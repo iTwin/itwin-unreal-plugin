@@ -1,0 +1,32 @@
+[
+  {
+    "name": "cesium-unreal",
+    "url": "https://github.com/CesiumGS/cesium-unreal",
+    "license": ["Apache 2.0"]
+  },
+  {
+    "name": "Boost",
+    "url": "https://www.boost.org/",
+    "license": ["Boost 1.0"],
+  },
+  {
+    "name": "reflect-cpp",
+    "url": "https://github.com/getml/reflect-cpp.git",
+    "license": ["MIT"]
+  },
+  {
+    "name": "tiny-process-library",
+    "url": "http://gitlab.com/eidheim/tiny-process-library",
+    "license": ["MIT"]
+  },
+  {
+    "name": "cpr",
+    "url": "https://github.com/libcpr/cpr",
+    "license": ["MIT"]
+  },
+  {
+    "name": "googletest",
+    "url": "https://github.com/google/googletest",
+    "license": ["BSD-3-Clause"]
+  }
+]

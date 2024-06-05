@@ -1,0 +1,21 @@
+
+if (APPLE)
+	if(EXISTS "/Users/Shared/Epic Games/UE_5.3/Engine" AND NOT EXISTS "/Applications/Epic Games/UE_5.3/Engine")
+		set (default_UE_PATH "/Users/Shared/Epic Games/UE_5.3/Engine")
+	else ()
+		set (default_UE_PATH "/Applications/Epic Games/UE_5.3/Engine")
+	endif ()
+else ()
+	set (default_UE_PATH "C:/Program Files/Epic Games/UE_5.3/Engine")
+endif ()
+mark_as_advanced (default_UE_PATH)
+
+option_path (BE_UNREAL_ENGINE_DIR "Path to Unreal Engine directory" "${default_UE_PATH}")
+
+if (NOT EXISTS ${BE_UNREAL_ENGINE_DIR})
+	if (DEFINED ENV{UNREAL_ENGINE_ROOT} AND EXISTS $ENV{UNREAL_ENGINE_ROOT})
+		set (BE_UNREAL_ENGINE_DIR $ENV{UNREAL_ENGINE_ROOT})
+	else ()
+		Message(FATAL_ERROR "Can't find unreal engine dir, change BE_UNREAL_ENGINE_DIR.\nActual:${BE_UNREAL_ENGINE_DIR}")
+	endif ()
+endif()

@@ -1,0 +1,6 @@
+{
+	"version": 4,
+	"include": [
+		"Public/SDK/CMakePresets.json"
+	  ]
+}

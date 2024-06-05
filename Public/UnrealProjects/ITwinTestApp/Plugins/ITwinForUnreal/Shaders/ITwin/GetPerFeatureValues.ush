@@ -1,0 +1,62 @@
+uint _czm_width;
+uint _czm_height;
+uint _czm_pixelX;
+uint _czm_pixelY;
+bool _czm_knownXY = false;
+uint _czm_featureIndex = round(FeatureID);
+uint _czm_alpha = 1;
+Synchro4D_RGBA_DATA.GetDimensions(_czm_width, _czm_height);
+_czm_pixelY = _czm_featureIndex / _czm_width;
+// Second clause added for robustness, in case one wants to test manually with dummy textures,
+// BUT ALSO to handle error cases where FeatureID is invalid in the Cesium tile
+if (_czm_width == 1 || _czm_pixelY >= _czm_height)
+{
+	Synchro4D_RGBA = uint4(0, 0, 0, 255);
+}
+else
+{
+	_czm_knownXY = true;
+	_czm_pixelX = _czm_featureIndex % _czm_width;
+	Synchro4D_RGBA = Synchro4D_RGBA_DATA.Load(int3(_czm_pixelX, _czm_pixelY, 0));
+}
+Synchro4D_CutPlanes_DATA.GetDimensions(_czm_width, _czm_height);
+if (_czm_width != 1 && !_czm_knownXY)
+{
+	_czm_pixelX = _czm_featureIndex % _czm_width;
+	_czm_pixelY = _czm_featureIndex / _czm_width;
+}
+// Last two clauses added for robustness, in case one wants to test manually with dummy textures
+// (even _czm_pixelX might be >= _czm_width if for some reason the CutPlane texture does not have
+//  the same size as the RGBA one)
+// BUT ALSO to handle error cases where FeatureID is invalid in the Cesium tile
+if (_czm_width == 1 || _czm_pixelX >= _czm_width || _czm_pixelY >= _czm_height)
+{
+	Synchro4D_CutPlane = float4(0, 0, 0, 0);
+}
+else
+{
+	Synchro4D_CutPlane = Synchro4D_CutPlanes_DATA.Load(int3(_czm_pixelX, _czm_pixelY, 0));
+}
+// Only test selection highlight if no Synchro4D highlight exists
+if (Synchro4D_RGBA.x + Synchro4D_RGBA.y + Synchro4D_RGBA.z == 0)
+{
+	_czm_alpha = Synchro4D_RGBA.w;
+	Selection_RGBA_DATA.GetDimensions(_czm_width, _czm_height);
+	if (_czm_width != 1 && !_czm_knownXY)
+	{
+		_czm_pixelX = _czm_featureIndex % _czm_width;
+		_czm_pixelY = _czm_featureIndex / _czm_width;
+	}
+	// Second clause added for robustness, in case one wants to test manually with dummy textures,
+	// BUT ALSO to handle error cases where FeatureID is invalid in the Cesium tile
+	if (_czm_width == 1 || _czm_pixelY >= _czm_height)
+	{
+		Synchro4D_RGBA = uint4(0, 0, 0, _czm_alpha);
+	}
+	else
+	{
+		Synchro4D_RGBA = Selection_RGBA_DATA.Load(int3(_czm_pixelX, _czm_pixelY, 0));
+		Synchro4D_RGBA.w = _czm_alpha;
+	}
+}
+return FeatureID;

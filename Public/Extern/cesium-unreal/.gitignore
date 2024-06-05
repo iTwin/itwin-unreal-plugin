@@ -1,0 +1,12 @@
+.DS_Store
+Binaries
+Saved
+.vs
+cesiumunreal.sln
+packages
+Intermediate
+ThirdParty/build
+Source/ThirdParty
+node_modules
+extern/build-helper.sh
+Documentation/Reference

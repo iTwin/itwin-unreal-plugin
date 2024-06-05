@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<AutoVisualizer xmlns="http://schemas.microsoft.com/vstudio/debugger/natvis/2010">
+
+  <!-- AccessorView visualizer -->
+  <Type Name="CesiumGltf::AccessorView&lt;*&gt;"  Priority="Low">
+    <DisplayString>{{ size={_size} }}</DisplayString>
+    <Expand>
+      <Item Name="[size]" ExcludeView="simple">_size</Item>
+      <ArrayItems>
+        <Size>_size</Size>
+        <ValuePointer>{{ {reinterpret_cast&lt;$T1 const*&gt;(_pData + _offset)} }}</ValuePointer>
+      </ArrayItems>
+    </Expand>
+  </Type>
+
+</AutoVisualizer>

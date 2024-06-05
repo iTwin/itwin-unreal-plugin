@@ -1,0 +1,1 @@
+set (beProjectName ITwinTestApp)

@@ -1,0 +1,13 @@
+{
+  "dependencies": [
+    "cpr"
+	,"gtest"
+  ]
+  ,"builtin-baseline": "04b0cf2b3fd1752d3c3db969cbc10ba0a4613cee"
+  ,"overrides": [
+    {
+		"name": "cpr"
+		,"version": "1.10.5#2"
+    }
+  ]
+}
