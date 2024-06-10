@@ -1,20 +1,12 @@
 /*--------------------------------------------------------------------------------------+
 |
-|     $Source: ITwinAuthorizationObserver.h $
+|     $Source: Tools.h $
 |
 |  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
-
 #pragma once
 
-#include "CoreMinimal.h"
-
-class ITWINRUNTIME_API IITwinAuthorizationObserver
-{
-public:
-	virtual ~IITwinAuthorizationObserver() = default;
-
-	virtual void OnAuthorizationDone(bool bSuccess, FString const& Error) = 0;
-};
+#include "Extension.h"
+#include "FactoryClass.h"

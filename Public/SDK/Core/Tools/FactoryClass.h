@@ -1,8 +1,15 @@
-export module SDK.Core.Tools:FactoryClass;
-import<memory>;
-import<functional>;
+/*--------------------------------------------------------------------------------------+
+|
+|     $Source: FactoryClass.h $
+|
+|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|
++--------------------------------------------------------------------------------------*/
 
-export namespace SDK::Core::Tools
+#include <memory>
+#include <functional>
+
+namespace SDK::Core::Tools
 {
 	/// <summary>
 	/// Allows to override the creation of objects

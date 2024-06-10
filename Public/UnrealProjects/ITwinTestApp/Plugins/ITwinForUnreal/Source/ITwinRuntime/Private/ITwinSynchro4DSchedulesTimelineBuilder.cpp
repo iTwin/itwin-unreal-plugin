@@ -22,22 +22,22 @@ void AddColorToTimeline(FITwinElementTimeline& ElementTimeline,
 	{
 		return;
 	}
-	using namespace ITwin::Schedule;
+	using namespace ITwin::Timeline;
 	ElementTimeline.SetColorAt(Time.first,
 		Profile.StartAppearance.bUseOriginalColor ? std::nullopt
 			: std::optional<FVector>(Profile.StartAppearance.Color),
-		InterpolationMode::Step);
+		Interpolation::Step);
 
 	ElementTimeline.SetColorAt(Time.first + KEYFRAME_TIME_EPSILON,
 		Profile.ActiveAppearance.Base.bUseOriginalColor ? std::nullopt
 			: std::optional<FVector>(Profile.ActiveAppearance.Base.Color),
-		InterpolationMode::Step);
+		Interpolation::Step);
 
 	ElementTimeline.SetColorAt(Time.second,
 		Profile.FinishAppearance.bUseOriginalColor ? std::nullopt
 			: std::optional<FVector>(Profile.FinishAppearance.Color),
-		// See comment on InterpolationMode::Next for an alternative
-		InterpolationMode::Step);
+		// See comment on Interpolation::Next for an alternative
+		Interpolation::Step);
 }
 
 /// IMPORTANT: the orientation here is such that it points into the half space that is *cut out*,
@@ -97,7 +97,7 @@ void AddCuttingPlaneToTimeline(FITwinElementTimeline& ElementTimeline,
 		return;
 	}
 	using namespace ITwin::Timeline;
-	using namespace ITwin::Schedule;
+	using namespace ITwin::Timeline;
 	bool const bVisibleOutsideTask = (Profile.ProfileType == EProfileAction::Neutral)
 									|| (Profile.ProfileType == EProfileAction::Maintenance);
 	// Regular growth means "building (new or temp) stuff", while inverted growth means "removing"
@@ -105,31 +105,31 @@ void AddCuttingPlaneToTimeline(FITwinElementTimeline& ElementTimeline,
 	// removed, visibility is 0 anyway so the cutting plane setting does not matter.
 	ElementTimeline.SetCuttingPlaneAt(Time.first,
 		GrowthAppearance.bInvertGrowth ? true/*fullyVisible_*/ : bVisibleOutsideTask/*fullyHidden_?*/,
-		InterpolationMode::Step);
+		Interpolation::Step);
 	ElementTimeline.SetCuttingPlaneAt(Time.first + KEYFRAME_TIME_EPSILON,
 		FDeferredPlaneEquation{ PlaneEqDeferredW,
 								GrowthAppearance.bInvertGrowth
 									? EGrowthBoundary::FullyGrown : EGrowthBoundary::FullyRemoved },
-		InterpolationMode::Linear);
+		Interpolation::Linear);
 	ElementTimeline.SetCuttingPlaneAt(Time.second - KEYFRAME_TIME_EPSILON,
 		FDeferredPlaneEquation{ PlaneEqDeferredW,
 								GrowthAppearance.bInvertGrowth
 									? EGrowthBoundary::FullyRemoved : EGrowthBoundary::FullyGrown },
-		InterpolationMode::Step);
+		Interpolation::Step);
 	ElementTimeline.SetCuttingPlaneAt(Time.second,
 		GrowthAppearance.bInvertGrowth ? bVisibleOutsideTask/*fullyHidden_?*/ : true/*fullyVisible_*/,
-		// See comment on InterpolationMode::Next for an alternative
-		InterpolationMode::Step);
+		// See comment on Interpolation::Next for an alternative
+		Interpolation::Step);
 }
 	
 void AddVisibilityToTimeline(FITwinElementTimeline& ElementTimeline,
 									FAppearanceProfile const& Profile, FTimeRangeInSeconds const& Time)
 {
-	using namespace ITwin::Schedule;
+	using namespace ITwin::Timeline;
 	if (Profile.ProfileType == EProfileAction::Neutral)
 	{
 		// Element just disappears at start of task?!
-		ElementTimeline.SetVisibilityAt(Time.first, 0, InterpolationMode::Step);
+		ElementTimeline.SetVisibilityAt(Time.first, 0, Interpolation::Step);
 	}
 	else
 	{
@@ -151,21 +151,21 @@ void AddVisibilityToTimeline(FITwinElementTimeline& ElementTimeline,
 				|| EProfileAction::Temporary == Profile.ProfileType)
 			? 0.f : (Profile.StartAppearance.bUseOriginalAlpha ? std::nullopt
 					: std::optional<float>(Profile.StartAppearance.Alpha)),
-			InterpolationMode::Step);
+			Interpolation::Step);
 
 		if (Profile.ActiveAppearance.Base.Alpha == Profile.ActiveAppearance.FinishAlpha)
 		{
 			ElementTimeline.SetVisibilityAt(Time.first + KEYFRAME_TIME_EPSILON,
 				Profile.ActiveAppearance.Base.bUseOriginalAlpha
 					? std::nullopt : std::optional<float>(Profile.ActiveAppearance.Base.Alpha),
-				InterpolationMode::Step);
+				Interpolation::Step);
 		}
 		else
 		{
 			ElementTimeline.SetVisibilityAt(Time.first + KEYFRAME_TIME_EPSILON,
-				Profile.ActiveAppearance.Base.Alpha, InterpolationMode::Linear);
+				Profile.ActiveAppearance.Base.Alpha, Interpolation::Linear);
 			ElementTimeline.SetVisibilityAt(Time.second - KEYFRAME_TIME_EPSILON,
-				Profile.ActiveAppearance.FinishAlpha, InterpolationMode::Step);
+				Profile.ActiveAppearance.FinishAlpha, Interpolation::Step);
 		}
 
 		ElementTimeline.SetVisibilityAt(Time.second,
@@ -173,8 +173,8 @@ void AddVisibilityToTimeline(FITwinElementTimeline& ElementTimeline,
 				|| EProfileAction::Temporary == Profile.ProfileType)
 			? 0.f : (Profile.FinishAppearance.bUseOriginalAlpha ? std::nullopt
 						: std::optional<float>(Profile.FinishAppearance.Alpha)),
-			// See comment on InterpolationMode::Next for an alternative
-			InterpolationMode::Step);
+			// See comment on Interpolation::Next for an alternative
+			Interpolation::Step);
 	}
 }
 
@@ -184,10 +184,10 @@ void CreateTestingTimeline(FITwinElementTimeline& Timeline)
 
 	// Initial conditions, to not depend on the first keyframe of each feature, which can be much farther
 	// along the timeline
-	using namespace ITwin::Schedule;
-	Timeline.SetColorAt(0., std::nullopt/*ie. bUseOriginalColor*/, InterpolationMode::Step);
-	Timeline.SetVisibilityAt(0., 1.f, InterpolationMode::Step);
-	Timeline.SetCuttingPlaneAt(0., true/*ie. fullyVisible_*/, InterpolationMode::Step);
+	using namespace ITwin::Timeline;
+	Timeline.SetColorAt(0., std::nullopt/*ie. bUseOriginalColor*/, Interpolation::Step);
+	Timeline.SetVisibilityAt(0., 1.f, Interpolation::Step);
+	Timeline.SetCuttingPlaneAt(0., true/*ie. fullyVisible_*/, Interpolation::Step);
 
 	// tests occur every 4 deltas: one before task, one for task duration, one after task, one for blink
 	constexpr int cycle = 4;
@@ -206,12 +206,12 @@ void CreateTestingTimeline(FITwinElementTimeline& Timeline)
 		{
 			double const BlinkStart = TimeRange.second + delta;
 			// "Blink" the Element
-			Timeline.SetVisibilityAt(BlinkStart - KEYFRAME_TIME_EPSILON, 1, InterpolationMode::Step);
-			Timeline.SetVisibilityAt(BlinkStart, 0.f, InterpolationMode::Step);
+			Timeline.SetVisibilityAt(BlinkStart - KEYFRAME_TIME_EPSILON, 1, Interpolation::Step);
+			Timeline.SetVisibilityAt(BlinkStart, 0.f, Interpolation::Step);
 			// End blink and instruct to use the next keyframes' values, if any, otherwise reset values
-			Timeline.SetVisibilityAt(BlinkStart + delta, 1.f, InterpolationMode::Next);
-			Timeline.SetColorAt(BlinkStart + delta, std::nullopt, InterpolationMode::Next);
-			Timeline.SetCuttingPlaneAt(BlinkStart + delta, true, InterpolationMode::Next);
+			Timeline.SetVisibilityAt(BlinkStart + delta, 1.f, Interpolation::Next);
+			Timeline.SetColorAt(BlinkStart + delta, std::nullopt, Interpolation::Next);
+			Timeline.SetCuttingPlaneAt(BlinkStart + delta, true, Interpolation::Next);
 		};
 	auto const testColor = [&Timeline, &Profile, &Idx, &incrTimes, &blinkAndResetBetweenTests]
 		(bool start, bool active, bool finish)

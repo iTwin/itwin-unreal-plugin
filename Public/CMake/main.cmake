@@ -1,7 +1,7 @@
 # Due to Unreal and CMake having their own distinct configuration set,
 # we have to map Unreal configs to CMake configs (see be_add_unreal_project).
 # As a result, only a subset of CMake configs are supported.
-set (CMAKE_CONFIGURATION_TYPES Debug Release)
+set (CMAKE_CONFIGURATION_TYPES UnrealDebug Release)
 # Change some compiler/linker flags, applied to both our targets and the external (ceesium) targets.
 # Enable debug info in Release config.
 if(WIN32)

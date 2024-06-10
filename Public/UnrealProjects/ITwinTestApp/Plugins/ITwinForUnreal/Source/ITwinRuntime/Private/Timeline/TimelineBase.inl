@@ -1,6 +1,6 @@
 /*--------------------------------------------------------------------------------------+
 |
-|     $Source: Schedule.inl $
+|     $Source: TimelineBase.inl $
 |
 |  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
 |
@@ -8,7 +8,7 @@
 
 #pragma once
 
-#include "Schedule.h"
+#include "TimelineBase.h"
 #include "TimeInSeconds.h"
 
 #include <Dom/JsonObject.h>
@@ -22,7 +22,7 @@
 
 #include <type_traits>
 
-namespace ITwin::Schedule
+namespace ITwin::Timeline
 {
 
 template<class _Values>
@@ -96,15 +96,15 @@ boost::optional<_PropertyValues> PropertyTimeline<_PropertyValues>::GetStateAtTi
 	const auto& entry0 = *(--entryIt);
 	switch (entry0.interpolation_)
 	{
-		case InterpolationMode::Step:
+		case Interpolation::Step:
 			return entry0;
-		case InterpolationMode::Next:
+		case Interpolation::Next:
 			return entry1;
-		case InterpolationMode::Linear:
+		case Interpolation::Linear:
 		{
 			_PropertyValues result;
 			const float u = float((time-entry0.time_)/(entry1.time_-entry0.time_));
-			decltype(_LrtScheduleGetInterpolators(_PropertyValues{})) interpolators;
+			decltype(_iTwinTimelineGetInterpolators(_PropertyValues{})) interpolators;
 			using Zipped = boost::fusion::vector<_PropertyValues&, const _PropertyValues&,
 				const _PropertyValues&, const decltype(interpolators)&>;
 			boost::fusion::for_each(
@@ -212,12 +212,12 @@ void ObjectTimeline<_Metadata>::ToJson(TSharedRef<FJsonObject>& JsonObj) const
 			//	std::remove_reference_t<std::remove_const_t<decltype(propertyTimeline)>>;
 			JsonObj->SetArrayField(
 				// Can't make that work because of unhelpful compile errors...:-(
-				//ITwin::Timeline::_LrtScheduleGetPropertyName<TimelineType::PropertyValues>()
+				//ITwin::Timeline::_iTwinTimelineGetPropertyName<TimelineType::PropertyValues>()
 				HardcodedNames[HardcodedIndex]
 					+ TEXT("Times"),
 				Keys);
 			JsonObj->SetArrayField(
-				//ITwin::Timeline::_LrtScheduleGetPropertyName<TimelineType::PropertyValues>()
+				//ITwin::Timeline::_iTwinTimelineGetPropertyName<TimelineType::PropertyValues>()
 				HardcodedNames[HardcodedIndex]
 					+ TEXT("Values"),
 				Values);
@@ -236,19 +236,19 @@ std::size_t hash_value(const ObjectTimeline<_Metadata>& timeline) noexcept
 }
 
 template<class _ObjectTimeline>
-const FTimeRangeInSeconds& MainTimeline<_ObjectTimeline>::GetTimeRange() const
+const FTimeRangeInSeconds& MainTimelineBase<_ObjectTimeline>::GetTimeRange() const
 {
 	return timeRange_;
 }
 
 template<class _ObjectTimeline>
-FDateRange MainTimeline<_ObjectTimeline>::GetDateRange() const
+FDateRange MainTimelineBase<_ObjectTimeline>::GetDateRange() const
 {
 	return ITwin::Time::ToDateRange(timeRange_);
 }
 
 template<class _ObjectTimeline>
-void MainTimeline<_ObjectTimeline>::IncludeTimeRange(const _ObjectTimeline& object)
+void MainTimelineBase<_ObjectTimeline>::IncludeTimeRange(const _ObjectTimeline& object)
 {
 	const auto objectTimeRange = object.GetTimeRange();
 	timeRange_.first = std::min(timeRange_.first, objectTimeRange.first);
@@ -256,7 +256,7 @@ void MainTimeline<_ObjectTimeline>::IncludeTimeRange(const _ObjectTimeline& obje
 }
 
 template<class _ObjectTimeline>
-std::shared_ptr<_ObjectTimeline> MainTimeline<_ObjectTimeline>::Add(const ObjectTimelinePtr& object)
+std::shared_ptr<_ObjectTimeline> MainTimelineBase<_ObjectTimeline>::Add(const ObjectTimelinePtr& object)
 {
 	auto result = container_.push_back(object);
 	// Note: "Add" is now called from ElementTimelineFor, when creating an empty timeline...
@@ -264,4 +264,4 @@ std::shared_ptr<_ObjectTimeline> MainTimeline<_ObjectTimeline>::Add(const Object
 	return result.second ? object : *result.first;
 }
 
-} // namespace ITwin::Schedule
+} // namespace ITwin::Timeline

@@ -89,7 +89,7 @@ public:
   std::shared_ptr<TileOcclusionRendererProxyPool> pTileOcclusionProxyPool =
       nullptr;
 
-  std::shared_ptr<GltfTuner> gltfTuner;
+  std::shared_ptr<GltfTuner> gltfTuner = nullptr;
 };
 
 } // namespace Cesium3DTilesSelection

@@ -6,13 +6,15 @@
 |
 +--------------------------------------------------------------------------------------*/
 
-module;
-#include <rfl/json.hpp> //Hack, should not be there
-
-module SDK.Core.Visualization:Scene;
-import<string>;
-import SDK.Core.Network;
-import :Config;
+/*--------------------------------------------------------------------------------------+
+|
+|     $Source: Scene.cpp $
+|
+|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|
++--------------------------------------------------------------------------------------*/
+#include "Scene.h"
+#include "Config.h"
 
 namespace SDK::Core {
 	
@@ -20,6 +22,7 @@ namespace SDK::Core {
 	{
 	public:
 		std::string id_;
+		Impl(const std::string &id): id_(id){}
 	};
 
 	DecorationEnvironment::DecorationEnvironment(const std::string &s):impl_(new Impl(s))
@@ -37,7 +40,7 @@ namespace SDK::Core {
 	{
 		return GetImpl().id_;
 	}
-
+	template<>
 	std::function<std::shared_ptr<IDecorationEnvironment>(std::string)> Tools::Factory<IDecorationEnvironment, std::string>::newFct_ = [](std::string id) {
 		std::shared_ptr<IDecorationEnvironment> p(static_cast<IDecorationEnvironment*>(new DecorationEnvironment(id)));
 		return p;
@@ -47,6 +50,7 @@ namespace SDK::Core {
 	{
 	public:
 		std::string id_;
+		Impl(const std::string& id) : id_(id) {}
 	};
 
 	DecorationLayer::DecorationLayer(const std::string& s) :impl_(new Impl(s))
@@ -64,7 +68,7 @@ namespace SDK::Core {
 	{
 		return GetImpl().id_;
 	}
-
+	template<>
 	std::function<std::shared_ptr<IDecorationLayer>(std::string)> Tools::Factory<IDecorationLayer, std::string>::newFct_ = [](std::string id) {
 		std::shared_ptr<IDecorationLayer> p(static_cast<IDecorationLayer*>(new DecorationLayer(id)));
 		return p;
@@ -156,6 +160,7 @@ namespace SDK::Core {
 		}
 	};
 
+	template<>
 	std::function<std::shared_ptr<IScene>()> Tools::Factory<IScene>::newFct_ = []() {
 		std::shared_ptr<IScene> p(static_cast<IScene*>(new Scene()));
 		return p;

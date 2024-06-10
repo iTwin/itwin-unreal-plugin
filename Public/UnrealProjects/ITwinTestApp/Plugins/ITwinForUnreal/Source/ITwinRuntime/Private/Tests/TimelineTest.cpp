@@ -14,35 +14,35 @@
 #include <Misc/LowLevelTestAdapter.h>
 
 #include <Boost/BoostHash.h>
-#include <Timeline/Schedule/Definition.h>
+#include <Timeline/Definition.h>
 
 namespace ITwin::Timeline {
 
-LRT_SCHEDULE_DEFINE_PROPERTY_VALUES(Test_Visibility,
+ITWIN_TIMELINE_DEFINE_PROPERTY_VALUES(Test_Visibility,
 	(float, test_value_)
 )
 TSharedPtr<FJsonValue> ToJsonValue(Test_Visibility const&) { return MakeShared<FJsonValueNumber>(0.f); }
 
-LRT_SCHEDULE_DEFINE_PROPERTY_VALUES(Test_Color,
-	(bool, test_hasColor_, ITwin::Schedule::Interpolators::BoolOr)
+ITWIN_TIMELINE_DEFINE_PROPERTY_VALUES(Test_Color,
+	(bool, test_hasColor_, ITwin::Timeline::Interpolators::BoolOr)
 	(FVector, test_value_)
 )
 TSharedPtr<FJsonValue> ToJsonValue(Test_Color const&) { return MakeShared<FJsonValueNumber>(0.f); }
 
-LRT_SCHEDULE_DEFINE_PROPERTY_VALUES(Test_Transform,
+ITWIN_TIMELINE_DEFINE_PROPERTY_VALUES(Test_Transform,
 	(FQuat, test_orientation_)
 	(FVector, test_position_)
 )
 TSharedPtr<FJsonValue> ToJsonValue(Test_Transform const&) { return MakeShared<FJsonValueNumber>(0.f); }
 
-LRT_SCHEDULE_DEFINE_PROPERTY_VALUES(Test_CuttingPlane,
-	(FVector4f, test_planeEquation_, ITwin::Schedule::Interpolators::PlaneEquation)
-	(bool, test_fullyVisible_, ITwin::Schedule::Interpolators::BoolAnd)
-	(bool, test_fullyHidden_, ITwin::Schedule::Interpolators::BoolAnd)
+ITWIN_TIMELINE_DEFINE_PROPERTY_VALUES(Test_CuttingPlane,
+	(FVector4f, test_planeEquation_, ITwin::Timeline::Interpolators::PlaneEquation)
+	(bool, test_fullyVisible_, ITwin::Timeline::Interpolators::BoolAnd)
+	(bool, test_fullyHidden_, ITwin::Timeline::Interpolators::BoolAnd)
 )
 TSharedPtr<FJsonValue> ToJsonValue(Test_CuttingPlane const&) { return MakeShared<FJsonValueNumber>(0.f); }
 
-LRT_SCHEDULE_DEFINE_OBJECT_PROPERTIES(Test_Element,
+ITWIN_TIMELINE_DEFINE_OBJECT_PROPERTIES(Test_Element,
 	(Test_Visibility, test_visibility_)
 	(Test_Color, test_color_)
 	(Test_Transform, test_transform_)
@@ -143,53 +143,53 @@ void GetStateAtTimeSpec::Define()
 					elementTimeline = std::make_shared<Test_ElementTimeline>();
 					// Insert unsorted test keyframes
 					{
-						ITwin::Schedule::PropertyEntry<Test_Visibility> entry;
+						ITwin::Timeline::PropertyEntry<Test_Visibility> entry;
 						entry.time_ = 100.;
-						entry.interpolation_ = ITwin::Schedule::InterpolationMode::Linear;
+						entry.interpolation_ = ITwin::Timeline::Interpolation::Linear;
 						entry.test_value_ = 0.6f;
 						elementTimeline->test_visibility_.list_.insert(entry);
 					}
 					{
-						ITwin::Schedule::PropertyEntry<Test_Visibility> entry;
+						ITwin::Timeline::PropertyEntry<Test_Visibility> entry;
 						entry.time_ = 200.;
-						entry.interpolation_ = ITwin::Schedule::InterpolationMode::Step;
+						entry.interpolation_ = ITwin::Timeline::Interpolation::Step;
 						entry.test_value_ = 0.2f;
 						elementTimeline->test_visibility_.list_.insert(entry);
 					}
 					{
-						ITwin::Schedule::PropertyEntry<Test_Color> entry;
+						ITwin::Timeline::PropertyEntry<Test_Color> entry;
 						entry.time_ = 150;
-						entry.interpolation_ = ITwin::Schedule::InterpolationMode::Step;
+						entry.interpolation_ = ITwin::Timeline::Interpolation::Step;
 						entry.test_hasColor_ = true;
 						entry.test_value_ = {0.5f, 0.7f, 0.9f};
 						elementTimeline->test_color_.list_.insert(entry);
 					}
 					{
-						ITwin::Schedule::PropertyEntry<Test_Color> entry;
+						ITwin::Timeline::PropertyEntry<Test_Color> entry;
 						entry.time_ = 190;
-						entry.interpolation_ = ITwin::Schedule::InterpolationMode::Step;
+						entry.interpolation_ = ITwin::Timeline::Interpolation::Step;
 						entry.test_hasColor_ = false;
 						elementTimeline->test_color_.list_.insert(entry);
 					}
 					{
-						ITwin::Schedule::PropertyEntry<Test_Color> entry;
+						ITwin::Timeline::PropertyEntry<Test_Color> entry;
 						entry.time_ = 200;
-						entry.interpolation_ = ITwin::Schedule::InterpolationMode::Step;
+						entry.interpolation_ = ITwin::Timeline::Interpolation::Step;
 						entry.test_hasColor_ = true;
 						entry.test_value_ = {0.15f, 0.37f, 0.43f};
 						elementTimeline->test_color_.list_.insert(entry);
 					}
 					{
-						ITwin::Schedule::PropertyEntry<Test_CuttingPlane> entry;
+						ITwin::Timeline::PropertyEntry<Test_CuttingPlane> entry;
 						entry.time_ = 150;
-						entry.interpolation_ = ITwin::Schedule::InterpolationMode::Linear;
+						entry.interpolation_ = ITwin::Timeline::Interpolation::Linear;
 						entry.test_planeEquation_ = FVector4f(1, 0, 0, 10);
 						elementTimeline->test_cuttingPlane_.list_.insert(entry);
 					}
 					{
-						ITwin::Schedule::PropertyEntry<Test_CuttingPlane> entry;
+						ITwin::Timeline::PropertyEntry<Test_CuttingPlane> entry;
 						entry.time_ = 190;
-						entry.interpolation_ = ITwin::Schedule::InterpolationMode::Linear;
+						entry.interpolation_ = ITwin::Timeline::Interpolation::Linear;
 						entry.test_planeEquation_ = FVector4f(1, 0, 0, 20);
 						elementTimeline->test_cuttingPlane_.list_.insert(entry);
 					}
@@ -203,7 +203,7 @@ void GetStateAtTimeSpec::Define()
 							{},
 							Test_CuttingPlane{FVector4f(1,0,0,10), false, false}},
 						elementTimeline->GetStateAtTime(90,
-							ITwin::Schedule::StateAtEntryTimeBehavior::UseLeftInterval, nullptr));
+							ITwin::Timeline::StateAtEntryTimeBehavior::UseLeftInterval, nullptr));
 				});
 			It("checks time == first keyframe returns all earliest values",
 				[this]() {
@@ -214,7 +214,7 @@ void GetStateAtTimeSpec::Define()
 							{},
 							Test_CuttingPlane{FVector4f(1,0,0,10), false, false}},
 						elementTimeline->GetStateAtTime(100,
-							ITwin::Schedule::StateAtEntryTimeBehavior::UseLeftInterval, nullptr));
+							ITwin::Timeline::StateAtEntryTimeBehavior::UseLeftInterval, nullptr));
 				});
 			It("checks time strictly between keyframes returns the expected values with interpolation",
 				[this]() {
@@ -225,7 +225,7 @@ void GetStateAtTimeSpec::Define()
 							{},
 							Test_CuttingPlane{FVector4f(1,0,0,12.5f), false, false}},
 						elementTimeline->GetStateAtTime(160,
-							ITwin::Schedule::StateAtEntryTimeBehavior::UseLeftInterval, nullptr));
+							ITwin::Timeline::StateAtEntryTimeBehavior::UseLeftInterval, nullptr));
 				});
 			It("checks time == intermediate keyframe returns the expected values with interpolation",
 				[this]() {
@@ -236,7 +236,7 @@ void GetStateAtTimeSpec::Define()
 							{},
 							Test_CuttingPlane{FVector4f(1,0,0,20), false, false}},
 						elementTimeline->GetStateAtTime(190,
-							ITwin::Schedule::StateAtEntryTimeBehavior::UseLeftInterval, nullptr));
+							ITwin::Timeline::StateAtEntryTimeBehavior::UseLeftInterval, nullptr));
 				});
 			It("checks time == intermediate keyframe handles UseRightInterval properly",
 				[this]() {
@@ -247,7 +247,7 @@ void GetStateAtTimeSpec::Define()
 							{},
 							Test_CuttingPlane{FVector4f(1,0,0,20), false, false}},
 						elementTimeline->GetStateAtTime(190, 
-							ITwin::Schedule::StateAtEntryTimeBehavior::UseRightInterval, nullptr));
+							ITwin::Timeline::StateAtEntryTimeBehavior::UseRightInterval, nullptr));
 				});
 			It("checks time == last keyframe returns all latest values",
 				[this]() {
@@ -258,7 +258,7 @@ void GetStateAtTimeSpec::Define()
 							{},
 							Test_CuttingPlane{FVector4f(1,0,0,20), false, false}},
 						elementTimeline->GetStateAtTime(200,
-							ITwin::Schedule::StateAtEntryTimeBehavior::UseLeftInterval, nullptr));
+							ITwin::Timeline::StateAtEntryTimeBehavior::UseLeftInterval, nullptr));
 				});
 			It("checks time > last keyframe returns all latest values",
 				[this]() {
@@ -269,17 +269,17 @@ void GetStateAtTimeSpec::Define()
 							{},
 							Test_CuttingPlane{FVector4f(1,0,0,20), false, false}},
 						elementTimeline->GetStateAtTime(210,
-							ITwin::Schedule::StateAtEntryTimeBehavior::UseLeftInterval, nullptr));
+							ITwin::Timeline::StateAtEntryTimeBehavior::UseLeftInterval, nullptr));
 				});
 
-			Describe("A spec for InterpolationMode::Next",
+			Describe("A spec for Interpolation::Next",
 				[this]() {
 					// Add a new keyframe after the former last Visibility keyframe, which was set
 					// with Next interpolation (see BeforeEach call)
 					BeforeEach([this]() {
-							ITwin::Schedule::PropertyEntry<Test_Visibility> entry;
+							ITwin::Timeline::PropertyEntry<Test_Visibility> entry;
 							entry.time_ = 220.;
-							entry.interpolation_ = ITwin::Schedule::InterpolationMode::Next;
+							entry.interpolation_ = ITwin::Timeline::Interpolation::Next;
 							entry.test_value_ = 0.4f;
 							elementTimeline->test_visibility_.list_.insert(entry);
 						});
@@ -288,20 +288,20 @@ void GetStateAtTimeSpec::Define()
 					It("should use value from keyframe(t=200) because of interp=Step", [this]() {
 						VisibilityApproxEqual(*this,
 							elementTimeline->GetStateAtTime(200,
-								ITwin::Schedule::StateAtEntryTimeBehavior::UseLeftInterval, nullptr),
+								ITwin::Timeline::StateAtEntryTimeBehavior::UseLeftInterval, nullptr),
 							0.2f);
 						VisibilityApproxEqual(*this,
 							elementTimeline->GetStateAtTime(210,
-								ITwin::Schedule::StateAtEntryTimeBehavior::UseLeftInterval, nullptr),
+								ITwin::Timeline::StateAtEntryTimeBehavior::UseLeftInterval, nullptr),
 							0.2f);
 						// And this is independent of the Use*Interval
 						VisibilityApproxEqual(*this,
 							elementTimeline->GetStateAtTime(200,
-								ITwin::Schedule::StateAtEntryTimeBehavior::UseRightInterval, nullptr),
+								ITwin::Timeline::StateAtEntryTimeBehavior::UseRightInterval, nullptr),
 							0.2f);
 						VisibilityApproxEqual(*this,
 							elementTimeline->GetStateAtTime(219,
-								ITwin::Schedule::StateAtEntryTimeBehavior::UseRightInterval, nullptr),
+								ITwin::Timeline::StateAtEntryTimeBehavior::UseRightInterval, nullptr),
 							0.2f);
 						});
 					It("should always use value from keyframe(t=220) when it is last",
@@ -309,28 +309,28 @@ void GetStateAtTimeSpec::Define()
 						{
 							VisibilityApproxEqual(*this,
 								elementTimeline->GetStateAtTime(220,
-									ITwin::Schedule::StateAtEntryTimeBehavior::UseLeftInterval, nullptr),
+									ITwin::Timeline::StateAtEntryTimeBehavior::UseLeftInterval, nullptr),
 								// would be 0.2 if not the last keyframe - hack introduced in Schedule.inl to
 								// conform to iModel.js behavior :/
 								0.4f);
 							VisibilityApproxEqual(*this,
 								elementTimeline->GetStateAtTime(220,
-									ITwin::Schedule::StateAtEntryTimeBehavior::UseRightInterval, nullptr),
+									ITwin::Timeline::StateAtEntryTimeBehavior::UseRightInterval, nullptr),
 								0.4f);
 							// Add a new keyframe at t > 220
-							ITwin::Schedule::PropertyEntry<Test_Visibility> entry;
+							ITwin::Timeline::PropertyEntry<Test_Visibility> entry;
 							entry.time_ = 240.;
-							entry.interpolation_ = ITwin::Schedule::InterpolationMode::Step;
+							entry.interpolation_ = ITwin::Timeline::Interpolation::Step;
 							entry.test_value_ = 0.5f;
 							elementTimeline->test_visibility_.list_.insert(entry);
 							VisibilityApproxEqual(*this,
 								elementTimeline->GetStateAtTime(220,
-									ITwin::Schedule::StateAtEntryTimeBehavior::UseLeftInterval, nullptr),
+									ITwin::Timeline::StateAtEntryTimeBehavior::UseLeftInterval, nullptr),
 								// so now it's really 0.2
 								0.2f);
 							VisibilityApproxEqual(*this,
 								elementTimeline->GetStateAtTime(220,
-									ITwin::Schedule::StateAtEntryTimeBehavior::UseRightInterval, nullptr),
+									ITwin::Timeline::StateAtEntryTimeBehavior::UseRightInterval, nullptr),
 								// now it's 0.5 because entry0 for RightInterval is 220, which interp is Next
 								0.5f);
 						});
@@ -340,12 +340,12 @@ void GetStateAtTimeSpec::Define()
 							// t=220 is still the last keyframe, its value should be returned
 							VisibilityApproxEqual(*this,
 								elementTimeline->GetStateAtTime(230,
-									ITwin::Schedule::StateAtEntryTimeBehavior::UseLeftInterval, nullptr),
+									ITwin::Timeline::StateAtEntryTimeBehavior::UseLeftInterval, nullptr),
 								0.4f);
 							// Add a new keyframe at t > 220
-							ITwin::Schedule::PropertyEntry<Test_Visibility> entry;
+							ITwin::Timeline::PropertyEntry<Test_Visibility> entry;
 							entry.time_ = 240.;
-							entry.interpolation_ = ITwin::Schedule::InterpolationMode::Step;
+							entry.interpolation_ = ITwin::Timeline::Interpolation::Step;
 							entry.test_value_ = 0.5f;
 							elementTimeline->test_visibility_.list_.insert(entry);
 							// t=220 is no longer the last keyframe, but the interpolation used is that of
@@ -353,23 +353,23 @@ void GetStateAtTimeSpec::Define()
 							// so these first 2 tests are actually the same as the other test above...
 							VisibilityApproxEqual(*this,
 								elementTimeline->GetStateAtTime(220,
-									ITwin::Schedule::StateAtEntryTimeBehavior::UseLeftInterval, nullptr),
+									ITwin::Timeline::StateAtEntryTimeBehavior::UseLeftInterval, nullptr),
 								0.2f);
 							VisibilityApproxEqual(*this,
 								elementTimeline->GetStateAtTime(220,
-									ITwin::Schedule::StateAtEntryTimeBehavior::UseRightInterval, nullptr),
+									ITwin::Timeline::StateAtEntryTimeBehavior::UseRightInterval, nullptr),
 								0.5f);
 							VisibilityApproxEqual(*this,
 								elementTimeline->GetStateAtTime(240,
-									ITwin::Schedule::StateAtEntryTimeBehavior::UseLeftInterval, nullptr),
+									ITwin::Timeline::StateAtEntryTimeBehavior::UseLeftInterval, nullptr),
 								0.5f);
 							VisibilityApproxEqual(*this,
 								elementTimeline->GetStateAtTime(240,
-									ITwin::Schedule::StateAtEntryTimeBehavior::UseRightInterval, nullptr),
+									ITwin::Timeline::StateAtEntryTimeBehavior::UseRightInterval, nullptr),
 								0.5f);
 							VisibilityApproxEqual(*this,
 								elementTimeline->GetStateAtTime(250,
-									ITwin::Schedule::StateAtEntryTimeBehavior::UseLeftInterval, nullptr),
+									ITwin::Timeline::StateAtEntryTimeBehavior::UseLeftInterval, nullptr),
 								0.5f);
 						});
 					It("should not interpolate linearly even when Next is followed by Linear",
@@ -377,40 +377,40 @@ void GetStateAtTimeSpec::Define()
 						{
 							// Add a new keyframe at t > 220 with Linear interpolation: but Next 'cuts' the
 							// timeline into independent parts on purpose, so it will behave as Step
-							ITwin::Schedule::PropertyEntry<Test_Visibility> entry;
+							ITwin::Timeline::PropertyEntry<Test_Visibility> entry;
 							entry.time_ = 240.;
-							entry.interpolation_ = ITwin::Schedule::InterpolationMode::Linear;
+							entry.interpolation_ = ITwin::Timeline::Interpolation::Linear;
 							entry.test_value_ = 0.5f;
 							elementTimeline->test_visibility_.list_.insert(entry);
 							// Same tests as the above test with Step:
 							VisibilityApproxEqual(*this,
 								elementTimeline->GetStateAtTime(220,
-									ITwin::Schedule::StateAtEntryTimeBehavior::UseLeftInterval, nullptr),
+									ITwin::Timeline::StateAtEntryTimeBehavior::UseLeftInterval, nullptr),
 								0.2f);
 							VisibilityApproxEqual(*this,
 								elementTimeline->GetStateAtTime(220,
-									ITwin::Schedule::StateAtEntryTimeBehavior::UseRightInterval, nullptr),
+									ITwin::Timeline::StateAtEntryTimeBehavior::UseRightInterval, nullptr),
 								0.5f);
 							VisibilityApproxEqual(*this,
 								elementTimeline->GetStateAtTime(240,
-									ITwin::Schedule::StateAtEntryTimeBehavior::UseLeftInterval, nullptr),
+									ITwin::Timeline::StateAtEntryTimeBehavior::UseLeftInterval, nullptr),
 								0.5f);
 							VisibilityApproxEqual(*this,
 								elementTimeline->GetStateAtTime(240,
-									ITwin::Schedule::StateAtEntryTimeBehavior::UseRightInterval, nullptr),
+									ITwin::Timeline::StateAtEntryTimeBehavior::UseRightInterval, nullptr),
 								0.5f);
 							VisibilityApproxEqual(*this,
 								elementTimeline->GetStateAtTime(250,
-									ITwin::Schedule::StateAtEntryTimeBehavior::UseLeftInterval, nullptr),
+									ITwin::Timeline::StateAtEntryTimeBehavior::UseLeftInterval, nullptr),
 								0.5f);
 							VisibilityApproxEqual(*this,
 								elementTimeline->GetStateAtTime(220,
-									ITwin::Schedule::StateAtEntryTimeBehavior::UseRightInterval, nullptr),
+									ITwin::Timeline::StateAtEntryTimeBehavior::UseRightInterval, nullptr),
 								0.5f);
 							// Test no interp:
 							VisibilityApproxEqual(*this,
 								elementTimeline->GetStateAtTime(230,
-									ITwin::Schedule::StateAtEntryTimeBehavior::UseLeftInterval, nullptr),
+									ITwin::Timeline::StateAtEntryTimeBehavior::UseLeftInterval, nullptr),
 								0.5f);
 						});
 				});
@@ -419,7 +419,7 @@ void GetStateAtTimeSpec::Define()
 
 BEGIN_DEFINE_SPEC(MainTimelineAddSpec, "Bentley.ITwinForUnreal.ITwinRuntime.Timeline", \
 				  EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::EngineFilter)
-	ITwin::Schedule::MainTimeline<Test_ElementTimelineEx> timeline;
+	ITwin::Timeline::MainTimelineBase<Test_ElementTimelineEx> timeline;
 END_DEFINE_SPEC(MainTimelineAddSpec)
 void MainTimelineAddSpec::Define()
 {
@@ -429,17 +429,17 @@ void MainTimelineAddSpec::Define()
 				const auto elementTimeline = std::make_shared<Test_ElementTimelineEx>();
 				elementTimeline->test_stuff_ = 12;
 				{
-					ITwin::Schedule::PropertyEntry<Test_Visibility> entry;
+					ITwin::Timeline::PropertyEntry<Test_Visibility> entry;
 					entry.time_ = 100.;
 					elementTimeline->test_visibility_.list_.insert(entry);
 				}
 				{
-					ITwin::Schedule::PropertyEntry<Test_Color> entry;
+					ITwin::Timeline::PropertyEntry<Test_Color> entry;
 					entry.time_ = 100.;
 					elementTimeline->test_color_.list_.insert(entry);
 				}
 				{
-					ITwin::Schedule::PropertyEntry<Test_Color> entry;
+					ITwin::Timeline::PropertyEntry<Test_Color> entry;
 					entry.time_ = 200.;
 					elementTimeline->test_color_.list_.insert(entry);
 				}
@@ -449,17 +449,17 @@ void MainTimelineAddSpec::Define()
 				const auto elementTimeline = std::make_shared<Test_ElementTimelineEx>();
 				elementTimeline->test_stuff_ = 34;
 				{
-					ITwin::Schedule::PropertyEntry<Test_Transform> entry;
+					ITwin::Timeline::PropertyEntry<Test_Transform> entry;
 					entry.time_ = 150.;
 					elementTimeline->test_transform_.list_.insert(entry);
 				}
 				{
-					ITwin::Schedule::PropertyEntry<Test_Transform> entry;
+					ITwin::Timeline::PropertyEntry<Test_Transform> entry;
 					entry.time_ = 200.;
 					elementTimeline->test_transform_.list_.insert(entry);
 				}
 				{
-					ITwin::Schedule::PropertyEntry<Test_CuttingPlane> entry;
+					ITwin::Timeline::PropertyEntry<Test_CuttingPlane> entry;
 					entry.time_ = 300.;
 					elementTimeline->test_cuttingPlane_.list_.insert(entry);
 				}
@@ -482,24 +482,24 @@ void MainTimelineAddSpec::Define()
 //	std::vector<uint8_t> buffer;
 //	std::vector<std::shared_ptr<Test_ElementTimelineEx>> allElementTimelines;
 //	{
-//		ITwin::Schedule::MainTimeline<Test_ElementTimelineEx> timeline;
+//		ITwin::Timeline::MainTimelineBase<Test_ElementTimelineEx> timeline;
 //		{
 //			const auto elementTimeline = std::make_shared<Test_ElementTimelineEx>();
 //			elementTimeline->test_stuff_ = 12;
 //			{
-//				ITwin::Schedule::PropertyEntry<Test_Visibility> entry;
+//				ITwin::Timeline::PropertyEntry<Test_Visibility> entry;
 //				entry.time_ = 100.;
 //				entry.test_value_ = 0.5f;
 //				elementTimeline->test_visibility_.list_.insert(entry);
 //			}
 //			{
-//				ITwin::Schedule::PropertyEntry<Test_Color> entry;
+//				ITwin::Timeline::PropertyEntry<Test_Color> entry;
 //				entry.time_ = 100.;
-//				entry.interpolation_ = ITwin::Schedule::InterpolationMode::Linear;
+//				entry.interpolation_ = ITwin::Timeline::Interpolation::Linear;
 //				elementTimeline->test_color_.list_.insert(entry);
 //			}
 //			{
-//				ITwin::Schedule::PropertyEntry<Test_Color> entry;
+//				ITwin::Timeline::PropertyEntry<Test_Color> entry;
 //				entry.time_ = 200.;
 //				entry.test_hasColor_ = true;
 //				entry.test_value_ = FVector{0.5f, 0.7f, 0.9f};
@@ -512,15 +512,15 @@ void MainTimelineAddSpec::Define()
 //			const auto elementTimeline = std::make_shared<Test_ElementTimelineEx>();
 //			elementTimeline->test_stuff_ = 34;
 //			{
-//				ITwin::Schedule::PropertyEntry<Test_Transform> entry;
+//				ITwin::Timeline::PropertyEntry<Test_Transform> entry;
 //				entry.time_ = 150.;
-//				entry.interpolation_ = ITwin::Schedule::InterpolationMode::Linear;
+//				entry.interpolation_ = ITwin::Timeline::Interpolation::Linear;
 //				entry.test_orientation_ = {0.1f,0.2f,0.3f,0.4f};
 //				entry.test_position_ = {10,20,30};
 //				elementTimeline->test_transform_.list_.insert(entry);
 //			}
 //			{
-//				ITwin::Schedule::PropertyEntry<Test_CuttingPlane> entry;
+//				ITwin::Timeline::PropertyEntry<Test_CuttingPlane> entry;
 //				entry.time_ = 300.;
 //				entry.test_planeEquation_ = {0,1,0,10};
 //				entry.test_fullyVisible_ = false;
@@ -528,7 +528,7 @@ void MainTimelineAddSpec::Define()
 //				elementTimeline->test_cuttingPlane_.list_.insert(entry);
 //			}
 //			{
-//				ITwin::Schedule::PropertyEntry<Test_CuttingPlane> entry;
+//				ITwin::Timeline::PropertyEntry<Test_CuttingPlane> entry;
 //				entry.time_ = 350.;
 //				entry.test_fullyVisible_ = true;
 //				elementTimeline->test_cuttingPlane_.list_.insert(entry);
@@ -541,7 +541,7 @@ void MainTimelineAddSpec::Define()
 //		const auto streamSize = stream.MakeMemoryRead();
 //		buffer.assign((const uint8_t*)stream.GetReadMemoryPtr(), (const uint8_t*)stream.GetReadMemoryPtr()+streamSize);
 //	}
-//	ITwin::Schedule::MainTimeline<Test_ElementTimelineEx> timeline;
+//	ITwin::Timeline::MainTimelineBase<Test_ElementTimelineEx> timeline;
 //	{
 //		BEStream stream(ST_MemoryRead, (HGLOBAL)buffer.data(), BE_ENDIAN_LITTLE);
 //		ReadStreamValue(&stream, timeline);

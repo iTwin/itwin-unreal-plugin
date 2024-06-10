@@ -1,6 +1,7 @@
 cmake_minimum_required (VERSION 3.28)
 
-include ("Public/SDK/HandleVCPKG.cmake")
+enable_testing()
+include ("Public/SDK/cmake/HandleVCPKG.cmake")
 # Use "Private" dir as main dir if it exists, otherwise "Public".
 foreach (dir Private Public)
 	if (NOT EXISTS "${CMAKE_SOURCE_DIR}/${dir}")

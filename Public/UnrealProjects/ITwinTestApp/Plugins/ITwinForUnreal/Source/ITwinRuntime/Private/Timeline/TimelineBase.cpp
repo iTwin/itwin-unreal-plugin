@@ -1,14 +1,14 @@
 /*--------------------------------------------------------------------------------------+
 |
-|     $Source: Schedule.cpp $
+|     $Source: TimelineBase.cpp $
 |
 |  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
-#include "Schedule.h"
+#include "TimelineBase.h"
 
-namespace ITwin::Schedule {
+namespace ITwin::Timeline {
 
 bool operator ==(const PropertyEntryBase& x, const PropertyEntryBase& y)
 {
@@ -28,4 +28,4 @@ std::size_t hash_value(const PropertyEntryBase& v) noexcept
 	return seed;
 }
 
-} // namespace ITwin::Schedule
+} // namespace ITwin::Timeline

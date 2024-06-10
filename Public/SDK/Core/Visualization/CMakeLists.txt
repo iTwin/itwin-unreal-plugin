@@ -1,20 +1,18 @@
 
 add_library(Visualization 
-		Visualization.ixx
-		Scene.ixx
+		Visualization.h
+		Scene.h
 		Scene.cpp
-		Config.ixx
+		Config.h
 		Config.cpp
 )
 target_compile_features(Visualization PRIVATE ${DefaultCXXSTD})
-
-
 target_link_libraries(Visualization PRIVATE 
 						Network
 						Tools
 					 ) 
-
 set_target_properties(Visualization PROPERTIES FOLDER "SDK/Core") 
+
 
 
 ####  Unit Tests

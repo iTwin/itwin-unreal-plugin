@@ -8,21 +8,17 @@
 
 #pragma once
 
-#include <GameFramework/Actor.h>
-#include <ITwinFwd.h>
+#include <ITwinServiceActor.h>
 #include <Templates/PimplPtr.h>
 #include <ITwinRealityData.generated.h>
 
+
 UCLASS()
-class ITWINRUNTIME_API AITwinRealityData : public AActor
+class ITWINRUNTIME_API AITwinRealityData : public AITwinServiceActor
 {
 	GENERATED_BODY()
 public:
 	TSharedPtr<FITwinGeolocation> Geolocation;
-
-	UPROPERTY(Category = "iTwin",
-		EditAnywhere)
-	TObjectPtr<AITwinServerConnection> ServerConnection;
 
 	UPROPERTY(Category = "iTwin",
 		EditAnywhere)
@@ -34,6 +30,9 @@ public:
 
 	AITwinRealityData();
 	virtual void Destroyed() override;
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif
 	
 	UFUNCTION(Category = "iTwin",
 		CallInEditor,
@@ -45,6 +44,11 @@ public:
 		BlueprintCallable,
 		Meta = (EditCondition = "bGeolocated"))
 	void UseAsGeolocation();
+
+	UFUNCTION(Category = "iTwin",
+		BlueprintCallable)
+	void Reset();
+
 private:
 	UPROPERTY(Category = "iTwin",
 		VisibleAnywhere)
@@ -52,4 +56,17 @@ private:
 
 	class FImpl;
 	TPimplPtr<FImpl> Impl;
+
+
+	bool HasTileset() const;
+	void DestroyTileset();
+
+	/// overridden from AITwinServiceActor:
+	virtual void UpdateOnSuccessfulAuthorization() override;
+
+	/// overridden from IITwinWebServicesObserver:
+	virtual void OnRealityData3DInfoRetrieved(bool bSuccess, FITwinRealityData3DInfo const& Info) override;
+
+	/// overridden from FITwinDefaultWebServicesObserver
+	virtual const TCHAR* GetObserverName() const override;
 };

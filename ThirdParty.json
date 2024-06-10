@@ -28,5 +28,10 @@
     "name": "googletest",
     "url": "https://github.com/google/googletest",
     "license": ["BSD-3-Clause"]
+  },
+  {
+    "name": "UnrealTransformGizmo",
+    "url": "https://github.com/robinwood3d/UnrealTransformGizmo",
+    "license": ["MIT"]
   }
 ]

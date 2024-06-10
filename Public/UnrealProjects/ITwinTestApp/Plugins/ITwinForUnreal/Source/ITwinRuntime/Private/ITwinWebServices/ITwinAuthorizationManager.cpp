@@ -57,7 +57,11 @@ struct FAuthorizationCredentials
 
 	static FString GetITwinAppId(EITwinEnvironment Env)
 	{
-		checkf(!ITwinAppIDs[(size_t)Env].IsEmpty(), TEXT("iTwin App ID not initialized for current env"));
+		// Use "ensure" instead of "check" here, so that the app will not stop (crash) if the user
+		// did not correctly set the app ID, which is likely to happen if user just wants to try
+		// the ITwinTestApp without having read the doc completely.
+		// In this case, a more "friendly" error message is displayed by the app.
+		ensureMsgf(!ITwinAppIDs[(size_t)Env].IsEmpty(), TEXT("iTwin App ID not initialized for current env"));
 		return ITwinAppIDs[(size_t)Env];
 	}
 
@@ -326,7 +330,7 @@ void FITwinAuthorizationManager::ProcessTokenRequest(
 	const FString clientId = FAuthorizationCredentials::GetITwinAppId(Environment);
 	if (clientId.IsEmpty())
 	{
-		UE_LOG(LrtuServer, Error, TEXT("The iTwin App ID is missing. Please refer to the plugin documentation."));
+		UE_LOG(LogITwinHttp, Error, TEXT("The iTwin App ID is missing. Please refer to the plugin documentation."));
 		return;
 	}
 
@@ -383,13 +387,13 @@ void FITwinAuthorizationManager::ProcessTokenRequest(
 				// automatic refresh attempt through a timer => just log the result of the refresh request
 				if (bHasAuthToken)
 				{
-					UE_LOG(LrtuServer, Display, TEXT("iTwin authorization successfully refreshed"));
+					UE_LOG(LogITwinHttp, Display, TEXT("iTwin authorization successfully refreshed"));
 				}
 				else
 				{
 					const double remainingTime = this->GetExpirationTime() - FApp::GetCurrentTime();
 					const int remainingSec = static_cast<int>(std::max(0., remainingTime));
-					UE_LOG(LrtuServer, Error, TEXT("Could not refresh the authorization (expiring in %d seconds):\n%s"),
+					UE_LOG(LogITwinHttp, Error, TEXT("Could not refresh the authorization (expiring in %d seconds):\n%s"),
 						remainingSec, *requestError);
 				}
 			}
@@ -551,4 +555,12 @@ void FITwinAuthorizationManager::RestartAuthorizationLater()
 			return false; // stop ticking
 		}
 	}), 0.200 /*TickerDelay: 200 ms*/);
+}
+
+
+bool FITwinAuthorizationManager::IsAuthorizationInProgress() const
+{
+	if (HasAccessToken())
+		return false;
+	return bHasBoundAuthPort.load();
 }

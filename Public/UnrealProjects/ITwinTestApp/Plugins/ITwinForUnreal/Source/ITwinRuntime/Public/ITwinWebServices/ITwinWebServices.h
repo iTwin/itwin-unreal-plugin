@@ -18,6 +18,7 @@
 #include "ITwinWebServices.generated.h"
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnAuthorizationChecked, bool, bSuccess, FString, Error);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGetITwinInfoComplete, bool, bSuccess, FITwinInfo, iTwin);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGetiTwinsComplete, bool, bSuccess, FITwinInfos, iTwins);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGetiTwiniModelsComplete, bool, bSuccess, FIModelInfos, iModels);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGetiModelChangesetsComplete, bool, bSuccess, FChangesetInfos, Changesets);
@@ -30,7 +31,9 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnEditSavedViewComplete, bool, b
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGetSavedViewsComplete, bool, bSuccess, FSavedViewInfos, SavedViews);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnGetSavedViewComplete, bool, bSuccess, FSavedView, SavedView, FSavedViewInfo, SavedViewInfo);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGetRealityDataComplete, bool, bSuccess, FITwinRealityDataInfos, RealityDataInfos);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGetRealityData3DInfoComplete, bool, bSuccess, FITwinRealityData3DInfo, RealityDataInfo);
 
+class FJsonObject;
 class IITwinWebServicesObserver;
 
 UCLASS(BlueprintType)
@@ -43,8 +46,20 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
 	void CheckAuthorization();
 
+	//! Returns the last error encountered, if any.
+	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
+	FString GetLastError() const;
+
+	//! Returns the last error encountered, if any, and resets it.
+	//! Returns whether an error message actually existed.
+	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
+	bool ConsumeLastError(FString& OutError);
+
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
 	void GetiTwins();
+
+	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
+	void GetITwinInfo(FString iTwinId);
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
 	void GetiTwiniModels(FString iTwinId);
@@ -68,6 +83,9 @@ public:
 	void GetRealityData(FString iTwinId);
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
+	void GetRealityData3DInfo(FString iTwinId, FString RealityDataId);
+
+	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
 	void AddSavedView(FString ITwinId, FString IModelId, FSavedView SavedView, FSavedViewInfo SavedViewInfo);
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
@@ -87,6 +105,9 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
 	FOnGetiTwinsComplete OnGetiTwinsComplete;
+
+	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
+	FOnGetITwinInfoComplete OnGetITwinInfoComplete;
 
 	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
 	FOnGetiTwiniModelsComplete OnGetiTwiniModelsComplete;
@@ -121,10 +142,14 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
 	FOnGetRealityDataComplete OnGetRealityDataComplete;
 
+	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
+	FOnGetRealityData3DInfoComplete OnGetRealityData3DInfoComplete;
+
 	UPROPERTY(EditAnywhere, Category = "iTwin Web Services")
 	EITwinEnvironment Environment = EITwinEnvironment::Prod;
 
 
+	bool IsAuthorizationInProgress() const;
 	void SetServerConnection(TObjectPtr<AITwinServerConnection> const& InConnection);
 
 	void GetServerConnection(TObjectPtr<AITwinServerConnection>& OutConnection) const;
@@ -140,6 +165,9 @@ public:
 	static bool LoadToken(FString& OutInfo, EITwinEnvironment Env);
 	static void DeleteTokenFile(EITwinEnvironment Env);
 
+	static bool GetErrorDescription(FJsonObject const& responseJson, FString& OutError,
+		FString const& Indent = {});
+
 #if WITH_TESTS
 	static void SetupTestMode(EITwinEnvironment Env);
 #endif
@@ -151,6 +179,8 @@ private:
 	virtual void OnAuthorizationDone(bool bSuccess, FString const& Error) override;
 
 	FString GetAuthToken() const;
+
+	void SetLastError(FString const& InError);
 
 	void DoGetiModelChangesets(FString const& iModelId, bool bRestrictToLatest);
 

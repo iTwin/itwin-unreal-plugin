@@ -9,7 +9,7 @@
 #include "SchedulesImport.h"
 #include "SchedulesStructs.h"
 #include "ReusableJsonQueries.h"
-#include "Schedule/TimeInSeconds.h"
+#include "TimeInSeconds.h"
 #include "Timeline.h"
 #include <Math/UEMathExts.h> // for RandomFloatColorFromIndex
 
@@ -32,12 +32,12 @@
 #include <unordered_map>
 #include <unordered_set>
 
-DECLARE_LOG_CATEGORY_EXTERN(LrtuS4dImport, Log, All);
-DEFINE_LOG_CATEGORY(LrtuS4dImport);
-#define S4D_VERBOSE(FORMAT, ...) UE_LOG(LrtuS4dImport, Verbose, FORMAT, ##__VA_ARGS__)
-#define S4D_LOG(FORMAT, ...) UE_LOG(LrtuS4dImport, Display, FORMAT, ##__VA_ARGS__)
-#define S4D_WARN(FORMAT, ...) UE_LOG(LrtuS4dImport, Warning, FORMAT, ##__VA_ARGS__)
-#define S4D_ERROR(FORMAT, ...) UE_LOG(LrtuS4dImport, Error, FORMAT, ##__VA_ARGS__)
+DECLARE_LOG_CATEGORY_EXTERN(ITwinS4DImport, Log, All);
+DEFINE_LOG_CATEGORY(ITwinS4DImport);
+#define S4D_VERBOSE(FORMAT, ...) UE_LOG(ITwinS4DImport, Verbose, FORMAT, ##__VA_ARGS__)
+#define S4D_LOG(FORMAT, ...) UE_LOG(ITwinS4DImport, Display, FORMAT, ##__VA_ARGS__)
+#define S4D_WARN(FORMAT, ...) UE_LOG(ITwinS4DImport, Warning, FORMAT, ##__VA_ARGS__)
+#define S4D_ERROR(FORMAT, ...) UE_LOG(ITwinS4DImport, Error, FORMAT, ##__VA_ARGS__)
 
 /// Required this early otherwise compiling "TPimplPtr<...> Queries;" below will complain
 /// ONLY when building this single compile unit, when fastcompiling one gets error C2961:
@@ -590,7 +590,7 @@ void FITwinSchedulesImport::FImpl::RequestTaskDetails(ReusableJsonQueries::FStac
 // are available - blame here to retrieve
 //void FITwinSchedulesImport::FImpl::RequestResourceEntity3Ds(...)
 
-namespace ITwin::Schedule
+namespace ITwin::Timeline
 {
 	float fProbaOfOpacityAnimation = 0.5f;
 }
@@ -599,7 +599,7 @@ void FITwinSchedulesImport::FImpl::DuplicateTaskAnimationBindingWithDummyAndNoti
 	size_t const AnimIdx, std::unordered_set<ITwinElementID> const& Elements, FLock& Lock)
 {
 	size_t const Dummy = Schedules[SchedIdx].AppearanceProfiles.size();
-	using ITwin::Schedule::fProbaOfOpacityAnimation;
+	using ITwin::Timeline::fProbaOfOpacityAnimation;
 	float CrudeFloatRand = 0.f;
 	FVector const RandClr = FITwinMathExts::RandomFloatColorFromIndex(
 		AnimIdx, fProbaOfOpacityAnimation > 0.f ? &CrudeFloatRand : nullptr);

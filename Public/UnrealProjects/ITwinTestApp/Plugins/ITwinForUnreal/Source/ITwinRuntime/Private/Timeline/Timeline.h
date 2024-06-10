@@ -14,8 +14,8 @@
 
 #include "CoreMinimal.h"
 #include "Math/Vector.h"
-#include "Schedule/Definition.h"
-#include "Schedule/Schedule.h"
+#include "Definition.h"
+
 #include <Boost/BoostHash.h>
 #include <ITwinElementID.h>
 
@@ -24,22 +24,23 @@
 
 class AActor;
 class FJsonValue;
+enum class ITwin::Timeline::Interpolation : int32_t;
 
 namespace ITwin::Timeline {
 
-LRT_SCHEDULE_DEFINE_PROPERTY_VALUES(PVisibility,
+ITWIN_TIMELINE_DEFINE_PROPERTY_VALUES(PVisibility,
 	(float, value_)
 )
 [[nodiscard]] TSharedPtr<FJsonValue> ToJsonValue(PVisibility const& Prop);
 
-LRT_SCHEDULE_DEFINE_PROPERTY_VALUES(PColor,
-	(bool, hasColor_, ITwin::Schedule::Interpolators::BoolOr)
+ITWIN_TIMELINE_DEFINE_PROPERTY_VALUES(PColor,
+	(bool, hasColor_, ITwin::Timeline::Interpolators::BoolOr)
 	(FVector, value_)
 )
 [[nodiscard]] bool operator ==(const PColor& x, const PColor& y);
 [[nodiscard]] TSharedPtr<FJsonValue> ToJsonValue(PColor const& Prop);
 
-LRT_SCHEDULE_DEFINE_PROPERTY_VALUES(PTransform,
+ITWIN_TIMELINE_DEFINE_PROPERTY_VALUES(PTransform,
 	(FVector, translation_)
 	(FQuat, orientation_)
 	(FVector, pivot_)
@@ -66,10 +67,10 @@ struct FDeferredPlaneEquation
 };
 [[nodiscard]] std::size_t hash_value(const FDeferredPlaneEquation& v) noexcept;
 
-LRT_SCHEDULE_DEFINE_PROPERTY_VALUES(PClippingPlane,
+ITWIN_TIMELINE_DEFINE_PROPERTY_VALUES(PClippingPlane,
 	(FDeferredPlaneEquation, deferredPlaneEquation_)
-	(bool, fullyVisible_, ITwin::Schedule::Interpolators::BoolAnd)
-	(bool, fullyHidden_, ITwin::Schedule::Interpolators::BoolAnd)
+	(bool, fullyVisible_, ITwin::Timeline::Interpolators::BoolAnd)
+	(bool, fullyHidden_, ITwin::Timeline::Interpolators::BoolAnd)
 )
 [[nodiscard]] bool operator ==(const PClippingPlane& x, const PClippingPlane& y);
 [[nodiscard]] TSharedPtr<FJsonValue> ToJsonValue(PClippingPlane const&);
@@ -77,7 +78,7 @@ LRT_SCHEDULE_DEFINE_PROPERTY_VALUES(PClippingPlane,
 /// Defines class ElementTimeline, which is an ObjectTimeline that associates the SYNCHRO schedule animated
 /// properties (visibility, color, transform and cutting plane) to an element and is used to query the state
 /// at a given time (see GetStateAtTime)
-LRT_SCHEDULE_DEFINE_OBJECT_PROPERTIES(Element,
+ITWIN_TIMELINE_DEFINE_OBJECT_PROPERTIES(Element,
 	(PVisibility, visibility_)
 	(PColor, color_)
 	(PTransform, transform_)
@@ -100,19 +101,19 @@ public:
 	/// reduced to a single time point.
 	[[nodiscard]] bool IsEmpty() const;
 	void SetColorAt(double const Time, std::optional<FVector> Color,
-					ITwin::Schedule::InterpolationMode const Interp);
+					ITwin::Timeline::Interpolation const Interp);
 	/// Note: the fourth coordinate of the plane equation is missing, because we can't generally expect to
 	/// have the Element's bounding box when creating the timeline's keyframes.
 	/// The constant DeferredPlaneEquationW is used instead, until it can be properly initialized.
 	void SetCuttingPlaneAt(double const Time,
 		std::variant<FDeferredPlaneEquation, bool> const& OrientationOrFullVisibility,
-		ITwin::Schedule::InterpolationMode const Interp);
+		ITwin::Timeline::Interpolation const Interp);
 	/// \return Whether the timeline has any CuttingPlane keyframe where fullyHidden_ is true
 	[[nodiscard]] bool HasFullyHidingCuttingPlaneKeyframes() const;
 	/// \return Whether the timeline has any Visibility keyframe where the transparency is neither 0 nor 1
 	[[nodiscard]] bool NeedsPartialVisibility() const;
 	void SetVisibilityAt(double const Time, std::optional<float> Alpha,
-						 ITwin::Schedule::InterpolationMode const Interp);
+						 ITwin::Timeline::Interpolation const Interp);
 	//TODO_GCO: SetTransformAt(..)
 
 	void ToJson(TSharedRef<FJsonObject>& JsonObj) const override;
@@ -121,9 +122,9 @@ public:
 	[[nodiscard]] FString ToCondensedJsonString() const;
 };
 
-class MainTimeline : public ITwin::Schedule::MainTimeline<ElementTimelineEx>
+class MainTimeline : public ITwin::Timeline::MainTimelineBase<ElementTimelineEx>
 {
-	using Super = ITwin::Schedule::MainTimeline<ElementTimelineEx>;
+	using Super = ITwin::Timeline::MainTimelineBase<ElementTimelineEx>;
 
 	/// Maps each animated element to a single timeline that references it
 	std::unordered_map<ITwinElementID, int /*elementTimelineIndex*/> IModelElementToTimeline;

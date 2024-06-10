@@ -1,20 +1,21 @@
 /*--------------------------------------------------------------------------------------+
 |
-|     $Source: ITwinAuthorizationObserver.h $
+|     $Source: Interpolators.inl $
 |
 |  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
-
 #pragma once
 
-#include "CoreMinimal.h"
+#include "Interpolators.h"
 
-class ITWINRUNTIME_API IITwinAuthorizationObserver
+namespace ITwin::Timeline::Interpolators {
+
+template<class _T>
+_T Default::operator ()(const _T& x0, const _T& x1, float u) const
 {
-public:
-	virtual ~IITwinAuthorizationObserver() = default;
+	return x0 * (1.f - u) + x1 * u;
+}
 
-	virtual void OnAuthorizationDone(bool bSuccess, FString const& Error) = 0;
-};
+} // namespace ITwin::Timeline::Interpolators

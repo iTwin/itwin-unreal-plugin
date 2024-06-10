@@ -10,7 +10,7 @@
 //	and vue.git/viewer/Code/IModelJs/IModelModule/RenderSchedule.cpp
 
 #include "Timeline.h"
-#include "Schedule/Schedule.h"
+#include "TimelineBase.h"
 
 #include <Dom/JsonObject.h>
 #include <Dom/JsonValue.h>
@@ -60,9 +60,9 @@ ElementTimelineEx const& MainTimeline::GetElementTimelineByIndex(int TimelineIdx
 }
 
 template<typename NamedProperty, typename ValueType>
-auto MakeEntry(double const Time, ValueType const& Value, ITwin::Schedule::InterpolationMode const Interp)
+auto MakeEntry(double const Time, ValueType const& Value, ITwin::Timeline::Interpolation const Interp)
 {
-	ITwin::Schedule::PropertyEntry<NamedProperty> Entry;
+	ITwin::Timeline::PropertyEntry<NamedProperty> Entry;
 	Entry.time_ = Time;
 	Entry.interpolation_ = Interp;
 	Entry.value_ = Value;
@@ -70,7 +70,7 @@ auto MakeEntry(double const Time, ValueType const& Value, ITwin::Schedule::Inter
 }
 
 void ElementTimelineEx::SetColorAt(double const Time, std::optional<FVector> Color,
-								   ITwin::Schedule::InterpolationMode const Interp)
+								   ITwin::Timeline::Interpolation const Interp)
 {
 	if (Color)
 	{
@@ -91,14 +91,14 @@ template<class> inline constexpr bool always_false_v = false;
 
 void ElementTimelineEx::SetCuttingPlaneAt(double const Time,
 	std::variant<FDeferredPlaneEquation, bool> const& OrientationOrFullVisibility,
-	ITwin::Schedule::InterpolationMode const Interp)
+	ITwin::Timeline::Interpolation const Interp)
 {
     std::visit([this, &Time, &Interp](auto&& arg)
 		{
 			using T = std::decay_t<decltype(arg)>;
 			if constexpr (std::is_same_v<T, FDeferredPlaneEquation>)
 			{
-				ITwin::Schedule::PropertyEntry<PClippingPlane> Entry;
+				ITwin::Timeline::PropertyEntry<PClippingPlane> Entry;
 				Entry.time_ = Time;
 				Entry.interpolation_ = Interp;
 				Entry.deferredPlaneEquation_ = arg;
@@ -108,7 +108,7 @@ void ElementTimelineEx::SetCuttingPlaneAt(double const Time,
 			}
 			else if constexpr (std::is_same_v<T, bool>)
 			{
-				ITwin::Schedule::PropertyEntry<PClippingPlane> Entry;
+				ITwin::Timeline::PropertyEntry<PClippingPlane> Entry;
 				Entry.time_ = Time;
 				Entry.interpolation_ = Interp;
 				Entry.fullyHidden_ = !arg;
@@ -128,7 +128,7 @@ bool ElementTimelineEx::IsEmpty() const
 }
 
 void ElementTimelineEx::SetVisibilityAt(double const Time, std::optional<float> Alpha,
-										ITwin::Schedule::InterpolationMode const Interp)
+										ITwin::Timeline::Interpolation const Interp)
 {
 	if (Alpha)
 	{
@@ -156,7 +156,7 @@ bool ElementTimelineEx::NeedsPartialVisibility() const
 {
 	for (auto&& Keyframe : visibility_.list_)
 	{
-		if (Keyframe.interpolation_ == ITwin::Schedule::InterpolationMode::Linear
+		if (Keyframe.interpolation_ == ITwin::Timeline::Interpolation::Linear
 			|| (Keyframe.value_ != 0.f && Keyframe.value_ != 1.f))
 		{
 			return true;
@@ -329,7 +329,7 @@ void MainTimeline::FixColor()
 			continue;
 		// Create an entry at the end of the entire timeline animation,
 		// with a disabled color overlay.
-		ITwin::Schedule::PropertyEntry<PColor> entry;
+		ITwin::Timeline::PropertyEntry<PColor> entry;
 		entry.time_ = GetTimeRange().second;
 		entry.hasColor_ = false;
 		objectTimeline->color_.list_.insert(entry);

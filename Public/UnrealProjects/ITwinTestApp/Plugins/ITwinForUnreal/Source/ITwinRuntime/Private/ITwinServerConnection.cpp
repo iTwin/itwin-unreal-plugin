@@ -9,12 +9,18 @@
 #include <ITwinServerConnection.h>
 #include <ITwinServerEnvironment.h>
 
+#include <Dom/JsonObject.h>
+#include <Dom/JsonValue.h>
+#include <Interfaces/IHttpResponse.h>
+#include <ITwinWebServices/ITwinWebServices.h>
+#include <Serialization/JsonReader.h>
+#include <Serialization/JsonSerializer.h>
+
 #include <Compil/BeforeNonUnrealIncludes.h>
 	#include <BeHeaders/Compil/CleanUpGuard.h>
 #include <Compil/AfterNonUnrealIncludes.h>
 
-#define LRTUHTTP_LOG(FORMAT, ...) UE_LOG(LrtuServer, Display, FORMAT, ##__VA_ARGS__)
-DEFINE_LOG_CATEGORY(LrtuServer);
+DEFINE_LOG_CATEGORY(LogITwinHttp);
 
 /// Checks the request status, response code, and logs any failure (does not assert)
 /// \return Whether the request's response is valid and can be processed further
@@ -30,7 +36,7 @@ bool AITwinServerConnection::CheckRequest(FHttpRequestPtr const& CompletedReques
 	{
 		if (!requestError.IsEmpty())
 		{
-			UE_LOG(LrtuServer, Error, TEXT("Request to %s failed with %s"),
+			UE_LOG(LogITwinHttp, Error, TEXT("Request to %s failed with %s"),
 				*CompletedRequest->GetURL(), *requestError);
 		}
 		if (pstrError)
@@ -50,6 +56,16 @@ bool AITwinServerConnection::CheckRequest(FHttpRequestPtr const& CompletedReques
 			(int)Response->GetResponseCode(),
 			*EHttpResponseCodes::GetDescription(
 				(EHttpResponseCodes::Type)Response->GetResponseCode()).ToString());
+
+		// see if we can get more information in the response
+		TSharedPtr<FJsonObject> responseJson;
+		if (FJsonSerializer::Deserialize(
+			TJsonReaderFactory<>::Create(Response->GetContentAsString()), responseJson))
+		{
+			FString detailedError;
+			UITwinWebServices::GetErrorDescription(*responseJson, detailedError, TEXT("\t"));
+			requestError += detailedError;
+		}
 		return false;
 	}
 	else

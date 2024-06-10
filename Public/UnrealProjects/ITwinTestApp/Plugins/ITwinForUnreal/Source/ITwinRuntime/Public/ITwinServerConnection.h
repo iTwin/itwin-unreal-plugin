@@ -63,4 +63,4 @@ public:
 	static void SetITwinAppID(const FString& AppID);
 };
 
-DECLARE_LOG_CATEGORY_EXTERN(LrtuServer, Log, All);
+DECLARE_LOG_CATEGORY_EXTERN(LogITwinHttp, Log, All);

@@ -16,7 +16,7 @@
 #include <Timeline/SchedulesImport.h>
 #include <Timeline/SchedulesConstants.h>
 #include <Timeline/SchedulesStructs.h>
-#include <Timeline/Schedule/TimeInSeconds.h>
+#include <Timeline/TimeInSeconds.h>
 #include <Containers/Map.h>
 #include <EngineUtils.h>
 #include <Engine/Engine.h>

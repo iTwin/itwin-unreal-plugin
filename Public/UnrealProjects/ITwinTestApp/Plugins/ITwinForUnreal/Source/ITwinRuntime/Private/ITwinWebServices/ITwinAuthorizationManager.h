@@ -48,6 +48,8 @@ public:
 	bool HasAccessToken() const;
 	void GetAccessToken(FString& OutAccessToken) const;
 
+	bool IsAuthorizationInProgress() const;
+
 
 private:
 	FITwinAuthorizationManager(EITwinEnvironment Env);

@@ -1,12 +1,23 @@
-export module SDK.Core.Network:http;
+/*--------------------------------------------------------------------------------------+
+|
+|     $Source: http.h $
+|
+|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|
++--------------------------------------------------------------------------------------*/
 
-import <memory>;
-import <string>;
-import <vector>;
+#pragma once
+#ifndef SDK_CPPMODULES
+	#include <memory>
+	#include <string>
+	#include <vector>
+	#include "Core/Json/Json.h"
+	#ifndef MODULE_EXPORT
+		#define MODULE_EXPORT
+	#endif // !MODULE_EXPORT
+#endif
 
-import SDK.Core.Json;
-
-export namespace SDK::Core {
+MODULE_EXPORT namespace SDK::Core {
 
 	class Http: public std::enable_shared_from_this<Http>
 	{

@@ -13,7 +13,7 @@
 #include <ITwinIModelInternals.h>
 #include <ITwinSceneMapping.h>
 #include <Timeline/Timeline.h>
-#include <Timeline/Schedule/TimeInSeconds.h>
+#include <Timeline/TimeInSeconds.h>
 #include <Timeline/SchedulesConstants.h>
 
 #include <Materials/MaterialInstanceDynamic.h>
@@ -325,7 +325,7 @@ namespace Detail
 
 } // ns Detail
 
-namespace ITwin::Schedule::Interpolators
+namespace ITwin::Timeline::Interpolators
 {
 	void CheckDeferredPlaneEquationW(Detail::FCheckDeferredPlaneEquationData& UserData,
 									 ITwin::Timeline::FDeferredPlaneEquation const& Deferred);
@@ -363,10 +363,10 @@ void FITwinSynchro4DAnimator::FImpl::ApplyAnimation(bool const bForceUpdateAll)
 		Detail::FCheckDeferredPlaneEquationData UserData{ IModelInternals,
 														  ElementTimelinePtr->IModelElementID };
 		// 'State' contains boost::optional's of each Timeline property (see ElementStateBase example in
-		// Timeline/Schedule/Definition.h)
+		// Timeline/Definition.h)
 		Detail::FStateToApply StateToApply{
 			ElementTimelinePtr->GetStateAtTime(CurrentTimeInSeconds,
-				ITwin::Schedule::StateAtEntryTimeBehavior::UseLeftInterval, (void*)(&UserData))
+				ITwin::Timeline::StateAtEntryTimeBehavior::UseLeftInterval, (void*)(&UserData))
 		};
 		auto& State = StateToApply.Props;
 		// Apply (debug) settings_ and property simplifications:
@@ -405,7 +405,7 @@ void FITwinSynchro4DAnimator::FImpl::ApplyAnimation(bool const bForceUpdateAll)
 				// WillInterpolateBetween. Do it now: it should rather be in
 				// PropertyTimeline<_PropertyValues>::GetStateAtTime, but it would mean going through all
 				// the boost fusion mishmash just for this:
-				ITwin::Schedule::Interpolators::CheckDeferredPlaneEquationW(
+				ITwin::Timeline::Interpolators::CheckDeferredPlaneEquationW(
 					UserData, State.clippingPlane_->deferredPlaneEquation_);
 			}
 		}
@@ -444,7 +444,7 @@ void FITwinSynchro4DAnimator::FImpl::UpdateAllTextures()
 	}
 }
 
-namespace ITwin::Schedule::Interpolators {
+namespace ITwin::Timeline::Interpolators {
 
 using DefrdPlaneEq = ITwin::Timeline::FDeferredPlaneEquation;
 
@@ -465,7 +465,7 @@ void CheckDeferredPlaneEquationW(Detail::FCheckDeferredPlaneEquationData& UserDa
 		// Note: this is actually the BBox of the whole Resource because there is a 1:1 mapping between
 		// Resource and AnimatedElement in the current version of Synchro4D tools, according to Bernardas
 		auto const& BBox = UserData.IModelInternals.GetBoundingBox(UserData.Element);
-		UE_LOG(LrtuITwin, Display, TEXT("Setting up Cutting Plane for Element 0x%I64x with BBox %s"),
+		UE_LOG(LogITwin, Display, TEXT("Setting up Cutting Plane for Element 0x%I64x with BBox %s"),
 			   UserData.Element.value(), *BBox.ToString());
 		FITwinSynchro4DSchedulesInternals::FinalizeCuttingPlaneEquation(Deferred, BBox);
 	}
@@ -479,4 +479,4 @@ template<> void Default::WillInterpolateBetween<DefrdPlaneEq>(
 	CheckDeferredPlaneEquationW(UserDataForDeferredW, x1);
 }
 
-} // namespace ITwin::Schedule::Interpolators
+} // namespace ITwin::Timeline::Interpolators

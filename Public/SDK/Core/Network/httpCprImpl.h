@@ -1,11 +1,18 @@
-export module SDK.Core.Network:httpCprImpl;
+/*--------------------------------------------------------------------------------------+
+|
+|     $Source: httpCprImpl.h $
+|
+|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|
++--------------------------------------------------------------------------------------*/
 
-import <cpr/cpr.h>;
 
-import <string>;
-import :http;
+#include <cpr/cpr.h>
 
-export namespace SDK::Core
+#include <string>
+#include "http.h"
+
+namespace SDK::Core
 {
 	namespace Impl
 	{

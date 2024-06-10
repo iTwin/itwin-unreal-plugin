@@ -1,44 +1,59 @@
 {
-  "version": 2,
+	"version": 2,
 
-  "configurePresets": [
-    {
-	  "name": "win64static"
-      ,"displayName": "Windows 64 Static"
-      ,"description": "Default build using Visual Studio generator"
-      ,"generator": "Visual Studio 17 2022"
-	  ,"binaryDir": "${sourceDir}/../build/${presetName}"
-	  ,"architecture": "x64"
-      ,"cacheVariables": {
-		"CMAKE_TOOLCHAIN_FILE": "${dollar}<VCPKG_ROOT>/scripts/buildsystems/vcpkg.cmake"
-		,"VCPKG_TARGET_TRIPLET": "x64-windows-static"
-		,"CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded$<$<CONFIG:Debug>:Debug>"
-		,"SELECTED_PRESET": "${presetName}"
-      }
-	},
+	"configurePresets": [
 	{
+		"name": "win64static"
+		,"displayName": "Windows 64 Static"
+		,"description": "Default build using Visual Studio generator"
+		,"generator": "Visual Studio 17 2022"
+		,"binaryDir": "${sourceDir}/../build/${presetName}"
+		,"architecture": "x64"
+		,"cacheVariables": {
+			"CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+			,"VCPKG_TARGET_TRIPLET": "x64-windows-static"
+			,"CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+			,"SELECTED_PRESET": "${presetName}"
+		}
+	}
+	,{
+		"name": "win64Unreal"
+		,"displayName": "Windows 64 Unreal"
+		,"description": "Default build using Visual Studio generator"
+		,"generator": "Visual Studio 17 2022"
+		,"binaryDir": "${sourceDir}/../build/${presetName}"
+		,"architecture": "x64"
+		,"cacheVariables": {
+			"CMAKE_TOOLCHAIN_FILE": "${dollar}<VCPKG_ROOT>/scripts/buildsystems/vcpkg.cmake"
+			,"VCPKG_TARGET_TRIPLET": "x64-windows-static-md-release"
+			,"CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreadedDLL"
+			,"UNREAL_BUILD":"True"
+			,"SELECTED_PRESET": "${presetName}"
+		}
+	}
+	,{
 	  "name": "macosXcodeX64"
       ,"displayName": "mac os Xcode x64"
       ,"description": "Default using xcode"
       ,"generator": "Xcode"
 	  ,"binaryDir": "${sourceDir}/../build/${presetName}"
       ,"cacheVariables": {
-			"CMAKE_TOOLCHAIN_FILE": "${dollar}<VCPKG_ROOT>/scripts/buildsystems/vcpkg.cmake"
-			,"VCPKG_TARGET_TRIPLET": "x64-osx"
-			,"SELECTED_PRESET": "${presetName}"
+		"CMAKE_TOOLCHAIN_FILE": "${dollar}<VCPKG_ROOT>/scripts/buildsystems/vcpkg.cmake"
+		,"VCPKG_TARGET_TRIPLET": "x64-osx"
+		,"SELECTED_PRESET": "${presetName}"
       }
-    },
-	{
+    }
+	,{
 	  "name": "macosXcodeARM"
       ,"displayName": "mac os Xcode ARM"
       ,"description": "Default using xcode ARM"
       ,"generator": "Xcode"
 	  ,"binaryDir": "${sourceDir}/../build/${presetName}"
       ,"cacheVariables": {
-      "CMAKE_TOOLCHAIN_FILE": "${dollar}<VCPKG_ROOT>/scripts/buildsystems/vcpkg.cmake"
+		  "CMAKE_TOOLCHAIN_FILE": "${dollar}<VCPKG_ROOT>/scripts/buildsystems/vcpkg.cmake"
 		  ,"VCPKG_TARGET_TRIPLET": "arm64-osx"
 		  ,"SELECTED_PRESET": "${presetName}"
       }
     }
-  ]
+	]
 }

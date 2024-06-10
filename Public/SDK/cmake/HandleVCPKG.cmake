@@ -17,16 +17,17 @@ if(NOT EXISTS "${CMAKE_TOOLCHAIN_FILE}" OR NOT DEFINED VCPKG_TARGET_TRIPLET)
 		endif()
 	else()
 		#convert env variable to cmake variable 
+		#message ("ENV  VCPKG_ROOT is set $ENV{VCPKG_ROOT}" )
 		cmake_path(SET VCPKG_ROOT $ENV{VCPKG_ROOT})
 	endif()
 	
 	#replace placeholder $<VCPKG_ROOT> in default CMAKE_TOOLCHAIN_FILE from preset by the content of VCPKG_ROOT cmake variable
 	STRING(REPLACE $<VCPKG_ROOT> "${VCPKG_ROOT}" CMAKE_TOOLCHAIN_FILE "${CMAKE_TOOLCHAIN_FILE}")
-	set( CMAKE_TOOLCHAIN_FILE CACHE PATH "${CMAKE_TOOLCHAIN_FILE}" FORCE)
+	set( "CMAKE_TOOLCHAIN_FILE" "${CMAKE_TOOLCHAIN_FILE}" CACHE PATH "path to vcpkg toolchain cmake"  FORCE)
 	
 	#final check if the CMAKE_TOOLCHAIN_FILE exists
 	if(NOT EXISTS ${CMAKE_TOOLCHAIN_FILE})
-		message(FATAL_ERROR "CMAKE_TOOLCHAIN_FILE does not exists ${CMAKE_TOOLCHAIN_FILE}")
+		message(FATAL_ERROR "CMAKE_TOOLCHAIN_FILE does not exists '${CMAKE_TOOLCHAIN_FILE}'")
 	endif()
 	
 endif()

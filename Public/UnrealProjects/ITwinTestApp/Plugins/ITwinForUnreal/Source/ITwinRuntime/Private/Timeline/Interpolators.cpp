@@ -8,11 +8,7 @@
 
 #include "Interpolators.h"
 
-namespace ITwin
-{
-namespace Schedule
-{
-namespace Interpolators
+namespace ITwin::Timeline::Interpolators
 {
 
 FVector4f PlaneEquation::operator ()(const FVector4f& x0, const FVector4f& x1, float u) const
@@ -39,6 +35,4 @@ bool BoolOr::operator ()(bool x0, bool x1, float u) const
 			x0 || x1;
 }
 
-} // namespace Interpolators
-} // namespace Schedule
-} // namespace ITwin
+} // namespace ITwin::Timeline::Interpolators

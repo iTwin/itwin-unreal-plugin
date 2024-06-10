@@ -33,10 +33,10 @@ public class ITwinRuntime : ModuleRules
 			"Slate",
 			"SlateCore",
         });
-		string libFolder = "Debug";
+		string libFolder = "UnrealDebug";
 		string libPostfix = ".lib";
 		string libPrefix = "";
-        string libSuffix = "d";
+        string libSuffix = "";
         if (Target.Platform == UnrealTargetPlatform.Mac)
         {
             libPostfix = ".a";

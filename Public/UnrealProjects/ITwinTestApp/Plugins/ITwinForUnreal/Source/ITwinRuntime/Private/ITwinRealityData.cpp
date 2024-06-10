@@ -27,56 +27,40 @@ public:
 	double Latitude = 0;
 	double Longitude = 0;
 	FImpl(AITwinRealityData& InOwner)
-		:Owner(InOwner)
+		: Owner(InOwner)
 	{
 	}
-	void OnMetadataRetrieved(const TSharedPtr<FJsonObject>& MetadataJson)
+
+	void OnRealityData3DInfoRetrieved(FITwinRealityData3DInfo const& Info)
 	{
-		const auto Request = FHttpModule::Get().CreateRequest();
-		Request->SetVerb("GET");
-		Request->SetURL("https://"+Owner.ServerConnection->UrlPrefix()+"api.bentley.com/reality-management/reality-data/"+Owner.RealityDataId+"/readaccess?iTwinId="+Owner.ITwinId);
-		Request->SetHeader("Accept", "application/vnd.bentley.itwin-platform.v1+json");
-		Request->SetHeader("Authorization", "Bearer "+Owner.ServerConnection->AccessToken);
-		Request->OnProcessRequestComplete().BindLambda(
-			[this, MetadataJson](FHttpRequestPtr Request, FHttpResponsePtr Response, bool bConnectedSuccessfully)
-			{
-				if (!AITwinServerConnection::CheckRequest(Request, Response, bConnectedSuccessfully))
-					{ check(false); return; }
-				TSharedPtr<FJsonObject> ResponseJson;
-				FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Response->GetContentAsString()), ResponseJson);
-				FActorSpawnParameters SpawnParams;
-				SpawnParams.Owner = &Owner;
-				const auto Tileset = Owner.GetWorld()->SpawnActor<AITwinCesium3DTileset>(SpawnParams);
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.Owner = &Owner;
+		const auto Tileset = Owner.GetWorld()->SpawnActor<AITwinCesium3DTileset>(SpawnParams);
 #if WITH_EDITOR
-				Tileset->SetActorLabel(Owner.GetActorLabel()+TEXT(" tileset"));
+		Tileset->SetActorLabel(Owner.GetActorLabel() + TEXT(" tileset"));
 #endif
-				Tileset->AttachToActor(&Owner, FAttachmentTransformRules::KeepRelativeTransform);
-				Tileset->SetCreatePhysicsMeshes(false);
-				Tileset->SetTilesetSource(ETilesetSource::FromUrl);
-				Tileset->SetUrl(ResponseJson->GetObjectField("_links")->GetObjectField("containerUrl")->GetStringField("href").
-					Replace(TEXT("?"), ToCStr("/"+MetadataJson->GetStringField("rootDocument")+"?")));
-				const TSharedPtr<FJsonObject>* ExtentJson;
-				if (MetadataJson->TryGetObjectField("extent", ExtentJson))
-				{
-					Owner.bGeolocated = true;
-					Latitude = 0.5*((*ExtentJson)->GetObjectField("southWest")->GetNumberField("latitude")+
-							(*ExtentJson)->GetObjectField("northEast")->GetNumberField("latitude"));
-					Longitude = 0.5*((*ExtentJson)->GetObjectField("southWest")->GetNumberField("longitude")+
-							(*ExtentJson)->GetObjectField("northEast")->GetNumberField("longitude"));
-					Tileset->SetGeoreference(Owner.Geolocation->LocatedGeoreference.Get());
-					if (Tileset->GetGeoreference()->GetOriginPlacement() == EOriginPlacement::TrueOrigin)
-					{
-						// Common geolocation is not yet inited, use the location of this reality data.
-						Tileset->GetGeoreference()->SetOriginPlacement(EOriginPlacement::CartographicOrigin);
-						Tileset->GetGeoreference()->SetOriginLatitude(Latitude);
-						Tileset->GetGeoreference()->SetOriginLongitude(Longitude);
-						Tileset->GetGeoreference()->SetOriginHeight(0);
-					}
-				}
-				else
-					Tileset->SetGeoreference(Owner.Geolocation->NonLocatedGeoreference.Get());
-			});
-		Request->ProcessRequest();
+		Tileset->AttachToActor(&Owner, FAttachmentTransformRules::KeepRelativeTransform);
+		Tileset->SetCreatePhysicsMeshes(false);
+		Tileset->SetTilesetSource(ETilesetSource::FromUrl);
+		Tileset->SetUrl(Info.MeshUrl);
+
+		if (Info.bGeolocated)
+		{
+			Owner.bGeolocated = true;
+			Latitude = 0.5 * (Info.ExtentNorthEast.Latitude + Info.ExtentSouthWest.Latitude);
+			Longitude = 0.5 * (Info.ExtentNorthEast.Longitude + Info.ExtentSouthWest.Longitude);
+			Tileset->SetGeoreference(Owner.Geolocation->LocatedGeoreference.Get());
+			if (Tileset->GetGeoreference()->GetOriginPlacement() == EOriginPlacement::TrueOrigin)
+			{
+				// Common geolocation is not yet inited, use the location of this reality data.
+				Tileset->GetGeoreference()->SetOriginPlacement(EOriginPlacement::CartographicOrigin);
+				Tileset->GetGeoreference()->SetOriginLatitude(Latitude);
+				Tileset->GetGeoreference()->SetOriginLongitude(Longitude);
+				Tileset->GetGeoreference()->SetOriginHeight(0);
+			}
+		}
+		else
+			Tileset->SetGeoreference(Owner.Geolocation->NonLocatedGeoreference.Get());
 	}
 };
 
@@ -86,48 +70,94 @@ AITwinRealityData::AITwinRealityData()
 	SetRootComponent(CreateDefaultSubobject<USceneComponent>(TEXT("root")));
 }
 
+void AITwinRealityData::UpdateOnSuccessfulAuthorization()
+{
+	UpdateRealityData();
+}
+
+const TCHAR* AITwinRealityData::GetObserverName() const
+{
+	return TEXT("ITwinRealityData");
+}
+
+void AITwinRealityData::OnRealityData3DInfoRetrieved(bool bSuccess, FITwinRealityData3DInfo const& Info)
+{
+	if (bSuccess)
+	{
+		Impl->OnRealityData3DInfoRetrieved(Info);
+	}
+}
+
 void AITwinRealityData::UpdateRealityData()
 {
-	check(!RealityDataId.IsEmpty()); // TODO_AW
+	if (HasTileset())
+		return;
 
-	if (!ServerConnection && UITwinWebServices::GetWorkingInstance())
+	if (CheckServerConnection() != AITwinServiceActor::EConnectionStatus::Connected)
 	{
-		// Happens when the requests are made from blueprints, independently from ITwinDigitalTwin
-		// through OnGetRealityDataComplete callback...
-		UITwinWebServices::GetWorkingInstance()->GetServerConnection(ServerConnection);
+		// No authorization yet: postpone the actual update (see OnAuthorizationDone)
+		return;
 	}
+
 	if (!Geolocation)
 	{
 		// Idem: can happen if this was created manually, outside any instance of AITwinDigitalTwin
 		Geolocation = MakeShared<FITwinGeolocation>(*this);
 	}
 
-	if (!ServerConnection)
+	if (WebServices && !RealityDataId.IsEmpty() && !ITwinId.IsEmpty())
 	{
-		checkf(false, TEXT("no server connection"));
-		return;
-	}
-
-	if (!Children.IsEmpty())
-		return;
-	{
-		const auto Request = FHttpModule::Get().CreateRequest();
-		Request->SetVerb("GET");
-		Request->SetURL("https://"+ServerConnection->UrlPrefix()+"api.bentley.com/reality-management/reality-data/"+RealityDataId+"?iTwinId="+ITwinId);
-		Request->SetHeader("Accept", "application/vnd.bentley.itwin-platform.v1+json");
-		Request->SetHeader("Authorization", "Bearer "+ServerConnection->AccessToken);
-		Request->OnProcessRequestComplete().BindLambda(
-			[this](FHttpRequestPtr Request, FHttpResponsePtr Response, bool bConnectedSuccessfully)
-			{
-				if (!AITwinServerConnection::CheckRequest(Request, Response, bConnectedSuccessfully))
-					{ check(false); return; }
-				TSharedPtr<FJsonObject> ResponseJson;
-				FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Response->GetContentAsString()), ResponseJson);
-				Impl->OnMetadataRetrieved(ResponseJson->GetObjectField("realityData"));
-			});
-		Request->ProcessRequest();
+		WebServices->GetRealityData3DInfo(ITwinId, RealityDataId);
 	}
 }
+
+namespace ITwin
+{
+	uint32 DestroyTilesetsInActor(AActor& Owner);
+}
+
+bool AITwinRealityData::HasTileset() const
+{
+	for (auto const& Child : Children)
+	{
+		if (Cast<AITwinCesium3DTileset const>(Child.Get()))
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+void AITwinRealityData::DestroyTileset()
+{
+	ITwin::DestroyTilesetsInActor(*this);
+}
+
+void AITwinRealityData::Reset()
+{
+	DestroyTileset();
+}
+
+#if WITH_EDITOR
+void AITwinRealityData::PostEditChangeProperty(FPropertyChangedEvent& e)
+{
+	Super::PostEditChangeProperty(e);
+
+	FName const PropertyName = (e.Property != nullptr) ? e.Property->GetFName() : NAME_None;
+	if (PropertyName == GET_MEMBER_NAME_CHECKED(AITwinRealityData, RealityDataId)
+		||
+		PropertyName == GET_MEMBER_NAME_CHECKED(AITwinRealityData, ITwinId))
+	{
+		DestroyTileset();
+
+		if (!RealityDataId.IsEmpty() && !ITwinId.IsEmpty())
+		{
+			UpdateRealityData();
+		}
+	}
+}
+#endif //WITH_EDITOR
+
 
 void AITwinRealityData::UseAsGeolocation()
 {

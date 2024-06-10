@@ -59,25 +59,25 @@ AITwinDigitalTwin::AITwinDigitalTwin()
 	SetRootComponent(CreateDefaultSubobject<USceneComponent>(TEXT("root")));
 }
 
-void AITwinDigitalTwin::OnAuthorizationDone(bool bSuccess, FString const& Error)
+const TCHAR* AITwinDigitalTwin::GetObserverName() const
+{
+	return TEXT("ITwinDigitalTwin");
+}
+
+void AITwinDigitalTwin::UpdateOnSuccessfulAuthorization()
+{
+	UpdateITwin();
+}
+
+void AITwinDigitalTwin::OnITwinInfoRetrieved(bool bSuccess, FITwinInfo const& Info)
 {
 	if (bSuccess)
 	{
-		UpdateWebServices();
-		if (ServerConnection && !ServerConnection->AccessToken.IsEmpty())
-		{
-			UpdateITwin();
-		}
+		checkf(ITwinId == Info.Id, TEXT("mismatch in iTwin ID (%s vs %s)"), *ITwinId, *Info.Id);
+#if WITH_EDITOR
+		SetActorLabel(Info.DisplayName);
+#endif
 	}
-	else
-	{
-		UE_LOG(LrtuITwin, Error, TEXT("AITwinDigitalTwin Authorization failure (%s)"), *Error);
-	}
-}
-
-void AITwinDigitalTwin::OnITwinsRetrieved(bool bSuccess, FITwinInfos const& Infos)
-{
-	checkf(false, TEXT("an iTwin cannot handle other iTwins"));
 }
 
 void AITwinDigitalTwin::OnIModelsRetrieved(bool bSuccess, FIModelInfos const& IModelInfos)
@@ -126,91 +126,24 @@ void AITwinDigitalTwin::OnRealityDataRetrieved(bool bSuccess, FITwinRealityDataI
 	}
 }
 
-void AITwinDigitalTwin::OnChangesetsRetrieved(bool bSuccess, FChangesetInfos const& ChangesetInfos)
-{
-	checkf(false, TEXT("an iTwin cannot handle changesets"));
-}
-void AITwinDigitalTwin::OnExportInfosRetrieved(bool bSuccess, FITwinExportInfos const& ExportInfos)
-{
-	checkf(false, TEXT("an iTwin cannot handle exports"));
-}
-void AITwinDigitalTwin::OnExportInfoRetrieved(bool bSuccess, FITwinExportInfo const& ExportInfo)
-{
-	checkf(false, TEXT("an iTwin cannot handle exports"));
-}
-void AITwinDigitalTwin::OnExportStarted(bool bSuccess, FString const& ExportId)
-{
-	checkf(false, TEXT("an iTwin cannot handle exports"));
-}
-void AITwinDigitalTwin::OnSavedViewInfosRetrieved(bool bSuccess, FSavedViewInfos const& Infos)
-{
-	checkf(false, TEXT("an iTwin cannot handle SavedViews"));
-}
-void AITwinDigitalTwin::OnSavedViewRetrieved(bool bSuccess, FSavedView const& SavedView, FSavedViewInfo const& SavedViewInfo)
-{
-	checkf(false, TEXT("an iTwin cannot handle SavedViews"));
-}
-void AITwinDigitalTwin::OnSavedViewAdded(bool bSuccess, FSavedViewInfo const& SavedViewInfo)
-{
-	checkf(false, TEXT("an iTwin cannot handle SavedViews"));
-}
-void AITwinDigitalTwin::OnSavedViewDeleted(bool bSuccess, FString const& Response)
-{
-	checkf(false, TEXT("an iTwin cannot handle SavedViews"));
-}
-void AITwinDigitalTwin::OnSavedViewEdited(bool bSuccess, FSavedView const& SavedView, FSavedViewInfo const& SavedViewInfo)
-{
-	checkf(false, TEXT("an iTwin cannot handle SavedViews"));
-}
-
-
-namespace ITwin
-{
-	void UpdateWebServices(AActor* Owner, IITwinWebServicesObserver* InObserver,
-		TObjectPtr<AITwinServerConnection>& ServerConnection,
-		TObjectPtr<UITwinWebServices>& WebServices);
-}
-
-void AITwinDigitalTwin::UpdateWebServices()
-{
-	// use same code as for AITwinIModel...
-	ITwin::UpdateWebServices(this, this, ServerConnection, WebServices);
-}
-
 void AITwinDigitalTwin::UpdateITwin()
 {
 	check(!ITwinId.IsEmpty());
 	if (!Children.IsEmpty())
 		return;
 
-	UpdateWebServices();
-	if (!ServerConnection)
+	if (CheckServerConnection() != AITwinServiceActor::EConnectionStatus::Connected)
 	{
-		WebServices->CheckAuthorization();
-		// postpone the actual update (see OnAuthorizationDone)
+		// No authorization yet: postpone the actual update (see OnAuthorizationDone)
 		return;
 	}
 
 	Impl->Geolocation = MakeShared<FITwinGeolocation>(*this);
-	{
-		const auto Request = FHttpModule::Get().CreateRequest();
-		Request->SetVerb("GET");
-		Request->SetURL("https://"+ServerConnection->UrlPrefix()+"api.bentley.com/itwins/"+ITwinId);
-		Request->SetHeader("Prefer", "return=representation");
-		Request->SetHeader("Accept", "application/vnd.bentley.itwin-platform.v1+json");
-		Request->SetHeader("Authorization", "Bearer "+ServerConnection->AccessToken);
-		Request->OnProcessRequestComplete().BindLambda([this](FHttpRequestPtr Request, FHttpResponsePtr Response, bool bConnectedSuccessfully)
-			{
-				if (!AITwinServerConnection::CheckRequest(Request, Response, bConnectedSuccessfully))
-					{ return; }
-				TSharedPtr<FJsonObject> ResponseJson;
-				FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Response->GetContentAsString()), ResponseJson);
+
 #if WITH_EDITOR
-				SetActorLabel(ResponseJson->GetObjectField("iTwin")->GetStringField("displayName"));
+	// make a request to get the display name
+	WebServices->GetITwinInfo(ITwinId);
 #endif
-			});
-		Request->ProcessRequest();
-	}
 
 	// fetch iModels
 	WebServices->GetiTwiniModels(ITwinId);
@@ -231,10 +164,7 @@ void AITwinDigitalTwin::PostEditChangeProperty(FPropertyChangedEvent& PropertyCh
 
 void AITwinDigitalTwin::Destroyed()
 {
-	if (WebServices)
-	{
-		WebServices->SetObserver(nullptr);
-	}
+	Super::Destroyed();
 	Impl->DestroyChildren();
 }
 
@@ -357,12 +287,12 @@ void AITwinDigitalTwin::FImpl::OnClickedElement(FHitResult const& HitResult,
 			return;
 		}
 		DejaVu.insert(ElementID);
-		UE_LOG(LrtuITwin, Display,
+		UE_LOG(LogITwin, Display,
 			   TEXT("ElementID 0x%I64x clicked, with additional metadata:"), ElementID.value());
 		for (TTuple<FString, FString> const& Entry : AsStrings)
 		{
 			if (ITwinCesium::Metada::ELEMENT_NAME != Entry.Get<0>())
-				UE_LOG(LrtuITwin, Display, TEXT("%s = %s"), *Entry.Get<0>(), *Entry.Get<1>());
+				UE_LOG(LogITwin, Display, TEXT("%s = %s"), *Entry.Get<0>(), *Entry.Get<1>());
 		}
 		for (auto&& Child : Owner.Children)
 		{
@@ -378,11 +308,11 @@ void AITwinDigitalTwin::FImpl::OnClickedElement(FHitResult const& HitResult,
 	}
 	else
 	{
-		UE_LOG(LrtuITwin, Display, TEXT("'%s' not found in metadata, instead got:"),
+		UE_LOG(LogITwin, Display, TEXT("'%s' not found in metadata, instead got:"),
 			   *ITwinCesium::Metada::ELEMENT_NAME);
 		for (TTuple<FString, FString> const& Entry : AsStrings)
 		{
-			UE_LOG(LrtuITwin, Display, TEXT("%s = %s"), *Entry.Get<0>(), *Entry.Get<1>());
+			UE_LOG(LogITwin, Display, TEXT("%s = %s"), *Entry.Get<0>(), *Entry.Get<1>());
 		}
 	}
 }

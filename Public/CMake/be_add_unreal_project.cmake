@@ -44,6 +44,14 @@ function (createSymlink target link addedFilesRef)
 		message (SEND_ERROR "Cannot create symlink \"${link}\", because there is already a real file/directory at this path. Overwriting it could result in data loss.")
 	endif ()
 	get_filename_component (linkParent "${link}" DIRECTORY)
+	# Fixup case when the parent folder of the link already exists as a symlink itself.
+	# This may happen eg. if the previous version of the script would symlink the parent folder directly,
+	# For example for unreal "Config" folder which used to be a symlink,
+	# but is now a regular folder (into which we may add symlinks).
+	# In this case, we need to remove the parent before creating the directory.
+	if (IS_SYMLINK "${linkParent}")
+		file (REMOVE "${linkParent}")
+	endif ()
 	file (MAKE_DIRECTORY "${linkParent}")
 	file (CREATE_LINK "${target}" "${link}" SYMBOLIC)
 endfunction ()
@@ -72,7 +80,6 @@ endfunction ()
 # |- qux -> points to <target>/qux
 function (createSymlinksForDirectoryContent target link addedFilesRef)
 	set (addedFiles_local ${${addedFilesRef}})
-	file (MAKE_DIRECTORY "${link}")
 	file (GLOB items RELATIVE "${target}" "${target}/*")
 	foreach (item ${items})
 		createSymlink ("${target}/${item}" "${link}/${item}" addedFiles_local)
@@ -199,6 +206,7 @@ function (be_add_unreal_project projectDir)
 			# ask git for whether the item is ignored. Only non-ignored items should be symlinked.
 			if ("${pluginName}" STREQUAL ITwinForUnreal)
 				foreach (item
+					"Config/BaseITwinForUnreal.ini"
 					"Content/ITwin"
 					"Resources"
 					"Shaders/ITwin"
@@ -275,11 +283,11 @@ function (be_add_unreal_project projectDir)
 		if ("${pluginName}" STREQUAL ITwinForUnreal)
 			# The goal here is to merge the cesium-unreal plugin into our own plugin.
 			# Some dirs are simply symlinked.
-			foreach (item Content Shaders)
+			foreach (item Config Content Shaders)
 				createSymlinksForDirectoryContent ("${CMAKE_SOURCE_DIR}/Public/Extern/cesium-unreal/${item}" "${projectAbsDir}${srcDirRel}/${item}" addedFiles_local)
 			endforeach ()
 			# Source code of the (modified) CesiumRuntime are symlinked as well:
-			foreach (item Source/ITwinCesiumRuntime Config)
+			foreach (item Source/ITwinCesiumRuntime)
 				createSymlink ("${CMAKE_SOURCE_DIR}/Public/Extern/cesium-unreal/${item}" "${projectAbsDir}${srcDirRel}/${item}" addedFiles_local)
 			endforeach ()
 			# Add a command that will (at build time) create symlinks pointing to the header & lib files "installed"
@@ -288,6 +296,11 @@ function (be_add_unreal_project projectDir)
 			string (APPEND setupExternFilesCommands "SetupCesium('${cesiumDependenciesBinDir}/extern/../Source/ThirdParty', '${projectAbsDir}${srcDirRel}/Source/ThirdParty')\n")
 			list (APPEND setupExternFilesDependencies InstallCesiumDependencies)
 			list (APPEND extraTests_local "+Cesium.Unit")
+			
+			# SDK part:
+			configure_file("${CMAKE_CURRENT_SOURCE_DIR}/Public/UnrealProjects/ITwinTestApp/Plugins/ITwinForUnreal/Source/SDKCore/BuildInfo.txt.in"
+						   "${CMAKE_CURRENT_SOURCE_DIR}/Public/UnrealProjects/ITwinTestApp/Plugins/ITwinForUnreal/Source/ThirdParty/BuildInfo.txt")
+			list (APPEND setupExternFilesDependencies Visualization)
 		endif ()
 		if (setupExternFilesCommands)
 			# Actually create the target that will create the symlinks to the lib files of the dependencies.
@@ -303,9 +316,9 @@ function (be_add_unreal_project projectDir)
 			add_custom_target (SetupExternFiles_${uniqueName}
 				COMMAND ${CMAKE_COMMAND} -E make_directory "${projectAbsDir}${srcDirRel}/Source/ThirdParty/Lib/$<CONFIG>"
 				COMMAND ${CMAKE_COMMAND} -E make_directory "${projectAbsDir}${srcDirRel}/Binaries/Win64"
-				COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/Public/SetupUnrealExternFiles.py" '${JsonContent}'
-			VERBATIM
-		)
+					COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/Public/SetupUnrealExternFiles.py" '${JsonContent}'
+				VERBATIM
+			)
 
 			set_target_properties (SetupExternFiles_${uniqueName} PROPERTIES FOLDER "UnrealProjects/Detail")
 			if (setupExternFilesDependencies)
@@ -419,7 +432,11 @@ function (be_add_unreal_project projectDir)
 				continue ()
 			endif ()
 		else ()
-			message (SEND_ERROR "Cannot delete \"${addedFile_old}\", as it is not a symlink. Deleting it could result in data loss.\nThis is probably a bug in our build scripts.")
+			# The item exists as a regular file/folder (not a symlink).
+			# Probably the old symlink has been replaced by a regular file/folder by this script.
+			# This may happen for unreal "Config" folder.
+			# So, do not report an error, and just do nothing.
+			message ("When trying to delete \"${addedFile_old}\", expected to find a symlink, but found a regular file/folder. Skipping.")
 			continue ()
 		endif ()
 		file (REMOVE "${addedFile_old}")
@@ -428,32 +445,25 @@ function (be_add_unreal_project projectDir)
 	file (WRITE "${addedFilesFilePath}" "${addedFiles}")
 	# Now that all build dirs have been setup, we can ask UBT to generate the project files (.sln, .vcxproj...).
 	# We will use some of these generated files to create some cmake targets.
-	if (APPLE)
+	if( WIN32)
 		execute_process (
-		COMMAND "${BE_UNREAL_ENGINE_DIR}/Build/BatchFiles/Mac/Build.sh" -ProjectFiles -Project "${projectAbsDir}/${projectName}.uproject"
-		COMMAND_ERROR_IS_FATAL ANY
-		)
-	else ()
-		execute_process (
-			COMMAND "${BE_UNREAL_ENGINE_DIR}/Build/BatchFiles/Build.bat" -ProjectFiles -Project "${projectAbsDir}/${projectName}.uproject"
+			COMMAND "${BE_UNREAL_ENGINE_DIR}/Build/BatchFiles/Build.bat" -ProjectFiles -Project "${projectAbsDir}/${projectName}.uproject" -WaitMutex
 			COMMAND_ERROR_IS_FATAL ANY
 		)
-	endif ()
-	if( WIN32)
 		# The files generated by UBT use VS macro $(SolutionDir), which will not work in our case because our final .sln file
 		# (which is generated by CMake) not the .sln file generated by UBT and is not in the same folder.
 		# So we create our own project files by duplicating & fixing the files generated by UBT.
-		file (MAKE_DIRECTORY "${projectAbsDir}/Intermediate/ProjectFiles_be/")
+			file (MAKE_DIRECTORY "${projectAbsDir}/Intermediate/ProjectFiles_be/")
 		foreach (extension .vcxproj .vcxproj.user .vcxproj.filters)
 			file (READ "${projectAbsDir}/Intermediate/ProjectFiles/${projectName}${extension}" vcxprojContent)
 			string (REPLACE "$(SolutionDir)" "${projectAbsDir}/" vcxprojContent "${vcxprojContent}")
-		writeFile ("${projectAbsDir}/Intermediate/ProjectFiles_be/${projectName}${extension}" "${vcxprojContent}")
+			writeFile ("${projectAbsDir}/Intermediate/ProjectFiles_be/${projectName}${extension}" "${vcxprojContent}")
 		endforeach ()
 		# Some project files are referenced by others (using relative path) but we do not need to fix them
 		# so let's just make symlinks.
 		file (GLOB propsFiles RELATIVE "${projectAbsDir}/Intermediate/ProjectFiles" "${projectAbsDir}/Intermediate/ProjectFiles/*.props")
 		foreach (propsFile ${propsFiles})
-		createSymlink ("${projectAbsDir}/Intermediate/ProjectFiles/${propsFile}" "${projectAbsDir}/Intermediate/ProjectFiles_be/${propsFile}" addedFiles)
+			createSymlink ("${projectAbsDir}/Intermediate/ProjectFiles/${propsFile}" "${projectAbsDir}/Intermediate/ProjectFiles_be/${propsFile}" addedFiles)
 		endforeach ()
 		# If for whatever reason, project files generated by UBT are modified, we have to update our own "fixed" files.
 		# Thus, make sure CMake is re-run if these file changes.
@@ -461,27 +471,28 @@ function (be_add_unreal_project projectDir)
 		# Fortunately this does not happen.
 		set_property (DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${projectAbsDir}/Intermediate/ProjectFiles/${projectName}.vcxproj")
 		# Import the .vcxproj as a new CMake target.
-		include_external_msproject (${projectName} "${projectAbsDir}/Intermediate/ProjectFiles_be/${projectName}.vcxproj")
+			include_external_msproject (${projectName} "${projectAbsDir}/Intermediate/ProjectFiles_be/${projectName}.vcxproj")
 		# Since Unreal uses its own specific set of configs, we have to map them to CMake configs.
 		set_target_properties(${projectName} PROPERTIES
 			MAP_IMPORTED_CONFIG_DEBUG DebugGame_Editor
-		MAP_IMPORTED_CONFIG_RELEASE Development_Editor
+			MAP_IMPORTED_CONFIG_UNREALDEBUG DebugGame_Editor
+			MAP_IMPORTED_CONFIG_RELEASE Development_Editor
 		)
-		# Add a target that will build the Shipping version of the app.
-		add_custom_target (${projectName}_Shipping ALL
-			# This target is only compatible with CMake Release config, since it uses Release extern binaries.
-			# Hence the dummy command that will output an explicit error message.
-			COMMAND "$<$<NOT:$<CONFIG:Release>>:TARGET_NOT COMPATIBLE_WITH_THIS_CONFIG>"
-			COMMAND "${BE_UNREAL_ENGINE_DIR}/Build/BatchFiles/Build.bat" ${projectName} Win64 Shipping -Project="${projectAbsDir}/${projectName}.uproject" -WaitMutex -FromMsBuild
-			)
-		set_property (TARGET ${projectName}_Shipping PROPERTY VS_DEBUGGER_COMMAND "${projectAbsDir}/Binaries/Win64/${projectName}-Win64-Shipping.exe")
+			# Add a target that will build the Shipping version of the app.
+			add_custom_target (${projectName}_Shipping ALL
+				# This target is only compatible with CMake Release config, since it uses Release extern binaries.
+				# Hence the dummy command that will output an explicit error message.
+				COMMAND "$<$<NOT:$<CONFIG:Release>>:TARGET_NOT COMPATIBLE_WITH_THIS_CONFIG>"
+				COMMAND "${BE_UNREAL_ENGINE_DIR}/Build/BatchFiles/Build.bat" ${projectName} Win64 Shipping -Project="${projectAbsDir}/${projectName}.uproject" -WaitMutex -FromMsBuild
+				)
+			set_property (TARGET ${projectName}_Shipping PROPERTY VS_DEBUGGER_COMMAND "${projectAbsDir}/Binaries/Win64/${projectName}-Win64-Shipping.exe")
 		# Add dependencies to all external libs used by the project.
 		if (projectDependencies)
 			add_dependencies (${projectName} ${projectDependencies})
 			add_dependencies (${projectName}_Shipping ${projectDependencies})
 		endif ()
 		set_target_properties (${projectName} PROPERTIES FOLDER "UnrealProjects")
-		set_target_properties (${projectName}_Shipping PROPERTIES FOLDER "UnrealProjects/Shipping")
+			set_target_properties (${projectName}_Shipping PROPERTIES FOLDER "UnrealProjects/Shipping")
 		# Update the BuildUnrealProjects target so that it will build this project too.
 		if (NOT TARGET BuildUnrealProjects)
 			add_custom_target (BuildUnrealProjects ALL)
@@ -491,13 +502,13 @@ function (be_add_unreal_project projectDir)
 		if (NOT funcArgs_NO_TEST)
 			# Add a target to run the tests.
 			add_custom_target (RunTests_${projectName} ALL # "ALL" so that target is enabled and MSBuild can build it.
-			# UnrealEditor.exe loads the Development binaries (this config is mapped to CMake Release config).
-			# UnrealEditor-Win64-DebugGame.exe loads the DebugGame binaries (this config is mapped to CMake Debug config).
-			# Other CMake configs (if any) are not supported, so we add a dummy command that will try to run an unexisting command with an explicit name.
-			COMMAND "$<$<NOT:$<CONFIG:Debug,Release>>:TARGET_NOT COMPATIBLE_WITH_THIS_CONFIG>"
-			COMMAND "${BE_UNREAL_ENGINE_DIR}/Binaries/Win64/UnrealEditor$<$<CONFIG:Debug>:-Win64-DebugGame>.exe" "${projectAbsDir}/${projectName}.uproject" "-ExecCmds=\"Automation RunTests Bentley${extraTests};Quit\"" -unattended -nopause -editor -stdout
+				# UnrealEditor.exe loads the Development binaries (this config is mapped to CMake Release config).
+				# UnrealEditor-Win64-DebugGame.exe loads the DebugGame binaries (this config is mapped to CMake Debug config).
+				# Other CMake configs (if any) are not supported, so we add a dummy command that will try to run an unexisting command with an explicit name.
+				COMMAND "$<$<NOT:$<CONFIG:UnrealDebug,Release>>:TARGET_NOT COMPATIBLE_WITH_THIS_CONFIG>"
+				COMMAND "${BE_UNREAL_ENGINE_DIR}/Binaries/Win64/UnrealEditor$<$<CONFIG:UnrealDebug>:-Win64-DebugGame>.exe" "${projectAbsDir}/${projectName}.uproject" "-ExecCmds=\"Automation RunTests Bentley${extraTests};Quit\"" -unattended -nopause -editor -stdout
 			)
-		set_target_properties (RunTests_${projectName} PROPERTIES FOLDER "UnrealProjects/Tests")
+				set_target_properties (RunTests_${projectName} PROPERTIES FOLDER "UnrealProjects/Tests")
 			add_dependencies (RunTests_${projectName} ${projectName})
 			if (NOT TARGET RunUnrealTests)
 				add_custom_target (RunUnrealTests ALL)
@@ -514,19 +525,21 @@ function (be_add_unreal_project projectDir)
 			include_external_msproject (UE5 "${projectAbsDir}/Intermediate/ProjectFiles/UE5.vcxproj" PLATFORM Win64)
 			set_target_properties(UE5 PROPERTIES
 				MAP_IMPORTED_CONFIG_DEBUG BuiltWithUnrealBuildTool
+				MAP_IMPORTED_CONFIG_UNREALDEBUG BuiltWithUnrealBuildTool
 				MAP_IMPORTED_CONFIG_RELEASE BuiltWithUnrealBuildTool
 			)
 			set_target_properties (UE5 PROPERTIES FOLDER "UnrealProjects/Detail")
 			add_custom_target (UE5Natvis
 				SOURCES
-				"${BE_UNREAL_ENGINE_DIR}/Extras/VisualStudioDebugging/Unreal.natvis" 
+					"${BE_UNREAL_ENGINE_DIR}/Extras/VisualStudioDebugging/Unreal.natvis" 
 				"${CMAKE_SOURCE_DIR}/Public/VSNatVis/cesium_gltf.natvis"
 				)
 			set_target_properties (UE5Natvis PROPERTIES FOLDER "UnrealProjects/Detail")
 		endif ()
 	elseif (APPLE)
 		execute_process (
-			COMMAND "${BE_UNREAL_ENGINE_DIR}/Build/BatchFiles/Mac/Build.sh" -ProjectFiles -Project "${projectAbsDir}/${projectName}.uproject"
+			COMMAND echo "generating unreal project for ${projectAbsDir}/${projectName}.uproject"
+			COMMAND "${BE_UNREAL_ENGINE_DIR}/Build/BatchFiles/Mac/Build.sh" -ProjectFiles -Project "${projectAbsDir}/${projectName}.uproject" -WaitMutex
 			COMMAND_ERROR_IS_FATAL ANY
 		)
 				
@@ -536,7 +549,7 @@ function (be_add_unreal_project projectDir)
 		
 		
 		add_custom_target( ${projectName}Editor 
-			COMMAND "xcodebuild" "build" "-scheme" "${projectName}Editor" "-configuration" "$<$<CONFIG:Debug>:DebugGame>$<$<CONFIG:Release>:Development>" "-project" "${projectAbsDir}/Intermediate/ProjectFiles/${projectName}Editor (Mac).xcodeproj"
+			COMMAND "xcodebuild" "build" "-scheme" "${projectName}Editor" "-configuration" "$<$<CONFIG:UnrealDebug>:DebugGame>$<$<CONFIG:Release>:Development>" "-project" "${projectAbsDir}/Intermediate/ProjectFiles/${projectName}Editor (Mac).xcodeproj"
 			VERBATIM
 		)
 		
@@ -547,7 +560,7 @@ function (be_add_unreal_project projectDir)
 		set_target_properties (${projectName}Editor PROPERTIES FOLDER "UnrealProjects")
 		
 		add_custom_target( ${projectName} 
-			COMMAND "xcodebuild" "build" "-scheme" "${projectName}" "-configuration" "$<$<CONFIG:Debug>:DebugGame>$<$<CONFIG:Release>:Development>" "-project" "${projectAbsDir}/Intermediate/ProjectFiles/${projectName} (Mac).xcodeproj"
+			COMMAND "xcodebuild" "build" "-scheme" "${projectName}" "-configuration" "$<$<CONFIG:UnrealDebug>:DebugGame>$<$<CONFIG:Release>:Development>" "-project" "${projectAbsDir}/Intermediate/ProjectFiles/${projectName} (Mac).xcodeproj"
 			VERBATIM
 		)
 		
@@ -574,8 +587,31 @@ function (be_add_unreal_project projectDir)
 			# Add dependencies to all external libs used by the project.
 			if (projectDependencies)
 				add_dependencies (${projectName}_Shipping ${projectDependencies})
-			endif ()
+	endif()
 			set_target_properties (${projectName}_Shipping PROPERTIES FOLDER "UnrealProjects/Shipping")
+		endif ()
+		
+		if (NOT TARGET BuildUnrealProjects)
+			add_custom_target (BuildUnrealProjects ALL)
+		endif ()
+		add_dependencies (BuildUnrealProjects ${projectName})
+		
+		if (NOT funcArgs_NO_TEST)
+			# Add a target to run the tests.
+			add_custom_target (RunTests_${projectName} ALL # "ALL" so that target is enabled and MSBuild can build it.
+			# UnrealEditor.exe loads the Development binaries (this config is mapped to CMake Release config).
+			# UnrealEditor-Win64-DebugGame.exe loads the DebugGame binaries (this config is mapped to CMake Debug config).
+			# Other CMake configs (if any) are not supported, so we add a dummy command that will try to run an unexisting command with an explicit name.
+			COMMAND "$<$<NOT:$<CONFIG:Debug,Release>>:TARGET_NOT COMPATIBLE_WITH_THIS_CONFIG>"
+			COMMAND "${BE_UNREAL_ENGINE_DIR}/Binaries/Mac/UnrealEditor$<$<CONFIG:Debug>:-Mac-DebugGame>" "${projectAbsDir}/${projectName}.uproject" "-ExecCmds=\"Automation RunTests Bentley${extraTests};Quit\"" -unattended -nopause -editor -stdout
+			)
+			set_target_properties (RunTests_${projectName} PROPERTIES FOLDER "UnrealProjects/Tests")
+				add_dependencies (RunTests_${projectName} ${projectName})
+				if (NOT TARGET RunUnrealTests)
+					add_custom_target (RunUnrealTests ALL)
+				endif ()
+				add_dependencies (RunUnrealTests RunTests_${projectName})
+				set_target_properties (RunUnrealTests PROPERTIES FOLDER "UnrealProjects/Detail")
 		endif ()
 	endif()
 	

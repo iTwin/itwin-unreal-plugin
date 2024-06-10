@@ -6,15 +6,19 @@
 |
 +--------------------------------------------------------------------------------------*/
 
-module;
+/*--------------------------------------------------------------------------------------+
+|
+|     $Source: Config.cpp $
+|
+|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|
++--------------------------------------------------------------------------------------*/
+#include <filesystem>
 #include <fstream>
 #include <rfl/json.hpp>
 
-module SDK.Core.Visualization:Config;
-
-import SDK.Core.Network;
-import SDK.Core.Json;
-
+#include "Core/Network/Network.h"
+#include "Config.h"
 namespace SDK::Core
 {
 	namespace Config {

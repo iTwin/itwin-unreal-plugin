@@ -1,9 +1,9 @@
 
-add_library(Tools 
-		Tools.ixx
-		Extension.ixx
+add_library(Tools OBJECT
+		Tools.h
+		Extension.h
 		Extension.cpp
-		FactoryClass.ixx
+		FactoryClass.h
 		FactoryClass.cpp
 )
 target_compile_features(Tools PRIVATE ${DefaultCXXSTD})

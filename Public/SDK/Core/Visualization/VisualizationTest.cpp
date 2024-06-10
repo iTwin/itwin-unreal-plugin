@@ -6,8 +6,15 @@
 |
 +--------------------------------------------------------------------------------------*/
 
-import SDK.Core.Visualization;
-import<filesystem>;
+/*--------------------------------------------------------------------------------------+
+|
+|     $Source: VisualizationTest.cpp $
+|
+|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|
++--------------------------------------------------------------------------------------*/
+#include "Visualization.h"
+#include <filesystem>
 
 #include <gtest/gtest.h>
 #include <fstream>
@@ -93,14 +100,18 @@ TEST(Visualization, Config) {
 	EXPECT_TRUE(GetDefaultHttp().get() != nullptr);
 }
 
+void SetDefaultConfig()
+{
+	Config::SConfig config;
+	config.server.server = serverURL;
+	config.server.port = serverPort;
+	config.server.urlapiprefix = "/advviz/v1";
+	Config::Init(config);
+}
+
 TEST(Visualization, Scene) {
 	try {
-
-		Config::SConfig config;
-		config.server.server = serverURL;
-		config.server.port = serverPort;
-		config.server.urlapiprefix = "/advviz/v1";
-		Config::Init(config);
+		SetDefaultConfig();
 		EXPECT_TRUE(GetDefaultHttp().get() != nullptr);
 
 		auto scene = IScene::New();
@@ -149,6 +160,8 @@ public:
 
 TEST(Visualization, ExtendedScene) {
 	try {
+		SetDefaultConfig();
+
 		IScene::SetNewFct([]() {
 			std::shared_ptr<IScene> p(static_cast<IScene*>(new ExtendedScene));
 			return p;

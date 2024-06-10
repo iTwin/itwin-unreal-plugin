@@ -8,7 +8,7 @@
 
 #include <gtest/gtest.h>
 
-import SDK.Core.Tools;
+#include "Tools.h"
 
 using namespace SDK::Core;
 

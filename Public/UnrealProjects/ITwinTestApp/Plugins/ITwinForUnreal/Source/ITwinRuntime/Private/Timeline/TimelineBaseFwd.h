@@ -1,20 +1,17 @@
 /*--------------------------------------------------------------------------------------+
 |
-|     $Source: ITwinAuthorizationObserver.h $
+|     $Source: TimelineBaseFwd.h $
 |
 |  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
-
 #pragma once
 
-#include "CoreMinimal.h"
+namespace ITwin::Timeline {
 
-class ITWINRUNTIME_API IITwinAuthorizationObserver
-{
-public:
-	virtual ~IITwinAuthorizationObserver() = default;
+class PropertyEntryBase;
+template<class _Values> class PropertyEntry;
+template<class _PropertyValues> class PropertyTimeline;
 
-	virtual void OnAuthorizationDone(bool bSuccess, FString const& Error) = 0;
-};
+} // namespace ITwin::Timeline

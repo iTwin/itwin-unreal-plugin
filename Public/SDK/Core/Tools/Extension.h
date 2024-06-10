@@ -1,8 +1,15 @@
-export module SDK.Core.Tools:Extension;
-import<memory>;
-import<unordered_map>;
+/*--------------------------------------------------------------------------------------+
+|
+|     $Source: Extension.h $
+|
+|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|
++--------------------------------------------------------------------------------------*/
 
-export namespace SDK::Core::Tools
+#include <memory>
+#include <unordered_map>
+
+namespace SDK::Core::Tools
 {
 	class Extension{};
 

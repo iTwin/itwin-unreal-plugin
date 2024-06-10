@@ -13,7 +13,7 @@
 #include <ITwinServerConnection.h>
 #include <ITwinIModel.h>
 #include <ITwinIModelInternals.h>
-#include <Timeline/Schedule/TimeInSeconds.h>
+#include <Timeline/TimeInSeconds.h>
 #include <Timeline/SchedulesConstants.h>
 #include <Timeline/SchedulesImport.h>
 #include <Timeline/SchedulesStructs.h>

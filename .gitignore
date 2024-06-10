@@ -20,7 +20,8 @@
 # - are actually symlinks,
 # - or are real folders that contain only symlinks.
 **/UnrealProjects/*/Source/ThirdParty/
-**/UnrealProjects/*/Plugins/ITwinForUnreal/Config
+**/UnrealProjects/*/Plugins/ITwinForUnreal/Config/*
+!**/UnrealProjects/*/Plugins/ITwinForUnreal/Config/BaseITwinForUnreal.ini
 **/UnrealProjects/*/Plugins/*/Source/ThirdParty/
 **/UnrealProjects/*/Plugins/ITwinForUnreal/Source/ITwinCesiumRuntime
 **/UnrealProjects/Engine

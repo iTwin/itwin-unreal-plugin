@@ -17,6 +17,9 @@ public class ITwinTestApp : ModuleRules
 		PrivateDefinitions.AddRange(new string[]{
 			"NOMINMAX",
 		});
+
+        CppStandard = CppStandardVersion.Cpp20;
+        
 		PublicDependencyModuleNames.AddRange(new string[]{
 			"Core",
 			"CoreUObject",
@@ -28,7 +31,8 @@ public class ITwinTestApp : ModuleRules
 			"Json",
 			"PlatformCryptoOpenSSL",
 			"WebBrowser",
-		});
+            "SDKCore",
+        });
 		PrivateDependencyModuleNames.AddRange(new string[]{
             "Slate",
             "SlateCore",

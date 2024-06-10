@@ -34,8 +34,6 @@
 #include <Serialization/JsonSerializer.h>
 #include <Timeline/Timeline.h>
 
-DEFINE_LOG_CATEGORY(LrtuITwin);
-
 namespace ITwinIModelImpl
 {
 	// TODO_GCO: move to Scheds comp + std::move param for the time being, there's a single observer anyway
@@ -248,7 +246,7 @@ public:
 
 		// Simulate an animation of transformation
 		using ITwin::Timeline::PTransform;
-		ITwin::Schedule::PropertyEntry<PTransform> Entry;
+		ITwin::Timeline::PropertyEntry<PTransform> Entry;
 		Entry.time_ = 0.;
 		ModifiedTimeline.transform_.list_.insert(Entry);
 		for (auto const& [EltID, BBox] : BBoxes)
@@ -261,9 +259,9 @@ public:
 		if (bTestVisibilityAnim) {
 			// Simulate an animation of visibility
 			ModifiedTimeline.SetVisibilityAt(
-				0., 0. /* alpha */, ITwin::Schedule::InterpolationMode::Linear);
+				0., 0. /* alpha */, ITwin::Timeline::Interpolation::Linear);
 			ModifiedTimeline.SetVisibilityAt(
-				30., 1. /* alpha */, ITwin::Schedule::InterpolationMode::Linear);
+				30., 1. /* alpha */, ITwin::Timeline::Interpolation::Linear);
 
 			for (auto const& [EltID, BBox] : BBoxes)
 			{
@@ -320,30 +318,22 @@ void AITwinIModel::GetModel3DInfo(FITwinIModel3DInfo& Info)
 
 namespace ITwin
 {
-	void UpdateWebServices(AActor* Owner, IITwinWebServicesObserver* InObserver,
-		TObjectPtr<AITwinServerConnection>& ServerConnection,
-		TObjectPtr<UITwinWebServices>& WebServices)
+	uint32 DestroyTilesetsInActor(AActor& Owner)
 	{
-		if (!ServerConnection && UITwinWebServices::GetWorkingInstance())
+		const auto ChildrenCopy = Owner.Children;
+		uint32 numDestroyed = 0;
+		for (auto& Child : ChildrenCopy)
 		{
-			// Happens when the requests are made from blueprints, typically in the previous 3DFT plugin
-			UITwinWebServices::GetWorkingInstance()->GetServerConnection(ServerConnection);
+			AITwinCesium3DTileset* AsTileset = Cast<AITwinCesium3DTileset>(Child.Get());
+			if (AsTileset)
+			{
+				Owner.GetWorld()->DestroyActor(Child);
+				numDestroyed++;
+			}
 		}
-		const bool bHasValidWebServices = WebServices && WebServices->IsValidLowLevel();
-		const bool bHasChangedConnection =
-			bHasValidWebServices && !WebServices->HasSameConnection(ServerConnection.Get());
-		if (!bHasValidWebServices || bHasChangedConnection)
-		{
-			WebServices = NewObject<UITwinWebServices>(Owner);
-			WebServices->SetServerConnection(ServerConnection);
-			WebServices->SetObserver(InObserver);
-		}
+		check(Owner.Children.Num() + numDestroyed == ChildrenCopy.Num());
+		return numDestroyed;
 	}
-}
-
-void AITwinIModel::UpdateWebServices()
-{
-	ITwin::UpdateWebServices(this, this, ServerConnection, WebServices);
 }
 
 void AITwinIModel::LoadModel(FString InExportId)
@@ -572,6 +562,11 @@ void AITwinIModel::OnSavedViewEdited(bool bSuccess, FSavedView const& SavedView,
 {
 }
 
+const TCHAR* AITwinIModel::GetObserverName() const
+{
+	return TEXT("ITwinIModel");
+}
+
 void AITwinIModel::Reset()
 {
 	DestroyTileset();
@@ -579,26 +574,12 @@ void AITwinIModel::Reset()
 
 void AITwinIModel::DestroyTileset()
 {
-	const auto ChildrenCopy = Children;
-	uint32 numDestroyed = 0;
-	for (auto& Child : ChildrenCopy)
-	{
-		AITwinCesium3DTileset* AsTileset = Cast<AITwinCesium3DTileset>(Child.Get());
-		if (AsTileset)
-		{
-			GetWorld()->DestroyActor(Child);
-			numDestroyed++;
-		}
-	}
-	check(Children.Num() + numDestroyed == ChildrenCopy.Num());
+	ITwin::DestroyTilesetsInActor(*this);
 }
 
 void AITwinIModel::Destroyed()
 {
-	if (WebServices)
-	{
-		WebServices->SetObserver(nullptr);
-	}
+	Super::Destroyed();
 	if (Impl->OnTilesetLoadFailureHandle.IsValid())
 	{
 		OnCesium3DTilesetLoadFailure.Remove(Impl->OnTilesetLoadFailureHandle);
@@ -621,58 +602,35 @@ void AITwinIModel::UpdateAfterLoadingUIEvent()
 	}
 }
 
-void AITwinIModel::OnAuthorizationDone(bool bSuccess, FString const& AuthError)
+void AITwinIModel::UpdateOnSuccessfulAuthorization()
 {
-	if (bSuccess)
-	{
-		UpdateWebServices();
-		UpdateAfterLoadingUIEvent();
-	}
-	else
-	{
-		UE_LOG(LrtuITwin, Error, TEXT("AITwinIModel Authorization failure (%s)"), *AuthError);
-	}
+	UpdateAfterLoadingUIEvent();
 }
 
-void AITwinIModel::OnITwinsRetrieved(bool bSuccess, FITwinInfos const& Infos)
-{
-	checkf(false, TEXT("an iModel cannot handle iTwins"));
-}
-void AITwinIModel::OnIModelsRetrieved(bool bSuccess, FIModelInfos const& Infos)
-{
-	checkf(false, TEXT("an iModel cannot handle other iModels"));
-}
-void AITwinIModel::OnRealityDataRetrieved(bool bSuccess, FITwinRealityDataInfos const& Infos)
-{
-	checkf(false, TEXT("an iModel cannot handle RealityData"));
-}
 
 #if WITH_EDITOR
 
 void AITwinIModel::PostEditChangeProperty(struct FPropertyChangedEvent& e)
 {
-	UE_LOG(LrtuITwin, Display, TEXT("AITwinIModel::PostEditChangeProperty()"));
+	UE_LOG(LogITwin, Display, TEXT("AITwinIModel::PostEditChangeProperty()"));
 	Super::PostEditChangeProperty(e);
-	FName PropertyName = (e.Property != nullptr) ? e.Property->GetFName() : NAME_None;
-	if (PropertyName == "iModelId"
-		|| PropertyName == "IModelId"
-		|| PropertyName == "ChangesetId"
-		|| PropertyName == "ExportId")
+
+	FName const PropertyName = (e.Property != nullptr) ? e.Property->GetFName() : NAME_None;
+	if (   PropertyName == GET_MEMBER_NAME_CHECKED(AITwinIModel, IModelId)
+		|| PropertyName == GET_MEMBER_NAME_CHECKED(AITwinIModel, ChangesetId)
+		|| PropertyName == GET_MEMBER_NAME_CHECKED(AITwinIModel, ExportId))
 	{
-		UpdateWebServices();
 		// If no ServerConnection has been created yet, make sure we request an authentication and then
 		// process the actual loading request(s).
-		if (!ServerConnection)
+		if (CheckServerConnection() != AITwinServiceActor::EConnectionStatus::Connected)
 		{
-			WebServices->CheckAuthorization();
+			return;
 		}
-		else
-		{
-			UpdateAfterLoadingUIEvent();
-		}
+		UpdateAfterLoadingUIEvent();
 	}
 }
-#endif
+
+#endif // WITH_EDITOR
 
 void FITwinIModelInternals::OnElementTimelineModified(FITwinElementTimeline const& ModifiedTimeline)
 {
@@ -697,7 +655,7 @@ void FITwinIModelInternals::OnClickedElement(ITwinElementID const Element,
 										 FHitResult const& HitResult)
 {
 	FBox const BBox = SceneMapping.GetBoundingBox(Element);
-	UE_LOG(LrtuITwin, Display, TEXT("ElementID 0x%I64x found in iModel %s with BBox %s"),
+	UE_LOG(LogITwin, Display, TEXT("ElementID 0x%I64x found in iModel %s with BBox %s"),
 		Element.value(), *Owner.GetActorNameOrLabel(), *BBox.ToString());
 
 	// TODO_JDE
@@ -738,7 +696,7 @@ void FITwinIModelInternals::OnClickedElement(ITwinElementID const Element,
 			FString const TileIdString(
 				Cesium3DTilesSelection::TileIdUtilities::createTileIdString(
 					*TileID).c_str());
-			UE_LOG(LrtuITwin, Display, TEXT("Owning Tile: %s"), *TileIdString);
+			UE_LOG(LogITwin, Display, TEXT("Owning Tile: %s"), *TileIdString);
 		}
 	}
 	// Another debugging option: extract clicked Element
@@ -757,7 +715,7 @@ void FITwinIModelInternals::OnClickedElement(ITwinElementID const Element,
 	FString const ElementTimelineDescription = GetInternals(*Schedules).ElementTimelineAsString(Element);
 	if (ElementTimelineDescription.IsEmpty())
 		return;
-	UE_LOG(LrtuITwin, Display, TEXT("ElementID 0x%I64x has a timeline:\n%s"),
+	UE_LOG(LogITwin, Display, TEXT("ElementID 0x%I64x has a timeline:\n%s"),
 			Element.value(), *ElementTimelineDescription);
 }
 
@@ -766,7 +724,7 @@ void FITwinIModelInternals::SelectElement(ITwinElementID const InElementID)
 	SceneMapping.SelectElement(InElementID);
 }
 
-namespace ITwin::Schedule
+namespace ITwin::Timeline
 {
 	extern float fProbaOfOpacityAnimation;
 }
@@ -894,7 +852,7 @@ static FAutoConsoleCommandWithWorldAndArgs FCmd_ITwinAllowSynchro4DOpacityAnimat
 	{
 		fProbaOfOpacityAnimation = FCString::Atof(*Args[0]);
 	}
-	ITwin::Schedule::fProbaOfOpacityAnimation = fProbaOfOpacityAnimation;
+	ITwin::Timeline::fProbaOfOpacityAnimation = fProbaOfOpacityAnimation;
 }));
 
 // Console command equivalent to ITwinTestApp's ATopMenu::ZoomOnIModel, useful elsewhere, except that here

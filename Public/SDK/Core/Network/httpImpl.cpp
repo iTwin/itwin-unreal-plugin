@@ -6,11 +6,19 @@
 |
 +--------------------------------------------------------------------------------------*/
 
-module;
-#include <cpr/cpr.h>
+/*--------------------------------------------------------------------------------------+
+|
+|     $Source: httpImpl.cpp $
+|
+|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|
++--------------------------------------------------------------------------------------*/#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 
-module SDK.Core.Network:http;
-import :httpCprImpl;
+#include <cpr/cpr.h>
+#include "http.h"
+#include "httpCprImpl.h"
 
 namespace SDK::Core
 {

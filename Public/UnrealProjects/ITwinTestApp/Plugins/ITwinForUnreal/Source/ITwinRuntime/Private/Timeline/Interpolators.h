@@ -10,7 +10,7 @@
 
 #include "CoreMinimal.h"
 
-namespace ITwin::Schedule::Interpolators {
+namespace ITwin::Timeline::Interpolators {
 
 //! Default interpolator does a linear interpolation.
 class Default
@@ -48,6 +48,6 @@ public:
 	void WillInterpolateBetween(const bool&, const bool&, void*) const {}
 };
 
-} // namespace ITwin::Schedule::Interpolators
+} // namespace ITwin::Timeline::Interpolators
 
 #include "Interpolators.inl"

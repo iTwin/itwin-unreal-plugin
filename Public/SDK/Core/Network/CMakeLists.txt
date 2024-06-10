@@ -1,15 +1,15 @@
 
-add_library(Network 
-		Network.ixx
-		http.ixx
+add_library(Network OBJECT
+		Network.h
+		http.h
 		http.cpp
-		httpCprImpl.ixx
+		httpCprImpl.h
 		httpImpl.cpp 
 )
 target_compile_features(Network PRIVATE ${DefaultCXXSTD})
 target_link_libraries(Network PRIVATE 
-						cpr::cpr 
-						Json
+						cpr::cpr
+						reflectcpp
 					 ) 
 
 set_target_properties(Network PROPERTIES FOLDER "SDK/Core") 

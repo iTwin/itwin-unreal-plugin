@@ -6,10 +6,15 @@
 |
 +--------------------------------------------------------------------------------------*/
 
-import SDK.Core.Network;
-
+/*--------------------------------------------------------------------------------------+
+|
+|     $Source: NetworkHttpTest.cpp $
+|
+|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|
++--------------------------------------------------------------------------------------*/
+#include "Network.h"
 #include <gtest/gtest.h>
-#include <rfl/json.hpp> //note: we should not include this but compiler error VS 2022 17.9.2: static function 'void yyjson_mut_doc_set_root(yyjson_mut_doc *,yyjson_mut_val *)' declared but not defined
 
 //TEST(HttpTest, Put) {
 //	auto http = SDK::Core::Http::New();

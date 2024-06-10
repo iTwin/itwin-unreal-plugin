@@ -162,7 +162,7 @@ void AddMeshPrimitive(const AddMeshPrimitiveArgs& args)
 											return color2;
 										}
 										else
-											static_assert(std::is_void_v<SourceColor>);
+											static_assert(std::is_void_v<typename CompleteType::value_type>);
 									}();
 								colors.push_back(color);
 							}
@@ -230,6 +230,14 @@ void AddMeshPrimitive(const AddMeshPrimitiveArgs& args)
 		}
 	}
 }
+#ifdef _WIN32
+#define _TEXT(quote) L##quote
+#define _TOSTRING(s) std::to_wstring(s)
+
+#else
+#define _TEXT(quote) #quote
+#define _TOSTRING(s) std::to_string(s)
+#endif
 
 void CheckGltf(const CesiumGltf::Model& expected, const CesiumGltf::Model& actual)
 {
@@ -240,9 +248,9 @@ void CheckGltf(const CesiumGltf::Model& expected, const CesiumGltf::Model& actua
 			const auto pathBase = std::filesystem::path(BEUTILS_WORK_DIR)/subDir/Catch::getResultCapture().getCurrentTestName();
 			std::filesystem::create_directories(pathBase.parent_path());
 			const auto json = CesiumGltfWriter::GltfWriter().writeGltf(model, {.prettyPrint = true}).gltfBytes;
-			std::ofstream(pathBase.native()+L".json") << std::string((const char*)json.data(), json.size()) << std::endl;
+			std::ofstream(pathBase.native() + _TEXT(".json")) << std::string((const char*)json.data(), json.size()) << std::endl;
 			for (auto bufferIndex = 0; bufferIndex < model.buffers.size(); ++bufferIndex)
-				std::ofstream(pathBase.native()+std::to_wstring(bufferIndex)+L".bin") <<
+				std::ofstream(pathBase.native()+ _TOSTRING(bufferIndex)+ _TEXT(".bin")) <<
 					std::string((const char*)model.buffers[bufferIndex].cesium.data.data(),
 					model.buffers[bufferIndex].cesium.data.size());
 			return json;

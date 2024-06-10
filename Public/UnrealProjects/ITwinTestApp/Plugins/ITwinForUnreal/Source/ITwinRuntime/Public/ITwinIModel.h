@@ -8,10 +8,7 @@
 
 #pragma once
 
-#include <GameFramework/Actor.h>
-#include <ITwinFwd.h>
-#include <ITwinWebServices/ITwinWebServicesObserver.h>
-#include <Logging/LogMacros.h>
+#include <ITwinServiceActor.h>
 #include <Templates/PimplPtr.h>
 
 #include <ITwinIModel.generated.h>
@@ -21,9 +18,7 @@ struct FChangesetInfos;
 struct FITwinExportInfos;
 struct FITwinCesium3DTilesetLoadFailureDetails;
 struct FSavedViewInfos;
-class UITwinWebServices;
 
-DECLARE_LOG_CATEGORY_EXTERN(LrtuITwin, Log, All);
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnIModelLoaded, bool, bSuccess);
 
@@ -46,15 +41,11 @@ enum class ELoadingMethod : uint8
 
 
 UCLASS()
-class ITWINRUNTIME_API AITwinIModel : public AActor, public IITwinWebServicesObserver
+class ITWINRUNTIME_API AITwinIModel : public AITwinServiceActor
 {
 	GENERATED_BODY()
 public:
 	TSharedPtr<FITwinGeolocation> Geolocation;
-
-	UPROPERTY(Category = "iTwin",
-		EditAnywhere)
-	TObjectPtr<AITwinServerConnection> ServerConnection;
 
 	UPROPERTY(Category = "iTwin|Loading",
 		EditAnywhere)
@@ -158,15 +149,13 @@ public:
 
 private:
 	void SetResolvedChangesetId(FString const& InChangesetId);
-	void UpdateWebServices();
 	void UpdateAfterLoadingUIEvent();
 	void DestroyTileset();
 
+	/// overridden from AITwinServiceActor:
+	virtual void UpdateOnSuccessfulAuthorization() override;
+
 	/// overridden from IITwinWebServicesObserver:
-	virtual void OnAuthorizationDone(bool bSuccess, FString const& Error) override;
-	virtual void OnITwinsRetrieved(bool bSuccess, FITwinInfos const& Infos) override;
-	virtual void OnIModelsRetrieved(bool bSuccess, FIModelInfos const& Infos) override;
-	virtual void OnRealityDataRetrieved(bool bSuccess, FITwinRealityDataInfos const& Infos) override;
 	virtual void OnChangesetsRetrieved(bool bSuccess, FChangesetInfos const& ChangesetInfos) override;
 	virtual void OnExportInfosRetrieved(bool bSuccess, FITwinExportInfos const& ExportInfos) override;
 	virtual void OnExportInfoRetrieved(bool bSuccess, FITwinExportInfo const& ExportInfo) override;
@@ -177,6 +166,8 @@ private:
 	virtual void OnSavedViewDeleted(bool bSuccess, FString const& Response) override;
 	virtual void OnSavedViewEdited(bool bSuccess, FSavedView const& SavedView, FSavedViewInfo const& SavedViewInfo) override;
 
+	/// overridden from FITwinDefaultWebServicesObserver:
+	virtual const TCHAR* GetObserverName() const override;
 
 	UFUNCTION()
 	void OnTilesetLoaded();
@@ -194,9 +185,6 @@ private:
 		meta = (EditCondition = "LoadingMethod == ELoadingMethod::LM_Manual"),
 		EditAnywhere)
 	FString ExportId;
-
-	UPROPERTY()
-	TObjectPtr<UITwinWebServices> WebServices;
 
 	//! FITwinIModelImplAccess is defined in ITwinImodel.cpp, so it is only usable here.
 	//! It is needed for some free functions (console commands) to access the impl.

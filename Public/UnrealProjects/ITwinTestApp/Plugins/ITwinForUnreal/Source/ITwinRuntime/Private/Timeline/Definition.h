@@ -17,14 +17,14 @@
 	#include <BeHeaders/Boost/BoostFusionUtils.h>
 #include <Compil/AfterNonUnrealIncludes.h>
 
-#include "Schedule.h"
+#include "TimelineBase.h"
 
 /// Hack: needs to be in the same namespace as its specialization(s) :/
-namespace ITwin::Timeline { template<typename PropertyClass> FString _LrtScheduleGetPropertyName(); }
+namespace ITwin::Timeline { template<typename PropertyClass> FString _iTwinTimelineGetPropertyName(); }
 //! Example: the following call:
 //! 
-//! LRT_SCHEDULE_DEFINE_PROPERTY_VALUES(Color,
-//!     (bool, hasColor_, ITwin::Schedule::Interpolators::BoolOr)
+//! ITWIN_TIMELINE_DEFINE_PROPERTY_VALUES(Color,
+//!     (bool, hasColor_, ITwin::Timeline::Interpolators::BoolOr)
 //!     (CLR, value_)
 //! )
 //! 
@@ -38,32 +38,32 @@ namespace ITwin::Timeline { template<typename PropertyClass> FString _LrtSchedul
 //! using Color = BoostFusionUtils::SequenceEx<ColorBase>
 //! struct ColorInterpolators // Actually a boost::fusion::sequence
 //! {
-//!     ITwin::Schedule::Interpolators::BoolOr hasColor_;
-//!     ITwin::Schedule::Interpolators::Default value_;
+//!     ITwin::Timeline::Interpolators::BoolOr hasColor_;
+//!     ITwin::Timeline::Interpolators::Default value_;
 //! };
-//! inline FString _LrtScheduleGetPropertyName<Color>() { return "Color"; }
-//! ColorInterpolators _LrtScheduleGetInterpolators(Color); // Not implemented, used with decltype().
+//! inline FString _iTwinTimelineGetPropertyName<Color>() { return "Color"; }
+//! ColorInterpolators _iTwinTimelineGetInterpolators(Color); // Not implemented, used with decltype().
 //!
-#define LRT_SCHEDULE_DEFINE_PROPERTY_VALUES(propertyName, values)			\
+#define ITWIN_TIMELINE_DEFINE_PROPERTY_VALUES(propertyName, values)			\
 	BOOST_FUSION_DEFINE_STRUCT_INLINE(										\
 		BOOST_PP_CAT(propertyName, Base),									\
 		BOOST_PP_SEQ_TRANSFORM(												\
-			_LRT_SCHEDULE_DETAIL_DEFINE_PROPERTY_VALUES_IMPL_1, ,			\
+			_ITWIN_TIMELINE_DETAIL_DEFINE_PROPERTY_VALUES_IMPL_1, ,			\
 			BOOST_PP_VARIADIC_SEQ_TO_SEQ(values)))							\
 	using propertyName =													\
 		::BoostFusionUtils::SequenceEx<BOOST_PP_CAT(propertyName, Base)>;	\
 	BOOST_FUSION_DEFINE_STRUCT_INLINE(										\
 		BOOST_PP_CAT(propertyName, Interpolators),							\
 		BOOST_PP_SEQ_TRANSFORM(												\
-			_LRT_SCHEDULE_DETAIL_DEFINE_PROPERTY_VALUES_IMPL_2, ,			\
+			_ITWIN_TIMELINE_DETAIL_DEFINE_PROPERTY_VALUES_IMPL_2, ,			\
 			BOOST_PP_VARIADIC_SEQ_TO_SEQ(values)))							\
-	template<> inline FString _LrtScheduleGetPropertyName<propertyName>()	\
+	template<> inline FString _iTwinTimelineGetPropertyName<propertyName>()	\
 		{ return BOOST_PP_STRINGIZE(propertyName); }						\
-	BOOST_PP_CAT(propertyName, Interpolators) _LrtScheduleGetInterpolators(propertyName);
+	BOOST_PP_CAT(propertyName, Interpolators) _iTwinTimelineGetInterpolators(propertyName);
 
 //! Example: the following call:
 //! 
-//! LRT_SCHEDULE_DEFINE_OBJECT_PROPERTIES(Element,
+//! ITWIN_TIMELINE_DEFINE_OBJECT_PROPERTIES(Element,
 //!     (Visibility, visibility_)
 //!     (Color, color_)
 //! )
@@ -83,31 +83,31 @@ namespace ITwin::Timeline { template<typename PropertyClass> FString _LrtSchedul
 //! using ElementState = BoostFusionUtils::SequenceEx<ElementStateBase>;
 //! struct ElementTimelineBase // Actually a boost::fusion::sequence
 //! {
-//!     ITwin::Schedule::PropertyTimeline<Visibility> visibility_;
-//!     ITwin::Schedule::PropertyTimeline<Color> color_;
+//!     ITwin::Timeline::PropertyTimeline<Visibility> visibility_;
+//!     ITwin::Timeline::PropertyTimeline<Color> color_;
 //! };
-//! using ElementTimeline = ITwin::Schedule::ObjectTimeline<
-//!     ITwin::Schedule::ObjectTimelineMetadata<
+//! using ElementTimeline = ITwin::Timeline::ObjectTimeline<
+//!     ITwin::Timeline::ObjectTimelineMetadata<
 //!         BoostFusionUtils::SequenceEx<ElementTimelineBase>
 //!         ElementState>>;
 //! 
-#define LRT_SCHEDULE_DEFINE_OBJECT_PROPERTIES(objectName, properties)					\
+#define ITWIN_TIMELINE_DEFINE_OBJECT_PROPERTIES(objectName, properties)					\
 	BOOST_FUSION_DEFINE_STRUCT_INLINE(objectName, properties)							\
 	BOOST_FUSION_DEFINE_STRUCT_INLINE(													\
 		BOOST_PP_CAT(objectName, StateBase),											\
 		BOOST_PP_SEQ_TRANSFORM(															\
-			_LRT_SCHEDULE_DETAIL_DEFINE_OBJECT_PROPERTIES_IMPL_1, ,						\
+			_ITWIN_TIMELINE_DETAIL_DEFINE_OBJECT_PROPERTIES_IMPL_1, ,					\
 			BOOST_PP_VARIADIC_SEQ_TO_SEQ(properties)))									\
 	using BOOST_PP_CAT(objectName, State) =												\
 		::BoostFusionUtils::SequenceEx<BOOST_PP_CAT(objectName, StateBase)>;			\
 	BOOST_FUSION_DEFINE_STRUCT_INLINE(													\
 		BOOST_PP_CAT(objectName, TimelineBase),											\
 		BOOST_PP_SEQ_TRANSFORM(															\
-			_LRT_SCHEDULE_DETAIL_DEFINE_OBJECT_PROPERTIES_IMPL_2, ,						\
+			_ITWIN_TIMELINE_DETAIL_DEFINE_OBJECT_PROPERTIES_IMPL_2, ,					\
 			BOOST_PP_VARIADIC_SEQ_TO_SEQ(properties)))									\
 	using BOOST_PP_CAT(objectName, Timeline) =											\
-		::ITwin::Schedule::ObjectTimeline<										\
-			::ITwin::Schedule::ObjectTimelineMetadata<							\
+		::ITwin::Timeline::ObjectTimeline<												\
+			::ITwin::Timeline::ObjectTimelineMetadata<									\
 				::BoostFusionUtils::SequenceEx<BOOST_PP_CAT(objectName, TimelineBase)>,	\
 				BOOST_PP_CAT(objectName, State)>>;
 

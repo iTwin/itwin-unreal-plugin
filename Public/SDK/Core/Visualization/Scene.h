@@ -1,12 +1,17 @@
-export module SDK.Core.Visualization:Scene;
-import<memory>;
-import<string>;
-import<vector>;
-import<functional>;
-import SDK.Core.Network;
-import SDK.Core.Tools;
+/*--------------------------------------------------------------------------------------+
+|
+|     $Source: Scene.h $
+|
+|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|
++--------------------------------------------------------------------------------------*/
 
-export namespace SDK::Core {
+#pragma once
+#include <string>
+#include "Core/Network/Network.h"
+#include "Core/Tools/Tools.h"
+
+MODULE_EXPORT namespace SDK::Core {
 
 	class IDecorationEnvironment : public Tools::Factory<IDecorationEnvironment, std::string>, public std::enable_shared_from_this<IDecorationEnvironment>
 	{

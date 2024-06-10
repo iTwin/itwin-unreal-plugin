@@ -12,6 +12,19 @@
 #include "UObject/NoExportTypes.h"
 #include "ITwinWebServices_Info.generated.h"
 
+
+USTRUCT(BlueprintType)
+struct FITwinGeolocationInfo
+{
+	GENERATED_USTRUCT_BODY()
+
+	UPROPERTY(BlueprintReadOnly)
+		double Latitude = 0.0;
+
+	UPROPERTY(BlueprintReadOnly)
+		double Longitude = 0.0;
+};
+
 USTRUCT(BlueprintType)
 struct FITwinExportInfo
 {
@@ -188,4 +201,23 @@ struct FITwinRealityDataInfos
 
 	UPROPERTY(BlueprintReadOnly, Category = "RealityData")
 		TArray<FITwinRealityDataInfo> Infos;
+};
+
+
+USTRUCT(BlueprintType)
+struct FITwinRealityData3DInfo : public FITwinRealityDataInfo
+{
+	GENERATED_USTRUCT_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "RealityData")
+		bool bGeolocated = false;
+
+	UPROPERTY(BlueprintReadOnly, Category = "RealityData")
+		FITwinGeolocationInfo ExtentSouthWest = {};
+
+	UPROPERTY(BlueprintReadOnly, Category = "RealityData")
+		FITwinGeolocationInfo ExtentNorthEast = {};
+
+	UPROPERTY(BlueprintReadOnly, Category = "RealityData")
+		FString MeshUrl;
 };

@@ -120,20 +120,6 @@ void AITwinSavedView::UpdateSavedView()
 		WebServices->GetSavedView(SavedViewId);
 }
 
-
-namespace ITwin
-{
-	void UpdateWebServices(AActor* Owner, IITwinWebServicesObserver* InObserver,
-		TObjectPtr<AITwinServerConnection>& ServerConnection,
-		TObjectPtr<UITwinWebServices>& WebServices);
-}
-
-void AITwinSavedView::UpdateWebServices()
-{
-	// use same code as for AITwinIModel...
-	ITwin::UpdateWebServices(this, this, ServerConnection, WebServices);
-}
-
 void AITwinSavedView::MoveToSavedView()
 {
 	check(Impl->bSavedViewTransformIsSet);
@@ -227,56 +213,14 @@ void AITwinSavedView::Destroyed()
 	Impl->DestroyChildren();
 }
 
-void AITwinSavedView::OnAuthorizationDone(bool bSuccess, FString const& Error)
+const TCHAR* AITwinSavedView::GetObserverName() const
 {
-	if (bSuccess)
-	{
-		UpdateWebServices();
-		if (ServerConnection && !ServerConnection->AccessToken.IsEmpty())
-		{
-			UpdateSavedView();
-		}
-	}
-	else
-	{
-		UE_LOG(LrtuServer, Error, TEXT("AITwinSavedView Authorization failure (%s)"), *Error);
-	}
+	return TEXT("ITwinSavedView");
 }
 
-void AITwinSavedView::OnITwinsRetrieved(bool bSuccess, FITwinInfos const& Infos)
+void AITwinSavedView::UpdateOnSuccessfulAuthorization()
 {
-	checkf(false, TEXT("ITwinSavedView cannot handle other iTwins"));
-}
-
-void AITwinSavedView::OnIModelsRetrieved(bool bSuccess, FIModelInfos const& IModelInfos)
-{
-	checkf(false, TEXT("ITwinSavedView cannot handle changesets"));
-}
-
-void AITwinSavedView::OnRealityDataRetrieved(bool bSuccess, FITwinRealityDataInfos const& RealityDataInfos)
-{
-	checkf(false, TEXT("ITwinSavedView cannot handle changesets"));
-}
-
-void AITwinSavedView::OnChangesetsRetrieved(bool bSuccess, FChangesetInfos const& ChangesetInfos)
-{
-	checkf(false, TEXT("ITwinSavedView cannot handle changesets"));
-}
-void AITwinSavedView::OnExportInfosRetrieved(bool bSuccess, FITwinExportInfos const& ExportInfos)
-{
-	checkf(false, TEXT("ITwinSavedView cannot handle exports"));
-}
-void AITwinSavedView::OnExportInfoRetrieved(bool bSuccess, FITwinExportInfo const& ExportInfo)
-{
-	checkf(false, TEXT("ITwinSavedView cannot handle exports"));
-}
-void AITwinSavedView::OnExportStarted(bool bSuccess, FString const& ExportId)
-{
-	checkf(false, TEXT("ITwinSavedView cannot handle exports"));
-}
-void AITwinSavedView::OnSavedViewInfosRetrieved(bool bSuccess, FSavedViewInfos const& Infos)
-{
-	checkf(false, TEXT("ITwinSavedView cannot handle SavedViews"));
+	UpdateSavedView();
 }
 
 void AITwinSavedView::OnSavedViewAdded(bool bSuccess, FSavedViewInfo const& SavedViewInfo)

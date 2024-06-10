@@ -6,7 +6,14 @@
 |
 +--------------------------------------------------------------------------------------*/
 
-import SDK.Core.Json;
+/*--------------------------------------------------------------------------------------+
+|
+|     $Source: JsonTest.cpp $
+|
+|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|
++--------------------------------------------------------------------------------------*/
+#include "Json.h"
 
 #include <variant>
 
@@ -33,7 +40,8 @@ TEST(JsonTest, json_tostring) {
 TEST(JsonTest, json_fromstring) {
 	const std::string r = SDK::Core::Json::ToString(homer);
 	const std::string json_string("{\"first_name\":\"Homer\",\"last_name\":\"Simpson\",\"age\":45}");
-	auto homer = SDK::Core::Json::FromString<Person>(json_string);
+	Person homer;
+	SDK::Core::Json::FromString(homer, json_string);
 	EXPECT_EQ(homer.first_name, "Homer");
 	EXPECT_EQ(homer.last_name, "Simpson");
 	EXPECT_EQ(homer.age, 45);
@@ -82,7 +90,6 @@ TEST(JsonTest, json_fromstring3) {
 }
 
 //typedef std::map<std::string, std::variant<Value::v, std::vector<Value::v>, std::map<std::string, Value::v> >> GenericJSon;
-#endif
 
 class Generic {
 public:
@@ -91,7 +98,7 @@ public:
 		std::unordered_map<std::string, Generic>>;
 
 	Generic(const ReflectionType& _value) : value_(_value) {}
-
+	Generic() {}
 	~Generic() = default;
 
 	ReflectionType reflection() const { return value_; };
@@ -109,7 +116,7 @@ public:
 							std::unordered_map<StringType, GenericT<StringType, Types...>>>;
 
 	GenericT(const ReflectionType& _value) : value_(_value) {}
-
+	GenericT(){}
 	~GenericT() = default;
 
 	ReflectionType reflection() const { return value_; };
@@ -129,7 +136,7 @@ public:
 	using ReflectionType = BaseType<ThisType>;
 
 	Generic2T(const ReflectionType& _value) : value_(_value) {}
-
+	Generic2T(){}
 	~Generic2T() = default;
 
 	ReflectionType reflection() const { return value_; };
@@ -172,10 +179,12 @@ TEST(JsonTest, json_fromstring2) {
 		);
 
 	//auto generic = SDK::Core::Json::FromString<GenericJSon>(json_string);
-	auto generic = SDK::Core::Json::FromString<Generic>(json_string);
+	Generic generic;
+	SDK::Core::Json::FromString(generic, json_string);
 	std::string s = SDK::Core::Json::ToString(generic);
 
-	auto generic2 = SDK::Core::Json::FromString<Generic2>(json_string);
+	Generic2 generic2;
+	SDK::Core::Json::FromString(generic2, json_string);
 	//const std::string r = SDK::Core::Json::ToString(homer);
 	//const std::string json_string("{\"first_name\":\"Homer\",\"last_name\":\"Simpson\",\"age\":45}");
 	//auto homer = SDK::Core::Json::FromString<Person>(json_string);
@@ -183,3 +192,4 @@ TEST(JsonTest, json_fromstring2) {
 	//EXPECT_EQ(homer.last_name, "Simpson");
 	//EXPECT_EQ(homer.age, 45);
 }
+#endif

@@ -10,7 +10,7 @@
 
 #include "CoreMinimal.h"
 #include <ITwinElementID.h>
-#include <Timeline/Schedule/TimeInSeconds.h>
+#include <Timeline/TimeInSeconds.h>
 #include <Math/Vector.h>
 #include <Compil/StdHash.h>
 

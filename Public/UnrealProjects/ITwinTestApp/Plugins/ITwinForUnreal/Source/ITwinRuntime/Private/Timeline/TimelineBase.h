@@ -1,6 +1,6 @@
 /*--------------------------------------------------------------------------------------+
 |
-|     $Source: Schedule.h $
+|     $Source: TimelineBase.h $
 |
 |  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
 |
@@ -9,7 +9,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include <Timeline/Schedule/TimeInSeconds.h>
+#include <Timeline/TimeInSeconds.h>
 
 #include <Compil/BeforeNonUnrealIncludes.h>
 	#include <boost/multi_index_container.hpp>
@@ -33,11 +33,11 @@ class FJsonObject;
 //! They are supposed to be used with any user-defined properties and metadata.
 //! Do not add specific data like "color", "visibility" or whatever here.
 
-namespace ITwin::Schedule
+namespace ITwin::Timeline
 {
 
 //! Defines how values are computed (interpolated) between 2 entries.
-enum class InterpolationMode: int32_t
+enum class Interpolation: int32_t
 {
 	Step, //!< Use value of the "previous" entry - TODO_GCO: rename 'Previous'? (see 'Next')
 	Linear, //!< Linear interpolation between previous and next entries.
@@ -58,7 +58,7 @@ class PropertyEntryBase: boost::equality_comparable<PropertyEntryBase>
 {
 public:
 	double time_ = {};
-	InterpolationMode interpolation_ = {};
+	Interpolation interpolation_ = {};
 };
 
 std::size_t hash_value(const PropertyEntryBase& v) noexcept;
@@ -125,7 +125,7 @@ struct ObjectTimelineMetadata
 //! object (ObjectState) at any given time.
 //! The ObjectState is the set of the corresponding Property values at the given time.
 template<class _Metadata>
-class ObjectTimeline: public _Metadata::Base
+class ObjectTimeline : public _Metadata::Base
 {
 public:
 	virtual ~ObjectTimeline();
@@ -144,9 +144,9 @@ public:
 template<class _Metadata>
 std::size_t hash_value(const ObjectTimeline<_Metadata>& timeline) noexcept;
 
-//! A MainTimeline is a group of ObjectTimelines.
+//! A MainTimelineBase is a group of ObjectTimeline's.
 template<class _ObjectTimeline>
-class MainTimeline
+class MainTimelineBase
 {
 public:
 	using ObjectTimeline = _ObjectTimeline;
@@ -160,7 +160,7 @@ public:
 		>
 	>;
 	CONSTRUCT_ENUMERATION(TimelineObjectContainerTags, (Index, Ptr, Value));
-	virtual ~MainTimeline() {}
+	virtual ~MainTimelineBase() {}
 	[[nodiscard]] const TimelineObjectContainer& GetContainer() const { return container_; }
 	[[nodiscard]] const FTimeRangeInSeconds& GetTimeRange() const;
 	[[nodiscard]] FDateRange GetDateRange() const;
@@ -173,6 +173,6 @@ private:
 	FTimeRangeInSeconds timeRange_ = ITwin::Time::InitForMinMax();
 };
 
-} // namespace ITwin::Schedule
+} // namespace ITwin::Timeline
 
-#include "Schedule.inl"
+#include "TimelineBase.inl"
