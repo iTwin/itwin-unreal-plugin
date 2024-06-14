@@ -1,16 +1,27 @@
 # itwin-unreal-plugin
 
-## Supported platforms
+## Introduction
+The iTwin for Unreal SDK enables streaming of iModels  and reality data from the iTwin cloud into Unreal Engine for high-fidelity visualization and consumption. Additionally, the SDK allows Unreal Engine developers to create custom applications which can expand upon the capabilities provided by the SDK out of the box. This enables the creation of tailored interactive experiences around iTwins. In addition, we provide a pre-compiled plugin version of the SDK.<br>
+The streaming technology is based on the open-source Cesium 3D tiles (link to the Cesium github) and offers great performance even with large datasets. The SDK is based on the experience gathered through the technology previews introduced by the Datasmith Connector and the 3DFT plugin during the last year.<br>  
+The iTwin for Unreal SDK will supersede these technology demos and become the foundation of our upcoming advanced visualization products. It embodies Bentley’s long-term commitment to offering scalable and future-proven technologies and open standards for any visualization needs of infrastructure and Digital Twins. <br> 
+This SDK will be regularly updated. We appreciate your feedback to turn this exciting new technology into the leading foundation for advanced visualization of Digital Twins leveraging game engine technology. We encourage you to participate in the SDK’s development with your ideas, requests and wishes, and help us shape the future of visualization together. 
 
-Only Windows is supported at the moment.<br>
-Only [Unreal Engine 5.3](https://dev.epicgames.com/documentation/en-us/unreal-engine/installing-unreal-engine?application_version=5.3) is supported at the moment.
 
 ## Supported features
+- Real-time 3D rendering, navigation and visualization of iModels with high performance; other iTwin related data will be added in future updates.
+- Accessing saved views 
+- Exposed API for custom blueprints (for loading reality data, for example) 
 
-Only iModels and their Saved Views are supported at the moment ; Reality Data can be loaded through blueprints only (no GUI in ITwinTestApp for them at the moment).
-4D Schedules are not yet supported in this version.
 
-## <a id="install-plugin"></a> Installing iTwin for Unreal
+## Supported platforms & requirements
+This initial release supports Windows 11; Windows 10 might work, but has not been tested officially (you may conduct tests on Windows 10 yourself if you would like). A version for Mac is in development.<br>
+Only iModels and their Saved Views are supported at the moment; Reality Data can be loaded through blueprints only (no GUI is available in the ITwinTestApp for them at the moment).<br>
+[Unreal Engine 5.3](https://dev.epicgames.com/documentation/en-us/unreal-engine/installing-unreal-engine?application_version=5.3) is the currently supported version. Other Unreal Engine versions will be supported in future updates.<br>
+You also need a Bentley account to stream iModels from the cloud.<br>
+To run Unreal Engine, make sure you are using a dedicated GPU. The performance largely depends on the power of your graphics card. For more information on recommended system specs for Unreal Engine, please visit [Epic's website](https://dev.epicgames.com/documentation/de-de/unreal-engine/hardware-and-software-specifications-for-unreal-engine).
+
+
+## <a id="install-plugin"></a> 1. Installing the precompiled iTwin plugin for Unreal
 
 1. Go to the [Releases](https://github.com/iTwin/itwin-unreal-plugin/releases) page.
 2. Download ITwinForUnreal.zip from the latest release.
@@ -23,63 +34,56 @@ Only iModels and their Saved Views are supported at the moment ; Reality Data ca
 If you do not want to install the plugin in the Unreal Engine folder and instead prefer to put it directly in your Unreal project, just extract the zip archive inside your app's `Plugins` folder (you may need to create this folder).<br>
 For example: `C:\MyUnrealApp\Plugins\ITwinForUnreal`.
 
-## Using iTwin for Unreal
+## 2. Using the installed iTwin plugin inside Unreal Engine
 
 ### <a id="use-plugin-in-new-project"></a> In a new project
 
-1. If you installed the plugin in the Unreal Engine folder, enable plugin `iTwin for Unreal` as explained [here](https://dev.epicgames.com/documentation/en-us/unreal-engine/working-with-plugins-in-unreal-engine).
+1. If you installed the plugin in the Unreal Engine folder, enable the plugin `iTwin for Unreal` as explained [here](https://dev.epicgames.com/documentation/en-us/unreal-engine/working-with-plugins-in-unreal-engine).
 2. If not done yet, [configure your iTwin Platform account](#configure-itwin-platform) and take note of your app's client ID.
-3. To access your iModels from your Unreal app, you will have to give the iTwin app ID to the plugin.<br>
+3. To access your iModels from your Unreal app, you will have to provide the iTwin app ID to the plugin.<br>
    This can be done in several ways:
    - Drag and drop an `ITwinAppIdHelper` actor from the Content Browser into your level.<br>
      This actor can be found in the content browser inside folder `Plugins/iTwin for Unreal C++ Classes/ITwinRuntime/Public`.<br>
-     Then in the actor's Details panel, paste you iTwin app ID inside the field `ITwin/App Id` and validate.<br>
+     Then, in the actor's Details panel, paste your iTwin app ID inside the field `ITwin/App Id` and validate.<br>
      Now, the plugin will use this app ID whenever this level is loaded.<br>
-     This method is useful if you want to simply add an iModel manually in your level inside the Unreal Editor (see below).
+     This method is useful if you want to simply add an iModel manually into your level inside the Unreal Editor (see below).
    - If you use C++ code or Blueprint, you can instead directly call the static function `AITwinServerConnection::SetITwinAppID()`.<br>
-     This is typically done in your app's module `StartupModule()` function (if using C++), or in the `BeginPlay` event of your Game Mode (if using Blueprint).
-4. To manually add an iModel in your level inside the Unreal Editor, drag and drop an `ITwinIModel` actor from the Content Browser into your level.<br>
+     This is typically done in your app's module `StartupModule()` function (if using C++), or in the `BeginPlay` event of your Game Mode (if using Blueprints).
+4. To manually add an iModel into your level inside the Unreal Editor, drag and drop an `ITwinIModel` actor from the Content Browser into your level.<br>
    This actor can be found in the content browser inside folder `Plugins/iTwin for Unreal C++ Classes/ITwinRuntime/Public`.<br>
-   Then in the actor's Details panel, go to the `Loading` section and fill these fields:
+   Then, in the actor's Details panel, go to the `Loading` section and fill in these fields:
    - `Loading Method`: `Automatic`
    - `iModel Id`: the ID of your iModel
    - `Changeset Id`: the ID of the changeset you want to import
    Then the iModel should appear in the viewport.<br>
-   This may take some time if the iModel has never been imported yet (iTwin server needs to convert it to Cesium format).
+   This may take some time if the iModel has never been imported yet (because the iTwin server needs to convert it to the Cesium format first).
 
-### In an existing project that uses the [3DFT plugin](https://github.com/iTwin/unreal-engine-3dft-plugin)
+### In an existing project which uses the [3DFT plugin](https://github.com/iTwin/unreal-engine-3dft-plugin)
 
 1. Make sure your project is using Unreal Engine version 5.3.<br>
    See "Change a Project's Unreal Engine Version" [here](https://dev.epicgames.com/documentation/en-us/unreal-engine/managing-game-code-in-unreal-engine?application_version=5.3).
-2. Remove dependency to the 3DFT plugin. This is done by following these steps:
+2. Remove the dependency to the 3DFT plugin. This is done by following these steps:
    - If the 3DFT plugin folder is located inside your project:
      1. Make sure your project is not open in Unreal Editor.
-     2. Remove folder `Plugins\iTwin` from your project.
+     2. Remove the folder `Plugins\iTwin` from your project.
    - If the 3DFT plugin folder is located inside in the Unreal Engine folder:<br>
-     In Unreal Editor, disable the `iTwin` plugin as explained [here](https://dev.epicgames.com/documentation/en-us/unreal-engine/working-with-plugins-in-unreal-engine?application_version=5.3).
-3. Make sure your project is not open in Unreal Editor.
+     In the Unreal Editor, disable the `iTwin` plugin as explained [here](https://dev.epicgames.com/documentation/en-us/unreal-engine/working-with-plugins-in-unreal-engine?application_version=5.3).
+3. Make sure your project is not open in the Unreal Editor.
 4. If not done yet, [install the `ITwinForUnreal` plugin](#install-plugin).
 5. Remove the folders `Binaries` and `Intermediate` that may exist at the root of your project's folder.
 6. If your project contains C++ code, these additional steps are needed:
-   - Enable C++20 support, this can be done by adding/updating this line in your *.Target.cs files:<br>
+   - Enable C++20 support; this can be done by adding/updating this line in your *.Target.cs files:<br>
      `DefaultBuildSettings = BuildSettingsVersion.V4;`
    - Open your .uproject file in a text editor, and remove any dependency on module `iTwin` inside the `Modules/AdditionalDependencies` section.
    - Some classes have been renamed (eg. `AiModel` -> `AITwinIModel`), you may need to update your code accordingly.<br>
      Please refer to file `ITwinForUnreal/Config/BaseITwinForUnreal.ini` for the list of changes.
-7. Modify your app so that it gives the iTwin app ID to the plugin, as explained in the ["using the plugin in a new project"](#use-plugin-in-new-project) section.
+7. Modify your app so that it provides the iTwin app ID to the plugin, as explained in the ["using the plugin in a new project"](#use-plugin-in-new-project) section.
 
-Now, if you open your .uproject in the Unreal Editor, it should (build and) run without error.
+Now, if you open your .uproject in the Unreal Editor, it should (build and) run without any error.
 
-### Behavior changes compared to 3DFT plugin
+## <a id="configure-itwin-platform"></a> 3. Configure access to the iTwin Platform
 
-#### Saved views
-
-If you use function `ITwinPositionToUE()` to convert the camera position of a saved view from "iTwin" space to "Unreal" space, you should now pass (0,0,0) to parameter `ModelOrigin`.<br>
-This is a "breaking" change compared to the 3DFT plugin, which required to pass the iModel's `ModelCenter` to get correct result.
-
-## <a id="configure-itwin-platform"></a> Configure access to the iTwin Platform
-
-Create and configure your iTwin Platform account.<br>
+Create and configure your iTwin Platform account:<br>
 1. Go to the [iTwin Platform developer portal](https://developer.bentley.com/) and create an account.<br>
 2. Go to [My Models](https://developer.bentley.com/my-imodels/) and create a new iModel.<br>
 3. Go to [My Apps](https://developer.bentley.com/my-apps/) and [register a new iTwin App](https://developer.bentley.com/tutorials/quickstart-web-and-service-apps/#12-register-your-application):
@@ -87,7 +91,7 @@ Create and configure your iTwin Platform account.<br>
    - Redirect URIs: http://localhost:3000/signin-callback
    - Scopes: `savedviews:read savedviews:modify itwins:read imodels:read mesh-export:read mesh-export:modify offline_access realitydata:read`
 
-## Developing with Unreal Engine
+## 4. Developing with Unreal Engine: Compiling the plugin yourself
 
 ### Prerequisites
 
@@ -95,7 +99,7 @@ Create and configure your iTwin Platform account.<br>
 - [Python 3.9 or newer](https://www.python.org/downloads/)
 - [Visual Studio 2022](https://dev.epicgames.com/documentation/en-us/unreal-engine/setting-up-visual-studio-development-environment-for-cplusplus-projects-in-unreal-engine?application_version=5.3)
 
-### Configure your machine for develoment
+### Configure your machine for development
 
 Developer Mode for Windows must be enabled, as explained [here](https://learn.microsoft.com/en-us/windows/apps/get-started/enable-your-device-for-development).
 
@@ -129,3 +133,6 @@ Developer Mode for Windows must be enabled, as explained [here](https://learn.mi
 1. remove your cmake Build folder
 2. call `git clean -dfX` in your source folder
 
+## Support
+
+We are looking forward to your feedback and your ideas for the plugin. If you encounter any bugs, please use the Issues tab to report any bugs.
