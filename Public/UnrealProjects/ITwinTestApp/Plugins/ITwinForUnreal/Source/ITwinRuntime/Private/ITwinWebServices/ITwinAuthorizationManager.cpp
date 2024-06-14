@@ -42,9 +42,7 @@ struct FAuthorizationCredentials
 {
 	static constexpr int LocalhostPort = 3000;
 	static constexpr auto RedirectUriEndpoint = TEXT("/signin-callback");
-	static constexpr auto Scope = TEXT("itwins:read imodels:read realitydata:read") \
-		" savedviews:read savedviews:modify" \
-		" mesh-export:read mesh-export:modify" \
+	static constexpr auto Scope = TEXT("itwin-platform") \
 		OPTIONAL_OFFLINE_ACCESS_SCOPE \
 		;
 

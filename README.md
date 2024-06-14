@@ -87,9 +87,8 @@ Create and configure your iTwin Platform account:<br>
 1. Go to the [iTwin Platform developer portal](https://developer.bentley.com/) and create an account.<br>
 2. Go to [My Models](https://developer.bentley.com/my-imodels/) and create a new iModel.<br>
 3. Go to [My Apps](https://developer.bentley.com/my-apps/) and [register a new iTwin App](https://developer.bentley.com/tutorials/quickstart-web-and-service-apps/#12-register-your-application):
-   - Application type: Desktop / Mobile
+   - Application type: Native
    - Redirect URIs: http://localhost:3000/signin-callback
-   - Scopes: `savedviews:read savedviews:modify itwins:read imodels:read mesh-export:read mesh-export:modify offline_access realitydata:read`
 
 ## 4. Developing with Unreal Engine: Compiling the plugin yourself
 
