@@ -27,7 +27,7 @@ FDelegateHandle subscriptionPostPIEStarted;
 
 END_DEFINE_SPEC(FITwinCesiumOriginShiftComponentSpec)
 
-using namespace CesiumTestHelpers;
+using namespace ITwinCesiumTestHelpers;
 
 void FITwinCesiumOriginShiftComponentSpec::Define() {
   BeforeEach([this]() {
@@ -122,7 +122,7 @@ void FITwinCesiumOriginShiftComponentSpec::Define() {
 
           // Activate georeference origin shifting
           findInPlay(pOriginShiftComponent)
-              ->SetMode(ECesiumOriginShiftMode::ChangeCesiumGeoreference);
+              ->SetMode(EITwinCesiumOriginShiftMode::ChangeCesiumGeoreference);
 
           // Move it to 90 degrees longitude.
           FVector location = FVector(

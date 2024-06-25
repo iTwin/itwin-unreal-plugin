@@ -132,12 +132,12 @@ void AITwinSelector::GetExportInfoComplete(bool bSuccess, FITwinExportInfo Expor
 {
 	FString State;
 	GetExportState(State, Export);
-	if (State == "Complete")
+	if (State == TEXT("Complete"))
 	{
 		LoadIModel();
 		return;
 	}
-	if (State == "Invalid")
+	if (State == TEXT("Invalid"))
 	{
 		UI->ShowPanel(2);
 		return;

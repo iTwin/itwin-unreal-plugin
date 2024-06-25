@@ -22,7 +22,7 @@ FName AITwinCesiumCameraManager::DEFAULT_CAMERAMANAGER_TAG =
     return nullptr;
   }
   UE_LOG(
-      LogCesium,
+      LogITwinCesium,
       Verbose,
       TEXT("World name for GetDefaultCameraManager: %s"),
       *world->GetFullName());
@@ -51,7 +51,7 @@ FName AITwinCesiumCameraManager::DEFAULT_CAMERAMANAGER_TAG =
 
   if (!pCameraManager) {
     UE_LOG(
-        LogCesium,
+        LogITwinCesium,
         Verbose,
         TEXT("Creating default AITwinCesiumCameraManager for actor %s"),
         *WorldContextObject->GetName());
@@ -68,7 +68,7 @@ FName AITwinCesiumCameraManager::DEFAULT_CAMERAMANAGER_TAG =
     }
   } else {
     UE_LOG(
-        LogCesium,
+        LogITwinCesium,
         Verbose,
         TEXT("Using existing AITwinCesiumCameraManager %s for actor %s"),
         *pCameraManager->GetName(),

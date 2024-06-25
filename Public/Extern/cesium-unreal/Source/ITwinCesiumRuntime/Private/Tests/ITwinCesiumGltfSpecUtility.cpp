@@ -2,7 +2,7 @@
 
 using namespace CesiumGltf;
 
-int32_t AddBufferToModel(
+int32_t ITwinCesium::AddBufferToModel(
     CesiumGltf::Model& model,
     const std::string& type,
     const int32_t componentType,
@@ -29,7 +29,7 @@ int32_t AddBufferToModel(
   return static_cast<int32_t>(model.accessors.size() - 1);
 }
 
-CesiumGltf::FeatureId& AddFeatureIDsAsAttributeToModel(
+CesiumGltf::FeatureId& ITwinCesium::AddFeatureIDsAsAttributeToModel(
     CesiumGltf::Model& model,
     CesiumGltf::MeshPrimitive& primitive,
     const std::vector<uint8_t>& featureIDs,
@@ -58,7 +58,7 @@ CesiumGltf::FeatureId& AddFeatureIDsAsAttributeToModel(
   return featureID;
 }
 
-CesiumGltf::FeatureId& AddFeatureIDsAsTextureToModel(
+CesiumGltf::FeatureId& ITwinCesium::AddFeatureIDsAsTextureToModel(
     CesiumGltf::Model& model,
     CesiumGltf::MeshPrimitive& primitive,
     const std::vector<uint8_t>& featureIDs,

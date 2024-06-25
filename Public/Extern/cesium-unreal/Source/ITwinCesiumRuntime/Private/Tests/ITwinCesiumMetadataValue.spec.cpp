@@ -19,11 +19,11 @@ void FITwinCesiumMetadataValueSpec::Define() {
       FITwinCesiumMetadataValue value;
       FITwinCesiumMetadataValueType valueType =
           UITwinCesiumMetadataValueBlueprintLibrary::GetValueType(value);
-      TestEqual("Type", valueType.Type, ECesiumMetadataType::Invalid);
+      TestEqual("Type", valueType.Type, EITwinCesiumMetadataType::Invalid);
       TestEqual(
           "ComponentType",
           valueType.ComponentType,
-          ECesiumMetadataComponentType::None);
+          EITwinCesiumMetadataComponentType::None);
       TestFalse("IsArray", valueType.bIsArray);
     });
 
@@ -31,11 +31,11 @@ void FITwinCesiumMetadataValueSpec::Define() {
       FITwinCesiumMetadataValue value(true);
       FITwinCesiumMetadataValueType valueType =
           UITwinCesiumMetadataValueBlueprintLibrary::GetValueType(value);
-      TestEqual("Type", valueType.Type, ECesiumMetadataType::Boolean);
+      TestEqual("Type", valueType.Type, EITwinCesiumMetadataType::Boolean);
       TestEqual(
           "ComponentType",
           valueType.ComponentType,
-          ECesiumMetadataComponentType::None);
+          EITwinCesiumMetadataComponentType::None);
       TestFalse("IsArray", valueType.bIsArray);
     });
 
@@ -43,11 +43,11 @@ void FITwinCesiumMetadataValueSpec::Define() {
       FITwinCesiumMetadataValue value(1.6);
       FITwinCesiumMetadataValueType valueType =
           UITwinCesiumMetadataValueBlueprintLibrary::GetValueType(value);
-      TestEqual("Type", valueType.Type, ECesiumMetadataType::Scalar);
+      TestEqual("Type", valueType.Type, EITwinCesiumMetadataType::Scalar);
       TestEqual(
           "ComponentType",
           valueType.ComponentType,
-          ECesiumMetadataComponentType::Float64);
+          EITwinCesiumMetadataComponentType::Float64);
       TestFalse("IsArray", valueType.bIsArray);
     });
 
@@ -55,11 +55,11 @@ void FITwinCesiumMetadataValueSpec::Define() {
       FITwinCesiumMetadataValue value(glm::u8vec4(1, 2, 3, 4));
       FITwinCesiumMetadataValueType valueType =
           UITwinCesiumMetadataValueBlueprintLibrary::GetValueType(value);
-      TestEqual("Type", valueType.Type, ECesiumMetadataType::Vec4);
+      TestEqual("Type", valueType.Type, EITwinCesiumMetadataType::Vec4);
       TestEqual(
           "ComponentType",
           valueType.ComponentType,
-          ECesiumMetadataComponentType::Uint8);
+          EITwinCesiumMetadataComponentType::Uint8);
       TestFalse("IsArray", valueType.bIsArray);
     });
 
@@ -67,11 +67,11 @@ void FITwinCesiumMetadataValueSpec::Define() {
       FITwinCesiumMetadataValue value(glm::imat2x2(-1, -2, 3, 0));
       FITwinCesiumMetadataValueType valueType =
           UITwinCesiumMetadataValueBlueprintLibrary::GetValueType(value);
-      TestEqual("Type", valueType.Type, ECesiumMetadataType::Mat2);
+      TestEqual("Type", valueType.Type, EITwinCesiumMetadataType::Mat2);
       TestEqual(
           "ComponentType",
           valueType.ComponentType,
-          ECesiumMetadataComponentType::Int32);
+          EITwinCesiumMetadataComponentType::Int32);
       TestFalse("IsArray", valueType.bIsArray);
     });
 
@@ -79,11 +79,11 @@ void FITwinCesiumMetadataValueSpec::Define() {
       FITwinCesiumMetadataValue value(std::string_view("Hello"));
       FITwinCesiumMetadataValueType valueType =
           UITwinCesiumMetadataValueBlueprintLibrary::GetValueType(value);
-      TestEqual("Type", valueType.Type, ECesiumMetadataType::String);
+      TestEqual("Type", valueType.Type, EITwinCesiumMetadataType::String);
       TestEqual(
           "ComponentType",
           valueType.ComponentType,
-          ECesiumMetadataComponentType::None);
+          EITwinCesiumMetadataComponentType::None);
       TestFalse("IsArray", valueType.bIsArray);
     });
 
@@ -92,11 +92,11 @@ void FITwinCesiumMetadataValueSpec::Define() {
       FITwinCesiumMetadataValue value(arrayView);
       FITwinCesiumMetadataValueType valueType =
           UITwinCesiumMetadataValueBlueprintLibrary::GetValueType(value);
-      TestEqual("Type", valueType.Type, ECesiumMetadataType::Scalar);
+      TestEqual("Type", valueType.Type, EITwinCesiumMetadataType::Scalar);
       TestEqual(
           "ComponentType",
           valueType.ComponentType,
-          ECesiumMetadataComponentType::Uint8);
+          EITwinCesiumMetadataComponentType::Uint8);
       TestTrue("IsArray", valueType.bIsArray);
     });
   });
@@ -1215,11 +1215,11 @@ void FITwinCesiumMetadataValueSpec::Define() {
       TestEqual(
           "array element type",
           elementType.Type,
-          ECesiumMetadataType::Invalid);
+          EITwinCesiumMetadataType::Invalid);
       TestEqual(
           "array element component type",
           elementType.ComponentType,
-          ECesiumMetadataComponentType::None);
+          EITwinCesiumMetadataComponentType::None);
     });
 
     It("gets array from array value", [this]() {
@@ -1239,11 +1239,11 @@ void FITwinCesiumMetadataValueSpec::Define() {
       TestEqual(
           "array element type",
           elementType.Type,
-          ECesiumMetadataType::Scalar);
+          EITwinCesiumMetadataType::Scalar);
       TestEqual(
           "array element component type",
           elementType.ComponentType,
-          ECesiumMetadataComponentType::Uint8);
+          EITwinCesiumMetadataComponentType::Uint8);
     });
   });
 

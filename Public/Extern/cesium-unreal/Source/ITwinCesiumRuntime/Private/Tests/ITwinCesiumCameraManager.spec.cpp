@@ -16,7 +16,7 @@ void FITwinCesiumCameraManagerSpec::Define() {
 
   Describe("GetDefaultCameraManager", [this]() {
     It("should get the default camera manager", [this]() {
-      UWorld* world = CesiumTestHelpers::getGlobalWorldContext();
+      UWorld* world = ITwinCesiumTestHelpers::getGlobalWorldContext();
       AITwinCesiumCameraManager* cameraManager =
           AITwinCesiumCameraManager::GetDefaultCameraManager(world);
       TestNotNull("Returned pointer is valid", cameraManager);
@@ -32,7 +32,7 @@ void FITwinCesiumCameraManagerSpec::Define() {
 
   Describe("AddCamera", [this]() {
     It("should add and remove a single camera", [this]() {
-      UWorld* world = CesiumTestHelpers::getGlobalWorldContext();
+      UWorld* world = ITwinCesiumTestHelpers::getGlobalWorldContext();
       AITwinCesiumCameraManager* cameraManager =
           AITwinCesiumCameraManager::GetDefaultCameraManager(world);
       TestNotNull("Returned pointer is valid", cameraManager);
@@ -54,7 +54,7 @@ void FITwinCesiumCameraManagerSpec::Define() {
     });
 
     It("should fail to remove a camera, when the id is invalid", [this]() {
-      UWorld* world = CesiumTestHelpers::getGlobalWorldContext();
+      UWorld* world = ITwinCesiumTestHelpers::getGlobalWorldContext();
       AITwinCesiumCameraManager* cameraManager =
           AITwinCesiumCameraManager::GetDefaultCameraManager(world);
       TestNotNull("Returned pointer is valid", cameraManager);

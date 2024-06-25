@@ -21,7 +21,7 @@ struct FITwinCesiumPropertyTableProperty;
 struct FITwinCesiumPropertyTexture;
 struct FITwinCesiumPropertyTableDescription;
 struct FITwinCesiumPropertyTextureDescription;
-struct FFeatureTextureDescription;
+struct FITwinFeatureTextureDescription;
 struct FITwinCesiumModelMetadataDescription;
 struct FITwinCesiumPrimitiveFeaturesDescription;
 struct FITwinCesiumPrimitiveMetadataDescription;
@@ -37,7 +37,7 @@ struct FITwinCesiumPrimitiveMetadataDescription;
  * a model-by-model basis. Not all models in a tileset may necessarily contain
  * the feature IDs / metadata specified in the description.
  */
-namespace CesiumEncodedFeaturesMetadata {
+namespace ITwinCesiumEncodedFeaturesMetadata {
 
 /**
  * Naming convention for feature ID texture parameters nodes:
@@ -152,7 +152,7 @@ struct EncodedFeatureIdTexture {
   /**
    * @brief The actual feature ID texture.
    */
-  TSharedPtr<CesiumTextureUtility::LoadedTextureResult> pTexture;
+  TSharedPtr<ITwinCesiumTextureUtility::LoadedTextureResult> pTexture;
 
   /**
    * @brief The channels that this feature ID texture uses within the image.
@@ -308,12 +308,12 @@ struct EncodedPropertyTableProperty {
   /**
    * @brief The property table property values, encoded into a texture.
    */
-  TUniquePtr<CesiumTextureUtility::LoadedTextureResult> pTexture;
+  TUniquePtr<ITwinCesiumTextureUtility::LoadedTextureResult> pTexture;
 
   /**
    * @brief The type that the metadata will be encoded as.
    */
-  ECesiumEncodedMetadataType type;
+  EITwinCesiumEncodedMetadataType type;
 
   /**
    * @brief The property table property's offset.
@@ -365,12 +365,12 @@ struct EncodedPropertyTextureProperty {
   /**
    * @brief The texture used by the property texture property.
    */
-  TSharedPtr<CesiumTextureUtility::LoadedTextureResult> pTexture;
+  TSharedPtr<ITwinCesiumTextureUtility::LoadedTextureResult> pTexture;
 
   /**
    * @brief The type that of the metadata encoded in the texture.
    */
-  ECesiumEncodedMetadataType type;
+  EITwinCesiumEncodedMetadataType type;
 
   /**
    * @brief The set index of the texture coordinates from the glTF primitive
@@ -454,7 +454,7 @@ EncodedPropertyTexture encodePropertyTextureAnyThreadPart(
     const FITwinCesiumPropertyTexture& propertyTexture,
     TMap<
         const CesiumGltf::ImageCesium*,
-        TWeakPtr<CesiumTextureUtility::LoadedTextureResult>>&
+        TWeakPtr<ITwinCesiumTextureUtility::LoadedTextureResult>>&
         propertyTexturePropertyMap);
 
 EncodedPrimitiveMetadata encodePrimitiveMetadataAnyThreadPart(
@@ -470,7 +470,7 @@ bool encodePropertyTableGameThreadPart(
     EncodedPropertyTable& encodedFeatureTable);
 
 bool encodePropertyTextureGameThreadPart(
-    TArray<TUniquePtr<CesiumTextureUtility::LoadedTextureResult>>&
+    TArray<TUniquePtr<ITwinCesiumTextureUtility::LoadedTextureResult>>&
         uniqueTextures,
     EncodedPropertyTexture& encodedFeatureTexture);
 
@@ -482,4 +482,4 @@ void destroyEncodedModelMetadata(EncodedModelMetadata& encodedMetadata);
 
 FString createHlslSafeName(const FString& rawName);
 
-} // namespace CesiumEncodedFeaturesMetadata
+} // namespace ITwinCesiumEncodedFeaturesMetadata

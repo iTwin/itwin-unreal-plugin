@@ -42,5 +42,5 @@ public:
   virtual FBoxSphereBounds
   CalcBounds(const FTransform& LocalToWorld) const override;
 
-  friend class CesiumTileExcluderAdapter;
+  friend class FITwinCesiumTileExcluderAdapter;
 };

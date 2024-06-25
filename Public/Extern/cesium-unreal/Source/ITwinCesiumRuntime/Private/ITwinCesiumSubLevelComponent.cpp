@@ -146,7 +146,7 @@ void UITwinCesiumSubLevelComponent::PlaceGeoreferenceOriginAtSubLevelOrigin() {
   AITwinCesiumGeoreference* pGeoreference = this->ResolveGeoreference();
   if (!IsValid(pGeoreference)) {
     UE_LOG(
-        LogCesium,
+        LogITwinCesium,
         Error,
         TEXT(
             "Cannot place the origin because the sub-level does not have a CesiumGeoreference."));
@@ -177,7 +177,7 @@ void UITwinCesiumSubLevelComponent::PlaceGeoreferenceOriginHere() {
   AITwinCesiumGeoreference* pGeoreference = this->ResolveGeoreference();
   if (!IsValid(pGeoreference)) {
     UE_LOG(
-        LogCesium,
+        LogITwinCesium,
         Error,
         TEXT(
             "Cannot place the origin because the sub-level does not have a CesiumGeoreference."));
@@ -211,7 +211,7 @@ void UITwinCesiumSubLevelComponent::PlaceOriginAtEcef(const FVector& NewOriginEc
   AITwinCesiumGeoreference* pGeoreference = this->ResolveGeoreference();
   if (!IsValid(pGeoreference)) {
     UE_LOG(
-        LogCesium,
+        LogITwinCesium,
         Error,
         TEXT(
             "Cannot place the origin because the sub-level does not have a CesiumGeoreference."));
@@ -225,7 +225,7 @@ void UITwinCesiumSubLevelComponent::PlaceOriginAtEcef(const FVector& NewOriginEc
 
   if (pOwner->IsEditing()) {
     UE_LOG(
-        LogCesium,
+        LogITwinCesium,
         Error,
         TEXT(
             "The georeference origin cannot be moved while the sub-level is being edited."));
@@ -243,13 +243,13 @@ void UITwinCesiumSubLevelComponent::PlaceOriginAtEcef(const FVector& NewOriginEc
               this->OriginHeight));
   ITwinGeoTransforms CurrentTransforms(
       ellipsoid,
-      VecMath::createVector3D(CurrentOriginEcef),
+      FITwinVecMath::createVector3D(CurrentOriginEcef),
       pGeoreference->GetScale() / 100.0);
 
   // Construct new geotransforms at the new origin
   ITwinGeoTransforms NewTransforms(
       ellipsoid,
-      VecMath::createVector3D(NewOriginEcef),
+      FITwinVecMath::createVector3D(NewOriginEcef),
       pGeoreference->GetScale() / 100.0);
 
   // Transform the level instance from the old origin to the new one.
@@ -259,7 +259,7 @@ void UITwinCesiumSubLevelComponent::PlaceOriginAtEcef(const FVector& NewOriginEc
       NewTransforms.GetEllipsoidCenteredToAbsoluteUnrealWorldTransform();
   glm::dmat4 OldToNew = EcefToNew * OldToEcef;
   glm::dmat4 OldTransform =
-      VecMath::createMatrix4D(pOwner->GetActorTransform().ToMatrixWithScale());
+      FITwinVecMath::createMatrix4D(pOwner->GetActorTransform().ToMatrixWithScale());
   glm::dmat4 NewLevelTransform = OldToNew * OldTransform;
 
   FScopedTransaction transaction(FText::FromString("Place Origin At Location"));
@@ -280,7 +280,7 @@ void UITwinCesiumSubLevelComponent::PlaceOriginAtEcef(const FVector& NewOriginEc
 
   pOwner->Modify();
   pOwner->SetActorTransform(
-      FTransform(VecMath::createMatrix(NewLevelTransform)));
+      FTransform(FITwinVecMath::createMatrix(NewLevelTransform)));
 
   // Set the new sub-level georeference origin.
   this->Modify();
@@ -295,11 +295,11 @@ void UITwinCesiumSubLevelComponent::PlaceOriginAtEcef(const FVector& NewOriginEc
       static_cast<FEditorViewportClient*>(pViewportClient);
 
   glm::dvec3 ViewLocation =
-      VecMath::createVector3D(pEditorViewportClient->GetViewLocation());
+      FITwinVecMath::createVector3D(pEditorViewportClient->GetViewLocation());
   ViewLocation = glm::dvec3(OldToNew * glm::dvec4(ViewLocation, 1.0));
-  pEditorViewportClient->SetViewLocation(VecMath::createVector(ViewLocation));
+  pEditorViewportClient->SetViewLocation(FITwinVecMath::createVector(ViewLocation));
 
-  glm::dmat4 ViewportRotation = VecMath::createMatrix4D(
+  glm::dmat4 ViewportRotation = FITwinVecMath::createMatrix4D(
       pEditorViewportClient->GetViewRotation().Quaternion().ToMatrix());
   ViewportRotation = OldToNew * ViewportRotation;
 
@@ -339,7 +339,7 @@ void UITwinCesiumSubLevelComponent::PlaceOriginAtEcef(const FVector& NewOriginEc
       // coordinate system.
       glm::dmat4 NewToEcef =
           NewTransforms.GetAbsoluteUnrealWorldToEllipsoidCenteredTransform();
-      glm::dmat4 oldRelativeTransform = VecMath::createMatrix4D(
+      glm::dmat4 oldRelativeTransform = FITwinVecMath::createMatrix4D(
           (Root->GetRelativeTransform() * OldLevelTransform)
               .ToMatrixWithScale());
       glm::dmat4 NewToOld = glm::affineInverse(OldToNew);
@@ -350,7 +350,7 @@ void UITwinCesiumSubLevelComponent::PlaceOriginAtEcef(const FVector& NewOriginEc
       Tileset->Modify();
       Root->Modify();
       Root->SetRelativeTransform(
-          FTransform(VecMath::createMatrix(RelativeTransformInNew)),
+          FTransform(FITwinVecMath::createMatrix(RelativeTransformInNew)),
           false,
           nullptr,
           ETeleportType::TeleportPhysics);
@@ -498,7 +498,7 @@ void UITwinCesiumSubLevelComponent::OnRegister() {
         ELevelInstanceRuntimeBehavior::LevelStreaming;
 
     UE_LOG(
-        LogCesium,
+        LogITwinCesium,
         Warning,
         TEXT(
             "Cesium changed the \"Is Spatially Loaded\" or \"Desired Runtime Behavior\" "
@@ -555,7 +555,7 @@ ALevelInstance* UITwinCesiumSubLevelComponent::_getLevelInstance() const noexcep
   ALevelInstance* pOwner = Cast<ALevelInstance>(this->GetOwner());
   if (!pOwner) {
     UE_LOG(
-        LogCesium,
+        LogITwinCesium,
         Warning,
         TEXT(
             "A CesiumSubLevelComponent can only be attached a LevelInstance Actor."));

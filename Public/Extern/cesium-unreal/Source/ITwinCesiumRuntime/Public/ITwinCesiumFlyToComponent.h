@@ -22,7 +22,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FITwinCesiumFlightInterrupted);
  * Indicates which rotation to use for orienting the object during flights.
  */
 UENUM(BlueprintType)
-enum class ECesiumFlyToRotation : uint8 {
+enum class EITwinCesiumFlyToRotation : uint8 {
   /**
    * Uses the relative rotation of the root component of the Actor to which the
    * CesiumFlyToComponent is attached.
@@ -119,7 +119,7 @@ public:
    * Indicates which rotation to use during flights.
    */
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cesium")
-  ECesiumFlyToRotation RotationToUse = ECesiumFlyToRotation::Actor;
+  EITwinCesiumFlyToRotation RotationToUse = EITwinCesiumFlyToRotation::Actor;
 
   /**
    * A delegate that will be called when the Actor finishes flying.

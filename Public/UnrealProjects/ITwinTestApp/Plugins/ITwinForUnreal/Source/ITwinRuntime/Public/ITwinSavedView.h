@@ -86,7 +86,7 @@ private:
 	/// overridden from IITwinWebServicesObserver:
 	virtual void OnSavedViewRetrieved(bool bSuccess, FSavedView const& SavedView, FSavedViewInfo const& SavedViewInfo) override;
 	virtual void OnSavedViewAdded(bool bSuccess, FSavedViewInfo const& SavedViewInfo) override;
-	virtual void OnSavedViewDeleted(bool bSuccess, FString const& Response) override;
+	virtual void OnSavedViewDeleted(bool bSuccess, FString const& InSavedViewId, FString const& Response) override;
 	virtual void OnSavedViewEdited(bool bSuccess, FSavedView const& SavedView, FSavedViewInfo const& SavedViewInfo) override;
 
 	/// overridden from FITwinDefaultWebServicesObserver

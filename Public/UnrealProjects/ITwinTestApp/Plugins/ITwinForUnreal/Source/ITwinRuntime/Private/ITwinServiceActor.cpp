@@ -38,12 +38,24 @@ void AITwinServiceActor::UpdateWebServices()
 	const bool bHasValidWebServices = WebServices && WebServices->IsValidLowLevel();
 	const bool bHasChangedConnection =
 		bHasValidWebServices && !WebServices->HasSameConnection(ServerConnection.Get());
-	if (!bHasValidWebServices || bHasChangedConnection)
+	const bool bHasObserver =
+		bHasValidWebServices && WebServices->HasObserver(this);
+	if (!bHasValidWebServices || bHasChangedConnection || !bHasObserver)
 	{
 		WebServices = NewObject<UITwinWebServices>(this);
 		WebServices->SetServerConnection(ServerConnection);
 		WebServices->SetObserver(this);
 	}
+}
+
+const UITwinWebServices* AITwinServiceActor::GetWebServices() const
+{
+	return WebServices.Get();
+}
+
+UITwinWebServices* AITwinServiceActor::GetMutableWebServices()
+{
+	return WebServices.Get();
 }
 
 const TCHAR* AITwinServiceActor::GetObserverName() const

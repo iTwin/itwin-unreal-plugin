@@ -20,7 +20,7 @@
  * table property cannot be accessed, this briefly indicates why.
  */
 UENUM(BlueprintType)
-enum class ECesiumPropertyTablePropertyStatus : uint8 {
+enum class EITwinCesiumPropertyTablePropertyStatus : uint8 {
   /* The property table property is valid. */
   Valid = 0,
   /* The property table property is empty but has a specified default value. */
@@ -49,7 +49,7 @@ public:
    * Construct an invalid property with an unknown type.
    */
   FITwinCesiumPropertyTableProperty()
-      : _status(ECesiumPropertyTablePropertyStatus::ErrorInvalidProperty),
+      : _status(EITwinCesiumPropertyTablePropertyStatus::ErrorInvalidProperty),
         _property(),
         _valueType(),
         _normalized(false) {}
@@ -62,16 +62,16 @@ public:
   template <typename T, bool Normalized>
   FITwinCesiumPropertyTableProperty(
       const CesiumGltf::PropertyTablePropertyView<T, Normalized>& Property)
-      : _status(ECesiumPropertyTablePropertyStatus::ErrorInvalidProperty),
+      : _status(EITwinCesiumPropertyTablePropertyStatus::ErrorInvalidProperty),
         _property(Property),
         _valueType(),
         _normalized(Normalized) {
     switch (Property.status()) {
     case CesiumGltf::PropertyTablePropertyViewStatus::Valid:
-      _status = ECesiumPropertyTablePropertyStatus::Valid;
+      _status = EITwinCesiumPropertyTablePropertyStatus::Valid;
       break;
     case CesiumGltf::PropertyTablePropertyViewStatus::EmptyPropertyWithDefault:
-      _status = ECesiumPropertyTablePropertyStatus::EmptyPropertyWithDefault;
+      _status = EITwinCesiumPropertyTablePropertyStatus::EmptyPropertyWithDefault;
       break;
     case CesiumGltf::PropertyTablePropertyViewStatus::ErrorInvalidPropertyTable:
     case CesiumGltf::PropertyTablePropertyViewStatus::ErrorNonexistentProperty:
@@ -91,7 +91,7 @@ public:
       // The status was already set in the initializer list.
       return;
     default:
-      _status = ECesiumPropertyTablePropertyStatus::ErrorInvalidPropertyData;
+      _status = EITwinCesiumPropertyTablePropertyStatus::ErrorInvalidPropertyData;
       return;
     }
 
@@ -100,7 +100,7 @@ public:
   }
 
 private:
-  ECesiumPropertyTablePropertyStatus _status;
+  EITwinCesiumPropertyTablePropertyStatus _status;
 
   std::any _property;
 
@@ -124,7 +124,7 @@ public:
       BlueprintCallable,
       BlueprintPure,
       Category = "Cesium|Metadata|PropertyTableProperty")
-  static ECesiumPropertyTablePropertyStatus GetPropertyTablePropertyStatus(
+  static EITwinCesiumPropertyTablePropertyStatus GetPropertyTablePropertyStatus(
       UPARAM(ref) const FITwinCesiumPropertyTableProperty& Property);
 
   /**
@@ -136,7 +136,7 @@ public:
       BlueprintCallable,
       BlueprintPure,
       Category = "Cesium|Metadata|PropertyTableProperty")
-  static ECesiumMetadataBlueprintType
+  static EITwinCesiumMetadataBlueprintType
   GetBlueprintType(UPARAM(ref) const FITwinCesiumPropertyTableProperty& Property);
 
   /**
@@ -148,7 +148,7 @@ public:
       BlueprintCallable,
       BlueprintPure,
       Category = "Cesium|Metadata|PropertyTableProperty")
-  static ECesiumMetadataBlueprintType GetArrayElementBlueprintType(
+  static EITwinCesiumMetadataBlueprintType GetArrayElementBlueprintType(
       UPARAM(ref) const FITwinCesiumPropertyTableProperty& Property);
 
   PRAGMA_DISABLE_DEPRECATION_WARNINGS
@@ -163,7 +163,7 @@ public:
       Meta =
           (DeprecatedFunction,
            DeprecationMessage = "Use GetArrayElementBlueprintType instead."))
-  static ECesiumMetadataBlueprintType
+  static EITwinCesiumMetadataBlueprintType
   GetBlueprintComponentType(UPARAM(ref)
                                 const FITwinCesiumPropertyTableProperty& Property);
   PRAGMA_ENABLE_DEPRECATION_WARNINGS
@@ -192,7 +192,7 @@ public:
           (DeprecatedFunction,
            DeprecationMessage =
                "CesiumMetadataTrueType is deprecated. Use GetValueType to get the CesiumMetadataValueType instead."))
-  static ECesiumMetadataTrueType_DEPRECATED
+  static EITwinCesiumMetadataTrueType_DEPRECATED
   GetTrueType(UPARAM(ref) const FITwinCesiumPropertyTableProperty& Value);
 
   /**
@@ -208,7 +208,7 @@ public:
           (DeprecatedFunction,
            DeprecationMessage =
                "CesiumMetadataTrueType is deprecated. Use GetValueType to get the CesiumMetadataValueType instead."))
-  static ECesiumMetadataTrueType_DEPRECATED
+  static EITwinCesiumMetadataTrueType_DEPRECATED
   GetTrueComponentType(UPARAM(ref) const FITwinCesiumPropertyTableProperty& Value);
 
   PRAGMA_ENABLE_DEPRECATION_WARNINGS

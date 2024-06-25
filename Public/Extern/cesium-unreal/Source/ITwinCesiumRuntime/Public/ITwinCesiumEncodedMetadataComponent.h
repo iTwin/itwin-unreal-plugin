@@ -20,7 +20,7 @@ PRAGMA_DISABLE_DEPRECATION_WARNINGS
  *
  */
 UENUM()
-enum class ECesiumPropertyComponentType_DEPRECATED : uint8 {
+enum class EITwinCesiumPropertyComponentType_DEPRECATED : uint8 {
   Uint8_DEPRECATED,
   Float_DEPRECATED
 };
@@ -29,7 +29,7 @@ enum class ECesiumPropertyComponentType_DEPRECATED : uint8 {
  * @brief The property type.
  */
 UENUM()
-enum class ECesiumPropertyType_DEPRECATED : uint8 {
+enum class EITwinCesiumPropertyType_DEPRECATED : uint8 {
   Scalar_DEPRECATED,
   Vec2_DEPRECATED,
   Vec3_DEPRECATED,
@@ -41,7 +41,7 @@ enum class ECesiumPropertyType_DEPRECATED : uint8 {
  * id textures, feature id attributes, mixed, or neither.
  */
 UENUM()
-enum class ECesiumFeatureTableAccessType_DEPRECATED : uint8 {
+enum class EITwinCesiumFeatureTableAccessType_DEPRECATED : uint8 {
   Unknown_DEPRECATED,
   Texture_DEPRECATED,
   Attribute_DEPRECATED,
@@ -55,15 +55,15 @@ enum class ECesiumFeatureTableAccessType_DEPRECATED : uint8 {
 
 struct UE_DEPRECATED(
     5.0,
-    "CesiumEncodedMetadataComponent and its related description properties have been deprecated. Use CesiumEncodedFeaturesMetadata instead.")
-    FPropertyDescription;
+    "CesiumEncodedMetadataComponent and its related description properties have been deprecated. Use ITwinCesiumEncodedFeaturesMetadata instead.")
+    FITwinPropertyDescription;
 
 /**
  * @brief Description of a feature table property that should be encoded for
  * access on the GPU.
  */
 USTRUCT()
-struct ITWINCESIUMRUNTIME_API FPropertyDescription {
+struct ITWINCESIUMRUNTIME_API FITwinPropertyDescription {
   GENERATED_USTRUCT_BODY()
 
   /**
@@ -78,15 +78,15 @@ struct ITWINCESIUMRUNTIME_API FPropertyDescription {
    *
    */
   UPROPERTY(EditAnywhere, Category = "Cesium")
-  ECesiumPropertyComponentType_DEPRECATED ComponentType =
-      ECesiumPropertyComponentType_DEPRECATED::Float_DEPRECATED;
+  EITwinCesiumPropertyComponentType_DEPRECATED ComponentType =
+      EITwinCesiumPropertyComponentType_DEPRECATED::Float_DEPRECATED;
 
   /**
    * @brief The property type.
    */
   UPROPERTY(EditAnywhere, Category = "Cesium")
-  ECesiumPropertyType_DEPRECATED Type =
-      ECesiumPropertyType_DEPRECATED::Scalar_DEPRECATED;
+  EITwinCesiumPropertyType_DEPRECATED Type =
+      EITwinCesiumPropertyType_DEPRECATED::Scalar_DEPRECATED;
 
   /**
    * @brief If ComponentType==Uint8, this indicates whether to normalize into a
@@ -97,21 +97,21 @@ struct ITWINCESIUMRUNTIME_API FPropertyDescription {
       Category = "Cesium",
       Meta =
           (EditCondition =
-               "ComponentType==ECesiumPropertyComponentType_DEPRECATED::Uint8_DEPRECATED"))
+               "ComponentType==EITwinCesiumPropertyComponentType_DEPRECATED::Uint8_DEPRECATED"))
   bool Normalized = false;
 };
 
 struct UE_DEPRECATED(
     5.0,
-    "CesiumEncodedMetadataComponent and its related description properties have been deprecated. Use CesiumEncodedFeaturesMetadata instead.")
-    FFeatureTableDescription;
+    "CesiumEncodedMetadataComponent and its related description properties have been deprecated. Use ITwinCesiumEncodedFeaturesMetadata instead.")
+    FITwinFeatureTableDescription;
 
 /**
  * @brief Description of a feature table containing properties to be encoded
  * for access on the GPU.
  */
 USTRUCT()
-struct ITWINCESIUMRUNTIME_API FFeatureTableDescription {
+struct ITWINCESIUMRUNTIME_API FITwinFeatureTableDescription {
   GENERATED_USTRUCT_BODY()
 
   /**
@@ -126,8 +126,8 @@ struct ITWINCESIUMRUNTIME_API FFeatureTableDescription {
    * id textures, feature id attributes, mixed, or neither.
    */
   UPROPERTY(EditAnywhere, Category = "Cesium")
-  ECesiumFeatureTableAccessType_DEPRECATED AccessType =
-      ECesiumFeatureTableAccessType_DEPRECATED::Unknown_DEPRECATED;
+  EITwinCesiumFeatureTableAccessType_DEPRECATED AccessType =
+      EITwinCesiumFeatureTableAccessType_DEPRECATED::Unknown_DEPRECATED;
 
   /**
    * @brief If the AccessType==Texture, this string represents the channel of
@@ -138,27 +138,27 @@ struct ITWINCESIUMRUNTIME_API FFeatureTableDescription {
       Category = "Cesium",
       Meta =
           (EditCondition =
-               "AccessType==ECesiumFeatureTableAccessType_DEPRECATED::Texture_DEPRECATED"))
+               "AccessType==EITwinCesiumFeatureTableAccessType_DEPRECATED::Texture_DEPRECATED"))
   FString Channel;
 
   /**
    * @brief Descriptions of the properties to upload to the GPU.
    */
   UPROPERTY(EditAnywhere, Category = "Cesium", Meta = (TitleProperty = "Name"))
-  TArray<FPropertyDescription> Properties;
+  TArray<FITwinPropertyDescription> Properties;
 };
 
 struct UE_DEPRECATED(
     5.0,
-    "CesiumEncodedMetadataComponent and its related properties have been deprecated. Use CesiumEncodedFeaturesMetadata instead.")
-    FFeatureTexturePropertyDescription;
+    "CesiumEncodedMetadataComponent and its related properties have been deprecated. Use ITwinCesiumEncodedFeaturesMetadata instead.")
+    FITwinFeatureTexturePropertyDescription;
 
 /**
  * @brief Description of a feature texture property that should be uploaded to
  * the GPU.
  */
 USTRUCT()
-struct ITWINCESIUMRUNTIME_API FFeatureTexturePropertyDescription {
+struct ITWINCESIUMRUNTIME_API FITwinFeatureTexturePropertyDescription {
   GENERATED_USTRUCT_BODY()
 
   /**
@@ -171,15 +171,15 @@ struct ITWINCESIUMRUNTIME_API FFeatureTexturePropertyDescription {
   // For now, always assumes it is Uint8
   /*
   UPROPERTY(EditAnywhere, Category = "Cesium")
-  ECesiumPropertyComponentType ComponentType =
-      ECesiumPropertyComponentType::Uint8;*/
+  EITwinCesiumPropertyComponentType ComponentType =
+      EITwinCesiumPropertyComponentType::Uint8;*/
 
   /**
    * @brief The property type.
    */
   UPROPERTY(EditAnywhere, Category = "Cesium")
-  ECesiumPropertyType_DEPRECATED Type =
-      ECesiumPropertyType_DEPRECATED::Scalar_DEPRECATED;
+  EITwinCesiumPropertyType_DEPRECATED Type =
+      EITwinCesiumPropertyType_DEPRECATED::Scalar_DEPRECATED;
 
   /**
    * @brief If ComponentType==Uint8, this indicates whether to normalize into a
@@ -199,15 +199,15 @@ struct ITWINCESIUMRUNTIME_API FFeatureTexturePropertyDescription {
 
 struct UE_DEPRECATED(
     5.0,
-    "CesiumEncodedMetadataComponent and its related description properties have been deprecated. Use CesiumEncodedFeaturesMetadata instead.")
-    FFeatureTextureDescription;
+    "CesiumEncodedMetadataComponent and its related description properties have been deprecated. Use ITwinCesiumEncodedFeaturesMetadata instead.")
+    FITwinFeatureTextureDescription;
 
 /**
  * @brief Description of a feature texture with properties that should be
  * uploaded to the GPU.
  */
 USTRUCT()
-struct ITWINCESIUMRUNTIME_API FFeatureTextureDescription {
+struct ITWINCESIUMRUNTIME_API FITwinFeatureTextureDescription {
   GENERATED_USTRUCT_BODY()
 
   /**
@@ -220,25 +220,25 @@ struct ITWINCESIUMRUNTIME_API FFeatureTextureDescription {
    * @brief Descriptions of the properties to upload to the GPU.
    */
   UPROPERTY(EditAnywhere, Category = "Cesium", Meta = (TitleProperty = "Name"))
-  TArray<FFeatureTexturePropertyDescription> Properties;
+  TArray<FITwinFeatureTexturePropertyDescription> Properties;
 };
 
 struct UE_DEPRECATED(
     5.0,
-    "CesiumEncodedMetadataComponent and its related description properties have been deprecated. Use CesiumEncodedFeaturesMetadata instead.")
-    FMetadataDescription;
+    "CesiumEncodedMetadataComponent and its related description properties have been deprecated. Use ITwinCesiumEncodedFeaturesMetadata instead.")
+    FITwinMetadataDescription;
 
 struct UE_DEPRECATED(
     5.0,
-    "CesiumEncodedMetadataComponent and its related description properties have been deprecated. Use CesiumEncodedFeaturesMetadata instead.")
-    FMetadataDescription;
+    "CesiumEncodedMetadataComponent and its related description properties have been deprecated. Use ITwinCesiumEncodedFeaturesMetadata instead.")
+    FITwinMetadataDescription;
 
 /**
  * @brief Description of metadata from a glTF that should be uploaded to the
  * GPU for access in materials.
  */
 USTRUCT()
-struct ITWINCESIUMRUNTIME_API FMetadataDescription {
+struct ITWINCESIUMRUNTIME_API FITwinMetadataDescription {
   GENERATED_USTRUCT_BODY()
 
   /**
@@ -248,7 +248,7 @@ struct ITWINCESIUMRUNTIME_API FMetadataDescription {
       EditAnywhere,
       Category = "EncodeMetadata",
       Meta = (TitleProperty = "Name"))
-  TArray<FFeatureTableDescription> FeatureTables;
+  TArray<FITwinFeatureTableDescription> FeatureTables;
 
   /**
    * @brief Descriptions of feature textures to upload to the GPU.
@@ -257,7 +257,7 @@ struct ITWINCESIUMRUNTIME_API FMetadataDescription {
       EditAnywhere,
       Category = "EncodeMetadata",
       Meta = (TitleProperty = "Name"))
-  TArray<FFeatureTextureDescription> FeatureTextures;
+  TArray<FITwinFeatureTextureDescription> FeatureTextures;
 };
 
 /**
@@ -269,7 +269,7 @@ struct ITWINCESIUMRUNTIME_API FMetadataDescription {
  * auto-generated using the "Generate Material" button.
  */
 UCLASS(Deprecated)
-class ITWINCESIUMRUNTIME_API UDEPRECATED_CesiumEncodedMetadataComponent
+class ITWINCESIUMRUNTIME_API UDEPRECATED_ITwinCesiumEncodedMetadataComponent
     : public UActorComponent {
   GENERATED_BODY()
 
@@ -293,7 +293,7 @@ public:
 #endif
 
   // Note: Here, we avoid wrapping the feature tables and feature textures
-  // inside a FMetadataDescription to avoid further complicating the details
+  // inside a FITwinMetadataDescription to avoid further complicating the details
   // panel UI for editing the hierarchy.
 
   /**
@@ -307,7 +307,7 @@ public:
            DeprecatedProperty,
            DeprecationMessage =
                "CesiumEncodedMetadataComponent is deprecated. Use CesiumFeaturesMetadataComponent instead."))
-  TArray<FFeatureTableDescription> FeatureTables;
+  TArray<FITwinFeatureTableDescription> FeatureTables;
 
   /**
    * @brief Descriptions of feature textures to upload to the GPU.
@@ -320,7 +320,7 @@ public:
            DeprecatedProperty,
            DeprecationMessage =
                "CesiumEncodedMetadataComponent is deprecated. Use CesiumFeaturesMetadataComponent instead."))
-  TArray<FFeatureTextureDescription> FeatureTextures;
+  TArray<FITwinFeatureTextureDescription> FeatureTextures;
 
   // virtual void Serialize(FArchive& Ar) override;
 };

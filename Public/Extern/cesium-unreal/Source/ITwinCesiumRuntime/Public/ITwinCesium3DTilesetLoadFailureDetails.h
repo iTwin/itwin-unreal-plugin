@@ -8,7 +8,7 @@
 class AITwinCesium3DTileset;
 
 UENUM(BlueprintType)
-enum class ECesium3DTilesetLoadType : uint8 {
+enum class EITwinCesium3DTilesetLoadType : uint8 {
   /**
    * An unknown load error.
    */
@@ -39,7 +39,7 @@ struct ITWINCESIUMRUNTIME_API FITwinCesium3DTilesetLoadFailureDetails {
    * The type of request that failed to load.
    */
   UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Cesium")
-  ECesium3DTilesetLoadType Type = ECesium3DTilesetLoadType::Unknown;
+  EITwinCesium3DTilesetLoadType Type = EITwinCesium3DTilesetLoadType::Unknown;
 
   /**
    * The HTTP status code of the response that led to the failure.

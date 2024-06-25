@@ -17,7 +17,7 @@ FITwinCesiumFeatureIdSet::FITwinCesiumFeatureIdSet(
     const MeshPrimitive& Primitive,
     const FeatureId& FeatureID)
     : _featureID(),
-      _featureIDSetType(ECesiumFeatureIdSetType::None),
+      _featureIDSetType(EITwinCesiumFeatureIdSetType::None),
       _featureCount(FeatureID.featureCount),
       _nullFeatureID(FeatureID.nullFeatureId.value_or(-1)),
       _propertyTableIndex(FeatureID.propertyTable.value_or(-1)),
@@ -42,7 +42,7 @@ FITwinCesiumFeatureIdSet::FITwinCesiumFeatureIdSet(
         Primitive,
         *FeatureID.attribute,
         propertyTableName);
-    _featureIDSetType = ECesiumFeatureIdSetType::Attribute;
+    _featureIDSetType = EITwinCesiumFeatureIdSetType::Attribute;
 
     return;
   }
@@ -53,17 +53,17 @@ FITwinCesiumFeatureIdSet::FITwinCesiumFeatureIdSet(
         Primitive,
         *FeatureID.texture,
         propertyTableName);
-    _featureIDSetType = ECesiumFeatureIdSetType::Texture;
+    _featureIDSetType = EITwinCesiumFeatureIdSetType::Texture;
 
     return;
   }
 
   if (_featureCount > 0) {
-    _featureIDSetType = ECesiumFeatureIdSetType::Implicit;
+    _featureIDSetType = EITwinCesiumFeatureIdSetType::Implicit;
   }
 }
 
-const ECesiumFeatureIdSetType
+const EITwinCesiumFeatureIdSetType
 UITwinCesiumFeatureIdSetBlueprintLibrary::GetFeatureIDSetType(
     UPARAM(ref) const FITwinCesiumFeatureIdSet& FeatureIDSet) {
   return FeatureIDSet._featureIDSetType;
@@ -72,7 +72,7 @@ UITwinCesiumFeatureIdSetBlueprintLibrary::GetFeatureIDSetType(
 const FITwinCesiumFeatureIdAttribute&
 UITwinCesiumFeatureIdSetBlueprintLibrary::GetAsFeatureIDAttribute(
     UPARAM(ref) const FITwinCesiumFeatureIdSet& FeatureIDSet) {
-  if (FeatureIDSet._featureIDSetType == ECesiumFeatureIdSetType::Attribute) {
+  if (FeatureIDSet._featureIDSetType == EITwinCesiumFeatureIdSetType::Attribute) {
     return std::get<FITwinCesiumFeatureIdAttribute>(FeatureIDSet._featureID);
   }
 
@@ -82,7 +82,7 @@ UITwinCesiumFeatureIdSetBlueprintLibrary::GetAsFeatureIDAttribute(
 const FITwinCesiumFeatureIdTexture&
 UITwinCesiumFeatureIdSetBlueprintLibrary::GetAsFeatureIDTexture(
     UPARAM(ref) const FITwinCesiumFeatureIdSet& FeatureIDSet) {
-  if (FeatureIDSet._featureIDSetType == ECesiumFeatureIdSetType::Texture) {
+  if (FeatureIDSet._featureIDSetType == EITwinCesiumFeatureIdSetType::Texture) {
     return std::get<FITwinCesiumFeatureIdTexture>(FeatureIDSet._featureID);
   }
 
@@ -112,7 +112,7 @@ const FString UITwinCesiumFeatureIdSetBlueprintLibrary::GetLabel(
 int64 UITwinCesiumFeatureIdSetBlueprintLibrary::GetFeatureIDForVertex(
     UPARAM(ref) const FITwinCesiumFeatureIdSet& FeatureIDSet,
     int64 VertexIndex) {
-  if (FeatureIDSet._featureIDSetType == ECesiumFeatureIdSetType::Attribute) {
+  if (FeatureIDSet._featureIDSetType == EITwinCesiumFeatureIdSetType::Attribute) {
     FITwinCesiumFeatureIdAttribute attribute =
         std::get<FITwinCesiumFeatureIdAttribute>(FeatureIDSet._featureID);
     return UITwinCesiumFeatureIdAttributeBlueprintLibrary::GetFeatureIDForVertex(
@@ -120,7 +120,7 @@ int64 UITwinCesiumFeatureIdSetBlueprintLibrary::GetFeatureIDForVertex(
         VertexIndex);
   }
 
-  if (FeatureIDSet._featureIDSetType == ECesiumFeatureIdSetType::Texture) {
+  if (FeatureIDSet._featureIDSetType == EITwinCesiumFeatureIdSetType::Texture) {
     FITwinCesiumFeatureIdTexture texture =
         std::get<FITwinCesiumFeatureIdTexture>(FeatureIDSet._featureID);
     return UITwinCesiumFeatureIdTextureBlueprintLibrary::GetFeatureIDForVertex(
@@ -128,7 +128,7 @@ int64 UITwinCesiumFeatureIdSetBlueprintLibrary::GetFeatureIDForVertex(
         VertexIndex);
   }
 
-  if (FeatureIDSet._featureIDSetType == ECesiumFeatureIdSetType::Implicit) {
+  if (FeatureIDSet._featureIDSetType == EITwinCesiumFeatureIdSetType::Implicit) {
     return (VertexIndex >= 0 && VertexIndex < FeatureIDSet._featureCount)
                ? VertexIndex
                : -1;
@@ -140,7 +140,7 @@ int64 UITwinCesiumFeatureIdSetBlueprintLibrary::GetFeatureIDForVertex(
 int64 UITwinCesiumFeatureIdSetBlueprintLibrary::GetFeatureIDFromHit(
     UPARAM(ref) const FITwinCesiumFeatureIdSet& FeatureIDSet,
     const FHitResult& Hit) {
-  if (FeatureIDSet._featureIDSetType == ECesiumFeatureIdSetType::Texture) {
+  if (FeatureIDSet._featureIDSetType == EITwinCesiumFeatureIdSetType::Texture) {
     FITwinCesiumFeatureIdTexture texture =
         std::get<FITwinCesiumFeatureIdTexture>(FeatureIDSet._featureID);
     return UITwinCesiumFeatureIdTextureBlueprintLibrary::GetFeatureIDFromHit(
@@ -164,7 +164,7 @@ int64 UITwinCesiumFeatureIdSetBlueprintLibrary::GetFeatureIDFromHit(
 
   int64 VertexIndex = VertexIndices[0];
 
-  if (FeatureIDSet._featureIDSetType == ECesiumFeatureIdSetType::Attribute) {
+  if (FeatureIDSet._featureIDSetType == EITwinCesiumFeatureIdSetType::Attribute) {
     FITwinCesiumFeatureIdAttribute attribute =
         std::get<FITwinCesiumFeatureIdAttribute>(FeatureIDSet._featureID);
     return UITwinCesiumFeatureIdAttributeBlueprintLibrary::GetFeatureIDForVertex(
@@ -172,7 +172,7 @@ int64 UITwinCesiumFeatureIdSetBlueprintLibrary::GetFeatureIDFromHit(
         VertexIndex);
   }
 
-  if (FeatureIDSet._featureIDSetType == ECesiumFeatureIdSetType::Implicit) {
+  if (FeatureIDSet._featureIDSetType == EITwinCesiumFeatureIdSetType::Implicit) {
     return (VertexIndex >= 0 && VertexIndex < FeatureIDSet._featureCount)
                ? VertexIndex
                : -1;

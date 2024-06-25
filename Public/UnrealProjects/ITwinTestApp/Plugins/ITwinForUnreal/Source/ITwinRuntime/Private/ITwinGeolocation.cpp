@@ -19,7 +19,7 @@ FITwinGeolocation::FITwinGeolocation(AActor& Parent)
 		LocatedGeoreference->SetActorLabel(TEXT("Located Georeference"));
 #endif
 		LocatedGeoreference->AttachToActor(&Parent, FAttachmentTransformRules::KeepRelativeTransform);
-		LocatedGeoreference->SetOriginPlacement(EOriginPlacement::TrueOrigin); // Means "not yet inited".
+		LocatedGeoreference->SetOriginPlacement(EITwinOriginPlacement::TrueOrigin); // Means "not yet inited".
 	}
 	{
 		FActorSpawnParameters SpawnParams;
@@ -29,6 +29,6 @@ FITwinGeolocation::FITwinGeolocation(AActor& Parent)
 		NonLocatedGeoreference->SetActorLabel(TEXT("Non-Located Georeference"));
 #endif
 		NonLocatedGeoreference->AttachToActor(&Parent, FAttachmentTransformRules::KeepRelativeTransform);
-		NonLocatedGeoreference->SetOriginPlacement(EOriginPlacement::TrueOrigin);
+		NonLocatedGeoreference->SetOriginPlacement(EITwinOriginPlacement::TrueOrigin);
 	}
 }

@@ -3,7 +3,7 @@
 #include "ITwinCesiumGeoreference.h"
 #include "ITwinVecMath.h"
 
-bool CesiumTileExcluderAdapter::shouldExclude(
+bool FITwinCesiumTileExcluderAdapter::shouldExclude(
     const Cesium3DTilesSelection::Tile& tile) const noexcept {
   if (!this->IsExcluderValid) {
     return false;
@@ -13,7 +13,7 @@ bool CesiumTileExcluderAdapter::shouldExclude(
   return Excluder->ShouldExclude(Tile);
 }
 
-void CesiumTileExcluderAdapter::startNewFrame() noexcept {
+void FITwinCesiumTileExcluderAdapter::startNewFrame() noexcept {
   if (!Excluder.IsValid() || !IsValid(Tile) || !IsValid(Georeference)) {
     IsExcluderValid = false;
     return;
@@ -25,7 +25,7 @@ void CesiumTileExcluderAdapter::startNewFrame() noexcept {
           .GetAbsoluteUnrealWorldToEllipsoidCenteredTransform();
 }
 
-CesiumTileExcluderAdapter::CesiumTileExcluderAdapter(
+FITwinCesiumTileExcluderAdapter::FITwinCesiumTileExcluderAdapter(
     TWeakObjectPtr<UITwinCesiumTileExcluder> pExcluder,
     AITwinCesiumGeoreference* pGeoreference,
     UITwinCesiumTile* pTile)

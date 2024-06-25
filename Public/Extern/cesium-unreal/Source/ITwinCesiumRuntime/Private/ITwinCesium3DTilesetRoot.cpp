@@ -14,7 +14,7 @@ UITwinCesium3DTilesetRoot::UITwinCesium3DTilesetRoot()
 
 void UITwinCesium3DTilesetRoot::HandleGeoreferenceUpdated() {
   UE_LOG(
-      LogCesium,
+      LogITwinCesium,
       Verbose,
       TEXT("Called HandleGeoreferenceUpdated for tileset root %s"),
       *this->GetName());
@@ -57,13 +57,13 @@ bool UITwinCesium3DTilesetRoot::MoveComponentImpl(
 
 void UITwinCesium3DTilesetRoot::_updateAbsoluteLocation() {
   const FVector& newLocation = this->GetRelativeLocation();
-  this->_absoluteLocation = VecMath::createVector3D(newLocation);
+  this->_absoluteLocation = FITwinVecMath::createVector3D(newLocation);
 }
 
 void UITwinCesium3DTilesetRoot::_updateTilesetToUnrealRelativeWorldTransform() {
   AITwinCesium3DTileset* pTileset = this->GetOwner<AITwinCesium3DTileset>();
 
-  this->_tilesetToUnrealRelativeWorld = VecMath::createMatrix4D(
+  this->_tilesetToUnrealRelativeWorld = FITwinVecMath::createMatrix4D(
       pTileset->ResolveGeoreference()
           ->ComputeEarthCenteredEarthFixedToUnrealTransformation());
 

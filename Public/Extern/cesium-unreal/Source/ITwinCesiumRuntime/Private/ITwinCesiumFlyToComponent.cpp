@@ -42,7 +42,7 @@ void UITwinCesiumFlyToComponent::FlyToLocationEarthCenteredEarthFixed(
     bool CanInterruptByMoving) {
   if (this->_flightInProgress) {
     UE_LOG(
-        LogCesium,
+        LogITwinCesium,
         Error,
         TEXT("Cannot start a flight because one is already in progress."));
     return;
@@ -65,9 +65,9 @@ void UITwinCesiumFlyToComponent::FlyToLocationEarthCenteredEarthFixed(
   this->_destinationEcef = EarthCenteredEarthFixedDestination;
 
   // Compute axis/Angle transform
-  glm::dvec3 glmEcefSource = VecMath::createVector3D(
+  glm::dvec3 glmEcefSource = FITwinVecMath::createVector3D(
       UITwinCesiumWgs84Ellipsoid::ScaleToGeodeticSurface(ecefSource));
-  glm::dvec3 glmEcefDestination = VecMath::createVector3D(
+  glm::dvec3 glmEcefDestination = FITwinVecMath::createVector3D(
       UITwinCesiumWgs84Ellipsoid::ScaleToGeodeticSurface(this->_destinationEcef));
 
   glm::dquat flyQuat = glm::rotation(
@@ -158,7 +158,7 @@ void UITwinCesiumFlyToComponent::FlyToLocationUnreal(
   UITwinCesiumGlobeAnchorComponent* GlobeAnchor = this->GetGlobeAnchor();
   if (!IsValid(GlobeAnchor)) {
     UE_LOG(
-        LogCesium,
+        LogITwinCesium,
         Warning,
         TEXT(
             "CesiumFlyToComponent cannot FlyToLocationUnreal because the Actor has no CesiumGlobeAnchorComponent."));
@@ -168,7 +168,7 @@ void UITwinCesiumFlyToComponent::FlyToLocationUnreal(
   AITwinCesiumGeoreference* Georeference = GlobeAnchor->ResolveGeoreference();
   if (!IsValid(Georeference)) {
     UE_LOG(
-        LogCesium,
+        LogITwinCesium,
         Warning,
         TEXT(
             "CesiumFlyToComponent cannot FlyToLocationUnreal because the globe anchor has no associated CesiumGeoreference."));
@@ -196,7 +196,7 @@ void UITwinCesiumFlyToComponent::InterruptFlight() {
   }
 
   // Trigger callback accessible from BP
-  UE_LOG(LogCesium, Verbose, TEXT("Broadcasting OnFlightInterrupt"));
+  UE_LOG(LogITwinCesium, Verbose, TEXT("Broadcasting OnFlightInterrupt"));
   OnFlightInterrupted.Broadcast();
 }
 
@@ -250,7 +250,7 @@ void UITwinCesiumFlyToComponent::TickComponent(
     this->_currentFlyTime = 0.0f;
 
     // Trigger callback accessible from BP
-    UE_LOG(LogCesium, Verbose, TEXT("Broadcasting OnFlightComplete"));
+    UE_LOG(LogITwinCesium, Verbose, TEXT("Broadcasting OnFlightComplete"));
     OnFlightComplete.Broadcast();
 
     return;
@@ -301,14 +301,14 @@ void UITwinCesiumFlyToComponent::TickComponent(
 }
 
 FQuat UITwinCesiumFlyToComponent::GetCurrentRotationEastSouthUp() {
-  if (this->RotationToUse != ECesiumFlyToRotation::Actor) {
+  if (this->RotationToUse != EITwinCesiumFlyToRotation::Actor) {
     APawn* Pawn = Cast<APawn>(this->GetOwner());
     const TObjectPtr<AController> Controller =
         IsValid(Pawn) ? Pawn->Controller : nullptr;
     if (Controller) {
       FRotator rotator = Controller->GetControlRotation();
       if (this->RotationToUse ==
-          ECesiumFlyToRotation::ControlRotationInUnreal) {
+          EITwinCesiumFlyToRotation::ControlRotationInUnreal) {
         USceneComponent* PawnRoot = Pawn->GetRootComponent();
         if (IsValid(PawnRoot)) {
           rotator = GetGlobeAnchor()
@@ -329,14 +329,14 @@ void UITwinCesiumFlyToComponent::SetCurrentRotationEastSouthUp(
     const FQuat& EastSouthUpRotation) {
   bool controlRotationSet = false;
 
-  if (this->RotationToUse != ECesiumFlyToRotation::Actor) {
+  if (this->RotationToUse != EITwinCesiumFlyToRotation::Actor) {
     APawn* Pawn = Cast<APawn>(this->GetOwner());
     const TObjectPtr<AController> Controller =
         IsValid(Pawn) ? Pawn->Controller : nullptr;
     if (Controller) {
       FRotator rotator = EastSouthUpRotation.Rotator();
       if (this->RotationToUse ==
-          ECesiumFlyToRotation::ControlRotationInUnreal) {
+          EITwinCesiumFlyToRotation::ControlRotationInUnreal) {
         USceneComponent* PawnRoot = Pawn->GetRootComponent();
         if (IsValid(PawnRoot)) {
           rotator = GetGlobeAnchor()

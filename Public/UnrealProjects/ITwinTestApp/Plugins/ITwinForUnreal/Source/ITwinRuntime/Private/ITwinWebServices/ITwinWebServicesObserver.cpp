@@ -61,7 +61,7 @@ void FITwinDefaultWebServicesObserver::OnSavedViewAdded(bool bSuccess, FSavedVie
 {
 	checkf(false, TEXT("%s does not handle SavedViews"), GetObserverName());
 }
-void FITwinDefaultWebServicesObserver::OnSavedViewDeleted(bool bSuccess, FString const& Response)
+void FITwinDefaultWebServicesObserver::OnSavedViewDeleted(bool bSuccess, FString const& SavedViewId, FString const& Response)
 {
 	checkf(false, TEXT("%s does not handle SavedViews"), GetObserverName());
 }

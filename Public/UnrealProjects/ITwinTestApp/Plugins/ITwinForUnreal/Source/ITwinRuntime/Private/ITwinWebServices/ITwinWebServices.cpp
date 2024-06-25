@@ -38,6 +38,9 @@
 namespace ITwin
 {
 	extern FString GetITwinAppId(EITwinEnvironment Env);
+
+
+	constexpr uint32 NO_REQUEST{ 0xFFFFFFFF };
 }
 
 namespace
@@ -145,7 +148,10 @@ namespace
 		{
 			return FRotator(0, 0, 0);
 		}
-		return FRotator(JsonObject->GetNumberField("pitch"), JsonObject->GetNumberField("yaw"), JsonObject->GetNumberField("roll"));
+		return FRotator(
+			JsonObject->GetNumberField("pitch"),
+			JsonObject->GetNumberField("yaw"),
+			JsonObject->GetNumberField("roll"));
 	}
 }
 
@@ -333,7 +339,14 @@ class UITwinWebServices::FImpl
 	mutable FMutex mutex_;
 	std::shared_ptr< std::atomic_bool > isThisValid_ = std::make_shared< std::atomic_bool >(true); // same principle as in #FReusableJsonQueries::FImpl
 	IITwinWebServicesObserver* observer_ = nullptr;
-	FString lastError_;
+
+	struct LastError
+	{
+		FString msg_;
+		RequestID requestId_ = ITwin::NO_REQUEST;
+	};
+	LastError lastError_;
+	RequestID nextRequestId_ = 0;
 
 	// Some data (mostly tokens) are unique per environment - thus their management is centralized
 	using SharedMngrPtr = FITwinAuthorizationManager::SharedInstance;
@@ -514,22 +527,37 @@ void UITwinWebServices::SetObserver(IITwinWebServicesObserver* InObserver)
 	Impl->observer_ = InObserver;
 }
 
-void UITwinWebServices::SetLastError(FString const& InError)
+bool UITwinWebServices::HasObserver(IITwinWebServicesObserver const* Observer) const
+{
+	return Impl->observer_ == Observer;
+}
+
+void UITwinWebServices::SetLastError(FString const& InError, RequestID InRequestID)
 {
 	FImpl::FLock Lock(Impl->mutex_);
-	Impl->lastError_ = InError;
+	Impl->lastError_.msg_ = InError;
+	Impl->lastError_.requestId_ = InRequestID;
 }
 
 FString UITwinWebServices::GetLastError() const
 {
 	FImpl::FLock Lock(Impl->mutex_);
-	return Impl->lastError_;
+	return Impl->lastError_.msg_;
+}
+
+FString UITwinWebServices::GetRequestError(RequestID InRequestId) const
+{
+	FImpl::FLock Lock(Impl->mutex_);
+	if (Impl->lastError_.requestId_ == InRequestId)
+		return Impl->lastError_.msg_;
+	else
+		return {};
 }
 
 bool UITwinWebServices::ConsumeLastError(FString& OutError)
 {
 	FImpl::FLock Lock(Impl->mutex_);
-	OutError = Impl->lastError_;
+	OutError = Impl->lastError_.msg_;
 	Impl->lastError_ = {};
 	return !OutError.IsEmpty();
 }
@@ -544,10 +572,12 @@ struct UITwinWebServices::FITwinAPIRequestInfo
 	FString ContentString;
 
 	TMap<FString, FString> CustomHeaders;
+
+	bool bAllowEmptyResponse = false; // E.g. true for DeleteSavedView
 };
 
 template <typename ResultDataType, class FunctorType, class DelegateAsFunctor>
-void UITwinWebServices::TProcessHttpRequest(
+UITwinWebServices::RequestID UITwinWebServices::TProcessHttpRequest(
 	FITwinAPIRequestInfo const& RequestInfo,
 	FunctorType&& InFunctor,
 	DelegateAsFunctor&& InResultFunctor)
@@ -559,13 +589,21 @@ void UITwinWebServices::TProcessHttpRequest(
 	// client.
 	if (!TryGetServerConnection(false))
 	{
-		return;
+		return ITwin::NO_REQUEST;
 	}
 	FString const authToken = GetAuthToken();
 	if (authToken.IsEmpty())
 	{
-		return;
+		return ITwin::NO_REQUEST;
 	}
+
+	// build a unique request ID
+	RequestID newRequestID(ITwin::NO_REQUEST);
+	{
+		FImpl::FLock Lock(Impl->mutex_);
+		newRequestID = Impl->nextRequestId_++;
+	}
+
 	const auto request = FHttpModule::Get().CreateRequest();
 	request->SetVerb(RequestInfo.Verb);
 	request->SetURL(GetITwinAPIRootUrl(this->Environment) + RequestInfo.UrlSuffix);
@@ -596,7 +634,9 @@ void UITwinWebServices::TProcessHttpRequest(
 		[this,
 		IsValidLambda = this->Impl->isThisValid_,
 		ResultCallback = Forward<DelegateAsFunctor>(InResultFunctor),
-		ResponseProcessor = Forward<FunctorType>(InFunctor)]
+		ResponseProcessor = Forward<FunctorType>(InFunctor),
+		bAllowEmptyResponse = RequestInfo.bAllowEmptyResponse,
+		requestId = newRequestID]
 		(FHttpRequestPtr request, FHttpResponsePtr response, bool connectedSuccessfully)
 	{
 		if (!(*IsValidLambda))
@@ -606,9 +646,9 @@ void UITwinWebServices::TProcessHttpRequest(
 		}
 		bool bValidResponse = false;
 		FString requestError;
-		Be::CleanUpGuard setErrorGuard([this, &bValidResponse, &requestError, &ResultCallback]
+		Be::CleanUpGuard setErrorGuard([this, &bValidResponse, &requestError, &ResultCallback, requestId]
 		{
-			this->SetLastError(requestError);
+			this->SetLastError(requestError, requestId);
 			if (!bValidResponse)
 			{
 				ResultCallback(false, {});
@@ -627,10 +667,17 @@ void UITwinWebServices::TProcessHttpRequest(
 		{
 			bValidResponse = ResponseProcessor(ResultData, *responseJson);
 		}
+		else if (bAllowEmptyResponse)
+		{
+			// some request expect no response (DeleteSavedView, typically)
+			bValidResponse = ResponseProcessor(ResultData, {});
+		}
 		ScopedWorkingWebServices WorkingInstanceSetter(this);
 		ResultCallback(bValidResponse, ResultData);
 	});
 	request->ProcessRequest();
+
+	return newRequestID;
 }
 
 void UITwinWebServices::GetITwinInfo(FString ITwinId)
@@ -803,7 +850,7 @@ void UITwinWebServices::GetExports(FString IModelId, FString ChangesetId)
 		{},
 		{},
 		{
-			// The following headers have been added folowing suggestion by Daniel Iborra.
+			// The following headers have been added following suggestion by Daniel Iborra.
 			// This header is supposed to filter exports, but it is not implemented yet on server.
 			// Therefore we need to keep our own filter on the response for now.
 			{TEXT("exportType"), TEXT("CESIUM")}, 
@@ -821,19 +868,31 @@ void UITwinWebServices::GetExports(FString IModelId, FString ChangesetId)
 		{
 			return false;
 		}
+		// intermediate structure to sort exports by date
+		struct FCesiumExport
+		{
+			FITwinExportInfo Info;
+			FString LastModified;
+		};
+		TArray<FCesiumExport> CesiumExports;
+		CesiumExports.Reserve(exportsJson->Num());
 		for (const auto& ExportValue : *exportsJson)
 		{
 			const auto& ExportObject = ExportValue->AsObject();
 			const auto& RequestObject = ExportObject->GetObjectField("request");
 			if (RequestObject->GetStringField("exportType") == "CESIUM" && RequestObject->HasField("exportTypeVersion"))
 			{
-				FITwinExportInfo Export = {
+				FCesiumExport& ExportWithDate = CesiumExports.Emplace_GetRef();
+				FITwinExportInfo& Export(ExportWithDate.Info);
+				Export = {
 					ExportObject->GetStringField("id"),
 					ExportObject->GetStringField("displayName"),
 					ExportObject->GetStringField("status"),
 					RequestObject->GetStringField("iModelId"),
+					RequestObject->GetStringField("contextId"),
 					RequestObject->GetStringField("changesetId")
 				};
+				ExportWithDate.LastModified = ExportObject->GetStringField("lastModified");
 				if (Export.Status == "Complete")
 				{
 					auto MeshJsonObject = GetChildObject(ExportObject, "_links/mesh");
@@ -842,8 +901,16 @@ void UITwinWebServices::GetExports(FString IModelId, FString ChangesetId)
 						Export.MeshUrl = MeshJsonObject->GetStringField("href").Replace(TEXT("?"), TEXT("/tileset.json?"));
 					}
 				}
-				Infos.ExportInfos.Push(Export);
 			}
+		}
+		// sort by decreasing modification time
+		CesiumExports.StableSort([](FCesiumExport const& A, FCesiumExport const& B) {
+			return A.LastModified > B.LastModified;
+		});
+		Infos.ExportInfos.Reserve(CesiumExports.Num());
+		for (FCesiumExport const& ExportWithDate : CesiumExports)
+		{
+			Infos.ExportInfos.Push(ExportWithDate.Info);
 		}
 		return true;
 	},
@@ -1081,10 +1148,24 @@ void UITwinWebServices::GetRealityData3DInfo(FString ITwinId, FString RealityDat
 	});
 }
 
+namespace
+{
+	inline FString GetSavedViewData_Json(FSavedView const& SavedView)
+	{
+		const auto& camPos = SavedView.Origin;
+		const auto& camRot = SavedView.Angles;
+		return FString::Printf(TEXT("\"savedViewData\":{\"itwin3dView\":{" \
+			"\"origin\":[%.2f,%.2f,%.2f]," \
+			"\"extents\":[0.00,0.00,0.00]," \
+			"\"angles\":{\"yaw\":%.2f,\"pitch\":%.2f,\"roll\":%.2f}," \
+			"\"camera\":{\"lens\":0.0,\"focusDist\":0.0,\"eye\":[%.2f,%.2f,%.2f]}}}"),
+			camPos.X, camPos.Y, camPos.Z, camRot.Yaw, camRot.Pitch, camRot.Roll,
+			camPos.X, camPos.Y, camPos.Z);
+	}
+}
+
 void UITwinWebServices::AddSavedView(FString ITwinId, FString IModelId, FSavedView SavedView, FSavedViewInfo SavedViewInfo)
 {
-	const auto& camPos = SavedView.Origin;
-	const auto& camRot = SavedView.Angles;
 	const FITwinAPIRequestInfo savedViewsRequestInfo = {
 		TEXT("POST"),
 		TEXT("/savedviews/"),
@@ -1092,8 +1173,9 @@ void UITwinWebServices::AddSavedView(FString ITwinId, FString IModelId, FSavedVi
 
 		/*** additional settings for POST ***/
 		TEXT("application/json"),
-		FString::Printf(TEXT("{\"iTwinId\":\"%s\",\"iModelId\":\"%s\",\"savedViewData\":{\"itwin3dView\":{\"origin\":[%.2f,%.2f,%.2f],\"extents\":[0.00,0.00,0.00],\"angles\":{\"yaw\":%.2f,\"pitch\":%.2f,\"roll\":%.2f},\"camera\":{\"lens\":0.0,\"focusDist\":0.0,\"eye\":[%.2f,%.2f,%.2f]}}},\"displayName\":\"%s\",\"shared\":true,\"tagIds\":[]}"),
-		*ITwinId, *IModelId, camPos.X, camPos.Y, camPos.Z, camRot.Yaw, camRot.Pitch, camRot.Roll, camPos.X, camPos.Y, camPos.Z, *SavedViewInfo.DisplayName)
+		FString::Printf(TEXT("{\"iTwinId\":\"%s\",\"iModelId\":\"%s\",%s," \
+			"\"displayName\":\"%s\",\"shared\":true,\"tagIds\":[]}"),
+			*ITwinId, *IModelId, *GetSavedViewData_Json(SavedView), *SavedViewInfo.DisplayName)
 	};
 	TProcessHttpRequest<FSavedViewInfo>(
 		savedViewsRequestInfo,
@@ -1112,13 +1194,18 @@ void UITwinWebServices::AddSavedView(FString ITwinId, FString IModelId, FSavedVi
 		},
 		[this](bool bResult, FSavedViewInfo const& ResultData)
 		{
-			this->OnAddSavedViewComplete.Broadcast(bResult, ResultData);
-			if (this->Impl->observer_)
-			{
-				this->Impl->observer_->OnSavedViewAdded(bResult, ResultData);
-			}
+			this->OnSavedViewAdded(bResult, ResultData);
 		}
 	);
+}
+
+void UITwinWebServices::OnSavedViewAdded(bool bSuccess, FSavedViewInfo const& SavedViewInfo)
+{
+	OnAddSavedViewComplete.Broadcast(bSuccess, SavedViewInfo);
+	if (Impl->observer_)
+	{
+		Impl->observer_->OnSavedViewAdded(bSuccess, SavedViewInfo);
+	}
 }
 
 void UITwinWebServices::DeleteSavedView(FString SavedViewId)
@@ -1127,8 +1214,19 @@ void UITwinWebServices::DeleteSavedView(FString SavedViewId)
 		TEXT("DELETE"),
 		TEXT("/savedviews/" + SavedViewId),
 		TEXT("application/vnd.bentley.itwin-platform.v1+json"),
+		{},
+		{},
+		{},
+		true /*bAllowEmptyResponse*/
 	};
-	TProcessHttpRequest<FString>(
+
+	// store request ID which will be used
+	RequestID delRequestID(ITwin::NO_REQUEST);
+	{
+		FImpl::FLock Lock(Impl->mutex_);
+		delRequestID = Impl->nextRequestId_;
+	}
+	RequestID const requestID = TProcessHttpRequest<FString>(
 		savedViewsRequestInfo,
 		[](FString& ErrorCode, FJsonObject const& responseJson) -> bool
 		{
@@ -1142,22 +1240,33 @@ void UITwinWebServices::DeleteSavedView(FString SavedViewId)
 			ErrorCode = {};
 			return true;
 		},
-		[this](bool bResult, FString const& strResponse)
+		[this, delRequestID, SavedViewId](bool bResult, FString const& strResponse)
 		{
-			this->OnDeleteSavedViewComplete.Broadcast(bResult, strResponse);
-			if (this->Impl->observer_)
+			// in DeleteSavedView, the callbacks expect an error message (in case of failure)
+			// => if none if provided, and if the last error recorded corresponds to our request, use the
+			// latter as response.
+			FString OutResponse = strResponse;
+			if (!bResult && OutResponse.IsEmpty())
 			{
-				this->Impl->observer_->OnSavedViewDeleted(bResult, strResponse);
+				OutResponse = GetRequestError(delRequestID);
 			}
+			this->OnSavedViewDeleted(bResult, SavedViewId, OutResponse);
 		}
 	);
+	ensureMsgf(delRequestID == requestID, TEXT("mismatch in request ID - error might be lost"));
+}
+
+void UITwinWebServices::OnSavedViewDeleted(bool bSuccess, FString const& SavedViewId, FString const& Response) const
+{
+	OnDeleteSavedViewComplete.Broadcast(bSuccess, SavedViewId, Response);
+	if (Impl->observer_)
+	{
+		Impl->observer_->OnSavedViewDeleted(bSuccess, SavedViewId, Response);
+	}
 }
 
 void UITwinWebServices::EditSavedView(FSavedView SavedView, FSavedViewInfo SavedViewInfo)
 {
-	const auto Request = FHttpModule::Get().CreateRequest();
-	const auto& camPos = SavedView.Origin;
-	const auto& camRot = SavedView.Angles;
 	const FITwinAPIRequestInfo savedViewsRequestInfo = {
 		TEXT("PATCH"),
 		TEXT("/savedviews/" + SavedViewInfo.Id),
@@ -1165,8 +1274,8 @@ void UITwinWebServices::EditSavedView(FSavedView SavedView, FSavedViewInfo Saved
 
 		/*** additional settings for PATCH ***/
 		TEXT("application/json"),
-		FString::Printf(TEXT("{\"savedViewData\":{\"itwin3dView\":{\"origin\":[%.2f,%.2f,%.2f],\"extents\":[0.00,0.00,0.00],\"angles\":{\"yaw\":%.2f,\"pitch\":%.2f,\"roll\":%.2f},\"camera\":{\"lens\":0.0,\"focusDist\":0.0,\"eye\":[%.2f,%.2f,%.2f]}}},\"displayName\":\"%s\",\"shared\":true,\"tagIds\":[]}"),
-		camPos.X, camPos.Y, camPos.Z, camRot.Yaw, camRot.Pitch, camRot.Roll, camPos.X, camPos.Y, camPos.Z, *SavedViewInfo.DisplayName)
+		FString::Printf(TEXT("{%s,\"displayName\":\"%s\",\"shared\":true,\"tagIds\":[]}"),
+			*GetSavedViewData_Json(SavedView), *SavedViewInfo.DisplayName)
 	};
 
 	struct FEditSavedViewData
@@ -1190,8 +1299,15 @@ void UITwinWebServices::EditSavedView(FSavedView SavedView, FSavedViewInfo Saved
 
 			const auto& JsonEye = JsonView->GetObjectField("camera");
 
-			EditSVData.SavedView = { GetFVector(JsonEye, "eye"), GetFVector(JsonView, "extents"), GetFRotator(JsonView, "angles") };
-			EditSVData.SavedViewInfo = { view->GetStringField("id"), view->GetStringField("displayName"), view->GetBoolField("shared") };
+			EditSVData.SavedView = {
+				GetFVector(JsonEye, "eye"),
+				GetFVector(JsonView, "extents"),
+				GetFRotator(JsonView, "angles")
+			};
+			EditSVData.SavedViewInfo = {
+				view->GetStringField("id"),
+				view->GetStringField("displayName"),
+				view->GetBoolField("shared") };
 			return true;
 		},
 		[this](bool bResult, FEditSavedViewData const& EditSVData)

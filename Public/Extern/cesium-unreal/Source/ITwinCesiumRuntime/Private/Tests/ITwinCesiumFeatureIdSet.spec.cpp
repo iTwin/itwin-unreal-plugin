@@ -36,7 +36,7 @@ void FITwinCesiumFeatureIdSetSpec::Define() {
           "FeatureIDType",
           UITwinCesiumFeatureIdSetBlueprintLibrary::GetFeatureIDSetType(
               featureIDSet),
-          ECesiumFeatureIdSetType::None);
+          EITwinCesiumFeatureIdSetType::None);
       TestEqual(
           "FeatureCount",
           UITwinCesiumFeatureIdSetBlueprintLibrary::GetFeatureCount(featureIDSet),
@@ -52,7 +52,7 @@ void FITwinCesiumFeatureIdSetSpec::Define() {
           "FeatureIDType",
           UITwinCesiumFeatureIdSetBlueprintLibrary::GetFeatureIDSetType(
               featureIDSet),
-          ECesiumFeatureIdSetType::Implicit);
+          EITwinCesiumFeatureIdSetType::Implicit);
       TestEqual(
           "FeatureCount",
           UITwinCesiumFeatureIdSetBlueprintLibrary::GetFeatureCount(featureIDSet),
@@ -62,7 +62,7 @@ void FITwinCesiumFeatureIdSetSpec::Define() {
     It("constructs set with feature ID attribute", [this]() {
       const int64 attributeIndex = 0;
       const std::vector<uint8_t> featureIDs{0, 0, 0, 1, 1, 1};
-      FeatureId& featureID = AddFeatureIDsAsAttributeToModel(
+      FeatureId& featureID = ITwinCesium::AddFeatureIDsAsAttributeToModel(
           model,
           *pPrimitive,
           featureIDs,
@@ -74,7 +74,7 @@ void FITwinCesiumFeatureIdSetSpec::Define() {
           "FeatureIDType",
           UITwinCesiumFeatureIdSetBlueprintLibrary::GetFeatureIDSetType(
               featureIDSet),
-          ECesiumFeatureIdSetType::Attribute);
+          EITwinCesiumFeatureIdSetType::Attribute);
       TestEqual(
           "FeatureCount",
           UITwinCesiumFeatureIdSetBlueprintLibrary::GetFeatureCount(featureIDSet),
@@ -89,7 +89,7 @@ void FITwinCesiumFeatureIdSetSpec::Define() {
           glm::vec2(0, 0.5),
           glm::vec2(0.5, 0.5)};
 
-      FeatureId& featureId = AddFeatureIDsAsTextureToModel(
+      FeatureId& featureId = ITwinCesium::AddFeatureIDsAsTextureToModel(
           model,
           *pPrimitive,
           featureIDs,
@@ -104,7 +104,7 @@ void FITwinCesiumFeatureIdSetSpec::Define() {
           "FeatureIDType",
           UITwinCesiumFeatureIdSetBlueprintLibrary::GetFeatureIDSetType(
               featureIDSet),
-          ECesiumFeatureIdSetType::Texture);
+          EITwinCesiumFeatureIdSetType::Texture);
       TestEqual(
           "FeatureCount",
           UITwinCesiumFeatureIdSetBlueprintLibrary::GetFeatureCount(featureIDSet),
@@ -121,7 +121,7 @@ void FITwinCesiumFeatureIdSetSpec::Define() {
           "FeatureIDType",
           UITwinCesiumFeatureIdSetBlueprintLibrary::GetFeatureIDSetType(
               featureIDSet),
-          ECesiumFeatureIdSetType::Implicit);
+          EITwinCesiumFeatureIdSetType::Implicit);
       TestEqual(
           "FeatureCount",
           UITwinCesiumFeatureIdSetBlueprintLibrary::GetFeatureCount(featureIDSet),
@@ -142,7 +142,7 @@ void FITwinCesiumFeatureIdSetSpec::Define() {
           "FeatureIDType",
           UITwinCesiumFeatureIdSetBlueprintLibrary::GetFeatureIDSetType(
               featureIDSet),
-          ECesiumFeatureIdSetType::Implicit);
+          EITwinCesiumFeatureIdSetType::Implicit);
       TestEqual(
           "FeatureCount",
           UITwinCesiumFeatureIdSetBlueprintLibrary::GetFeatureCount(featureIDSet),
@@ -174,14 +174,14 @@ void FITwinCesiumFeatureIdSetSpec::Define() {
           "AttributeStatus",
           UITwinCesiumFeatureIdAttributeBlueprintLibrary::
               GetFeatureIDAttributeStatus(attribute),
-          ECesiumFeatureIdAttributeStatus::ErrorInvalidAttribute);
+          EITwinCesiumFeatureIdAttributeStatus::ErrorInvalidAttribute);
       TestEqual("AttributeIndex", attribute.getAttributeIndex(), -1);
     });
 
     It("returns valid instance for attribute feature ID set", [this]() {
       const int64 attributeIndex = 0;
       const std::vector<uint8_t> featureIDs{0, 0, 0, 1, 1, 1};
-      FeatureId& featureID = AddFeatureIDsAsAttributeToModel(
+      FeatureId& featureID = ITwinCesium::AddFeatureIDsAsAttributeToModel(
           model,
           *pPrimitive,
           featureIDs,
@@ -196,7 +196,7 @@ void FITwinCesiumFeatureIdSetSpec::Define() {
           "AttributeStatus",
           UITwinCesiumFeatureIdAttributeBlueprintLibrary::
               GetFeatureIDAttributeStatus(attribute),
-          ECesiumFeatureIdAttributeStatus::Valid);
+          EITwinCesiumFeatureIdAttributeStatus::Valid);
       TestEqual(
           "AttributeIndex",
           attribute.getAttributeIndex(),
@@ -223,7 +223,7 @@ void FITwinCesiumFeatureIdSetSpec::Define() {
           "TextureStatus",
           UITwinCesiumFeatureIdTextureBlueprintLibrary::GetFeatureIDTextureStatus(
               texture),
-          ECesiumFeatureIdTextureStatus::ErrorInvalidTexture);
+          EITwinCesiumFeatureIdTextureStatus::ErrorInvalidTexture);
 
       auto featureIDTextureView = texture.getFeatureIdTextureView();
       TestEqual(
@@ -240,7 +240,7 @@ void FITwinCesiumFeatureIdSetSpec::Define() {
           glm::vec2(0, 0.5),
           glm::vec2(0.5, 0.5)};
 
-      FeatureId& featureId = AddFeatureIDsAsTextureToModel(
+      FeatureId& featureId = ITwinCesium::AddFeatureIDsAsTextureToModel(
           model,
           *pPrimitive,
           featureIDs,
@@ -258,7 +258,7 @@ void FITwinCesiumFeatureIdSetSpec::Define() {
           "TextureStatus",
           UITwinCesiumFeatureIdTextureBlueprintLibrary::GetFeatureIDTextureStatus(
               texture),
-          ECesiumFeatureIdTextureStatus::Valid);
+          EITwinCesiumFeatureIdTextureStatus::Valid);
 
       auto featureIDTextureView = texture.getFeatureIdTextureView();
       TestEqual(
@@ -322,7 +322,7 @@ void FITwinCesiumFeatureIdSetSpec::Define() {
     It("returns correct value for attribute set", [this]() {
       const int64 attributeIndex = 0;
       const std::vector<uint8_t> featureIDs{0, 0, 0, 1, 1, 1};
-      FeatureId& featureID = AddFeatureIDsAsAttributeToModel(
+      FeatureId& featureID = ITwinCesium::AddFeatureIDsAsAttributeToModel(
           model,
           *pPrimitive,
           featureIDs,
@@ -348,7 +348,7 @@ void FITwinCesiumFeatureIdSetSpec::Define() {
           glm::vec2(0, 0.5),
           glm::vec2(0.5, 0.5)};
 
-      FeatureId& featureID = AddFeatureIDsAsTextureToModel(
+      FeatureId& featureID = ITwinCesium::AddFeatureIDsAsTextureToModel(
           model,
           *pPrimitive,
           featureIDs,
@@ -445,7 +445,7 @@ void FITwinCesiumFeatureIdSetSpec::Define() {
           glm::vec2(0, 1),
           glm::vec2(1, 0)};
       const std::vector<uint8_t> featureIDs{0, 3, 1, 2};
-      FeatureId& featureID = AddFeatureIDsAsTextureToModel(
+      FeatureId& featureID = ITwinCesium::AddFeatureIDsAsTextureToModel(
           model,
           *pPrimitive,
           featureIDs,
@@ -524,7 +524,7 @@ void FITwinCesiumFeatureIdSetSpec::Define() {
           static_cast<int32_t>(model.accessors.size() - 1);
       const int64 attributeIndex = 0;
       const std::vector<uint8_t> featureIDs{0, 0, 0, 1, 1, 1};
-      FeatureId& featureId = AddFeatureIDsAsAttributeToModel(
+      FeatureId& featureId = ITwinCesium::AddFeatureIDsAsAttributeToModel(
           model,
           *pPrimitive,
           featureIDs,
@@ -569,7 +569,7 @@ void FITwinCesiumFeatureIdSetSpec::Define() {
        [this]() {
          const int64 attributeIndex = 0;
          const std::vector<uint8_t> featureIDs{0, 0, 0, 1, 1, 1};
-         FeatureId& featureID = AddFeatureIDsAsAttributeToModel(
+         FeatureId& featureID = ITwinCesium::AddFeatureIDsAsAttributeToModel(
              model,
              *pPrimitive,
              featureIDs,
@@ -593,7 +593,7 @@ void FITwinCesiumFeatureIdSetSpec::Define() {
              "AttributeStatus",
              UITwinCesiumFeatureIdAttributeBlueprintLibrary::
                  GetFeatureIDAttributeStatus(attribute),
-             ECesiumFeatureIdAttributeStatus::Valid);
+             EITwinCesiumFeatureIdAttributeStatus::Valid);
          TestEqual(
              "GetFeatureTableName",
              UITwinCesiumFeatureIdAttributeBlueprintLibrary::GetFeatureTableName(
@@ -610,7 +610,7 @@ void FITwinCesiumFeatureIdSetSpec::Define() {
              glm::vec2(0, 0.5),
              glm::vec2(0.5, 0.5)};
 
-         FeatureId& featureID = AddFeatureIDsAsTextureToModel(
+         FeatureId& featureID = ITwinCesium::AddFeatureIDsAsTextureToModel(
              model,
              *pPrimitive,
              featureIDs,
@@ -637,7 +637,7 @@ void FITwinCesiumFeatureIdSetSpec::Define() {
              "TextureStatus",
              UITwinCesiumFeatureIdTextureBlueprintLibrary::GetFeatureIDTextureStatus(
                  texture),
-             ECesiumFeatureIdTextureStatus::Valid);
+             EITwinCesiumFeatureIdTextureStatus::Valid);
          TestEqual(
              "GetFeatureTableName",
              UITwinCesiumFeatureIdTextureBlueprintLibrary::GetFeatureTableName(

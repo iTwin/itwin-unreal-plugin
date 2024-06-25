@@ -30,7 +30,7 @@ class UMaterialInterface;
 class AITwinCesiumCartographicSelection;
 class AITwinCesiumCameraManager;
 class UITwinCesiumBoundingVolumePoolComponent;
-class CesiumViewExtension;
+class FITwinCesiumViewExtension;
 struct FITwinCesiumCamera;
 class ICesiumMeshBuildCallbacks;
 
@@ -52,13 +52,13 @@ DECLARE_MULTICAST_DELEGATE_OneParam(
  * The delegate for the Acesium3DTileset::OnTilesetLoaded,
  * which is triggered from UpdateLoadStatus
  */
-DECLARE_DYNAMIC_MULTICAST_DELEGATE(FCompletedLoadTrigger);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FITwinCompletedLoadTrigger);
 
 ITWINCESIUMRUNTIME_API extern FITwinCesium3DTilesetLoadFailure
     OnCesium3DTilesetLoadFailure;
 
 UENUM(BlueprintType)
-enum class ETilesetSource : uint8 {
+enum class EITwinTilesetSource : uint8 {
   /**
    * The tileset will be loaded from Cesium Ion using the provided IonAssetID
    * and IonAccessToken.
@@ -72,7 +72,7 @@ enum class ETilesetSource : uint8 {
 };
 
 UENUM(BlueprintType)
-enum class EApplyDpiScaling : uint8 { Yes, No, UseProjectDefault };
+enum class EITwinApplyDpiScaling : uint8 { Yes, No, UseProjectDefault };
 
 UCLASS()
 class ITWINCESIUMRUNTIME_API AITwinCesium3DTileset : public AActor {
@@ -243,7 +243,7 @@ private:
    * The custom view extension this tileset uses to pull renderer view
    * information.
    */
-  TSharedPtr<CesiumViewExtension, ESPMode::ThreadSafe> _cesiumViewExtension =
+  TSharedPtr<FITwinCesiumViewExtension, ESPMode::ThreadSafe> _cesiumViewExtension =
       nullptr;
 
 public:
@@ -335,7 +335,7 @@ public:
       EditAnywhere,
       BlueprintReadWrite,
       Category = "Cesium|Level of Detail")
-  EApplyDpiScaling ApplyDpiScaling = EApplyDpiScaling::UseProjectDefault;
+  EITwinApplyDpiScaling ApplyDpiScaling = EITwinApplyDpiScaling::UseProjectDefault;
 
   /**
    * Whether to preload ancestor tiles.
@@ -614,7 +614,7 @@ public:
    * A delegate that will be called whenever the tileset is fully loaded.
    */
   UPROPERTY(BlueprintAssignable, Category = "Cesium");
-  FCompletedLoadTrigger OnTilesetLoaded;
+  FITwinCompletedLoadTrigger OnTilesetLoaded;
 
   /**
    * Use a dithering effect when transitioning between tiles of different LODs.
@@ -655,7 +655,7 @@ private:
       BlueprintSetter = SetTilesetSource,
       Category = "Cesium",
       meta = (DisplayName = "Source"))
-  ETilesetSource TilesetSource = ETilesetSource::FromCesiumIon;
+  EITwinTilesetSource TilesetSource = EITwinTilesetSource::FromCesiumIon;
 
   /**
    * The URL of this tileset's "tileset.json" file.
@@ -667,7 +667,7 @@ private:
       BlueprintGetter = GetUrl,
       BlueprintSetter = SetUrl,
       Category = "Cesium",
-      meta = (EditCondition = "TilesetSource==ETilesetSource::FromUrl"))
+      meta = (EditCondition = "TilesetSource==EITwinTilesetSource::FromUrl"))
   FString Url = "";
 
   /**
@@ -681,7 +681,7 @@ private:
       BlueprintSetter = SetIonAssetID,
       Category = "Cesium",
       meta =
-          (EditCondition = "TilesetSource==ETilesetSource::FromCesiumIon",
+          (EditCondition = "TilesetSource==EITwinTilesetSource::FromCesiumIon",
            ClampMin = 0))
   int64 IonAssetID;
 
@@ -693,7 +693,7 @@ private:
       BlueprintGetter = GetIonAccessToken,
       BlueprintSetter = SetIonAccessToken,
       Category = "Cesium",
-      meta = (EditCondition = "TilesetSource==ETilesetSource::FromCesiumIon"))
+      meta = (EditCondition = "TilesetSource==EITwinTilesetSource::FromCesiumIon"))
   FString IonAccessToken;
 
   UPROPERTY(
@@ -711,7 +711,7 @@ private:
       BlueprintSetter = SetCesiumIonServer,
       Category = "Cesium",
       AdvancedDisplay,
-      meta = (EditCondition = "TilesetSource==ETilesetSource::FromCesiumIon"))
+      meta = (EditCondition = "TilesetSource==EITwinTilesetSource::FromCesiumIon"))
   UITwinCesiumIonServer* CesiumIonServer;
 
   /**
@@ -911,10 +911,10 @@ public:
   void SetUseLodTransitions(bool InUseLodTransitions);
 
   UFUNCTION(BlueprintGetter, Category = "Cesium")
-  ETilesetSource GetTilesetSource() const { return TilesetSource; }
+  EITwinTilesetSource GetTilesetSource() const { return TilesetSource; }
 
   UFUNCTION(BlueprintSetter, Category = "Cesium")
-  void SetTilesetSource(ETilesetSource InSource);
+  void SetTilesetSource(EITwinTilesetSource InSource);
 
   UFUNCTION(BlueprintGetter, Category = "Cesium")
   FString GetUrl() const { return Url; }
@@ -1204,7 +1204,7 @@ private:
       _featuresMetadataDescription;
 
   PRAGMA_DISABLE_DEPRECATION_WARNINGS
-  std::optional<FMetadataDescription> _metadataDescription_DEPRECATED;
+  std::optional<FITwinMetadataDescription> _metadataDescription_DEPRECATED;
   PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
   // For debug output

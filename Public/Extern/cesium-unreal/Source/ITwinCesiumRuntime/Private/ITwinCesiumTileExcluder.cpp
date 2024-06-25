@@ -8,7 +8,7 @@ using namespace Cesium3DTilesSelection;
 namespace {
 auto findExistingExcluder(
     const std::vector<std::shared_ptr<ITileExcluder>>& excluders,
-    const CesiumTileExcluderAdapter& excluder) {
+    const FITwinCesiumTileExcluderAdapter& excluder) {
   return std::find_if(
       excluders.begin(),
       excluders.end(),
@@ -48,7 +48,7 @@ void UITwinCesiumTileExcluder::AddToTileset() {
   CesiumTile->SetupAttachment(CesiumTileset->GetRootComponent());
   CesiumTile->RegisterComponent();
 
-  auto pAdapter = std::make_shared<CesiumTileExcluderAdapter>(
+  auto pAdapter = std::make_shared<FITwinCesiumTileExcluderAdapter>(
       TWeakObjectPtr<UITwinCesiumTileExcluder>(this),
       CesiumTileset->ResolveGeoreference(),
       CesiumTile);
@@ -72,7 +72,7 @@ void UITwinCesiumTileExcluder::RemoveFromTileset() {
     excluders.erase(it);
   }
 
-  CesiumLifetime::destroyComponentRecursively(CesiumTile);
+  FITwinCesiumLifetime::destroyComponentRecursively(CesiumTile);
 }
 
 void UITwinCesiumTileExcluder::Refresh() {

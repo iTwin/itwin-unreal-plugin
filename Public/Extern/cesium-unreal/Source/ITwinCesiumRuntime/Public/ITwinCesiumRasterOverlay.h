@@ -31,7 +31,7 @@ ITWINCESIUMRUNTIME_API extern FITwinCesiumRasterOverlayLoadFailure
  * `prepareRasterInLoadThread` is called.
  */
 USTRUCT(BlueprintType)
-struct FRasterOverlayRendererOptions {
+struct FITwinRasterOverlayRendererOptions {
   GENERATED_BODY()
 
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cesium")
@@ -72,7 +72,7 @@ public:
    * have the best quality.
    */
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cesium")
-  FRasterOverlayRendererOptions rendererOptions;
+  FITwinRasterOverlayRendererOptions rendererOptions;
 
   // Sets default values for this component's properties
   UITwinCesiumRasterOverlay();

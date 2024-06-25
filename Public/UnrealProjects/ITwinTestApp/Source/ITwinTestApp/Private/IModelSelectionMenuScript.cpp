@@ -38,9 +38,15 @@ void AIModelSelectionMenuScript::OnLoadIModel(FString InIModelId, FString InExpo
 
 void AIModelSelectionMenuScript::IModelLoaded(bool bSuccess)
 {
-	FITwinIModel3DInfo IModel3dInfo;
-	IModel->GetModel3DInfo(IModel3dInfo);
-	TopPanel->SetIModelInfo(ITwinId, IModelId, IModel3dInfo);
+	// for compatibility with former 3DFT plugin, we hold the 2 versions
+	FITwinIModel3DInfo IModel3dInfo_iTwin, IModel3dInfo_UE;
+
+	IModel->GetModel3DInfoInCoordSystem(IModel3dInfo_iTwin, EITwinCoordSystem::ITwin);
+	TopPanel->SetIModelInfo(ITwinId, IModelId, IModel3dInfo_iTwin);
+
+	IModel->GetModel3DInfoInCoordSystem(IModel3dInfo_UE, EITwinCoordSystem::UE);
+	TopPanel->SetIModel3DInfoInCoordSystem(IModel3dInfo_UE, EITwinCoordSystem::UE);
+
 	TopPanel->GetAllSavedViews();
 	TopPanel->ZoomOnIModel();
 }

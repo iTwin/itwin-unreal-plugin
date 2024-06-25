@@ -51,7 +51,7 @@ void setupForDenver(SceneGenerationContext& context) {
   // Add Cesium World Terrain
   AITwinCesium3DTileset* worldTerrainTileset =
       context.world->SpawnActor<AITwinCesium3DTileset>();
-  worldTerrainTileset->SetTilesetSource(ETilesetSource::FromCesiumIon);
+  worldTerrainTileset->SetTilesetSource(EITwinTilesetSource::FromCesiumIon);
   worldTerrainTileset->SetIonAssetID(1);
   worldTerrainTileset->SetIonAccessToken(SceneGenerationContext::testIonToken);
   worldTerrainTileset->SetActorLabel(TEXT("Cesium World Terrain"));
@@ -70,7 +70,7 @@ void setupForDenver(SceneGenerationContext& context) {
   // Aerometrex Denver
   AITwinCesium3DTileset* aerometrexTileset =
       context.world->SpawnActor<AITwinCesium3DTileset>();
-  aerometrexTileset->SetTilesetSource(ETilesetSource::FromCesiumIon);
+  aerometrexTileset->SetTilesetSource(EITwinTilesetSource::FromCesiumIon);
   aerometrexTileset->SetIonAssetID(354307);
   aerometrexTileset->SetIonAccessToken(SceneGenerationContext::testIonToken);
   aerometrexTileset->SetMaximumScreenSpaceError(2.0);
@@ -93,7 +93,7 @@ void setupForMelbourne(SceneGenerationContext& context) {
   // Add Cesium World Terrain
   AITwinCesium3DTileset* worldTerrainTileset =
       context.world->SpawnActor<AITwinCesium3DTileset>();
-  worldTerrainTileset->SetTilesetSource(ETilesetSource::FromCesiumIon);
+  worldTerrainTileset->SetTilesetSource(EITwinTilesetSource::FromCesiumIon);
   worldTerrainTileset->SetIonAssetID(1);
   worldTerrainTileset->SetIonAccessToken(SceneGenerationContext::testIonToken);
   worldTerrainTileset->SetActorLabel(TEXT("Cesium World Terrain"));
@@ -111,7 +111,7 @@ void setupForMelbourne(SceneGenerationContext& context) {
 
   AITwinCesium3DTileset* melbourneTileset =
       context.world->SpawnActor<AITwinCesium3DTileset>();
-  melbourneTileset->SetTilesetSource(ETilesetSource::FromCesiumIon);
+  melbourneTileset->SetTilesetSource(EITwinTilesetSource::FromCesiumIon);
   melbourneTileset->SetIonAssetID(69380);
   melbourneTileset->SetIonAccessToken(SceneGenerationContext::testIonToken);
   melbourneTileset->SetMaximumScreenSpaceError(6.0);
@@ -131,7 +131,7 @@ void setupForMontrealPointCloud(SceneGenerationContext& context) {
 
   AITwinCesium3DTileset* montrealTileset =
       context.world->SpawnActor<AITwinCesium3DTileset>();
-  montrealTileset->SetTilesetSource(ETilesetSource::FromCesiumIon);
+  montrealTileset->SetTilesetSource(EITwinTilesetSource::FromCesiumIon);
   montrealTileset->SetIonAssetID(28945);
   montrealTileset->SetIonAccessToken(SceneGenerationContext::testIonToken);
   montrealTileset->SetMaximumScreenSpaceError(16.0);
@@ -224,7 +224,7 @@ bool FSampleMaxTileLoads::RunTest(const FString& Parameters) {
                        SceneGenerationContext& context,
                        TestPass::TestingParameter parameter) {
     std::shared_ptr<CesiumAsync::ICacheDatabase> pCacheDatabase =
-        getCacheDatabase();
+        ITwinCesium::getCacheDatabase();
     pCacheDatabase->clearAll();
 
     int maxLoadsTarget = std::get<int>(parameter);
@@ -249,7 +249,7 @@ bool FSampleMaxTileLoads::RunTest(const FString& Parameters) {
       reportStr += "\n";
     }
     reportStr += "------------------------------------------------------\n";
-    UE_LOG(LogCesium, Display, TEXT("%s"), *reportStr);
+    UE_LOG(LogITwinCesium, Display, TEXT("%s"), *reportStr);
   };
 
   std::vector<TestPass> testPasses;

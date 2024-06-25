@@ -10,15 +10,15 @@
 
 #include <glm/glm.hpp>
 
-glm::dvec4 CesiumActors::getWorldOrigin4D(const AActor* actor) {
+glm::dvec4 ITwinCesiumActors::getWorldOrigin4D(const AActor* actor) {
   if (!IsValid(actor)) {
-    UE_LOG(LogCesium, Warning, TEXT("The actor is not valid"));
+    UE_LOG(LogITwinCesium, Warning, TEXT("The actor is not valid"));
     return glm::dvec4();
   }
   const UWorld* world = actor->GetWorld();
   if (!IsValid(world)) {
     UE_LOG(
-        LogCesium,
+        LogITwinCesium,
         Warning,
         TEXT("The actor %s is not spawned in a level"),
         *actor->GetName());
@@ -28,7 +28,7 @@ glm::dvec4 CesiumActors::getWorldOrigin4D(const AActor* actor) {
   return glm::dvec4(originLocation.X, originLocation.Y, originLocation.Z, 1.0);
 }
 
-bool CesiumActors::shouldValidateFlags(UObject* object) {
+bool ITwinCesiumActors::shouldValidateFlags(UObject* object) {
 #if WITH_EDITOR
   // Only fixup flags in the editor, when not in play mode
   if (!IsValid(GEditor) || GEditor->IsPlaySessionInProgress())
@@ -46,7 +46,7 @@ bool CesiumActors::shouldValidateFlags(UObject* object) {
 #endif
 }
 
-void CesiumActors::validatePublicFlag(UObject* object, const FString& label) {
+void ITwinCesiumActors::validatePublicFlag(UObject* object, const FString& label) {
   //
   // From an Epic Engine Developer...
   // RF_Public means that the object is an asset, so it should be only set for
@@ -60,7 +60,7 @@ void CesiumActors::validatePublicFlag(UObject* object, const FString& label) {
   //
   if (object->HasAnyFlags(RF_Public)) {
     UE_LOG(
-        LogCesium,
+        LogITwinCesium,
         Display,
         TEXT("Clearing invalid RF_Public flag on %s"),
         *label);
@@ -68,12 +68,12 @@ void CesiumActors::validatePublicFlag(UObject* object, const FString& label) {
   }
 }
 
-void CesiumActors::validateActorFlags(AActor* actor) {
+void ITwinCesiumActors::validateActorFlags(AActor* actor) {
   FString label = FString("actor: ") + *actor->GetName();
   validatePublicFlag(actor, label);
 }
 
-void CesiumActors::validateActorComponentFlags(UActorComponent* component) {
+void ITwinCesiumActors::validateActorComponentFlags(UActorComponent* component) {
   FString label = FString("actor component: ") + *component->GetName();
   validatePublicFlag(component, label);
 }

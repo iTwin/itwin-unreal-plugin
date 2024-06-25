@@ -105,13 +105,13 @@ glm::dquat ITwinGeoTransforms::ComputeSurfaceNormalRotationUnreal(
 void ITwinGeoTransforms::updateTransforms() noexcept {
   this->_coordinateSystem =
       createCoordinateSystem(this->_ellipsoid, this->_center, this->_scale);
-  this->_ecefToUnreal = VecMath::createMatrix(
+  this->_ecefToUnreal = FITwinVecMath::createMatrix(
       this->_coordinateSystem.getEcefToLocalTransformation());
-  this->_unrealToEcef = VecMath::createMatrix(
+  this->_unrealToEcef = FITwinVecMath::createMatrix(
       this->_coordinateSystem.getLocalToEcefTransformation());
 
   UE_LOG(
-      LogCesium,
+      LogITwinCesium,
       Verbose,
       TEXT(
           "GeoTransforms::updateTransforms with center %f %f %f and ellipsoid radii %f %f %f"),

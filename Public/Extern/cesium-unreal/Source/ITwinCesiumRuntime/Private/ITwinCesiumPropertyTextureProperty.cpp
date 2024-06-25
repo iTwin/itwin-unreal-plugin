@@ -62,43 +62,43 @@ TResult scalarPropertyTexturePropertyCallback(
     const FITwinCesiumMetadataValueType& valueType,
     Callback&& callback) {
   switch (valueType.ComponentType) {
-  case ECesiumMetadataComponentType::Int8:
+  case EITwinCesiumMetadataComponentType::Int8:
     return propertyTexturePropertyCallback<
         int8_t,
         Normalized,
         TResult,
         Callback>(property, std::forward<Callback>(callback));
-  case ECesiumMetadataComponentType::Uint8:
+  case EITwinCesiumMetadataComponentType::Uint8:
     return propertyTexturePropertyCallback<
         uint8_t,
         Normalized,
         TResult,
         Callback>(property, std::forward<Callback>(callback));
-  case ECesiumMetadataComponentType::Int16:
+  case EITwinCesiumMetadataComponentType::Int16:
     return propertyTexturePropertyCallback<
         int16_t,
         Normalized,
         TResult,
         Callback>(property, std::forward<Callback>(callback));
-  case ECesiumMetadataComponentType::Uint16:
+  case EITwinCesiumMetadataComponentType::Uint16:
     return propertyTexturePropertyCallback<
         uint16_t,
         Normalized,
         TResult,
         Callback>(property, std::forward<Callback>(callback));
-  case ECesiumMetadataComponentType::Int32:
+  case EITwinCesiumMetadataComponentType::Int32:
     return propertyTexturePropertyCallback<
         int32_t,
         Normalized,
         TResult,
         Callback>(property, std::forward<Callback>(callback));
-  case ECesiumMetadataComponentType::Uint32:
+  case EITwinCesiumMetadataComponentType::Uint32:
     return propertyTexturePropertyCallback<
         uint32_t,
         Normalized,
         TResult,
         Callback>(property, std::forward<Callback>(callback));
-  case ECesiumMetadataComponentType::Float32:
+  case EITwinCesiumMetadataComponentType::Float32:
     return propertyTexturePropertyCallback<float, false, TResult, Callback>(
         property,
         std::forward<Callback>(callback));
@@ -127,25 +127,25 @@ TResult scalarArrayPropertyTexturePropertyCallback(
     const FITwinCesiumMetadataValueType& valueType,
     Callback&& callback) {
   switch (valueType.ComponentType) {
-  case ECesiumMetadataComponentType::Int8:
+  case EITwinCesiumMetadataComponentType::Int8:
     return propertyTexturePropertyCallback<
         PropertyArrayView<int8_t>,
         Normalized,
         TResult,
         Callback>(property, std::forward<Callback>(callback));
-  case ECesiumMetadataComponentType::Uint8:
+  case EITwinCesiumMetadataComponentType::Uint8:
     return propertyTexturePropertyCallback<
         PropertyArrayView<uint8_t>,
         Normalized,
         TResult,
         Callback>(property, std::forward<Callback>(callback));
-  case ECesiumMetadataComponentType::Int16:
+  case EITwinCesiumMetadataComponentType::Int16:
     return propertyTexturePropertyCallback<
         PropertyArrayView<int16_t>,
         Normalized,
         TResult,
         Callback>(property, std::forward<Callback>(callback));
-  case ECesiumMetadataComponentType::Uint16:
+  case EITwinCesiumMetadataComponentType::Uint16:
     return propertyTexturePropertyCallback<
         PropertyArrayView<uint16_t>,
         Normalized,
@@ -177,25 +177,25 @@ TResult vecNPropertyTexturePropertyCallback(
     const FITwinCesiumMetadataValueType& valueType,
     Callback&& callback) {
   switch (valueType.ComponentType) {
-  case ECesiumMetadataComponentType::Int8:
+  case EITwinCesiumMetadataComponentType::Int8:
     return propertyTexturePropertyCallback<
         glm::vec<N, int8_t>,
         Normalized,
         TResult,
         Callback>(property, std::forward<Callback>(callback));
-  case ECesiumMetadataComponentType::Uint8:
+  case EITwinCesiumMetadataComponentType::Uint8:
     return propertyTexturePropertyCallback<
         glm::vec<N, uint8_t>,
         Normalized,
         TResult,
         Callback>(property, std::forward<Callback>(callback));
-  case ECesiumMetadataComponentType::Int16:
+  case EITwinCesiumMetadataComponentType::Int16:
     return propertyTexturePropertyCallback<
         glm::vec<N, int16_t>,
         Normalized,
         TResult,
         Callback>(property, std::forward<Callback>(callback));
-  case ECesiumMetadataComponentType::Uint16:
+  case EITwinCesiumMetadataComponentType::Uint16:
     return propertyTexturePropertyCallback<
         glm::vec<N, uint16_t>,
         Normalized,
@@ -225,7 +225,7 @@ TResult vecNPropertyTexturePropertyCallback(
     const std::any& property,
     const FITwinCesiumMetadataValueType& valueType,
     Callback&& callback) {
-  if (valueType.Type == ECesiumMetadataType::Vec2) {
+  if (valueType.Type == EITwinCesiumMetadataType::Vec2) {
     return vecNPropertyTexturePropertyCallback<
         2,
         Normalized,
@@ -233,7 +233,7 @@ TResult vecNPropertyTexturePropertyCallback(
         Callback>(property, valueType, std::forward<Callback>(callback));
   }
 
-  if (valueType.Type == ECesiumMetadataType::Vec3) {
+  if (valueType.Type == EITwinCesiumMetadataType::Vec3) {
     return vecNPropertyTexturePropertyCallback<
         3,
         Normalized,
@@ -241,7 +241,7 @@ TResult vecNPropertyTexturePropertyCallback(
         Callback>(property, valueType, std::forward<Callback>(callback));
   }
 
-  if (valueType.Type == ECesiumMetadataType::Vec4) {
+  if (valueType.Type == EITwinCesiumMetadataType::Vec4) {
     return vecNPropertyTexturePropertyCallback<
         4,
         Normalized,
@@ -259,7 +259,7 @@ TResult propertyTexturePropertyCallback(
     bool normalized,
     Callback&& callback) {
 
-  if (valueType.bIsArray && valueType.Type != ECesiumMetadataType::Scalar) {
+  if (valueType.bIsArray && valueType.Type != EITwinCesiumMetadataType::Scalar) {
 
     // Only scalar property arrays are supported.
     return callback(PropertyTexturePropertyView<uint8_t>());
@@ -283,7 +283,7 @@ TResult propertyTexturePropertyCallback(
   }
 
   switch (valueType.Type) {
-  case ECesiumMetadataType::Scalar:
+  case EITwinCesiumMetadataType::Scalar:
     return normalized
                ? scalarPropertyTexturePropertyCallback<true, TResult, Callback>(
                      property,
@@ -296,9 +296,9 @@ TResult propertyTexturePropertyCallback(
                      property,
                      valueType,
                      std::forward<Callback>(callback));
-  case ECesiumMetadataType::Vec2:
-  case ECesiumMetadataType::Vec3:
-  case ECesiumMetadataType::Vec4:
+  case EITwinCesiumMetadataType::Vec2:
+  case EITwinCesiumMetadataType::Vec3:
+  case EITwinCesiumMetadataType::Vec4:
     return normalized
                ? vecNPropertyTexturePropertyCallback<true, TResult, Callback>(
                      property,
@@ -344,24 +344,24 @@ FITwinCesiumPropertyTextureProperty::getImage() const {
       });
 }
 
-ECesiumPropertyTexturePropertyStatus
+EITwinCesiumPropertyTexturePropertyStatus
 UITwinCesiumPropertyTexturePropertyBlueprintLibrary::
     GetPropertyTexturePropertyStatus(
         UPARAM(ref) const FITwinCesiumPropertyTextureProperty& Property) {
   return Property._status;
 }
 
-ECesiumMetadataBlueprintType
+EITwinCesiumMetadataBlueprintType
 UITwinCesiumPropertyTexturePropertyBlueprintLibrary::GetBlueprintType(
     UPARAM(ref) const FITwinCesiumPropertyTextureProperty& Property) {
   return CesiumMetadataValueTypeToBlueprintType(Property._valueType);
 }
 
-ECesiumMetadataBlueprintType
+EITwinCesiumMetadataBlueprintType
 UITwinCesiumPropertyTexturePropertyBlueprintLibrary::GetArrayElementBlueprintType(
     UPARAM(ref) const FITwinCesiumPropertyTextureProperty& Property) {
   if (!Property._valueType.bIsArray) {
-    return ECesiumMetadataBlueprintType::None;
+    return EITwinCesiumMetadataBlueprintType::None;
   }
 
   FITwinCesiumMetadataValueType valueType(Property._valueType);
@@ -564,13 +564,13 @@ FIntPoint UITwinCesiumPropertyTexturePropertyBlueprintLibrary::GetIntPoint(
         }
         auto value = *maybeValue;
         if constexpr (IsMetadataString<decltype(value)>::value) {
-          return UnrealMetadataConversions::toIntPoint(
+          return FITwinUnrealMetadataConversions::toIntPoint(
               *maybeValue,
               DefaultValue);
         } else {
           auto maybeVec2 = CesiumGltf::
               MetadataConversions<glm::ivec2, decltype(value)>::convert(value);
-          return maybeVec2 ? UnrealMetadataConversions::toIntPoint(*maybeVec2)
+          return maybeVec2 ? FITwinUnrealMetadataConversions::toIntPoint(*maybeVec2)
                            : DefaultValue;
         }
       });
@@ -594,11 +594,11 @@ FVector2D UITwinCesiumPropertyTexturePropertyBlueprintLibrary::GetVector2D(
         }
         auto value = *maybeValue;
         if constexpr (IsMetadataString<decltype(value)>::value) {
-          return UnrealMetadataConversions::toVector2D(value, DefaultValue);
+          return FITwinUnrealMetadataConversions::toVector2D(value, DefaultValue);
         } else {
           auto maybeVec2 = CesiumGltf::
               MetadataConversions<glm::dvec2, decltype(value)>::convert(value);
-          return maybeVec2 ? UnrealMetadataConversions::toVector2D(*maybeVec2)
+          return maybeVec2 ? FITwinUnrealMetadataConversions::toVector2D(*maybeVec2)
                            : DefaultValue;
         }
       });
@@ -622,11 +622,11 @@ FIntVector UITwinCesiumPropertyTexturePropertyBlueprintLibrary::GetIntVector(
         }
         auto value = *maybeValue;
         if constexpr (IsMetadataString<decltype(value)>::value) {
-          return UnrealMetadataConversions::toIntVector(value, DefaultValue);
+          return FITwinUnrealMetadataConversions::toIntVector(value, DefaultValue);
         } else {
           auto maybeVec3 = CesiumGltf::
               MetadataConversions<glm::ivec3, decltype(value)>::convert(value);
-          return maybeVec3 ? UnrealMetadataConversions::toIntVector(*maybeVec3)
+          return maybeVec3 ? FITwinUnrealMetadataConversions::toIntVector(*maybeVec3)
                            : DefaultValue;
         }
       });
@@ -650,11 +650,11 @@ FVector UITwinCesiumPropertyTexturePropertyBlueprintLibrary::GetVector(
         }
         auto value = *maybeValue;
         if constexpr (IsMetadataString<decltype(value)>::value) {
-          return UnrealMetadataConversions::toVector(value, DefaultValue);
+          return FITwinUnrealMetadataConversions::toVector(value, DefaultValue);
         } else {
           auto maybeVec3 = CesiumGltf::
               MetadataConversions<glm::dvec3, decltype(value)>::convert(value);
-          return maybeVec3 ? UnrealMetadataConversions::toVector(*maybeVec3)
+          return maybeVec3 ? FITwinUnrealMetadataConversions::toVector(*maybeVec3)
                            : DefaultValue;
         }
       });
@@ -678,11 +678,11 @@ FVector4 UITwinCesiumPropertyTexturePropertyBlueprintLibrary::GetVector4(
         }
         auto value = *maybeValue;
         if constexpr (IsMetadataString<decltype(value)>::value) {
-          return UnrealMetadataConversions::toVector(value, DefaultValue);
+          return FITwinUnrealMetadataConversions::toVector(value, DefaultValue);
         } else {
           auto maybeVec4 = CesiumGltf::
               MetadataConversions<glm::dvec4, decltype(value)>::convert(value);
-          return maybeVec4 ? UnrealMetadataConversions::toVector4(*maybeVec4)
+          return maybeVec4 ? FITwinUnrealMetadataConversions::toVector4(*maybeVec4)
                            : DefaultValue;
         }
       });

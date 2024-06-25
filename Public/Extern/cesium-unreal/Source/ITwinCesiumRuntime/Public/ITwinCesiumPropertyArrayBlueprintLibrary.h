@@ -23,7 +23,7 @@ public:
       BlueprintCallable,
       BlueprintPure,
       Category = "Cesium|Metadata|PropertyArray")
-  static ECesiumMetadataBlueprintType
+  static EITwinCesiumMetadataBlueprintType
   GetElementBlueprintType(UPARAM(ref) const FITwinCesiumPropertyArray& array);
 
   /**
@@ -77,7 +77,7 @@ public:
       Meta =
           (DeprecatedFunction,
            DeprecationMessage = "Use GetElementBlueprintType instead."))
-  static ECesiumMetadataBlueprintType
+  static EITwinCesiumMetadataBlueprintType
   GetBlueprintComponentType(UPARAM(ref) const FITwinCesiumPropertyArray& array);
 
   /**
@@ -92,7 +92,7 @@ public:
           (DeprecatedFunction,
            DeprecationMessage =
                "CesiumMetadataTrueType is deprecated. Use GetElementValueType instead."))
-  static ECesiumMetadataTrueType_DEPRECATED
+  static EITwinCesiumMetadataTrueType_DEPRECATED
   GetTrueComponentType(UPARAM(ref) const FITwinCesiumPropertyArray& array);
 
   /**

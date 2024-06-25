@@ -9,6 +9,7 @@
 #pragma once
 
 #include <GameFramework/Actor.h>
+#include <ITwinCoordSystem.h>
 #include <ITwinIModel3DInfo.h>
 #include <TopMenu.generated.h>
 
@@ -29,6 +30,8 @@ public:
 	UFUNCTION(BlueprintCallable)
 	void SetIModelInfo(const FString& InITwinId, const FString& InIModelId, const FITwinIModel3DInfo& IModelInfo);
 	UFUNCTION(BlueprintCallable)
+	void SetIModel3DInfoInCoordSystem(const FITwinIModel3DInfo& IModelInfo, EITwinCoordSystem CoordSystem);
+	UFUNCTION(BlueprintCallable)
 	void ZoomOnIModel();
 private:
 	UPROPERTY()
@@ -40,13 +43,19 @@ private:
 	UPROPERTY()
 	FString IModelId;
 	UPROPERTY()
-	FITwinIModel3DInfo IModel3dInfo;
+	FITwinIModel3DInfo IModel3dInfo_ITwin;
+	UPROPERTY()
+	FITwinIModel3DInfo IModel3dInfo_UE;
 	UFUNCTION(BlueprintCallable)
 	void OnSavedViews(bool bSuccess, FSavedViewInfos SavedViews);
 	UFUNCTION(BlueprintCallable)
 	void SavedViewSelected(FString DisplayName, FString Value);
 	UFUNCTION(BlueprintCallable)
 	void GetSavedView(bool bSuccess, FSavedView SavedView, FSavedViewInfo SavedViewInfo);
+	UFUNCTION(BlueprintCallable)
+	void SavedViewAdded(bool bSuccess, FSavedViewInfo SavedViewInfo);
+	UFUNCTION(BlueprintCallable)
+	void SavedViewDeleted(bool bSuccess, FString SavedViewId, FString Response);
 	UFUNCTION(BlueprintCallable)
 	void OnZoom();
 	UFUNCTION(BlueprintCallable)
@@ -57,4 +66,6 @@ private:
 	void ITwinRotationToUE(FRotator& UERotation, const FRotator& ITwinRotation);
 	UFUNCTION(BlueprintCallable)
 	void ITwinPositionToUE(FVector& UEPos, const FVector& ITwinPos, const FVector& ModelOrigin);
+	UFUNCTION(BlueprintCallable)
+	FITwinIModel3DInfo const& GetIModel3DInfoInCoordSystem(EITwinCoordSystem CoordSystem) const;
 };

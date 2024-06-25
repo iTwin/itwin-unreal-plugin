@@ -90,12 +90,12 @@ void UITwinCesiumSubLevelSwitcherComponent::SetTargetSubLevel(
   if (this->_pTarget != pLevelInstance) {
     if (pLevelInstance) {
       UE_LOG(
-          LogCesium,
+          LogITwinCesium,
           Display,
           TEXT("New target sub-level %s."),
           *GetActorLabel(pLevelInstance));
     } else {
-      UE_LOG(LogCesium, Display, TEXT("New target sub-level <none>"));
+      UE_LOG(LogITwinCesium, Display, TEXT("New target sub-level <none>"));
     }
 
     this->_pTarget = pLevelInstance;
@@ -230,7 +230,7 @@ void UITwinCesiumSubLevelSwitcherComponent::_updateSubLevelStateGame() {
       // Wait for these transitions to finish before doing anything further.
       // TODO: maybe we can cancel these transitions somehow?
       UE_LOG(
-          LogCesium,
+          LogITwinCesium,
           Log,
           TEXT(
               "Waiting for sub-level %s to transition out of an intermediate state while unloading it."),
@@ -241,7 +241,7 @@ void UITwinCesiumSubLevelSwitcherComponent::_updateSubLevelStateGame() {
     case StreamState::LoadedNotVisible:
     case StreamState::LoadedVisible:
       UE_LOG(
-          LogCesium,
+          LogITwinCesium,
           Display,
           TEXT("Starting unload of sub-level %s."),
           *GetActorLabel(this->_pCurrent.Get()));
@@ -251,7 +251,7 @@ void UITwinCesiumSubLevelSwitcherComponent::_updateSubLevelStateGame() {
     case StreamState::Removed:
     case StreamState::Unloaded:
       UE_LOG(
-          LogCesium,
+          LogITwinCesium,
           Display,
           TEXT("Finished unloading sub-level %s."),
           *GetActorLabel(this->_pCurrent.Get()));
@@ -296,7 +296,7 @@ void UITwinCesiumSubLevelSwitcherComponent::_updateSubLevelStateGame() {
     case StreamState::MakingVisible:
       // Wait for these transitions to finish before doing anything further.
       UE_LOG(
-          LogCesium,
+          LogITwinCesium,
           Log,
           TEXT(
               "Waiting for sub-level %s to transition out of an intermediate state while loading it."),
@@ -308,7 +308,7 @@ void UITwinCesiumSubLevelSwitcherComponent::_updateSubLevelStateGame() {
     case StreamState::LoadedVisible:
       // Loading complete!
       UE_LOG(
-          LogCesium,
+          LogITwinCesium,
           Display,
           TEXT("Finished loading sub-level %s."),
           *GetActorLabel(this->_pTarget.Get()));
@@ -326,7 +326,7 @@ void UITwinCesiumSubLevelSwitcherComponent::_updateSubLevelStateGame() {
     case StreamState::Unloaded:
       // Start loading this level
       UE_LOG(
-          LogCesium,
+          LogITwinCesium,
           Display,
           TEXT("Starting load of sub-level %s."),
           *GetActorLabel(this->_pTarget.Get()));

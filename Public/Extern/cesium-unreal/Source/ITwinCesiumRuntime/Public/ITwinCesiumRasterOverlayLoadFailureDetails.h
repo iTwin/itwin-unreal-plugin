@@ -8,7 +8,7 @@
 class UITwinCesiumRasterOverlay;
 
 UENUM(BlueprintType)
-enum class ECesiumRasterOverlayLoadType : uint8 {
+enum class EITwinCesiumRasterOverlayLoadType : uint8 {
   /**
    * An unknown load error.
    */
@@ -39,7 +39,7 @@ struct ITWINCESIUMRUNTIME_API FITwinCesiumRasterOverlayLoadFailureDetails {
    * The type of request that failed to load.
    */
   UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Cesium")
-  ECesiumRasterOverlayLoadType Type = ECesiumRasterOverlayLoadType::Unknown;
+  EITwinCesiumRasterOverlayLoadType Type = EITwinCesiumRasterOverlayLoadType::Unknown;
 
   /**
    * The HTTP status code of the response that led to the failure.

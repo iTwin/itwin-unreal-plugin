@@ -14,7 +14,7 @@
  * property texture property cannot be accessed, this briefly indicates why.
  */
 UENUM(BlueprintType)
-enum class ECesiumPropertyTexturePropertyStatus : uint8 {
+enum class EITwinCesiumPropertyTexturePropertyStatus : uint8 {
   /* The property texture property is valid. */
   Valid = 0,
   /* The property texture property is empty but has a specified default value.
@@ -40,7 +40,7 @@ struct ITWINCESIUMRUNTIME_API FITwinCesiumPropertyTextureProperty {
 
 public:
   FITwinCesiumPropertyTextureProperty()
-      : _status(ECesiumPropertyTexturePropertyStatus::ErrorInvalidProperty),
+      : _status(EITwinCesiumPropertyTexturePropertyStatus::ErrorInvalidProperty),
         _property(),
         _valueType(),
         _normalized(false) {}
@@ -48,21 +48,21 @@ public:
   template <typename T, bool Normalized>
   FITwinCesiumPropertyTextureProperty(
       const CesiumGltf::PropertyTexturePropertyView<T, Normalized>& Property)
-      : _status(ECesiumPropertyTexturePropertyStatus::ErrorInvalidProperty),
+      : _status(EITwinCesiumPropertyTexturePropertyStatus::ErrorInvalidProperty),
         _property(Property),
         _valueType(),
         _normalized(Normalized) {
     switch (Property.status()) {
     case CesiumGltf::PropertyTexturePropertyViewStatus::Valid:
-      _status = ECesiumPropertyTexturePropertyStatus::Valid;
+      _status = EITwinCesiumPropertyTexturePropertyStatus::Valid;
       break;
     case CesiumGltf::PropertyTexturePropertyViewStatus::
         EmptyPropertyWithDefault:
-      _status = ECesiumPropertyTexturePropertyStatus::EmptyPropertyWithDefault;
+      _status = EITwinCesiumPropertyTexturePropertyStatus::EmptyPropertyWithDefault;
       break;
     case CesiumGltf::PropertyTexturePropertyViewStatus::
         ErrorUnsupportedProperty:
-      _status = ECesiumPropertyTexturePropertyStatus::ErrorUnsupportedProperty;
+      _status = EITwinCesiumPropertyTexturePropertyStatus::ErrorUnsupportedProperty;
       return;
     case CesiumGltf::PropertyTexturePropertyViewStatus::
         ErrorInvalidPropertyTexture:
@@ -86,7 +86,7 @@ public:
       // The status was already set in the initializer list.
       return;
     default:
-      _status = ECesiumPropertyTexturePropertyStatus::ErrorInvalidPropertyData;
+      _status = EITwinCesiumPropertyTexturePropertyStatus::ErrorInvalidPropertyData;
       return;
     }
 
@@ -99,7 +99,7 @@ public:
   const CesiumGltf::ImageCesium* getImage() const;
 
 private:
-  ECesiumPropertyTexturePropertyStatus _status;
+  EITwinCesiumPropertyTexturePropertyStatus _status;
 
   std::any _property;
 
@@ -123,7 +123,7 @@ public:
       BlueprintCallable,
       BlueprintPure,
       Category = "Cesium|Metadata|PropertyTextureProperty")
-  static ECesiumPropertyTexturePropertyStatus GetPropertyTexturePropertyStatus(
+  static EITwinCesiumPropertyTexturePropertyStatus GetPropertyTexturePropertyStatus(
       UPARAM(ref) const FITwinCesiumPropertyTextureProperty& Property);
 
   /**
@@ -135,7 +135,7 @@ public:
       BlueprintCallable,
       BlueprintPure,
       Category = "Cesium|Metadata|PropertyTextureProperty")
-  static ECesiumMetadataBlueprintType
+  static EITwinCesiumMetadataBlueprintType
   GetBlueprintType(UPARAM(ref) const FITwinCesiumPropertyTextureProperty& Property);
 
   /**
@@ -147,7 +147,7 @@ public:
       BlueprintCallable,
       BlueprintPure,
       Category = "Cesium|Metadata|PropertyTextureProperty")
-  static ECesiumMetadataBlueprintType GetArrayElementBlueprintType(
+  static EITwinCesiumMetadataBlueprintType GetArrayElementBlueprintType(
       UPARAM(ref) const FITwinCesiumPropertyTextureProperty& Property);
 
   /**

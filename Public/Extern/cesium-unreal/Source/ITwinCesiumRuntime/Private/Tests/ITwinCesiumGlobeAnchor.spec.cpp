@@ -19,7 +19,7 @@ END_DEFINE_SPEC(FITwinCesiumGlobeAnchorSpec)
 
 void FITwinCesiumGlobeAnchorSpec::Define() {
   BeforeEach([this]() {
-    UWorld* pWorld = CesiumTestHelpers::getGlobalWorldContext();
+    UWorld* pWorld = ITwinCesiumTestHelpers::getGlobalWorldContext();
     this->pActor = pWorld->SpawnActor<AActor>();
     this->pActor->AddComponentByClass(
         USceneComponent::StaticClass(),

@@ -21,7 +21,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "PropertyTablePropertyStatus",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::ErrorInvalidProperty);
+          EITwinCesiumPropertyTablePropertyStatus::ErrorInvalidProperty);
       TestEqual<int64>(
           "Size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -44,7 +44,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
              "PropertyTablePropertyStatus",
              UITwinCesiumPropertyTablePropertyBlueprintLibrary::
                  GetPropertyTablePropertyStatus(property),
-             ECesiumPropertyTablePropertyStatus::ErrorInvalidProperty);
+             EITwinCesiumPropertyTablePropertyStatus::ErrorInvalidProperty);
          TestEqual<int64>(
              "Size",
              UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -66,7 +66,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "PropertyTablePropertyStatus",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::ErrorInvalidPropertyData);
+          EITwinCesiumPropertyTablePropertyStatus::ErrorInvalidPropertyData);
       TestEqual<int64>(
           "Size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -99,7 +99,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "PropertyTablePropertyStatus",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "Size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -107,8 +107,8 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           static_cast<int64_t>(values.size()));
 
       FITwinCesiumMetadataValueType expectedType(
-          ECesiumMetadataType::Scalar,
-          ECesiumMetadataComponentType::Int32,
+          EITwinCesiumMetadataType::Scalar,
+          EITwinCesiumMetadataComponentType::Int32,
           false);
       TestTrue(
           "ValueType",
@@ -118,7 +118,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "BlueprintType",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetBlueprintType(
               property),
-          ECesiumMetadataBlueprintType::Integer);
+          EITwinCesiumMetadataBlueprintType::Integer);
 
       TestFalse(
           "IsNormalized",
@@ -133,7 +133,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "ArrayElementBlueprintType",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetArrayElementBlueprintType(property),
-          ECesiumMetadataBlueprintType::None);
+          EITwinCesiumMetadataBlueprintType::None);
 
       // Check that undefined properties return empty values
       FITwinCesiumMetadataValue value =
@@ -180,7 +180,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "PropertyTablePropertyStatus",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "Size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -188,8 +188,8 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           static_cast<int64_t>(values.size()));
 
       FITwinCesiumMetadataValueType expectedType(
-          ECesiumMetadataType::Scalar,
-          ECesiumMetadataComponentType::Uint8,
+          EITwinCesiumMetadataType::Scalar,
+          EITwinCesiumMetadataComponentType::Uint8,
           false);
       TestTrue(
           "ValueType",
@@ -199,7 +199,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "BlueprintType",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetBlueprintType(
               property),
-          ECesiumMetadataBlueprintType::Byte);
+          EITwinCesiumMetadataBlueprintType::Byte);
 
       TestTrue(
           "IsNormalized",
@@ -214,7 +214,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "ArrayElementBlueprintType",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetArrayElementBlueprintType(property),
-          ECesiumMetadataBlueprintType::None);
+          EITwinCesiumMetadataBlueprintType::None);
     });
 
     It("constructs instance for fixed-length array property", [this]() {
@@ -245,7 +245,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "PropertyTablePropertyStatus",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "Size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -253,8 +253,8 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           static_cast<int64_t>(size));
 
       FITwinCesiumMetadataValueType expectedType(
-          ECesiumMetadataType::Scalar,
-          ECesiumMetadataComponentType::Int32,
+          EITwinCesiumMetadataType::Scalar,
+          EITwinCesiumMetadataComponentType::Int32,
           true);
       TestTrue(
           "ValueType",
@@ -264,7 +264,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "BlueprintType",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetBlueprintType(
               property),
-          ECesiumMetadataBlueprintType::Array);
+          EITwinCesiumMetadataBlueprintType::Array);
 
       TestFalse(
           "IsNormalized",
@@ -278,7 +278,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "ArrayElementBlueprintType",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetArrayElementBlueprintType(property),
-          ECesiumMetadataBlueprintType::Integer);
+          EITwinCesiumMetadataBlueprintType::Integer);
     });
 
     It("constructs instance for variable-length array property", [this]() {
@@ -310,7 +310,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "PropertyTablePropertyStatus",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "Size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -318,8 +318,8 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           size);
 
       FITwinCesiumMetadataValueType expectedType(
-          ECesiumMetadataType::Scalar,
-          ECesiumMetadataComponentType::Int32,
+          EITwinCesiumMetadataType::Scalar,
+          EITwinCesiumMetadataComponentType::Int32,
           true);
       TestTrue(
           "ValueType",
@@ -329,7 +329,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "BlueprintType",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetBlueprintType(
               property),
-          ECesiumMetadataBlueprintType::Array);
+          EITwinCesiumMetadataBlueprintType::Array);
 
       TestFalse(
           "IsNormalized",
@@ -344,7 +344,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "ArrayElementBlueprintType",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetArrayElementBlueprintType(property),
-          ECesiumMetadataBlueprintType::Integer);
+          EITwinCesiumMetadataBlueprintType::Integer);
     });
 
     It("constructs valid instance with additional properties", [this]() {
@@ -381,7 +381,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "PropertyTablePropertyStatus",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "Size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -389,8 +389,8 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           static_cast<int64_t>(values.size()));
 
       FITwinCesiumMetadataValueType expectedType(
-          ECesiumMetadataType::Scalar,
-          ECesiumMetadataComponentType::Int32,
+          EITwinCesiumMetadataType::Scalar,
+          EITwinCesiumMetadataComponentType::Int32,
           false);
       TestTrue(
           "ValueType",
@@ -400,7 +400,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "BlueprintType",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetBlueprintType(
               property),
-          ECesiumMetadataBlueprintType::Integer);
+          EITwinCesiumMetadataBlueprintType::Integer);
 
       TestTrue(
           "IsNormalized",
@@ -415,7 +415,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "ArrayElementBlueprintType",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetArrayElementBlueprintType(property),
-          ECesiumMetadataBlueprintType::None);
+          EITwinCesiumMetadataBlueprintType::None);
 
       FITwinCesiumMetadataValue value =
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetOffset(property);
@@ -495,7 +495,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "PropertyTablePropertyStatus",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "Size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -503,8 +503,8 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           static_cast<int64_t>(values.size()));
 
       FITwinCesiumMetadataValueType expectedType(
-          ECesiumMetadataType::Scalar,
-          ECesiumMetadataComponentType::Int32,
+          EITwinCesiumMetadataType::Scalar,
+          EITwinCesiumMetadataComponentType::Int32,
           true);
       TestTrue(
           "ValueType",
@@ -514,7 +514,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "BlueprintType",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetBlueprintType(
               property),
-          ECesiumMetadataBlueprintType::Array);
+          EITwinCesiumMetadataBlueprintType::Array);
 
       TestTrue(
           "IsNormalized",
@@ -528,7 +528,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "ArrayElementBlueprintType",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetArrayElementBlueprintType(property),
-          ECesiumMetadataBlueprintType::Integer);
+          EITwinCesiumMetadataBlueprintType::Integer);
 
       FITwinCesiumMetadataValue value =
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetOffset(property);
@@ -665,7 +665,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::ErrorInvalidProperty);
+          EITwinCesiumPropertyTablePropertyStatus::ErrorInvalidProperty);
       TestFalse(
           "value",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetBoolean(
@@ -690,7 +690,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -726,7 +726,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
 
       std::vector<bool>
           expected{true, false, false, false, true, true, false, true};
@@ -788,7 +788,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -815,7 +815,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::ErrorInvalidProperty);
+          EITwinCesiumPropertyTablePropertyStatus::ErrorInvalidProperty);
       TestEqual(
           "value",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetByte(property, 0),
@@ -841,7 +841,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -877,7 +877,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -914,7 +914,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -958,7 +958,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -994,7 +994,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::ErrorInvalidProperty);
+          EITwinCesiumPropertyTablePropertyStatus::ErrorInvalidProperty);
       TestEqual(
           "value",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetInteger(property, 0),
@@ -1020,7 +1020,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -1060,7 +1060,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -1103,7 +1103,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -1147,7 +1147,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -1185,7 +1185,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::ErrorInvalidProperty);
+          EITwinCesiumPropertyTablePropertyStatus::ErrorInvalidProperty);
       TestEqual<int64>(
           "value",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetInteger64(
@@ -1213,7 +1213,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -1253,7 +1253,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -1294,7 +1294,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -1338,7 +1338,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -1374,7 +1374,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::ErrorInvalidProperty);
+          EITwinCesiumPropertyTablePropertyStatus::ErrorInvalidProperty);
       TestEqual(
           "value",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetFloat(
@@ -1402,7 +1402,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -1438,7 +1438,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -1479,7 +1479,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -1528,7 +1528,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -1554,7 +1554,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::ErrorInvalidProperty);
+          EITwinCesiumPropertyTablePropertyStatus::ErrorInvalidProperty);
       TestEqual(
           "value",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetFloat64(
@@ -1582,7 +1582,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -1622,7 +1622,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -1660,7 +1660,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -1721,7 +1721,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -1768,7 +1768,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -1794,7 +1794,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::ErrorInvalidProperty);
+          EITwinCesiumPropertyTablePropertyStatus::ErrorInvalidProperty);
       TestEqual(
           "value",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetIntPoint(
@@ -1826,7 +1826,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -1871,7 +1871,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -1912,7 +1912,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -1962,7 +1962,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -1995,7 +1995,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::ErrorInvalidProperty);
+          EITwinCesiumPropertyTablePropertyStatus::ErrorInvalidProperty);
       TestEqual(
           "value",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetVector2D(
@@ -2027,7 +2027,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -2072,7 +2072,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -2114,7 +2114,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -2176,7 +2176,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -2226,7 +2226,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -2256,7 +2256,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::ErrorInvalidProperty);
+          EITwinCesiumPropertyTablePropertyStatus::ErrorInvalidProperty);
       TestEqual(
           "value",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetIntVector(
@@ -2288,7 +2288,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -2333,7 +2333,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -2375,7 +2375,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -2430,7 +2430,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -2463,7 +2463,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::ErrorInvalidProperty);
+          EITwinCesiumPropertyTablePropertyStatus::ErrorInvalidProperty);
       TestEqual(
           "value",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetVector3f(
@@ -2495,7 +2495,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -2540,7 +2540,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -2582,7 +2582,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -2637,7 +2637,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -2667,7 +2667,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::ErrorInvalidProperty);
+          EITwinCesiumPropertyTablePropertyStatus::ErrorInvalidProperty);
       TestEqual(
           "value",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetVector(
@@ -2699,7 +2699,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -2744,7 +2744,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -2786,7 +2786,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -2852,7 +2852,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -2902,7 +2902,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -2932,7 +2932,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::ErrorInvalidProperty);
+          EITwinCesiumPropertyTablePropertyStatus::ErrorInvalidProperty);
       TestEqual(
           "value",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetVector4(
@@ -2964,7 +2964,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -3009,7 +3009,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -3055,7 +3055,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -3126,7 +3126,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -3176,7 +3176,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -3207,7 +3207,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::ErrorInvalidProperty);
+          EITwinCesiumPropertyTablePropertyStatus::ErrorInvalidProperty);
       TestEqual(
           "value",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetMatrix(
@@ -3249,7 +3249,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -3305,7 +3305,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -3368,7 +3368,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -3421,7 +3421,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -3471,7 +3471,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -3534,7 +3534,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -3585,7 +3585,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "PropertyTablePropertyStatus",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "Size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -3611,7 +3611,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "PropertyTablePropertyStatus",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::ErrorInvalidProperty);
+          EITwinCesiumPropertyTablePropertyStatus::ErrorInvalidProperty);
 
       FITwinCesiumPropertyArray array =
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetArray(property, 0);
@@ -3652,7 +3652,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "PropertyTablePropertyStatus",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "Size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -3709,7 +3709,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "PropertyTablePropertyStatus",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "Size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -3726,8 +3726,8 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
         int64 arraySize = UITwinCesiumPropertyArrayBlueprintLibrary::GetSize(array);
         TestEqual<int64>("array size", arraySize, *classProperty.count);
         FITwinCesiumMetadataValueType valueType(
-            ECesiumMetadataType::Scalar,
-            ECesiumMetadataComponentType::Int32,
+            EITwinCesiumMetadataType::Scalar,
+            EITwinCesiumMetadataComponentType::Int32,
             false);
         TestTrue(
             "array element type",
@@ -3776,7 +3776,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "PropertyTablePropertyStatus",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "Size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -3798,8 +3798,8 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
             UITwinCesiumPropertyArrayBlueprintLibrary::GetSize(array),
             static_cast<int64>(expectedArray.size()));
         FITwinCesiumMetadataValueType valueType(
-            ECesiumMetadataType::Scalar,
-            ECesiumMetadataComponentType::Int32,
+            EITwinCesiumMetadataType::Scalar,
+            EITwinCesiumMetadataComponentType::Int32,
             false);
         TestTrue(
             "element type",
@@ -3849,7 +3849,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "PropertyTablePropertyStatus",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "Size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -3866,8 +3866,8 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
         int64 arraySize = UITwinCesiumPropertyArrayBlueprintLibrary::GetSize(array);
         TestEqual<int64>("array size", arraySize, *classProperty.count);
         FITwinCesiumMetadataValueType valueType(
-            ECesiumMetadataType::Scalar,
-            ECesiumMetadataComponentType::Int32,
+            EITwinCesiumMetadataType::Scalar,
+            EITwinCesiumMetadataComponentType::Int32,
             false);
         TestTrue(
             "array element type",
@@ -3898,8 +3898,8 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           UITwinCesiumPropertyArrayBlueprintLibrary::GetSize(array),
           static_cast<int64_t>(0));
       FITwinCesiumMetadataValueType valueType(
-          ECesiumMetadataType::Invalid,
-          ECesiumMetadataComponentType::None,
+          EITwinCesiumMetadataType::Invalid,
+          EITwinCesiumMetadataComponentType::None,
           false);
       TestTrue(
           "array element type",
@@ -3936,7 +3936,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "PropertyTablePropertyStatus",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "Size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -3953,8 +3953,8 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
         int64 arraySize = UITwinCesiumPropertyArrayBlueprintLibrary::GetSize(array);
         TestEqual<int64>("array size", arraySize, *classProperty.count);
         FITwinCesiumMetadataValueType valueType(
-            ECesiumMetadataType::Scalar,
-            ECesiumMetadataComponentType::Int32,
+            EITwinCesiumMetadataType::Scalar,
+            EITwinCesiumMetadataComponentType::Int32,
             false);
         TestTrue(
             "array element type",
@@ -4000,7 +4000,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "PropertyTablePropertyStatus",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::ErrorInvalidProperty);
+          EITwinCesiumPropertyTablePropertyStatus::ErrorInvalidProperty);
       TestEqual<int64>(
           "Size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -4035,7 +4035,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -4077,7 +4077,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -4085,8 +4085,8 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           static_cast<int64>(values.size()));
 
       FITwinCesiumMetadataValueType valueType(
-          ECesiumMetadataType::Scalar,
-          ECesiumMetadataComponentType::Int32,
+          EITwinCesiumMetadataType::Scalar,
+          EITwinCesiumMetadataComponentType::Int32,
           false);
       for (size_t i = 0; i < values.size(); i++) {
         FITwinCesiumMetadataValue value =
@@ -4127,7 +4127,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -4135,8 +4135,8 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           static_cast<int64>(values.size()));
 
       FITwinCesiumMetadataValueType valueType(
-          ECesiumMetadataType::Scalar,
-          ECesiumMetadataComponentType::Float32,
+          EITwinCesiumMetadataType::Scalar,
+          EITwinCesiumMetadataComponentType::Float32,
           false);
       for (size_t i = 0; i < values.size(); i++) {
         FITwinCesiumMetadataValue value =
@@ -4174,7 +4174,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -4182,8 +4182,8 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           static_cast<int64>(values.size()));
 
       FITwinCesiumMetadataValueType valueType(
-          ECesiumMetadataType::Scalar,
-          ECesiumMetadataComponentType::Int32,
+          EITwinCesiumMetadataType::Scalar,
+          EITwinCesiumMetadataComponentType::Int32,
           false);
       for (size_t i = 0; i < values.size(); i++) {
         FITwinCesiumMetadataValue value =
@@ -4232,7 +4232,7 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           "status",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::
               GetPropertyTablePropertyStatus(property),
-          ECesiumPropertyTablePropertyStatus::Valid);
+          EITwinCesiumPropertyTablePropertyStatus::Valid);
       TestEqual<int64>(
           "size",
           UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetPropertySize(
@@ -4240,8 +4240,8 @@ void FITwinCesiumPropertyTablePropertySpec::Define() {
           static_cast<int64>(values.size()));
 
       FITwinCesiumMetadataValueType valueType(
-          ECesiumMetadataType::Scalar,
-          ECesiumMetadataComponentType::Int32,
+          EITwinCesiumMetadataType::Scalar,
+          EITwinCesiumMetadataComponentType::Int32,
           false);
       for (size_t i = 0; i < values.size(); i++) {
         FITwinCesiumMetadataValue value =

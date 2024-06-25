@@ -90,9 +90,9 @@ public:
 
   /**
    * Update the occlusion state for this bounding volume from the
-   * CesiumViewExtension.
+   * FITwinCesiumViewExtension.
    */
-  void UpdateOcclusion(const CesiumViewExtension& cesiumViewExtension);
+  void UpdateOcclusion(const FITwinCesiumViewExtension& cesiumViewExtension);
 
   /**
    * Updates this component's transform from a new double-precision

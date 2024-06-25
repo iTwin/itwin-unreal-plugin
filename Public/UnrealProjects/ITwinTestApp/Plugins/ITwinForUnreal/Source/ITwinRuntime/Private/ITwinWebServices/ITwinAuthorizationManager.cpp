@@ -80,7 +80,8 @@ namespace ITwin
 	}
 }
 
-/*static*/ ITwin::AppIDArray FAuthorizationCredentials::ITwinAppIDs;
+/*static*/
+ITwin::AppIDArray FAuthorizationCredentials::ITwinAppIDs;
 
 /*static*/
 void FITwinAuthorizationManager::SetITwinAppIDArray(ITwin::AppIDArray const& ITwinAppIDs)
@@ -468,7 +469,7 @@ void FITwinAuthorizationManager::CheckAuthorization()
 		return;
 	}
 
-	checkf(!bHasBoundAuthPort, TEXT("Authorization process already in progress..."));
+	ensureMsgf(!bHasBoundAuthPort, TEXT("Authorization process already in progress..."));
 
 	const FString state = GenerateRandomCharacters(10);
 	const FString verifier = GenerateRandomCharacters(128);

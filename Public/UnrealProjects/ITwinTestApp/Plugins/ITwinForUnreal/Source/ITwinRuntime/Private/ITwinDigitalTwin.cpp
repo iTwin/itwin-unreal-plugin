@@ -128,7 +128,12 @@ void AITwinDigitalTwin::OnRealityDataRetrieved(bool bSuccess, FITwinRealityDataI
 
 void AITwinDigitalTwin::UpdateITwin()
 {
-	check(!ITwinId.IsEmpty());
+	if (ITwinId.IsEmpty())
+	{
+		UE_LOG(LogTemp, Error, TEXT("ITwinDigitalTwin with no ITwinId cannot be updated"));
+		return;
+	}
+
 	if (!Children.IsEmpty())
 		return;
 

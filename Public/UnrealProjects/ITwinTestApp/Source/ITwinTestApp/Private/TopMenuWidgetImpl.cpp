@@ -75,3 +75,18 @@ void UTopMenuWidgetImpl::AddSavedView(const FString& DisplayName, const FString&
 	SavedViewsValues.Add(Value);
 	ComboBox_SavedViews->AddOption(DisplayName);
 }
+
+void UTopMenuWidgetImpl::RemoveSavedView(const FString& SavedViewId)
+{
+	ensureMsgf(SavedViewsValues.Num() == ComboBox_SavedViews->GetOptionCount(), TEXT("SavedView UI Invariant"));
+
+	TArray<FString>::SizeType SavedViewIndex;
+	if (SavedViewsValues.Find(SavedViewId, SavedViewIndex))
+	{
+		SavedViewsValues.RemoveAt(SavedViewIndex);
+		if (ensure(SavedViewIndex < ComboBox_SavedViews->GetOptionCount()))
+		{
+			ComboBox_SavedViews->RemoveOption(ComboBox_SavedViews->GetOptionAtIndex(SavedViewIndex));
+		}
+	}
+}

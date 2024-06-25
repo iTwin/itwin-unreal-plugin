@@ -13,7 +13,7 @@ class UITwinCesiumGlobeAnchorComponent;
  * CesiumOriginShiftComponent is attached moves.
  */
 UENUM(BlueprintType)
-enum class ECesiumOriginShiftMode : uint8 {
+enum class EITwinCesiumOriginShiftMode : uint8 {
   /**
    * This component is disabled and will have no effect.
    */
@@ -78,7 +78,7 @@ private:
       BlueprintSetter = SetMode,
       Category = "Cesium",
       Meta = (AllowPrivateAccess))
-  ECesiumOriginShiftMode Mode = ECesiumOriginShiftMode::SwitchSubLevelsOnly;
+  EITwinCesiumOriginShiftMode Mode = EITwinCesiumOriginShiftMode::SwitchSubLevelsOnly;
 
   /**
    * The maximum distance between the origin of the Unreal coordinate system and
@@ -106,14 +106,14 @@ public:
    * component is attached moves.
    */
   UFUNCTION(BlueprintGetter)
-  ECesiumOriginShiftMode GetMode() const;
+  EITwinCesiumOriginShiftMode GetMode() const;
 
   /**
    * Sets a value indicating how to shift the origin as the Actor to which this
    * component is attached moves.
    */
   UFUNCTION(BlueprintSetter)
-  void SetMode(ECesiumOriginShiftMode NewMode);
+  void SetMode(EITwinCesiumOriginShiftMode NewMode);
 
   /**
    * Gets the maximum distance between the origin of the Unreal coordinate

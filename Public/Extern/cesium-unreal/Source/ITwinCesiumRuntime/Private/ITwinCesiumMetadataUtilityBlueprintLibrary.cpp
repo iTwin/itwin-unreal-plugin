@@ -41,7 +41,7 @@ UITwinCesiumMetadataUtilityBlueprintLibrary::GetMetadataValuesForFace(
   const TArray<FITwinCesiumFeatureIdSet>& featureIDSets =
       UITwinCesiumPrimitiveFeaturesBlueprintLibrary::GetFeatureIDSetsOfType(
           features,
-          ECesiumFeatureIdSetType::Attribute);
+          EITwinCesiumFeatureIdSetType::Attribute);
   if (featureIDSets.Num() == 0) {
     return TMap<FString, FITwinCesiumMetadataValue>();
   }

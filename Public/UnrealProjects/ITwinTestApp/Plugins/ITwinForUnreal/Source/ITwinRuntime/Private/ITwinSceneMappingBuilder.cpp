@@ -28,11 +28,12 @@
 //=======================================================================================
 
 void FITwinSceneMappingBuilder::OnMeshConstructed(
-    const Cesium3DTilesSelection::TileID& tileId,
+    const Cesium3DTilesSelection::Tile& Tile,
     const TWeakObjectPtr<UStaticMeshComponent>& MeshComponent,
     const TWeakObjectPtr<UMaterialInstanceDynamic>& pMaterial,
     const FITwinCesiumMeshData& CesiumData)
 {
+    auto const tileId = Tile.getTileID();
     FITwinSceneTile& sceneTile = sceneMapping_.KnownTiles[tileId];
     const int64 FeatureIDSetIndex = 0; // always look in 1st set (_FEATURE_ID_0)
 
@@ -51,13 +52,37 @@ void FITwinSceneMappingBuilder::OnMeshConstructed(
 
     auto MeshBox = StaticMesh->GetBoundingBox();
     auto const& Transform = MeshComponent->GetComponentTransform();
-    // Update global bounding box
+    // Update global bounding box, both in Unreal and "ITwin" coordinate system
+    // Beware the code for ITwin coordinate system should not be modified without testing saved views with
+    // the default level of the former 3DFT plugin!
     if (MeshBox.IsValid)
     {
-        sceneMapping_.IModelBBox += Transform.TransformPosition(MeshBox.Min);
-        sceneMapping_.IModelBBox += Transform.TransformPosition(MeshBox.Max);
+        sceneMapping_.IModelBBox_UE += Transform.TransformPosition(MeshBox.Min);
+        sceneMapping_.IModelBBox_UE += Transform.TransformPosition(MeshBox.Max);
+
+        // For iTwin coordinate system: swap Y with Z (compensate what is done previously)
+        std::swap(MeshBox.Min.Y, MeshBox.Min.Z);
+        std::swap(MeshBox.Max.Y, MeshBox.Max.Z);
+        sceneMapping_.IModelBBox_ITwin += MeshBox.Min;
+        sceneMapping_.IModelBBox_ITwin += MeshBox.Max;
     }
-    sceneMapping_.ModelCenter = Transform.GetTranslation();
+    sceneMapping_.ModelCenter_UE = Transform.GetTranslation();
+
+    if (!sceneMapping_.bHasSetModelCenter)
+    {
+        // the ModelCenter, as used in 3DFT plugin, can be retrieved by fetching the translation of the
+        // root tile
+        // here again, please do not change this code without testing saved views in 3DFT level...
+        auto const* rootTile = &Tile;
+        while (rootTile->getParent() != nullptr)
+        {
+            rootTile = rootTile->getParent();
+        }
+        auto const& tsfTranslation = rootTile->getTransform()[3];
+        sceneMapping_.ModelCenter_ITwin = FVector(tsfTranslation[0], tsfTranslation[1], tsfTranslation[2]);
+        // no need to evaluate it for every tile: the result will be constant, obviously.
+        sceneMapping_.bHasSetModelCenter = true;
+    }
 
     const FITwinCesiumPrimitiveFeatures& Features(CesiumData.Features);
     const FITwinCesiumPropertyTableProperty* pElementProperty =

@@ -10,29 +10,29 @@ UITwinCesiumBingMapsRasterOverlay::CreateOverlay(
   std::string mapStyle;
 
   switch (this->MapStyle) {
-  case EBingMapsStyle::Aerial:
+  case EITwinBingMapsStyle::Aerial:
     mapStyle = CesiumRasterOverlays::BingMapsStyle::AERIAL;
     break;
-  case EBingMapsStyle::AerialWithLabelsOnDemand:
+  case EITwinBingMapsStyle::AerialWithLabelsOnDemand:
     mapStyle =
         CesiumRasterOverlays::BingMapsStyle::AERIAL_WITH_LABELS_ON_DEMAND;
     break;
-  case EBingMapsStyle::RoadOnDemand:
+  case EITwinBingMapsStyle::RoadOnDemand:
     mapStyle = CesiumRasterOverlays::BingMapsStyle::ROAD_ON_DEMAND;
     break;
-  case EBingMapsStyle::CanvasDark:
+  case EITwinBingMapsStyle::CanvasDark:
     mapStyle = CesiumRasterOverlays::BingMapsStyle::CANVAS_DARK;
     break;
-  case EBingMapsStyle::CanvasLight:
+  case EITwinBingMapsStyle::CanvasLight:
     mapStyle = CesiumRasterOverlays::BingMapsStyle::CANVAS_LIGHT;
     break;
-  case EBingMapsStyle::CanvasGray:
+  case EITwinBingMapsStyle::CanvasGray:
     mapStyle = CesiumRasterOverlays::BingMapsStyle::CANVAS_GRAY;
     break;
-  case EBingMapsStyle::OrdnanceSurvey:
+  case EITwinBingMapsStyle::OrdnanceSurvey:
     mapStyle = CesiumRasterOverlays::BingMapsStyle::ORDNANCE_SURVEY;
     break;
-  case EBingMapsStyle::CollinsBart:
+  case EITwinBingMapsStyle::CollinsBart:
     mapStyle = CesiumRasterOverlays::BingMapsStyle::COLLINS_BART;
     break;
   }

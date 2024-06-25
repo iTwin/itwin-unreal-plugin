@@ -22,9 +22,9 @@
 #include <optional>
 #include <unordered_map>
 
-using namespace CesiumTextureUtility;
+using namespace ITwinCesiumTextureUtility;
 
-namespace CesiumEncodedFeaturesMetadata {
+namespace ITwinCesiumEncodedFeaturesMetadata {
 
 FString getNameForFeatureIDSet(
     const FITwinCesiumFeatureIdSet& featureIDSet,
@@ -34,31 +34,31 @@ FString getNameForFeatureIDSet(
     return label;
   }
 
-  ECesiumFeatureIdSetType type =
+  EITwinCesiumFeatureIdSetType type =
       UITwinCesiumFeatureIdSetBlueprintLibrary::GetFeatureIDSetType(featureIDSet);
 
-  if (type == ECesiumFeatureIdSetType::Attribute) {
+  if (type == EITwinCesiumFeatureIdSetType::Attribute) {
     FITwinCesiumFeatureIdAttribute attribute =
         UITwinCesiumFeatureIdSetBlueprintLibrary::GetAsFeatureIDAttribute(
             featureIDSet);
-    ECesiumFeatureIdAttributeStatus status =
+    EITwinCesiumFeatureIdAttributeStatus status =
         UITwinCesiumFeatureIdAttributeBlueprintLibrary::GetFeatureIDAttributeStatus(
             attribute);
-    if (status == ECesiumFeatureIdAttributeStatus::Valid) {
+    if (status == EITwinCesiumFeatureIdAttributeStatus::Valid) {
       std::string generatedName =
           "_FEATURE_ID_" + std::to_string(attribute.getAttributeIndex());
       return FString(generatedName.c_str());
     }
   }
 
-  if (type == ECesiumFeatureIdSetType::Texture) {
+  if (type == EITwinCesiumFeatureIdSetType::Texture) {
     std::string generatedName =
         "_FEATURE_ID_TEXTURE_" + std::to_string(FeatureIdTextureCounter);
     FeatureIdTextureCounter++;
     return FString(generatedName.c_str());
   }
 
-  if (type == ECesiumFeatureIdSetType::Implicit) {
+  if (type == EITwinCesiumFeatureIdSetType::Implicit) {
     return FString("_IMPLICIT_FEATURE_ID");
   }
 
@@ -79,13 +79,13 @@ namespace {
  */
 std::optional<EncodedFeatureIdSet>
 encodeFeatureIdAttribute(const FITwinCesiumFeatureIdAttribute& attribute) {
-  const ECesiumFeatureIdAttributeStatus status =
+  const EITwinCesiumFeatureIdAttributeStatus status =
       UITwinCesiumFeatureIdAttributeBlueprintLibrary::GetFeatureIDAttributeStatus(
           attribute);
 
-  if (status != ECesiumFeatureIdAttributeStatus::Valid) {
+  if (status != EITwinCesiumFeatureIdAttributeStatus::Valid) {
     UE_LOG(
-        LogCesium,
+        LogITwinCesium,
         Warning,
         TEXT("Can't encode invalid feature ID attribute, skipped."));
     return std::nullopt;
@@ -100,12 +100,12 @@ std::optional<EncodedFeatureIdSet> encodeFeatureIdTexture(
     const FITwinCesiumFeatureIdTexture& texture,
     TMap<const CesiumGltf::ImageCesium*, TWeakPtr<LoadedTextureResult>>&
         featureIdTextureMap) {
-  const ECesiumFeatureIdTextureStatus status =
+  const EITwinCesiumFeatureIdTextureStatus status =
       UITwinCesiumFeatureIdTextureBlueprintLibrary::GetFeatureIDTextureStatus(
           texture);
-  if (status != ECesiumFeatureIdTextureStatus::Valid) {
+  if (status != EITwinCesiumFeatureIdTextureStatus::Valid) {
     UE_LOG(
-        LogCesium,
+        LogITwinCesium,
         Warning,
         TEXT("Can't encode invalid feature ID texture, skipped."));
     return std::nullopt;
@@ -149,7 +149,7 @@ std::optional<EncodedFeatureIdSet> encodeFeatureIdTexture(
 
     if (!encodedFeatureIdTexture.pTexture->pTextureData) {
       UE_LOG(
-          LogCesium,
+          LogITwinCesium,
           Error,
           TEXT(
               "Error encoding a feature ID texture. Most likely could not allocate enough texture memory."));
@@ -213,18 +213,18 @@ EncodedPrimitiveFeatures encodePrimitiveFeaturesAnyThreadPart(
     }
 
     std::optional<EncodedFeatureIdSet> encodedSet;
-    ECesiumFeatureIdSetType type =
+    EITwinCesiumFeatureIdSetType type =
         UITwinCesiumFeatureIdSetBlueprintLibrary::GetFeatureIDSetType(set);
 
-    if (type == ECesiumFeatureIdSetType::Attribute) {
+    if (type == EITwinCesiumFeatureIdSetType::Attribute) {
       const FITwinCesiumFeatureIdAttribute& attribute =
           UITwinCesiumFeatureIdSetBlueprintLibrary::GetAsFeatureIDAttribute(set);
       encodedSet = encodeFeatureIdAttribute(attribute);
-    } else if (type == ECesiumFeatureIdSetType::Texture) {
+    } else if (type == EITwinCesiumFeatureIdSetType::Texture) {
       const FITwinCesiumFeatureIdTexture& texture =
           UITwinCesiumFeatureIdSetBlueprintLibrary::GetAsFeatureIDTexture(set);
       encodedSet = encodeFeatureIdTexture(texture, featureIdTextureMap);
-    } else if (type == ECesiumFeatureIdSetType::Implicit) {
+    } else if (type == EITwinCesiumFeatureIdSetType::Implicit) {
       encodedSet = EncodedFeatureIdSet();
     }
 
@@ -280,7 +280,7 @@ void destroyEncodedPrimitiveFeatures(
 
     auto& encodedFeatureIdTexture = *encodedFeatureIdSet.texture;
     if (encodedFeatureIdTexture.pTexture->pTexture.IsValid()) {
-      CesiumLifetime::destroy(encodedFeatureIdTexture.pTexture->pTexture.Get());
+      FITwinCesiumLifetime::destroy(encodedFeatureIdTexture.pTexture->pTexture.Get());
       encodedFeatureIdTexture.pTexture->pTexture.Reset();
     }
   }
@@ -341,24 +341,24 @@ EncodedPixelFormat
 getPixelFormat(FITwinCesiumMetadataEncodingDetails encodingDetails) {
 
   switch (encodingDetails.ComponentType) {
-  case ECesiumEncodedMetadataComponentType::Uint8:
+  case EITwinCesiumEncodedMetadataComponentType::Uint8:
     switch (encodingDetails.Type) {
-    case ECesiumEncodedMetadataType::Scalar:
+    case EITwinCesiumEncodedMetadataType::Scalar:
       return {EPixelFormat::PF_R8_UINT, 1};
-    case ECesiumEncodedMetadataType::Vec2:
-    case ECesiumEncodedMetadataType::Vec3:
-    case ECesiumEncodedMetadataType::Vec4:
+    case EITwinCesiumEncodedMetadataType::Vec2:
+    case EITwinCesiumEncodedMetadataType::Vec3:
+    case EITwinCesiumEncodedMetadataType::Vec4:
       return {EPixelFormat::PF_R8G8B8A8_UINT, 4};
     default:
       return {EPixelFormat::PF_Unknown, 0};
     }
-  case ECesiumEncodedMetadataComponentType::Float:
+  case EITwinCesiumEncodedMetadataComponentType::Float:
     switch (encodingDetails.Type) {
-    case ECesiumEncodedMetadataType::Scalar:
+    case EITwinCesiumEncodedMetadataType::Scalar:
       return {EPixelFormat::PF_R32_FLOAT, 4};
-    case ECesiumEncodedMetadataType::Vec2:
-    case ECesiumEncodedMetadataType::Vec3:
-    case ECesiumEncodedMetadataType::Vec4:
+    case EITwinCesiumEncodedMetadataType::Vec2:
+    case EITwinCesiumEncodedMetadataType::Vec3:
+    case EITwinCesiumEncodedMetadataType::Vec4:
       // Note this is ABGR
       return {EPixelFormat::PF_A32B32G32R32F, 16};
     }
@@ -371,9 +371,9 @@ bool isValidPropertyTablePropertyDescription(
     const FITwinCesiumPropertyTablePropertyDescription& propertyDescription,
     const FITwinCesiumPropertyTableProperty& property) {
   if (propertyDescription.EncodingDetails.Type ==
-      ECesiumEncodedMetadataType::None) {
+      EITwinCesiumEncodedMetadataType::None) {
     UE_LOG(
-        LogCesium,
+        LogITwinCesium,
         Warning,
         TEXT(
             "No encoded metadata type was specified for this property table property; skip encoding."));
@@ -381,9 +381,9 @@ bool isValidPropertyTablePropertyDescription(
   }
 
   if (propertyDescription.EncodingDetails.ComponentType ==
-      ECesiumEncodedMetadataComponentType::None) {
+      EITwinCesiumEncodedMetadataComponentType::None) {
     UE_LOG(
-        LogCesium,
+        LogITwinCesium,
         Warning,
         TEXT(
             "No encoded metadata component type was specified for this property table property; skip encoding."));
@@ -396,7 +396,7 @@ bool isValidPropertyTablePropertyDescription(
       UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetValueType(property);
   if (valueType != expectedType) {
     UE_LOG(
-        LogCesium,
+        LogITwinCesium,
         Warning,
         TEXT(
             "The value type of the metadata property %s does not match the type specified by the metadata description. It will still attempt to be encoded, but may result in empty or unexpected values."),
@@ -410,15 +410,15 @@ bool isValidPropertyTablePropertyDescription(
         propertyDescription.PropertyDetails.bIsNormalized
             ? "Description incorrectly marked a property table property as normalized; skip encoding."
             : "Description incorrectly marked a property table property as not normalized; skip encoding.";
-    UE_LOG(LogCesium, Warning, TEXT("%s"), *error);
+    UE_LOG(LogITwinCesium, Warning, TEXT("%s"), *error);
     return false;
   }
 
   // Only uint8 normalization is currently supported.
   if (isNormalized &&
-      valueType.ComponentType != ECesiumMetadataComponentType::Uint8) {
+      valueType.ComponentType != EITwinCesiumMetadataComponentType::Uint8) {
     UE_LOG(
-        LogCesium,
+        LogITwinCesium,
         Warning,
         TEXT("Only normalization of uint8 properties is currently supported."));
     return false;
@@ -436,7 +436,7 @@ bool isValidPropertyTexturePropertyDescription(
       UITwinCesiumPropertyTexturePropertyBlueprintLibrary::GetValueType(property);
   if (valueType != expectedType) {
     UE_LOG(
-        LogCesium,
+        LogITwinCesium,
         Warning,
         TEXT(
             "The value type of the metadata property %s does not match the type specified by the metadata description. It will still attempt to be encoded, but may result in empty or unexpected values."),
@@ -450,15 +450,15 @@ bool isValidPropertyTexturePropertyDescription(
         propertyDescription.PropertyDetails.bIsNormalized
             ? "Description incorrectly marked a property texture property as normalized; skip encoding."
             : "Description incorrectly marked a property texture property as not normalized; skip encoding.";
-    UE_LOG(LogCesium, Warning, TEXT("%s"), *error);
+    UE_LOG(LogITwinCesium, Warning, TEXT("%s"), *error);
     return false;
   }
 
   // Only uint8 normalization is currently supported.
   if (isNormalized &&
-      valueType.ComponentType != ECesiumMetadataComponentType::Uint8) {
+      valueType.ComponentType != EITwinCesiumMetadataComponentType::Uint8) {
     UE_LOG(
-        LogCesium,
+        LogITwinCesium,
         Warning,
         TEXT("Only normalization of uint8 properties is currently supported."));
     return false;
@@ -501,7 +501,7 @@ EncodedPropertyTable encodePropertyTableAnyThreadPart(
 
     const FITwinCesiumMetadataEncodingDetails& encodingDetails =
         pDescription->EncodingDetails;
-    if (encodingDetails.Conversion == ECesiumEncodedMetadataConversion::None) {
+    if (encodingDetails.Conversion == EITwinCesiumEncodedMetadataConversion::None) {
       // No encoding to be done; skip.
       continue;
     }
@@ -511,10 +511,10 @@ EncodedPropertyTable encodePropertyTableAnyThreadPart(
     }
 
     if (encodingDetails.Conversion ==
-            ECesiumEncodedMetadataConversion::Coerce &&
+            EITwinCesiumEncodedMetadataConversion::Coerce &&
         !CesiumEncodedMetadataCoerce::canEncode(*pDescription)) {
       UE_LOG(
-          LogCesium,
+          LogITwinCesium,
           Warning,
           TEXT(
               "Cannot use 'Coerce' with the specified property info; skipped."));
@@ -522,10 +522,10 @@ EncodedPropertyTable encodePropertyTableAnyThreadPart(
     }
 
     if (encodingDetails.Conversion ==
-            ECesiumEncodedMetadataConversion::ParseColorFromString &&
+            EITwinCesiumEncodedMetadataConversion::ParseColorFromString &&
         !CesiumEncodedMetadataParseColorFromString::canEncode(*pDescription)) {
       UE_LOG(
-          LogCesium,
+          LogITwinCesium,
           Warning,
           TEXT(
               "Cannot use `Parse Color From String` with the specified property info; skipped."));
@@ -535,7 +535,7 @@ EncodedPropertyTable encodePropertyTableAnyThreadPart(
     EncodedPixelFormat encodedFormat = getPixelFormat(encodingDetails);
     if (encodedFormat.format == EPixelFormat::PF_Unknown) {
       UE_LOG(
-          LogCesium,
+          LogITwinCesium,
           Warning,
           TEXT(
               "Unable to determine a suitable GPU format for this property table property; skipped."));
@@ -551,7 +551,7 @@ EncodedPropertyTable encodePropertyTableAnyThreadPart(
 
     if (UITwinCesiumPropertyTablePropertyBlueprintLibrary::
             GetPropertyTablePropertyStatus(property) ==
-        ECesiumPropertyTablePropertyStatus::Valid) {
+        EITwinCesiumPropertyTablePropertyStatus::Valid) {
 
       int64 floorSqrtFeatureCount = glm::sqrt(propertyTableCount);
       int64 textureDimension =
@@ -574,7 +574,7 @@ EncodedPropertyTable encodePropertyTableAnyThreadPart(
 
       if (!encodedProperty.pTexture->pTextureData) {
         UE_LOG(
-            LogCesium,
+            LogITwinCesium,
             Error,
             TEXT(
                 "Error encoding a property table property. Most likely could not allocate enough texture memory."));
@@ -596,13 +596,13 @@ EncodedPropertyTable encodePropertyTableAnyThreadPart(
           static_cast<size_t>(pMip->BulkData.GetBulkDataSize()));
 
       if (encodingDetails.Conversion ==
-          ECesiumEncodedMetadataConversion::ParseColorFromString) {
+          EITwinCesiumEncodedMetadataConversion::ParseColorFromString) {
         CesiumEncodedMetadataParseColorFromString::encode(
             *pDescription,
             property,
             textureData,
             encodedFormat.pixelSize);
-      } else /* info.Conversion == ECesiumEncodedMetadataConversion::Coerce */ {
+      } else /* info.Conversion == EITwinCesiumEncodedMetadataConversion::Coerce */ {
         CesiumEncodedMetadataCoerce::encode(
             *pDescription,
             property,
@@ -700,7 +700,7 @@ EncodedPropertyTexture encodePropertyTextureAnyThreadPart(
 
     if (UITwinCesiumPropertyTexturePropertyBlueprintLibrary::
             GetPropertyTexturePropertyStatus(property) ==
-        ECesiumPropertyTexturePropertyStatus::Valid) {
+        EITwinCesiumPropertyTexturePropertyStatus::Valid) {
 
       const TArray<int64>& channels =
           UITwinCesiumPropertyTexturePropertyBlueprintLibrary::GetChannels(property);
@@ -755,7 +755,7 @@ EncodedPropertyTexture encodePropertyTextureAnyThreadPart(
 
         if (!encodedProperty.pTexture->pTextureData) {
           UE_LOG(
-              LogCesium,
+              LogITwinCesium,
               Error,
               TEXT(
                   "Error encoding a property texture property. Most likely could not allocate enough texture memory."));
@@ -962,7 +962,7 @@ void destroyEncodedModelMetadata(EncodedModelMetadata& encodedMetadata) {
          propertyTable.properties) {
       if (encodedProperty.pTexture &&
           encodedProperty.pTexture->pTexture.IsValid()) {
-        CesiumLifetime::destroy(encodedProperty.pTexture->pTexture.Get());
+        FITwinCesiumLifetime::destroy(encodedProperty.pTexture->pTexture.Get());
         encodedProperty.pTexture->pTexture.Reset();
       }
     }
@@ -972,7 +972,7 @@ void destroyEncodedModelMetadata(EncodedModelMetadata& encodedMetadata) {
     for (EncodedPropertyTextureProperty& encodedPropertyTextureProperty :
          encodedPropertyTextureIt.properties) {
       if (encodedPropertyTextureProperty.pTexture->pTexture.IsValid()) {
-        CesiumLifetime::destroy(
+        FITwinCesiumLifetime::destroy(
             encodedPropertyTextureProperty.pTexture->pTexture.Get());
         encodedPropertyTextureProperty.pTexture->pTexture.Reset();
       }
@@ -1006,4 +1006,4 @@ FString createHlslSafeName(const FString& rawName) {
   return safeName;
 }
 
-} // namespace CesiumEncodedFeaturesMetadata
+} // namespace ITwinCesiumEncodedFeaturesMetadata

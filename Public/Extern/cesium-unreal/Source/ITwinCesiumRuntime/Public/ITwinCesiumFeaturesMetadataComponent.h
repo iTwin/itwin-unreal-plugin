@@ -51,7 +51,7 @@ struct ITWINCESIUMRUNTIME_API FITwinCesiumFeatureIdSetDescription {
    * The type of the feature ID set.
    */
   UPROPERTY(EditAnywhere, Category = "Cesium")
-  ECesiumFeatureIdSetType Type = ECesiumFeatureIdSetType::None;
+  EITwinCesiumFeatureIdSetType Type = EITwinCesiumFeatureIdSetType::None;
 
   /**
    * The name of the property table that this feature ID set corresponds to.

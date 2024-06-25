@@ -10,7 +10,7 @@
 class UObject;
 class UTexture;
 
-class AmortizedDestructor : FTickableGameObject {
+class FITwinAmortizedDestructor : FTickableGameObject {
 public:
   void Tick(float DeltaTime) override;
   ETickableTickType GetTickableTickType() const override;
@@ -29,11 +29,11 @@ private:
   TArray<TWeakObjectPtr<UObject>> _nextPending;
 };
 
-class CesiumLifetime {
+class FITwinCesiumLifetime {
 public:
   static void destroy(UObject* pObject);
   static void destroyComponentRecursively(USceneComponent* pComponent);
 
 private:
-  static AmortizedDestructor amortizedDestructor;
+  static FITwinAmortizedDestructor amortizedDestructor;
 };

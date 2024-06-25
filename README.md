@@ -3,8 +3,8 @@
 ## Introduction
 The iTwin for Unreal SDK enables streaming of iModels  and reality data from the iTwin cloud into Unreal Engine for high-fidelity visualization and consumption. Additionally, the SDK allows Unreal Engine developers to create custom applications which can expand upon the capabilities provided by the SDK out of the box. This enables the creation of tailored interactive experiences around iTwins. In addition, we provide a pre-compiled plugin version of the SDK.<br>
 The streaming technology is based on the open-source Cesium 3D tiles (link to the Cesium github) and offers great performance even with large datasets. The SDK is based on the experience gathered through the technology previews introduced by the Datasmith Connector and the 3DFT plugin during the last year.<br>  
-The iTwin for Unreal SDK will supersede these technology demos and become the foundation of our upcoming advanced visualization products. It embodies Bentleyâ€™s long-term commitment to offering scalable and future-proven technologies and open standards for any visualization needs of infrastructure and Digital Twins. <br> 
-This SDK will be regularly updated. We appreciate your feedback to turn this exciting new technology into the leading foundation for advanced visualization of Digital Twins leveraging game engine technology. We encourage you to participate in the SDKâ€™s development with your ideas, requests and wishes, and help us shape the future of visualization together. 
+The iTwin for Unreal SDK will supersede these technology demos and become the foundation of our upcoming advanced visualization products. It embodies Bentley’s long-term commitment to offering scalable and future-proven technologies and open standards for any visualization needs of infrastructure and Digital Twins. <br> 
+This SDK will be regularly updated. We appreciate your feedback to turn this exciting new technology into the leading foundation for advanced visualization of Digital Twins leveraging game engine technology. We encourage you to participate in the SDK’s development with your ideas, requests and wishes, and help us shape the future of visualization together. 
 
 
 ## Supported features
@@ -19,6 +19,8 @@ Only iModels and their Saved Views are supported at the moment; Reality Data can
 [Unreal Engine 5.3](https://dev.epicgames.com/documentation/en-us/unreal-engine/installing-unreal-engine?application_version=5.3) is the currently supported version. Other Unreal Engine versions will be supported in future updates.<br>
 You also need a Bentley account to stream iModels from the cloud.<br>
 To run Unreal Engine, make sure you are using a dedicated GPU. The performance largely depends on the power of your graphics card. For more information on recommended system specs for Unreal Engine, please visit [Epic's website](https://dev.epicgames.com/documentation/de-de/unreal-engine/hardware-and-software-specifications-for-unreal-engine).
+
+We recorded a quick start video on [YouTube](https://www.youtube.com/watch?v=quf4t4LsqXw). Read on for the written steps of the installation process.
 
 
 ## <a id="install-plugin"></a> 1. Installing the precompiled iTwin plugin for Unreal
@@ -55,8 +57,11 @@ For example: `C:\MyUnrealApp\Plugins\ITwinForUnreal`.
    - `Loading Method`: `Automatic`
    - `iModel Id`: the ID of your iModel
    - `Changeset Id`: the ID of the changeset you want to import
-   Then the iModel should appear in the viewport.<br>
-   This may take some time if the iModel has never been imported yet (because the iTwin server needs to convert it to the Cesium format first).
+   Then the iModel should appear in the viewport.
+   If the selected iModel/changeset has never been imported yet, the iTwin server needs to convert (ie. export) it into the Cesium format.<br>
+   In such case the export will be automatically started, and the “Export Status” label will say “In progress” until the export is complete.<br>
+   This can take a long time, depending on the complexity of your iModel. Once the export is complete, the iModel will appear in the viewport.
+
 
 ### In an existing project which uses the [3DFT plugin](https://github.com/iTwin/unreal-engine-3dft-plugin)
 

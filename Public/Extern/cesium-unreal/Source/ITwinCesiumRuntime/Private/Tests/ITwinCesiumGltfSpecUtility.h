@@ -8,6 +8,7 @@
 #include <type_traits>
 #include <vector>
 
+
 /**
  * @brief Converts the given vector of values into a std::vector of bytes.
  *
@@ -21,6 +22,7 @@ std::vector<std::byte> GetValuesAsBytes(const std::vector<T>& values) {
   return bytes;
 }
 
+namespace ITwinCesium {
 /**
  * @brief Adds the buffer to the given model, creating a buffer view and
  * accessor in the process.
@@ -31,6 +33,7 @@ int32_t AddBufferToModel(
     const std::string& type,
     const int32_t componentType,
     const std::vector<std::byte>&& values);
+}
 
 /**
  * @brief Creates an attribute on the given primitive, including a buffer,
@@ -46,7 +49,7 @@ void CreateAttributeForPrimitive(
     const std::vector<T>& values) {
   std::vector<std::byte> data = GetValuesAsBytes(values);
   const int32_t accessor =
-      AddBufferToModel(model, type, componentType, std::move(data));
+      ITwinCesium::AddBufferToModel(model, type, componentType, std::move(data));
   primitive.attributes.insert({attributeName, accessor});
 }
 
@@ -61,7 +64,7 @@ void CreateIndicesForPrimitive(
     const int32_t componentType,
     const std::vector<T>& indices) {
   std::vector<std::byte> values = GetValuesAsBytes(indices);
-  const int32_t accessor = AddBufferToModel(
+  const int32_t accessor = ITwinCesium::AddBufferToModel(
       model,
       CesiumGltf::AccessorSpec::Type::SCALAR,
       componentType,
@@ -69,6 +72,7 @@ void CreateIndicesForPrimitive(
   primitive.indices = accessor;
 }
 
+namespace ITwinCesium {
 /**
  * @brief Adds the feature IDs to the given primitive as a feature ID attribute
  * in EXT_mesh_features. If the primitive doesn't already contain
@@ -100,6 +104,8 @@ CesiumGltf::FeatureId& AddFeatureIDsAsTextureToModel(
     const int32_t imageHeight,
     const std::vector<glm::vec2>& texCoords,
     const int64_t texcoordSetIndex);
+
+}
 
 /**
  * @brief Adds the given values to the given model as a property table property

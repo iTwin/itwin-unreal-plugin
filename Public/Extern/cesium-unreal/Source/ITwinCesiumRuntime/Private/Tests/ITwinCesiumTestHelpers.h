@@ -16,7 +16,7 @@
 class UWorld;
 class AITwinCesiumGeoreference;
 
-namespace CesiumTestHelpers {
+namespace ITwinCesiumTestHelpers {
 
 UWorld* getGlobalWorldContext();
 
@@ -45,7 +45,7 @@ void waitForImpl(
   } else if (pWorld->GetTimerManager().GetTimerRemaining(timerHandle) <= 0.0f) {
     // Timeout
     UE_LOG(
-        LogCesium,
+        LogITwinCesium,
         Error,
         TEXT("Timed out waiting for a condition to become true."));
     pWorld->GetTimerManager().ClearTimer(timerHandle);
@@ -197,4 +197,4 @@ template <typename T> T* findInPlay(TObjectPtr<T> pEditorObject) {
 
 #endif // #if WITH_EDITOR
 
-} // namespace CesiumTestHelpers
+} // namespace ITwinCesiumTestHelpers

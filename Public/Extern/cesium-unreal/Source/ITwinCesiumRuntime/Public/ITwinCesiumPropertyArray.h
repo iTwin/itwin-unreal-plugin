@@ -109,9 +109,9 @@ public:
   template <typename T>
   FITwinCesiumPropertyArray(CesiumGltf::PropertyArrayView<T> value)
       : _value(value), _elementType() {
-    ECesiumMetadataType type =
-        ECesiumMetadataType(CesiumGltf::TypeToPropertyType<T>::value);
-    ECesiumMetadataComponentType componentType = ECesiumMetadataComponentType(
+    EITwinCesiumMetadataType type =
+        EITwinCesiumMetadataType(CesiumGltf::TypeToPropertyType<T>::value);
+    EITwinCesiumMetadataComponentType componentType = EITwinCesiumMetadataComponentType(
         CesiumGltf::TypeToPropertyType<T>::component);
     bool isArray = false;
 

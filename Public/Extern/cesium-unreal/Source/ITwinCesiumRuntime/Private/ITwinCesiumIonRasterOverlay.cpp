@@ -57,8 +57,8 @@ UITwinCesiumIonRasterOverlay::CreateOverlay(
 void UITwinCesiumIonRasterOverlay::PostLoad() {
   Super::PostLoad();
 
-  if (CesiumActors::shouldValidateFlags(this))
-    CesiumActors::validateActorComponentFlags(this);
+  if (ITwinCesiumActors::shouldValidateFlags(this))
+    ITwinCesiumActors::validateActorComponentFlags(this);
 
 #if WITH_EDITOR
   const int32 CesiumVersion =

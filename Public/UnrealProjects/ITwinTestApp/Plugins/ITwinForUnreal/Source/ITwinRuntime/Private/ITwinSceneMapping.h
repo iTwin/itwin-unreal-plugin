@@ -12,6 +12,7 @@
 #include <Cesium3DTilesSelection/Tile.h> // see TCesiumTileID later on
 #include <CesiumTileIDHash.h>
 #include <CesiumMaterialType.h>
+#include <ITwinCoordSystem.h>
 #include <ITwinElementID.h>
 #include <ITwinFeatureID.h>
 #include <ITwinDynamicShadingProperty.h>
@@ -242,9 +243,13 @@ private:
 	/// Global bounding box for the whole model - very coarse, as it it filled from all known tiles,
 	/// taking the lowest LODs into account. This could be improved by evaluating it from the tiles currently
 	/// displayed...
-	FBox IModelBBox;
-	/// ModelCenter is defined as the translation of the iModel
-	FVector ModelCenter = FVector(0, 0, 0);
+	FBox IModelBBox_ITwin;
+	FBox IModelBBox_UE; // same, but in Unreal Engine coordinate system
+	/// ModelCenter, in iTwin world, is defined as the translation of the iModel ; this data is directly
+	/// retrieved from the iModel.
+	FVector ModelCenter_ITwin = FVector(0, 0, 0);
+	FVector ModelCenter_UE = FVector(0, 0, 0); // same, but in Unreal Engine coordinate system
+	bool bHasSetModelCenter = false;
 
 public:
 	std::unordered_map<CesiumTileID, FITwinSceneTile> KnownTiles;
@@ -269,11 +274,11 @@ public:
 	const std::unordered_map<ITwinElementID, FBox>& GetKnownBBoxes() const {
 		return KnownBBoxes;
 	}
-	FBox const& GetIModelBoundingBox() const {
-		return IModelBBox;
+	FBox const& GetIModelBoundingBox(EITwinCoordSystem CoordSystem) const {
+		return (CoordSystem == EITwinCoordSystem::UE) ? IModelBBox_UE: IModelBBox_ITwin;
 	}
-	FVector const& GetModelCenter() const {
-		return ModelCenter;
+	FVector const& GetModelCenter(EITwinCoordSystem CoordSystem) const {
+		return (CoordSystem == EITwinCoordSystem::UE) ? ModelCenter_UE : ModelCenter_ITwin;
 	}
 
 	static void SetupFeatureIdUVIndex(FITwinSceneTile& SceneTile,

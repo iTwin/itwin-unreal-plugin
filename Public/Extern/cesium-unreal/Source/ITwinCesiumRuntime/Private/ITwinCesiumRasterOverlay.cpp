@@ -54,13 +54,13 @@ void UITwinCesiumRasterOverlay::AddToTileset() {
       [this](const CesiumRasterOverlays::RasterOverlayLoadFailureDetails&
                  details) {
         static_assert(
-            uint8_t(ECesiumRasterOverlayLoadType::CesiumIon) ==
+            uint8_t(EITwinCesiumRasterOverlayLoadType::CesiumIon) ==
             uint8_t(CesiumRasterOverlays::RasterOverlayLoadType::CesiumIon));
         static_assert(
-            uint8_t(ECesiumRasterOverlayLoadType::TileProvider) ==
+            uint8_t(EITwinCesiumRasterOverlayLoadType::TileProvider) ==
             uint8_t(CesiumRasterOverlays::RasterOverlayLoadType::TileProvider));
         static_assert(
-            uint8_t(ECesiumRasterOverlayLoadType::Unknown) ==
+            uint8_t(EITwinCesiumRasterOverlayLoadType::Unknown) ==
             uint8_t(CesiumRasterOverlays::RasterOverlayLoadType::Unknown));
 
         uint8_t typeValue = uint8_t(details.type);
@@ -72,7 +72,7 @@ void UITwinCesiumRasterOverlay::AddToTileset() {
 
         FITwinCesiumRasterOverlayLoadFailureDetails ueDetails{};
         ueDetails.Overlay = this;
-        ueDetails.Type = ECesiumRasterOverlayLoadType(typeValue);
+        ueDetails.Type = EITwinCesiumRasterOverlayLoadType(typeValue);
         ueDetails.HttpStatusCode =
             details.pRequest && details.pRequest->response()
                 ? details.pRequest->response()->statusCode()
@@ -116,7 +116,7 @@ void UITwinCesiumRasterOverlay::RemoveFromTileset() {
   // operations in progress and have been fully destroyed.
   // See IsReadyForFinishDestroy.
   ++this->_overlaysBeingDestroyed;
-  this->_pOverlay->getAsyncDestructionCompleteEvent(getAsyncSystem())
+  this->_pOverlay->getAsyncDestructionCompleteEvent(ITwinCesium::getAsyncSystem())
       .thenInMainThread([this]() { --this->_overlaysBeingDestroyed; });
 
   this->OnRemove(pTileset, this->_pOverlay);
@@ -191,8 +191,8 @@ bool UITwinCesiumRasterOverlay::IsReadyForFinishDestroy() {
   ready &= this->_overlaysBeingDestroyed == 0;
 
   if (!ready) {
-    getAssetAccessor()->tick();
-    getAsyncSystem().dispatchMainThreadTasks();
+    ITwinCesium::getAssetAccessor()->tick();
+    ITwinCesium::getAsyncSystem().dispatchMainThreadTasks();
   }
 
   return ready;

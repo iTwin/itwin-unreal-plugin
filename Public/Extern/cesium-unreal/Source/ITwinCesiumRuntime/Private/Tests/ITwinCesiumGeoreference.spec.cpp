@@ -23,7 +23,7 @@ END_DEFINE_SPEC(FITwinCesiumGeoreferenceSpec)
 
 void FITwinCesiumGeoreferenceSpec::Define() {
   BeforeEach([this]() {
-    UWorld* pWorld = CesiumTestHelpers::getGlobalWorldContext();
+    UWorld* pWorld = ITwinCesiumTestHelpers::getGlobalWorldContext();
     pGeoreferenceNullIsland = pWorld->SpawnActor<AITwinCesiumGeoreference>();
     pGeoreferenceNullIsland->SetOriginLongitudeLatitudeHeight(
         FVector(0.0, 0.0, 0.0));
@@ -186,7 +186,7 @@ void FITwinCesiumGeoreferenceSpec::Define() {
               rotationAt90DegreesLongitude,
               originOf90DegreesLongitudeInNullIslandCoordinates);
 
-      CesiumTestHelpers::TestRotatorsAreEquivalent(
+      ITwinCesiumTestHelpers::TestRotatorsAreEquivalent(
           this,
           pGeoreference90Longitude,
           rotationAt90DegreesLongitude,
@@ -206,7 +206,7 @@ void FITwinCesiumGeoreferenceSpec::Define() {
               rotationAtNullIsland,
               originOf90DegreesLongitudeInNullIslandCoordinates);
 
-      CesiumTestHelpers::TestRotatorsAreEquivalent(
+      ITwinCesiumTestHelpers::TestRotatorsAreEquivalent(
           this,
           pGeoreferenceNullIsland,
           rotationAtNullIsland,

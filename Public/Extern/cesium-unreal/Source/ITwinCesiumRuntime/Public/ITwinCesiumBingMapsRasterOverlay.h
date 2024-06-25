@@ -7,7 +7,7 @@
 #include "ITwinCesiumBingMapsRasterOverlay.generated.h"
 
 UENUM(BlueprintType)
-enum class EBingMapsStyle : uint8 {
+enum class EITwinBingMapsStyle : uint8 {
   Aerial UMETA(DisplayName = "Aerial"),
   AerialWithLabelsOnDemand UMETA(DisplayName = "Aerial with Labels"),
   RoadOnDemand UMETA(DisplayName = "Road"),
@@ -38,7 +38,7 @@ public:
    * The map style to use.
    */
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cesium")
-  EBingMapsStyle MapStyle = EBingMapsStyle::Aerial;
+  EITwinBingMapsStyle MapStyle = EITwinBingMapsStyle::Aerial;
 
 protected:
   virtual std::unique_ptr<CesiumRasterOverlays::RasterOverlay> CreateOverlay(

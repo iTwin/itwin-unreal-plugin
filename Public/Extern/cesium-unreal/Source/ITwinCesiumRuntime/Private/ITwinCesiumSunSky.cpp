@@ -123,7 +123,7 @@ void AITwinCesiumSunSky::OnConstruction(const FTransform& Transform) {
   Super::OnConstruction(Transform);
 
   UE_LOG(
-      LogCesium,
+      LogITwinCesium,
       Verbose,
       TEXT("Called OnConstruction for CesiumSunSky %s"),
       *this->GetName());
@@ -132,7 +132,7 @@ void AITwinCesiumSunSky::OnConstruction(const FTransform& Transform) {
       FVector(0.0, 0.0, 0.0));
 
   UE_LOG(
-      LogCesium,
+      LogITwinCesium,
       Verbose,
       TEXT("Spawn new sky sphere: %s"),
       _wantsSpawnMobileSkySphere ? TEXT("true") : TEXT("false"));
@@ -385,7 +385,7 @@ void AITwinCesiumSunSky::PostEditChangeProperty(
 AITwinCesiumGeoreference* AITwinCesiumSunSky::GetGeoreference() const {
   if (!IsValid(this->GlobeAnchor)) {
     UE_LOG(
-        LogCesium,
+        LogITwinCesium,
         Error,
         TEXT("AITwinCesiumSunSky %s does not have a GlobeAnchorComponent"),
         *this->GetName());
@@ -584,6 +584,6 @@ void AITwinCesiumSunSky::SetSkyAtmosphereGroundRadius(
   if (Sky && !FMath::IsNearlyEqualByULP(radiusFloat, Sky->BottomRadius)) {
     Sky->BottomRadius = radiusFloat;
     Sky->MarkRenderStateDirty();
-    UE_LOG(LogCesium, Verbose, TEXT("GroundRadius now %f"), Sky->BottomRadius);
+    UE_LOG(LogITwinCesium, Verbose, TEXT("GroundRadius now %f"), Sky->BottomRadius);
   }
 }

@@ -42,7 +42,7 @@ void UITwinCesiumBoundingVolumePoolComponent::destroyProxy(
   UITwinCesiumBoundingVolumeComponent* pBoundingVolumeComponent =
       (UITwinCesiumBoundingVolumeComponent*)pProxy;
   if (pBoundingVolumeComponent) {
-    CesiumLifetime::destroyComponentRecursively(pBoundingVolumeComponent);
+    FITwinCesiumLifetime::destroyComponentRecursively(pBoundingVolumeComponent);
   }
 }
 
@@ -95,7 +95,7 @@ FPrimitiveSceneProxy* UITwinCesiumBoundingVolumeComponent::CreateSceneProxy() {
 }
 
 void UITwinCesiumBoundingVolumeComponent::UpdateOcclusion(
-    const CesiumViewExtension& cesiumViewExtension) {
+    const FITwinCesiumViewExtension& cesiumViewExtension) {
   if (!_isMapped) {
     return;
   }
@@ -114,7 +114,7 @@ void UITwinCesiumBoundingVolumeComponent::UpdateOcclusion(
 
 void UITwinCesiumBoundingVolumeComponent::_updateTransform() {
   const FTransform transform = FTransform(
-      VecMath::createMatrix(this->_cesiumToUnreal * this->_tileTransform));
+      FITwinVecMath::createMatrix(this->_cesiumToUnreal * this->_tileTransform));
 
   this->SetRelativeTransform_Direct(transform);
   this->SetComponentToWorld(transform);
@@ -145,6 +145,6 @@ void UITwinCesiumBoundingVolumeComponent::reset(const Tile* pTile) {
 FBoxSphereBounds UITwinCesiumBoundingVolumeComponent::CalcBounds(
     const FTransform& LocalToWorld) const {
   return std::visit(
-      CalcBoundsOperation{LocalToWorld, this->_tileTransform},
+      FITwinCalcBoundsOperation{LocalToWorld, this->_tileTransform},
       this->_tileBounds);
 }

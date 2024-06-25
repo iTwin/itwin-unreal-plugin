@@ -41,7 +41,7 @@ public:
 #endif
 		Tileset->AttachToActor(&Owner, FAttachmentTransformRules::KeepRelativeTransform);
 		Tileset->SetCreatePhysicsMeshes(false);
-		Tileset->SetTilesetSource(ETilesetSource::FromUrl);
+		Tileset->SetTilesetSource(EITwinTilesetSource::FromUrl);
 		Tileset->SetUrl(Info.MeshUrl);
 
 		if (Info.bGeolocated)
@@ -50,10 +50,10 @@ public:
 			Latitude = 0.5 * (Info.ExtentNorthEast.Latitude + Info.ExtentSouthWest.Latitude);
 			Longitude = 0.5 * (Info.ExtentNorthEast.Longitude + Info.ExtentSouthWest.Longitude);
 			Tileset->SetGeoreference(Owner.Geolocation->LocatedGeoreference.Get());
-			if (Tileset->GetGeoreference()->GetOriginPlacement() == EOriginPlacement::TrueOrigin)
+			if (Tileset->GetGeoreference()->GetOriginPlacement() == EITwinOriginPlacement::TrueOrigin)
 			{
 				// Common geolocation is not yet inited, use the location of this reality data.
-				Tileset->GetGeoreference()->SetOriginPlacement(EOriginPlacement::CartographicOrigin);
+				Tileset->GetGeoreference()->SetOriginPlacement(EITwinOriginPlacement::CartographicOrigin);
 				Tileset->GetGeoreference()->SetOriginLatitude(Latitude);
 				Tileset->GetGeoreference()->SetOriginLongitude(Longitude);
 				Tileset->GetGeoreference()->SetOriginHeight(0);
@@ -161,10 +161,9 @@ void AITwinRealityData::PostEditChangeProperty(FPropertyChangedEvent& e)
 
 void AITwinRealityData::UseAsGeolocation()
 {
-	check(bGeolocated && Geolocation);
-	if (Geolocation)
+	if (ensure(bGeolocated && Geolocation))
 	{
-		Geolocation->LocatedGeoreference->SetOriginPlacement(EOriginPlacement::CartographicOrigin);
+		Geolocation->LocatedGeoreference->SetOriginPlacement(EITwinOriginPlacement::CartographicOrigin);
 		Geolocation->LocatedGeoreference->SetOriginLatitude(Impl->Latitude);
 		Geolocation->LocatedGeoreference->SetOriginLongitude(Impl->Longitude);
 	}

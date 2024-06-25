@@ -17,7 +17,7 @@ class UITwinCesiumSubLevelSwitcherComponent;
  * The delegate for the AITwinCesiumGeoreference::OnGeoreferenceUpdated,
  * which is triggered from UpdateGeoreference
  */
-DECLARE_DYNAMIC_MULTICAST_DELEGATE(FGeoreferenceUpdated);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FITwinGeoreferenceUpdated);
 
 /**
  * Controls how global geospatial coordinates are mapped to coordinates in the
@@ -82,7 +82,7 @@ public:
    * modified in a way that affects its computations.
    */
   UPROPERTY(BlueprintAssignable, Category = "Cesium")
-  FGeoreferenceUpdated OnGeoreferenceUpdated;
+  FITwinGeoreferenceUpdated OnGeoreferenceUpdated;
 
 #pragma region Properties
 
@@ -105,7 +105,7 @@ private:
       BlueprintGetter = GetOriginPlacement,
       BlueprintSetter = SetOriginPlacement,
       meta = (AllowPrivateAccess))
-  EOriginPlacement OriginPlacement = EOriginPlacement::CartographicOrigin;
+  EITwinOriginPlacement OriginPlacement = EITwinOriginPlacement::CartographicOrigin;
 
   /**
    * The latitude of the custom origin placement in degrees, in the range [-90,
@@ -121,7 +121,7 @@ private:
       meta =
           (AllowPrivateAccess,
            EditCondition =
-               "OriginPlacement==EOriginPlacement::CartographicOrigin",
+               "OriginPlacement==EITwinOriginPlacement::CartographicOrigin",
            ClampMin = -90.0,
            ClampMax = 90.0))
   double OriginLatitude = 39.736401;
@@ -140,7 +140,7 @@ private:
       meta =
           (AllowPrivateAccess,
            EditCondition =
-               "OriginPlacement==EOriginPlacement::CartographicOrigin",
+               "OriginPlacement==EITwinOriginPlacement::CartographicOrigin",
            ClampMin = -180.0,
            ClampMax = 180.0))
   double OriginLongitude = -105.25737;
@@ -159,7 +159,7 @@ private:
       meta =
           (AllowPrivateAccess,
            EditCondition =
-               "OriginPlacement==EOriginPlacement::CartographicOrigin"))
+               "OriginPlacement==EITwinOriginPlacement::CartographicOrigin"))
   double OriginHeight = 2250.0;
 
   /**
@@ -277,7 +277,7 @@ public:
    * much better than setting the Actor's Transform property.
    */
   UFUNCTION(BlueprintGetter)
-  EOriginPlacement GetOriginPlacement() const;
+  EITwinOriginPlacement GetOriginPlacement() const;
 
   /**
    * Sets the placement of this Actor's origin (coordinate 0,0,0) within the
@@ -292,7 +292,7 @@ public:
    * much better than setting the Actor's Transform property.
    */
   UFUNCTION(BlueprintSetter)
-  void SetOriginPlacement(EOriginPlacement NewValue);
+  void SetOriginPlacement(EITwinOriginPlacement NewValue);
 
   /**
    * Gets the latitude of the custom origin placement in degrees, in the range

@@ -41,7 +41,7 @@ struct Rectangle;
 }
 
 USTRUCT()
-struct FRasterOverlayTile {
+struct FITwinRasterOverlayTile {
   GENERATED_BODY()
 
   UPROPERTY()
@@ -96,10 +96,10 @@ public:
   FITwinCustomDepthParameters CustomDepthParameters{};
 
   FITwinCesiumModelMetadata Metadata{};
-  CesiumEncodedFeaturesMetadata::EncodedModelMetadata EncodedMetadata{};
+  ITwinCesiumEncodedFeaturesMetadata::EncodedModelMetadata EncodedMetadata{};
 
   PRAGMA_DISABLE_DEPRECATION_WARNINGS
-  std::optional<CesiumEncodedMetadataUtility::EncodedMetadata>
+  std::optional<ITwinCesiumEncodedMetadataUtility::EncodedMetadata>
       EncodedMetadata_DEPRECATED = std::nullopt;
   PRAGMA_ENABLE_DEPRECATION_WARNINGS
 

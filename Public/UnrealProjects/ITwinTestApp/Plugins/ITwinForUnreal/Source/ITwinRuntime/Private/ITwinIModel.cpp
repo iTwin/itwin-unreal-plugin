@@ -63,6 +63,17 @@ public:
 	uint32 TilesetLoadedCount = 0;
 	FDelegateHandle OnTilesetLoadFailureHandle;
 
+	// Some operations require to first fetch a valid server connection
+	enum class EOperationUponAuth : uint8
+	{
+		None,
+		Load,
+		Update,
+	};
+	EOperationUponAuth PendingOperation = EOperationUponAuth::None;
+	bool bAutoStartExportIfNeeded = false;
+	bool bTickCalled = false;
+
 	FImpl(AITwinIModel& InOwner)
 		: Owner(InOwner), Internals(InOwner)
 	{
@@ -292,12 +303,26 @@ AITwinIModel::AITwinIModel()
 	:Impl(MakePimpl<FImpl>(*this))
 {
 	SetRootComponent(CreateDefaultSubobject<USceneComponent>(TEXT("root")));
+
+	PrimaryActorTick.bCanEverTick = true;
 }
 
 void AITwinIModel::UpdateIModel()
 {
-	check(!IModelId.IsEmpty()); // TODO_AW
-	check(ServerConnection); // TODO_AW
+	if (IModelId.IsEmpty())
+	{
+		UE_LOG(LogTemp, Error, TEXT("ITwinIModel with no IModelId cannot be updated"));
+		return;
+	}
+
+	// If no access token has been retrieved yet, make sure we request an authentication and then process
+	// the actual update.
+	if (CheckServerConnection() != AITwinServiceActor::EConnectionStatus::Connected)
+	{
+		Impl->PendingOperation = FImpl::EOperationUponAuth::Update;
+		return;
+	}
+
 	bResolvedChangesetIdValid = false;
 	ExportStatus = EITwinExportStatus::Unknown;
 	DestroyTileset();
@@ -305,15 +330,50 @@ void AITwinIModel::UpdateIModel()
 	UpdateSavedViews();
 }
 
-void AITwinIModel::GetModel3DInfo(FITwinIModel3DInfo& Info)
+void AITwinIModel::AutoExportAndLoad()
 {
-	FBox const& IModelBBox = Impl->Internals.SceneMapping.GetIModelBoundingBox();
+	if (ensure(LoadingMethod == ELoadingMethod::LM_Automatic
+		&& !IModelId.IsEmpty()))
+	{
+		// automatically start the export if necessary.
+		Impl->bAutoStartExportIfNeeded = true;
+		UpdateIModel();
+	}
+}
+
+void AITwinIModel::GetModel3DInfoInCoordSystem(FITwinIModel3DInfo& OutInfo, EITwinCoordSystem CoordSystem,
+	bool bGetLegacy3DFTValue /*= false*/) const
+{
+	FBox const& IModelBBox = Impl->Internals.SceneMapping.GetIModelBoundingBox(CoordSystem);
 	if (IModelBBox.IsValid)
 	{
-		Info.BoundingBoxMin = IModelBBox.Min;
-		Info.BoundingBoxMax = IModelBBox.Max;
+		OutInfo.BoundingBoxMin = IModelBBox.Min;
+		OutInfo.BoundingBoxMax = IModelBBox.Max;
 	}
-	Info.ModelCenter = Impl->Internals.SceneMapping.GetModelCenter();
+	// The 'ModelCenter' used in 3DFT plugin is defined as the translation of the iModel (which is an offset
+	// existing in the iModel itself, and can be found in Cesium export by retrieving the translation of the
+	// root tile). It was mainly (and probably only) to adjust the savedViews in the 3DFT plugin, due to the
+	// way the coordinate system of the iModel was handled in the legacy 3DFT display engine.
+	// This offset should *not* be done with Cesium tiles, so we decided to always return zero except if the
+	// customer explicitly request this former value (and then it would be interesting to know why he does
+	// this...)
+	if (bGetLegacy3DFTValue)
+	{
+		OutInfo.ModelCenter = Impl->Internals.SceneMapping.GetModelCenter(CoordSystem);
+	}
+	else
+	{
+		OutInfo.ModelCenter = FVector(0, 0, 0);
+	}
+}
+
+void AITwinIModel::GetModel3DInfo(FITwinIModel3DInfo& Info) const
+{
+	// For compatibility with former 3DFT plugin, we work in the iTwin coordinate system here.
+	// However, we'll retrieve a null ModelCenter to avoid breaking savedViews totally (see comments in
+	// ATopMenu::#StartCameraMovementToSavedView, which is the C++ version of the blueprint provided in
+	// default 3DFT level.
+	GetModel3DInfoInCoordSystem(Info, EITwinCoordSystem::ITwin, false);
 }
 
 namespace ITwin
@@ -339,7 +399,7 @@ namespace ITwin
 void AITwinIModel::LoadModel(FString InExportId)
 {
 	UpdateWebServices();
-	if (!InExportId.IsEmpty())
+	if (WebServices && !InExportId.IsEmpty())
 	{
 		WebServices->GetExportInfo(InExportId);
 	}
@@ -389,7 +449,7 @@ void AITwinIModel::OnExportInfosRetrieved(bool bSuccess, FITwinExportInfos const
 
 	for (FITwinExportInfo const& Info : ExportInfosArray.ExportInfos)
 	{
-		if (Info.Status == "Complete")
+		if (Info.Status == TEXT("Complete"))
 		{
 			ExportStatus = EITwinExportStatus::Complete;
 			FActorSpawnParameters SpawnParams;
@@ -406,7 +466,7 @@ void AITwinIModel::OnExportInfosRetrieved(bool bSuccess, FITwinExportInfos const
 			// connect mesh creation callback
 			Tileset->SetMeshBuildCallbacks(Impl->SceneMappingBuilder);
 			Tileset->SetGltfTuner(Impl->GltfTuner);
-			Tileset->SetTilesetSource(ETilesetSource::FromUrl);
+			Tileset->SetTilesetSource(EITwinTilesetSource::FromUrl);
 			Tileset->SetUrl(Info.MeshUrl);
 			if (!Geolocation)
 			{
@@ -429,6 +489,12 @@ void AITwinIModel::OnExportInfosRetrieved(bool bSuccess, FITwinExportInfos const
 		}
 		ExportStatus = EITwinExportStatus::InProgress;
 	}
+
+	if (ExportStatus == EITwinExportStatus::NoneFound && Impl->bAutoStartExportIfNeeded)
+	{
+		// in manual mode, automatically start an export if none exists yet
+		StartExport();
+	}
 }
 
 void AITwinIModel::OnExportInfoRetrieved(bool bSuccess, FITwinExportInfo const& ExportInfo)
@@ -436,7 +502,7 @@ void AITwinIModel::OnExportInfoRetrieved(bool bSuccess, FITwinExportInfo const& 
 	// This callback is called when an export was actually found and LoadModel was called with the latter
 	// => update the IModelID and changeset ID accordingly.
 	if (bSuccess
-		&& ExportInfo.Status == "Complete")
+		&& ExportInfo.Status == TEXT("Complete"))
 	{
 		ExportId = ExportInfo.Id;
 		IModelId = ExportInfo.iModelId;
@@ -444,10 +510,22 @@ void AITwinIModel::OnExportInfoRetrieved(bool bSuccess, FITwinExportInfo const& 
 		ChangesetId = ExportInfo.ChangesetId;
 		SetResolvedChangesetId(ChangesetId);
 	}
-	// Actually load the Cesium tileset in case of success
+	// Actually load the Cesium tileset if the request was successful and the export is complete
 	FITwinExportInfos infos;
 	infos.ExportInfos.Push(ExportInfo);
 	OnExportInfosRetrieved(bSuccess, infos);
+
+	if (!bSuccess || ExportInfo.Status == TEXT("Invalid"))
+	{
+		// the export may have been interrupted on the server, or deleted...
+		ExportStatus = EITwinExportStatus::Unknown;
+	}
+
+	if (ExportStatus == EITwinExportStatus::InProgress)
+	{
+		// Still in progress => test again in 3 seconds
+		TestExportCompletionAfterDelay(ExportInfo.Id, 3.f);
+	}
 }
 
 void AITwinIModel::Retune()
@@ -457,8 +535,19 @@ void AITwinIModel::Retune()
 
 void AITwinIModel::StartExport()
 {
+	if (IModelId.IsEmpty())
+	{
+		UE_LOG(LogITwin, Error, TEXT("IModelId is required to start an export"));
+		return;
+	}
+	if (ExportStatus == EITwinExportStatus::InProgress)
+	{
+		// do not accumulate exports...
+		UE_LOG(LogITwin, Display, TEXT("Export is already in progress for ITwinIModel %s"), *IModelId);
+		return;
+	}
 	UpdateWebServices();
-	if (!IModelId.IsEmpty())
+	if (WebServices)
 	{
 		WebServices->StartExport(IModelId, ResolvedChangesetId);
 	}
@@ -466,7 +555,22 @@ void AITwinIModel::StartExport()
 
 void AITwinIModel::OnExportStarted(bool bSuccess, FString const& InExportId)
 {
+	if (!bSuccess)
+		return;
+	ExportStatus = EITwinExportStatus::InProgress;
+	TestExportCompletionAfterDelay(InExportId, 3.f); // 3s
+}
 
+void AITwinIModel::TestExportCompletionAfterDelay(FString const& InExportId, float DelayInSeconds)
+{
+	// Create a ticker to test the new export completion
+	FTSTicker::GetCoreTicker().AddTicker(
+		FTickerDelegate::CreateLambda([this, InExportId, _ = TStrongObjectPtr<AITwinIModel>(this)]
+		(float Delta) -> bool
+	{
+		LoadModel(InExportId);
+		return false; // One tick
+	}), DelayInSeconds);
 }
 
 void AITwinIModel::UpdateSavedViews()
@@ -533,28 +637,38 @@ void AITwinIModel::OnSavedViewAdded(bool bSuccess, FSavedViewInfo const& SavedVi
 	savedViewActor->SavedViewId = SavedViewInfo.Id;
 }
 
+namespace ITwin
+{
+	extern bool GetSavedViewFromPlayerController(UWorld const* World, FSavedView& OutSavedView);
+}
+
 void AITwinIModel::AddSavedView(const FString& displayName)
 {
-	auto camPos = GetWorld()->GetFirstPlayerController()->GetPawn()->GetActorLocation();
-	auto camRot = GetWorld()->GetFirstPlayerController()->GetPawn()->GetActorRotation();
-	//convert pos to itwin
-	camPos /= FVector(100.0, -100.0, 100.0);
-	//convert rot to itwin
-	FRotator rot(-90.0, -90.0, 0.0);
-	camRot = UKismetMathLibrary::ComposeRotators(rot.GetInverse(), camRot);
-	camRot = camRot.GetInverse();
-	camRot.Yaw *= -1.0;
-	UpdateWebServices();
-	if (WebServices
-		&& !IModelId.IsEmpty()
-		&& !ITwinId.IsEmpty())
+	if (IModelId.IsEmpty())
 	{
-		WebServices->AddSavedView(ITwinId, IModelId, { camPos, {0.0,0.0,0.0}, camRot },
-														   {"",displayName,true});
+		UE_LOG(LogTemp, Error, TEXT("IModelId is required to create a new SavedView"));
+		return;
+	}
+	if (ITwinId.IsEmpty())
+	{
+		UE_LOG(LogTemp, Error, TEXT("ITwinId is required to create a new SavedView"));
+		return;
+	}
+
+	FSavedView NewSavedView;
+	if (!ITwin::GetSavedViewFromPlayerController(GetWorld(), NewSavedView))
+	{
+		return;
+	}
+
+	UpdateWebServices();
+	if (WebServices)
+	{
+		WebServices->AddSavedView(ITwinId, IModelId, NewSavedView, { TEXT(""), displayName, true });
 	}
 }
 
-void AITwinIModel::OnSavedViewDeleted(bool bSuccess, FString const& Response)
+void AITwinIModel::OnSavedViewDeleted(bool bSuccess, FString const& SavedViewId, FString const& Response)
 {
 }
 
@@ -598,15 +712,37 @@ void AITwinIModel::UpdateAfterLoadingUIEvent()
 	}
 	else if (LoadingMethod == ELoadingMethod::LM_Automatic && !IModelId.IsEmpty() && !ChangesetId.IsEmpty())
 	{
-		UpdateIModel();
+		AutoExportAndLoad();
 	}
 }
 
 void AITwinIModel::UpdateOnSuccessfulAuthorization()
 {
-	UpdateAfterLoadingUIEvent();
+	switch (Impl->PendingOperation)
+	{
+	case FImpl::EOperationUponAuth::Load:
+		UpdateAfterLoadingUIEvent();
+		break;
+	case FImpl::EOperationUponAuth::Update:
+		UpdateIModel();
+		break;
+	case FImpl::EOperationUponAuth::None:
+		break;
+	}
+	Impl->PendingOperation = FImpl::EOperationUponAuth::None;
 }
 
+void AITwinIModel::OnLoadingUIEvent()
+{
+	// If no access token has been retrieved yet, make sure we request an authentication and then
+	// process the actual loading request(s).
+	if (CheckServerConnection() != AITwinServiceActor::EConnectionStatus::Connected)
+	{
+		Impl->PendingOperation = FImpl::EOperationUponAuth::Load;
+		return;
+	}
+	UpdateAfterLoadingUIEvent();
+}
 
 #if WITH_EDITOR
 
@@ -620,17 +756,34 @@ void AITwinIModel::PostEditChangeProperty(struct FPropertyChangedEvent& e)
 		|| PropertyName == GET_MEMBER_NAME_CHECKED(AITwinIModel, ChangesetId)
 		|| PropertyName == GET_MEMBER_NAME_CHECKED(AITwinIModel, ExportId))
 	{
-		// If no ServerConnection has been created yet, make sure we request an authentication and then
-		// process the actual loading request(s).
-		if (CheckServerConnection() != AITwinServiceActor::EConnectionStatus::Connected)
-		{
-			return;
-		}
-		UpdateAfterLoadingUIEvent();
+		OnLoadingUIEvent();
 	}
 }
 
 #endif // WITH_EDITOR
+
+void AITwinIModel::Tick(float DeltaTime)
+{
+	Super::Tick(DeltaTime);
+
+	if (!Impl->bTickCalled)
+	{
+		Impl->bTickCalled = true;
+
+		// just in case the loaded level contains an iModel already configured...
+		if ((LoadingMethod == ELoadingMethod::LM_Manual && !ExportId.IsEmpty())
+			||
+			(LoadingMethod == ELoadingMethod::LM_Automatic && !IModelId.IsEmpty() && !ChangesetId.IsEmpty()))
+		{
+			OnLoadingUIEvent();
+		}
+	}
+}
+
+bool AITwinIModel::ShouldTickIfViewportsOnly() const
+{
+	return (GetWorld() && GetWorld()->WorldType == EWorldType::Editor);
+}
 
 void FITwinIModelInternals::OnElementTimelineModified(FITwinElementTimeline const& ModifiedTimeline)
 {
@@ -840,6 +993,29 @@ static FAutoConsoleCommandWithWorldAndArgs FCmd_ITwinBakeFeaturesInUVs(
 })
 );
 
+// Console command to create a new saved view
+static FAutoConsoleCommandWithWorldAndArgs FCmd_ITwinAddSavedView(
+	TEXT("cmd.ITwin_AddSavedView"),
+	TEXT("Create a new ITwin SavedView for all iModels in the scene, using current point of view."),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+{
+	FString SavedViewName;
+	if (!Args.IsEmpty())
+	{
+		SavedViewName = Args[0];
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("A name is required to create a new SavedView"));
+		return;
+	}
+	for (TActorIterator<AITwinIModel> IModelIter(World); IModelIter; ++IModelIter)
+	{
+		(*IModelIter)->AddSavedView(SavedViewName);
+	}
+})
+);
+
 // Console command to test visibility animation translucent materials
 static FAutoConsoleCommandWithWorldAndArgs FCmd_ITwinAllowSynchro4DOpacityAnimation(
 	TEXT("cmd.ITwinAllowSynchro4DOpacityAnimation"),
@@ -865,7 +1041,7 @@ static FAutoConsoleCommandWithWorldAndArgs FCmd_ITwinFitIModelInView(
 	FBox AllBBox(ForceInitToZero);
 	for (TActorIterator<AITwinIModel> IModelIter(World); IModelIter; ++IModelIter)
 	{
-		FBox const& IModelBBox = GetInternals(**IModelIter).SceneMapping.GetIModelBoundingBox();
+		FBox const& IModelBBox = GetInternals(**IModelIter).SceneMapping.GetIModelBoundingBox(EITwinCoordSystem::UE);
 		if (IModelBBox.IsValid)
 		{
 			if (AllBBox.IsValid) AllBBox += IModelBBox;

@@ -12,6 +12,8 @@
 #include <iTwinWebServices/iTwinWebServices.h>
 #include <Camera/CameraActor.h>
 #include <Camera/CameraComponent.h>
+#include <GameFramework/Pawn.h>
+#include <GameFramework/PlayerController.h>
 #include <Kismet/GameplayStatics.h>
 #include <Kismet/KismetMathLibrary.h>
 
@@ -37,19 +39,45 @@ void ATopMenu::SetIModelInfo(const FString& InITwinId, const FString& InIModelId
 {
 	ITwinId = InITwinId;
 	IModelId = InIModelId;
-	IModel3dInfo = IModelInfo;
+	SetIModel3DInfoInCoordSystem(IModelInfo, EITwinCoordSystem::ITwin);
+}
+
+void ATopMenu::SetIModel3DInfoInCoordSystem(const FITwinIModel3DInfo& IModelInfo, EITwinCoordSystem CoordSystem)
+{
+	// see comment in #StartCameraMovementToSavedView
+	ensureMsgf(CoordSystem == EITwinCoordSystem::UE || IModelInfo.ModelCenter == FVector(0, 0, 0),
+		TEXT("No offset needed for SavedViews with Cesium tiles"));
+
+	FITwinIModel3DInfo& DstInfo = (CoordSystem == EITwinCoordSystem::UE)
+		? IModel3dInfo_UE
+		: IModel3dInfo_ITwin;
+	DstInfo = IModelInfo;
 }
 
 void ATopMenu::GetAllSavedViews()
 {
-	AITwinIModel const& IModel = *Cast<AITwinIModel>(UGameplayStatics::GetActorOfClass(GetWorld(), AITwinIModel::StaticClass()));
-	ITwinWebService->OnGetSavedViewsComplete.AddDynamic(&IModel, &AITwinIModel::OnSavedViewsRetrieved);
+	AITwinIModel* IModel = Cast<AITwinIModel>(UGameplayStatics::GetActorOfClass(GetWorld(), AITwinIModel::StaticClass()));
+	if (ensure(IModel != nullptr))
+	{
+		ITwinWebService->OnGetSavedViewsComplete.AddDynamic(IModel, &AITwinIModel::OnSavedViewsRetrieved);
+
+		UITwinWebServices* IModelWebServices = IModel->GetMutableWebServices();
+		if (IModelWebServices)
+		{
+			// bind the add/delete saved view callback so that we update the list of saved views in the UI
+			IModelWebServices->OnAddSavedViewComplete.AddDynamic(this, &ATopMenu::SavedViewAdded);
+			IModelWebServices->OnDeleteSavedViewComplete.AddDynamic(this, &ATopMenu::SavedViewDeleted);
+		}
+	}
 
 	ITwinWebService->GetAllSavedViews(ITwinId, IModelId);
 }
 
 void ATopMenu::ZoomOnIModel()
 {
+	// working in ITwin coordinate system here like in former 3DFT plugin would make no sense at all here...
+	auto const& IModel3dInfo = GetIModel3DInfoInCoordSystem(EITwinCoordSystem::UE);
+
 	GetWorld()->GetFirstPlayerController()->GetPawnOrSpectator()->SetActorLocation(
 		IModel3dInfo.ModelCenter
 			// "0.5" is empirical, let's not be too far from the center of things, iModels tend to have
@@ -89,6 +117,24 @@ void ATopMenu::GetSavedView(bool bSuccess, FSavedView SavedView, FSavedViewInfo 
 		}), BlendTime, false);
 }
 
+void ATopMenu::SavedViewAdded(bool bSuccess, FSavedViewInfo SavedViewInfo)
+{
+	if (bSuccess)
+	{
+		UI->AddSavedView(SavedViewInfo.DisplayName, SavedViewInfo.Id);
+	}
+}
+
+void ATopMenu::SavedViewDeleted(bool bSuccess, FString SavedViewId, FString Response)
+{
+	if (!bSuccess)
+	{
+		// we could display the error message...
+		return;
+	}
+	UI->RemoveSavedView(SavedViewId);
+}
+
 void ATopMenu::OnZoom()
 {
 	ZoomOnIModel();
@@ -98,7 +144,15 @@ void ATopMenu::StartCameraMovementToSavedView(float& OutBlendTime, ACameraActor*
 {
 	OutBlendTime = BlendTime;
 	FVector UEPos;
-	ITwinPositionToUE(UEPos, SavedView.Origin, {0.0,0.0,0.0});
+	// Note that we work in iTwin coordinate system here, and then convert to UE, as done in former
+	// 3DFT plugin:
+	auto const& IModel3dInfo = GetIModel3DInfoInCoordSystem(EITwinCoordSystem::ITwin);
+	// With Cesium tiles, there is no need (and it would be wrong) to subtract the 'ModelCenter' here as done
+	// in 3DFT plugin (this requirement was induced by former 3DFT geometry handling).
+	// To avoid enforcing users to change all blueprints based on the default level of the 3DFT plugin, we
+	// have decided to reset this ModelCenter to zero.
+	checkfSlow(IModel3dInfo.ModelCenter == FVector(0, 0, 0), TEXT("No offset needed for SavedViews with Cesium tiles"));
+	ITwinPositionToUE(UEPos, SavedView.Origin, IModel3dInfo.ModelCenter);
 	FRotator UERotation;
 	ITwinRotationToUE(UERotation, SavedView.Angles);
 	Transform = FTransform(UERotation, UEPos);
@@ -125,5 +179,10 @@ void ATopMenu::ITwinRotationToUE(FRotator& UERotation, const FRotator& ITwinRota
 
 void ATopMenu::ITwinPositionToUE(FVector& UEPos, const FVector& ITwinPos, const FVector& ModelOrigin)
 {
-	UEPos = (ITwinPos-ModelOrigin)*FVector(100, -100, 100);
+	UEPos = (ITwinPos - ModelOrigin) * FVector(100, -100, 100);
+}
+
+FITwinIModel3DInfo const& ATopMenu::GetIModel3DInfoInCoordSystem(EITwinCoordSystem CoordSystem) const
+{
+	return (CoordSystem == EITwinCoordSystem::UE) ? IModel3dInfo_UE : IModel3dInfo_ITwin;
 }

@@ -24,11 +24,11 @@
 #include <glm/gtx/integer.hpp>
 #include <unordered_map>
 
-using namespace CesiumTextureUtility;
+using namespace ITwinCesiumTextureUtility;
 
 PRAGMA_DISABLE_DEPRECATION_WARNINGS
 
-namespace CesiumEncodedMetadataUtility {
+namespace ITwinCesiumEncodedMetadataUtility {
 
 namespace {
 
@@ -40,12 +40,12 @@ struct EncodedPixelFormat {
 // TODO: consider picking better pixel formats when they are available for the
 // current platform.
 EncodedPixelFormat getPixelFormat(
-    ECesiumMetadataPackedGpuType_DEPRECATED type,
+    EITwinCesiumMetadataPackedGpuType_DEPRECATED type,
     int64 componentCount,
     bool isNormalized) {
 
   switch (type) {
-  case ECesiumMetadataPackedGpuType_DEPRECATED::Uint8_DEPRECATED:
+  case EITwinCesiumMetadataPackedGpuType_DEPRECATED::Uint8_DEPRECATED:
     switch (componentCount) {
     case 1:
       return {isNormalized ? EPixelFormat::PF_R8 : EPixelFormat::PF_R8_UINT, 1};
@@ -59,7 +59,7 @@ EncodedPixelFormat getPixelFormat(
     default:
       return {EPixelFormat::PF_Unknown, 0};
     }
-  case ECesiumMetadataPackedGpuType_DEPRECATED::Float_DEPRECATED:
+  case EITwinCesiumMetadataPackedGpuType_DEPRECATED::Float_DEPRECATED:
     switch (componentCount) {
     case 1:
       return {EPixelFormat::PF_R32_FLOAT, 4};
@@ -76,7 +76,7 @@ EncodedPixelFormat getPixelFormat(
 } // namespace
 
 EncodedMetadataFeatureTable encodeMetadataFeatureTableAnyThreadPart(
-    const FFeatureTableDescription& featureTableDescription,
+    const FITwinFeatureTableDescription& featureTableDescription,
     const FITwinCesiumPropertyTable& featureTable) {
 
   TRACE_CPUPROFILER_EVENT_SCOPE(Cesium::EncodeFeatureTable)
@@ -93,9 +93,9 @@ EncodedMetadataFeatureTable encodeMetadataFeatureTableAnyThreadPart(
   for (const auto& pair : properties) {
     const FITwinCesiumPropertyTableProperty& property = pair.Value;
 
-    const FPropertyDescription* pExpectedProperty =
+    const FITwinPropertyDescription* pExpectedProperty =
         featureTableDescription.Properties.FindByPredicate(
-            [&key = pair.Key](const FPropertyDescription& expectedProperty) {
+            [&key = pair.Key](const FITwinPropertyDescription& expectedProperty) {
               return key == expectedProperty.Name;
             });
 
@@ -119,46 +119,46 @@ EncodedMetadataFeatureTable encodeMetadataFeatureTableAnyThreadPart(
 
     int32 expectedComponentCount = 1;
     switch (pExpectedProperty->Type) {
-    // case ECesiumPropertyType::Scalar:
+    // case EITwinCesiumPropertyType::Scalar:
     //  expectedComponentCount = 1;
     //  break;
-    case ECesiumPropertyType_DEPRECATED::Vec2_DEPRECATED:
+    case EITwinCesiumPropertyType_DEPRECATED::Vec2_DEPRECATED:
       expectedComponentCount = 2;
       break;
-    case ECesiumPropertyType_DEPRECATED::Vec3_DEPRECATED:
+    case EITwinCesiumPropertyType_DEPRECATED::Vec3_DEPRECATED:
       expectedComponentCount = 3;
       break;
-    case ECesiumPropertyType_DEPRECATED::Vec4_DEPRECATED:
+    case EITwinCesiumPropertyType_DEPRECATED::Vec4_DEPRECATED:
       expectedComponentCount = 4;
     };
 
     if (expectedComponentCount != componentCount) {
       UE_LOG(
-          LogCesium,
+          LogITwinCesium,
           Warning,
           TEXT("Unexpected component count in feature table property."));
       continue;
     }
 
     // Coerce the true type into the expected gpu component type.
-    ECesiumMetadataPackedGpuType_DEPRECATED gpuType =
-        ECesiumMetadataPackedGpuType_DEPRECATED::None_DEPRECATED;
+    EITwinCesiumMetadataPackedGpuType_DEPRECATED gpuType =
+        EITwinCesiumMetadataPackedGpuType_DEPRECATED::None_DEPRECATED;
     if (pExpectedProperty->ComponentType ==
-        ECesiumPropertyComponentType_DEPRECATED::Uint8_DEPRECATED) {
-      gpuType = ECesiumMetadataPackedGpuType_DEPRECATED::Uint8_DEPRECATED;
+        EITwinCesiumPropertyComponentType_DEPRECATED::Uint8_DEPRECATED) {
+      gpuType = EITwinCesiumMetadataPackedGpuType_DEPRECATED::Uint8_DEPRECATED;
     } else /*if (expected type is float)*/ {
-      gpuType = ECesiumMetadataPackedGpuType_DEPRECATED::Float_DEPRECATED;
+      gpuType = EITwinCesiumMetadataPackedGpuType_DEPRECATED::Float_DEPRECATED;
     }
 
     if (pExpectedProperty->Normalized != isNormalized) {
       if (isNormalized) {
         UE_LOG(
-            LogCesium,
+            LogITwinCesium,
             Warning,
             TEXT("Unexpected normalization in feature table property."));
       } else {
         UE_LOG(
-            LogCesium,
+            LogITwinCesium,
             Warning,
             TEXT("Feature table property not normalized as expected"));
       }
@@ -167,9 +167,9 @@ EncodedMetadataFeatureTable encodeMetadataFeatureTableAnyThreadPart(
 
     // Only support normalization of uint8 for now
     if (isNormalized &&
-        trueType.ComponentType != ECesiumMetadataComponentType::Uint8) {
+        trueType.ComponentType != EITwinCesiumMetadataComponentType::Uint8) {
       UE_LOG(
-          LogCesium,
+          LogITwinCesium,
           Warning,
           TEXT(
               "Feature table property has unexpected type for normalization, only normalization of Uint8 is supported."));
@@ -181,7 +181,7 @@ EncodedMetadataFeatureTable encodeMetadataFeatureTableAnyThreadPart(
 
     if (encodedFormat.format == EPixelFormat::PF_Unknown) {
       UE_LOG(
-          LogCesium,
+          LogITwinCesium,
           Warning,
           TEXT(
               "Unable to determine a suitable GPU format for this feature table property."));
@@ -215,7 +215,7 @@ EncodedMetadataFeatureTable encodeMetadataFeatureTableAnyThreadPart(
 
     if (!encodedProperty.pTexture->pTextureData) {
       UE_LOG(
-          LogCesium,
+          LogITwinCesium,
           Error,
           TEXT(
               "Error encoding a feature table property. Most likely could not allocate enough texture memory."));
@@ -233,7 +233,7 @@ EncodedMetadataFeatureTable encodeMetadataFeatureTableAnyThreadPart(
 
     if (isArray) {
       switch (gpuType) {
-      case ECesiumMetadataPackedGpuType_DEPRECATED::Uint8_DEPRECATED: {
+      case EITwinCesiumMetadataPackedGpuType_DEPRECATED::Uint8_DEPRECATED: {
         uint8* pWritePos = reinterpret_cast<uint8*>(pTextureData);
         for (int64 i = 0; i < featureCount; ++i) {
           FITwinCesiumPropertyArray arrayProperty =
@@ -247,7 +247,7 @@ EncodedMetadataFeatureTable encodeMetadataFeatureTableAnyThreadPart(
           pWritePos += encodedFormat.pixelSize;
         }
       } break;
-      case ECesiumMetadataPackedGpuType_DEPRECATED::Float_DEPRECATED: {
+      case EITwinCesiumMetadataPackedGpuType_DEPRECATED::Float_DEPRECATED: {
         uint8* pWritePos = reinterpret_cast<uint8*>(pTextureData);
         for (int64 i = 0; i < featureCount; ++i) {
           FITwinCesiumPropertyArray arrayProperty =
@@ -269,7 +269,7 @@ EncodedMetadataFeatureTable encodeMetadataFeatureTableAnyThreadPart(
       }
     } else {
       switch (gpuType) {
-      case ECesiumMetadataPackedGpuType_DEPRECATED::Uint8_DEPRECATED: {
+      case EITwinCesiumMetadataPackedGpuType_DEPRECATED::Uint8_DEPRECATED: {
         uint8* pWritePos = reinterpret_cast<uint8*>(pTextureData);
         for (int64 i = 0; i < featureCount; ++i) {
           *pWritePos = UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetByte(
@@ -278,7 +278,7 @@ EncodedMetadataFeatureTable encodeMetadataFeatureTableAnyThreadPart(
           ++pWritePos;
         }
       } break;
-      case ECesiumMetadataPackedGpuType_DEPRECATED::Float_DEPRECATED: {
+      case EITwinCesiumMetadataPackedGpuType_DEPRECATED::Float_DEPRECATED: {
         float* pWritePosF = reinterpret_cast<float*>(pTextureData);
         for (int64 i = 0; i < featureCount; ++i) {
           *pWritePosF = UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetFloat(
@@ -300,7 +300,7 @@ EncodedMetadataFeatureTable encodeMetadataFeatureTableAnyThreadPart(
 EncodedFeatureTexture encodeFeatureTextureAnyThreadPart(
     TMap<const CesiumGltf::ImageCesium*, TWeakPtr<LoadedTextureResult>>&
         featureTexturePropertyMap,
-    const FFeatureTextureDescription& featureTextureDescription,
+    const FITwinFeatureTextureDescription& featureTextureDescription,
     const FString& featureTextureName,
     const FITwinCesiumPropertyTexture& featureTexture) {
 
@@ -313,10 +313,10 @@ EncodedFeatureTexture encodeFeatureTextureAnyThreadPart(
   encodedFeatureTexture.properties.Reserve(properties.Num());
 
   for (const auto& propertyIt : properties) {
-    const FFeatureTexturePropertyDescription* pPropertyDescription =
+    const FITwinFeatureTexturePropertyDescription* pPropertyDescription =
         featureTextureDescription.Properties.FindByPredicate(
             [propertyName = propertyIt.Key](
-                const FFeatureTexturePropertyDescription& expectedProperty) {
+                const FITwinFeatureTexturePropertyDescription& expectedProperty) {
               return propertyName == expectedProperty.Name;
             });
 
@@ -331,7 +331,7 @@ EncodedFeatureTexture encodeFeatureTextureAnyThreadPart(
 
     if (!pImage) {
       UE_LOG(
-          LogCesium,
+          LogITwinCesium,
           Warning,
           TEXT("This feature texture property does not have a valid image."));
       continue;
@@ -339,16 +339,16 @@ EncodedFeatureTexture encodeFeatureTextureAnyThreadPart(
 
     int32 expectedComponentCount = 0;
     switch (pPropertyDescription->Type) {
-    case ECesiumPropertyType_DEPRECATED::Scalar_DEPRECATED:
+    case EITwinCesiumPropertyType_DEPRECATED::Scalar_DEPRECATED:
       expectedComponentCount = 1;
       break;
-    case ECesiumPropertyType_DEPRECATED::Vec2_DEPRECATED:
+    case EITwinCesiumPropertyType_DEPRECATED::Vec2_DEPRECATED:
       expectedComponentCount = 2;
       break;
-    case ECesiumPropertyType_DEPRECATED::Vec3_DEPRECATED:
+    case EITwinCesiumPropertyType_DEPRECATED::Vec3_DEPRECATED:
       expectedComponentCount = 3;
       break;
-    case ECesiumPropertyType_DEPRECATED::Vec4_DEPRECATED:
+    case EITwinCesiumPropertyType_DEPRECATED::Vec4_DEPRECATED:
       expectedComponentCount = 4;
       break;
     };
@@ -358,23 +358,23 @@ EncodedFeatureTexture encodeFeatureTextureAnyThreadPart(
         UITwinCesiumPropertyTexturePropertyBlueprintLibrary::GetValueType(
             featureTextureProperty);
     switch (valueType.Type) {
-    case ECesiumMetadataType::Scalar:
+    case EITwinCesiumMetadataType::Scalar:
       actualComponentCount = 1;
       break;
-    case ECesiumMetadataType::Vec2:
+    case EITwinCesiumMetadataType::Vec2:
       actualComponentCount = 2;
       break;
-    case ECesiumMetadataType::Vec3:
+    case EITwinCesiumMetadataType::Vec3:
       actualComponentCount = 3;
       break;
-    case ECesiumMetadataType::Vec4:
+    case EITwinCesiumMetadataType::Vec4:
       actualComponentCount = 4;
       break;
     }
 
     if (expectedComponentCount != actualComponentCount) {
       UE_LOG(
-          LogCesium,
+          LogITwinCesium,
           Warning,
           TEXT(
               "This feature texture property does not have the expected component count"));
@@ -386,7 +386,7 @@ EncodedFeatureTexture encodeFeatureTextureAnyThreadPart(
             featureTextureProperty);
     if (pPropertyDescription->Normalized != isNormalized) {
       UE_LOG(
-          LogCesium,
+          LogITwinCesium,
           Warning,
           TEXT(
               "This feature texture property does not have the expected normalization."));
@@ -443,7 +443,7 @@ EncodedFeatureTexture encodeFeatureTextureAnyThreadPart(
 
       if (!encodedFeatureTextureProperty.pTexture->pTextureData) {
         UE_LOG(
-            LogCesium,
+            LogITwinCesium,
             Error,
             TEXT(
                 "Error encoding a feature texture property. Most likely could not allocate enough texture memory."));
@@ -471,7 +471,7 @@ EncodedFeatureTexture encodeFeatureTextureAnyThreadPart(
 }
 
 EncodedMetadataPrimitive encodeMetadataPrimitiveAnyThreadPart(
-    const FMetadataDescription& metadataDescription,
+    const FITwinMetadataDescription& metadataDescription,
     const FITwinCesiumMetadataPrimitive& primitive) {
 
   TRACE_CPUPROFILER_EVENT_SCOPE(Cesium::EncodeMetadataPrimitive)
@@ -489,7 +489,7 @@ EncodedMetadataPrimitive encodeMetadataPrimitiveAnyThreadPart(
           primitive);
   result.featureTextureNames.Reserve(featureTextureNames.Num());
 
-  for (const FFeatureTextureDescription& expectedFeatureTexture :
+  for (const FITwinFeatureTextureDescription& expectedFeatureTexture :
        metadataDescription.FeatureTextures) {
     if (featureTextureNames.Find(expectedFeatureTexture.Name) != INDEX_NONE) {
       result.featureTextureNames.Add(expectedFeatureTexture.Name);
@@ -505,12 +505,12 @@ EncodedMetadataPrimitive encodeMetadataPrimitiveAnyThreadPart(
 
   // Imposed implementation limitation: Assume only upto one feature id texture
   // or attribute corresponds to each feature table.
-  for (const FFeatureTableDescription& expectedFeatureTable :
+  for (const FITwinFeatureTableDescription& expectedFeatureTable :
        metadataDescription.FeatureTables) {
     const FString& featureTableName = expectedFeatureTable.Name;
 
     if (expectedFeatureTable.AccessType ==
-        ECesiumFeatureTableAccessType_DEPRECATED::Texture_DEPRECATED) {
+        EITwinCesiumFeatureTableAccessType_DEPRECATED::Texture_DEPRECATED) {
 
       const FITwinCesiumFeatureIdTexture* pFeatureIdTexture =
           featureIdTextures.FindByPredicate([&featureTableName](
@@ -529,7 +529,7 @@ EncodedMetadataPrimitive encodeMetadataPrimitiveAnyThreadPart(
 
         if (!pFeatureIdImage) {
           UE_LOG(
-              LogCesium,
+              LogITwinCesium,
               Warning,
               TEXT("Feature id texture missing valid image."));
           continue;
@@ -573,7 +573,7 @@ EncodedMetadataPrimitive encodeMetadataPrimitiveAnyThreadPart(
 
           if (!encodedFeatureIdTexture.pTexture->pTextureData) {
             UE_LOG(
-                LogCesium,
+                LogITwinCesium,
                 Error,
                 TEXT(
                     "Error encoding a feature table property. Most likely could not allocate enough texture memory."));
@@ -602,7 +602,7 @@ EncodedMetadataPrimitive encodeMetadataPrimitiveAnyThreadPart(
       }
     } else if (
         expectedFeatureTable.AccessType ==
-        ECesiumFeatureTableAccessType_DEPRECATED::Attribute_DEPRECATED) {
+        EITwinCesiumFeatureTableAccessType_DEPRECATED::Attribute_DEPRECATED) {
       for (size_t i = 0; i < featureIdAttributes.Num(); ++i) {
         const FITwinCesiumFeatureIdAttribute& featureIdAttribute =
             featureIdAttributes[i];
@@ -627,7 +627,7 @@ EncodedMetadataPrimitive encodeMetadataPrimitiveAnyThreadPart(
 }
 
 EncodedMetadata encodeMetadataAnyThreadPart(
-    const FMetadataDescription& metadataDescription,
+    const FITwinMetadataDescription& metadataDescription,
     const FITwinCesiumModelMetadata& metadata) {
 
   TRACE_CPUPROFILER_EVENT_SCOPE(Cesium::EncodeMetadataModel)
@@ -640,10 +640,10 @@ EncodedMetadata encodeMetadataAnyThreadPart(
   for (const auto& featureTableIt : featureTables) {
     const FString& featureTableName = featureTableIt.Key;
 
-    const FFeatureTableDescription* pExpectedFeatureTable =
+    const FITwinFeatureTableDescription* pExpectedFeatureTable =
         metadataDescription.FeatureTables.FindByPredicate(
             [&featureTableName](
-                const FFeatureTableDescription& expectedFeatureTable) {
+                const FITwinFeatureTableDescription& expectedFeatureTable) {
               return featureTableName == expectedFeatureTable.Name;
             });
 
@@ -667,10 +667,10 @@ EncodedMetadata encodeMetadataAnyThreadPart(
   for (const auto& featureTextureIt : featureTextures) {
     const FString& featureTextureName = featureTextureIt.Key;
 
-    const FFeatureTextureDescription* pExpectedFeatureTexture =
+    const FITwinFeatureTextureDescription* pExpectedFeatureTexture =
         metadataDescription.FeatureTextures.FindByPredicate(
             [&featureTextureName](
-                const FFeatureTextureDescription& expectedFeatureTexture) {
+                const FITwinFeatureTextureDescription& expectedFeatureTexture) {
               return featureTextureName == expectedFeatureTexture.Name;
             });
 
@@ -769,7 +769,7 @@ void destroyEncodedMetadataPrimitive(
        encodedPrimitive.encodedFeatureIdTextures) {
 
     if (encodedFeatureIdTexture.pTexture->pTexture.IsValid()) {
-      CesiumLifetime::destroy(encodedFeatureIdTexture.pTexture->pTexture.Get());
+      FITwinCesiumLifetime::destroy(encodedFeatureIdTexture.pTexture->pTexture.Get());
       encodedFeatureIdTexture.pTexture->pTexture.Reset();
     }
   }
@@ -782,7 +782,7 @@ void destroyEncodedMetadata(EncodedMetadata& encodedMetadata) {
     for (EncodedMetadataProperty& encodedProperty :
          encodedFeatureTableIt.Value.encodedProperties) {
       if (encodedProperty.pTexture->pTexture.IsValid()) {
-        CesiumLifetime::destroy(encodedProperty.pTexture->pTexture.Get());
+        FITwinCesiumLifetime::destroy(encodedProperty.pTexture->pTexture.Get());
         encodedProperty.pTexture->pTexture.Reset();
       }
     }
@@ -793,7 +793,7 @@ void destroyEncodedMetadata(EncodedMetadata& encodedMetadata) {
     for (EncodedFeatureTextureProperty& encodedFeatureTextureProperty :
          encodedFeatureTextureIt.Value.properties) {
       if (encodedFeatureTextureProperty.pTexture->pTexture.IsValid()) {
-        CesiumLifetime::destroy(
+        FITwinCesiumLifetime::destroy(
             encodedFeatureTextureProperty.pTexture->pTexture.Get());
         encodedFeatureTextureProperty.pTexture->pTexture.Reset();
       }
@@ -827,6 +827,6 @@ FString createHlslSafeName(const FString& rawName) {
   return safeName;
 }
 
-} // namespace CesiumEncodedMetadataUtility
+} // namespace ITwinCesiumEncodedMetadataUtility
 
 PRAGMA_ENABLE_DEPRECATION_WARNINGS

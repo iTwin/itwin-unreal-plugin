@@ -8,17 +8,17 @@
 
 using namespace CesiumGltf;
 
-ECesiumMetadataBlueprintType
+EITwinCesiumMetadataBlueprintType
 UITwinCesiumMetadataValueBlueprintLibrary::GetBlueprintType(
     UPARAM(ref) const FITwinCesiumMetadataValue& Value) {
   return CesiumMetadataValueTypeToBlueprintType(Value._valueType);
 }
 
-ECesiumMetadataBlueprintType
+EITwinCesiumMetadataBlueprintType
 UITwinCesiumMetadataValueBlueprintLibrary::GetArrayElementBlueprintType(
     UPARAM(ref) const FITwinCesiumMetadataValue& Value) {
   if (!Value._valueType.bIsArray) {
-    return ECesiumMetadataBlueprintType::None;
+    return EITwinCesiumMetadataBlueprintType::None;
   }
 
   FITwinCesiumMetadataValueType types(Value._valueType);
@@ -34,13 +34,13 @@ FITwinCesiumMetadataValueType UITwinCesiumMetadataValueBlueprintLibrary::GetValu
 
 PRAGMA_DISABLE_DEPRECATION_WARNINGS
 
-ECesiumMetadataTrueType_DEPRECATED
+EITwinCesiumMetadataTrueType_DEPRECATED
 UITwinCesiumMetadataValueBlueprintLibrary::GetTrueType(
     UPARAM(ref) const FITwinCesiumMetadataValue& Value) {
   return CesiumMetadataValueTypeToTrueType(Value._valueType);
 }
 
-ECesiumMetadataTrueType_DEPRECATED
+EITwinCesiumMetadataTrueType_DEPRECATED
 UITwinCesiumMetadataValueBlueprintLibrary::GetTrueComponentType(
     UPARAM(ref) const FITwinCesiumMetadataValue& Value) {
   FITwinCesiumMetadataValueType type = Value._valueType;
@@ -144,11 +144,11 @@ FIntPoint UITwinCesiumMetadataValueBlueprintLibrary::GetIntPoint(
   return std::visit(
       [&DefaultValue](auto value) -> FIntPoint {
         if constexpr (CesiumGltf::IsMetadataString<decltype(value)>::value) {
-          return UnrealMetadataConversions::toIntPoint(value, DefaultValue);
+          return FITwinUnrealMetadataConversions::toIntPoint(value, DefaultValue);
         } else {
           auto maybeVec2 = CesiumGltf::
               MetadataConversions<glm::ivec2, decltype(value)>::convert(value);
-          return maybeVec2 ? UnrealMetadataConversions::toIntPoint(*maybeVec2)
+          return maybeVec2 ? FITwinUnrealMetadataConversions::toIntPoint(*maybeVec2)
                            : DefaultValue;
         }
       },
@@ -161,11 +161,11 @@ FVector2D UITwinCesiumMetadataValueBlueprintLibrary::GetVector2D(
   return std::visit(
       [&DefaultValue](auto value) -> FVector2D {
         if constexpr (CesiumGltf::IsMetadataString<decltype(value)>::value) {
-          return UnrealMetadataConversions::toVector2D(value, DefaultValue);
+          return FITwinUnrealMetadataConversions::toVector2D(value, DefaultValue);
         } else {
           auto maybeVec2 = CesiumGltf::
               MetadataConversions<glm::dvec2, decltype(value)>::convert(value);
-          return maybeVec2 ? UnrealMetadataConversions::toVector2D(*maybeVec2)
+          return maybeVec2 ? FITwinUnrealMetadataConversions::toVector2D(*maybeVec2)
                            : DefaultValue;
         }
       },
@@ -178,11 +178,11 @@ FIntVector UITwinCesiumMetadataValueBlueprintLibrary::GetIntVector(
   return std::visit(
       [&DefaultValue](auto value) -> FIntVector {
         if constexpr (CesiumGltf::IsMetadataString<decltype(value)>::value) {
-          return UnrealMetadataConversions::toIntVector(value, DefaultValue);
+          return FITwinUnrealMetadataConversions::toIntVector(value, DefaultValue);
         } else {
           auto maybeVec3 = CesiumGltf::
               MetadataConversions<glm::ivec3, decltype(value)>::convert(value);
-          return maybeVec3 ? UnrealMetadataConversions::toIntVector(*maybeVec3)
+          return maybeVec3 ? FITwinUnrealMetadataConversions::toIntVector(*maybeVec3)
                            : DefaultValue;
         }
       },
@@ -195,11 +195,11 @@ FVector3f UITwinCesiumMetadataValueBlueprintLibrary::GetVector3f(
   return std::visit(
       [&DefaultValue](auto value) -> FVector3f {
         if constexpr (CesiumGltf::IsMetadataString<decltype(value)>::value) {
-          return UnrealMetadataConversions::toVector3f(value, DefaultValue);
+          return FITwinUnrealMetadataConversions::toVector3f(value, DefaultValue);
         } else {
           auto maybeVec3 = CesiumGltf::
               MetadataConversions<glm::vec3, decltype(value)>::convert(value);
-          return maybeVec3 ? UnrealMetadataConversions::toVector3f(*maybeVec3)
+          return maybeVec3 ? FITwinUnrealMetadataConversions::toVector3f(*maybeVec3)
                            : DefaultValue;
         }
       },
@@ -212,11 +212,11 @@ FVector UITwinCesiumMetadataValueBlueprintLibrary::GetVector(
   return std::visit(
       [&DefaultValue](auto value) -> FVector {
         if constexpr (CesiumGltf::IsMetadataString<decltype(value)>::value) {
-          return UnrealMetadataConversions::toVector(value, DefaultValue);
+          return FITwinUnrealMetadataConversions::toVector(value, DefaultValue);
         } else {
           auto maybeVec3 = CesiumGltf::
               MetadataConversions<glm::dvec3, decltype(value)>::convert(value);
-          return maybeVec3 ? UnrealMetadataConversions::toVector(*maybeVec3)
+          return maybeVec3 ? FITwinUnrealMetadataConversions::toVector(*maybeVec3)
                            : DefaultValue;
         }
       },
@@ -229,11 +229,11 @@ FVector4 UITwinCesiumMetadataValueBlueprintLibrary::GetVector4(
   return std::visit(
       [&DefaultValue](auto value) -> FVector4 {
         if constexpr (CesiumGltf::IsMetadataString<decltype(value)>::value) {
-          return UnrealMetadataConversions::toVector4(value, DefaultValue);
+          return FITwinUnrealMetadataConversions::toVector4(value, DefaultValue);
         } else {
           auto maybeVec4 = CesiumGltf::
               MetadataConversions<glm::dvec4, decltype(value)>::convert(value);
-          return maybeVec4 ? UnrealMetadataConversions::toVector4(*maybeVec4)
+          return maybeVec4 ? FITwinUnrealMetadataConversions::toVector4(*maybeVec4)
                            : DefaultValue;
         }
       },
@@ -250,7 +250,7 @@ FMatrix UITwinCesiumMetadataValueBlueprintLibrary::GetMatrix(
       },
       Value._value);
 
-  return maybeMat4 ? UnrealMetadataConversions::toMatrix(*maybeMat4)
+  return maybeMat4 ? FITwinUnrealMetadataConversions::toMatrix(*maybeMat4)
                    : DefaultValue;
 }
 
@@ -264,12 +264,12 @@ FString UITwinCesiumMetadataValueBlueprintLibrary::GetString(
             IsMetadataVecN<ValueType>::value ||
             IsMetadataMatN<ValueType>::value ||
             IsMetadataString<ValueType>::value) {
-          return UnrealMetadataConversions::toString(value);
+          return FITwinUnrealMetadataConversions::toString(value);
         } else {
           auto maybeString = CesiumGltf::
               MetadataConversions<std::string, decltype(value)>::convert(value);
 
-          return maybeString ? UnrealMetadataConversions::toString(*maybeString)
+          return maybeString ? FITwinUnrealMetadataConversions::toString(*maybeString)
                              : DefaultValue;
         }
       },

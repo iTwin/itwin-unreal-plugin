@@ -8,10 +8,10 @@
 /**
  * @brief Utility functions for logging GLM data in Unreal
  */
-class GlmLogging {
+class ITwinGlmLogging {
 public:
   /**
-   * Print the given vector as a verbose `LogCesium`
+   * Print the given vector as a verbose `LogITwinCesium`
    * message, with unspecified formatting.
    *
    * @param name The name that will be part of the message
@@ -20,7 +20,7 @@ public:
   static void logVector(const std::string& name, const glm::dvec3& vector);
 
   /**
-   * Print the given matrix as a verbose `LogCesium`
+   * Print the given matrix as a verbose `LogITwinCesium`
    * message, with unspecified formatting.
    *
    * @param name The name that will be part of the message

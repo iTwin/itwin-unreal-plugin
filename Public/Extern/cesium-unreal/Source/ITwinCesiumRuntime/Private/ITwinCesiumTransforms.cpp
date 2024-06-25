@@ -2,15 +2,15 @@
 
 #include "ITwinCesiumTransforms.h"
 
-const double CesiumTransforms::metersToCentimeters = 100.0;
-const double CesiumTransforms::centimetersToMeters = 0.01;
+const double ITwinCesiumTransforms::metersToCentimeters = 100.0;
+const double ITwinCesiumTransforms::centimetersToMeters = 0.01;
 
 // Scale Cesium's meters up to Unreal's centimeters.
-const glm::dmat4x4 CesiumTransforms::scaleToUnrealWorld =
+const glm::dmat4x4 ITwinCesiumTransforms::scaleToUnrealWorld =
     glm::dmat4x4(glm::dmat3x3(metersToCentimeters));
 
 // Scale down Unreal's centimeters into Cesium's meters.
-const glm::dmat4x4 CesiumTransforms::scaleToCesium =
+const glm::dmat4x4 ITwinCesiumTransforms::scaleToCesium =
     glm::dmat4x4(glm::dmat3x3(centimetersToMeters));
 
 // We're initializing with a static function instead of inline to avoid an
@@ -26,5 +26,5 @@ static glm::dmat4 createUnrealToOrFromCesium() {
 // Transform Cesium's right-handed, Z-up coordinate system to Unreal's
 // left-handed, Z-up coordinate system by inverting the Y coordinate. This same
 // transformation can also go the other way.
-const glm::dmat4x4 CesiumTransforms::unrealToOrFromCesium =
+const glm::dmat4x4 ITwinCesiumTransforms::unrealToOrFromCesium =
     createUnrealToOrFromCesium();

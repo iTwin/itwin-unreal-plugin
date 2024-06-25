@@ -2,119 +2,119 @@
 
 #include "ITwinUnrealMetadataConversions.h"
 
-ECesiumMetadataBlueprintType
+EITwinCesiumMetadataBlueprintType
 CesiumMetadataValueTypeToBlueprintType(FITwinCesiumMetadataValueType ValueType) {
   if (ValueType.bIsArray) {
-    return ECesiumMetadataBlueprintType::Array;
+    return EITwinCesiumMetadataBlueprintType::Array;
   }
 
-  ECesiumMetadataType type = ValueType.Type;
-  ECesiumMetadataComponentType componentType = ValueType.ComponentType;
+  EITwinCesiumMetadataType type = ValueType.Type;
+  EITwinCesiumMetadataComponentType componentType = ValueType.ComponentType;
 
-  if (type == ECesiumMetadataType::Boolean) {
-    return ECesiumMetadataBlueprintType::Boolean;
+  if (type == EITwinCesiumMetadataType::Boolean) {
+    return EITwinCesiumMetadataBlueprintType::Boolean;
   }
 
-  if (type == ECesiumMetadataType::String) {
-    return ECesiumMetadataBlueprintType::String;
+  if (type == EITwinCesiumMetadataType::String) {
+    return EITwinCesiumMetadataBlueprintType::String;
   }
 
-  if (type == ECesiumMetadataType::Scalar) {
+  if (type == EITwinCesiumMetadataType::Scalar) {
     switch (componentType) {
-    case ECesiumMetadataComponentType::Uint8:
-      return ECesiumMetadataBlueprintType::Byte;
-    case ECesiumMetadataComponentType::Int8:
-    case ECesiumMetadataComponentType::Int16:
-    case ECesiumMetadataComponentType::Uint16:
-    case ECesiumMetadataComponentType::Int32:
-      return ECesiumMetadataBlueprintType::Integer;
-    case ECesiumMetadataComponentType::Uint32:
-    case ECesiumMetadataComponentType::Int64:
-      return ECesiumMetadataBlueprintType::Integer64;
-    case ECesiumMetadataComponentType::Float32:
-      return ECesiumMetadataBlueprintType::Float;
-    case ECesiumMetadataComponentType::Float64:
-      return ECesiumMetadataBlueprintType::Float64;
-    case ECesiumMetadataComponentType::Uint64:
+    case EITwinCesiumMetadataComponentType::Uint8:
+      return EITwinCesiumMetadataBlueprintType::Byte;
+    case EITwinCesiumMetadataComponentType::Int8:
+    case EITwinCesiumMetadataComponentType::Int16:
+    case EITwinCesiumMetadataComponentType::Uint16:
+    case EITwinCesiumMetadataComponentType::Int32:
+      return EITwinCesiumMetadataBlueprintType::Integer;
+    case EITwinCesiumMetadataComponentType::Uint32:
+    case EITwinCesiumMetadataComponentType::Int64:
+      return EITwinCesiumMetadataBlueprintType::Integer64;
+    case EITwinCesiumMetadataComponentType::Float32:
+      return EITwinCesiumMetadataBlueprintType::Float;
+    case EITwinCesiumMetadataComponentType::Float64:
+      return EITwinCesiumMetadataBlueprintType::Float64;
+    case EITwinCesiumMetadataComponentType::Uint64:
     default:
-      return ECesiumMetadataBlueprintType::String;
+      return EITwinCesiumMetadataBlueprintType::String;
     }
   }
 
-  if (type == ECesiumMetadataType::Vec2) {
+  if (type == EITwinCesiumMetadataType::Vec2) {
     switch (componentType) {
-    case ECesiumMetadataComponentType::Uint8:
-    case ECesiumMetadataComponentType::Int8:
-    case ECesiumMetadataComponentType::Int16:
-    case ECesiumMetadataComponentType::Uint16:
-    case ECesiumMetadataComponentType::Int32:
-      return ECesiumMetadataBlueprintType::IntPoint;
+    case EITwinCesiumMetadataComponentType::Uint8:
+    case EITwinCesiumMetadataComponentType::Int8:
+    case EITwinCesiumMetadataComponentType::Int16:
+    case EITwinCesiumMetadataComponentType::Uint16:
+    case EITwinCesiumMetadataComponentType::Int32:
+      return EITwinCesiumMetadataBlueprintType::IntPoint;
     default:
-      return ECesiumMetadataBlueprintType::Vector2D;
+      return EITwinCesiumMetadataBlueprintType::Vector2D;
     }
   }
 
-  if (type == ECesiumMetadataType::Vec3) {
+  if (type == EITwinCesiumMetadataType::Vec3) {
     switch (componentType) {
-    case ECesiumMetadataComponentType::Uint8:
-    case ECesiumMetadataComponentType::Int8:
-    case ECesiumMetadataComponentType::Int16:
-    case ECesiumMetadataComponentType::Uint16:
-    case ECesiumMetadataComponentType::Int32:
-      return ECesiumMetadataBlueprintType::IntVector;
-    case ECesiumMetadataComponentType::Float32:
-      return ECesiumMetadataBlueprintType::Vector3f;
+    case EITwinCesiumMetadataComponentType::Uint8:
+    case EITwinCesiumMetadataComponentType::Int8:
+    case EITwinCesiumMetadataComponentType::Int16:
+    case EITwinCesiumMetadataComponentType::Uint16:
+    case EITwinCesiumMetadataComponentType::Int32:
+      return EITwinCesiumMetadataBlueprintType::IntVector;
+    case EITwinCesiumMetadataComponentType::Float32:
+      return EITwinCesiumMetadataBlueprintType::Vector3f;
     default:
-      return ECesiumMetadataBlueprintType::Vector3;
+      return EITwinCesiumMetadataBlueprintType::Vector3;
     }
   }
 
-  if (type == ECesiumMetadataType::Vec4) {
-    return ECesiumMetadataBlueprintType::Vector4;
+  if (type == EITwinCesiumMetadataType::Vec4) {
+    return EITwinCesiumMetadataBlueprintType::Vector4;
   }
 
-  if (type == ECesiumMetadataType::Mat2 || type == ECesiumMetadataType::Mat3 ||
-      type == ECesiumMetadataType::Mat4) {
-    return ECesiumMetadataBlueprintType::Matrix;
+  if (type == EITwinCesiumMetadataType::Mat2 || type == EITwinCesiumMetadataType::Mat3 ||
+      type == EITwinCesiumMetadataType::Mat4) {
+    return EITwinCesiumMetadataBlueprintType::Matrix;
   }
 
-  return ECesiumMetadataBlueprintType::None;
+  return EITwinCesiumMetadataBlueprintType::None;
 }
 
-ECesiumMetadataBlueprintType CesiumMetadataTrueTypeToBlueprintType(
-    ECesiumMetadataTrueType_DEPRECATED trueType) {
+EITwinCesiumMetadataBlueprintType CesiumMetadataTrueTypeToBlueprintType(
+    EITwinCesiumMetadataTrueType_DEPRECATED trueType) {
   switch (trueType) {
-  case ECesiumMetadataTrueType_DEPRECATED::Boolean_DEPRECATED:
-    return ECesiumMetadataBlueprintType::Boolean;
-  case ECesiumMetadataTrueType_DEPRECATED::Uint8_DEPRECATED:
-    return ECesiumMetadataBlueprintType::Byte;
-  case ECesiumMetadataTrueType_DEPRECATED::Int8_DEPRECATED:
-  case ECesiumMetadataTrueType_DEPRECATED::Int16_DEPRECATED:
-  case ECesiumMetadataTrueType_DEPRECATED::Uint16_DEPRECATED:
-  case ECesiumMetadataTrueType_DEPRECATED::Int32_DEPRECATED:
+  case EITwinCesiumMetadataTrueType_DEPRECATED::Boolean_DEPRECATED:
+    return EITwinCesiumMetadataBlueprintType::Boolean;
+  case EITwinCesiumMetadataTrueType_DEPRECATED::Uint8_DEPRECATED:
+    return EITwinCesiumMetadataBlueprintType::Byte;
+  case EITwinCesiumMetadataTrueType_DEPRECATED::Int8_DEPRECATED:
+  case EITwinCesiumMetadataTrueType_DEPRECATED::Int16_DEPRECATED:
+  case EITwinCesiumMetadataTrueType_DEPRECATED::Uint16_DEPRECATED:
+  case EITwinCesiumMetadataTrueType_DEPRECATED::Int32_DEPRECATED:
   // TODO: remove this one
-  case ECesiumMetadataTrueType_DEPRECATED::Uint32_DEPRECATED:
-    return ECesiumMetadataBlueprintType::Integer;
-  case ECesiumMetadataTrueType_DEPRECATED::Int64_DEPRECATED:
-    return ECesiumMetadataBlueprintType::Integer64;
-  case ECesiumMetadataTrueType_DEPRECATED::Float32_DEPRECATED:
-    return ECesiumMetadataBlueprintType::Float;
-  case ECesiumMetadataTrueType_DEPRECATED::Float64_DEPRECATED:
-    return ECesiumMetadataBlueprintType::Float64;
-  case ECesiumMetadataTrueType_DEPRECATED::Uint64_DEPRECATED:
-  case ECesiumMetadataTrueType_DEPRECATED::String_DEPRECATED:
-    return ECesiumMetadataBlueprintType::String;
-  case ECesiumMetadataTrueType_DEPRECATED::Array_DEPRECATED:
-    return ECesiumMetadataBlueprintType::Array;
+  case EITwinCesiumMetadataTrueType_DEPRECATED::Uint32_DEPRECATED:
+    return EITwinCesiumMetadataBlueprintType::Integer;
+  case EITwinCesiumMetadataTrueType_DEPRECATED::Int64_DEPRECATED:
+    return EITwinCesiumMetadataBlueprintType::Integer64;
+  case EITwinCesiumMetadataTrueType_DEPRECATED::Float32_DEPRECATED:
+    return EITwinCesiumMetadataBlueprintType::Float;
+  case EITwinCesiumMetadataTrueType_DEPRECATED::Float64_DEPRECATED:
+    return EITwinCesiumMetadataBlueprintType::Float64;
+  case EITwinCesiumMetadataTrueType_DEPRECATED::Uint64_DEPRECATED:
+  case EITwinCesiumMetadataTrueType_DEPRECATED::String_DEPRECATED:
+    return EITwinCesiumMetadataBlueprintType::String;
+  case EITwinCesiumMetadataTrueType_DEPRECATED::Array_DEPRECATED:
+    return EITwinCesiumMetadataBlueprintType::Array;
   default:
-    return ECesiumMetadataBlueprintType::None;
+    return EITwinCesiumMetadataBlueprintType::None;
   }
 }
 
-ECesiumMetadataTrueType_DEPRECATED
+EITwinCesiumMetadataTrueType_DEPRECATED
 CesiumMetadataValueTypeToTrueType(FITwinCesiumMetadataValueType ValueType) {
   if (ValueType.bIsArray) {
-    return ECesiumMetadataTrueType_DEPRECATED::Array_DEPRECATED;
+    return EITwinCesiumMetadataTrueType_DEPRECATED::Array_DEPRECATED;
   }
 
   CesiumGltf::PropertyType type = CesiumGltf::PropertyType(ValueType.Type);
@@ -122,52 +122,52 @@ CesiumMetadataValueTypeToTrueType(FITwinCesiumMetadataValueType ValueType) {
       CesiumGltf::PropertyComponentType(ValueType.ComponentType);
 
   if (type == CesiumGltf::PropertyType::Boolean) {
-    return ECesiumMetadataTrueType_DEPRECATED::Boolean_DEPRECATED;
+    return EITwinCesiumMetadataTrueType_DEPRECATED::Boolean_DEPRECATED;
   }
 
   if (type == CesiumGltf::PropertyType::Scalar) {
     switch (componentType) {
     case CesiumGltf::PropertyComponentType::Uint8:
-      return ECesiumMetadataTrueType_DEPRECATED::Uint8_DEPRECATED;
+      return EITwinCesiumMetadataTrueType_DEPRECATED::Uint8_DEPRECATED;
     case CesiumGltf::PropertyComponentType::Int8:
-      return ECesiumMetadataTrueType_DEPRECATED::Int8_DEPRECATED;
+      return EITwinCesiumMetadataTrueType_DEPRECATED::Int8_DEPRECATED;
     case CesiumGltf::PropertyComponentType::Uint16:
-      return ECesiumMetadataTrueType_DEPRECATED::Uint16_DEPRECATED;
+      return EITwinCesiumMetadataTrueType_DEPRECATED::Uint16_DEPRECATED;
     case CesiumGltf::PropertyComponentType::Int16:
-      return ECesiumMetadataTrueType_DEPRECATED::Int16_DEPRECATED;
+      return EITwinCesiumMetadataTrueType_DEPRECATED::Int16_DEPRECATED;
     case CesiumGltf::PropertyComponentType::Uint32:
-      return ECesiumMetadataTrueType_DEPRECATED::Uint32_DEPRECATED;
+      return EITwinCesiumMetadataTrueType_DEPRECATED::Uint32_DEPRECATED;
     case CesiumGltf::PropertyComponentType::Int32:
-      return ECesiumMetadataTrueType_DEPRECATED::Int32_DEPRECATED;
+      return EITwinCesiumMetadataTrueType_DEPRECATED::Int32_DEPRECATED;
     case CesiumGltf::PropertyComponentType::Int64:
-      return ECesiumMetadataTrueType_DEPRECATED::Int64_DEPRECATED;
+      return EITwinCesiumMetadataTrueType_DEPRECATED::Int64_DEPRECATED;
     case CesiumGltf::PropertyComponentType::Uint64:
-      return ECesiumMetadataTrueType_DEPRECATED::Uint64_DEPRECATED;
+      return EITwinCesiumMetadataTrueType_DEPRECATED::Uint64_DEPRECATED;
     case CesiumGltf::PropertyComponentType::Float32:
-      return ECesiumMetadataTrueType_DEPRECATED::Float32_DEPRECATED;
+      return EITwinCesiumMetadataTrueType_DEPRECATED::Float32_DEPRECATED;
     case CesiumGltf::PropertyComponentType::Float64:
-      return ECesiumMetadataTrueType_DEPRECATED::Float64_DEPRECATED;
+      return EITwinCesiumMetadataTrueType_DEPRECATED::Float64_DEPRECATED;
     default:
-      return ECesiumMetadataTrueType_DEPRECATED::None_DEPRECATED;
+      return EITwinCesiumMetadataTrueType_DEPRECATED::None_DEPRECATED;
     }
   }
 
   if (type == CesiumGltf::PropertyType::String) {
-    return ECesiumMetadataTrueType_DEPRECATED::String_DEPRECATED;
+    return EITwinCesiumMetadataTrueType_DEPRECATED::String_DEPRECATED;
   }
 
-  return ECesiumMetadataTrueType_DEPRECATED::None_DEPRECATED;
+  return EITwinCesiumMetadataTrueType_DEPRECATED::None_DEPRECATED;
 }
 
 /*static*/ FIntPoint
-UnrealMetadataConversions::toIntPoint(const glm::ivec2& vec2) {
+FITwinUnrealMetadataConversions::toIntPoint(const glm::ivec2& vec2) {
   return FIntPoint(vec2[0], vec2[1]);
 }
 
-/*static*/ FIntPoint UnrealMetadataConversions::toIntPoint(
+/*static*/ FIntPoint FITwinUnrealMetadataConversions::toIntPoint(
     const std::string_view& string,
     const FIntPoint& defaultValue) {
-  FString unrealString = UnrealMetadataConversions::toString(string);
+  FString unrealString = FITwinUnrealMetadataConversions::toString(string);
 
   // For some reason, FIntPoint doesn't have an InitFromString method, so
   // copy the one from FVector.
@@ -178,27 +178,27 @@ UnrealMetadataConversions::toIntPoint(const glm::ivec2& vec2) {
 }
 
 /*static*/ FVector2D
-UnrealMetadataConversions::toVector2D(const glm::dvec2& vec2) {
+FITwinUnrealMetadataConversions::toVector2D(const glm::dvec2& vec2) {
   return FVector2D(vec2[0], vec2[1]);
 }
 
-/*static*/ FVector2D UnrealMetadataConversions::toVector2D(
+/*static*/ FVector2D FITwinUnrealMetadataConversions::toVector2D(
     const std::string_view& string,
     const FVector2D& defaultValue) {
-  FString unrealString = UnrealMetadataConversions::toString(string);
+  FString unrealString = FITwinUnrealMetadataConversions::toString(string);
   FVector2D result;
   return result.InitFromString(unrealString) ? result : defaultValue;
 }
 
 /*static*/ FIntVector
-UnrealMetadataConversions::toIntVector(const glm::ivec3& vec3) {
+FITwinUnrealMetadataConversions::toIntVector(const glm::ivec3& vec3) {
   return FIntVector(vec3[0], vec3[1], vec3[2]);
 }
 
-/*static*/ FIntVector UnrealMetadataConversions::toIntVector(
+/*static*/ FIntVector FITwinUnrealMetadataConversions::toIntVector(
     const std::string_view& string,
     const FIntVector& defaultValue) {
-  FString unrealString = UnrealMetadataConversions::toString(string);
+  FString unrealString = FITwinUnrealMetadataConversions::toString(string);
   // For some reason, FIntVector doesn't have an InitFromString method, so
   // copy the one from FVector.
   int32 X = 0, Y = 0, Z = 0;
@@ -209,44 +209,44 @@ UnrealMetadataConversions::toIntVector(const glm::ivec3& vec3) {
 }
 
 /*static*/ FVector3f
-UnrealMetadataConversions::toVector3f(const glm::vec3& vec3) {
+FITwinUnrealMetadataConversions::toVector3f(const glm::vec3& vec3) {
   return FVector3f(vec3[0], vec3[1], vec3[2]);
 }
 
-/*static*/ FVector3f UnrealMetadataConversions::toVector3f(
+/*static*/ FVector3f FITwinUnrealMetadataConversions::toVector3f(
     const std::string_view& string,
     const FVector3f& defaultValue) {
-  FString unrealString = UnrealMetadataConversions::toString(string);
+  FString unrealString = FITwinUnrealMetadataConversions::toString(string);
   FVector3f result;
   return result.InitFromString(unrealString) ? result : defaultValue;
 }
 
-/*static*/ FVector UnrealMetadataConversions::toVector(const glm::dvec3& vec3) {
+/*static*/ FVector FITwinUnrealMetadataConversions::toVector(const glm::dvec3& vec3) {
   return FVector(vec3[0], vec3[1], vec3[2]);
 }
 
-/*static*/ FVector UnrealMetadataConversions::toVector(
+/*static*/ FVector FITwinUnrealMetadataConversions::toVector(
     const std::string_view& string,
     const FVector& defaultValue) {
-  FString unrealString = UnrealMetadataConversions::toString(string);
+  FString unrealString = FITwinUnrealMetadataConversions::toString(string);
   FVector result;
   return result.InitFromString(unrealString) ? result : defaultValue;
 }
 
 /*static*/ FVector4
-UnrealMetadataConversions::toVector4(const glm::dvec4& vec4) {
+FITwinUnrealMetadataConversions::toVector4(const glm::dvec4& vec4) {
   return FVector4(vec4[0], vec4[1], vec4[2], vec4[3]);
 }
 
-/*static*/ FVector4 UnrealMetadataConversions::toVector4(
+/*static*/ FVector4 FITwinUnrealMetadataConversions::toVector4(
     const std::string_view& string,
     const FVector4& defaultValue) {
-  FString unrealString = UnrealMetadataConversions::toString(string);
+  FString unrealString = FITwinUnrealMetadataConversions::toString(string);
   FVector4 result;
   return result.InitFromString(unrealString) ? result : defaultValue;
 }
 
-/*static*/ FMatrix UnrealMetadataConversions::toMatrix(const glm::dmat4& mat4) {
+/*static*/ FMatrix FITwinUnrealMetadataConversions::toMatrix(const glm::dmat4& mat4) {
   // glm is column major, but Unreal is row major.
   FPlane4d row1(
       static_cast<double>(mat4[0][0]),
@@ -276,11 +276,11 @@ UnrealMetadataConversions::toVector4(const glm::dvec4& vec4) {
 }
 
 /*static*/ FString
-UnrealMetadataConversions::toString(const std::string_view& from) {
+FITwinUnrealMetadataConversions::toString(const std::string_view& from) {
   return toString(std::string(from));
 }
 
 /*static*/ FString
-UnrealMetadataConversions::toString(const std::string& from) {
+FITwinUnrealMetadataConversions::toString(const std::string& from) {
   return FString(UTF8_TO_TCHAR(from.data()));
 }

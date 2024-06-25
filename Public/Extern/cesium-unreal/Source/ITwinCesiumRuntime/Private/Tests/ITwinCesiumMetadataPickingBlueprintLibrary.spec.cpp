@@ -237,7 +237,7 @@ void FITwinCesiumMetadataPickingSpec::Define() {
 
       std::vector<uint8_t> featureIDs{0, 0, 0, 1, 1, 1};
       FeatureId& featureId =
-          AddFeatureIDsAsAttributeToModel(model, *pPrimitive, featureIDs, 2, 0);
+          ITwinCesium::AddFeatureIDsAsAttributeToModel(model, *pPrimitive, featureIDs, 2, 0);
       featureId.propertyTable =
           static_cast<int64_t>(pModelMetadata->propertyTables.size() - 1);
 
@@ -275,7 +275,7 @@ void FITwinCesiumMetadataPickingSpec::Define() {
 
       std::vector<uint8_t> featureIDs{0, 0, 0, 1, 1, 1};
       FeatureId& featureId =
-          AddFeatureIDsAsAttributeToModel(model, *pPrimitive, featureIDs, 2, 0);
+          ITwinCesium::AddFeatureIDsAsAttributeToModel(model, *pPrimitive, featureIDs, 2, 0);
       featureId.propertyTable =
           static_cast<int64_t>(pModelMetadata->propertyTables.size() - 1);
 
@@ -322,7 +322,7 @@ void FITwinCesiumMetadataPickingSpec::Define() {
              static_cast<int32_t>(model.accessors.size() - 1);
 
          std::vector<uint8_t> featureIDs{0, 0, 0, 1, 1, 1};
-         AddFeatureIDsAsAttributeToModel(model, *pPrimitive, featureIDs, 2, 0);
+         ITwinCesium::AddFeatureIDsAsAttributeToModel(model, *pPrimitive, featureIDs, 2, 0);
 
          pPrimitiveComponent->PositionAccessor =
              AccessorView<FVector3f>(model, positionAccessorIndex);
@@ -370,7 +370,7 @@ void FITwinCesiumMetadataPickingSpec::Define() {
 
       std::vector<uint8_t> featureIDs{0, 0, 0, 1, 1, 1};
       FeatureId& featureId =
-          AddFeatureIDsAsAttributeToModel(model, *pPrimitive, featureIDs, 2, 0);
+          ITwinCesium::AddFeatureIDsAsAttributeToModel(model, *pPrimitive, featureIDs, 2, 0);
       featureId.propertyTable =
           static_cast<int64_t>(pModelMetadata->propertyTables.size() - 1);
 
@@ -453,14 +453,14 @@ void FITwinCesiumMetadataPickingSpec::Define() {
           static_cast<int32_t>(model.accessors.size() - 1);
 
       std::vector<uint8_t> featureIDs0{1, 1, 1, 0, 0, 0};
-      FeatureId& featureId0 = AddFeatureIDsAsAttributeToModel(
+      FeatureId& featureId0 = ITwinCesium::AddFeatureIDsAsAttributeToModel(
           model,
           *pPrimitive,
           featureIDs0,
           2,
           0);
       std::vector<uint8_t> featureIDs1{0, 0, 0, 1, 1, 1};
-      FeatureId& featureId1 = AddFeatureIDsAsAttributeToModel(
+      FeatureId& featureId1 = ITwinCesium::AddFeatureIDsAsAttributeToModel(
           model,
           *pPrimitive,
           featureIDs1,
@@ -914,7 +914,7 @@ void FITwinCesiumMetadataPickingSpec::Define() {
 
       It("returns empty map for invalid face index", [this]() {
         std::vector<uint8_t> featureIDs{0, 0, 0, 1, 1, 1};
-        FeatureId& featureId = AddFeatureIDsAsAttributeToModel(
+        FeatureId& featureId = ITwinCesium::AddFeatureIDsAsAttributeToModel(
             model,
             *pPrimitive,
             featureIDs,
@@ -956,7 +956,7 @@ void FITwinCesiumMetadataPickingSpec::Define() {
 
       It("returns empty map for invalid feature ID set index", [this]() {
         std::vector<uint8_t> featureIDs{0, 0, 0, 1, 1, 1};
-        FeatureId& featureId = AddFeatureIDsAsAttributeToModel(
+        FeatureId& featureId = ITwinCesium::AddFeatureIDsAsAttributeToModel(
             model,
             *pPrimitive,
             featureIDs,
@@ -1001,7 +1001,7 @@ void FITwinCesiumMetadataPickingSpec::Define() {
       It("returns empty values if feature ID set is not associated with a property table",
          [this]() {
            std::vector<uint8_t> featureIDs{0, 0, 0, 1, 1, 1};
-           AddFeatureIDsAsAttributeToModel(
+           ITwinCesium::AddFeatureIDsAsAttributeToModel(
                model,
                *pPrimitive,
                featureIDs,
@@ -1045,7 +1045,7 @@ void FITwinCesiumMetadataPickingSpec::Define() {
 
       It("returns values for first feature ID set by default", [this]() {
         std::vector<uint8_t> featureIDs{0, 0, 0, 1, 1, 1};
-        FeatureId& featureId = AddFeatureIDsAsAttributeToModel(
+        FeatureId& featureId = ITwinCesium::AddFeatureIDsAsAttributeToModel(
             model,
             *pPrimitive,
             featureIDs,
@@ -1124,14 +1124,14 @@ void FITwinCesiumMetadataPickingSpec::Define() {
 
       It("returns values for specified feature ID set", [this]() {
         std::vector<uint8_t> featureIDs0{1, 1, 1, 0, 0, 0};
-        FeatureId& featureId0 = AddFeatureIDsAsAttributeToModel(
+        FeatureId& featureId0 = ITwinCesium::AddFeatureIDsAsAttributeToModel(
             model,
             *pPrimitive,
             featureIDs0,
             2,
             0);
         std::vector<uint8_t> featureIDs1{0, 0, 0, 1, 1, 1};
-        FeatureId& featureId1 = AddFeatureIDsAsAttributeToModel(
+        FeatureId& featureId1 = ITwinCesium::AddFeatureIDsAsAttributeToModel(
             model,
             *pPrimitive,
             featureIDs1,
@@ -1251,7 +1251,7 @@ void FITwinCesiumMetadataPickingSpec::Define() {
 
       It("returns values for first feature ID set by default", [this]() {
         std::vector<uint8_t> featureIDs{0, 0, 0, 1, 1, 1};
-        FeatureId& featureId = AddFeatureIDsAsAttributeToModel(
+        FeatureId& featureId = ITwinCesium::AddFeatureIDsAsAttributeToModel(
             model,
             *pPrimitive,
             featureIDs,

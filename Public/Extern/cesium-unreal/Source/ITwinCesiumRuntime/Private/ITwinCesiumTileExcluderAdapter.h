@@ -9,7 +9,7 @@ namespace Cesium3DTilesSelection {
 class Tile;
 }
 
-class CesiumTileExcluderAdapter : public Cesium3DTilesSelection::ITileExcluder {
+class FITwinCesiumTileExcluderAdapter : public Cesium3DTilesSelection::ITileExcluder {
   virtual bool shouldExclude(
       const Cesium3DTilesSelection::Tile& tile) const noexcept override;
   virtual void startNewFrame() noexcept override;
@@ -21,7 +21,7 @@ private:
   bool IsExcluderValid;
 
 public:
-  CesiumTileExcluderAdapter(
+  FITwinCesiumTileExcluderAdapter(
       TWeakObjectPtr<UITwinCesiumTileExcluder> pExcluder,
       AITwinCesiumGeoreference* pGeoreference,
       UITwinCesiumTile* pTile);

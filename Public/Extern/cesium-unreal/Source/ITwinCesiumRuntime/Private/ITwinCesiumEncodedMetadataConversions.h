@@ -4,8 +4,8 @@
 
 #include <gsl/span>
 
-enum class ECesiumMetadataType : uint8;
-enum class ECesiumEncodedMetadataType : uint8;
+enum class EITwinCesiumMetadataType : uint8;
+enum class EITwinCesiumEncodedMetadataType : uint8;
 struct FITwinCesiumPropertyTablePropertyDescription;
 struct FITwinCesiumPropertyTableProperty;
 struct FITwinCesiumMetadataPropertyDetails;
@@ -14,8 +14,8 @@ struct FITwinCesiumMetadataEncodingDetails;
 /**
  * @brief Gets the best-fitting encoded type for the given metadata type.
  */
-ECesiumEncodedMetadataType
-CesiumMetadataTypeToEncodingType(ECesiumMetadataType Type);
+EITwinCesiumEncodedMetadataType
+CesiumMetadataTypeToEncodingType(EITwinCesiumMetadataType Type);
 
 /**
  * @brief Gets the best-fitting encoded types and conversion method for a given
@@ -37,7 +37,7 @@ FITwinCesiumMetadataEncodingDetails CesiumMetadataPropertyDetailsToEncodingDetai
  * @param type The encoded metadata type.
  */
 size_t
-CesiumGetEncodedMetadataTypeComponentCount(ECesiumEncodedMetadataType Type);
+CesiumGetEncodedMetadataTypeComponentCount(EITwinCesiumEncodedMetadataType Type);
 
 /**
  * Any custom encoding behavior, e.g., special encoding of unsupported

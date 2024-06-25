@@ -21,7 +21,7 @@ struct CreateModelOptions {
   const FITwinCesiumFeaturesMetadataDescription* pFeaturesMetadataDescription =
       nullptr;
   PRAGMA_DISABLE_DEPRECATION_WARNINGS
-  const FMetadataDescription* pEncodedMetadataDescription_DEPRECATED = nullptr;
+  const FITwinMetadataDescription* pEncodedMetadataDescription_DEPRECATED = nullptr;
   PRAGMA_ENABLE_DEPRECATION_WARNINGS
   bool alwaysIncludeTangents = false;
   bool createPhysicsMeshes = true;

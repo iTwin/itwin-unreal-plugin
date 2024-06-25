@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include <ITwinCoordSystem.h>
 #include <ITwinServiceActor.h>
 #include <Templates/PimplPtr.h>
 
@@ -97,7 +98,10 @@ public:
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 #endif
-	
+
+	virtual void Tick(float DeltaTime) override;
+	virtual bool ShouldTickIfViewportsOnly() const override;
+
 	//! To be called at least once after ServerConnection, IModelId, ChangesetId have been set.
 	//! This will query the mesh export service for a corresponding export, and if complete one is found,
 	//! It will spawn the corresponding Cesium tileset.
@@ -109,7 +113,12 @@ public:
 
 	UFUNCTION(Category = "iTwin|Info",
 		BlueprintCallable)
-	void GetModel3DInfo(FITwinIModel3DInfo& Info);
+	void GetModel3DInfo(FITwinIModel3DInfo& Info) const;
+
+	UFUNCTION(Category = "iTwin|Info",
+		BlueprintCallable)
+	void GetModel3DInfoInCoordSystem(FITwinIModel3DInfo& OutInfo, EITwinCoordSystem CoordSystem,
+		bool bGetLegacy3DFTValue = false) const;
 
 	UFUNCTION(Category = "iTwin|Load",
 		BlueprintCallable)
@@ -118,8 +127,10 @@ public:
 	UPROPERTY(Category = "iTwin|Load",
 		BlueprintAssignable)
 	FOnIModelLoaded OnIModelLoaded;
-	
+
 	//! Start a new export of the iModel by the mesh export service.
+	//! If the export is successfully started, the actor will regularly check for its completion and the
+	//! tileset will be loaded automatically as soon as the export is complete.
 	UFUNCTION(Category = "iTwin|Load",
 		CallInEditor,
 		BlueprintCallable)
@@ -148,7 +159,12 @@ public:
 	void OnSavedViewsRetrieved(bool bSuccess, FSavedViewInfos SavedViews);
 
 private:
+	void AutoExportAndLoad();
+	void TestExportCompletionAfterDelay(FString const& InExportId, float DelayInSeconds);
+
 	void SetResolvedChangesetId(FString const& InChangesetId);
+
+	void OnLoadingUIEvent();
 	void UpdateAfterLoadingUIEvent();
 	void DestroyTileset();
 
@@ -163,7 +179,7 @@ private:
 	virtual void OnSavedViewInfosRetrieved(bool bSuccess, FSavedViewInfos const& Infos) override;
 	virtual void OnSavedViewRetrieved(bool bSuccess, FSavedView const& SavedView, FSavedViewInfo const& SavedViewInfo) override;
 	virtual void OnSavedViewAdded(bool bSuccess, FSavedViewInfo const& SavedViewInfo) override;
-	virtual void OnSavedViewDeleted(bool bSuccess, FString const& Response) override;
+	virtual void OnSavedViewDeleted(bool bSuccess, FString const& SavedViewId, FString const& Response) override;
 	virtual void OnSavedViewEdited(bool bSuccess, FSavedView const& SavedView, FSavedViewInfo const& SavedViewInfo) override;
 
 	/// overridden from FITwinDefaultWebServicesObserver:

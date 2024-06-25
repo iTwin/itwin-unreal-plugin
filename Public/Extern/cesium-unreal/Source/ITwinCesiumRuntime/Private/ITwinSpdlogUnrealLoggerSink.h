@@ -12,7 +12,7 @@
  * @brief Internal implementation of a spdlog sink that forwards the messages
  * to Unreal log macros.
  */
-class SpdlogUnrealLoggerSink
+class ITwinSpdlogUnrealLoggerSink
     : public spdlog::sinks::base_sink<spdlog::details::null_mutex> {
 protected:
   virtual void sink_it_(const spdlog::details::log_msg& msg) override;

@@ -33,6 +33,8 @@ public:
 	void UpdateElementId(bool bVisible, const FString& InElementId);
 	UFUNCTION(BlueprintCallable)
 	void AddSavedView(const FString& DisplayName, const FString& Value);
+	UFUNCTION(BlueprintCallable)
+	void RemoveSavedView(const FString& SavedViewId);
 protected:
 	virtual void NativeConstruct() override;
 private:

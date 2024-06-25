@@ -8,7 +8,7 @@
 #include "ITwinUnrealAssetAccessor.h"
 
 BEGIN_DEFINE_SPEC(
-    FUnrealAssetAccessorSpec,
+    FITwinUnrealAssetAccessorSpec,
     "Cesium.Unit.UnrealAssetAccessor",
     EAutomationTestFlags::ApplicationContextMask |
         EAutomationTestFlags::ProductFilter)
@@ -21,7 +21,7 @@ void TestAccessorRequest(const FString& Uri, const std::string& expectedData) {
   bool done = false;
 
   ITwinUnrealAssetAccessor accessor{};
-  accessor.get(getAsyncSystem(), TCHAR_TO_UTF8(*Uri), {})
+  accessor.get(ITwinCesium::getAsyncSystem(), TCHAR_TO_UTF8(*Uri), {})
       .thenInMainThread(
           [&](std::shared_ptr<CesiumAsync::IAssetRequest>&& pRequest) {
             const CesiumAsync::IAssetResponse* Response = pRequest->response();
@@ -40,13 +40,13 @@ void TestAccessorRequest(const FString& Uri, const std::string& expectedData) {
 
   while (!done) {
     accessor.tick();
-    getAsyncSystem().dispatchMainThreadTasks();
+    ITwinCesium::getAsyncSystem().dispatchMainThreadTasks();
   }
 }
 
-END_DEFINE_SPEC(FUnrealAssetAccessorSpec)
+END_DEFINE_SPEC(FITwinUnrealAssetAccessorSpec)
 
-void FUnrealAssetAccessorSpec::Define() {
+void FITwinUnrealAssetAccessorSpec::Define() {
   BeforeEach([this]() {
     Filename = FPaths::ConvertRelativePathToFull(
         FPaths::CreateTempFilename(*FPaths::ProjectSavedDir()));

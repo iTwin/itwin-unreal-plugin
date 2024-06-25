@@ -7,7 +7,7 @@ const FGuid
     FITwinCesiumCustomVersion::GUID(0xEEBEC3F6, 0xADA54FC6, 0x8597852F, 0x3AF08280);
 
 // Register the custom version with core
-FCustomVersionRegistration GRegisterCesiumCustomVersion(
+FCustomVersionRegistration GRegisterITwinCesiumCustomVersion(
     FITwinCesiumCustomVersion::GUID,
     FITwinCesiumCustomVersion::LatestVersion,
     TEXT("CesiumVer"));

@@ -183,19 +183,19 @@ public:
    */
   template <typename T>
   explicit FITwinCesiumMetadataValue(const T& Value) : _value(Value), _valueType() {
-    ECesiumMetadataType type;
-    ECesiumMetadataComponentType componentType;
+    EITwinCesiumMetadataType type;
+    EITwinCesiumMetadataComponentType componentType;
     bool isArray;
     if constexpr (CesiumGltf::IsMetadataArray<T>::value) {
       using ArrayType = typename CesiumGltf::MetadataArrayType<T>::type;
       type =
-          ECesiumMetadataType(CesiumGltf::TypeToPropertyType<ArrayType>::value);
-      componentType = ECesiumMetadataComponentType(
+          EITwinCesiumMetadataType(CesiumGltf::TypeToPropertyType<ArrayType>::value);
+      componentType = EITwinCesiumMetadataComponentType(
           CesiumGltf::TypeToPropertyType<ArrayType>::component);
       isArray = true;
     } else {
-      type = ECesiumMetadataType(CesiumGltf::TypeToPropertyType<T>::value);
-      componentType = ECesiumMetadataComponentType(
+      type = EITwinCesiumMetadataType(CesiumGltf::TypeToPropertyType<T>::value);
+      componentType = EITwinCesiumMetadataComponentType(
           CesiumGltf::TypeToPropertyType<T>::component);
       isArray = false;
     }
@@ -240,7 +240,7 @@ public:
       BlueprintCallable,
       BlueprintPure,
       Category = "Cesium|Metadata|Value")
-  static ECesiumMetadataBlueprintType
+  static EITwinCesiumMetadataBlueprintType
   GetBlueprintType(UPARAM(ref) const FITwinCesiumMetadataValue& Value);
 
   /**
@@ -251,7 +251,7 @@ public:
       BlueprintCallable,
       BlueprintPure,
       Category = "Cesium|Metadata|Value")
-  static ECesiumMetadataBlueprintType
+  static EITwinCesiumMetadataBlueprintType
   GetArrayElementBlueprintType(UPARAM(ref) const FITwinCesiumMetadataValue& Value);
 
   /**
@@ -278,7 +278,7 @@ public:
           (DeprecatedFunction,
            DeprecationMessage =
                "CesiumMetadataTrueType is deprecated. Use GetValueType to get the CesiumMetadataValueType instead."))
-  static ECesiumMetadataTrueType_DEPRECATED
+  static EITwinCesiumMetadataTrueType_DEPRECATED
   GetTrueType(UPARAM(ref) const FITwinCesiumMetadataValue& Value);
 
   /**
@@ -293,7 +293,7 @@ public:
           (DeprecatedFunction,
            DeprecationMessage =
                "CesiumMetadataTrueType is deprecated. Use GetValueType to get the CesiumMetadataValueType instead."))
-  static ECesiumMetadataTrueType_DEPRECATED
+  static EITwinCesiumMetadataTrueType_DEPRECATED
   GetTrueComponentType(UPARAM(ref) const FITwinCesiumMetadataValue& Value);
 
   PRAGMA_ENABLE_DEPRECATION_WARNINGS

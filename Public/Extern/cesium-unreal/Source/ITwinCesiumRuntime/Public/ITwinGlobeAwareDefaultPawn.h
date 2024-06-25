@@ -19,13 +19,13 @@ class UITwinCesiumFlyToComponent;
  * The delegate for when the pawn finishes flying
  * which is triggered from _handleFlightStep
  */
-DECLARE_DYNAMIC_MULTICAST_DELEGATE(FCompletedFlight);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FITwinCompletedFlight);
 
 /**
  * The delegate for when the pawn's flying is interrupted
  * which is triggered from _interruptFlight
  */
-DECLARE_DYNAMIC_MULTICAST_DELEGATE(FInterruptedFlight);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FITwinInterruptedFlight);
 
 /**
  * This pawn can be used to easily move around the globe while maintaining a
@@ -87,7 +87,7 @@ public:
           (DeprecatedProperty,
            DeprecationMessage =
                "Use OnFlightComplete on CesiumFlyToComponent instead."))
-  FCompletedFlight OnFlightComplete_DEPRECATED;
+  FITwinCompletedFlight OnFlightComplete_DEPRECATED;
 
   UPROPERTY(
       BlueprintAssignable,
@@ -95,7 +95,7 @@ public:
           (DeprecatedProperty,
            DeprecationMessage =
                "Use OnFlightInterrupted on CesiumFlyToComponent instead."))
-  FInterruptedFlight OnFlightInterrupt_DEPRECATED;
+  FITwinInterruptedFlight OnFlightInterrupt_DEPRECATED;
 
   /**
    * Gets the transformation from globe's reference frame to the Unreal world

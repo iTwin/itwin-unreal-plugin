@@ -10,118 +10,118 @@
 #include <stdexcept>
 
 namespace {
-ECesiumEncodedMetadataType
+EITwinCesiumEncodedMetadataType
 GetBestFittingEncodedType(FITwinCesiumMetadataPropertyDetails PropertyDetails) {
-  ECesiumMetadataType type = PropertyDetails.Type;
+  EITwinCesiumMetadataType type = PropertyDetails.Type;
   if (PropertyDetails.bIsArray) {
     if (PropertyDetails.ArraySize <= 0) {
       // Variable-length array properties are unsupported.
-      return ECesiumEncodedMetadataType::None;
+      return EITwinCesiumEncodedMetadataType::None;
     }
 
-    if (type != ECesiumMetadataType::Boolean &&
-        type != ECesiumMetadataType::Scalar) {
+    if (type != EITwinCesiumMetadataType::Boolean &&
+        type != EITwinCesiumMetadataType::Scalar) {
       // Only boolean and scalar array properties are supported.
-      return ECesiumEncodedMetadataType::None;
+      return EITwinCesiumEncodedMetadataType::None;
     }
 
     int64 componentCount =
         std::min(PropertyDetails.ArraySize, static_cast<int64>(4));
     switch (componentCount) {
     case 1:
-      return ECesiumEncodedMetadataType::Scalar;
+      return EITwinCesiumEncodedMetadataType::Scalar;
     case 2:
-      return ECesiumEncodedMetadataType::Vec2;
+      return EITwinCesiumEncodedMetadataType::Vec2;
     case 3:
-      return ECesiumEncodedMetadataType::Vec3;
+      return EITwinCesiumEncodedMetadataType::Vec3;
     case 4:
-      return ECesiumEncodedMetadataType::Vec4;
+      return EITwinCesiumEncodedMetadataType::Vec4;
     default:
-      return ECesiumEncodedMetadataType::None;
+      return EITwinCesiumEncodedMetadataType::None;
     }
   }
 
   switch (type) {
-  case ECesiumMetadataType::Boolean:
-  case ECesiumMetadataType::Scalar:
-    return ECesiumEncodedMetadataType::Scalar;
-  case ECesiumMetadataType::Vec2:
-    return ECesiumEncodedMetadataType::Vec2;
-  case ECesiumMetadataType::Vec3:
-    return ECesiumEncodedMetadataType::Vec3;
-  case ECesiumMetadataType::Vec4:
-    return ECesiumEncodedMetadataType::Vec4;
+  case EITwinCesiumMetadataType::Boolean:
+  case EITwinCesiumMetadataType::Scalar:
+    return EITwinCesiumEncodedMetadataType::Scalar;
+  case EITwinCesiumMetadataType::Vec2:
+    return EITwinCesiumEncodedMetadataType::Vec2;
+  case EITwinCesiumMetadataType::Vec3:
+    return EITwinCesiumEncodedMetadataType::Vec3;
+  case EITwinCesiumMetadataType::Vec4:
+    return EITwinCesiumEncodedMetadataType::Vec4;
   default:
-    return ECesiumEncodedMetadataType::None;
+    return EITwinCesiumEncodedMetadataType::None;
   }
 }
 
-ECesiumEncodedMetadataComponentType
-GetBestFittingEncodedComponentType(ECesiumMetadataComponentType ComponentType) {
+EITwinCesiumEncodedMetadataComponentType
+GetBestFittingEncodedComponentType(EITwinCesiumMetadataComponentType ComponentType) {
   switch (ComponentType) {
-  case ECesiumMetadataComponentType::Int8: // lossy or reinterpreted
-  case ECesiumMetadataComponentType::Uint8:
-    return ECesiumEncodedMetadataComponentType::Uint8;
-  case ECesiumMetadataComponentType::Int16:
-  case ECesiumMetadataComponentType::Uint16:
-  case ECesiumMetadataComponentType::Int32:  // lossy or reinterpreted
-  case ECesiumMetadataComponentType::Uint32: // lossy or reinterpreted
-  case ECesiumMetadataComponentType::Int64:  // lossy
-  case ECesiumMetadataComponentType::Uint64: // lossy
-  case ECesiumMetadataComponentType::Float32:
-  case ECesiumMetadataComponentType::Float64: // lossy
-    return ECesiumEncodedMetadataComponentType::Float;
+  case EITwinCesiumMetadataComponentType::Int8: // lossy or reinterpreted
+  case EITwinCesiumMetadataComponentType::Uint8:
+    return EITwinCesiumEncodedMetadataComponentType::Uint8;
+  case EITwinCesiumMetadataComponentType::Int16:
+  case EITwinCesiumMetadataComponentType::Uint16:
+  case EITwinCesiumMetadataComponentType::Int32:  // lossy or reinterpreted
+  case EITwinCesiumMetadataComponentType::Uint32: // lossy or reinterpreted
+  case EITwinCesiumMetadataComponentType::Int64:  // lossy
+  case EITwinCesiumMetadataComponentType::Uint64: // lossy
+  case EITwinCesiumMetadataComponentType::Float32:
+  case EITwinCesiumMetadataComponentType::Float64: // lossy
+    return EITwinCesiumEncodedMetadataComponentType::Float;
   default:
-    return ECesiumEncodedMetadataComponentType::None;
+    return EITwinCesiumEncodedMetadataComponentType::None;
   }
 }
 } // namespace
 
-ECesiumEncodedMetadataType
+EITwinCesiumEncodedMetadataType
 
-CesiumMetadataTypeToEncodingType(ECesiumMetadataType Type) {
+CesiumMetadataTypeToEncodingType(EITwinCesiumMetadataType Type) {
   switch (Type) {
-  case ECesiumMetadataType::Scalar:
-    return ECesiumEncodedMetadataType::Scalar;
-  case ECesiumMetadataType::Vec2:
-    return ECesiumEncodedMetadataType::Vec2;
-  case ECesiumMetadataType::Vec3:
-    return ECesiumEncodedMetadataType::Vec3;
-  case ECesiumMetadataType::Vec4:
-    return ECesiumEncodedMetadataType::Vec4;
+  case EITwinCesiumMetadataType::Scalar:
+    return EITwinCesiumEncodedMetadataType::Scalar;
+  case EITwinCesiumMetadataType::Vec2:
+    return EITwinCesiumEncodedMetadataType::Vec2;
+  case EITwinCesiumMetadataType::Vec3:
+    return EITwinCesiumEncodedMetadataType::Vec3;
+  case EITwinCesiumMetadataType::Vec4:
+    return EITwinCesiumEncodedMetadataType::Vec4;
   default:
-    return ECesiumEncodedMetadataType::None;
+    return EITwinCesiumEncodedMetadataType::None;
   }
 }
 
 FITwinCesiumMetadataEncodingDetails CesiumMetadataPropertyDetailsToEncodingDetails(
     FITwinCesiumMetadataPropertyDetails PropertyDetails) {
-  ECesiumEncodedMetadataType type = GetBestFittingEncodedType(PropertyDetails);
+  EITwinCesiumEncodedMetadataType type = GetBestFittingEncodedType(PropertyDetails);
 
-  if (type == ECesiumEncodedMetadataType::None) {
+  if (type == EITwinCesiumEncodedMetadataType::None) {
     // The type cannot be encoded at all; return.
     return FITwinCesiumMetadataEncodingDetails();
   }
 
-  ECesiumEncodedMetadataComponentType componentType =
+  EITwinCesiumEncodedMetadataComponentType componentType =
       GetBestFittingEncodedComponentType(PropertyDetails.ComponentType);
 
   return FITwinCesiumMetadataEncodingDetails(
       type,
       componentType,
-      ECesiumEncodedMetadataConversion::Coerce);
+      EITwinCesiumEncodedMetadataConversion::Coerce);
 }
 
 size_t
-CesiumGetEncodedMetadataTypeComponentCount(ECesiumEncodedMetadataType Type) {
+CesiumGetEncodedMetadataTypeComponentCount(EITwinCesiumEncodedMetadataType Type) {
   switch (Type) {
-  case ECesiumEncodedMetadataType::Scalar:
+  case EITwinCesiumEncodedMetadataType::Scalar:
     return 1;
-  case ECesiumEncodedMetadataType::Vec2:
+  case EITwinCesiumEncodedMetadataType::Vec2:
     return 2;
-  case ECesiumEncodedMetadataType::Vec3:
+  case EITwinCesiumEncodedMetadataType::Vec3:
     return 3;
-  case ECesiumEncodedMetadataType::Vec4:
+  case EITwinCesiumEncodedMetadataType::Vec4:
     return 4;
   default:
     return 0;
@@ -338,10 +338,10 @@ void coerceAndEncodeVec4s(
 
 bool CesiumEncodedMetadataCoerce::canEncode(
     const FITwinCesiumPropertyTablePropertyDescription& description) {
-  const ECesiumMetadataType type = description.PropertyDetails.Type;
+  const EITwinCesiumMetadataType type = description.PropertyDetails.Type;
 
-  if (type == ECesiumMetadataType::Boolean ||
-      type == ECesiumMetadataType::String) {
+  if (type == EITwinCesiumMetadataType::Boolean ||
+      type == EITwinCesiumMetadataType::String) {
     // Booleans and boolean arrays are supported.
     // Strings and string arrays are technically supported for all encoded
     // types. This will attempt to coerce a string by parsing it as the
@@ -349,9 +349,9 @@ bool CesiumEncodedMetadataCoerce::canEncode(
     return true;
   }
 
-  const ECesiumMetadataComponentType componentType =
+  const EITwinCesiumMetadataComponentType componentType =
       description.PropertyDetails.ComponentType;
-  if (componentType == ECesiumMetadataComponentType::None) {
+  if (componentType == EITwinCesiumMetadataComponentType::None) {
     // Can't coerce a numeric property that doesn't know its component type.
     return false;
   }
@@ -359,20 +359,20 @@ bool CesiumEncodedMetadataCoerce::canEncode(
   if (description.PropertyDetails.bIsArray) {
     // Only scalar and boolean types are supported. (Booleans will have been
     // verified earlier in this function).
-    return type == ECesiumMetadataType::Scalar;
+    return type == EITwinCesiumMetadataType::Scalar;
   }
 
   switch (type) {
-  case ECesiumMetadataType::Scalar:
+  case EITwinCesiumMetadataType::Scalar:
     // Scalars can be converted to vecNs.
     return true;
-  case ECesiumMetadataType::Vec2:
-  case ECesiumMetadataType::Vec3:
-  case ECesiumMetadataType::Vec4:
+  case EITwinCesiumMetadataType::Vec2:
+  case EITwinCesiumMetadataType::Vec3:
+  case EITwinCesiumMetadataType::Vec4:
     // VecNs can be converted to other vecNs of different dimensions, but not to
     // scalars.
     return description.EncodingDetails.Type !=
-           ECesiumEncodedMetadataType::Scalar;
+           EITwinCesiumEncodedMetadataType::Scalar;
   default:
     return false;
   }
@@ -385,7 +385,7 @@ void CesiumEncodedMetadataCoerce::encode(
     size_t pixelSize) {
   if (propertyDescription.PropertyDetails.bIsArray) {
     if (propertyDescription.EncodingDetails.ComponentType ==
-        ECesiumEncodedMetadataComponentType::Uint8) {
+        EITwinCesiumEncodedMetadataComponentType::Uint8) {
       coerceAndEncodeArrays<uint8>(
           propertyDescription,
           property,
@@ -393,7 +393,7 @@ void CesiumEncodedMetadataCoerce::encode(
           pixelSize);
     } else if (
         propertyDescription.EncodingDetails.ComponentType ==
-        ECesiumEncodedMetadataComponentType::Float) {
+        EITwinCesiumEncodedMetadataComponentType::Float) {
       coerceAndEncodeArrays<float>(
           propertyDescription,
           property,
@@ -404,18 +404,18 @@ void CesiumEncodedMetadataCoerce::encode(
   }
 
   if (propertyDescription.EncodingDetails.ComponentType ==
-      ECesiumEncodedMetadataComponentType::Uint8) {
+      EITwinCesiumEncodedMetadataComponentType::Uint8) {
     switch (propertyDescription.EncodingDetails.Type) {
-    case ECesiumEncodedMetadataType::Scalar:
+    case EITwinCesiumEncodedMetadataType::Scalar:
       coerceAndEncodeScalars<uint8>(property, textureData);
       break;
-    case ECesiumEncodedMetadataType::Vec2:
+    case EITwinCesiumEncodedMetadataType::Vec2:
       coerceAndEncodeVec2s<uint8>(property, textureData, pixelSize);
       break;
-    case ECesiumEncodedMetadataType::Vec3:
+    case EITwinCesiumEncodedMetadataType::Vec3:
       coerceAndEncodeVec3s<uint8>(property, textureData, pixelSize);
       break;
-    case ECesiumEncodedMetadataType::Vec4:
+    case EITwinCesiumEncodedMetadataType::Vec4:
       coerceAndEncodeVec4s<uint8>(property, textureData, pixelSize);
       break;
     default:
@@ -423,18 +423,18 @@ void CesiumEncodedMetadataCoerce::encode(
     }
   } else if (
       propertyDescription.EncodingDetails.ComponentType ==
-      ECesiumEncodedMetadataComponentType::Float) {
+      EITwinCesiumEncodedMetadataComponentType::Float) {
     switch (propertyDescription.EncodingDetails.Type) {
-    case ECesiumEncodedMetadataType::Scalar:
+    case EITwinCesiumEncodedMetadataType::Scalar:
       coerceAndEncodeScalars<float>(property, textureData);
       break;
-    case ECesiumEncodedMetadataType::Vec2:
+    case EITwinCesiumEncodedMetadataType::Vec2:
       coerceAndEncodeVec2s<float>(property, textureData, pixelSize);
       break;
-    case ECesiumEncodedMetadataType::Vec3:
+    case EITwinCesiumEncodedMetadataType::Vec3:
       coerceAndEncodeVec3s<float>(property, textureData, pixelSize);
       break;
-    case ECesiumEncodedMetadataType::Vec4:
+    case EITwinCesiumEncodedMetadataType::Vec4:
       coerceAndEncodeVec4s<float>(property, textureData, pixelSize);
       break;
     default:
@@ -543,11 +543,11 @@ void parseAndEncodeColors(
 
 bool CesiumEncodedMetadataParseColorFromString::canEncode(
     const FITwinCesiumPropertyTablePropertyDescription& description) {
-  return description.PropertyDetails.Type == ECesiumMetadataType::String &&
+  return description.PropertyDetails.Type == EITwinCesiumMetadataType::String &&
          !description.PropertyDetails.bIsArray &&
          (description.EncodingDetails.Type ==
-              ECesiumEncodedMetadataType::Vec3 ||
-          description.EncodingDetails.Type == ECesiumEncodedMetadataType::Vec4);
+              EITwinCesiumEncodedMetadataType::Vec3 ||
+          description.EncodingDetails.Type == EITwinCesiumEncodedMetadataType::Vec4);
 }
 
 void CesiumEncodedMetadataParseColorFromString::encode(
@@ -556,11 +556,11 @@ void CesiumEncodedMetadataParseColorFromString::encode(
     gsl::span<std::byte>& textureData,
     size_t pixelSize) {
   if (propertyDescription.EncodingDetails.ComponentType ==
-      ECesiumEncodedMetadataComponentType::Uint8) {
+      EITwinCesiumEncodedMetadataComponentType::Uint8) {
     parseAndEncodeColors<uint8>(property, textureData, pixelSize);
   } else if (
       propertyDescription.EncodingDetails.ComponentType ==
-      ECesiumEncodedMetadataComponentType::Float) {
+      EITwinCesiumEncodedMetadataComponentType::Float) {
     parseAndEncodeColors<float>(property, textureData, pixelSize);
   }
 }

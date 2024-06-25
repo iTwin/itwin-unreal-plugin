@@ -25,7 +25,7 @@ UITwinCesiumMetadataPrimitiveBlueprintLibrary::GetFeatureIdAttributes(
   const TArray<FITwinCesiumFeatureIdSet> featureIDSets =
       UITwinCesiumPrimitiveFeaturesBlueprintLibrary::GetFeatureIDSetsOfType(
           *MetadataPrimitive._pPrimitiveFeatures,
-          ECesiumFeatureIdSetType::Attribute);
+          EITwinCesiumFeatureIdSetType::Attribute);
 
   featureIDAttributes.Reserve(featureIDSets.Num());
   for (const FITwinCesiumFeatureIdSet& featureIDSet : featureIDSets) {
@@ -48,7 +48,7 @@ UITwinCesiumMetadataPrimitiveBlueprintLibrary::GetFeatureIdTextures(
   const TArray<FITwinCesiumFeatureIdSet> featureIDSets =
       UITwinCesiumPrimitiveFeaturesBlueprintLibrary::GetFeatureIDSetsOfType(
           *MetadataPrimitive._pPrimitiveFeatures,
-          ECesiumFeatureIdSetType::Texture);
+          EITwinCesiumFeatureIdSetType::Texture);
 
   featureIDTextures.Reserve(featureIDSets.Num());
   for (const FITwinCesiumFeatureIdSet& featureIDSet : featureIDSets) {

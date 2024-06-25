@@ -49,7 +49,7 @@ UITwinCesiumPrimitiveFeaturesBlueprintLibrary::GetFeatureIDSets(
 const TArray<FITwinCesiumFeatureIdSet>
 UITwinCesiumPrimitiveFeaturesBlueprintLibrary::GetFeatureIDSetsOfType(
     UPARAM(ref) const FITwinCesiumPrimitiveFeatures& PrimitiveFeatures,
-    ECesiumFeatureIdSetType Type) {
+    EITwinCesiumFeatureIdSetType Type) {
   TArray<FITwinCesiumFeatureIdSet> featureIdSets;
   for (int32 i = 0; i < PrimitiveFeatures._featureIdSets.Num(); i++) {
     const FITwinCesiumFeatureIdSet& featureIdSet =

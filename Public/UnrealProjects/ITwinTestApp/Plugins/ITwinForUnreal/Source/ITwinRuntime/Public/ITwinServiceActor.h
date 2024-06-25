@@ -36,6 +36,13 @@ public:
 	AITwinServiceActor();
 	virtual void Destroyed() override;
 
+	UFUNCTION(Category = "iTwin",
+		BlueprintCallable)
+	const UITwinWebServices* GetWebServices() const;
+
+	UFUNCTION(Category = "iTwin",
+		BlueprintCallable)
+	UITwinWebServices* GetMutableWebServices();
 
 protected:
 	UPROPERTY()

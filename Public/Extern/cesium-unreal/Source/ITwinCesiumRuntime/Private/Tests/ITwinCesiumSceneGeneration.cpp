@@ -77,23 +77,23 @@ bool SceneGenerationContext::areTilesetsDoneLoading() {
 }
 
 void SceneGenerationContext::trackForPlay() {
-  CesiumTestHelpers::trackForPlay(sunSky);
-  CesiumTestHelpers::trackForPlay(georeference);
-  CesiumTestHelpers::trackForPlay(pawn);
+  ITwinCesiumTestHelpers::trackForPlay(sunSky);
+  ITwinCesiumTestHelpers::trackForPlay(georeference);
+  ITwinCesiumTestHelpers::trackForPlay(pawn);
 
   std::vector<AITwinCesium3DTileset*>::iterator it;
   for (it = tilesets.begin(); it != tilesets.end(); ++it) {
     AITwinCesium3DTileset* tileset = *it;
-    CesiumTestHelpers::trackForPlay(tileset);
+    ITwinCesiumTestHelpers::trackForPlay(tileset);
   }
 }
 
 void SceneGenerationContext::initForPlay(
     SceneGenerationContext& creationContext) {
   world = GEditor->PlayWorld;
-  sunSky = CesiumTestHelpers::findInPlay(creationContext.sunSky);
-  georeference = CesiumTestHelpers::findInPlay(creationContext.georeference);
-  pawn = CesiumTestHelpers::findInPlay(creationContext.pawn);
+  sunSky = ITwinCesiumTestHelpers::findInPlay(creationContext.sunSky);
+  georeference = ITwinCesiumTestHelpers::findInPlay(creationContext.georeference);
+  pawn = ITwinCesiumTestHelpers::findInPlay(creationContext.pawn);
 
   startPosition = creationContext.startPosition;
   startRotation = creationContext.startRotation;
@@ -105,7 +105,7 @@ void SceneGenerationContext::initForPlay(
   std::vector<AITwinCesium3DTileset*>::iterator it;
   for (it = creationTilesets.begin(); it != creationTilesets.end(); ++it) {
     AITwinCesium3DTileset* creationTileset = *it;
-    AITwinCesium3DTileset* tileset = CesiumTestHelpers::findInPlay(creationTileset);
+    AITwinCesium3DTileset* tileset = ITwinCesiumTestHelpers::findInPlay(creationTileset);
     tilesets.push_back(tileset);
   }
 }

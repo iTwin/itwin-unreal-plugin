@@ -12,7 +12,7 @@
  * The Blueprint type that can losslessly represent values of a given property.
  */
 UENUM(BlueprintType)
-enum class ECesiumMetadataBlueprintType : uint8 {
+enum class EITwinCesiumMetadataBlueprintType : uint8 {
   /* Indicates a value cannot be represented in Blueprints. */
   None,
   /* Indicates a value is best represented as a Boolean. */
@@ -67,7 +67,7 @@ static_assert(int(CesiumGltf::PropertyComponentType::None) == 0);
  * of a metadata property instead.
  */
 UENUM(BlueprintType)
-enum class ECesiumMetadataTrueType_DEPRECATED : uint8 {
+enum class EITwinCesiumMetadataTrueType_DEPRECATED : uint8 {
   None_DEPRECATED = 0,
   Int8_DEPRECATED,
   Uint8_DEPRECATED,
@@ -87,7 +87,7 @@ enum class ECesiumMetadataTrueType_DEPRECATED : uint8 {
 
 // True types are cast, reintepreted, or parsed before being packed into gpu
 // types when encoding into a texture.
-enum class ECesiumMetadataPackedGpuType_DEPRECATED : uint8 {
+enum class EITwinCesiumMetadataPackedGpuType_DEPRECATED : uint8 {
   None_DEPRECATED,
   Uint8_DEPRECATED,
   Float_DEPRECATED
@@ -97,7 +97,7 @@ enum class ECesiumMetadataPackedGpuType_DEPRECATED : uint8 {
  * The type of a metadata property in EXT_structural_metadata.
  */
 UENUM(BlueprintType)
-enum class ECesiumMetadataType : uint8 {
+enum class EITwinCesiumMetadataType : uint8 {
   Invalid = 0,
   Scalar = int(CesiumGltf::PropertyType::Scalar),
   Vec2 = int(CesiumGltf::PropertyType::Vec2),
@@ -116,7 +116,7 @@ enum class ECesiumMetadataType : uint8 {
  * applicable if the property has a Scalar, VecN, or MatN type.
  */
 UENUM(BlueprintType)
-enum class ECesiumMetadataComponentType : uint8 {
+enum class EITwinCesiumMetadataComponentType : uint8 {
   None = 0,
   Int8 = int(CesiumGltf::PropertyComponentType::Int8),
   Uint8 = int(CesiumGltf::PropertyComponentType::Uint8),
@@ -139,13 +139,13 @@ struct ITWINCESIUMRUNTIME_API FITwinCesiumMetadataValueType {
   GENERATED_USTRUCT_BODY()
 
   FITwinCesiumMetadataValueType()
-      : Type(ECesiumMetadataType::Invalid),
-        ComponentType(ECesiumMetadataComponentType::None),
+      : Type(EITwinCesiumMetadataType::Invalid),
+        ComponentType(EITwinCesiumMetadataComponentType::None),
         bIsArray(false) {}
 
   FITwinCesiumMetadataValueType(
-      ECesiumMetadataType InType,
-      ECesiumMetadataComponentType InComponentType,
+      EITwinCesiumMetadataType InType,
+      EITwinCesiumMetadataComponentType InComponentType,
       bool IsArray = false)
       : Type(InType), ComponentType(InComponentType), bIsArray(IsArray) {}
 
@@ -153,7 +153,7 @@ struct ITWINCESIUMRUNTIME_API FITwinCesiumMetadataValueType {
    * The type of the metadata property or value.
    */
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cesium")
-  ECesiumMetadataType Type;
+  EITwinCesiumMetadataType Type;
 
   /**
    * The component of the metadata property or value. Only applies when the type
@@ -165,8 +165,8 @@ struct ITWINCESIUMRUNTIME_API FITwinCesiumMetadataValueType {
       Category = "Cesium",
       Meta =
           (EditCondition =
-               "Type != ECesiumMetadataType::Invalid && Type != ECesiumMetadataType::Boolean && Type != ECesiumMetadataType::Enum && Type != ECesiumMetadataType::String"))
-  ECesiumMetadataComponentType ComponentType;
+               "Type != EITwinCesiumMetadataType::Invalid && Type != EITwinCesiumMetadataType::Boolean && Type != EITwinCesiumMetadataType::Enum && Type != EITwinCesiumMetadataType::String"))
+  EITwinCesiumMetadataComponentType ComponentType;
 
   /**
    * Whether or not this represents an array containing elements of the
@@ -188,20 +188,20 @@ struct ITWINCESIUMRUNTIME_API FITwinCesiumMetadataValueType {
 
 template <typename T>
 static FITwinCesiumMetadataValueType TypeToMetadataValueType() {
-  ECesiumMetadataType type;
-  ECesiumMetadataComponentType componentType;
+  EITwinCesiumMetadataType type;
+  EITwinCesiumMetadataComponentType componentType;
   bool isArray;
 
   if constexpr (CesiumGltf::IsMetadataArray<T>::value) {
     using ArrayType = typename CesiumGltf::MetadataArrayType<T>::type;
     type =
-        ECesiumMetadataType(CesiumGltf::TypeToPropertyType<ArrayType>::value);
-    componentType = ECesiumMetadataComponentType(
+        EITwinCesiumMetadataType(CesiumGltf::TypeToPropertyType<ArrayType>::value);
+    componentType = EITwinCesiumMetadataComponentType(
         CesiumGltf::TypeToPropertyType<ArrayType>::component);
     isArray = true;
   } else {
-    type = ECesiumMetadataType(CesiumGltf::TypeToPropertyType<T>::value);
-    componentType = ECesiumMetadataComponentType(
+    type = EITwinCesiumMetadataType(CesiumGltf::TypeToPropertyType<T>::value);
+    componentType = EITwinCesiumMetadataComponentType(
         CesiumGltf::TypeToPropertyType<T>::component);
     isArray = false;
   }
@@ -214,36 +214,36 @@ static FITwinCesiumMetadataValueType TypeToMetadataValueType() {
  * and strings.
  */
 static size_t GetMetadataTypeByteSize(
-    ECesiumMetadataType Type,
-    ECesiumMetadataComponentType ComponentType) {
+    EITwinCesiumMetadataType Type,
+    EITwinCesiumMetadataComponentType ComponentType) {
   size_t componentByteSize = 0;
-  if (ComponentType != ECesiumMetadataComponentType::None)
+  if (ComponentType != EITwinCesiumMetadataComponentType::None)
     componentByteSize = CesiumGltf::getSizeOfComponentType(
         CesiumGltf::PropertyComponentType(ComponentType));
 
   size_t byteSize = componentByteSize;
   switch (Type) {
-  case ECesiumMetadataType::Boolean:
+  case EITwinCesiumMetadataType::Boolean:
     byteSize = sizeof(bool);
     break;
-  case ECesiumMetadataType::Scalar:
+  case EITwinCesiumMetadataType::Scalar:
     break;
-  case ECesiumMetadataType::Vec2:
+  case EITwinCesiumMetadataType::Vec2:
     byteSize *= 2;
     break;
-  case ECesiumMetadataType::Vec3:
+  case EITwinCesiumMetadataType::Vec3:
     byteSize *= 3;
     break;
-  case ECesiumMetadataType::Vec4:
+  case EITwinCesiumMetadataType::Vec4:
     byteSize *= 4;
     break;
-  case ECesiumMetadataType::Mat2:
+  case EITwinCesiumMetadataType::Mat2:
     byteSize *= 4;
     break;
-  case ECesiumMetadataType::Mat3:
+  case EITwinCesiumMetadataType::Mat3:
     byteSize *= 9;
     break;
-  case ECesiumMetadataType::Mat4:
+  case EITwinCesiumMetadataType::Mat4:
     byteSize *= 16;
     break;
   default:

@@ -55,7 +55,7 @@ bool TimeLoadingCommand::Update() {
 
     // Start test mark, turn updates back on
     pass.startMark = FPlatformTime::Seconds();
-    UE_LOG(LogCesium, Display, TEXT("-- Load start mark -- %s"), *loggingName);
+    UE_LOG(LogITwinCesium, Display, TEXT("-- Load start mark -- %s"), *loggingName);
 
     playContext.setSuspendUpdate(false);
 
@@ -77,17 +77,17 @@ bool TimeLoadingCommand::Update() {
 
   if (tilesetsloaded || timedOut) {
     pass.endMark = timeMark;
-    UE_LOG(LogCesium, Display, TEXT("-- Load end mark -- %s"), *loggingName);
+    UE_LOG(LogITwinCesium, Display, TEXT("-- Load end mark -- %s"), *loggingName);
 
     if (timedOut) {
       UE_LOG(
-          LogCesium,
+          LogITwinCesium,
           Error,
           TEXT("TIMED OUT: Loading stopped after %.2f seconds"),
           pass.elapsedTime);
     } else {
       UE_LOG(
-          LogCesium,
+          LogITwinCesium,
           Display,
           TEXT("Tileset load completed in %.2f seconds"),
           pass.elapsedTime);
@@ -112,7 +112,7 @@ DEFINE_LATENT_AUTOMATION_COMMAND_ONE_PARAMETER(
     screenshotName);
 bool LoadTestScreenshotCommand::Update() {
   UE_LOG(
-      LogCesium,
+      LogITwinCesium,
       Display,
       TEXT("Requesting screenshot to /Saved/Screenshots/WindowsEditor..."));
 
@@ -136,7 +136,7 @@ void defaultReportStep(const std::vector<TestPass>& testPasses) {
   }
   reportStr += "-----------------------------\n";
 
-  UE_LOG(LogCesium, Display, TEXT("%s"), *reportStr);
+  UE_LOG(LogITwinCesium, Display, TEXT("%s"), *reportStr);
 }
 
 DEFINE_LATENT_AUTOMATION_COMMAND_ONE_PARAMETER(
@@ -177,14 +177,14 @@ DEFINE_LATENT_AUTOMATION_COMMAND_TWO_PARAMETER(
 bool InitForPlayWhenReady::Update() {
   if (!GEditor || !GEditor->IsPlayingSessionInEditor())
     return false;
-  UE_LOG(LogCesium, Display, TEXT("Play in Editor ready..."));
+  UE_LOG(LogITwinCesium, Display, TEXT("Play in Editor ready..."));
   playContext.initForPlay(creationContext);
   return true;
 }
 
 void clearCacheDb() {
   std::shared_ptr<CesiumAsync::ICacheDatabase> pCacheDatabase =
-      getCacheDatabase();
+      ITwinCesium::getCacheDatabase();
   pCacheDatabase->clearAll();
 }
 
@@ -207,11 +207,11 @@ bool RunLoadTest(
   //
   // Programmatically set up the world
   //
-  UE_LOG(LogCesium, Display, TEXT("Creating common world objects..."));
+  UE_LOG(LogITwinCesium, Display, TEXT("Creating common world objects..."));
   createCommonWorldObjects(context.creationContext);
 
   // Configure location specific objects
-  UE_LOG(LogCesium, Display, TEXT("Setting up location..."));
+  UE_LOG(LogITwinCesium, Display, TEXT("Setting up location..."));
   locationSetup(context.creationContext);
   context.creationContext.trackForPlay();
 

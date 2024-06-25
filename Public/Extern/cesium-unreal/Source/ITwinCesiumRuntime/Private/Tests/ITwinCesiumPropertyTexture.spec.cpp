@@ -43,7 +43,7 @@ void FITwinCesiumPropertyTextureSpec::Define() {
           "PropertyTextureStatus",
           UITwinCesiumPropertyTextureBlueprintLibrary::GetPropertyTextureStatus(
               propertyTexture),
-          ECesiumPropertyTextureStatus::ErrorInvalidPropertyTexture);
+          EITwinCesiumPropertyTextureStatus::ErrorInvalidPropertyTexture);
       TestTrue(
           "Properties",
           UITwinCesiumPropertyTextureBlueprintLibrary::GetProperties(propertyTexture)
@@ -58,7 +58,7 @@ void FITwinCesiumPropertyTextureSpec::Define() {
           "PropertyTextureStatus",
           UITwinCesiumPropertyTextureBlueprintLibrary::GetPropertyTextureStatus(
               propertyTexture),
-          ECesiumPropertyTextureStatus::ErrorInvalidPropertyTextureClass);
+          EITwinCesiumPropertyTextureStatus::ErrorInvalidPropertyTextureClass);
       TestTrue(
           "Properties",
           UITwinCesiumPropertyTextureBlueprintLibrary::GetProperties(propertyTexture)
@@ -73,7 +73,7 @@ void FITwinCesiumPropertyTextureSpec::Define() {
           "PropertyTextureStatus",
           UITwinCesiumPropertyTextureBlueprintLibrary::GetPropertyTextureStatus(
               propertyTexture),
-          ECesiumPropertyTextureStatus::ErrorInvalidPropertyTextureClass);
+          EITwinCesiumPropertyTextureStatus::ErrorInvalidPropertyTextureClass);
       TestTrue(
           "Properties",
           UITwinCesiumPropertyTextureBlueprintLibrary::GetProperties(propertyTexture)
@@ -98,7 +98,7 @@ void FITwinCesiumPropertyTextureSpec::Define() {
           "PropertyTextureStatus",
           UITwinCesiumPropertyTextureBlueprintLibrary::GetPropertyTextureStatus(
               propertyTexture),
-          ECesiumPropertyTextureStatus::Valid);
+          EITwinCesiumPropertyTextureStatus::Valid);
       TestEqual<int64>(
           "Property Count",
           UITwinCesiumPropertyTextureBlueprintLibrary::GetProperties(propertyTexture)
@@ -126,7 +126,7 @@ void FITwinCesiumPropertyTextureSpec::Define() {
           "PropertyTextureStatus",
           UITwinCesiumPropertyTextureBlueprintLibrary::GetPropertyTextureStatus(
               propertyTexture),
-          ECesiumPropertyTextureStatus::Valid);
+          EITwinCesiumPropertyTextureStatus::Valid);
       TestEqual<int64>(
           "Property Count",
           UITwinCesiumPropertyTextureBlueprintLibrary::GetProperties(propertyTexture)
@@ -144,7 +144,7 @@ void FITwinCesiumPropertyTextureSpec::Define() {
           "PropertyTextureStatus",
           UITwinCesiumPropertyTextureBlueprintLibrary::GetPropertyTextureStatus(
               propertyTexture),
-          ECesiumPropertyTextureStatus::ErrorInvalidPropertyTexture);
+          EITwinCesiumPropertyTextureStatus::ErrorInvalidPropertyTexture);
       const auto properties =
           UITwinCesiumPropertyTextureBlueprintLibrary::GetProperties(
               propertyTexture);
@@ -184,7 +184,7 @@ void FITwinCesiumPropertyTextureSpec::Define() {
           "PropertyTextureStatus",
           UITwinCesiumPropertyTextureBlueprintLibrary::GetPropertyTextureStatus(
               propertyTexture),
-          ECesiumPropertyTextureStatus::Valid);
+          EITwinCesiumPropertyTextureStatus::Valid);
 
       const auto properties =
           UITwinCesiumPropertyTextureBlueprintLibrary::GetProperties(
@@ -199,7 +199,7 @@ void FITwinCesiumPropertyTextureSpec::Define() {
           "PropertyTexturePropertyStatus",
           UITwinCesiumPropertyTexturePropertyBlueprintLibrary::
               GetPropertyTexturePropertyStatus(scalarProperty),
-          ECesiumPropertyTexturePropertyStatus::Valid);
+          EITwinCesiumPropertyTexturePropertyStatus::Valid);
       for (size_t i = 0; i < texCoords.size(); i++) {
         std::string label("Property value " + std::to_string(i));
         TestEqual(
@@ -219,7 +219,7 @@ void FITwinCesiumPropertyTextureSpec::Define() {
           "PropertyTexturePropertyStatus",
           UITwinCesiumPropertyTexturePropertyBlueprintLibrary::
               GetPropertyTexturePropertyStatus(vec2Property),
-          ECesiumPropertyTexturePropertyStatus::Valid);
+          EITwinCesiumPropertyTexturePropertyStatus::Valid);
       for (size_t i = 0; i < texCoords.size(); i++) {
         std::string label("Property value " + std::to_string(i));
         FVector2D expected(
@@ -254,7 +254,7 @@ void FITwinCesiumPropertyTextureSpec::Define() {
           "PropertyTextureStatus",
           UITwinCesiumPropertyTextureBlueprintLibrary::GetPropertyTextureStatus(
               propertyTexture),
-          ECesiumPropertyTextureStatus::Valid);
+          EITwinCesiumPropertyTextureStatus::Valid);
 
       const auto properties =
           UITwinCesiumPropertyTextureBlueprintLibrary::GetProperties(
@@ -269,7 +269,7 @@ void FITwinCesiumPropertyTextureSpec::Define() {
           "PropertyTexturePropertyStatus",
           UITwinCesiumPropertyTexturePropertyBlueprintLibrary::
               GetPropertyTexturePropertyStatus(property),
-          ECesiumPropertyTexturePropertyStatus::ErrorInvalidPropertyData);
+          EITwinCesiumPropertyTexturePropertyStatus::ErrorInvalidPropertyData);
     });
   });
 
@@ -282,7 +282,7 @@ void FITwinCesiumPropertyTextureSpec::Define() {
           "PropertyTextureStatus",
           UITwinCesiumPropertyTextureBlueprintLibrary::GetPropertyTextureStatus(
               propertyTexture),
-          ECesiumPropertyTextureStatus::ErrorInvalidPropertyTexture);
+          EITwinCesiumPropertyTextureStatus::ErrorInvalidPropertyTexture);
       const auto properties =
           UITwinCesiumPropertyTextureBlueprintLibrary::GetProperties(
               propertyTexture);
@@ -333,7 +333,7 @@ void FITwinCesiumPropertyTextureSpec::Define() {
           "PropertyTextureStatus",
           UITwinCesiumPropertyTextureBlueprintLibrary::GetPropertyTextureStatus(
               propertyTexture),
-          ECesiumPropertyTextureStatus::Valid);
+          EITwinCesiumPropertyTextureStatus::Valid);
 
       const auto propertyNames =
           UITwinCesiumPropertyTextureBlueprintLibrary::GetPropertyNames(
@@ -371,7 +371,7 @@ void FITwinCesiumPropertyTextureSpec::Define() {
           "PropertyTextureStatus",
           UITwinCesiumPropertyTextureBlueprintLibrary::GetPropertyTextureStatus(
               propertyTexture),
-          ECesiumPropertyTextureStatus::Valid);
+          EITwinCesiumPropertyTextureStatus::Valid);
       TestEqual(
           "Property Count",
           UITwinCesiumPropertyTextureBlueprintLibrary::GetProperties(propertyTexture)
@@ -386,7 +386,7 @@ void FITwinCesiumPropertyTextureSpec::Define() {
           "PropertyTexturePropertyStatus",
           UITwinCesiumPropertyTexturePropertyBlueprintLibrary::
               GetPropertyTexturePropertyStatus(property),
-          ECesiumPropertyTexturePropertyStatus::ErrorInvalidProperty);
+          EITwinCesiumPropertyTexturePropertyStatus::ErrorInvalidProperty);
     });
 
     It("finds existing properties", [this]() {
@@ -422,7 +422,7 @@ void FITwinCesiumPropertyTextureSpec::Define() {
           "PropertyTextureStatus",
           UITwinCesiumPropertyTextureBlueprintLibrary::GetPropertyTextureStatus(
               propertyTexture),
-          ECesiumPropertyTextureStatus::Valid);
+          EITwinCesiumPropertyTextureStatus::Valid);
       TestEqual(
           "Property Count",
           UITwinCesiumPropertyTextureBlueprintLibrary::GetProperties(propertyTexture)
@@ -437,7 +437,7 @@ void FITwinCesiumPropertyTextureSpec::Define() {
           "PropertyTexturePropertyStatus",
           UITwinCesiumPropertyTexturePropertyBlueprintLibrary::
               GetPropertyTexturePropertyStatus(scalarProperty),
-          ECesiumPropertyTexturePropertyStatus::Valid);
+          EITwinCesiumPropertyTexturePropertyStatus::Valid);
 
       FITwinCesiumPropertyTextureProperty vec2Property =
           UITwinCesiumPropertyTextureBlueprintLibrary::FindProperty(
@@ -447,7 +447,7 @@ void FITwinCesiumPropertyTextureSpec::Define() {
           "PropertyTexturePropertyStatus",
           UITwinCesiumPropertyTexturePropertyBlueprintLibrary::
               GetPropertyTexturePropertyStatus(vec2Property),
-          ECesiumPropertyTexturePropertyStatus::Valid);
+          EITwinCesiumPropertyTexturePropertyStatus::Valid);
     });
   });
 
@@ -461,7 +461,7 @@ void FITwinCesiumPropertyTextureSpec::Define() {
           "PropertyTextureStatus",
           UITwinCesiumPropertyTextureBlueprintLibrary::GetPropertyTextureStatus(
               propertyTexture),
-          ECesiumPropertyTextureStatus::ErrorInvalidPropertyTexture);
+          EITwinCesiumPropertyTextureStatus::ErrorInvalidPropertyTexture);
       TestTrue(
           "Properties",
           UITwinCesiumPropertyTextureBlueprintLibrary::GetProperties(propertyTexture)
@@ -508,7 +508,7 @@ void FITwinCesiumPropertyTextureSpec::Define() {
           "PropertyTextureStatus",
           UITwinCesiumPropertyTextureBlueprintLibrary::GetPropertyTextureStatus(
               propertyTexture),
-          ECesiumPropertyTextureStatus::Valid);
+          EITwinCesiumPropertyTextureStatus::Valid);
       TestEqual(
           "Property Count",
           UITwinCesiumPropertyTextureBlueprintLibrary::GetProperties(propertyTexture)
@@ -566,7 +566,7 @@ void FITwinCesiumPropertyTextureSpec::Define() {
           "PropertyTextureStatus",
           UITwinCesiumPropertyTextureBlueprintLibrary::GetPropertyTextureStatus(
               propertyTexture),
-          ECesiumPropertyTextureStatus::Valid);
+          EITwinCesiumPropertyTextureStatus::Valid);
       TestEqual(
           "Property Count",
           UITwinCesiumPropertyTextureBlueprintLibrary::GetProperties(propertyTexture)
@@ -663,7 +663,7 @@ void FITwinCesiumPropertyTextureSpec::Define() {
           "PropertyTextureStatus",
           UITwinCesiumPropertyTextureBlueprintLibrary::GetPropertyTextureStatus(
               propertyTexture),
-          ECesiumPropertyTextureStatus::Valid);
+          EITwinCesiumPropertyTextureStatus::Valid);
       TestEqual(
           "Property Count",
           UITwinCesiumPropertyTextureBlueprintLibrary::GetProperties(propertyTexture)
@@ -716,7 +716,7 @@ void FITwinCesiumPropertyTextureSpec::Define() {
           "PropertyTextureStatus",
           UITwinCesiumPropertyTextureBlueprintLibrary::GetPropertyTextureStatus(
               propertyTexture),
-          ECesiumPropertyTextureStatus::Valid);
+          EITwinCesiumPropertyTextureStatus::Valid);
       TestEqual(
           "Property Count",
           UITwinCesiumPropertyTextureBlueprintLibrary::GetProperties(propertyTexture)
@@ -794,7 +794,7 @@ void FITwinCesiumPropertyTextureSpec::Define() {
           "PropertyTextureStatus",
           UITwinCesiumPropertyTextureBlueprintLibrary::GetPropertyTextureStatus(
               propertyTexture),
-          ECesiumPropertyTextureStatus::Valid);
+          EITwinCesiumPropertyTextureStatus::Valid);
       TestEqual(
           "Property Count",
           UITwinCesiumPropertyTextureBlueprintLibrary::GetProperties(propertyTexture)

@@ -4,7 +4,7 @@
 #include "ITwinCesiumGeoreference.h"
 #include "Engine/Engine.h"
 
-namespace CesiumTestHelpers {
+namespace ITwinCesiumTestHelpers {
 
 UWorld* getGlobalWorldContext() {
   const TIndirectArray<FWorldContext>& worldContexts =
@@ -72,4 +72,4 @@ void trackForPlay(UActorComponent* pEditorComponent) {
   pEditorComponent->ComponentTags.Add(getUniqueTag(pEditorComponent));
 }
 
-} // namespace CesiumTestHelpers
+} // namespace ITwinCesiumTestHelpers

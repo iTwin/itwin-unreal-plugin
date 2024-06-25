@@ -26,7 +26,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGetExportsComplete, bool, bSucce
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGetExportInfoComplete, bool, bSuccess, FITwinExportInfo, Export);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnStartExportComplete, bool, bSuccess, FString, ExportId);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnAddSavedViewComplete, bool, bSuccess, FSavedViewInfo, SavedViewInfo);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnDeleteSavedViewComplete, bool, bSuccess, FString, Response);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnDeleteSavedViewComplete, bool, bSuccess, FString, SavedViewId, FString, Response);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnEditSavedViewComplete, bool, bSuccess, FSavedView, SavedView, FSavedViewInfo, SavedViewInfo);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGetSavedViewsComplete, bool, bSuccess, FSavedViewInfos, SavedViews);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnGetSavedViewComplete, bool, bSuccess, FSavedView, SavedView, FSavedViewInfo, SavedViewInfo);
@@ -87,9 +87,11 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
 	void AddSavedView(FString ITwinId, FString IModelId, FSavedView SavedView, FSavedViewInfo SavedViewInfo);
+	void OnSavedViewAdded(bool bSuccess, FSavedViewInfo const& SavedViewInfo);
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
 	void DeleteSavedView(FString SavedViewId);
+	void OnSavedViewDeleted(bool bSuccess, FString const& SavedViewId, FString const& Response) const;
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
 	void EditSavedView(FSavedView SavedView, FSavedViewInfo SavedViewInfo);
@@ -156,6 +158,7 @@ public:
 	bool HasSameConnection(AITwinServerConnection const* Connection) const;
 
 	void SetObserver(IITwinWebServicesObserver* InObserver);
+	bool HasObserver(IITwinWebServicesObserver const* Observer) const;
 
 	static void SetITwinAppIDArray(ITwin::AppIDArray const& iTwinAppIDs);
 
@@ -177,17 +180,24 @@ private:
 	void OnAuthDoneImpl(bool bSuccess, FString const& Error, bool bBroadcastResult = true);
 
 	virtual void OnAuthorizationDone(bool bSuccess, FString const& Error) override;
-
 	FString GetAuthToken() const;
 
-	void SetLastError(FString const& InError);
-
 	void DoGetiModelChangesets(FString const& iModelId, bool bRestrictToLatest);
+
+	/// This Request ID is relative to each instance of UITwinWebServices, it is *not* a global unique
+	/// identifier for requests (hence it should be kept it private...)
+	/// For now its only purpose is to test if the last error message was created for current request or not.
+	using RequestID = uint32;
+
+	void SetLastError(FString const& InError, RequestID InRequestId);
+
+	//! Returns the error stored for the given request, if any.
+	FString GetRequestError(RequestID InRequestId) const;
 
 	struct FITwinAPIRequestInfo;
 
 	template <typename ResultDataType, class FunctorType, class DelegateAsFunctor>
-	void TProcessHttpRequest(
+	RequestID TProcessHttpRequest(
 		FITwinAPIRequestInfo const& RequestInfo,
 		FunctorType&& InFunctor,
 		DelegateAsFunctor&& InResultFunctor);

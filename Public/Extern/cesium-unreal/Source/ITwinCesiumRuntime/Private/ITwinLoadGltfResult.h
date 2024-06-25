@@ -52,13 +52,13 @@ struct LoadPrimitiveResult {
       pCollisionMesh = nullptr;
   std::string name{};
 
-  TUniquePtr<CesiumTextureUtility::LoadedTextureResult> baseColorTexture;
-  TUniquePtr<CesiumTextureUtility::LoadedTextureResult>
+  TUniquePtr<ITwinCesiumTextureUtility::LoadedTextureResult> baseColorTexture;
+  TUniquePtr<ITwinCesiumTextureUtility::LoadedTextureResult>
       metallicRoughnessTexture;
-  TUniquePtr<CesiumTextureUtility::LoadedTextureResult> normalTexture;
-  TUniquePtr<CesiumTextureUtility::LoadedTextureResult> emissiveTexture;
-  TUniquePtr<CesiumTextureUtility::LoadedTextureResult> occlusionTexture;
-  TUniquePtr<CesiumTextureUtility::LoadedTextureResult> waterMaskTexture;
+  TUniquePtr<ITwinCesiumTextureUtility::LoadedTextureResult> normalTexture;
+  TUniquePtr<ITwinCesiumTextureUtility::LoadedTextureResult> emissiveTexture;
+  TUniquePtr<ITwinCesiumTextureUtility::LoadedTextureResult> occlusionTexture;
+  TUniquePtr<ITwinCesiumTextureUtility::LoadedTextureResult> waterMaskTexture;
   std::unordered_map<std::string, uint32_t> textureCoordinateParameters;
   /**
    * A map of feature ID set names to their corresponding texture coordinate
@@ -93,14 +93,14 @@ struct LoadPrimitiveResult {
   FITwinCesiumPrimitiveMetadata Metadata{};
 
   /** Encodes the EXT_mesh_features on a mesh primitive.*/
-  CesiumEncodedFeaturesMetadata::EncodedPrimitiveFeatures EncodedFeatures{};
+  ITwinCesiumEncodedFeaturesMetadata::EncodedPrimitiveFeatures EncodedFeatures{};
   /** Encodes the EXT_structural_metadata on a mesh primitive.*/
-  CesiumEncodedFeaturesMetadata::EncodedPrimitiveMetadata EncodedMetadata{};
+  ITwinCesiumEncodedFeaturesMetadata::EncodedPrimitiveMetadata EncodedMetadata{};
 
   PRAGMA_DISABLE_DEPRECATION_WARNINGS
   // For backwards compatibility with CesiumEncodedMetadataComponent.
   FITwinCesiumMetadataPrimitive Metadata_DEPRECATED{};
-  std::optional<CesiumEncodedMetadataUtility::EncodedMetadataPrimitive>
+  std::optional<ITwinCesiumEncodedMetadataUtility::EncodedMetadataPrimitive>
       EncodedMetadata_DEPRECATED = std::nullopt;
   PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
@@ -173,10 +173,10 @@ struct LoadModelResult {
   FITwinCesiumModelMetadata Metadata{};
 
   // Encodes the EXT_structural_metadata on a glTF model.
-  CesiumEncodedFeaturesMetadata::EncodedModelMetadata EncodedMetadata{};
+  ITwinCesiumEncodedFeaturesMetadata::EncodedModelMetadata EncodedMetadata{};
 
   // For backwards compatibility with CesiumEncodedMetadataComponent.
-  std::optional<CesiumEncodedMetadataUtility::EncodedMetadata>
+  std::optional<ITwinCesiumEncodedMetadataUtility::EncodedMetadata>
       EncodedMetadata_DEPRECATED{};
 };
 } // namespace LoadGltfResult

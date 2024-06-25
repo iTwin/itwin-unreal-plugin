@@ -69,7 +69,7 @@ void setupForPompidou(SceneGenerationContext& context) {
   context.sunSky->UpdateSun();
 
   AITwinCesium3DTileset* tileset = context.world->SpawnActor<AITwinCesium3DTileset>();
-  tileset->SetTilesetSource(ETilesetSource::FromCesiumIon);
+  tileset->SetTilesetSource(EITwinTilesetSource::FromCesiumIon);
   tileset->SetIonAssetID(2275207);
   tileset->SetIonAccessToken(SceneGenerationContext::testIonToken);
   tileset->SetActorLabel(TEXT("Center Pompidou, Paris, France"));
@@ -87,7 +87,7 @@ void setupForChrysler(SceneGenerationContext& context) {
   context.sunSky->UpdateSun();
 
   AITwinCesium3DTileset* tileset = context.world->SpawnActor<AITwinCesium3DTileset>();
-  tileset->SetTilesetSource(ETilesetSource::FromCesiumIon);
+  tileset->SetTilesetSource(EITwinTilesetSource::FromCesiumIon);
   tileset->SetIonAssetID(2275207);
   tileset->SetIonAccessToken(SceneGenerationContext::testIonToken);
   tileset->SetActorLabel(TEXT("Chrysler Building, NYC"));
@@ -105,7 +105,7 @@ void setupForGuggenheim(SceneGenerationContext& context) {
   context.sunSky->UpdateSun();
 
   AITwinCesium3DTileset* tileset = context.world->SpawnActor<AITwinCesium3DTileset>();
-  tileset->SetTilesetSource(ETilesetSource::FromCesiumIon);
+  tileset->SetTilesetSource(EITwinTilesetSource::FromCesiumIon);
   tileset->SetIonAssetID(2275207);
   tileset->SetIonAccessToken(SceneGenerationContext::testIonToken);
   tileset->SetActorLabel(TEXT("Guggenheim Museum, Bilbao, Spain"));
@@ -123,7 +123,7 @@ void setupForDeathValley(SceneGenerationContext& context) {
   context.sunSky->UpdateSun();
 
   AITwinCesium3DTileset* tileset = context.world->SpawnActor<AITwinCesium3DTileset>();
-  tileset->SetTilesetSource(ETilesetSource::FromCesiumIon);
+  tileset->SetTilesetSource(EITwinTilesetSource::FromCesiumIon);
   tileset->SetIonAssetID(2275207);
   tileset->SetIonAccessToken(SceneGenerationContext::testIonToken);
   tileset->SetActorLabel(
@@ -142,7 +142,7 @@ void setupForTokyo(SceneGenerationContext& context) {
   context.sunSky->UpdateSun();
 
   AITwinCesium3DTileset* tileset = context.world->SpawnActor<AITwinCesium3DTileset>();
-  tileset->SetTilesetSource(ETilesetSource::FromCesiumIon);
+  tileset->SetTilesetSource(EITwinTilesetSource::FromCesiumIon);
   tileset->SetIonAssetID(2275207);
   tileset->SetIonAccessToken(SceneGenerationContext::testIonToken);
   tileset->SetActorLabel(TEXT("Tokyo Tower, Tokyo, Japan"));
@@ -157,7 +157,7 @@ void setupForGoogleplex(SceneGenerationContext& context) {
       90.0f);
 
   AITwinCesium3DTileset* tileset = context.world->SpawnActor<AITwinCesium3DTileset>();
-  tileset->SetTilesetSource(ETilesetSource::FromCesiumIon);
+  tileset->SetTilesetSource(EITwinTilesetSource::FromCesiumIon);
   tileset->SetIonAssetID(2275207);
   tileset->SetIonAccessToken(SceneGenerationContext::testIonToken);
   tileset->SetActorLabel(TEXT("Google Photorealistic 3D Tiles"));
@@ -248,7 +248,7 @@ bool FGoogleTilesMaxTileLoads::RunTest(const FString& Parameters) {
                        SceneGenerationContext& context,
                        TestPass::TestingParameter parameter) {
     std::shared_ptr<CesiumAsync::ICacheDatabase> pCacheDatabase =
-        getCacheDatabase();
+        ITwinCesium::getCacheDatabase();
     pCacheDatabase->clearAll();
 
     int maxLoadsTarget = std::get<int>(parameter);

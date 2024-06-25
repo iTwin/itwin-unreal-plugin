@@ -18,7 +18,7 @@ struct ImageCesium;
 struct Texture;
 } // namespace CesiumGltf
 
-namespace CesiumTextureUtility {
+namespace ITwinCesiumTextureUtility {
 /**
  * @brief A texture that has already been asynchronously created.
  */
@@ -162,4 +162,4 @@ UTexture2D* loadTextureGameThreadPart(
 
 void destroyHalfLoadedTexture(LoadedTextureResult& halfLoaded);
 void destroyTexture(UTexture* pTexture);
-} // namespace CesiumTextureUtility
+} // namespace ITwinCesiumTextureUtility
