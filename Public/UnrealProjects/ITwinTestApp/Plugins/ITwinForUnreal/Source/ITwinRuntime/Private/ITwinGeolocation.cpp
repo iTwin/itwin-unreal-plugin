@@ -12,9 +12,7 @@
 FITwinGeolocation::FITwinGeolocation(AActor& Parent)
 {
 	{
-		FActorSpawnParameters SpawnParams;
-		SpawnParams.Owner = &Parent;
-		LocatedGeoreference.Reset(Parent.GetWorld()->SpawnActor<AITwinCesiumGeoreference>(SpawnParams));
+		LocatedGeoreference = Parent.GetWorld()->SpawnActor<AITwinCesiumGeoreference>();
 #if WITH_EDITOR
 		LocatedGeoreference->SetActorLabel(TEXT("Located Georeference"));
 #endif
@@ -22,9 +20,7 @@ FITwinGeolocation::FITwinGeolocation(AActor& Parent)
 		LocatedGeoreference->SetOriginPlacement(EITwinOriginPlacement::TrueOrigin); // Means "not yet inited".
 	}
 	{
-		FActorSpawnParameters SpawnParams;
-		SpawnParams.Owner = &Parent;
-		NonLocatedGeoreference.Reset(Parent.GetWorld()->SpawnActor<AITwinCesiumGeoreference>(SpawnParams));
+		NonLocatedGeoreference = Parent.GetWorld()->SpawnActor<AITwinCesiumGeoreference>();
 #if WITH_EDITOR
 		NonLocatedGeoreference->SetActorLabel(TEXT("Non-Located Georeference"));
 #endif

@@ -394,10 +394,43 @@ namespace
 		}
 	#endif // ENABLE_CheckMaterialSetup
 	}
+
+#if ENABLE_DRAW_DEBUG
+	float DebugBoxNextLifetime = 5.f;
+#endif
 } // anon ns.
 
 
-void FITwinSceneTile::SelectElement(ITwinElementID const& InElemID, bool& bHasUpdatedTextures)
+void FITwinSceneTile::DrawTileBox(UWorld const* World) const
+{
+#if ENABLE_DRAW_DEBUG
+	// Display the bounding box of the tile
+	FBox Box;
+	for (auto const& gltfMeshData : GltfMeshes)
+	{
+		if (gltfMeshData.GetMeshComponent())
+		{
+			Box += gltfMeshData.GetMeshComponent()->Bounds.GetBox();
+		}
+	}
+	FVector Center, Extent;
+	Box.GetCenterAndExtents(Center, Extent);
+
+	FColor const boxColor = (DebugBoxNextLifetime > 5)
+		? FColor::MakeRandomColor()
+		: FColor::Red;
+	DrawDebugBox(
+		World,
+		Center,
+		Extent,
+		boxColor,
+		/*bool bPersistent =*/ false,
+		/*float LifeTime =*/ DebugBoxNextLifetime);
+	DebugBoxNextLifetime += 5.f;
+#endif //ENABLE_DRAW_DEBUG
+}
+
+void FITwinSceneTile::SelectElement(ITwinElementID const& InElemID, bool& bHasUpdatedTextures, UWorld const* World)
 {
 	bHasUpdatedTextures = false;
 	if (InElemID == SelectedElement)
@@ -445,6 +478,7 @@ void FITwinSceneTile::SelectElement(ITwinElementID const& InElemID, bool& bHasUp
 			// Bake feature IDs in per-vertex UVs if needed
 			BakeFeatureIDsInVertexUVs(*this);
 		}
+
 		// Apply constant highlight color to pixels matching the Element's features
 		SelectionHighlights->SetPixels(FeaturesToSelect->Features, ITwin::COLOR_SELECTED_ELEMENT_BGRA);
 
@@ -452,6 +486,9 @@ void FITwinSceneTile::SelectElement(ITwinElementID const& InElemID, bool& bHasUp
 		bHasUpdatedTextures = true;
 
 		SelectedElement = InElemID;
+
+		//// Display the bounding box of the tile
+		// DrawTileBox(World);
 	}
 }
 
@@ -461,11 +498,13 @@ void FITwinSceneTile::UpdateSelectionTextureInMaterials()
 	{
 		return;
 	}
+	SetupFeatureIdInfo();
 	bool hasUpdatedTex = false;
 	for (auto&& [ElemID, FeaturesInTile] : ElementsFeatures)
 	{
 		if (FeaturesInTile.TextureFlags.SelectionFlags.bNeedSetupTexture)
 		{
+			FITwinSceneMapping::SetupFeatureIdUVIndex(*this, FeaturesInTile);
 			if (!hasUpdatedTex)
 			{
 				// important: we must call UpdateTexture once, *before* updating materials
@@ -949,12 +988,12 @@ void FITwinSceneMapping::BakeFeaturesInUVs_AllMeshes()
     }
 }
 
-void FITwinSceneMapping::SelectElement(ITwinElementID const& InElemID)
+void FITwinSceneMapping::SelectElement(ITwinElementID const& InElemID, UWorld const* World)
 {
 	for (auto& [TileID, SceneTile] : KnownTiles)
 	{
 		bool bHasUpdatedTex(false);
-		SceneTile.SelectElement(InElemID, bHasUpdatedTex);
+		SceneTile.SelectElement(InElemID, bHasUpdatedTex, World);
 		if (bHasUpdatedTex)
 			bNeedUpdateSelectionHighlights = true;
 	}
@@ -995,23 +1034,8 @@ std::optional<CesiumTileID> FITwinSceneMapping::DrawOwningTileBox(
 		if (bFoundMesh)
 		{
 			// Display the bounding box of the tile
-			FBox Box;
-			for (auto const& gltfMeshData : SceneTile.GltfMeshes)
-			{
-				if (gltfMeshData.GetMeshComponent())
-				{
-					Box += gltfMeshData.GetMeshComponent()->Bounds.GetBox();
-				}
-			}
-			FVector Center, Extent;
-			Box.GetCenterAndExtents(Center, Extent);
-			DrawDebugBox(
-				World,
-				Center,
-				Extent,
-				FColor::Red,
-				/*bool bPersistent =*/ false,
-				/*float LifeTime =*/ 5.f);
+			DebugBoxNextLifetime = 5.f;
+			SceneTile.DrawTileBox(World);
 			return TileID;
 		}
 	}

@@ -55,11 +55,11 @@ MODULE_EXPORT namespace SDK::Core {
 	class IScene : public Tools::Factory<IScene>, public std::enable_shared_from_this<IScene>
 	{
 	public:
-		/// Create new scene on sever
+		/// Create new scene on server
 		virtual void Create(const std::string& name) = 0;
-		/// Retreive the scene from sever
+		/// Retreive the scene from server
 		virtual void Get(const std::string& id) = 0;
-		/// Delete the scene on sever
+		/// Delete the scene on server
 		virtual void Delete(bool deleteLayers = false) = 0;
 		/// Get scene identifier
 		virtual const std::string& GetId() = 0;
@@ -73,11 +73,11 @@ MODULE_EXPORT namespace SDK::Core {
 	class Scene : public Tools::ExtensionSupport, public IScene
 	{
 	public:
-		/// Create new scene on sever
+		/// Create new scene on server
 		void Create(const std::string& name) override;
-		/// Retreive the scene from sever
+		/// Retreive the scene from server
 		void Get(const std::string& id) override;
-		/// Delete the scene on sever
+		/// Delete the scene on server
 		void Delete(bool deleteLayers = false) override;
 		/// Get scene identifier
 		const std::string& GetId() override;

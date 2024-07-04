@@ -220,8 +220,10 @@ public:
 
 	void ForEachExtractedElement(std::function<void(FITwinExtractedEntity&)> const& Func);
 
-	void SelectElement(ITwinElementID const& InElemID, bool& bHasUpdatedTextures);
+	void SelectElement(ITwinElementID const& InElemID, bool& bHasUpdatedTextures, UWorld const* World);
 	void UpdateSelectionTextureInMaterials();
+
+	void DrawTileBox(UWorld const* World) const;
 };
 
 using CesiumTileID = Cesium3DTilesSelection::TileID;
@@ -330,7 +332,7 @@ public:
 	void BakeFeaturesInUVs_AllMeshes();
 
 	/// Set the current selected ElementID - can be NOT_ELEMENT to discard any selection.
-	void SelectElement(ITwinElementID const& InElemID);
+	void SelectElement(ITwinElementID const& InElemID, UWorld const* World);
 
 	bool NeedUpdateSelectionHighlights() const {
 		return bNeedUpdateSelectionHighlights;

@@ -15,8 +15,10 @@
 #endif
 
 #pragma push_macro ("check")
+#pragma push_macro ("verify")
 #pragma push_macro ("TEXT") // defined in winnt.h but also in UE
 #undef check
+#undef verify
 #undef TEXT
 #ifdef WIN32
     #include "Microsoft/AllowMicrosoftPlatformTypes.h"

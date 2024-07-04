@@ -35,9 +35,9 @@ public:
 	void ZoomOnIModel();
 private:
 	UPROPERTY()
-	UTopMenuWidgetImpl* UI;
+	UTopMenuWidgetImpl* UI = nullptr;
 	UPROPERTY()
-	UITwinWebServices* ITwinWebService;
+	UITwinWebServices* ITwinWebService = nullptr;
 	UPROPERTY()
 	FString ITwinId;
 	UPROPERTY()

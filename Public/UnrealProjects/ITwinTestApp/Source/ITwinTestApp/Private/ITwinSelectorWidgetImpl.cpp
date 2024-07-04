@@ -104,3 +104,16 @@ void UITwinSelectorWidgetImpl::OnOpenClicked()
 {
 	OnOpenPressed.Broadcast();
 }
+
+FString UITwinSelectorWidgetImpl::GetIModelDisplayName(const FString& iModelId) const
+{
+	ensureMsgf(IModelValues.Num() == ComboBox_iModel->GetOptionCount(), TEXT("IModel ComboBox Invariant"));
+	TArray<FString>::SizeType iModelIndex;
+	if (IModelValues.Find(iModelId, iModelIndex)
+		&&
+		ensure(iModelIndex < ComboBox_iModel->GetOptionCount()))
+	{
+		return ComboBox_iModel->GetOptionAtIndex(iModelIndex);
+	}
+	return {};
+}

@@ -27,11 +27,9 @@ set_target_properties(VisualizationTest PROPERTIES FOLDER "SDK/Core/Tests")
 target_link_libraries(VisualizationTest PRIVATE 
 						Visualization
 						tiny-process-library
-						GTest::gtest 
-						GTest::gtest_main 
-						GTest::gmock 
-						GTest::gmock_main
+						Catch2::Catch2WithMain
 					)
 
-include(GoogleTest)
-gtest_discover_tests(VisualizationTest)
+include(CTest)
+include(Catch)
+catch_discover_tests(VisualizationTest)

@@ -1,7 +1,9 @@
 # itwin-unreal-plugin
 
 ## Introduction
-The iTwin for Unreal SDK enables streaming of iModels  and reality data from the iTwin cloud into Unreal Engine for high-fidelity visualization and consumption. Additionally, the SDK allows Unreal Engine developers to create custom applications which can expand upon the capabilities provided by the SDK out of the box. This enables the creation of tailored interactive experiences around iTwins. In addition, we provide a pre-compiled plugin version of the SDK.<br>
+As part of Bentley's commitment to keep evolving its solutions alongside the increasing complexity of the infrastructure industry, Bentley's cloud-based iTwin platform serves the central hub for bringing all elements of Digital Twins together in a collaborative, scalable environment which allows insights into all available types of data and planning stages of Digital Twins, including IoT, change tracking, maintenance and issue anticipation and much more. Together, all this data is known as an iTwin. Bentley's applications directly plug into the iTwin cloud platform, allowing all stakeholders to consume the Digital Twin from a single point of truth.<br>
+ 
+The iTwin for Unreal SDK enables streaming of iTwins and reality data from the iTwin cloud into Unreal Engine for high-fidelity visualization and consumption. Additionally, the SDK allows Unreal Engine developers to create custom applications which can expand upon the capabilities provided by the SDK out of the box. This enables the creation of tailored interactive experiences around iTwins. In addition, we provide a pre-compiled plugin version of the SDK.<br>
 The streaming technology is based on the open-source Cesium 3D tiles (link to the Cesium github) and offers great performance even with large datasets. The SDK is based on the experience gathered through the technology previews introduced by the Datasmith Connector and the 3DFT plugin during the last year.<br>  
 The iTwin for Unreal SDK will supersede these technology demos and become the foundation of our upcoming advanced visualization products. It embodies Bentley’s long-term commitment to offering scalable and future-proven technologies and open standards for any visualization needs of infrastructure and Digital Twins. <br> 
 This SDK will be regularly updated. We appreciate your feedback to turn this exciting new technology into the leading foundation for advanced visualization of Digital Twins leveraging game engine technology. We encourage you to participate in the SDK’s development with your ideas, requests and wishes, and help us shape the future of visualization together. 
@@ -11,6 +13,8 @@ This SDK will be regularly updated. We appreciate your feedback to turn this exc
 - Real-time 3D rendering, navigation and visualization of iModels with high performance; other iTwin related data will be added in future updates.
 - Accessing saved views 
 - Exposed API for custom blueprints (for loading reality data, for example) 
+
+Please note that 4D animation is not part of this initial build, but it is one of our top priorities and will be added as soon as possible.
 
 
 ## Supported platforms & requirements
@@ -114,7 +118,7 @@ Developer Mode for Windows must be enabled, as explained [here](https://learn.mi
    File: "\Public\CMake\main.cmake"<br>
    `set (ITWIN_TEST_APP_ID "your_client_id_goes_here")`<br>
 
-### Build and run
+### Build and run on windows
 
 1. Clone the vcpkg repo somewhere on your machine.<br>
 `git clone https://github.com/microsoft/vcpkg.git`

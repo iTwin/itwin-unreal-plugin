@@ -18,10 +18,10 @@ struct FITwinGeolocationInfo
 {
 	GENERATED_USTRUCT_BODY()
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "iTwin")
 		double Latitude = 0.0;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "iTwin")
 		double Longitude = 0.0;
 };
 

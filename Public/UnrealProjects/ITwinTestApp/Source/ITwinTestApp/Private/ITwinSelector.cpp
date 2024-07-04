@@ -10,18 +10,31 @@
 #include <ITwinSelectorWidgetImpl.h>
 #include <iTwinWebServices/iTwinWebServices.h>
 #include <Components/TextBlock.h>
+#include <TimerManager.h>
+#include <UObject/StrongObjectPtr.h>
 
 void AITwinSelector::BeginPlay()
 {
 	Super::BeginPlay();
 	// Create UI
 	UI = CreateWidget<UITwinSelectorWidgetImpl>(GetWorld()->GetFirstPlayerController(), LoadClass<UITwinSelectorWidgetImpl>(nullptr,
-		L"/Script/UMGEditor.WidgetBlueprint'/Game/UX/ITwinSelectorWidget.ITwinSelectorWidget_C'"));
+		TEXT("/Script/UMGEditor.WidgetBlueprint'/Game/UX/ITwinSelectorWidget.ITwinSelectorWidget_C'")));
 	UI->AddToViewport();
 	ITwinWebService = NewObject<UITwinWebServices>(this);
 	// Check authorization
 	ITwinWebService->OnAuthorizationChecked.AddDynamic(this, &AITwinSelector::AuthError);
 	ITwinWebService->CheckAuthorization();
+}
+
+FString AITwinSelector::GetIModelDisplayName(const FString& iModelId) const
+{
+	// retrieve it from the UI
+	FString DisplayName;
+	if (ensure(UI))
+	{
+		DisplayName = UI->GetIModelDisplayName(iModelId);
+	}
+	return DisplayName;
 }
 
 void AITwinSelector::AuthError(bool bSuccess, FString Error)

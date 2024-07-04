@@ -32,7 +32,7 @@ public:
 	// Called every frame
 	virtual void Tick(float DeltaTime) override;
 
-	UFUNCTION(BlueprintCallable)
+	UFUNCTION(BlueprintCallable, Category = "iTwin")
 	void PickObjectAtMousePosition(FString& Id, FVector2D& MousePosition, AITwinIModel* iModel);
 
 	DECLARE_EVENT_OneParam(AITwinPickingActor, FElementPicked, FString);

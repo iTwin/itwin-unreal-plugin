@@ -70,7 +70,7 @@ AITwinServiceActor::EConnectionStatus
 AITwinServiceActor::CheckServerConnection(bool bRequestAuthorisationIfNeeded /*= true*/)
 {
 	UpdateWebServices();
-	if (ServerConnection && !ServerConnection->AccessToken.IsEmpty())
+	if (ServerConnection && ServerConnection->HasAccessToken())
 	{
 		// Assume the access token is valid (this is the case if the authorization is performed internally,
 		// but not if the user types random character in the ServerConnection instance, of course...)
@@ -102,7 +102,7 @@ void AITwinServiceActor::OnAuthorizationDone(bool bSuccess, FString const& AuthE
 	{
 		UpdateWebServices();
 
-		if (ServerConnection && !ServerConnection->AccessToken.IsEmpty())
+		if (ServerConnection && ServerConnection->HasAccessToken())
 		{
 			UpdateOnSuccessfulAuthorization();
 		}

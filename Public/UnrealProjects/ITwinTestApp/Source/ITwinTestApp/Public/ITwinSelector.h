@@ -22,13 +22,17 @@ public:
 	DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(FLoadModelEvent, FString, IModelId, FString, ExportId, FString, ChangesetId, FString, ITwinId);
 	UPROPERTY()
 	FLoadModelEvent LoadModel;
+
+	UFUNCTION(BlueprintCallable)
+	FString GetIModelDisplayName(const FString& iModelId) const;
+
 protected:
 	void BeginPlay() override;
 private:
 	UPROPERTY()
-	UITwinSelectorWidgetImpl* UI;
+	UITwinSelectorWidgetImpl* UI = nullptr;
 	UPROPERTY()
-	UITwinWebServices* ITwinWebService;
+	UITwinWebServices* ITwinWebService = nullptr;
 	UPROPERTY()
 	FString SelectedExportId;
 	UPROPERTY()

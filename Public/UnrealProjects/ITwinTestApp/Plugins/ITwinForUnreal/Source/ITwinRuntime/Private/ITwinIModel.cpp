@@ -72,7 +72,6 @@ public:
 	};
 	EOperationUponAuth PendingOperation = EOperationUponAuth::None;
 	bool bAutoStartExportIfNeeded = false;
-	bool bTickCalled = false;
 
 	FImpl(AITwinIModel& InOwner)
 		: Owner(InOwner), Internals(InOwner)
@@ -303,8 +302,6 @@ AITwinIModel::AITwinIModel()
 	:Impl(MakePimpl<FImpl>(*this))
 {
 	SetRootComponent(CreateDefaultSubobject<USceneComponent>(TEXT("root")));
-
-	PrimaryActorTick.bCanEverTick = true;
 }
 
 void AITwinIModel::UpdateIModel()
@@ -378,21 +375,24 @@ void AITwinIModel::GetModel3DInfo(FITwinIModel3DInfo& Info) const
 
 namespace ITwin
 {
-	uint32 DestroyTilesetsInActor(AActor& Owner)
+	void DestroyTilesetsInActor(AActor& Owner, bool bDestroyCesiumGeoreference)
 	{
 		const auto ChildrenCopy = Owner.Children;
 		uint32 numDestroyed = 0;
 		for (auto& Child : ChildrenCopy)
 		{
-			AITwinCesium3DTileset* AsTileset = Cast<AITwinCesium3DTileset>(Child.Get());
-			if (AsTileset)
+			bool const bDestroyChild =
+				Cast<AITwinCesium3DTileset>(Child.Get()) != nullptr
+				||
+				(bDestroyCesiumGeoreference && Cast<AITwinCesiumGeoreference>(Child.Get()) != nullptr);
+			if (bDestroyChild)
 			{
 				Owner.GetWorld()->DestroyActor(Child);
 				numDestroyed++;
 			}
 		}
-		check(Owner.Children.Num() + numDestroyed == ChildrenCopy.Num());
-		return numDestroyed;
+		ensureMsgf(Owner.Children.Num() + numDestroyed == ChildrenCopy.Num(),
+			TEXT("UWorld::DestroyActor should notify the owner"));
 	}
 }
 
@@ -456,6 +456,12 @@ void AITwinIModel::OnExportInfosRetrieved(bool bSuccess, FITwinExportInfos const
 			SpawnParams.Owner = this;
 			const auto Tileset = GetWorld()->SpawnActor<AITwinCesium3DTileset>(SpawnParams);
 #if WITH_EDITOR
+			// in manual mode, the name is usually not set at this point => adjust it now
+			if (!Info.DisplayName.IsEmpty()
+				&& GetActorLabel().StartsWith(TEXT("ITwinIModel")))
+			{
+				this->SetActorLabel(Info.DisplayName);
+			}
 			Tileset->SetActorLabel(GetActorLabel() + TEXT(" tileset"));
 #endif
 			Tileset->AttachToActor(this, FAttachmentTransformRules::KeepRelativeTransform);
@@ -474,7 +480,7 @@ void AITwinIModel::OnExportInfosRetrieved(bool bSuccess, FITwinExportInfos const
 				Geolocation = MakeShared<FITwinGeolocation>(*this);
 			}
 			// Because iModel geolocation info is not available yet:
-			Tileset->SetGeoreference(Geolocation->NonLocatedGeoreference.Get());
+			Tileset->SetGeoreference(Geolocation->NonLocatedGeoreference);
 			// Disabled in the plugin for now (schedules component not created), to hide functionality not
 			// ready for release
 			//Impl->SetupSynchro4DSchedules(*Tileset);
@@ -688,7 +694,11 @@ void AITwinIModel::Reset()
 
 void AITwinIModel::DestroyTileset()
 {
-	ITwin::DestroyTilesetsInActor(*this);
+	// when reloading a level, we automatically reload the tileset. In this case, Geolocation is null but
+	// there can remain "orphan" children of type AITwinCesiumGeoreference - clean them now, as they will be
+	// recreated when we instantiate Geolocation.
+	bool bDestroyCesiumGeoref = !Geolocation;
+	ITwin::DestroyTilesetsInActor(*this, bDestroyCesiumGeoref);
 }
 
 void AITwinIModel::Destroyed()
@@ -762,27 +772,18 @@ void AITwinIModel::PostEditChangeProperty(struct FPropertyChangedEvent& e)
 
 #endif // WITH_EDITOR
 
-void AITwinIModel::Tick(float DeltaTime)
-{
-	Super::Tick(DeltaTime);
 
-	if (!Impl->bTickCalled)
+void AITwinIModel::PostLoad()
+{
+	Super::PostLoad();
+
+	// just in case the loaded level contains an iModel already configured...
+	if ((LoadingMethod == ELoadingMethod::LM_Manual && !ExportId.IsEmpty())
+		||
+		(LoadingMethod == ELoadingMethod::LM_Automatic && !IModelId.IsEmpty() && !ChangesetId.IsEmpty()))
 	{
-		Impl->bTickCalled = true;
-
-		// just in case the loaded level contains an iModel already configured...
-		if ((LoadingMethod == ELoadingMethod::LM_Manual && !ExportId.IsEmpty())
-			||
-			(LoadingMethod == ELoadingMethod::LM_Automatic && !IModelId.IsEmpty() && !ChangesetId.IsEmpty()))
-		{
-			OnLoadingUIEvent();
-		}
+		OnLoadingUIEvent();
 	}
-}
-
-bool AITwinIModel::ShouldTickIfViewportsOnly() const
-{
-	return (GetWorld() && GetWorld()->WorldType == EWorldType::Editor);
 }
 
 void FITwinIModelInternals::OnElementTimelineModified(FITwinElementTimeline const& ModifiedTimeline)
@@ -874,7 +875,7 @@ void FITwinIModelInternals::OnClickedElement(ITwinElementID const Element,
 
 void FITwinIModelInternals::SelectElement(ITwinElementID const InElementID)
 {
-	SceneMapping.SelectElement(InElementID);
+	SceneMapping.SelectElement(InElementID, Owner.GetWorld());
 }
 
 namespace ITwin::Timeline

@@ -12,6 +12,7 @@
 #include <IModelSelectionMenuScript.generated.h>
 
 class AITwinIModel;
+class AITwinSelector;
 class ATopMenu;
 
 //! Used as "parent class" of level "IModelSelectionMenu".
@@ -26,7 +27,9 @@ protected:
 	void BeginPlay() override;
 private:
 	UPROPERTY()
-	ATopMenu* TopPanel;
+	TObjectPtr<AITwinSelector> ITwinSelector;
+	UPROPERTY()
+	ATopMenu* TopPanel = nullptr;
 	UPROPERTY()
 	FString IModelId;
 	UPROPERTY()
@@ -34,7 +37,7 @@ private:
 	UPROPERTY()
 	FString ExportId;
 	UPROPERTY()
-	AITwinIModel* IModel;
+	AITwinIModel* IModel = nullptr;
 	UFUNCTION(BlueprintCallable)
 	void OnLoadIModel(FString InIModelId, FString InExportId, FString InChangesetId, FString InITwinId);
 	UFUNCTION(BlueprintCallable)

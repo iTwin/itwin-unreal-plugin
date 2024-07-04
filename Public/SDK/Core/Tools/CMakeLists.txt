@@ -5,6 +5,7 @@ add_library(Tools OBJECT
 		Extension.cpp
 		FactoryClass.h
 		FactoryClass.cpp
+		fnv1ahash.h
 )
 target_compile_features(Tools PRIVATE ${DefaultCXXSTD})
 set_target_properties(Tools PROPERTIES FOLDER "SDK/Core") 
@@ -17,11 +18,9 @@ target_compile_definitions(ToolsTest PRIVATE "CMAKE_SOURCE_DIR=\"${CMAKE_SOURCE_
 set_target_properties(ToolsTest PROPERTIES FOLDER "SDK/Core/Tests")
 target_link_libraries(ToolsTest PRIVATE 
 						Tools
-						GTest::gtest 
-						GTest::gtest_main 
-						GTest::gmock 
-						GTest::gmock_main
+						Catch2::Catch2WithMain
 					)
 
-include(GoogleTest)
-gtest_discover_tests(ToolsTest)
+include(CTest)
+include(Catch)
+catch_discover_tests(ToolsTest)

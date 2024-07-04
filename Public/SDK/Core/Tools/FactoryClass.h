@@ -23,7 +23,7 @@ namespace SDK::Core::Tools
 		static std::shared_ptr<Type> New(Args...args) { return newFct_(args...); }
 		static void SetNewFct(std::function<std::shared_ptr<Type>(Args...)> fct) { newFct_ = fct; }
 		static std::function<std::shared_ptr<Type>(Args...)> GetNewFct() { return newFct_; }
-
+		virtual ~Factory() {} //class derivate from Factory needs virtual destructor
 	private:
 		static std::function<std::shared_ptr<Type>(Args...)> newFct_;
 	};

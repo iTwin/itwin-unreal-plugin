@@ -171,11 +171,17 @@ public:
 	static bool GetErrorDescription(FJsonObject const& responseJson, FString& OutError,
 		FString const& Indent = {});
 
+	static void SetLogErrors(bool bInLogErrors);
+	static bool ShouldLogErrors() { return bLogErrors; }
+
 #if WITH_TESTS
-	static void SetupTestMode(EITwinEnvironment Env);
+	void SetTestServerURL(FString const& ServerUrl);
+	static void SetupTestMode(EITwinEnvironment Env, FString const& TokenFileSuffix);
 #endif
 
+
 private:
+	FString GetAPIRootURL() const;
 	bool TryGetServerConnection(bool bAllowBroadcastAuthResult);
 	void OnAuthDoneImpl(bool bSuccess, FString const& Error, bool bBroadcastResult = true);
 
@@ -208,4 +214,6 @@ private:
 
 	class FImpl;
 	TPimplPtr<FImpl> Impl;
+
+	static bool bLogErrors;
 };

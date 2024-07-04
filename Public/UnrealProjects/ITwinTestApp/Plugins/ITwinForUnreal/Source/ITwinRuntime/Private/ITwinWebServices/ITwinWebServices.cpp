@@ -167,9 +167,31 @@ UITwinWebServices* UITwinWebServices::GetWorkingInstance()
 	return WorkingInstance;
 }
 
-#if WITH_TESTS
 /*static*/
-void UITwinWebServices::SetupTestMode(EITwinEnvironment Env)
+bool UITwinWebServices::bLogErrors = true;
+
+/*static*/
+void UITwinWebServices::SetLogErrors(bool bInLogErrors)
+{
+	bLogErrors = bInLogErrors;
+}
+
+#define LOG_ITWIN_WSRV_ERROR( Str )	\
+	if (ShouldLogErrors())			\
+	{								\
+		UE_LOG(LogITwinHttp, Error, TEXT(Str));	\
+	}
+
+#define LOG_ITWIN_WSRV_ERROR_ONE_PARAM( Str, Arg1 )	\
+	if (ShouldLogErrors())			\
+	{								\
+		UE_LOG(LogITwinHttp, Error, TEXT(Str), Arg1);\
+	}
+
+#if WITH_TESTS
+
+/*static*/
+void UITwinWebServices::SetupTestMode(EITwinEnvironment Env, FString const& InTokenFileSuffix)
 {
 	// for unit tests, allow running without iTwin App ID, and use a special suffix for filenames to avoid
 	// any conflict with the normal run.
@@ -177,7 +199,8 @@ void UITwinWebServices::SetupTestMode(EITwinEnvironment Env)
 	{
 		UITwinWebServices::SetITwinAppIDArray({ TEXT("ThisIsADummyAppIDForTesting") });
 	}
-	TokenFileSuffix = TEXT("_Test");
+	checkf(!InTokenFileSuffix.IsEmpty(), TEXT("a unique suffix is required to avoid conflicts"));
+	TokenFileSuffix = InTokenFileSuffix;
 }
 #endif //WITH_TESTS
 
@@ -352,6 +375,10 @@ class UITwinWebServices::FImpl
 	using SharedMngrPtr = FITwinAuthorizationManager::SharedInstance;
 	SharedMngrPtr authManager_;
 
+#if WITH_TESTS
+	FString customServerURL_;
+#endif
+
 public:
 	FImpl(UITwinWebServices& Owner)
 		: owner_(Owner)
@@ -381,7 +408,7 @@ UITwinWebServices::UITwinWebServices()
 bool UITwinWebServices::IsAuthorizationInProgress() const
 {
 	FImpl::FLock Lock(Impl->mutex_);
-	if (ServerConnection && !ServerConnection->AccessToken.IsEmpty())
+	if (ServerConnection && ServerConnection->HasAccessToken())
 	{
 		// Authorization already proceed.
 		return false;
@@ -408,7 +435,7 @@ bool UITwinWebServices::TryGetServerConnection(bool bAllowBroadcastAuthResult)
 {
 	{
 		FImpl::FLock Lock(Impl->mutex_);
-		if (ServerConnection)
+		if (ServerConnection && ServerConnection->HasAccessToken())
 		{
 			return true;
 		}
@@ -474,7 +501,7 @@ void UITwinWebServices::OnAuthDoneImpl(bool bSuccess, FString const& Error, bool
 		}
 		ServerConnection->Environment = this->Environment;
 		Impl->authManager_->GetAccessToken(ServerConnection->AccessToken);
-		checkf(!ServerConnection->AccessToken.IsEmpty(), TEXT("Upon success, an access token is expected!"));
+		checkf(ServerConnection->HasAccessToken(), TEXT("Upon success, an access token is expected!"));
 	}
 
 	if (bBroadcastResult)
@@ -576,6 +603,25 @@ struct UITwinWebServices::FITwinAPIRequestInfo
 	bool bAllowEmptyResponse = false; // E.g. true for DeleteSavedView
 };
 
+#if WITH_TESTS
+void UITwinWebServices::SetTestServerURL(FString const& ServerUrl)
+{
+	Impl->customServerURL_ = ServerUrl;
+}
+#endif
+
+FString UITwinWebServices::GetAPIRootURL() const
+{
+#if WITH_TESTS
+	if (!Impl->customServerURL_.IsEmpty())
+	{
+		// automation test is running: use mock server URL instead.
+		return Impl->customServerURL_;
+	}
+#endif
+	return GetITwinAPIRootUrl(this->Environment);
+}
+
 template <typename ResultDataType, class FunctorType, class DelegateAsFunctor>
 UITwinWebServices::RequestID UITwinWebServices::TProcessHttpRequest(
 	FITwinAPIRequestInfo const& RequestInfo,
@@ -606,7 +652,7 @@ UITwinWebServices::RequestID UITwinWebServices::TProcessHttpRequest(
 
 	const auto request = FHttpModule::Get().CreateRequest();
 	request->SetVerb(RequestInfo.Verb);
-	request->SetURL(GetITwinAPIRootUrl(this->Environment) + RequestInfo.UrlSuffix);
+	request->SetURL(GetAPIRootURL() + RequestInfo.UrlSuffix);
 
 	// Fill headers
 	if (!RequestInfo.CustomHeaders.Contains(TEXT("Prefer")))
@@ -728,6 +774,7 @@ void UITwinWebServices::GetiTwins()
 		{
 			return false;
 		}
+		iTwinInfos.iTwins.Reserve(itwinsJson->Num());
 		for (const auto& iTwinValue : *itwinsJson)
 		{
 			const auto& iTwinObject = iTwinValue->AsObject();
@@ -768,6 +815,7 @@ void UITwinWebServices::GetiTwiniModels(FString ITwinId)
 		{
 			return false;
 		}
+		iModelInfos.iModels.Reserve(imodelsJson->Num());
 		for (const auto& IModelValue : *imodelsJson)
 		{
 			auto const& IModelObject = IModelValue->AsObject();
@@ -808,6 +856,7 @@ void UITwinWebServices::DoGetiModelChangesets(FString const& IModelId, bool bRes
 		{
 			return false;
 		}
+		Infos.Changesets.Reserve(changesetsJson->Num());
 		for (const auto& ChangesetValue : *changesetsJson)
 		{
 			auto const& JsonObject = ChangesetValue->AsObject();
@@ -938,21 +987,21 @@ void UITwinWebServices::GetExportInfo(FString ExportId)
 		auto JsonExport = responseJson.GetObjectField("export");
 		if (!JsonExport)
 		{
-			UE_LOG(LogITwinHttp, Error, TEXT("Invalid Reply: Export not defined."));
+			LOG_ITWIN_WSRV_ERROR("Invalid Reply: Export not defined.");
 			return false;
 		}
 
 		auto JsonHref = GetChildObject(JsonExport, "request");
 		if (!JsonHref)
 		{
-			UE_LOG(LogITwinHttp, Error, TEXT("Invalid Reply: Export request not defined."));
+			LOG_ITWIN_WSRV_ERROR("Invalid Reply: Export request not defined.");
 			return false;
 		}
 
 		FString const ExportType = JsonHref->GetStringField(TEXT("exportType"));
 		if (ExportType != "CESIUM")
 		{
-			UE_LOG(LogITwinHttp, Error, TEXT("Invalid Reply: Export Type is incorrect: %s"), *ExportType);
+			LOG_ITWIN_WSRV_ERROR_ONE_PARAM("Invalid Reply: Export Type is incorrect: %s", *ExportType);
 			return false;
 		}
 		Export.Id = JsonExport->GetStringField(TEXT("id"));
@@ -1043,6 +1092,7 @@ void UITwinWebServices::GetRealityData(FString ITwinId)
 		{
 			return false;
 		}
+		RealityData.Infos.Reserve(realityDataJson->Num());
 		for (const auto& RealityDataValue : *realityDataJson)
 		{
 			const auto& RealityDataObject = RealityDataValue->AsObject();
@@ -1184,7 +1234,7 @@ void UITwinWebServices::AddSavedView(FString ITwinId, FString IModelId, FSavedVi
 			FString DetailedError;
 			if (UITwinWebServices::GetErrorDescription(responseJson, DetailedError))
 			{
-				UE_LOG(LogITwinHttp, Error, TEXT("Error while adding SavedView: %s"), *DetailedError);
+				LOG_ITWIN_WSRV_ERROR_ONE_PARAM("Error while adding SavedView: %s", *DetailedError);
 				Info = { "","",true };
 				return false;
 			}
@@ -1233,7 +1283,7 @@ void UITwinWebServices::DeleteSavedView(FString SavedViewId)
 			FString DetailedError;
 			if (UITwinWebServices::GetErrorDescription(responseJson, DetailedError))
 			{
-				UE_LOG(LogITwinHttp, Error, TEXT("Error while deleting SavedView: %s"), *DetailedError);
+				LOG_ITWIN_WSRV_ERROR_ONE_PARAM("Error while deleting SavedView: %s", *DetailedError);
 				ErrorCode = DetailedError;
 				return false;
 			}
@@ -1290,7 +1340,7 @@ void UITwinWebServices::EditSavedView(FSavedView SavedView, FSavedViewInfo Saved
 			FString DetailedError;
 			if (UITwinWebServices::GetErrorDescription(responseJson, DetailedError))
 			{
-				UE_LOG(LogITwinHttp, Error, TEXT("Error while editing SavedView: %s"), *DetailedError);
+				LOG_ITWIN_WSRV_ERROR_ONE_PARAM("Error while editing SavedView: %s", *DetailedError);
 				return false;
 			}
 
@@ -1338,6 +1388,7 @@ void UITwinWebServices::GetAllSavedViews(FString iTwinId, FString iModelId)
 		{
 			return false;
 		}
+		Infos.SavedViews.Reserve(savedViewsJson->Num());
 		for (const auto savedViewValue : *savedViewsJson)
 		{
 			const auto savedViewObject = savedViewValue->AsObject();
@@ -1381,19 +1432,19 @@ void UITwinWebServices::GetSavedView(FString SavedViewId)
 		auto JsonSavedView = responseJson.GetObjectField("savedView");
 		if (!JsonSavedView)
 		{
-			UE_LOG(LogITwinHttp, Error, TEXT("Invalid Reply: savedView not defined."));
+			LOG_ITWIN_WSRV_ERROR("Invalid Reply: savedView not defined.");
 			return false;
 		}
 		auto JsonView = GetChildObject(JsonSavedView, "savedViewData/itwin3dView");
 		if (!JsonView)
 		{
-			UE_LOG(LogITwinHttp, Error, TEXT("Invalid Reply: itwin3dView not defined."));
+			LOG_ITWIN_WSRV_ERROR("Invalid Reply: itwin3dView not defined.");
 			return false;
 		}
 		auto JsonEye = JsonView->GetObjectField("camera");
 		if (!JsonEye)
 		{
-			UE_LOG(LogITwinHttp, Error, TEXT("Invalid Reply: camera not defined."));
+			LOG_ITWIN_WSRV_ERROR("Invalid Reply: camera not defined.");
 			return false;
 		}
 		SVData.SavedView.Origin = GetFVector(JsonEye, "eye");

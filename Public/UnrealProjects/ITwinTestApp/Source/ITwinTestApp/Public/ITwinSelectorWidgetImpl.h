@@ -47,6 +47,8 @@ public:
 	void AddChangeset(const FString& DisplayName, const FString& Value);
 	UFUNCTION(BlueprintCallable)
 	void DisableITwinPanel();
+	UFUNCTION(BlueprintCallable)
+	FString GetIModelDisplayName(const FString& iModelId) const;
 protected:
 	virtual void NativeConstruct() override;
 private:

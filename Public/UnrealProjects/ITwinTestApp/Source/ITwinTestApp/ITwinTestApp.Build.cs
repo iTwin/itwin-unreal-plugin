@@ -14,10 +14,6 @@ public class ITwinTestApp : ModuleRules
 	public ITwinTestApp(ReadOnlyTargetRules Target) : base(Target)
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
-		PrivateDefinitions.AddRange(new string[]{
-			"NOMINMAX",
-		});
-
         CppStandard = CppStandardVersion.Cpp20;
         
 		PublicDependencyModuleNames.AddRange(new string[]{

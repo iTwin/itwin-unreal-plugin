@@ -21,4 +21,5 @@ PRAGMA_POP_PLATFORM_DEFAULT_PACKING
     #undef OPAQUE // defined in wingdi.h but Cesium has a constant with that name
 #endif
 #pragma pop_macro ("check")
+#pragma pop_macro ("verify")
 #pragma pop_macro ("TEXT")

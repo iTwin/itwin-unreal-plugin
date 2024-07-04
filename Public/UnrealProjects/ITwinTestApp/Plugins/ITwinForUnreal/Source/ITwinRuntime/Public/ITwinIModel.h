@@ -98,9 +98,7 @@ public:
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 #endif
-
-	virtual void Tick(float DeltaTime) override;
-	virtual bool ShouldTickIfViewportsOnly() const override;
+	virtual void PostLoad() override;
 
 	//! To be called at least once after ServerConnection, IModelId, ChangesetId have been set.
 	//! This will query the mesh export service for a corresponding export, and if complete one is found,

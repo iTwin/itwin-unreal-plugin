@@ -87,6 +87,36 @@ function (createSymlinksForDirectoryContent target link addedFilesRef)
 	set (${addedFilesRef} ${addedFiles_local} PARENT_SCOPE)
 endfunction ()
 
+# Returns the name of the vcpkg package coresponding to the given dependency,
+# or the empty string if this is not a vcpkg package.
+# Recognizes regular package name (eg. "catch2") as well as CMake targets
+# created by the package (eg. "Catch2::Catch2WithMain").
+function (getVcpkgPackageName dependency result)
+	set (result_local "")
+	# If the given dependency is a target created by a package, there is no proper way to
+	# reliably retrieve the package name.
+	# So what we do here is take the lowercase string to the left of "::".
+	# This transforms "Catch2::Catch2WithMain" into "catch2".
+	string (REGEX REPLACE "::.*" "" package ${dependency})
+	string (TOLOWER ${package} package)
+	if (${package} IN_LIST BE_VCPKG_PACKAGES)
+		set (result_local ${package})
+	endif ()
+	set (${result} ${result_local} PARENT_SCOPE)
+endfunction ()
+
+# Same as built-in "file (RELATIVE_PATH)" but verifies the relative path is actually
+# "inside" the given directory (eg. it does not start with "..").
+# Returns the empty string if the relative path is not inside the directory.
+function (getRelativePathChecked directory item result)
+	set (result_local "")
+	file (RELATIVE_PATH relPath ${directory} ${item})
+	if (NOT "${relPath}" MATCHES "^\\.\\..*")
+		set (result_local ${relPath})
+	endif ()
+	set (${result} ${result_local} PARENT_SCOPE)
+endfunction ()
+
 # Creates a custom target which will package the plugin
 function (be_create_plugin_packager_target pluginName pluginDir)
 	set ( packagerTargetName "${pluginName}_PluginPackager" )
@@ -218,35 +248,126 @@ function (be_add_unreal_project projectDir)
 				message (SEND_ERROR "External source for plugin ${pluginName} is not supported (TODO).")
 			endif ()
 		endif ()
+		get_property (cesiumDependenciesBinDir DIRECTORY "${CMAKE_SOURCE_DIR}/Public/CesiumDependencies" PROPERTY BINARY_DIR)
 		if (DEFINED funcArgs_DEPENDS)
-			list (APPEND projectDependencies_local ${funcArgs_DEPENDS})
 			file (MAKE_DIRECTORY "${projectAbsDir}${srcDirRel}/Source/ThirdParty/Include")
+			# Verify each direct dependency is either an existing target or a vcpkg package.
 			foreach (dependency ${funcArgs_DEPENDS})
-				if (NOT TARGET ${dependency})
-					message (SEND_ERROR "Target ${dependency} must be defined before adding an Unreal module dependency on it.")
+				if (TARGET ${dependency})
+					list (APPEND projectDependencies_local ${dependency})
 					continue ()
 				endif ()
+				getVcpkgPackageName (${dependency} packageName)
+				if (packageName)
+					continue ()
+				endif ()
+				message (SEND_ERROR "Unreal project/plugin dependency ${dependency} is neither an existing target nor a vcpk package.")
+			endforeach ()
+			# Recursively retrieve all dependencies.
+			set (allDependencyTargets "")
+			set (allDependencyPackages "")
+			set (dependenciesToProcess ${funcArgs_DEPENDS})
+			while (dependenciesToProcess)
+				set (nextDependenciesToProcess "")
+				foreach (dependency ${dependenciesToProcess})
+					# Skip dependency if it is a target already encountered.
+					if (${dependency} IN_LIST allDependencyTargets)
+						continue ()
+					endif ()
+					if (TARGET ${dependency})
+						# If this dependency is from Cesium, we can skip it, as this is already handled later in this script.
+						get_property (dependencySourceDir TARGET ${dependency} PROPERTY SOURCE_DIR)
+						cmake_path (IS_PREFIX cesiumDependenciesBinDir ${dependencySourceDir} isCesiumDependency)
+						if (isCesiumDependency)
+							continue ()
+						endif ()
+						# Retrieve the transitive dependencies, which will be processed in the next loop.
+						list (APPEND allDependencyTargets ${dependency})
+						get_property (dependencyDependencies TARGET ${dependency} PROPERTY LINK_LIBRARIES)
+						list (APPEND nextDependenciesToProcess ${dependencyDependencies})
+						continue ()
+					endif ()
+					# The dependency is not a target, check if this is a vcpkg package.
+					getVcpkgPackageName (${dependency} packageName)
+					if (packageName)
+						# Skip package if it has already been encountered.
+						if (${packageName} IN_LIST allDependencyPackages)
+							continue ()
+						endif ()
+						list (APPEND allDependencyPackages ${packageName})
+						# Retrieve the transitive dependencies, which will be processed in the next loop.
+						# Note: some packages (eg. "curl") also exist as regulat CMake targets coming from Cesium.
+						# So what we do is rename such package to "curl::_dummy" so that in the next loop
+						# it is correctly recognized as a package (see getVcpkgPackageName()).
+						foreach (dep ${BE_VCPKG_DEPENDENCIES_${packageName}})
+							list (APPEND nextDependenciesToProcess "${dep}::_dummy")
+						endforeach ()
+					endif ()
+				endforeach ()
+				set (dependenciesToProcess ${nextDependenciesToProcess})
+			endwhile ()
+			foreach (dependency ${allDependencyTargets})
 				# Create symlinks to the header files of the dependency, except for those in Extern/ (boost...) for which a link to the folder is enough
 				set (isDependencyExtern FALSE)
 				get_property (depSourceDir TARGET ${dependency} PROPERTY SOURCE_DIR)
 				get_property (depBinaryDir TARGET ${dependency} PROPERTY BINARY_DIR)
-				# We want to retrieve the dependency source dir relative to Public or Private dir.
-				# First retrieve the path relative to CMAKE_SOURCE_DIR
-				file (RELATIVE_PATH depSourceDirRel "${CMAKE_SOURCE_DIR}" "${depSourceDir}")
-				# Now depSourceDirRel contains something like "Private/aa/bb".
-				# We want to strip the leading "xxx/" part.
-				# A "regex replace" command will do the job, but there is a catch:
-				# Since "regex replace" replaces all occurences, we will end up with "bb" instead of "aa/bb".
-				# So we add a dummy prefix character (':', but could be any character forbidden in paths)
-				# to both the path and the regex, so that only a single replacement is done.
-				string (REGEX REPLACE "^:[^/]*/" "" depSourceDirRel ":${depSourceDirRel}")
+				# Check if the dependency source dir is in the CMake "source" or "binary" directory.
+				getRelativePathChecked ("${CMAKE_SOURCE_DIR}" "${depSourceDir}" depSourceDirRel)
+				if (depSourceDirRel)
+					# We want to retrieve the dependency source dir relative to Public or Private dir.
+					# Now depSourceDirRel contains something like "Private/aa/bb".
+					# We want to strip the leading "xxx/" part.
+					# A "regex replace" command will do the job, but there is a catch:
+					# Since "regex replace" replaces all occurences, we will end up with "bb" instead of "aa/bb".
+					# So we add a dummy prefix character (':', but could be any character forbidden in paths)
+					# to both the path and the regex, so that only a single replacement is done.
+					string (REGEX REPLACE "^:[^/]*/" "" depSourceDirRel ":${depSourceDirRel}")
+				else ()
+					getRelativePathChecked ("${CMAKE_BINARY_DIR}" "${depSourceDir}" depSourceDirRel)
+				endif ()
+				if (NOT depSourceDirRel)
+					message (SEND_ERROR "Cannot compute relative path for dependency \"${dependency}\".")
+				endif ()
 				if (depSourceDirRel MATCHES "^Extern/")
 					string(REPLACE "Extern/" "" depInclDirRel ${depSourceDirRel})
 					set (linkPath "${projectAbsDir}${srcDirRel}/Source/ThirdParty/Include/${depInclDirRel}")
 					createSymlink ("${depSourceDir}" "${linkPath}" addedFiles_local)
 				else()
+					# Here we are going to handle different types of targets:
+					# - Our "own" regular targets, eg. BeUtils.
+					# - External targets added by FetchContent(), eg. reflect-cpp.
+					# In all cases, the goal is to retrieve the list of headers and lib files of the target,
+					# and decide where to put the symlinks inside the "Source/ThirdParty" folder.
+					# Examples:
+					# - For BeUtils, when retrieving the list of source files, CMake will likey return relative paths
+					#   as this is how they are "declared" in add_library(), eg. "Gltf/GltfBuilder.h".
+					#   This file will be symlinked as "Source/ThirdParty/Include/BeUtils/Gltf/GltfBuilder.h".
+					# - For reflect-cpp, when retrieving the list of source files, CMake will likey return absolute paths,
+					#   eg. "<binaryDir>/_deps/reflect-cpp-src/include/rfl/json.hpp".
+					#   This file will be symlinked as "Source/ThirdParty/Include/rfl/json.hpp".
+					# For external libraries, we need to retrieve the list of "interface include directories",
+					# eg. "<binaryDir>/_deps/reflect-cpp-src/include", so that we can compute the relative path of each header.
+					set (depInterfaceIncludeDirs "")
+					get_property (depInterfaceIncludeDirsRaw TARGET ${dependency} PROPERTY INTERFACE_INCLUDE_DIRECTORIES)
+					foreach (dir ${depInterfaceIncludeDirsRaw})
+						# "Raw" directories may contain generator expressions eg. "$<BUILD_INTERFACE:C:/xx/yy>",
+						# so we transform this into "C:/xx/yy".
+						string (REGEX REPLACE "\\$<BUILD_INTERFACE:(.*)>" "\\1" dir "${dir}")
+						if ("${dir}" IN_LIST depInterfaceIncludeDirs OR NOT EXISTS "${dir}")
+							continue ()
+						endif ()
+						list (APPEND depInterfaceIncludeDirs "${dir}")
+					endforeach ()
+					# Retrieve the list of all sources for this target.
+					# We also need to query the "header sets" are some libs (eg. reflect-cpp) add their headers here.
 					get_property (depSources TARGET ${dependency} PROPERTY SOURCES)
+					get_property (depHeaderSets TARGET ${dependency} PROPERTY HEADER_SETS)
+					foreach (headerSet ${depHeaderSets})
+						get_property (headerSetFiles TARGET ${dependency} PROPERTY HEADER_SET_${headerSet})
+						list (APPEND depSources ${headerSetFiles})
+					endforeach ()
 					foreach (depSource ${depSources})
+						# Ignore non-header sources.
 						get_filename_component (ext "${depSource}" EXT)
 						string (TOLOWER "${ext}" extLower)
 						list (FIND includeExts "${extLower}" idx)
@@ -254,28 +375,59 @@ function (be_add_unreal_project projectDir)
 							continue ()
 						endif ()
 						if (IS_ABSOLUTE "${depSource}")
-							# If the source file path is absolute, assume it is inside the dependency's binary dir.
+							# Try to get the relative path from one of the "interface include directories"
+							foreach (parentDirCandidate ${depInterfaceIncludeDirs})
+								getRelativePathChecked ("${parentDirCandidate}" "${depSource}" depSourceRel)
+								if (depSourceRel)
+									break ()
+								endif ()
+							endforeach ()
+							# If the source file is not inside one of the interface include dirs,
+							# check if it is inside the dependency's binary dir.
 							# For example, a file generated with configure_file().
-							file(RELATIVE_PATH depSourceRel "${depBinaryDir}" "${depSource}")
+							if (NOT depSourceRel)
+								getRelativePathChecked ("${depBinaryDir}" "${depSource}" depSourceRel)
+								if (depSourceRel)
+									set (depSourceRel "${depSourceDirRel}/${depSource}")
+								endif ()
+							endif ()
+							if (NOT depSourceRel)
+								message (SEND_ERROR "Cannot compute relative path for header \"${depSource}\".")
+							endif ()
 							set (targetPath "${depSource}")
 						else ()
-							set (depSourceRel "${depSource}")
+							set (depSourceRel "${depSourceDirRel}/${depSource}")
 							set (targetPath "${depSourceDir}/${depSource}")
 						endif ()
-						string (APPEND setupExternFilesCommands "CreateSymlink('${targetPath}', '${projectAbsDir}${srcDirRel}/Source/ThirdParty/Include/${depSourceDirRel}/${depSourceRel}')\n")
+						string (APPEND setupExternFilesCommands "CreateSymlink('${targetPath}', '${projectAbsDir}${srcDirRel}/Source/ThirdParty/Include/${depSourceRel}')\n")
 					endforeach ()
 				endif()
 				get_property (depType TARGET ${dependency} PROPERTY TYPE)
-				if (NOT depType STREQUAL INTERFACE_LIBRARY)
+				if (NOT depType MATCHES "^(INTERFACE_LIBRARY|OBJECT_LIBRARY)$")
 					# Create symlinks to the lib files of the dependency.
 					list (APPEND setupExternFilesDefines "LinkerFile:${dependency}=$<TARGET_LINKER_FILE:${dependency}>")
 					string (APPEND setupExternFilesCommands "CreateSymlink('LinkerFile:${dependency}', '${projectAbsDir}${srcDirRel}/Source/ThirdParty/Lib/Config:/LinkerFileName:${dependency}')\n")
 					if (depType STREQUAL SHARED_LIBRARY)
 						list (APPEND setupExternFilesDefines "File:${dependency}=$<TARGET_FILE:${dependency}>")
-						string (APPEND setupExternFilesCommands "CreateSymlink('File:${dependency}', '${projectAbsDir}${srcDirRel}/Binaries/Win64/FileName:${dependency}')\n")
+						if(WIN32)
+							string (APPEND setupExternFilesCommands "CreateSymlink('File:${dependency}', '${projectAbsDir}${srcDirRel}/Binaries/Win64/FileName:${dependency}')\n")
+						elseif (APPLE)
+							string (APPEND setupExternFilesCommands "CreateSymlink('File:${dependency}', '${projectAbsDir}${srcDirRel}/Binaries/Mac/FileName:${dependency}')\n")
+						else()
+							string (APPEND setupExternFilesCommands "CreateSymlink('File:${dependency}', '${projectAbsDir}${srcDirRel}/Binaries/Linux/FileName:${dependency}')\n")
+						endif()
+						
 					endif ()
 				endif ()
 				list (APPEND setupExternFilesDependencies ${dependency})
+			endforeach ()
+			foreach (dependency ${allDependencyPackages})
+				foreach (item ${BE_VCPKG_INCLUDES_${dependency}})
+					string (APPEND setupExternFilesCommands "CreateSymlink('${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/include/${item}', '${projectAbsDir}${srcDirRel}/Source/ThirdParty/Include/${item}')\n")
+				endforeach ()
+				foreach (item ${BE_VCPKG_LIBS_${dependency}})
+					string (APPEND setupExternFilesCommands "CreateSymlink('${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/lib/${item}', '${projectAbsDir}${srcDirRel}/Source/ThirdParty/Lib/Config:/${item}')\n")
+				endforeach ()
 			endforeach ()
 		endif ()
 		# Extra stuff for the ITwinForUnreal plugin.
@@ -292,15 +444,9 @@ function (be_add_unreal_project projectDir)
 			endforeach ()
 			# Add a command that will (at build time) create symlinks pointing to the header & lib files "installed"
 			# during the build of the external dependencies of cesium-unreal.
-			get_property (cesiumDependenciesBinDir DIRECTORY "${CMAKE_SOURCE_DIR}/Public/CesiumDependencies" PROPERTY BINARY_DIR)
 			string (APPEND setupExternFilesCommands "SetupCesium('${cesiumDependenciesBinDir}/extern/../Source/ThirdParty', '${projectAbsDir}${srcDirRel}/Source/ThirdParty')\n")
 			list (APPEND setupExternFilesDependencies InstallCesiumDependencies)
 			list (APPEND extraTests_local "+Cesium.Unit")
-			
-			# SDK part:
-			configure_file("${CMAKE_CURRENT_SOURCE_DIR}/Public/UnrealProjects/ITwinTestApp/Plugins/ITwinForUnreal/Source/SDKCore/BuildInfo.txt.in"
-						   "${CMAKE_CURRENT_SOURCE_DIR}/Public/UnrealProjects/ITwinTestApp/Plugins/ITwinForUnreal/Source/ThirdParty/BuildInfo.txt")
-			list (APPEND setupExternFilesDependencies Visualization)
 		endif ()
 		if (setupExternFilesCommands)
 			# Actually create the target that will create the symlinks to the lib files of the dependencies.
@@ -315,7 +461,7 @@ function (be_add_unreal_project projectDir)
 
 			add_custom_target (SetupExternFiles_${uniqueName}
 				COMMAND ${CMAKE_COMMAND} -E make_directory "${projectAbsDir}${srcDirRel}/Source/ThirdParty/Lib/$<CONFIG>"
-				COMMAND ${CMAKE_COMMAND} -E make_directory "${projectAbsDir}${srcDirRel}/Binaries/Win64"
+				COMMAND ${CMAKE_COMMAND} -E make_directory "${projectAbsDir}${srcDirRel}/Binaries/${TargetPlatforms}"
 					COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/Public/SetupUnrealExternFiles.py" '${JsonContent}'
 				VERBATIM
 			)
@@ -358,7 +504,7 @@ function (be_add_unreal_project projectDir)
 		"MAIN_DEPENDS;PLUGINS"
 		${ARGN}
 	)
-	set (includeExts .h .inl)
+	set (includeExts .h .hpp .inl)
 	get_filename_component (projectAbsDir "${projectDir}" ABSOLUTE)
 	get_filename_component (projectName "${projectDir}" NAME)
 	set (projectBinDir "${CMAKE_BINARY_DIR}/UnrealProjects/${projectName}")
@@ -443,17 +589,26 @@ function (be_add_unreal_project projectDir)
 	endforeach ()
 	# Save the updated list of current added files.
 	file (WRITE "${addedFilesFilePath}" "${addedFiles}")
+	
+	#set var paths
+	if( WIN32)
+		set (UnrealLaunchPath "${BE_UNREAL_ENGINE_DIR}/Binaries/Win64/UnrealEditor$<$<CONFIG:UnrealDebug>:-Win64-DebugGame>.exe")
+	elseif (APPLE)
+		set (UnrealLaunchPath "${BE_UNREAL_ENGINE_DIR}/Binaries/Mac/UnrealEditor$<$<CONFIG:UnrealDebug>:-Mac-DebugGame>")
+	endif()
+
+	
 	# Now that all build dirs have been setup, we can ask UBT to generate the project files (.sln, .vcxproj...).
 	# We will use some of these generated files to create some cmake targets.
 	if( WIN32)
 		execute_process (
-			COMMAND "${BE_UNREAL_ENGINE_DIR}/Build/BatchFiles/Build.bat" -ProjectFiles -Project "${projectAbsDir}/${projectName}.uproject" -WaitMutex
+			COMMAND "${BE_UNREAL_ENGINE_DIR}/Build/BatchFiles/Build.bat" -ProjectFiles -Project "${projectAbsDir}/${projectName}.uproject" 
 			COMMAND_ERROR_IS_FATAL ANY
 		)
 		# The files generated by UBT use VS macro $(SolutionDir), which will not work in our case because our final .sln file
 		# (which is generated by CMake) not the .sln file generated by UBT and is not in the same folder.
 		# So we create our own project files by duplicating & fixing the files generated by UBT.
-			file (MAKE_DIRECTORY "${projectAbsDir}/Intermediate/ProjectFiles_be/")
+		file (MAKE_DIRECTORY "${projectAbsDir}/Intermediate/ProjectFiles_be/")
 		foreach (extension .vcxproj .vcxproj.user .vcxproj.filters)
 			file (READ "${projectAbsDir}/Intermediate/ProjectFiles/${projectName}${extension}" vcxprojContent)
 			string (REPLACE "$(SolutionDir)" "${projectAbsDir}/" vcxprojContent "${vcxprojContent}")
@@ -478,44 +633,153 @@ function (be_add_unreal_project projectDir)
 			MAP_IMPORTED_CONFIG_UNREALDEBUG DebugGame_Editor
 			MAP_IMPORTED_CONFIG_RELEASE Development_Editor
 		)
+		# Add a target that will build the Shipping version of the app.
+		add_custom_target (${projectName}_Shipping ALL
+			# This target is only compatible with CMake Release config, since it uses Release extern binaries.
+			# Hence the dummy command that will output an explicit error message.
+			COMMAND "$<$<NOT:$<CONFIG:Release>>:TARGET_NOT COMPATIBLE_WITH_THIS_CONFIG>"
+			COMMAND "${BE_UNREAL_ENGINE_DIR}/Build/BatchFiles/Build.bat" ${projectName} Win64 Shipping -Project="${projectAbsDir}/${projectName}.uproject" -WaitMutex -FromMsBuild
+			)
+		set_property (TARGET ${projectName}_Shipping PROPERTY VS_DEBUGGER_COMMAND "${projectAbsDir}/Binaries/Win64/${projectName}-Win64-Shipping.exe")
+	elseif (APPLE)
+	# Mac has a risk of freeze of UnrealBuildTools, try multiple time with tiemout
+		message( "generating unreal project for ${projectAbsDir}/${projectName}.uproject")
+		execute_process (
+			COMMAND "${BE_UNREAL_ENGINE_DIR}/Build/BatchFiles/Mac/Build.sh" -ProjectFiles -Project "${projectAbsDir}/${projectName}.uproject" -WaitMutex
+			TIMEOUT 300
+			RESULT_VARIABLE res
+		)
+		if (NOT ${res} STREQUAL "0")
+			if (${res} MATCHES ".*timeout.*")
+				message( "try generating unreal project for ${projectAbsDir}/${projectName}.uproject after timeout : ${res}")
+				execute_process (
+				COMMAND "killall dotnet" 
+			)
+			else()
+				message( "try generating unreal project for ${projectAbsDir}/${projectName}.uproject after error : ${res}")
+			endif()
+			execute_process (
+				COMMAND "${BE_UNREAL_ENGINE_DIR}/Build/BatchFiles/Mac/Build.sh" -ProjectFiles -Project "${projectAbsDir}/${projectName}.uproject" 
+				RESULT_VARIABLE res
+				TIMEOUT 300
+			)
+			if (NOT ${res} STREQUAL "0")
+				if (${res} MATCHES ".*timeout.*")
+					message( "try generating unreal project for ${projectAbsDir}/${projectName}.uproject after timeout : ${res}")
+					execute_process (
+						COMMAND "killall dotnet" 
+					)
+				else()
+					message( "try generating unreal project for ${projectAbsDir}/${projectName}.uproject after error : ${res}")
+				endif()
+				execute_process (
+					COMMAND "${BE_UNREAL_ENGINE_DIR}/Build/BatchFiles/Mac/Build.sh" -ProjectFiles -Project "${projectAbsDir}/${projectName}.uproject"
+					COMMAND_ERROR_IS_FATAL ANY
+					TIMEOUT 300
+				)
+			endif()
+		endif()
+		
+		# Create a symlink to engine for debugging purpose
+		message("createSymlink " "${BE_UNREAL_ENGINE_DIR}" to  "${projectAbsDir}/../Engine")	
+		createSymlink ("${BE_UNREAL_ENGINE_DIR}" "${projectAbsDir}/../Engine" addedFiles)
+		
+		# Create targets linking to xcode proj generated earlier
+		if (CMAKE_OSX_ARCHITECTURES)
+			add_custom_target( ${projectName} 
+				COMMAND "xcodebuild" "build" "-scheme" "${projectName}" "-configuration" "$<$<CONFIG:UnrealDebug>:DebugGame>$<$<CONFIG:Release>:Development>" "-project" "${projectAbsDir}/Intermediate/ProjectFiles/${projectName} (Mac).xcodeproj" "-arch" "${CMAKE_OSX_ARCHITECTURES}"
+				VERBATIM
+			)
+		else()
+			add_custom_target( ${projectName} 
+				COMMAND "xcodebuild" "build" "-scheme" "${projectName}" "-configuration" "$<$<CONFIG:UnrealDebug>:DebugGame>$<$<CONFIG:Release>:Development>" "-project" "${projectAbsDir}/Intermediate/ProjectFiles/${projectName} (Mac).xcodeproj"
+				VERBATIM
+			)
+		endif()
+	
+		if (CMAKE_OSX_ARCHITECTURES)
+			add_custom_target( ${projectName}Editor 
+				COMMAND "xcodebuild" "build" "-scheme" "${projectName}Editor" "-configuration" "$<$<CONFIG:UnrealDebug>:DebugGame>$<$<CONFIG:Release>:Development>" "-project" "${projectAbsDir}/Intermediate/ProjectFiles/${projectName}Editor (Mac).xcodeproj" "-arch" "${CMAKE_OSX_ARCHITECTURES}"
+				VERBATIM
+			)
+		else()
+			add_custom_target( ${projectName}Editor 
+				COMMAND "xcodebuild" "build" "-scheme" "${projectName}Editor" "-configuration" "$<$<CONFIG:UnrealDebug>:DebugGame>$<$<CONFIG:Release>:Development>" "-project" "${projectAbsDir}/Intermediate/ProjectFiles/${projectName}Editor (Mac).xcodeproj"
+				VERBATIM
+			)
+		endif()
+		
+		if (NOT funcArgs_NO_TEST)
 			# Add a target that will build the Shipping version of the app.
 			add_custom_target (${projectName}_Shipping ALL
 				# This target is only compatible with CMake Release config, since it uses Release extern binaries.
 				# Hence the dummy command that will output an explicit error message.
 				COMMAND "$<$<NOT:$<CONFIG:Release>>:TARGET_NOT COMPATIBLE_WITH_THIS_CONFIG>"
-				COMMAND "${BE_UNREAL_ENGINE_DIR}/Build/BatchFiles/Build.bat" ${projectName} Win64 Shipping -Project="${projectAbsDir}/${projectName}.uproject" -WaitMutex -FromMsBuild
+				COMMAND "${BE_UNREAL_ENGINE_DIR}/Build/BatchFiles/Mac/Build.sh" ${projectName} Mac Shipping -Project="${projectAbsDir}/${projectName}.uproject" -WaitMutex
 				)
-			set_property (TARGET ${projectName}_Shipping PROPERTY VS_DEBUGGER_COMMAND "${projectAbsDir}/Binaries/Win64/${projectName}-Win64-Shipping.exe")
-		# Add dependencies to all external libs used by the project.
-		if (projectDependencies)
-			add_dependencies (${projectName} ${projectDependencies})
-			add_dependencies (${projectName}_Shipping ${projectDependencies})
-		endif ()
-		set_target_properties (${projectName} PROPERTIES FOLDER "UnrealProjects")
-			set_target_properties (${projectName}_Shipping PROPERTIES FOLDER "UnrealProjects/Shipping")
-		# Update the BuildUnrealProjects target so that it will build this project too.
-		if (NOT TARGET BuildUnrealProjects)
-			add_custom_target (BuildUnrealProjects ALL)
-		endif ()
-		add_dependencies (BuildUnrealProjects ${projectName})
-		set_target_properties (BuildUnrealProjects PROPERTIES FOLDER "UnrealProjects/Detail")
+		endif()
+
+				
+		add_custom_target( Run${projectName}Editor
+			COMMAND "${BE_UNREAL_ENGINE_DIR}/Binaries/Mac/UnrealEditor" "${projectAbsDir}/${projectName}.uproject"
+			WORKING_DIRECTORY "${BE_UNREAL_ENGINE_DIR}/.."
+		)
+		add_dependencies (Run${projectName}Editor ${projectName}Editor)
+		set_target_properties (Run${projectName}Editor  PROPERTIES FOLDER "UnrealProjects")
+		
+	endif()
+	
+	# Add dependencies to all external libs used by the project.
+	if (projectDependencies)
+		add_dependencies (${projectName} ${projectDependencies})
 		if (NOT funcArgs_NO_TEST)
-			# Add a target to run the tests.
-			add_custom_target (RunTests_${projectName} ALL # "ALL" so that target is enabled and MSBuild can build it.
-				# UnrealEditor.exe loads the Development binaries (this config is mapped to CMake Release config).
-				# UnrealEditor-Win64-DebugGame.exe loads the DebugGame binaries (this config is mapped to CMake Debug config).
-				# Other CMake configs (if any) are not supported, so we add a dummy command that will try to run an unexisting command with an explicit name.
-				COMMAND "$<$<NOT:$<CONFIG:UnrealDebug,Release>>:TARGET_NOT COMPATIBLE_WITH_THIS_CONFIG>"
-				COMMAND "${BE_UNREAL_ENGINE_DIR}/Binaries/Win64/UnrealEditor$<$<CONFIG:UnrealDebug>:-Win64-DebugGame>.exe" "${projectAbsDir}/${projectName}.uproject" "-ExecCmds=\"Automation RunTests Bentley${extraTests};Quit\"" -unattended -nopause -editor -stdout
-			)
-				set_target_properties (RunTests_${projectName} PROPERTIES FOLDER "UnrealProjects/Tests")
-			add_dependencies (RunTests_${projectName} ${projectName})
-			if (NOT TARGET RunUnrealTests)
-				add_custom_target (RunUnrealTests ALL)
-			endif ()
-			add_dependencies (RunUnrealTests RunTests_${projectName})
-			set_target_properties (RunUnrealTests PROPERTIES FOLDER "UnrealProjects/Detail")
+			add_dependencies (${projectName}_Shipping ${projectDependencies})
+		endif()
+		if(APPLE)
+			add_dependencies (${projectName}Editor  ${projectDependencies})
+		endif()
+	endif ()
+	
+	set_target_properties (${projectName} PROPERTIES FOLDER "UnrealProjects")
+	if (NOT funcArgs_NO_TEST)
+		set_target_properties (${projectName}_Shipping PROPERTIES FOLDER "UnrealProjects/Shipping")
+	endif()
+	if(APPLE)
+		set_target_properties (${projectName}Editor PROPERTIES FOLDER "UnrealProjects")
+	endif ()
+	
+	# Update the BuildUnrealProjects target so that it will build this project too.
+	if (NOT TARGET BuildUnrealProjects)
+		add_custom_target (BuildUnrealProjects ALL)
+	endif ()
+	add_dependencies (BuildUnrealProjects ${projectName})
+	set_target_properties (BuildUnrealProjects PROPERTIES FOLDER "UnrealProjects/Detail")
+	if(APPLE)
+		add_dependencies (BuildUnrealProjects ${projectName}Editor)
+	endif ()
+	
+	if (NOT funcArgs_NO_TEST)
+		# Add a target to run the tests.
+		add_custom_target (RunTests_${projectName} ALL # "ALL" so that target is enabled and MSBuild can build it.
+			# UnrealEditor.exe loads the Development binaries (this config is mapped to CMake Release config).
+			# UnrealEditor-Win64-DebugGame.exe loads the DebugGame binaries (this config is mapped to CMake Debug config).
+			# Other CMake configs (if any) are not supported, so we add a dummy command that will try to run an unexisting command with an explicit name.
+			COMMAND "$<$<NOT:$<CONFIG:UnrealDebug,Release>>:TARGET_NOT COMPATIBLE_WITH_THIS_CONFIG>"
+			COMMAND "${UnrealLaunchPath}" "${projectAbsDir}/${projectName}.uproject" "-ExecCmds=\"Automation RunTests Bentley${extraTests};Quit\"" -unattended -nopause -editor -stdout
+		)
+		set_target_properties (RunTests_${projectName} PROPERTIES FOLDER "UnrealProjects/Tests")
+		add_dependencies (RunTests_${projectName} ${projectName})
+		if (NOT TARGET RunUnrealTests)
+			add_custom_target (RunUnrealTests ALL)
 		endif ()
+		if(APPLE)
+			add_dependencies (RunTests_${projectName} ${projectName}Editor)  #unreal tests needs the editor version compiled otherwise the Cesium Runtime Plugin may not be installeed by UnrealbuiltTool
+		endif ()
+		add_dependencies (RunUnrealTests RunTests_${projectName})
+		set_target_properties (RunUnrealTests PROPERTIES FOLDER "UnrealProjects/Detail")
+	endif ()
+
+	if(WIN32)
 		# If not done yet, add the UE5 project generated by UBT, which references all Unreal sources
 		# and is needed for VAX to work correctly.
 		# We also add Unreal natvis files for improved debugging experience.
@@ -536,83 +800,6 @@ function (be_add_unreal_project projectDir)
 				)
 			set_target_properties (UE5Natvis PROPERTIES FOLDER "UnrealProjects/Detail")
 		endif ()
-	elseif (APPLE)
-		execute_process (
-			COMMAND echo "generating unreal project for ${projectAbsDir}/${projectName}.uproject"
-			COMMAND "${BE_UNREAL_ENGINE_DIR}/Build/BatchFiles/Mac/Build.sh" -ProjectFiles -Project "${projectAbsDir}/${projectName}.uproject" -WaitMutex
-			COMMAND_ERROR_IS_FATAL ANY
-		)
-				
-		#  Create a symlink to engine for debugging purpose
-		message("createSymlink " "${BE_UNREAL_ENGINE_DIR}" to  "${projectAbsDir}/../Engine")	
-		createSymlink ("${BE_UNREAL_ENGINE_DIR}" "${projectAbsDir}/../Engine" addedFiles)
-		
-		
-		add_custom_target( ${projectName}Editor 
-			COMMAND "xcodebuild" "build" "-scheme" "${projectName}Editor" "-configuration" "$<$<CONFIG:UnrealDebug>:DebugGame>$<$<CONFIG:Release>:Development>" "-project" "${projectAbsDir}/Intermediate/ProjectFiles/${projectName}Editor (Mac).xcodeproj"
-			VERBATIM
-		)
-		
-	
-		if (projectDependencies)
-			add_dependencies (${projectName}Editor  ${projectDependencies})
-		endif ()
-		set_target_properties (${projectName}Editor PROPERTIES FOLDER "UnrealProjects")
-		
-		add_custom_target( ${projectName} 
-			COMMAND "xcodebuild" "build" "-scheme" "${projectName}" "-configuration" "$<$<CONFIG:UnrealDebug>:DebugGame>$<$<CONFIG:Release>:Development>" "-project" "${projectAbsDir}/Intermediate/ProjectFiles/${projectName} (Mac).xcodeproj"
-			VERBATIM
-		)
-		
-	
-		if (projectDependencies)
-			add_dependencies (${projectName}  ${projectDependencies})
-		endif ()
-		set_target_properties (${projectName} PROPERTIES FOLDER "UnrealProjects")
+	endif()
 
-		add_custom_target( Run${projectName}Editor
-			COMMAND "${BE_UNREAL_ENGINE_DIR}/Binaries/Mac/UnrealEditor" "${projectAbsDir}/${projectName}.uproject"
-			WORKING_DIRECTORY "${BE_UNREAL_ENGINE_DIR}/.."
-		)
-		add_dependencies (Run${projectName}Editor ${projectName}Editor)
-		set_target_properties (Run${projectName}Editor  PROPERTIES FOLDER "UnrealProjects")
-		if (NOT funcArgs_NO_TEST)
-			# Add a target that will build the Shipping version of the app.
-			add_custom_target (${projectName}_Shipping ALL
-				# This target is only compatible with CMake Release config, since it uses Release extern binaries.
-				# Hence the dummy command that will output an explicit error message.
-				COMMAND "$<$<NOT:$<CONFIG:Release>>:TARGET_NOT COMPATIBLE_WITH_THIS_CONFIG>"
-				COMMAND "${BE_UNREAL_ENGINE_DIR}/Build/BatchFiles/Mac/Build.sh" ${projectName} Mac Shipping -Project="${projectAbsDir}/${projectName}.uproject" -WaitMutex
-				)
-			# Add dependencies to all external libs used by the project.
-			if (projectDependencies)
-				add_dependencies (${projectName}_Shipping ${projectDependencies})
-	endif()
-			set_target_properties (${projectName}_Shipping PROPERTIES FOLDER "UnrealProjects/Shipping")
-		endif ()
-		
-		if (NOT TARGET BuildUnrealProjects)
-			add_custom_target (BuildUnrealProjects ALL)
-		endif ()
-		add_dependencies (BuildUnrealProjects ${projectName})
-		
-		if (NOT funcArgs_NO_TEST)
-			# Add a target to run the tests.
-			add_custom_target (RunTests_${projectName} ALL # "ALL" so that target is enabled and MSBuild can build it.
-			# UnrealEditor.exe loads the Development binaries (this config is mapped to CMake Release config).
-			# UnrealEditor-Win64-DebugGame.exe loads the DebugGame binaries (this config is mapped to CMake Debug config).
-			# Other CMake configs (if any) are not supported, so we add a dummy command that will try to run an unexisting command with an explicit name.
-			COMMAND "$<$<NOT:$<CONFIG:Debug,Release>>:TARGET_NOT COMPATIBLE_WITH_THIS_CONFIG>"
-			COMMAND "${BE_UNREAL_ENGINE_DIR}/Binaries/Mac/UnrealEditor$<$<CONFIG:Debug>:-Mac-DebugGame>" "${projectAbsDir}/${projectName}.uproject" "-ExecCmds=\"Automation RunTests Bentley${extraTests};Quit\"" -unattended -nopause -editor -stdout
-			)
-			set_target_properties (RunTests_${projectName} PROPERTIES FOLDER "UnrealProjects/Tests")
-				add_dependencies (RunTests_${projectName} ${projectName})
-				if (NOT TARGET RunUnrealTests)
-					add_custom_target (RunUnrealTests ALL)
-				endif ()
-				add_dependencies (RunUnrealTests RunTests_${projectName})
-				set_target_properties (RunUnrealTests PROPERTIES FOLDER "UnrealProjects/Detail")
-		endif ()
-	endif()
-	
 endfunction ()

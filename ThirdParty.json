@@ -30,6 +30,16 @@
     "license": ["BSD-3-Clause"]
   },
   {
+    "name": "httpmockserver",
+    "url": "https://github.com/seznam/httpmockserver",
+    "license": ["MIT"]
+  },
+  {
+    "name": "libmicrohttpd",
+    "url": "https://www.gnu.org/software/libmicrohttpd/",
+    "license": ["GNU LGPL v2.1"]
+  },
+  {
     "name": "UnrealTransformGizmo",
     "url": "https://github.com/robinwood3d/UnrealTransformGizmo",
     "license": ["MIT"]

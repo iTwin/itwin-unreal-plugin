@@ -24,4 +24,4 @@ include_directories(${tiny-process_SOURCE_DIR})
 
 
 find_package(cpr REQUIRED)
-find_package(GTest CONFIG REQUIRED)
+find_package(Catch2 3 REQUIRED)

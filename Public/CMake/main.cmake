@@ -17,6 +17,7 @@ set (beRequiredPythonVersion "3.9")
 if("${Python3_VERSION}" VERSION_LESS "${beRequiredPythonVersion}")
 	message (FATAL_ERROR "Python version required is ${beRequiredPythonVersion}, but found ${Python3_VERSION}.")
 endif ()
+include ("${CMAKE_CURRENT_LIST_DIR}/be_get_vcpkg_infos.cmake")
 add_subdirectory(Public/SDK)
 include ("${CMAKE_CURRENT_LIST_DIR}/advanced_option.cmake")
 include ("${CMAKE_CURRENT_LIST_DIR}/options.cmake")
@@ -40,6 +41,7 @@ include_directories (
 add_subdirectory (Public/BeHeaders)
 add_subdirectory (Public/Extern/boost) # Actually a small subset, see CMakeLists to expand it
 add_subdirectory (Public/BeUtils)
+add_subdirectory (Public/httpmockserver) # for some unit tests only
 if (NOT ITWIN_TEST_APP_ID)
 	# Configure your App ID here.
 	set (ITWIN_TEST_APP_ID "")
@@ -51,11 +53,17 @@ set (ITwinForUnreal_PluginDef
 				BeHeaders
 				BeUtils
 				Boost
+				cpr::cpr
+				httpmockserver
+				libmicrohttpd
+				Visualization
 )
 # Generate ITwinTestAppConfig.h (storing the app ID) in ThirdParty dir, so that it's ignored by git.
 configure_file (Public/ITwinTestAppConfig/ITwinTestAppConfig.h.in
 	"${CMAKE_SOURCE_DIR}/Public/UnrealProjects/ITwinTestApp/Source/ThirdParty/Include/ITwinTestAppConfig/ITwinTestAppConfig.h")
 be_add_unreal_project ("Public/UnrealProjects/ITwinTestApp"
+	MAIN_DEPENDS
+		Visualization
 	PLUGINS
 		${ITwinForUnreal_PluginDef}
 )

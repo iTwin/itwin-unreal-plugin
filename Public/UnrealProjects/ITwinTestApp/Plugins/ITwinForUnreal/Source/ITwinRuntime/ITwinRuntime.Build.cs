@@ -14,9 +14,6 @@ public class ITwinRuntime : ModuleRules
 	public ITwinRuntime(ReadOnlyTargetRules Target) : base(Target)
 	{
 		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
-		PrivateDefinitions.AddRange(new string[]{
-			"NOMINMAX",
-		});
 		PublicDependencyModuleNames.AddRange(new string[]{
 			"Core",
 		});
@@ -32,26 +29,36 @@ public class ITwinRuntime : ModuleRules
 			"RHI",
 			"Slate",
 			"SlateCore",
-        });
+		});
 		string libFolder = "UnrealDebug";
-		string libPostfix = ".lib";
+		string libExtension = ".lib";
 		string libPrefix = "";
-        string libSuffix = "";
-        if (Target.Platform == UnrealTargetPlatform.Mac)
-        {
-            libPostfix = ".a";
-            libPrefix = "lib";
-        }
+		if (Target.Platform == UnrealTargetPlatform.Mac)
+		{
+			libExtension = ".a";
+			libPrefix = "lib";
+		}
 
-       if (Target.Configuration == UnrealTargetConfiguration.Development ||
+		if (Target.Configuration == UnrealTargetConfiguration.Development ||
 			Target.Configuration == UnrealTargetConfiguration.Shipping)
-
 		{
 			libFolder = "Release";
-			libSuffix = "";
-        }
-        PublicAdditionalLibraries.AddRange(new string[]{
-			Path.Combine(ModuleDirectory, "../ThirdParty/Lib",libFolder, libPrefix + "BeUtils" + libSuffix + libPostfix)
+		}
+
+		PublicAdditionalLibraries.AddRange(new string[]{
+			Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, libPrefix + "BeUtils" + libExtension),
+			Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, libPrefix + "httpmockserver" + libExtension),
+			Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, libPrefix + "cpr" + libExtension),
+			Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, "libcurl" + libExtension),
+			Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, "libmicrohttpd" + libExtension),
 		});
+		if (Target.Platform == UnrealTargetPlatform.Win64)
+		{
+			PublicSystemLibraries.Add("crypt32.lib"); // for curl
+		}
+		else
+		{
+			PublicFrameworks.AddRange(new string[] { "SystemConfiguration" }); //for curl
+		}
 	}
 }

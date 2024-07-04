@@ -33,7 +33,8 @@ public:
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 #endif
-	
+	virtual void PostLoad() override;
+
 	UFUNCTION(Category = "iTwin",
 		CallInEditor,
 		BlueprintCallable)
@@ -60,6 +61,7 @@ private:
 
 	bool HasTileset() const;
 	void DestroyTileset();
+	void OnLoadingUIEvent();
 
 	/// overridden from AITwinServiceActor:
 	virtual void UpdateOnSuccessfulAuthorization() override;

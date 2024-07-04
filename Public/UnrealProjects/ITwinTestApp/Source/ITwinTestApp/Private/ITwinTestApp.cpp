@@ -8,10 +8,10 @@
 
 #include <ITwinTestApp.h>
 
-#include <ITwinRuntime\Private\Compil\BeforeNonUnrealIncludes.h>
+#include <ITwinRuntime/Private/Compil/BeforeNonUnrealIncludes.h>
 #	include <Core/Visualization/Visualization.h>
 #	include <filesystem>
-#include <ITwinRuntime\Private\Compil\AfterNonUnrealIncludes.h>
+#include <ITwinRuntime/Private/Compil/AfterNonUnrealIncludes.h>
 
 #include <Modules/ModuleManager.h>
 #include <ITwinServerConnection.h>

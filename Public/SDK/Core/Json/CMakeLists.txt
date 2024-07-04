@@ -1,5 +1,10 @@
-
-
+add_library(Json INTERFACE
+	Json.h
+)
+target_link_libraries (Json INTERFACE
+	reflectcpp
+)
+set_target_properties(Json PROPERTIES FOLDER "SDK/Core") 
 
 #### =========  Unit Tests ===========
 
@@ -10,12 +15,9 @@ set_target_properties(JsonTest PROPERTIES FOLDER "SDK/Core/Tests")
 #add_test(NAME JsonTest COMMAND JsonTest)
 
 target_link_libraries(JsonTest PRIVATE 
-						reflectcpp
-						GTest::gtest 
-						GTest::gtest_main 
-						GTest::gmock 
-						GTest::gmock_main
+						Json
+						Catch2::Catch2WithMain
 					)
-
-include(GoogleTest)
-gtest_discover_tests(JsonTest)
+include(CTest)
+include(Catch)
+catch_discover_tests(JsonTest)

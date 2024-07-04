@@ -6,13 +6,6 @@
 |
 +--------------------------------------------------------------------------------------*/
 
-/*--------------------------------------------------------------------------------------+
-|
-|     $Source: JsonTest.cpp $
-|
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
-|
-+--------------------------------------------------------------------------------------*/
 #include "Json.h"
 
 #include <variant>
@@ -20,7 +13,7 @@
 #include <rfl/json.hpp> //note: we should not include this but compiler error VS 2022 17.9.2: static function 'void yyjson_mut_doc_set_root(yyjson_mut_doc *,yyjson_mut_val *)' declared but not defined
 #include <rfl.hpp>
 
-#include <gtest/gtest.h>
+#include <catch2/catch_all.hpp>
 struct Person {
 	std::string first_name;
 	std::string last_name;
@@ -32,19 +25,19 @@ Person{ .first_name = "Homer",
 	   .last_name = "Simpson",
 	   .age = 45 };
 
-TEST(JsonTest, json_tostring) {
+TEST_CASE("JsonTest:json_tostring") {
 	const std::string r = SDK::Core::Json::ToString(homer);
-	EXPECT_EQ(r, "{\"first_name\":\"Homer\",\"last_name\":\"Simpson\",\"age\":45}");
+	REQUIRE(r == "{\"first_name\":\"Homer\",\"last_name\":\"Simpson\",\"age\":45}");
 }
 
-TEST(JsonTest, json_fromstring) {
+TEST_CASE("JsonTest:json_fromstring") {
 	const std::string r = SDK::Core::Json::ToString(homer);
 	const std::string json_string("{\"first_name\":\"Homer\",\"last_name\":\"Simpson\",\"age\":45}");
 	Person homer;
 	SDK::Core::Json::FromString(homer, json_string);
-	EXPECT_EQ(homer.first_name, "Homer");
-	EXPECT_EQ(homer.last_name, "Simpson");
-	EXPECT_EQ(homer.age, 45);
+	REQUIRE(homer.first_name == "Homer");
+	REQUIRE(homer.last_name == "Simpson");
+	REQUIRE(homer.age == 45);
 }
 
 #if 0
@@ -59,7 +52,7 @@ public:
 	//std::map<std::string, int> v;
 };
 
-TEST(JsonTest, json_fromstring3) {
+TEST_CASE(JsonTest, json_fromstring3) {
 //	std::string json_string(
 //		"\
 //	{\
@@ -84,9 +77,9 @@ TEST(JsonTest, json_fromstring3) {
 	//const std::string r = SDK::Core::Json::ToString(homer);
 	//const std::string json_string("{\"first_name\":\"Homer\",\"last_name\":\"Simpson\",\"age\":45}");
 	//auto homer = SDK::Core::Json::FromString<Person>(json_string);
-	//EXPECT_EQ(homer.first_name, "Homer");
-	//EXPECT_EQ(homer.last_name, "Simpson");
-	//EXPECT_EQ(homer.age, 45);
+	//REQUIRE(homer.first_name, "Homer");
+	//REQUIRE(homer.last_name, "Simpson");
+	//REQUIRE(homer.age, 45);
 }
 
 //typedef std::map<std::string, std::variant<Value::v, std::vector<Value::v>, std::map<std::string, Value::v> >> GenericJSon;
@@ -162,7 +155,7 @@ struct GenericJSon : public std::map<std::string, std::variant<Value, std::vecto
 //typedef std::variant<bool, double, std::string, std::vector<Value>, std::map<std::string, Value> > Value2;
 //typedef std::map<std::string, std::variant<std::map<std::string, Value>, std::vector<std::map<std::string, Value>>, std::vector<Value2>, Value2>> GenericJSon;
 
-TEST(JsonTest, json_fromstring2) {
+TEST_CASE(JsonTest, json_fromstring2) {
 	std::string json_string(
 "\
 	{\
@@ -188,8 +181,8 @@ TEST(JsonTest, json_fromstring2) {
 	//const std::string r = SDK::Core::Json::ToString(homer);
 	//const std::string json_string("{\"first_name\":\"Homer\",\"last_name\":\"Simpson\",\"age\":45}");
 	//auto homer = SDK::Core::Json::FromString<Person>(json_string);
-	//EXPECT_EQ(homer.first_name, "Homer");
-	//EXPECT_EQ(homer.last_name, "Simpson");
-	//EXPECT_EQ(homer.age, 45);
+	//REQUIRE(homer.first_name, "Homer");
+	//REQUIRE(homer.last_name, "Simpson");
+	//REQUIRE(homer.age, 45);
 }
 #endif

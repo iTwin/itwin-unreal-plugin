@@ -21,7 +21,7 @@ void AIModelSelectionMenuScript::PreInitializeComponents()
 void AIModelSelectionMenuScript::BeginPlay()
 {
 	Super::BeginPlay();
-	auto* const ITwinSelector = GetWorld()->SpawnActor<AITwinSelector>();
+	ITwinSelector = GetWorld()->SpawnActor<AITwinSelector>();
 	ITwinSelector->LoadModel.AddDynamic(this, &AIModelSelectionMenuScript::OnLoadIModel);
 }
 
@@ -32,6 +32,19 @@ void AIModelSelectionMenuScript::OnLoadIModel(FString InIModelId, FString InExpo
 	ITwinId = InITwinId;
 	TopPanel = GetWorld()->SpawnActor<ATopMenu>();
 	IModel = GetWorld()->SpawnActor<AITwinIModel>();
+#if WITH_EDITOR
+	// use the display name of the iModel preferably
+	FString IModelName;
+	if (ensure(ITwinSelector))
+	{
+		IModelName = ITwinSelector->GetIModelDisplayName(IModelId);
+		ensureMsgf(!IModelName.IsEmpty(), TEXT("Display Name should be retrievable from UI"));
+	}
+	if (!IModelName.IsEmpty())
+	{
+		IModel->SetActorLabel(IModelName);
+	}
+#endif
 	IModel->OnIModelLoaded.AddDynamic(this, &AIModelSelectionMenuScript::IModelLoaded);
 	IModel->LoadModel(ExportId);
 }

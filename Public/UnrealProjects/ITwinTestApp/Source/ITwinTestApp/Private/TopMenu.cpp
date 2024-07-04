@@ -16,13 +16,15 @@
 #include <GameFramework/PlayerController.h>
 #include <Kismet/GameplayStatics.h>
 #include <Kismet/KismetMathLibrary.h>
+#include <TimerManager.h>
+#include <UObject/StrongObjectPtr.h>
 
 void ATopMenu::BeginPlay()
 {
 	Super::BeginPlay();
 	// Create UI
 	UI = CreateWidget<UTopMenuWidgetImpl>(GetWorld()->GetFirstPlayerController(), LoadClass<UTopMenuWidgetImpl>(nullptr,
-		L"/Script/UMGEditor.WidgetBlueprint'/Game/UX/TopMenuWidget.TopMenuWidget_C'"));
+		TEXT("/Script/UMGEditor.WidgetBlueprint'/Game/UX/TopMenuWidget.TopMenuWidget_C'")));
 	UI->AddToViewport();
 	UpdateElementId(false, "");
 	ITwinWebService = NewObject<UITwinWebServices>(this);

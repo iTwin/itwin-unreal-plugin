@@ -18,13 +18,12 @@
 
 #include <Boost/BoostHash.h>
 #include <ITwinElementID.h>
-
+#include "TimelineBase.h"
 #include <optional>
 #include <unordered_map>
 
 class AActor;
 class FJsonValue;
-enum class ITwin::Timeline::Interpolation : int32_t;
 
 namespace ITwin::Timeline {
 

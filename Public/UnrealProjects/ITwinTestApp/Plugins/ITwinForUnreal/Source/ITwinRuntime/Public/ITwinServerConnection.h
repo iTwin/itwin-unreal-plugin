@@ -47,10 +47,14 @@ public:
 	
 	//! OAuth access token, without any prefix (eg. it should not start with "Bearer ").
 	UPROPERTY(Category = "iTwin",
-		EditAnywhere)
+		EditAnywhere,
+		Transient)
 	FString AccessToken;
 
 	FString UrlPrefix() const;
+
+	UFUNCTION(BlueprintCallable, Category = "iTwin")
+	bool HasAccessToken() const { return !AccessToken.IsEmpty(); }
 
 	static bool CheckRequest(FHttpRequestPtr const& CompletedRequest, FHttpResponsePtr const& Response,
 							 bool connectedSuccessfully, FString* pstrError = nullptr);
@@ -59,7 +63,7 @@ public:
 	static void SetITwinAppIDArray(ITwin::AppIDArray const& ITwinAppIDs);
 	//! Sets the app ID for the Prod environment.
 	//! This function is a convenience for non-Bentley apps, since such apps only use this env.
-	UFUNCTION(BlueprintCallable)
+	UFUNCTION(BlueprintCallable, Category = "iTwin")
 	static void SetITwinAppID(const FString& AppID);
 };
 

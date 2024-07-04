@@ -6,7 +6,7 @@
 |
 +--------------------------------------------------------------------------------------*/
 
-#include <gtest/gtest.h>
+#include <catch2/catch_all.hpp>
 
 #include "Tools.h"
 
@@ -18,17 +18,33 @@ class MyClass : public Tools::ExtensionSupport
 
 class MyExtension : public Tools::Extension
 {
+public:
+	enum ETypeid : std::uint64_t {
+		value = Tools::GenHash("MyExtension")
+	};
 };
 
-TEST(Tools, Extension) {
-	MyClass myclass;
-	Tools::ExtensionId MyGoodId{ 10 };
-	Tools::ExtensionId MyBadId{ 20 };
+class BadExt : public Tools::Extension
+{
+public:
+	enum ETypeid : std::uint64_t {
+		value = Tools::GenHash("BadExt")
+	};
+};
 
-	std::shared_ptr<Tools::Extension> ext(new MyExtension);
-	myclass.AddExtension(MyGoodId, ext);
-	EXPECT_EQ(myclass.HasExtension(MyGoodId), true);
-	EXPECT_EQ(myclass.HasExtension(MyBadId), false);
-	EXPECT_EQ(myclass.GetExtension(MyGoodId).get(), ext.get());
-	EXPECT_EQ(myclass.GetExtension(MyBadId).get(), nullptr);
+TEST_CASE("Tools:Extension") 
+{
+	MyClass myclass;
+	std::shared_ptr<MyExtension> ext(new MyExtension);
+	myclass.AddExtension(ext);
+
+	REQUIRE(myclass.HasExtension<MyExtension>() == true);
+	REQUIRE(myclass.GetExtension<MyExtension>().get() == ext.get());
+
+	REQUIRE(myclass.GetExtension<BadExt>().get() == nullptr);
+	REQUIRE(myclass.HasExtension<BadExt>() == false);
+
+	myclass.RemoveExtension<MyExtension>();
+	REQUIRE(myclass.HasExtension<MyExtension>() == false);
+	REQUIRE(myclass.GetExtension<MyExtension>().get() == nullptr);
 }

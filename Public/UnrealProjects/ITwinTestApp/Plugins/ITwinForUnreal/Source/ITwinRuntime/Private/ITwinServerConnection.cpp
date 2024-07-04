@@ -36,8 +36,11 @@ bool AITwinServerConnection::CheckRequest(FHttpRequestPtr const& CompletedReques
 	{
 		if (!requestError.IsEmpty())
 		{
-			UE_LOG(LogITwinHttp, Error, TEXT("Request to %s failed with %s"),
-				*CompletedRequest->GetURL(), *requestError);
+			if (UITwinWebServices::ShouldLogErrors())
+			{
+				UE_LOG(LogITwinHttp, Error, TEXT("Request to %s failed with %s"),
+					*CompletedRequest->GetURL(), *requestError);
+			}
 		}
 		if (pstrError)
 		{

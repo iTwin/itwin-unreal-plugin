@@ -49,7 +49,7 @@ public:
 			Owner.bGeolocated = true;
 			Latitude = 0.5 * (Info.ExtentNorthEast.Latitude + Info.ExtentSouthWest.Latitude);
 			Longitude = 0.5 * (Info.ExtentNorthEast.Longitude + Info.ExtentSouthWest.Longitude);
-			Tileset->SetGeoreference(Owner.Geolocation->LocatedGeoreference.Get());
+			Tileset->SetGeoreference(Owner.Geolocation->LocatedGeoreference);
 			if (Tileset->GetGeoreference()->GetOriginPlacement() == EITwinOriginPlacement::TrueOrigin)
 			{
 				// Common geolocation is not yet inited, use the location of this reality data.
@@ -60,7 +60,7 @@ public:
 			}
 		}
 		else
-			Tileset->SetGeoreference(Owner.Geolocation->NonLocatedGeoreference.Get());
+			Tileset->SetGeoreference(Owner.Geolocation->NonLocatedGeoreference);
 	}
 };
 
@@ -85,6 +85,13 @@ void AITwinRealityData::OnRealityData3DInfoRetrieved(bool bSuccess, FITwinRealit
 	if (bSuccess)
 	{
 		Impl->OnRealityData3DInfoRetrieved(Info);
+
+#if WITH_EDITOR
+		if (!Info.DisplayName.IsEmpty())
+		{
+			SetActorLabel(Info.DisplayName);
+		}
+#endif
 	}
 }
 
@@ -113,7 +120,7 @@ void AITwinRealityData::UpdateRealityData()
 
 namespace ITwin
 {
-	uint32 DestroyTilesetsInActor(AActor& Owner);
+	void DestroyTilesetsInActor(AActor& Owner, bool bDestroyCesiumGeoref);
 }
 
 bool AITwinRealityData::HasTileset() const
@@ -130,12 +137,24 @@ bool AITwinRealityData::HasTileset() const
 
 void AITwinRealityData::DestroyTileset()
 {
-	ITwin::DestroyTilesetsInActor(*this);
+	// see comment in AITwinIModel::DestroyTileset()
+	bool bDestroyCesiumGeoref = !Geolocation;
+	ITwin::DestroyTilesetsInActor(*this, bDestroyCesiumGeoref);
 }
 
 void AITwinRealityData::Reset()
 {
 	DestroyTileset();
+}
+
+void AITwinRealityData::OnLoadingUIEvent()
+{
+	DestroyTileset();
+
+	if (!RealityDataId.IsEmpty() && !ITwinId.IsEmpty())
+	{
+		UpdateRealityData();
+	}
 }
 
 #if WITH_EDITOR
@@ -148,16 +167,20 @@ void AITwinRealityData::PostEditChangeProperty(FPropertyChangedEvent& e)
 		||
 		PropertyName == GET_MEMBER_NAME_CHECKED(AITwinRealityData, ITwinId))
 	{
-		DestroyTileset();
-
-		if (!RealityDataId.IsEmpty() && !ITwinId.IsEmpty())
-		{
-			UpdateRealityData();
-		}
+		OnLoadingUIEvent();
 	}
 }
 #endif //WITH_EDITOR
 
+void AITwinRealityData::PostLoad()
+{
+	Super::PostLoad();
+
+	if (!RealityDataId.IsEmpty() && !ITwinId.IsEmpty())
+	{
+		OnLoadingUIEvent();
+	}
+}
 
 void AITwinRealityData::UseAsGeolocation()
 {
