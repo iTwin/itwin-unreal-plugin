@@ -46,8 +46,8 @@ bool FITwinWebServicesTest::RunTest(const FString& /*Parameters*/)
 		EITwinEnvironment const TestEnv = EITwinEnvironment::Prod;
 		// Avoid conflicting with the true application (or another instance of the same test running in
 		// parallel...), and provide with a default iTwin App ID if there is none currently.
-		FString TokenFileSuffix = FString::Printf(TEXT("_Test_%d"), FPlatformProcess::GetCurrentProcessId());
-		UITwinWebServices::SetupTestMode(TestEnv, TokenFileSuffix);
+		FString TokenFileSuffixForTest = FString::Printf(TEXT("_Test_%d"), FPlatformProcess::GetCurrentProcessId());
+		UITwinWebServices::SetupTestMode(TestEnv, TokenFileSuffixForTest);
 
 		UTEST_TRUE("SaveToken", UITwinWebServices::SaveToken(SrcToken, TestEnv));
 		FString ReadToken;
@@ -397,7 +397,7 @@ private:
 				"\"numStorePolyfacesEntries\":256,\"numStorePolyfacesPrimitives\":673886,\"numStorePrimitives\":673894,\"numStoreStrokesEntries\":8,\"numStoreStrokesPrimitives\":8," \
 				"\"storeSize\":28,\"leafTileSizeMax\":17,\"leafTolerance\":0,\"modelBox\":256,\"modelSize\":16,\"numLeafTilePrimitives\":293566,\"numLeafTilePrimitivesMax\":214374," \
 				"\"numLeafTiles\":7,\"numTileBatches\":10,\"numTileBatchesMax\":3,\"numTilePrimitives\":301360,\"numTilePrimitivesMax\":214374,\"numTiles\":8,\"publisherTime\":0," \
-				"\"tileSizeMax\":17,\"tileSizeMaxLevel\":7,\"version\":\"0.2.0\",\"tilesetSize\":24,\"tilesetStructureTime\":0}}," \
+				"\"tileSizeMax\":17,\"tileSizeMaxLevel\":7,\"version\":\"0.2.8.1\",\"tilesetSize\":24,\"tilesetStructureTime\":0}}," \
 				"\"_links\":{\"mesh\":{\"href\":\"https://gltf59.blob.net/6e5a59b7-878b-4275-b960-8668dc11a04d?sv=2024-05-04&spr=https&se=2024-06-22T23%3A59%3A59Z&sr=c&sp=rl&sig=Nq%2B%2FPjEXu64kgPsYVBjuxTV44Zq4GfsSxqTDDygD4oI%3D\"}}}," \
 				"{\"id\":\"87316e15-3d1e-436f-bc7d-b22521f67aff\",\"displayName\":\"WindTurbine\",\"status\":\"Complete\",\"lastModified\":\"2024-01-29T08:39:07.737Z\"," \
 				"\"request\":{\"iModelId\":\"d66fcd8c-604a-41d6-964a-b9767d446c53\",\"changesetId\":\"9641026f8e6370db8cc790fab8943255af57d38e\"," \
@@ -416,7 +416,7 @@ private:
 				"\"numStorePolyfacesEntries\":256,\"numStorePolyfacesPrimitives\":673886,\"numStorePrimitives\":673894,\"numStoreStrokesEntries\":8,\"numStoreStrokesPrimitives\":8," \
 				"\"storeSize\":28,\"leafTileSizeMax\":11,\"leafTolerance\":0,\"modelBox\":256,\"modelSize\":16,\"numLeafTilePrimitives\":293566,\"numLeafTilePrimitivesMax\":214374," \
 				"\"numLeafTiles\":7,\"numTileBatches\":10,\"numTileBatchesMax\":3,\"numTilePrimitives\":301360,\"numTilePrimitivesMax\":214374,\"numTiles\":8,\"publisherTime\":0," \
-				"\"tileSizeMax\":11,\"tileSizeMaxLevel\":7,\"version\":\"0.2.0\",\"tilesetSize\":16,\"tilesetStructureTime\":0}}," \
+				"\"tileSizeMax\":11,\"tileSizeMaxLevel\":7,\"version\":\"0.2.8.1\",\"tilesetSize\":16,\"tilesetStructureTime\":0}}," \
 				"\"_links\":{\"mesh\":{\"href\":\"https://gltf59.blob.net/a8d9806f-42e1-4523-aa25-0ba0b7f87e5c?sv=2024-05-04&spr=https&se=2024-06-22T23%3A59%3A59Z&sr=c&sp=rl&sig=Va1c8owVNySpR7IFb4Q0A1%2FDqZn%2BD5B4T9%2F%2Fru8PFEM%3D\"}}}]," \
 				"\"_links\":{\"self\":{\"href\":\"https://api.test.com/mesh-export/?$skip=0&$top=100&iModelId=d66fcd8c-604a-41d6-964a-b9767d446c53&changesetId=9641026f8e6370db8cc790fab8943255af57d38e\"}}}"
 			);
@@ -442,7 +442,7 @@ private:
 				"\"numStoreLevels\":2,\"numStorePolyfacesEntries\":1502,\"numStorePolyfacesPrimitives\":76874,\"numStorePrimitives\":80745,\"numStoreStrokesEntries\":770," \
 				"\"numStoreStrokesPrimitives\":3871,\"storeSize\":5,\"leafTileSizeMax\":1,\"leafTolerance\":0,\"modelBox\":16,\"modelSize\":16,\"numLeafTilePrimitives\":57076," \
 				"\"numLeafTilePrimitivesMax\":57076,\"numLeafTiles\":1,\"numTileBatches\":39,\"numTileBatchesMax\":39,\"numTilePrimitives\":57076,\"numTilePrimitivesMax\":57076," \
-				"\"numTiles\":1,\"publisherTime\":0,\"tileSizeMax\":1,\"tileSizeMaxLevel\":4,\"version\":\"0.2.0\",\"tilesetSize\":1,\"tilesetStructureTime\":0}}," \
+				"\"numTiles\":1,\"publisherTime\":0,\"tileSizeMax\":1,\"tileSizeMaxLevel\":4,\"version\":\"0.2\",\"tilesetSize\":1,\"tilesetStructureTime\":0}}," \
 				"\"_links\":{\"mesh\":{\"href\":\"https://gltf59.blob.net/00af52a3-a416-4e37-99e9-6de56368bc37?sv=2024-05-04&spr=https&se=2024-06-22T23%3A59%3A59Z&sr=c&sp=rl&sig=sgi1%2F26Szx6zUezikckec3l0285RRw3A1k948KBAjsU%3D\"}}}," \
 				"{\"id\":\"1485a12a-c4f6-416f-bb79-e1fe478a3220\",\"displayName\":\"PhotoRealisticRendering\",\"status\":\"Complete\",\"lastModified\":\"2024-06-18T15:00:19.179Z\"," \
 				"\"request\":{\"iModelId\":\"4dcf6dee-e7f1-4ed8-81f2-125402b9ac95\",\"changesetId\":\"\"," \
@@ -455,7 +455,7 @@ private:
 				"\"numStoreLevels\":2,\"numStorePolyfacesEntries\":1502,\"numStorePolyfacesPrimitives\":76874,\"numStorePrimitives\":80745,\"numStoreStrokesEntries\":770," \
 				"\"numStoreStrokesPrimitives\":3871,\"storeSize\":5,\"leafTileSizeMax\":1,\"leafTolerance\":0,\"modelBox\":16,\"modelSize\":16,\"numLeafTilePrimitives\":57076," \
 				"\"numLeafTilePrimitivesMax\":57076,\"numLeafTiles\":1,\"numTileBatches\":39,\"numTileBatchesMax\":39,\"numTilePrimitives\":57076,\"numTilePrimitivesMax\":57076," \
-				"\"numTiles\":1,\"publisherTime\":0,\"tileSizeMax\":1,\"tileSizeMaxLevel\":4,\"version\":\"0.2.0\",\"tilesetSize\":1,\"tilesetStructureTime\":0}}," \
+				"\"numTiles\":1,\"publisherTime\":0,\"tileSizeMax\":1,\"tileSizeMaxLevel\":4,\"version\":\"0.3.8\",\"tilesetSize\":1,\"tilesetStructureTime\":0}}," \
 				"\"_links\":{\"mesh\":{\"href\":\"https://gltf59.blob.net/1485a12a-c4f6-416f-bb79-e1fe478a3220?sv=2024-05-04&spr=https&se=2024-06-22T23%3A59%3A59Z&sr=c&sp=rl&sig=jAKM4lsaO0THXKe6Au9jOoqb4CUaAOVGy6hCf%2BGCO9s%3D\"}}}," \
 				"{\"id\":\"1d7eb244-cec9-4f62-909b-fb4755c37d83\",\"displayName\":\"PhotoRealisticRendering\",\"status\":\"Complete\",\"lastModified\":\"2024-06-05T13:51:14.999Z\"," \
 				"\"request\":{\"iModelId\":\"4dcf6dee-e7f1-4ed8-81f2-125402b9ac95\",\"changesetId\":\"\"," \
@@ -472,7 +472,7 @@ private:
 				"\"numStoreLevels\":2,\"numStorePolyfacesEntries\":1502,\"numStorePolyfacesPrimitives\":76874,\"numStorePrimitives\":80745,\"numStoreStrokesEntries\":770," \
 				"\"numStoreStrokesPrimitives\":3871,\"storeSize\":5,\"leafTileSizeMax\":1,\"leafTolerance\":0,\"modelBox\":16,\"modelSize\":16,\"numLeafTilePrimitives\":57076," \
 				"\"numLeafTilePrimitivesMax\":57076,\"numLeafTiles\":1,\"numTileBatches\":39,\"numTileBatchesMax\":39,\"numTilePrimitives\":57076,\"numTilePrimitivesMax\":57076," \
-				"\"numTiles\":1,\"publisherTime\":0,\"tileSizeMax\":1,\"tileSizeMaxLevel\":4,\"version\":\"0.2.0\",\"tilesetSize\":1,\"tilesetStructureTime\":0}}," \
+				"\"numTiles\":1,\"publisherTime\":0,\"tileSizeMax\":1,\"tileSizeMaxLevel\":4,\"version\":\"0.2.8.1\",\"tilesetSize\":1,\"tilesetStructureTime\":0}}," \
 				"\"_links\":{\"mesh\":{\"href\":\"https://gltf59.blob.net/ed456436-ed0a-488c-a5f2-4115e7d8e311?sv=2024-05-04&spr=https&se=2024-06-22T23%3A59%3A59Z&sr=c&sp=rl&sig=1pievrXlFCSwmErxnSsIS4STny9y9oz%2B3P5j%2FsbPkgA%3D\"}}}]," \
 				"\"_links\":{\"self\":{\"href\":\"https://api.test.com/mesh-export/?$skip=0&$top=100&iModelId=4dcf6dee-e7f1-4ed8-81f2-125402b9ac95\"}}}"
 			);
@@ -494,7 +494,7 @@ private:
 				"\"numStorePolyfacesEntries\":256,\"numStorePolyfacesPrimitives\":673886,\"numStorePrimitives\":673894,\"numStoreStrokesEntries\":8,\"numStoreStrokesPrimitives\":8," \
 				"\"storeSize\":28,\"leafTileSizeMax\":17,\"leafTolerance\":0,\"modelBox\":256,\"modelSize\":16,\"numLeafTilePrimitives\":293566,\"numLeafTilePrimitivesMax\":214374," \
 				"\"numLeafTiles\":7,\"numTileBatches\":10,\"numTileBatchesMax\":3,\"numTilePrimitives\":301360,\"numTilePrimitivesMax\":214374,\"numTiles\":8,\"publisherTime\":0," \
-				"\"tileSizeMax\":17,\"tileSizeMaxLevel\":7,\"version\":\"0.2.0\",\"tilesetSize\":24,\"tilesetStructureTime\":0}}," \
+				"\"tileSizeMax\":17,\"tileSizeMaxLevel\":7,\"version\":\"0.2.8.1\",\"tilesetSize\":24,\"tilesetStructureTime\":0}}," \
 				"\"_links\":{\"mesh\":{\"href\":\"https://gltf59.blob.net/6e5a59b7-878b-4275-b960-8668dc11a04d?sv=2024-05-04&spr=https&se=2024-06-22T23%3A59%3A59Z&sr=c&sp=rl&sig=Nq%2B%2FPjEXu64kgPsYVBjuxTV44Zq4GfsSxqTDDygD4oI%3D\"}}}}"
 			);
 		}
@@ -697,14 +697,7 @@ private:
 std::unique_ptr<httpmock::MockServer> FITwinMockServer::MakeServer(
 	unsigned startPort, unsigned tryCount /*= 1000*/)
 {
-	try {
-		return httpmock::getFirstRunningMockServer<FITwinMockServer>(startPort, tryCount);
-	}
-	catch (std::runtime_error&) {
-		return {};
-	}
-	checkNoEntry();
-	return {};
+	return httpmock::getFirstRunningMockServer<FITwinMockServer>(startPort, tryCount);
 }
 
 
@@ -1094,6 +1087,8 @@ bool FITwinWebServicesRequestTest::RunTest(const FString& /*Parameters*/)
 				// result is sorted by date, with only Cesium exports
 				UTEST_EQUAL("Id 0", ExportInfos[0].Id, TEXT("ed456436-ed0a-488c-a5f2-4115e7d8e311"));
 				UTEST_EQUAL("Id 1", ExportInfos[1].Id, TEXT("1485a12a-c4f6-416f-bb79-e1fe478a3220"));
+				// I left the old export version 0.2[.0] for this one, instead of 0.2.8.1, so that it was
+				// filtered out by WebServices, but we can no longer (and should not) test versions
 				UTEST_EQUAL("Id 2", ExportInfos[2].Id, TEXT("00af52a3-a416-4e37-99e9-6de56368bc37"));
 			}
 			return true;

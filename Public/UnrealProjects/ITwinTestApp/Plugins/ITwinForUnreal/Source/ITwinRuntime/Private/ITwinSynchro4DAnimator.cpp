@@ -16,7 +16,13 @@
 #include <Timeline/TimeInSeconds.h>
 #include <Timeline/SchedulesConstants.h>
 
+#include <Components/StaticMeshComponent.h>
+#include <GenericPlatform/GenericPlatformTime.h>
 #include <Materials/MaterialInstanceDynamic.h>
+#include <Math/Plane.h>
+#include <Math/Quat.h>
+#include <Math/Transform.h>
+#include <Math/Vector.h>
 
 #include <algorithm>
 #include <limits>
@@ -27,11 +33,27 @@ class FITwinSynchro4DAnimator::FImpl
 {
 	friend class FITwinSynchro4DAnimator;
 	FITwinSynchro4DAnimator& Owner;
-	std::optional<double> LastTickScriptTime;
-	bool bIsPlaying = false, bIsPaused = false;
+	/// Last AnimationTime for which the animation was applied for all timelines
+	std::optional<double> LastAnimationTime;
+	bool bIsPlaying = false, bIsPaused = true;
+
+// Variables used by ApplyAnimation to handle distribution of the work load over several ticks:
+	/// Schedule time used to apply the animation: it should probably be consistent for the whole scene,
+	/// even though the animation is applied over several ticks (which means AnimationTime <= ScheduleTime)
+	double AnimationTime = 0;
+	/// Next timeline to process in ApplyAnimation so, when zero, it means the state of all timelines is
+	/// consistent with AnimationTime.
+	size_t NextTimelineToUpdate = 0;
+	/// Whether applying all timelines has touched at least one property texture
+	bool bHasUpdatedSomething = false;
+	/// We need to store the flag passed to ApplyAnimation so that the information persists over the several
+	/// ticks it can take to apply all timelines. Also, if ApplyAnimation is called with bForceUpdateAll=true
+	/// while in the middle of an update loop, we need to store it to launch a new full-update loop later on.
+	bool bNeedUpdateAll = false, bNeedUpdateAllAgain = false;
+	/// Time it last took to apply the whole animation (informative)
+	double TimeToApplyAllTimelines = 0;
 
 	void ApplyAnimation(bool const bForceUpdateAll);
-	void UpdateAllTextures();
 
 public:
 	FImpl(FITwinSynchro4DAnimator& InOwner) : Owner(InOwner) {}
@@ -43,17 +65,48 @@ FITwinSynchro4DAnimator::FITwinSynchro4DAnimator(UITwinSynchro4DSchedules& InOwn
 {
 }
 
-void FITwinSynchro4DAnimator::TickAnimation(float DeltaTime)
+void FITwinSynchro4DAnimator::TickAnimation(float DeltaTime, bool const bNewTilesReceived)
 {
-	if (Impl->bIsPlaying && Owner.AnimationSpeed != 0.)
+	if (Impl->bIsPlaying && Owner.ReplaySpeed != 0.)
 	{
-		Owner.AnimationTime += FTimespan::FromSeconds(DeltaTime * Owner.AnimationSpeed);
 		auto&& ScheduleEnd = GetInternals(Owner).GetTimeline().GetDateRange().GetUpperBound();
-		if (ScheduleEnd.IsClosed() && Owner.AnimationTime >= ScheduleEnd.GetValue())
+		// Avoid incrementing time when clicking Play repeatedly at the end of the schedule...
+		if (ScheduleEnd.IsClosed() && Owner.ScheduleTime >= ScheduleEnd.GetValue())
 		{
 			Pause();
+			if (bNewTilesReceived)
+				Impl->ApplyAnimation(true);
 		}
-		OnChangedAnimationTime();
+		else
+		{
+			Owner.ScheduleTime += FTimespan::FromSeconds(
+				DeltaTime * Owner.ReplaySpeed * REPLAYSPEED_FACTOR_UI_TO_SECONDS);
+			if (ScheduleEnd.IsClosed() && Owner.ScheduleTime >= ScheduleEnd.GetValue())
+			{
+				Owner.ScheduleTime = ScheduleEnd.GetValue();
+				Pause();
+			}
+			OnChangedScheduleTime(bNewTilesReceived);
+		}
+	}
+	else if (Impl->bIsPlaying || Impl->bIsPaused)
+	{
+		// TODO_GCO: note that despite this, newly received meshes will still show up temporarily without the
+		// animation effects applied (typically, visible before being built...), ie there's at least sth
+		// to fix with respect to ordering (assuming cesium meshes are received _before_ the schedules component
+		// is ticked!). Also, fixing ordering will not even be sufficient because of the splitting of
+		// ApplyAnimation among successive ticks...
+		if (bNewTilesReceived)
+			Impl->ApplyAnimation(true);
+		// Animation is applied over several ticks, ie it will always be behind the theoretical ScheduleTime:
+		// we need to continue applying the animation even when Paused and until we're done
+		// ("Impl->NextTimelineToUpdate == 0"), *and* no more "update all" has been requested, *and* the
+		// animation time has caught up with the schedule time!
+		else if (Impl->bNeedUpdateAll || Impl->NextTimelineToUpdate != 0
+			|| ITwin::Time::ToDateTime(Impl->AnimationTime) != Owner.ScheduleTime)
+		{
+			Impl->ApplyAnimation(false);
+		}
 	}
 }
 
@@ -83,7 +136,7 @@ void FITwinSynchro4DAnimator::Stop()
 	}
 	if (Impl->bIsPaused)
 	{
-		Impl->LastTickScriptTime.reset();
+		Impl->LastAnimationTime.reset();
 		Impl->bIsPaused = false;
 		auto* IModel = Cast<AITwinIModel>(Owner.GetOwner());
 		if (!IModel)
@@ -98,18 +151,21 @@ void FITwinSynchro4DAnimator::Stop()
 			SceneTile.ForEachExtractedElement([](FITwinExtractedEntity& Extracted)
 				{
 					Extracted.SetForcedOpacity(1.f);
+					if (Extracted.MeshComponent.IsValid())
+						Extracted.MeshComponent->SetWorldTransform(Extracted.OriginalTransform, false,
+																   nullptr, ETeleportType::TeleportPhysics);
 				});
 		}
 		//Impl->ApplyAnimation(true); No, this would reset the values above for all animated elements
-		Impl->UpdateAllTextures();
+		IModelInternals.SceneMapping.UpdateAllTextures();
 	}
 }
 
-void FITwinSynchro4DAnimator::OnChangedAnimationTime()
+void FITwinSynchro4DAnimator::OnChangedScheduleTime(bool const bForceUpdateAll)
 {
 	// Don't wait next tick, speed can be 0, when setting a new time manually
 	if (Impl->bIsPlaying || Impl->bIsPaused)
-		Impl->ApplyAnimation(false);
+		Impl->ApplyAnimation(bForceUpdateAll);
 }
 
 void FITwinSynchro4DAnimator::OnChangedAnimationSpeed()
@@ -142,6 +198,12 @@ void FITwinSynchro4DAnimator::OnFadeOutNonAnimatedElements()
 								 Owner.bMaskOutNonAnimatedElements ? (uint8)0 : (uint8)255 })
 		: std::array<uint8, 4>(S4D_MAT_BGRA_DISABLED(255));
 	FITwinIModelInternals& IModelInternals = GetInternals(*IModel);
+	std::unordered_set<ITwinElementID> AllAnimatedElements;
+	for (auto const& ElementTimelinePtr : Timeline.GetContainer())
+	{
+		for (auto&& Elem : ElementTimelinePtr->GetIModelElements())
+			AllAnimatedElements.insert(Elem);
+	}
 	for (auto& it: IModelInternals.SceneMapping.KnownTiles)
 	{
 		auto & TileID = it.first;
@@ -149,9 +211,9 @@ void FITwinSynchro4DAnimator::OnFadeOutNonAnimatedElements()
 		if (SceneTile.HighlightsAndOpacities)
 		{
 			SceneTile.ForEachElementFeatures(
-				[&Timeline, &FillColor, &SceneTile](FITwinElementFeaturesInTile& ElementFeatures)
+				[&AllAnimatedElements, &FillColor, &SceneTile](FITwinElementFeaturesInTile& ElementFeatures)
 				{
-					if (-1 == Timeline.GetElementTimelineIndex(ElementFeatures.ElementID))
+					if (AllAnimatedElements.end() == AllAnimatedElements.find(ElementFeatures.ElementID))
 						SceneTile.HighlightsAndOpacities->SetPixels(ElementFeatures.Features, FillColor);
 				});
 		}
@@ -159,16 +221,16 @@ void FITwinSynchro4DAnimator::OnFadeOutNonAnimatedElements()
 		// originate from material mapping, and not just scheduling? Hence not even testing
 		// HighlightsAndOpacities here)
 		SceneTile.ForEachExtractedElement(
-			[&Timeline, &FillColor, &SceneTile](FITwinExtractedEntity& ExtractedElement)
+			[&AllAnimatedElements, &FillColor, &SceneTile](FITwinExtractedEntity& ExtractedElement)
 			{
-				if (-1 == Timeline.GetElementTimelineIndex(ExtractedElement.ElementID))
+				if (AllAnimatedElements.end() == AllAnimatedElements.find(ExtractedElement.ElementID))
 					ExtractedElement.SetForcedOpacity(FillColor[3] / 255.f);
 			});
 	}
 	if (Impl->bIsPlaying || Impl->bIsPaused)
 		Impl->ApplyAnimation(true);
 	else
-		Impl->UpdateAllTextures();
+		IModelInternals.SceneMapping.UpdateAllTextures();
 }
 
 namespace Detail
@@ -187,33 +249,34 @@ namespace Detail
 			  ClampCast01toU8(Alpha) };
 		// Note: this is indeed late to do the replacement, that's because the timeline stores the color as
 		// a float vector - TODO_GCO keep uint8 all along since 4D animations are actually described with
-		// uint8 components too.
+		// uint8 components too (and transparencies as a percentage!).
 		return ITwin::Synchro4D::ReplaceDisabledColorInPlace(ColorBGRA8);
 	}
 
 	struct FStateToApply
 	{
 		FITwinElementTimeline::PropertyOptionals Props;
+		FITwinElementTimeline& ElementsTimeline;
+		std::function<FBox(std::set<ITwinElementID> const&)> const& GroupBBoxGetter;
+		std::function<FBox const&(ITwinElementID const&)> const& BBoxGetter;
+		FVector const& ModelCenter;
 		bool bFullyHidden = false;
 		/// Color and/or Visibility properties as a packed BGRA value for use in the property texture.
-		/// Converted once just-in-time from Props.color_ and Props.visibility_.
+		/// Converted once just-in-time from Props.Color and Props.Visibility.
 		std::optional<std::array<uint8, 4>> AsBGRA;
 		/// Cutting plane equation property as a packed std::array for use in the property texture.
-		/// Converted once just-in-time from Props.clippingPlane_->deferredPlaneEquation_.planeEquation_
+		/// Converted once just-in-time from Props.ClippingPlane->DefrdPlaneEq members
 		std::optional<std::array<float, 4>> AsPlaneEquation;
-		/// Animation transform property as an FMatrix to be applied on an actor or component.
-		/// Converted once just-in-time from Props.transform_.
-		std::optional<FMatrix> AsMatrix;
 
-		/// OK to call whatever Props.color_ and Props.visibility_
+		/// OK to call whatever Props.Color and Props.Visibility
 		void EnsureBGRA()
 		{
 			if (!AsBGRA)
 			{
-				float const alpha = Props.visibility_.get_value_or(1.f).value_;
-				if (Props.color_)
+				float const alpha = Props.Visibility.get_value_or(1.f).Value;
+				if (Props.Color)
 				{
-					AsBGRA.emplace(ClampCast01toBGRA8ReplacingDisabled(Props.color_->value_, alpha));
+					AsBGRA.emplace(ClampCast01toBGRA8ReplacingDisabled(Props.Color->Value, alpha));
 				}
 				else
 				{
@@ -222,40 +285,41 @@ namespace Detail
 			}
 		}
 
-		/// OK to call whatever Props.clippingPlane_
+		/// OK to call whatever Props.ClippingPlane
 		void EnsurePlaneEquation()
 		{
 			if (!AsPlaneEquation)
 			{
-				if (Props.clippingPlane_)
+				if (Props.ClippingPlane)
 				{
-					auto const& PlaneEq = Props.clippingPlane_->deferredPlaneEquation_.planeEquation_;
-					AsPlaneEquation.emplace(std::array<float, 4>
-						// see comment about ordering on FITwinSceneTile::CuttingPlanes
-						{ (float)PlaneEq.X, (float)PlaneEq.Y, (float)PlaneEq.Z, (float)PlaneEq.W });
+					if (Props.Transform)
+					{
+						// UE stores a plane as Xx+Yy+Zz=W like us! ;^^
+						FPlane4f const TransformdPlane =
+							FPlane4f(Props.ClippingPlane->DefrdPlaneEq.PlaneOrientation,
+									 (double)Props.ClippingPlane->DefrdPlaneEq.PlaneW)
+							.TransformBy(FMatrix44f(Props.Transform->Transform.ToMatrixWithScale()));
+						AsPlaneEquation.emplace(std::array<float, 4>
+							{ TransformdPlane.X, TransformdPlane.Y, TransformdPlane.Z, TransformdPlane.W });
+					}
+					else
+					{
+						auto const& PlaneDir(Props.ClippingPlane->DefrdPlaneEq.PlaneOrientation);
+						AsPlaneEquation.emplace(std::array<float, 4>
+							// see comment about ordering on FITwinSceneTile::CuttingPlanes
+							{ PlaneDir.X, PlaneDir.Y, PlaneDir.Z, Props.ClippingPlane->DefrdPlaneEq.PlaneW });
+					}
 				}
 				else
-				{
 					AsPlaneEquation.emplace(std::array<float, 4> S4D_CLIPPING_DISABLED);
-				}
-			}
-		}
-
-		/// MUST have a valid Props.transform_
-		void EnsureMatrix()
-		{
-			if (!AsMatrix)
-			{
-				AsMatrix.emplace(ITwin::Timeline::TransformToMatrix(*Props.transform_));
 			}
 		}
 	};
 
-	void UpdateExtractedElement(FStateToApply& State,
-								FITwinSceneTile& SceneTile,
+	void UpdateExtractedElement(FStateToApply& State, FITwinSceneTile& SceneTile,
 								FITwinExtractedEntity& ExtractedEntity)
 	{
-		if (!ExtractedEntity.IsValid())
+		if (!ExtractedEntity.IsValid()) // checks both Material and MeshComponent
 			return;
 		ExtractedEntity.SetHidden(State.bFullyHidden);
 		if (State.bFullyHidden)
@@ -265,28 +329,39 @@ namespace Detail
 		// use the same material and textures as the batched meshes. Alpha must be set on the material
 		// parameter that is used to override the texture look-up for extracted elements, though:
 		//State.EnsureBGRA(); NOT needed, the single float value is exactly what we need!
-		ExtractedEntity.SetForcedOpacity(State.Props.visibility_.get_value_or(1.f).value_);
-		if (State.Props.transform_)
+		ExtractedEntity.SetForcedOpacity(State.Props.Visibility.get_value_or(1.f).Value);
+	#if SYNCHRO4D_ENABLE_TRANSFORMATIONS()
+		if (State.Props.Transform)
 		{
-			//State.EnsureMatrix();
-			//SetSynchroScheduleTransform(*ExtractedEntity.MeshComponent.Get(), *State.AsMatrix,
-			//							ExtractedEntity.OriginalMatrix);
+			FVector ElemOffset = State.ElementsTimeline.GetIModelElementOffsetInGroup(
+				ExtractedEntity.ElementID, State.GroupBBoxGetter, State.BBoxGetter);
+			//ElemOffset -= State.ModelCenter; <== included in CesiumToUnreal?
+			if (State.Props.Transform->DefrdAnchor)
+				ElemOffset += State.Props.Transform->DefrdAnchor->Pos;
+			auto const& TransfoToApply = State.Props.Transform->Transform;
+			ExtractedEntity.MeshComponent->SetWorldTransform(
+				// see comment about FTransform composition order in Add3DPathTransformToTimeline
+				FTransform(ElemOffset) * TransfoToApply,
+				false, nullptr, ETeleportType::TeleportPhysics);
+			// TODO_GCO: could optimize the static-transform case, with a static transform ID (not a hash...)
+			ExtractedEntity.bIsCurrentlyTransformed = true;
 		}
-		else
+		else if (ExtractedEntity.bIsCurrentlyTransformed)
 		{
-			//SetSynchroScheduleTransform(*ExtractedEntity.MeshComponent.Get(), FMatrix::Identity,
-			//							ExtractedEntity.OriginalMatrix);
+			ExtractedEntity.bIsCurrentlyTransformed = false;
+			ExtractedEntity.MeshComponent->SetWorldTransform(ExtractedEntity.OriginalTransform,
+															 false, nullptr, ETeleportType::TeleportPhysics);
 		}
+	#endif // SYNCHRO4D_ENABLE_TRANSFORMATIONS()
 		FITwinSceneMapping::SetupHighlights(SceneTile, ExtractedEntity);
 		FITwinSceneMapping::SetupCuttingPlanes(SceneTile, ExtractedEntity);
 	}
 
-	void UpdateBatchedElement(FStateToApply& State, CesiumTileID const&, FITwinSceneTile& SceneTile,
+	void UpdateBatchedElement(FStateToApply& State, FITwinSceneTile& SceneTile,
 							  FITwinElementFeaturesInTile& ElementFeaturesInTile)
 	{
 		if (State.bFullyHidden)
 		{
-			// Masked and Translucent materials should both test this special value
 			if (SceneTile.HighlightsAndOpacities)
 				SceneTile.HighlightsAndOpacities->SetPixelsAlpha(ElementFeaturesInTile.Features, 0);
 		}
@@ -299,7 +374,7 @@ namespace Detail
 				if (ElementFeaturesInTile.bIsElementExtracted)
 				{
 					// Ensure the parts that were extracted are made invisible in the original mesh
-					// (alpha is already zeroed in FITwinSceneMapping::OnBatchedElementTimelineModified,
+					// (alpha is already zeroed in FITwinSceneMapping::OnElementsTimelineModified,
 					// but here we still need to set the BGR part for the extracted mesh coloring)
 					PixelValue[3] = 0;
 				}
@@ -315,66 +390,121 @@ namespace Detail
 		FITwinSceneMapping::SetupCuttingPlanes(SceneTile, ElementFeaturesInTile);
 	}
 
-	struct FCheckDeferredPlaneEquationData
+	struct FFinalizeDeferredPropData
 	{
 		FITwinIModelInternals& IModelInternals;
-		ITwinElementID const Element;
+		FITwinElementTimeline& ElementsTimeline;
 	};
 
-	constexpr float HiddenBelowAlpha = 0.02f;
+	constexpr float HiddenBelowAlpha = 0.04f;
+	constexpr float OpaqueAboveAlpha = 0.96f;
 
 } // ns Detail
 
 namespace ITwin::Timeline::Interpolators
 {
-	void CheckDeferredPlaneEquationW(Detail::FCheckDeferredPlaneEquationData& UserData,
-									 ITwin::Timeline::FDeferredPlaneEquation const& Deferred);
+	void AnchorPosFinalizer(::Detail::FFinalizeDeferredPropData& UserData,
+							std::shared_ptr<ITwin::Timeline::FDeferredAnchorPos> const& Deferred);
+	void PlaneEquationFinalizer(::Detail::FFinalizeDeferredPropData& UserData,
+								ITwin::Timeline::FDeferredPlaneEquation const& Deferred);
 }
 
 void FITwinSynchro4DAnimator::FImpl::ApplyAnimation(bool const bForceUpdateAll)
 {
 	auto const& Schedules = Owner.Owner;
-	if (LastTickScriptTime && Schedules.AnimationTime == *LastTickScriptTime && !bForceUpdateAll)
-		return;
 	FITwinScheduleTimeline const& Timeline = GetInternals(Schedules).GetTimeline();
-	if (Timeline.GetContainer().empty())
-		return;
 	AITwinIModel* IModel = Cast<AITwinIModel>(Schedules.GetOwner());
-	if (!IModel)
+	if (!IModel || Timeline.GetContainer().empty())
 		return;
-	FITwinIModelInternals& IModelInternals = GetInternals(*IModel);
-	double const CurrentTimeInSeconds = ITwin::Time::FromDateTime(Schedules.AnimationTime);
-	const auto ScriptTimeRange = (LastTickScriptTime && !bForceUpdateAll) ?
-		// Braces are a workaround for compilation error on clang, because without them minmax would return
-		// a pair of references, while make_pair returns a pair of values.
-		std::minmax({ *LastTickScriptTime, CurrentTimeInSeconds }) :
-		std::make_pair(std::numeric_limits<double>::lowest(), // Update everything on first call
-					   std::numeric_limits<double>::max());
-	bool bHasUpdatedSomething = bForceUpdateAll;
-	for (const auto& ElementTimelinePtr : Timeline.GetContainer())
+	if (LastAnimationTime && Schedules.ScheduleTime == ITwin::Time::ToDateTime(*LastAnimationTime)
+		&& !bForceUpdateAll && !bNeedUpdateAll && NextTimelineToUpdate == 0)
 	{
-		const auto ElementTimeRange = ElementTimelinePtr->GetTimeRange();
-		if (ElementTimeRange.second < ScriptTimeRange.first
-			|| ElementTimeRange.first > ScriptTimeRange.second)
+		return;
+	}
+	FITwinIModelInternals& IModelInternals = GetInternals(*IModel);
+	auto const& GroupBBoxGetter = std::bind(&FITwinIModelInternals::GetBoundingBox, &IModelInternals,
+											std::placeholders::_1);
+	auto const& BBoxGetter = std::bind(&FITwinSceneMapping::GetBoundingBox, &IModelInternals.SceneMapping,
+										std::placeholders::_1);
+	std::optional<std::pair<double const&, double const&>> TimeIncrement;
+	if (bForceUpdateAll)
+	{
+		if (bNeedUpdateAll)
+			bNeedUpdateAllAgain = true;
+		else
+			bNeedUpdateAll = true;
+	}
+	if (!LastAnimationTime)
+		bNeedUpdateAll = true;
+
+	bool bHasUpdatedTextures = false;
+	if (IModelInternals.SceneMapping.NewTilesReceivedHaveTextures(bHasUpdatedTextures))
+	{
+		// restart from scratch
+		LastAnimationTime.reset();
+		NextTimelineToUpdate = 0;
+		TimeToApplyAllTimelines = 0;
+		if (bHasUpdatedTextures)
+		{
+			// don't do UpdateInMaterials in same tick :/ but nothing guarantees that the render thread will
+			// have processed or UpdateTexture messages before next tick, right?
+			// TODO_GCO: sync with UpdateTextureRegions's DataCleanup functor?
+			return;
+		}
+	}
+	IModelInternals.SceneMapping.HandleNewTileTexturesNeedUpateInMaterials();
+	if (NextTimelineToUpdate == 0)
+	{
+		AnimationTime = ITwin::Time::FromDateTime(Schedules.ScheduleTime);
+		// As a precaution, don't start applying animation as long as some textures are dirty.
+		// "Useful"(is it?) only the first time, except when new timelines are added
+		if (IModelInternals.SceneMapping.UpdateAllTextures() != 0)
+		{
+			UE_LOG(LogITwin, Verbose, TEXT("Skipping ApplyAnimation (dirty textures)"));
+			return;
+		}
+	}
+	if (!bNeedUpdateAll)
+		TimeIncrement.emplace(std::minmax(*LastAnimationTime, AnimationTime));
+	double const TimelineUpdateEnd =
+		FPlatformTime::Seconds() + (Schedules.MaxTimelineUpdateMilliseconds / 1000.);
+	auto&& AllTimelines = Timeline.GetContainer();
+	size_t const FirstTimelineUpdated = NextTimelineToUpdate;
+	size_t const NumberOfTimelines = AllTimelines.size();
+	for ( ; NextTimelineToUpdate < NumberOfTimelines; ++NextTimelineToUpdate)
+	{
+		const auto& ElementTimelinePtr = AllTimelines[NextTimelineToUpdate];
+		const auto TimelineRange = ElementTimelinePtr->GetTimeRange();
+		// After a timeline has been applied once(*), this is a good optim as most timelines correspond to
+		// tasks which duration is rather small with respect to the whole animation. Note that a hack like
+		// FixColor (see Timeline.cpp) would rather spoil this!
+		// (*) and not "modified" since, like adding Elements to existing (grouped Elements) timelines.
+		//     "Modified" used to also include discovering new tiles using known Elements, but for that we
+		//     we now restart from scratch anyway (see bNewTilesReceivedHaveTextures above)
+		// If we want to skip hidden tiles later on, we'll have to handle newly visible tiles here too.
+		if (!ElementTimelinePtr->TestModifiedAndReset() && TimeIncrement
+			&& (TimelineRange.second < TimeIncrement->first || TimelineRange.first > TimeIncrement->second))
 		{
 			continue;
 		}
 		bHasUpdatedSomething = true;
-		Detail::FCheckDeferredPlaneEquationData UserData{ IModelInternals,
-														  ElementTimelinePtr->IModelElementID };
+		using namespace ITwin::Timeline;
+		::Detail::FFinalizeDeferredPropData UserData{ IModelInternals, *ElementTimelinePtr };
 		// 'State' contains boost::optional's of each Timeline property (see ElementStateBase example in
 		// Timeline/Definition.h)
-		Detail::FStateToApply StateToApply{
-			ElementTimelinePtr->GetStateAtTime(CurrentTimeInSeconds,
-				ITwin::Timeline::StateAtEntryTimeBehavior::UseLeftInterval, (void*)(&UserData))
+		::Detail::FStateToApply StateToApply{
+			ElementTimelinePtr->GetStateAtTime(AnimationTime,
+											   StateAtEntryTimeBehavior::UseLeftInterval, (void*)(&UserData))
+			, *ElementTimelinePtr, GroupBBoxGetter, BBoxGetter
+			, IModelInternals.SceneMapping.GetModelCenter(EITwinCoordSystem::UE)
 		};
 		auto& State = StateToApply.Props;
 		// Apply (debug) settings_ and property simplifications:
-		if (State.color_ && (Schedules.bDisableColoring || !State.color_->hasColor_))
+		if (State.Color && (Schedules.bDisableColoring || !State.Color->bHasColor))
 		{
-			State.color_.reset();
+			State.Color.reset();
 		}
-		if (State.visibility_)
+		if (State.Visibility)
 		{
 			// No, this would apply to extracted elements as well...or split StateToApply.bFullyHidden
 			// into Extracted- and Batched-specific flags.
@@ -382,101 +512,229 @@ void FITwinSynchro4DAnimator::FImpl::ApplyAnimation(bool const bForceUpdateAll)
 				StateToApply.bFullyHidden = true;
 			else*/
 			if (Schedules.bDisableVisibilities)
-				State.visibility_.reset();
-			else if (State.visibility_->value_ <= Detail::HiddenBelowAlpha)
+				State.Visibility.reset();
+			else
 			{
-				StateToApply.bFullyHidden = true;
+				if (State.Visibility->Value <= ::Detail::HiddenBelowAlpha)
+					StateToApply.bFullyHidden = true;
+				else if (State.Visibility->Value < ::Detail::OpaqueAboveAlpha)
+					IModelInternals.SceneMapping.CheckAndExtractElements(
+						ElementTimelinePtr->GetIModelElements(), true);
 			}
 		}
-		if (State.clippingPlane_)
+		if (State.Transform)
 		{
-			if (Schedules.bDisableCuttingPlanes || State.clippingPlane_->fullyVisible_)
+			if (!State.Transform->bIsTransformed || Schedules.bDisableTransforms)
+				State.Transform.reset();
+			// Case of a non-interpolated keyframe, need to call "finalizers" now (see same comment below)
+			else if (State.Transform->DefrdAnchor && State.Transform->DefrdAnchor->IsDeferred())
+				Interpolators::AnchorPosFinalizer(UserData, State.Transform->DefrdAnchor);
+		}
+		if (State.ClippingPlane)
+		{
+			// Case of a non-interpolated keyframe, need to call "finalizers" now: it should rather be
+			// in PropertyTimeline<_PropertyValues>::GetStateAtTime, but it would mean going through all
+			// the boost fusion mishmash just for this:
+			if (State.ClippingPlane->DefrdPlaneEq.IsDeferred())
 			{
-				State.clippingPlane_.reset();
+				Interpolators::PlaneEquationFinalizer(UserData, State.ClippingPlane->DefrdPlaneEq);
 			}
-			else if (State.clippingPlane_->fullyHidden_)
+			// At this point, only non-Deferred states remain possible
+			if (EGrowthStatus::FullyGrown == State.ClippingPlane->DefrdPlaneEq.GrowthStatus
+				|| Schedules.bDisableCuttingPlanes)
+			{
+				State.ClippingPlane.reset();
+			}
+			else if (EGrowthStatus::FullyRemoved == State.ClippingPlane->DefrdPlaneEq.GrowthStatus)
 			{
 				StateToApply.bFullyHidden = true;
 			}
-			else if (State.clippingPlane_->deferredPlaneEquation_.planeEquation_.W
-				== FITwinElementTimeline::DeferredPlaneEquationW)
-			{
-				// Rare case of a non-interpolated keyframe that was never passed through 
-				// WillInterpolateBetween. Do it now: it should rather be in
-				// PropertyTimeline<_PropertyValues>::GetStateAtTime, but it would mean going through all
-				// the boost fusion mishmash just for this:
-				ITwin::Timeline::Interpolators::CheckDeferredPlaneEquationW(
-					UserData, State.clippingPlane_->deferredPlaneEquation_);
-			}
 		}
-		if (Schedules.bDisableTransforms) State.transform_.reset();
-
-		IModelInternals.ProcessElementInEachTile(ElementTimelinePtr->IModelElementID,
-			[&StateToApply](CesiumTileID const& TileID,
-							FITwinSceneTile& SceneTile,
-							FITwinElementFeaturesInTile& ElementFeaturesInTile)
-				{ Detail::UpdateBatchedElement(StateToApply, TileID, SceneTile,
-											   ElementFeaturesInTile); },
-			[&StateToApply](FITwinSceneTile& SceneTile,
-							FITwinExtractedEntity& ExtractedEntity)
-				{ Detail::UpdateExtractedElement(StateToApply, SceneTile,
-												 ExtractedEntity); });
+		IModelInternals.ProcessElementsInEachTile(ElementTimelinePtr->GetIModelElements(),
+			std::bind(&::Detail::UpdateBatchedElement, std::ref(StateToApply),
+					  std::placeholders::_2, std::placeholders::_3),
+			std::bind(&::Detail::UpdateExtractedElement, std::ref(StateToApply),
+					  std::placeholders::_1, std::placeholders::_2),
+			// bVisibleOnly: cannot use this optim for the moment because LOD changes will not trigger a
+			// call of ApplyAnimation
+			false);
+		if (FPlatformTime::Seconds() >= TimelineUpdateEnd)
+		{
+			++NextTimelineToUpdate;
+			break;
+		}
 	}
-	if (bHasUpdatedSomething)
-		UpdateAllTextures();
-	LastTickScriptTime = CurrentTimeInSeconds;
-}
-
-void FITwinSynchro4DAnimator::FImpl::UpdateAllTextures()
-{
-	AITwinIModel* IModel = Cast<AITwinIModel>(Owner.Owner.GetOwner());
-	if (!IModel)
-		return;
-	FITwinIModelInternals& IModelInternals = GetInternals(*IModel);
-	for (auto&& [TileID, SceneTile] : IModelInternals.SceneMapping.KnownTiles)
+	double const LoopTime = FPlatformTime::Seconds()
+		- (TimelineUpdateEnd - Schedules.MaxTimelineUpdateMilliseconds / 1000.);
+	UE_LOG(LogITwin, VeryVerbose, TEXT("Spent %dms applying animation for %llu timelines"),
+		(int)std::round(1000 * LoopTime), NextTimelineToUpdate - FirstTimelineUpdated);
+	TimeToApplyAllTimelines += LoopTime;
+	if (NextTimelineToUpdate >= NumberOfTimelines)
 	{
-		if (SceneTile.HighlightsAndOpacities)
-			SceneTile.HighlightsAndOpacities->UpdateTexture();
-		if (SceneTile.CuttingPlanes)
-			SceneTile.CuttingPlanes->UpdateTexture();
-		if (SceneTile.SelectionHighlights)
-			SceneTile.SelectionHighlights->UpdateTexture();
+		UE_LOG(LogITwin, Verbose, TEXT("Spent a total of %dms applying all %llu timelines"),
+			(int)std::round(1000 * TimeToApplyAllTimelines), NumberOfTimelines);
+		if (bHasUpdatedSomething)
+		{
+			IModelInternals.SceneMapping.UpdateAllTextures();
+		}
+		bHasUpdatedSomething = false;
+		if (bNeedUpdateAllAgain)
+		{
+			bNeedUpdateAllAgain = false;
+			bNeedUpdateAll = true;
+		}
+		else
+			bNeedUpdateAll = false;
+		NextTimelineToUpdate = 0;
+		TimeToApplyAllTimelines = 0;
+		// see comment at start of method - use the most conservative value "common" to all timelines, even
+		// if some timelines were applied at a more recent time
+		LastAnimationTime = AnimationTime;
 	}
 }
 
 namespace ITwin::Timeline::Interpolators {
 
-using DefrdPlaneEq = ITwin::Timeline::FDeferredPlaneEquation;
+//---------------------------------------------------------------------------------------
+// Slightly less-than-basic interpolators
+//---------------------------------------------------------------------------------------
 
-template<> DefrdPlaneEq Default::operator ()<DefrdPlaneEq>(const DefrdPlaneEq& x0,
-														   const DefrdPlaneEq& x1, float u) const
+template<> inline FContinue Default::operator ()<FTransform>(
+	FTransform& Out, FTransform const& x0, FTransform const& x1, float u, void* /*userData*/) const
 {
-	check(x0.planeEquation_.W != FITwinElementTimeline::DeferredPlaneEquationW
-	   && x1.planeEquation_.W != FITwinElementTimeline::DeferredPlaneEquationW);
-	return DefrdPlaneEq{ operator()(x0.planeEquation_, x1.planeEquation_, u),
-						 ITwin::Timeline::EGrowthBoundary() };
+	Out.Blend(x0, x1, u);
+	return Continue;
 }
 
-void CheckDeferredPlaneEquationW(Detail::FCheckDeferredPlaneEquationData& UserData,
-								 DefrdPlaneEq const& Deferred)
+template<> inline FContinue Default::operator ()<ITwin::Flag::FPresence>(
+	ITwin::Flag::FPresence& Out, ITwin::Flag::FPresence const& x0, ITwin::Flag::FPresence const& x1,
+	float u, void* /*userData*/) const
 {
-	if (FITwinElementTimeline::DeferredPlaneEquationW == Deferred.planeEquation_.W)
+	Out = (u == 0) ? x0 : ((u == 1) ? x1 : (x0 | x1));
+	return (Out == ITwin::Flag::Present) ? Continue : Stop; // skip other properties when Absent
+}
+
+//---------------------------------------------------------------------------------------
+// A couple utility functions
+//---------------------------------------------------------------------------------------
+
+/// This is exactly UE::Math::TVector<T>::SlerpNormals but with proper const ref for params!!
+template<typename T>
+UE::Math::TVector<T> ConstQualSlerpNormals(UE::Math::TVector<T> const& NormalA,
+										   UE::Math::TVector<T> const& NormalB, T const Alpha)
+{
+	using TVector = UE::Math::TVector<T>;
+	using TQuat = UE::Math::TQuat<T>;
+
+	// Find rotation from A to B
+	const TQuat RotationQuat = TQuat::FindBetweenNormals(NormalA, NormalB);
+	const TVector Axis = RotationQuat.GetRotationAxis();
+	const T AngleRads = RotationQuat.GetAngle();
+
+	// Rotate from A toward B using portion of the angle specified by Alpha.
+	const TQuat DeltaQuat(Axis, AngleRads * Alpha);
+	TVector Result = DeltaQuat.RotateVector(NormalA);
+	return Result;
+}
+
+template<typename FDefrdProp>
+void FinalizeDeferredProperty(::Detail::FFinalizeDeferredPropData& UserData, FDefrdProp const& Deferred,
+	std::function<void(FDefrdProp const&, FBox const&)> const& Finalizer, FString const& PropName)
+{
+	if (Deferred.IsDeferred())
 	{
-		// Note: this is actually the BBox of the whole Resource because there is a 1:1 mapping between
-		// Resource and AnimatedElement in the current version of Synchro4D tools, according to Bernardas
-		auto const& BBox = UserData.IModelInternals.GetBoundingBox(UserData.Element);
-		UE_LOG(LogITwin, Display, TEXT("Setting up Cutting Plane for Element 0x%I64x with BBox %s"),
-			   UserData.Element.value(), *BBox.ToString());
-		FITwinSynchro4DSchedulesInternals::FinalizeCuttingPlaneEquation(Deferred, BBox);
+		auto&& IModelElements = UserData.ElementsTimeline.GetIModelElements();
+		auto const& IModelElementsBBox = UserData.ElementsTimeline.GetIModelElementsBBox(
+			std::bind(&FITwinIModelInternals::GetBoundingBox, &UserData.IModelInternals,
+					  std::placeholders::_1));
+		UE_LOG(LogITwin, Verbose, TEXT("Setting up %s for %s with BBox %s"), *PropName,
+			IModelElements.size() == 1
+				? (*FString::Printf(TEXT("Element 0x%I64x"), IModelElements.begin()->value()))
+				: (*FString::Printf(TEXT("%llu Elements"), IModelElements.size())),
+			*IModelElementsBBox.ToString());
+		Finalizer(Deferred, IModelElementsBBox);
 	}
 }
 
-template<> void Default::WillInterpolateBetween<DefrdPlaneEq>(
-	const DefrdPlaneEq& x0, const DefrdPlaneEq& x1, void* userData) const
+//---------------------------------------------------------------------------------------
+// FDeferredAnchorPos interpolation and "finalizer"
+//---------------------------------------------------------------------------------------
+
+using FDefrdAnchor = std::shared_ptr<ITwin::Timeline::FDeferredAnchorPos>;
+
+void AnchorPosFinalizer(::Detail::FFinalizeDeferredPropData& UserData, FDefrdAnchor const& Deferred)
 {
-	auto& UserDataForDeferredW = *(Detail::FCheckDeferredPlaneEquationData*)userData;
-	CheckDeferredPlaneEquationW(UserDataForDeferredW, x0);
-	CheckDeferredPlaneEquationW(UserDataForDeferredW, x1);
+	FinalizeDeferredProperty<ITwin::Timeline::FDeferredAnchorPos>(UserData, *Deferred,
+		&FITwinSynchro4DSchedulesInternals::FinalizeAnchorPos, TEXT("AnchorPos"));
+}
+
+template<> FContinue Default::operator ()<FDefrdAnchor>(
+	FDefrdAnchor& Out, const FDefrdAnchor& x0, const FDefrdAnchor& x1, float u, void* userData) const
+{
+	auto& UserDataForDeferredCalc = *(::Detail::FFinalizeDeferredPropData*)userData;
+	AnchorPosFinalizer(UserDataForDeferredCalc, x0);
+	AnchorPosFinalizer(UserDataForDeferredCalc, x1);
+	using namespace ::ITwin::Timeline;
+	if (!x0) Out = x1; // <=> (x1 ? x1 : FDefrdAnchor());
+	else if (!x1) Out = x0;
+	else Out = std::make_shared<FDeferredAnchorPos>(FDeferredAnchorPos{ EAnchorPoint::Custom,
+																		Lerp(x0->Pos, x1->Pos, u) });
+	return Continue;
+}
+
+//---------------------------------------------------------------------------------------
+// FDeferredPlaneEquation interpolation and "finalizer"
+//---------------------------------------------------------------------------------------
+
+/*  We could optimize the case when cut planes and transforms have keyframes at the same times (ie. in
+	the case of a static transform), by interpolating directly the transformed plane equations. But we
+	would need to store the Transforms and their Times in userData, but also handle the case of non-inter-
+	polated keyframes, which is currently handled after all interpolations are done! It's probably more
+	trouble than it's worth, so for the moment we'll recompute the cut plane at each tick whenever there
+	is a transform, be it static or following a 3D path.
+*/
+
+using FDefrdPlaneEq = ITwin::Timeline::FDeferredPlaneEquation;
+
+void PlaneEquationFinalizer(::Detail::FFinalizeDeferredPropData& UserData,
+							FDefrdPlaneEq const& Deferred)
+{
+	FinalizeDeferredProperty<FDefrdPlaneEq>(UserData, Deferred,
+		&FITwinSynchro4DSchedulesInternals::FinalizeCuttingPlaneEquation, TEXT("Cutting Plane"));
+}
+
+template<> FContinue Default::operator ()<FDefrdPlaneEq>(
+	FDefrdPlaneEq& Out, const FDefrdPlaneEq& x0, const FDefrdPlaneEq& x1, float u, void* userData) const
+{
+	auto& UserDataForDeferredCalc = *(::Detail::FFinalizeDeferredPropData*)userData;
+	PlaneEquationFinalizer(UserDataForDeferredCalc, x0);
+	PlaneEquationFinalizer(UserDataForDeferredCalc, x1);
+	ensure(!x0.IsDeferred() && !x1.IsDeferred()
+		&& x0.PlaneOrientation.IsUnit() && x1.PlaneOrientation.IsUnit());
+	if (x0.GrowthStatus == x1.GrowthStatus && (x0.GrowthStatus == EGrowthStatus::FullyGrown
+											|| x0.GrowthStatus == EGrowthStatus::FullyRemoved))
+	{
+		// avoid useless interpolation below - this is called from GetStateAtTime, unrelated to the other
+		// optims of the ElementTimelinePtr loop in ApplyAnimation!
+		return Stop;
+	}
+	if ((x0.PlaneOrientation - x1.PlaneOrientation).IsNearlyZero()) // ie nearly equal
+	{
+		Out = FDefrdPlaneEq{ x0.PlaneOrientation, Lerp(x0.PlaneW, x1.PlaneW, u),
+							 ITwin::Timeline::EGrowthStatus::Partial };
+	}
+	else if ((x0.PlaneOrientation + x1.PlaneOrientation).IsNearlyZero()) // ie nearly opposite
+	{
+		Out = FDefrdPlaneEq{ x0.PlaneOrientation, Lerp(x0.PlaneW, -x1.PlaneW, u),
+							 ITwin::Timeline::EGrowthStatus::Partial };
+	}
+	else
+	{
+		Out = FDefrdPlaneEq{ ConstQualSlerpNormals(x0.PlaneOrientation, x1.PlaneOrientation, u),
+							 Lerp(x0.PlaneW, x1.PlaneW, u),
+							 ITwin::Timeline::EGrowthStatus::Partial };
+	}
+	return Continue;
 }
 
 } // namespace ITwin::Timeline::Interpolators

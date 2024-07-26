@@ -18,12 +18,12 @@ namespace SDK::Core
 	Http::~Http()
 	{}
 
-	std::pair<long, std::string> Http::GetJson(const std::string& url, const std::string& body, const Headers& hi)
+	std::pair<long, std::string> Http::GetJson(const std::string& url, const std::string& body, const Headers& hi, bool isFullUrl /*= false*/)
 	{
 		Headers h(hi);
 		h.emplace_back("accept", "application/json");
 		h.emplace_back("Content-Type", "application/json; charset=UTF-8");
-		return Get(url, body, h);
+		return Get(url, body, h, isFullUrl);
 	}
 
 	std::pair<long, std::string> Http::PutJson(const std::string& url, const std::string& body, const Headers& hi)
@@ -50,5 +50,12 @@ namespace SDK::Core
 		return Post(url, body, h);
 	}
 
+	std::pair<long, std::string> Http::DeleteJson(const std::string& url, const std::string& body, const Headers& hi)
+	{
+		Headers h(hi);
+		h.emplace_back("accept", "application/json");
+		h.emplace_back("Content-Type", "application/json; charset=UTF-8");
+		return Delete(url, body, h);
+	}
 }
 

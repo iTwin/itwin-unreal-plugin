@@ -101,20 +101,21 @@ namespace SDK::Core::Impl
 
 	std::pair<long, std::string> HttpCpr::Get(const std::string& url,
 											  const std::string& body /*= "" */,
-											  const Headers& headers /*= {} */)
+											  const Headers& headers /*= {} */,
+											  bool isFullUrl /*= false*/)
 	{
 		cpr::Header h;
 		for (auto& i : headers)
 			h[i.first] = i.second;
 		cpr::Response r;
 		if (auth_)
-			r = cpr::Get(cpr::Url{ url_ + '/' + url }
+			r = cpr::Get(cpr::Url{ isFullUrl ? url : (url_ + '/' + url) }
 				, cpr::Body{ body }
 				, h
 				, *auth_
 			);
 		else
-			r = cpr::Get(cpr::Url{ url_ + '/' + url }
+			r = cpr::Get(cpr::Url{ isFullUrl ? url : (url_ + '/' + url) }
 				, h
 				, cpr::Body{ body }
 		);

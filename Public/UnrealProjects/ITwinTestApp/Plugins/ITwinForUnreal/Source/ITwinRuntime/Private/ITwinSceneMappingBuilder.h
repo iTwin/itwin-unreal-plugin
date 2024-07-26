@@ -10,12 +10,14 @@
 
 #include <ITwinCesiumMeshBuildCallbacks.h>
 
+class AITwinIModel;
 class FITwinSceneMapping;
 
 class FITwinSceneMappingBuilder : public ICesiumMeshBuildCallbacks
 {
+	using Super = ICesiumMeshBuildCallbacks;
 public:
-	FITwinSceneMappingBuilder(FITwinSceneMapping& sceneMapping);
+	FITwinSceneMappingBuilder(FITwinSceneMapping& SceneMapping, AITwinIModel& IModel);
 
 	virtual void OnMeshConstructed(
 		const Cesium3DTilesSelection::Tile& Tile,
@@ -25,6 +27,13 @@ public:
 
 	virtual bool ShouldAllocateUVForFeatures() const override;
 
+	virtual UMaterialInstanceDynamic* CreateMaterial_GameThread(
+		CesiumGltf::MeshPrimitive const* pMeshPrimitive,
+		UMaterialInterface*& pBaseMaterial,
+		UObject* InOuter,
+		FName const& Name) override;
+
 private:
-	FITwinSceneMapping& sceneMapping_;
+	FITwinSceneMapping& SceneMapping;
+	AITwinIModel& IModel;
 };

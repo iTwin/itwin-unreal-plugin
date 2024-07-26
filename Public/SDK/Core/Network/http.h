@@ -28,31 +28,32 @@ MODULE_EXPORT namespace SDK::Core {
 
 		virtual void SetBaseUrl(const std::string& url) = 0;
 		virtual void SetBasicAuth(const std::string& login, const std::string& passwd) = 0;
-		virtual std::pair<long, std::string> Delete(const std::string& url, const std::string& body, const Headers& h = {}) = 0;
-		virtual std::pair<long, std::string> Get(const std::string& url, const std::string& body, const Headers& h = {}) = 0;
+		virtual std::pair<long, std::string> Get(const std::string& url, const std::string& body, const Headers& h = {}, bool isFullUrl = false) = 0;
 		virtual std::pair<long, std::string> Patch(const std::string& url, const std::string& body, const Headers& h = {}) = 0;
 		virtual std::pair<long, std::string> Post(const std::string& url, const std::string& body, const Headers& h = {}) = 0;
 		virtual std::pair<long, std::string> Put(const std::string& url, const std::string& body, const Headers& h = {}) = 0;
+		virtual std::pair<long, std::string> Delete(const std::string& url, const std::string& body, const Headers& h = {}) = 0;
 
-		std::pair<long, std::string> GetJson(const std::string& url, const std::string& body, const Headers& h = {});
+		std::pair<long, std::string> GetJson(const std::string& url, const std::string& body, const Headers& h = {}, bool isFullUrl = false);
 		std::pair<long, std::string> PatchJson(const std::string& url, const std::string& body, const Headers& h = {});
 		std::pair<long, std::string> PostJson(const std::string& url, const std::string& body, const Headers& h = {});
 		std::pair<long, std::string> PutJson(const std::string& url, const std::string& body, const Headers& h = {});
+		std::pair<long, std::string> DeleteJson(const std::string& url, const std::string& body, const Headers& h = {});
 
 		template<typename Type>
-		long GetJson(Type& t, const std::string& url, const std::string& body, const Headers& h = {})
+		long GetJson(Type& t, const std::string& url, const std::string& body, const Headers& h = {}, bool isFullUrl = false)
 		{
-			std::pair<long, std::string> r = GetJson(url, body, h);
+			std::pair<long, std::string> r = GetJson(url, body, h, isFullUrl);
 			if (r.first == 200)
 				Json::FromString(t, r.second);
 			return r.first;
 		}
 
 		template<typename Type, typename TypeBody>
-		long GetJsonJBody(Type& t, const std::string& url, const TypeBody& body, const Headers& h = {})
+		long GetJsonJBody(Type& t, const std::string& url, const TypeBody& body, const Headers& h = {}, bool isFullUrl = false)
 		{
 			std::string bodyStr = Json::ToString(body);
-			return GetJson<Type>(t, url, bodyStr, h);
+			return GetJson<Type>(t, url, bodyStr, h, isFullUrl);
 		}
 
 		template<typename Type>
@@ -101,6 +102,22 @@ MODULE_EXPORT namespace SDK::Core {
 		{
 			std::string bodyStr = Json::ToString(body);
 			return PostJson<Type>(t, url, bodyStr, h);
+		}
+
+		template<typename Type>
+		long DeleteJson(Type& t, const std::string& url, const std::string& body, const Headers& h = {})
+		{
+			std::pair<long, std::string> r = DeleteJson(url, body, h);
+			if (r.first == 200)
+				Json::FromString(t, r.second);
+			return r.first;
+		}
+
+		template<typename Type, typename TypeBody>
+		long DeleteJsonJBody(Type& t, const std::string& url, const TypeBody& body, const Headers& h = {})
+		{
+			std::string bodyStr = Json::ToString(body);
+			return DeleteJson<Type>(t, url, bodyStr, h);
 		}
 
 		virtual ~Http();

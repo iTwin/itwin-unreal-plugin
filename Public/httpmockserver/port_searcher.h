@@ -22,18 +22,16 @@ template <typename HTTPMock>
 std::unique_ptr<MockServer> getFirstRunningMockServer(
         unsigned port = 8080, unsigned tryCount = 1000)
 {
-    for (unsigned p = 0; p < tryCount; p++) {
-        try {
-            std::unique_ptr<MockServer> server(new HTTPMock(port + p));
-            // try to run the server on current port
-            server->start();
+    for (unsigned p = 0; p < tryCount; p++)
+    {
+        std::unique_ptr<MockServer> server(new HTTPMock(port + p));
+        // try to run the server on current port
+        if (server->tryStart())
+        {
             return server;
-        } catch (const std::runtime_error &) {
-            // error occurred, try next port number
-            continue;
         }
     }
-    throw std::runtime_error("MockServer did not come up!");
+    return {};
 }
 
 

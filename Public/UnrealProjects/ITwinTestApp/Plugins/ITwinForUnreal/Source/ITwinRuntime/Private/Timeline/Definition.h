@@ -24,22 +24,22 @@ namespace ITwin::Timeline { template<typename PropertyClass> FString _iTwinTimel
 //! Example: the following call:
 //! 
 //! ITWIN_TIMELINE_DEFINE_PROPERTY_VALUES(Color,
-//!     (bool, hasColor_, ITwin::Timeline::Interpolators::BoolOr)
-//!     (CLR, value_)
+//!     (bool, bHasColor, ITwin::Timeline::Interpolators::BoolOr)
+//!     (CLR, Value)
 //! )
 //! 
 //! will generate code similar to this:
 //! 
 //! struct ColorBase // Actually a boost::fusion::sequence
 //! {
-//!     bool hasColor_;
-//!     CLR value_;
+//!     bool bHasColor;
+//!     CLR Value;
 //! };
 //! using Color = BoostFusionUtils::SequenceEx<ColorBase>
 //! struct ColorInterpolators // Actually a boost::fusion::sequence
 //! {
-//!     ITwin::Timeline::Interpolators::BoolOr hasColor_;
-//!     ITwin::Timeline::Interpolators::Default value_;
+//!     ITwin::Timeline::Interpolators::BoolOr bHasColor;
+//!     ITwin::Timeline::Interpolators::Default Value;
 //! };
 //! inline FString _iTwinTimelineGetPropertyName<Color>() { return "Color"; }
 //! ColorInterpolators _iTwinTimelineGetInterpolators(Color); // Not implemented, used with decltype().
@@ -64,27 +64,27 @@ namespace ITwin::Timeline { template<typename PropertyClass> FString _iTwinTimel
 //! Example: the following call:
 //! 
 //! ITWIN_TIMELINE_DEFINE_OBJECT_PROPERTIES(Element,
-//!     (Visibility, visibility_)
-//!     (Color, color_)
+//!     (PVisibility, Visibility)
+//!     (PColor, Color)
 //! )
 //! 
 //! will generate code similar to this:
 //! 
 //! struct Element // Actually a boost::fusion::sequence
 //! {
-//!     Visibility visibility_;
-//!     Color color_;
+//!     PVisibility Visibility;
+//!     PColor Color;
 //! };
 //! struct ElementStateBase // Actually a boost::fusion::sequence
 //! {
-//!     boost::optional<Visibility> visibility_;
-//!     boost::optional<Color> color_;
+//!     boost::optional<PVisibility> Visibility;
+//!     boost::optional<PColor> Color;
 //! };
 //! using ElementState = BoostFusionUtils::SequenceEx<ElementStateBase>;
 //! struct ElementTimelineBase // Actually a boost::fusion::sequence
 //! {
-//!     ITwin::Timeline::PropertyTimeline<Visibility> visibility_;
-//!     ITwin::Timeline::PropertyTimeline<Color> color_;
+//!     ITwin::Timeline::PropertyTimeline<PVisibility> Visibility;
+//!     ITwin::Timeline::PropertyTimeline<PColor> Color;
 //! };
 //! using ElementTimeline = ITwin::Timeline::ObjectTimeline<
 //!     ITwin::Timeline::ObjectTimelineMetadata<

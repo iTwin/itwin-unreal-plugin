@@ -37,7 +37,7 @@ namespace ITwin::Timeline
 {
 
 //! Defines how values are computed (interpolated) between 2 entries.
-enum class Interpolation: int32_t
+enum class EInterpolation : int32_t
 {
 	Step, //!< Use value of the "previous" entry - TODO_GCO: rename 'Previous'? (see 'Next')
 	Linear, //!< Linear interpolation between previous and next entries.
@@ -57,8 +57,8 @@ enum class Interpolation: int32_t
 class PropertyEntryBase: boost::equality_comparable<PropertyEntryBase>
 {
 public:
-	double time_ = {};
-	Interpolation interpolation_ = {};
+	double Time = {};
+	EInterpolation Interpolation = {};
 };
 
 std::size_t hash_value(const PropertyEntryBase& v) noexcept;
@@ -78,6 +78,8 @@ template<class _Values>
 std::size_t hash_value(const PropertyEntry<_Values>& v) noexcept;
 template<class _Values>
 bool operator ==(const PropertyEntry<_Values>& x, const PropertyEntry<_Values>& y);
+template<class _Values>
+bool NoEffect(const _Values& Prop);
 
 //! This enum controls the behavior of function GetStateAtTime() when the given time
 //! matches exactly the time of an entry (say, entry N).
@@ -99,11 +101,16 @@ class PropertyTimeline: boost::equality_comparable<PropertyTimeline<_PropertyVal
 {
 public:
 	using PropertyValues = _PropertyValues;
-	//! Property keyframes, ordered by PropertyEntryBase::time_
+	//! Property keyframes, ordered by PropertyEntryBase::Time. Using an std::set to have them naturally
+	//! ordered (since there is no guarantee they are added in chronological order), but for efficiency
+	//! it might be a good idea(?) to use a mere std::list and a fast_pool_allocator (TODO_GCO) since
+	//! timelines have usually very few keyframes (2-3!).
 	using FTimeOrderedProperties = std::set<PropertyEntry<_PropertyValues>>;
-	FTimeOrderedProperties list_;
+	FTimeOrderedProperties Values;
 	//! Removes duplicate, useless entries that may exist at the end of the list.
 	void Prune();
+	//! Tells whether the timeline will have no effect at all (useful to trim print-outs)
+	bool HasNoEffect() const;
 	//! Returns the interpolated property values at the given time.
 	[[nodiscard]] boost::optional<_PropertyValues> GetStateAtTime(double time,
 		StateAtEntryTimeBehavior entryTimeBehavior, void* userData) const;
@@ -130,6 +137,7 @@ class ObjectTimeline : public _Metadata::Base
 public:
 	virtual ~ObjectTimeline();
 
+	using Super = _Metadata::Base;
 	using This = ObjectTimeline<_Metadata>;
 	using PropertyOptionals = typename _Metadata::ObjectState;
 	[[nodiscard]] PropertyOptionals GetStateAtTime(double time, StateAtEntryTimeBehavior entryTimeBehavior,
@@ -161,16 +169,18 @@ public:
 	>;
 	CONSTRUCT_ENUMERATION(TimelineObjectContainerTags, (Index, Ptr, Value));
 	virtual ~MainTimelineBase() {}
-	[[nodiscard]] const TimelineObjectContainer& GetContainer() const { return container_; }
+	[[nodiscard]] const TimelineObjectContainer& GetContainer() const { return Container; }
+	[[nodiscard]] TimelineObjectContainer& GetContainer() { return Container; }
 	[[nodiscard]] const FTimeRangeInSeconds& GetTimeRange() const;
 	[[nodiscard]] FDateRange GetDateRange() const;
-	virtual ObjectTimelinePtr Add(const ObjectTimelinePtr& object);
 	void IncludeTimeRange(const _ObjectTimeline& object);
+	ObjectTimelinePtr Add(const ObjectTimelinePtr& object);
+
 protected:
-	[[nodiscard]] TimelineObjectContainer& Container() { return container_; }
+	TimelineObjectContainer Container;
+
 private:
-	TimelineObjectContainer container_;
-	FTimeRangeInSeconds timeRange_ = ITwin::Time::InitForMinMax();
+	FTimeRangeInSeconds TimeRange = ITwin::Time::InitForMinMax();
 };
 
 } // namespace ITwin::Timeline

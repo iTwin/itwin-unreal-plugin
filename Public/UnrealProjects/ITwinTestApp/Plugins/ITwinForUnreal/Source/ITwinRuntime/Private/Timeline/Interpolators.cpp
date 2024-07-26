@@ -11,28 +11,16 @@
 namespace ITwin::Timeline::Interpolators
 {
 
-FVector4f PlaneEquation::operator ()(const FVector4f& x0, const FVector4f& x1, float u) const
+FContinue BoolAnd::operator ()(bool& out, bool x0, bool x1, float u, void*) const
 {
-	// TODO_AW fix this, it only works when directions are same
-	return x0 * (1.f - u) + x1 * u;
+	out = (u == 0) ? x0 : (u == 1 ? x1 : (x0 && x1));
+	return Continue;
 }
 
-bool BoolAnd::operator ()(bool x0, bool x1, float u) const
+FContinue BoolOr::operator ()(bool& out, bool x0, bool x1, float u, void*) const
 {
-	return u == 0 ?
-		x0 :
-		u == 1 ?
-			x1 :
-			x0 && x1;
-}
-
-bool BoolOr::operator ()(bool x0, bool x1, float u) const
-{
-	return u == 0 ?
-		x0 :
-		u == 1 ?
-			x1 :
-			x0 || x1;
+	out = (u == 0) ? x0 : (u == 1 ? x1 : (x0 || x1));
+	return Continue;
 }
 
 } // namespace ITwin::Timeline::Interpolators

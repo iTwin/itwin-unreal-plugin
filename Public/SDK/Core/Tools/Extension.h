@@ -8,14 +8,13 @@
 
 #include <memory>
 #include <unordered_map>
-#include "fnv1ahash.h"
+#include "TypeId.h"
 
 namespace SDK::Core::Tools
 {
+
 	// Extension base class
-	// each extension class needs to define a typeid like this:
-	// enum ETypeid : std::uint64_t {value = Tools::GenHash("MyExtension")};
-	class Extension{
+	class Extension {
 	public:
 		virtual ~Extension() {}
 	};
@@ -25,7 +24,7 @@ namespace SDK::Core::Tools
 		template<typename T>
 		const std::shared_ptr<T> GetExtension()
 		{
-			auto it = extension_.find(T::ETypeid::value);
+			auto it = extension_.find(T::GetTypeId());
 			if (it != extension_.end())
 				return std::static_pointer_cast<T>(it->second);
 			return {};
@@ -34,19 +33,19 @@ namespace SDK::Core::Tools
 		template<typename T>
 		void AddExtension(const std::shared_ptr<T>& extension)
 		{
-			extension_[T::ETypeid::value] = extension;
+			extension_[T::GetTypeId()] = extension;
 		}
 
 		template<typename T>
 		bool HasExtension()
 		{
-			return extension_.find(T::ETypeid::value) != extension_.end();
+			return extension_.find(T::GetTypeId()) != extension_.end();
 		}
 
 		template<typename T>
 		void RemoveExtension()
 		{
-			extension_.erase(T::ETypeid::value);
+			extension_.erase(T::GetTypeId());
 		}
 
 		virtual ~ExtensionSupport() {}
@@ -56,9 +55,5 @@ namespace SDK::Core::Tools
 	};
 
 
-	inline constexpr std::uint64_t GenHash(const char* txt)
-	{
-		return Internal::hash_64_fnv1a_const(txt);
-	}
 
 }

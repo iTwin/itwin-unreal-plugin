@@ -115,6 +115,19 @@ void MockServer::start() {
     server->start(port);
 }
 
+bool MockServer::tryStart() noexcept
+{
+    try {
+        this->start();
+        return true;
+    }
+    catch (const std::runtime_error&) {
+        // error occurred
+        return false;
+    }
+    return false;
+}
+
 
 void MockServer::stop() {
     server->stop();

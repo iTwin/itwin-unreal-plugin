@@ -1144,6 +1144,10 @@ public:
   //! Sets the optional glTF model tuner.
   void SetGltfTuner(const std::shared_ptr<Cesium3DTilesSelection::GltfTuner>& tuner);
 
+  //! Returns whether some Gltf tuning is to be achieved.
+  bool NeedGltfTuning(const Cesium3DTilesSelection::Tile& tile) const;
+
+
 private:
   /**
    * Writes the values of all properties of this actor into the

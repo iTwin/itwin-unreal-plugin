@@ -41,13 +41,26 @@ enum class ELoadingMethod : uint8
 };
 
 
+USTRUCT()
+struct ITWINRUNTIME_API FITwinCustomMaterial
+{
+	GENERATED_BODY()
+
+	UPROPERTY(Category = "iTwin",
+		VisibleAnywhere)
+	FString Name;
+
+	UPROPERTY(Category = "iTwin",
+		EditAnywhere)
+	TObjectPtr<UMaterialInterface> Material;
+};
+
+
 UCLASS()
 class ITWINRUNTIME_API AITwinIModel : public AITwinServiceActor
 {
 	GENERATED_BODY()
 public:
-	TSharedPtr<FITwinGeolocation> Geolocation;
-
 	UPROPERTY(Category = "iTwin|Loading",
 		EditAnywhere)
 	ELoadingMethod LoadingMethod = ELoadingMethod::LM_Manual;
@@ -90,8 +103,14 @@ public:
 	EITwinExportStatus ExportStatus;
 
 	//! WORK IN PROGRESS - UNRELEASED - Synchro4D schedules found on this iModel.
-	UPROPERTY()
+	UPROPERTY(Category = "iTwin",
+		VisibleAnywhere)
 	UITwinSynchro4DSchedules* Synchro4DSchedules = nullptr;
+
+	//! WORK IN PROGRESS - UNRELEASED - material customization.
+	UPROPERTY()
+	TMap<uint64, FITwinCustomMaterial> CustomMaterials;
+
 
 	AITwinIModel();
 	virtual void Destroyed() override;
@@ -108,6 +127,11 @@ public:
 		CallInEditor,
 		BlueprintCallable)
 	void UpdateIModel();
+
+	UFUNCTION(Category = "iTwin",
+		CallInEditor,
+		BlueprintCallable)
+	void ZoomOnIModel();
 
 	UFUNCTION(Category = "iTwin|Info",
 		BlueprintCallable)
@@ -147,14 +171,23 @@ public:
 		BlueprintCallable)
 	void Reset();
 
+	UFUNCTION(Category = "iTwin|Load",
+		BlueprintCallable)
+	void RefreshTileset();
+
 	//! TEMPORARY (for tests). Triggers a re-tune of the glTF model.
 	UFUNCTION(Category = "iTwin",
 		CallInEditor,
 		BlueprintCallable)
 	void Retune();
 
+	//! Fills the map of known iTwin materials, if it was read from the tileset.
+	UFUNCTION()
+	void FillMaterialInfoFromTuner();
+
 	UFUNCTION()
 	void OnSavedViewsRetrieved(bool bSuccess, FSavedViewInfos SavedViews);
+
 
 private:
 	void AutoExportAndLoad();

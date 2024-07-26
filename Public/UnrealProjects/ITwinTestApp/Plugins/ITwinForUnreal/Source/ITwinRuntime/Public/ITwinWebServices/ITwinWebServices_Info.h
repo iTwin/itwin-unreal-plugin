@@ -147,13 +147,13 @@ struct FSavedViewInfo
 {
 	GENERATED_USTRUCT_BODY()
 
-	UPROPERTY(BlueprintReadOnly, Category = "SavedViewInfo")
+	UPROPERTY(BlueprintReadWrite, Category = "SavedViewInfo")
 		FString Id;
 
-	UPROPERTY(BlueprintReadOnly, Category = "SavedViewInfo")
+	UPROPERTY(BlueprintReadWrite, Category = "SavedViewInfo")
 		FString DisplayName;
 
-	UPROPERTY(BlueprintReadOnly, Category = "SavedViewInfo")
+	UPROPERTY(BlueprintReadWrite, Category = "SavedViewInfo")
 		bool bShared = false;
 };
 
@@ -171,13 +171,13 @@ struct FSavedView
 {
 	GENERATED_USTRUCT_BODY()
 
-	UPROPERTY(BlueprintReadOnly, Category = "SavedView")
+	UPROPERTY(BlueprintReadWrite, Category = "SavedView")
 		FVector Origin = FVector(0, 0, 0);
 
-	UPROPERTY(BlueprintReadOnly, Category = "SavedView")
+	UPROPERTY(BlueprintReadWrite, Category = "SavedView")
 		FVector Extents = FVector(0, 0, 0);
 
-	UPROPERTY(BlueprintReadOnly, Category = "SavedView")
+	UPROPERTY(BlueprintReadWrite, Category = "SavedView")
 		FRotator Angles = FRotator::ZeroRotator;
 };
 
@@ -221,3 +221,37 @@ struct FITwinRealityData3DInfo : public FITwinRealityDataInfo
 	UPROPERTY(BlueprintReadOnly, Category = "RealityData")
 		FString MeshUrl;
 };
+
+USTRUCT(BlueprintType)
+struct FElementAttribute
+{
+	GENERATED_USTRUCT_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "BIMInfo")
+	FString Name;
+
+	UPROPERTY(BlueprintReadOnly, Category = "BIMInfo")
+	FString Value;
+};
+
+USTRUCT(BlueprintType)
+struct FElementProperty
+{
+	GENERATED_USTRUCT_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "BIMInfo")
+	FString Name;
+
+	UPROPERTY(BlueprintReadOnly, Category = "BIMInfo")
+	TArray<FElementAttribute> Attributes;
+};
+
+USTRUCT(BlueprintType)
+struct FElementProperties
+{
+	GENERATED_USTRUCT_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "BIMInfo")
+	TArray<FElementProperty> Properties;
+};
+

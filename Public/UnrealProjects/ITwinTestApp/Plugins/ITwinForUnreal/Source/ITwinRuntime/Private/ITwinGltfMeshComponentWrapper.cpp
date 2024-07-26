@@ -83,7 +83,7 @@ const FITwinCesiumPropertyTableProperty* FITwinGltfMeshComponentWrapper::FetchEl
         checkf(false, TEXT("no gltf meta-data/features"));
         return nullptr;
     }
-    FeatureIDSetIndex = 0; // always look in 1st set (_FEATURE_ID_0)
+    FeatureIDSetIndex = ITwinCesium::Metada::ELEMENT_FEATURE_ID_SLOT; // always look in 1st set (_FEATURE_ID_0)
 
     const FITwinCesiumPropertyTableProperty* pElementProperty =
         UITwinCesiumMetadataPickingBlueprintLibrary::FindValidProperty(
@@ -172,19 +172,15 @@ FITwinGltfMeshComponentWrapper::EMetadataStatus FITwinGltfMeshComponentWrapper::
                 // extracted, obviously.
                 const ITwinElementID ITwinEltID = curEltID;
 
-                auto itSection = elementSections_.find(ITwinEltID);
-                if (itSection == elementSections_.end())
-                {
-                    elementSections_.emplace(ITwinEltID, curSection);
-                }
-                else
+                auto InsertedSection = elementSections_.try_emplace(ITwinEltID, curSection);
+                if (!InsertedSection.second) // was already present
                 {
                     // Not contiguous... We will not use any mesh section for this
                     // element during extraction. 
                     // Just increment the number of triangles matching current element
                     bUseMeshSections = false;
-                    itSection->second.Invalidate();
-                    itSection->second.NumTriangles += curSection.NumTriangles;
+                    InsertedSection.first->second.Invalidate();
+                    InsertedSection.first->second.NumTriangles += curSection.NumTriangles;
                 }
             }
 
@@ -326,7 +322,7 @@ void FITwinGltfMeshComponentWrapper::InitExtractedMeshComponent(
 
 
     ExtractedEntity.MeshComponent = pMesh;
-    ExtractedEntity.OriginalMatrix = gltfMeshComponent_->GetComponentTransform().ToMatrixWithScale();
+    ExtractedEntity.OriginalTransform = gltfMeshComponent_->GetComponentTransform();
 }
 
 bool FITwinGltfMeshComponentWrapper::FinalizeExtractedEntity(
@@ -466,29 +462,24 @@ bool FITwinGltfMeshComponentWrapper::FinalizeExtractedEntity(
             {
                 static std::unordered_map<ITwinElementID, FLinearColor> eltColorMap;
                 FLinearColor matColor;
-                auto const itClr = eltColorMap.find(EltID);
-                if (itClr != eltColorMap.end())
+                auto InsertedClr = eltColorMap.try_emplace(EltID);
+                if (InsertedClr.second) // new clr was inserted
                 {
-                    matColor = itClr->second;
-                }
-                else
-                {
-                    matColor = FLinearColor::MakeRandomColor();
-                    matColor.A = 1.;
-                    eltColorMap.emplace(EltID, matColor);
+                    InsertedClr.first->second = FLinearColor::MakeRandomColor();
+                    InsertedClr.first->second.A = 1.;
                 }
                 pNewMaterial->SetVectorParameterValueByInfo(
                     FMaterialParameterInfo(
                         "baseColorFactor",
                         EMaterialParameterAssociation::GlobalParameter,
                         INDEX_NONE),
-                    matColor);
+                    InsertedClr.first->second);
                 pNewMaterial->SetVectorParameterValueByInfo(
                     FMaterialParameterInfo(
                         "baseColorFactor",
                         EMaterialParameterAssociation::LayerParameter,
                         0),
-                    matColor);
+                    InsertedClr.first->second);
             }
             MaterialToUse = pNewMaterial;
 
@@ -630,8 +621,8 @@ namespace
 
     inline void StaticMeshExtractionHelper::AddVertex(uint32 const SrcVtxId)
     {
-        auto itDstVtxId = VtxIndicesMap.find(SrcVtxId);
-        if (itDstVtxId == VtxIndicesMap.end())
+        auto DstVtxId = VtxIndicesMap.try_emplace(SrcVtxId, NextNewVertexIndex);
+        if (DstVtxId.second) // was inserted
         {
             checkf(NextNewVertexIndex == BuildVertices.Num(), TEXT("bad invariant!"));
 
@@ -656,15 +647,14 @@ namespace
             {
                 DstBuildVertex.Color = SrcVtxColors.VertexColor(SrcVtxId);
             }
-            
-            VtxIndicesMap[SrcVtxId] = NextNewVertexIndex;
+
             Indices.Add(NextNewVertexIndex);
             NextNewVertexIndex++;
         }
         else
         {
-            // already copied before
-            Indices.Add(itDstVtxId->second);
+            // not inserted -> already copied before
+            Indices.Add(DstVtxId.first->second);
         }
     }
 
@@ -1003,7 +993,7 @@ std::optional<uint32> FITwinGltfMeshComponentWrapper::BakeFeatureIDsInVertexUVs(
     const uint32 uvIndex = (uint32)pGltfToUnrealTexCoordMap_->size();
     (*pGltfToUnrealTexCoordMap_)[*featuresAccessorIndex_] = uvIndex;
 
-    static const int64 FeatureIDSetIndex = 0;
+    static const int64 FeatureIDSetIndex = ITwinCesium::Metada::ELEMENT_FEATURE_ID_SLOT;
     const FITwinCesiumFeatureIdSet& FeatureIdSet =
         UITwinCesiumPrimitiveFeaturesBlueprintLibrary::GetFeatureIDSets(*pFeatures_)[FeatureIDSetIndex];
 

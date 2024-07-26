@@ -22,7 +22,7 @@ class FITwinSynchro4DAnimator
 public:
 	FITwinSynchro4DAnimator(UITwinSynchro4DSchedules& Owner);
 
-	void OnChangedAnimationTime();
+	void OnChangedScheduleTime(bool const bForceUpdateAll);
 	void OnChangedAnimationSpeed();
 	void OnChangedScheduleRenderSetting();
 	void OnMaskOutNonAnimatedElements();
@@ -32,7 +32,7 @@ public:
 	void Pause();
 	void Stop();
 
-	void TickAnimation(float DeltaTime);
+	void TickAnimation(float DeltaTime, bool const bNewTilesReceived);
 
 	class FImpl;
 private:

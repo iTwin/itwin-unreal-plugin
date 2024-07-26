@@ -22,4 +22,6 @@ PRAGMA_POP_PLATFORM_DEFAULT_PACKING
 #endif
 #pragma pop_macro ("check")
 #pragma pop_macro ("verify")
-#pragma pop_macro ("TEXT")
+//#pragma pop_macro ("TEXT") <== doesn't seem to work so well
+// redefining it like in HAL/Platform.h works better:
+#define TEXT(x) TEXT_PASTE(x)

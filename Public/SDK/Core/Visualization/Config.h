@@ -7,8 +7,7 @@
 +--------------------------------------------------------------------------------------*/
 
 #pragma once
-#ifndef __cpp_modules
-	//#include "Core/Vizualisation/Config.h"
+#ifndef SDK_CPPMODULES
 	#include <string>
 	#include <memory>
 	#include <filesystem>

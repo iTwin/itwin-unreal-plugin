@@ -615,10 +615,12 @@ TEST_CASE("Test loading individual tile of tileset json") {
         std::get<CesiumGeometry::QuadtreeTileID>(implicitTile.getTileID());
     CHECK(tileID == CesiumGeometry::QuadtreeTileID(0, 0, 0));
 
+    #if defined(_CPPRTTI)
     const auto pLoader =
         dynamic_cast<const ImplicitQuadtreeLoader*>(implicitTile.getLoader());
     CHECK(pLoader);
     CHECK(pLoader->getSubtreeLevels() == 2);
     CHECK(pLoader->getAvailableLevels() == 2);
+   #endif
   }
 }

@@ -14,6 +14,7 @@
 #include <unordered_map>
 
 class UMaterialInstanceDynamic;
+class UMaterialInterface;
 class UStaticMeshComponent;
 struct FITwinCesiumModelMetadata;
 struct FITwinCesiumPrimitiveFeatures;
@@ -54,6 +55,15 @@ public:
 	* Whether an extra UV layer should be allocated for feature IDs.
 	*/
 	virtual bool ShouldAllocateUVForFeatures() const = 0;
+
+	/**
+	* Creates a material instance for the given primitive.
+	*/
+	virtual UMaterialInstanceDynamic* CreateMaterial_GameThread(
+		CesiumGltf::MeshPrimitive const* pMeshPrimitive,
+		UMaterialInterface*& pBaseMaterial,
+		UObject* InOuter,
+		FName const& Name);
 
 private:
 	static TSharedPtr<ICesiumMeshBuildCallbacks> Singleton;

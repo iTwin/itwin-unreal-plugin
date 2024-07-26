@@ -11,8 +11,7 @@
 #include <ITwinSceneMapping.h>
 #include <Timeline/TimelineFwd.h>
 
-#include <vector>
-#include <unordered_map>
+#include <unordered_set>
 
 struct FHitResult;
 
@@ -30,30 +29,43 @@ public:
 	FITwinIModelInternals(AITwinIModel& InOwner) : Owner(InOwner) {}
 
 	template<typename TProcessElementFeaturesInTile, typename TProcessExtractedElementInTile>
-	void ProcessElementInEachTile(ITwinElementID const Elem,
+	void ProcessElementsInEachTile(std::set<ITwinElementID> const& IModelElements,
 		TProcessElementFeaturesInTile const& ProcElemFeatures,
-		TProcessExtractedElementInTile const& ProcExtractedElem)
+		TProcessExtractedElementInTile const& ProcExtractedElem,
+		bool const bVisibleOnly)
 	{
 		for (auto& [TileID, SceneTile] : SceneMapping.KnownTiles)
 		{
-			{	auto* Found = SceneTile.FindElementFeatures(Elem);
-				if (Found)
-				{
-					ProcElemFeatures(TileID, SceneTile, *Found);
-				}
+			if (bVisibleOnly && !SceneTile.HasVisibleMesh())
+			{
+				continue;
 			}
-			{	auto* Found = SceneTile.FindExtractedElement(Elem);
-				if (Found)
-				{
-					ProcExtractedElem(SceneTile, *Found);
+			for (auto&& Elem : IModelElements)
+			{
+				{	auto* Found = SceneTile.FindElementFeatures(Elem);
+					if (Found)
+					{
+						ProcElemFeatures(TileID, SceneTile, *Found);
+					}
+				}
+				{	auto* Found = SceneTile.FindExtractedElement(Elem);
+					if (Found)
+					{
+						ProcExtractedElem(SceneTile, *Found);
+					}
 				}
 			}
 		}
 	}
 
-	FBox GetBoundingBox(ITwinElementID const Element) const
+	FBox GetBoundingBox(std::set<ITwinElementID> const& Elements) const
 	{
-		return SceneMapping.GetBoundingBox(Element);
+		FBox GroupBox;
+		for (auto&& Elem : Elements)
+		{
+			GroupBox += SceneMapping.GetBoundingBox(Elem);
+		}
+		return GroupBox;
 	}
 
 	/// Currently uses the assumption that BBoxes are computed for all Elements of a tile
@@ -63,9 +75,10 @@ public:
 		return BBoxes.find(Element) != BBoxes.cend();
 	}
 
-	void OnElementTimelineModified(FITwinElementTimeline const& ModifiedTimeline);
+	void OnElementsTimelineModified(FITwinElementTimeline& ModifiedTimeline,
+									std::vector<ITwinElementID> const* OnlyForElements = nullptr);
 
-	void OnClickedElement(ITwinElementID const Element, FHitResult const& HitResult);
+	bool OnClickedElement(ITwinElementID const Element, FHitResult const& HitResult);
 
-	void SelectElement(ITwinElementID const InElementID);
+	bool SelectElement(ITwinElementID const InElementID);
 };

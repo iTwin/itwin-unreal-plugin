@@ -1,10 +1,16 @@
 
 add_library(Visualization 
 		Visualization.h
-		Scene.h
-		Scene.cpp
+		Decoration.h
+		Decoration.cpp
 		Config.h
 		Config.cpp
+		Instance.h
+		Instance.cpp
+		InstancesGroup.h
+		InstancesGroup.cpp
+		InstancesManager.h
+		InstancesManager.cpp
 )
 target_compile_features(Visualization PRIVATE ${DefaultCXXSTD})
 target_link_libraries(Visualization PRIVATE 
@@ -12,8 +18,6 @@ target_link_libraries(Visualization PRIVATE
 						Tools
 					 ) 
 set_target_properties(Visualization PROPERTIES FOLDER "SDK/Core") 
-
-
 
 ####  Unit Tests
 add_executable(VisualizationTest VisualizationTest.cpp)

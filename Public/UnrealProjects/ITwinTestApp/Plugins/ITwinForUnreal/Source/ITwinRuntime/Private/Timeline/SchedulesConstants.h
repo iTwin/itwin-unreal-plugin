@@ -8,12 +8,21 @@
 
 #pragma once
 
+/// Disable transformations-related code for the time being, to avoid the performance cost of extracting
+/// entities for transformations which will not actually work in the first release of the Schedules code
+#define SYNCHRO4D_ENABLE_TRANSFORMATIONS() 0
+
 /// Small time offset in seconds, used to avoid strictly superimposed key frames
 #define KEYFRAME_TIME_EPSILON 1.
 
 #define PRIVATE_S4D_BGR_DISABLED_VAL 0
 #define PRIVATE_S4D_BGR_DISABLED \
 	PRIVATE_S4D_BGR_DISABLED_VAL, PRIVATE_S4D_BGR_DISABLED_VAL, PRIVATE_S4D_BGR_DISABLED_VAL
+
+namespace ITwin
+{
+	constexpr size_t INVALID_IDX = static_cast<size_t>(-1);
+}
 
 namespace ITwin::Synchro4D
 {

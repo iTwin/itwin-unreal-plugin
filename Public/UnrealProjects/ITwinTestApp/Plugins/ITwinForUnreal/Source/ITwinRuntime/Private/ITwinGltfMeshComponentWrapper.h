@@ -31,6 +31,7 @@ struct FITwinMeshExtractionOptions
 {
     /// Whether the extracted component should use a distinct material instance
     bool bCreateNewMaterialInstance = false;
+    bool bSetupMatForTileTexturesNow = false;
     /// When a new material instance is to be created, we may supply the base material
     /// to use for this creation. If none is provided, we will use the base material of
     /// the material instance used by the original mesh.

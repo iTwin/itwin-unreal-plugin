@@ -421,7 +421,7 @@ void FITwinAuthorizationManager::ProcessTokenRequest(
 		}
 		TSharedPtr<FJsonObject> responseJson;
 		FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(response->GetContentAsString()), responseJson);
-		FString const authToken = responseJson->GetStringField("access_token");
+		FString const authToken = responseJson->GetStringField(TEXT("access_token"));
 
 		// store expiration and automatic refresh info
 		FITwinAuthorizationInfo authInfo;
@@ -460,7 +460,11 @@ void FITwinAuthorizationManager::CheckAuthorization()
 	{
 		return;
 	}
-
+	if (IsAuthorizationInProgress())
+	{
+		// Do not accumulate authorization requests! (see itwin-unreal-plugin/issues/7)
+		return;
+	}
 	const FString clientId = FAuthorizationCredentials::GetITwinAppId(Environment);
 	if (clientId.IsEmpty())
 	{

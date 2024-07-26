@@ -7,17 +7,26 @@
 +--------------------------------------------------------------------------------------*/
 
 #include "ReusableJsonQueries.h"
+#include "ReusableJsonQueriesImpl.h"
 
 #include <Compil/BeforeNonUnrealIncludes.h>
 	#include <BeHeaders/Compil/CleanUpGuard.h>
 #include <Compil/AfterNonUnrealIncludes.h>
 
+#include <GenericPlatform/GenericPlatformTime.h>
+#include <HAL/PlatformFileManager.h>
 #include <HttpModule.h>
+#include <Logging/LogMacros.h>
 #include <Interfaces/IHttpResponse.h>
+#include <Misc/Paths.h>
 #include <Serialization/JsonReader.h>
 #include <Serialization/JsonSerializer.h>
 
+#include <algorithm>
 #include <optional>
+
+DECLARE_LOG_CATEGORY_EXTERN(ITwinS4DQueries, Log, All);
+DEFINE_LOG_CATEGORY(ITwinS4DQueries);
 
 using namespace ReusableJsonQueries;
 
@@ -40,51 +49,56 @@ public:
 };
 
 template<uint16_t SimultaneousRequestsT>
-class FReusableJsonQueries<SimultaneousRequestsT>::FImpl
+FReusableJsonQueries<SimultaneousRequestsT>::FImpl::FImpl(
+	FString const& InBaseUrlNoSlash, FAllocateRequest const& AllocateRequest,
+	FCheckRequest const& InCheckRequest, ReusableJsonQueries::FMutex& InMutex,
+	TCHAR const* const InRecordToFolder, int const InRecorderSessionIndex,
+	TCHAR const* const InSimulateFromFolder,
+	std::optional<ReusableJsonQueries::EReplayMode> const InReplayMode)
+: BaseUrlNoSlash(InBaseUrlNoSlash)
+, CheckRequest(InCheckRequest)
+, Mutex(InMutex)
+, RecordToFolder(InRecordToFolder)
+, RecorderSessionIndex(InRecorderSessionIndex)
+, SimulateFromFolder(InSimulateFromFolder)
+, IsThisValid(new bool(true))
 {
-	friend class FReusableJsonQueries<SimultaneousRequestsT>;
-
-	FString const BaseUrlNoSlash;
-	FCheckRequest const CheckRequest;
-	ReusableJsonQueries::FMutex& Mutex;
-
-	/// Number of requests in the current "batch", which is a grouping of requests which ordering is not
-	/// relevant. Incremented when stacking requests, decremented when finishing a request.
-	/// => Until it's back down to zero, incoming request stacking functors are put on a waiting list.
-	int RequestsInBatch = 0;
-	ReusableJsonQueries::FStackedBatches NextBatches;
-
-	/// ProcessRequest doc says a Request can be re-used (but not while still being processed, obviously)
-	std::array<FPoolRequest, SimultaneousRequestsT> RequestsPool;
-	ReusableJsonQueries::FStackedRequests RequestsInQueue;
-	std::atomic<uint16_t> AvailableRequestSlots{ SimultaneousRequestsT };
-
-	std::shared_ptr<bool> IsThisValid;
-
-	void HandlePendingQueries();
-	void DoEmitRequest(FPoolRequest& FromPool, FRequestArgs const RequestArgs);
-	[[nodiscard]] FString JoinToBaseUrl(FUrlSubpath const& UrlSubpath, int32 const ExtraSlack) const;
-
-public:
-	FImpl(FString const& InBaseUrlNoSlash, FAllocateRequest const& AllocateRequest,
-		FCheckRequest const& InCheckRequest, ReusableJsonQueries::FMutex& InMutex);
-	~FImpl();
-};
-
-template<uint16_t SimultaneousRequestsT>
-FReusableJsonQueries<SimultaneousRequestsT>::FImpl::FImpl(FString const& InBaseUrlNoSlash,
-		FAllocateRequest const& AllocateRequest, FCheckRequest const& InCheckRequest,
-		ReusableJsonQueries::FMutex& InMutex)
-	: BaseUrlNoSlash(InBaseUrlNoSlash)
-	, CheckRequest(InCheckRequest)
-	, Mutex(InMutex)
-	, IsThisValid(new bool(true))
-{
+	if (SimulateFromFolder && !FString(SimulateFromFolder).IsEmpty()
+		&& InReplayMode && (*InReplayMode) != ReusableJsonQueries::EReplayMode::None)
+	{
+		IPlatformFile& FileManager = FPlatformFileManager::Get().GetPlatformFile();
+		FString PathBase = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir());
+		if (ensure(FileManager.DirectoryExists(*PathBase)
+			&& FileManager.DirectoryExists(*(PathBase += SimulateFromFolder))))
+		{
+			FRecordDirIterator DirIter(SimulationMap, ReplayMap);
+			if (FileManager.IterateDirectory(*PathBase, DirIter))
+				ReplayMode = *InReplayMode;
+		}
+	}
+	// Allocate those even when simulating! (see DoEmitRequest)
 	for (auto& FromPool : RequestsPool)
 	{
 		FromPool.Request = AllocateRequest();
 	}
-}
+	if (RecordToFolder && !FString(RecordToFolder).IsEmpty())
+	{
+		IPlatformFile& FileManager = FPlatformFileManager::Get().GetPlatformFile();
+		FString PathBase = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir());
+		FString SubDirs[] = { FString(RecordToFolder),
+			FString::Printf(TEXT("%s_session%02d"), *FDateTime::Now().ToString(), InRecorderSessionIndex) };
+		if (!ensure(FileManager.DirectoryExists(*PathBase)))
+			return;
+		for (auto&& Comp : SubDirs)
+		{
+			PathBase += Comp;
+			if (!ensure(FileManager.CreateDirectory(*PathBase)))
+				return;
+			PathBase += TEXT('/');
+		}
+		RecorderPathBase = PathBase;
+	}
+} // ctor
 
 template<uint16_t SimultaneousRequestsT>
 FReusableJsonQueries<SimultaneousRequestsT>::FImpl::~FImpl()
@@ -113,9 +127,11 @@ void FReusableJsonQueries<SimultaneousRequestsT>::FImpl::DoEmitRequest(FPoolRequ
 {
 	check(!FromPool.bIsAvailable);//flag already toggled
 	FromPool.Request->SetVerb(EVerb::GET == RequestArgs.Verb ? TEXT("GET") : TEXT("POST"));
+	FString FullUrl;
 	if (RequestArgs.Params.empty())
 	{
-		FromPool.Request->SetURL(JoinToBaseUrl(RequestArgs.UrlSubpath, 0));
+		FullUrl = JoinToBaseUrl(RequestArgs.UrlSubpath, 0);
+		FromPool.Request->SetURL(RecorderPathBase.IsEmpty() ? std::move(FullUrl) : FullUrl);
 	}
 	else
 	{
@@ -124,7 +140,7 @@ void FReusableJsonQueries<SimultaneousRequestsT>::FImpl::DoEmitRequest(FPoolRequ
 		{
 			ExtraSlack += 2 + Parameter.first.Len() + Parameter.second.Len();
 		}
-		FString FullUrl = JoinToBaseUrl(RequestArgs.UrlSubpath, ExtraSlack);
+		FullUrl = JoinToBaseUrl(RequestArgs.UrlSubpath, ExtraSlack);
 		bool first = true;
 		for (auto const& Parameter : RequestArgs.Params)
 		{
@@ -134,7 +150,7 @@ void FReusableJsonQueries<SimultaneousRequestsT>::FImpl::DoEmitRequest(FPoolRequ
 			FullUrl += Parameter.second;
 			first = false;
 		}
-		FromPool.Request->SetURL(std::move(FullUrl));
+		FromPool.Request->SetURL(RecorderPathBase.IsEmpty() ? std::move(FullUrl) : FullUrl);
 	}
 	// Content-Length should be present http://www.w3.org/Protocols/rfc2616/rfc2616-sec4.html#sec4.4
 	// See FCurlHttpRequest::SetupRequest: if we don't set it up here correctly, reusing requests
@@ -142,14 +158,34 @@ void FReusableJsonQueries<SimultaneousRequestsT>::FImpl::DoEmitRequest(FPoolRequ
 	// converted utf8 buffer for the payload, so it's better to set an empty string here and let
 	// FCurlHttpRequest::SetupRequest set the proper size.
 	FromPool.Request->SetHeader("Content-Length", "");
+	if (!RecorderPathBase.IsEmpty())
+	{
+		FLock Lock(Mutex);
+		RecordQuery(ToJson(FromPool.Request, FullUrl, RequestArgs.PostDataString), Lock);
+	}
 	FromPool.Request->SetContentAsString(std::move(RequestArgs.PostDataString));
-	// "Single" delegate, no need to Unbind to reuse:
-	FromPool.Request->OnProcessRequestComplete().BindLambda(
+	std::function<TSharedPtr<FJsonObject>(FHttpResponsePtr)> GetJsonObj =
+		[](FHttpResponsePtr Response) -> TSharedPtr<FJsonObject>
+		{
+			TSharedPtr<FJsonObject> ResponseJson;
+			FJsonSerializer::Deserialize(
+				TJsonReaderFactory<>::Create(Response->GetContentAsString()),
+				ResponseJson);
+			return ResponseJson;
+		};
+	if (ReusableJsonQueries::EReplayMode::OnDemandSimulation == ReplayMode)
+	{
+		// Overwrite because ternary operator for init wouldn't compile...
+		GetJsonObj = GetJsonObjGetterForSimulation(FromPool, EVerb::GET == RequestArgs.Verb);
+	}
+	auto&& RequestCompletionCallback =
 		[ IsThisValid=this->IsThisValid, // need to copy shared_ptr
 		  JsonQueries=this, // just to make it explicit
 		  pbRequestAvailableFlag=&(FromPool.bIsAvailable), // usable as long as (*IsThisValid)
 		  ProcessJsonResponseFunc=std::move(RequestArgs.ProcessJsonResponseFunc),
-		  &RequestsInBatch=this->RequestsInBatch]
+		  &RequestsInBatch=this->RequestsInBatch,
+		  QueryTimestamp = RecorderPathBase.IsEmpty() ? -1 : (RecorderTimestamp - 1),
+		  GetJsonObj = std::move(GetJsonObj)]
 		(FHttpRequestPtr CompletedRequest, FHttpResponsePtr Response, bool bConnectedSuccessfully)
 		{
 			// IsThisValid access not thread-safe otherwise... If needed, the destructor and this callback
@@ -161,28 +197,46 @@ void FReusableJsonQueries<SimultaneousRequestsT>::FImpl::DoEmitRequest(FPoolRequ
 				// so other captures are invalid
 				return;
 			}
+			JsonQueries->LastCompletionTime = FPlatformTime::Seconds();
 			check(*pbRequestAvailableFlag == false);
-			Be::CleanUpGuard CleanUp([&JsonQueries, pbRequestAvailableFlag, &RequestsInBatch]
+			Be::CleanUpGuard CleanUp([JsonQueries, pbRequestAvailableFlag, &RequestsInBatch,
+									  Response, bConnectedSuccessfully, QueryTimestamp]
 				{
 					FLock Lock(JsonQueries->Mutex);
 					*pbRequestAvailableFlag = true;
 					++JsonQueries->AvailableRequestSlots; // next Tick will call HandlePendingRequests
 					--RequestsInBatch;
+					if (-1 != QueryTimestamp)
+						JsonQueries->RecordReply(Response, bConnectedSuccessfully, QueryTimestamp, Lock);
 				});
-			if (JsonQueries->CheckRequest(CompletedRequest, Response, bConnectedSuccessfully, nullptr))
+			if ((ReusableJsonQueries::EReplayMode::OnDemandSimulation == JsonQueries->ReplayMode)
+				|| (JsonQueries->CheckRequest(CompletedRequest, Response, bConnectedSuccessfully, nullptr)
+					//synonym to 20X response?
+					&& ensure(EHttpRequestStatus::Succeeded == CompletedRequest->GetStatus())))
 			{
-				//synonym to 20X response?
-				check(EHttpRequestStatus::Succeeded == CompletedRequest->GetStatus());
-				TSharedPtr<FJsonObject> responseJson;
-				FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Response->GetContentAsString()),
-											 responseJson);
-				if (responseJson)
-				{
-					ProcessJsonResponseFunc(responseJson);
-				}
+				TSharedPtr<FJsonObject> ResponseJson = GetJsonObj(Response);
+				if (ResponseJson)
+					ProcessJsonResponseFunc(ResponseJson);
 			}
-		});
-	FromPool.Request->ProcessRequest();
+		};
+	switch (ReplayMode)
+	{
+	case ReusableJsonQueries::EReplayMode::OnDemandSimulation:
+		// "Simulation" mode, we should have a matching entry in the simulation map (see GetJsonObj)
+		RequestCompletionCallback({}, {}, true);
+		break;
+	case ReusableJsonQueries::EReplayMode::SequentialSession:
+		// TODO_GCO: A little harder: can't persist the callbacks passed from SchedulesImport.cpp!
+		break;
+	case ReusableJsonQueries::EReplayMode::None:
+		// "Single" delegate, no need to Unbind to reuse:
+		FromPool.Request->OnProcessRequestComplete().BindLambda(std::move(RequestCompletionCallback));
+		++TotalRequestsCount;
+		if (FirstActiveTime == 0.) // assumed invalid
+			FirstActiveTime = FPlatformTime::Seconds();
+		FromPool.Request->ProcessRequest();
+		break;
+	}
 }
 
 template<uint16_t SimultaneousRequestsT>
@@ -204,22 +258,19 @@ FString FReusableJsonQueries<SimultaneousRequestsT>::FImpl::JoinToBaseUrl(
 }
 
 template<uint16_t SimultaneousRequestsT>
-void FReusableJsonQueries<SimultaneousRequestsT>::FImpl::HandlePendingQueries()
+bool FReusableJsonQueries<SimultaneousRequestsT>::FImpl::HandlePendingQueries()
 {
 	FPoolRequest* Slot = nullptr;
 	FRequestArgs RequestArgs;
 	{	FLock Lock(Mutex);
 		if (AvailableRequestSlots > 0 && !RequestsInQueue.empty())
 		{
-			if (AvailableRequestSlots > SimultaneousRequestsT)
+			if (!ensure(AvailableRequestSlots <= SimultaneousRequestsT))
 			{
-				check(false);
 				AvailableRequestSlots = 0;
 				for (auto&& FromPool : RequestsPool) if (FromPool.bIsAvailable) ++AvailableRequestSlots;
 				if (!AvailableRequestSlots)
-				{
-					return;
-				}
+					return false;
 			}
 			for (auto&& FromPool : RequestsPool)
 			{
@@ -229,26 +280,41 @@ void FReusableJsonQueries<SimultaneousRequestsT>::FImpl::HandlePendingQueries()
 					break;
 				}
 			}
-			if (!Slot) { check(false); return; }
-			Slot->bIsAvailable = false;
-			--AvailableRequestSlots;
-			RequestArgs = std::move(RequestsInQueue.front());
-			RequestsInQueue.pop_front();
+			if (ensure(Slot))
+			{
+				Slot->bIsAvailable = false;
+				--AvailableRequestSlots;
+				RequestArgs = std::move(RequestsInQueue.front());
+				RequestsInQueue.pop_front();
+			}
 		}
 	}
 	if (Slot)
 	{
 		DoEmitRequest(*Slot, std::move(RequestArgs));
+		return true;
 	}
+	else
+		return false;
 }
 
 template<uint16_t SimultaneousRequestsT>
 FReusableJsonQueries<SimultaneousRequestsT>::FReusableJsonQueries(FString const& InBaseUrlNoSlash,
 		FAllocateRequest const& AllocateRequest, FCheckRequest const& InCheckRequest,
-		ReusableJsonQueries::FMutex& InMutex)
-	: Impl(MakePimpl<FReusableJsonQueries<SimultaneousRequestsT>::FImpl>(
-		InBaseUrlNoSlash, AllocateRequest, InCheckRequest, InMutex))
+		ReusableJsonQueries::FMutex& InMutex, TCHAR const* const InRecordToFolder,
+		int const InRecorderSessionIndex, TCHAR const* const InSimulateFromFolder,
+		std::optional<ReusableJsonQueries::EReplayMode> const ReplayMode)
+: Impl(MakePimpl<FReusableJsonQueries<SimultaneousRequestsT>::FImpl>(
+	InBaseUrlNoSlash, AllocateRequest, InCheckRequest, InMutex, InRecordToFolder, InRecorderSessionIndex, 
+	InSimulateFromFolder, ReplayMode))
 {
+}
+
+template<uint16_t SimultaneousRequestsT>
+void FReusableJsonQueries<SimultaneousRequestsT>::ChangeRemoteUrl(FString const& NewRemoteUrl)
+{
+	FLock Lock(Impl->Mutex);
+	Impl->BaseUrlNoSlash = NewRemoteUrl;
 }
 
 // IMPORTANT: this is never called in the Editor! (because there is no ticking!)
@@ -260,7 +326,7 @@ void FReusableJsonQueries<SimultaneousRequestsT>::HandlePendingQueries()
 	{	FLock Lock(Impl->Mutex);
 		if (!Impl->RequestsInBatch && !Impl->NextBatches.empty())
 		{
-			NextBatch = std::move(Impl->NextBatches.front());
+			NextBatch = std::move(Impl->NextBatches.front().Exec);
 			Impl->NextBatches.pop_front();
 		}
 	}
@@ -268,8 +334,14 @@ void FReusableJsonQueries<SimultaneousRequestsT>::HandlePendingQueries()
 	{
 		FStackingToken Token;
 		NextBatch(Token);
+		// re-enter in case the batch resulted in zero request: can easily happen when Elements filtering
+		// and the AnimBindingsFullyKnownForElem system, so don't wait for next tick
+		HandlePendingQueries();
 	}
-	Impl->HandlePendingQueries();
+	else
+	{
+		while (Impl->HandlePendingQueries()) {}
+	}
 }
 
 template<uint16_t SimultaneousRequestsT>
@@ -286,7 +358,8 @@ void FReusableJsonQueries<SimultaneousRequestsT>::StackRequest(ReusableJsonQueri
 }
 
 template<uint16_t SimultaneousRequestsT>
-void FReusableJsonQueries<SimultaneousRequestsT>::NewBatch(FStackingFunc&& StackingFunc)
+void FReusableJsonQueries<SimultaneousRequestsT>::NewBatch(FStackingFunc&& StackingFunc,
+														   bool const bPseudoBatch/*= false*/)
 {
 	FLock Lock(Impl->Mutex);
 	if (!Impl->RequestsInBatch && Impl->NextBatches.empty())
@@ -295,7 +368,7 @@ void FReusableJsonQueries<SimultaneousRequestsT>::NewBatch(FStackingFunc&& Stack
 		FStackingToken Token;
 		StackingFunc(Token);
 	}
-	else Impl->NextBatches.emplace_back(std::move(StackingFunc));
+	else Impl->NextBatches.emplace_back(FNewBatch{ std::move(StackingFunc), bPseudoBatch });
 }
 
 template<uint16_t SimultaneousRequestsT>
@@ -303,7 +376,9 @@ std::pair<int, int> FReusableJsonQueries<SimultaneousRequestsT>::QueueSize() con
 {
 	FLock Lock(Impl->Mutex);
 	return {
-		(Impl->RequestsInBatch ? 1 : 0) + (int)Impl->NextBatches.size(),
+		(Impl->RequestsInBatch ? 1 : 0) + (int)std::count_if(
+			Impl->NextBatches.begin(), Impl->NextBatches.end(),
+			[](auto&& PendingBatch) { return !PendingBatch.bPseudoBatch; }),
 		Impl->RequestsInBatch
 	};
 }
@@ -322,15 +397,33 @@ void FReusableJsonQueries<SimultaneousRequestsT>::SwapQueues(ReusableJsonQueries
 			FStackedRequests ReqsInQ;
 			ReqsInQ.swap(Impl->RequestsInQueue);
 			Impl->NextBatches.push_front(
-				[this, Reqs = std::move(ReqsInQ)](FStackingToken const&) mutable
-				{
-					check(Impl->RequestsInQueue.empty());
-					Impl->RequestsInQueue.swap(Reqs);
-				});
+				FNewBatch{
+					[this, Reqs = std::move(ReqsInQ)](FStackingToken const&) mutable
+					{
+						ensure(Impl->RequestsInQueue.empty());
+						Impl->RequestsInQueue.swap(Reqs);
+					},
+					false });
 		}
-		Impl->NextBatches.push_front(PriorityRequest);
+		Impl->NextBatches.push_front(FNewBatch{ PriorityRequest, false });
 	}
 }
+
+template<uint16_t SimultaneousRequestsT>
+FString FReusableJsonQueries<SimultaneousRequestsT>::Stats() const
+{
+	return FString::Printf(TEXT("Processed %llu requests in %.1fs."), Impl->TotalRequestsCount,
+		Impl->LastCompletionTime - Impl->FirstActiveTime);
+}
+
+template<uint16_t SimultaneousRequestsT>
+void FReusableJsonQueries<SimultaneousRequestsT>::StatsResetActiveTime()
+{
+	Impl->FirstActiveTime = 0.;
+}
+
+// Need to be included in this CPP because of the explicit instantiation below
+#include "ReusableJsonQueriesRecording.inl"
 
 /// Must match SimultaneousRequestsAllowed but since it's declared in SchedulesImport.h, I didn't want to
 /// introduce a dependency for that (you'll get link errors in case of inconsistency anyway)

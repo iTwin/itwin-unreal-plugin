@@ -81,7 +81,7 @@ void ATopMenu::ZoomOnIModel()
 	auto const& IModel3dInfo = GetIModel3DInfoInCoordSystem(EITwinCoordSystem::UE);
 
 	GetWorld()->GetFirstPlayerController()->GetPawnOrSpectator()->SetActorLocation(
-		IModel3dInfo.ModelCenter
+		(0.5 * (IModel3dInfo.BoundingBoxMin + IModel3dInfo.BoundingBoxMax))
 			// "0.5" is empirical, let's not be too far from the center of things, iModels tend to have
 			// a large context around the actual area of interest...
 			- FMath::Max(0.5 * FVector::Distance(IModel3dInfo.BoundingBoxMin, IModel3dInfo.BoundingBoxMax),

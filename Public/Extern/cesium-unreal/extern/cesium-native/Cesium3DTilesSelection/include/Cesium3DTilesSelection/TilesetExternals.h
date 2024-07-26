@@ -3,6 +3,7 @@
 #include "Library.h"
 #include "TileOcclusionRendererProxy.h"
 #include "spdlog-cesium.h"
+#include <rapidjson/fwd.h>
 
 #include <CesiumAsync/AsyncSystem.h>
 
@@ -37,6 +38,7 @@ public:
 	int currentVersion = 0;
 	virtual ~GltfTuner() = default;
 	virtual CesiumGltf::Model Tune(const CesiumGltf::Model& model) = 0;
+	virtual void ParseTilesetJson(const rapidjson::Document& tilesetJson) = 0;
 };
 
 /**

@@ -57,13 +57,20 @@ class FITwinSceneMappingBuilder;
 
 struct FITwinPropertyTextureFlags
 {
-	/// Whether UpdateInMaterials has been called on the containing tile's property texture
-	bool bTextureIsSet : 1 = false;
+	/// Non-zero when UpdateInMaterials has been called on the containing tile's property texture. The value
+	/// stored here is the size of the array of Materials when UpdateInMaterials was called, so that when it
+	/// grows, the method can be called again (at the moment we never clean up stale materials, but we could
+	/// use another method of detecting new materials).
+	/// TODO_GCO: each FITwinElementFeaturesInTile has a set of FITwinSynchro4DTextureFlags (for each tex),
+	/// which probably leads to a lot of redundant calls since batched materials are shared by many Elements,
+	/// so we should probably move the batched Elements FITwinSynchro4DTextureFlags at the tile level!
+	/// The value will be 0 or 1 for extracted entities' flags.
+	int32 TexturesSet = 0;
 	/// Whether the property texture has to be setup upon next tick
-	bool bNeedSetupTexture : 1 = false;
+	bool bNeedSetupTexture = false;
 
-	void OnTextureSetInMaterials() {
-		bTextureIsSet = true;
+	void OnTextureSetInMaterials(int32 const InTexturesSet) {
+		TexturesSet = InTexturesSet;
 		bNeedSetupTexture = false;
 	}
 
@@ -71,7 +78,7 @@ struct FITwinPropertyTextureFlags
 		bNeedSetupTexture = true;
 	}
 	void InvalidateOnCondition(bool bCondition) {
-		if (bCondition && !bTextureIsSet)
+		if (bCondition && TexturesSet == 0)
 		{
 			// Texture will have to be setup upon next tick
 			Invalidate();
@@ -79,9 +86,17 @@ struct FITwinPropertyTextureFlags
 	}
 
 	[[nodiscard]] bool ShouldUpdateMaterials(
-		std::unique_ptr<FITwinDynamicShadingBGRA8Property> const& PropertyTexture) const
+		std::unique_ptr<FITwinDynamicShadingBGRA8Property> const& PropertyTexture,
+		int32 const InTexturesSet) const
 	{
-		return PropertyTexture && bNeedSetupTexture;
+		if (PropertyTexture)
+		{
+			if (bNeedSetupTexture)
+				return true;
+			else
+				return (InTexturesSet > TexturesSet);
+		}
+		return false;
 	}
 };
 
@@ -135,9 +150,12 @@ struct FITwinExtractedEntity
 {
 	ITwinElementID ElementID;
 
-	/// Need to store Actor.GetTransform().ToMatrixWithScale() there for entities that will have a
-	/// Transform animation.
-	FMatrix OriginalMatrix;
+	/// Needed to restore the original world transform when an Element stops being transformed or stops
+	/// following a 3D path.
+	FTransform OriginalTransform;
+	/// To avoid resetting to OriginalTransform at each tick during a time segment where the entity is not to
+	/// be transformed
+	bool bIsCurrentlyTransformed = false;
 	/// Something than can be used to transform the entity in the UE world.
 	TWeakObjectPtr<UStaticMeshComponent> MeshComponent;
 	/// UV index where feature IDs were baked
@@ -177,15 +195,17 @@ public:
 	ITwinFeatureID MaxFeatureID = ITwin::NOT_FEATURE;
 
 	/// May or may not be useful to keep the list of all material instances for each tile
-	//std::vector<TWeakObjectPtr<UMaterialInstanceDynamic>> Materials;
+	std::vector<TWeakObjectPtr<UMaterialInstanceDynamic>> Materials;
 	/// RGBA texture where the 'RGB' part is the Synchro Highlight color (used by both opaque and translucent
 	/// materials). The 'A' part will be used by the translucent materials for opacity animation. It can
 	/// probably also be used by opaque materials (or, again, translucent materials) to mask out entirely
 	/// the parts that had to be extracted as FITwinExtractedEntity.
 	std::unique_ptr<FITwinDynamicShadingBGRA8Property> HighlightsAndOpacities;
+	bool bNeedUpdateHighlightsAndOpacitiesInMaterials = true;
 	/// Note: despite the pixel format's name, alpha is still the fourth channel, otherwise
 	/// EnsurePlaneEquation would have needed to swap the channels, but in practice it does not.
 	std::unique_ptr<FITwinDynamicShadingABGR32fProperty> CuttingPlanes;
+	bool bNeedUpdateCuttingPlanesInMaterials = true;
 	/// RGBA texture where the 'RGB' part is the selection Highlight color (used to highlight the selected
 	/// iTwin Element during picking).
 	std::unique_ptr<FITwinDynamicShadingBGRA8Property> SelectionHighlights;
@@ -196,6 +216,11 @@ public:
 	/// applied only in SetupHighlightsAndOpacities/SetupCuttingPlanes, like other material parameters
 	/// (ie. BGRA and CuttingPlane textures)
 	std::unordered_map<UMaterialInterface*, uint32> FeatureIDsUVIndex;
+
+	/// Bake feature IDs in per-vertex UVs if needed
+	void BakeFeatureIDsInVertexUVs(bool bUpdatingTile = false);
+	/// Whether at least once of the tile meshes is (valid and) visible
+	bool HasVisibleMesh() const;
 
 	/// Finds the FITwinElementFeaturesInTile for the passed Element ID or return nullptr
 	FITwinElementFeaturesInTile const* FindElementFeatures(ITwinElementID const& ElemID) const;
@@ -220,28 +245,41 @@ public:
 
 	void ForEachExtractedElement(std::function<void(FITwinExtractedEntity&)> const& Func);
 
-	void SelectElement(ITwinElementID const& InElemID, bool& bHasUpdatedTextures, UWorld const* World);
+	bool SelectElement(ITwinElementID const& InElemID, bool& bHasUpdatedTextures, UWorld const* World);
 	void UpdateSelectionTextureInMaterials();
-
 	void DrawTileBox(UWorld const* World) const;
+
+	template<typename ElementsCont>
+	void ForEachElementFeatures(ElementsCont const& ForElementIDs,
+								std::function<void(FITwinElementFeaturesInTile&)> const& Func);
+	template<typename ElementsCont>
+	void ForEachExtractedElement(ElementsCont const& ForElementIDs,
+								 std::function<void(FITwinExtractedEntity&)> const& Func);
 };
 
 using CesiumTileID = Cesium3DTilesSelection::TileID;
 
+struct FTileRequirements
+{
+	bool bNeedHiliteAndOpaTex = false;
+	bool bNeedCuttingPlaneTex = false;
+	bool bNeedTranslucentMaterial = false; ///< ie need extraction (unless material already translucent?)
+	bool bNeedBeTransformable = false; ///< unused unless SYNCHRO4D_ENABLE_TRANSFORMATIONS() is set to 1
+};
+
 class FITwinSceneMapping
 {
-public:
-	using FNewTileMeshObserver =
-		std::function<void(CesiumTileID const&, std::set<ITwinElementID> const& /*MeshElementIDs*/)>;
 private:
-	/// World AABB for some Elements: we need them for cutting plane animation. We need some kind of caching
-	/// if only because there are two keyframes each time, and it's not obvious how to associate the two so
-	/// currently the two missing W coordinates in the plane equations stored are computed independently :/
+	/// UE-World AABB for the Elements: we need them for cutting plane animation, 3D path anchor, etc.
 	std::unordered_map<ITwinElementID, FBox> KnownBBoxes;
+	/// Stores Elements requirements in each tile where they'll be found, like the need for property textures
+	/// or whether or not they are extracted at least in once tile
+	std::unordered_map<ITwinElementID, FTileRequirements> TileRequirements;
 	std::function<FITwinScheduleTimeline const& ()> TimelineGetter;
 	std::function<UMaterialInterface* (ECesiumMaterialType)> MaterialGetter;
+	bool bNewTilesReceivedHaveTextures = false;
+	bool bNewTileTexturesNeedUpateInMaterials = false;
 	bool bNeedUpdateSelectionHighlights = false;
-	FNewTileMeshObserver NewTileMeshObserver;
 	/// Global bounding box for the whole model - very coarse, as it it filled from all known tiles,
 	/// taking the lowest LODs into account. This could be improved by evaluating it from the tiles currently
 	/// displayed...
@@ -249,30 +287,35 @@ private:
 	FBox IModelBBox_UE; // same, but in Unreal Engine coordinate system
 	/// ModelCenter, in iTwin world, is defined as the translation of the iModel ; this data is directly
 	/// retrieved from the iModel.
-	FVector ModelCenter_ITwin = FVector(0, 0, 0);
-	FVector ModelCenter_UE = FVector(0, 0, 0); // same, but in Unreal Engine coordinate system
-	bool bHasSetModelCenter = false;
+	std::optional<FVector> ModelCenter_ITwin;
+	std::optional<FVector> ModelCenter_UE; // same, but in Unreal Engine coordinate system
+	/// Constant? See UITwinCesiumGltfPrimitiveComponent::UpdateTransformFromCesium
+	std::optional<FTransform> CesiumToUnrealTransform;
 
 public:
 	std::unordered_map<CesiumTileID, FITwinSceneTile> KnownTiles;
+	std::function<void(CesiumTileID const&, std::set<ITwinElementID>&&)> OnNewTileMeshBuilt;
 
-	void OnBatchedElementTimelineModified(CesiumTileID const&, FITwinSceneTile& SceneTile,
-		FITwinElementFeaturesInTile& ElementFeaturesInTile, FITwinElementTimeline const& ModifiedTimeline);
-	void OnExtractedElementTimelineModified(FITwinExtractedEntity& ExtractedEntity,
-											FITwinElementTimeline const& ModifiedTimeline);
-	void OnNewTileMeshFromBuilder(CesiumTileID const& TileId, FITwinSceneTile& SceneTile,
-							  std::set<ITwinElementID> const& ElementIDsWithNewMats);
+	void OnElementsTimelineModified(CesiumTileID const& TileID, FITwinSceneTile& SceneTile,
+									FITwinElementTimeline& ModifiedTimeline,
+									std::vector<ITwinElementID> const* OnlyForElements = nullptr);
+	/// See long comment before call, in FITwinSynchro4DSchedulesInternals::HandleReceivedElements
+	void ReplicateKnownElementsSetupInTile(
+		std::pair<CesiumTileID, std::set<ITwinElementID>> const& TileElements);
+	size_t UpdateAllTextures();
+	bool NewTilesReceivedHaveTextures(bool& bHasUpdatedTextures);
+	void HandleNewTileTexturesNeedUpateInMaterials();
+
 	void SetTimelineGetter(std::function<FITwinScheduleTimeline const& ()> const& InTimelineGetter) {
 		TimelineGetter = InTimelineGetter;
 	}
 	void SetMaterialGetter(std::function<UMaterialInterface* (ECesiumMaterialType)> const& InMaterialGetter) {
 		MaterialGetter = InMaterialGetter;
 	}
-	void SetNewTileMeshObserver(FNewTileMeshObserver const& InNewTileMeshObserver) {
-		NewTileMeshObserver = InNewTileMeshObserver;
-	}
 
-	FBox GetBoundingBox(ITwinElementID const Element) const;
+	/// Get the Element's AABB in UE coordinates
+	FBox const& GetBoundingBox(ITwinElementID const Element) const;
+	/// Get all known Elements' AABBs in UE coordinates
 	const std::unordered_map<ITwinElementID, FBox>& GetKnownBBoxes() const {
 		return KnownBBoxes;
 	}
@@ -280,7 +323,11 @@ public:
 		return (CoordSystem == EITwinCoordSystem::UE) ? IModelBBox_UE: IModelBBox_ITwin;
 	}
 	FVector const& GetModelCenter(EITwinCoordSystem CoordSystem) const {
-		return (CoordSystem == EITwinCoordSystem::UE) ? ModelCenter_UE : ModelCenter_ITwin;
+		auto&& Center = (CoordSystem == EITwinCoordSystem::UE) ? ModelCenter_UE : ModelCenter_ITwin;
+		return Center ? (*Center) : FVector::ZeroVector;
+	}
+	std::optional<FTransform> const& GetCesiumToUnrealTransform() const {
+		return CesiumToUnrealTransform;
 	}
 
 	static void SetupFeatureIdUVIndex(FITwinSceneTile& SceneTile,
@@ -288,8 +335,7 @@ public:
 	static void SetupFeatureIdUVIndex(FITwinSceneTile& SceneTile, FITwinExtractedEntity& ExtractedEntity);
 	static void SetupHighlights(FITwinSceneTile& SceneTile,
 								FITwinElementFeaturesInTile& ElementFeaturesInTile);
-	static void SetupHighlights(FITwinSceneTile& SceneTile,
-								FITwinExtractedEntity& ExtractedEntity);
+	static void SetupHighlights(FITwinSceneTile& SceneTile, FITwinExtractedEntity& ExtractedEntity);
 	static void SetupCuttingPlanes(FITwinSceneTile& SceneTile,
 								   FITwinElementFeaturesInTile& ElementFeaturesInTile);
 	static void SetupCuttingPlanes(FITwinSceneTile& SceneTile, FITwinExtractedEntity& ExtractedEntity);
@@ -298,25 +344,18 @@ public:
 	///		zeroed alpha masking the matching batched mesh) in an extracted Element's material
 	static FMaterialParameterInfo const& GetExtractedElementForcedAlphaMaterialParameterInfo();
 
-	/// Extracts the given element, in all known tiles.
-	 /// New Unreal entities may be created.
-	 /// \return the number of created entities in Unreal.
-	uint32 ExtractElement(
-		ITwinElementID const Element,
-		FITwinMeshExtractionOptions const& Options = {});
-
-
-	/// Extract some elements in a subset of the known tiles.
-	/// \param percentageOfTiles Percentage (in range [0;1] of known tiles from which to
-	/// extract.
-	/// \param percentageOfEltsInTile Percentage of elements which will be extracted from
-	/// each tile processed.
-	/// \return Number of elements newly extracted.
-	/// (for debugging).
-	uint32 ExtractElementsOfSomeTiles(
-		float PercentageOfTiles,
-		float PercentageOfEltsInTile = 0.1f,
-		FITwinMeshExtractionOptions const& Options = {});
+	/// Extract Elements in all tiles if they were not yet
+	uint32 CheckAndExtractElements(std::set<ITwinElementID> const& Elements,
+								   bool const bTranslucencyNeeded);
+	/// Extracts the given element, in all known tiles. New Unreal entities may be created.
+	/// \return the number of created entities in Unreal.
+	uint32 ExtractElement(ITwinElementID const Element, FITwinMeshExtractionOptions const& Options = {});
+	/// For debugging purposes - Extract some elements in a subset of the known tiles.
+	/// \param percentageOfTiles Percentage (in range [0;1] of known tiles from which to extract
+	/// \param percentageOfEltsInTile Percentage of elements which will be extracted from each tile processed
+	/// \return Number of elements newly extracted
+	uint32 ExtractElementsOfSomeTiles(float PercentageOfTiles, float PercentageOfEltsInTile = 0.1f,
+									  FITwinMeshExtractionOptions const& Options = {});
 
 	/// Hide or Show all extracted entities.
 	void HideExtractedEntities(bool bHide = true);
@@ -332,11 +371,9 @@ public:
 	void BakeFeaturesInUVs_AllMeshes();
 
 	/// Set the current selected ElementID - can be NOT_ELEMENT to discard any selection.
-	void SelectElement(ITwinElementID const& InElemID, UWorld const* World);
+	bool SelectElement(ITwinElementID const& InElemID, UWorld const* World);
 
-	bool NeedUpdateSelectionHighlights() const {
-		return bNeedUpdateSelectionHighlights;
-	}
+	bool NeedUpdateSelectionHighlights() const { return bNeedUpdateSelectionHighlights; }
 	void UpdateSelectionHighlights();
 
 	/// Given a hit component, display the world bounding box of its owner tile.
@@ -344,15 +381,20 @@ public:
 		UPrimitiveComponent const* Component,
 		UWorld const* World) const;
 
+	/// Reset everything - should only be called before the tileset is reloaded.
+	void Reset();
+
 private:
-	/// Extracts the given element in the given tile.
-	/// New Unreal entities may be created.
+	/// Extracts the given element in the given tile. New Unreal entities may be created.
 	/// \return the number of created entities in Unreal.
-	uint32 ExtractElementFromTile(
-		CesiumTileID const TileID,
-		ITwinElementID const Element,
-		FITwinSceneTile& SceneTile,
-		FITwinMeshExtractionOptions const& Options = {});
+	uint32 ExtractElementFromTile(ITwinElementID const Element, FITwinSceneTile& SceneTile,
+		FITwinMeshExtractionOptions const& Options = {},
+		std::optional<std::unordered_map<ITwinElementID, FITwinElementFeaturesInTile>::iterator> 
+			ElementFeaturesInTile = {});
+
+	template<typename Container>
+	std::vector<FITwinElementFeaturesInTile*> GatherElementsFeaturesInTile(FITwinSceneTile& SceneTile,
+		FITwinElementTimeline const& Timeline, Container const& TimelineElements);
 
 	friend class FITwinSceneMappingBuilder;
 };

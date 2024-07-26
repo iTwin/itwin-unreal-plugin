@@ -13,6 +13,12 @@
 namespace BeUtils
 {
 
+struct ITwinMaterialInfo
+{
+	uint64_t id = 0;
+	std::string name;
+};
+
 class GltfTuner: public Cesium3DTilesSelection::GltfTuner
 {
 public:
@@ -29,7 +35,8 @@ public:
 		struct ElementGroup
 		{
 			std::vector<uint64_t> elements_;
-			int32_t material_ = -1;
+			int32_t material_ = -1; // gltf material index
+			std::optional<uint64_t> itwinMaterialID_; // identifier in the original iModel
 		};
 		//! The list of element groups.
 		//! IDs belonging to different groups cannot be merged together.
@@ -40,7 +47,11 @@ public:
 	GltfTuner();
 	~GltfTuner();
 	virtual CesiumGltf::Model Tune(const CesiumGltf::Model& model) override;
+	virtual void ParseTilesetJson(const rapidjson::Document& tilesetJson) override;
 	void SetRules(Rules&& rules);
+
+	std::vector<ITwinMaterialInfo> GetITwinMaterialInfo() const;
+
 private:
 	class Impl;
 	const std::unique_ptr<Impl> impl_;

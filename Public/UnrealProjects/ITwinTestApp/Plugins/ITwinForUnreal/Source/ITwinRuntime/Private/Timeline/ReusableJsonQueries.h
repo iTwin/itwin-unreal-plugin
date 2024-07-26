@@ -18,6 +18,7 @@
 #include <deque>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -60,7 +61,21 @@ namespace ReusableJsonQueries
 	class FStackingToken;
 	using FStackedRequests = std::deque<FRequestArgs>;
 	using FStackingFunc = std::function<void(FStackingToken const&)>;
-	using FStackedBatches = std::deque<FStackingFunc>;
+	struct FNewBatch
+	{
+		FStackingFunc Exec;
+		bool bPseudoBatch = false;
+	};
+	using FStackedBatches = std::deque<FNewBatch>;
+
+	enum class EReplayMode {
+		/// Session is replayed sequentially based on persisted timestamps
+		SequentialSession,
+		/// FReusableJsonQueries is called "normally" but do not emit any actual http requests, using persisted
+		/// data instead to match queries to replies
+		OnDemandSimulation,
+		None,
+	};
 }
 
 template<uint16_t SimultaneousRequestsT>
@@ -68,7 +83,12 @@ class FReusableJsonQueries
 {
 public:
 	FReusableJsonQueries(FString const& RemoteUrl, FAllocateRequest const& AllocateRequest,
-						 FCheckRequest const& CheckRequest, ReusableJsonQueries::FMutex& Mutex);
+		FCheckRequest const& CheckRequest, ReusableJsonQueries::FMutex& Mutex,
+		TCHAR const* const InSavedFolderForReplay, int const SchedApiSession,
+		TCHAR const* const InSimulateFromFolder,
+		std::optional<ReusableJsonQueries::EReplayMode> const ReplayMode);
+
+	void ChangeRemoteUrl(FString const& NewRemoteUrl);
 
 	/// Called during game tick to sent new requests and handle request batches in the waiting list
 	void HandlePendingQueries();
@@ -77,7 +97,7 @@ public:
 	/// and/or wait for the current queue and running requests to finish, to use their result for example.
 	/// Use this method to stack requests to be executed after all current and pending requests are done.
 	/// \param Func Functor for creating the requests to be stacked once the current/running ones are done
-	void NewBatch(ReusableJsonQueries::FStackingFunc&& Func);
+	void NewBatch(ReusableJsonQueries::FStackingFunc&& Func, bool const bPseudoBatch = false);
 
 	/// To be used only from a FStackingFunc functor, itself passed to NewBatch for execution or postponement
 	/// \param Token Passed by the FReusableJsonQueries itself to the stacking functor, to allow it to
@@ -97,6 +117,13 @@ public:
 	/// advance because it can typically depend on the responses to all requests after which they were queued
 	/// (if it did not, it would not have been necessary to make separate batches in the first place!).
 	std::pair<int, int> QueueSize() const;
+
+	/// Return some statistics
+	FString Stats() const;
+	/// Resets the time used for statistics as the start time of the first request (useful to avoid accouting
+	/// for the delay between the initial listing of the schedules of an iModel and the start of the actual
+	/// querying of bindings)
+	void StatsResetActiveTime();
 
 	void SwapQueues(ReusableJsonQueries::FLock&, ReusableJsonQueries::FStackedBatches& NextBatches,
 		ReusableJsonQueries::FStackedRequests& RequestsInQueue,

@@ -19,9 +19,23 @@ inline constexpr FTimeRangeInSeconds InitForMinMax()
 	return std::make_pair(std::numeric_limits<double>::max(), std::numeric_limits<double>::lowest());
 }
 
-inline FTimeRangeInSeconds Undefined()
+inline constexpr FTimeRangeInSeconds Undefined()
 {
 	return InitForMinMax();
+}
+
+inline FTimeRangeInSeconds Union(FTimeRangeInSeconds const& A, FTimeRangeInSeconds const& B)
+{
+	if (A.second < A.first || B.second < B.first) return Undefined();
+	return FTimeRangeInSeconds(std::min(A.first, B.first), std::max(A.second, B.second));
+}
+
+inline FTimeRangeInSeconds Intersection(FTimeRangeInSeconds A, FTimeRangeInSeconds B)
+{
+	if (A.second < A.first || B.second < B.first) return Undefined();
+	if (A.first > B.first) std::swap(A, B);
+	if (B.first > A.second) return Undefined();
+	return FTimeRangeInSeconds(B.first, std::min(A.second, B.second));
 }
 
 inline FTimespan ToTimespan(double const TimeInSeconds)

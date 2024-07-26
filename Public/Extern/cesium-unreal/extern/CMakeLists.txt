@@ -43,6 +43,7 @@ set(CESIUM_DEBUG_POSTFIX "d")
 set(CESIUM_RELEASE_POSTFIX "")
 
 set(CMAKE_DEBUG_POSTFIX ${CESIUM_DEBUG_POSTFIX})
+set(CMAKE_UNREALDEBUG_POSTFIX ${CESIUM_DEBUG_POSTFIX})
 set(CMAKE_RELEASE_POSTFIX ${CESIUM_RELEASE_POSTFIX})
 set(CMAKE_MINSIZEREL_POSTFIX ${CESIUM_RELEASE_POSTFIX})
 set(CMAKE_RELWITHDEBINFO_POSTFIX ${CESIUM_RELEASE_POSTFIX})
@@ -50,11 +51,11 @@ set(CMAKE_RELWITHDEBINFO_POSTFIX ${CESIUM_RELEASE_POSTFIX})
 # On Mac and Linux, Unreal uses -fvisibility-ms-compat.
 # On Android, it uses -fvisibility=hidden
 if (${CMAKE_SYSTEM_NAME} STREQUAL "Linux" OR ${CMAKE_SYSTEM_NAME} STREQUAL "Darwin")
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fvisibility-ms-compat -fvisibility-inlines-hidden")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fvisibility-ms-compat -fvisibility-inlines-hidden -fno-rtti")
 elseif (${CMAKE_SYSTEM_NAME} STREQUAL "Android")
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fvisibility=hidden -fvisibility-inlines-hidden")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fvisibility=hidden -fvisibility-inlines-hidden -fno-rtti")
 elseif (${CMAKE_SYSTEM_NAME} STREQUAL "iOS")
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fvisibility=hidden")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fvisibility=hidden -fno-rtti")
 elseif (${CMAKE_SYSTEM_NAME} STREQUAL "Windows")
   # Unreal Engine adds /Zp8 in 64-bit Windows builds to align structs to 8 bytes instead of the
   # default of 16 bytes. There's this nice note in the documentation for that option:

@@ -8,5 +8,6 @@
 
 #pragma once
 
+#include "TypeId.h"
 #include "Extension.h"
 #include "FactoryClass.h"

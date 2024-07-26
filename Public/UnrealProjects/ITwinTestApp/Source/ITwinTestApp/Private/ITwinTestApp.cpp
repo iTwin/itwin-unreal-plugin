@@ -48,6 +48,10 @@ void FITwinGameModuleImpl::StartupModule()
 
 	// propagate current App IDs to the ITwin plugin
 	AITwinServerConnection::SetITwinAppID(iTwinAppId);
+
+#if ENABLE_ALL_ITWIN_ENVS
+	AITwinServerConnection::SetITwinAppIDArray({ iTwinAppId, iTwinAppId_QA, iTwinAppId_Dev, "" });
+#endif
 }
 
 IMPLEMENT_PRIMARY_GAME_MODULE( FITwinGameModuleImpl, ITwinTestApp, "ITwinTestApp" );

@@ -8,6 +8,7 @@
 
 #if WITH_TESTS
 
+#include <Compil/SanitizedPlatformHeaders.h>
 #include <ITwinCesium3DTileset.h>
 #include <ITwinIModel.h>
 #include <ITwinServerConnection.h>
@@ -105,6 +106,10 @@ public:
 	{
 		check(!DummyIModel);
 		DummyIModel = NewObject<AITwinIModel>(GEngine, "DummyIModel");
+		DummyIModel->ITwinId = TEXT("DummyITwinId");
+		DummyIModel->IModelId = TEXT("DummyIModelId");
+		DummyIModel->ChangesetId = TEXT("DummyChangesetId");
+		DummyIModel->ResolvedChangesetId = DummyIModel->ChangesetId;
 		DummyIModel->ServerConnection = NewObject<AITwinServerConnection>(DummyIModel, "DummyConnection");
 		DummyIModel->ServerConnection->Environment = EITwinEnvironment::Prod;
 	}
@@ -248,28 +253,29 @@ private:
 		double const TestRangeEnd = ITwin::Time::FromDateTime(TestDateEnd);
 		for (auto const& AnimBinding : FullSched.AnimationBindings)
 		{
-			if (AnimBinding.TimeRange == ITwin::Time::Undefined()
-				|| AnimBinding.TimeRange.first == ITwin::Time::InitForMinMax().first
-				|| AnimBinding.TimeRange.second == ITwin::Time::InitForMinMax().second
-				|| AnimBinding.TimeRange.first >= AnimBinding.TimeRange.second)
+			auto&& AnimTask = FullSched.Tasks[AnimBinding.TaskInVec];
+			if (AnimTask.TimeRange == ITwin::Time::Undefined()
+				|| AnimTask.TimeRange.first == ITwin::Time::InitForMinMax().first
+				|| AnimTask.TimeRange.second == ITwin::Time::InitForMinMax().second
+				|| AnimTask.TimeRange.first >= AnimTask.TimeRange.second)
 			{
 				FAIL_CHECK(TEXT("Element timeline has invalid time range"));
 				continue;
 			}
 			if (optOnlyElements
-				&& optOnlyElements->find(AnimBinding.AnimatedEntityId) == optOnlyElements->end())
+				&& optOnlyElements->find(std::get<0>(AnimBinding.AnimatedEntities)) == optOnlyElements->end())
 			{
 				continue; // OK.
 			}
-			if (optAllButElement && (*optAllButElement) == AnimBinding.AnimatedEntityId)
+			if (optAllButElement && (*optAllButElement) == std::get<0>(AnimBinding.AnimatedEntities))
 			{
 				continue; // OK.
 			}
 			bool ShouldBeInFilteredTL = true;
 			if (bCheckCoverage)
 			{
-				double const& Lower = AnimBinding.TimeRange.first;
-				double const& Upper = AnimBinding.TimeRange.second;
+				double const& Lower = AnimTask.TimeRange.first;
+				double const& Upper = AnimTask.TimeRange.second;
 				double const Epsilon = KEYFRAME_TIME_EPSILON;
 				if (Upper < TestRangeStart)
 				{
@@ -305,8 +311,7 @@ private:
 					FAIL_CHECK(TEXT("Too close to a time boundary of the query, adjust it."));
 				}
 			}
-			auto const Found = TestSched.KnownAnimationBindings.find(
-				std::make_pair(AnimBinding.TaskId, AnimBinding.AnimatedEntityId));
+			auto const Found = TestSched.KnownAnimationBindings.find(AnimBinding);
 			if (ShouldBeInFilteredTL)
 			{
 				CHECK(Found != TestSched.KnownAnimationBindings.end());
@@ -329,22 +334,21 @@ private:
 	}
 
 	static bool FillWithRandomElementsToCapacity(FAutomationTestBase& Test, FITwinSchedule const& FromSched,
-		std::vector<ITwinElementID>& Elems, size_t const Pruning)
+		size_t const MaxNeeded, std::unordered_set<ITwinElementID>& Elems, size_t const Pruning)
 	{
 		// Ensure we should at least be close to capacity() after the "random" pick
-		if (FromSched.AnimBindingsFullyKnownForElem.size() < 2 * Elems.capacity())
+		if (FromSched.AnimBindingsFullyKnownForElem.size() < 2 * MaxNeeded)
 		{
 			return true; // try next schedule
 		}
 		size_t Seed = 4321;
-		size_t const MaxNeeded = Elems.capacity();
 		auto It = FromSched.AnimBindingsFullyKnownForElem.begin();
 		auto const ItE = FromSched.AnimBindingsFullyKnownForElem.end();
 		while (Elems.size() < MaxNeeded && It != ItE)
 		{
 			boost::hash_combine(Seed, It->first.getValue());
 			Test.TestTrue("All Elements should be 'fully known'", It->second);
-			if ((Seed % Pruning) == 0) Elems.push_back(It->first);
+			if (Pruning <= 1 || (Seed % Pruning) == 0) Elems.insert(It->first);
 			++It;
 		}
 		return false;
@@ -371,10 +375,11 @@ public:
 	}
 
 	static void FillWithRandomElementsToCapacity(FAutomationTestBase& Test,
-		std::vector<ITwinElementID>& Elems, size_t const Pruning)
+		size_t const MaxNeeded, std::unordered_set<ITwinElementID>& Elems, size_t const Pruning)
 	{
-		GetFullScheduleInternals().VisitSchedules([&Test, &Elems](FITwinSchedule const& FullSched)
-			{ return FillWithRandomElementsToCapacity(Test, FullSched, Elems, 2); });
+		GetFullScheduleInternals().VisitSchedules(
+			[&Test, &Elems, MaxNeeded, Pruning](FITwinSchedule const& FullSched)
+			{ return FillWithRandomElementsToCapacity(Test, FullSched, MaxNeeded, Elems, Pruning); });
 	}
 }; // class FSynchro4DQueriesTestHelper
 
@@ -399,17 +404,23 @@ namespace TestSynchro4DQueries
 				Sched.Id = TEXT("<SchedId>");
 				Sched.Name = TEXT("<SchedName>");
 				Sched.AnimatedEntityUserFieldId = TEXT("<SchedAnimatedEntityUserFieldId>");
-				Sched.AnimationBindings.emplace_back(FAnimationBinding{
-					TEXT("<TaskId>"), TEXT("<TaskName>"), TEXT("<AppearanceProfileId>"),
-					ITwinElementID(42), size_t(0), FTimeRangeInSeconds{0., 12.}
-				});
+				FAnimationBinding Binding;
+				Binding.AnimatedEntities = ITwinElementID(42);
+				Binding.TaskId = TEXT("<TaskId>");
+				Binding.TaskInVec = 0;
+				Sched.Tasks.push_back(FScheduleTask{ {}, TEXT("<TaskName>"), FTimeRangeInSeconds{0., 12.} });
+				Sched.KnownTasks[Binding.TaskId] = 0;
+				Binding.AppearanceProfileId = TEXT("<AppearanceProfileId>");
+				Binding.AppearanceProfileInVec = 0;
 				check(Sched.AppearanceProfiles.empty());
 				Sched.AppearanceProfiles.resize(1);
-				Sched.KnownAppearanceProfiles[Sched.AnimationBindings[0].AppearanceProfileId] = 0;
-				Sched.AnimBindingsFullyKnownForElem[Sched.AnimationBindings[0].AnimatedEntityId] = true;
-				Sched.KnownAnimationBindings[std::make_pair(Sched.AnimationBindings[0].TaskId,				
-															Sched.AnimationBindings[0].AnimatedEntityId)
-											] = 0;
+				Sched.KnownAppearanceProfiles[Binding.AppearanceProfileId] = 0;
+				Sched.AnimBindingsFullyKnownForElem[std::get<0>(Binding.AnimatedEntities)] = true;
+				//Binding.TransfoAssignmentId = TEXT("<TransformListId>");
+				//Binding.TransfoAssignmentInVec = 0;
+				//Sched.TransfoAssignments.push_back(FTransformAssignment{...});
+				Sched.KnownAnimationBindings[Binding] = 0;
+				Sched.AnimationBindings.emplace_back(std::move(Binding));
 			});
 	}
 }
@@ -475,34 +486,36 @@ void Synchro4DImportSpec::WaitTestSchedule(const FDoneDelegate& Done)
 void Synchro4DImportSpec::TestQueryElementsTasks(double const MultiRatio, FName const SchedName,
 	std::optional<int64_t> MaxElementIDsFilterSizeOverride)
 {
-	auto ElemsSet = std::make_shared<std::unordered_set<ITwinElementID>>();
+	auto ElemsSetKeptForCheck = std::make_shared<std::unordered_set<ITwinElementID>>();
 	LatentBeforeEach(
-		[this, SchedName, ElemsSet, MultiRatio, MaxElementIDsFilterSizeOverride](const FDoneDelegate& Done)
+		[this, SchedName, ElemsSetKeptForCheck, MultiRatio, MaxElementIDsFilterSizeOverride]
+		(const FDoneDelegate& Done)
 		{
-			std::vector<ITwinElementID> Elems;
-			Elems.reserve(static_cast<size_t>(
+			size_t const MaxElemsNeeded = static_cast<size_t>(
 				(MaxElementIDsFilterSizeOverride ? *MaxElementIDsFilterSizeOverride
 												 : ITwin_TestOverrides::MaxElementIDsFilterSize)
-					* MultiRatio));
-			FSynchro4DQueriesTestHelper::FillWithRandomElementsToCapacity(*this, Elems, 2);
-			if (Elems.empty())
+					* MultiRatio);
+			FSynchro4DQueriesTestHelper::FillWithRandomElementsToCapacity(*this, MaxElemsNeeded,
+																		  *ElemsSetKeptForCheck, 2);
+			if (ElemsSetKeptForCheck->empty())
 			{
 				TestTrue("FillWithRandomElementsToCapacity failed", false);
 				Done.Execute();
 			}
 			else
 			{
-				for (auto&& Elem : Elems)
-					ElemsSet->insert(Elem);
+				std::set<ITwinElementID> ElemSetWillBeEmptied;
+				for (auto&& Elem : (*ElemsSetKeptForCheck))
+					ElemSetWillBeEmptied.insert(Elem);
 				GetInternals(Helper->GetTestSchedule(SchedName, MaxElementIDsFilterSizeOverride))
-					.GetSchedulesApiReadyForUnitTesting().QueryElementsTasks(std::move(Elems));
+					.GetSchedulesApiReadyForUnitTesting().QueryElementsTasks(ElemSetWillBeEmptied);
 				WaitTestSchedule(Done);
 			}
 		});
-	It("should match expectations", [this, ElemsSet]()
+	It("should match expectations", [this, ElemsSetKeptForCheck]()
 		{
-			if (!ElemsSet->empty()) // otherwise test already failed above
-				Helper->CheckExpectations({}, {}, *ElemsSet);
+			if (!ElemsSetKeptForCheck->empty()) // otherwise test already failed above
+				Helper->CheckExpectations({}, {}, *ElemsSetKeptForCheck);
 		});
 }
 void Synchro4DImportSpec::CheckEntireScheduleMatchesJson()
@@ -551,7 +564,7 @@ void Synchro4DImportSpec::Define()
 					Internals.VisitSchedules([this, &Count](FITwinSchedule const&)
 						{ TestEqual("check size is 1", Count, 0); ++Count; return true; });
 					// Requires the schedule to have an iModel owner!
-					TestSched.Reset();
+					TestSched.ResetSchedules();
 					Internals.VisitSchedules([this](FITwinSchedule const&)
 						{ TestTrue("should be empty", false); return false; });
 				});
@@ -662,23 +675,25 @@ void Synchro4DImportSpec::Define()
 				[this, ElementID, MarginFromStart, MarginFromEnd]()
 				{
 					auto& TestSched = Helper->GetTestSchedule();
-					int const ElemTL =
-						GetInternals(TestSched).GetTimeline().GetElementTimelineIndex(*ElementID);
-					FDateRange ElemTimeRange;
-					if (-1 == ElemTL)
+					FDateRange ElemTimeRange(FDateTime::MaxValue(), FDateTime::MinValue());
+					GetInternals(TestSched).GetTimeline().ForEachElementTimeline(*ElementID,
+						[this, &ElemTimeRange](FITwinElementTimeline const& Timeline)
+						{
+							auto const& TimeRange = Timeline.GetDateRange();
+							if (!TimeRange.HasLowerBound() || !TimeRange.HasUpperBound())
+							{
+								TestTrue("Invalid Element time range found", false);
+								return;
+							}
+							if (TimeRange.GetLowerBoundValue() < ElemTimeRange.GetLowerBoundValue())
+								ElemTimeRange.SetLowerBoundValue(TimeRange.GetLowerBoundValue());
+							if (TimeRange.GetUpperBoundValue() > ElemTimeRange.GetUpperBoundValue())
+								ElemTimeRange.SetUpperBoundValue(TimeRange.GetUpperBoundValue());
+						});
+					if (ElemTimeRange == FDateRange(FDateTime::MaxValue(), FDateTime::MinValue()))
 					{
 						TestTrue("Element timeline not found", false);
 						return;
-					}
-					else
-					{
-						ElemTimeRange = GetInternals(TestSched).GetTimeline()
-							.GetElementTimelineByIndex(ElemTL).GetDateRange();
-						if (!ElemTimeRange.HasLowerBound() || !ElemTimeRange.HasUpperBound())
-						{
-							TestTrue("Invalid Element time range found", false);
-							return;
-						}
 					}
 					// Check we have all the tasks involving ElementID that the full schedule has
 					Helper->CheckExpectations({}, {}, std::unordered_set<ITwinElementID>{ *ElementID });

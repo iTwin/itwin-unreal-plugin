@@ -69,3 +69,7 @@ void FITwinDefaultWebServicesObserver::OnSavedViewEdited(bool bSuccess, FSavedVi
 {
 	checkf(false, TEXT("%s does not handle SavedViews"), GetObserverName());
 }
+void FITwinDefaultWebServicesObserver::OnElementPropertiesRetrieved(bool bSuccess, FElementProperties const& ElementProps)
+{
+	checkf(false, TEXT("%s does not handle BIM Info"), GetObserverName());
+}

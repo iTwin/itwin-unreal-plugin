@@ -25,6 +25,7 @@
 #include <Serialization/JsonReader.h>
 #include <Serialization/JsonSerializer.h>
 #include <Misc/FileHelper.h>
+#include <Misc/Paths.h>
 #include <PlatformCryptoTypes.h>
 #include <HAL/FileManager.h>
 
@@ -149,9 +150,9 @@ namespace
 			return FRotator(0, 0, 0);
 		}
 		return FRotator(
-			JsonObject->GetNumberField("pitch"),
-			JsonObject->GetNumberField("yaw"),
-			JsonObject->GetNumberField("roll"));
+			JsonObject->GetNumberField(TEXT("pitch")),
+			JsonObject->GetNumberField(TEXT("yaw")),
+			JsonObject->GetNumberField(TEXT("roll")));
 	}
 }
 
@@ -187,6 +188,26 @@ void UITwinWebServices::SetLogErrors(bool bInLogErrors)
 	{								\
 		UE_LOG(LogITwinHttp, Error, TEXT(Str), Arg1);\
 	}
+
+// conflicts with ScheduleImport.cpp
+// TODO_JDE: clean when those requests are moved to SDK
+#undef JSON_GETOBJ_OR
+#undef JSON_GETOBJ_OR_CUSTOM
+
+/// Get an Object from the Json object passed, or log an error and do something (typically continue or return)
+#define JSON_GETOBJ_OR(JsonObj, Field, Dest, WhatToDo) \
+	{ Dest = nullptr; \
+		if (!(JsonObj)->TryGetObjectField(TEXT(Field), Dest) || !Dest) { \
+			LOG_ITWIN_WSRV_ERROR_ONE_PARAM("Parsing error for object field %s in Json response", TEXT(Field)); \
+			WhatToDo; \
+	}}
+/// Same with custom message
+#define JSON_GETOBJ_OR_CUSTOM(JsonObj, Field, CustomMsg, Dest, WhatToDo) \
+	{ Dest = nullptr; \
+		if (!(JsonObj)->TryGetObjectField(TEXT(Field), Dest) || !Dest) { \
+			LOG_ITWIN_WSRV_ERROR(CustomMsg); \
+			WhatToDo; \
+	}}
 
 #if WITH_TESTS
 
@@ -316,14 +337,15 @@ bool UITwinWebServices::GetErrorDescription(FJsonObject const& responseJson, FSt
 	// see https://developer.bentley.com/apis/issues-v1/operations/get-workflow/
 	// (search "error-response" section)
 
-	TSharedPtr<FJsonObject> const ErrorObject = responseJson.GetObjectField(TEXT("error"));
-	FString errorCode = ErrorObject->GetStringField("code");
-	FString errorMessage = ErrorObject->GetStringField("message");
+	TSharedPtr<FJsonObject> const* ErrorObject;
+	JSON_GETOBJ_OR(&responseJson, "error", ErrorObject, return false)
+	FString errorCode = (*ErrorObject)->GetStringField(TEXT("code"));
+	FString errorMessage = (*ErrorObject)->GetStringField(TEXT("message"));
 	FString const newLine = TEXT("\n") + Indent;
 	OutError += newLine + FString::Printf(TEXT("Error [%s]: %s"), *errorCode, *errorMessage);
 
 	const TArray<TSharedPtr<FJsonValue>>* detailsJson = nullptr;
-	if (ErrorObject->TryGetArrayField(TEXT("details"), detailsJson))
+	if ((*ErrorObject)->TryGetArrayField(TEXT("details"), detailsJson))
 	{
 		for (const auto& detailValue : *detailsJson)
 		{
@@ -457,6 +479,47 @@ bool UITwinWebServices::TryGetServerConnection(bool bAllowBroadcastAuthResult)
 
 	// No valid server connection
 	return false;
+}
+
+bool UITwinWebServices::InitServerConnectionFromWorld()
+{
+	// If the level already contains AITwinServerConnection actors, and they all have the same
+	// environment, use the latter.
+	TArray<AActor*> itwinServerActors;
+	UGameplayStatics::GetAllActorsOfClass(
+		GetWorld(), AITwinServerConnection::StaticClass(), itwinServerActors);
+	EITwinEnvironment commonEnv = EITwinEnvironment::Invalid;
+	AITwinServerConnection* firstValidConnection = nullptr;
+	for (AActor* servConn : itwinServerActors)
+	{
+		AITwinServerConnection* existingConnection = Cast<AITwinServerConnection>(servConn);
+		if (existingConnection
+			&& existingConnection->IsValidLowLevel()
+			// Ignore any ServerConnection which has not been assigned any valid environment.
+			&& existingConnection->Environment != EITwinEnvironment::Invalid)
+		{
+			if (!firstValidConnection)
+			{
+				firstValidConnection = existingConnection;
+				commonEnv = existingConnection->Environment;
+			}
+			if (commonEnv != existingConnection->Environment)
+			{
+				// distinct environments are present, so we cannot decide which connection to use
+				commonEnv = EITwinEnvironment::Invalid;
+				break;
+			}
+		}
+	}
+	if (firstValidConnection && commonEnv != EITwinEnvironment::Invalid)
+	{
+		SetServerConnection(firstValidConnection);
+		return true;
+	}
+	else
+	{
+		return false;
+	}
 }
 
 void UITwinWebServices::CheckAuthorization()
@@ -737,15 +800,12 @@ void UITwinWebServices::GetITwinInfo(FString ITwinId)
 		iTwinRequestInfo,
 		[](FITwinInfo& iTwinInfo, FJsonObject const& responseJson) -> bool
 	{
-		auto itwinJson = responseJson.GetObjectField("iTwin");
-		if (!itwinJson)
-		{
-			return false;
-		}
-		iTwinInfo.Id = itwinJson->GetStringField("id");
-		iTwinInfo.DisplayName = itwinJson->GetStringField("displayName");
-		iTwinInfo.Status = itwinJson->GetStringField("status");
-		iTwinInfo.Number = itwinJson->GetStringField("number");
+		TSharedPtr<FJsonObject> const* itwinJson;
+		JSON_GETOBJ_OR(&responseJson, "iTwin", itwinJson, return false)
+		iTwinInfo.Id = (*itwinJson)->GetStringField(TEXT("id"));
+		iTwinInfo.DisplayName = (*itwinJson)->GetStringField(TEXT("displayName"));
+		iTwinInfo.Status = (*itwinJson)->GetStringField(TEXT("status"));
+		iTwinInfo.Number = (*itwinJson)->GetStringField(TEXT("number"));
 		return true;
 	},
 		[this](bool bResult, FITwinInfo const& ResultData)
@@ -780,10 +840,10 @@ void UITwinWebServices::GetiTwins()
 			const auto& iTwinObject = iTwinValue->AsObject();
 
 			FITwinInfo iTwinInfo = {
-				iTwinObject->GetStringField("id"),
-				iTwinObject->GetStringField("displayName"),
-				iTwinObject->GetStringField("status"),
-				iTwinObject->GetStringField("number")
+				iTwinObject->GetStringField(TEXT("id")),
+				iTwinObject->GetStringField(TEXT("displayName")),
+				iTwinObject->GetStringField(TEXT("status")),
+				iTwinObject->GetStringField(TEXT("number"))
 			};
 			iTwinInfos.iTwins.Push(iTwinInfo);
 		}
@@ -821,8 +881,8 @@ void UITwinWebServices::GetiTwiniModels(FString ITwinId)
 			auto const& IModelObject = IModelValue->AsObject();
 
 			FIModelInfo iModel = {
-				IModelObject->GetStringField("id"),
-				IModelObject->GetStringField("displayName")
+				IModelObject->GetStringField(TEXT("id")),
+				IModelObject->GetStringField(TEXT("displayName"))
 			};
 			iModelInfos.iModels.Push(iModel);
 		}
@@ -861,10 +921,10 @@ void UITwinWebServices::DoGetiModelChangesets(FString const& IModelId, bool bRes
 		{
 			auto const& JsonObject = ChangesetValue->AsObject();
 			FChangesetInfo Changeset = {
-				JsonObject->GetStringField("id"),
-				JsonObject->GetStringField("displayName"),
-				JsonObject->HasField("description") ? JsonObject->GetStringField("description") : "",
-				JsonObject->GetIntegerField("index")
+				JsonObject->GetStringField(TEXT("id")),
+				JsonObject->GetStringField(TEXT("displayName")),
+				JsonObject->HasField(TEXT("description")) ? JsonObject->GetStringField(TEXT("description")) : "",
+				JsonObject->GetIntegerField(TEXT("index"))
 			};
 			Infos.Changesets.Push(Changeset);
 		}
@@ -928,26 +988,26 @@ void UITwinWebServices::GetExports(FString IModelId, FString ChangesetId)
 		for (const auto& ExportValue : *exportsJson)
 		{
 			const auto& ExportObject = ExportValue->AsObject();
-			const auto& RequestObject = ExportObject->GetObjectField("request");
-			if (RequestObject->GetStringField("exportType") == "CESIUM" && RequestObject->HasField("exportTypeVersion"))
+			const auto& RequestObject = ExportObject->GetObjectField(TEXT("request"));
+			if (RequestObject->GetStringField(TEXT("exportType")) == "CESIUM")
 			{
 				FCesiumExport& ExportWithDate = CesiumExports.Emplace_GetRef();
 				FITwinExportInfo& Export(ExportWithDate.Info);
 				Export = {
-					ExportObject->GetStringField("id"),
-					ExportObject->GetStringField("displayName"),
-					ExportObject->GetStringField("status"),
-					RequestObject->GetStringField("iModelId"),
-					RequestObject->GetStringField("contextId"),
-					RequestObject->GetStringField("changesetId")
+					ExportObject->GetStringField(TEXT("id")),
+					ExportObject->GetStringField(TEXT("displayName")),
+					ExportObject->GetStringField(TEXT("status")),
+					RequestObject->GetStringField(TEXT("iModelId")),
+					RequestObject->GetStringField(TEXT("contextId")),
+					RequestObject->GetStringField(TEXT("changesetId"))
 				};
-				ExportWithDate.LastModified = ExportObject->GetStringField("lastModified");
+				ExportWithDate.LastModified = ExportObject->GetStringField(TEXT("lastModified"));
 				if (Export.Status == "Complete")
 				{
 					auto MeshJsonObject = GetChildObject(ExportObject, "_links/mesh");
 					if (MeshJsonObject)
 					{
-						Export.MeshUrl = MeshJsonObject->GetStringField("href").Replace(TEXT("?"), TEXT("/tileset.json?"));
+						Export.MeshUrl = MeshJsonObject->GetStringField(TEXT("href")).Replace(TEXT("?"), TEXT("/tileset.json?"));
 					}
 				}
 			}
@@ -984,14 +1044,10 @@ void UITwinWebServices::GetExportInfo(FString ExportId)
 		exportRequestInfo,
 		[](FITwinExportInfo& Export, FJsonObject const& responseJson) -> bool
 	{
-		auto JsonExport = responseJson.GetObjectField("export");
-		if (!JsonExport)
-		{
-			LOG_ITWIN_WSRV_ERROR("Invalid Reply: Export not defined.");
-			return false;
-		}
-
-		auto JsonHref = GetChildObject(JsonExport, "request");
+		TSharedPtr<FJsonObject> const* JsonExport;
+		JSON_GETOBJ_OR_CUSTOM(&responseJson, "export", "Invalid Reply: Export not defined.",
+							  JsonExport, return false)
+		auto JsonHref = GetChildObject(*JsonExport, "request");
 		if (!JsonHref)
 		{
 			LOG_ITWIN_WSRV_ERROR("Invalid Reply: Export request not defined.");
@@ -1004,19 +1060,19 @@ void UITwinWebServices::GetExportInfo(FString ExportId)
 			LOG_ITWIN_WSRV_ERROR_ONE_PARAM("Invalid Reply: Export Type is incorrect: %s", *ExportType);
 			return false;
 		}
-		Export.Id = JsonExport->GetStringField(TEXT("id"));
-		Export.DisplayName = JsonExport->GetStringField(TEXT("displayName"));
-		Export.Status = JsonExport->GetStringField(TEXT("status"));
+		Export.Id = (*JsonExport)->GetStringField(TEXT("id"));
+		Export.DisplayName = (*JsonExport)->GetStringField(TEXT("displayName"));
+		Export.Status = (*JsonExport)->GetStringField(TEXT("status"));
 		Export.iModelId = JsonHref->GetStringField(TEXT("iModelId"));
 		Export.iTwinId = JsonHref->GetStringField(TEXT("contextId"));
 		Export.ChangesetId = JsonHref->GetStringField(TEXT("changesetId"));
 
 		if (Export.Status == "Complete")
 		{
-			JsonHref = GetChildObject(JsonExport, "_links/mesh");
+			JsonHref = GetChildObject(*JsonExport, "_links/mesh");
 			if (JsonHref)
 			{
-				Export.MeshUrl = JsonHref->GetStringField("href").Replace(TEXT("?"), TEXT("/tileset.json?"));
+				Export.MeshUrl = JsonHref->GetStringField(TEXT("href")).Replace(TEXT("?"), TEXT("/tileset.json?"));
 			}
 		}
 		return true;
@@ -1042,17 +1098,21 @@ void UITwinWebServices::StartExport(FString IModelId, FString ChangesetId)
 		TEXT("application/json"),
 		FString::Printf(
 			TEXT("{\"iModelId\":\"%s\",\"changesetId\":\"%s\",\"exportType\":\"CESIUM\"}"),
-			*IModelId, *ChangesetId)
+			*IModelId, *ChangesetId),
+
+		{ { TEXT("use-new-exporter"), TEXT("3") } }
 	};
 	TProcessHttpRequest<FString>(
 		startExportRequest,
 		[IModelId](FString& ExportId, FJsonObject const& responseJson) -> bool
 	{
 		ExportId = FString();
-		auto JsonExport = responseJson.GetObjectField("export");
-		if (JsonExport)
+		TSharedPtr<FJsonObject> const* JsonExport;
+		JSON_GETOBJ_OR_CUSTOM(&responseJson, "export", "Invalid Reply: Export not defined.",
+							  JsonExport, return false)
+		if (*JsonExport)
 		{
-			ExportId = JsonExport->GetStringField("id");
+			ExportId = (*JsonExport)->GetStringField(TEXT("id"));
 
 			UE_LOG(LogITwinHttp, Display, TEXT("StartExport for %s = OK, export ID:\n%s"),
 				*IModelId, *ExportId);
@@ -1097,8 +1157,8 @@ void UITwinWebServices::GetRealityData(FString ITwinId)
 		{
 			const auto& RealityDataObject = RealityDataValue->AsObject();
 			FITwinRealityDataInfo Info;
-			Info.DisplayName = RealityDataObject->GetStringField("displayName");
-			Info.Id = RealityDataObject->GetStringField("id");
+			Info.DisplayName = RealityDataObject->GetStringField(TEXT("displayName"));
+			Info.Id = RealityDataObject->GetStringField(TEXT("id"));
 			RealityData.Infos.Push(Info);
 		}
 		return true;
@@ -1126,13 +1186,13 @@ void UITwinWebServices::GetRealityData3DInfo(FString ITwinId, FString RealityDat
 		realDataRequestInfo,
 		[this, ITwinId, RealityDataId](FITwinRealityData3DInfo& RealityData3DInfo, FJsonObject const& responseJson) -> bool
 	{
-		auto realitydataJson = responseJson.GetObjectField("realityData");
+		auto realitydataJson = responseJson.GetObjectField(TEXT("realityData"));
 		if (!realitydataJson)
 		{
 			return false;
 		}
 		RealityData3DInfo.Id = RealityDataId;
-		RealityData3DInfo.DisplayName = realitydataJson->GetStringField("displayName");
+		RealityData3DInfo.DisplayName = realitydataJson->GetStringField(TEXT("displayName"));
 
 		// Make a second request to retrieve mesh URL
 		const FITwinAPIRequestInfo realDataRequestInfo = {
@@ -1151,22 +1211,22 @@ void UITwinWebServices::GetRealityData3DInfo(FString ITwinId, FString RealityDat
 			if (realitydataJson->TryGetObjectField(TEXT("extent"), ExtentJson))
 			{
 				FinalRealityData3DInfo.bGeolocated = true;
-				auto const SW_Json = (*ExtentJson)->GetObjectField("southWest");
-				auto const NE_Json = (*ExtentJson)->GetObjectField("northEast");
-				FinalRealityData3DInfo.ExtentSouthWest.Latitude = SW_Json->GetNumberField("latitude");
-				FinalRealityData3DInfo.ExtentSouthWest.Longitude = SW_Json->GetNumberField("longitude");
-				FinalRealityData3DInfo.ExtentNorthEast.Latitude = NE_Json->GetNumberField("latitude");
-				FinalRealityData3DInfo.ExtentNorthEast.Longitude = NE_Json->GetNumberField("longitude");
+				auto const SW_Json = (*ExtentJson)->GetObjectField(TEXT("southWest"));
+				auto const NE_Json = (*ExtentJson)->GetObjectField(TEXT("northEast"));
+				FinalRealityData3DInfo.ExtentSouthWest.Latitude = SW_Json->GetNumberField(TEXT("latitude"));
+				FinalRealityData3DInfo.ExtentSouthWest.Longitude = SW_Json->GetNumberField(TEXT("longitude"));
+				FinalRealityData3DInfo.ExtentNorthEast.Latitude = NE_Json->GetNumberField(TEXT("latitude"));
+				FinalRealityData3DInfo.ExtentNorthEast.Longitude = NE_Json->GetNumberField(TEXT("longitude"));
 			}
 
-			auto LinksJson = responseJson.GetObjectField("_links");
+			auto LinksJson = responseJson.GetObjectField(TEXT("_links"));
 			if (LinksJson)
 			{
-				auto MeshJsonObject = LinksJson->GetObjectField("containerUrl");
+				auto MeshJsonObject = LinksJson->GetObjectField(TEXT("containerUrl"));
 				if (MeshJsonObject)
 				{
-					FinalRealityData3DInfo.MeshUrl = MeshJsonObject->GetStringField("href").
-						Replace(TEXT("?"), ToCStr("/" + realitydataJson->GetStringField("rootDocument") + "?"));
+					FinalRealityData3DInfo.MeshUrl = MeshJsonObject->GetStringField(TEXT("href")).
+						Replace(TEXT("?"), ToCStr("/" + realitydataJson->GetStringField(TEXT("rootDocument")) + "?"));
 				}
 			}
 			return true;
@@ -1238,8 +1298,8 @@ void UITwinWebServices::AddSavedView(FString ITwinId, FString IModelId, FSavedVi
 				Info = { "","",true };
 				return false;
 			}
-			Info = { responseJson.GetObjectField("savedView")->GetStringField("id"),
-					 responseJson.GetObjectField("savedView")->GetStringField("displayName"), true };
+			Info = { responseJson.GetObjectField(TEXT("savedView"))->GetStringField(TEXT("id")),
+					 responseJson.GetObjectField(TEXT("savedView"))->GetStringField(TEXT("displayName")), true };
 			return true;
 		},
 		[this](bool bResult, FSavedViewInfo const& ResultData)
@@ -1344,20 +1404,22 @@ void UITwinWebServices::EditSavedView(FSavedView SavedView, FSavedViewInfo Saved
 				return false;
 			}
 
-			const auto& view = responseJson.GetObjectField("savedView");
-			const auto& JsonView = GetChildObject(view, "savedViewData/itwin3dView");
+			TSharedPtr<FJsonObject> const* view;
+			JSON_GETOBJ_OR(&responseJson, "savedView", view, return false)
+			const auto& JsonView = GetChildObject(*view, "savedViewData/itwin3dView");
+			if (!JsonView) return false;
 
-			const auto& JsonEye = JsonView->GetObjectField("camera");
-
+			TSharedPtr<FJsonObject> const* JsonEye;
+			JSON_GETOBJ_OR(JsonView, "camera", JsonEye, return false)
 			EditSVData.SavedView = {
-				GetFVector(JsonEye, "eye"),
+				GetFVector(*JsonEye, "eye"),
 				GetFVector(JsonView, "extents"),
 				GetFRotator(JsonView, "angles")
 			};
 			EditSVData.SavedViewInfo = {
-				view->GetStringField("id"),
-				view->GetStringField("displayName"),
-				view->GetBoolField("shared") };
+				(*view)->GetStringField(TEXT("id")),
+				(*view)->GetStringField(TEXT("displayName")),
+				(*view)->GetBoolField(TEXT("shared")) };
 			return true;
 		},
 		[this](bool bResult, FEditSavedViewData const& EditSVData)
@@ -1393,9 +1455,9 @@ void UITwinWebServices::GetAllSavedViews(FString iTwinId, FString iModelId)
 		{
 			const auto savedViewObject = savedViewValue->AsObject();
 			FSavedViewInfo SavedView = {
-				savedViewObject->GetStringField("id"),
-				savedViewObject->GetStringField("displayName"),
-				savedViewObject->GetBoolField("shared")
+				savedViewObject->GetStringField(TEXT("id")),
+				savedViewObject->GetStringField(TEXT("displayName")),
+				savedViewObject->GetBoolField(TEXT("shared"))
 			};
 			Infos.SavedViews.Push(SavedView);
 		}
@@ -1429,30 +1491,44 @@ void UITwinWebServices::GetSavedView(FString SavedViewId)
 		savedViewsRequestInfo,
 		[](FSavedViewData& SVData, FJsonObject const& responseJson) -> bool
 	{
-		auto JsonSavedView = responseJson.GetObjectField("savedView");
-		if (!JsonSavedView)
-		{
-			LOG_ITWIN_WSRV_ERROR("Invalid Reply: savedView not defined.");
-			return false;
-		}
-		auto JsonView = GetChildObject(JsonSavedView, "savedViewData/itwin3dView");
+		TSharedPtr<FJsonObject> const* JsonSavedView;
+		JSON_GETOBJ_OR_CUSTOM(&responseJson, "savedView", "Invalid Reply: savedView not defined.",
+							  JsonSavedView, return false)
+		auto JsonView = GetChildObject(*JsonSavedView, "savedViewData/itwin3dView");
 		if (!JsonView)
 		{
 			LOG_ITWIN_WSRV_ERROR("Invalid Reply: itwin3dView not defined.");
 			return false;
 		}
-		auto JsonEye = JsonView->GetObjectField("camera");
-		if (!JsonEye)
+		if (JsonView->HasTypedField<EJson::Object>(TEXT("camera")))
 		{
-			LOG_ITWIN_WSRV_ERROR("Invalid Reply: camera not defined.");
+			TSharedPtr<FJsonObject> const* JsonCamera = nullptr;
+			JSON_GETOBJ_OR_CUSTOM(JsonView, "camera", "Invalid Reply: camera not defined.",
+								  JsonCamera, return false)
+			if ((*JsonCamera)->HasTypedField<EJson::Array>(TEXT("eye")))
+			{
+				SVData.SavedView.Origin = GetFVector(*JsonCamera, "eye");
+			}
+			else
+			{
+				LOG_ITWIN_WSRV_ERROR("Invalid Reply: camera 'eye' not defined.");
+				return false;
+			}
+		}
+		else if (JsonView->HasTypedField<EJson::Array>(TEXT("origin")))
+		{
+			SVData.SavedView.Origin = GetFVector(JsonView, "origin");
+		}
+		else
+		{
+			LOG_ITWIN_WSRV_ERROR("Invalid Reply: neither 'camera' nor 'origin' are defined.");
 			return false;
 		}
-		SVData.SavedView.Origin = GetFVector(JsonEye, "eye");
 		SVData.SavedView.Extents = GetFVector(JsonView, "extents");
 		SVData.SavedView.Angles = GetFRotator(JsonView, "angles");
-		SVData.SavedViewInfo.Id = JsonSavedView->GetStringField("id");
-		SVData.SavedViewInfo.DisplayName = JsonSavedView->GetStringField("displayName");
-		SVData.SavedViewInfo.bShared = JsonSavedView->GetBoolField("shared");
+		SVData.SavedViewInfo.Id = (*JsonSavedView)->GetStringField(TEXT("id"));
+		SVData.SavedViewInfo.DisplayName = (*JsonSavedView)->GetStringField(TEXT("displayName"));
+		SVData.SavedViewInfo.bShared = (*JsonSavedView)->GetBoolField(TEXT("shared"));
 		return true;
 	},
 		[this](bool bResult, FSavedViewData const& SVData)
@@ -1463,4 +1539,82 @@ void UITwinWebServices::GetSavedView(FString SavedViewId)
 			this->Impl->observer_->OnSavedViewRetrieved(bResult, SVData.SavedView, SVData.SavedViewInfo);
 		}
 	});
+}
+
+namespace
+{
+	void GetAllElementProperties(TSharedPtr<FJsonObject> items, FElementProperties& properties)
+	{
+		for (const auto& value : items->Values)
+		{
+			FElementProperty property;
+			FString valueType = value.Value->AsObject()->GetStringField("type");
+			if (valueType == "primitive")
+			{
+				FElementAttribute Attribute;
+				Attribute.Name = value.Key;
+
+				Attribute.Value = value.Value->AsObject()->GetStringField("Value");
+				properties.Properties.Last().Attributes.Add(Attribute);
+			}
+			else if (valueType == "category")
+			{
+				property.Name = value.Key == "@Presentation:selectedItems.categoryLabel@" ? "Selected Item" : value.Key;
+				properties.Properties.Add(property);
+				GetAllElementProperties(value.Value->AsObject()->GetObjectField("items"), properties);
+			}
+			else if (valueType == "array")
+			{
+				if (value.Value->AsObject()->GetStringField("valueType") == "primitive")
+				{
+					FElementAttribute Attribute;
+					Attribute.Name = value.Key;
+
+					Attribute.Value = value.Value->AsObject()->GetArrayField("values")[0]->AsString();
+					properties.Properties.Last().Attributes.Add(Attribute);
+				}
+				else //struct
+				{
+					GetAllElementProperties(value.Value->AsObject()->GetArrayField("values")[0]->AsObject(), properties);
+				}
+			}
+		}
+	}
+}
+
+void UITwinWebServices::GetElementProperties(FString iTwinId, FString iModelId, FString iChangesetId, FString ElementId)
+{
+	const FITwinAPIRequestInfo RequestInfo = {
+		TEXT("POST"),
+		TEXT("/imodel/rpc/v4/mode/1/context/") + iTwinId + TEXT("/imodel/") + iModelId + TEXT("/changeset/") + iChangesetId + TEXT("/PresentationRpcInterface-4.1.0-getElementProperties"),
+		TEXT("application/vnd.bentley.itwin-platform.v1+json"),
+
+		/*** additional settings for POST ***/
+		TEXT("text/plain"),
+		FString::Printf(TEXT("[{\"key\":\"%s:%s\",\"iTwinId\":\"%s\",\"iModelId\":\"%s\",\"changeset\":{\"id\":\"%s\"}},{\"elementId\":\"%s\"}]"),
+		*iModelId, *iChangesetId, *iTwinId, *iModelId, *iChangesetId, *ElementId)
+	};
+	TProcessHttpRequest<FElementProperties>(
+		RequestInfo,
+		[](FElementProperties& ElementProps, FJsonObject const& responseJson) -> bool
+		{
+			FElementProperties properties;
+			TSharedPtr<FJsonObject> ResItemsObject = GetChildObject(MakeShared<FJsonObject>(responseJson), "result/items");
+			if (!ResItemsObject)
+			{
+				LOG_ITWIN_WSRV_ERROR("Invalid Reply: items not defined.");
+				return false;
+			}
+			GetAllElementProperties(ResItemsObject, properties);
+			return true;
+		},
+		[this](bool bResult, FElementProperties const& ResultData)
+		{
+			this->OnGetElementPropertiesComplete.Broadcast(bResult, ResultData);
+			if (this->Impl->observer_)
+			{
+				this->Impl->observer_->OnElementPropertiesRetrieved(bResult, ResultData);
+			}
+		}
+	);
 }

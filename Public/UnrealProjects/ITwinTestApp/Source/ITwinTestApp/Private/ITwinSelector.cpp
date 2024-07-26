@@ -21,6 +21,9 @@ void AITwinSelector::BeginPlay()
 		TEXT("/Script/UMGEditor.WidgetBlueprint'/Game/UX/ITwinSelectorWidget.ITwinSelectorWidget_C'")));
 	UI->AddToViewport();
 	ITwinWebService = NewObject<UITwinWebServices>(this);
+	// See if a server connection was instantiated before playing the level: this is an easy trick to test QA
+	// or Dev environment in the test app.
+	ITwinWebService->InitServerConnectionFromWorld();
 	// Check authorization
 	ITwinWebService->OnAuthorizationChecked.AddDynamic(this, &AITwinSelector::AuthError);
 	ITwinWebService->CheckAuthorization();

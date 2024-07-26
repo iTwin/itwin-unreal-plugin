@@ -14,12 +14,13 @@
     #define BE_UE_THIRDPARTY_GUARD 1
 #endif
 
+// push_macro doesn't seem to work so well, just undef it and redef in AfterNonUnrealIncludes.h
+//#pragma push_macro ("TEXT") // defined in winnt.h but also in UE
+#undef TEXT
 #pragma push_macro ("check")
 #pragma push_macro ("verify")
-#pragma push_macro ("TEXT") // defined in winnt.h but also in UE
 #undef check
 #undef verify
-#undef TEXT
 #ifdef WIN32
     #include "Microsoft/AllowMicrosoftPlatformTypes.h"
 #endif

@@ -32,6 +32,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGetSavedViewsComplete, bool, bSu
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnGetSavedViewComplete, bool, bSuccess, FSavedView, SavedView, FSavedViewInfo, SavedViewInfo);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGetRealityDataComplete, bool, bSuccess, FITwinRealityDataInfos, RealityDataInfos);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGetRealityData3DInfoComplete, bool, bSuccess, FITwinRealityData3DInfo, RealityDataInfo);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGetElementPropertiesComplete, bool, bSuccess, FElementProperties, ElementProps);
 
 class FJsonObject;
 class IITwinWebServicesObserver;
@@ -102,6 +103,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
 	void GetSavedView(FString SavedViewId);
 
+	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
+	void GetElementProperties(FString iTwinId, FString iModelId, FString iChangesetId, FString ElementId);
+
 	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
 	FOnAuthorizationChecked OnAuthorizationChecked;
 
@@ -147,12 +151,21 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
 	FOnGetRealityData3DInfoComplete OnGetRealityData3DInfoComplete;
 
+	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
+	FOnGetElementPropertiesComplete OnGetElementPropertiesComplete;
+
 	UPROPERTY(EditAnywhere, Category = "iTwin Web Services")
 	EITwinEnvironment Environment = EITwinEnvironment::Prod;
 
 
 	bool IsAuthorizationInProgress() const;
 	void SetServerConnection(TObjectPtr<AITwinServerConnection> const& InConnection);
+
+	//! Initialize the server connection from the level, if all connection actors in the level are using the
+	//! same environment. If no server connection actor exists in the world, or if there are several ones not
+	//! sharing the same environment, this WebServices actor will not be modified and false is returned.
+	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
+	bool InitServerConnectionFromWorld();
 
 	void GetServerConnection(TObjectPtr<AITwinServerConnection>& OutConnection) const;
 	bool HasSameConnection(AITwinServerConnection const* Connection) const;

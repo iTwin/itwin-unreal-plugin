@@ -7,21 +7,51 @@
 +--------------------------------------------------------------------------------------*/
 
 #include "ITwinSceneMappingBuilder.h"
+
+#include "ITwinIModel.h"
 #include "ITwinSceneMapping.h"
 #include <ITwinMetadataConstants.h>
+#include <ITwinGeolocation.h>
+#include <Math/UEMathExts.h>
+
 #include <Components/StaticMeshComponent.h>
 #include <Engine/StaticMesh.h>
 #include <StaticMeshResources.h>
 
+#include <ITwinCesium3DTileset.h>
 #include <ITwinCesiumFeatureIdSet.h>
 #include <ITwinCesiumMetadataPickingBlueprintLibrary.h>
 #include <ITwinCesiumModelMetadata.h>
 #include <ITwinCesiumPrimitiveFeatures.h>
 
+#include <CesiumGltf/ExtensionITwinMaterialID.h>
 #include <CesiumGltf/MeshPrimitive.h>
+
+#include <Materials/MaterialInstanceDynamic.h>
 
 #include <set>
 
+// Activate this to test the retrieval of iTwin material IDs by overriding the base color
+// on a per material ID basis.
+#define DEBUG_ITWIN_MATERIAL_IDS() 0
+
+
+#if DEBUG_ITWIN_MATERIAL_IDS()
+namespace
+{
+    // Temporary code to test material IDs
+    static std::unordered_map<UMaterialInstanceDynamic*, FLinearColor> materialColorOverrides;
+}
+#endif
+
+// From FITwinVecMath::createMatrix
+FMatrix CreateMatrixFromGlm(const glm::dmat4& m) noexcept {
+  return FMatrix(
+      FVector(m[0].x, m[0].y, m[0].z),
+      FVector(m[1].x, m[1].y, m[1].z),
+      FVector(m[2].x, m[2].y, m[2].z),
+      FVector(m[3].x, m[3].y, m[3].z));
+}
 
 //=======================================================================================
 // class FITwinSceneMappingBuilder
@@ -34,8 +64,8 @@ void FITwinSceneMappingBuilder::OnMeshConstructed(
     const FITwinCesiumMeshData& CesiumData)
 {
     auto const tileId = Tile.getTileID();
-    FITwinSceneTile& sceneTile = sceneMapping_.KnownTiles[tileId];
-    const int64 FeatureIDSetIndex = 0; // always look in 1st set (_FEATURE_ID_0)
+    FITwinSceneTile& sceneTile = SceneMapping.KnownTiles[tileId];
+    const int64 FeatureIDSetIndex = ITwinCesium::Metada::ELEMENT_FEATURE_ID_SLOT; // always look in 1st set (_FEATURE_ID_0)
 
     const TObjectPtr<UStaticMesh> StaticMesh = MeshComponent->GetStaticMesh();
     if (!StaticMesh
@@ -50,25 +80,38 @@ void FITwinSceneMappingBuilder::OnMeshConstructed(
         return;
     }
 
-    auto MeshBox = StaticMesh->GetBoundingBox();
-    auto const& Transform = MeshComponent->GetComponentTransform();
-    // Update global bounding box, both in Unreal and "ITwin" coordinate system
-    // Beware the code for ITwin coordinate system should not be modified without testing saved views with
-    // the default level of the former 3DFT plugin!
-    if (MeshBox.IsValid)
+#if DEBUG_ITWIN_MATERIAL_IDS()
+    auto const itBaseColorOverride = materialColorOverrides.find(pMaterial.Get());
+    if (itBaseColorOverride != materialColorOverrides.end())
     {
-        sceneMapping_.IModelBBox_UE += Transform.TransformPosition(MeshBox.Min);
-        sceneMapping_.IModelBBox_UE += Transform.TransformPosition(MeshBox.Max);
-
-        // For iTwin coordinate system: swap Y with Z (compensate what is done previously)
-        std::swap(MeshBox.Min.Y, MeshBox.Min.Z);
-        std::swap(MeshBox.Max.Y, MeshBox.Max.Z);
-        sceneMapping_.IModelBBox_ITwin += MeshBox.Min;
-        sceneMapping_.IModelBBox_ITwin += MeshBox.Max;
+        pMaterial->SetVectorParameterValueByInfo(
+            FMaterialParameterInfo(
+                "baseColorFactor",
+                EMaterialParameterAssociation::GlobalParameter,
+                INDEX_NONE),
+            itBaseColorOverride->second);
+        pMaterial->SetVectorParameterValueByInfo(
+            FMaterialParameterInfo(
+                "baseColorFactor",
+                EMaterialParameterAssociation::LayerParameter,
+                0),
+            itBaseColorOverride->second);
     }
-    sceneMapping_.ModelCenter_UE = Transform.GetTranslation();
+#endif // DEBUG_ITWIN_MATERIAL_IDS
 
-    if (!sceneMapping_.bHasSetModelCenter)
+    AITwinCesium3DTileset* Tileset = nullptr;
+    // MeshComponent is a UITwinCesiumGltfPrimitiveComponent, a USceneComponent which 'AttachParent' is
+    // a UITwinCesiumGltfComponent, which Owner is the cesium tileset, thus:
+    if (ensure(MeshComponent->GetAttachParent()))
+    {
+        Tileset = Cast<AITwinCesium3DTileset>(MeshComponent->GetAttachParent()->GetOwner());
+    }
+    if (!SceneMapping.CesiumToUnrealTransform && ensure(Tileset))
+    {
+        SceneMapping.CesiumToUnrealTransform.emplace(FTransform(CreateMatrixFromGlm(
+            Tileset->GetCesiumTilesetToUnrealRelativeWorldTransform())));
+    }
+    if (!SceneMapping.ModelCenter_ITwin)
     {
         // the ModelCenter, as used in 3DFT plugin, can be retrieved by fetching the translation of the
         // root tile
@@ -79,9 +122,51 @@ void FITwinSceneMappingBuilder::OnMeshConstructed(
             rootTile = rootTile->getParent();
         }
         auto const& tsfTranslation = rootTile->getTransform()[3];
-        sceneMapping_.ModelCenter_ITwin = FVector(tsfTranslation[0], tsfTranslation[1], tsfTranslation[2]);
-        // no need to evaluate it for every tile: the result will be constant, obviously.
-        sceneMapping_.bHasSetModelCenter = true;
+        SceneMapping.ModelCenter_ITwin.emplace(tsfTranslation[0], tsfTranslation[1], tsfTranslation[2]);
+        if (ensure(SceneMapping.CesiumToUnrealTransform && !SceneMapping.ModelCenter_UE))
+        {
+            SceneMapping.ModelCenter_UE.emplace(
+                SceneMapping.CesiumToUnrealTransform->TransformPosition(*SceneMapping.ModelCenter_ITwin));
+        }
+        if (ensure(Tileset))
+        {
+            auto&& Geoloc = FITwinGeolocation::Get(*Tileset->GetWorld());
+            // NO: we must always consider that iModels are georeferenced, otherwise their location at
+            // ECEF coordinates (6378137, 0, 0) will make them rotated 90 degrees (ie appear vertically).
+            //if (std::abs(SceneMapping.ModelCenter_ITwin->Y) < 1e-3
+            //    && std::abs(SceneMapping.ModelCenter_ITwin->Z) < 1e-3)
+            //{
+            //    Tileset->SetGeoreference(Geoloc->LocalReference.Get());
+            //}
+            //else
+            if (Geoloc->GeoReference->GetOriginPlacement() == EITwinOriginPlacement::TrueOrigin)
+            {
+                // Common geolocation is not yet inited, use the location of this tileset.
+                Geoloc->GeoReference->SetOriginPlacement(EITwinOriginPlacement::CartographicOrigin);
+                Geoloc->GeoReference->SetOriginEarthCenteredEarthFixed(*SceneMapping.ModelCenter_ITwin);
+                // Note: doc mentions a ACesiumGeoreference::AlignTilesetUpWithZ but I don't see it
+                // (deprecated?) - see:
+                // https://github.com/CesiumGS/cesium-unreal/blob/main/Documentation/reference-frames.md
+            }
+            Tileset->SetGeoreference(Geoloc->GeoReference.Get());
+        }
+    }
+    // Note: geoloc must have been set before, MeshComponent->GetComponentTransform depends on it!
+    auto MeshBox = StaticMesh->GetBoundingBox();
+    auto const& Transform = MeshComponent->GetComponentTransform();
+    // Update global bounding box, both in Unreal and "ITwin" coordinate system
+    // Beware the code for ITwin coordinate system should not be modified without testing saved views with
+    // the default level of the former 3DFT plugin!
+    if (MeshBox.IsValid)
+    {
+        SceneMapping.IModelBBox_UE += Transform.TransformPosition(MeshBox.Min);
+        SceneMapping.IModelBBox_UE += Transform.TransformPosition(MeshBox.Max);
+
+        // For iTwin coordinate system: swap Y with Z (compensate what is done previously)
+        std::swap(MeshBox.Min.Y, MeshBox.Min.Z);
+        std::swap(MeshBox.Max.Y, MeshBox.Max.Z);
+        SceneMapping.IModelBBox_ITwin += MeshBox.Min;
+        SceneMapping.IModelBBox_ITwin += MeshBox.Max;
     }
 
     const FITwinCesiumPrimitiveFeatures& Features(CesiumData.Features);
@@ -101,7 +186,7 @@ void FITwinSceneMappingBuilder::OnMeshConstructed(
     // feature IDs in its vertex UVs.
     sceneTile.GltfMeshes.emplace_back(MeshComponent, CesiumData);
 
-    std::unordered_map<ITwinElementID, FBox>& KnownBBoxes = sceneMapping_.KnownBBoxes;
+    std::unordered_map<ITwinElementID, FBox>& KnownBBoxes = SceneMapping.KnownBBoxes;
 
     // note that this has already been checked:
     // if no featureIDSet exists in features, pElementProperty would be
@@ -169,6 +254,7 @@ void FITwinSceneMappingBuilder::OnMeshConstructed(
                     // The material is always different (each primitive uses its own
                     // material instance).
                     TileData.Materials.push_back(pMaterial);
+                    sceneTile.Materials.push_back(pMaterial);
                 }
             }
             else
@@ -186,7 +272,8 @@ void FITwinSceneMappingBuilder::OnMeshConstructed(
             }
         }
     }
-    sceneMapping_.OnNewTileMeshFromBuilder(tileId, sceneTile, MeshElementIDs);
+    if (SceneMapping.OnNewTileMeshBuilt)
+        SceneMapping.OnNewTileMeshBuilt(tileId, std::move(MeshElementIDs));
 }
 
 bool FITwinSceneMappingBuilder::ShouldAllocateUVForFeatures() const
@@ -199,9 +286,62 @@ bool FITwinSceneMappingBuilder::ShouldAllocateUVForFeatures() const
     return true;
 }
 
-
-FITwinSceneMappingBuilder::FITwinSceneMappingBuilder(FITwinSceneMapping& sceneMapping)
-    : sceneMapping_(sceneMapping) {
-
+FITwinSceneMappingBuilder::FITwinSceneMappingBuilder(FITwinSceneMapping& InSceneMapping,
+                                                     AITwinIModel& InIModel)
+    : SceneMapping(InSceneMapping)
+    , IModel(InIModel)
+{
 }
 
+UMaterialInstanceDynamic* FITwinSceneMappingBuilder::CreateMaterial_GameThread(
+    CesiumGltf::MeshPrimitive const* pMeshPrimitive,
+    UMaterialInterface*& pBaseMaterial,
+    UObject* InOuter,
+    FName const& Name) {
+    std::optional<uint64_t> iTwinMaterialID;
+    if (pMeshPrimitive)
+    {
+        auto const* matIdExt = pMeshPrimitive->getExtension<CesiumGltf::ExtensionITwinMaterialID>();
+        if (matIdExt)
+            iTwinMaterialID = matIdExt->materialId;
+    }
+    UMaterialInterface* CustomBaseMaterial = nullptr;
+    if (iTwinMaterialID)
+    {
+        if (IModel.CustomMaterials.IsEmpty())
+        {
+            // Map of iTin materials not yet ready: see if we have loaded the list from tileset.json
+            IModel.FillMaterialInfoFromTuner();
+        }
+        auto itCustomMat = IModel.CustomMaterials.Find(*iTwinMaterialID);
+        if (ensureMsgf(itCustomMat, TEXT("iTwin Material 0x%I64x not parsed from tileset.json"), *iTwinMaterialID))
+        {
+            CustomBaseMaterial = itCustomMat->Material.Get();
+            if (CustomBaseMaterial)
+                pBaseMaterial = CustomBaseMaterial;
+        }
+    }
+    UMaterialInstanceDynamic* pMat = Super::CreateMaterial_GameThread(pMeshPrimitive, pBaseMaterial, InOuter, Name);
+    if (iTwinMaterialID && !CustomBaseMaterial)
+    {
+#if DEBUG_ITWIN_MATERIAL_IDS()
+        // Temporary code to visualize iTwin material IDs
+        const auto MatID = *iTwinMaterialID;
+        static std::unordered_map<uint64_t, FLinearColor> matIDColorMap;
+        FLinearColor matColor;
+        auto const itClr = matIDColorMap.find(MatID);
+        if (itClr != matIDColorMap.end())
+        {
+            matColor = itClr->second;
+        }
+        else
+        {
+            matColor = (*iTwinMaterialID == 0) ? FLinearColor::White : FLinearColor::MakeRandomColor();
+            matColor.A = 1.;
+            matIDColorMap.emplace(MatID, matColor);
+        }
+        materialColorOverrides.emplace(pMat, matColor);
+#endif // DEBUG_ITWIN_MATERIAL_IDS
+    }
+    return pMat;
+}

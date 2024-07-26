@@ -8,7 +8,6 @@
 
 #include <ITwinDigitalTwin.h>
 #include <ITwinElementID.h>
-#include <ITwinGeolocation.h>
 #include <ITwinIModel.h>
 #include <ITwinIModelInternals.h>
 #include <ITwinMetadataConstants.h>
@@ -35,7 +34,6 @@ class AITwinDigitalTwin::FImpl
 {
 public:
 	AITwinDigitalTwin& Owner;
-	TSharedPtr<FITwinGeolocation> Geolocation;
 
 	FImpl(AITwinDigitalTwin& InOwner)
 		:Owner(InOwner)
@@ -97,7 +95,6 @@ void AITwinDigitalTwin::OnIModelsRetrieved(bool bSuccess, FIModelInfos const& IM
 		// (see FITwinSynchro4DAnimator::FImpl::TickImpl)
 		IModel->AttachToActor(this, FAttachmentTransformRules::KeepRelativeTransform);
 		IModel->ServerConnection = ServerConnection;
-		IModel->Geolocation = Impl->Geolocation;
 		IModel->IModelId = IModelInfo.Id;
 		IModel->ITwinId = ITwinId;
 		IModel->UpdateIModel();
@@ -119,7 +116,6 @@ void AITwinDigitalTwin::OnRealityDataRetrieved(bool bSuccess, FITwinRealityDataI
 #endif
 		RealityData->AttachToActor(this, FAttachmentTransformRules::KeepRelativeTransform);
 		RealityData->ServerConnection = ServerConnection;
-		RealityData->Geolocation = Impl->Geolocation;
 		RealityData->RealityDataId = ReaDataInfo.Id;
 		RealityData->ITwinId = ITwinId;
 		RealityData->UpdateRealityData();
@@ -142,8 +138,6 @@ void AITwinDigitalTwin::UpdateITwin()
 		// No authorization yet: postpone the actual update (see OnAuthorizationDone)
 		return;
 	}
-
-	Impl->Geolocation = MakeShared<FITwinGeolocation>(*this);
 
 #if WITH_EDITOR
 	// make a request to get the display name
@@ -277,7 +271,8 @@ void AITwinDigitalTwin::FImpl::OnClickedElement(FHitResult const& HitResult,
 												std::unordered_set<ITwinElementID>& DejaVu)
 {
 	TMap<FString, FITwinCesiumMetadataValue> const Table =
-		UITwinCesiumMetadataPickingBlueprintLibrary::GetPropertyTableValuesFromHit(HitResult);
+		UITwinCesiumMetadataPickingBlueprintLibrary::GetPropertyTableValuesFromHit(
+			HitResult, ITwinCesium::Metada::ELEMENT_FEATURE_ID_SLOT);
 	TMap<FString, FString> const AsStrings =
 		UITwinCesiumMetadataValueBlueprintLibrary::GetValuesAsStrings(Table);
 	FITwinCesiumMetadataValue const* const ElementIdFound = Table.Find(ITwinCesium::Metada::ELEMENT_NAME);
@@ -291,14 +286,7 @@ void AITwinDigitalTwin::FImpl::OnClickedElement(FHitResult const& HitResult,
 		{
 			return;
 		}
-		DejaVu.insert(ElementID);
-		UE_LOG(LogITwin, Display,
-			   TEXT("ElementID 0x%I64x clicked, with additional metadata:"), ElementID.value());
-		for (TTuple<FString, FString> const& Entry : AsStrings)
-		{
-			if (ITwinCesium::Metada::ELEMENT_NAME != Entry.Get<0>())
-				UE_LOG(LogITwin, Display, TEXT("%s = %s"), *Entry.Get<0>(), *Entry.Get<1>());
-		}
+		size_t const SizeBefore = DejaVu.size();
 		for (auto&& Child : Owner.Children)
 		{
 			AITwinIModel* AsIModel = Cast<AITwinIModel>(Child.Get());
@@ -307,7 +295,18 @@ void AITwinDigitalTwin::FImpl::OnClickedElement(FHitResult const& HitResult,
 			FITwinIModelInternals& IModelInternals = GetInternals(*AsIModel);
 			if (IModelInternals.HasElementWithID(ElementID))
 			{
-				IModelInternals.OnClickedElement(ElementID, HitResult);
+				if (IModelInternals.OnClickedElement(ElementID, HitResult)) // can filter "unselectable" Elem
+					DejaVu.insert(ElementID);
+			}
+		}
+		if (SizeBefore != DejaVu.size())
+		{
+			UE_LOG(LogITwin, Display,
+				   TEXT("ElementID 0x%I64x clicked, with additional metadata:"), ElementID.value());
+			for (TTuple<FString, FString> const& Entry : AsStrings)
+			{
+				if (ITwinCesium::Metada::ELEMENT_NAME != Entry.Get<0>())
+					UE_LOG(LogITwin, Display, TEXT("%s = %s"), *Entry.Get<0>(), *Entry.Get<1>());
 			}
 		}
 	}

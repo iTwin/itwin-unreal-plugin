@@ -17,7 +17,7 @@
 #include <mutex>
 #include <vector>
 
-constexpr uint16_t SimultaneousRequestsAllowed = 8;
+constexpr uint16_t SimultaneousRequestsAllowed = 6;
 
 class FITwinSchedulesImport
 {
@@ -30,7 +30,8 @@ public:
 	bool IsReady() const;
 	void ResetConnection(TObjectPtr<AITwinServerConnection> const ServerConnection,
 						 FString const& ITwinAkaProjectAkaContextId, FString const& IModelId);
-	void SetOnAnimationBindingAdded(FOnAnimationBindingAdded const& InOnAnimBindingAdded);
+	void SetSchedulesImportObservers(FOnAnimationBindingAdded const& InOnAnimBindingAdded,
+									 FOnAnimationGroupModified const& InOnAnimationGroupModified);
 	std::pair<int, int> HandlePendingQueries();
 	/// \param FromTime Restrict the query to tasks starting (or ending) at or after this date. Ignored if
 	///		UntilTime and FromTime are strictly equal (eg. both default constructed).
@@ -40,11 +41,12 @@ public:
 							  std::function<void(bool/*success*/)>&& OnQueriesCompleted = {});
 	void QueryAroundElementTasks(ITwinElementID const ElementID, FTimespan const MarginFromStart,
 		FTimespan const MarginFromEnd, std::function<void(bool/*success*/)>&& OnQueriesCompleted = {});
+	/// \param ElementIDs Collection of Elements to query. Empty when returning from this method.
 	/// \param FromTime Restrict the query to tasks starting (or ending) at or after this date. Ignored if
 	///		UntilTime and FromTime are strictly equal (eg. both default constructed).
 	/// \param UntilTime Restrict the query to tasks starting (or ending) at or before this date. Ignored if
 	///		UntilTime and FromTime are strictly equal (eg. both default constructed).
-	void QueryElementsTasks(std::vector<ITwinElementID>&& ElementIDs, FDateTime const FromTime = {},
+	void QueryElementsTasks(std::set<ITwinElementID>& ElementIDs, FDateTime const FromTime = {},
 		FDateTime const UntilTime = {}, std::function<void(bool/*success*/)>&& OnQueriesCompleted = {});
 
 private:

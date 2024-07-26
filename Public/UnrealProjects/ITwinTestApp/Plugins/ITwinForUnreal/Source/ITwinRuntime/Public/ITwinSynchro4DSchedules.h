@@ -30,12 +30,13 @@ public:
 	UITwinSynchro4DSchedules();
 	UITwinSynchro4DSchedules(bool bDoNotBuildTimelines);
 
-	/// Clear all previously queried schedules data and reset the remote connection details
-	/// \return Whether the component's structures could be reset successfully
-	UFUNCTION(Category = "Schedules Querying",
-		CallInEditor,
-		BlueprintCallable)
-	bool Reset();
+	UPROPERTY(Category = "Schedules Querying",
+		VisibleAnywhere)
+	FString ScheduleId;
+
+	UPROPERTY(Category = "Schedules Querying",
+		VisibleAnywhere)
+	FString ScheduleName;
 
 	/// Update the remote connection details with the current URL, authorization token, etc. from the outer
 	/// iTwin's ServerConnection data
@@ -52,17 +53,24 @@ public:
 		BlueprintCallable)
 	void QueryAll();
 
+	/// Clear all previously queried schedules data and reset the remote connection details
+	/// \return Whether the component's structures could be reset successfully
+	UFUNCTION(Category = "Schedules Querying",
+		CallInEditor,
+		BlueprintCallable)
+	void ResetSchedules();
+
 	/// Restrict the QueryAll action to tasks starting (or ending) at or after this date. Ignored if
 	/// QueryAllUntilTime and QueryAllFromTime are strictly equal.
 	UPROPERTY(Category = "Schedules Querying",
 		EditAnywhere)
-	FDateTime QueryAllFromTime = FDateTime::UtcNow();//see AnimationTime about UtcNow()
+	FDateTime QueryAllFromTime = FDateTime::UtcNow();//see ScheduleTime about UtcNow()
 
 	/// Restrict the QueryAll action to tasks starting (or ending) at or before this date. Ignored if
 	/// QueryAllUntilTime and QueryAllFromTime are strictly equal.
 	UPROPERTY(Category = "Schedules Querying",
 		EditAnywhere)
-	FDateTime QueryAllUntilTime = FDateTime::UtcNow();//see AnimationTime about UtcNow()
+	FDateTime QueryAllUntilTime = FDateTime::UtcNow();//see ScheduleTime about UtcNow()
 
 	/// Launches asynchronous querying of schedule data for an Element and around its assigned tasks,
 	/// searching before and after the Element's tasks by a specified time extent (both can be zero).
@@ -130,25 +138,44 @@ public:
 		EditAnywhere)
 	FString DebugDumpAsJsonAfterQueryAll;
 
+	/// When not empty, persist all queries and their replies (for later replay/simulation) to the indicated
+	/// folder inside the project's Saved folder. Superceded by DebugSimulateSessionQueries.
+	UPROPERTY(Category = "Schedules Querying|Debug",
+		EditAnywhere)
+	FString DebugRecordSessionQueries;
+
+	/// When not empty, simulate all queries and their replies (for later replay/simulation) using the
+	/// persisted query/reply pairs read from the specified subfolder inside the project's Saved folder.
+	/// Takes precedence over DebugRecordSessionQueries.
+	UPROPERTY(Category = "Schedules Querying|Debug",
+		EditAnywhere)
+	FString DebugSimulateSessionQueries;
+
 	// Note: local time (Now() insead of UtcNow()) is just not possible because in that case the TZ offset
 	// (+0200 for GMT+2) is added in the Outliner field! The variable needs to be UTC it seems, and the
 	// Outliner field correctly converts it to local timezone. Which was not obvious from the doc...
-	/// Animation replay's current time in UTC time
+	/// Animation replay's current time in UTC time. Default is in the future so that the initial state is the
+	/// fully completed project.
 	UPROPERTY(Category = "Schedules Replay",
 		EditAnywhere)
-	FDateTime AnimationTime = FDateTime::UtcNow();
+	FDateTime ScheduleTime = FDateTime(2099, 12, 31, 12, 0, 0);
 
-	/// Animation replay speed, as a multiplier of the actual schedule time.
-	/// Default is one day per second, ie x86400.
+	/// Animation replay speed, expressed in days of schedule time per second of replay time
 	UPROPERTY(Category = "Schedules Replay",
 		EditAnywhere)
-	double AnimationSpeed = 86400.;
+	double ReplaySpeed = 1.;
 	
-	/// Reset the script time to the beginning of the construction schedule
+	/// Set the script time to the beginning of the construction schedule
 	UFUNCTION(Category = "Schedules Replay",
 		CallInEditor,
 		BlueprintCallable)
-	void ResetAnimationTime();
+	void JumpToBeginning();
+
+	/// Set the script time to the end of the construction schedule
+	UFUNCTION(Category = "Schedules Replay",
+		CallInEditor,
+		BlueprintCallable)
+	void JumpToEnd();
 
 	/// Helper method: determines the schedule's time range (at least the part that has been streamed to us
 	/// so far), then determines and sets the script speed so that the whole construction schedule's replay
@@ -156,7 +183,7 @@ public:
 	UFUNCTION(Category = "Schedules Replay",
 		CallInEditor,
 		BlueprintCallable)
-	void AutoAnimationSpeed();
+	void AutoReplaySpeed();
 
 	/// Start or restart replay of the schedule animation at the current script time and speed
 	UFUNCTION(Category = "Schedules Replay",
@@ -180,6 +207,11 @@ public:
 		BlueprintCallable)
 	void Stop();
 
+	/// Split applying animation on Elements among subsequent ticks to avoid spending more than this amount
+	/// of time each time. Visual update only occurs once the whole iModel (?) has been updated, though.
+	UPROPERTY(Category = "Schedules Replay|Settings", EditAnywhere)
+	double MaxTimelineUpdateMilliseconds = 30;
+
 	/// Disable application of color highlights on animated Elements
 	UPROPERTY(Category = "Schedules Replay|Settings", EditAnywhere)
 	bool bDisableColoring = false;
@@ -194,7 +226,7 @@ public:
 
 	/// Disable the scheduled animation of Elements' transformations (like movement along 3D paths)
 	UPROPERTY(Category = "Schedules Replay|Settings", EditAnywhere)
-	bool bDisableTransforms = false;
+	bool bDisableTransforms = true;
 
 	/// Fade out all non-animated elements, ultimately using partial transparency, but for the moment a
 	/// neutral light grey color is used instead. Note that tiles where no animated element is present will

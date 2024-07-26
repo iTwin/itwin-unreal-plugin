@@ -7,6 +7,9 @@
 +--------------------------------------------------------------------------------------*/
 
 #include "ITwinDynamicShadingProperty.h"
+#include <Compil/BeforeNonUnrealIncludes.h>
+	#include <BeHeaders/Compil/AlwaysFalse.h>
+#include <Compil/AfterNonUnrealIncludes.h>
 
 #include "Engine/Texture2D.h"
 #include "Materials/MaterialInstanceDynamic.h"
@@ -18,8 +21,6 @@
 #include <cmath>
 
 namespace Detail {
-
-template<class> inline constexpr bool always_false_v = false;
 
 template<typename DataType, int NumChannels>
 constexpr TextureCompressionSettings GetTextureCompressionSettings()
@@ -115,6 +116,29 @@ FITwinDynamicShadingProperty<DataType, NumChannels>::~FITwinDynamicShadingProper
 		Texture->RemoveFromRoot();
 	}
 }
+
+// Would need to UpdateTexture if return true, realloc texture if return false (and also reset flags, etc.)
+// so I think it's too risky to allow resizing the textures, I'd rather try first to avoid the need for that.
+// Dox would have been:
+// Check whether the current texture can accomodate a new (normally higher!) capacity
+// \return true when the current texture is large enough and the new capacity was accepted, false when
+//		the texture is too small, so that the caller should create a new one
+//template<typename DataType, int NumChannels>
+//bool FITwinDynamicShadingProperty<DataType, NumChannels>::EnsureCapacity(
+//	ITwinFeatureID const MaxAddressableFeatureID,
+//	std::optional<std::array<DataType, NumChannels>> const& FillWithValue)
+//{
+//	if ((MaxAddressableFeatureID.value() + 1) <= (TextureDimension * TextureDimension))
+//	{
+//		for (uint32 Pixel = TotalUsedPixels; Pixel < (MaxAddressableFeatureID.value() + 1); ++Pixel)
+//		{
+//			SetPixel(Pixel, FillWithValue);
+//		}
+//		TotalUsedPixels = (MaxAddressableFeatureID.value() + 1);
+//		return true;
+//	}
+//	else return false;
+//}
 
 template<typename DataType, int NumChannels>
 void FITwinDynamicShadingProperty<DataType, NumChannels>::UpdateInMaterial(
@@ -234,29 +258,31 @@ void FITwinDynamicShadingProperty<DataType, NumChannels>::InitializeTexture(
 	{
 		FillWith(*FillWithValue);
 	}
-	UpdateTexture();
+	// Useless, TextureRHI is not yet created so it will just return
+	//UpdateTexture();
 }
 
 template<typename DataType, int NumChannels>
-void FITwinDynamicShadingProperty<DataType, NumChannels>::UpdateTexture(/*bool bFreeData*/)
+bool FITwinDynamicShadingProperty<DataType, NumChannels>::UpdateTexture(/*bool bFreeData*/)
 {
 	if (Texture == nullptr)
 	{
 		UE_LOG(LogTemp, Warning,
 			TEXT("Dynamic Texture tried to Update Texture but it hasn't been initialized!"));
-		return;
+		return true;
 	}
-	if (!bNeedUpdate) return;
+	if (!bNeedUpdate) return false;
 
 	auto* TextureRHI = ((FTexture2DResource*)Texture->GetResource())->GetTexture2DRHI();
 	// tested in UpdateTextureRegions too but bNeedUpdate requires this early exit, which needs to be toggled
 	// as soon as the copy is made I think, not in DataCleanupFunc
-	if (!TextureRHI) return;
+	if (!TextureRHI) return true;
 
 	bNeedUpdate = false;
 	// Note: UpdateTextureRegions makes the copy of the source data itself
 	Texture->UpdateTextureRegions(0/*Mip*/, 1/*NumRegions*/, TextureRegion.get(), TextureDataBytesPerRow,
 		TextureDataBytesPerPixel, reinterpret_cast<uint8*>(&TextureData[0]));
+	return true;
 }
 
 template<typename DataType, int NumChannels>
@@ -275,6 +301,25 @@ void FITwinDynamicShadingProperty<DataType, NumChannels>::SetPixel(uint32 const 
 		++TexPtr;
 	}
 	bNeedUpdate = true;
+}
+
+template<typename DataType, int NumChannels>
+std::array<DataType, NumChannels> FITwinDynamicShadingProperty<DataType, NumChannels>::GetPixel(
+	uint32 const Pixel) const
+{
+	if (Pixel >= TotalUsedPixels)
+	{
+		check(false);
+		return {};
+	}
+	std::array<DataType, NumChannels> Ret;
+	DataType const* TexPtr = &TextureData[Pixel * NumChannels];
+	for (auto& ChanVal : Ret)
+	{
+		ChanVal = *TexPtr;
+		++TexPtr;
+	}
+	return Ret;
 }
 
 template<typename DataType, int NumChannels>

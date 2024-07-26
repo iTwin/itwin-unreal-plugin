@@ -18,8 +18,6 @@ class ITWINRUNTIME_API AITwinRealityData : public AITwinServiceActor
 {
 	GENERATED_BODY()
 public:
-	TSharedPtr<FITwinGeolocation> Geolocation;
-
 	UPROPERTY(Category = "iTwin",
 		EditAnywhere)
 	FString RealityDataId;

@@ -1248,6 +1248,7 @@ TEST_CASE("Test GLTF tune state machine") {
       ++tuneCallCount;
       return model;
     }
+    void ParseTilesetJson(const rapidjson::Document&) override {}
   };
   auto gltfTuner = std::make_shared<SimpleGltfTuner>();
   externals.gltfTuner = gltfTuner;

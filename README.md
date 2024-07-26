@@ -5,8 +5,8 @@ As part of Bentley's commitment to keep evolving its solutions alongside the inc
  
 The iTwin for Unreal SDK enables streaming of iTwins and reality data from the iTwin cloud into Unreal Engine for high-fidelity visualization and consumption. Additionally, the SDK allows Unreal Engine developers to create custom applications which can expand upon the capabilities provided by the SDK out of the box. This enables the creation of tailored interactive experiences around iTwins. In addition, we provide a pre-compiled plugin version of the SDK.<br>
 The streaming technology is based on the open-source Cesium 3D tiles (link to the Cesium github) and offers great performance even with large datasets. The SDK is based on the experience gathered through the technology previews introduced by the Datasmith Connector and the 3DFT plugin during the last year.<br>  
-The iTwin for Unreal SDK will supersede these technology demos and become the foundation of our upcoming advanced visualization products. It embodies Bentley’s long-term commitment to offering scalable and future-proven technologies and open standards for any visualization needs of infrastructure and Digital Twins. <br> 
-This SDK will be regularly updated. We appreciate your feedback to turn this exciting new technology into the leading foundation for advanced visualization of Digital Twins leveraging game engine technology. We encourage you to participate in the SDK’s development with your ideas, requests and wishes, and help us shape the future of visualization together. 
+The iTwin for Unreal SDK will supersede these technology demos and become the foundation of our upcoming advanced visualization products. It embodies Bentley's long-term commitment to offering scalable and future-proven technologies and open standards for any visualization needs of infrastructure and Digital Twins. <br> 
+This SDK will be regularly updated. We appreciate your feedback to turn this exciting new technology into the leading foundation for advanced visualization of Digital Twins leveraging game engine technology. We encourage you to participate in the SDK's development with your ideas, requests and wishes, and help us shape the future of visualization together. 
 
 
 ## Supported features
@@ -16,12 +16,18 @@ This SDK will be regularly updated. We appreciate your feedback to turn this exc
 
 Please note that 4D animation is not part of this initial build, but it is one of our top priorities and will be added as soon as possible.
 
+### <a id="load-external-tileset"></a>Ability to load external tilesets
+It is possible to load "external" tilesets (ie. non-iModels, like tileset coming from Cesium Ion server) by following these steps:
+- Drag and drop an `ITwinCesium3DTileset` actor from the Content Browser into your level.<br>
+  This actor can be found in the content browser inside folder `Plugins/iTwin for Unreal C++ Classes/ITwinCesiumRuntime/Public`.<br>
+- In the actor's Details panel, in the `Cesium` section, fill the `Source`, `Url`, `Ion Asset ID`, `Ion Access token` fields depending on the source of your tileset.
 
 ## Supported platforms & requirements
+To use the iTwin plugin, you need to create an account at [developer.bentley.com](https://developer.bentley.com). There is a free 90 day trial available. The developer account is required for utilizing the streaming API within the plugin. If your trial period is over and you would like to continue using and testing the plugin, please get in touch with us.<br>
 This initial release supports Windows 11; Windows 10 might work, but has not been tested officially (you may conduct tests on Windows 10 yourself if you would like). A version for Mac is in development.<br>
 Only iModels and their Saved Views are supported at the moment; Reality Data can be loaded through blueprints only (no GUI is available in the ITwinTestApp for them at the moment).<br>
 [Unreal Engine 5.3](https://dev.epicgames.com/documentation/en-us/unreal-engine/installing-unreal-engine?application_version=5.3) is the currently supported version. Other Unreal Engine versions will be supported in future updates.<br>
-You also need a Bentley account to stream iModels from the cloud.<br>
+
 To run Unreal Engine, make sure you are using a dedicated GPU. The performance largely depends on the power of your graphics card. For more information on recommended system specs for Unreal Engine, please visit [Epic's website](https://dev.epicgames.com/documentation/de-de/unreal-engine/hardware-and-software-specifications-for-unreal-engine).
 
 We recorded a quick start video on [YouTube](https://www.youtube.com/watch?v=quf4t4LsqXw). Read on for the written steps of the installation process.
@@ -63,7 +69,7 @@ For example: `C:\MyUnrealApp\Plugins\ITwinForUnreal`.
    - `Changeset Id`: the ID of the changeset you want to import
    Then the iModel should appear in the viewport.
    If the selected iModel/changeset has never been imported yet, the iTwin server needs to convert (ie. export) it into the Cesium format.<br>
-   In such case the export will be automatically started, and the “Export Status” label will say “In progress” until the export is complete.<br>
+   In such case the export will be automatically started, and the "Export Status" label will say "In progress" until the export is complete.<br>
    This can take a long time, depending on the complexity of your iModel. Once the export is complete, the iModel will appear in the viewport.
 
 
@@ -141,6 +147,41 @@ Developer Mode for Windows must be enabled, as explained [here](https://learn.mi
 1. remove your cmake Build folder
 2. call `git clean -dfX` in your source folder
 
+## Known issues and limitations
+
+- Packaging an application that uses both the iTwin plugin and the Cesium plugin will not work (errors about duplicate c++ symbols).<br>
+  As a workaround, you can disable the Cesium plugin and add your tilesets as explained [here](#load-external-tileset).
+
 ## Support
 
 We are looking forward to your feedback and your ideas for the plugin. If you encounter any bugs, please use the Issues tab to report any bugs.
+
+## 5. Getting 4D animations from Synchro working in the plugin
+Build 0.1.9 adds initial support for playing back 4D animations. Since this is an early access version, there are a few steps and limitations to consider. Please follow allong the following process:
+
+1. First, it is important to note that projects hosted in the East US region datacenter cannot yet access schedules data from the plugin, because of specific technical difficulties on these servers. This will of course be fixed in future builds.
+You can see the region by scrolling down from the "Manage project details" panel.<br> 
+![Screenshot of Synchro control's web interface](docs/Synchro1.jpg)<br>
+![Screenshot of Synchro control's web interface](docs/Synchro2.jpg)<br>
+2. To be able to access schedules data, the project must have been resynchronized recently: projects not actively used and synchronized before mid-July of this year will probably need to be resynchronized, either by submitting actual changes to the project, or by changing any of the synchronization settings in the "Edit iModel" panel for the iModel bearing the 4D schedule:<br>
+![Screenshot of Synchro control's web interface](docs/Synchro3.jpg)<br>
+![Screenshot of Synchro control's web interface](docs/Synchro4.jpg)<br>
+3. When "playing" an Unreal level and loading an iModel, the schedule data will be queried for all displayed geometries. After setting up the app Id and creating the iModel actor in your Unreal level, the geometries are immediately visible, but you need to play the level ("Play in Editor") for the 4D schedules to be enabled.â€‚Also, as a temporary workaround, after starting to play the level, you need to select the iModel and click "Update iModel": the tileset will be destroyed and re-created, and only then will the Schedule data start downloading.<br>
+![Screenshot of the update button in Unreal Engine](docs/Synchro8.jpg)<br>
+This can take some time and you can see the pending queries in the "Output log" panel. Moving in the scene will stack more pending batches, when new tiles become visible or resolution changes occur.
+When waiting long enough, all pending queries will be handled, and a summary is visible in the Output log:<br>
+![Screenshot of Unreal Engine's output log](docs/Synchro5.jpg)<br>
+4. Select the iModel in the Outliner, and select its Synchro4DSchedules component in the Details panel: you will see the Replay settings there, where you can:
+   *"Jump to beginning": jump to the start of the schedule (the default is a time far in the future in order to see the completed project)
+   *"Jump to end" of schedule
+   *Set the replay speed (in days of schedule time per second of replay time), or use "Auto replay speed" to fit the whole animation in 30 seconds of replay time.
+   *You can edit the "Schedule Time" field manually, to jump to a specific time point.
+   *"Play"/"Pause" the schedule animation
+   *"Stop" will pause the animation but also display all geometries with their original color and opacities, as if there were no schedules at all.<br>
+![Screenshot of Unreal Engine's Synchro settings](docs/Synchro6.jpg)<br>
+5. There are also advanced Replay settings to optionally disable coloring, opacities or cutting planes during the animation, or to Mask out non-animated Elements which may be confusing when looking at the animation
+(NOTE: that transformations and 3D paths are not supported yet - even if you uncheck the box)<br>
+![Screenshot of further Unreal Engine Synchro settings](docs/Synchro7.jpg)
+
+
+

@@ -10,12 +10,17 @@ else ()
 endif ()
 mark_as_advanced (default_UE_PATH)
 
-option_path (BE_UNREAL_ENGINE_DIR "Path to Unreal Engine directory" "${default_UE_PATH}")
-
-if (NOT EXISTS ${BE_UNREAL_ENGINE_DIR})
+if (NOT DEFINED BE_UNREAL_ENGINE_DIR)
 	if (DEFINED ENV{UNREAL_ENGINE_ROOT} AND EXISTS $ENV{UNREAL_ENGINE_ROOT})
-		set (BE_UNREAL_ENGINE_DIR $ENV{UNREAL_ENGINE_ROOT})
+		option_path (BE_UNREAL_ENGINE_DIR "Path to Unreal Engine directory" "$ENV{UNREAL_ENGINE_ROOT}")
 	else ()
-		Message(FATAL_ERROR "Can't find unreal engine dir, change BE_UNREAL_ENGINE_DIR.\nActual:${BE_UNREAL_ENGINE_DIR}")
+		option_path (BE_UNREAL_ENGINE_DIR "Path to Unreal Engine directory" "${default_UE_PATH}")
 	endif ()
+endif()
+
+# Note: testing an expected subdir is a way to make sure the right path component was set,
+# because the error in case of mistake is not very explicit...
+# (eg. "/Users/Shared/Epic Games/UE_5.4/Engine" and not just "/Users/Shared/Epic Games/UE_5.4"!)
+if (NOT EXISTS "${BE_UNREAL_ENGINE_DIR}/Build/BatchFiles")
+	Message(FATAL_ERROR "Can't find 'Build/BatchFiles' subfolder in BE_UNREAL_ENGINE_DIR specified (or defaulted to): ${BE_UNREAL_ENGINE_DIR}")
 endif()

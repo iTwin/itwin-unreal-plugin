@@ -50,7 +50,8 @@ namespace ITwin
 
 }
 
-void AITwinPickingActor::PickObjectAtMousePosition(FString& ElementId, FVector2D& MousePosition, AITwinIModel* iModel)
+void AITwinPickingActor::PickObjectAtMousePosition(FString& ElementId, FVector2D& MousePosition,
+												   AITwinIModel* iModel)
 {
 	if (!iModel)
 	{
@@ -65,7 +66,8 @@ void AITwinPickingActor::PickObjectAtMousePosition(FString& ElementId, FVector2D
 		[this, iModel, &PickedEltID](FHitResult const& HitResult, std::unordered_set<ITwinElementID>& DejaVu)
 	{
 		TMap<FString, FITwinCesiumMetadataValue> const Table =
-			UITwinCesiumMetadataPickingBlueprintLibrary::GetPropertyTableValuesFromHit(HitResult);
+			UITwinCesiumMetadataPickingBlueprintLibrary::GetPropertyTableValuesFromHit(
+				HitResult, ITwinCesium::Metada::ELEMENT_FEATURE_ID_SLOT);
 		FITwinCesiumMetadataValue const* const ElementIdFound = Table.Find(ITwinCesium::Metada::ELEMENT_NAME);
 		ITwinElementID const EltID = (ElementIdFound != nullptr)
 			? ITwinElementID(UITwinCesiumMetadataValueBlueprintLibrary::GetUnsignedInteger64(
@@ -75,13 +77,11 @@ void AITwinPickingActor::PickObjectAtMousePosition(FString& ElementId, FVector2D
 		if (EltID != ITwin::NOT_ELEMENT)
 		{
 			FITwinIModelInternals& IModelInternals = GetInternals(*iModel);
-			if (IModelInternals.HasElementWithID(EltID))
+			if (IModelInternals.HasElementWithID(EltID)
+				&& IModelInternals.OnClickedElement(EltID, HitResult))
 			{
 				DejaVu.insert(EltID);
-
 				PickedEltID = EltID;
-				IModelInternals.OnClickedElement(EltID, HitResult);
-
 				ElementPickedEvent.Broadcast({});
 			}
 		}

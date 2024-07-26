@@ -13,9 +13,16 @@
 namespace ITwin::Timeline::Interpolators {
 
 template<class _T>
-_T Default::operator ()(const _T& x0, const _T& x1, float u) const
+_T Lerp(const _T& x0, const _T& x1, float u)
 {
 	return x0 * (1.f - u) + x1 * u;
+}
+
+template<class _T>
+FContinue Default::operator ()(_T& result, const _T& x0, const _T& x1, float u, void*) const
+{
+	result = Lerp(x0, x1, u);
+	return Continue;
 }
 
 } // namespace ITwin::Timeline::Interpolators

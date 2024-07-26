@@ -7,7 +7,8 @@
 +--------------------------------------------------------------------------------------*/
 
 #pragma once
-	#include <Boost/BoostHash.h>
+
+#include <Boost/BoostHash.h>
 #include <Cesium3DTilesSelection/TileID.h>
 
 #include <Compil/BeforeNonUnrealIncludes.h>
@@ -47,7 +48,7 @@ namespace std
 }
 
 namespace CesiumGeometry {
-	bool operator == (
+	inline bool operator == (
 		const UpsampledQuadtreeNode& key1,
 		const UpsampledQuadtreeNode& key2)
 	{

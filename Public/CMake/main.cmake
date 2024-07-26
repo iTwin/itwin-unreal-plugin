@@ -18,6 +18,7 @@ if("${Python3_VERSION}" VERSION_LESS "${beRequiredPythonVersion}")
 	message (FATAL_ERROR "Python version required is ${beRequiredPythonVersion}, but found ${Python3_VERSION}.")
 endif ()
 include ("${CMAKE_CURRENT_LIST_DIR}/be_get_vcpkg_infos.cmake")
+set ( glm_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/Public/Extern/cesium-unreal/extern/cesium-native/extern/glm" )
 add_subdirectory(Public/SDK)
 include ("${CMAKE_CURRENT_LIST_DIR}/advanced_option.cmake")
 include ("${CMAKE_CURRENT_LIST_DIR}/options.cmake")
@@ -67,5 +68,5 @@ be_add_unreal_project ("Public/UnrealProjects/ITwinTestApp"
 	PLUGINS
 		${ITwinForUnreal_PluginDef}
 )
-# Set ITwinTestApp as VS default startup project, that's what most users will want to run.
-set_property(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY VS_STARTUP_PROJECT ITwinTestApp)
+# Set ITwinTestApp_Editor as VS default startup project, that's what most users will want to run.
+set_property(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY VS_STARTUP_PROJECT ITwinTestApp_Editor)

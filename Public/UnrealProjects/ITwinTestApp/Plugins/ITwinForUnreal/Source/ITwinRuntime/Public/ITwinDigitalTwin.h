@@ -13,7 +13,6 @@
 
 #include <ITwinDigitalTwin.generated.h>
 
-class FITwinSynchro4DAnimator;
 struct FIModelInfos;
 
 UCLASS()

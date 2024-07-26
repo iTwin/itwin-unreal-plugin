@@ -1,1 +1,8 @@
 static constexpr auto iTwinAppId = "@ITWIN_TEST_APP_ID@";
+
+#cmakedefine01 ENABLE_ALL_ITWIN_ENVS
+
+#if ENABLE_ALL_ITWIN_ENVS
+static constexpr auto iTwinAppId_QA = "@ITWIN_TEST_APP_ID_QA@";
+static constexpr auto iTwinAppId_Dev = "@ITWIN_TEST_APP_ID_DEV@";
+#endif

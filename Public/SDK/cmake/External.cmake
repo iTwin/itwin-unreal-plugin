@@ -22,6 +22,26 @@ FetchContent_MakeAvailable(tiny-process)
 set_target_properties(tiny-process-library PROPERTIES FOLDER "SDK/External") 
 include_directories(${tiny-process_SOURCE_DIR})
 
+### =============== glm =============== 
+if ( NOT DEFINED glm_INCLUDE_DIR )
+	FetchContent_Declare(
+		glm
+		GIT_REPOSITORY	https://github.com/g-truc/glm.git
+		GIT_TAG 0.9.9.8 
+		EXCLUDE_FROM_ALL
+	)
+
+	FetchContent_MakeAvailable(glm)
+
+	set_target_properties(glm PROPERTIES FOLDER "SDK/External")
+	
+	set ( glm_INCLUDE_DIR ${glm_SOURCE_DIR} )
+endif ()
+
+include_directories(${glm_INCLUDE_DIR})
+
 
 find_package(cpr REQUIRED)
 find_package(Catch2 3 REQUIRED)
+
+

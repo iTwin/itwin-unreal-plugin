@@ -9,6 +9,7 @@
 #include <BeUtils/Gltf/GltfBuilder.h>
 #include <CesiumGltf/Model.h>
 #include <CesiumGltf/ExtensionModelExtStructuralMetadata.h>
+#include <CesiumGltf/ExtensionITwinMaterialID.h>
 
 namespace BeUtils
 {
@@ -44,6 +45,12 @@ void GltfBuilder::MeshPrimitive::SetUVs(const std::vector<std::array<float, 2>>&
 	primitive_.attributes["TEXCOORD_0"] = builder_.AddAccessor(
 		builder_.AddBufferView(uvs, CesiumGltf::BufferView::Target::ARRAY_BUFFER),
 		uvs, false);
+}
+
+void GltfBuilder::MeshPrimitive::SetITwinMaterialID(uint64_t materialId)
+{
+	auto& matIdExt = primitive_.addExtension<CesiumGltf::ExtensionITwinMaterialID>();
+	matIdExt.materialId = materialId;
 }
 
 GltfBuilder::GltfBuilder()

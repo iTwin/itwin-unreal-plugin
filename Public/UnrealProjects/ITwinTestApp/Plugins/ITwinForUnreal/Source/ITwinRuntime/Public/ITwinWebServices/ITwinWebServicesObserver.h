@@ -21,6 +21,7 @@ struct FITwinRealityData3DInfo;
 struct FSavedViewInfos;
 struct FSavedView;
 struct FSavedViewInfo;
+struct FElementProperties;
 
 class ITWINRUNTIME_API IITwinWebServicesObserver : public IITwinAuthorizationObserver
 {
@@ -47,6 +48,7 @@ public:
 	virtual void OnSavedViewAdded(bool bSuccess, FSavedViewInfo const& SavedViewInfo) = 0;
 	virtual void OnSavedViewDeleted(bool bSuccess, FString const& SavedViewId, FString const& Response) = 0;
 	virtual void OnSavedViewEdited(bool bSuccess, FSavedView const& SavedView, FSavedViewInfo const& SavedViewInfo) = 0;
+	virtual void OnElementPropertiesRetrieved(bool bSuccess, FElementProperties const& ElementProps) = 0;
 };
 
 
@@ -72,6 +74,7 @@ public:
 	virtual void OnSavedViewAdded(bool bSuccess, FSavedViewInfo const& SavedViewInfo) override;
 	virtual void OnSavedViewDeleted(bool bSuccess, FString const& SavedViewId, FString const& Response) override;
 	virtual void OnSavedViewEdited(bool bSuccess, FSavedView const& SavedView, FSavedViewInfo const& SavedViewInfo) override;
+	virtual void OnElementPropertiesRetrieved(bool bSuccess, FElementProperties const& ElementProps) override;
 
 protected:
 	virtual const TCHAR* GetObserverName() const = 0;

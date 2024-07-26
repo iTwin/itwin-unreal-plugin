@@ -33,6 +33,8 @@ public:
 
 	void OnRealityData3DInfoRetrieved(FITwinRealityData3DInfo const& Info)
 	{
+		// *before* SpawnActor otherwise Cesium will create its own default georef
+		auto&& Geoloc = FITwinGeolocation::Get(*Owner.GetWorld());
 		FActorSpawnParameters SpawnParams;
 		SpawnParams.Owner = &Owner;
 		const auto Tileset = Owner.GetWorld()->SpawnActor<AITwinCesium3DTileset>(SpawnParams);
@@ -49,18 +51,18 @@ public:
 			Owner.bGeolocated = true;
 			Latitude = 0.5 * (Info.ExtentNorthEast.Latitude + Info.ExtentSouthWest.Latitude);
 			Longitude = 0.5 * (Info.ExtentNorthEast.Longitude + Info.ExtentSouthWest.Longitude);
-			Tileset->SetGeoreference(Owner.Geolocation->LocatedGeoreference);
-			if (Tileset->GetGeoreference()->GetOriginPlacement() == EITwinOriginPlacement::TrueOrigin)
+			if (Geoloc->GeoReference->GetOriginPlacement() == EITwinOriginPlacement::TrueOrigin)
 			{
 				// Common geolocation is not yet inited, use the location of this reality data.
-				Tileset->GetGeoreference()->SetOriginPlacement(EITwinOriginPlacement::CartographicOrigin);
-				Tileset->GetGeoreference()->SetOriginLatitude(Latitude);
-				Tileset->GetGeoreference()->SetOriginLongitude(Longitude);
-				Tileset->GetGeoreference()->SetOriginHeight(0);
+				Geoloc->GeoReference->SetOriginPlacement(EITwinOriginPlacement::CartographicOrigin);
+				Geoloc->GeoReference->SetOriginLatitude(Latitude);
+				Geoloc->GeoReference->SetOriginLongitude(Longitude);
+				Geoloc->GeoReference->SetOriginHeight(0);
 			}
+			Tileset->SetGeoreference(Geoloc->GeoReference.Get());
 		}
 		else
-			Tileset->SetGeoreference(Owner.Geolocation->NonLocatedGeoreference);
+			Tileset->SetGeoreference(Geoloc->LocalReference.Get());
 	}
 };
 
@@ -99,19 +101,11 @@ void AITwinRealityData::UpdateRealityData()
 {
 	if (HasTileset())
 		return;
-
 	if (CheckServerConnection() != AITwinServiceActor::EConnectionStatus::Connected)
 	{
 		// No authorization yet: postpone the actual update (see OnAuthorizationDone)
 		return;
 	}
-
-	if (!Geolocation)
-	{
-		// Idem: can happen if this was created manually, outside any instance of AITwinDigitalTwin
-		Geolocation = MakeShared<FITwinGeolocation>(*this);
-	}
-
 	if (WebServices && !RealityDataId.IsEmpty() && !ITwinId.IsEmpty())
 	{
 		WebServices->GetRealityData3DInfo(ITwinId, RealityDataId);
@@ -120,7 +114,7 @@ void AITwinRealityData::UpdateRealityData()
 
 namespace ITwin
 {
-	void DestroyTilesetsInActor(AActor& Owner, bool bDestroyCesiumGeoref);
+	void DestroyTilesetsInActor(AActor& Owner);
 }
 
 bool AITwinRealityData::HasTileset() const
@@ -137,9 +131,7 @@ bool AITwinRealityData::HasTileset() const
 
 void AITwinRealityData::DestroyTileset()
 {
-	// see comment in AITwinIModel::DestroyTileset()
-	bool bDestroyCesiumGeoref = !Geolocation;
-	ITwin::DestroyTilesetsInActor(*this, bDestroyCesiumGeoref);
+	ITwin::DestroyTilesetsInActor(*this);
 }
 
 void AITwinRealityData::Reset()
@@ -184,11 +176,12 @@ void AITwinRealityData::PostLoad()
 
 void AITwinRealityData::UseAsGeolocation()
 {
-	if (ensure(bGeolocated && Geolocation))
+	if (ensure(bGeolocated))
 	{
-		Geolocation->LocatedGeoreference->SetOriginPlacement(EITwinOriginPlacement::CartographicOrigin);
-		Geolocation->LocatedGeoreference->SetOriginLatitude(Impl->Latitude);
-		Geolocation->LocatedGeoreference->SetOriginLongitude(Impl->Longitude);
+		auto&& Geoloc = FITwinGeolocation::Get(*GetWorld());
+		Geoloc->GeoReference->SetOriginPlacement(EITwinOriginPlacement::CartographicOrigin);
+		Geoloc->GeoReference->SetOriginLatitude(Impl->Latitude);
+		Geoloc->GeoReference->SetOriginLongitude(Impl->Longitude);
 	}
 }
 

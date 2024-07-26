@@ -9,34 +9,45 @@
 #pragma once
 
 #include <ITwinFwd.h>
+#include <ITwinElementID.h>
 #include <Timeline/Timeline.h>
 
-using FOnElementTimelineModified = std::function<void(FITwinElementTimeline const&)>;
-class FAnimationBinding;
-class FAppearanceProfile;
+#include <mutex>
+#include <unordered_set>
+
+using FOnElementsTimelineModified =
+	std::function<void(FITwinElementTimeline&,  std::vector<ITwinElementID> const*)>;
+class FITwinSchedule;
+using FSchedLock = std::lock_guard<std::recursive_mutex>;
 
 class FITwinScheduleTimelineBuilder
 {
 	friend class FITwinSynchro4DSchedulesInternals;
 
-	UITwinSynchro4DSchedules* Owner;
+	UITwinSynchro4DSchedules const* Owner;
+	std::optional<FTransform> const* CesiumToUnrealTransform;
 	FITwinScheduleTimeline MainTimeline;
-	FOnElementTimelineModified OnElementTimelineModified;
+	FOnElementsTimelineModified OnElementsTimelineModified;
 
-	void AddAnimationBindingToTimeline(FAnimationBinding const& AnimationBinding,
-									   FAppearanceProfile const& Profile);
+	void AddAnimationBindingToTimeline(FITwinSchedule const& Schedule, size_t const AnimationBindingIndex,
+									   FSchedLock& Lock);
+	void UpdateAnimationGroupInTimeline(size_t const GroupIdx, std::set<ITwinElementID> const& GroupElements,
+										FSchedLock&);
 
 public:
-	FITwinScheduleTimelineBuilder(UITwinSynchro4DSchedules& InOwner) : Owner(&InOwner)
+	FITwinScheduleTimelineBuilder(UITwinSynchro4DSchedules const& InOwner,
+								  std::optional<FTransform> const& InCesiumToUnrealTransform)
+		: Owner(&InOwner)
+		, CesiumToUnrealTransform(&InCesiumToUnrealTransform)
 	{
 	}
 
 	FITwinScheduleTimeline& Timeline() { return MainTimeline; }
 	FITwinScheduleTimeline const& GetTimeline() const { return MainTimeline; }
 
-	void SetOnElementTimelineModified(FOnElementTimelineModified const& InOnElementTimelineModified)
+	void SetOnElementsTimelineModified(FOnElementsTimelineModified const& InOnElementsTimelineModified)
 	{
-		check(!OnElementTimelineModified);
-		OnElementTimelineModified = InOnElementTimelineModified;
+		check(!OnElementsTimelineModified);
+		OnElementsTimelineModified = InOnElementsTimelineModified;
 	}
 };

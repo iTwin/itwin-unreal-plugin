@@ -2291,3 +2291,17 @@ void AITwinCesium3DTileset::SetGltfTuner(const std::shared_ptr<Cesium3DTilesSele
 {
 	_gltfTuner = tuner;
 }
+
+bool AITwinCesium3DTileset::NeedGltfTuning(const Cesium3DTilesSelection::Tile& tile) const
+{
+    if (_gltfTuner && ensure(IsInGameThread()))
+    {
+        auto* renderContent = tile.getContent().getRenderContent();
+        if (renderContent &&
+            renderContent->tuneVersion < _gltfTuner->currentVersion)
+        {
+            return true;
+        }
+    }
+    return false;
+}

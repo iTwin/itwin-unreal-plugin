@@ -53,6 +53,10 @@ class MockServer: public IMockServer {
 
     /// Starts the server.
     virtual void start() override;
+
+    /// Try to start the server. Returns true upon success.
+    bool tryStart() noexcept;
+
     /// Stops the server.
     virtual void stop() override;
 

@@ -14,7 +14,7 @@ namespace ITwin
 	{
 		class MainTimeline;
 		class ElementTimelineEx;
-		enum class EGrowthBoundary : uint8_t;
+		enum class EGrowthStatus : uint8_t;
 	}
 }
 using FITwinScheduleTimeline = ITwin::Timeline::MainTimeline;

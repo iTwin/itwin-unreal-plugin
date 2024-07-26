@@ -26,4 +26,6 @@ namespace SDK::Core::Tools::Internal
 			crc = (crc ^ std::uint64_t(*p)) * 0x100000001b3;
 		return crc;
 	}
+
+
 }

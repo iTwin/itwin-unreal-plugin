@@ -37,9 +37,11 @@ public:
 								 std::optional<std::array<DataType, NumChannels>> const& FillWithValue);
 	~FITwinDynamicShadingProperty();
 
+	uint32 GetTotalUsedPixels() const { return TotalUsedPixels; }
 	/// For RGBA colors, note that the expected channel order is B, G, R, A.
 	void SetPixel(int32 X, int32 Y, std::array<DataType, NumChannels> const& Value);
 	void SetPixel(uint32 const Pixel, std::array<DataType, NumChannels> const& Value);
+	std::array<DataType, NumChannels> GetPixel(uint32 const Pixel) const;
 	void SetPixel(ITwinFeatureID const Pixel, std::array<DataType, NumChannels> const& Value);
 	void FillWith(std::array<DataType, NumChannels> const& Value);///< Fill with a constant pixel
 	/// Fill with a constant pixel, only for channels where the Mask bit is set, thus no whole-row copy
@@ -54,7 +56,12 @@ public:
 	void SetAllPixelsExceptAlpha(std::array<DataType, NumChannels> const& Value);
 
 	/// Update Texture Object from Texture Data
-	void UpdateTexture(/*bool bFreeData = false*/);
+	/// \return A flag telling whether the texture is "dirty", ie either the texture resource isn't even ready
+	///		yet, and the call couldn't actually process the update request, or it is ready and an update
+	///		render command was enqueued. The return value will be false as soon as the bNeedUpdate flag is 
+	///		false, but in that case we'll assume it was updated previously and we won't even check whether the
+	///		Texture RHI is still valid.
+	bool UpdateTexture(/*bool bFreeData = false*/);
 	void UpdateInMaterial(
 		TWeakObjectPtr<UMaterialInstanceDynamic> const& MatPtr,
 		FMaterialParameterInfo const& TextureAttachment) const;

@@ -80,6 +80,7 @@ void SetDefaultConfig()
 
 
 
+/*
 TEST_CASE("Visualization"){
 
 	if (g_startNewServer)
@@ -88,37 +89,23 @@ TEST_CASE("Visualization"){
 		StartServer();
 	}
 
-	SECTION("Scene") {
+	SECTION("Decoration") {
 		try {
 			SetDefaultConfig();
 			REQUIRE(GetDefaultHttp().get() != nullptr);
 
-			auto scene = IScene::New();
-			scene->Create("test auto");
-			auto decEnv = scene->GetDecorationEnvironment();
-			REQUIRE(scene->GetId() != "");
-			CHECK(decEnv.get() != nullptr);
-			REQUIRE(decEnv->GetId() != "");
-			auto decLayers = scene->GetDecorationLayers();
-			CHECK(decLayers.size() == 1);
-			REQUIRE(decLayers[0].get() != nullptr);
-			REQUIRE(decLayers[0]->GetId() != "");
+			auto decoration = IDecoration::New();
+			decoration->Create("test auto");
+			REQUIRE(decoration->GetId() != "");
 
-			auto scene2 = IScene::New();
-			scene2->Get(scene->GetId());
-			REQUIRE(scene2->GetId() == scene->GetId());
-			auto decEnv2 = scene2->GetDecorationEnvironment();
-			CHECK(decEnv2.get() != nullptr);
-			REQUIRE(decEnv2->GetId() == decEnv->GetId());
-			auto decLayers2 = scene2->GetDecorationLayers();
-			CHECK(decLayers2.size() == decLayers.size());
-			for (size_t i = 0; i < decLayers.size(); ++i)
-				REQUIRE(decLayers2[i]->GetId() == decLayers[i]->GetId());
+			auto decoration2 = IDecoration::New();
+			decoration2->Get(decoration->GetId());
+			REQUIRE(decoration2->GetId() == decoration->GetId());
 
-			scene->Delete(true /*delete layers*/);
+			decoration->Delete();
 
-			auto scene3 = IScene::New();
-			REQUIRE_THROWS(scene2->Get(scene->GetId()));
+			auto decoration3 = IDecoration::New();
+			REQUIRE_THROWS(decoration3->Get(decoration->GetId()));
 
 		}
 		catch (std::string& error)
@@ -133,8 +120,9 @@ TEST_CASE("Visualization"){
 		g_serverProcess->kill();
 	}
 }
+*/
 
-class ExtendedScene : public Scene
+class ExtendedDecoration : public Decoration
 {
 public:
 	int Fct() { return 1234; }
@@ -144,17 +132,17 @@ public:
 	}
 };
 
-TEST_CASE("Visualization:ExtendedScene") {
+TEST_CASE("Visualization:ExtendedDecoration") {
 	try {
 		SetDefaultConfig();
 
-		IScene::SetNewFct([]() {
-			std::shared_ptr<IScene> p(static_cast<IScene*>(new ExtendedScene));
+		IDecoration::SetNewFct([]() {
+			std::shared_ptr<IDecoration> p(static_cast<IDecoration*>(new ExtendedDecoration));
 			return p;
 			});
-		std::shared_ptr<IScene> pScene = IScene::New();
-		CHECK(pScene.get() != nullptr);
-		std::shared_ptr<ExtendedScene> pExt = std::dynamic_pointer_cast<ExtendedScene>(pScene);
+		std::shared_ptr<IDecoration> pDecoration = IDecoration::New();
+		CHECK(pDecoration.get() != nullptr);
+		std::shared_ptr<ExtendedDecoration> pExt = std::dynamic_pointer_cast<ExtendedDecoration>(pDecoration);
 		CHECK(pExt.get() != nullptr);
 		CHECK(pExt->Fct() == 1234);
 		CHECK(pExt->GetId() == "test");

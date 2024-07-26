@@ -7,5 +7,5 @@
 +--------------------------------------------------------------------------------------*/
 
 #pragma once
-#include "Scene.h"
+#include "Decoration.h"
 #include "Config.h"

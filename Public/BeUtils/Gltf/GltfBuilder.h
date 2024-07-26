@@ -41,6 +41,7 @@ public:
 		void SetColors(const std::vector<std::array<_T, _n>>& colors);
 		template<class _T>
 		void SetFeatureIds(const std::vector<std::array<_T, 1>>& featureIds);
+		void SetITwinMaterialID(uint64_t materialId);
 	private:
 		MeshPrimitive(GltfBuilder& builder, CesiumGltf::MeshPrimitive& primitive);
 		GltfBuilder& builder_;

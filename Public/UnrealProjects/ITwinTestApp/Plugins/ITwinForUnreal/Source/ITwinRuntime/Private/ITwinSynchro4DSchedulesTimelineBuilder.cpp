@@ -8,10 +8,13 @@
 
 #include "ITwinSynchro4DSchedulesTimelineBuilder.h"
 #include "ITwinSynchro4DSchedules.h"
+#include <Compil/BeforeNonUnrealIncludes.h>
+	#include <BeHeaders/Compil/AlwaysFalse.h>
+#include <Compil/AfterNonUnrealIncludes.h>
 #include <Math/UEMathExts.h> // for RandomFloatColorFromIndex
 #include <Timeline/Timeline.h>
-#include <Timeline/SchedulesStructs.h>
 #include <Timeline/SchedulesConstants.h>
+#include <Timeline/SchedulesStructs.h>
 
 void AddColorToTimeline(FITwinElementTimeline& ElementTimeline,
 						FAppearanceProfile const& Profile, FTimeRangeInSeconds const& Time)
@@ -26,18 +29,18 @@ void AddColorToTimeline(FITwinElementTimeline& ElementTimeline,
 	ElementTimeline.SetColorAt(Time.first,
 		Profile.StartAppearance.bUseOriginalColor ? std::nullopt
 			: std::optional<FVector>(Profile.StartAppearance.Color),
-		Interpolation::Step);
+		EInterpolation::Step);
 
 	ElementTimeline.SetColorAt(Time.first + KEYFRAME_TIME_EPSILON,
 		Profile.ActiveAppearance.Base.bUseOriginalColor ? std::nullopt
 			: std::optional<FVector>(Profile.ActiveAppearance.Base.Color),
-		Interpolation::Step);
+		EInterpolation::Step);
 
 	ElementTimeline.SetColorAt(Time.second,
 		Profile.FinishAppearance.bUseOriginalColor ? std::nullopt
 			: std::optional<FVector>(Profile.FinishAppearance.Color),
-		// See comment on Interpolation::Next for an alternative
-		Interpolation::Step);
+		// See comment on EInterpolation::Next for an alternative
+		EInterpolation::Step);
 }
 
 /// IMPORTANT: the orientation here is such that it points into the half space that is *cut out*,
@@ -76,60 +79,61 @@ FVector GetCuttingPlaneOrientation(FActiveAppearance const& Appearance)
 	case EGrowthSimulationMode::Unknown:
 	default:
 		Orientation = FVector::ZeroVector;
-		check(false);
+		ensure(false);
 		break;
 	}
 	return Appearance.bInvertGrowth ? (-Orientation) : Orientation;
 }
 	
-void AddCuttingPlaneToTimeline(FITwinElementTimeline& ElementTimeline,
-	FAppearanceProfile const& Profile, FTimeRangeInSeconds const& Time)
+void AddCuttingPlaneToTimeline(FITwinElementTimeline& ElementTimeline, FAppearanceProfile const& Profile,
+							   FTimeRangeInSeconds const& Time)
 {
 	auto const& GrowthAppearance = Profile.ActiveAppearance;// all others are ignored...
 	if (GrowthAppearance.GrowthSimulationMode > EGrowthSimulationMode::Custom)
 	{
 		return;
 	}
-	const FVector4 PlaneEqDeferredW(GetCuttingPlaneOrientation(GrowthAppearance),
-									FITwinElementTimeline::DeferredPlaneEquationW);
-	if (PlaneEqDeferredW.X == 0 && PlaneEqDeferredW.Y == 0 && PlaneEqDeferredW.Z == 0)
+	auto&& PlaneOrientation = GetCuttingPlaneOrientation(GrowthAppearance);
+	if (PlaneOrientation.X == 0 && PlaneOrientation.Y == 0 && PlaneOrientation.Z == 0)
 	{
 		return;
 	}
 	using namespace ITwin::Timeline;
-	using namespace ITwin::Timeline;
-	bool const bVisibleOutsideTask = (Profile.ProfileType == EProfileAction::Neutral)
-									|| (Profile.ProfileType == EProfileAction::Maintenance);
+	bool const bVisibleOutsideTask = (Profile.ProfileType == EProfileAction::Neutral
+								   || Profile.ProfileType == EProfileAction::Maintenance);
 	// Regular growth means "building (new or temp) stuff", while inverted growth means "removing"
 	// (dismantling) existing/temp stuff. Before new/temp stuff is built, or after existing/temp stuff is
-	// removed, visibility is 0 anyway so the cutting plane setting does not matter.
-	ElementTimeline.SetCuttingPlaneAt(Time.first,
-		GrowthAppearance.bInvertGrowth ? true/*fullyVisible_*/ : bVisibleOutsideTask/*fullyHidden_?*/,
-		Interpolation::Step);
-	ElementTimeline.SetCuttingPlaneAt(Time.first + KEYFRAME_TIME_EPSILON,
-		FDeferredPlaneEquation{ PlaneEqDeferredW,
-								GrowthAppearance.bInvertGrowth
-									? EGrowthBoundary::FullyGrown : EGrowthBoundary::FullyRemoved },
-		Interpolation::Linear);
-	ElementTimeline.SetCuttingPlaneAt(Time.second - KEYFRAME_TIME_EPSILON,
-		FDeferredPlaneEquation{ PlaneEqDeferredW,
-								GrowthAppearance.bInvertGrowth
-									? EGrowthBoundary::FullyRemoved : EGrowthBoundary::FullyGrown },
-		Interpolation::Step);
-	ElementTimeline.SetCuttingPlaneAt(Time.second,
-		GrowthAppearance.bInvertGrowth ? bVisibleOutsideTask/*fullyHidden_?*/ : true/*fullyVisible_*/,
-		// See comment on Interpolation::Next for an alternative
-		Interpolation::Step);
+	// removed, visibility is 0 anyway so the cutting plane setting does not matter, thus we only need a
+	// 'Step' keyframe when FullyRemoved before (resp. after) the task but the growth status starts
+	// (resp. ends) at FullyGrown.
+	if (bVisibleOutsideTask && !GrowthAppearance.bInvertGrowth)
+	{
+		ElementTimeline.SetCuttingPlaneAt(Time.first - KEYFRAME_TIME_EPSILON, {},
+										  EGrowthStatus::FullyGrown, EInterpolation::Step);
+	}
+	ElementTimeline.SetCuttingPlaneAt(Time.first, PlaneOrientation,
+		GrowthAppearance.bInvertGrowth ? EGrowthStatus::DeferredFullyGrown
+									   : EGrowthStatus::DeferredFullyRemoved,
+		EInterpolation::Linear);
+	ElementTimeline.SetCuttingPlaneAt(Time.second, PlaneOrientation,
+		GrowthAppearance.bInvertGrowth ? EGrowthStatus::DeferredFullyRemoved
+									   : EGrowthStatus::DeferredFullyGrown,
+		EInterpolation::Step);
+	if (bVisibleOutsideTask && GrowthAppearance.bInvertGrowth)
+	{
+		ElementTimeline.SetCuttingPlaneAt(Time.second + KEYFRAME_TIME_EPSILON, {},
+										  EGrowthStatus::FullyGrown, EInterpolation::Step);
+	}
 }
 	
 void AddVisibilityToTimeline(FITwinElementTimeline& ElementTimeline,
-									FAppearanceProfile const& Profile, FTimeRangeInSeconds const& Time)
+							 FAppearanceProfile const& Profile, FTimeRangeInSeconds const& Time)
 {
 	using namespace ITwin::Timeline;
 	if (Profile.ProfileType == EProfileAction::Neutral)
 	{
 		// Element just disappears at start of task?!
-		ElementTimeline.SetVisibilityAt(Time.first, 0, Interpolation::Step);
+		ElementTimeline.SetVisibilityAt(Time.first, 0, EInterpolation::Step);
 	}
 	else
 	{
@@ -151,21 +155,21 @@ void AddVisibilityToTimeline(FITwinElementTimeline& ElementTimeline,
 				|| EProfileAction::Temporary == Profile.ProfileType)
 			? 0.f : (Profile.StartAppearance.bUseOriginalAlpha ? std::nullopt
 					: std::optional<float>(Profile.StartAppearance.Alpha)),
-			Interpolation::Step);
+			EInterpolation::Step);
 
 		if (Profile.ActiveAppearance.Base.Alpha == Profile.ActiveAppearance.FinishAlpha)
 		{
 			ElementTimeline.SetVisibilityAt(Time.first + KEYFRAME_TIME_EPSILON,
 				Profile.ActiveAppearance.Base.bUseOriginalAlpha
 					? std::nullopt : std::optional<float>(Profile.ActiveAppearance.Base.Alpha),
-				Interpolation::Step);
+				EInterpolation::Step);
 		}
 		else
 		{
 			ElementTimeline.SetVisibilityAt(Time.first + KEYFRAME_TIME_EPSILON,
-				Profile.ActiveAppearance.Base.Alpha, Interpolation::Linear);
+				Profile.ActiveAppearance.Base.Alpha, EInterpolation::Linear);
 			ElementTimeline.SetVisibilityAt(Time.second - KEYFRAME_TIME_EPSILON,
-				Profile.ActiveAppearance.FinishAlpha, Interpolation::Step);
+				Profile.ActiveAppearance.FinishAlpha, EInterpolation::Step);
 		}
 
 		ElementTimeline.SetVisibilityAt(Time.second,
@@ -173,8 +177,49 @@ void AddVisibilityToTimeline(FITwinElementTimeline& ElementTimeline,
 				|| EProfileAction::Temporary == Profile.ProfileType)
 			? 0.f : (Profile.FinishAppearance.bUseOriginalAlpha ? std::nullopt
 						: std::optional<float>(Profile.FinishAppearance.Alpha)),
-			// See comment on Interpolation::Next for an alternative
-			Interpolation::Step);
+			// See comment on EInterpolation::Next for an alternative
+			EInterpolation::Step);
+	}
+}
+
+void AddStaticTransformToTimeline(FITwinElementTimeline& ElementTimeline, FTransform const& TransformUE,
+								  FTimeRangeInSeconds const& Time)
+{
+	using namespace ITwin::Timeline;
+	// Let's keep the possible anterior transformation set:
+	//ElementTimeline.SetTransformationDisabledAt(Time.first, EInterpolation::Step);
+	ElementTimeline.SetTransformationAt(Time.first /*+ KEYFRAME_TIME_EPSILON*/, TransformUE,
+		FDeferredAnchorPos::MakeSharedCustom(FVector::Zero()), EInterpolation::Step);
+	ElementTimeline.SetTransformationDisabledAt(Time.second, EInterpolation::Step);
+}
+
+template<typename KeyframeIt>
+void Add3DPathTransformToTimeline(FITwinElementTimeline& ElementTimeline, FTimeRangeInSeconds const& Time,
+	std::variant<ITwin::Timeline::EAnchorPoint, FVector> const& TransformAnchor,
+	KeyframeIt const KeyframeBegin, KeyframeIt const KeyframeEnd, FTransform const& CesiumToUnreal)
+{
+	using namespace ITwin::Timeline;
+	// Let's keep the possible anterior transformation set:
+	//ElementTimeline.SetTransformationDisabledAt(Time.first, EInterpolation::Step);
+	double const TaskDuration = Time.second - Time.first;
+	std::shared_ptr<FDeferredAnchorPos> SharedAnchor; // share anchor info with all keyframes
+    std::visit([&SharedAnchor](auto&& Var)
+		{
+			using T = std::decay_t<decltype(Var)>;
+			if constexpr (std::is_same_v<T, EAnchorPoint>)
+				SharedAnchor = std::move(FDeferredAnchorPos::MakeShared(Var));
+			else if constexpr (std::is_same_v<T, FVector>)
+				SharedAnchor = std::move(FDeferredAnchorPos::MakeSharedCustom(Var));
+			else static_assert(always_false_v<T>, "non-exhaustive visitor!");
+		},
+		TransformAnchor);
+	for (KeyframeIt Key = KeyframeBegin; Key != KeyframeEnd; ++Key)
+	{
+		// FTransform composition order is the opposite of matrix (and quaternion) composition order, see this
+		// example from UE doc (from Math/Transform[Non]Vectorized.h):
+		// LocalToWorld = (DeltaRotation * LocalToWorld) will change rotation in local space by DeltaRotation
+		ElementTimeline.SetTransformationAt(Time.first + Key->RelativeTime * TaskDuration,
+			Key->Transform * CesiumToUnreal, SharedAnchor, EInterpolation::Linear);
 	}
 }
 
@@ -185,9 +230,9 @@ void CreateTestingTimeline(FITwinElementTimeline& Timeline)
 	// Initial conditions, to not depend on the first keyframe of each feature, which can be much farther
 	// along the timeline
 	using namespace ITwin::Timeline;
-	Timeline.SetColorAt(0., std::nullopt/*ie. bUseOriginalColor*/, Interpolation::Step);
-	Timeline.SetVisibilityAt(0., 1.f, Interpolation::Step);
-	Timeline.SetCuttingPlaneAt(0., true/*ie. fullyVisible_*/, Interpolation::Step);
+	Timeline.SetColorAt(0., std::nullopt/*ie. bUseOriginalColor*/, EInterpolation::Step);
+	Timeline.SetVisibilityAt(0., 1.f, EInterpolation::Step);
+	Timeline.SetCuttingPlaneAt(0., {}, EGrowthStatus::FullyGrown, EInterpolation::Step);
 
 	// tests occur every 4 deltas: one before task, one for task duration, one after task, one for blink
 	constexpr int cycle = 4;
@@ -206,12 +251,12 @@ void CreateTestingTimeline(FITwinElementTimeline& Timeline)
 		{
 			double const BlinkStart = TimeRange.second + delta;
 			// "Blink" the Element
-			Timeline.SetVisibilityAt(BlinkStart - KEYFRAME_TIME_EPSILON, 1, Interpolation::Step);
-			Timeline.SetVisibilityAt(BlinkStart, 0.f, Interpolation::Step);
+			Timeline.SetVisibilityAt(BlinkStart - KEYFRAME_TIME_EPSILON, 1, EInterpolation::Step);
+			Timeline.SetVisibilityAt(BlinkStart, 0.f, EInterpolation::Step);
 			// End blink and instruct to use the next keyframes' values, if any, otherwise reset values
-			Timeline.SetVisibilityAt(BlinkStart + delta, 1.f, Interpolation::Next);
-			Timeline.SetColorAt(BlinkStart + delta, std::nullopt, Interpolation::Next);
-			Timeline.SetCuttingPlaneAt(BlinkStart + delta, true, Interpolation::Next);
+			Timeline.SetVisibilityAt(BlinkStart + delta, 1.f, EInterpolation::Next);
+			Timeline.SetColorAt(BlinkStart + delta, std::nullopt, EInterpolation::Next);
+			Timeline.SetCuttingPlaneAt(BlinkStart + delta, {}, EGrowthStatus::FullyGrown, EInterpolation::Next);
 		};
 	auto const testColor = [&Timeline, &Profile, &Idx, &incrTimes, &blinkAndResetBetweenTests]
 		(bool start, bool active, bool finish)
@@ -301,20 +346,86 @@ void CreateTestingTimeline(FITwinElementTimeline& Timeline)
 	}
 }
 
-void FITwinScheduleTimelineBuilder::AddAnimationBindingToTimeline(
-	FAnimationBinding const& AnimationBinding, FAppearanceProfile const& Profile)
+void FITwinScheduleTimelineBuilder::UpdateAnimationGroupInTimeline(size_t const GroupIndex,
+	std::set<ITwinElementID> const& GroupElements, FSchedLock&)
 {
-	FITwinElementTimeline& ElementTimeline =
-		MainTimeline.ElementTimelineFor(AnimationBinding.AnimatedEntityId);
+	if (!ensure(OnElementsTimelineModified))
+		return;
+	FITwinElementTimeline* Timeline = MainTimeline.GetElementTimelineFor(FIModelElementsKey(GroupIndex));
+	if (Timeline) // group may be used by bindings not yet notified, so the case !Timeline is perfectly fine
+	{
+		std::vector<ITwinElementID> ElementsDiffSet;
+		auto const& TimelineElements = Timeline->GetIModelElements();
+		if (!ensure(GroupElements.size() >= TimelineElements.size()))
+			return; // current set should be subset of new group
+		ElementsDiffSet.reserve(GroupElements.size() - Timeline->GetIModelElements().size());
+		std::set_difference(GroupElements.begin(), GroupElements.end(), TimelineElements.begin(),
+							TimelineElements.end(), std::back_inserter(ElementsDiffSet));
+		Timeline->AddIModelElements(ElementsDiffSet);
+		OnElementsTimelineModified(*Timeline, &ElementsDiffSet);
+	}
+}
+
+void FITwinScheduleTimelineBuilder::AddAnimationBindingToTimeline(FITwinSchedule const& Schedule,
+	size_t const AnimationBindingIndex, FSchedLock&)
+{
+	auto&& Binding = Schedule.AnimationBindings[AnimationBindingIndex];
+	if (!ensure(Binding.NotifiedVersion == VersionToken::None))
+		return;
+	bool const bSingleElement = std::holds_alternative<ITwinElementID>(Binding.AnimatedEntities);
+	ITwinElementID const SingleElementID =
+		bSingleElement ? std::get<0>(Binding.AnimatedEntities) : ITwin::NOT_ELEMENT;
+	FITwinElementTimeline& ElementTimeline = MainTimeline.ElementTimelineFor(
+		bSingleElement ? FIModelElementsKey(SingleElementID) : FIModelElementsKey(Binding.GroupInVec),
+		bSingleElement ? std::set<ITwinElementID>{ SingleElementID } : Schedule.Groups[Binding.GroupInVec]);
 	if (Owner->bDebugWithDummyTimelines)
 	{
 		CreateTestingTimeline(ElementTimeline);
 	}
 	else
 	{
-		AddColorToTimeline(ElementTimeline, Profile, AnimationBinding.TimeRange);
-		AddCuttingPlaneToTimeline(ElementTimeline, Profile, AnimationBinding.TimeRange);
-		AddVisibilityToTimeline(ElementTimeline, Profile, AnimationBinding.TimeRange);
+		auto&& AppearanceProfile = Schedule.AppearanceProfiles[Binding.AppearanceProfileInVec];
+		auto&& Task = Schedule.Tasks[Binding.TaskInVec];
+		AddColorToTimeline(ElementTimeline, AppearanceProfile, Task.TimeRange);
+		AddCuttingPlaneToTimeline(ElementTimeline, AppearanceProfile, Task.TimeRange);
+		AddVisibilityToTimeline(ElementTimeline, AppearanceProfile, Task.TimeRange);
+	#if SYNCHRO4D_ENABLE_TRANSFORMATIONS()
+		if (ITwin::INVALID_IDX != Binding.TransfoAssignmentInVec) // optional
+		{
+			auto&& TransfoAssignment = Schedule.TransfoAssignments[Binding.TransfoAssignmentInVec];
+			if (Binding.bStaticTransform)
+			{
+				if (ensure(CesiumToUnrealTransform && *CesiumToUnrealTransform))
+				{
+					AddStaticTransformToTimeline(ElementTimeline,
+						// see comment about FTransform composition order in Add3DPathTransformToTimeline
+						std::get<0>(TransfoAssignment.Transformation) * CesiumToUnrealTransform->value(),
+						Task.TimeRange);
+				}
+			}
+			else
+			{
+				auto&& PathAssignment = std::get<1>(TransfoAssignment.Transformation);
+				if (ensure(ITwin::INVALID_IDX != PathAssignment.Animation3DPathInVec
+							&& CesiumToUnrealTransform && *CesiumToUnrealTransform))
+				{
+					auto&& Path3D = Schedule.Animation3DPaths[PathAssignment.Animation3DPathInVec].Keyframes;
+					if (PathAssignment.b3DPathReverseDirection)
+					{
+						Add3DPathTransformToTimeline(ElementTimeline, Task.TimeRange,
+							PathAssignment.TransformAnchor, Path3D.rbegin(), Path3D.rend(), //<== reversed
+							CesiumToUnrealTransform->value());
+					}
+					else
+					{
+						Add3DPathTransformToTimeline(ElementTimeline, Task.TimeRange,
+							PathAssignment.TransformAnchor, Path3D.begin(), Path3D.end(),
+							CesiumToUnrealTransform->value());
+					}
+				}
+			}
+		}
+	#endif // SYNCHRO4D_ENABLE_TRANSFORMATIONS
 	}
-	if (OnElementTimelineModified) OnElementTimelineModified(ElementTimeline);
+	if (OnElementsTimelineModified) OnElementsTimelineModified(ElementTimeline, nullptr);
 }

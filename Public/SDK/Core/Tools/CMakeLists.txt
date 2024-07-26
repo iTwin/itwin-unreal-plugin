@@ -1,6 +1,8 @@
 
 add_library(Tools OBJECT
 		Tools.h
+		TypeId.h
+		Types.h
 		Extension.h
 		Extension.cpp
 		FactoryClass.h
@@ -9,6 +11,10 @@ add_library(Tools OBJECT
 )
 target_compile_features(Tools PRIVATE ${DefaultCXXSTD})
 set_target_properties(Tools PROPERTIES FOLDER "SDK/Core") 
+
+if ( DEFINED glm_INCLUDE_DIR )
+	target_include_directories(Tools PUBLIC ${glm_INCLUDE_DIR} )
+endif ()
 
 
 ####  Unit Tests

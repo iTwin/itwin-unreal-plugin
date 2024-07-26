@@ -1502,14 +1502,19 @@ static void loadPrimitive(
     LODResources.VertexBuffers.StaticMeshVertexBuffer.SetUseFullPrecisionUVs(
         true);
 
+    // For iTwin scene mapping mechanism (used both for Synchro 4D schedules and selection highlight), we
+    // need to access vertex data from the CPU (in packaged game, if we don't set this flag, the data can
+    // become inaccessible at any time...)
+    const bool bNeedsCPUAccess = true;
+
     LODResources.VertexBuffers.PositionVertexBuffer.Init(
         StaticMeshBuildVertices,
-        false);
+        bNeedsCPUAccess);
 
     FColorVertexBuffer& ColorVertexBuffer =
         LODResources.VertexBuffers.ColorVertexBuffer;
     if (hasVertexColors) {
-      ColorVertexBuffer.Init(StaticMeshBuildVertices, false);
+      ColorVertexBuffer.Init(StaticMeshBuildVertices, bNeedsCPUAccess);
     }
 
     uint32 NumTexCoords =
@@ -1525,10 +1530,13 @@ static void loadPrimitive(
         // created with MAX_STATIC_TEXCOORDS...)
         NumTexCoords++;
     }
+
+    FStaticMeshVertexBufferFlags VtxBufferFlags;
+    VtxBufferFlags.bNeedsCPUAccess = bNeedsCPUAccess;
     LODResources.VertexBuffers.StaticMeshVertexBuffer.Init(
         StaticMeshBuildVertices,
         NumTexCoords,
-        false);
+        VtxBufferFlags);
   }
 
   FStaticMeshSectionArray& Sections = LODResources.Sections;
@@ -2785,10 +2793,23 @@ static void loadPrimitiveGameThreadPart(
   }
 #endif
 
-  UMaterialInstanceDynamic* pMaterial = UMaterialInstanceDynamic::Create(
-      pBaseMaterial,
-      nullptr,
-      ImportedSlotName);
+  UMaterialInstanceDynamic* pMaterial(nullptr);
+  if (loadResult.MeshBuildCallbacks.IsValid())
+  {
+      // Possibility to override the material for this primitive
+      pMaterial = loadResult.MeshBuildCallbacks.Pin()->CreateMaterial_GameThread(
+          loadResult.pMeshPrimitive,
+          pBaseMaterial,
+          nullptr,
+          ImportedSlotName);
+  }
+  else
+  {
+      pMaterial = UMaterialInstanceDynamic::Create(
+          pBaseMaterial,
+          nullptr,
+          ImportedSlotName);
+  }
 
   pMaterial->SetFlags(
       RF_Transient | RF_DuplicateTransient | RF_TextExportTransient);
@@ -2959,8 +2980,11 @@ static void loadPrimitiveGameThreadPart(
   pMesh->SetupAttachment(pGltf);
   pMesh->RegisterComponent();
 
-  // call the observer callback (if any) once all is done
-  if (loadResult.MeshBuildCallbacks.IsValid())
+  // Call the observer callback (if any) once all is done
+  // If some tuning is about to be performed, postpone the mesh construction callback, as the present
+  // mesh will be replaced by the tuned model afterwards.
+  // TODO_AW could we avoid building the UE mesh in this case?
+  if (loadResult.MeshBuildCallbacks.IsValid() && !pTilesetActor->NeedGltfTuning(tile))
   {
       loadResult.MeshBuildCallbacks.Pin()->OnMeshConstructed(
           tile,
@@ -3154,7 +3178,7 @@ void UITwinCesiumGltfComponent::AttachRasterTile(
           UMaterialInstanceDynamic* pMaterial,
           UITwinCesiumMaterialUserData* pCesiumData) {
         // If this material uses material layers and has the Cesium user data,
-        // set the parameters on each material layer that maps to this overlay
+        // set the parameters on each material layer that maps to this overlay 
         // tile.
         if (pCesiumData) {
           FString name(

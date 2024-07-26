@@ -653,6 +653,7 @@ TilesetContentManager::TilesetContentManager(
             [pLogger = externals.pLogger,
              asyncSystem = externals.asyncSystem,
              pAssetAccessor = externals.pAssetAccessor,
+             gltfTuner = externals.gltfTuner,
              contentOptions = tilesetOptions.contentOptions](
                 const std::shared_ptr<CesiumAsync::IAssetRequest>&
                     pCompletedRequest) {
@@ -692,6 +693,12 @@ TilesetContentManager::TilesetContentManager(
                     tilesetJson.GetParseError(),
                     tilesetJson.GetErrorOffset()));
                 return asyncSystem.createResolvedFuture(std::move(result));
+              }
+
+              // Let the optional tuner parse any extra information from tileset.json
+              if (gltfTuner)
+              {
+                gltfTuner->ParseTilesetJson(tilesetJson);
               }
 
               // Check if the json is a tileset.json format or layer.json format
