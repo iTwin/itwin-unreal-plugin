@@ -10,6 +10,7 @@
 #include <Components/ComboBoxString.h>
 #include <Components/CanvasPanel.h>
 #include <Components/Button.h>
+#include <Components/TextBlock.h>
 
 void UITwinSelectorWidgetImpl::NativeConstruct()
 {
@@ -68,6 +69,21 @@ void UITwinSelectorWidgetImpl::ShowPanel(int Index)
 	UWidget* const Panels[] = {Panel_SelectItwin, Panel_Converting, Panel_Error};
 	for (auto Index2 = 0; Index2 < std::extent_v<decltype(Panels)>; ++Index2)
 		Panels[Index2]->SetVisibility(Index == Index2 ? ESlateVisibility::Visible : ESlateVisibility::Hidden);
+}
+
+void UITwinSelectorWidgetImpl::ShowErrorPanel(const FString& Error)
+{
+	ShowPanel(2);
+	// Store the default (generic) error message defined in resources.
+	static const FText DefaultError = TextError->GetText();
+	if (!Error.IsEmpty())
+	{
+		TextError->SetText(FText::FromString(Error));
+	}
+	else
+	{
+		TextError->SetText(DefaultError);
+	}
 }
 
 void UITwinSelectorWidgetImpl::AddITwin(const FString& DisplayName, const FString& Value)

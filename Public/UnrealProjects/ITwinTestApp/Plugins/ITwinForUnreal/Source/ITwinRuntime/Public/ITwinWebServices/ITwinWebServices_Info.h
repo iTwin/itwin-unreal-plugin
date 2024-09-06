@@ -164,6 +164,9 @@ struct FSavedViewInfos
 
 	UPROPERTY(BlueprintReadOnly, Category = "SavedView")
 		TArray<FSavedViewInfo> SavedViews;
+
+	UPROPERTY(BlueprintReadOnly, Category = "SavedView")
+		FString GroupId;
 };
 
 USTRUCT(BlueprintType)
@@ -179,6 +182,33 @@ struct FSavedView
 
 	UPROPERTY(BlueprintReadWrite, Category = "SavedView")
 		FRotator Angles = FRotator::ZeroRotator;
+};
+
+USTRUCT(BlueprintType)
+struct FSavedViewGroupInfo
+{
+	GENERATED_USTRUCT_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "SavedViewGroup")
+	FString Id;
+
+	UPROPERTY(BlueprintReadWrite, Category = "SavedViewGroup")
+	FString DisplayName;
+
+	UPROPERTY(BlueprintReadWrite, Category = "SavedViewGroup")
+	bool bShared = false;
+
+	UPROPERTY(BlueprintReadWrite, Category = "SavedViewGroupInfo")
+	bool bReadOnly = false;
+};
+
+USTRUCT(BlueprintType)
+struct FSavedViewGroupInfos
+{
+	GENERATED_USTRUCT_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "SavedViewGroup")
+	TArray<FSavedViewGroupInfo> SavedViewGroups;
 };
 
 USTRUCT(BlueprintType)
@@ -254,4 +284,60 @@ struct FElementProperties
 	UPROPERTY(BlueprintReadOnly, Category = "BIMInfo")
 	TArray<FElementProperty> Properties;
 };
+
+USTRUCT(BlueprintType)
+struct FProjectExtents
+{
+	GENERATED_USTRUCT_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "IModelProps")
+	FVector High = FVector(0, 0, 0);
+
+	UPROPERTY(BlueprintReadOnly, Category = "IModelProps")
+	FVector Low = FVector(0, 0, 0);
+};
+
+USTRUCT(BlueprintType)
+struct FCartographicProps
+{
+	GENERATED_USTRUCT_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "IModelProps")
+	double Height = 0.0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "IModelProps")
+	double Latitude = 0.0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "IModelProps")
+	double Longitude = 0.0;
+};
+
+USTRUCT(BlueprintType)
+struct FEcefLocation
+{
+	GENERATED_USTRUCT_BODY()
+	
+	//! Indicates whether CartographicOrigin member contains valid data.
+	UPROPERTY(BlueprintReadOnly, Category = "IModelProps")
+	bool bHasCartographicOrigin = false;
+	UPROPERTY(BlueprintReadOnly, Category = "IModelProps")
+	FCartographicProps CartographicOrigin;
+	UPROPERTY(BlueprintReadOnly, Category = "IModelProps")
+	FRotator Orientation = FRotator::ZeroRotator;
+	UPROPERTY(BlueprintReadOnly, Category = "IModelProps")
+	FVector Origin = FVector(0, 0, 0);
+	//! Indicates whether Transform member contains valid data.
+	UPROPERTY(BlueprintReadOnly, Category = "IModelProps")
+	bool bHasTransform = false;
+	UPROPERTY(BlueprintReadOnly, Category = "IModelProps")
+	FMatrix Transform = FMatrix::Identity;
+	//! Indicates whether xVector & yVector members contain valid data.
+	UPROPERTY(BlueprintReadOnly, Category = "IModelProps")
+	bool bHasVectors = false;
+	UPROPERTY(BlueprintReadOnly, Category = "IModelProps")
+	FVector xVector = FVector(0, 0, 0);
+	UPROPERTY(BlueprintReadOnly, Category = "IModelProps")
+	FVector yVector = FVector(0, 0, 0);
+};
+
 

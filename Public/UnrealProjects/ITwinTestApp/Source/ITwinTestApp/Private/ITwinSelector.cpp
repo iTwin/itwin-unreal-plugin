@@ -44,8 +44,7 @@ void AITwinSelector::AuthError(bool bSuccess, FString Error)
 {
 	if (!bSuccess)
 	{
-		UI->ShowPanel(2);
-		UI->TextError->SetText(FText::FromString(Error));
+		UI->ShowErrorPanel(Error);
 		return;
 	}
 	// iTwin combobox
@@ -140,8 +139,15 @@ void AITwinSelector::OnExportsCompleted(bool bSuccess, FITwinExportInfos Exports
 
 void AITwinSelector::OnStartExportComplete(bool bSuccess, FString ExportId)
 {
-	SelectedExportId = ExportId;
-	ITwinWebService->GetExportInfo(ExportId);
+	if (bSuccess)
+	{
+		SelectedExportId = ExportId;
+		ITwinWebService->GetExportInfo(ExportId);
+	}
+	else
+	{
+		UI->ShowErrorPanel(TEXT("Unable to process the tileset for first visualization.\nThe service may be temporarily unavailable. Please try again later."));
+	}
 }
 
 void AITwinSelector::GetExportInfoComplete(bool bSuccess, FITwinExportInfo Export)
@@ -155,7 +161,7 @@ void AITwinSelector::GetExportInfoComplete(bool bSuccess, FITwinExportInfo Expor
 	}
 	if (State == TEXT("Invalid"))
 	{
-		UI->ShowPanel(2);
+		UI->ShowErrorPanel({});
 		return;
 	}
 	FTimerHandle TimerHandle;

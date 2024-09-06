@@ -13,6 +13,7 @@
 #include <Timeline/Timeline.h>
 
 #include <mutex>
+#include <set>
 #include <unordered_set>
 
 using FOnElementsTimelineModified =

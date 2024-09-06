@@ -258,7 +258,7 @@ FDateRange MainTimelineBase<_ObjectTimeline>::GetDateRange() const
 }
 
 template<class _ObjectTimeline>
-void MainTimelineBase<_ObjectTimeline>::IncludeTimeRange(const _ObjectTimeline& ObjectTimeline)
+void MainTimelineBase<_ObjectTimeline>::IncludeTimeRange(_ObjectTimeline const& ObjectTimeline)
 {
 	const auto ObjectTimeRange = ObjectTimeline.GetTimeRange();
 	TimeRange.first = std::min(TimeRange.first, ObjectTimeRange.first);
@@ -266,13 +266,23 @@ void MainTimelineBase<_ObjectTimeline>::IncludeTimeRange(const _ObjectTimeline& 
 }
 
 template<class _ObjectTimeline>
-std::shared_ptr<_ObjectTimeline> MainTimelineBase<_ObjectTimeline>::Add(const ObjectTimelinePtr& Timeline)
+void MainTimelineBase<_ObjectTimeline>::IncludeTimeRange(FTimeRangeInSeconds const& CustomRange)
+{
+	TimeRange.first = std::min(TimeRange.first, CustomRange.first);
+	TimeRange.second = std::max(TimeRange.second, CustomRange.second);
+}
+
+template<class _ObjectTimeline>
+std::shared_ptr<_ObjectTimeline> MainTimelineBase<_ObjectTimeline>::AddTimeline(
+	const ObjectTimelinePtr& Timeline)
 {
 	auto Result = Container.push_back(Timeline);
-	// Note: "Add" is now called from ElementTimelineFor, when creating an empty timeline, in that case this
-	// call is pointless, but let's keep it to preserve also the other use case (adding an already filled
-	// timeline, for example in unit testing - see other call to IncludeTimeRange done only in
+	// Note: "AddTimeline" is now called from ElementTimelineFor, when creating an empty timeline, in that
+	// case this call is pointless, but let's keep it to preserve also the other use case (adding an already
+	// filled timeline, for example in unit testing - see other call to IncludeTimeRange done only in
 	// FITwinIModelInternals::OnElementsTimelineModified)
+	// Note 2: IncludeTimeRange is also now included directly from SchedulesImport.cpp in case of pre-fetching
+	// of all Tasks, in which case this is again redundant.
 	IncludeTimeRange(*Timeline);
 	return Result.second ? Timeline : *Result.first;
 }

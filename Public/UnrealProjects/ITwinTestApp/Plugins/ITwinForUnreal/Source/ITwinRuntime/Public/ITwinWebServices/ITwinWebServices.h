@@ -29,10 +29,16 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnAddSavedViewComplete, bool, bSuc
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnDeleteSavedViewComplete, bool, bSuccess, FString, SavedViewId, FString, Response);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnEditSavedViewComplete, bool, bSuccess, FSavedView, SavedView, FSavedViewInfo, SavedViewInfo);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGetSavedViewsComplete, bool, bSuccess, FSavedViewInfos, SavedViews);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGetSavedViewGroupsComplete, bool, bSuccess, FSavedViewGroupInfos, SavedViewGroups);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnAddSavedViewGroupComplete, bool, bSuccess, FSavedViewGroupInfo, SavedViewGroupInfo);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnGetSavedViewComplete, bool, bSuccess, FSavedView, SavedView, FSavedViewInfo, SavedViewInfo);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnGetSavedViewThumbnailComplete, bool, bSuccess, FString, SavedViewThumbnail, FString, SavedViewId);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnUpdateSavedViewThumbnailComplete, bool, bSuccess, FString, SavedViewId, FString, Response);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGetRealityDataComplete, bool, bSuccess, FITwinRealityDataInfos, RealityDataInfos);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGetRealityData3DInfoComplete, bool, bSuccess, FITwinRealityData3DInfo, RealityDataInfo);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGetElementPropertiesComplete, bool, bSuccess, FElementProperties, ElementProps);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_FiveParams(FOnGetIModelPropertiesComplete, bool, bSuccess, bool, bHasExtents, FProjectExtents, Extents, bool, bHasEcefLocation, FEcefLocation, EcefLocation);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnQueryIModelComplete, bool, bSuccess, FString, QueryResult);
 
 class FJsonObject;
 class IITwinWebServicesObserver;
@@ -81,13 +87,25 @@ public:
 	void StartExport(FString iModelId, FString iChangesetId);
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
-	void GetRealityData(FString iTwinId);
+	void GetAllSavedViews(FString iTwinId, FString iModelId, FString GroupId = "");
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
-	void GetRealityData3DInfo(FString iTwinId, FString RealityDataId);
+	void GetSavedViewGroups(FString iTwinId, FString iModelId);
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
-	void AddSavedView(FString ITwinId, FString IModelId, FSavedView SavedView, FSavedViewInfo SavedViewInfo);
+	void AddSavedViewGroup(FString ITwinId, FString IModelId, FSavedViewGroupInfo SavedViewGroupInfo);
+
+	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
+	void GetSavedView(FString SavedViewId);
+
+	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
+	void GetSavedViewThumbnail(FString SavedViewId);
+	
+	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
+	void UpdateSavedViewThumbnail(FString SavedViewId, FString ThumbnailURL);
+
+	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
+	void AddSavedView(FString ITwinId, FString IModelId, FSavedView SavedView, FSavedViewInfo SavedViewInfo, FString GroupId = "");
 	void OnSavedViewAdded(bool bSuccess, FSavedViewInfo const& SavedViewInfo);
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
@@ -98,13 +116,29 @@ public:
 	void EditSavedView(FSavedView SavedView, FSavedViewInfo SavedViewInfo);
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
-	void GetAllSavedViews(FString iTwinId, FString iModelId);
+	void GetRealityData(FString iTwinId);
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
-	void GetSavedView(FString SavedViewId);
+	void GetRealityData3DInfo(FString iTwinId, FString RealityDataId);
+
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
 	void GetElementProperties(FString iTwinId, FString iModelId, FString iChangesetId, FString ElementId);
+
+	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
+	void GetIModelProperties(FString iTwinId, FString iModelId, FString iChangesetId);
+
+	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
+	void QueryIModel(FString iTwinId, FString iModelId, FString iChangesetId, FString ECSQLQuery, int Offset,
+					 int Count);
+
+	void GetMaterialProperties(
+		FString iTwinId, FString iModelId, FString iChangesetId,
+		FString MaterialId);
+	void GetMaterialListProperties(
+		FString iTwinId, FString iModelId, FString iChangesetId,
+		TArray<FString> MaterialIds);
+
 
 	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
 	FOnAuthorizationChecked OnAuthorizationChecked;
@@ -146,6 +180,18 @@ public:
 	FOnGetSavedViewComplete OnGetSavedViewComplete;
 
 	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
+	FOnGetSavedViewGroupsComplete OnGetSavedViewGroupsComplete;
+
+	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
+	FOnAddSavedViewGroupComplete OnAddSavedViewGroupComplete;
+
+	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
+	FOnGetSavedViewThumbnailComplete OnGetSavedViewThumbnailComplete;
+
+	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
+	FOnUpdateSavedViewThumbnailComplete OnUpdateSavedViewThumbnailComplete;
+
+	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
 	FOnGetRealityDataComplete OnGetRealityDataComplete;
 
 	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
@@ -154,9 +200,17 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
 	FOnGetElementPropertiesComplete OnGetElementPropertiesComplete;
 
-	UPROPERTY(EditAnywhere, Category = "iTwin Web Services")
-	EITwinEnvironment Environment = EITwinEnvironment::Prod;
+	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
+	FOnGetIModelPropertiesComplete OnGetIModelPropertiesComplete;
 
+	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
+	FOnQueryIModelComplete OnQueryIModelComplete;
+
+	UFUNCTION(BlueprintGetter, Category = "iTwin Web Services")
+	EITwinEnvironment GetEnvironment() const { return Environment; }
+
+	UFUNCTION(BlueprintSetter, Category = "iTwin Web Services")
+	void SetEnvironment(EITwinEnvironment InEnvironment);
 
 	bool IsAuthorizationInProgress() const;
 	void SetServerConnection(TObjectPtr<AITwinServerConnection> const& InConnection);
@@ -181,9 +235,6 @@ public:
 	static bool LoadToken(FString& OutInfo, EITwinEnvironment Env);
 	static void DeleteTokenFile(EITwinEnvironment Env);
 
-	static bool GetErrorDescription(FJsonObject const& responseJson, FString& OutError,
-		FString const& Indent = {});
-
 	static void SetLogErrors(bool bInLogErrors);
 	static bool ShouldLogErrors() { return bLogErrors; }
 
@@ -194,7 +245,6 @@ public:
 
 
 private:
-	FString GetAPIRootURL() const;
 	bool TryGetServerConnection(bool bAllowBroadcastAuthResult);
 	void OnAuthDoneImpl(bool bSuccess, FString const& Error, bool bBroadcastResult = true);
 
@@ -204,26 +254,23 @@ private:
 	void DoGetiModelChangesets(FString const& iModelId, bool bRestrictToLatest);
 
 	/// This Request ID is relative to each instance of UITwinWebServices, it is *not* a global unique
-	/// identifier for requests (hence it should be kept it private...)
+	/// identifier for requests (hence it should be kept private...)
 	/// For now its only purpose is to test if the last error message was created for current request or not.
 	using RequestID = uint32;
-
-	void SetLastError(FString const& InError, RequestID InRequestId);
 
 	//! Returns the error stored for the given request, if any.
 	FString GetRequestError(RequestID InRequestId) const;
 
-	struct FITwinAPIRequestInfo;
-
-	template <typename ResultDataType, class FunctorType, class DelegateAsFunctor>
-	RequestID TProcessHttpRequest(
-		FITwinAPIRequestInfo const& RequestInfo,
-		FunctorType&& InFunctor,
-		DelegateAsFunctor&& InResultFunctor);
+	template <typename FunctorType>
+	void DoRequest(FunctorType&& InFunctor);
 
 private:
 	UPROPERTY()
 	TObjectPtr<AITwinServerConnection> ServerConnection;
+
+	UPROPERTY(EditAnywhere, Category = "iTwin Web Services",
+		BlueprintGetter = GetEnvironment, BlueprintSetter = SetEnvironment)
+	EITwinEnvironment Environment = EITwinEnvironment::Prod;
 
 	class FImpl;
 	TPimplPtr<FImpl> Impl;

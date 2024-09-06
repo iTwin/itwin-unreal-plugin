@@ -36,6 +36,7 @@ class FJsonValue;
 class FIModelElementsKey
 {
 public:
+	static FIModelElementsKey NOT_ANIMATED;
 	std::variant<ITwinElementID, size_t/*GroupInVec*/> Key;
 	explicit FIModelElementsKey(ITwinElementID const& ElementID) : Key(ElementID) {}
 	explicit FIModelElementsKey(size_t const& GroupIndex) : Key(GroupIndex) {}
@@ -212,15 +213,18 @@ public:
 
 	void SetModified() { bModified = true; }
 	bool IsModified() const { return bModified; }
-	bool TestModifiedAndReset() { bool const tmp = bModified; bModified = false; return tmp; }
-	void AddIModelElements(std::vector<ITwinElementID> const& NewElements);
+	bool TestModifiedAndResetFlag() { bool const tmp = bModified; bModified = false; return tmp; }
+
 	[[nodiscard]] FIModelElementsKey const& GetIModelElementsKey() const { return IModelElementsKey; }
+	[[nodiscard]] std::set<ITwinElementID>& IModelElementsRef() { return IModelElements; }
 	[[nodiscard]] std::set<ITwinElementID> const& GetIModelElements() const { return IModelElements; }
+	void OnIModelElementsAdded() { bIModelElementsBBoxNeedsUpdate = true; }
 	[[nodiscard]] FVector const& GetIModelElementOffsetInGroup(ITwinElementID const ElementID,
 		std::function<FBox(std::set<ITwinElementID> const&)> const& GroupBBoxGetter,
 		std::function<FBox const&(ITwinElementID const)> const& SingleBBoxGetter);
 	[[nodiscard]] FBox const& GetIModelElementsBBox(
 		std::function<FBox(std::set<ITwinElementID> const&)> ElementsBBoxGetter);
+	/// SLOW!
 	[[nodiscard]] bool AppliesToElement(ITwinElementID const& ElementID) const;
 	/// Returns the total number of keyframes in the timeline
 	[[nodiscard]] size_t NumKeyframes() const;
@@ -254,20 +258,20 @@ class MainTimeline : public MainTimelineBase<ElementTimelineEx>
 
 	/// Maps each animated Element or group of Elements to a single timeline that applies only to it
 	std::unordered_map<FIModelElementsKey, int/*timeline index*/> ElementsKeyToTimeline;
-	/// Maps each animated Element to a all the timelines that apply to it (either applying only to it, or to
-	/// a group of Elements to which it belongs)
-	//std::unordered_multimap< ITwinElementID, int/*timeline index*/> ElementToTimelines;
+	/// See HideNonAnimatedDuplicates in ITwinSynchro4DSchedulesTimelineBuilder.cpp
+	std::set<ITwinElementID> NonAnimatedDuplicates;
+	bool bHasNewOrModifiedTimeline_ = false;
 
 public:
-	// Not suited for performance-critical code paths: maybe uncomment ElementToTimelines if needed?
-	void ForEachElementTimeline(ITwinElementID const& ElementID,
-								std::function<void(ElementTimelineEx&)> const& Func);
-	void ForEachElementTimeline(ITwinElementID const& ElementID,
-								std::function<void(ElementTimelineEx const&)> const& Func) const;
-
-	/// Tells whether there is at least one timeline applying to the ElementID. It does NOT check whether
-	/// any of the timeline(s) found applies to it alone (as opposed to groups containing the Element).
-	[[nodiscard]] bool HasTimelineForElement(ITwinElementID const& ElementID) const;
+	void OnElementsTimelineModified(ElementTimelineEx& ModifiedTimeline);
+	bool TestNewOrModifiedAndResetFlag() {
+		bool tmp = bHasNewOrModifiedTimeline_; bHasNewOrModifiedTimeline_ = false; return tmp;
+	}
+	std::set<ITwinElementID> const& GetNonAnimatedDuplicates() const { return NonAnimatedDuplicates; }
+	void AddNonAnimatedDuplicate(ITwinElementID const Elem);
+	void RemoveNonAnimatedDuplicate(ITwinElementID const Elem);
+	// Removed: test FITwinElement::AnimationKeys instead
+	//[[nodiscard]] bool HasTimelineForElement(ITwinElementID const& ElementID) const;
 	/// Get or create and return a timeline for the Element or group of Elements.
 	[[nodiscard]] ElementTimelineEx& ElementTimelineFor(FIModelElementsKey const IModelElementsKey,
 														std::set<ITwinElementID> const& Elements);

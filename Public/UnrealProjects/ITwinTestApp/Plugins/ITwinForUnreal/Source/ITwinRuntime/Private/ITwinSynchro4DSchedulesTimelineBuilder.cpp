@@ -7,6 +7,9 @@
 +--------------------------------------------------------------------------------------*/
 
 #include "ITwinSynchro4DSchedulesTimelineBuilder.h"
+#include "ITwinIModel.h"
+#include "ITwinIModelInternals.h"
+#include "ITwinSceneMapping.h"
 #include "ITwinSynchro4DSchedules.h"
 #include <Compil/BeforeNonUnrealIncludes.h>
 	#include <BeHeaders/Compil/AlwaysFalse.h>
@@ -149,34 +152,32 @@ void AddVisibilityToTimeline(FITwinElementTimeline& ElementTimeline,
 		{
 			return;
 		}
-
+		auto const StartAlpha = Profile.ActiveAppearance.Base.bUseOriginalAlpha
+			? std::nullopt : std::optional<float>(Profile.ActiveAppearance.Base.Alpha);
 		ElementTimeline.SetVisibilityAt(Time.first,
 			(EProfileAction::Install == Profile.ProfileType
-				|| EProfileAction::Temporary == Profile.ProfileType)
-			? 0.f : (Profile.StartAppearance.bUseOriginalAlpha ? std::nullopt
-					: std::optional<float>(Profile.StartAppearance.Alpha)),
+				|| EProfileAction::Temporary == Profile.ProfileType) ? 0.f : StartAlpha,
 			EInterpolation::Step);
 
-		if (Profile.ActiveAppearance.Base.Alpha == Profile.ActiveAppearance.FinishAlpha)
+		auto const FinishAlpha = Profile.FinishAppearance.bUseOriginalAlpha
+			? std::nullopt : std::optional<float>(Profile.FinishAppearance.Alpha);
+		if (StartAlpha == FinishAlpha
+			|| (!StartAlpha && FinishAlpha && *FinishAlpha == 1.f)
+			|| (!FinishAlpha && StartAlpha && *StartAlpha == 1.f))
 		{
 			ElementTimeline.SetVisibilityAt(Time.first + KEYFRAME_TIME_EPSILON,
-				Profile.ActiveAppearance.Base.bUseOriginalAlpha
-					? std::nullopt : std::optional<float>(Profile.ActiveAppearance.Base.Alpha),
-				EInterpolation::Step);
+											StartAlpha, EInterpolation::Step);
 		}
 		else
 		{
 			ElementTimeline.SetVisibilityAt(Time.first + KEYFRAME_TIME_EPSILON,
-				Profile.ActiveAppearance.Base.Alpha, EInterpolation::Linear);
+											StartAlpha, EInterpolation::Linear);
 			ElementTimeline.SetVisibilityAt(Time.second - KEYFRAME_TIME_EPSILON,
-				Profile.ActiveAppearance.FinishAlpha, EInterpolation::Step);
+											FinishAlpha, EInterpolation::Step);
 		}
-
 		ElementTimeline.SetVisibilityAt(Time.second,
 			(EProfileAction::Remove == Profile.ProfileType
-				|| EProfileAction::Temporary == Profile.ProfileType)
-			? 0.f : (Profile.FinishAppearance.bUseOriginalAlpha ? std::nullopt
-						: std::optional<float>(Profile.FinishAppearance.Alpha)),
+				|| EProfileAction::Temporary == Profile.ProfileType) ? 0.f : FinishAlpha,
 			// See comment on EInterpolation::Next for an alternative
 			EInterpolation::Step);
 	}
@@ -346,6 +347,71 @@ void CreateTestingTimeline(FITwinElementTimeline& Timeline)
 	}
 }
 
+namespace Detail {
+
+template<typename ElemDesignationContainer>
+void InsertAnimatedMeshSubElemsRecursively(FIModelElementsKey const& AnimationKey,
+	FITwinSceneMapping& Scene, ElemDesignationContainer const& Elements,
+	FITwinScheduleTimeline& MainTimeline, std::set<ITwinElementID>& OutSet,
+	std::vector<ITwinElementID>* OutElemsDiff = nullptr)
+{
+	for (auto const ElementDesignation : Elements)
+	{
+		FITwinElement& Elem = Scene.ElementFor(ElementDesignation);
+		if (Elem.AnimationKeys.end()
+			== std::find(Elem.AnimationKeys.begin(), Elem.AnimationKeys.end(), AnimationKey))
+		{
+			Elem.AnimationKeys.push_back(AnimationKey);
+		}
+		if (Elem.bHasMesh)
+		{
+			if (!OutSet.insert(Elem.Id).second)
+				continue; // already in set: no need for RemoveNonAnimatedDuplicate nor recursion
+			else
+			{
+				MainTimeline.RemoveNonAnimatedDuplicate(Elem.Id);
+				if (OutElemsDiff)
+					OutElemsDiff->push_back(Elem.Id);
+			}
+		}
+		// assume both bHasMesh==true and having child Elements is possible, altho I don't really know
+		Detail::InsertAnimatedMeshSubElemsRecursively(AnimationKey, Scene, Elem.SubElemsInVec, MainTimeline,
+													  OutSet, OutElemsDiff);
+	}
+}
+
+template<typename ContainerToHandle>
+void HideNonAnimatedDuplicates(FITwinSceneMapping const& Scene, ContainerToHandle const& ElemIDs,
+							   FITwinScheduleTimeline& MainTimeline)
+{
+	for (ITwinElementID ElemID : ElemIDs)
+	{
+		auto const& Duplicates = Scene.GetDuplicateElements(ElemID);
+		bool bOneIsAnimated = false;
+		for (auto Dupl : Duplicates)
+		{
+			auto const& Elem = Scene.GetElement(Dupl);
+			if (!Elem.AnimationKeys.empty())
+			{
+				bOneIsAnimated = true;
+				break;
+			}
+		}
+		if (!bOneIsAnimated)
+			continue;
+		for (auto Dupl : Duplicates)
+		{
+			auto const& Elem = Scene.GetElement(Dupl);
+			if (Elem.AnimationKeys.empty())
+			{
+				MainTimeline.AddNonAnimatedDuplicate(Elem.Id);
+			}
+		}
+	}
+}
+
+} // ns Detail
+
 void FITwinScheduleTimelineBuilder::UpdateAnimationGroupInTimeline(size_t const GroupIndex,
 	std::set<ITwinElementID> const& GroupElements, FSchedLock&)
 {
@@ -354,15 +420,16 @@ void FITwinScheduleTimelineBuilder::UpdateAnimationGroupInTimeline(size_t const 
 	FITwinElementTimeline* Timeline = MainTimeline.GetElementTimelineFor(FIModelElementsKey(GroupIndex));
 	if (Timeline) // group may be used by bindings not yet notified, so the case !Timeline is perfectly fine
 	{
-		std::vector<ITwinElementID> ElementsDiffSet;
-		auto const& TimelineElements = Timeline->GetIModelElements();
-		if (!ensure(GroupElements.size() >= TimelineElements.size()))
-			return; // current set should be subset of new group
-		ElementsDiffSet.reserve(GroupElements.size() - Timeline->GetIModelElements().size());
-		std::set_difference(GroupElements.begin(), GroupElements.end(), TimelineElements.begin(),
-							TimelineElements.end(), std::back_inserter(ElementsDiffSet));
-		Timeline->AddIModelElements(ElementsDiffSet);
-		OnElementsTimelineModified(*Timeline, &ElementsDiffSet);
+		AITwinIModel* IModel = Cast<AITwinIModel>(Owner->GetOwner());
+		if (!ensure(IModel))
+			return;
+		FITwinSceneMapping& Scene = GetInternals(*IModel).SceneMapping;
+		std::vector<ITwinElementID> ElementsSetDiff;
+		Detail::InsertAnimatedMeshSubElemsRecursively(FIModelElementsKey(GroupIndex), Scene, GroupElements,
+			MainTimeline, Timeline->IModelElementsRef(), &ElementsSetDiff);
+		::Detail::HideNonAnimatedDuplicates(Scene, ElementsSetDiff, MainTimeline);
+		Timeline->OnIModelElementsAdded(); // just invalidates group's BBox
+		OnElementsTimelineModified(*Timeline, &ElementsSetDiff);
 	}
 }
 
@@ -375,9 +442,22 @@ void FITwinScheduleTimelineBuilder::AddAnimationBindingToTimeline(FITwinSchedule
 	bool const bSingleElement = std::holds_alternative<ITwinElementID>(Binding.AnimatedEntities);
 	ITwinElementID const SingleElementID =
 		bSingleElement ? std::get<0>(Binding.AnimatedEntities) : ITwin::NOT_ELEMENT;
-	FITwinElementTimeline& ElementTimeline = MainTimeline.ElementTimelineFor(
-		bSingleElement ? FIModelElementsKey(SingleElementID) : FIModelElementsKey(Binding.GroupInVec),
-		bSingleElement ? std::set<ITwinElementID>{ SingleElementID } : Schedule.Groups[Binding.GroupInVec]);
+	std::set<ITwinElementID> const& BoundElements =
+		bSingleElement ? std::set<ITwinElementID>{ SingleElementID } : Schedule.Groups[Binding.GroupInVec];
+	FIModelElementsKey const AnimationKey =
+		bSingleElement ? FIModelElementsKey(SingleElementID) : FIModelElementsKey(Binding.GroupInVec);
+	AITwinIModel* IModel = Cast<AITwinIModel>(Owner->GetOwner());
+	if (!ensure(IModel))
+		return;
+	FITwinSceneMapping& Scene = GetInternals(*IModel).SceneMapping;
+	std::set<ITwinElementID> AnimatedMeshElements;
+	Detail::InsertAnimatedMeshSubElemsRecursively(AnimationKey, Scene, BoundElements, MainTimeline,
+												  AnimatedMeshElements);
+	if (!ensure(!AnimatedMeshElements.empty()))
+		return;
+	FITwinElementTimeline& ElementTimeline = MainTimeline.ElementTimelineFor(AnimationKey,
+																			 AnimatedMeshElements);
+	::Detail::HideNonAnimatedDuplicates(Scene, AnimatedMeshElements, MainTimeline);
 	if (Owner->bDebugWithDummyTimelines)
 	{
 		CreateTestingTimeline(ElementTimeline);

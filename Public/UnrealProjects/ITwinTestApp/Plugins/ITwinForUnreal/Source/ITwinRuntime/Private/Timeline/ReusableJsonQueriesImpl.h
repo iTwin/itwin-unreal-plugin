@@ -69,6 +69,7 @@ class FReusableJsonQueries<SimultaneousRequestsT>::FImpl
 
 	FString BaseUrlNoSlash;
 	FCheckRequest const CheckRequest;
+	std::function<FString()> const GetBearerToken;
 	ReusableJsonQueries::FMutex& Mutex;
 	TCHAR const* const RecordToFolder; ///< Only for devs (save requests and replies for later replay)
 	FString RecorderPathBase; ///< \see RecordToFolder
@@ -81,6 +82,11 @@ class FReusableJsonQueries<SimultaneousRequestsT>::FImpl
 	ReusableJsonQueries::FSimulationMap SimulationMap;
 	ReusableJsonQueries::FReplayMap ReplayMap;
 	ReusableJsonQueries::EReplayMode ReplayMode = ReusableJsonQueries::EReplayMode::None;
+
+	/// Flag tracking the status of "RequestsInBatch != 0 || !NextBatches.empty()" in order to trigger
+	/// OnScheduleQueryingStatusChanged when it changes
+	bool bIsRunning = false;
+	FScheduleQueryingDelegate const& OnScheduleQueryingStatusChanged;
 
 	/// Number of requests in the current "batch", which is a grouping of requests which ordering is not
 	/// relevant. Incremented when stacking requests, decremented when finishing a request.
@@ -121,7 +127,9 @@ public:
 		FCheckRequest const& InCheckRequest, ReusableJsonQueries::FMutex& InMutex,
 		TCHAR const* const InRecordToFolder, int const InRecorderSessionIndex,
 		TCHAR const* const InSimulateFromFolder,
-		std::optional<ReusableJsonQueries::EReplayMode> const InReplayMode);
+		std::optional<ReusableJsonQueries::EReplayMode> const InReplayMode,
+		FScheduleQueryingDelegate const& OnScheduleQueryingStatusChanged,
+		std::function<FString()> const& GetBearerToken);
 
 }; // class FReusableJsonQueries<SimultaneousRequestsT>::FImpl
 

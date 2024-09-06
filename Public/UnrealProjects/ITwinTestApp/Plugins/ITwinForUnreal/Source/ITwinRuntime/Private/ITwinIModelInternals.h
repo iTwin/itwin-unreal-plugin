@@ -48,10 +48,13 @@ public:
 						ProcElemFeatures(TileID, SceneTile, *Found);
 					}
 				}
-				{	auto* Found = SceneTile.FindExtractedElement(Elem);
-					if (Found)
+				{	auto* FoundEntities = SceneTile.FindExtractedElement(Elem);
+					if (FoundEntities)
 					{
-						ProcExtractedElem(SceneTile, *Found);
+						for (FITwinExtractedEntity& ExtrEnt : *FoundEntities)
+						{
+							ProcExtractedElem(SceneTile, ExtrEnt);
+						}
 					}
 				}
 			}
@@ -68,11 +71,10 @@ public:
 		return GroupBox;
 	}
 
-	/// Currently uses the assumption that BBoxes are computed for all Elements of a tile
 	bool HasElementWithID(ITwinElementID const Element) const
 	{
-		auto const& BBoxes = SceneMapping.GetKnownBBoxes();
-		return BBoxes.find(Element) != BBoxes.cend();
+		auto const& AllElems = SceneMapping.GetElementIDs();
+		return AllElems.find(Element) != AllElems.cend();
 	}
 
 	void OnElementsTimelineModified(FITwinElementTimeline& ModifiedTimeline,
@@ -81,4 +83,7 @@ public:
 	bool OnClickedElement(ITwinElementID const Element, FHitResult const& HitResult);
 
 	bool SelectElement(ITwinElementID const InElementID);
+
+	//! Returns the selected Element's ID, if an Element is selected, or ITwin::NOT_ELEMENT.
+	ITwinElementID GetSelectedElement() const;
 };

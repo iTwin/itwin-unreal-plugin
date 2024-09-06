@@ -376,6 +376,11 @@ bool FITwinGltfMeshComponentWrapper::FinalizeExtractedEntity(
     RenderData->AllocateLODResources(1);
     FStaticMeshLODResources& LODResources = RenderData->LODResources[0];
 
+    // Same comment as in #loadPrimitive in ITwinCesiumGltfComponent.cpp.
+    // For extracted pieces, the need for mesh data on the CPU is less obvious, but we get warnings in
+    // Unreal's logs if we do not activate this flag, which may cause troubles in packaged mode...
+    const bool bNeedsCPUAccess = true;
+
     const bool hasVertexColors = SrcVertexBuffers.ColorVertexBuffer.GetNumVertices() > 0;
     LODResources.bHasColorVertexData = hasVertexColors;
 
@@ -385,20 +390,22 @@ bool FITwinGltfMeshComponentWrapper::FinalizeExtractedEntity(
 
         LODResources.VertexBuffers.PositionVertexBuffer.Init(
             StaticMeshBuildVertices,
-            false);
+            bNeedsCPUAccess);
 
         FColorVertexBuffer& ColorVertexBuffer =
             LODResources.VertexBuffers.ColorVertexBuffer;
         if (hasVertexColors) {
-            ColorVertexBuffer.Init(StaticMeshBuildVertices, false);
+            ColorVertexBuffer.Init(StaticMeshBuildVertices, bNeedsCPUAccess);
         }
         const uint32 NumTexCoords = UVIndexForFeatures.has_value()
             ? (UVIndexForFeatures.value() + 1)
             : SrcVertexBuffers.StaticMeshVertexBuffer.GetNumTexCoords();
+        FStaticMeshVertexBufferFlags VtxBufferFlags;
+        VtxBufferFlags.bNeedsCPUAccess = bNeedsCPUAccess;
         LODResources.VertexBuffers.StaticMeshVertexBuffer.Init(
             StaticMeshBuildVertices,
             NumTexCoords,
-            false);
+            VtxBufferFlags);
     }
 
     FStaticMeshSectionArray& Sections = LODResources.Sections;
@@ -412,6 +419,7 @@ bool FITwinGltfMeshComponentWrapper::FinalizeExtractedEntity(
     section.bCastShadow = true;
     section.MaterialIndex = 0;
 
+    LODResources.IndexBuffer.TrySetAllowCPUAccess(bNeedsCPUAccess);
     LODResources.IndexBuffer.SetIndices(
         Indices,
         StaticMeshBuildVertices.Num() >= std::numeric_limits<uint16>::max()
@@ -500,7 +508,9 @@ bool FITwinGltfMeshComponentWrapper::FinalizeExtractedEntity(
 
     pStaticMesh->CreateBodySetup();
 
-
+    // TODO_GCO: try to avoid crashes I had with heavy scenes only - should MeshComponent be a strong ptr??
+    if (!ensure(ExtractedEntity.MeshComponent.IsValid()))
+        return false;
     ExtractedEntity.MeshComponent->SetMobility(gltfMeshComponent_->Mobility);
 
     ExtractedEntity.MeshComponent->AttachToComponent(gltfMeshComponent_.Get(), FAttachmentTransformRules::KeepWorldTransform);
@@ -902,6 +912,11 @@ bool FITwinGltfMeshComponentWrapper::HasDetectedElementID(ITwinElementID const E
 
 bool FITwinGltfMeshComponentWrapper::CanExtractElement(ITwinElementID const Element)
 {
+    if (!gltfMeshComponent_.IsValid())
+    {
+        // The Cesium tile may have been destroyed in the interval.
+        return false;
+    }
     if (!metadataStatus_)
     {
         metadataStatus_ = ComputeMetadataStatus();
@@ -942,16 +957,20 @@ uint32 FITwinGltfMeshComponentWrapper::ExtractSomeElements(
     for (auto const& [EltID, MeshSection] : elementSections_)
     {
         // test if the element was extracted previously
-        auto* Found = SceneTile.FindExtractedElement(EltID);
-        if (!Found)
+        if (SceneTile.FindExtractedElement(EltID) == nullptr)
         {
             // extract it now
-            FITwinExtractedEntity& ExtractedEntity = SceneTile.ExtractedElement(EltID)->second;
+            auto& ExtractedEntities = SceneTile.ExtractedElement(EltID)->second;
+            auto& ExtractedEntity = ExtractedEntities.emplace_back(FITwinExtractedEntity{ EltID });
             if (ExtractElement(EltID, ExtractedEntity, Options))
             {
                 nExtracted++;
                 if (nExtracted >= nbEltsToExtract)
                     break;
+            }
+            else
+            {
+                ExtractedEntities.pop_back();
             }
         }
     }
@@ -982,28 +1001,37 @@ std::optional<uint32> FITwinGltfMeshComponentWrapper::BakeFeatureIDsInVertexUVs(
         return std::nullopt;
     }
 
-    checkf(pGltfToUnrealTexCoordMap_->find(*featuresAccessorIndex_) == pGltfToUnrealTexCoordMap_->end(),
-        TEXT("there seems to be UVs for features already!"));
+    auto AlreadyInMap = pGltfToUnrealTexCoordMap_->find(*featuresAccessorIndex_);
+    if (AlreadyInMap != pGltfToUnrealTexCoordMap_->end())
+    {
+        uvIndexForFeatures_ = AlreadyInMap->second;
+        return uvIndexForFeatures_;
+    }
 
     // use next free slot (accordingly to GltfToUnrealTexCoordMap)
     if (pGltfToUnrealTexCoordMap_->size() >= MAX_STATIC_TEXCOORDS) {
         checkf(false, TEXT("no space left for any extra UV layer"));
         return std::nullopt;
     }
-    const uint32 uvIndex = (uint32)pGltfToUnrealTexCoordMap_->size();
-    (*pGltfToUnrealTexCoordMap_)[*featuresAccessorIndex_] = uvIndex;
 
-    static const int64 FeatureIDSetIndex = ITwinCesium::Metada::ELEMENT_FEATURE_ID_SLOT;
-    const FITwinCesiumFeatureIdSet& FeatureIdSet =
-        UITwinCesiumPrimitiveFeaturesBlueprintLibrary::GetFeatureIDSets(*pFeatures_)[FeatureIDSetIndex];
-
+    // ==============
+    // TODO: remove?
+    //
+    // Leaving the following on-demand baking for the moment in case it can be fixed later, but it seems
+    // to work only in the Editor! For example, it leads to disappearing meshes in a packaged app (eg.
+    // "ITwinTestApp_Game" build), or even crashes in RT render!? So I have made it so that it is done
+    // directly in ITwinCesiumGltfComponent.cpp's loadPrimitive (look for
+    // MeshBuildCallbacks.Pin()->BakeFeatureIDsInVertexUVs)
+    // Maybe related to cesium-unreal's commit 17d5f9c1b5bda0e653984436145a7566d3300b2c by Julot?
+    //
+    // ==============
 
     TUniquePtr< FStaticMeshComponentRecreateRenderStateContext > RecreateRenderStateContext
         = MakeUnique<FStaticMeshComponentRecreateRenderStateContext>(StaticMesh);
 
+    // Note: validity of RenderData and LODResources[0] already checked in GetSourceStaticMesh
     FStaticMeshLODResources& LODResources = StaticMesh->GetRenderData()->LODResources[0];
     const uint32 NumVertices = LODResources.VertexBuffers.StaticMeshVertexBuffer.GetNumVertices();
-
 
     // Dirty the mesh
     StaticMesh->Modify();
@@ -1012,24 +1040,53 @@ std::optional<uint32> FITwinGltfMeshComponentWrapper::BakeFeatureIDsInVertexUVs(
     StaticMesh->ReleaseResources();
     StaticMesh->ReleaseResourcesFence.Wait();
 
-    // Fill an extra UV layer.
-    // It should have been allocated before! (see #ShouldAllocateUVForFeatures)
+    // Fill the extra UV layer
+    uvIndexForFeatures_ = BakeFeatureIDsInVertexUVs(
+        featuresAccessorIndex_,
+        ICesiumMeshBuildCallbacks::FITwinCesiumMeshData{
+            (const CesiumGltf::MeshPrimitive*)nullptr/*because we provide featuresAccessorIndex_*/,
+            *pMetadata_, *pFeatures_, *pGltfToUnrealTexCoordMap_
+        },
+        LODResources);
+
+    StaticMesh->InitResources();
+    gltfMeshComponent_->MarkRenderStateDirty();
+
+    return uvIndexForFeatures_;
+}
+
+/*static*/
+uint32 FITwinGltfMeshComponentWrapper::BakeFeatureIDsInVertexUVs(
+    std::optional<uint32> featuresAccessorIndex,
+    ICesiumMeshBuildCallbacks::FITwinCesiumMeshData const& CesiumData,
+    FStaticMeshLODResources& LODResources)
+{
+    if (!featuresAccessorIndex)
+    {
+        check(CesiumData.pMeshPrimitive);
+        auto featAccessorIt = CesiumData.pMeshPrimitive->attributes.find("_FEATURE_ID_0");
+        if (featAccessorIt == CesiumData.pMeshPrimitive->attributes.end())
+            return (uint32)-1;
+        featuresAccessorIndex = featAccessorIt->second;
+    }
+
+    static const int64 FeatureIDSetIndex = ITwinCesium::Metada::ELEMENT_FEATURE_ID_SLOT;
+    const FITwinCesiumFeatureIdSet& FeatureIdSet = UITwinCesiumPrimitiveFeaturesBlueprintLibrary
+        ::GetFeatureIDSets(CesiumData.Features)[FeatureIDSetIndex];
+    const uint32 NumVertices = LODResources.VertexBuffers.StaticMeshVertexBuffer.GetNumVertices();
     FStaticMeshVertexBuffer& VtxBuffer = LODResources.VertexBuffers.StaticMeshVertexBuffer;
-    check(uvIndex < VtxBuffer.GetNumTexCoords());
+
+    check(CesiumData.GltfToUnrealTexCoordMap.size() < VtxBuffer.GetNumTexCoords());
+    uint32 const uvIndex = (uint32)CesiumData.GltfToUnrealTexCoordMap.size();
+    CesiumData.GltfToUnrealTexCoordMap[*featuresAccessorIndex] = uvIndex;
     for (uint32 vtxIndex(0); vtxIndex < NumVertices; vtxIndex++)
     {
         int64 const FeatID = UITwinCesiumFeatureIdSetBlueprintLibrary::GetFeatureIDForVertex(
             FeatureIdSet,
             static_cast<int64>(vtxIndex));
-        const float fFeatureId = static_cast<float>((FeatID < 0) ? ITwin::NOT_FEATURE.value() : FeatID);
+        const float fFeatureId = static_cast<float>(
+            (FeatID < 0) ? ITwin::NOT_FEATURE.value() : FeatID);
         VtxBuffer.SetVertexUV(vtxIndex, uvIndex, FVector2f(fFeatureId, 0.0f));
     }
-
-    StaticMesh->InitResources();
-    gltfMeshComponent_->MarkRenderStateDirty();
-
-    uvIndexForFeatures_ = uvIndex;
-
-    return uvIndexForFeatures_;
+    return uvIndex;
 }
-

@@ -23,6 +23,8 @@
 
 #include <Math/UEMathExts.h>
 
+/*static*/ FIModelElementsKey FIModelElementsKey::NOT_ANIMATED(ITwin::NOT_ELEMENT);
+
 namespace ITwin::Timeline {
 
 ElementTimelineEx& MainTimeline::ElementTimelineFor(FIModelElementsKey const ElementsKey,
@@ -32,7 +34,9 @@ ElementTimelineEx& MainTimeline::ElementTimelineFor(FIModelElementsKey const Ele
 	const auto ItAndFlag = ElementsKeyToTimeline.try_emplace(ElementsKey, Index);
 	if (ItAndFlag.second) // was inserted
 	{
-		auto&& ElementTimelinePtr = Add(std::make_shared<ElementTimelineEx>(ElementsKey, IModelElements));
+		bHasNewOrModifiedTimeline_ = true;
+		auto&& ElementTimelinePtr = AddTimeline(
+			std::make_shared<ElementTimelineEx>(ElementsKey, IModelElements));
 		check(Index != (int)GetContainer().size());
 		return *ElementTimelinePtr;
 	}
@@ -40,6 +44,18 @@ ElementTimelineEx& MainTimeline::ElementTimelineFor(FIModelElementsKey const Ele
 	{
 		return *GetContainer()[ItAndFlag.first->second];
 	}
+}
+
+void MainTimeline::OnElementsTimelineModified(ElementTimelineEx& ModifiedTimeline)
+{
+	// See "Note 2" in MainTimelineBase<_ObjectTimeline>::AddTimeline
+	IncludeTimeRange(ModifiedTimeline);
+	// No longer used to notify Animator that new tiles were received, but still used when new Elements are
+	// added to existing (grouped Elements) timelines
+	ModifiedTimeline.SetModified();
+	// Used to notify the animator's TickAnimation that something has changed (new or modified timeline) so
+	// that ApplyAnimation is called and not skipped (important when bPaused_)
+	bHasNewOrModifiedTimeline_ = true;
 }
 
 ElementTimelineEx* MainTimeline::GetElementTimelineFor(FIModelElementsKey const ElementsKey) const
@@ -51,40 +67,20 @@ ElementTimelineEx* MainTimeline::GetElementTimelineFor(FIModelElementsKey const 
 		return GetContainer()[It->second].get();
 }
 
-void MainTimeline::ForEachElementTimeline(ITwinElementID const& ElementID,
-										  std::function<void(ElementTimelineEx&)> const& Func)
+void MainTimeline::AddNonAnimatedDuplicate(ITwinElementID const Elem)
 {
-	for (auto& ElementTimelinePtr : GetContainer())
-	{
-		if (ElementTimelinePtr->AppliesToElement(ElementID))
-			Func(*ElementTimelinePtr);
-	}
+	NonAnimatedDuplicates.insert(Elem);
 }
 
-void MainTimeline::ForEachElementTimeline(ITwinElementID const& ElementID,
-										  std::function<void(ElementTimelineEx const&)> const& Func) const
+void MainTimeline::RemoveNonAnimatedDuplicate(ITwinElementID const Elem)
 {
-	for (auto const& ElementTimelinePtr : GetContainer())
-	{
-		if (ElementTimelinePtr->AppliesToElement(ElementID))
-			Func(*ElementTimelinePtr);
-	}
-}
-
-bool MainTimeline::HasTimelineForElement(ITwinElementID const& ElementID) const
-{
-	bool bFound = false;
-	ForEachElementTimeline(ElementID, [&bFound](FITwinElementTimeline const&) {bFound = true; });
-	return bFound;
+	NonAnimatedDuplicates.erase(Elem);
 }
 
 bool ElementTimelineEx::AppliesToElement(ITwinElementID const& ElementID) const
 {
-	// this and std::holds_alternative<ITwinElementID>(ElementsKey.Key) are equivalent conditions,
-	// but which would be the fastest?
-	if (IModelElements.size() == 1)
+	if (IModelElements.size() == 1) // also OK for groups of 1, which are not so unusual...
 	{
-		// or: std::get<0>(ElementsKey.Key) == ElementID)
 		return (*IModelElements.begin() == ElementID);
 	}
 	else
@@ -170,11 +166,17 @@ bool ElementTimelineEx::HasFullyHidingCuttingPlaneKeyframes() const
 
 bool ElementTimelineEx::HasPartialVisibility() const
 {
-	for (auto&& Keyframe : Visibility.Values)
+	for (auto It = Visibility.Values.begin(), ItEnd = Visibility.Values.end(); It != ItEnd; ++It)
 	{
-		// TODO_GCO: a bit too conservative: Linear interpolation between visibilities of 0 or 1 at both end of a time segment does not mean the timeline has partial visibility. But the case is probably quite unlikely and rather an issue with the timeline building
-		if (Keyframe.Interpolation == EInterpolation::Linear
-			|| (Keyframe.Value != 0.f && Keyframe.Value != 1.f))
+		if (It->Value != 0.f && It->Value != 1.f)
+		{
+			return true;
+		}
+		auto NextIt = It;
+		++NextIt;
+		// The only way to have transparency between the two frames is if going from 0 to 1 or 1 to 0 with
+		// Linear interpolation:
+		if (It->Interpolation == EInterpolation::Linear && NextIt != ItEnd && It->Value != NextIt->Value)
 		{
 			return true;
 		}
@@ -216,16 +218,6 @@ void ElementTimelineEx::SetTransformationDisabledAt(double const Time, EInterpol
 	Entry.bIsTransformed = ITwin::Flag::Absent;
 	Entry.Transform = FTransform::Identity;
 	Transform.Values.insert(Entry);
-}
-
-void ElementTimelineEx::AddIModelElements(std::vector<ITwinElementID> const& NewElements)
-{
-	check(IModelElementsKey.Key.index() == 1);
-	for (auto&& Elem : NewElements)
-	{
-		if (IModelElements.insert(Elem).second)
-			bIModelElementsBBoxNeedsUpdate = true;
-	}
 }
 
 FBox const& ElementTimelineEx::GetIModelElementsBBox(

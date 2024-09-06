@@ -16,7 +16,9 @@
 #include <CesiumMaterialType.h>
 #include <CesiumTileIDHash.h>
 
+#include <functional>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <unordered_map>
 
@@ -39,6 +41,8 @@ class FITwinSynchro4DSchedulesInternals
 	UITwinSynchro4DSchedules& Owner;
 	const bool bDoNotBuildTimelines; ///< defaults to false, true only for internal unit testing
 	FITwinScheduleTimelineBuilder Builder;
+	/// The value tells whether the range is valid or not (empty schedule)
+	std::optional<bool> ScheduleTimeRangeIsKnown;
 	FITwinSchedulesImport SchedulesApi; // <== must be declared AFTER Builder
 	std::recursive_mutex& Mutex;
 	std::vector<FITwinSchedule>& Schedules;
@@ -56,15 +60,14 @@ class FITwinSynchro4DSchedulesInternals
 	/// Deferred processing of the Elements which were notified during the last tick ('last' to avoid doing
 	/// anything before the whole tile has been loaded, since we are notified of the tile meshes one by one)
 	void HandleReceivedElements(bool& bNewTilesReceived);
+	void UpdateConnection(bool const bOnlyIfReady);
+	bool ResetSchedules();
+	void Reset();
+	bool IsReady() const;
 
 public:
 	FITwinSynchro4DSchedulesInternals(UITwinSynchro4DSchedules& Owner, bool const InDoNotBuildTimelines,
 									  std::recursive_mutex& Mutex, std::vector<FITwinSchedule>& Schedules);
-	bool IsReady() const;
-	bool MakeReady();
-	void UpdateConnection(bool const bOnlyIfReady);
-	bool ResetSchedules();
-	void Reset();
 
 	static void GetAnimatableMaterials(UMaterialInterface*& OpaqueMat, UMaterialInterface*& TranslucentMat,
 									   UObject& MaterialOwner);
@@ -73,12 +76,15 @@ public:
 
 	[[nodiscard]] FITwinScheduleTimeline& Timeline();
 	[[nodiscard]] FITwinScheduleTimeline const& GetTimeline() const;
+	void ForEachElementTimeline(ITwinElementID const ElementID,
+								std::function<void(FITwinElementTimeline const&)> const& Func) const;
 	[[nodiscard]] FString ElementTimelineAsString(ITwinElementID const ElementID) const;
 	/// \param Func Function to execute for each schedule. Returning false will skip the visit of the
 	///		remaining schedules not yet visited.
 	void VisitSchedules(std::function<bool(FITwinSchedule const&)> const& Func) const;
 
 	void OnNewTileMeshBuilt(CesiumTileID const& TileId, std::set<ITwinElementID>&& MeshElementIDs);
+	void SetScheduleTimeRangeIsKnown();
 
 	FITwinSchedulesImport& GetSchedulesApiReadyForUnitTesting();
 
@@ -92,7 +98,3 @@ public:
 	static void FinalizeAnchorPos(ITwin::Timeline::FDeferredAnchorPos const& Deferred,
 								  FBox const& ElementsWorldBox);
 };
-
-/// Not strictly "seconds" but "seconds [of script time] per second [of user replay time]"
-constexpr double REPLAYSPEED_FACTOR_UI_TO_SECONDS = 86400.;
-constexpr double REPLAYSPEED_FACTOR_SECONDS_TO_UI = (1. / 86400.);

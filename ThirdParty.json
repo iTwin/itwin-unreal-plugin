@@ -40,8 +40,23 @@
     "license": ["GNU LGPL v2.1"]
   },
   {
+    "name": "fmt",
+    "url": "https://github.com/fmtlib/fmt",
+    "license": ["MIT"]
+  },
+  {
     "name": "UnrealTransformGizmo",
     "url": "https://github.com/robinwood3d/UnrealTransformGizmo",
+    "license": [ "MIT" ]
+  },
+  {
+    "name": "VictoryPlugin53",
+    "url": "https://forums.unrealengine.com/t/ramas-extra-blueprint-nodes-for-ue5-no-c-required/231476",
     "license": ["MIT"]
+  },
+  {
+    "name": "libassert",
+    "url": "https://github.com/jeremy-rifkin/libassert",
+    "license": [ "MIT" ]
   }
 ]

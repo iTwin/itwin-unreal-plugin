@@ -758,6 +758,11 @@ public:
     } else if (pMainThreadResult) {
       UITwinCesiumGltfComponent* pGltf =
           reinterpret_cast<UITwinCesiumGltfComponent*>(pMainThreadResult);
+      if (this->_pActor->GetMeshBuildCallbacks().IsValid())
+      {
+          this->_pActor->GetMeshBuildCallbacks().Pin()->BeforeTileDestruction(
+              tile, pGltf);
+      }
       FITwinCesiumLifetime::destroyComponentRecursively(pGltf);
     }
   }

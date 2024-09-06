@@ -17,9 +17,11 @@ MODULE_EXPORT namespace SDK::Core
 	{
 	public:
 		/// Create new decoration on server
-		virtual void Create(const std::string& name) = 0;
+		virtual void Create(
+			const std::string& name, const std::string& itwinid,
+			const std::string& accessToken) = 0;
 		/// Retreive the decoration from server
-		virtual void Get(const std::string& id) = 0;
+		virtual void Get(const std::string& id, const std::string& accessToken) = 0;
 		/// Delete the decoration on server
 		virtual void Delete() = 0;
 		/// Get decoration identifier
@@ -30,9 +32,11 @@ MODULE_EXPORT namespace SDK::Core
 	{
 	public:
 		/// Create new decoration on server
-		void Create(const std::string& name) override;
+		void Create(
+			const std::string& name, const std::string& itwinid,
+			const std::string& accessToken) override;
 		/// Retreive the decoration from server
-		void Get(const std::string& id) override;
+		void Get(const std::string& id, const std::string& accessToken) override;
 		/// Delete the decoration on server
 		void Delete() override;
 		/// Get decoration identifier
@@ -51,4 +55,7 @@ MODULE_EXPORT namespace SDK::Core
 		const std::unique_ptr<Impl> impl_;
 		Impl& GetImpl();
 	};
+
+	std::vector<std::shared_ptr<IDecoration>> GetITwinDecorations(
+		const std::string& itwinid, const std::string& accessToken);
 }

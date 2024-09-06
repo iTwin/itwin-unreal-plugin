@@ -10,44 +10,63 @@
 #include <filesystem>
 
 #include <catch2/catch_all.hpp>
-#include <fstream>
-#include <thread>
+#include <httpmockserver/mock_server.h>
+#include <httpmockserver/port_searcher.h>
 
-#include <process.hpp>
 using namespace SDK::Core;
 
-static std::string serverURL("localhost");
-static int serverPort = 8080;
-
-static bool g_startNewServer = true;
-
-std::unique_ptr<TinyProcessLib::Process> g_serverProcess;
-void StartServer()
-{
-	//using namespace subprocess;
-	using namespace TinyProcessLib;
-	std::filesystem::path serverexePath(CMAKE_SOURCE_DIR);
-	serverexePath /= "../../Private/Server";
-
-	bool serverStarted = false;
-	auto fctOut = [&serverStarted](const char* bytes, size_t n) {
-		std::string s(bytes, n);
-		std::cout << "[server] " << s;
-		if (s.find("router started") != std::string::npos)
-			serverStarted = true;
-		};
-
-	g_serverProcess.reset(new Process("go run server.go -server "+ serverURL + ":" + std::to_string(serverPort), serverexePath.string().c_str(),
-		fctOut,
-		fctOut));
-
-	std::cout << "Waiting server to start:" << std::endl;
-	int exit_status;
-	while (!g_serverProcess->try_get_exit_status(exit_status) && !serverStarted) {
-		std::cout << ".";
-		std::this_thread::sleep_for(std::chrono::milliseconds(500));
+class HTTPMock : public httpmock::MockServer {
+public:
+	static std::unique_ptr<httpmock::MockServer> MakeServer()
+	{
+		return httpmock::getFirstRunningMockServer<HTTPMock>();
 	}
+
+	explicit HTTPMock(int port = 9200) : MockServer(port) {}
+
+	std::string GetUrl()
+	{
+		return "http://localhost:" + std::to_string(getPort());
+	}
+
+private:
+
+	/// Handler called by MockServer on HTTP request.
+	Response responseHandler(
+		const std::string& url,
+		const std::string& method,
+		const std::string& data,
+		const std::vector<UrlArg>& urlArguments,
+		const std::vector<Header>& headers)
+	{
+		if (method == "POST" && matchesURL(url, "/advviz/v1/decorations")) {
+			std::string s = "{\"data\":{\"gcs\":{\"center\":[0,0,0], \"wkt\":\"WGS84\"}, \"itwinid\":\"904a89f7-b63c-4ae1-a223-88517bd4bb08\", \"name\":\"test auto\"}, \"id\":\"66c476ed1129763cf5485826\"}";
+			return Response(200, s);
+		}
+		if (method == "GET" && matchesURL(url, "/advviz/v1/decorations")) {
+			std::string s = "{\"name\":\"test auto\",\"itwinid\":\"904a89f7-b63c-4ae1-a223-88517bd4bb08\",\"gcs\":{\"wkt\":\"WGS84\",\"center\":[0,0,0]},\"id\":\"66c476ed1129763cf5485826\"}";
+			return Response(200, s);
+		}
+		if (method == "DELETE" && matchesURL(url, "/advviz/v1/decorations")) {
+			return Response(200, "{\"id\":\"66c476ed1129763cf5485826\"");
+		}
+		// Return "URI not found" for the undefined methods
+		return Response(404, "Not Found");
+	}
+
+	/// Return true if \p url starts with \p str.
+	bool matchesURL(const std::string& url, const std::string& str) const {
+		return url.substr(0, str.size()) == str;
+	}
+
+};
+
+const HTTPMock* const GetHttpMock()
+{
+	static std::unique_ptr<httpmock::MockServer> httpMockM = HTTPMock::MakeServer();
+	return static_cast<HTTPMock*>(httpMockM.get());
 }
+
 
 TEST_CASE("Visualization:Config")
 {
@@ -72,22 +91,13 @@ TEST_CASE("Visualization:Config")
 void SetDefaultConfig()
 {
 	Config::SConfig config;
-	config.server.server = serverURL;
-	config.server.port = serverPort;
-	config.server.urlapiprefix = "/advviz/v1";
+	config.server.server = "http://localhost";
+	config.server.port = GetHttpMock()->getPort();
+	config.server.urlapiprefix = "/advviz/v1/decorations";
 	Config::Init(config);
 }
 
-
-
-/*
 TEST_CASE("Visualization"){
-
-	if (g_startNewServer)
-	{
-		g_startNewServer = false;
-		StartServer();
-	}
 
 	SECTION("Decoration") {
 		try {
@@ -95,32 +105,24 @@ TEST_CASE("Visualization"){
 			REQUIRE(GetDefaultHttp().get() != nullptr);
 
 			auto decoration = IDecoration::New();
-			decoration->Create("test auto");
+			decoration->Create("test auto", "", "");
 			REQUIRE(decoration->GetId() != "");
 
+			// create a decoration copy by fetching previous decoration from server
 			auto decoration2 = IDecoration::New();
-			decoration2->Get(decoration->GetId());
+			decoration2->Get(decoration->GetId(), "");
 			REQUIRE(decoration2->GetId() == decoration->GetId());
 
+			// delete decoration on server
 			decoration->Delete();
-
-			auto decoration3 = IDecoration::New();
-			REQUIRE_THROWS(decoration3->Get(decoration->GetId()));
-
 		}
 		catch (std::string& error)
 		{
 			FAIL("Error: " << error);
 		}
 	}
-	
-	if (g_serverProcess)
-	{
-		std::cout << "Stop server process" << std::endl;
-		g_serverProcess->kill();
-	}
 }
-*/
+
 
 class ExtendedDecoration : public Decoration
 {
@@ -152,3 +154,6 @@ TEST_CASE("Visualization:ExtendedDecoration") {
 		FAIL("Error: " << error);
 	}
 }
+
+
+

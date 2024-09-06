@@ -25,25 +25,28 @@ MODULE_EXPORT namespace SDK::Core {
 	{
 	public:
 		using Headers = std::vector<std::pair<std::string, std::string>>;
+		using Response = std::pair<long, std::string>;
 
-		virtual void SetBaseUrl(const std::string& url) = 0;
+		void SetBaseUrl(const std::string& url);
+		std::string const& GetBaseUrl() const { return baseUrl_; }
+
 		virtual void SetBasicAuth(const std::string& login, const std::string& passwd) = 0;
-		virtual std::pair<long, std::string> Get(const std::string& url, const std::string& body, const Headers& h = {}, bool isFullUrl = false) = 0;
-		virtual std::pair<long, std::string> Patch(const std::string& url, const std::string& body, const Headers& h = {}) = 0;
-		virtual std::pair<long, std::string> Post(const std::string& url, const std::string& body, const Headers& h = {}) = 0;
-		virtual std::pair<long, std::string> Put(const std::string& url, const std::string& body, const Headers& h = {}) = 0;
-		virtual std::pair<long, std::string> Delete(const std::string& url, const std::string& body, const Headers& h = {}) = 0;
+		virtual Response Get(const std::string& url, const std::string& body, const Headers& h = {}, bool isFullUrl = false) = 0;
+		virtual Response Patch(const std::string& url, const std::string& body, const Headers& h = {}) = 0;
+		virtual Response Post(const std::string& url, const std::string& body, const Headers& h = {}) = 0;
+		virtual Response Put(const std::string& url, const std::string& body, const Headers& h = {}) = 0;
+		virtual Response Delete(const std::string& url, const std::string& body, const Headers& h = {}) = 0;
 
-		std::pair<long, std::string> GetJson(const std::string& url, const std::string& body, const Headers& h = {}, bool isFullUrl = false);
-		std::pair<long, std::string> PatchJson(const std::string& url, const std::string& body, const Headers& h = {});
-		std::pair<long, std::string> PostJson(const std::string& url, const std::string& body, const Headers& h = {});
-		std::pair<long, std::string> PutJson(const std::string& url, const std::string& body, const Headers& h = {});
-		std::pair<long, std::string> DeleteJson(const std::string& url, const std::string& body, const Headers& h = {});
+		Response GetJson(const std::string& url, const std::string& body, const Headers& h = {}, bool isFullUrl = false);
+		Response PatchJson(const std::string& url, const std::string& body, const Headers& h = {});
+		Response PostJson(const std::string& url, const std::string& body, const Headers& h = {});
+		Response PutJson(const std::string& url, const std::string& body, const Headers& h = {});
+		Response DeleteJson(const std::string& url, const std::string& body, const Headers& h = {});
 
 		template<typename Type>
 		long GetJson(Type& t, const std::string& url, const std::string& body, const Headers& h = {}, bool isFullUrl = false)
 		{
-			std::pair<long, std::string> r = GetJson(url, body, h, isFullUrl);
+			Response r = GetJson(url, body, h, isFullUrl);
 			if (r.first == 200)
 				Json::FromString(t, r.second);
 			return r.first;
@@ -59,7 +62,7 @@ MODULE_EXPORT namespace SDK::Core {
 		template<typename Type>
 		long PutJson(Type& t, const std::string& url, const std::string& body, const Headers& h = {})
 		{
-			std::pair<long, std::string> r = PutJson(url, body, h);
+			Response r = PutJson(url, body, h);
 			if (r.first == 200)
 				Json::FromString(t, r.second);
 			return r.first;
@@ -75,7 +78,7 @@ MODULE_EXPORT namespace SDK::Core {
 		template<typename Type>
 		long PatchJson(Type& t, const std::string& url, const std::string& body, const Headers& h = {})
 		{
-			std::pair<long, std::string> r = PatchJson(url, body, h);
+			Response r = PatchJson(url, body, h);
 			if (r.first == 200)
 				Json::FromString<Type>(t, r.second);
 			return r.first;
@@ -91,7 +94,7 @@ MODULE_EXPORT namespace SDK::Core {
 		template<typename Type>
 		long PostJson(Type& t, const std::string& url, const std::string& body, const Headers& h = {})
 		{
-			std::pair<long, std::string> r = PostJson(url, body, h);
+			Response r = PostJson(url, body, h);
 			if (r.first == 200 || r.first == 201)
 				Json::FromString<Type>(t, r.second);
 			return r.first;
@@ -124,6 +127,9 @@ MODULE_EXPORT namespace SDK::Core {
 
 	protected:
 		Http();
+
+	private:
+		std::string baseUrl_; // base URL
 	};
 
 }

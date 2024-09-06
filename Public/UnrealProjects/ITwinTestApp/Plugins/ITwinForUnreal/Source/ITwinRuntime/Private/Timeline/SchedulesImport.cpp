@@ -11,14 +11,15 @@
 #include "ReusableJsonQueries.h"
 #include "TimeInSeconds.h"
 #include "Timeline.h"
+#include <ITwinIModel.h>
+#include <ITwinServerConnection.h>
+#include <ITwinSynchro4DSchedules.h>
+#include <ITwinSynchro4DSchedulesInternals.h>
 #include <Math/UEMathExts.h> // for RandomFloatColorFromIndex
 
 #include <Dom/JsonObject.h>
 #include <HttpModule.h>
 #include <Input/Reply.h>
-#include <ITwinServerConnection.h>
-#include <ITwinSynchro4DSchedules.h>
-#include <ITwinSynchro4DSchedulesInternals.h>
 #include <Logging/LogMacros.h>
 #include <Math/UnrealMathUtility.h>
 #include <Math/Vector.h>
@@ -58,29 +59,6 @@ namespace ITwin_TestOverrides
 constexpr bool s_bDebugNoPartialTransparencies = false;
 constexpr bool s_bDebugForcePartialTransparencies = false; // will extract EVERYTHING! SLOW!!
 
-/**
- * The Synchro4D api should allow us to: (https://dev.azure.com/bentleycs/beconnect/_workitems/edit/826180)
- *  1. replay the full construction schedule
- *  2. replay the construction schedule for a given time range
- *  3. display the iModel at a specific time
- *
- * Note: the work item above mentions one of the inputs is a "map of schedule entities (schedule resources)
- *		 to 3D entities (iModel elements)" <== Bernardas said this grouping does not appear in how the
- *		 animations are streamed from the web api... We'll just get a list of animated elements that happen
- *		 share the same task (the resource id is not even mentioned!)
- *
- * FITwinSchedulesImport is only our internal (private) API, but the Bentley-UE plugin will need to expose
- * public entry points for these tasks, in a way that allows to stream only the necessary amount of data:
- *  a. handle construction time for the currently visible iModel (physical) extent
- *    a1. show the whole schedule's time range
- *    a2. set the UE world at a specific time
- *    a3. zoom the UE time into a specific time range (to prioritize loading for the tasks occurring during
- *		  this interval)
- *  b. link each animated element to its own sub-schedule (list of tasks w/ appearance settings)
- *  c. play/pause/stop/reverse/speed up/slow down the construction schedule (whole, and maybe also per
- *	   element?)
- *  d. pre-fetch animation data for a not-yet-visible/focused physical extent and time range?
- */
 class FITwinSchedulesImport::FImpl
 {
 private:
@@ -91,7 +69,6 @@ private:
 		[](FITwinSchedule const&, size_t const/*AnimIdx*/, FLock&) {};
 	FOnAnimationGroupModified OnAnimationGroupModified =
 		[](size_t const/*GroupIdx*/, std::set<ITwinElementID> const& /*GroupElements*/, FLock&) {};
-	TObjectPtr<AITwinServerConnection> ServerConnection;
 	ReusableJsonQueries::FMutex& Mutex;///< TODO_GCO: use a per-Schedule mutex?
 	const int RequestPagination;///< pageSize for paginated requests
 	/// When passing a collection of ElementIDs to filter a request, we need to cap the size for performance
@@ -110,7 +87,7 @@ private:
 
 public:
 	FImpl(FITwinSchedulesImport const& InOwner, ReusableJsonQueries::FMutex& InMutex,
-			std::vector<FITwinSchedule>& InSchedules, const int InRequestPagination = 100,
+			std::vector<FITwinSchedule>& InSchedules, const int InRequestPagination = 500,
 			const size_t InMaxElementIDsFilterSize = 900)
 		: Owner(&InOwner)
 		, Mutex(InMutex)
@@ -124,8 +101,7 @@ public:
 	FImpl(FImpl const&) = delete;
 	FImpl& operator=(FImpl const&) = delete;
 
-	void ResetConnection(TObjectPtr<AITwinServerConnection> ServerConnection,
-		FString const& ITwinAkaProjectAkaContextId, FString const& IModelId);
+	void ResetConnection(FString const& ITwinAkaProjectAkaContextId, FString const& IModelId);
 	void SetSchedulesImportObservers(FOnAnimationBindingAdded const& InOnAnimationBindingAdded,
 									 FOnAnimationGroupModified const& InOnAnimationGroupModified);
 	std::pair<int, int> HandlePendingQueries();
@@ -137,10 +113,13 @@ public:
 		FDateTime const UntilTime, std::function<void(bool/*success*/)>&& OnQueriesCompleted);
 
 private:
-	UITwinSynchro4DSchedules const& SchedulesComponent() const
-		{ return *Owner->Owner; }
+	UITwinSynchro4DSchedules const& SchedulesComponent() const { return *Owner->Owner; }
+	UITwinSynchro4DSchedules& SchedulesComponent() { return *Owner->Owner; }
+	TObjectPtr<AITwinServerConnection> const& GetServerConnection() const
+		{ return Cast<AITwinIModel>(SchedulesComponent().GetOwner())->ServerConnection; }
 	FITwinSynchro4DSchedulesInternals const& SchedulesInternals() const
 		{ return GetInternals(SchedulesComponent()); }
+	FITwinSynchro4DSchedulesInternals& SchedulesInternals() { return GetInternals(SchedulesComponent()); }
 	void RequestSchedules(ReusableJsonQueries::FStackingToken const&,
 		std::optional<FString> const PageToken = {}, FLock* optLock = nullptr);
 	void RequestAnimatedEntityUserFieldId(ReusableJsonQueries::FStackingToken const&,
@@ -172,11 +151,18 @@ private:
 		Insertable& CreatedPropertys, FLock&);
 	void CompletedProperty(FITwinSchedule& Schedule, std::vector<size_t>& Bindings, FLock& Lock,
 						   FString const& From);
+	void RequestAllTasks(ReusableJsonQueries::FStackingToken const&, size_t const SchedStartIdx,
+		size_t const SchedEndIdx, FLock&, std::optional<FString> const PageToken = {});
 	void RequestTask(ReusableJsonQueries::FStackingToken const&, size_t const SchedIdx, size_t const AnimIdx,
 					 FLock&);
 	void ParseTaskDetails(ReusableJsonQueries::FStackingToken const& Token,
-		TSharedPtr<FJsonObject> const& responseJson, size_t const SchedIdx, size_t const AnimIdx,
-		FLock* Lock = nullptr);
+		TSharedPtr<FJsonObject> const& responseJson, size_t const SchedIdx, FString const TaskId,
+		size_t const TaskInVec, FLock* MaybeLock = nullptr);
+	void ParseAppearanceProfileDetails(ReusableJsonQueries::FStackingToken const& Token,
+		TSharedPtr<FJsonObject> const& JsonObj, size_t const SchedIdx, FString const AppearanceProfileId,
+		size_t const AppearanceProfileInVec, FLock* MaybeLock = nullptr);
+	void RequestAllAppearanceProfiles(ReusableJsonQueries::FStackingToken const&, size_t const SchedStartIdx,
+		size_t const SchedEndIdx, FLock&, std::optional<FString> const PageToken = {});
 	void RequestAppearanceProfile(ReusableJsonQueries::FStackingToken const&, size_t const SchedIdx,
 								  size_t const AnimIdx, FLock&);
 	bool Parse3DPathAlignment(FString const& Alignment,
@@ -186,7 +172,6 @@ private:
 	void Request3DPath(ReusableJsonQueries::FStackingToken const&, size_t const SchedIdx,
 					   size_t const TransfoAssignmentIdx, std::optional<FString> const PageToken, FLock&);
 
-	//void RequestSchedulesTasks(...);
 	//void DetermineTaskElements(...); <== blame here to retrieve method to query resource assignments
 	//void RequestResourceEntity3Ds(...); <== blame here to retrieve method to query resource entity3Ds
 
@@ -230,14 +215,14 @@ private:
 	{
 		switch (SchedulesGeneration)
 		{
-		case EITwinSchedulesGeneration::Unknown: // not yet known: try NextGen first
-			[[fallthrough]];
 		case EITwinSchedulesGeneration::NextGen:
 			return FString::Printf(TEXT("https://%ssynchro4dschedulesapi-eus.bentley.com/api/v%d/schedules"),
-								   *ServerConnection->UrlPrefix(), GetSchedulesAPIVersion());
+								   *GetServerConnection()->UrlPrefix(), GetSchedulesAPIVersion());
+		case EITwinSchedulesGeneration::Unknown: // not yet known: try Legacy first
+			[[fallthrough]];
 		case EITwinSchedulesGeneration::Legacy:
 			return FString::Printf(TEXT("https://%ses-api.bentley.com/4dschedule/v%d/schedules"),
-								   *ServerConnection->UrlPrefix(), GetSchedulesAPIVersion());
+								   *GetServerConnection()->UrlPrefix(), GetSchedulesAPIVersion());
 		}
 		check(false);
 		return "<invalidUrl>";
@@ -247,11 +232,11 @@ private:
 	{
 		switch (SchedulesGeneration)
 		{
+		case EITwinSchedulesGeneration::Unknown:
+			// not yet known: we'll try Legacy first (see GetSchedulesAPIBaseUrl)
+			[[fallthrough]];
 		case EITwinSchedulesGeneration::Legacy:
 			return "projectId";
-		case EITwinSchedulesGeneration::Unknown:
-			// not yet known: we'll try NextGen first (see GetSchedulesAPIBaseUrl)
-			[[fallthrough]];
 		case EITwinSchedulesGeneration::NextGen:
 			return "contextId";
 		}
@@ -316,10 +301,15 @@ void FITwinSchedulesImport::FImpl::RequestSchedules(ReusableJsonQueries::FStacki
 			auto NewScheds = responseJson->GetArrayField(TEXT("items"));
 			S4D_LOG(TEXT("Received %d schedules for iTwin %s"), (int)NewScheds.Num(), *ITwinId);
 			if (0 == NewScheds.Num())
+			{
+				if (EITwinSchedulesGeneration::Unknown != SchedulesGeneration)
+				{
+					SchedulesInternals().SetScheduleTimeRangeIsKnown();
+				}
 				return;
+			}
 			FLock Lock(Mutex);
 			size_t const SchedStartIdx = Schedules.size();
-			Schedules.reserve(SchedStartIdx + NewScheds.Num());
 			for (const auto& SchedVal : NewScheds)
 			{
 				const auto& SchedObj = SchedVal->AsObject();
@@ -327,6 +317,11 @@ void FITwinSchedulesImport::FImpl::RequestSchedules(ReusableJsonQueries::FStacki
 				JSON_GETSTR_OR(SchedObj, "iModelId", IModelId, continue)
 				if (IModelId == TargetedIModelId)
 				{
+					if (EITwinSchedulesGeneration::Unknown == SchedulesGeneration)
+					{
+						// was tried first (see important comment on GetSchedulesAPIBaseUrl!)
+						SchedulesGeneration = EITwinSchedulesGeneration::Legacy;
+					}
 					Schedules.emplace_back(
 						FITwinSchedule{ SchedObj->GetStringField(TEXT("id")),
 										SchedObj->GetStringField(TEXT("name")),
@@ -338,11 +333,27 @@ void FITwinSchedulesImport::FImpl::RequestSchedules(ReusableJsonQueries::FStacki
 			}
 			FString NextPageToken;
 			if (responseJson->TryGetStringField(TEXT("nextPageToken"), NextPageToken))
+			{
 				RequestSchedules(Token, NextPageToken, &Lock);
+			}
 			else
+			{
 				Queries->StatsResetActiveTime();
-			if (EITwinSchedulesGeneration::Legacy != SchedulesGeneration)
-				RequestAnimatedEntityUserFieldId(Token, SchedStartIdx, Schedules.size(), Lock);
+				if (Schedules.empty() && EITwinSchedulesGeneration::Unknown != SchedulesGeneration)
+				{
+					SchedulesInternals().SetScheduleTimeRangeIsKnown();
+				}
+			}
+			if (SchedStartIdx != Schedules.size())
+			{
+				if (EITwinSchedulesGeneration::Legacy != SchedulesGeneration)
+					RequestAnimatedEntityUserFieldId(Token, SchedStartIdx, Schedules.size(), Lock);
+				if (Owner->Owner->bDebugPrefetchAllTasksAndAppearanceProfiles)
+				{
+					RequestAllTasks(Token, SchedStartIdx, Schedules.size(), Lock);
+					RequestAllAppearanceProfiles(Token, SchedStartIdx, Schedules.size(), Lock);
+				}
+			}
 		});
 }
 
@@ -401,6 +412,7 @@ bool FITwinSchedulesImport::FImpl::SetAnimatedEntityUserFieldId(TSharedRef<FJson
 
 bool FITwinSchedulesImport::FImpl::SupportsAnimationBindings(size_t const SchedIdx, FLock&) const
 {
+	ensure(EITwinSchedulesGeneration::Unknown != SchedulesGeneration);
 	if (EITwinSchedulesGeneration::NextGen == SchedulesGeneration)
 		// Note: some empty NextGen schedules do not even have the required user field, let's not assert on
 		// that - it's actly the case for schedule 75c8ecfb-fa5d-4669-b68d-33b1bd29a69e in our only NextGen
@@ -410,8 +422,118 @@ bool FITwinSchedulesImport::FImpl::SupportsAnimationBindings(size_t const SchedI
 		return EITwinSchedulesGeneration::Legacy == SchedulesGeneration;
 }
 
-// 4dschedule/v1/schedules/{scheduleId}/tasks: no longer needed - blame here to retrieve
-//void FITwinSchedulesImport::FImpl::RequestSchedulesTasks(...)
+void FITwinSchedulesImport::FImpl::RequestAllTasks(ReusableJsonQueries::FStackingToken const& Token,
+	size_t const SchedStartIdx, size_t const SchedEndIdx, FLock& Lock,
+	std::optional<FString> const PageToken /*= {}*/)
+{
+	// Cannot have a page token common to several Schedules tasks queries...
+	check(!PageToken || SchedEndIdx == (SchedStartIdx + 1));
+	FUrlArgList RequestArgList = {
+		{ TEXT("pageSize"), FString::Printf(TEXT("%d"), RequestPagination) } };
+	if (PageToken)
+		RequestArgList.push_back({ TEXT("pageToken"), *PageToken });
+	for (auto SchedIdx = SchedStartIdx; SchedIdx < SchedEndIdx; ++SchedIdx)
+	{
+		Queries->StackRequest(Token, &Lock, EVerb::GET, { Schedules[SchedIdx].Id, TEXT("tasks") },
+							  FUrlArgList(RequestArgList),
+			[this, SchedIdx, &Token](TSharedPtr<FJsonObject> const& responseJson)
+			{
+				auto const& Items = responseJson->GetArrayField("items");
+				if (Items.IsEmpty())
+				{
+					S4D_WARN(TEXT("Did not receive any task for schedule '%s'!"), *Schedules[SchedIdx].Name);
+				}
+				else
+				{
+					FLock Lock(Mutex);
+					bool const bMoreToCome = responseJson->HasTypedField<EJson::String>("nextPageToken");
+					auto&& Sched = Schedules[SchedIdx];
+					S4D_LOG(TEXT("Received %d tasks (total %d%s) for schedule '%s'"), Items.Num(),
+						(int)Sched.Tasks.size() + Items.Num(),
+						bMoreToCome ? TEXT(", more to come") : TEXT(", final reply"),
+						*Schedules[SchedIdx].Name);
+					if (bMoreToCome)
+					{
+						RequestAllTasks(Token, SchedIdx, SchedIdx + 1, Lock,
+										responseJson->GetStringField("nextPageToken"));
+					}
+					Sched.Tasks.reserve(Sched.Tasks.size() + Items.Num());
+					auto& MainTimeline = SchedulesInternals().Timeline();
+					for (auto&& Item : Items)
+					{
+						const auto& TaskObj = Item->AsObject();
+						FString const TaskId = TaskObj->GetStringField(TEXT("id"));
+						auto const KnownTask = Sched.KnownTasks.try_emplace(TaskId, Sched.Tasks.size());
+						if (KnownTask.second) // was inserted
+						{
+							Sched.Tasks.emplace_back();
+						}
+						ParseTaskDetails(Token, TaskObj, SchedIdx, TaskId, KnownTask.first->second, &Lock);
+						MainTimeline.IncludeTimeRange(Sched.Tasks[KnownTask.first->second].TimeRange);
+					}
+					if (!bMoreToCome)
+					{
+						SchedulesInternals().SetScheduleTimeRangeIsKnown();
+					}
+				}
+			});
+	}
+}
+
+void FITwinSchedulesImport::FImpl::RequestAllAppearanceProfiles(
+	ReusableJsonQueries::FStackingToken const& Token, size_t const SchedStartIdx, size_t const SchedEndIdx,
+	FLock& Lock, std::optional<FString> const PageToken /*= {}*/)
+{
+	// Cannot have a page token common to several Schedules appearanceProfiles queries...
+	check(!PageToken || SchedEndIdx == (SchedStartIdx + 1));
+	FUrlArgList RequestArgList = {
+		{ TEXT("pageSize"), FString::Printf(TEXT("%d"), RequestPagination) } };
+	if (PageToken)
+		RequestArgList.push_back({ TEXT("pageToken"), *PageToken });
+	for (auto SchedIdx = SchedStartIdx; SchedIdx < SchedEndIdx; ++SchedIdx)
+	{
+		Queries->StackRequest(Token, &Lock, EVerb::GET, { Schedules[SchedIdx].Id, TEXT("appearanceProfiles") },
+							  FUrlArgList(RequestArgList),
+			[this, SchedIdx, &Token](TSharedPtr<FJsonObject> const& responseJson)
+			{
+				auto const& Items = responseJson->GetArrayField("items");
+				if (Items.IsEmpty())
+				{
+					S4D_WARN(TEXT("Did not receive any appearance profile for schedule '%s'!"),
+							 *Schedules[SchedIdx].Name);
+				}
+				else
+				{
+					FLock Lock(Mutex);
+					bool const bMoreToCome = responseJson->HasTypedField<EJson::String>("nextPageToken");
+					auto&& Sched = Schedules[SchedIdx];
+					S4D_LOG(TEXT("Received %d appearance profiles (total %d%s) for schedule '%s'"),
+						Items.Num(), (int)Sched.AppearanceProfiles.size() + Items.Num(),
+						bMoreToCome ? TEXT(", more to come") : TEXT(", final reply"),
+						*Schedules[SchedIdx].Name);
+					if (bMoreToCome)
+					{
+						RequestAllAppearanceProfiles(Token, SchedIdx, SchedIdx + 1, Lock,
+													 responseJson->GetStringField("nextPageToken"));
+					}
+					Sched.AppearanceProfiles.reserve(Sched.AppearanceProfiles.size() + Items.Num());
+					for (auto&& Item : Items)
+					{
+						const auto& AppearanceObj = Item->AsObject();
+						FString const AppearanceId = AppearanceObj->GetStringField(TEXT("id"));
+						auto const KnownAppearance = Sched.KnownAppearanceProfiles.try_emplace(
+							AppearanceId,  Sched.AppearanceProfiles.size());
+						if (KnownAppearance.second) // was inserted
+						{
+							Sched.AppearanceProfiles.emplace_back();
+						}
+						ParseAppearanceProfileDetails(Token, AppearanceObj, SchedIdx, AppearanceId,
+													  KnownAppearance.first->second, &Lock);
+					}
+				}
+			});
+	}
+}
 
 namespace ITwin {
 
@@ -792,10 +914,9 @@ void FITwinSchedulesImport::FImpl::CompletedProperty(FITwinSchedule& Schedule, s
 	}
 }
 
-// Separate method from the time RequestSchedulesTasks was used for Legacy projects
 void FITwinSchedulesImport::FImpl::ParseTaskDetails(ReusableJsonQueries::FStackingToken const& Token,
-	TSharedPtr<FJsonObject> const& JsonObj, size_t const SchedIdx, size_t const AnimIdx,
-	FLock* MaybeLock /*= nullptr*/)
+	TSharedPtr<FJsonObject> const& JsonObj, size_t const SchedIdx, FString const TaskId,
+	size_t const TaskInVec, FLock* MaybeLock /*= nullptr*/)
 {
 	FString Name = JsonObj->GetStringField(TEXT("name"));
 	// Using "Planned" ATM (Laurynas said timerange filtering does that too), but we should probably also
@@ -810,33 +931,34 @@ void FITwinSchedulesImport::FImpl::ParseTaskDetails(ReusableJsonQueries::FStacki
 	if (!MaybeLock) OptLockDontUse.emplace(Mutex);
 	FLock& Lock = MaybeLock ? (*MaybeLock) : (*OptLockDontUse);
 	auto& Sched = Schedules[SchedIdx];
-	auto& Anim = Sched.AnimationBindings[AnimIdx];
-	auto& Task = Sched.Tasks[Anim.TaskInVec];
+	auto& Task = Sched.Tasks[TaskInVec];
 	Task.Name = std::move(Name);
 	if (ensure(bCouldParseDates))
 	{
 		Task.TimeRange.first = ITwin::Time::FromDateTime(PlannedStart);
 		Task.TimeRange.second = ITwin::Time::FromDateTime(PlannedFinish);
 		S4D_VERBOSE(TEXT("Task %s named '%s' for schedule Id %s spans %s to %s"),
-					*Anim.TaskId, *Task.Name, *Sched.Id, *PlannedStartStr, *PlannedFinishStr);
+					*TaskId, *Task.Name, *Sched.Id, *PlannedStartStr, *PlannedFinishStr);
 		CompletedProperty(Sched, Task.Bindings, Lock, TEXT("TaskDetails"));
 	}
 	else
 	{
 		Task.TimeRange = ITwin::Time::Undefined();
 		S4D_ERROR(TEXT("Task %s named '%s' for schedule Id %s has invalid date(s)!"),
-				  *Anim.TaskId, *Task.Name, *Sched.Id);
+				  *TaskId, *Task.Name, *Sched.Id);
 	}
 }
 
 void FITwinSchedulesImport::FImpl::RequestTask(ReusableJsonQueries::FStackingToken const& Token,
 	size_t const SchedIdx, size_t const AnimIdx, FLock& Lock)
 {
+	auto& Sched = Schedules[SchedIdx];
 	Queries->StackRequest(Token, &Lock, EVerb::GET,
-		{ Schedules[SchedIdx].Id, TEXT("tasks"), Schedules[SchedIdx].AnimationBindings[AnimIdx].TaskId },
+		{ Sched.Id, TEXT("tasks"), Schedules[SchedIdx].AnimationBindings[AnimIdx].TaskId },
 		{},
 		std::bind(&FITwinSchedulesImport::FImpl::ParseTaskDetails, this, std::cref(Token),
-				  std::placeholders::_1, SchedIdx, AnimIdx, nullptr));
+				  std::placeholders::_1, SchedIdx, Sched.AnimationBindings[AnimIdx].TaskId, 
+				  Sched.AnimationBindings[AnimIdx].TaskInVec, nullptr));
 }
 
 // 4dschedule/v1/schedules/{scheduleId}/tasks/{id}/resourceAssignments: should still be possible with Legacy
@@ -1001,22 +1123,6 @@ bool FITwinSchedulesImport::FImpl::ParseSimpleAppearance(FSimpleAppearance& Appe
 	bool const bBaseOfActiveApperance, TSharedPtr<FJsonObject> const& JsonObj)
 {
 	FString ColorStr;
-	JSON_GETSTR_OR(JsonObj, "color", ColorStr, return false)
-	if (!ColorFromHexString(ColorStr, Appearance.Color))
-		return false;
-
-	if (bBaseOfActiveApperance)
-		JSON_GETNUMBER_OR(JsonObj, "startTransparency", Appearance.Alpha, return false)
-	else
-		JSON_GETNUMBER_OR(JsonObj, "transparency", Appearance.Alpha, return false)
-
-	if constexpr (s_bDebugNoPartialTransparencies)
-		Appearance.Alpha = (Appearance.Alpha == 0.f) ? 1.f : 0.f;
-	else if constexpr (s_bDebugForcePartialTransparencies)
-		Appearance.Alpha = 0.3f;
-	else
-		Appearance.Alpha = std::clamp(1.f - Appearance.Alpha / 100.f, 0.f, 1.f);
-
 	// Note: cannot take address (or ref) of bitfield, hence the bools:
 	// Note2: init the flags to silence C4701...
 	bool OrgCol = true, OrgTransp = true;
@@ -1024,6 +1130,25 @@ bool FITwinSchedulesImport::FImpl::ParseSimpleAppearance(FSimpleAppearance& Appe
 	JSON_GETBOOL_OR(JsonObj, "useOriginalTransparency", OrgTransp, return false)
 	Appearance.bUseOriginalColor = OrgCol;
 	Appearance.bUseOriginalAlpha = OrgTransp;
+	if (!OrgCol)
+	{
+		JSON_GETSTR_OR(JsonObj, "color", ColorStr, return false)
+		if (!ColorFromHexString(ColorStr, Appearance.Color))
+			return false;
+	}
+	if (!OrgTransp)
+	{
+		if (bBaseOfActiveApperance)
+			JSON_GETNUMBER_OR(JsonObj, "startTransparency", Appearance.Alpha, return false)
+		else
+			JSON_GETNUMBER_OR(JsonObj, "transparency", Appearance.Alpha, return false)
+		if constexpr (s_bDebugNoPartialTransparencies)
+			Appearance.Alpha = (Appearance.Alpha == 0.f) ? 1.f : 0.f;
+		else if constexpr (s_bDebugForcePartialTransparencies)
+			Appearance.Alpha = 0.3f;
+		else
+			Appearance.Alpha = std::clamp(1.f - Appearance.Alpha / 100.f, 0.f, 1.f);
+	}
 	return true;
 }
 
@@ -1060,6 +1185,44 @@ bool FITwinSchedulesImport::FImpl::ParseActiveAppearance(FActiveAppearance& Appe
 	return true;
 }
 
+void FITwinSchedulesImport::FImpl::ParseAppearanceProfileDetails(
+	ReusableJsonQueries::FStackingToken const& Token, TSharedPtr<FJsonObject> const& JsonObj,
+	size_t const SchedIdx, FString const AppearanceProfileId, size_t const AppearanceProfileInVec,
+	FLock* MaybeLock /*= nullptr*/)
+{
+	FAppearanceProfile Parsed;
+	FString ProfileTypeStr;
+	JSON_GETSTR_OR(JsonObj, "action", ProfileTypeStr, return)
+	Parsed.ProfileType = ParseProfileAction(ProfileTypeStr);
+	bool const bNeedStartAppearance = EProfileAction::Install != Parsed.ProfileType
+								   && EProfileAction::Temporary != Parsed.ProfileType;
+	bool const bNeedFinishAppearance = EProfileAction::Remove != Parsed.ProfileType
+									&& EProfileAction::Temporary != Parsed.ProfileType;
+	TSharedPtr<FJsonObject> const *StartObj = nullptr, *ActiveObj, *EndObj = nullptr;
+	if (bNeedStartAppearance)
+		JSON_GETOBJ_OR(JsonObj, "startAppearance", StartObj, return)
+	JSON_GETOBJ_OR(JsonObj, "activeAppearance", ActiveObj, return)
+	if (bNeedFinishAppearance)
+		JSON_GETOBJ_OR(JsonObj, "endAppearance", EndObj, return)
+
+	std::optional<FLock> OptLockDontUse;
+	if (!MaybeLock) OptLockDontUse.emplace(Mutex);
+	FLock& Lock = MaybeLock ? (*MaybeLock) : (*OptLockDontUse);
+	auto& Sched = Schedules[SchedIdx];
+	auto& AppearanceProfile = Sched.AppearanceProfiles[AppearanceProfileInVec];
+	if ((bNeedStartAppearance && !ParseSimpleAppearance(Parsed.StartAppearance, false, *StartObj))
+		|| !ParseActiveAppearance(Parsed.ActiveAppearance, *ActiveObj)
+		|| (bNeedFinishAppearance && !ParseSimpleAppearance(Parsed.FinishAppearance, false, *EndObj)))
+	{
+		S4D_ERROR(TEXT("Error reading appearance profile %s"), *AppearanceProfileId);
+		return;
+	}
+	// swap with the empty Parsed.Bindings so that we can move the whole thing
+	Parsed.Bindings.swap(AppearanceProfile.Bindings); // don't lose this
+	AppearanceProfile = std::move(Parsed);
+	CompletedProperty(Sched, AppearanceProfile.Bindings, Lock, TEXT("Appearance"));
+}
+
 void FITwinSchedulesImport::FImpl::RequestAppearanceProfile(
 	ReusableJsonQueries::FStackingToken const& Token, size_t const SchedIdx, size_t const AnimIdx,
 	FLock& Lock)
@@ -1073,34 +1236,9 @@ void FITwinSchedulesImport::FImpl::RequestAppearanceProfile(
 	Queries->StackRequest(Token, &Lock, EVerb::GET,
 		{ Sched.Id, TEXT("appearanceProfiles"), Sched.AnimationBindings[AnimIdx].AppearanceProfileId },
 		{},
-		[this, SchedIdx, AnimIdx](TSharedPtr<FJsonObject> const& JsonObj)
-		{
-			FAppearanceProfile Parsed;
-			FString ProfileTypeStr;
-			JSON_GETSTR_OR(JsonObj, "action", ProfileTypeStr, return)
-			Parsed.ProfileType = ParseProfileAction(ProfileTypeStr);
-			TSharedPtr<FJsonObject> const *StartObj, *ActiveObj, *EndObj;
-			JSON_GETOBJ_OR(JsonObj, "startAppearance", StartObj, return)
-			JSON_GETOBJ_OR(JsonObj, "activeAppearance", ActiveObj, return)
-			JSON_GETOBJ_OR(JsonObj, "endAppearance", EndObj, return)
-			if (!ParseSimpleAppearance(Parsed.StartAppearance, false, *StartObj)
-				|| !ParseActiveAppearance(Parsed.ActiveAppearance, *ActiveObj)
-				|| !ParseSimpleAppearance(Parsed.FinishAppearance, false, *EndObj))
-			{
-				FLock Lock(Mutex);
-				S4D_ERROR(TEXT("Error reading appearance profiles for %s"),
-						  *Schedules[SchedIdx].AnimationBindings[AnimIdx].ToString());
-				return;
-			}
-			FLock Lock(Mutex);
-			auto& Sched = Schedules[SchedIdx];
-			auto& AppearanceProfile =
-				Sched.AppearanceProfiles[Sched.AnimationBindings[AnimIdx].AppearanceProfileInVec];
-			// swap with the empty Parsed.Bindings so that we can move the whole thing
-			Parsed.Bindings.swap(AppearanceProfile.Bindings); // don't lose this
-			AppearanceProfile = std::move(Parsed);
-			CompletedProperty(Sched, AppearanceProfile.Bindings, Lock, TEXT("Appearance"));
-		});
+		std::bind(&FITwinSchedulesImport::FImpl::ParseAppearanceProfileDetails, this, std::cref(Token),
+				  std::placeholders::_1, SchedIdx, Sched.AnimationBindings[AnimIdx].AppearanceProfileId,
+				  Sched.AnimationBindings[AnimIdx].AppearanceProfileInVec, nullptr));
 }
 
 /// Note: anchor point kept in iTwin reference system
@@ -1308,8 +1446,8 @@ void FITwinSchedulesImport::FImpl::SetSchedulesImportObservers(
 		OnAnimationGroupModified = InOnAnimationGroupModified;
 }
 
-void FITwinSchedulesImport::FImpl::ResetConnection(TObjectPtr<AITwinServerConnection> InServerConn,
-	FString const& ITwinAkaProjectAkaContextId, FString const& IModelId)
+void FITwinSchedulesImport::FImpl::ResetConnection(FString const& ITwinAkaProjectAkaContextId,
+												   FString const& IModelId)
 {
 	{	FLock Lock(Mutex);
 		// I can imagine the URL or the token could need updating (new mirror, auth renew),
@@ -1318,25 +1456,35 @@ void FITwinSchedulesImport::FImpl::ResetConnection(TObjectPtr<AITwinServerConnec
 			|| (ITwinAkaProjectAkaContextId == ITwinId && IModelId == TargetedIModelId));
 
 		SchedApiSession = s_NextSchedApiSession++;
+		LastDisplayedQueueSizeIncrements = { -1, -1 };
+		LastRoundedQueueSize = { -1, -1 };
+		LastCheckTotalBindings = 0.;
+		LastTotalBindingsFound = 0;
 		ReusableJsonQueries::FStackedBatches Batches;
 		ReusableJsonQueries::FStackedRequests Requests;
 		SchedulesGeneration = EITwinSchedulesGeneration::Unknown;
-		ServerConnection = InServerConn;
 		if (!Queries)
 		{
 			ITwinId = ITwinAkaProjectAkaContextId;
 			TargetedIModelId = IModelId;
 		}
+		auto const GetBearerToken = [SchedComp=Owner->Owner]() -> FString
+			{
+				AITwinIModel& IModel = *Cast<AITwinIModel>(SchedComp->GetOwner());
+				if (ensure(IModel.ServerConnection))
+					return IModel.ServerConnection->AccessToken;
+				else
+					return TEXT("_TokenError_");
+			};
 		Queries = MakePimpl<FReusableJsonQueries<SimultaneousRequestsAllowed>>(
 			GetSchedulesAPIBaseUrl(),
-			[&CurrentToken=ServerConnection->AccessToken]()
+			[]()
 			{
 				static const FString AcceptJson(
 					"application/json;odata.metadata=minimal;odata.streaming=true");
 				const auto Request = FHttpModule::Get().CreateRequest();
 				Request->SetHeader("Accept", AcceptJson);
 				Request->SetHeader("Content-Type", AcceptJson);
-				Request->SetHeader("Authorization", "Bearer " + CurrentToken);
 				return Request;
 			},
 			std::bind(&AITwinServerConnection::CheckRequest, std::placeholders::_1, std::placeholders::_2,
@@ -1347,7 +1495,9 @@ void FITwinSchedulesImport::FImpl::ResetConnection(TObjectPtr<AITwinServerConnec
 			SchedApiSession, 
 			Owner->Owner->DebugSimulateSessionQueries.IsEmpty()
 				? nullptr : (*Owner->Owner->DebugSimulateSessionQueries),
-			ReusableJsonQueries::EReplayMode::OnDemandSimulation);
+			ReusableJsonQueries::EReplayMode::OnDemandSimulation,
+			Owner->Owner->OnScheduleQueryingStatusChanged,
+			GetBearerToken);
 	} // end Lock
 
 	Queries->NewBatch(
@@ -1359,20 +1509,15 @@ void FITwinSchedulesImport::FImpl::ResetConnection(TObjectPtr<AITwinServerConnec
 	Queries->NewBatch([this](ReusableJsonQueries::FStackingToken const& Token)
 		{
 			FLock Lock(Mutex);
-			if (EITwinSchedulesGeneration::Unknown == SchedulesGeneration)
+			if (Schedules.empty())
 			{
-				if (Schedules.empty())
-				{
-					S4D_WARN(TEXT("No NextGen schedule found, trying Legacy..."));
-					SchedulesGeneration = EITwinSchedulesGeneration::Legacy;
-					Queries->ChangeRemoteUrl(GetSchedulesAPIBaseUrl());
-					RequestSchedules(Token);
-				}
-				else
-				{
-					// found at least one next-gen schedule => all good
-					SchedulesGeneration = EITwinSchedulesGeneration::NextGen;
-				}
+				// TODO_GCO: incomplete error handling means as long as NextGen call errors out,
+				// SetScheduleTimeRangeIsKnown never got called => disable NextGen entirely for the time being
+				//S4D_WARN(TEXT("No Legacy schedule found, trying NextGen..."));
+				//SchedulesGeneration = EITwinSchedulesGeneration::NextGen;
+				//Queries->ChangeRemoteUrl(GetSchedulesAPIBaseUrl());
+				//RequestSchedules(Token);
+				SchedulesInternals().SetScheduleTimeRangeIsKnown();
 			}
 			else
 			{
@@ -1386,29 +1531,7 @@ std::pair<int, int> FITwinSchedulesImport::FImpl::HandlePendingQueries()
 	if (!Queries) return std::make_pair(0, 0);
 	Queries->HandlePendingQueries();
 	auto const& QueueSize = Queries->QueueSize();
-	if (QueueSize.first == 0 && QueueSize.second == 0)
-	{
-		FLock Lock(Mutex);
-		if (LastCheckTotalBindings != 0. && (LastCheckTotalBindings + 1.) > FPlatformTime::Seconds())
-			return { 0, 0 }; // Checked less than one second ago
-		size_t NewTotalBindings = 0;
-		for (auto&& Sched : Schedules)
-			NewTotalBindings += Sched.AnimationBindings.size();
-		if (NewTotalBindings == LastTotalBindingsFound)
-			return { 0, 0 }; // no new binding since we last checked
-		LastTotalBindingsFound = 0;
-		for (auto&& Sched : Schedules)
-		{
-			if (!Sched.AnimationBindings.empty())
-			{
-				LastTotalBindingsFound += Sched.AnimationBindings.size();
-				S4D_LOG(TEXT("Current Schedules: %s\nQuerying statistics: %s"),
-					*Sched.ToString(), Queries ? (*Queries->Stats()) : TEXT("na."));
-			}
-		}
-		LastCheckTotalBindings = FPlatformTime::Seconds();
-		return { 0, 0 };
-	}
+#if WITH_EDITOR
 	// Avoid flooding the logs... Log only every ~10% more requests processed since last time
 	std::pair<int, int> const DisplayedQueueSizeIncrements = {
 		10, // batches could be of vastly different sizes, but logging all of them is too much...
@@ -1425,6 +1548,7 @@ std::pair<int, int> FITwinSchedulesImport::FImpl::HandlePendingQueries()
 		LastRoundedQueueSize = RoundedQueueSize;
 		LastDisplayedQueueSizeIncrements = DisplayedQueueSizeIncrements;
 	}
+#endif // WITH_EDITOR
 	return QueueSize;
 }
 
@@ -1448,7 +1572,6 @@ void FITwinSchedulesImport::FImpl::QueryEntireSchedules(FDateTime const FromTime
 			for (size_t SchedIdx = 0; SchedIdx < Schedules.size(); ++SchedIdx)
 				if (SupportsAnimationBindings(SchedIdx, Lock))
 					RequestAnimationBindings(Token, SchedIdx, Lock, TimeRange);
-				//else RequestSchedulesTasks(...) <== removed so as not to refactor it...
 		});
 	// Not actually a new batch, just a way to have a function called upon completion
 	// TODO_GCO: handle 'success' correctly by counting errors per batch in FReusableJsonQueries
@@ -1492,7 +1615,7 @@ void FITwinSchedulesImport::FImpl::QueryAroundElementTasks(ITwinElementID const 
 			// TODO_GCO => Schedules should be queried independently => one SchedulesApi per Schedule?
 			auto const& MainTimeline = SchedulesInternals().GetTimeline();
 			FTimeRangeInSeconds ElemTimeRange = ITwin::Time::Undefined();
-			MainTimeline.ForEachElementTimeline(ElementID,
+			SchedulesInternals().ForEachElementTimeline(ElementID,
 				[&ElemTimeRange](FITwinElementTimeline const& Timeline)
 				{
 					auto const& TimeRange = Timeline.GetTimeRange();
@@ -1564,7 +1687,7 @@ void FITwinSchedulesImport::FImpl::QueryElementsTasks(std::set<ITwinElementID>&&
 }
 
 /// Needed in the CPP otherwise the default ctor impl complains about FITwinSchedulesConnector being unknown
-FITwinSchedulesImport::FITwinSchedulesImport(UITwinSynchro4DSchedules const& InOwner,
+FITwinSchedulesImport::FITwinSchedulesImport(UITwinSynchro4DSchedules& InOwner,
 		std::recursive_mutex& Mutex, std::vector<FITwinSchedule>& Schedules)
 	: Impl(MakePimpl<FImpl>(*this, Mutex, Schedules))
 	, Owner(&InOwner)
@@ -1583,10 +1706,9 @@ bool FITwinSchedulesImport::IsReady() const
 	return Impl->Queries.Get() != nullptr;
 }
 
-void FITwinSchedulesImport::ResetConnection(TObjectPtr<AITwinServerConnection> const ServerConnection,
-	FString const& ITwinAkaProjectAkaContextId, FString const& IModelId)
+void FITwinSchedulesImport::ResetConnection(FString const& ITwinAkaProjectAkaCtextId, FString const& IModelId)
 {
-	Impl->ResetConnection(ServerConnection, ITwinAkaProjectAkaContextId, IModelId);
+	Impl->ResetConnection(ITwinAkaProjectAkaCtextId, IModelId);
 }
 
 void FITwinSchedulesImport::SetSchedulesImportObservers(
@@ -1666,6 +1788,19 @@ bool FAnimationBinding::FullyDefined(FITwinSchedule const& Schedule, bool const 
 		|| Schedule.Animation3DPaths[PathAssignment.Animation3DPathInVec].Bindings.empty();
 }
 
+FString FITwinSchedulesImport::ToString() const
+{
+	for (auto&& Sched : Impl->Schedules)
+	{
+		if (!Sched.Tasks.empty())
+		{
+			return FString::Printf(TEXT("Statistics for %s\nQuerying statistics: %s"),
+				*Sched.ToString(), Impl->Queries ? (*Impl->Queries->Stats()) : TEXT("na."));
+		}
+	}
+	return TEXT("<Empty schedule>");
+}
+
 FString FAnimationBinding::ToString(const TCHAR* SpecificElementID/* = nullptr*/) const
 {
 	return FString::Printf(TEXT("binding for ent. %s%s, appear. %s%s%s"),
@@ -1686,7 +1821,7 @@ FString FITwinSchedule::ToString() const
 		"\t%llu bindings, %llu tasks, %llu groups, %llu appearance profiles,\n" \
 		"\t%llu transfo. assignments (incl. %llu 3D paths).\n" \
 		"\t%llu ouf of %llu Elements are bound to a task."),
-		(EITwinSchedulesGeneration::Unknown == Generation) ? TEXT("<?>")
+		(EITwinSchedulesGeneration::Unknown == Generation) ? TEXT("<Gen?>")
 			: ((EITwinSchedulesGeneration::Legacy == Generation) ? TEXT("Legacy") : TEXT("NextGen")),
 		*Id, *Name, AnimationBindings.size(), Tasks.size(), Groups.size(), AppearanceProfiles.size(),
 		TransfoAssignments.size(), Animation3DPaths.size(),

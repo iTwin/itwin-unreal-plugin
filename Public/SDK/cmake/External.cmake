@@ -4,23 +4,13 @@ include(FetchContent)
 ### =========== reflect-cpp =========== 
 FetchContent_Declare(reflect-cpp
     GIT_REPOSITORY https://github.com/getml/reflect-cpp.git
-	GIT_TAG v0.10.0
+	GIT_TAG v0.14.1
 	GIT_SHALLOW ON
 )
 
 FetchContent_MakeAvailable(reflect-cpp)
 set_target_properties(reflectcpp PROPERTIES FOLDER "SDK/External")
 include_directories(${reflect-cpp_SOURCE_DIR}/include)
-
-### =========== tiny-process =========== 
-set(BUILD_TESTING OFF CACHE INTERNAL "set ON to build library tests")
-FetchContent_Declare(tiny-process
-    GIT_REPOSITORY http://gitlab.com/eidheim/tiny-process-library
-	GIT_SHALLOW ON
-)
-FetchContent_MakeAvailable(tiny-process)
-set_target_properties(tiny-process-library PROPERTIES FOLDER "SDK/External") 
-include_directories(${tiny-process_SOURCE_DIR})
 
 ### =============== glm =============== 
 if ( NOT DEFINED glm_INCLUDE_DIR )
@@ -40,8 +30,28 @@ endif ()
 
 include_directories(${glm_INCLUDE_DIR})
 
+### =========== fmt =========== 
+FetchContent_Declare(fmt
+    GIT_REPOSITORY https://github.com/fmtlib/fmt
+	GIT_TAG 11.0.2
+	EXCLUDE_FROM_ALL
+)
+FetchContent_MakeAvailable(fmt)
+set_target_properties(fmt PROPERTIES FOLDER "SDK/External")
+#message( " >>> fmt directory: ${fmt_SOURCE_DIR}")
+include_directories(${fmt_SOURCE_DIR}/include)
 
 find_package(cpr REQUIRED)
-find_package(Catch2 3 REQUIRED)
+find_package(libassert CONFIG REQUIRED)
+
+if(SDK_ADDUNITTEST)
+	find_package(Catch2 3 REQUIRED)
+
+	### =========== httpmockserver =========== 
+	include_directories(${CMAKE_SOURCE_DIR}/../)
+	add_subdirectory(../httpmockserver ${CMAKE_BINARY_DIR}/extern/httpmockserver) # for some unit tests only
+	set_target_properties(httpmockserver PROPERTIES FOLDER "SDK/External")
+endif()
+
 
 

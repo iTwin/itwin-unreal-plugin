@@ -11,7 +11,7 @@
 #include <ITwinCoordSystem.h>
 #include <ITwinServiceActor.h>
 #include <Templates/PimplPtr.h>
-
+#include <ITwinFwd.h>
 #include <ITwinIModel.generated.h>
 
 struct FITwinIModel3DInfo;
@@ -113,6 +113,7 @@ public:
 
 
 	AITwinIModel();
+	virtual void BeginPlay() override;
 	virtual void Destroyed() override;
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
@@ -150,6 +151,11 @@ public:
 		BlueprintAssignable)
 	FOnIModelLoaded OnIModelLoaded;
 
+	//! Returns the changeset currently selected for loading (whether manually by the user or automatically).
+	UFUNCTION(Category = "iTwin|Load",
+		BlueprintCallable)
+	FString GetSelectedChangeset() const;
+
 	//! Start a new export of the iModel by the mesh export service.
 	//! If the export is successfully started, the actor will regularly check for its completion and the
 	//! tileset will be loaded automatically as soon as the export is complete.
@@ -181,14 +187,24 @@ public:
 		BlueprintCallable)
 	void Retune();
 
+	//! Return true if the tuner has some material information which was not yet used to pre-fill the map
+	//! of iTwin materials which can be customized.
+	bool ShouldFillMaterialInfoFromTuner() const;
+
 	//! Fills the map of known iTwin materials, if it was read from the tileset.
-	UFUNCTION()
 	void FillMaterialInfoFromTuner();
 
 	UFUNCTION()
 	void OnSavedViewsRetrieved(bool bSuccess, FSavedViewInfos SavedViews);
+	UFUNCTION()
+	void OnSavedViewInfoAdded(bool bSuccess, FSavedViewInfo SavedViewInfo);
 
-
+	//! Returns null if the iModel does not have extents, or if it is not known yet.
+	const FProjectExtents* GetProjectExtents() const;
+	//! Returns null if the iModel is not geolocated, or if it is not known yet.
+	const FEcefLocation* GetEcefLocation() const;
+	//! Returns null if the tileset has not been constructed yet.
+	const AITwinCesium3DTileset* GetTileset() const;
 private:
 	void AutoExportAndLoad();
 	void TestExportCompletionAfterDelay(FString const& InExportId, float DelayInSeconds);
@@ -198,6 +214,10 @@ private:
 	void OnLoadingUIEvent();
 	void UpdateAfterLoadingUIEvent();
 	void DestroyTileset();
+
+	//! Retune the tileset if needed, to ensure that all materials customized by the user (or about to be...)
+	//! can be applied to individual meshes.
+	void SplitGltfModelForCustomMaterials();
 
 	/// overridden from AITwinServiceActor:
 	virtual void UpdateOnSuccessfulAuthorization() override;
@@ -212,6 +232,9 @@ private:
 	virtual void OnSavedViewAdded(bool bSuccess, FSavedViewInfo const& SavedViewInfo) override;
 	virtual void OnSavedViewDeleted(bool bSuccess, FString const& SavedViewId, FString const& Response) override;
 	virtual void OnSavedViewEdited(bool bSuccess, FSavedView const& SavedView, FSavedViewInfo const& SavedViewInfo) override;
+	virtual void OnElementPropertiesRetrieved(bool bSuccess, FElementProperties const& ElementProps) override;
+	virtual void OnMaterialPropertiesRetrieved(bool bSuccess, SDK::Core::ITwinMaterialPropertiesMap const& props) override;
+	virtual void OnIModelQueried(bool bSuccess, FString const& QueryResult) override;
 
 	/// overridden from FITwinDefaultWebServicesObserver:
 	virtual const TCHAR* GetObserverName() const override;

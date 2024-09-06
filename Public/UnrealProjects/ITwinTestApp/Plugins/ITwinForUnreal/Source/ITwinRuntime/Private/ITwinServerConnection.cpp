@@ -17,7 +17,8 @@
 #include <Serialization/JsonSerializer.h>
 
 #include <Compil/BeforeNonUnrealIncludes.h>
-	#include <BeHeaders/Compil/CleanUpGuard.h>
+#	include <BeHeaders/Compil/CleanUpGuard.h>
+#	include <Core/ITwinAPI/ITwinWebServices.h>
 #include <Compil/AfterNonUnrealIncludes.h>
 
 DEFINE_LOG_CATEGORY(LogITwinHttp);
@@ -60,14 +61,20 @@ bool AITwinServerConnection::CheckRequest(FHttpRequestPtr const& CompletedReques
 			*EHttpResponseCodes::GetDescription(
 				(EHttpResponseCodes::Type)Response->GetResponseCode()).ToString());
 
-		// see if we can get more information in the response
-		TSharedPtr<FJsonObject> responseJson;
-		if (FJsonSerializer::Deserialize(
-			TJsonReaderFactory<>::Create(Response->GetContentAsString()), responseJson))
+		// TODO_GCO: tmp stuff to investigate "unauthorized" errors for Daniel W. & others
+		if (401 == (int)Response->GetResponseCode())
 		{
-			FString detailedError;
-			UITwinWebServices::GetErrorDescription(*responseJson, detailedError, TEXT("\t"));
-			requestError += detailedError;
+			requestError += FString::Printf(TEXT(", with auth header: %s"),
+											*CompletedRequest->GetHeader(TEXT("Authorization")));
+		}
+		// END TMP TODO_GCO
+
+		// see if we can get more information in the response
+		std::string detailedError = SDK::Core::ITwinWebServices::GetErrorDescriptionFromJson(
+			TCHAR_TO_ANSI(*Response->GetContentAsString()), "\t");
+		if (!detailedError.empty())
+		{
+			requestError += detailedError.c_str();
 		}
 		return false;
 	}

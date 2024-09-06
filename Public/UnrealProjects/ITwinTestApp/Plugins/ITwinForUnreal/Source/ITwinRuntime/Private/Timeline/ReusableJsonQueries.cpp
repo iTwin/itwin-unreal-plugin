@@ -54,13 +54,17 @@ FReusableJsonQueries<SimultaneousRequestsT>::FImpl::FImpl(
 	FCheckRequest const& InCheckRequest, ReusableJsonQueries::FMutex& InMutex,
 	TCHAR const* const InRecordToFolder, int const InRecorderSessionIndex,
 	TCHAR const* const InSimulateFromFolder,
-	std::optional<ReusableJsonQueries::EReplayMode> const InReplayMode)
+	std::optional<ReusableJsonQueries::EReplayMode> const InReplayMode,
+	FScheduleQueryingDelegate const& InOnScheduleQueryingStatusChanged,
+	std::function<FString()> const& InGetBearerToken)
 : BaseUrlNoSlash(InBaseUrlNoSlash)
 , CheckRequest(InCheckRequest)
+, GetBearerToken(InGetBearerToken)
 , Mutex(InMutex)
 , RecordToFolder(InRecordToFolder)
 , RecorderSessionIndex(InRecorderSessionIndex)
 , SimulateFromFolder(InSimulateFromFolder)
+, OnScheduleQueryingStatusChanged(InOnScheduleQueryingStatusChanged)
 , IsThisValid(new bool(true))
 {
 	if (SimulateFromFolder && !FString(SimulateFromFolder).IsEmpty()
@@ -158,6 +162,7 @@ void FReusableJsonQueries<SimultaneousRequestsT>::FImpl::DoEmitRequest(FPoolRequ
 	// converted utf8 buffer for the payload, so it's better to set an empty string here and let
 	// FCurlHttpRequest::SetupRequest set the proper size.
 	FromPool.Request->SetHeader("Content-Length", "");
+	FromPool.Request->SetHeader("Authorization", "Bearer " + GetBearerToken());
 	if (!RecorderPathBase.IsEmpty())
 	{
 		FLock Lock(Mutex);
@@ -257,6 +262,7 @@ FString FReusableJsonQueries<SimultaneousRequestsT>::FImpl::JoinToBaseUrl(
 	return FullUrl;
 }
 
+// Note: this method only sends one request, but the loop is in the other HandlePendingQueries below!
 template<uint16_t SimultaneousRequestsT>
 bool FReusableJsonQueries<SimultaneousRequestsT>::FImpl::HandlePendingQueries()
 {
@@ -303,10 +309,12 @@ FReusableJsonQueries<SimultaneousRequestsT>::FReusableJsonQueries(FString const&
 		FAllocateRequest const& AllocateRequest, FCheckRequest const& InCheckRequest,
 		ReusableJsonQueries::FMutex& InMutex, TCHAR const* const InRecordToFolder,
 		int const InRecorderSessionIndex, TCHAR const* const InSimulateFromFolder,
-		std::optional<ReusableJsonQueries::EReplayMode> const ReplayMode)
+		std::optional<ReusableJsonQueries::EReplayMode> const ReplayMode,
+		FScheduleQueryingDelegate const& OnScheduleQueryingStatusChanged,
+		std::function<FString()> const& InGetBearerToken)
 : Impl(MakePimpl<FReusableJsonQueries<SimultaneousRequestsT>::FImpl>(
 	InBaseUrlNoSlash, AllocateRequest, InCheckRequest, InMutex, InRecordToFolder, InRecorderSessionIndex, 
-	InSimulateFromFolder, ReplayMode))
+	InSimulateFromFolder, ReplayMode, OnScheduleQueryingStatusChanged, InGetBearerToken))
 {
 }
 
@@ -317,17 +325,34 @@ void FReusableJsonQueries<SimultaneousRequestsT>::ChangeRemoteUrl(FString const&
 	Impl->BaseUrlNoSlash = NewRemoteUrl;
 }
 
-// IMPORTANT: this is never called in the Editor! (because there is no ticking!)
-// Even if we had our own in-Editor ticking system, we may have to call FHttpManager::Tick as well?
 template<uint16_t SimultaneousRequestsT>
 void FReusableJsonQueries<SimultaneousRequestsT>::HandlePendingQueries()
 {
 	FStackingFunc NextBatch;
 	{	FLock Lock(Impl->Mutex);
-		if (!Impl->RequestsInBatch && !Impl->NextBatches.empty())
+		if (Impl->RequestsInBatch)
 		{
-			NextBatch = std::move(Impl->NextBatches.front().Exec);
-			Impl->NextBatches.pop_front();
+			if (!Impl->bIsRunning)
+			{
+				Impl->bIsRunning = true;
+				Impl->OnScheduleQueryingStatusChanged.Broadcast(Impl->bIsRunning);
+			}
+		}
+		else
+		{
+			if (Impl->NextBatches.empty())
+			{
+				if (Impl->bIsRunning)
+				{
+					Impl->bIsRunning = false;
+					Impl->OnScheduleQueryingStatusChanged.Broadcast(Impl->bIsRunning);
+				}
+			}
+			else
+			{
+				NextBatch = std::move(Impl->NextBatches.front().Exec);
+				Impl->NextBatches.pop_front();
+			}
 		}
 	}
 	if (NextBatch)

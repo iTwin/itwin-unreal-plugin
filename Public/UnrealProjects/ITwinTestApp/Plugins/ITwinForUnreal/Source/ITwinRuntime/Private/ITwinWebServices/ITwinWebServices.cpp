@@ -10,20 +10,19 @@
 
 
 #include <EncryptionContextOpenSSL.h>
-#include <HttpModule.h>
 
 #include "ITwinAuthorizationManager.h"
 
 #include <ITwinServerEnvironment.h>
 #include <ITwinWebServices/ITwinWebServicesObserver.h>
+#include <Network/UEHttpAdapter.h>
 
 #include <Kismet/GameplayStatics.h>
 
 #include <Serialization/ArchiveProxy.h>
 #include <Serialization/MemoryReader.h>
 #include <Serialization/MemoryWriter.h>
-#include <Serialization/JsonReader.h>
-#include <Serialization/JsonSerializer.h>
+
 #include <Misc/FileHelper.h>
 #include <Misc/Paths.h>
 #include <PlatformCryptoTypes.h>
@@ -32,16 +31,15 @@
 #include <Engine/World.h>
 
 #include <Compil/BeforeNonUnrealIncludes.h>
-	#include <BeHeaders/Compil/CleanUpGuard.h>
+#	include <BeHeaders/Compil/CleanUpGuard.h>
+#	include <Core/ITwinAPI/ITwinWebServices.h>
+#	include <Core/ITwinAPI/ITwinWebServicesObserver.h>
 #include <Compil/AfterNonUnrealIncludes.h>
 
 
 namespace ITwin
 {
 	extern FString GetITwinAppId(EITwinEnvironment Env);
-
-
-	constexpr uint32 NO_REQUEST{ 0xFFFFFFFF };
 }
 
 namespace
@@ -111,61 +109,12 @@ namespace
 		return FPaths::Combine(TokenDir,
 			ITwinServerEnvironment::GetUrlPrefix(Env) + TEXT("AdvVizCnx") + TokenFileSuffix + TEXT(".dat"));
 	}
-
-
-	//// Json helpers imported from 3dft
-
-	TSharedPtr<FJsonObject> GetChildObject(TSharedPtr<FJsonObject> JsonRoot, FString Element)
-	{
-		TArray<FString> Names;
-		Element.ParseIntoArray(Names, TEXT("/"), true);
-
-		for (const auto& Name : Names)
-		{
-			auto JsonChild = JsonRoot->GetObjectField(Name);
-			if (!JsonChild)
-			{
-				return nullptr;
-			}
-			JsonRoot = JsonChild;
-		}
-		return JsonRoot;
-	}
-
-	FVector GetFVector(TSharedPtr<FJsonObject> JsonObject, FString name)
-	{
-		auto JsonArray = JsonObject->GetArrayField(*name);
-		if (!JsonArray.Num())
-		{
-			return FVector(0, 0, 0);
-		}
-		return FVector(JsonArray[0]->AsNumber(), JsonArray[1]->AsNumber(), JsonArray[2]->AsNumber());
-	}
-
-	FRotator GetFRotator(TSharedPtr<FJsonObject> JsonObject, FString name)
-	{
-		JsonObject = JsonObject->GetObjectField(*name);
-		if (!JsonObject)
-		{
-			return FRotator(0, 0, 0);
-		}
-		return FRotator(
-			JsonObject->GetNumberField(TEXT("pitch")),
-			JsonObject->GetNumberField(TEXT("yaw")),
-			JsonObject->GetNumberField(TEXT("roll")));
-	}
 }
 
 /*static*/
 void UITwinWebServices::SetITwinAppIDArray(ITwin::AppIDArray const& ITwinAppIDs)
 {
 	FITwinAuthorizationManager::SetITwinAppIDArray(ITwinAppIDs);
-}
-
-/*static*/ 
-UITwinWebServices* UITwinWebServices::GetWorkingInstance()
-{
-	return WorkingInstance;
 }
 
 /*static*/
@@ -177,37 +126,6 @@ void UITwinWebServices::SetLogErrors(bool bInLogErrors)
 	bLogErrors = bInLogErrors;
 }
 
-#define LOG_ITWIN_WSRV_ERROR( Str )	\
-	if (ShouldLogErrors())			\
-	{								\
-		UE_LOG(LogITwinHttp, Error, TEXT(Str));	\
-	}
-
-#define LOG_ITWIN_WSRV_ERROR_ONE_PARAM( Str, Arg1 )	\
-	if (ShouldLogErrors())			\
-	{								\
-		UE_LOG(LogITwinHttp, Error, TEXT(Str), Arg1);\
-	}
-
-// conflicts with ScheduleImport.cpp
-// TODO_JDE: clean when those requests are moved to SDK
-#undef JSON_GETOBJ_OR
-#undef JSON_GETOBJ_OR_CUSTOM
-
-/// Get an Object from the Json object passed, or log an error and do something (typically continue or return)
-#define JSON_GETOBJ_OR(JsonObj, Field, Dest, WhatToDo) \
-	{ Dest = nullptr; \
-		if (!(JsonObj)->TryGetObjectField(TEXT(Field), Dest) || !Dest) { \
-			LOG_ITWIN_WSRV_ERROR_ONE_PARAM("Parsing error for object field %s in Json response", TEXT(Field)); \
-			WhatToDo; \
-	}}
-/// Same with custom message
-#define JSON_GETOBJ_OR_CUSTOM(JsonObj, Field, CustomMsg, Dest, WhatToDo) \
-	{ Dest = nullptr; \
-		if (!(JsonObj)->TryGetObjectField(TEXT(Field), Dest) || !Dest) { \
-			LOG_ITWIN_WSRV_ERROR(CustomMsg); \
-			WhatToDo; \
-	}}
 
 #if WITH_TESTS
 
@@ -325,55 +243,9 @@ void UITwinWebServices::DeleteTokenFile(EITwinEnvironment Env)
 	SaveToken({}, Env);
 }
 
-/*static*/
-bool UITwinWebServices::GetErrorDescription(FJsonObject const& responseJson, FString& OutError,
-	FString const& Indent)
-{
-	if (!responseJson.HasField(TEXT("error")))
-	{
-		return false;
-	}
-
-	// see https://developer.bentley.com/apis/issues-v1/operations/get-workflow/
-	// (search "error-response" section)
-
-	TSharedPtr<FJsonObject> const* ErrorObject;
-	JSON_GETOBJ_OR(&responseJson, "error", ErrorObject, return false)
-	FString errorCode = (*ErrorObject)->GetStringField(TEXT("code"));
-	FString errorMessage = (*ErrorObject)->GetStringField(TEXT("message"));
-	FString const newLine = TEXT("\n") + Indent;
-	OutError += newLine + FString::Printf(TEXT("Error [%s]: %s"), *errorCode, *errorMessage);
-
-	const TArray<TSharedPtr<FJsonValue>>* detailsJson = nullptr;
-	if ((*ErrorObject)->TryGetArrayField(TEXT("details"), detailsJson))
-	{
-		for (const auto& detailValue : *detailsJson)
-		{
-			const auto& detailObject = detailValue->AsObject();
-			FString strDetail;
-			FString strCode, strMsg, strTarget;
-			if (detailObject->TryGetStringField(TEXT("code"), strCode))
-			{
-				strDetail += FString::Printf(TEXT("[%s] "), *strCode);
-			}
-			if (detailObject->TryGetStringField(TEXT("message"), strMsg))
-			{
-				strDetail += strMsg;
-			}
-			if (detailObject->TryGetStringField(TEXT("target"), strTarget))
-			{
-				strDetail += FString::Printf(TEXT(" (target: %s)"), *strTarget);
-			}
-			if (!strDetail.IsEmpty())
-			{
-				OutError += newLine + FString::Printf(TEXT("Details: %s"), *strDetail);
-			}
-		}
-	}
-	return true;
-}
-
 class UITwinWebServices::FImpl
+	: public SDK::Core::ITwinWebServices
+	, public SDK::Core::IITwinWebServicesObserver
 {
 	friend class UITwinWebServices;
 
@@ -382,48 +254,540 @@ class UITwinWebServices::FImpl
 	using FMutex = std::recursive_mutex;
 	using FLock = std::lock_guard<std::recursive_mutex>;
 	mutable FMutex mutex_;
-	std::shared_ptr< std::atomic_bool > isThisValid_ = std::make_shared< std::atomic_bool >(true); // same principle as in #FReusableJsonQueries::FImpl
-	IITwinWebServicesObserver* observer_ = nullptr;
 
-	struct LastError
-	{
-		FString msg_;
-		RequestID requestId_ = ITwin::NO_REQUEST;
-	};
-	LastError lastError_;
-	RequestID nextRequestId_ = 0;
+	::IITwinWebServicesObserver* observer_ = nullptr;
 
 	// Some data (mostly tokens) are unique per environment - thus their management is centralized
 	using SharedMngrPtr = FITwinAuthorizationManager::SharedInstance;
 	SharedMngrPtr authManager_;
 
-#if WITH_TESTS
-	FString customServerURL_;
-#endif
 
 public:
 	FImpl(UITwinWebServices& Owner)
 		: owner_(Owner)
 	{
-
+		SDK::Core::ITwinWebServices::SetObserver(this);
 	}
 
 	~FImpl()
 	{
-		*isThisValid_ = false;
-
+		SDK::Core::ITwinWebServices::SetObserver(nullptr);
 		if (authManager_)
 		{
 			authManager_->RemoveObserver(&owner_);
 		}
 	}
+
+	virtual void OnRequestError(std::string const& strError) override;
+
+	/// Overridden from SDK::Core::IITwinWebServicesObserver
+	/// This will just perform a conversion from SDKCore types to Unreal ones, and call the appropriate
+	/// callback on the latter.
+	virtual void OnITwinsRetrieved(bool bSuccess, SDK::Core::ITwinInfos const& infos) override;
+	virtual void OnITwinInfoRetrieved(bool bSuccess, SDK::Core::ITwinInfo const& info) override;
+	virtual void OnIModelsRetrieved(bool bSuccess, SDK::Core::IModelInfos const& infos) override;
+	virtual void OnChangesetsRetrieved(bool bSuccess, SDK::Core::ChangesetInfos const& infos) override;
+	virtual void OnExportInfosRetrieved(bool bSuccess, SDK::Core::ITwinExportInfos const& infos) override;
+	virtual void OnExportInfoRetrieved(bool bSuccess, SDK::Core::ITwinExportInfo const& info) override;
+	virtual void OnExportStarted(bool bSuccess, std::string const& InExportId) override;
+	virtual void OnSavedViewInfosRetrieved(bool bSuccess, SDK::Core::SavedViewInfos const& infos) override;
+	virtual void OnSavedViewRetrieved(bool bSuccess, SDK::Core::SavedView const& savedView, SDK::Core::SavedViewInfo const& info) override;
+	virtual void OnSavedViewThumbnailRetrieved(bool bSuccess, std::string const& SavedViewThumbnail, std::string const& SavedViewId) override;
+	virtual void OnSavedViewThumbnailUpdated(bool bSuccess, std::string const& SavedViewId, std::string const& Response) override;
+	virtual void OnSavedViewGroupInfosRetrieved(bool bSuccess, SDK::Core::SavedViewGroupInfos const& coreInfos) override;
+	virtual void OnSavedViewGroupAdded(bool bSuccess, SDK::Core::SavedViewGroupInfo const& coreGroupInfo) override;
+	virtual void OnSavedViewAdded(bool bSuccess, SDK::Core::SavedViewInfo const& info) override;
+	virtual void OnSavedViewDeleted(bool bSuccess, std::string const& savedViewId, std::string const& response) override;
+	virtual void OnSavedViewEdited(bool bSuccess, SDK::Core::SavedView const& savedView, SDK::Core::SavedViewInfo const& info) override;
+	virtual void OnRealityDataRetrieved(bool bSuccess, SDK::Core::ITwinRealityDataInfos const& infos) override;
+	virtual void OnRealityData3DInfoRetrieved(bool bSuccess, SDK::Core::ITwinRealityData3DInfo const& info) override;
+	virtual void OnElementPropertiesRetrieved(bool bSuccess, SDK::Core::ITwinElementProperties const& props) override;
+	virtual void OnIModelPropertiesRetrieved(bool bSuccess, SDK::Core::IModelProperties const& props) override;
+	virtual void OnIModelQueried(bool bSuccess, std::string const& QueryResult) override;
+	virtual void OnMaterialPropertiesRetrieved(bool bSuccess, SDK::Core::ITwinMaterialPropertiesMap const& props) override;
 };
 
 
+namespace
+{
+	inline void ToCoreVec3(FVector const& InVec3, std::array<double, 3>& OutVec3)
+	{
+		OutVec3[0] = InVec3.X;
+		OutVec3[1] = InVec3.Y;
+		OutVec3[2] = InVec3.Z;
+	}
+	inline FVector FromCoreVec3(std::array<double, 3> const& InVec3)
+	{
+		return FVector(InVec3[0], InVec3[1], InVec3[2]);
+	}
+	inline FPlane FromCoreVec4(std::array<double, 4> const& InVec)
+	{
+		return FPlane(InVec[0], InVec[1], InVec[2], InVec[3]);
+	}
+	inline FMatrix FromCoreMatrix3x4(SDK::Core::Matrix3x4 const& InMat)
+	{
+		return FMatrix(
+			FromCoreVec4(InMat[0]),
+			FromCoreVec4(InMat[1]),
+			FromCoreVec4(InMat[2]),
+			FPlane(0, 0, 0, 1)
+		);
+	}
+	inline void ToCoreRotator(FRotator const& InAngles, SDK::Core::Rotator& OutAngles)
+	{
+		OutAngles.yaw = InAngles.Yaw;
+		OutAngles.pitch = InAngles.Pitch;
+		OutAngles.roll = InAngles.Roll;
+	}
+	inline FRotator FromCoreRotator(SDK::Core::Rotator const& InRotator)
+	{
+		return FRotator(
+			InRotator.pitch.value_or(0.),
+			InRotator.yaw.value_or(0.),
+			InRotator.roll.value_or(0.));
+	}
+	inline void ToCoreSavedView(FSavedView const& SavedView, SDK::Core::SavedView& coreSV)
+	{
+		ToCoreVec3(SavedView.Origin, coreSV.origin);
+		ToCoreVec3(SavedView.Extents, coreSV.extents);
+		ToCoreRotator(SavedView.Angles, coreSV.angles);
+	}
+	inline void ToCoreSavedViewInfo(FSavedViewInfo const& SavedViewInfo, SDK::Core::SavedViewInfo& coreSV)
+	{
+		coreSV.id = TCHAR_TO_ANSI(*SavedViewInfo.Id);
+		coreSV.displayName = TCHAR_TO_ANSI(*SavedViewInfo.DisplayName);
+		coreSV.shared = SavedViewInfo.bShared;
+	}
+	inline void ToCoreSavedViewGroupInfo(FSavedViewGroupInfo const& SavedViewGroupInfo, SDK::Core::SavedViewGroupInfo& coreSVGroup)
+	{
+		coreSVGroup.id = TCHAR_TO_ANSI(*SavedViewGroupInfo.Id);
+		coreSVGroup.displayName = TCHAR_TO_ANSI(*SavedViewGroupInfo.DisplayName);
+		coreSVGroup.shared = SavedViewGroupInfo.bShared;
+		coreSVGroup.readOnly = SavedViewGroupInfo.bReadOnly;
+	}
+}
+
+
+/*static*/
+UITwinWebServices* UITwinWebServices::GetWorkingInstance()
+{
+	if (WorkingInstance)
+	{
+		return WorkingInstance;
+	}
+	auto* CoreWorkingInstance = SDK::Core::ITwinWebServices::GetWorkingInstance();
+	if (CoreWorkingInstance)
+	{
+		UITwinWebServices::FImpl* pImpl = static_cast<UITwinWebServices::FImpl*>(CoreWorkingInstance);
+		return &pImpl->owner_;
+	}
+	return nullptr;
+}
+
+void UITwinWebServices::FImpl::OnRequestError(std::string const& strError)
+{
+	if (UITwinWebServices::ShouldLogErrors())
+	{
+		UE_LOG(LogITwinHttp, Error, TEXT("iTwin request failed with: %s"),
+			*FString(strError.c_str()));
+	}
+}
+
+void UITwinWebServices::FImpl::OnITwinsRetrieved(bool bSuccess, SDK::Core::ITwinInfos const& coreInfos)
+{
+	FITwinInfos infos;
+	infos.iTwins.Reserve(coreInfos.iTwins.size());
+	Algo::Transform(coreInfos.iTwins, infos.iTwins,
+		[](SDK::Core::ITwinInfo const& V) -> FITwinInfo { return {
+			V.id.c_str(),
+			V.displayName.c_str(),
+			V.status.c_str(),
+			V.number.c_str()
+		};
+	});
+	owner_.OnGetiTwinsComplete.Broadcast(bSuccess, infos);
+	if (observer_)
+	{
+		observer_->OnITwinsRetrieved(bSuccess, infos);
+	}
+}
+
+void UITwinWebServices::FImpl::OnITwinInfoRetrieved(bool bSuccess, SDK::Core::ITwinInfo const& coreInfo)
+{
+	FITwinInfo const info =
+	{
+		coreInfo.id.c_str(),
+		coreInfo.displayName.c_str(),
+		coreInfo.status.c_str(),
+		coreInfo.number.c_str()
+	};
+	owner_.OnGetITwinInfoComplete.Broadcast(bSuccess, info);
+	if (observer_)
+	{
+		observer_->OnITwinInfoRetrieved(bSuccess, info);
+	}
+}
+
+void UITwinWebServices::FImpl::OnIModelsRetrieved(bool bSuccess, SDK::Core::IModelInfos const& coreInfos)
+{
+	FIModelInfos infos;
+	infos.iModels.Reserve(coreInfos.iModels.size());
+	Algo::Transform(coreInfos.iModels, infos.iModels,
+		[](SDK::Core::IModelInfo const& V) -> FIModelInfo { return {
+			V.id.c_str(),
+			V.displayName.c_str()
+		};
+	});
+	owner_.OnGetiTwiniModelsComplete.Broadcast(bSuccess, infos);
+	if (observer_)
+	{
+		observer_->OnIModelsRetrieved(bSuccess, infos);
+	}
+}
+
+void UITwinWebServices::FImpl::OnChangesetsRetrieved(bool bSuccess, SDK::Core::ChangesetInfos const& coreInfos)
+{
+	FChangesetInfos infos;
+	infos.Changesets.Reserve(coreInfos.changesets.size());
+	Algo::Transform(coreInfos.changesets, infos.Changesets,
+		[](SDK::Core::ChangesetInfo const& V) -> FChangesetInfo { return {
+			V.id.c_str(),
+			V.displayName.c_str(),
+			V.description.value_or("").c_str(),
+			V.index
+		};
+	});
+	owner_.OnGetiModelChangesetsComplete.Broadcast(bSuccess, infos);
+	if (observer_)
+	{
+		observer_->OnChangesetsRetrieved(bSuccess, infos);
+	}
+}
+
+void UITwinWebServices::FImpl::OnExportInfosRetrieved(bool bSuccess, SDK::Core::ITwinExportInfos const& coreInfos)
+{
+	FITwinExportInfos infos;
+	infos.ExportInfos.Reserve(coreInfos.exports.size());
+	Algo::Transform(coreInfos.exports, infos.ExportInfos,
+		[](SDK::Core::ITwinExportInfo const& V) -> FITwinExportInfo { return {
+			V.id.c_str(),
+			V.displayName.c_str(),
+			V.status.c_str(),
+			V.iModelId.c_str(),
+			V.iTwinId.c_str(),
+			V.changesetId.c_str(),
+			V.meshUrl.c_str()
+		};
+	});
+	owner_.OnGetExportsComplete.Broadcast(bSuccess, infos);
+	if (observer_)
+	{
+		observer_->OnExportInfosRetrieved(bSuccess, infos);
+	}
+}
+
+void UITwinWebServices::FImpl::OnExportInfoRetrieved(bool bSuccess, SDK::Core::ITwinExportInfo const& coreInfo)
+{
+	FITwinExportInfo const info =
+	{
+		coreInfo.id.c_str(),
+		coreInfo.displayName.c_str(),
+		coreInfo.status.c_str(),
+		coreInfo.iModelId.c_str(),
+		coreInfo.iTwinId.c_str(),
+		coreInfo.changesetId.c_str(),
+		coreInfo.meshUrl.c_str()
+	};
+	owner_.OnGetExportInfoComplete.Broadcast(bSuccess, info);
+	if (observer_)
+	{
+		observer_->OnExportInfoRetrieved(bSuccess, info);
+	}
+}
+
+void UITwinWebServices::FImpl::OnExportStarted(bool bSuccess, std::string const& exportId)
+{
+	const FString NewExportId(exportId.c_str());
+	owner_.OnStartExportComplete.Broadcast(bSuccess, NewExportId);
+	if (observer_)
+	{
+		observer_->OnExportStarted(bSuccess, NewExportId);
+	}
+}
+
+void UITwinWebServices::FImpl::OnSavedViewInfosRetrieved(bool bSuccess, SDK::Core::SavedViewInfos const& coreInfos)
+{
+	FSavedViewInfos infos;
+	infos.SavedViews.Reserve(coreInfos.savedViews.size());
+	Algo::Transform(coreInfos.savedViews, infos.SavedViews,
+		[](SDK::Core::SavedViewInfo const& V) -> FSavedViewInfo { return {
+			V.id.c_str(),
+			V.displayName.c_str(),
+			V.shared
+		};
+	});
+	infos.GroupId = coreInfos.groupId.value_or("").c_str();
+	owner_.OnGetSavedViewsComplete.Broadcast(bSuccess, infos);
+	if (observer_)
+	{
+		observer_->OnSavedViewInfosRetrieved(bSuccess, infos);
+	}
+}
+
+void UITwinWebServices::FImpl::OnSavedViewGroupInfosRetrieved(bool bSuccess, SDK::Core::SavedViewGroupInfos const& coreInfos)
+{
+	FSavedViewGroupInfos infos;
+	infos.SavedViewGroups.Reserve(coreInfos.groups.size());
+	Algo::Transform(coreInfos.groups, infos.SavedViewGroups,
+		[](SDK::Core::SavedViewGroupInfo const& V) -> FSavedViewGroupInfo { return {
+			V.id.c_str(),
+			V.displayName.c_str(),
+			V.shared,
+			V.readOnly
+		};
+		});
+	owner_.OnGetSavedViewGroupsComplete.Broadcast(bSuccess, infos);
+	if (observer_)
+	{
+		observer_->OnSavedViewGroupInfosRetrieved(bSuccess, infos);
+	}
+}
+
+void UITwinWebServices::FImpl::OnSavedViewRetrieved(bool bSuccess, SDK::Core::SavedView const& coreSV, SDK::Core::SavedViewInfo const& coreSVInfo)
+{
+	const FSavedView SavedView = {
+		FromCoreVec3(coreSV.origin),
+		FromCoreVec3(coreSV.extents),
+		FromCoreRotator(coreSV.angles)
+	};
+	const FSavedViewInfo SavedViewInfo = {
+		coreSVInfo.id.c_str(),
+		coreSVInfo.displayName.c_str(),
+		coreSVInfo.shared
+	};
+	owner_.OnGetSavedViewComplete.Broadcast(bSuccess, SavedView, SavedViewInfo);
+	if (observer_)
+	{
+		observer_->OnSavedViewRetrieved(bSuccess, SavedView, SavedViewInfo);
+	}
+}
+
+void UITwinWebServices::FImpl::OnSavedViewThumbnailRetrieved(bool bSuccess, std::string const& SavedViewThumbnail, std::string const& SavedViewId)
+{
+	owner_.OnGetSavedViewThumbnailComplete.Broadcast(bSuccess, SavedViewThumbnail.c_str(), SavedViewId.c_str());
+	if (observer_)
+	{
+		observer_->OnSavedViewThumbnailRetrieved(bSuccess, SavedViewThumbnail.c_str(), SavedViewId.c_str());
+	}
+}
+
+void UITwinWebServices::FImpl::OnSavedViewThumbnailUpdated(bool bSuccess, std::string const& SavedViewId, std::string const& Response)
+{
+	owner_.OnUpdateSavedViewThumbnailComplete.Broadcast(bSuccess, SavedViewId.c_str(), Response.c_str());
+	if (observer_)
+	{
+		observer_->OnSavedViewThumbnailUpdated(bSuccess, SavedViewId.c_str(), Response.c_str());
+	}
+}
+
+void UITwinWebServices::FImpl::OnSavedViewAdded(bool bSuccess, SDK::Core::SavedViewInfo const& coreSVInfo)
+{
+	const FSavedViewInfo SavedViewInfo = {
+		coreSVInfo.id.c_str(),
+		coreSVInfo.displayName.c_str(),
+		coreSVInfo.shared
+	};
+	owner_.OnSavedViewAdded(bSuccess, SavedViewInfo);
+}
+
+void UITwinWebServices::FImpl::OnSavedViewGroupAdded(bool bSuccess, SDK::Core::SavedViewGroupInfo const& coreGroupInfo)
+{
+	const FSavedViewGroupInfo SavedViewGroupInfo = {
+		coreGroupInfo.id.c_str(),
+		coreGroupInfo.displayName.c_str(),
+		coreGroupInfo.shared,
+		coreGroupInfo.readOnly
+	};
+	owner_.OnAddSavedViewGroupComplete.Broadcast(bSuccess, SavedViewGroupInfo);
+	if (observer_)
+	{
+		observer_->OnSavedViewGroupAdded(bSuccess, SavedViewGroupInfo);
+	}
+}
+
+void UITwinWebServices::FImpl::OnSavedViewDeleted(bool bSuccess, std::string const& savedViewId, std::string const& strError)
+{
+	owner_.OnSavedViewDeleted(bSuccess, FString(savedViewId.c_str()), FString(strError.c_str()));
+}
+
+void UITwinWebServices::FImpl::OnSavedViewEdited(bool bSuccess, SDK::Core::SavedView const& coreSV, SDK::Core::SavedViewInfo const& coreSVInfo)
+{
+	const FSavedView SavedView = {
+		FromCoreVec3(coreSV.origin),
+		FromCoreVec3(coreSV.extents),
+		FromCoreRotator(coreSV.angles)
+	};
+	const FSavedViewInfo SavedViewInfo = {
+		coreSVInfo.id.c_str(),
+		coreSVInfo.displayName.c_str(),
+		coreSVInfo.shared
+	};
+	owner_.OnEditSavedViewComplete.Broadcast(bSuccess, SavedView, SavedViewInfo);
+	if (observer_)
+	{
+		observer_->OnSavedViewEdited(bSuccess, SavedView, SavedViewInfo);
+	}
+}
+
+void UITwinWebServices::FImpl::OnRealityDataRetrieved(bool bSuccess, SDK::Core::ITwinRealityDataInfos const& coreInfos)
+{
+	FITwinRealityDataInfos infos;
+	infos.Infos.Reserve(coreInfos.realityData.size());
+	Algo::Transform(coreInfos.realityData, infos.Infos,
+		[](SDK::Core::ITwinRealityDataInfo const& V) -> FITwinRealityDataInfo { return {
+			V.id.c_str(),
+			V.displayName.c_str()
+		};
+	});
+	owner_.OnGetRealityDataComplete.Broadcast(bSuccess, infos);
+	if (observer_)
+	{
+		observer_->OnRealityDataRetrieved(bSuccess, infos);
+	}
+}
+
+void UITwinWebServices::FImpl::OnRealityData3DInfoRetrieved(bool bSuccess, SDK::Core::ITwinRealityData3DInfo const& coreInfo)
+{
+	FITwinRealityData3DInfo info;
+	info.Id = coreInfo.id.c_str();
+	info.DisplayName = coreInfo.displayName.c_str();
+	info.bGeolocated = coreInfo.bGeolocated;
+	info.ExtentNorthEast.Latitude = coreInfo.extentNorthEast.latitude;
+	info.ExtentNorthEast.Longitude = coreInfo.extentNorthEast.longitude;
+	info.ExtentSouthWest.Latitude = coreInfo.extentSouthWest.latitude;
+	info.ExtentSouthWest.Longitude = coreInfo.extentSouthWest.longitude;
+	info.MeshUrl = coreInfo.meshUrl.c_str();
+	owner_.OnGetRealityData3DInfoComplete.Broadcast(bSuccess, info);
+	if (observer_)
+	{
+		observer_->OnRealityData3DInfoRetrieved(bSuccess, info);
+	}
+}
+
+void UITwinWebServices::FImpl::OnElementPropertiesRetrieved(bool bSuccess, SDK::Core::ITwinElementProperties const& coreProps)
+{
+	FElementProperties props;
+	props.Properties.Reserve(coreProps.properties.size());
+	Algo::Transform(coreProps.properties, props.Properties,
+		[](SDK::Core::ITwinElementProperty const& coreProp) -> FElementProperty {
+		FElementProperty p;
+		p.Name = coreProp.name.c_str();
+		p.Attributes.Reserve(coreProp.attributes.size());
+		Algo::Transform(coreProp.attributes, p.Attributes,
+			[](SDK::Core::ITwinElementAttribute const& coreAttr) -> FElementAttribute {
+			return {
+				coreAttr.name.c_str(),
+				coreAttr.value.c_str()
+			};
+		});
+		return p;
+	});
+	owner_.OnGetElementPropertiesComplete.Broadcast(bSuccess, props);
+	if (observer_)
+	{
+		observer_->OnElementPropertiesRetrieved(bSuccess, props);
+	}
+}
+
+void UITwinWebServices::FImpl::OnIModelPropertiesRetrieved(bool bSuccess, SDK::Core::IModelProperties const& coreProps)
+{
+	FProjectExtents ProjectExtents;
+	FEcefLocation EcefLocation;
+	const bool bHasExtents = coreProps.projectExtents.has_value();
+	const bool bHasEcefLocation = coreProps.ecefLocation.has_value();
+	if (bHasExtents)
+	{
+		ProjectExtents.Low = FromCoreVec3(coreProps.projectExtents->low);
+		ProjectExtents.High = FromCoreVec3(coreProps.projectExtents->high);
+	}
+	if (bHasEcefLocation)
+	{
+		SDK::Core::EcefLocation const& coreEcef = *coreProps.ecefLocation;
+		EcefLocation.bHasCartographicOrigin = coreEcef.cartographicOrigin.has_value();
+		if (EcefLocation.bHasCartographicOrigin)
+		{
+			EcefLocation.CartographicOrigin.Latitude = coreEcef.cartographicOrigin->latitude;
+			EcefLocation.CartographicOrigin.Longitude = coreEcef.cartographicOrigin->longitude;
+			EcefLocation.CartographicOrigin.Height = coreEcef.cartographicOrigin->height;
+		}
+		EcefLocation.Orientation = FromCoreRotator(coreEcef.orientation);
+		EcefLocation.Origin = FromCoreVec3(coreEcef.origin);
+		EcefLocation.bHasTransform = coreEcef.transform.has_value();
+		if (EcefLocation.bHasTransform)
+		{
+			EcefLocation.Transform = FromCoreMatrix3x4(*coreEcef.transform);
+		}
+		EcefLocation.bHasVectors = coreEcef.xVector && coreEcef.yVector;
+		if (EcefLocation.bHasVectors)
+		{
+			EcefLocation.xVector = FromCoreVec3(*coreEcef.xVector);
+			EcefLocation.yVector = FromCoreVec3(*coreEcef.yVector);
+		}
+	}
+	
+	owner_.OnGetIModelPropertiesComplete.Broadcast(bSuccess, bHasExtents, ProjectExtents, bHasEcefLocation, EcefLocation);
+	if (observer_)
+	{
+		observer_->OnIModelPropertiesRetrieved(bSuccess, bHasExtents, ProjectExtents, bHasEcefLocation, EcefLocation);
+	}
+}
+
+void UITwinWebServices::FImpl::OnIModelQueried(bool bSuccess, std::string const& QueryResult)
+{
+	owner_.OnQueryIModelComplete.Broadcast(bSuccess, FString(QueryResult.c_str()));
+	if (observer_)
+	{
+		observer_->OnIModelQueried(bSuccess, FString(QueryResult.c_str()));
+	}
+}
+
+void UITwinWebServices::FImpl::OnMaterialPropertiesRetrieved(bool bSuccess, SDK::Core::ITwinMaterialPropertiesMap const& coreProps)
+{
+	// TODO_JDE convert ITwinMaterialProperties into something we can manipulate through blueprints...
+	if (observer_)
+	{
+		observer_->OnMaterialPropertiesRetrieved(bSuccess, coreProps);
+	}
+}
+
+/// UITwinWebServices
 UITwinWebServices::UITwinWebServices()
 	: Impl(MakePimpl<UITwinWebServices::FImpl>(*this))
 {
+	// Adapt Unreal to SDK Core's Http request
+	static bool bHasInitHttp = false;
+	if (!bHasInitHttp)
+	{
+		bHasInitHttp = true;
 
+		using namespace SDK::Core;
+		HttpRequest::SetNewFct([]() {
+			std::shared_ptr<HttpRequest> p(static_cast<HttpRequest*>(new FUEHttpRequest));
+			return p;
+		});
+	}
+
+#if 0 // IS_BE_DEV()
+	FString bentleyEnv = FPlatformMisc::GetEnvironmentVariable(TEXT("BENTLEY_ENV"));
+	if (bentleyEnv == "DEV")
+	{
+		SetEnvironment(EITwinEnvironment::Dev);
+	}
+	else if (bentleyEnv == "QA")
+	{
+		SetEnvironment(EITwinEnvironment::QA);
+	}
+#endif
 }
 
 
@@ -449,8 +813,20 @@ void UITwinWebServices::SetServerConnection(TObjectPtr<AITwinServerConnection> c
 	ServerConnection = InConnection;
 	if (ServerConnection)
 	{
-		this->Environment = ServerConnection->Environment;
+		SetEnvironment(ServerConnection->Environment);
 	}
+}
+
+void UITwinWebServices::SetEnvironment(EITwinEnvironment InEnvironment)
+{
+	this->Environment = InEnvironment;
+
+	// the enum should be exactly identical in SDK Core and here...
+	static_assert(static_cast<EITwinEnvironment>(SDK::Core::EITwinEnvironment::Prod) == EITwinEnvironment::Prod
+		&& static_cast<EITwinEnvironment>(SDK::Core::EITwinEnvironment::Invalid) == EITwinEnvironment::Invalid,
+		"EITwinEnvironment enum definition mismatch");
+
+	Impl->SetEnvironment(static_cast<SDK::Core::EITwinEnvironment>(InEnvironment));
 }
 
 bool UITwinWebServices::TryGetServerConnection(bool bAllowBroadcastAuthResult)
@@ -459,6 +835,7 @@ bool UITwinWebServices::TryGetServerConnection(bool bAllowBroadcastAuthResult)
 		FImpl::FLock Lock(Impl->mutex_);
 		if (ServerConnection && ServerConnection->HasAccessToken())
 		{
+			Impl->SetAuthToken(TCHAR_TO_ANSI(*ServerConnection->AccessToken));
 			return true;
 		}
 	}
@@ -565,6 +942,7 @@ void UITwinWebServices::OnAuthDoneImpl(bool bSuccess, FString const& Error, bool
 		ServerConnection->Environment = this->Environment;
 		Impl->authManager_->GetAccessToken(ServerConnection->AccessToken);
 		checkf(ServerConnection->HasAccessToken(), TEXT("Upon success, an access token is expected!"));
+		Impl->SetAuthToken(TCHAR_TO_ANSI(*ServerConnection->AccessToken));
 	}
 
 	if (bBroadcastResult)
@@ -622,74 +1000,30 @@ bool UITwinWebServices::HasObserver(IITwinWebServicesObserver const* Observer) c
 	return Impl->observer_ == Observer;
 }
 
-void UITwinWebServices::SetLastError(FString const& InError, RequestID InRequestID)
-{
-	FImpl::FLock Lock(Impl->mutex_);
-	Impl->lastError_.msg_ = InError;
-	Impl->lastError_.requestId_ = InRequestID;
-}
-
 FString UITwinWebServices::GetLastError() const
 {
-	FImpl::FLock Lock(Impl->mutex_);
-	return Impl->lastError_.msg_;
-}
-
-FString UITwinWebServices::GetRequestError(RequestID InRequestId) const
-{
-	FImpl::FLock Lock(Impl->mutex_);
-	if (Impl->lastError_.requestId_ == InRequestId)
-		return Impl->lastError_.msg_;
-	else
-		return {};
+	return FString(Impl->GetLastError().c_str());
 }
 
 bool UITwinWebServices::ConsumeLastError(FString& OutError)
 {
-	FImpl::FLock Lock(Impl->mutex_);
-	OutError = Impl->lastError_.msg_;
-	Impl->lastError_ = {};
-	return !OutError.IsEmpty();
+	std::string LastError;
+	const bool bHasError = Impl->ConsumeLastError(LastError);
+	OutError = LastError.c_str();
+	return bHasError;
 }
 
-struct UITwinWebServices::FITwinAPIRequestInfo
-{
-	FString Verb; // "GET" or "POST"...
-	FString UrlSuffix;
-	FString AcceptHeader;
-
-	FString ContentType;
-	FString ContentString;
-
-	TMap<FString, FString> CustomHeaders;
-
-	bool bAllowEmptyResponse = false; // E.g. true for DeleteSavedView
-};
 
 #if WITH_TESTS
 void UITwinWebServices::SetTestServerURL(FString const& ServerUrl)
 {
-	Impl->customServerURL_ = ServerUrl;
+	Impl->SetCustomServerURL(TCHAR_TO_ANSI(*ServerUrl));
 }
 #endif
 
-FString UITwinWebServices::GetAPIRootURL() const
-{
-#if WITH_TESTS
-	if (!Impl->customServerURL_.IsEmpty())
-	{
-		// automation test is running: use mock server URL instead.
-		return Impl->customServerURL_;
-	}
-#endif
-	return GetITwinAPIRootUrl(this->Environment);
-}
 
-template <typename ResultDataType, class FunctorType, class DelegateAsFunctor>
-UITwinWebServices::RequestID UITwinWebServices::TProcessHttpRequest(
-	FITwinAPIRequestInfo const& RequestInfo,
-	FunctorType&& InFunctor,
-	DelegateAsFunctor&& InResultFunctor)
+template <typename FunctorType>
+void UITwinWebServices::DoRequest(FunctorType&& InFunctor)
 {
 	// We may have no ServerConnection yet (happens if one instantiates UITwinWebServices and uses it at once
 	// without calling SetServerConnection or CheckAuthorization...)
@@ -698,246 +1032,31 @@ UITwinWebServices::RequestID UITwinWebServices::TProcessHttpRequest(
 	// client.
 	if (!TryGetServerConnection(false))
 	{
-		return ITwin::NO_REQUEST;
+		return;
 	}
-	FString const authToken = GetAuthToken();
-	if (authToken.IsEmpty())
-	{
-		return ITwin::NO_REQUEST;
-	}
-
-	// build a unique request ID
-	RequestID newRequestID(ITwin::NO_REQUEST);
-	{
-		FImpl::FLock Lock(Impl->mutex_);
-		newRequestID = Impl->nextRequestId_++;
-	}
-
-	const auto request = FHttpModule::Get().CreateRequest();
-	request->SetVerb(RequestInfo.Verb);
-	request->SetURL(GetAPIRootURL() + RequestInfo.UrlSuffix);
-
-	// Fill headers
-	if (!RequestInfo.CustomHeaders.Contains(TEXT("Prefer")))
-	{
-		request->SetHeader(TEXT("Prefer"), TEXT("return=representation"));
-	}
-	request->SetHeader(TEXT("Accept"), RequestInfo.AcceptHeader);
-	if (!RequestInfo.ContentType.IsEmpty())
-	{
-		// for "POST" requests typically
-		request->SetHeader(TEXT("Content-Type"), RequestInfo.ContentType);
-	}
-	if (!RequestInfo.ContentString.IsEmpty())
-	{
-		request->SetContentAsString(RequestInfo.ContentString);
-	}
-	request->SetHeader(TEXT("Authorization"), TEXT("Bearer ") + authToken);
-
-	// add custom headers, if any
-	for (const auto& header : RequestInfo.CustomHeaders) {
-		request->SetHeader(header.Key, header.Value);
-	}
-
-	request->OnProcessRequestComplete().BindLambda(
-		[this,
-		IsValidLambda = this->Impl->isThisValid_,
-		ResultCallback = Forward<DelegateAsFunctor>(InResultFunctor),
-		ResponseProcessor = Forward<FunctorType>(InFunctor),
-		bAllowEmptyResponse = RequestInfo.bAllowEmptyResponse,
-		requestId = newRequestID]
-		(FHttpRequestPtr request, FHttpResponsePtr response, bool connectedSuccessfully)
-	{
-		if (!(*IsValidLambda))
-		{
-			// see comments in #ReusableJsonQueries.cpp
-			return;
-		}
-		bool bValidResponse = false;
-		FString requestError;
-		Be::CleanUpGuard setErrorGuard([this, &bValidResponse, &requestError, &ResultCallback, requestId]
-		{
-			this->SetLastError(requestError, requestId);
-			if (!bValidResponse)
-			{
-				ResultCallback(false, {});
-			}
-		});
-
-		if (!AITwinServerConnection::CheckRequest(request, response, connectedSuccessfully, &requestError))
-		{
-			return;
-		}
-		TSharedPtr<FJsonObject> responseJson;
-		FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(response->GetContentAsString()), responseJson);
-
-		ResultDataType ResultData;
-		if (responseJson)
-		{
-			bValidResponse = ResponseProcessor(ResultData, *responseJson);
-		}
-		else if (bAllowEmptyResponse)
-		{
-			// some request expect no response (DeleteSavedView, typically)
-			bValidResponse = ResponseProcessor(ResultData, {});
-		}
-		ScopedWorkingWebServices WorkingInstanceSetter(this);
-		ResultCallback(bValidResponse, ResultData);
-	});
-	request->ProcessRequest();
-
-	return newRequestID;
+	InFunctor();
 }
 
 void UITwinWebServices::GetITwinInfo(FString ITwinId)
 {
-	const FITwinAPIRequestInfo iTwinRequestInfo = {
-		TEXT("GET"),
-		TEXT("/itwins/" + ITwinId),
-		TEXT("application/vnd.bentley.itwin-platform.v1+json")
-	};
-	TProcessHttpRequest<FITwinInfo>(
-		iTwinRequestInfo,
-		[](FITwinInfo& iTwinInfo, FJsonObject const& responseJson) -> bool
-	{
-		TSharedPtr<FJsonObject> const* itwinJson;
-		JSON_GETOBJ_OR(&responseJson, "iTwin", itwinJson, return false)
-		iTwinInfo.Id = (*itwinJson)->GetStringField(TEXT("id"));
-		iTwinInfo.DisplayName = (*itwinJson)->GetStringField(TEXT("displayName"));
-		iTwinInfo.Status = (*itwinJson)->GetStringField(TEXT("status"));
-		iTwinInfo.Number = (*itwinJson)->GetStringField(TEXT("number"));
-		return true;
-	},
-		[this](bool bResult, FITwinInfo const& ResultData)
-	{
-		this->OnGetITwinInfoComplete.Broadcast(bResult, ResultData);
-		if (this->Impl->observer_)
-		{
-			this->Impl->observer_->OnITwinInfoRetrieved(bResult, ResultData);
-		}
-	});
+	DoRequest([this, ITwinId]() { Impl->GetITwinInfo(TCHAR_TO_ANSI(*ITwinId)); });
 }
 
 void UITwinWebServices::GetiTwins()
 {
-	static const FITwinAPIRequestInfo iTwinsRequestInfo = {
-		TEXT("GET"),
-		TEXT("/itwins/recents?subClass=Project&status=Active&$top=1000"),
-		TEXT("application/vnd.bentley.itwin-platform.v1+json")
-	};
-	TProcessHttpRequest<FITwinInfos>(
-		iTwinsRequestInfo,
-		[](FITwinInfos& iTwinInfos, FJsonObject const& responseJson) -> bool
-	{
-		const TArray<TSharedPtr<FJsonValue>>* itwinsJson = nullptr;
-		if (!responseJson.TryGetArrayField(TEXT("iTwins"), itwinsJson))
-		{
-			return false;
-		}
-		iTwinInfos.iTwins.Reserve(itwinsJson->Num());
-		for (const auto& iTwinValue : *itwinsJson)
-		{
-			const auto& iTwinObject = iTwinValue->AsObject();
-
-			FITwinInfo iTwinInfo = {
-				iTwinObject->GetStringField(TEXT("id")),
-				iTwinObject->GetStringField(TEXT("displayName")),
-				iTwinObject->GetStringField(TEXT("status")),
-				iTwinObject->GetStringField(TEXT("number"))
-			};
-			iTwinInfos.iTwins.Push(iTwinInfo);
-		}
-		return true;
-	},
-		[this](bool bResult, FITwinInfos const& ResultData)
-	{
-		this->OnGetiTwinsComplete.Broadcast(bResult, ResultData);
-		if (this->Impl->observer_)
-		{
-			this->Impl->observer_->OnITwinsRetrieved(bResult, ResultData);
-		}
-	});
+	DoRequest([this]() { Impl->GetITwins(); });
 }
 
 void UITwinWebServices::GetiTwiniModels(FString ITwinId)
 {
-	const FITwinAPIRequestInfo iModelsRequestInfo = {
-		TEXT("GET"),
-		TEXT("/imodels/?iTwinId=") + ITwinId + TEXT("&$top=100"),
-		TEXT("application/vnd.bentley.itwin-platform.v2+json")
-	};
-	TProcessHttpRequest<FIModelInfos>(
-		iModelsRequestInfo,
-		[](FIModelInfos& iModelInfos, FJsonObject const& responseJson) -> bool
-	{
-		const TArray<TSharedPtr<FJsonValue>>* imodelsJson = nullptr;
-		if (!responseJson.TryGetArrayField(TEXT("iModels"), imodelsJson))
-		{
-			return false;
-		}
-		iModelInfos.iModels.Reserve(imodelsJson->Num());
-		for (const auto& IModelValue : *imodelsJson)
-		{
-			auto const& IModelObject = IModelValue->AsObject();
-
-			FIModelInfo iModel = {
-				IModelObject->GetStringField(TEXT("id")),
-				IModelObject->GetStringField(TEXT("displayName"))
-			};
-			iModelInfos.iModels.Push(iModel);
-		}
-		return true;
-	},
-		[this](bool bResult, FIModelInfos const& ResultData)
-	{
-		this->OnGetiTwiniModelsComplete.Broadcast(bResult, ResultData);
-		if (this->Impl->observer_)
-		{
-			this->Impl->observer_->OnIModelsRetrieved(bResult, ResultData);
-		}
-	});
+	DoRequest([this, ITwinId]() { Impl->GetITwinIModels(TCHAR_TO_ANSI(*ITwinId)); });
 }
 
 void UITwinWebServices::DoGetiModelChangesets(FString const& IModelId, bool bRestrictToLatest)
 {
-	const FITwinAPIRequestInfo changesetsRequestInfo = {
-		TEXT("GET"),
-		TEXT("/imodels/") + IModelId + TEXT("/changesets?")
-		+ (bRestrictToLatest ? TEXT("$top=1&") : TEXT(""))
-		+ TEXT("$orderBy=index+desc"),
-		TEXT("application/vnd.bentley.itwin-platform.v2+json")
-	};
-	TProcessHttpRequest<FChangesetInfos>(
-		changesetsRequestInfo,
-		[](FChangesetInfos& Infos, FJsonObject const& responseJson) -> bool
-	{
-		const TArray<TSharedPtr<FJsonValue>>* changesetsJson = nullptr;
-		if (!responseJson.TryGetArrayField(TEXT("changesets"), changesetsJson))
-		{
-			return false;
-		}
-		Infos.Changesets.Reserve(changesetsJson->Num());
-		for (const auto& ChangesetValue : *changesetsJson)
-		{
-			auto const& JsonObject = ChangesetValue->AsObject();
-			FChangesetInfo Changeset = {
-				JsonObject->GetStringField(TEXT("id")),
-				JsonObject->GetStringField(TEXT("displayName")),
-				JsonObject->HasField(TEXT("description")) ? JsonObject->GetStringField(TEXT("description")) : "",
-				JsonObject->GetIntegerField(TEXT("index"))
-			};
-			Infos.Changesets.Push(Changeset);
-		}
-		return true;
-	},
-		[this](bool bResult, FChangesetInfos const& ResultData)
-	{
-		this->OnGetiModelChangesetsComplete.Broadcast(bResult, ResultData);
-		if (this->Impl->observer_)
-		{
-			this->Impl->observer_->OnChangesetsRetrieved(bResult, ResultData);
-		}
-	});
+	DoRequest([this, &IModelId, bRestrictToLatest]() {
+		Impl->GetIModelChangesets(TCHAR_TO_ANSI(*IModelId), bRestrictToLatest); }
+	);
 }
 
 void UITwinWebServices::GetiModelChangesets(FString IModelId)
@@ -952,361 +1071,64 @@ void UITwinWebServices::GetiModelLatestChangeset(FString iModelId)
 
 void UITwinWebServices::GetExports(FString IModelId, FString ChangesetId)
 {
-	const FITwinAPIRequestInfo exportsRequestInfo = {
-		TEXT("GET"),
-		TEXT("/mesh-export/?iModelId=") + IModelId + TEXT("&changesetId=") + ChangesetId,
-		TEXT("application/vnd.bentley.itwin-platform.v1+json"),
-		{},
-		{},
-		{
-			// The following headers have been added following suggestion by Daniel Iborra.
-			// This header is supposed to filter exports, but it is not implemented yet on server.
-			// Therefore we need to keep our own filter on the response for now.
-			{TEXT("exportType"), TEXT("CESIUM")}, 
-			{TEXT("cdn"), TEXT("1")}, // Activates CDN, improves performance
-			{TEXT("client"), TEXT("Unreal")}, // For stats
-			// (end of headers suggested by Daniel Iborra)
-		},
-	};
-	TProcessHttpRequest<FITwinExportInfos>(
-		exportsRequestInfo,
-		[](FITwinExportInfos& Infos, FJsonObject const& responseJson) -> bool
-	{
-		const TArray<TSharedPtr<FJsonValue>>* exportsJson = nullptr;
-		if (!responseJson.TryGetArrayField(TEXT("exports"), exportsJson))
-		{
-			return false;
-		}
-		// intermediate structure to sort exports by date
-		struct FCesiumExport
-		{
-			FITwinExportInfo Info;
-			FString LastModified;
-		};
-		TArray<FCesiumExport> CesiumExports;
-		CesiumExports.Reserve(exportsJson->Num());
-		for (const auto& ExportValue : *exportsJson)
-		{
-			const auto& ExportObject = ExportValue->AsObject();
-			const auto& RequestObject = ExportObject->GetObjectField(TEXT("request"));
-			if (RequestObject->GetStringField(TEXT("exportType")) == "CESIUM")
-			{
-				FCesiumExport& ExportWithDate = CesiumExports.Emplace_GetRef();
-				FITwinExportInfo& Export(ExportWithDate.Info);
-				Export = {
-					ExportObject->GetStringField(TEXT("id")),
-					ExportObject->GetStringField(TEXT("displayName")),
-					ExportObject->GetStringField(TEXT("status")),
-					RequestObject->GetStringField(TEXT("iModelId")),
-					RequestObject->GetStringField(TEXT("contextId")),
-					RequestObject->GetStringField(TEXT("changesetId"))
-				};
-				ExportWithDate.LastModified = ExportObject->GetStringField(TEXT("lastModified"));
-				if (Export.Status == "Complete")
-				{
-					auto MeshJsonObject = GetChildObject(ExportObject, "_links/mesh");
-					if (MeshJsonObject)
-					{
-						Export.MeshUrl = MeshJsonObject->GetStringField(TEXT("href")).Replace(TEXT("?"), TEXT("/tileset.json?"));
-					}
-				}
-			}
-		}
-		// sort by decreasing modification time
-		CesiumExports.StableSort([](FCesiumExport const& A, FCesiumExport const& B) {
-			return A.LastModified > B.LastModified;
-		});
-		Infos.ExportInfos.Reserve(CesiumExports.Num());
-		for (FCesiumExport const& ExportWithDate : CesiumExports)
-		{
-			Infos.ExportInfos.Push(ExportWithDate.Info);
-		}
-		return true;
-	},
-		[this](bool bResult, FITwinExportInfos const& ResultData)
-	{
-		this->OnGetExportsComplete.Broadcast(bResult, ResultData);
-		if (this->Impl->observer_)
-		{
-			this->Impl->observer_->OnExportInfosRetrieved(bResult, ResultData);
-		}
-	});
+	DoRequest([this, IModelId, ChangesetId]() {
+		Impl->GetExports(TCHAR_TO_ANSI(*IModelId), TCHAR_TO_ANSI(*ChangesetId)); }
+	);
 }
 
 void UITwinWebServices::GetExportInfo(FString ExportId)
 {
-	const FITwinAPIRequestInfo exportRequestInfo = {
-		TEXT("GET"),
-		TEXT("/mesh-export/") + ExportId,
-		TEXT("application/vnd.bentley.itwin-platform.v1+json")
-	};
-	TProcessHttpRequest<FITwinExportInfo>(
-		exportRequestInfo,
-		[](FITwinExportInfo& Export, FJsonObject const& responseJson) -> bool
-	{
-		TSharedPtr<FJsonObject> const* JsonExport;
-		JSON_GETOBJ_OR_CUSTOM(&responseJson, "export", "Invalid Reply: Export not defined.",
-							  JsonExport, return false)
-		auto JsonHref = GetChildObject(*JsonExport, "request");
-		if (!JsonHref)
-		{
-			LOG_ITWIN_WSRV_ERROR("Invalid Reply: Export request not defined.");
-			return false;
-		}
-
-		FString const ExportType = JsonHref->GetStringField(TEXT("exportType"));
-		if (ExportType != "CESIUM")
-		{
-			LOG_ITWIN_WSRV_ERROR_ONE_PARAM("Invalid Reply: Export Type is incorrect: %s", *ExportType);
-			return false;
-		}
-		Export.Id = (*JsonExport)->GetStringField(TEXT("id"));
-		Export.DisplayName = (*JsonExport)->GetStringField(TEXT("displayName"));
-		Export.Status = (*JsonExport)->GetStringField(TEXT("status"));
-		Export.iModelId = JsonHref->GetStringField(TEXT("iModelId"));
-		Export.iTwinId = JsonHref->GetStringField(TEXT("contextId"));
-		Export.ChangesetId = JsonHref->GetStringField(TEXT("changesetId"));
-
-		if (Export.Status == "Complete")
-		{
-			JsonHref = GetChildObject(*JsonExport, "_links/mesh");
-			if (JsonHref)
-			{
-				Export.MeshUrl = JsonHref->GetStringField(TEXT("href")).Replace(TEXT("?"), TEXT("/tileset.json?"));
-			}
-		}
-		return true;
-	},
-		[this](bool bResult, FITwinExportInfo const& ResultData)
-	{
-		this->OnGetExportInfoComplete.Broadcast(bResult, ResultData);
-		if (this->Impl->observer_)
-		{
-			this->Impl->observer_->OnExportInfoRetrieved(bResult, ResultData);
-		}
-	});
+	DoRequest([this, ExportId]() { Impl->GetExportInfo(TCHAR_TO_ANSI(*ExportId)); });
 }
 
 void UITwinWebServices::StartExport(FString IModelId, FString ChangesetId)
 {
-	const FITwinAPIRequestInfo startExportRequest = {
-		TEXT("POST"),
-		TEXT("/mesh-export"),
-		TEXT("application/vnd.bentley.itwin-platform.v1+json"),
-
-		/*** additional settings for POST ***/
-		TEXT("application/json"),
-		FString::Printf(
-			TEXT("{\"iModelId\":\"%s\",\"changesetId\":\"%s\",\"exportType\":\"CESIUM\"}"),
-			*IModelId, *ChangesetId),
-
-		{ { TEXT("use-new-exporter"), TEXT("3") } }
-	};
-	TProcessHttpRequest<FString>(
-		startExportRequest,
-		[IModelId](FString& ExportId, FJsonObject const& responseJson) -> bool
-	{
-		ExportId = FString();
-		TSharedPtr<FJsonObject> const* JsonExport;
-		JSON_GETOBJ_OR_CUSTOM(&responseJson, "export", "Invalid Reply: Export not defined.",
-							  JsonExport, return false)
-		if (*JsonExport)
-		{
-			ExportId = (*JsonExport)->GetStringField(TEXT("id"));
-
-			UE_LOG(LogITwinHttp, Display, TEXT("StartExport for %s = OK, export ID:\n%s"),
-				*IModelId, *ExportId);
-		}
-		return !ExportId.IsEmpty();
-	},
-		[this](bool bResult, FString const& ExportId)
-	{
-		this->OnStartExportComplete.Broadcast(bResult, ExportId);
-		if (this->Impl->observer_)
-		{
-			this->Impl->observer_->OnExportStarted(bResult, ExportId);
-		}
-	});
-}
-
-void UITwinWebServices::GetRealityData(FString ITwinId)
-{
-	const FITwinAPIRequestInfo realDataRequestInfo = {
-		TEXT("GET"),
-		TEXT("/reality-management/reality-data/?iTwinId=") + ITwinId + TEXT("&types=Cesium3DTiles&$top=100"),
-		TEXT("application/vnd.bentley.itwin-platform.v1+json"),
-		TEXT(""),
-		TEXT(""),
-		/* custom headers */
-		{
-			{ TEXT("Prefer"),	TEXT("return=minimal") },
-			{ TEXT("types"),	TEXT("Cesium3DTiles") },
-		}
-	};
-	TProcessHttpRequest<FITwinRealityDataInfos>(
-		realDataRequestInfo,
-		[ITwinId](FITwinRealityDataInfos& RealityData, FJsonObject const& responseJson) -> bool
-	{
-		const TArray<TSharedPtr<FJsonValue>>* realityDataJson = nullptr;
-		if (!responseJson.TryGetArrayField(TEXT("realityData"), realityDataJson))
-		{
-			return false;
-		}
-		RealityData.Infos.Reserve(realityDataJson->Num());
-		for (const auto& RealityDataValue : *realityDataJson)
-		{
-			const auto& RealityDataObject = RealityDataValue->AsObject();
-			FITwinRealityDataInfo Info;
-			Info.DisplayName = RealityDataObject->GetStringField(TEXT("displayName"));
-			Info.Id = RealityDataObject->GetStringField(TEXT("id"));
-			RealityData.Infos.Push(Info);
-		}
-		return true;
-	},
-		[this](bool bResult, FITwinRealityDataInfos const& ResultData)
-	{
-		this->OnGetRealityDataComplete.Broadcast(bResult, ResultData);
-		if (this->Impl->observer_)
-		{
-			this->Impl->observer_->OnRealityDataRetrieved(bResult, ResultData);
-		}
-	});
-}
-
-void UITwinWebServices::GetRealityData3DInfo(FString ITwinId, FString RealityDataId)
-{
-	// two distinct requests are needed here!
-	// code moved from ITwinRealityData.cpp)
-	const FITwinAPIRequestInfo realDataRequestInfo = {
-		TEXT("GET"),
-		TEXT("/reality-management/reality-data/") + RealityDataId + TEXT("?iTwinId=") + ITwinId,
-		TEXT("application/vnd.bentley.itwin-platform.v1+json")
-	};
-	TProcessHttpRequest<FITwinRealityData3DInfo>(
-		realDataRequestInfo,
-		[this, ITwinId, RealityDataId](FITwinRealityData3DInfo& RealityData3DInfo, FJsonObject const& responseJson) -> bool
-	{
-		auto realitydataJson = responseJson.GetObjectField(TEXT("realityData"));
-		if (!realitydataJson)
-		{
-			return false;
-		}
-		RealityData3DInfo.Id = RealityDataId;
-		RealityData3DInfo.DisplayName = realitydataJson->GetStringField(TEXT("displayName"));
-
-		// Make a second request to retrieve mesh URL
-		const FITwinAPIRequestInfo realDataRequestInfo = {
-			TEXT("GET"),
-			TEXT("/reality-management/reality-data/") + RealityDataId + TEXT("/readaccess?iTwinId=") + ITwinId,
-			TEXT("application/vnd.bentley.itwin-platform.v1+json")
-		};
-		TProcessHttpRequest<FITwinRealityData3DInfo>(
-			realDataRequestInfo,
-			[this, RealityData3DInfo, realitydataJson]
-			(FITwinRealityData3DInfo& FinalRealityData3DInfo, FJsonObject const& responseJson) -> bool
-		{
-			FinalRealityData3DInfo = RealityData3DInfo;
-
-			const TSharedPtr<FJsonObject>* ExtentJson;
-			if (realitydataJson->TryGetObjectField(TEXT("extent"), ExtentJson))
-			{
-				FinalRealityData3DInfo.bGeolocated = true;
-				auto const SW_Json = (*ExtentJson)->GetObjectField(TEXT("southWest"));
-				auto const NE_Json = (*ExtentJson)->GetObjectField(TEXT("northEast"));
-				FinalRealityData3DInfo.ExtentSouthWest.Latitude = SW_Json->GetNumberField(TEXT("latitude"));
-				FinalRealityData3DInfo.ExtentSouthWest.Longitude = SW_Json->GetNumberField(TEXT("longitude"));
-				FinalRealityData3DInfo.ExtentNorthEast.Latitude = NE_Json->GetNumberField(TEXT("latitude"));
-				FinalRealityData3DInfo.ExtentNorthEast.Longitude = NE_Json->GetNumberField(TEXT("longitude"));
-			}
-
-			auto LinksJson = responseJson.GetObjectField(TEXT("_links"));
-			if (LinksJson)
-			{
-				auto MeshJsonObject = LinksJson->GetObjectField(TEXT("containerUrl"));
-				if (MeshJsonObject)
-				{
-					FinalRealityData3DInfo.MeshUrl = MeshJsonObject->GetStringField(TEXT("href")).
-						Replace(TEXT("?"), ToCStr("/" + realitydataJson->GetStringField(TEXT("rootDocument")) + "?"));
-				}
-			}
-			return true;
-		},
-			[this](bool bResult, FITwinRealityData3DInfo const& FinalResultData)
-		{
-			// This is for the 2nd request: broadcast final result
-			this->OnGetRealityData3DInfoComplete.Broadcast(bResult, FinalResultData);
-			if (this->Impl->observer_)
-			{
-				this->Impl->observer_->OnRealityData3DInfoRetrieved(bResult, FinalResultData);
-			}
-		});
-
-		return true;
-	},
-		[this](bool bResult, FITwinRealityData3DInfo const& PartialResultData)
-	{
-		// result of the 1st request: only broadcast it in case of failure
-		if (!bResult)
-		{
-			// the 1st request has failed
-			this->OnGetRealityData3DInfoComplete.Broadcast(false, PartialResultData);
-			if (this->Impl->observer_)
-			{
-				this->Impl->observer_->OnRealityData3DInfoRetrieved(false, PartialResultData);
-			}
-		}
-	});
-}
-
-namespace
-{
-	inline FString GetSavedViewData_Json(FSavedView const& SavedView)
-	{
-		const auto& camPos = SavedView.Origin;
-		const auto& camRot = SavedView.Angles;
-		return FString::Printf(TEXT("\"savedViewData\":{\"itwin3dView\":{" \
-			"\"origin\":[%.2f,%.2f,%.2f]," \
-			"\"extents\":[0.00,0.00,0.00]," \
-			"\"angles\":{\"yaw\":%.2f,\"pitch\":%.2f,\"roll\":%.2f}," \
-			"\"camera\":{\"lens\":0.0,\"focusDist\":0.0,\"eye\":[%.2f,%.2f,%.2f]}}}"),
-			camPos.X, camPos.Y, camPos.Z, camRot.Yaw, camRot.Pitch, camRot.Roll,
-			camPos.X, camPos.Y, camPos.Z);
-	}
-}
-
-void UITwinWebServices::AddSavedView(FString ITwinId, FString IModelId, FSavedView SavedView, FSavedViewInfo SavedViewInfo)
-{
-	const FITwinAPIRequestInfo savedViewsRequestInfo = {
-		TEXT("POST"),
-		TEXT("/savedviews/"),
-		TEXT("application/vnd.bentley.itwin-platform.v1+json"),
-
-		/*** additional settings for POST ***/
-		TEXT("application/json"),
-		FString::Printf(TEXT("{\"iTwinId\":\"%s\",\"iModelId\":\"%s\",%s," \
-			"\"displayName\":\"%s\",\"shared\":true,\"tagIds\":[]}"),
-			*ITwinId, *IModelId, *GetSavedViewData_Json(SavedView), *SavedViewInfo.DisplayName)
-	};
-	TProcessHttpRequest<FSavedViewInfo>(
-		savedViewsRequestInfo,
-		[](FSavedViewInfo& Info, FJsonObject const& responseJson) -> bool
-		{
-			FString DetailedError;
-			if (UITwinWebServices::GetErrorDescription(responseJson, DetailedError))
-			{
-				LOG_ITWIN_WSRV_ERROR_ONE_PARAM("Error while adding SavedView: %s", *DetailedError);
-				Info = { "","",true };
-				return false;
-			}
-			Info = { responseJson.GetObjectField(TEXT("savedView"))->GetStringField(TEXT("id")),
-					 responseJson.GetObjectField(TEXT("savedView"))->GetStringField(TEXT("displayName")), true };
-			return true;
-		},
-		[this](bool bResult, FSavedViewInfo const& ResultData)
-		{
-			this->OnSavedViewAdded(bResult, ResultData);
-		}
+	DoRequest([this, IModelId, ChangesetId]() {
+		Impl->StartExport(TCHAR_TO_ANSI(*IModelId), TCHAR_TO_ANSI(*ChangesetId)); }
 	);
+}
+
+
+void UITwinWebServices::GetAllSavedViews(FString iTwinId, FString iModelId, FString GroupId /*= ""*/)
+{
+	DoRequest([this, iTwinId, iModelId, GroupId]() {
+		Impl->GetAllSavedViews(TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId), TCHAR_TO_ANSI(*GroupId));
+	});
+}
+
+void UITwinWebServices::GetSavedViewGroups(FString iTwinId, FString iModelId)
+{
+	DoRequest([this, iTwinId, iModelId]() {
+		Impl->GetSavedViewsGroups(TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId));
+		});
+}
+
+void UITwinWebServices::GetSavedView(FString SavedViewId)
+{
+	DoRequest([this, SavedViewId]() { Impl->GetSavedView(TCHAR_TO_ANSI(*SavedViewId)); });
+}
+
+void UITwinWebServices::GetSavedViewThumbnail(FString SavedViewId)
+{
+	DoRequest([this, SavedViewId]() { Impl->GetSavedViewThumbnail(TCHAR_TO_ANSI(*SavedViewId)); });
+}
+
+void UITwinWebServices::UpdateSavedViewThumbnail(FString SavedViewId, FString ThumbnailURL)
+{
+	DoRequest([this, SavedViewId, ThumbnailURL]() { Impl->UpdateSavedViewThumbnail(TCHAR_TO_ANSI(*SavedViewId), TCHAR_TO_ANSI(*ThumbnailURL)); });
+}
+
+void UITwinWebServices::AddSavedView(FString ITwinId, FString IModelId, FSavedView SavedView, FSavedViewInfo SavedViewInfo, FString GroupId /*= ""*/)
+{
+	SDK::Core::SavedView coreSV;
+	SDK::Core::SavedViewInfo coreSVInfo;
+	ToCoreSavedView(SavedView, coreSV);
+	ToCoreSavedViewInfo(SavedViewInfo, coreSVInfo);
+
+	DoRequest([this, ITwinId, IModelId, &coreSV, &coreSVInfo, GroupId]() {
+		Impl->AddSavedView(TCHAR_TO_ANSI(*ITwinId), TCHAR_TO_ANSI(*IModelId),
+			coreSV, coreSVInfo, TCHAR_TO_ANSI(*GroupId));
+	});
 }
 
 void UITwinWebServices::OnSavedViewAdded(bool bSuccess, FSavedViewInfo const& SavedViewInfo)
@@ -1318,52 +1140,20 @@ void UITwinWebServices::OnSavedViewAdded(bool bSuccess, FSavedViewInfo const& Sa
 	}
 }
 
+void UITwinWebServices::AddSavedViewGroup(FString ITwinId, FString IModelId, FSavedViewGroupInfo SavedViewGroupInfo)
+{
+	SDK::Core::SavedViewGroupInfo coreSVGroupInfo;
+	ToCoreSavedViewGroupInfo(SavedViewGroupInfo, coreSVGroupInfo);
+
+	DoRequest([this, ITwinId, IModelId, &coreSVGroupInfo]() {
+		Impl->AddSavedViewGroup(TCHAR_TO_ANSI(*ITwinId), TCHAR_TO_ANSI(*IModelId),
+		coreSVGroupInfo);
+		});
+}
+
 void UITwinWebServices::DeleteSavedView(FString SavedViewId)
 {
-	const FITwinAPIRequestInfo savedViewsRequestInfo = {
-		TEXT("DELETE"),
-		TEXT("/savedviews/" + SavedViewId),
-		TEXT("application/vnd.bentley.itwin-platform.v1+json"),
-		{},
-		{},
-		{},
-		true /*bAllowEmptyResponse*/
-	};
-
-	// store request ID which will be used
-	RequestID delRequestID(ITwin::NO_REQUEST);
-	{
-		FImpl::FLock Lock(Impl->mutex_);
-		delRequestID = Impl->nextRequestId_;
-	}
-	RequestID const requestID = TProcessHttpRequest<FString>(
-		savedViewsRequestInfo,
-		[](FString& ErrorCode, FJsonObject const& responseJson) -> bool
-		{
-			FString DetailedError;
-			if (UITwinWebServices::GetErrorDescription(responseJson, DetailedError))
-			{
-				LOG_ITWIN_WSRV_ERROR_ONE_PARAM("Error while deleting SavedView: %s", *DetailedError);
-				ErrorCode = DetailedError;
-				return false;
-			}
-			ErrorCode = {};
-			return true;
-		},
-		[this, delRequestID, SavedViewId](bool bResult, FString const& strResponse)
-		{
-			// in DeleteSavedView, the callbacks expect an error message (in case of failure)
-			// => if none if provided, and if the last error recorded corresponds to our request, use the
-			// latter as response.
-			FString OutResponse = strResponse;
-			if (!bResult && OutResponse.IsEmpty())
-			{
-				OutResponse = GetRequestError(delRequestID);
-			}
-			this->OnSavedViewDeleted(bResult, SavedViewId, OutResponse);
-		}
-	);
-	ensureMsgf(delRequestID == requestID, TEXT("mismatch in request ID - error might be lost"));
+	DoRequest([this, SavedViewId]() { Impl->DeleteSavedView(TCHAR_TO_ANSI(*SavedViewId)); });
 }
 
 void UITwinWebServices::OnSavedViewDeleted(bool bSuccess, FString const& SavedViewId, FString const& Response) const
@@ -1377,244 +1167,73 @@ void UITwinWebServices::OnSavedViewDeleted(bool bSuccess, FString const& SavedVi
 
 void UITwinWebServices::EditSavedView(FSavedView SavedView, FSavedViewInfo SavedViewInfo)
 {
-	const FITwinAPIRequestInfo savedViewsRequestInfo = {
-		TEXT("PATCH"),
-		TEXT("/savedviews/" + SavedViewInfo.Id),
-		TEXT("application/vnd.bentley.itwin-platform.v1+json"),
+	SDK::Core::SavedView coreSV;
+	SDK::Core::SavedViewInfo coreSVInfo;
+	ToCoreSavedView(SavedView, coreSV);
+	ToCoreSavedViewInfo(SavedViewInfo, coreSVInfo);
 
-		/*** additional settings for PATCH ***/
-		TEXT("application/json"),
-		FString::Printf(TEXT("{%s,\"displayName\":\"%s\",\"shared\":true,\"tagIds\":[]}"),
-			*GetSavedViewData_Json(SavedView), *SavedViewInfo.DisplayName)
-	};
-
-	struct FEditSavedViewData
-	{
-		FSavedView SavedView;
-		FSavedViewInfo SavedViewInfo;
-	};
-	TProcessHttpRequest<FEditSavedViewData>(
-		savedViewsRequestInfo,
-		[](FEditSavedViewData& EditSVData, FJsonObject const& responseJson) -> bool
-		{
-			FString DetailedError;
-			if (UITwinWebServices::GetErrorDescription(responseJson, DetailedError))
-			{
-				LOG_ITWIN_WSRV_ERROR_ONE_PARAM("Error while editing SavedView: %s", *DetailedError);
-				return false;
-			}
-
-			TSharedPtr<FJsonObject> const* view;
-			JSON_GETOBJ_OR(&responseJson, "savedView", view, return false)
-			const auto& JsonView = GetChildObject(*view, "savedViewData/itwin3dView");
-			if (!JsonView) return false;
-
-			TSharedPtr<FJsonObject> const* JsonEye;
-			JSON_GETOBJ_OR(JsonView, "camera", JsonEye, return false)
-			EditSVData.SavedView = {
-				GetFVector(*JsonEye, "eye"),
-				GetFVector(JsonView, "extents"),
-				GetFRotator(JsonView, "angles")
-			};
-			EditSVData.SavedViewInfo = {
-				(*view)->GetStringField(TEXT("id")),
-				(*view)->GetStringField(TEXT("displayName")),
-				(*view)->GetBoolField(TEXT("shared")) };
-			return true;
-		},
-		[this](bool bResult, FEditSavedViewData const& EditSVData)
-		{
-			this->OnEditSavedViewComplete.Broadcast(bResult, EditSVData.SavedView, EditSVData.SavedViewInfo);
-			if (this->Impl->observer_)
-			{
-				this->Impl->observer_->OnSavedViewEdited(bResult, EditSVData.SavedView, EditSVData.SavedViewInfo);
-			}
-		}
-	);
+	DoRequest([this, &coreSV, &coreSVInfo]() { Impl->EditSavedView(coreSV, coreSVInfo);	});
 }
 
-void UITwinWebServices::GetAllSavedViews(FString iTwinId, FString iModelId)
+
+void UITwinWebServices::GetRealityData(FString ITwinId)
 {
-	const FITwinAPIRequestInfo savedViewsRequestInfo = {
-		TEXT("GET"),
-		TEXT("/savedviews?iTwinId=") + iTwinId + TEXT("&iModelId=") + iModelId,
-		TEXT("application/vnd.bentley.itwin-platform.v1+json"),
-		TEXT("application/json"),
-	};
-	TProcessHttpRequest<FSavedViewInfos>(
-		savedViewsRequestInfo,
-		[](FSavedViewInfos& Infos, FJsonObject const& responseJson) -> bool
-	{
-		const TArray<TSharedPtr<FJsonValue>>* savedViewsJson = nullptr;
-		if (!responseJson.TryGetArrayField(TEXT("savedViews"), savedViewsJson))
-		{
-			return false;
-		}
-		Infos.SavedViews.Reserve(savedViewsJson->Num());
-		for (const auto savedViewValue : *savedViewsJson)
-		{
-			const auto savedViewObject = savedViewValue->AsObject();
-			FSavedViewInfo SavedView = {
-				savedViewObject->GetStringField(TEXT("id")),
-				savedViewObject->GetStringField(TEXT("displayName")),
-				savedViewObject->GetBoolField(TEXT("shared"))
-			};
-			Infos.SavedViews.Push(SavedView);
-		}
-		return true;
-	},
-		[this](bool bResult, FSavedViewInfos const& ResultData)
-	{
-		this->OnGetSavedViewsComplete.Broadcast(bResult, ResultData);
-		if (this->Impl->observer_)
-		{
-			this->Impl->observer_->OnSavedViewInfosRetrieved(bResult, ResultData);
-		}
+	DoRequest([this, ITwinId]() { Impl->GetRealityData(TCHAR_TO_ANSI(*ITwinId)); });
+}
+
+void UITwinWebServices::GetRealityData3DInfo(FString ITwinId, FString RealityDataId)
+{
+	DoRequest([this, ITwinId, RealityDataId]() {
+		Impl->GetRealityData3DInfo(TCHAR_TO_ANSI(*ITwinId), TCHAR_TO_ANSI(*RealityDataId));
 	});
 }
 
-void UITwinWebServices::GetSavedView(FString SavedViewId)
-{
-	const FITwinAPIRequestInfo savedViewsRequestInfo = {
-		TEXT("GET"),
-		TEXT("/savedviews/") + SavedViewId,
-		TEXT("application/vnd.bentley.itwin-platform.v1+json"),
-		TEXT("application/json"),
-	};
-
-	struct FSavedViewData
-	{
-		FSavedView SavedView;
-		FSavedViewInfo SavedViewInfo;
-	};
-	TProcessHttpRequest<FSavedViewData>(
-		savedViewsRequestInfo,
-		[](FSavedViewData& SVData, FJsonObject const& responseJson) -> bool
-	{
-		TSharedPtr<FJsonObject> const* JsonSavedView;
-		JSON_GETOBJ_OR_CUSTOM(&responseJson, "savedView", "Invalid Reply: savedView not defined.",
-							  JsonSavedView, return false)
-		auto JsonView = GetChildObject(*JsonSavedView, "savedViewData/itwin3dView");
-		if (!JsonView)
-		{
-			LOG_ITWIN_WSRV_ERROR("Invalid Reply: itwin3dView not defined.");
-			return false;
-		}
-		if (JsonView->HasTypedField<EJson::Object>(TEXT("camera")))
-		{
-			TSharedPtr<FJsonObject> const* JsonCamera = nullptr;
-			JSON_GETOBJ_OR_CUSTOM(JsonView, "camera", "Invalid Reply: camera not defined.",
-								  JsonCamera, return false)
-			if ((*JsonCamera)->HasTypedField<EJson::Array>(TEXT("eye")))
-			{
-				SVData.SavedView.Origin = GetFVector(*JsonCamera, "eye");
-			}
-			else
-			{
-				LOG_ITWIN_WSRV_ERROR("Invalid Reply: camera 'eye' not defined.");
-				return false;
-			}
-		}
-		else if (JsonView->HasTypedField<EJson::Array>(TEXT("origin")))
-		{
-			SVData.SavedView.Origin = GetFVector(JsonView, "origin");
-		}
-		else
-		{
-			LOG_ITWIN_WSRV_ERROR("Invalid Reply: neither 'camera' nor 'origin' are defined.");
-			return false;
-		}
-		SVData.SavedView.Extents = GetFVector(JsonView, "extents");
-		SVData.SavedView.Angles = GetFRotator(JsonView, "angles");
-		SVData.SavedViewInfo.Id = (*JsonSavedView)->GetStringField(TEXT("id"));
-		SVData.SavedViewInfo.DisplayName = (*JsonSavedView)->GetStringField(TEXT("displayName"));
-		SVData.SavedViewInfo.bShared = (*JsonSavedView)->GetBoolField(TEXT("shared"));
-		return true;
-	},
-		[this](bool bResult, FSavedViewData const& SVData)
-	{
-		this->OnGetSavedViewComplete.Broadcast(bResult, SVData.SavedView, SVData.SavedViewInfo);
-		if (this->Impl->observer_)
-		{
-			this->Impl->observer_->OnSavedViewRetrieved(bResult, SVData.SavedView, SVData.SavedViewInfo);
-		}
-	});
-}
-
-namespace
-{
-	void GetAllElementProperties(TSharedPtr<FJsonObject> items, FElementProperties& properties)
-	{
-		for (const auto& value : items->Values)
-		{
-			FElementProperty property;
-			FString valueType = value.Value->AsObject()->GetStringField("type");
-			if (valueType == "primitive")
-			{
-				FElementAttribute Attribute;
-				Attribute.Name = value.Key;
-
-				Attribute.Value = value.Value->AsObject()->GetStringField("Value");
-				properties.Properties.Last().Attributes.Add(Attribute);
-			}
-			else if (valueType == "category")
-			{
-				property.Name = value.Key == "@Presentation:selectedItems.categoryLabel@" ? "Selected Item" : value.Key;
-				properties.Properties.Add(property);
-				GetAllElementProperties(value.Value->AsObject()->GetObjectField("items"), properties);
-			}
-			else if (valueType == "array")
-			{
-				if (value.Value->AsObject()->GetStringField("valueType") == "primitive")
-				{
-					FElementAttribute Attribute;
-					Attribute.Name = value.Key;
-
-					Attribute.Value = value.Value->AsObject()->GetArrayField("values")[0]->AsString();
-					properties.Properties.Last().Attributes.Add(Attribute);
-				}
-				else //struct
-				{
-					GetAllElementProperties(value.Value->AsObject()->GetArrayField("values")[0]->AsObject(), properties);
-				}
-			}
-		}
-	}
-}
 
 void UITwinWebServices::GetElementProperties(FString iTwinId, FString iModelId, FString iChangesetId, FString ElementId)
 {
-	const FITwinAPIRequestInfo RequestInfo = {
-		TEXT("POST"),
-		TEXT("/imodel/rpc/v4/mode/1/context/") + iTwinId + TEXT("/imodel/") + iModelId + TEXT("/changeset/") + iChangesetId + TEXT("/PresentationRpcInterface-4.1.0-getElementProperties"),
-		TEXT("application/vnd.bentley.itwin-platform.v1+json"),
+	DoRequest([this, iTwinId, iModelId, iChangesetId, ElementId]() {
+		Impl->GetElementProperties(TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId), TCHAR_TO_ANSI(*iChangesetId), TCHAR_TO_ANSI(*ElementId));
+	});
+}
 
-		/*** additional settings for POST ***/
-		TEXT("text/plain"),
-		FString::Printf(TEXT("[{\"key\":\"%s:%s\",\"iTwinId\":\"%s\",\"iModelId\":\"%s\",\"changeset\":{\"id\":\"%s\"}},{\"elementId\":\"%s\"}]"),
-		*iModelId, *iChangesetId, *iTwinId, *iModelId, *iChangesetId, *ElementId)
-	};
-	TProcessHttpRequest<FElementProperties>(
-		RequestInfo,
-		[](FElementProperties& ElementProps, FJsonObject const& responseJson) -> bool
-		{
-			FElementProperties properties;
-			TSharedPtr<FJsonObject> ResItemsObject = GetChildObject(MakeShared<FJsonObject>(responseJson), "result/items");
-			if (!ResItemsObject)
-			{
-				LOG_ITWIN_WSRV_ERROR("Invalid Reply: items not defined.");
-				return false;
-			}
-			GetAllElementProperties(ResItemsObject, properties);
-			return true;
-		},
-		[this](bool bResult, FElementProperties const& ResultData)
-		{
-			this->OnGetElementPropertiesComplete.Broadcast(bResult, ResultData);
-			if (this->Impl->observer_)
-			{
-				this->Impl->observer_->OnElementPropertiesRetrieved(bResult, ResultData);
-			}
-		}
-	);
+void UITwinWebServices::GetIModelProperties(FString iTwinId, FString iModelId, FString iChangesetId)
+{
+	DoRequest([this, iTwinId, iModelId, iChangesetId]() {
+		Impl->GetIModelProperties(TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId), TCHAR_TO_ANSI(*iChangesetId));
+	});
+}
+
+void UITwinWebServices::QueryIModel(FString iTwinId, FString iModelId, FString iChangesetId,
+									FString ECSQLQuery, int Offset, int Count)
+{
+	DoRequest([this, iTwinId, iModelId, iChangesetId, ECSQLQuery, Offset, Count]() {
+		Impl->QueryIModel(TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId), TCHAR_TO_ANSI(*iChangesetId),
+						  TCHAR_TO_ANSI(*ECSQLQuery), Offset, Count);
+	});
+}
+
+void UITwinWebServices::GetMaterialProperties(
+	FString iTwinId, FString iModelId, FString iChangesetId,
+	FString MaterialId)
+{
+	DoRequest([this, iTwinId, iModelId, iChangesetId, MaterialId]() {
+		Impl->GetMaterialProperties(
+			TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId), TCHAR_TO_ANSI(*iChangesetId),
+			TCHAR_TO_ANSI(*MaterialId));
+	});
+}
+
+void UITwinWebServices::GetMaterialListProperties(
+	FString iTwinId, FString iModelId, FString iChangesetId,
+	TArray<FString> MaterialIds)
+{
+	DoRequest([this, iTwinId, iModelId, iChangesetId, MaterialIds]() {
+		std::vector<std::string> coreMatIds;
+		coreMatIds.reserve(MaterialIds.Num());
+		for (FString const& id : MaterialIds)
+			coreMatIds.push_back(TCHAR_TO_ANSI(*id));
+		Impl->GetMaterialListProperties(
+			TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId), TCHAR_TO_ANSI(*iChangesetId),
+			coreMatIds);
+	});
 }

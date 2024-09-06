@@ -8,14 +8,15 @@
 #	b2.exe tools/bcp
 #
 # Then in a git bash, go to the source folder you want to scan,
-# for example UnrealSandbox.git/UnrealProjects/LumenRTU/Plugins/ITwinForUnreal/Source:
-#	/c/Dev/boost_1_84_0/dist/bin/bcp --boost=/c/Dev/boost_1_84_0/ --scan `find . -type f` ../../../../../Extern/
+# for example in Carrot.git/UnrealProjects/Carrot/Plugins/ITwinForUnreal/Source:
+#	/c/Dev/boost_1_84_0/dist/bin/bcp --boost=/c/Dev/boost_1_84_0/ --scan `find . -type f` /d/U/Carrot/Extern/
 # (or you can of course scan a manual list of files instead of the 'find' command inside back-quotes)
 #
-# Same inside the BeHeaders folder at the repository's root:
+# Same inside the Public/BeHeaders (and possibly others like BeUtils?) folder(s):
 #	/c/Dev/boost_1_84_0/dist/bin/bcp --boost=/c/Dev/boost_1_84_0/ --scan `find . -type f` ../Extern/
+# etc.
 #
-# Then go to /d/U/UnrealSandbox/Extern/boost, and list the code files to overwrite the list below:
+# Then go to /d/U/Carrot/Extern/boost, and list the code files to overwrite the list below (or get it from git status):
 #	find -type f \( -name "*.h" -o -name "*.hpp" \)
 # (you can check there are only 'h' and 'hpp' files with: find -type f | sed -e 's/\.h$/.hpp/' | grep -v \.hpp
 set(boostHeaders
@@ -129,6 +130,35 @@ set(boostHeaders
 	./config/warning_disable.hpp
 	./config/workaround.hpp
 	./config.hpp
+	./container/allocator_traits.hpp
+	./container/container_fwd.hpp
+	./container/detail/advanced_insert_int.hpp
+	./container/detail/algorithm.hpp
+	./container/detail/alloc_helpers.hpp
+	./container/detail/allocation_type.hpp
+	./container/detail/config_begin.hpp
+	./container/detail/config_end.hpp
+	./container/detail/construct_in_place.hpp
+	./container/detail/copy_move_algo.hpp
+	./container/detail/destroyers.hpp
+	./container/detail/iterator.hpp
+	./container/detail/iterators.hpp
+	./container/detail/min_max.hpp
+	./container/detail/mpl.hpp
+	./container/detail/next_capacity.hpp
+	./container/detail/placement_new.hpp
+	./container/detail/std_fwd.hpp
+	./container/detail/type_traits.hpp
+	./container/detail/value_functors.hpp
+	./container/detail/value_init.hpp
+	./container/detail/variadic_templates_tools.hpp
+	./container/detail/version_type.hpp
+	./container/detail/workaround.hpp
+	./container/new_allocator.hpp
+	./container/options.hpp
+	./container/small_vector.hpp
+	./container/throw_exception.hpp
+	./container/vector.hpp
 	./container_hash/detail/hash_integral.hpp
 	./container_hash/detail/hash_mix.hpp
 	./container_hash/detail/hash_range.hpp
@@ -575,6 +605,19 @@ set(boostHeaders
 	./fusion/view/zip_view.hpp
 	./get_pointer.hpp
 	./integer/common_factor_rt.hpp
+	./intrusive/detail/algorithm.hpp
+	./intrusive/detail/config_begin.hpp
+	./intrusive/detail/config_end.hpp
+	./intrusive/detail/has_member_function_callable_with.hpp
+	./intrusive/detail/iterator.hpp
+	./intrusive/detail/mpl.hpp
+	./intrusive/detail/reverse_iterator.hpp
+	./intrusive/detail/std_fwd.hpp
+	./intrusive/detail/value_functors.hpp
+	./intrusive/detail/workaround.hpp
+	./intrusive/pack_options.hpp
+	./intrusive/pointer_rebind.hpp
+	./intrusive/pointer_traits.hpp
 	./is_placeholder.hpp
 	./iterator/detail/config_def.hpp
 	./iterator/detail/config_undef.hpp
@@ -587,14 +630,40 @@ set(boostHeaders
 	./iterator/iterator_traits.hpp
 	./iterator/reverse_iterator.hpp
 	./limits.hpp
+	./move/adl_move_swap.hpp
+	./move/algo/adaptive_merge.hpp
+	./move/algo/detail/adaptive_sort_merge.hpp
+	./move/algo/detail/basic_op.hpp
+	./move/algo/detail/heap_sort.hpp
+	./move/algo/detail/insertion_sort.hpp
+	./move/algo/detail/is_sorted.hpp
+	./move/algo/detail/merge.hpp
+	./move/algo/detail/merge_sort.hpp
+	./move/algo/detail/search.hpp
+	./move/algo/detail/set_difference.hpp
+	./move/algo/move.hpp
+	./move/algo/predicate.hpp
+	./move/algo/unique.hpp
 	./move/core.hpp
 	./move/detail/addressof.hpp
 	./move/detail/config_begin.hpp
 	./move/detail/config_end.hpp
+	./move/detail/destruct_n.hpp
+	./move/detail/force_ptr.hpp
+	./move/detail/fwd_macros.hpp
+	./move/detail/iterator_to_raw_pointer.hpp
+	./move/detail/iterator_traits.hpp
 	./move/detail/meta_utils.hpp
 	./move/detail/meta_utils_core.hpp
+	./move/detail/move_helpers.hpp
+	./move/detail/placement_new.hpp
+	./move/detail/pointer_element.hpp
+	./move/detail/reverse_iterator.hpp
+	./move/detail/std_ns_begin.hpp
+	./move/detail/to_raw_pointer.hpp
 	./move/detail/type_traits.hpp
 	./move/detail/workaround.hpp
+	./move/iterator.hpp
 	./move/traits.hpp
 	./move/utility.hpp
 	./move/utility_core.hpp

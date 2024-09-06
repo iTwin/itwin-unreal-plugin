@@ -11,15 +11,26 @@
 #include <BeUtils/Gltf/GltfBuilder.h>
 #include <CesiumGltf/ExtensionModelExtStructuralMetadata.h>
 #include <CesiumGltf/ExtensionExtMeshFeatures.h>
+#include <CesiumGltf/ExtensionITwinMaterialID.h>
 #include <CesiumGltfWriter/GltfWriter.h>
 #include <iostream>
 #include <filesystem>
 #include <fstream>
+#include <rapidjson/document.h>
+#include <rapidjson/prettywriter.h>
 
 struct Vertex
 {
 	int vertexId_ = -1;
-	float featureId_ = -1;
+	float featureId_ = -1.f;
+	uint16_t featureId1_ = 0; // second feature slot, used for iTwin material IDs
+
+	template <std::size_t FeatIndex = 0>
+	auto GetFeature() const
+	{
+		return std::get<FeatIndex>(std::make_tuple(featureId_, featureId1_));
+	}
+
 };
 using Patch = std::vector<Vertex>;
 
@@ -44,7 +55,50 @@ struct AddMeshPrimitiveArgs
 	DataFormat uvFormat;
 	DataFormat colorFormat;
 	DataFormat featureIdFormat;
+	DataFormat materialFeatureIdFormat = { g_ComponentTypeNoData }; // for iTwin material IDs
+	std::optional<uint64_t> iTwinMaterialId;
 };
+
+
+template <std::size_t FeatIndex = 0>
+void FillPrimitiveFeatureIds(BeUtils::GltfBuilder::MeshPrimitive& primitive,
+	const DataFormat& featureIdFormat, const AddMeshPrimitiveArgs& args)
+{
+	const auto setFeatureIds = [&](auto* unusedComponentType)
+	{
+		using ComponentType = std::decay_t<decltype(*unusedComponentType)>;
+		std::vector<std::array<ComponentType, 1>> featureIds;
+		for (const auto& patch : args.patches)
+			for (const auto& vertex : patch)
+				featureIds.push_back({ (ComponentType)vertex.GetFeature<FeatIndex>() });
+		primitive.SetFeatureIds(featureIds, args.materialFeatureIdFormat.componentType != g_ComponentTypeNoData);
+	};
+	switch (featureIdFormat.componentType)
+	{
+	case CesiumGltf::Accessor::ComponentType::BYTE:
+		setFeatureIds((int8_t*)0);
+		break;
+	case CesiumGltf::Accessor::ComponentType::UNSIGNED_BYTE:
+		setFeatureIds((uint8_t*)0);
+		break;
+	case CesiumGltf::Accessor::ComponentType::SHORT:
+		setFeatureIds((int16_t*)0);
+		break;
+	case CesiumGltf::Accessor::ComponentType::UNSIGNED_SHORT:
+		setFeatureIds((uint16_t*)0);
+		break;
+	case CesiumGltf::Accessor::ComponentType::UNSIGNED_INT:
+		setFeatureIds((uint32_t*)0);
+		break;
+	case g_ComponentTypeAuto:
+	case CesiumGltf::Accessor::ComponentType::FLOAT:
+		setFeatureIds((float*)0);
+		break;
+	default:
+		assert(false);
+		break;
+	}
+}
 
 void AddMeshPrimitive(const AddMeshPrimitiveArgs& args)
 {
@@ -194,40 +248,15 @@ void AddMeshPrimitive(const AddMeshPrimitiveArgs& args)
 	}
 	if (args.featureIdFormat.componentType != g_ComponentTypeNoData)
 	{
-		const auto setFeatureIds = [&](auto* unusedComponentType)
-			{
-				using ComponentType = std::decay_t<decltype(*unusedComponentType)>;
-				std::vector<std::array<ComponentType, 1>> featureIds;
-				for (const auto& patch: args.patches)
-					for (const auto& vertex: patch)
-						featureIds.push_back({(ComponentType)vertex.featureId_});
-				primitive.SetFeatureIds(featureIds);
-			};
-		switch (args.featureIdFormat.componentType)
-		{
-			case CesiumGltf::Accessor::ComponentType::BYTE:
-				setFeatureIds((int8_t*)0);
-				break;
-			case CesiumGltf::Accessor::ComponentType::UNSIGNED_BYTE:
-				setFeatureIds((uint8_t*)0);
-				break;
-			case CesiumGltf::Accessor::ComponentType::SHORT:
-				setFeatureIds((int16_t*)0);
-				break;
-			case CesiumGltf::Accessor::ComponentType::UNSIGNED_SHORT:
-				setFeatureIds((uint16_t*)0);
-				break;
-			case CesiumGltf::Accessor::ComponentType::UNSIGNED_INT:
-				setFeatureIds((uint32_t*)0);
-				break;
-			case g_ComponentTypeAuto:
-			case CesiumGltf::Accessor::ComponentType::FLOAT:
-				setFeatureIds((float*)0);
-				break;
-			default:
-				assert(false);
-				break;
-		}
+		FillPrimitiveFeatureIds<0>(primitive, args.featureIdFormat, args);
+	}
+	//if (args.materialFeatureIdFormat.componentType != g_ComponentTypeNoData)
+	//{
+	//	FillPrimitiveFeatureIds<1>(primitive, args.materialFeatureIdFormat, args);
+	//}
+	if (args.iTwinMaterialId)
+	{
+		primitive.SetITwinMaterialID(*args.iTwinMaterialId);
 	}
 }
 #ifdef _WIN32
@@ -239,21 +268,104 @@ void AddMeshPrimitive(const AddMeshPrimitiveArgs& args)
 #define _TOSTRING(s) std::to_string(s)
 #endif
 
+//! Recursively sorts the content of the objects contained in this value.
+void SortJson(rapidjson::Value& value)
+{
+	switch (value.GetType())
+	{
+		case rapidjson::kObjectType:
+			// Do a bubble sort. Not the fastest sorting method, but easy to implement using rapidjson api.
+			for (auto it = value.MemberBegin(); it != value.MemberEnd(); ++it)
+			{
+				rapidjson::Value::Member* lowerMember = &*it;
+				for (auto it2 = it; it2 != value.MemberEnd(); ++it2)
+					if (strcmp(it2->name.GetString(), lowerMember->name.GetString()) < 0)
+						lowerMember = &*it2;
+				std::swap(*it, *lowerMember);
+				SortJson(it->value);
+			}
+			break;
+		case rapidjson::kArrayType:
+			for (auto it = value.Begin(); it != value.End(); ++it)
+				SortJson(*it);
+			break;
+	}
+}
+
+namespace
+{
+	// CesiumGltf::ExtensionITwinMaterialID is just used internally by ITwin plugin,
+	// and is missing an official writer in cesium-native...
+	// Add support for writing here
+	struct ExtensionITwinMaterialIDJsonWriter
+	{
+		using ValueType = CesiumGltf::ExtensionITwinMaterialID;
+
+		static inline constexpr const char* ExtensionName = "ITWIN_material_identifier";
+
+		static void write(
+			const CesiumGltf::ExtensionITwinMaterialID& obj,
+			CesiumJsonWriter::JsonWriter& jsonWriter,
+			const CesiumJsonWriter::ExtensionWriterContext& context);
+	};
+
+	/*static*/ void ExtensionITwinMaterialIDJsonWriter::write(
+		const CesiumGltf::ExtensionITwinMaterialID& obj,
+		CesiumJsonWriter::JsonWriter& jsonWriter,
+		const CesiumJsonWriter::ExtensionWriterContext& /*context*/)
+	{
+		jsonWriter.StartObject();
+
+		jsonWriter.Key("materialId");
+		jsonWriter.Uint64(obj.materialId);
+
+		//writeExtensibleObject(obj, jsonWriter, context);
+
+		jsonWriter.EndObject();
+	}
+
+	class ITwinGltfWriter : public CesiumGltfWriter::GltfWriter
+	{
+		using Super = CesiumGltfWriter::GltfWriter;
+	public:
+		ITwinGltfWriter() : Super()
+		{
+			getExtensions().registerExtension<
+				CesiumGltf::MeshPrimitive,
+				ExtensionITwinMaterialIDJsonWriter>();
+		}
+	};
+
+	// Name of the default feature table produced by the Mesh-Export Service
+	// this constant could be anything else (used to be "MeshPart"...)
+	static const std::string FEATURE_TABLE_NAME = "features";
+
+	static const std::string MATID_TABLE_NAME = "materials";
+}
+
 void CheckGltf(const CesiumGltf::Model& expected, const CesiumGltf::Model& actual)
 {
 	// Save models on disk so that when test fails it's easy to spot the difference
-	// by using a tool (eg. WinMerge) to compare the "expected" and "actual" foders.
+	// by using a tool (eg. WinMerge) to compare the "expected" and "actual" folders.
 	const auto writeGltf = [&](const CesiumGltf::Model& model, const std::string subDir)
 		{
 			const auto pathBase = std::filesystem::path(BEUTILS_WORK_DIR)/subDir/Catch::getResultCapture().getCurrentTestName();
 			std::filesystem::create_directories(pathBase.parent_path());
-			const auto json = CesiumGltfWriter::GltfWriter().writeGltf(model, {.prettyPrint = true}).gltfBytes;
-			std::ofstream(pathBase.native() + _TEXT(".json")) << std::string((const char*)json.data(), json.size()) << std::endl;
+			const auto jsonBytes = ITwinGltfWriter().writeGltf(model, {.prettyPrint = true}).gltfBytes;
+			// The json generated by the GltfWriter is not guaranteed to be reproducible (json object members are not sorted).
+			// Since we are going to compare the serialized json contents, we need to sort the json first.
+			rapidjson::Document sortedJsonDoc;
+			sortedJsonDoc.Parse((const char*)jsonBytes.data(), jsonBytes.size());
+			SortJson(sortedJsonDoc);
+			rapidjson::StringBuffer sortedJsonBuffer;
+			rapidjson::PrettyWriter<rapidjson::StringBuffer> writer(sortedJsonBuffer);
+			sortedJsonDoc.Accept(writer);
+			std::ofstream(pathBase.native() + _TEXT(".json")) << sortedJsonBuffer.GetString() << std::endl;
 			for (auto bufferIndex = 0; bufferIndex < model.buffers.size(); ++bufferIndex)
 				std::ofstream(pathBase.native()+ _TOSTRING(bufferIndex)+ _TEXT(".bin")) <<
 					std::string((const char*)model.buffers[bufferIndex].cesium.data.data(),
 					model.buffers[bufferIndex].cesium.data.size());
-			return json;
+			return std::string(sortedJsonBuffer.GetString());
 		};
 	// Compare a boolean (result of a lambda) instead of the buffers directly,
 	// to avoid having a dump of the entire buffers in stdout when the test fails.
@@ -277,7 +389,11 @@ TEST_CASE("TestNoFeatureId")
 TEST_CASE("TestSinglePrimitive")
 {
 	BeUtils::GltfBuilder gltfBuilder;
-	gltfBuilder.AddMetadataProperty("element", std::vector<uint64_t>{100,101});
+	gltfBuilder.AddMetadataProperty(FEATURE_TABLE_NAME, "element", std::vector<uint64_t>{100, 101, 102});
+	// Add some unused properties (in lexicographic order), to verify that the tuner
+	// also sorts the properties (if not, CheckGltf will fail).
+	gltfBuilder.AddMetadataProperty(FEATURE_TABLE_NAME, "model", std::vector<uint64_t>{200, 201, 202});
+	gltfBuilder.AddMetadataProperty(FEATURE_TABLE_NAME, "subcategory", std::vector<uint64_t>{300, 301, 302});
 	gltfBuilder.GetModel().meshes.emplace_back();
 	int v = 0;
 	AddMeshPrimitive({.gltfBuilder = gltfBuilder,
@@ -288,7 +404,7 @@ TEST_CASE("TestSinglePrimitive")
 TEST_CASE("TestConversionLineLoop")
 {
 	BeUtils::GltfBuilder gltfBuilder;
-	gltfBuilder.AddMetadataProperty("element", std::vector<uint64_t>{100,101});
+	gltfBuilder.AddMetadataProperty(FEATURE_TABLE_NAME, "element", std::vector<uint64_t>{100,101});
 	gltfBuilder.GetModel().meshes.emplace_back();
 	int v = 0;
 	AddMeshPrimitive({.gltfBuilder = gltfBuilder,
@@ -296,7 +412,7 @@ TEST_CASE("TestConversionLineLoop")
 		.mode = CesiumGltf::MeshPrimitive::Mode::LINE_LOOP});
 	BeUtils::GltfBuilder expectedBuilder;
 	expectedBuilder.GetModel().meshes.emplace_back();
-	expectedBuilder.AddMetadataProperty("element", std::vector<uint64_t>{100,101});
+	expectedBuilder.AddMetadataProperty(FEATURE_TABLE_NAME, "element", std::vector<uint64_t>{100,101});
 	AddMeshPrimitive({.gltfBuilder = expectedBuilder,
 		.patches = {{{0,0},{1,1},{2,0}}},
 		.indices = {{{0},{1},{1},{2},{2},{0}}},
@@ -307,7 +423,7 @@ TEST_CASE("TestConversionLineLoop")
 TEST_CASE("TestConversionLineStrip")
 {
 	BeUtils::GltfBuilder gltfBuilder;
-	gltfBuilder.AddMetadataProperty("element", std::vector<uint64_t>{100,101});
+	gltfBuilder.AddMetadataProperty(FEATURE_TABLE_NAME, "element", std::vector<uint64_t>{100,101});
 	gltfBuilder.GetModel().meshes.emplace_back();
 	int v = 0;
 	AddMeshPrimitive({.gltfBuilder = gltfBuilder,
@@ -315,7 +431,7 @@ TEST_CASE("TestConversionLineStrip")
 		.mode = CesiumGltf::MeshPrimitive::Mode::LINE_STRIP});
 	BeUtils::GltfBuilder expectedBuilder;
 	expectedBuilder.GetModel().meshes.emplace_back();
-	expectedBuilder.AddMetadataProperty("element", std::vector<uint64_t>{100,101});
+	expectedBuilder.AddMetadataProperty(FEATURE_TABLE_NAME, "element", std::vector<uint64_t>{100,101});
 	AddMeshPrimitive({.gltfBuilder = expectedBuilder,
 		.patches = {{{0,0},{1,1},{2,0}}},
 		.indices = {{{0},{1},{1},{2}}},
@@ -326,7 +442,7 @@ TEST_CASE("TestConversionLineStrip")
 TEST_CASE("TestConversionTriangleStrip")
 {
 	BeUtils::GltfBuilder gltfBuilder;
-	gltfBuilder.AddMetadataProperty("element", std::vector<uint64_t>{100,101});
+	gltfBuilder.AddMetadataProperty(FEATURE_TABLE_NAME, "element", std::vector<uint64_t>{100,101});
 	gltfBuilder.GetModel().meshes.emplace_back();
 	int v = 0;
 	AddMeshPrimitive({.gltfBuilder = gltfBuilder,
@@ -334,7 +450,7 @@ TEST_CASE("TestConversionTriangleStrip")
 		.mode = CesiumGltf::MeshPrimitive::Mode::TRIANGLE_STRIP});
 	BeUtils::GltfBuilder expectedBuilder;
 	expectedBuilder.GetModel().meshes.emplace_back();
-	expectedBuilder.AddMetadataProperty("element", std::vector<uint64_t>{100,101});
+	expectedBuilder.AddMetadataProperty(FEATURE_TABLE_NAME, "element", std::vector<uint64_t>{100,101});
 	AddMeshPrimitive({.gltfBuilder = expectedBuilder,
 		.patches = {{{0,0},{1,1},{2,0},{3,1}}},
 		.indices = {{{0},{1},{2},{1},{3},{2}}},
@@ -345,7 +461,7 @@ TEST_CASE("TestConversionTriangleStrip")
 TEST_CASE("TestConversionTriangleFan")
 {
 	BeUtils::GltfBuilder gltfBuilder;
-	gltfBuilder.AddMetadataProperty("element", std::vector<uint64_t>{100,101});
+	gltfBuilder.AddMetadataProperty(FEATURE_TABLE_NAME, "element", std::vector<uint64_t>{100,101});
 	gltfBuilder.GetModel().meshes.emplace_back();
 	int v = 0;
 	AddMeshPrimitive({.gltfBuilder = gltfBuilder,
@@ -353,7 +469,7 @@ TEST_CASE("TestConversionTriangleFan")
 		.mode = CesiumGltf::MeshPrimitive::Mode::TRIANGLE_FAN});
 	BeUtils::GltfBuilder expectedBuilder;
 	expectedBuilder.GetModel().meshes.emplace_back();
-	expectedBuilder.AddMetadataProperty("element", std::vector<uint64_t>{100,101});
+	expectedBuilder.AddMetadataProperty(FEATURE_TABLE_NAME, "element", std::vector<uint64_t>{100,101});
 	AddMeshPrimitive({.gltfBuilder = expectedBuilder,
 		.patches = {{{1,1},{2,0},{0,0},{3,1}}},
 		.indices = {{{0},{1},{2},{1},{3},{2}}},
@@ -364,7 +480,7 @@ TEST_CASE("TestConversionTriangleFan")
 TEST_CASE("TestMerge")
 {
 	BeUtils::GltfBuilder gltfBuilder;
-	gltfBuilder.AddMetadataProperty("element", std::vector<uint64_t>{100,101,102});
+	gltfBuilder.AddMetadataProperty(FEATURE_TABLE_NAME, "element", std::vector<uint64_t>{100,101,102});
 	gltfBuilder.GetModel().meshes.emplace_back();
 	int v = 0;
 	AddMeshPrimitive({.gltfBuilder = gltfBuilder,
@@ -372,7 +488,7 @@ TEST_CASE("TestMerge")
 	AddMeshPrimitive({.gltfBuilder = gltfBuilder,
 		.patches = {{{v++,0},{v++,0},{v++,0}}, {{v++,2},{v++,2},{v++,2}}}});
 	BeUtils::GltfBuilder expectedBuilder;
-	expectedBuilder.AddMetadataProperty("element", std::vector<uint64_t>{100,101,102});
+	expectedBuilder.AddMetadataProperty(FEATURE_TABLE_NAME, "element", std::vector<uint64_t>{100,101,102});
 	expectedBuilder.GetModel().meshes.emplace_back();
 	AddMeshPrimitive({.gltfBuilder = expectedBuilder,
 		.patches = {{{0,0},{1,0},{2,0}}, {{3,1},{4,1},{5,1}}, {{6,0},{7,0},{8,0}}, {{9,2},{10,2},{11,2}}}});
@@ -382,7 +498,7 @@ TEST_CASE("TestMerge")
 TEST_CASE("TestNoMergeDifferentMaterial")
 {
 	BeUtils::GltfBuilder gltfBuilder;
-	gltfBuilder.AddMetadataProperty("element", std::vector<uint64_t>{100,101,102});
+	gltfBuilder.AddMetadataProperty(FEATURE_TABLE_NAME, "element", std::vector<uint64_t>{100,101,102});
 	gltfBuilder.GetModel().meshes.emplace_back();
 	int v = 0;
 	AddMeshPrimitive({.gltfBuilder = gltfBuilder,
@@ -397,7 +513,7 @@ TEST_CASE("TestNoMergeDifferentMaterial")
 TEST_CASE("TestNoMergeIncompatibleMode")
 {
 	BeUtils::GltfBuilder gltfBuilder;
-	gltfBuilder.AddMetadataProperty("element", std::vector<uint64_t>{100,101,102});
+	gltfBuilder.AddMetadataProperty(FEATURE_TABLE_NAME, "element", std::vector<uint64_t>{100,101,102});
 	gltfBuilder.GetModel().meshes.emplace_back();
 	int v = 0;
 	AddMeshPrimitive({.gltfBuilder = gltfBuilder,
@@ -411,7 +527,7 @@ TEST_CASE("TestNoMergeIncompatibleMode")
 TEST_CASE("TestNoMergeDifferentHasNormal")
 {
 	BeUtils::GltfBuilder gltfBuilder;
-	gltfBuilder.AddMetadataProperty("element", std::vector<uint64_t>{100,101,102});
+	gltfBuilder.AddMetadataProperty(FEATURE_TABLE_NAME, "element", std::vector<uint64_t>{100,101,102});
 	gltfBuilder.GetModel().meshes.emplace_back();
 	int v = 0;
 	AddMeshPrimitive({.gltfBuilder = gltfBuilder,
@@ -425,7 +541,7 @@ TEST_CASE("TestNoMergeDifferentHasNormal")
 TEST_CASE("TestNoMergeDifferentHasUV")
 {
 	BeUtils::GltfBuilder gltfBuilder;
-	gltfBuilder.AddMetadataProperty("element", std::vector<uint64_t>{100,101,102});
+	gltfBuilder.AddMetadataProperty(FEATURE_TABLE_NAME, "element", std::vector<uint64_t>{100,101,102});
 	gltfBuilder.GetModel().meshes.emplace_back();
 	int v = 0;
 	AddMeshPrimitive({.gltfBuilder = gltfBuilder,
@@ -439,7 +555,7 @@ TEST_CASE("TestNoMergeDifferentHasUV")
 TEST_CASE("TestNoMergeDifferentHasColor")
 {
 	BeUtils::GltfBuilder gltfBuilder;
-	gltfBuilder.AddMetadataProperty("element", std::vector<uint64_t>{100,101,102});
+	gltfBuilder.AddMetadataProperty(FEATURE_TABLE_NAME, "element", std::vector<uint64_t>{100,101,102});
 	gltfBuilder.GetModel().meshes.emplace_back();
 	int v = 0;
 	AddMeshPrimitive({.gltfBuilder = gltfBuilder,
@@ -453,7 +569,7 @@ TEST_CASE("TestNoMergeDifferentHasColor")
 TEST_CASE("TestNoMergeDifferentHasFeatureId")
 {
 	BeUtils::GltfBuilder gltfBuilder;
-	gltfBuilder.AddMetadataProperty("element", std::vector<uint64_t>{100,101,102});
+	gltfBuilder.AddMetadataProperty(FEATURE_TABLE_NAME, "element", std::vector<uint64_t>{100,101,102});
 	gltfBuilder.GetModel().meshes.emplace_back();
 	int v = 0;
 	AddMeshPrimitive({.gltfBuilder = gltfBuilder,
@@ -467,7 +583,7 @@ TEST_CASE("TestNoMergeDifferentHasFeatureId")
 TEST_CASE("TestSplitAndMerge")
 {
 	BeUtils::GltfBuilder gltfBuilder;
-	gltfBuilder.AddMetadataProperty("element", std::vector<uint64_t>{100,101,102});
+	gltfBuilder.AddMetadataProperty(FEATURE_TABLE_NAME, "element", std::vector<uint64_t>{100,101,102});
 	gltfBuilder.GetModel().meshes.emplace_back();
 	int v = 0;
 	AddMeshPrimitive({.gltfBuilder = gltfBuilder,
@@ -479,7 +595,7 @@ TEST_CASE("TestSplitAndMerge")
 	BeUtils::GltfTuner tuner;
 	tuner.SetRules({{{{101,102}, 2}}});
 	BeUtils::GltfBuilder expectedBuilder;
-	expectedBuilder.AddMetadataProperty("element", std::vector<uint64_t>{100,101,102});
+	expectedBuilder.AddMetadataProperty(FEATURE_TABLE_NAME, "element", std::vector<uint64_t>{100,101,102});
 	expectedBuilder.GetModel().meshes.emplace_back();
 	AddMeshPrimitive({.gltfBuilder = expectedBuilder,
 		.patches = {{{0,0},{1,0},{2,0}}},
@@ -503,11 +619,119 @@ TEST_CASE("TestPropertyTableValuesIndex")
 	int v = 0;
 	AddMeshPrimitive({.gltfBuilder = gltfBuilder,
 		.patches = {{{v++,0},{v++,0},{v++,0}}}});
-	gltfBuilder.AddMetadataProperty("element", std::vector<uint64_t>{100,101,102});
+	gltfBuilder.AddMetadataProperty(FEATURE_TABLE_NAME, "element", std::vector<uint64_t>{100,101,102});
 	BeUtils::GltfBuilder expectedBuilder;
-	expectedBuilder.AddMetadataProperty("element", std::vector<uint64_t>{100,101,102});
+	expectedBuilder.AddMetadataProperty(FEATURE_TABLE_NAME, "element", std::vector<uint64_t>{100,101,102});
 	expectedBuilder.GetModel().meshes.emplace_back();
 	AddMeshPrimitive({.gltfBuilder = expectedBuilder,
 		.patches = {{{0,0},{1,0},{2,0}}}});
 	CheckGltf(expectedBuilder.GetModel(), BeUtils::GltfTuner().Tune(gltfBuilder.GetModel()));
+}
+
+TEST_CASE("TestMergeWithMaterialFeatureId")
+{
+	BeUtils::GltfBuilder gltfBuilder;
+	gltfBuilder.AddMetadataProperty(FEATURE_TABLE_NAME, "element", std::vector<uint64_t>{100, 101, 102, 103});
+	gltfBuilder.AddMetadataProperty(FEATURE_TABLE_NAME, "model", std::vector<uint64_t>{200, 201, 202, 203});
+	gltfBuilder.AddMetadataProperty(FEATURE_TABLE_NAME, "subcategory", std::vector<uint64_t>{300, 301, 302, 303});
+	gltfBuilder.AddMetadataProperty(MATID_TABLE_NAME, "material", std::vector<uint64_t>{0x1981, 0x1982, 0x1983, 0x1984}, 1);
+	gltfBuilder.GetModel().meshes.emplace_back();
+	int v = 0;
+	AddMeshPrimitive({ .gltfBuilder = gltfBuilder,
+		.patches = {{{v++,0},{v++,0},{v++,0}}, {{v++,3},{v++,3},{v++,3}}},
+		.materialFeatureIdFormat = {g_ComponentTypeAuto} });
+	AddMeshPrimitive({ .gltfBuilder = gltfBuilder,
+		.patches = {{{v++,0},{v++,0},{v++,0}}, {{v++,2},{v++,2},{v++,2}}},
+		.materialFeatureIdFormat = {g_ComponentTypeAuto} });
+	BeUtils::GltfBuilder expectedBuilder;
+	expectedBuilder.AddMetadataProperty(FEATURE_TABLE_NAME, "element", std::vector<uint64_t>{100, 101, 102, 103});
+	expectedBuilder.AddMetadataProperty(FEATURE_TABLE_NAME, "model", std::vector<uint64_t>{200, 201, 202, 203});
+	expectedBuilder.AddMetadataProperty(FEATURE_TABLE_NAME, "subcategory", std::vector<uint64_t>{300, 301, 302, 303});
+	expectedBuilder.AddMetadataProperty(MATID_TABLE_NAME, "material", std::vector<uint64_t>{0x1981, 0x1982, 0x1983, 0x1984}, 1);
+	expectedBuilder.GetModel().meshes.emplace_back();
+	// rules do not say to split materials, so the merge should occur
+	AddMeshPrimitive({ .gltfBuilder = expectedBuilder,
+		.patches = {{{0,0},{1,0},{2,0}}, {{3,3},{4,3},{5,3}}, {{6,0},{7,0},{8,0}}, {{9,2},{10,2},{11,2}}},
+		.materialFeatureIdFormat = {g_ComponentTypeAuto} });
+	CheckGltf(expectedBuilder.GetModel(), BeUtils::GltfTuner().Tune(gltfBuilder.GetModel()));
+}
+
+TEST_CASE("TestNoMergeDifferentHasMaterialFeatureId")
+{
+	BeUtils::GltfBuilder gltfBuilder;
+	gltfBuilder.AddMetadataProperty(FEATURE_TABLE_NAME, "element", std::vector<uint64_t>{100, 101, 102, 103});
+	gltfBuilder.AddMetadataProperty(FEATURE_TABLE_NAME, "model", std::vector<uint64_t>{200, 201, 202, 203});
+	gltfBuilder.AddMetadataProperty(FEATURE_TABLE_NAME, "subcategory", std::vector<uint64_t>{300, 301, 302, 303});
+	gltfBuilder.AddMetadataProperty(MATID_TABLE_NAME, "material", std::vector<uint64_t>{0x1981, 0x1982, 0x1983, 0x1984}, 1);
+	gltfBuilder.GetModel().meshes.emplace_back();
+	int v = 0;
+	AddMeshPrimitive({ .gltfBuilder = gltfBuilder,
+		.patches = {{{v++,0},{v++,0},{v++,0}}, {{v++,3},{v++,3},{v++,3}}} });
+	AddMeshPrimitive({ .gltfBuilder = gltfBuilder,
+		.patches = {{{v++,0},{v++,0},{v++,0}}, {{v++,2},{v++,2},{v++,2}}},
+		.materialFeatureIdFormat = {g_ComponentTypeAuto} });
+	CheckGltf(gltfBuilder.GetModel(), BeUtils::GltfTuner().Tune(gltfBuilder.GetModel()));
+}
+
+TEST_CASE("TestSplitMaterialFeatureId")
+{
+	BeUtils::GltfBuilder gltfBuilder;
+	gltfBuilder.AddMetadataProperty(FEATURE_TABLE_NAME, "element", std::vector<uint64_t>{100, 101, 102, 103});
+	gltfBuilder.AddMetadataProperty(MATID_TABLE_NAME, "material", std::vector<uint64_t>{0x1981, 0x1982, 0x1983, 0x1984}, 1);
+	gltfBuilder.GetModel().meshes.emplace_back();
+	int v = 0;
+	AddMeshPrimitive({ .gltfBuilder = gltfBuilder,
+		.patches = {{{v++,0},{v++,0},{v++,0}}, {{v++,3},{v++,3},{v++,3}}, {{v++,2},{v++,2},{v++,2}}},
+		.materialFeatureIdFormat = {g_ComponentTypeAuto} });
+	AddMeshPrimitive({ .gltfBuilder = gltfBuilder,
+		.patches = {{{v++,0},{v++,0},{v++,0}}, {{v++,2},{v++,2},{v++,2}}, {{v++,3},{v++,3},{v++,3}}},
+		.materialFeatureIdFormat = {g_ComponentTypeAuto} });
+	BeUtils::GltfBuilder expectedBuilder;
+	expectedBuilder.AddMetadataProperty(FEATURE_TABLE_NAME, "element", std::vector<uint64_t>{100, 101, 102, 103});
+	expectedBuilder.AddMetadataProperty(MATID_TABLE_NAME, "material", std::vector<uint64_t>{0x1981, 0x1982, 0x1983, 0x1984}, 1);
+	expectedBuilder.GetModel().meshes.emplace_back();
+	AddMeshPrimitive({ .gltfBuilder = expectedBuilder,
+		.patches = {{{0,0},{1,0},{2,0}}, {{9,0},{10,0},{11,0}}},
+		.materialFeatureIdFormat = {g_ComponentTypeAuto},
+		.iTwinMaterialId = {0x1981} });
+	AddMeshPrimitive({ .gltfBuilder = expectedBuilder,
+		.patches = {{{6,2},{7,2},{8,2}}, {{12,2},{13,2},{14,2}}},
+		.materialFeatureIdFormat = {g_ComponentTypeAuto},
+		.iTwinMaterialId = {0x1983} });
+	AddMeshPrimitive({ .gltfBuilder = expectedBuilder,
+		.patches = {{{3,3},{4,3},{5,3}}, {{15,3},{16,3},{17,3}}},
+		.materialFeatureIdFormat = {g_ComponentTypeAuto},
+		.iTwinMaterialId = {0x1984} });
+	BeUtils::GltfTuner tuner;
+	tuner.SetRules({ .itwinMatIDsToSplit_ = {{0x1981, 0x1982, 0x1983, 0x1984}} });
+	CheckGltf(expectedBuilder.GetModel(), tuner.Tune(gltfBuilder.GetModel()));
+}
+
+TEST_CASE("TestSplitMaterialFeatureId_OneMaterial")
+{
+	BeUtils::GltfBuilder gltfBuilder;
+	gltfBuilder.AddMetadataProperty(FEATURE_TABLE_NAME, "element", std::vector<uint64_t>{100, 101, 102, 103});
+	gltfBuilder.AddMetadataProperty(MATID_TABLE_NAME, "material", std::vector<uint64_t>{0x1981, 0x1982, 0x1983, 0x1984}, 1);
+	gltfBuilder.GetModel().meshes.emplace_back();
+	int v = 0;
+	AddMeshPrimitive({ .gltfBuilder = gltfBuilder,
+		.patches = {{{v++,0},{v++,0},{v++,0}}, {{v++,3},{v++,3},{v++,3}}, {{v++,2},{v++,2},{v++,2}}},
+		.materialFeatureIdFormat = {g_ComponentTypeAuto} });
+	AddMeshPrimitive({ .gltfBuilder = gltfBuilder,
+		.patches = {{{v++,0},{v++,0},{v++,0}}, {{v++,2},{v++,2},{v++,2}}, {{v++,3},{v++,3},{v++,3}}},
+		.materialFeatureIdFormat = {g_ComponentTypeAuto} });
+	BeUtils::GltfBuilder expectedBuilder;
+	expectedBuilder.AddMetadataProperty(FEATURE_TABLE_NAME, "element", std::vector<uint64_t>{100, 101, 102, 103});
+	expectedBuilder.AddMetadataProperty(MATID_TABLE_NAME, "material", std::vector<uint64_t>{0x1981, 0x1982, 0x1983, 0x1984}, 1);
+	expectedBuilder.GetModel().meshes.emplace_back();
+	AddMeshPrimitive({ .gltfBuilder = expectedBuilder,
+		.patches = {{{0,0},{1,0},{2,0}}, {{6,2},{7,2},{8,2}}, {{9,0},{10,0},{11,0}}, {{12,2},{13,2},{14,2}}},
+		.materialFeatureIdFormat = {g_ComponentTypeAuto} });
+	AddMeshPrimitive({ .gltfBuilder = expectedBuilder,
+		.patches = {{{3,3},{4,3},{5,3}}, {{15,3},{16,3},{17,3}}},
+		.materialFeatureIdFormat = {g_ComponentTypeAuto},
+		.iTwinMaterialId = {0x1984} });
+	BeUtils::GltfTuner tuner;
+	tuner.SetRules({ .itwinMatIDsToSplit_ = {{0x1984}} }); // correspond to material ID #3
+	CheckGltf(expectedBuilder.GetModel(), tuner.Tune(gltfBuilder.GetModel()));
 }

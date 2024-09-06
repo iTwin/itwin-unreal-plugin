@@ -173,8 +173,9 @@ public:
 	[[nodiscard]] TimelineObjectContainer& GetContainer() { return Container; }
 	[[nodiscard]] const FTimeRangeInSeconds& GetTimeRange() const;
 	[[nodiscard]] FDateRange GetDateRange() const;
-	void IncludeTimeRange(const _ObjectTimeline& object);
-	ObjectTimelinePtr Add(const ObjectTimelinePtr& object);
+	void IncludeTimeRange(const _ObjectTimeline& Object);
+	void IncludeTimeRange(const FTimeRangeInSeconds& CustomRange);
+	ObjectTimelinePtr AddTimeline(const ObjectTimelinePtr& object);
 
 protected:
 	TimelineObjectContainer Container;

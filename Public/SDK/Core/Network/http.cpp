@@ -18,6 +18,11 @@ namespace SDK::Core
 	Http::~Http()
 	{}
 
+	void Http::SetBaseUrl(const std::string& url)
+	{
+		baseUrl_ = url;
+	}
+
 	std::pair<long, std::string> Http::GetJson(const std::string& url, const std::string& body, const Headers& hi, bool isFullUrl /*= false*/)
 	{
 		Headers h(hi);

@@ -68,22 +68,35 @@ CesiumGltf::Model& GltfBuilder::GetModel()
 	return impl_->model_;
 }
 
-void GltfBuilder::AddMetadataProperty(const std::string& name, const std::vector<uint64_t> values)
+void GltfBuilder::AddMetadataProperty(const std::string& className,
+	const std::string& propertyName,
+	const std::vector<uint64_t>& values,
+	size_t featureSetIndex /*= 0*/)
 {
 	auto& extension = impl_->model_.addExtension<CesiumGltf::ExtensionModelExtStructuralMetadata>();
 	if (!extension.schema)
 	{
 		extension.schema.emplace();
-		auto& propertyTable = extension.propertyTables.emplace_back();
-		propertyTable.classProperty = "MeshPart";
+	}
+	if (featureSetIndex >= extension.propertyTables.size())
+	{
+		extension.schema->classes.emplace(className, CesiumGltf::Class());
+
+		extension.propertyTables.resize(featureSetIndex + 1);
+		auto& propertyTable = extension.propertyTables[featureSetIndex];
+		propertyTable.classProperty = className;
 		propertyTable.count = values.size();
 	}
 	{
-		auto& property = extension.schema->classes["MeshPart"].properties[name];
+		auto& property = extension.schema->classes[className].properties[propertyName];
 		property.type = CesiumGltf::ClassProperty::ComponentType::UINT64;
 	}
 	{
-		auto& property = extension.propertyTables.back().properties[name];
+		auto& propertyTable = extension.propertyTables[featureSetIndex];
+		assert(propertyTable.classProperty == className);
+		assert(propertyTable.count == values.size());
+
+		auto& property = propertyTable.properties[propertyName];
 		property.values = AddBufferView(values, {});
 	}
 }

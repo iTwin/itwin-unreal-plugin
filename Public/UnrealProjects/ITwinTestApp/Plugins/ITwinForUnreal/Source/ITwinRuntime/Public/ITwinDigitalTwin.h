@@ -35,12 +35,6 @@ public:
 		BlueprintCallable)
 	void UpdateITwin();
 
-	/// Determine what Elements are under the mouse cursor and log information about them. Only the first few
-	/// encountered Elements are processed to avoid overflowing the logs.
-	/// \param pMaxUniqueElementsHit Pointer to a variable storing the maximum number of Elements to identify
-	///		(passing nullptr is allowed and means "1")
-	void IdentifyElementsUnderCursor(uint32 const* pMaxUniqueElementsHit);
-
 private:
 	/// overridden from AITwinServiceActor:
 	virtual void UpdateOnSuccessfulAuthorization() override;

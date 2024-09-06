@@ -39,14 +39,24 @@ public class SDKCore : ModuleRules
 			Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, libPrefix + "cpr" + libExtension),
 			Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, libPrefix + "z" + libSuffix + libExtension),
 			Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, "libcurl" + libExtension),
-		});
-		if (Target.Platform == UnrealTargetPlatform.Win64)
+            Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, libPrefix + "assert" + libExtension),
+            Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, libPrefix + "cpptrace" + libExtension),
+        });
+
+        if (Target.Platform == UnrealTargetPlatform.Mac)
+		{
+			PublicAdditionalLibraries.AddRange(new string[]{
+				Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, libPrefix + "dwarf" + libExtension), // dependency of cpptrace for macos
+			});
+		}
+
+        if (Target.Platform == UnrealTargetPlatform.Win64)
 		{
 			PublicSystemLibraries.Add("crypt32.lib");
 		}
 		else
 		{
 			PublicFrameworks.AddRange(new string[] { "SystemConfiguration" });
-		}
+        }
 	}
 }

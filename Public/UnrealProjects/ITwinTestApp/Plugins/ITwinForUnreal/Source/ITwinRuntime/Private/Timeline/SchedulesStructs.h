@@ -46,7 +46,7 @@ class FSimpleAppearance
 {
 public: // Note: ordered for best packing, not semantics (keep order or change list inits!)
 	FVector Color;
-	float Alpha;
+	float Alpha = 1.f;
 	bool bUseOriginalColor : 1 = true;
 	bool bUseOriginalAlpha : 1 = true;
 	FSimpleAppearance()
@@ -267,23 +267,7 @@ enum class EITwinSchedulesGeneration : uint8
 };
 
 /**
- * Schedule identifier obtained from /api/v1/schedules, filtered by targeted iModel.
- * The minimum amount of data necessary to support any meaningful display of the schedule are:
- *		- "Animated Entity User Field Id" of the schedule: not sure what this is for, some kind of
- *		  indirection to access the actual animation data
- *		- Each schedule's name and id.
- * Subsequent data is fetched on-demand (with some amount of pre-fetch, obviously). In particular,
- * there is no total duration for a schedule: the tasks hierarchy has to be explored for that. So
- * in an assumed graphical timeline, one could merely list folded schedules, then start materializing
- * tasks when unfolding a schedule "line", extending the schedule's span as new tasks and subtasks appear.
- *
- * Data to pre-fetch could include the first few levels of tasks: top-level tasks would already give us
- * the total time range of each schedule and thus of the whole project. More detail could be pre-fetched
- * until some limit, and to populate the timeline when zooming in. Not sure whether a really large project
- * could indeed overwhelm us with data, as those are only made of small amounts of metadata??
- *
- * Requests will be made asynchronously to complete missing data, hence the need for mutexes - and later
- * also notifications of some sort to update UI, scheduled objects materials, etc.
+ * Schedules obtained from /api/v1/schedules, filtered by targeted iModel
  */
 class FITwinSchedule
 {

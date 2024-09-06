@@ -9,6 +9,8 @@
 #include <catch2/catch_all.hpp>
 
 #include "Tools.h"
+#include <libassert/assert-catch2.hpp>
+#include <iostream>
 
 using namespace SDK::Core;
 
@@ -53,15 +55,15 @@ TEST_CASE("Tools:Extension")
 	std::shared_ptr<MyExtension> ext(new MyExtension);
 	myclass.AddExtension(ext);
 
-	REQUIRE(myclass.HasExtension<MyExtension>() == true);
-	REQUIRE(myclass.GetExtension<MyExtension>().get() == ext.get());
+	BE_ASSERT(myclass.HasExtension<MyExtension>() == true);
+	BE_ASSERT(myclass.GetExtension<MyExtension>().get() == ext.get());
 
-	REQUIRE(myclass.GetExtension<BadExt>().get() == nullptr);
-	REQUIRE(myclass.HasExtension<BadExt>() == false);
+	BE_ASSERT(myclass.GetExtension<BadExt>().get() == nullptr);
+	BE_ASSERT(myclass.HasExtension<BadExt>() == false);
 
 	myclass.RemoveExtension<MyExtension>();
-	REQUIRE(myclass.HasExtension<MyExtension>() == false);
-	REQUIRE(myclass.GetExtension<MyExtension>().get() == nullptr);
+	BE_ASSERT(myclass.HasExtension<MyExtension>() == false);
+	BE_ASSERT(myclass.GetExtension<MyExtension>().get() == nullptr);
 }
 
 namespace InterfaceTest {
@@ -109,7 +111,7 @@ namespace InterfaceTest {
 		}
 		
 		int Fct1() override {
-			REQUIRE(BaseClass::Fct1() == 245);
+			BE_ASSERT(BaseClass::Fct1() == 245);
 			return 654;
 		}
 		
@@ -143,8 +145,8 @@ TEST_CASE("Tools:Interface")
 	// check with base class
 	{
 		std::shared_ptr<IMyClass> pObj = IMyClass::New();
-		REQUIRE(pObj->Fct1() == 245);
-		REQUIRE(pObj->GetDynTypeId() == MyClass::GetTypeId());
+		BE_ASSERT(pObj->Fct1() == 245);
+		BE_ASSERT(pObj->GetDynTypeId() == MyClass::GetTypeId());
 	}
 	{
 		// We want MyExtendedClass to be instantiate everywhere we need a IMyClass, so we define the "New" function.
@@ -154,24 +156,60 @@ TEST_CASE("Tools:Interface")
 			});
 
 		std::shared_ptr<IMyClass> pObj = IMyClass::New();
-		REQUIRE(pObj->Fct1() == 654);
-		REQUIRE(pObj->GetDynTypeId() == MyExtendedClass::GetTypeId());
-		REQUIRE(pObj->IsTypeOf(MyClass::GetTypeId()) == true);
-		REQUIRE(pObj->IsTypeOf(MyExtendedClass2::GetTypeId()) == true);
-		REQUIRE(pObj->IsTypeOf(DummyClass::GetTypeId()) == false);
-		REQUIRE(pObj->IsTypeOf(MyExtendedClass::GetTypeId()) == true);
+		BE_ASSERT(pObj->Fct1() == 654);
+		BE_ASSERT(pObj->GetDynTypeId() == MyExtendedClass::GetTypeId());
+		BE_ASSERT(pObj->IsTypeOf(MyClass::GetTypeId()) == true);
+		BE_ASSERT(pObj->IsTypeOf(MyExtendedClass2::GetTypeId()) == true);
+		BE_ASSERT(pObj->IsTypeOf(DummyClass::GetTypeId()) == false);
+		BE_ASSERT(pObj->IsTypeOf(MyExtendedClass::GetTypeId()) == true);
 		if (pObj->GetDynTypeId() == MyExtendedClass::GetTypeId())
 		{
 			std::shared_ptr<MyExtendedClass> ext = std::static_pointer_cast<MyExtendedClass>(pObj);
-			REQUIRE(ext->Fct2() == 987);
+			BE_ASSERT(ext->Fct2() == 987);
 		}
 
 		auto obj2 = Tools::DynamicCast<MyExtendedClass2>(pObj);
-		REQUIRE((bool)obj2 == true);
+		BE_ASSERT((bool)obj2 == true);
 		if (obj2)
 		{
-			REQUIRE(obj2->Fct3() == 741);
+			BE_ASSERT(obj2->Fct3() == 741);
 		}
 	}
 }
 
+std::string g_AssertCheckStr;
+class MyAssertHandler :public SDK::Core::Tools::AssertHandler
+{
+public:
+	void Handler(const libassert::assertion_info& info) override
+	{
+		REQUIRE(info.type == libassert::assert_type::assertion);
+		g_AssertCheckStr = "success &ddefe";
+		std::string message = info.to_string(
+			libassert::terminal_width(libassert::stderr_fileno),
+			libassert::isatty(libassert::stderr_fileno)
+			? libassert::get_color_scheme()
+			: libassert::color_scheme::blank
+		);
+		std::cout << "Assert handler message recieved:" << message << std::endl;
+	}
+};
+
+TEST_CASE("Tools:AssertHandler")
+{
+	using namespace SDK::Core::Tools;
+	auto prevHandler = IAssertHandler::GetNewFct();
+	IAssertHandler::SetNewFct([]() {
+		std::shared_ptr<IAssertHandler> p(static_cast<MyAssertHandler*>(new MyAssertHandler));
+		return p;
+		});
+
+	InitAssertHandler();
+	auto myVar = "test param";
+	BE_ASSERT(false == true, "test assert", myVar); // ignore this assert when debugging
+	BE_ISSUE("test Issue texte"); // ignore this assert when debugging
+	REQUIRE(g_AssertCheckStr == "success &ddefe");
+	//restore previous handler
+	IAssertHandler::SetNewFct(prevHandler);
+	InitAssertHandler();
+}

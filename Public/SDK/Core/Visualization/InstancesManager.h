@@ -19,9 +19,9 @@ MODULE_EXPORT namespace SDK::Core
 	{
 	public:
 		/// Load the data from the server
-		virtual void LoadDataFromServer(const std::string& decorationId) = 0;
+		virtual void LoadDataFromServer(const std::string& decorationId, const std::string& accessToken) = 0;
 		/// Save the data on the server
-		virtual void SaveDataOnServer(const std::string& decorationId) = 0;
+		virtual void SaveDataOnServer(const std::string& decorationId, const std::string& accessToken) = 0;
 
 		/// Get the instance count by object reference
 		virtual uint64_t GetInstanceCountByObjectRef(const std::string& objectRef) const = 0;
@@ -46,9 +46,9 @@ MODULE_EXPORT namespace SDK::Core
 	{
 	public:
 		/// Load the data from the server
-		void LoadDataFromServer(const std::string& decorationId) override;
+		void LoadDataFromServer(const std::string& decorationId, const std::string& accessToken) override;
 		/// Save the data on the server
-		void SaveDataOnServer(const std::string& decorationId) override;
+		void SaveDataOnServer(const std::string& decorationId, const std::string& accessToken) override;
 
 		/// Get the instance count by object reference
 		uint64_t GetInstanceCountByObjectRef(const std::string& objectRef) const override;

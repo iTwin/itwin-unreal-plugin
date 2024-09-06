@@ -67,7 +67,7 @@ FITwinSynchro4DAnimator::FITwinSynchro4DAnimator(UITwinSynchro4DSchedules& InOwn
 
 void FITwinSynchro4DAnimator::TickAnimation(float DeltaTime, bool const bNewTilesReceived)
 {
-	if (Impl->bIsPlaying && Owner.ReplaySpeed != 0.)
+	if (Impl->bIsPlaying && !Owner.GetReplaySpeed().IsZero())
 	{
 		auto&& ScheduleEnd = GetInternals(Owner).GetTimeline().GetDateRange().GetUpperBound();
 		// Avoid incrementing time when clicking Play repeatedly at the end of the schedule...
@@ -79,8 +79,7 @@ void FITwinSynchro4DAnimator::TickAnimation(float DeltaTime, bool const bNewTile
 		}
 		else
 		{
-			Owner.ScheduleTime += FTimespan::FromSeconds(
-				DeltaTime * Owner.ReplaySpeed * REPLAYSPEED_FACTOR_UI_TO_SECONDS);
+			Owner.ScheduleTime += DeltaTime * Owner.GetReplaySpeed();
 			if (ScheduleEnd.IsClosed() && Owner.ScheduleTime >= ScheduleEnd.GetValue())
 			{
 				Owner.ScheduleTime = ScheduleEnd.GetValue();
@@ -102,10 +101,17 @@ void FITwinSynchro4DAnimator::TickAnimation(float DeltaTime, bool const bNewTile
 		// we need to continue applying the animation even when Paused and until we're done
 		// ("Impl->NextTimelineToUpdate == 0"), *and* no more "update all" has been requested, *and* the
 		// animation time has caught up with the schedule time!
-		else if (Impl->bNeedUpdateAll || Impl->NextTimelineToUpdate != 0
-			|| ITwin::Time::ToDateTime(Impl->AnimationTime) != Owner.ScheduleTime)
+		else
 		{
-			Impl->ApplyAnimation(false);
+			// Set bNeedUpdateAll even if a single timeline has changed: it's not as inefficient as it looks,
+			// because each timeline has its own flag, which is tested in ApplyAnimation's loop on timelines.
+			Impl->bNeedUpdateAll |= GetInternals(Owner).Timeline().TestNewOrModifiedAndResetFlag();
+
+			if (Impl->bNeedUpdateAll || Impl->NextTimelineToUpdate != 0
+				|| ITwin::Time::ToDateTime(Impl->AnimationTime) != Owner.ScheduleTime)
+			{
+				Impl->ApplyAnimation(false);
+			}
 		}
 	}
 }
@@ -208,15 +214,26 @@ void FITwinSynchro4DAnimator::OnFadeOutNonAnimatedElements()
 	{
 		auto & TileID = it.first;
 		auto & SceneTile= it.second;
-		if (SceneTile.HighlightsAndOpacities)
-		{
-			SceneTile.ForEachElementFeatures(
-				[&AllAnimatedElements, &FillColor, &SceneTile](FITwinElementFeaturesInTile& ElementFeatures)
+		bool bJustCreatedOpaTex = false;
+		SceneTile.ForEachElementFeatures(
+			[&AllAnimatedElements, &FillColor, &SceneTile, &bJustCreatedOpaTex]
+			(FITwinElementFeaturesInTile& ElementFeatures)
+			{
+				if (AllAnimatedElements.end() == AllAnimatedElements.find(ElementFeatures.ElementID))
 				{
-					if (AllAnimatedElements.end() == AllAnimatedElements.find(ElementFeatures.ElementID))
-						SceneTile.HighlightsAndOpacities->SetPixels(ElementFeatures.Features, FillColor);
-				});
-		}
+					if (!SceneTile.HighlightsAndOpacities)
+					{
+						bJustCreatedOpaTex = true;
+						SceneTile.HighlightsAndOpacities = std::make_unique<FITwinDynamicShadingBGRA8Property>(
+							SceneTile.MaxFeatureID, std::array<uint8, 4>(S4D_MAT_BGRA_DISABLED(255)));
+					}
+					if (bJustCreatedOpaTex)
+					{
+						FITwinSceneMapping::SetupHighlightsOpacities(SceneTile, ElementFeatures);
+					}
+					SceneTile.HighlightsAndOpacities->SetPixels(ElementFeatures.Features, FillColor);
+				}
+			});
 		// SceneTile.ExtractedElements share the textures: just set opacity (ExtractedElements may soon
 		// originate from material mapping, and not just scheduling? Hence not even testing
 		// HighlightsAndOpacities here)
@@ -353,7 +370,7 @@ namespace Detail
 															 false, nullptr, ETeleportType::TeleportPhysics);
 		}
 	#endif // SYNCHRO4D_ENABLE_TRANSFORMATIONS()
-		FITwinSceneMapping::SetupHighlights(SceneTile, ExtractedEntity);
+		FITwinSceneMapping::SetupHighlightsOpacities(SceneTile, ExtractedEntity);
 		FITwinSceneMapping::SetupCuttingPlanes(SceneTile, ExtractedEntity);
 	}
 
@@ -386,8 +403,15 @@ namespace Detail
 				SceneTile.CuttingPlanes->SetPixels(ElementFeaturesInTile.Features, *State.AsPlaneEquation);
 			}
 		}
-		FITwinSceneMapping::SetupHighlights(SceneTile, ElementFeaturesInTile);
+		FITwinSceneMapping::SetupHighlightsOpacities(SceneTile, ElementFeaturesInTile);
 		FITwinSceneMapping::SetupCuttingPlanes(SceneTile, ElementFeaturesInTile);
+	}
+
+	void ForceHideBatchedElement(FITwinSceneTile& SceneTile, FITwinElementFeaturesInTile& ElementFeaturesInTile)
+	{
+		if (SceneTile.HighlightsAndOpacities)
+			SceneTile.HighlightsAndOpacities->SetPixelsAlpha(ElementFeaturesInTile.Features, 0);
+		FITwinSceneMapping::SetupHighlightsOpacities(SceneTile, ElementFeaturesInTile);
 	}
 
 	struct FFinalizeDeferredPropData
@@ -446,13 +470,19 @@ void FITwinSynchro4DAnimator::FImpl::ApplyAnimation(bool const bForceUpdateAll)
 		TimeToApplyAllTimelines = 0;
 		if (bHasUpdatedTextures)
 		{
-			// don't do UpdateInMaterials in same tick :/ but nothing guarantees that the render thread will
+			// Don't do UpdateInMaterials in same tick :/ but nothing guarantees that the render thread will
 			// have processed or UpdateTexture messages before next tick, right?
 			// TODO_GCO: sync with UpdateTextureRegions's DataCleanup functor?
+			// Because of the early exit, we need the next call to TickAnimation to enter ApplyAnimation even
+			// when paused *and* NextTimelineToUpdate == 0, to finish the rest of the job!
+			// Since we have reset LastAnimationTime anyway, let's set this flag:
+			bNeedUpdateAll = true;
 			return;
 		}
 	}
 	IModelInternals.SceneMapping.HandleNewTileTexturesNeedUpateInMaterials();
+	double const TimelineUpdateEnd = // store time before handling masking of duplicates in condition below
+		FPlatformTime::Seconds() + (Schedules.MaxTimelineUpdateMilliseconds / 1000.);
 	if (NextTimelineToUpdate == 0)
 	{
 		AnimationTime = ITwin::Time::FromDateTime(Schedules.ScheduleTime);
@@ -460,14 +490,21 @@ void FITwinSynchro4DAnimator::FImpl::ApplyAnimation(bool const bForceUpdateAll)
 		// "Useful"(is it?) only the first time, except when new timelines are added
 		if (IModelInternals.SceneMapping.UpdateAllTextures() != 0)
 		{
+			// Because of the early exit, we need the next call to TickAnimation to enter ApplyAnimation even
+			// when paused *and* NextTimelineToUpdate == 0, to finish the rest of the job!
+			bNeedUpdateAll = true;
 			UE_LOG(LogITwin, Verbose, TEXT("Skipping ApplyAnimation (dirty textures)"));
 			return;
+		}
+		if (bNeedUpdateAll)
+		{
+			IModelInternals.ProcessElementsInEachTile(Timeline.GetNonAnimatedDuplicates(),
+				std::bind(&::Detail::ForceHideBatchedElement, std::placeholders::_2, std::placeholders::_3),
+				[](FITwinSceneTile&, FITwinExtractedEntity&) {}, false);
 		}
 	}
 	if (!bNeedUpdateAll)
 		TimeIncrement.emplace(std::minmax(*LastAnimationTime, AnimationTime));
-	double const TimelineUpdateEnd =
-		FPlatformTime::Seconds() + (Schedules.MaxTimelineUpdateMilliseconds / 1000.);
 	auto&& AllTimelines = Timeline.GetContainer();
 	size_t const FirstTimelineUpdated = NextTimelineToUpdate;
 	size_t const NumberOfTimelines = AllTimelines.size();
@@ -480,9 +517,9 @@ void FITwinSynchro4DAnimator::FImpl::ApplyAnimation(bool const bForceUpdateAll)
 		// FixColor (see Timeline.cpp) would rather spoil this!
 		// (*) and not "modified" since, like adding Elements to existing (grouped Elements) timelines.
 		//     "Modified" used to also include discovering new tiles using known Elements, but for that we
-		//     we now restart from scratch anyway (see bNewTilesReceivedHaveTextures above)
+		//     now restart from scratch anyway (see bNewTilesReceivedHaveTextures above)
 		// If we want to skip hidden tiles later on, we'll have to handle newly visible tiles here too.
-		if (!ElementTimelinePtr->TestModifiedAndReset() && TimeIncrement
+		if (!ElementTimelinePtr->TestModifiedAndResetFlag() && TimeIncrement
 			&& (TimelineRange.second < TimeIncrement->first || TimelineRange.first > TimeIncrement->second))
 		{
 			continue;

@@ -20,11 +20,16 @@
 #include <Timeline/SchedulesStructs.h>
 
 #include <HAL/PlatformFileManager.h>
+#include <Logging/LogMacros.h>
 #include <Materials/MaterialInterface.h>
 #include <Misc/FileHelper.h>
 #include <Misc/Paths.h>
 #include <mutex>
+#include <optional>
 #include <unordered_set>
+
+DECLARE_LOG_CATEGORY_EXTERN(LogITwinSched, Log, All);
+DEFINE_LOG_CATEGORY(LogITwinSched);
 
 constexpr double AUTO_SCRIPT_DURATION = 30.;
 
@@ -35,6 +40,8 @@ class UITwinSynchro4DSchedules::FImpl
 	friend FITwinSynchro4DSchedulesInternals const& GetInternals(UITwinSynchro4DSchedules const&);
 
 	UITwinSynchro4DSchedules& Owner;
+	bool bResetSchedulesNeeded = true; ///< Has precedence over bUpdateConnectionIfReadyNeeded
+	bool bUpdateConnectionIfReadyNeeded = false;
 	std::recursive_mutex Mutex;
 	std::vector<FITwinSchedule> Schedules;
 	FITwinSynchro4DAnimator Animator;
@@ -99,11 +106,42 @@ FITwinScheduleTimeline const& FITwinSynchro4DSchedulesInternals::GetTimeline() c
 	return Builder.GetTimeline();
 }
 
+void FITwinSynchro4DSchedulesInternals::SetScheduleTimeRangeIsKnown()
+{
+	auto const& DateRange = GetTimeline().GetDateRange();
+	if (DateRange.HasLowerBound() && DateRange.HasUpperBound())
+	{
+		ScheduleTimeRangeIsKnown = true;
+		Owner.OnScheduleTimeRangeKnown.Broadcast(DateRange.GetLowerBoundValue(),
+												 DateRange.GetUpperBoundValue());
+	}
+	else
+	{
+		ScheduleTimeRangeIsKnown = false;
+		Owner.OnScheduleTimeRangeKnown.Broadcast(FDateTime::MinValue(), FDateTime::MinValue());
+	}
+}
+
+void FITwinSynchro4DSchedulesInternals::ForEachElementTimeline(ITwinElementID const ElementID,
+	std::function<void(FITwinElementTimeline const&)> const& Func) const
+{
+	auto const& MainTimeline = GetTimeline();
+	auto& SceneMapping = GetInternals(*Cast<AITwinIModel>(Owner.GetOwner())).SceneMapping;
+	auto const& Elem = SceneMapping.GetElement(ElementID);
+	FString Result;
+	for (auto AnimKey : Elem.AnimationKeys)
+	{
+		auto const* Timeline = MainTimeline.GetElementTimelineFor(AnimKey);
+		if (Timeline)
+			Func(*Timeline);
+	}
+}
+
 FString FITwinSynchro4DSchedulesInternals::ElementTimelineAsString(ITwinElementID const ElementID) const
 {
 	auto const& MainTimeline = GetTimeline();
 	FString Result;
-	MainTimeline.ForEachElementTimeline(ElementID, [&Result](FITwinElementTimeline const& Timeline)
+	ForEachElementTimeline(ElementID, [&Result](FITwinElementTimeline const& Timeline)
 		{ Result.Append(Timeline.ToPrettyJsonString()); });
 	return Result;
 }
@@ -146,7 +184,7 @@ void FITwinSynchro4DSchedulesInternals::OnNewTileMeshBuilt(CesiumTileID const& T
 
 void FITwinSynchro4DSchedulesInternals::HandleReceivedElements(bool& bNewTilesReceived)
 {
-	if (!MakeReady())
+	if (!IsReady())
 		return;
 
 	// In theory, OnElementsTimelineModified must be called for each timeline applying to an Element (or a
@@ -160,30 +198,33 @@ void FITwinSynchro4DSchedulesInternals::HandleReceivedElements(bool& bNewTilesRe
 	auto& SceneMapping = GetInternals(*Cast<AITwinIModel>(Owner.GetOwner())).SceneMapping;
 	for (auto const& TileMeshElements : ElementsReceived)
 	{
-		SceneMapping.ReplicateKnownElementsSetupInTile(TileMeshElements);
+		bNewTilesReceived |= SceneMapping.ReplicateAnimatedElementsSetupInTile(TileMeshElements);
 	}
 	if (!ElementsReceived.empty())
 	{
+		auto const& AllElements = SceneMapping.GetElements();
 		// ElementIDs are already mapped in the SchedulesApi structures to avoid redundant requests, so it
-		// seems redundant to merge the sets here:
-		//if (ElementsReceived.size() == 1)
-		//	SchedulesApi.QueryElementsTasks(ElementsReceived.begin()->second);//empties the set
-		//else
-		//{
-		//	std::set<ITwinElementID> MergedSet;
-		//	auto SetsIt = ElementsReceived.begin();
-		//	MergedSet.swap(SetsIt->second);
-		//	for (++SetsIt; ; ++SetsIt)
-		//	{
-		//		for (auto&& Elem : SetsIt->second)
-		//		{
-		//			MergedSet.insert(Elem);
-		//		}
-		//		SetsIt->second.clear();
-		//	}
-		//	ElementsReceived.clear();
-		//	SchedulesApi.QueryElementsTasks(MergedSet);
-		//}
+		// was redundant to merge the sets here, until we needed to add the parent Elements as well:
+		std::set<ITwinElementID> MergedSet;
+		for (auto SetsIt = ElementsReceived.begin(); SetsIt != ElementsReceived.end(); ++SetsIt)
+		{
+			for (auto const& ElemID : SetsIt->second)
+			{
+				//if (Elem.bHasMesh) // must be leaves
+				FITwinElement const* pElem = &SceneMapping.GetElement(ElemID);
+				while (true)
+				{
+					if (!MergedSet.insert(pElem->Id).second)
+						break; // if already present, all its parents are, too
+					if (ITwinScene::NOT_ELEM == pElem->ParentInVec)
+						break;
+					pElem = &SceneMapping.GetElement(pElem->ParentInVec);
+				}
+			}
+			SetsIt->second.clear();
+		}
+		ElementsReceived.clear();
+
 		if (Owner.bDebugWithDummyTimelines)
 		{
 			std::lock_guard<std::recursive_mutex> Lock(Mutex);
@@ -208,10 +249,8 @@ void FITwinSynchro4DSchedulesInternals::HandleReceivedElements(bool& bNewTilesRe
 		}
 		else
 		{
-			for (auto&& TileElements : ElementsReceived)
-				SchedulesApi.QueryElementsTasks(TileElements.second);//empties the set
+			SchedulesApi.QueryElementsTasks(MergedSet);
 		}
-		ElementsReceived.clear();
 	}
 }
 
@@ -327,15 +366,6 @@ bool FITwinSynchro4DSchedulesInternals::IsReady() const
 	return SchedulesApi.IsReady(); // other members need no particular init
 }
 
-bool FITwinSynchro4DSchedulesInternals::MakeReady()
-{
-	if (!IsReady())
-	{
-		return ResetSchedules();
-	}
-	return true;
-}
-
 void FITwinSynchro4DSchedulesInternals::Reset()
 {
 	Schedules.clear();
@@ -353,11 +383,19 @@ void FITwinSynchro4DSchedulesInternals::Reset()
 			std::bind(&FITwinScheduleTimelineBuilder::UpdateAnimationGroupInTimeline, &Builder,
 					  std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
 	}
+#if WITH_EDITOR
+	if (!Owner.OnScheduleQueryingStatusChanged.IsAlreadyBound(&Owner,
+		&UITwinSynchro4DSchedules::LogStatisticsUponQueryLoopStatusChange))
+	{
+		Owner.OnScheduleQueryingStatusChanged.AddDynamic(&Owner,
+			&UITwinSynchro4DSchedules::LogStatisticsUponQueryLoopStatusChange);
+	}
+#endif
 }
 
 FITwinSchedulesImport& FITwinSynchro4DSchedulesInternals::GetSchedulesApiReadyForUnitTesting()
 {
-	ensure(MakeReady());
+	ensure(IsReady() || ResetSchedules());
 	return SchedulesApi;
 }
 
@@ -373,26 +411,23 @@ UITwinSynchro4DSchedules::UITwinSynchro4DSchedules()
 UITwinSynchro4DSchedules::UITwinSynchro4DSchedules(bool bDoNotBuildTimelines)
 	: Impl(MakePimpl<FImpl>(*this, bDoNotBuildTimelines))
 {
-	PrimaryComponentTick.bCanEverTick = true;
 }
 
-void UITwinSynchro4DSchedules::OnRegister()
+FDateRange UITwinSynchro4DSchedules::GetDateRange() const
 {
-	Super::OnRegister();
-	SetComponentTickEnabled(true);
+	if (Impl->Internals.ScheduleTimeRangeIsKnown && *Impl->Internals.ScheduleTimeRangeIsKnown)
+		return Impl->Internals.GetTimeline().GetDateRange();
+	else
+		return FDateRange();
 }
 
-void UITwinSynchro4DSchedules::OnUnregister()
+void UITwinSynchro4DSchedules::TickSchedules(float DeltaTime)
 {
-	SetComponentTickEnabled(false);
-	Super::OnUnregister();
-}
-
-void UITwinSynchro4DSchedules::TickComponent(float DeltaTime, enum ELevelTick /*TickType*/,
-											 FActorComponentTickFunction* /*ThisTickFunction*/)
-{
-	AITwinIModel* IModel = Cast<AITwinIModel>(GetOwner());
 	static const TCHAR* ErrPrefix = TEXT("Unknown:");
+	AITwinIModel* IModel = Cast<AITwinIModel>(GetOwner());
+	if (!IModel)
+		return; // fine happens, between constructor and registation to parent iModel
+
 	if (!IModel->ServerConnection // happens when an iModel is created from scratch by the user
 		|| IModel->ITwinId.IsEmpty()) // happens transitorily in iTwinTestApp...
 	{
@@ -411,10 +446,24 @@ void UITwinSynchro4DSchedules::TickComponent(float DeltaTime, enum ELevelTick /*
 		ScheduleId = Impl->Schedules[0].Id;
 		ScheduleName = Impl->Schedules[0].Name;
 	}
-	bool bNewTilesReceived = false;
-	Impl->Internals.HandleReceivedElements(bNewTilesReceived);
-	Impl->Internals.SchedulesApi.HandlePendingQueries();
-	Impl->Animator.TickAnimation(DeltaTime, bNewTilesReceived);
+	if (Impl->bResetSchedulesNeeded)
+	{
+		Impl->bResetSchedulesNeeded = false;
+		Impl->bUpdateConnectionIfReadyNeeded = false;// does both
+		Impl->Internals.ResetSchedules();
+	}
+	else if (Impl->bUpdateConnectionIfReadyNeeded)
+	{
+		Impl->bUpdateConnectionIfReadyNeeded = false;
+		Impl->Internals.UpdateConnection(true);
+	}
+	else
+	{
+		bool bNewTilesReceived = false;
+		Impl->Internals.HandleReceivedElements(bNewTilesReceived);
+		Impl->Internals.SchedulesApi.HandlePendingQueries();
+		Impl->Animator.TickAnimation(DeltaTime, bNewTilesReceived);
+	}
 }
 
 void FITwinSynchro4DSchedulesInternals::UpdateConnection(bool const bOnlyIfReady)
@@ -422,22 +471,35 @@ void FITwinSynchro4DSchedulesInternals::UpdateConnection(bool const bOnlyIfReady
 	if (!bOnlyIfReady || IsReady())
 	{
 		AITwinIModel& IModel = *Cast<AITwinIModel>(Owner.GetOwner());
-		SchedulesApi.ResetConnection(IModel.ServerConnection, IModel.ITwinId, IModel.IModelId);
+		SchedulesApi.ResetConnection(IModel.ITwinId, IModel.IModelId);
 	}
 }
 
 void UITwinSynchro4DSchedules::UpdateConnection()
 {
-	Impl->Internals.UpdateConnection(true);
+	if (Impl->Internals.IsReady())
+		Impl->bUpdateConnectionIfReadyNeeded = true;
 }
 
 void UITwinSynchro4DSchedules::ResetSchedules()
 {
-	Impl->Internals.ResetSchedules();
+	Impl->bResetSchedulesNeeded = true;
+}
+
+void UITwinSynchro4DSchedules::LogStatisticsUponQueryLoopStatusChange(bool bQueryLoopIsRunning)
+{
+	if (bQueryLoopIsRunning)
+	{
+		UE_LOG(LogITwinSched, Display, TEXT("Query loop (re)started..."));
+	}
+	else
+	{
+		UE_LOG(LogITwinSched, Display, TEXT("Query loop now idling. %s"),
+										*Impl->Internals.SchedulesApi.ToString());
+	}
 }
 
 // Note: must have been called at least once before any actual querying.
-// Use Impl->Internals.MakeReady() for that.
 bool FITwinSynchro4DSchedulesInternals::ResetSchedules()
 {
 	AITwinIModel* IModel = Cast<AITwinIModel>(Owner.GetOwner());
@@ -461,12 +523,37 @@ bool FITwinSynchro4DSchedulesInternals::ResetSchedules()
 		&FITwinIModelInternals::OnElementsTimelineModified, &IModelInternals,
 															std::placeholders::_1, std::placeholders::_2));
 	UpdateConnection(false);
+
+	// If the tileset is already loaded, we need to trigger QueryElementsTasks for all Elements for which we
+	// have already received some mesh parts, but also for all their parents/ancesters, which may have anim
+	// bindings that will also animate the children.
+	auto const& AllElems = IModelInternals.SceneMapping.GetElements();
+	if (!AllElems.empty())
+	{
+		std::set<ITwinElementID> ElementIDs;
+		for (auto const& Elem : AllElems)
+		{
+			if (Elem.bHasMesh) // start from leaves (can intermediate nodes have their own geom too?)
+			{
+				FITwinElement const* pElem = &Elem;
+				while (true)
+				{
+					if (!ElementIDs.insert(pElem->Id).second)
+						break; // if already present, all its parents are, too
+					if (ITwinScene::NOT_ELEM == pElem->ParentInVec)
+						break;
+					pElem = &IModelInternals.SceneMapping.GetElement(pElem->ParentInVec);
+				}
+			}
+		}
+		SchedulesApi.QueryElementsTasks(ElementIDs);
+	}
 	return true;
 }
 
 void UITwinSynchro4DSchedules::QueryAll()
 {
-	if (!Impl->Internals.MakeReady()) return;
+	if (!Impl->Internals.IsReady()) return;
 	Impl->Internals.SchedulesApi.QueryEntireSchedules(QueryAllFromTime, QueryAllUntilTime,
 		DebugDumpAsJsonAfterQueryAll.IsEmpty() ? std::function<void(bool)>() :
 		[this, Dest=DebugDumpAsJsonAfterQueryAll] (bool bSuccess)
@@ -487,14 +574,14 @@ void UITwinSynchro4DSchedules::QueryAll()
 void UITwinSynchro4DSchedules::QueryAroundElementTasks(FString const ElementID,
 	FTimespan const MarginFromStart, FTimespan const MarginFromEnd)
 {
-	if (!ensure(Impl->Internals.MakeReady())) return;
+	if (!Impl->Internals.IsReady()) return;
 	Impl->Internals.SchedulesApi.QueryAroundElementTasks(ITwin::ParseElementID(ElementID),
 														 MarginFromStart, MarginFromEnd);
 }
 
 void UITwinSynchro4DSchedules::QueryElementsTasks(TArray<FString> const& Elements)
 {
-	if (!ensure(Impl->Internals.MakeReady())) return;
+	if (!Impl->Internals.IsReady()) return;
 	std::set<ITwinElementID> ElementIDs;
 	for (auto&& Elem : Elements)
 	{
@@ -545,10 +632,33 @@ void UITwinSynchro4DSchedules::AutoReplaySpeed()
 	auto const& TimeRange = Impl->Internals.GetTimeline().GetTimeRange();
 	if (TimeRange.first < TimeRange.second)
 	{
-		ReplaySpeed = REPLAYSPEED_FACTOR_SECONDS_TO_UI
-			* std::ceil((TimeRange.second - TimeRange.first) / AUTO_SCRIPT_DURATION);
-		Impl->Animator.OnChangedAnimationSpeed();
+		SetReplaySpeed(FTimespan::FromHours( // round the number of hours per second
+			std::ceil((TimeRange.second - TimeRange.first) / (3600. * AUTO_SCRIPT_DURATION))));
 	}
+}
+
+FDateTime UITwinSynchro4DSchedules::GetScheduleTime()
+{
+	return ScheduleTime;
+}
+
+void UITwinSynchro4DSchedules::SetScheduleTime(FDateTime NewScheduleTime)
+{
+	//if (ScheduleTime != NewScheduleTime) <== don't: see PostEditChangeProperty
+	ScheduleTime = NewScheduleTime;
+	Impl->Animator.OnChangedScheduleTime(false);
+}
+
+FTimespan UITwinSynchro4DSchedules::GetReplaySpeed()
+{
+	return ReplaySpeed;
+}
+
+void UITwinSynchro4DSchedules::SetReplaySpeed(FTimespan NewReplaySpeed)
+{
+	//if (ReplaySpeed != NewReplaySpeed) <== don't: see PostEditChangeProperty
+	ReplaySpeed = NewReplaySpeed;
+	Impl->Animator.OnChangedAnimationSpeed();
 }
 
 #if WITH_EDITOR
@@ -571,11 +681,11 @@ void UITwinSynchro4DSchedules::PostEditChangeProperty(FPropertyChangedEvent& Pro
 	auto const Name = PropertyChangedEvent.Property->GetFName();
 	if (Name == GET_MEMBER_NAME_CHECKED(UITwinSynchro4DSchedules, ScheduleTime))
 	{
-		Impl->Animator.OnChangedScheduleTime(false);
+		SetScheduleTime(ScheduleTime);
 	}
 	else if (Name == GET_MEMBER_NAME_CHECKED(UITwinSynchro4DSchedules, ReplaySpeed))
 	{
-		Impl->Animator.OnChangedAnimationSpeed();
+		SetReplaySpeed(ReplaySpeed);
 	}
 	else if (Name == GET_MEMBER_NAME_CHECKED(UITwinSynchro4DSchedules, bDisableColoring)
 		  || Name == GET_MEMBER_NAME_CHECKED(UITwinSynchro4DSchedules, bDisableVisibilities)

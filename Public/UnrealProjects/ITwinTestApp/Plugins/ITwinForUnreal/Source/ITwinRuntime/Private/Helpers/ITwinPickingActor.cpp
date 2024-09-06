@@ -16,6 +16,7 @@
 #include <ITwinMetadataConstants.h>
 
 #include <Containers/Ticker.h>
+#include <DrawDebugHelpers.h>
 
 #include <unordered_set>
 
@@ -48,6 +49,20 @@ namespace ITwin
 		std::function<void(FHitResult const&, std::unordered_set<ITwinElementID>&)> const& HitResultHandler,
 		uint32 const* pMaxUniqueElementsHit);
 
+	ITwinElementID GetMaterialIDFromHit(FHitResult const& HitResult)
+	{
+		ITwinElementID PickedMaterial = ITwin::NOT_ELEMENT;
+		TMap<FString, FITwinCesiumMetadataValue> const Table1 =
+			UITwinCesiumMetadataPickingBlueprintLibrary::GetPropertyTableValuesFromHit(
+				HitResult, ITwinCesium::Metada::MATERIAL_FEATURE_ID_SLOT);
+		FITwinCesiumMetadataValue const* const MaterialIdFound = Table1.Find(ITwinCesium::Metada::MATERIAL_NAME);
+		if (MaterialIdFound != nullptr)
+		{
+			PickedMaterial = ITwinElementID(UITwinCesiumMetadataValueBlueprintLibrary::GetUnsignedInteger64(
+				*MaterialIdFound, ITwin::NOT_ELEMENT.value()));
+		}
+		return PickedMaterial;
+	}
 }
 
 void AITwinPickingActor::PickObjectAtMousePosition(FString& ElementId, FVector2D& MousePosition,
@@ -61,9 +76,10 @@ void AITwinPickingActor::PickObjectAtMousePosition(FString& ElementId, FVector2D
 	uint32 const MaxUniqueElementsHit = 1;
 
 	ITwinElementID PickedEltID = ITwin::NOT_ELEMENT;
+	ITwinElementID PickedMaterial = ITwin::NOT_ELEMENT;
 
 	ITwin::VisitElementsUnderCursor(GetWorld(), MousePosition,
-		[this, iModel, &PickedEltID](FHitResult const& HitResult, std::unordered_set<ITwinElementID>& DejaVu)
+		[this, iModel, &PickedEltID, &PickedMaterial](FHitResult const& HitResult, std::unordered_set<ITwinElementID>& DejaVu)
 	{
 		TMap<FString, FITwinCesiumMetadataValue> const Table =
 			UITwinCesiumMetadataPickingBlueprintLibrary::GetPropertyTableValuesFromHit(
@@ -83,6 +99,10 @@ void AITwinPickingActor::PickObjectAtMousePosition(FString& ElementId, FVector2D
 				DejaVu.insert(EltID);
 				PickedEltID = EltID;
 				ElementPickedEvent.Broadcast({});
+
+#if ENABLE_DRAW_DEBUG
+				PickedMaterial = ITwin::GetMaterialIDFromHit(HitResult);
+#endif
 			}
 		}
 
@@ -94,18 +114,10 @@ void AITwinPickingActor::PickObjectAtMousePosition(FString& ElementId, FVector2D
 		ElementId = FString::Printf(TEXT("0x%I64x"), PickedEltID.value());
 	}
 
-	// Update selection highlight
-	FITwinIModelInternals& IModelInternals = GetInternals(*iModel);
-	IModelInternals.SelectElement(PickedEltID);
-
-	if (IModelInternals.SceneMapping.NeedUpdateSelectionHighlights())
+#if ENABLE_DRAW_DEBUG
+	if (PickedMaterial != ITwin::NOT_ELEMENT)
 	{
-		// Make sure the textures are updated in materials (if needed), upon next frame.
-		FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda(
-			[iModel](float Delta) -> bool
-		{
-			GetInternals(*iModel).SceneMapping.UpdateSelectionHighlights();
-			return false;
-		}));
+		ElementId += FString::Printf(TEXT(" MaterialID:0x%I64x"), PickedMaterial.value());
 	}
+#endif
 }

@@ -143,16 +143,43 @@ function (be_create_plugin_packager_target pluginName projectDir)
 	# First duplicate the plugin folder completely: this is done to eliminate any
 	# symbolic link, which RunUAT does not like at all...
 	# Then run RunUAT for the current platform.
-	add_custom_command ( TARGET ${packagerTargetName}
-		WORKING_DIRECTORY "${BE_UNREAL_ENGINE_DIR}/Build/BatchFiles"
-		COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/Packaging_Input"
-		COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/Packaging_Output"
-		COMMAND ${CMAKE_COMMAND} -E rm -rf "${pluginPackageSrcDir}"
-		COMMAND ${CMAKE_COMMAND} -E rm -rf "${pluginPackageDstDir}"
-		COMMAND ${CMAKE_COMMAND} -E copy_directory "${projectAbsDir}/Plugins/${pluginName}" "${pluginPackageSrcDir}"
-		COMMAND ${CMAKE_COMMAND} -E rm -rf "${pluginPackageSrcDir}/Binaries"
-		COMMAND ./${RunUATBasename} BuildPlugin -Plugin=${pluginPackageSrcDir}/${pluginName}.uplugin -Package="${pluginPackageDstDir}" -CreateSubFolder -TargetPlatforms=${TargetPlatforms}
-	)
+
+	if(APPLE)
+		if(CMAKE_OSX_ARCHITECTURES)
+			add_custom_command ( TARGET ${packagerTargetName}
+				WORKING_DIRECTORY "${BE_UNREAL_ENGINE_DIR}/Build/BatchFiles"
+				COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/Packaging_Input"
+				COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/Packaging_Output"
+				COMMAND ${CMAKE_COMMAND} -E rm -rf "${pluginPackageSrcDir}"
+				COMMAND ${CMAKE_COMMAND} -E rm -rf "${pluginPackageDstDir}"
+				COMMAND cp -RL "${projectAbsDir}/Plugins/${pluginName}" "${pluginPackageSrcDir}"
+				COMMAND ${CMAKE_COMMAND} -E rm -rf "${pluginPackageSrcDir}/Binaries"
+				COMMAND ./${RunUATBasename} BuildPlugin -Plugin=${pluginPackageSrcDir}/${pluginName}.uplugin -Package="${pluginPackageDstDir}" -CreateSubFolder -TargetPlatforms=${TargetPlatforms} -Architecture_Mac=${CMAKE_OSX_ARCHITECTURES}
+			)
+		else()
+			add_custom_command ( TARGET ${packagerTargetName}
+				WORKING_DIRECTORY "${BE_UNREAL_ENGINE_DIR}/Build/BatchFiles"
+				COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/Packaging_Input"
+				COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/Packaging_Output"
+				COMMAND ${CMAKE_COMMAND} -E rm -rf "${pluginPackageSrcDir}"
+				COMMAND ${CMAKE_COMMAND} -E rm -rf "${pluginPackageDstDir}"
+				COMMAND cp -RL "${projectAbsDir}/Plugins/${pluginName}" "${pluginPackageSrcDir}"
+				COMMAND ${CMAKE_COMMAND} -E rm -rf "${pluginPackageSrcDir}/Binaries"
+				COMMAND ./${RunUATBasename} BuildPlugin -Plugin=${pluginPackageSrcDir}/${pluginName}.uplugin -Package="${pluginPackageDstDir}" -CreateSubFolder -TargetPlatforms=${TargetPlatforms}
+			)
+		endif()
+	else()
+		add_custom_command ( TARGET ${packagerTargetName}
+			WORKING_DIRECTORY "${BE_UNREAL_ENGINE_DIR}/Build/BatchFiles"
+			COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/Packaging_Input"
+			COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/Packaging_Output"
+			COMMAND ${CMAKE_COMMAND} -E rm -rf "${pluginPackageSrcDir}"
+			COMMAND ${CMAKE_COMMAND} -E rm -rf "${pluginPackageDstDir}"
+			COMMAND ${CMAKE_COMMAND} -E copy_directory "${projectAbsDir}/Plugins/${pluginName}" "${pluginPackageSrcDir}"
+			COMMAND ${CMAKE_COMMAND} -E rm -rf "${pluginPackageSrcDir}/Binaries"
+			COMMAND ./${RunUATBasename} BuildPlugin -Plugin=${pluginPackageSrcDir}/${pluginName}.uplugin -Package="${pluginPackageDstDir}" -CreateSubFolder -TargetPlatforms=${TargetPlatforms}
+		)
+	endif()
 	set_target_properties (${packagerTargetName} PROPERTIES FOLDER "UnrealProjects/Packaging")
 	# Make sure ThirdParty folder is populated (and thus all extern libs are built) before packaging.
 	add_dependencies (${packagerTargetName} SetupExternFiles_${projectName}_${pluginName})

@@ -10,6 +10,7 @@
 #include <rfl/json.hpp>
 #include <rfl.hpp>
 #include <string>
+#include <stdexcept>
 #include <Core/Json/Json.h>
 
 namespace SDK::Core::Json {
@@ -20,7 +21,21 @@ namespace SDK::Core::Json {
 	}
 
 	template<typename Type>
-	inline void FromString(Type &t, const std::string &s) {
-		t = rfl::json::read<Type>(s).value();
+	inline bool FromString(Type& t, const std::string& s, std::string& parseError) {
+		bool bHasParseError = false;
+		try {
+			t = rfl::json::read<Type>(s).value();
+		}
+		catch (std::exception const& e) {
+			parseError = e.what();
+			bHasParseError = true;
+		}
+		return !bHasParseError;
+	}
+
+	template<typename Type>
+	inline bool FromString(Type& t, const std::string& s) {
+		std::string parseJsonError;
+		return FromString(t, s, parseJsonError);
 	}
 }

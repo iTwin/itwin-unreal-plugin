@@ -33,7 +33,13 @@
 #include <Math/Box.h>
 #include <Serialization/JsonReader.h>
 #include <Serialization/JsonSerializer.h>
+#include <JsonObjectConverter.h>
 #include <Timeline/Timeline.h>
+#include <ITwinUtilityLibrary.h>
+
+#include <Compil/BeforeNonUnrealIncludes.h>
+#	include <Core/ITwinAPI/ITwinTypes.h>
+#include <Compil/AfterNonUnrealIncludes.h>
 
 class AITwinIModel::FImpl
 {
@@ -42,6 +48,8 @@ public:
 	/// helper to fill/update SceneMapping
 	TSharedPtr<FITwinSceneMappingBuilder> SceneMappingBuilder;
 	std::shared_ptr<BeUtils::GltfTuner> GltfTuner = std::make_shared<BeUtils::GltfTuner>();
+	bool bHasFilledMaterialInfoFromTuner = false;
+	std::unordered_set<uint64_t> MatIDsToSplit; // stored to detect the need for retuning
 	FITwinIModelInternals Internals;
 	uint32 TilesetLoadedCount = 0;
 	FDelegateHandle OnTilesetLoadFailureHandle;
@@ -55,9 +63,15 @@ public:
 	};
 	EOperationUponAuth PendingOperation = EOperationUponAuth::None;
 	bool bAutoStartExportIfNeeded = false;
+	struct FIModelProperties
+	{
+		std::optional<FProjectExtents> ProjectExtents;
+		std::optional<FEcefLocation> EcefLocation;
+	};
+	std::optional<FIModelProperties> IModelProperties; //!< Empty means not inited yet.
 
 	FImpl(AITwinIModel& InOwner)
-		: Owner(InOwner), Internals(InOwner)
+		: Owner(InOwner), Internals(InOwner), ElementMetadataQuerying(InOwner)
 	{
 		// create a callback to fill our scene mapping when meshes are loaded
 		SceneMappingBuilder = MakeShared<FITwinSceneMappingBuilder>(Internals.SceneMapping, Owner);
@@ -82,11 +96,11 @@ public:
 			if (!Owner.bResolvedChangesetIdValid)
 				return;
 
-			Owner.WebServices->GetExports(Owner.IModelId, Owner.ResolvedChangesetId);
+			Owner.WebServices->GetExports(Owner.IModelId, Owner.GetSelectedChangeset());
 		}
 	}
 
-	static void ZoomOn(FBox const& FocusBBox, UWorld* World)
+	static void ZoomOn(FBox const& FocusBBox, UWorld* World, double MinDistanceToCenter = 10000)
 	{
 		if (!ensure(World)) return;
 		auto* PlayerController = World->GetFirstPlayerController();
@@ -98,7 +112,7 @@ public:
 				// "0.5" is empirical, let's not be too far from the center of things, iModels tend to have
 				// a large context around the actual area of interest...
 				FocusBBox.GetCenter()
-					- FMath::Max(0.5 * BBoxLen, 10000)
+					- FMath::Max(0.5 * BBoxLen, MinDistanceToCenter)
 						* ((AActor*)PlayerController)->GetActorForwardVector(),
 				false, nullptr, ETeleportType::TeleportPhysics);
 		}
@@ -161,7 +175,10 @@ public:
 		// of the tileset happening automatically is also why we don't need to bother calling the observer
 		// manually for tiles and meshes already received and displayed: the refresh does it all over again
 		SetupMaterials(Tileset);
-		GetInternals(*Owner.Synchro4DSchedules).MakeReady();
+		// Now done in the main ticker function (see AITwinIModel's ctor) because we need to wait for the end
+		// of the Elements metadata properties queries (Elements hierarchy + Source IDs) to make proper sense
+		// of the animation bindings received.
+		//GetInternals(*Owner.Synchro4DSchedules).MakeReady(); <== MakeReady used to call ResetSchedules
 	}
 
 	void SetupMaterials(AITwinCesium3DTileset& Tileset)
@@ -188,22 +205,22 @@ public:
 	#if ENABLE_DRAW_DEBUG
 		const UWorld* World = Owner.GetWorld();
 		// this is for debugging
-		for (auto const& [EltID, Box] : Internals.SceneMapping.GetKnownBBoxes())
+		for (auto const& Elem : Internals.SceneMapping.GetElements())
 		{
-			if (Box.IsValid)
+			if (Elem.bHasMesh && Elem.BBox.IsValid)
 			{
 				FColor lineColor = FColor::MakeRandomColor();
 				FColor fillColor = lineColor;
 				fillColor.A = 150;
 				DrawDebugSolidBox(
 					World,
-					Box,
+					Elem.BBox,
 					fillColor,
 					FTransform::Identity,
 					/*bool bPersistent =*/ false,
 					/*float LifeTime =*/ 10.f);
 				FVector Center, Extent;
-				Box.GetCenterAndExtents(Center, Extent);
+				Elem.BBox.GetCenterAndExtents(Center, Extent);
 				DrawDebugBox(
 					World,
 					Center,
@@ -259,13 +276,11 @@ public:
 #if ENABLE_DRAW_DEBUG
 	void InternalSynchro4DTest(bool bTestVisibilityAnim)
 	{
-		// Use known boxes just to retrieve all ElementIDs...
-		auto const& BBoxes = Internals.SceneMapping.GetKnownBBoxes();
-
+		auto const& AllElems = Internals.SceneMapping.GetElements();
 		std::set<ITwinElementID> IModelElements;
-		for (auto const& [EltID, BBox] : BBoxes)
+		for (auto const& Elem : AllElems)
 		{
-			IModelElements.insert(EltID);
+			IModelElements.insert(Elem.Id);
 		}
 		FITwinElementTimeline ModifiedTimeline(FIModelElementsKey((size_t)0)/*GroupIdx*/, IModelElements);
 
@@ -325,10 +340,10 @@ public:
 			};
 		if (Args.IsEmpty())
 		{
-			auto const& BBoxes = Internals.SceneMapping.GetKnownBBoxes();
-			for (auto const& [ElementID, BBox] : BBoxes)
+			auto const& AllElems = Internals.SceneMapping.GetElements();
+			for (auto const& Elem : AllElems)
 			{
-				CreateDebugTimeline(ElementID);
+				CreateDebugTimeline(Elem.Id);
 			}
 		}
 		else
@@ -340,6 +355,119 @@ public:
 		}
 	}
 #endif //ENABLE_DRAW_DEBUG
+
+	/// Used to query info about all Elements of the iModel by reading rows from its database tables through
+	/// a paginated series of HTTP RPC requests. We'll read first the parent-child relationships, then the
+	/// "Source Element ID" (aka "Identifier") information, successively.
+	class FQueryElementMetadataPageByPage
+	{
+	public:
+		enum class EState {
+			NotStarted, Running, NeedRestart, Finished, StoppedOnError
+		};
+
+	private:
+		AITwinIModel& Owner;
+		/// TODO_GCO: a bit hacky, would be cleaner to use 2 instances of this class, working in succession,
+		/// or maybe in parallel (which would mean using the RequestID to determine which emitter to forward
+		/// the replies to)
+		enum class EElementsMetadata {
+			Hierarchy, SourceIdentifiers
+		};
+		EState State = EState::NotStarted;
+		int QueryRowStart = 0, TotalRowsParsed = 0;
+		EElementsMetadata KindOfMetadata = EElementsMetadata::Hierarchy;
+		FString BatchMsg;
+		static const int QueryRowCount = 50000;
+
+		void DoRestart()
+		{
+			UE_LOG(LogITwin, Display, TEXT("Elements metadata queries interrupted, restarting..."));
+			QueryRowStart = TotalRowsParsed = 0;
+			KindOfMetadata = EElementsMetadata::Hierarchy;
+			BatchMsg = TEXT("Element parent-child pairs");
+			QueryNextPage();
+		}
+
+	public:
+		FQueryElementMetadataPageByPage(AITwinIModel& InOwner) : Owner(InOwner) {}
+		EState GetState() const { return State; }
+
+		void Restart()
+		{
+			if (EState::NotStarted == State || EState::Finished == State || EState::StoppedOnError == State)
+			{
+				DoRestart();
+			}
+			else
+			{
+				State = EState::NeedRestart;
+			}
+		}
+
+		void QueryNextPage()
+		{
+			State = EState::Running;
+			switch (KindOfMetadata)
+			{
+			case EElementsMetadata::Hierarchy:
+				Owner.WebServices->QueryIModel(Owner.ITwinId, Owner.IModelId, Owner.ResolvedChangesetId,
+					TEXT("SELECT ECInstanceID, SourceECInstanceID FROM bis.ElementOwnsChildElements"),
+					QueryRowStart, QueryRowCount);
+				break;
+			case EElementsMetadata::SourceIdentifiers:
+				Owner.WebServices->QueryIModel(Owner.ITwinId, Owner.IModelId, Owner.ResolvedChangesetId,
+					TEXT("SELECT Element.Id, Identifier FROM bis.ExternalSourceAspect"),
+					QueryRowStart, QueryRowCount);
+				break;
+			default:
+				ensure(false);
+				break;
+			}
+			QueryRowStart += QueryRowCount;
+		}
+
+		void OnQueryCompleted(bool bSuccess, FString const& QueryResult)
+		{
+			if (EState::NeedRestart == State)
+			{
+				DoRestart();
+				return;
+			}
+			if (!ensure(bSuccess))
+			{
+				UE_LOG(LogITwin, Error, TEXT("Total %s retrieved: %d, stopping on error!"), *BatchMsg,
+										TotalRowsParsed);
+				State = EState::StoppedOnError;
+				return;
+			}
+			// Testing RowsParsed vs QueryRowCount would be risky since we might get errors
+			// when parsing some rows...
+			int const RowsParsed = (EElementsMetadata::Hierarchy == KindOfMetadata)
+				? GetInternals(Owner).SceneMapping.ParseHierarchyTree(QueryResult)
+				: GetInternals(Owner).SceneMapping.ParseSourceElementIDs(QueryResult);
+			TotalRowsParsed += RowsParsed;
+			if (RowsParsed > 0)
+			{
+				UE_LOG(LogITwin, Verbose, TEXT("%s retrieved: %d, asking for more..."), *BatchMsg,
+										  TotalRowsParsed);
+				QueryNextPage();
+			}
+			else
+			{
+				UE_LOG(LogITwin, Display, TEXT("Total %s retrieved: %d."), *BatchMsg, TotalRowsParsed);
+				if (EElementsMetadata::Hierarchy == KindOfMetadata)
+				{
+					KindOfMetadata = EElementsMetadata::SourceIdentifiers;
+					QueryRowStart = TotalRowsParsed = 0;
+					BatchMsg = TEXT("Source Element IDs");
+					QueryNextPage();
+				}
+				else State = EState::Finished;
+			}
+		}
+	};
+	FQueryElementMetadataPageByPage ElementMetadataQuerying;
 
 }; // class AITwinIModel::FImpl
 
@@ -357,12 +485,50 @@ FITwinIModelInternals& GetInternals(AITwinIModel& IModel)
 	return FITwinIModelImplAccess::Get(IModel).Internals;
 }
 
-
 AITwinIModel::AITwinIModel()
 	:Impl(MakePimpl<FImpl>(*this))
 {
 	SetRootComponent(CreateDefaultSubobject<USceneComponent>(TEXT("root")));
 	Synchro4DSchedules = CreateDefaultSubobject<UITwinSynchro4DSchedules>(TEXT("Schedules"));
+
+	// As soon as material IDs are read, launch a request to RPC service to get the corresponding material
+	// properties
+	Impl->GltfTuner->SetMaterialInfoReadCallback(
+		[this](std::vector<BeUtils::ITwinMaterialInfo> const& materialInfos)
+	{
+		// Initialize the map of customizable materials at once.
+		FillMaterialInfoFromTuner();
+
+		// Launch a request to fetch all material properties.
+		TArray<FString> MaterialIds;
+		MaterialIds.Reserve(materialInfos.size());
+		Algo::Transform(materialInfos, MaterialIds,
+			[](BeUtils::ITwinMaterialInfo const& V) -> FString
+		{
+			return FString::Printf(TEXT("0x%I64x"), V.id);
+		});
+		GetMutableWebServices()->GetMaterialListProperties(ITwinId, IModelId, GetSelectedChangeset(),
+			MaterialIds);
+	});
+
+	// Single ticker for all iModel updates (selection highlight, schedules queries and replay...)
+	// to avoid spawning multiple ones everywhere needed
+	FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda(
+		[This = TWeakObjectPtr<AITwinIModel>(this)] (float Delta)
+		{
+			if (This.IsValid())
+			{
+				GetInternals(*This).SceneMapping.UpdateSelectionAndHighlightTextures();
+				if (This->Synchro4DSchedules && 
+					AITwinIModel::FImpl::FQueryElementMetadataPageByPage::EState::Finished
+						== This->Impl->ElementMetadataQuerying.GetState())
+				{
+					This->Synchro4DSchedules->TickSchedules(Delta);
+				}
+				return true; // repeated tick
+			}
+			else return false;
+		}));
 }
 
 void AITwinIModel::UpdateIModel()
@@ -474,6 +640,8 @@ namespace ITwin
 		}
 		return false;
 	}
+
+	ITwinElementID GetMaterialIDFromHit(FHitResult const& HitResult);
 }
 
 void AITwinIModel::LoadModel(FString InExportId)
@@ -483,6 +651,16 @@ void AITwinIModel::LoadModel(FString InExportId)
 	{
 		WebServices->GetExportInfo(InExportId);
 	}
+}
+
+FString AITwinIModel::GetSelectedChangeset() const
+{
+	// By construction, this is generally ResolvedChangesetId - it can be empty if no export has been loaded
+	// yet, *or* in the particular case of an iModel without any changeset...
+	if (bResolvedChangesetIdValid)
+		return ResolvedChangesetId;
+	else
+		return ChangesetId;
 }
 
 void AITwinIModel::SetResolvedChangesetId(FString const& InChangesetId)
@@ -549,57 +727,163 @@ void AITwinIModel::OnExportInfosRetrieved(bool bSuccess, FITwinExportInfos const
 		}
 		return;
 	}
-
 	ExportStatus = EITwinExportStatus::Complete;
 	// in Automatic mode, it is still empty and must be set here because the 4D apis require it:
 	ITwinId = CompleteInfo->iTwinId;
 	ExportId = CompleteInfo->Id; // informative only (needed here for  Automatic mode)
-	// No need to keep former versions of the tileset
-	GetInternals(*this).SceneMapping.Reset();
-	DestroyTileset();
+	const auto MakeTileset = [this, CompleteInfo = *CompleteInfo]
+		{
+			// No need to keep former versions of the tileset
+			GetInternals(*this).SceneMapping.Reset();
+			DestroyTileset();
 
-	// *before* SpawnActor otherwise Cesium will create its own default georef
-	auto&& Geoloc = FITwinGeolocation::Get(*GetWorld());
+			// We need to query the hierarchy of iModel Elements using several "paginated" requests sent
+			// successively, but we also need to support interrupting and restart queries from scratch
+			// because this code path can be executed several times for an iModel, eg. upon UpdateIModel
+			Impl->ElementMetadataQuerying.Restart();
+			// It seems risky to NOT do a ResetSchedules here: for example, FITwinElement::AnimationKeys are
+			// not set, MainTimeline::NonAnimatedDuplicates is empty, etc.
+			// To avoid redownloading everything, we could just "reinterpret" the known schedule data...?
+			if (Synchro4DSchedules)
+				Synchro4DSchedules->ResetSchedules();
 
-	FActorSpawnParameters SpawnParams;
-	SpawnParams.Owner = this;
-	const auto Tileset = GetWorld()->SpawnActor<AITwinCesium3DTileset>(SpawnParams);
+			// *before* SpawnActor otherwise Cesium will create its own default georef
+			auto&& Geoloc = FITwinGeolocation::Get(*GetWorld());
+
+			FActorSpawnParameters SpawnParams;
+			SpawnParams.Owner = this;
+			const auto Tileset = GetWorld()->SpawnActor<AITwinCesium3DTileset>(SpawnParams);
 #if WITH_EDITOR
-	// in manual mode, the name is usually not set at this point => adjust it now
-	if (!CompleteInfo->DisplayName.IsEmpty()
-		&& (GetActorLabel().StartsWith(TEXT("ITwinIModel")) || GetActorLabel().StartsWith(TEXT("IModel"))))
-	{
-		this->SetActorLabel(CompleteInfo->DisplayName);
-	}
-	Tileset->SetActorLabel(GetActorLabel() + TEXT(" tileset"));
+			// in manual mode, the name is usually not set at this point => adjust it now
+			if (!CompleteInfo.DisplayName.IsEmpty()
+				&& (GetActorLabel().StartsWith(TEXT("ITwinIModel")) || GetActorLabel().StartsWith(TEXT("IModel"))))
+			{
+				this->SetActorLabel(CompleteInfo.DisplayName);
+			}
+			Tileset->SetActorLabel(GetActorLabel() + TEXT(" tileset"));
 #endif
-	Tileset->AttachToActor(this, FAttachmentTransformRules::KeepRelativeTransform);
-	// TODO_GCO: Necessary for picking, unless there is another method that does
-	// not require the Physics data? Note that pawn collisions are disabled to
-	// still allow navigation through meshes.
-	//Tileset->SetCreatePhysicsMeshes(false);
-	// connect mesh creation callback
-	Tileset->SetMeshBuildCallbacks(Impl->SceneMappingBuilder);
-	Tileset->SetGltfTuner(Impl->GltfTuner);
+			Tileset->AttachToActor(this, FAttachmentTransformRules::KeepRelativeTransform);
+			// TODO_GCO: Necessary for picking, unless there is another method that does
+			// not require the Physics data? Note that pawn collisions are disabled to
+			// still allow navigation through meshes.
+			//Tileset->SetCreatePhysicsMeshes(false);
+			// connect mesh creation callback
+			Tileset->SetMeshBuildCallbacks(Impl->SceneMappingBuilder);
+			Tileset->SetGltfTuner(Impl->GltfTuner);
 
-	Tileset->SetTilesetSource(EITwinTilesetSource::FromUrl);
-	Tileset->SetUrl(CompleteInfo->MeshUrl);
-	// Because iModel geolocation info is not available yet (will be obtained the first time we reach
-	// FITwinSceneMappingBuilder::OnMeshConstructed for this iModel): if actually georeferenced, the
-	// iModel will define the scene's georef, or point to it if it is already defined, so as to be
-	// placed in a geographically correct manner. If not actually georeferenced, the iModel will be
-	// relocated at the UE world origin (at the time of loading) and keep pointing to LocalReference.
-	Tileset->SetGeoreference(Geoloc->LocalReference.Get());
-	if (Synchro4DSchedules)
-		Impl->SetupSynchro4DSchedules(*Tileset);
+			Tileset->SetTilesetSource(EITwinTilesetSource::FromUrl);
+			Tileset->SetUrl(CompleteInfo.MeshUrl);
+			check(Impl->IModelProperties);
+			if (Impl->IModelProperties->EcefLocation)
+			{
+				// iModel is geolocated.
+				Tileset->SetGeoreference(Geoloc->GeoReference.Get());
+				// If the shared georeference is not inited yet, let's initialize it according to this iModel location.
+				if (Geoloc->GeoReference->GetOriginPlacement() == EITwinOriginPlacement::TrueOrigin)
+				{
+					Geoloc->GeoReference->SetOriginPlacement(EITwinOriginPlacement::CartographicOrigin);
+					// Put georeference at the cartographic coordinates of the center of the iModel's extents.
+					Geoloc->GeoReference->SetOriginEarthCenteredEarthFixed(
+						FTransform(UITwinUtilityLibrary::ConvertRotator_ITwinToUnreal(Impl->IModelProperties->EcefLocation->Orientation),
+							Impl->IModelProperties->EcefLocation->Origin).TransformPosition(
+							Impl->IModelProperties->ProjectExtents ?
+								0.5*(Impl->IModelProperties->ProjectExtents->Low+Impl->IModelProperties->ProjectExtents->High) :
+								FVector::ZeroVector));
+				}
+			}
+			else
+			{
+				// iModel is not geolocated.
+				Tileset->SetGeoreference(Geoloc->LocalReference.Get());
+			}
+			if (Synchro4DSchedules)
+				Impl->SetupSynchro4DSchedules(*Tileset);
+			else
+				// useful when commenting out schedules component's default creation for testing?
+				Impl->SetupMaterials(*Tileset);
+
+			Impl->TilesetLoadedCount = 0;
+			Tileset->OnTilesetLoaded.AddDynamic(
+				this, &AITwinIModel::OnTilesetLoaded);
+			Impl->OnTilesetLoadFailureHandle = OnCesium3DTilesetLoadFailure.AddUObject(
+				this, &AITwinIModel::OnTilesetLoadFailure);
+		};
+	// To assign the correct georeference to the tileset, we need some properties of the iModel
+	// (whether it is geolocated, its extents...), which are retrieved by a specific request.
+	// At this point, it is very likely the properties have not been retrieved yet
+	if (Impl->IModelProperties)
+	{
+		// Properties have already been retrieved.
+		MakeTileset();
+	}
 	else
-		Impl->SetupMaterials(*Tileset);//<== remove when uncommenting SetupSynchro4DSchedules!
+	{
+		// Properties have not been retrieved yet, we have to send the request.
+		// We could implement AITwinIModel::OnIModelPropertiesRetrieved() and construct the tileset here,
+		// but in this case we would need to keep FITwinExportInfo as a member variable since it is needed
+		// to initialize the tileset.
+		// So to keep everything locally to this function, we create a local temporary observer that will
+		// handle the request result and construct the tileset.
+		class FTempObserver: public FITwinDefaultWebServicesObserver
+		{
+		public:
+			//! Keep a shared pointer on this to control destruction.
+			std::shared_ptr<FTempObserver> This;
+			AITwinIModel& Owner;
+			decltype(MakeTileset) MakeTileset;
+			FTempObserver(AITwinIModel& InOwner, const decltype(MakeTileset)& InMakeTileset)
+				:Owner(InOwner)
+				,MakeTileset(InMakeTileset)
+			{
+			}
+			virtual void OnIModelPropertiesRetrieved(bool bSuccess, bool bHasExtents, FProjectExtents const& Extents, bool bHasEcefLocation, FEcefLocation const& EcefLocation) override
+			{
+				Owner.Impl->IModelProperties.emplace();
+				if (bSuccess)
+				{
+					if (bHasExtents)
+						Owner.Impl->IModelProperties->ProjectExtents = Extents;
+					if (bHasEcefLocation)
+						Owner.Impl->IModelProperties->EcefLocation = EcefLocation;
+				}
+				// Restore the WebServices' observer.
+				Owner.WebServices->SetObserver(&Owner);
+				// Now that properties have been retrieved, we can construct the tileset.
+				MakeTileset();
 
-	Impl->TilesetLoadedCount = 0;
-	Tileset->OnTilesetLoaded.AddDynamic(
-		this, &AITwinIModel::OnTilesetLoaded);
-	Impl->OnTilesetLoadFailureHandle = OnCesium3DTilesetLoadFailure.AddUObject(
-		this, &AITwinIModel::OnTilesetLoadFailure);
+				// Self-destruct. Note that if the changeset is empty, GetIModelProperties will exit at once
+				// and thus the shared_ptr usage is still 2 at this point...
+				ensureMsgf(This.use_count() == 1 || (This.use_count() == 2 && Owner.GetSelectedChangeset().IsEmpty()),
+					TEXT("FTempObserver self-destruction issue!"));
+				This.reset();
+			}
+			virtual const TCHAR* GetObserverName() const override
+			{
+				return Owner.GetObserverName();
+			}
+		};
+		const auto Observer = std::make_shared<FTempObserver>(*this, MakeTileset);
+		Observer->This = Observer;
+		// Temporarily change the WebServices' observer before sending the request.
+		WebServices->SetObserver(Observer.get());
+		check(!ITwinId.IsEmpty());
+		WebServices->GetIModelProperties(ITwinId, IModelId, GetSelectedChangeset());
+	}
+}
+
+void AITwinIModel::BeginPlay()
+{
+	Super::BeginPlay();
+	// If a tileset was already loaded (eg. in the Editor, priori to PIE), we won't be receiving any calls to
+	// OnMeshConstructed for existing meshes: so either 1/ we declare everything in SceneMapping as UPROPERTY,
+	// so that they are copied over from Editor to PIE (non-UPROPERTY data is lost when entering PIE!),
+	// or 2/ we need to refresh the Tileset to rebuild all over again.
+	// Solution 1/ is obviously better as that's what Unreal wants us to do, but it's more work and thus a
+	// longer term target.
+	//Do NOT test this, obviously it IS empty since data is not carried over from Editor mode!!
+	//if (!Impl->Internals.SceneMapping.GetElements().empty())
+	if (!IModelId.IsEmpty() && !ChangesetId.IsEmpty())
+		UpdateIModel();
 }
 
 void AITwinIModel::OnExportInfoRetrieved(bool bSuccess, FITwinExportInfo const& ExportInfo)
@@ -633,9 +917,53 @@ void AITwinIModel::OnExportInfoRetrieved(bool bSuccess, FITwinExportInfo const& 
 	}
 }
 
+void AITwinIModel::OnElementPropertiesRetrieved(bool bSuccess, FElementProperties const& ElementProps)
+{
+	if (!bSuccess)
+		return;
+	FString JSONString;
+	FJsonObjectConverter::UStructToJsonObjectString(ElementProps, JSONString, 0, 0);
+	UE_LOG(LogITwin, Display, TEXT("Element properties retrieved: %s"), *JSONString);
+}
+
+void AITwinIModel::OnIModelQueried(bool bSuccess, FString const& QueryResult)
+{
+	Impl->ElementMetadataQuerying.OnQueryCompleted(bSuccess, QueryResult);
+}
+
+void AITwinIModel::OnMaterialPropertiesRetrieved(bool bSuccess, SDK::Core::ITwinMaterialPropertiesMap const& props)
+{
+	if (!bSuccess)
+		return;
+	// TODO_JDE convert ITwinMaterialProperties into something we can use to convert the iTwin material into
+	// an Unreal material
+	for (auto const& [matId, matProperties] : props.data_)
+	{
+		ensureMsgf(matId == matProperties.id, TEXT("material ID mismatch vs map key!"));
+		FString const MaterialID(matId.c_str());
+		auto const id64 = ITwin::ParseElementID(MaterialID);
+		// If the list of iTwin material IDs was read from tileset.json, the material being inspected should be
+		// found in (the map) CustomMaterials which we filled from the latter.
+		if (!CustomMaterials.IsEmpty()
+			&&
+			ensureMsgf(id64 != ITwin::NOT_ELEMENT, TEXT("Invalid material ID %s"), *MaterialID))
+		{
+			FITwinCustomMaterial* CustomMat = CustomMaterials.Find(id64.value());
+			ensureMsgf(CustomMat != nullptr, TEXT("Material mismatch: ID %s not found in tileset.json (%s)"),
+				*MaterialID, *FString(matProperties.name.c_str()));
+		}
+	}
+}
+
 void AITwinIModel::Retune()
 {
 	++Impl->GltfTuner->currentVersion;
+}
+
+bool AITwinIModel::ShouldFillMaterialInfoFromTuner() const
+{
+	return !Impl->bHasFilledMaterialInfoFromTuner
+		&& Impl->GltfTuner->HasITwinMaterialInfo();
 }
 
 void AITwinIModel::FillMaterialInfoFromTuner()
@@ -653,6 +981,29 @@ void AITwinIModel::FillMaterialInfoFromTuner()
 		{
 			CustomMat.Name.RemoveAt(LastColon, CustomMat.Name.Len() - LastColon);
 		}
+	}
+	Impl->bHasFilledMaterialInfoFromTuner = true;
+}
+
+void AITwinIModel::SplitGltfModelForCustomMaterials()
+{
+	std::unordered_set<uint64_t> MatIDsToSplit;
+	for (auto const& [MatID, CustomMat] : CustomMaterials)
+	{
+		if (CustomMat.Material.Get())
+		{
+			MatIDsToSplit.insert(MatID);
+		}
+	}
+	if (MatIDsToSplit != Impl->MatIDsToSplit)
+	{
+		Impl->MatIDsToSplit = MatIDsToSplit;
+
+		BeUtils::GltfTuner::Rules rules;
+		rules.itwinMatIDsToSplit_.swap(MatIDsToSplit);
+		Impl->GltfTuner->SetRules(std::move(rules));
+
+		Retune();
 	}
 }
 
@@ -672,7 +1023,7 @@ void AITwinIModel::StartExport()
 	UpdateWebServices();
 	if (WebServices)
 	{
-		WebServices->StartExport(IModelId, ResolvedChangesetId);
+		WebServices->StartExport(IModelId, GetSelectedChangeset());
 	}
 }
 
@@ -692,8 +1043,7 @@ void AITwinIModel::TestExportCompletionAfterDelay(FString const& InExportId, flo
 	// The comment in ITwinGeoLocation.h also hints that preventing a Level from unloading by keeping strong
 	// ptr is not a good idea, hence the weak ptr here.
 	FTSTicker::GetCoreTicker().AddTicker(
-		FTickerDelegate::CreateLambda([this, InExportId, This = TWeakObjectPtr<AITwinIModel>(this)]
-		(float Delta) -> bool
+		FTickerDelegate::CreateLambda([InExportId, This = TWeakObjectPtr<AITwinIModel>(this)](float Delta)
 	{
 		if (This.IsValid())
 			This->LoadModel(InExportId);
@@ -744,6 +1094,26 @@ void AITwinIModel::OnSavedViewsRetrieved(bool bSuccess, FSavedViewInfos SavedVie
 	OnSavedViewInfosRetrieved(bSuccess, SavedViews);
 }
 
+const FProjectExtents* AITwinIModel::GetProjectExtents() const
+{
+	return Impl->IModelProperties && Impl->IModelProperties->ProjectExtents ?
+		&*Impl->IModelProperties->ProjectExtents : nullptr;
+}
+
+const FEcefLocation* AITwinIModel::GetEcefLocation() const
+{
+	return Impl->IModelProperties && Impl->IModelProperties->EcefLocation ?
+		&*Impl->IModelProperties->EcefLocation : nullptr;
+}
+
+const AITwinCesium3DTileset* AITwinIModel::GetTileset() const
+{
+	for (auto& Child : Children)
+		if (auto* Tileset = Cast<AITwinCesium3DTileset>(Child.Get()))
+			return Tileset;
+	return nullptr;
+}
+
 void AITwinIModel::OnSavedViewRetrieved(bool bSuccess, FSavedView const& SavedView, FSavedViewInfo const& SavedViewInfo)
 {
 
@@ -763,6 +1133,11 @@ void AITwinIModel::OnSavedViewAdded(bool bSuccess, FSavedViewInfo const& SavedVi
 	savedViewActor->AttachToActor(this, FAttachmentTransformRules::KeepRelativeTransform);
 	savedViewActor->ServerConnection = ServerConnection;
 	savedViewActor->SavedViewId = SavedViewInfo.Id;
+}
+
+void AITwinIModel::OnSavedViewInfoAdded(bool bSuccess, FSavedViewInfo SavedViewInfo)
+{
+	OnSavedViewAdded(bSuccess, SavedViewInfo);
 }
 
 namespace ITwin
@@ -826,8 +1201,10 @@ void AITwinIModel::RefreshTileset()
 		AITwinCesium3DTileset* Tileset = Cast<AITwinCesium3DTileset>(Child.Get());
 		if (Tileset)
 		{
-			// before refreshing the tileset, make sure we invalidate the mapping
+			// Before refreshing the tileset, make sure we invalidate the mapping
 			GetInternals(*this).SceneMapping.Reset();
+			// Also make sure we reload material info from the tuner
+			Impl->bHasFilledMaterialInfoFromTuner = false;
 			Tileset->SetMeshBuildCallbacks(Impl->SceneMappingBuilder);
 			Tileset->SetGltfTuner(Impl->GltfTuner);
 			Tileset->RefreshTileset();
@@ -896,11 +1273,19 @@ void AITwinIModel::PostEditChangeProperty(struct FPropertyChangedEvent& e)
 	Super::PostEditChangeProperty(e);
 
 	FName const PropertyName = (e.Property != nullptr) ? e.Property->GetFName() : NAME_None;
+	FName const MemberPropertyName = (e.MemberProperty != nullptr) ? e.MemberProperty->GetFName() : NAME_None;
 	if (   PropertyName == GET_MEMBER_NAME_CHECKED(AITwinIModel, IModelId)
 		|| PropertyName == GET_MEMBER_NAME_CHECKED(AITwinIModel, ChangesetId)
 		|| PropertyName == GET_MEMBER_NAME_CHECKED(AITwinIModel, ExportId))
 	{
 		OnLoadingUIEvent();
+	}
+	if (MemberPropertyName == GET_MEMBER_NAME_CHECKED(AITwinIModel, CustomMaterials)
+		&& PropertyName == GET_MEMBER_NAME_CHECKED(FITwinCustomMaterial, Material))
+	{
+		// The user may have set a custom material: re-tune the model if needed.
+		// There will be a delay before the new material appears, as the whole tileset will be reloaded.
+		SplitGltfModelForCustomMaterials();
 	}
 }
 
@@ -910,6 +1295,9 @@ void AITwinIModel::PostEditChangeProperty(struct FPropertyChangedEvent& e)
 void AITwinIModel::PostLoad()
 {
 	Super::PostLoad();
+
+	// If the loaded iModel uses custom materials, notify the tuner so that it splits the model accordingly
+	SplitGltfModelForCustomMaterials();
 
 	// just in case the loaded level contains an iModel already configured...
 	if ((LoadingMethod == ELoadingMethod::LM_Manual && !ExportId.IsEmpty())
@@ -928,15 +1316,15 @@ void AITwinIModel::PostLoad()
 void FITwinIModelInternals::OnElementsTimelineModified(FITwinElementTimeline& ModifiedTimeline,
 	std::vector<ITwinElementID> const* OnlyForElements/*= nullptr*/)
 {
+	UITwinSynchro4DSchedules* Schedules = Owner.FindComponentByClass<UITwinSynchro4DSchedules>();
+	if (!Schedules)
+		return;
+	GetInternals(*Schedules).Timeline().OnElementsTimelineModified(ModifiedTimeline);
 	for (auto& SceneTile : SceneMapping.KnownTiles)
 	{
 		SceneMapping.OnElementsTimelineModified(SceneTile.first, SceneTile.second,
 												ModifiedTimeline, OnlyForElements);
 	}
-	UITwinSynchro4DSchedules* Schedules = Owner.FindComponentByClass<UITwinSynchro4DSchedules>();
-	if (!Schedules)
-		return;
-	GetInternals(*Schedules).Timeline().IncludeTimeRange(ModifiedTimeline);
 }
 
 bool FITwinIModelInternals::OnClickedElement(ITwinElementID const Element,
@@ -945,20 +1333,9 @@ bool FITwinIModelInternals::OnClickedElement(ITwinElementID const Element,
 	if (!SelectElement(Element))
 		return false; // filtered out internally, most likely Element is masked out
 
-	FBox const BBox = SceneMapping.GetBoundingBox(Element);
+	FBox const& BBox = SceneMapping.GetBoundingBox(Element);
 	UE_LOG(LogITwin, Display, TEXT("ElementID 0x%I64x found in iModel %s with BBox %s centered on %s"),
 		Element.value(), *Owner.GetActorNameOrLabel(), *BBox.ToString(), *BBox.GetCenter().ToString());
-
-	// Copied from AITwinPickingActor::PickObjectAtMousePosition:
-	if (SceneMapping.NeedUpdateSelectionHighlights())
-	{
-		FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda(
-			[this](float Delta) -> bool
-		{
-			SceneMapping.UpdateSelectionHighlights();
-			return false;
-		}));
-	}
 
 #if ENABLE_DRAW_DEBUG
 	// Draw element bounding box for a few seconds for debugging
@@ -1007,7 +1384,8 @@ bool FITwinIModelInternals::OnClickedElement(ITwinElementID const Element,
 	}
 #endif // ENABLE_DRAW_DEBUG
 
-	Owner.GetMutableWebServices()->GetElementProperties(Owner.ITwinId, Owner.IModelId, Owner.ChangesetId, FString::Printf(TEXT("0x%I64x"), Element.value()));
+	Owner.GetMutableWebServices()->GetElementProperties(Owner.ITwinId, Owner.IModelId, Owner.GetSelectedChangeset(),
+		FString::Printf(TEXT("0x%I64x"), Element.value()));
 
 	UITwinSynchro4DSchedules* Schedules = Owner.FindComponentByClass<UITwinSynchro4DSchedules>();
 	if (!Schedules)
@@ -1023,6 +1401,11 @@ bool FITwinIModelInternals::OnClickedElement(ITwinElementID const Element,
 bool FITwinIModelInternals::SelectElement(ITwinElementID const InElementID)
 {
 	return SceneMapping.SelectElement(InElementID, Owner.GetWorld());
+}
+
+ITwinElementID FITwinIModelInternals::GetSelectedElement() const
+{
+	return SceneMapping.GetSelectedElement();
 }
 
 namespace ITwin::Timeline
@@ -1080,7 +1463,7 @@ static FAutoConsoleCommandWithWorldAndArgs FCmd_ITwinExtractElement(
 	ITwinElementID Element = ITwin::NOT_ELEMENT;
 	if (Args.Num() >= 1)
 	{
-		Element = ITwinElementID(FCString::Strtoui64(*Args[0], nullptr, 10 /*Base*/));
+		Element = ITwin::ParseElementID(Args[0]);
 	}
 	if (Element != ITwin::NOT_ELEMENT)
 	{
@@ -1181,6 +1564,43 @@ static FAutoConsoleCommandWithWorldAndArgs FCmd_ITwinAllowSynchro4DOpacityAnimat
 	ITwin::Timeline::fProbaOfOpacityAnimation = fProbaOfOpacityAnimation;
 }));
 
+namespace ITwin
+{
+	void ZoomOnIModelsOrElement(ITwinElementID const ElementID, UWorld* World)
+	{
+		FBox FocusedBBox(ForceInitToZero);
+		if (ITwin::NOT_ELEMENT == ElementID)
+		{
+			for (TActorIterator<AITwinIModel> IModelIter(World); IModelIter; ++IModelIter)
+			{
+				FBox const& IModelBBox =
+					GetInternals(**IModelIter).SceneMapping.GetIModelBoundingBox(EITwinCoordSystem::UE);
+				if (IModelBBox.IsValid)
+				{
+					if (FocusedBBox.IsValid) FocusedBBox += IModelBBox;
+					else FocusedBBox = IModelBBox;
+				}
+			}
+		}
+		else
+		{
+			for (TActorIterator<AITwinIModel> IModelIter(World); IModelIter; ++IModelIter)
+			{
+				FBox const& IModelBBox = GetInternals(**IModelIter).SceneMapping.GetBoundingBox(ElementID);
+				if (IModelBBox.IsValid)
+				{
+					if (FocusedBBox.IsValid) FocusedBBox += IModelBBox;
+					else FocusedBBox = IModelBBox;
+					break;
+				}
+			}
+		}
+		// When zooming on an Element, we want to go closer than 100 meters
+		double const MinCamDist = ITwin::NOT_ELEMENT == ElementID ? 10000. : 500.;
+		AITwinIModel::FImpl::ZoomOn(FocusedBBox, World, MinCamDist);
+	}
+}
+
 // Console command equivalent to ITwinTestApp's ATopMenu::ZoomOnIModel, useful elsewhere, except that here
 // we check all iModels in the current world
 static FAutoConsoleCommandWithWorldAndArgs FCmd_ITwinFitIModelInView(
@@ -1189,34 +1609,26 @@ static FAutoConsoleCommandWithWorldAndArgs FCmd_ITwinFitIModelInView(
 	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
 {
 	ITwinElementID const ElementID = Args.IsEmpty() ? ITwin::NOT_ELEMENT : ITwin::ParseElementID(Args[0]);
-	FBox FocusedBBox(ForceInitToZero);
-	if (ITwin::NOT_ELEMENT == ElementID)
+	ITwin::ZoomOnIModelsOrElement(ElementID, World);
+}));
+
+// Console command to zoom on the first iModel's selected element, if any.
+static FAutoConsoleCommandWithWorldAndArgs FCmd_ITwinZoomOnSelectedElement(
+	TEXT("cmd.ITwinZoomOnSelectedElement"),
+	TEXT("Move the viewport pawn close to the first selected Element, if any."),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+{
+	ITwinElementID SelectedElement = ITwin::NOT_ELEMENT;
+	for (TActorIterator<AITwinIModel> IModelIter(World); IModelIter; ++IModelIter)
 	{
-		for (TActorIterator<AITwinIModel> IModelIter(World); IModelIter; ++IModelIter)
-		{
-			FBox const& IModelBBox =
-				GetInternals(**IModelIter).SceneMapping.GetIModelBoundingBox(EITwinCoordSystem::UE);
-			if (IModelBBox.IsValid)
-			{
-				if (FocusedBBox.IsValid) FocusedBBox += IModelBBox;
-				else FocusedBBox = IModelBBox;
-			}
-		}
+		SelectedElement = GetInternals(**IModelIter).GetSelectedElement();
+		if (SelectedElement != ITwin::NOT_ELEMENT)
+			break;
 	}
-	else
+	if (SelectedElement != ITwin::NOT_ELEMENT)
 	{
-		for (TActorIterator<AITwinIModel> IModelIter(World); IModelIter; ++IModelIter)
-		{
-			FBox const& IModelBBox = GetInternals(**IModelIter).SceneMapping.GetBoundingBox(ElementID);
-			if (IModelBBox.IsValid)
-			{
-				if (FocusedBBox.IsValid) FocusedBBox += IModelBBox;
-				else FocusedBBox = IModelBBox;
-				break;
-			}
-		}
+		ITwin::ZoomOnIModelsOrElement(SelectedElement, World);
 	}
-	AITwinIModel::FImpl::ZoomOn(FocusedBBox, World);
 }));
 
 // Console command to create the Schedules components

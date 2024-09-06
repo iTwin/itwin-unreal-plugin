@@ -18,11 +18,14 @@
 
 #include <ITwinSynchro4DSchedules.generated.h>
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FScheduleQueryingDelegate, bool, bIsRunning);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FScheduleTimeRangeDelegate, FDateTime, StartTime, FDateTime, EndTime);
+
 /// Component of an AITwinIModel handling the Synchro4D schedules for a given iModel: it will query the
 /// REST api to compute the animation scripts for all tasks, and store the result for the iTwin's
 /// FITwinSynchro4DAnimator component to use for replay.
 UCLASS()
-class UITwinSynchro4DSchedules : public UActorComponent
+class ITWINRUNTIME_API UITwinSynchro4DSchedules : public UActorComponent
 {
 	GENERATED_BODY()
 
@@ -94,6 +97,24 @@ public:
 		BlueprintCallable)
 	void QueryElementsTasks(TArray<FString> const& Elements);
 
+	/// Called when the full time range of the Schedule is known, with the StartTime and EndTime passed as
+	/// arguments. FDateTime::MinValue() is passed twice when no tasks were found in the schedule.
+	/// Never called when bDebugPrefetchAllTasksAndAppearanceProfiles is false.
+	UPROPERTY(BlueprintAssignable)
+	FScheduleTimeRangeDelegate OnScheduleTimeRangeKnown;
+
+	/// Returns the time range of the Schedule, if any and already currently known. Will return FDateRange()
+	/// when either there is no schedule, or its data has not been received yet.
+	/// Use OnScheduleTimeRangeKnown if you'd rather wait and be notified when the final value of the time
+	/// range is known.
+	//UFUNCTION() <== FDateRange not UFUNCTION-able...
+	FDateRange GetDateRange() const;
+
+	/// Called when the status of the Schedule data request process changes: the parameter passed is 'true'
+	/// when some more data needs to be requested, or 'false' when all requests have been processed.
+	UPROPERTY(BlueprintAssignable)
+	FScheduleQueryingDelegate OnScheduleQueryingStatusChanged;
+
 #if WITH_EDITORONLY_DATA
 	/// In-editor helper to only request the task for this Element using QueryElementsTasks (enter a decimal
 	/// or hexadecimal Element ID here).
@@ -120,6 +141,12 @@ public:
 		BlueprintCallable)
 	void SendPartialQuery();
 #endif // WITH_EDITOR
+
+	/// Query all 4D Schedules tasks and apperance profiles at once as soon as the Schedule Id is known for
+	/// an iModel. This will vastly speed up querying animation bindings (half the time is typically spared)
+	UPROPERTY(Category = "Schedules Querying|Debug",
+		EditAnywhere)
+	bool bDebugPrefetchAllTasksAndAppearanceProfiles = true;
 
 	/// Use the correct schedules' task but use random appearance profiles (color, opacity and growth
 	/// simulations) for visual debugging.
@@ -157,13 +184,28 @@ public:
 	/// Animation replay's current time in UTC time. Default is in the future so that the initial state is the
 	/// fully completed project.
 	UPROPERTY(Category = "Schedules Replay",
-		EditAnywhere)
+		EditAnywhere,
+		BlueprintReadWrite,
+		BlueprintGetter = GetScheduleTime,
+		BlueprintSetter = SetScheduleTime)
 	FDateTime ScheduleTime = FDateTime(2099, 12, 31, 12, 0, 0);
+	UFUNCTION(BlueprintGetter)
+	FDateTime GetScheduleTime();
+	UFUNCTION(BlueprintSetter)
+	void SetScheduleTime(FDateTime NewScheduleTime);
 
-	/// Animation replay speed, expressed in days of schedule time per second of replay time
+	/// Animation replay speed, expressed as a period of schedule time per second of replay time (default: one
+	/// day per second). Outliner field format is "DAYS.HOURS:MIN:SEC.decimals"
 	UPROPERTY(Category = "Schedules Replay",
-		EditAnywhere)
-	double ReplaySpeed = 1.;
+		EditAnywhere,
+		BlueprintReadWrite,
+		BlueprintGetter = GetReplaySpeed,
+		BlueprintSetter = SetReplaySpeed)
+	FTimespan ReplaySpeed = FTimespan::FromDays(1.);
+	UFUNCTION(BlueprintGetter)
+	FTimespan GetReplaySpeed();
+	UFUNCTION(BlueprintSetter)
+	void SetReplaySpeed(FTimespan NewReplaySpeed);
 	
 	/// Set the script time to the beginning of the construction schedule
 	UFUNCTION(Category = "Schedules Replay",
@@ -179,7 +221,7 @@ public:
 
 	/// Helper method: determines the schedule's time range (at least the part that has been streamed to us
 	/// so far), then determines and sets the script speed so that the whole construction schedule's replay
-	/// takes a fixed duration (currently 30 seconds)
+	/// takes a fixed duration (currently around 30 seconds, plus or minus a small amount of rounding)
 	UFUNCTION(Category = "Schedules Replay",
 		CallInEditor,
 		BlueprintCallable)
@@ -242,13 +284,13 @@ public:
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 	#endif
 
-private:
-	// From UActorComponent:
-	void OnRegister() override;
-	void OnUnregister() override;
-	void TickComponent(float DeltaTime, enum ELevelTick TickType,
-					   FActorComponentTickFunction* ThisTickFunction) override;
+	void TickSchedules(float DeltaTime);
 
+	// Must be marked UFUNCTION to be bound to a delegate...
+	UFUNCTION()
+	void LogStatisticsUponQueryLoopStatusChange(bool bQueryLoopIsRunning);
+
+private:
 	class FImpl;
 	TPimplPtr<FImpl> Impl;
 	//! Allows the entire plugin to access the FITwinSynchro4DSchedulesInternals.

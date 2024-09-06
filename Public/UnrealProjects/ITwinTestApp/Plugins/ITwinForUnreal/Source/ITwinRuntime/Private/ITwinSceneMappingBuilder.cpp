@@ -128,28 +128,6 @@ void FITwinSceneMappingBuilder::OnMeshConstructed(
             SceneMapping.ModelCenter_UE.emplace(
                 SceneMapping.CesiumToUnrealTransform->TransformPosition(*SceneMapping.ModelCenter_ITwin));
         }
-        if (ensure(Tileset))
-        {
-            auto&& Geoloc = FITwinGeolocation::Get(*Tileset->GetWorld());
-            // NO: we must always consider that iModels are georeferenced, otherwise their location at
-            // ECEF coordinates (6378137, 0, 0) will make them rotated 90 degrees (ie appear vertically).
-            //if (std::abs(SceneMapping.ModelCenter_ITwin->Y) < 1e-3
-            //    && std::abs(SceneMapping.ModelCenter_ITwin->Z) < 1e-3)
-            //{
-            //    Tileset->SetGeoreference(Geoloc->LocalReference.Get());
-            //}
-            //else
-            if (Geoloc->GeoReference->GetOriginPlacement() == EITwinOriginPlacement::TrueOrigin)
-            {
-                // Common geolocation is not yet inited, use the location of this tileset.
-                Geoloc->GeoReference->SetOriginPlacement(EITwinOriginPlacement::CartographicOrigin);
-                Geoloc->GeoReference->SetOriginEarthCenteredEarthFixed(*SceneMapping.ModelCenter_ITwin);
-                // Note: doc mentions a ACesiumGeoreference::AlignTilesetUpWithZ but I don't see it
-                // (deprecated?) - see:
-                // https://github.com/CesiumGS/cesium-unreal/blob/main/Documentation/reference-frames.md
-            }
-            Tileset->SetGeoreference(Geoloc->GeoReference.Get());
-        }
     }
     // Note: geoloc must have been set before, MeshComponent->GetComponentTransform depends on it!
     auto MeshBox = StaticMesh->GetBoundingBox();
@@ -185,12 +163,8 @@ void FITwinSceneMappingBuilder::OnMeshConstructed(
     // matching a given ElementID (for Synchro4D animation), or if we need to bake
     // feature IDs in its vertex UVs.
     sceneTile.GltfMeshes.emplace_back(MeshComponent, CesiumData);
-
-    std::unordered_map<ITwinElementID, FBox>& KnownBBoxes = SceneMapping.KnownBBoxes;
-
     // note that this has already been checked:
-    // if no featureIDSet exists in features, pElementProperty would be
-    // null...
+    // if no featureIDSet exists in features, pElementProperty would be null...
     const FITwinCesiumFeatureIdSet& FeatureIdSet =
         UITwinCesiumPrimitiveFeaturesBlueprintLibrary::GetFeatureIDSets(Features)[FeatureIDSetIndex];
 
@@ -266,9 +240,9 @@ void FITwinSceneMappingBuilder::OnMeshConstructed(
             if (ElementID != ITwin::NOT_ELEMENT)
             {
                 // update BBox
-                FBox& ElementBBox = KnownBBoxes[ElementID];
-                ElementBBox += Transform.TransformPosition(
-                    FVector3d(PositionBuffer.VertexPosition(vtxIndex)));
+                auto& Elem = SceneMapping.ElementFor(ElementID);
+                Elem.bHasMesh = true;
+                Elem.BBox += Transform.TransformPosition(FVector3d(PositionBuffer.VertexPosition(vtxIndex)));
             }
         }
     }
@@ -276,14 +250,12 @@ void FITwinSceneMappingBuilder::OnMeshConstructed(
         SceneMapping.OnNewTileMeshBuilt(tileId, std::move(MeshElementIDs));
 }
 
-bool FITwinSceneMappingBuilder::ShouldAllocateUVForFeatures() const
+uint32 FITwinSceneMappingBuilder::BakeFeatureIDsInVertexUVs(std::optional<uint32> featuresAccessorIndex,
+	ICesiumMeshBuildCallbacks::FITwinCesiumMeshData const& CesiumMeshData,
+    FStaticMeshLODResources& LODResources) const
 {
-    // For now, we always allocate this extra layer, used in BakeFeatureIDsInVertexUVs.
-    // We could condition it on the presence of Synchro4D schedules, *but* its seems that
-    // it has no impact at all on the buffers actually allocated by Unreal, which always
-    // allocates spaces for MAX_STATIC_TEXCOORDS (VtxBuffer.GetNumTexCoords() always
-    // returns MAX_STATIC_TEXCOORDS...)
-    return true;
+    return FITwinGltfMeshComponentWrapper::BakeFeatureIDsInVertexUVs(
+        featuresAccessorIndex, CesiumMeshData, LODResources);
 }
 
 FITwinSceneMappingBuilder::FITwinSceneMappingBuilder(FITwinSceneMapping& InSceneMapping,
@@ -305,14 +277,14 @@ UMaterialInstanceDynamic* FITwinSceneMappingBuilder::CreateMaterial_GameThread(
         if (matIdExt)
             iTwinMaterialID = matIdExt->materialId;
     }
+    if (IModel.ShouldFillMaterialInfoFromTuner())
+    {
+        // Map of iTwin materials not yet ready: see if we have loaded the list from tileset.json
+        IModel.FillMaterialInfoFromTuner();
+    }
     UMaterialInterface* CustomBaseMaterial = nullptr;
     if (iTwinMaterialID)
     {
-        if (IModel.CustomMaterials.IsEmpty())
-        {
-            // Map of iTin materials not yet ready: see if we have loaded the list from tileset.json
-            IModel.FillMaterialInfoFromTuner();
-        }
         auto itCustomMat = IModel.CustomMaterials.Find(*iTwinMaterialID);
         if (ensureMsgf(itCustomMat, TEXT("iTwin Material 0x%I64x not parsed from tileset.json"), *iTwinMaterialID))
         {
@@ -344,4 +316,38 @@ UMaterialInstanceDynamic* FITwinSceneMappingBuilder::CreateMaterial_GameThread(
 #endif // DEBUG_ITWIN_MATERIAL_IDS
     }
     return pMat;
+}
+
+void FITwinSceneMappingBuilder::BeforeTileDestruction(
+    const Cesium3DTilesSelection::Tile& Tile,
+    USceneComponent* TileGltfComponent)
+{
+    // The passed component is the scene component cerated for the given tile (UITwinCesiumGltfComponent).
+    // Its children are the primitive components (UITwinCesiumGltfPrimitiveComponent), on which we point in
+    // FITwinGltfMeshComponentWrapper => remove any wrapper pointing on the components about to be freed.
+    // Note that they may not exist in the mapping, typically in case we have to apply some tuning, or for
+    // unsupported primitives types (UITwinCesiumGltfPointsComponent.
+    auto itSceneTile = SceneMapping.KnownTiles.find(Tile.getTileID());
+    if (itSceneTile == SceneMapping.KnownTiles.end())
+    {
+        return;
+    }
+    auto const& PrimComponentPtrs = TileGltfComponent->GetAttachChildren();
+    // To raw (const) pointers for use in Find
+    TArray<USceneComponent const*> PrimComponents;
+    PrimComponents.Reserve(PrimComponentPtrs.Num());
+    Algo::Transform(PrimComponentPtrs, PrimComponents,
+        [](TObjectPtr<USceneComponent> const& V) -> USceneComponent const*
+    { return V.Get(); }
+    );
+
+    auto& GltfMeshes = itSceneTile->second.GltfMeshes;
+    GltfMeshes.erase(
+        std::remove_if(
+            GltfMeshes.begin(), GltfMeshes.end(),
+            [&](FITwinGltfMeshComponentWrapper const& itwinWrapper)
+    {
+        return PrimComponents.Find(itwinWrapper.GetMeshComponent()) != INDEX_NONE;
+    }),
+        GltfMeshes.end());
 }

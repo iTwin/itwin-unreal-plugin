@@ -11,48 +11,56 @@
 
 namespace SDK::Core {
 
+	struct SJSonGCS
+	{
+		std::string wkt;
+		std::array<float, 3> center = {0.f, 0.f, 0.f};
+	};
+
 	class Decoration::Impl
 	{
 	public:
-
-		struct SJSonGCS
-		{
-			std::string wkt;
-			float center[3] = {0.f, 0.f, 0.f};
-		};
-
-		struct SJson
+		struct SJsonDeco
 		{
 			std::string name;
-			SJSonGCS gcs;
+			std::string itwinid;
+			std::optional<SJSonGCS> gcs;
 		};
 
 		std::string id_;
 		std::shared_ptr<Http> http_;
-		SJson json_;
+		SJsonDeco jsonDeco_;
 
 		std::shared_ptr<Http>& GetHttp() { return http_; }
 		void SetHttp(const std::shared_ptr<Http>& http) { http_ = http; }
 
-		void Create(const std::string& name)
+		void Create(
+			const std::string& name, const std::string& itwinid, const std::string& accessToken)
 		{
-			struct SJsonIn { std::string name; };
-			SJsonIn jIn{ name };
-			struct SJsonOut { std::string id; SJson data;};
+			struct SJsonIn { std::string name; std::string itwinid; };
+			SJsonIn jIn{ name, itwinid };
+			struct SJsonOut { std::string id; SJsonDeco data; };
 			SJsonOut jOut;
-			long status = GetHttp()->PostJsonJBody(jOut, "decorations", jIn);
+
+			Http::Headers headers;
+			headers.emplace_back("Authorization", std::string("Bearer ") + accessToken);
+
+			long status = GetHttp()->PostJsonJBody(jOut, std::string(""), jIn, headers);
 			if (status == 200 || status == 201)
 			{
-				json_ = std::move(jOut.data);
+				jsonDeco_ = std::move(jOut.data);
 				id_ = jOut.id;
 			}
 			else
 				throw std::string("Create decoration failed. http status:" + std::to_string(status));
 		}
 
-		void Get(const std::string& id)
+		void Get(const std::string& id, const std::string& accessToken)
 		{
-			long status = GetHttp()->GetJson(json_, "decorations/" + id, "");
+			Http::Headers headers;
+			headers.emplace_back("Authorization", std::string("Bearer ") + accessToken);
+
+			long status = GetHttp()->GetJson(jsonDeco_, id, "", headers);
 			if (status == 200)
 			{
 				id_ = id;
@@ -70,7 +78,7 @@ namespace SDK::Core {
 				throw std::string("Delete decoration failed. http status:" + std::to_string(status.first));
 			}
 			id_ = "";
-			json_ = SJson();
+			jsonDeco_ = SJsonDeco();
 		}
 	};
 
@@ -85,14 +93,14 @@ namespace SDK::Core {
 		GetImpl().SetHttp(http);
 	}
 
-	void Decoration::Create(const std::string& name)
+	void Decoration::Create(const std::string& name, const std::string& itwinid, const std::string& accessToken)
 	{
-		GetImpl().Create(name);
+		GetImpl().Create(name, itwinid, accessToken);
 	}
 
-	void Decoration::Get(const std::string& id)
+	void Decoration::Get(const std::string& id, const std::string& accessToken)
 	{
-		GetImpl().Get(id);
+		GetImpl().Get(id, accessToken);
 	}
 
 	void Decoration::Delete()
@@ -116,5 +124,61 @@ namespace SDK::Core {
 
 	Decoration::Impl& Decoration::GetImpl() {
 		return *impl_;
+	}
+
+	std::vector<std::shared_ptr<IDecoration>> GetITwinDecorations(
+		const std::string& itwinid, const std::string& accessToken)
+	{
+		std::vector<std::shared_ptr<IDecoration>> decorations;
+
+		std::shared_ptr<Http>& http = GetDefaultHttp();
+		if (!http)
+			return decorations;
+
+		Http::Headers headers;
+		headers.emplace_back("Authorization", std::string("Bearer ") + accessToken);
+
+		struct SJsonInEmpty	{};
+
+		struct SJsonLink
+		{
+			std::optional<std::string> prev;
+			std::optional<std::string> self;
+			std::optional<std::string> next;
+		};
+
+		struct SJsonDecoWithId
+		{
+			std::string id;
+			std::string name;
+			std::string itwinid;
+			std::optional<SJSonGCS> gcs;
+		};
+
+		struct SJsonOut
+		{ 
+			int total_rows;
+			std::vector<SJsonDecoWithId> rows;
+			SJsonLink _links;
+		};
+
+		SJsonInEmpty jIn;
+		SJsonOut jOut;
+		long status = http->GetJsonJBody(jOut, "?iTwinId=" + itwinid, jIn, headers);
+
+		if (status == 200 || status == 201)
+		{
+			for (auto& row : jOut.rows)
+			{
+				std::shared_ptr<SDK::Core::IDecoration> deco = SDK::Core::IDecoration::New();
+				deco->Get(row.id, accessToken);
+				decorations.push_back(deco);
+			}
+		}
+		else
+			throw std::string("Load decorations failed. http status:" + std::to_string(status));
+
+
+		return decorations;
 	}
 }

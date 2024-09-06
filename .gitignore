@@ -39,7 +39,7 @@
 !**/UnrealProjects/*/Plugins/ITwinForUnreal/Shaders/ITwin/
 
 # Special case for plugin that is symlinked to an external source folder.
-Private/UnrealProjects/LumenRTU/Plugins/ITwinForUnreal/
+Private/UnrealProjects/Carrot/Plugins/ITwinForUnreal/
 
 
 

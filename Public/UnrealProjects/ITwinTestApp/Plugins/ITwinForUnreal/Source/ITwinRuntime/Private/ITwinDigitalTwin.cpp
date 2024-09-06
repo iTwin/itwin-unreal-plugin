@@ -47,8 +47,6 @@ public:
 			Owner.GetWorld()->DestroyActor(Child);
 		Owner.Children.Empty();
 	}
-
-	void OnClickedElement(FHitResult const& HitResult, std::unordered_set<ITwinElementID>& DejaVu);
 };
 
 AITwinDigitalTwin::AITwinDigitalTwin()
@@ -254,69 +252,5 @@ namespace ITwin
 			}
 		}
 		return firstEltID;
-	}
-}
-
-void AITwinDigitalTwin::IdentifyElementsUnderCursor(uint32 const* pMaxUniqueElementsHit)
-{
-	FVector2D MousePosition;
-	ITwin::VisitElementsUnderCursor(GetWorld(), MousePosition,
-		[this](FHitResult const& HitResult, std::unordered_set<ITwinElementID>& DejaVu)
-	{
-		Impl->OnClickedElement(HitResult, DejaVu);
-	}, pMaxUniqueElementsHit);
-}
-
-void AITwinDigitalTwin::FImpl::OnClickedElement(FHitResult const& HitResult,
-												std::unordered_set<ITwinElementID>& DejaVu)
-{
-	TMap<FString, FITwinCesiumMetadataValue> const Table =
-		UITwinCesiumMetadataPickingBlueprintLibrary::GetPropertyTableValuesFromHit(
-			HitResult, ITwinCesium::Metada::ELEMENT_FEATURE_ID_SLOT);
-	TMap<FString, FString> const AsStrings =
-		UITwinCesiumMetadataValueBlueprintLibrary::GetValuesAsStrings(Table);
-	FITwinCesiumMetadataValue const* const ElementIdFound = Table.Find(ITwinCesium::Metada::ELEMENT_NAME);
-	ITwinElementID const ElementID = (ElementIdFound != nullptr)
-		? ITwinElementID(UITwinCesiumMetadataValueBlueprintLibrary::GetUnsignedInteger64(
-						 *ElementIdFound, ITwin::NOT_ELEMENT.value()))
-		: ITwin::NOT_ELEMENT;
-	if (ElementID != ITwin::NOT_ELEMENT)
-	{
-		if (DejaVu.end() != DejaVu.find(ElementID)) // TODO_GCO: could be different iModels...
-		{
-			return;
-		}
-		size_t const SizeBefore = DejaVu.size();
-		for (auto&& Child : Owner.Children)
-		{
-			AITwinIModel* AsIModel = Cast<AITwinIModel>(Child.Get());
-			if (!AsIModel)
-				continue;
-			FITwinIModelInternals& IModelInternals = GetInternals(*AsIModel);
-			if (IModelInternals.HasElementWithID(ElementID))
-			{
-				if (IModelInternals.OnClickedElement(ElementID, HitResult)) // can filter "unselectable" Elem
-					DejaVu.insert(ElementID);
-			}
-		}
-		if (SizeBefore != DejaVu.size())
-		{
-			UE_LOG(LogITwin, Display,
-				   TEXT("ElementID 0x%I64x clicked, with additional metadata:"), ElementID.value());
-			for (TTuple<FString, FString> const& Entry : AsStrings)
-			{
-				if (ITwinCesium::Metada::ELEMENT_NAME != Entry.Get<0>())
-					UE_LOG(LogITwin, Display, TEXT("%s = %s"), *Entry.Get<0>(), *Entry.Get<1>());
-			}
-		}
-	}
-	else
-	{
-		UE_LOG(LogITwin, Display, TEXT("'%s' not found in metadata, instead got:"),
-			   *ITwinCesium::Metada::ELEMENT_NAME);
-		for (TTuple<FString, FString> const& Entry : AsStrings)
-		{
-			UE_LOG(LogITwin, Display, TEXT("%s = %s"), *Entry.Get<0>(), *Entry.Get<1>());
-		}
 	}
 }

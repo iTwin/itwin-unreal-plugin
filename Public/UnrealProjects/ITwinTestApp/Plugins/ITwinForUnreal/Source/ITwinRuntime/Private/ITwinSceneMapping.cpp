@@ -18,6 +18,8 @@
 #include <Logging/LogMacros.h>
 #include <Materials/MaterialInstanceDynamic.h>
 #include <MaterialTypes.h>
+#include <Serialization/JsonReader.h>
+#include <Serialization/JsonSerializer.h>
 
 //#include "../../CesiumRuntime/Private/CesiumMaterialUserData.h" // see comment in #GetSynchro4DLayerIndexInMaterial
 
@@ -162,12 +164,8 @@ void FITwinSceneTile::BakeFeatureIDsInVertexUVs(bool bUpdatingTile /*= false*/)
 		for (int32 m = 0; m < NumMats; ++m)
 		{
 			auto Mat = MeshComp->GetMaterial(m);
-			if (bUpdatingTile)
-			{
-				checkSlow(FeatureIDsUVIndex.end() == FeatureIDsUVIndex.find(Mat)
-					|| FeatureIDsUVIndex[Mat] == *UVIdx);
-			}
-			else checkSlow(FeatureIDsUVIndex.end() == FeatureIDsUVIndex.find(Mat));
+			checkSlow(FeatureIDsUVIndex.end() == FeatureIDsUVIndex.find(Mat)
+					|| (bUpdatingTile && FeatureIDsUVIndex[Mat] == *UVIdx));
 			FeatureIDsUVIndex[Mat] = *UVIdx;
 		}
 	}
@@ -227,7 +225,7 @@ void FITwinSceneTile::ForEachElementFeatures(std::function<void(FITwinElementFea
 	}
 }
 
-FITwinExtractedEntity const* FITwinSceneTile::FindExtractedElement(ITwinElementID const& ElemID) const
+FITwinSceneTile::ExtractedEntityVec const* FITwinSceneTile::FindExtractedElement(ITwinElementID const& ElemID) const
 {
 	auto const Found = ExtractedElements.find(ElemID);
 	if (Found != ExtractedElements.end())
@@ -237,7 +235,7 @@ FITwinExtractedEntity const* FITwinSceneTile::FindExtractedElement(ITwinElementI
 	else return nullptr;
 }
 
-FITwinExtractedEntity* FITwinSceneTile::FindExtractedElement(ITwinElementID const& ElemID)
+FITwinSceneTile::ExtractedEntityVec* FITwinSceneTile::FindExtractedElement(ITwinElementID const& ElemID)
 {
 	auto const Found = ExtractedElements.find(ElemID);
 	if (Found != ExtractedElements.end())
@@ -247,23 +245,25 @@ FITwinExtractedEntity* FITwinSceneTile::FindExtractedElement(ITwinElementID cons
 	else return nullptr;
 }
 
-std::unordered_map<ITwinElementID, FITwinExtractedEntity>::iterator
+FITwinSceneTile::ExtractedEntityMap::iterator
 	FITwinSceneTile::ExtractedElement(ITwinElementID const& ElemID)
 {
-	return ExtractedElements.try_emplace(ElemID, FITwinExtractedEntity{ ElemID }).first;
+	return ExtractedElements.try_emplace(ElemID, ExtractedEntityVec{}).first;
 }
 
-void FITwinSceneTile::EraseExtractedElement(
-	std::unordered_map<ITwinElementID, FITwinExtractedEntity>::iterator const Where)
+void FITwinSceneTile::EraseExtractedElement(ExtractedEntityMap::iterator const Where)
 {
 	ExtractedElements.erase(Where);
 }
 
 void FITwinSceneTile::ForEachExtractedElement(std::function<void(FITwinExtractedEntity&)> const& Func)
 {
-	for (auto&& [ElemID, Extracted] : ExtractedElements)
+	for (auto&& [ElemID, ExtractedVec] : ExtractedElements)
 	{
-		Func(Extracted);
+		for (auto&& Extracted : ExtractedVec)
+		{
+			Func(Extracted);
+		}
 	}
 }
 
@@ -273,7 +273,7 @@ void FITwinSceneTile::ForEachElementFeatures(ElementsCont const& ForElementIDs,
 {
 	for (auto const& ElemID : ForElementIDs)
 	{
-		auto Found = FindElementFeatures(ElemID);
+		auto* Found = FindElementFeatures(ElemID);
 		if (Found) Func(*Found);
 	}
 }
@@ -284,16 +284,18 @@ void FITwinSceneTile::ForEachExtractedElement(ElementsCont const& ForElementIDs,
 {
 	for (auto const& ElemID : ForElementIDs)
 	{
-		auto Found = FindExtractedElement(ElemID);
-		if (Found) Func(*Found);
+		auto* FoundVec = FindExtractedElement(ElemID);
+		if (FoundVec)
+		{
+			for (auto&& ExtractedElt : *FoundVec)
+			{
+				Func(ExtractedElt);
+			}
+		}
 	}
 }
 
-//---------------------------------------------------------------------------------------
-// class FITwinSceneMapping
-//---------------------------------------------------------------------------------------
-
-#define DEBUG_SYNCHRO4D_BGRA 0 // TODO_GCO: fix in FITwinSceneMapping::ReplicateKnownElementsSetupInTile
+#define DEBUG_SYNCHRO4D_BGRA 0 // TODO_GCO: ignored in FITwinSceneMapping::ReplicateAnimatedElementsSetupInTile
 
 static const FName SelectionHighlightsMaterialParameterName = "PROP_Selection_RGBA";
 static const FName HighlightsAndOpacitiesMaterialParameterName = "PROP_Synchro4D_RGBA";
@@ -465,7 +467,6 @@ void FITwinSceneTile::DrawTileBox(UWorld const* World) const
 bool FITwinSceneTile::SelectElement(ITwinElementID const& InElemID, bool& bHasUpdatedTextures,
 									UWorld const* World)
 {
-	bHasUpdatedTextures = false;
 	if (InElemID == SelectedElement)
 	{
 		// Nothing to do.
@@ -541,7 +542,7 @@ bool FITwinSceneTile::SelectElement(ITwinElementID const& InElemID, bool& bHasUp
 		SelectedElement = InElemID;
 
 		//// Display the bounding box of the tile
-		// DrawTileBox(World);
+		// if (World) DrawTileBox(World);
 		return true;
 	}
 	else return false;
@@ -574,6 +575,9 @@ void FITwinSceneTile::UpdateSelectionTextureInMaterials()
 	}
 }
 
+//---------------------------------------------------------------------------------------
+// class FITwinSceneMapping
+//---------------------------------------------------------------------------------------
 
 /*static*/
 FMaterialParameterInfo const& FITwinSceneMapping::GetExtractedElementForcedAlphaMaterialParameterInfo()
@@ -615,7 +619,7 @@ void FITwinSceneMapping::SetupFeatureIdUVIndex(FITwinSceneTile& SceneTile,
 }
 
 /*static*/
-void FITwinSceneMapping::SetupHighlights(
+void FITwinSceneMapping::SetupHighlightsOpacities(
 	FITwinSceneTile& SceneTile,
 	FITwinElementFeaturesInTile& ElementFeaturesInTile)
 {
@@ -623,12 +627,8 @@ void FITwinSceneMapping::SetupHighlights(
 		return;
 
 	auto const& HighlightOpaFlags = ElementFeaturesInTile.TextureFlags.HighlightsAndOpacitiesFlags;
-	auto const& SelectionHiLFlags = ElementFeaturesInTile.TextureFlags.SelectionFlags;
-
 	bool const bNeedUpdateHighlightOpa = HighlightOpaFlags.ShouldUpdateMaterials(
 		SceneTile.HighlightsAndOpacities, (int32)ElementFeaturesInTile.Materials.size());
-	bool const bNeedUpdateSelectionHiL = SelectionHiLFlags.ShouldUpdateMaterials(
-		SceneTile.SelectionHighlights, (int32)ElementFeaturesInTile.Materials.size());
 
 	// NB: those FMaterialParameterInfo info no longer depend on the material, so we can setup them at once:
 	if (bNeedUpdateHighlightOpa)
@@ -636,9 +636,7 @@ void FITwinSceneMapping::SetupHighlights(
 		SetupHighlightsAndOpacitiesInfo();
 	}
 	SetupFeatureIdInfo();
-	ensure(!bNeedUpdateSelectionHiL || SelectionHighlightsInfo);
-
-	if (!bNeedUpdateHighlightOpa && !bNeedUpdateSelectionHiL)
+	if (!bNeedUpdateHighlightOpa)
 	{
 		// Nothing to do
 		for (auto&& Mat : ElementFeaturesInTile.Materials)
@@ -652,7 +650,7 @@ void FITwinSceneMapping::SetupHighlights(
 		}
 		return;
 	}
-	auto const SetupElement = [&SceneTile, bNeedUpdateHighlightOpa, bNeedUpdateSelectionHiL]
+	auto const SetupElement = [&SceneTile, bNeedUpdateHighlightOpa]
 		(FITwinElementFeaturesInTile& Element)
 		{
 			if (!Element.Materials.empty())
@@ -663,13 +661,6 @@ void FITwinSceneMapping::SetupHighlights(
 					SceneTile.HighlightsAndOpacities->UpdateInMaterials(Element.Materials,
 																		*HighlightsAndOpacitiesInfo);
 					Element.TextureFlags.HighlightsAndOpacitiesFlags.OnTextureSetInMaterials(
-						(int32)Element.Materials.size());
-				}
-				if (bNeedUpdateSelectionHiL)
-				{
-					SceneTile.SelectionHighlights->UpdateInMaterials(Element.Materials,
-																	 *SelectionHighlightsInfo);
-					Element.TextureFlags.SelectionFlags.OnTextureSetInMaterials(
 						(int32)Element.Materials.size());
 				}
 			}
@@ -685,6 +676,166 @@ void FITwinSceneMapping::SetupHighlights(
 #else
 	SetupElement(ElementFeaturesInTile);
 #endif
+}
+
+FITwinSceneMapping::FITwinSceneMapping()
+{
+	AllElements.reserve(16384);
+}
+
+FITwinElement& FITwinSceneMapping::ElementFor(ITwinScene::ElemIdx const IndexInVec)
+{
+	return AllElements[IndexInVec.value()];
+}
+
+FITwinElement& FITwinSceneMapping::ElementFor(ITwinElementID const ById,
+											  ITwinScene::ElemIdx* IndexInVec/*= nullptr*/)
+{
+	auto Known = ElementsInVec.try_emplace(ById, AllElements.size());
+	if (Known.second) // was inserted
+	{
+		if (IndexInVec) *IndexInVec = ITwinScene::ElemIdx(AllElements.size());
+		return AllElements.emplace_back(FITwinElement{ false, ById });
+	}
+	else
+	{
+		if (IndexInVec) *IndexInVec = Known.first->second;
+		return ElementFor(Known.first->second);
+	}
+}
+
+int FITwinSceneMapping::ParseHierarchyTree(FString const& JsonStr)
+{
+	auto Reader = TJsonReaderFactory<TCHAR>::Create(JsonStr);
+	TSharedPtr<FJsonObject> JsonObj;
+	if (!FJsonSerializer::Deserialize(Reader, JsonObj) || !JsonObj.IsValid())
+		return 0;
+	TArray<TSharedPtr<FJsonValue>> const* JsonRows = nullptr;
+	if (!JsonObj->TryGetArrayField(TEXT("data"), JsonRows))
+		return 0;
+	// TODO_GCO: successive queries can hardly optimize allocations, get count first with
+	// "SELECT COUNT(*) FROM [Table]"
+	AllElements.reserve(AllElements.size() + (size_t)JsonRows->Num());
+	int TotalGoodRows = 0;
+	for (auto const& Row : *JsonRows)
+	{
+		auto const& Entries = Row->AsArray();
+		if (!ensure(Entries.Num() == 2))
+			continue;
+		ITwinElementID const ElemId = ITwin::ParseElementID(Entries[0]->AsString());
+		if (!ensure(ITwin::NOT_ELEMENT != ElemId))
+			continue;
+		ITwinScene::ElemIdx ChildInVec = ITwinScene::NOT_ELEM;
+		FITwinElement& ChildElem = ElementFor(ElemId, &ChildInVec);
+		if (!ensure(ITwinScene::NOT_ELEM == ChildElem.ParentInVec))
+			continue; // already known - how come?!
+		ITwinElementID const ParentId = ITwin::ParseElementID(Entries[1]->AsString());
+		if (!ensure(ITwin::NOT_ELEMENT != ParentId))
+			continue;
+		FITwinElement& ParentElem = ElementFor(ParentId, &ChildElem.ParentInVec);
+		// TODO_GCO: optimize with a first loop that creates all ParentElem and counts their children,
+		// exploiting the fact that children of the same parent "seem" to be contiguous (but let's not
+		// assume it's always the case...), then a second loop that reserves the SubElems vectors and
+		// fills them
+		ParentElem.SubElemsInVec.push_back(ChildInVec);
+		++TotalGoodRows;
+	}
+	// check there is no loop, it would be fatal
+	size_t const Count = AllElements.size();
+	std::vector<bool> Visited(Count, false);
+	bool bError = false;
+	for (size_t LoopIdxInVec = 0; LoopIdxInVec < Count; ++LoopIdxInVec)
+	{
+		if (Visited[LoopIdxInVec]) continue; // ok here
+		ITwinScene::ElemIdx InVec(LoopIdxInVec);
+		int Depth = 0;
+		FITwinElement const* Elem = nullptr;
+		do
+		{
+			//if (Visited[InVec]) break; <== not here, we'd never reach Count in case of a loop!!
+			Visited[InVec.value()] = true;
+			++Depth;
+			Elem = &GetElement(InVec);
+			InVec = Elem->ParentInVec;
+		} while (ITwinScene::NOT_ELEM != InVec && Depth <= Count);
+
+		if (Depth > Count) // we have obviously been looping "forever", let's stop
+		{
+			bError = true;
+			break;
+		}
+	}
+	if (bError)
+	{
+		for (auto& Elem : AllElements) // it's so unlikely, let's just trash all relationships
+			Elem.ParentInVec = ITwinScene::NOT_ELEM;
+		UE_LOG(ITwinSceneMap, Error, TEXT("Loop found in iModel Elements hierarchy, it will be IGNORED!"));
+		return 0;
+	}
+	return TotalGoodRows;
+}
+
+int FITwinSceneMapping::ParseSourceElementIDs(FString const& JsonStr)
+{
+	auto Reader = TJsonReaderFactory<TCHAR>::Create(JsonStr);
+	TSharedPtr<FJsonObject> JsonObj;
+	if (!FJsonSerializer::Deserialize(Reader, JsonObj) || !JsonObj.IsValid())
+		return 0;
+	TArray<TSharedPtr<FJsonValue>> const* JsonRows = nullptr;
+	if (!JsonObj->TryGetArrayField(TEXT("data"), JsonRows))
+		return 0;
+	int TotalGoodRows = 0;
+	for (auto const& Row : *JsonRows)
+	{
+		auto const& Entries = Row->AsArray();
+		if (!ensure(Entries.Num() == 2))
+			continue;
+		ITwinElementID const ElemId = ITwin::ParseElementID(Entries[0]->AsString());
+		if (!ensure(ITwin::NOT_ELEMENT != ElemId))
+			continue;
+		FString const SourceId = Entries[1]->AsString();
+		if (!ensure(!SourceId.IsEmpty()))
+			continue;
+		auto SourceEntry = SourceElementIDs.try_emplace(SourceId, ITwinScene::NOT_ELEM);
+		ITwinScene::ElemIdx ThisElemIdx = ITwinScene::NOT_ELEM;
+		auto& ThisElem = ElementFor(ElemId, &ThisElemIdx);
+		if (SourceEntry.second)
+		{
+			// was inserted => first time the Source Element ID is encountered, but don't create a duplicates
+			// list just yet!
+			SourceEntry.first->second = ThisElemIdx;
+		}
+		else
+		{
+			// already in set => we have a duplicate
+			auto& FirstSourceElem = ElementFor(SourceEntry.first->second);
+			// first duplicate: create the list
+			if (ITwinScene::NOT_DUPL == FirstSourceElem.DuplicatesList)
+			{
+				FirstSourceElem.DuplicatesList = ITwinScene::DuplIdx(DuplicateElements.size());
+				DuplicateElements.emplace_back(
+					FDuplicateElementsVec{ SourceEntry.first->second, ThisElemIdx });
+			}
+			else
+			{
+				DuplicateElements[FirstSourceElem.DuplicatesList.value()].push_back(ThisElemIdx);
+			}
+			ThisElem.DuplicatesList = FirstSourceElem.DuplicatesList;
+		}
+		++TotalGoodRows;
+	}
+	return TotalGoodRows;
+}
+
+FITwinSceneMapping::FDuplicateElementsVec const& FITwinSceneMapping::GetDuplicateElements(
+	ITwinElementID const ElemID) const
+{
+	static FDuplicateElementsVec Empty;
+	auto const& Elem = GetElement(ElemID);
+	if (ITwinScene::NOT_DUPL == Elem.DuplicatesList)
+		return Empty;
+	else
+		return DuplicateElements[Elem.DuplicatesList.value()];
 }
 
 size_t FITwinSceneMapping::UpdateAllTextures()
@@ -751,20 +902,14 @@ void FITwinSceneMapping::HandleNewTileTexturesNeedUpateInMaterials()
 }
 
 /*static*/
-void FITwinSceneMapping::SetupHighlights(
+void FITwinSceneMapping::SetupHighlightsOpacities(
 	FITwinSceneTile& SceneTile,
 	FITwinExtractedEntity& ExtractedEntity)
 {
 	auto const& HighlightOpaFlags = ExtractedEntity.TextureFlags.HighlightsAndOpacitiesFlags;
-	auto const& SelectionHiLFlags = ExtractedEntity.TextureFlags.SelectionFlags;
-
 	bool const bNeedUpdateHighlightOpa =
 		HighlightOpaFlags.ShouldUpdateMaterials(SceneTile.HighlightsAndOpacities, 1);
-	bool const bNeedUpdateSelectionHiL =
-		SelectionHiLFlags.ShouldUpdateMaterials(SceneTile.SelectionHighlights, 1);
-
-	if ((!bNeedUpdateHighlightOpa && !bNeedUpdateSelectionHiL)
-		|| !ExtractedEntity.Material.IsValid())
+	if (!bNeedUpdateHighlightOpa || !ExtractedEntity.Material.IsValid())
 	{
 		if (ensure(ExtractedEntity.Material.IsValid()))
 		{
@@ -776,19 +921,12 @@ void FITwinSceneMapping::SetupHighlights(
 	}
 	SetupHighlightsAndOpacitiesInfo();
 	SetupFeatureIdInfo();
-
 	SetupFeatureIdUVIndex(SceneTile, ExtractedEntity);
 	if (bNeedUpdateHighlightOpa)
 	{
 		SceneTile.HighlightsAndOpacities->UpdateInMaterial(ExtractedEntity.Material,
 			*HighlightsAndOpacitiesInfo);
 		ExtractedEntity.TextureFlags.HighlightsAndOpacitiesFlags.OnTextureSetInMaterials(1);
-	}
-	if (bNeedUpdateSelectionHiL)
-	{
-		SceneTile.SelectionHighlights->UpdateInMaterial(ExtractedEntity.Material,
-			*SelectionHighlightsInfo);
-		ExtractedEntity.TextureFlags.SelectionFlags.OnTextureSetInMaterials(1);
 	}
 }
 
@@ -830,40 +968,53 @@ void FITwinSceneMapping::SetupCuttingPlanes(
 }
 
 template<typename Container>
-std::vector<FITwinElementFeaturesInTile*> FITwinSceneMapping::GatherElementsFeaturesInTile(
-	FITwinSceneTile& SceneTile, FITwinElementTimeline const& Timeline, Container const& TimelineElements)
+auto GatherTimelineElemInfos(FITwinSceneMapping& SceneMapping, FITwinSceneTile& SceneTile,
+							 FITwinElementTimeline const& Timeline, Container const& TimelineElements)
 {
-	std::vector<FITwinElementFeaturesInTile*> ElementsFeaturesInTile;
-	ElementsFeaturesInTile.reserve(TimelineElements.size());
+	std::vector<std::pair<FITwinElementFeaturesInTile*, ITwinScene::ElemIdx>> TimelineElemInfos;
+	TimelineElemInfos.reserve(TimelineElements.size());
 	for (auto&& ElementID : TimelineElements)
 	{
 		FITwinElementFeaturesInTile* Found = SceneTile.FindElementFeatures(ElementID);
 		if (Found)
-			ElementsFeaturesInTile.push_back(Found);
+		{
+			ITwinScene::ElemIdx InVec = ITwinScene::NOT_ELEM;
+			SceneMapping.ElementFor(ElementID, &InVec);
+			TimelineElemInfos.push_back(std::make_pair(Found, InVec));
+		}
 	}
-	return ElementsFeaturesInTile;
+	return TimelineElemInfos;
 }
 
-void FITwinSceneMapping::ReplicateKnownElementsSetupInTile(
+bool FITwinSceneMapping::ReplicateAnimatedElementsSetupInTile(
 	std::pair<CesiumTileID, std::set<ITwinElementID>> const& TileElements)
 {
 	auto SceneTileFound = KnownTiles.find(TileElements.first);
 	if (!ensure(KnownTiles.end() != SceneTileFound))
-		return;
+		return false;
 	auto& SceneTile = SceneTileFound->second;
 	FTileRequirements TileReq = {
 		(bool)SceneTile.HighlightsAndOpacities, /*bNeedHiliteAndOpaTex*/
 		(bool)SceneTile.CuttingPlanes			/*bNeedCuttingPlaneTex*/
 	};
-	for (ITwinElementID const& Elem : TileElements.second)
+	for (ITwinElementID const& ElemID : TileElements.second)
 	{
 		if (TileReq.bNeedHiliteAndOpaTex && TileReq.bNeedCuttingPlaneTex)
 			break;
-		auto const ElemReqs = TileRequirements.find(Elem);
-		if (TileRequirements.end() != ElemReqs)
+		auto const InVec = ElementsInVec.find(ElemID);
+		if (ElementsInVec.end() != InVec)
 		{
-			TileReq.bNeedHiliteAndOpaTex |= ElemReqs->second.bNeedHiliteAndOpaTex;
-			TileReq.bNeedCuttingPlaneTex |= ElemReqs->second.bNeedCuttingPlaneTex;
+			ITwinScene::ElemIdx IdxInVec = InVec->second;
+			do
+			{
+				auto const& Elem = GetElement(IdxInVec);
+				TileReq.bNeedHiliteAndOpaTex |= Elem.TileRequirements.bNeedHiliteAndOpaTex;
+				TileReq.bNeedCuttingPlaneTex |= Elem.TileRequirements.bNeedCuttingPlaneTex;
+				// If animated by a Parent Element node, no specific animation will be received, we thus need
+				// to traverse ancesters here:
+				IdxInVec = Elem.ParentInVec;
+			}
+			while (IdxInVec != ITwinScene::NOT_ELEM);
 		}
 	}
 	// Note: doesn't account for DEBUG_SYNCHRO4D_BGRA
@@ -881,15 +1032,16 @@ void FITwinSceneMapping::ReplicateKnownElementsSetupInTile(
 		SceneTile.CuttingPlanes = std::make_unique<FITwinDynamicShadingABGR32fProperty>(
 			SceneTile.MaxFeatureID, std::array<float, 4>(S4D_CLIPPING_DISABLED));
 	}
-	// Even if textures were already present, we'll have to UpdateInMaterials in all (nejj w) materials
+	// Even if textures were already present, we'll have to UpdateInMaterials in all (new) materials
 	SceneTile.bNeedUpdateCuttingPlanesInMaterials = TileReq.bNeedCuttingPlaneTex;
 
 	// Redo it even if textures were already present: we may have received new materials
 	if (SceneTile.HighlightsAndOpacities || SceneTile.CuttingPlanes)
 		SceneTile.BakeFeatureIDsInVertexUVs();
 	// Even if textures were already present, we'll have to UpdateInMaterials in all (new) materials
-	bNewTilesReceivedHaveTextures = SceneTile.bNeedUpdateHighlightsAndOpacitiesInMaterials
-								 || SceneTile.bNeedUpdateCuttingPlanesInMaterials;
+	bNewTilesReceivedHaveTextures |= SceneTile.bNeedUpdateHighlightsAndOpacitiesInMaterials
+								  || SceneTile.bNeedUpdateCuttingPlanesInMaterials;
+	return bNewTilesReceivedHaveTextures;
 }
 
 void FITwinSceneMapping::OnElementsTimelineModified(CesiumTileID const& TileID,
@@ -900,20 +1052,13 @@ void FITwinSceneMapping::OnElementsTimelineModified(CesiumTileID const& TileID,
 	{
 		return;
 	}
-	// No longer used to notify Animator that new tiles were received, but still used when new Elements are
-	// added to existing (grouped Elements) timelines
-	ModifiedTimeline.SetModified();
-
-	auto const ElementsFeaturesInTile = OnlyForElements
-		? GatherElementsFeaturesInTile(SceneTile, ModifiedTimeline, *OnlyForElements)
-		: GatherElementsFeaturesInTile(SceneTile, ModifiedTimeline, ModifiedTimeline.GetIModelElements());
+	auto const TimelineElemInfos = OnlyForElements
+		? GatherTimelineElemInfos(*this, SceneTile, ModifiedTimeline, *OnlyForElements)
+		: GatherTimelineElemInfos(*this, SceneTile, ModifiedTimeline, ModifiedTimeline.GetIModelElements());
 	// FITwinIModelInternals::OnElementsTimelineModified calls us for every SceneTile, even if it contains no
 	// Element affected by this timeline!
-	if (ElementsFeaturesInTile.empty())
+	if (TimelineElemInfos.empty())
 		return;
-	// store ptr into TileRequirements in the same order as those in ElementsFeaturesInTile...
-	std::vector<FTileRequirements*> ElementsTileRequirements;
-	ElementsTileRequirements.reserve(ElementsFeaturesInTile.size());
 	// Check whether with this ModifiedTimeline we need to switch the Element's material from opaque to
 	// translucent (not the other way round: even if Visibility can force opacity to 1, and not only
 	// multiplies, the material can be translucent for other reasons).
@@ -927,12 +1072,12 @@ void FITwinSceneMapping::OnElementsTimelineModified(CesiumTileID const& TileID,
 	bool bIsAnyElementExtracted = false;
 	if (bTimelineHasPartialVisibility || bTimelineHasTransformations)
 	{
-		check(ElementsTileRequirements.empty());
-		for (FITwinElementFeaturesInTile* ElementInTile : ElementsFeaturesInTile)
+		for (auto const& ElemInfo : TimelineElemInfos)
 		{
-			ElementsTileRequirements.emplace_back(&TileRequirements[ElementInTile->ElementID]);
-			ElementsTileRequirements.back()->bNeedTranslucentMaterial |= bTimelineHasPartialVisibility;
-			ElementsTileRequirements.back()->bNeedBeTransformable |= bTimelineHasTransformations;
+			FITwinElementFeaturesInTile* ElementInTile = ElemInfo.first;
+			auto& ITwinElem = ElementFor(ElemInfo.second);
+			ITwinElem.TileRequirements.bNeedTranslucentMaterial |= bTimelineHasPartialVisibility;
+			ITwinElem.TileRequirements.bNeedBeTransformable |= bTimelineHasTransformations;
 			bool bTranslucencyNeeded = false;
 			if (bTimelineHasPartialVisibility
 				&& !ElementInTile->bHasTestedForTranslucentFeaturesNeedingExtraction)
@@ -974,10 +1119,10 @@ void FITwinSceneMapping::OnElementsTimelineModified(CesiumTileID const& TileID,
 	{
 		ensure(false); // see comment on FITwinSynchro4DSchedulesInternals::OnNewTileMeshBuilt
 		SceneTile.HighlightsAndOpacities.reset(); // let's hope it doesn't crash everything...
-		for (FITwinElementFeaturesInTile* ElementInTile : ElementsFeaturesInTile)
+		for (auto const& ElemInfo : TimelineElemInfos)
 		{
-			ElementInTile->bIsAlphaSetInTextureToHideExtractedElement = false;
-			ElementInTile->TextureFlags.HighlightsAndOpacitiesFlags.Invalidate();// no cond on bTextureIsSet
+			ElemInfo.first->bIsAlphaSetInTextureToHideExtractedElement = false;
+			ElemInfo.first->TextureFlags.HighlightsAndOpacitiesFlags.Invalidate();// no cond on bTextureIsSet
 		}
 	}
 	if (!SceneTile.HighlightsAndOpacities
@@ -1015,8 +1160,8 @@ void FITwinSceneMapping::OnElementsTimelineModified(CesiumTileID const& TileID,
 	{
 		ensure(false); // see comment on FITwinSynchro4DSchedulesInternals::OnNewTileMeshBuilt
 		SceneTile.CuttingPlanes.reset(); // let's hope it doesn't crash everything...
-		for (FITwinElementFeaturesInTile* ElementInTile : ElementsFeaturesInTile)
-			ElementInTile->TextureFlags.CuttingPlaneFlags.Invalidate();// no cond on bTextureIsSet here
+		for (auto const& ElemInfo : TimelineElemInfos)
+			ElemInfo.first->TextureFlags.CuttingPlaneFlags.Invalidate();// no cond on bTextureIsSet here
 	}
 	if (!SceneTile.CuttingPlanes && !ModifiedTimeline.ClippingPlane.Values.empty())
 	{
@@ -1028,15 +1173,28 @@ void FITwinSceneMapping::OnElementsTimelineModified(CesiumTileID const& TileID,
 	}
 	if (SceneTile.HighlightsAndOpacities || SceneTile.CuttingPlanes)
 	{
-		if (ElementsTileRequirements.empty())
-			for (FITwinElementFeaturesInTile* ElementInTile : ElementsFeaturesInTile)
-				ElementsTileRequirements.emplace_back(&TileRequirements[ElementInTile->ElementID]);
-		for (size_t i = 0; i < ElementsFeaturesInTile.size(); ++i)
+		for (auto const& ElemInfo : TimelineElemInfos)
 		{
-			FITwinElementFeaturesInTile* ElementInTile = ElementsFeaturesInTile[i];
-			FTileRequirements*& TileReq = ElementsTileRequirements[i];
-			TileReq->bNeedHiliteAndOpaTex |= (bool)SceneTile.HighlightsAndOpacities;
-			TileReq->bNeedCuttingPlaneTex |= (bool)SceneTile.CuttingPlanes;
+			FITwinElementFeaturesInTile* ElementInTile = ElemInfo.first;
+			// Propagate upwards as long as the nodes are marked as animated by the same timeline, ie up to
+			// the originally animated parent node (because non-mesh nodes are not part of TimelineElemInfos!)
+			FITwinElement* ITwinElem = &ElementFor(ElemInfo.second);
+			while (true)
+			{
+				ITwinElem->TileRequirements.bNeedHiliteAndOpaTex |= (bool)SceneTile.HighlightsAndOpacities;
+				ITwinElem->TileRequirements.bNeedCuttingPlaneTex |= (bool)SceneTile.CuttingPlanes;
+				if (ITwinElem->ParentInVec == ITwinScene::NOT_ELEM)
+				{
+					break;
+				}
+				ITwinElem = &ElementFor(ITwinElem->ParentInVec);
+				if (ITwinElem->AnimationKeys.end()
+					== std::find(ITwinElem->AnimationKeys.begin(), ITwinElem->AnimationKeys.end(), 
+								 ModifiedTimeline.GetIModelElementsKey()))
+				{
+					break;
+				}
+			}
 			if (SceneTile.HighlightsAndOpacities)
 			{
 				if (ElementInTile->bIsElementExtracted
@@ -1100,10 +1258,10 @@ void FITwinSceneMapping::HideExtractedEntities(bool bHide /*= true*/)
 
 FBox const& FITwinSceneMapping::GetBoundingBox(ITwinElementID const Element) const
 {
-	auto it = KnownBBoxes.find(Element);
-	if (it != KnownBBoxes.cend())
+	auto const& Elem = GetElement(Element);
+	if (ITwin::NOT_ELEMENT != Elem.Id)
 	{
-		return it->second;
+		return Elem.BBox;
 	}
 	// For a first (naive) implementation, the map of bounding boxes is
 	// filled as soon as a mesh component is created, so if we don't have
@@ -1164,21 +1322,28 @@ uint32 FITwinSceneMapping::ExtractElementFromTile(ITwinElementID const Element, 
 		ElementFeaturesInTile /*= {}*/)
 {
 	uint32 nbUEEntities = 0;
-	std::optional<std::unordered_map<ITwinElementID, FITwinExtractedEntity>::iterator> ExtractedEntity;
+	// Beware several primitives in the tile can contain the element to extract. That's why we store a vector
+	// in ExtractedEntityMap.
+	std::optional<FITwinSceneTile::ExtractedEntityMap::iterator> EntitiesVecIt;
 	for (FITwinGltfMeshComponentWrapper& gltfMeshData : SceneTile.GltfMeshes)
 	{
 		if (gltfMeshData.CanExtractElement(Element))
 		{
-			if (!ExtractedEntity)
-				ExtractedEntity.emplace(SceneTile.ExtractedElement(Element));
-			if (gltfMeshData.ExtractElement(Element, (*ExtractedEntity)->second, Options))
+			if (!EntitiesVecIt)
+			{
+				EntitiesVecIt.emplace(SceneTile.ExtractedElement(Element));
+				(*EntitiesVecIt)->second.clear(); // just in case we had extracted an obsolete version
+			}
+			auto& ExtractedEntity = (*EntitiesVecIt)->second.emplace_back(
+				FITwinExtractedEntity{ Element });
+			if (gltfMeshData.ExtractElement(Element, ExtractedEntity, Options))
 			{
 				nbUEEntities++;
 			}
 			else
 			{
 				// Don't keep half constructed extracted entity
-				SceneTile.EraseExtractedElement(*ExtractedEntity);
+				(*EntitiesVecIt)->second.pop_back();
 			}
 		}
     }
@@ -1190,30 +1355,36 @@ uint32 FITwinSceneMapping::ExtractElementFromTile(ITwinElementID const Element, 
 		(*ElementFeaturesInTile)->second.bIsElementExtracted = true;
 		if (Options.bSetupMatForTileTexturesNow)
 		{
-			auto& Extracted = (*ExtractedEntity)->second;
-			SetupFeatureIdUVIndex(SceneTile, Extracted);
-			if (SceneTile.HighlightsAndOpacities)
+			for (auto&& Extracted : (*EntitiesVecIt)->second)
 			{
-				SceneTile.HighlightsAndOpacities->UpdateInMaterial(Extracted.Material,
-																   *HighlightsAndOpacitiesInfo);
-				Extracted.TextureFlags.HighlightsAndOpacitiesFlags.OnTextureSetInMaterials(1);
-			}
-			if (SceneTile.CuttingPlanes)
-			{
-				SceneTile.CuttingPlanes->UpdateInMaterial(Extracted.Material, *CuttingPlanesInfo);
-				Extracted.TextureFlags.CuttingPlaneFlags.OnTextureSetInMaterials(1);
-			}
-			if (SceneTile.SelectionHighlights)
-			{
-				SceneTile.SelectionHighlights->UpdateInMaterial(Extracted.Material,
-																*SelectionHighlightsInfo);
-				Extracted.TextureFlags.SelectionFlags.OnTextureSetInMaterials(1);
+				SetupFeatureIdUVIndex(SceneTile, Extracted);
+				if (SceneTile.HighlightsAndOpacities)
+				{
+					SceneTile.HighlightsAndOpacities->UpdateInMaterial(Extracted.Material,
+						*HighlightsAndOpacitiesInfo);
+					Extracted.TextureFlags.HighlightsAndOpacitiesFlags.OnTextureSetInMaterials(1);
+				}
+				if (SceneTile.CuttingPlanes)
+				{
+					SceneTile.CuttingPlanes->UpdateInMaterial(Extracted.Material, *CuttingPlanesInfo);
+					Extracted.TextureFlags.CuttingPlaneFlags.OnTextureSetInMaterials(1);
+				}
+				if (SceneTile.SelectionHighlights)
+				{
+					SceneTile.SelectionHighlights->UpdateInMaterial(Extracted.Material,
+						*SelectionHighlightsInfo);
+					Extracted.TextureFlags.SelectionFlags.OnTextureSetInMaterials(1);
+				}
 			}
 		}
 	}
+	if (EntitiesVecIt && (*EntitiesVecIt)->second.empty())
+	{
+		// No need to keep an empty entry in the map
+		SceneTile.EraseExtractedElement(*EntitiesVecIt);
+	}
 	return nbUEEntities;
 }
-
 
 uint32 FITwinSceneMapping::ExtractElementsOfSomeTiles(
     float percentageOfTiles,
@@ -1254,7 +1425,6 @@ uint32 FITwinSceneMapping::ExtractElementsOfSomeTiles(
     return nbExtractedElts;
 }
 
-
 void FITwinSceneMapping::HidePrimitivesWithExtractedEntities(bool bHide /*= true*/)
 {
     for (auto& it : KnownTiles)
@@ -1292,26 +1462,36 @@ void FITwinSceneMapping::BakeFeaturesInUVs_AllMeshes()
 
 bool FITwinSceneMapping::SelectElement(ITwinElementID const& InElemID, UWorld const* World)
 {
+	if (InElemID == SelectedElement)
+	{
+		return false;
+	}
 	bool bSelectedInATile = false;
 	for (auto& [TileID, SceneTile] : KnownTiles)
 	{
-		bool bHasUpdatedTex(false);
-		bSelectedInATile |= SceneTile.SelectElement(InElemID, bHasUpdatedTex, World);
-		if (bHasUpdatedTex)
-			bNeedUpdateSelectionHighlights = true;
+		bSelectedInATile |= SceneTile.SelectElement(InElemID, bNeedUpdateSelectionHighlights, World);
 	}
+	SelectedElement = InElemID;
 	return bSelectedInATile;
 }
 
-void FITwinSceneMapping::UpdateSelectionHighlights()
+void FITwinSceneMapping::UpdateSelectionAndHighlightTextures()
 {
-	if (!bNeedUpdateSelectionHighlights)
-		return;
+	// First update pending selection textures...
+	if (bNeedUpdateSelectionHighlights)
+	{
+		for (auto& [TileID, SceneTile] : KnownTiles)
+		{
+			SceneTile.UpdateSelectionTextureInMaterials();
+		}
+		bNeedUpdateSelectionHighlights = false;
+	}
+	// ...then only select the element in all tiles, so that new tiles or newly visible tiles are updated
+	// (since we must wait the next frame to call UpdateSelectionTextureInMaterials...)
 	for (auto& [TileID, SceneTile] : KnownTiles)
 	{
-		SceneTile.UpdateSelectionTextureInMaterials();
+		SceneTile.SelectElement(SelectedElement, bNeedUpdateSelectionHighlights, nullptr);
 	}
-	bNeedUpdateSelectionHighlights = false;
 }
 
 std::optional<CesiumTileID> FITwinSceneMapping::DrawOwningTileBox(
@@ -1349,7 +1529,10 @@ std::optional<CesiumTileID> FITwinSceneMapping::DrawOwningTileBox(
 
 void FITwinSceneMapping::Reset()
 {
-	KnownBBoxes.clear();
+	{ decltype(AllElements) Empty; Empty.swap(AllElements); }
+	ElementsInVec.clear();
+	SourceElementIDs.clear();
+	{ decltype(DuplicateElements) Empty; Empty.swap(DuplicateElements); }
 	KnownTiles.clear();
 	bNeedUpdateSelectionHighlights = false;
 	IModelBBox_ITwin = {};

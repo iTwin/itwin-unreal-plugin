@@ -40,7 +40,7 @@ public:
 		template<class _T, size_t _n>
 		void SetColors(const std::vector<std::array<_T, _n>>& colors);
 		template<class _T>
-		void SetFeatureIds(const std::vector<std::array<_T, 1>>& featureIds);
+		void SetFeatureIds(const std::vector<std::array<_T, 1>>& featureIds, bool bShareBufferForMatIDs = false);
 		void SetITwinMaterialID(uint64_t materialId);
 	private:
 		MeshPrimitive(GltfBuilder& builder, CesiumGltf::MeshPrimitive& primitive);
@@ -54,7 +54,10 @@ public:
 	//! Currently only usable for adding the same metadata as the mesh export service,
 	//! eg. "element", "model" etc.
 	//! Used in unit tests.
-	void AddMetadataProperty(const std::string& name, const std::vector<uint64_t> values);
+	void AddMetadataProperty(const std::string& className,
+		const std::string& propertyName,
+		const std::vector<uint64_t>& values,
+		size_t featureSetIndex = 0);
 	MeshPrimitive AddMeshPrimitive(int32_t mesh, int32_t material, int32_t mode);
 	int32_t AddMaterial();
 private:

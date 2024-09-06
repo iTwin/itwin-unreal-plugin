@@ -18,6 +18,10 @@ add_library (httpmockserver
 	port_searcher.h
 	test_environment.h
 )
+target_link_libraries(httpmockserver PUBLIC 
+						${MHD_LIBRARIES}
+						${CPR_LIBRARIES}
+					)
 
 target_include_directories (httpmockserver PUBLIC
     ${MHD_INCLUDE_DIRS}

@@ -22,14 +22,14 @@ constexpr uint16_t SimultaneousRequestsAllowed = 6;
 class FITwinSchedulesImport
 {
 public:
-	FITwinSchedulesImport(UITwinSynchro4DSchedules const& Owner, std::recursive_mutex& Mutex,
+	FITwinSchedulesImport(UITwinSynchro4DSchedules& Owner, std::recursive_mutex& Mutex,
 						  std::vector<FITwinSchedule>& Schedules);
 	FITwinSchedulesImport(FITwinSchedulesImport&& InOwner) = delete;
 	FITwinSchedulesImport& operator=(FITwinSchedulesImport&& Other);
+	FString ToString() const;
 
 	bool IsReady() const;
-	void ResetConnection(TObjectPtr<AITwinServerConnection> const ServerConnection,
-						 FString const& ITwinAkaProjectAkaContextId, FString const& IModelId);
+	void ResetConnection(FString const& ITwinAkaProjectAkaContextId, FString const& IModelId);
 	void SetSchedulesImportObservers(FOnAnimationBindingAdded const& InOnAnimBindingAdded,
 									 FOnAnimationGroupModified const& InOnAnimationGroupModified);
 	std::pair<int, int> HandlePendingQueries();
@@ -52,5 +52,5 @@ public:
 private:
 	class FImpl;
 	TPimplPtr<FImpl> Impl;
-	UITwinSynchro4DSchedules const* Owner;///< Never nullptr, not a ref because of move-assignment op
+	UITwinSynchro4DSchedules* Owner;///< Never nullptr, not a ref because of move-assignment op
 };

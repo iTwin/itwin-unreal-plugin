@@ -62,6 +62,8 @@ private:
 	void StartCameraMovementToSavedView(float& OutBlendTime, ACameraActor*& Actor, FTransform& Transform, const FSavedView& SavedView, float BlendTime);
 	UFUNCTION(BlueprintCallable)
 	void EndCameraMovement(ACameraActor* Actor, const FTransform& Transform);
+	//! Warning: this function should be used only in a single specific case:
+	//! Converting the orientation of the camera of a saved view when the iModel is *not* geolocated.
 	UFUNCTION(BlueprintCallable)
 	void ITwinRotationToUE(FRotator& UERotation, const FRotator& ITwinRotation);
 	UFUNCTION(BlueprintCallable)

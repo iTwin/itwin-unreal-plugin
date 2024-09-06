@@ -993,7 +993,8 @@ void TilesetContentManager::loadTileContent(
   pLoader->loadTileContent(loadInput)
       .thenImmediately([tileLoadInfo = std::move(tileLoadInfo),
                         projections = std::move(projections),
-                        rendererOptions = tilesetOptions.rendererOptions](
+                        rendererOptions = tilesetOptions.rendererOptions,
+                        gltfTuner = _externals.gltfTuner](
                            TileLoadResult&& result) mutable {
         // the reason we run immediate continuation, instead of in the
         // worker thread, is that the loader may run the task in the main
@@ -1009,7 +1010,18 @@ void TilesetContentManager::loadTileContent(
                 [result = std::move(result),
                  projections = std::move(projections),
                  tileLoadInfo = std::move(tileLoadInfo),
-                 rendererOptions]() mutable {
+                 rendererOptions,
+                 gltfTuner]() mutable {
+                  if (gltfTuner) {
+                    // Immediately tune the model, otherwise a tuning will be triggered after
+                    // the renderer-side resources have been created, which is both a performance
+                    // issue (since rendered resources will be re-created for the tuned mode),
+                    // and a cause of potential visual issues (the model may appear briefly with
+                    // custom materials not applied, because the model is not yet tuned).
+                    result.tuneVersion = gltfTuner->currentVersion;
+                    auto& model = std::get<CesiumGltf::Model>(result.contentKind);
+                    model = gltfTuner->Tune(model);
+                  }
                   return postProcessContentInWorkerThread(
                       std::move(result),
                       std::move(projections),
@@ -1347,7 +1359,8 @@ void TilesetContentManager::setTileContent(
             std::move(result.rasterOverlayDetails),
             pWorkerRenderResources},
         std::move(result.contentKind));
-
+    if (auto* renderContent = tile.getContent().getRenderContent())
+      renderContent->tuneVersion = result.tuneVersion;
     if (result.tileInitializer) {
       result.tileInitializer(tile);
     }

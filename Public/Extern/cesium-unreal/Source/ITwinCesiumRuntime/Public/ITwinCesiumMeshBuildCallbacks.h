@@ -10,14 +10,17 @@
 
 #include <Cesium3DTilesSelection/TileID.h>
 #include <UObject/WeakObjectPtr.h>
-#include <glm/mat4x4.hpp>
+
+#include <optional>
 #include <unordered_map>
 
 class UMaterialInstanceDynamic;
 class UMaterialInterface;
 class UStaticMeshComponent;
+class USceneComponent;
 struct FITwinCesiumModelMetadata;
 struct FITwinCesiumPrimitiveFeatures;
+struct FStaticMeshLODResources;
 
 namespace CesiumGltf {
 	struct MeshPrimitive;
@@ -52,9 +55,14 @@ public:
 		const FITwinCesiumMeshData& CesiumMeshData) = 0;
 
 	/**
-	* Whether an extra UV layer should be allocated for feature IDs.
+	* Called before a tile is destroyed (when it is unloaded, typically).
 	*/
-	virtual bool ShouldAllocateUVForFeatures() const = 0;
+	virtual void BeforeTileDestruction(
+		const Cesium3DTilesSelection::Tile& Tile,
+		USceneComponent* TileGltfComponent) = 0;
+
+	virtual uint32 BakeFeatureIDsInVertexUVs(std::optional<uint32> featuresAccessorIndex,
+		FITwinCesiumMeshData const& CesiumMeshData, FStaticMeshLODResources& LODResources) const = 0;
 
 	/**
 	* Creates a material instance for the given primitive.

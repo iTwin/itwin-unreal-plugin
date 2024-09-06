@@ -12,6 +12,7 @@
 #include <Cesium3DTilesSelection/Tile.h> // see TCesiumTileID later on
 #include <CesiumTileIDHash.h>
 #include <CesiumMaterialType.h>
+#include <Compil/StdHash.h>
 #include <ITwinCoordSystem.h>
 #include <ITwinElementID.h>
 #include <ITwinFeatureID.h>
@@ -19,7 +20,7 @@
 #include <ITwinGltfMeshComponentWrapper.h>
 #include <Math/Matrix.h>
 #include <Templates/SharedPointer.h>
-#include <Timeline/TimelineFwd.h>
+#include <Timeline/Timeline.h>
 #include <UObject/WeakObjectPtr.h>
 
 #include <functional>
@@ -27,12 +28,19 @@
 #include <unordered_map>
 #include <vector>
 
+#include <Compil/BeforeNonUnrealIncludes.h>
+#	include <BeHeaders/Compil/AlwaysFalse.h>
+#	include <boost/container/small_vector.hpp>
+#include <Compil/AfterNonUnrealIncludes.h>
+
 class AActor;
 class UMaterialInstanceDynamic;
 class UMaterialInterface;
 class UPrimitiveComponent;
 class UStaticMeshComponent;
 class FITwinSceneMappingBuilder;
+
+template <class T, std::size_t N> using FSmallVec = boost::container::small_vector<T, N>;
 
 /* Cesium tiles streamed by the mesh export service contain a single gtlf mesh divided into gltf primitives.
  * Grouping into primitives was done by comparing the "display parameters" of the iModel meshes, which
@@ -182,15 +190,11 @@ struct FITwinExtractedEntity
 
 class FITwinSceneTile
 {
-	/// Used to fill the textures (see (*) on TITwinFeatureID) for non-extracted Elements.
-	std::unordered_map<ITwinElementID, FITwinElementFeaturesInTile> ElementsFeatures;
-
-	/// Extracted Elements
-	std::unordered_map<ITwinElementID, FITwinExtractedEntity> ExtractedElements;
-
-	ITwinElementID SelectedElement = ITwin::NOT_ELEMENT;
-
 public:
+	using ExtractedEntityVec = FSmallVec<FITwinExtractedEntity, 4>;
+	using ExtractedEntityMap = std::unordered_map<ITwinElementID, ExtractedEntityVec>;
+
+
 	/// Maximum Feature ID in the tile. Only relevant when it does not equal ITwin::NOT_FEATURE.
 	ITwinFeatureID MaxFeatureID = ITwin::NOT_FEATURE;
 
@@ -233,15 +237,13 @@ public:
 	void ForEachElementFeatures(std::function<void(FITwinElementFeaturesInTile&)> const& Func);
 
 	/// Finds the FITwinExtractedEntity for the passed Element ID or return nullptr
-	FITwinExtractedEntity const* FindExtractedElement(ITwinElementID const& ElemID) const;
-	FITwinExtractedEntity* FindExtractedElement(ITwinElementID const& ElemID);
+	ExtractedEntityVec const* FindExtractedElement(ITwinElementID const& ElemID) const;
+	ExtractedEntityVec* FindExtractedElement(ITwinElementID const& ElemID);
 
-	/// Finds or inserts a FITwinExtractedEntity for the passed Element ID
-	std::unordered_map<ITwinElementID, FITwinExtractedEntity>::iterator
-		ExtractedElement(ITwinElementID const& ElemID);
+	/// Finds or inserts an ExtractedEntityVec for the passed Element ID
+	ExtractedEntityMap::iterator ExtractedElement(ITwinElementID const& ElemID);
 
-	void EraseExtractedElement(
-		std::unordered_map<ITwinElementID, FITwinExtractedEntity>::iterator const Where);
+	void EraseExtractedElement(ExtractedEntityMap::iterator const Where);
 
 	void ForEachExtractedElement(std::function<void(FITwinExtractedEntity&)> const& Func);
 
@@ -255,6 +257,17 @@ public:
 	template<typename ElementsCont>
 	void ForEachExtractedElement(ElementsCont const& ForElementIDs,
 								 std::function<void(FITwinExtractedEntity&)> const& Func);
+
+
+private:
+	/// Used to fill the textures (see (*) on TITwinFeatureID) for non-extracted Elements.
+	std::unordered_map<ITwinElementID, FITwinElementFeaturesInTile> ElementsFeatures;
+
+	/// Extracted Elements
+	ExtractedEntityMap ExtractedElements;
+
+	/// Last Element ID, if any, for which the tile's SelectionHighlight texture was set up
+	ITwinElementID SelectedElement = ITwin::NOT_ELEMENT;
 };
 
 using CesiumTileID = Cesium3DTilesSelection::TileID;
@@ -267,19 +280,65 @@ struct FTileRequirements
 	bool bNeedBeTransformable = false; ///< unused unless SYNCHRO4D_ENABLE_TRANSFORMATIONS() is set to 1
 };
 
+namespace ITwinScene
+{
+	DEFINE_STRONG_UINT64(ElemIdx);
+	constexpr ElemIdx NOT_ELEM{ (size_t)-1 };
+	DEFINE_STRONG_UINT64(DuplIdx);
+	constexpr DuplIdx NOT_DUPL{ (size_t)-1 };
+}
+
+class FITwinElement
+{
+public:
+	bool bHasMesh = false; ///< true when encountered in FITwinSceneMappingBuilder
+	/// The only member strictly required for a valid structure, although usually you'll soon have either the
+	/// Parent or the BBox known as well.
+	ITwinElementID Id = ITwin::NOT_ELEMENT;
+	/// Index of Parent in storage array
+	ITwinScene::ElemIdx ParentInVec = ITwinScene::NOT_ELEM;
+	/// Index in FITwinSceneMapping::DuplicateElements
+	ITwinScene::DuplIdx DuplicatesList = ITwinScene::NOT_DUPL;
+	/// Timeline indexing key of (one of) the timeline(s) applying to this Element.
+	using FAnimKeysVec = FSmallVec<FIModelElementsKey, 2>;
+	FAnimKeysVec AnimationKeys;
+	/// UE-World AABB for the Elements: we need them for cutting plane animation, 3D path anchor, etc.
+	FBox BBox;
+	/// Stores the Element's "animation requirements" like the need for property textures or whether or not
+	/// it is extracted at least in one tile. Useful to set up each tile in which they'll be found, even when
+	/// we don't want to check its timelines one by one. This is filled even for Element nodes in the
+	/// hierarchy tree for which bhasMesh is false, because we need the info when calling
+	/// OnElementsTimelineModified on child Elements of animated tasks that may be only received later,
+	/// typically in tiles of finer LOD.
+	FTileRequirements TileRequirements;
+	using FSubElemsVec = FSmallVec<ITwinScene::ElemIdx, 4>;
+	FSubElemsVec SubElemsInVec;
+};
+
 class FITwinSceneMapping
 {
+public:
+	using FDuplicateElementsVec = FSmallVec<ITwinScene::ElemIdx, 2>;
 private:
-	/// UE-World AABB for the Elements: we need them for cutting plane animation, 3D path anchor, etc.
-	std::unordered_map<ITwinElementID, FBox> KnownBBoxes;
-	/// Stores Elements requirements in each tile where they'll be found, like the need for property textures
-	/// or whether or not they are extracted at least in once tile
-	std::unordered_map<ITwinElementID, FTileRequirements> TileRequirements;
+	/// Can still be filled by Element as Cesium tiles are loaded, but since we'll want the whole hierarchy
+	/// tree, as soon as it's obtained from the web services, the whole list of iModel Elements will be
+	/// present in the vector, which does NOT mean we know anything more than their ParentId.
+	/// To process only Elements that were visible in the UE scene at some point, you now need to check
+	/// FITwinElement::bHasMesh.
+	std::vector<FITwinElement> AllElements;
+	std::unordered_map<ITwinElementID, ITwinScene::ElemIdx> ElementsInVec;
+	/// *All* Source Element IDs retrieved from the iModel metadata query.
+	std::unordered_map<FString, ITwinScene::ElemIdx/*first seen for this Source*/> SourceElementIDs;
+	/// Only contains entries for Elements with a common Source Element IDs: should be much fewer of those
+	/// than SourceElementIDs.
+	std::vector<FDuplicateElementsVec> DuplicateElements;
 	std::function<FITwinScheduleTimeline const& ()> TimelineGetter;
 	std::function<UMaterialInterface* (ECesiumMaterialType)> MaterialGetter;
 	bool bNewTilesReceivedHaveTextures = false;
 	bool bNewTileTexturesNeedUpateInMaterials = false;
 	bool bNeedUpdateSelectionHighlights = false;
+	/// ID of the currently selected Element, if any
+	ITwinElementID SelectedElement = ITwin::NOT_ELEMENT;
 	/// Global bounding box for the whole model - very coarse, as it it filled from all known tiles,
 	/// taking the lowest LODs into account. This could be improved by evaluating it from the tiles currently
 	/// displayed...
@@ -296,11 +355,45 @@ public:
 	std::unordered_map<CesiumTileID, FITwinSceneTile> KnownTiles;
 	std::function<void(CesiumTileID const&, std::set<ITwinElementID>&&)> OnNewTileMeshBuilt;
 
+	FITwinSceneMapping();
+
+	/// Get all known Element structures in the storage array
+	const std::vector<FITwinElement>& GetElements() const { return AllElements; }
+	/// Get all known Elements IDs and indices in the storage array
+	const std::unordered_map<ITwinElementID, ITwinScene::ElemIdx>& GetElementIDs() const {
+		return ElementsInVec;
+	}
+
+	/// ElemDesignation can be by ElementID (ITwinElementID) or by index in AllElements (ITwinScene::ElemIdx)
+	template<typename ElemDesignation>
+	FITwinElement const& GetElement(ElemDesignation const Designation) const {
+		static_assert(always_false_v<ElemDesignation>,
+					  "Unsupported Element designation type for FITwinSceneMapping::GetElement");
+	}
+	template<> FITwinElement const& GetElement<ITwinScene::ElemIdx>(ITwinScene::ElemIdx const ByIndex) const {
+		return AllElements[ByIndex.value()];
+	}
+	template<> FITwinElement const& GetElement<ITwinElementID>(ITwinElementID const ById) const {
+		static const FITwinElement Empty;
+		auto Found = ElementsInVec.find(ById);
+		if (Found != ElementsInVec.end())
+			return AllElements[Found->second.value()];
+		else
+			return Empty;
+	}
+	FITwinElement& ElementFor(ITwinScene::ElemIdx const ByElemIdx);
+	FITwinElement& ElementFor(ITwinElementID const ById, ITwinScene::ElemIdx* IndexInVec = nullptr);
+	int ParseHierarchyTree(FString const& JsonStr);
+	int ParseSourceElementIDs(FString const& JsonStr);
+	FDuplicateElementsVec const& GetDuplicateElements(ITwinElementID const ElemID) const;
+
 	void OnElementsTimelineModified(CesiumTileID const& TileID, FITwinSceneTile& SceneTile,
 									FITwinElementTimeline& ModifiedTimeline,
 									std::vector<ITwinElementID> const* OnlyForElements = nullptr);
-	/// See long comment before call, in FITwinSynchro4DSchedulesInternals::HandleReceivedElements
-	void ReplicateKnownElementsSetupInTile(
+	/// See long comment before call, in FITwinSynchro4DSchedulesInternals::HandleReceivedElements.
+	/// Does not (need to) handle selection highlight (see UpdateSelectionAndHighlightTextures).
+	/// \return Whether new tiles received have textures set up for Synchro animation
+	bool ReplicateAnimatedElementsSetupInTile(
 		std::pair<CesiumTileID, std::set<ITwinElementID>> const& TileElements);
 	size_t UpdateAllTextures();
 	bool NewTilesReceivedHaveTextures(bool& bHasUpdatedTextures);
@@ -315,10 +408,6 @@ public:
 
 	/// Get the Element's AABB in UE coordinates
 	FBox const& GetBoundingBox(ITwinElementID const Element) const;
-	/// Get all known Elements' AABBs in UE coordinates
-	const std::unordered_map<ITwinElementID, FBox>& GetKnownBBoxes() const {
-		return KnownBBoxes;
-	}
 	FBox const& GetIModelBoundingBox(EITwinCoordSystem CoordSystem) const {
 		return (CoordSystem == EITwinCoordSystem::UE) ? IModelBBox_UE: IModelBBox_ITwin;
 	}
@@ -333,9 +422,9 @@ public:
 	static void SetupFeatureIdUVIndex(FITwinSceneTile& SceneTile,
 									  FITwinElementFeaturesInTile& ElementFeaturesInTile);
 	static void SetupFeatureIdUVIndex(FITwinSceneTile& SceneTile, FITwinExtractedEntity& ExtractedEntity);
-	static void SetupHighlights(FITwinSceneTile& SceneTile,
+	static void SetupHighlightsOpacities(FITwinSceneTile& SceneTile,
 								FITwinElementFeaturesInTile& ElementFeaturesInTile);
-	static void SetupHighlights(FITwinSceneTile& SceneTile, FITwinExtractedEntity& ExtractedEntity);
+	static void SetupHighlightsOpacities(FITwinSceneTile& SceneTile, FITwinExtractedEntity& ExtractedEntity);
 	static void SetupCuttingPlanes(FITwinSceneTile& SceneTile,
 								   FITwinElementFeaturesInTile& ElementFeaturesInTile);
 	static void SetupCuttingPlanes(FITwinSceneTile& SceneTile, FITwinExtractedEntity& ExtractedEntity);
@@ -373,8 +462,11 @@ public:
 	/// Set the current selected ElementID - can be NOT_ELEMENT to discard any selection.
 	bool SelectElement(ITwinElementID const& InElemID, UWorld const* World);
 
-	bool NeedUpdateSelectionHighlights() const { return bNeedUpdateSelectionHighlights; }
-	void UpdateSelectionHighlights();
+	//! Returns the selected Element's ID, if an Element is selected, or ITwin::NOT_ELEMENT.
+	ITwinElementID GetSelectedElement() const { return SelectedElement; }
+
+	/// Called each frame: even if nothing changed in the selection, new tiles may have arrived and need it
+	void UpdateSelectionAndHighlightTextures();
 
 	/// Given a hit component, display the world bounding box of its owner tile.
 	std::optional<CesiumTileID> DrawOwningTileBox(
@@ -391,10 +483,6 @@ private:
 		FITwinMeshExtractionOptions const& Options = {},
 		std::optional<std::unordered_map<ITwinElementID, FITwinElementFeaturesInTile>::iterator> 
 			ElementFeaturesInTile = {});
-
-	template<typename Container>
-	std::vector<FITwinElementFeaturesInTile*> GatherElementsFeaturesInTile(FITwinSceneTile& SceneTile,
-		FITwinElementTimeline const& Timeline, Container const& TimelineElements);
 
 	friend class FITwinSceneMappingBuilder;
 };

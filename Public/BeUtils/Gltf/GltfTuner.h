@@ -9,6 +9,9 @@
 #pragma once
 
 #include <Cesium3DTilesSelection/TilesetExternals.h>
+#include <functional>
+#include <unordered_set>
+#include <rapidjson/document.h>
 
 namespace BeUtils
 {
@@ -18,6 +21,8 @@ struct ITwinMaterialInfo
 	uint64_t id = 0;
 	std::string name;
 };
+
+using ITwinMaterialInfoReadCallback = std::function<void(std::vector<ITwinMaterialInfo> const&)>;
 
 class GltfTuner: public Cesium3DTilesSelection::GltfTuner
 {
@@ -43,6 +48,8 @@ public:
 		//! All IDs not contained in any group can be merged together, as long as the primitives have
 		//! same topology, same material, same attribute list.
 		std::vector<ElementGroup> elementGroups_;
+		//! iTwin material IDs to split (when the user wants to edit/replace materials, typically)
+		std::unordered_set<uint64_t> itwinMatIDsToSplit_;
 	};
 	GltfTuner();
 	~GltfTuner();
@@ -50,11 +57,15 @@ public:
 	virtual void ParseTilesetJson(const rapidjson::Document& tilesetJson) override;
 	void SetRules(Rules&& rules);
 
+	bool HasITwinMaterialInfo() const;
 	std::vector<ITwinMaterialInfo> GetITwinMaterialInfo() const;
+	void SetMaterialInfoReadCallback(ITwinMaterialInfoReadCallback const&);
 
 private:
 	class Impl;
 	const std::unique_ptr<Impl> impl_;
+
+	ITwinMaterialInfoReadCallback onMaterialInfoParsed_;
 };
 
 } // namespace BeUtils

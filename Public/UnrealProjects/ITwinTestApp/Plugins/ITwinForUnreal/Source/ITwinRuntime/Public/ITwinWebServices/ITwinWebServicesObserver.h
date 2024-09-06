@@ -21,7 +21,16 @@ struct FITwinRealityData3DInfo;
 struct FSavedViewInfos;
 struct FSavedView;
 struct FSavedViewInfo;
+struct FSavedViewGroupInfo;
+struct FSavedViewGroupInfos;
 struct FElementProperties;
+struct FProjectExtents;
+struct FEcefLocation;
+
+namespace SDK::Core {
+	// TODO_JDE convert ITwinMaterialProperties into something we can manipulate through blueprints...
+	struct ITwinMaterialPropertiesMap;
+}
 
 class ITWINRUNTIME_API IITwinWebServicesObserver : public IITwinAuthorizationObserver
 {
@@ -45,10 +54,18 @@ public:
 
 	virtual void OnSavedViewInfosRetrieved(bool bSuccess, FSavedViewInfos const& Infos) = 0;
 	virtual void OnSavedViewRetrieved(bool bSuccess, FSavedView const& SavedView, FSavedViewInfo const& SavedViewInfo) = 0;
+	virtual void OnSavedViewThumbnailRetrieved(bool bSuccess, FString const& SavedViewThumbnail, FString const& SavedViewId) = 0;
+	virtual void OnSavedViewThumbnailUpdated(bool bSuccess, FString const& SavedViewId, FString const& Response) = 0;
+	virtual void OnSavedViewGroupInfosRetrieved(bool bSuccess, FSavedViewGroupInfos const& Infos) = 0;
+	virtual void OnSavedViewGroupAdded(bool bSuccess, FSavedViewGroupInfo const& SavedViewGroupInfo) = 0;
 	virtual void OnSavedViewAdded(bool bSuccess, FSavedViewInfo const& SavedViewInfo) = 0;
 	virtual void OnSavedViewDeleted(bool bSuccess, FString const& SavedViewId, FString const& Response) = 0;
 	virtual void OnSavedViewEdited(bool bSuccess, FSavedView const& SavedView, FSavedViewInfo const& SavedViewInfo) = 0;
 	virtual void OnElementPropertiesRetrieved(bool bSuccess, FElementProperties const& ElementProps) = 0;
+	virtual void OnIModelPropertiesRetrieved(bool bSuccess, bool bHasExtents, FProjectExtents const& Extents, bool bHasEcefLocation, FEcefLocation const& EcefLocation) = 0;
+	virtual void OnIModelQueried(bool bSuccess, FString const& QueryResult) = 0;
+
+	virtual void OnMaterialPropertiesRetrieved(bool bSuccess, SDK::Core::ITwinMaterialPropertiesMap const& props) = 0;
 };
 
 
@@ -71,10 +88,18 @@ public:
 	virtual void OnExportStarted(bool bSuccess, FString const& InExportId) override;
 	virtual void OnSavedViewInfosRetrieved(bool bSuccess, FSavedViewInfos const& Infos) override;
 	virtual void OnSavedViewRetrieved(bool bSuccess, FSavedView const& SavedView, FSavedViewInfo const& SavedViewInfo) override;
+	virtual void OnSavedViewThumbnailRetrieved(bool bSuccess, FString const& SavedViewThumbnail, FString const& SavedViewId) override;
+	virtual void OnSavedViewThumbnailUpdated(bool bSuccess, FString const& SavedViewId, FString const& Response) override;
+	virtual void OnSavedViewGroupInfosRetrieved(bool bSuccess, FSavedViewGroupInfos const& Infos) override;
+	virtual void OnSavedViewGroupAdded(bool bSuccess, FSavedViewGroupInfo const& SavedViewGroupInfo) override;
 	virtual void OnSavedViewAdded(bool bSuccess, FSavedViewInfo const& SavedViewInfo) override;
 	virtual void OnSavedViewDeleted(bool bSuccess, FString const& SavedViewId, FString const& Response) override;
 	virtual void OnSavedViewEdited(bool bSuccess, FSavedView const& SavedView, FSavedViewInfo const& SavedViewInfo) override;
 	virtual void OnElementPropertiesRetrieved(bool bSuccess, FElementProperties const& ElementProps) override;
+	virtual void OnIModelPropertiesRetrieved(bool bSuccess, bool bHasExtents, FProjectExtents const& Extents, bool bHasEcefLocation, FEcefLocation const& EcefLocation) override;
+	virtual void OnIModelQueried(bool bSuccess, FString const& QueryResult) override;
+
+	virtual void OnMaterialPropertiesRetrieved(bool bSuccess, SDK::Core::ITwinMaterialPropertiesMap const& props) override;
 
 protected:
 	virtual const TCHAR* GetObserverName() const = 0;

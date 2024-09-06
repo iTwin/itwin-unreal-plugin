@@ -12,6 +12,7 @@
 #include <Dom/JsonObject.h>
 #include <HttpFwd.h>
 #include <Templates/PimplPtr.h>
+#include <ITwinSynchro4DSchedules.h>
 
 #include <array>
 #include <atomic>
@@ -86,7 +87,9 @@ public:
 		FCheckRequest const& CheckRequest, ReusableJsonQueries::FMutex& Mutex,
 		TCHAR const* const InSavedFolderForReplay, int const SchedApiSession,
 		TCHAR const* const InSimulateFromFolder,
-		std::optional<ReusableJsonQueries::EReplayMode> const ReplayMode);
+		std::optional<ReusableJsonQueries::EReplayMode> const ReplayMode,
+		FScheduleQueryingDelegate const& OnScheduleQueryingStatusChanged,
+		std::function<FString()> const& GetBearerToken);
 
 	void ChangeRemoteUrl(FString const& NewRemoteUrl);
 

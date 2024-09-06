@@ -2,16 +2,21 @@ cmake_minimum_required(VERSION 3.18)
 
 include(cmake/HandleVCPKG.cmake)
 
-
-if(${UNREAL_BUILD})
+set(SDK_ADDUNITTEST ON)
+if("${VIZSDK_BUILD_CONTEXT}" STREQUAL "Unreal")
 	message("Using Unreal build configuration")
-	set (CMAKE_CONFIGURATION_TYPES UnrealDebug Release)
-	include(cmake/CustomConfig.cmake)
+	if(WIN32)
+		set (CMAKE_CONFIGURATION_TYPES UnrealDebug Release)
+		include(cmake/CustomConfig.cmake)
+	endif()
+	set(SDK_ADDUNITTEST OFF)
 endif()
 
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
-enable_testing()
+if(SDK_ADDUNITTEST)
+	enable_testing()
+endif()
 
 set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 set(DefaultCXXSTD cxx_std_20)

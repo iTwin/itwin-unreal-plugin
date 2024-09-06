@@ -49,10 +49,14 @@ struct FITwinMeshExtractionOptions
 class FITwinGltfMeshComponentWrapper
 {
 public:
+    static uint32 BakeFeatureIDsInVertexUVs(std::optional<uint32> featuresAccessorIndex,
+        ICesiumMeshBuildCallbacks::FITwinCesiumMeshData const& CesiumData,
+        FStaticMeshLODResources& LODResources);
+
+public:
     FITwinGltfMeshComponentWrapper(
         const TWeakObjectPtr<UStaticMeshComponent>& MeshComponent,
         const ICesiumMeshBuildCallbacks::FITwinCesiumMeshData& CesiumData);
-
 
     /// Extract faces matching the given element, if any, as a new Unreal mesh.
     /// \return true if a sub-mesh was actually extracted.

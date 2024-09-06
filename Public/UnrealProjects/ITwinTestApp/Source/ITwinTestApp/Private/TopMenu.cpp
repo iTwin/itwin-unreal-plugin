@@ -7,27 +7,35 @@
 +--------------------------------------------------------------------------------------*/
 
 #include <TopMenu.h>
+#include <ITwinRuntime/Private/Compil/SanitizedPlatformHeaders.h>
 #include <TopMenuWidgetImpl.h>
 #include <ITwinIModel.h>
 #include <iTwinWebServices/iTwinWebServices.h>
 #include <Camera/CameraActor.h>
 #include <Camera/CameraComponent.h>
+#include <GameFramework/FloatingPawnMovement.h>
 #include <GameFramework/Pawn.h>
 #include <GameFramework/PlayerController.h>
 #include <Kismet/GameplayStatics.h>
 #include <Kismet/KismetMathLibrary.h>
 #include <TimerManager.h>
 #include <UObject/StrongObjectPtr.h>
+#include <ITwinUtilityLibrary.h>
 
 void ATopMenu::BeginPlay()
 {
 	Super::BeginPlay();
+	// had a crash there once (when calling GetPawn tho, not GetPawnOrSpectator)... depends on init order?
+	if (auto* Pawn = GetWorld()->GetFirstPlayerController()->GetPawnOrSpectator())
+		Pawn->SetActorEnableCollision(false);
 	// Create UI
 	UI = CreateWidget<UTopMenuWidgetImpl>(GetWorld()->GetFirstPlayerController(), LoadClass<UTopMenuWidgetImpl>(nullptr,
 		TEXT("/Script/UMGEditor.WidgetBlueprint'/Game/UX/TopMenuWidget.TopMenuWidget_C'")));
 	UI->AddToViewport();
 	UpdateElementId(false, "");
 	ITwinWebService = NewObject<UITwinWebServices>(this);
+	// See comment as in AITwinSelector::BeginPlay.
+	ITwinWebService->InitServerConnectionFromWorld();
 	// Get saved views
 	ITwinWebService->OnGetSavedViewsComplete.AddDynamic(this, &ATopMenu::OnSavedViews);
 	// Saved view
@@ -77,9 +85,20 @@ void ATopMenu::GetAllSavedViews()
 
 void ATopMenu::ZoomOnIModel()
 {
+	auto* Pawn = GetWorld()->GetFirstPlayerController()->GetPawnOrSpectator();
+	if (!ensure(Pawn))
+		return;
 	// working in ITwin coordinate system here like in former 3DFT plugin would make no sense at all here...
 	auto const& IModel3dInfo = GetIModel3DInfoInCoordSystem(EITwinCoordSystem::UE);
-
+	auto* MvtComp = Cast<UFloatingPawnMovement>(Pawn->GetMovementComponent());
+	if (MvtComp)
+	{
+		float const OldSpeed = MvtComp->MaxSpeed;
+		// Adjust max speed to project extent: target a whole extent traversal time of 10s?
+		MvtComp->MaxSpeed = FVector::Distance(IModel3dInfo.BoundingBoxMin, IModel3dInfo.BoundingBoxMax) / 10.f;
+		MvtComp->Acceleration *= 0.5 * (MvtComp->MaxSpeed / OldSpeed);
+		MvtComp->Deceleration *= MvtComp->MaxSpeed / OldSpeed;
+	}
 	GetWorld()->GetFirstPlayerController()->GetPawnOrSpectator()->SetActorLocation(
 		(0.5 * (IModel3dInfo.BoundingBoxMin + IModel3dInfo.BoundingBoxMax))
 			// "0.5" is empirical, let's not be too far from the center of things, iModels tend to have
@@ -144,8 +163,10 @@ void ATopMenu::OnZoom()
 
 void ATopMenu::StartCameraMovementToSavedView(float& OutBlendTime, ACameraActor*& Actor, FTransform& Transform, const FSavedView& SavedView, float BlendTime)
 {
+	AITwinIModel* IModel = Cast<AITwinIModel>(UGameplayStatics::GetActorOfClass(GetWorld(), AITwinIModel::StaticClass()));
+	if (!ensure(IModel != nullptr))
+		return;
 	OutBlendTime = BlendTime;
-	FVector UEPos;
 	// Note that we work in iTwin coordinate system here, and then convert to UE, as done in former
 	// 3DFT plugin:
 	auto const& IModel3dInfo = GetIModel3DInfoInCoordSystem(EITwinCoordSystem::ITwin);
@@ -154,10 +175,7 @@ void ATopMenu::StartCameraMovementToSavedView(float& OutBlendTime, ACameraActor*
 	// To avoid enforcing users to change all blueprints based on the default level of the 3DFT plugin, we
 	// have decided to reset this ModelCenter to zero.
 	checkfSlow(IModel3dInfo.ModelCenter == FVector(0, 0, 0), TEXT("No offset needed for SavedViews with Cesium tiles"));
-	ITwinPositionToUE(UEPos, SavedView.Origin, IModel3dInfo.ModelCenter);
-	FRotator UERotation;
-	ITwinRotationToUE(UERotation, SavedView.Angles);
-	Transform = FTransform(UERotation, UEPos);
+	Transform = UITwinUtilityLibrary::GetSavedViewUnrealTransform(IModel, SavedView);
 	Actor = GetWorld()->SpawnActor<ACameraActor>(ACameraActor::StaticClass(), Transform);
 	Actor->GetCameraComponent()->SetConstraintAspectRatio(false);
 	GetWorld()->GetFirstPlayerController()->SetViewTargetWithBlend(Actor, BlendTime, VTBlend_Linear, 0, true);

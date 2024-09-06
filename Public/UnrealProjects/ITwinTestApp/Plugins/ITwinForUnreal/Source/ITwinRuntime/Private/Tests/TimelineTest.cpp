@@ -461,7 +461,7 @@ void MainTimelineAddSpec::Define()
 					entry.Time = 200.;
 					ElementTimeline->test_color_.Values.insert(entry);
 				}
-				Timeline->Add(ElementTimeline);
+				Timeline->AddTimeline(ElementTimeline);
 			}
 			{
 				auto ElementTimeline = std::make_shared<Test_ElementTimelineEx>();
@@ -481,7 +481,7 @@ void MainTimelineAddSpec::Define()
 					entry.Time = 300.;
 					ElementTimeline->test_cuttingPlane_.Values.insert(entry);
 				}
-				Timeline->Add(ElementTimeline);
+				Timeline->AddTimeline(ElementTimeline);
 			}
 		});
 	It("should contain the right number of keyframes", [this]() {
@@ -523,7 +523,7 @@ void MainTimelineAddSpec::Define()
 //				entry.test_value_ = FVector{0.5f, 0.7f, 0.9f};
 //				ElementTimeline->test_color_.Values.insert(entry);
 //			}
-//			Timeline->Add(ElementTimeline);
+//			Timeline->AddTimeline(ElementTimeline);
 //			allElementTimelines.insert(elementTimeline);
 //		}
 //		{
@@ -551,7 +551,7 @@ void MainTimelineAddSpec::Define()
 //				entry.test_fullyVisible_ = true;
 //				ElementTimeline->test_cuttingPlane_.Values.insert(entry);
 //			}
-//			Timeline->Add(ElementTimeline);
+//			Timeline->AddTimeline(ElementTimeline);
 //			allElementTimelines.insert(elementTimeline);
 //		}
 //		BEStream stream(ST_MemoryWrite, (HGLOBAL)nullptr, BE_ENDIAN_LITTLE);

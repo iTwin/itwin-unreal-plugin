@@ -14,6 +14,25 @@ import platform
 
 addedFiles = []
 
+hackDuplicateByPlatform = ["zconf.h"]
+
+
+def CreateIntermediateFile(target: pathlib.Path):
+	addedFiles.append(target.as_posix())
+	if target.is_symlink():
+		target.unlink(True)
+		print(f'unlink "{target}".')
+			
+	with open(target,"w") as f:
+		f.write(f'''
+#pragma once 
+#ifdef MACOS 
+#include "{target.stem+"_mac"+target.suffix}" 
+#elif defined(WIN32)
+#include "{target.stem+"_win"+target.suffix}" 
+#endif
+''')
+
 def CreateSymlink2(target: pathlib.Path, link: pathlib.Path):
 	addedFiles.append(link.as_posix())
 	# Do not touch the symlink if it already up-to-date.
@@ -39,7 +58,19 @@ def CreateSymlink(target: str, link: str):
 		for (k, v) in defines.items():
 			s = s.replace(k, v)
 		return s
-	CreateSymlink2(pathlib.Path(Resolve(target)), pathlib.Path(Resolve(link)))
+	if any([target.endswith('/'+f) for f in hackDuplicateByPlatform]):
+		print(f'Create duplicate by platform for "{link}" -> "{target}".')
+		ln = pathlib.Path(Resolve(link))
+		CreateIntermediateFile(ln)
+		if platform.system() == 'Darwin':
+			ln2 = pathlib.Path.joinpath(ln.parent,ln.stem+"_mac"+ln.suffix)
+			CreateSymlink2(pathlib.Path(Resolve(target)), ln2)
+		elif platform.system() == 'Windows':
+			ln2 = pathlib.Path.joinpath(ln.parent,ln.stem+"_win"+ln.suffix)
+			CreateSymlink2(pathlib.Path(Resolve(target)), ln2)
+	else:
+		CreateSymlink2(pathlib.Path(Resolve(target)), pathlib.Path(Resolve(link)))
+	
 
 def SetupCesium(src: str, dst:str):
 	#print(f'SetupCesium "{src}" -> "{dst}".')
@@ -84,9 +115,16 @@ for addedFile_old in addedFiles_old:
 		# We cannot know, so it is safer to keep the link.
 		(os.path.islink(addedFile_old) and os.path.exists(os.readlink(addedFile_old)))):
 		continue
-	if not os.path.islink(addedFile_old):
+	addedTextFiles = any([addedFile_old.endswith('/'+f) for f in hackDuplicateByPlatform])
+			
+	if not os.path.islink(addedFile_old) and not addedTextFiles:
+		print (f'Cannot delete "{addedFile_old}", as it is not a symlink. Deleting it could result in data loss.\nThis is probably a bug in our build scripts.')
 		raise Exception(f'Cannot delete "{addedFile_old}", as it is not a symlink. Deleting it could result in data loss.\nThis is probably a bug in our build scripts.')
-	print(f'Delete obsolete symlink "{addedFile_old}".')
+	if addedTextFiles:
+		print(f'Delete obsolete (not symlink) file "{addedFile_old}".')
+	else:
+		print(f'Delete obsolete symlink "{addedFile_old}".')
+		
 	os.remove(addedFile_old)
 # Save list of all the current links.
 pathlib.Path(args['added']).write_text(json.dumps(addedFiles))

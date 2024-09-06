@@ -10,6 +10,7 @@
 
 #include <ITwinRuntime/Private/Compil/BeforeNonUnrealIncludes.h>
 #	include <Core/Visualization/Visualization.h>
+#	include <Core/Tools/Tools.h>
 #	include <filesystem>
 #include <ITwinRuntime/Private/Compil/AfterNonUnrealIncludes.h>
 
@@ -41,6 +42,9 @@ void FITwinGameModuleImpl::StartupModule()
 	auto config = SDK::Core::Config::LoadFromFile(filePath);
 	Config::Init(config);
 
+	Tools::InitAssertHandler();
+	//BE_ASSERT(true == false);
+	//BE_DEBUG_ASSERT(true == false);
 	/////
 	
 	

@@ -66,6 +66,8 @@ bool FITwinWebServicesTest::RunTest(const FString& /*Parameters*/)
 #define ITWINTEST_ACCESS_TOKEN "ThisIsATestITwinAccessToken"
 
 #define ITWINID_CAYMUS_EAP "5e15184e-6d3c-43fd-ad04-e28b4b39485e"
+#define IMODELID_BUILDING "cb6052c0-c4a0-41c3-8914-b1ba7d8b8c49"
+#define CHANGESETID_BUILDING "694305dbe2e5626267920f6a3f1e23db707674ba"
 #define IMODELID_WIND_TURBINE "d66fcd8c-604a-41d6-964a-b9767d446c53"
 #define EXPORTID_WIND_TURBINE_CESIUM "6e5a59b7-878b-4275-b960-8668dc11a04d"
 #define SAVEDVIEWID_BUILDING_TEST "ARatNwH2bcJElcCIfZxfP69OGBVePG39Q60E4otLOUhewFJgy6DEw0GJFLG6fYuMSQ"
@@ -74,6 +76,9 @@ bool FITwinWebServicesTest::RunTest(const FString& /*Parameters*/)
 #define IMODELID_PHOTO_REALISTIC_RENDERING "4dcf6dee-e7f1-4ed8-81f2-125402b9ac95"
 #define SAVEDVIEWID_PHOTO_REALISTIC_RENDERING_VIEW02 "AB36h6dwg89Cg4SMOWg6cKy9liTnpQPYSopRsU6CdgOx7m3PTfHn2E6B8hJUArmslQ"
 
+#define SAVEDVIEWID_BUILDING_ALEXVIEW2 "AWei5oyoEPVDtrgMH7XZeXNOGBVePG39Q60E4otLOUheMCIwzguSSkan4OV67So_Nw"
+
+#define ITWINID_STADIUM_RN_QA "a2a1ee72-7fb2-402d-a588-1d873aeaff3e"
 #define IMODELID_STADIUM "e04bfa36-d4ce-4482-8057-cbd73ec80d23"
 #define CHANGESETID_STADIUM "50c2eb88e48e7556635504cec91a6811b5939122"
 
@@ -120,6 +125,10 @@ public:
 		if (isUrl(url, "/reality-management"))
 		{
 			return ProcessRealityDataTest(url, urlArguments, headers);
+		}
+		if (isUrl(url, "/imodel/rpc"))
+		{
+			return ProcessIModelRPCTest(url, method, data, urlArguments, headers);
 		}
 		return Response(cpr::status::HTTP_NOT_FOUND,
 			std::string("Page not found: ") + url);
@@ -247,7 +256,7 @@ private:
 				"{\"id\":\"e72496bd-03a5-4ad8-8a51-b14e827603b1\",\"class\":\"Endeavor\",\"subClass\":\"Project\"," \
 				"\"type\":null,\"number\":\"Tests_AlexW\",\"displayName\":\"Tests_AlexW\",\"geographicLocation\":null,\"ianaTimeZone\":null," \
 				"\"dataCenterLocation\":\"East US\",\"status\":\"Active\",\"parentId\":\"78202ffd-272b-4207\",\"iTwinAccountId\":\"78202ffd-272b-4207\"," \
-				"\"imageName\":null,\"image\":null,\"createdDateTime\":\"2024-03-25T10:26:45.797Z\",\"createdBy\":\"0a483d73-ffce-4d52-9af4-a9927d07aa82\"}," \
+				"\"imageName\":null,\"image\":null,\"createdDateTime\":\"2024-03-25T10:26:45.797Z\",\"createdBy\":\"aabbccdd-aaaa-bbbb-cccc-dddddddd\"}," \
 				"{\"id\":\"5e15184e-6d3c-43fd-ad04-e28b4b39485e\",\"class\":\"Endeavor\",\"subClass\":\"Project\",\"type\":null,\"number\":\"Bentley Caymus EAP\"," \
 				"\"displayName\":\"Bentley Caymus EAP\",\"geographicLocation\":\"Exton, PA\",\"ianaTimeZone\":\"America/New_York\",\"dataCenterLocation\":\"East US\",\"status\":\"Active\"," \
 				"\"parentId\":\"78202ffd-272b-4207\",\"iTwinAccountId\":\"78202ffd-272b-4207\",\"imageName\":null,\"image\":null," \
@@ -514,7 +523,7 @@ private:
 		StringMap argMap = ToArgMap(urlArguments);
 		StringMap headerMap = ToArgMap(headers);
 
-#define SAVEDVIEW_02_DATA "\"savedViewData\":{\"itwin3dView\":{\"origin\":[-1.79,-0.69,1.59],\"extents\":[0.00,0.00,0.00],\"angles\":{\"yaw\":-1.69,\"pitch\":-50.43,\"roll\":-92.19},\"camera\":{\"lens\":0.0,\"focusDist\":0.0,\"eye\":[-1.79,-0.69,1.59]}}},\"displayName\":\"view02\",\"shared\":true,\"tagIds\":[]"
+#define SAVEDVIEW_02_DATA "\"savedViewData\":{\"itwin3dView\":{\"origin\":[-1.79,-0.69,1.59],\"extents\":[0.0,0.0,0.0],\"angles\":{\"yaw\":-1.69,\"pitch\":-50.43,\"roll\":-92.19},\"camera\":{\"lens\":0.0,\"focusDist\":0.0,\"eye\":[-1.79,-0.69,1.59]}}},\"displayName\":\"view02\",\"shared\":true,\"tagIds\":[]"
 
 #define ADD_SAVEDVIEW_02_DATA "{\"iTwinId\":\"e72496bd-03a5-4ad8-8a51-b14e827603b1\",\"iModelId\":\"4dcf6dee-e7f1-4ed8-81f2-125402b9ac95\"," SAVEDVIEW_02_DATA "}"
 
@@ -527,31 +536,31 @@ private:
 			return Response(cpr::status::HTTP_OK, "{\"savedViews\":[" \
 				"{\"id\":\"AI2zKB-8DhFGnKK6h32qexm9liTnpQPYSopRsU6CdgOx7m3PTfHn2E6B8hJUArmslQ\",\"shared\":true,\"creationTime\":\"2024-06-13T10:07:29.897Z\",\"lastModified\":\"2024-06-13T12:25:19.239Z\"," \
 				"\"savedViewData\":{\"itwin3dView\":{\"origin\":[-3.12,7.39,2.2],\"extents\":[0,0,0],\"angles\":{\"yaw\":176.41,\"pitch\":-41.52,\"roll\":84.6},\"camera\":{\"lens\":0,\"focusDist\":0,\"eye\":[-3.12,7.39,2.2]}}}," \
-				"\"displayName\":\"view01\",\"tags\":[],\"extensions\":[],\"_links\":{\"creator\":{\"href\":\"https://api.test.com/accesscontrol/iTwins/e72496bd-03a5-4ad8-8a51-b14e827603b1/members/fab7496a-f871-4381-b243-623d0f897e09\"}," \
+				"\"displayName\":\"view01\",\"tags\":[],\"extensions\":[],\"_links\":{\"creator\":{\"href\":\"https://api.test.com/accesscontrol/iTwins/e72496bd-03a5-4ad8-8a51-b14e827603b1/members/abcdefabcdef\"}," \
 				"\"iTwin\":{\"href\":\"https://api.test.com/iTwins/e72496bd-03a5-4ad8-8a51-b14e827603b1\"},\"project\":{\"href\":\"https://api.test.com/projects/e72496bd-03a5-4ad8-8a51-b14e827603b1\"}," \
 				"\"imodel\":{\"href\":\"https://api.test.com/imodels/4dcf6dee-e7f1-4ed8-81f2-125402b9ac95\"},\"image\":{\"href\":\"https://api.test.com/savedviews/AI2zKB-8DhFGnKK6h32qexm9liTnpQPYSopRsU6CdgOx7m3PTfHn2E6B8hJUArmslQ/image?size=full\"}," \
 				"\"thumbnail\":{\"href\":\"https://api.test.com/savedviews/AI2zKB-8DhFGnKK6h32qexm9liTnpQPYSopRsU6CdgOx7m3PTfHn2E6B8hJUArmslQ/image\"}}}," \
 				"{\"id\":\"AB36h6dwg89Cg4SMOWg6cKy9liTnpQPYSopRsU6CdgOx7m3PTfHn2E6B8hJUArmslQ\",\"shared\":true,\"creationTime\":\"2024-06-13T10:08:34.797Z\",\"lastModified\":\"2024-06-13T12:26:35.678Z\"," \
 				"\"savedViewData\":{\"itwin3dView\":{\"origin\":[-1.79,-0.69,1.59],\"extents\":[0,0,0],\"angles\":{\"yaw\":-1.69,\"pitch\":-50.43,\"roll\":-92.19},\"camera\":{\"lens\":0,\"focusDist\":0,\"eye\":[-1.79,-0.69,1.59]}}}," \
-				"\"displayName\":\"view02\",\"tags\":[],\"extensions\":[],\"_links\":{\"creator\":{\"href\":\"https://api.test.com/accesscontrol/iTwins/e72496bd-03a5-4ad8-8a51-b14e827603b1/members/fab7496a-f871-4381-b243-623d0f897e09\"}," \
+				"\"displayName\":\"view02\",\"tags\":[],\"extensions\":[],\"_links\":{\"creator\":{\"href\":\"https://api.test.com/accesscontrol/iTwins/e72496bd-03a5-4ad8-8a51-b14e827603b1/members/abcdefabcdef\"}," \
 				"\"iTwin\":{\"href\":\"https://api.test.com/iTwins/e72496bd-03a5-4ad8-8a51-b14e827603b1\"},\"project\":{\"href\":\"https://api.test.com/projects/e72496bd-03a5-4ad8-8a51-b14e827603b1\"}," \
 				"\"imodel\":{\"href\":\"https://api.test.com/imodels/4dcf6dee-e7f1-4ed8-81f2-125402b9ac95\"},\"image\":{\"href\":\"https://api.test.com/savedviews/AB36h6dwg89Cg4SMOWg6cKy9liTnpQPYSopRsU6CdgOx7m3PTfHn2E6B8hJUArmslQ/image?size=full\"}," \
 				"\"thumbnail\":{\"href\":\"https://api.test.com/savedviews/AB36h6dwg89Cg4SMOWg6cKy9liTnpQPYSopRsU6CdgOx7m3PTfHn2E6B8hJUArmslQ/image\"}}}," \
 				"{\"id\":\"AOZH6-V9SGJPgQ25caQq6cK9liTnpQPYSopRsU6CdgOx7m3PTfHn2E6B8hJUArmslQ\",\"shared\":true,\"creationTime\":\"2024-06-13T10:43:36.006Z\",\"lastModified\":\"2024-06-18T07:27:58.423Z\"," \
 				"\"savedViewData\":{\"itwin3dView\":{\"origin\":[-1.6,6.77,10.89],\"extents\":[0,0,0],\"angles\":{\"yaw\":156.52,\"pitch\":-22.47,\"roll\":41.34},\"camera\":{\"lens\":0,\"focusDist\":0,\"eye\":[-1.6,6.77,10.89]}}}," \
-				"\"displayName\":\"view03 - top\",\"tags\":[],\"extensions\":[],\"_links\":{\"creator\":{\"href\":\"https://api.test.com/accesscontrol/iTwins/e72496bd-03a5-4ad8-8a51-b14e827603b1/members/fab7496a-f871-4381-b243-623d0f897e09\"}," \
+				"\"displayName\":\"view03 - top\",\"tags\":[],\"extensions\":[],\"_links\":{\"creator\":{\"href\":\"https://api.test.com/accesscontrol/iTwins/e72496bd-03a5-4ad8-8a51-b14e827603b1/members/abcdefabcdef\"}," \
 				"\"iTwin\":{\"href\":\"https://api.test.com/iTwins/e72496bd-03a5-4ad8-8a51-b14e827603b1\"},\"project\":{\"href\":\"https://api.test.com/projects/e72496bd-03a5-4ad8-8a51-b14e827603b1\"}," \
 				"\"imodel\":{\"href\":\"https://api.test.com/imodels/4dcf6dee-e7f1-4ed8-81f2-125402b9ac95\"},\"image\":{\"href\":\"https://api.test.com/savedviews/AOZH6-V9SGJPgQ25caQq6cK9liTnpQPYSopRsU6CdgOx7m3PTfHn2E6B8hJUArmslQ/image?size=full\"}," \
 				"\"thumbnail\":{\"href\":\"https://api.test.com/savedviews/AOZH6-V9SGJPgQ25caQq6cK9liTnpQPYSopRsU6CdgOx7m3PTfHn2E6B8hJUArmslQ/image\"}}}," \
 				"{\"id\":\"AP_q2cM-UHxAlm2OcWIk7Fu9liTnpQPYSopRsU6CdgOx7m3PTfHn2E6B8hJUArmslQ\",\"shared\":true,\"creationTime\":\"2024-06-13T12:16:16.765Z\",\"lastModified\":\"2024-06-13T12:17:04.237Z\"," \
 				"\"savedViewData\":{\"itwin3dView\":{\"origin\":[-2.67,3.17,1.9],\"extents\":[0,0,0],\"angles\":{\"yaw\":-170.55,\"pitch\":-86.22,\"roll\":99.47},\"camera\":{\"lens\":0,\"focusDist\":0,\"eye\":[-2.67,3.17,1.9]}}}," \
-				"\"displayName\":\"view04\",\"tags\":[],\"extensions\":[],\"_links\":{\"creator\":{\"href\":\"https://api.test.com/accesscontrol/iTwins/e72496bd-03a5-4ad8-8a51-b14e827603b1/members/fab7496a-f871-4381-b243-623d0f897e09\"}," \
+				"\"displayName\":\"view04\",\"tags\":[],\"extensions\":[],\"_links\":{\"creator\":{\"href\":\"https://api.test.com/accesscontrol/iTwins/e72496bd-03a5-4ad8-8a51-b14e827603b1/members/abcdefabcdef\"}," \
 				"\"iTwin\":{\"href\":\"https://api.test.com/iTwins/e72496bd-03a5-4ad8-8a51-b14e827603b1\"},\"project\":{\"href\":\"https://api.test.com/projects/e72496bd-03a5-4ad8-8a51-b14e827603b1\"}," \
 				"\"imodel\":{\"href\":\"https://api.test.com/imodels/4dcf6dee-e7f1-4ed8-81f2-125402b9ac95\"},\"image\":{\"href\":\"https://api.test.com/savedviews/AP_q2cM-UHxAlm2OcWIk7Fu9liTnpQPYSopRsU6CdgOx7m3PTfHn2E6B8hJUArmslQ/image?size=full\"}," \
 				"\"thumbnail\":{\"href\":\"https://api.test.com/savedviews/AP_q2cM-UHxAlm2OcWIk7Fu9liTnpQPYSopRsU6CdgOx7m3PTfHn2E6B8hJUArmslQ/image\"}}}," \
 				"{\"id\":\"AG7BwHvOKrJJi-kRUac5AVa9liTnpQPYSopRsU6CdgOx7m3PTfHn2E6B8hJUArmslQ\",\"shared\":true,\"creationTime\":\"2024-06-18T07:33:29.596Z\",\"lastModified\":\"2024-06-18T07:33:29.596Z\"," \
 				"\"savedViewData\":{\"itwin3dView\":{\"origin\":[-1.23,-0.78,1.46],\"extents\":[0,0,0],\"angles\":{\"yaw\":0.04,\"pitch\":-0.53,\"roll\":-85.38},\"camera\":{\"lens\":0,\"focusDist\":0,\"eye\":[-1.23,-0.78,1.46]}}}," \
-				"\"displayName\":\"view05\",\"tags\":[],\"extensions\":[],\"_links\":{\"creator\":{\"href\":\"https://api.test.com/accesscontrol/iTwins/e72496bd-03a5-4ad8-8a51-b14e827603b1/members/fab7496a-f871-4381-b243-623d0f897e09\"}," \
+				"\"displayName\":\"view05\",\"tags\":[],\"extensions\":[],\"_links\":{\"creator\":{\"href\":\"https://api.test.com/accesscontrol/iTwins/e72496bd-03a5-4ad8-8a51-b14e827603b1/members/abcdefabcdef\"}," \
 				"\"iTwin\":{\"href\":\"https://api.test.com/iTwins/e72496bd-03a5-4ad8-8a51-b14e827603b1\"},\"project\":{\"href\":\"https://api.test.com/projects/e72496bd-03a5-4ad8-8a51-b14e827603b1\"}," \
 				"\"imodel\":{\"href\":\"https://api.test.com/imodels/4dcf6dee-e7f1-4ed8-81f2-125402b9ac95\"},\"image\":{\"href\":\"https://api.test.com/savedviews/AG7BwHvOKrJJi-kRUac5AVa9liTnpQPYSopRsU6CdgOx7m3PTfHn2E6B8hJUArmslQ/image?size=full\"}," \
 				"\"thumbnail\":{\"href\":\"https://api.test.com/savedviews/AG7BwHvOKrJJi-kRUac5AVa9liTnpQPYSopRsU6CdgOx7m3PTfHn2E6B8hJUArmslQ/image\"}}}]," \
@@ -588,12 +597,68 @@ private:
 				"\"savedViewData\":{\"itwin3dView\":{\"origin\":[-1.79,-0.69,1.59],\"extents\":[0,0,0]," \
 				"\"angles\":{\"yaw\":-1.69,\"pitch\":-50.43,\"roll\":-92.19},\"camera\":{\"lens\":0,\"focusDist\":0,\"eye\":[-1.79,-0.69,1.59]}}}," \
 				"\"displayName\":\"view02\",\"tags\":[],\"extensions\":[]," \
-				"\"_links\":{\"creator\":{\"href\":\"https://api.test.com/accesscontrol/iTwins/e72496bd-03a5-4ad8-8a51-b14e827603b1/members/fab7496a-f871-4381-b243-623d0f897e09\"}," \
+				"\"_links\":{\"creator\":{\"href\":\"https://api.test.com/accesscontrol/iTwins/e72496bd-03a5-4ad8-8a51-b14e827603b1/members/abcdefabcdef\"}," \
 				"\"iTwin\":{\"href\":\"https://api.test.com/iTwins/e72496bd-03a5-4ad8-8a51-b14e827603b1\"}," \
 				"\"project\":{\"href\":\"https://api.test.com/projects/e72496bd-03a5-4ad8-8a51-b14e827603b1\"}," \
 				"\"imodel\":{\"href\":\"https://api.test.com/imodels/4dcf6dee-e7f1-4ed8-81f2-125402b9ac95\"}," \
 				"\"image\":{\"href\":\"https://api.test.com/savedviews/AB36h6dwg89Cg4SMOWg6cKy9liTnpQPYSopRsU6CdgOx7m3PTfHn2E6B8hJUArmslQ/image?size=full\"}," \
 				"\"thumbnail\":{\"href\":\"https://api.test.com/savedviews/AB36h6dwg89Cg4SMOWg6cKy9liTnpQPYSopRsU6CdgOx7m3PTfHn2E6B8hJUArmslQ/image\"}}}}"
+			);
+		}
+		else if (url.ends_with(SAVEDVIEWID_BUILDING_ALEXVIEW2) && method == "GET")
+		{
+			// GetSavedView with only 'roll' angle
+			return Response(cpr::status::HTTP_OK, "{\"savedView\":" \
+				"{\"id\":\"AWei5oyoEPVDtrgMH7XZeXNOGBVePG39Q60E4otLOUheMCIwzguSSkan4OV67So_Nw\",\"shared\":true,\"creationTime\":\"2024-08-21T08:31:17.000Z\",\"lastModified\":\"2024-08-21T08:31:17.000Z\"," \
+				"\"savedViewData\":{\"itwin3dView\":{\"origin\":[61.18413816135583,-5.737108595657904,6.9723644948156185],\"extents\":[2.5791900968344437,1.8184076521127042,1.2895950484174423]," \
+				"\"angles\":{\"roll\":-90},\"camera\":{\"lens\":90.00000000000115,\"focusDist\":1.2895950484171959,\"eye\":[62.47373320977305,-7.5267036440751,7.8815683208719705]}," \
+				"\"categories\":{\"enabled\":[\"0x20000000057\",\"0x200000000d5\",\"0x200000000d7\",\"0x200000000d9\",\"0x200000000df\",\"0x200000000e1\",\"0x200000000e3\",\"0x200000000e5\"],\"disabled\":[]}," \
+				"\"models\":{\"enabled\":[\"0x20000000144\",\"0x20000000146\",\"0x20000000148\",\"0x2000000014a\",\"0x2000000014c\"],\"disabled\":[]}," \
+				"\"displayStyle\":{\"viewflags\":{\"renderMode\":6,\"noConstructions\":true,\"ambientOcclusion\":true},\"mapImagery\":{\"backgroundBase\":{\"visible\":true," \
+				"\"name\":\"Bing Maps: Aerial Imagery with labels\",\"transparentBackground\":false,\"url\":\"https://dev.test.net/REST/v1/Imagery/Metadata/AerialWithLabels?o=json&incl=ImageryProviders&key={bingKey}\"," \
+				"\"formatId\":\"BingMaps\",\"provider\":{\"name\":\"BingProvider\",\"type\":3}}},\"environment\":{\"ground\":{\"display\":false,\"elevation\":-0.01," \
+				"\"aboveColor\":{\"red\":0,\"green\":100,\"blue\":0},\"belowColor\":{\"red\":101,\"green\":67,\"blue\":33}},\"sky\":{\"display\":true,\"twoColor\":true," \
+				"\"skyColor\":{\"red\":222,\"green\":242,\"blue\":255},\"groundColor\":{\"red\":240,\"green\":236,\"blue\":232},\"zenithColor\":{\"red\":222,\"green\":242,\"blue\":255}," \
+				"\"nadirColor\":{\"red\":240,\"green\":236,\"blue\":232}}},\"lights\":{\"portrait\":{\"intensity\":0.8},\"solar\":{\"intensity\":0},\"ambient\":{\"intensity\":0.55}," \
+				"\"specularIntensity\":0}}}," \
+				"\"legacyView\":{\"id\":\"8ce6a267-10a8-43f5-b6b8-0c1fb5d97973\",\"is2d\":false,\"groupId\":\"-1\",\"name\":\"AlexView2\",\"userId\":\"aabbccdd-aaaa-bbbb-cccc-dddddddd\"," \
+				"\"shared\":true,\"categorySelectorProps\":{\"classFullName\":\"BisCore:CategorySelector\",\"code\":{\"spec\":\"0x1\",\"scope\":\"0x1\",\"value\":\"\"}," \
+				"\"model\":\"0x10\",\"categories\":[\"0x20000000057\",\"0x200000000d5\",\"0x200000000d7\"]}," \
+				"\"modelSelectorProps\":{\"classFullName\":\"BisCore:ModelSelector\",\"code\":{\"spec\":\"0x1\",\"scope\":\"0x1\",\"value\":\"\"},\"model\":\"0x10\"," \
+				"\"models\":[\"0x2000000007f\",\"0x20000000134\",\"0x20000000136\",\"0x20000000138\",\"0x2000000013a\",\"0x2000000013c\",\"0x2000000013e\",\"0x20000000140\",\"0x20000000142\"]}," \
+				"\"displayStyleProps\":{\"classFullName\":\"BisCore:DisplayStyle3d\"," \
+				"\"jsonProperties\":{\"styles\":{\"viewflags\":{\"noConstruct\":true,\"ambientOcclusion\":true,\"renderMode\":6},\"environment\":{\"sky\":{\"skyColor\":16773854," \
+				"\"groundColor\":15265008,\"nadirColor\":15265008,\"zenithColor\":16773854,\"twoColor\":true,\"display\":true},\"ground\":{\"elevation\":-0.01,\"aboveColor\":25600," \
+				"\"belowColor\":2179941,\"display\":false},\"atmosphere\":{\"atmosphereHeightAboveEarth\":100000,\"exposure\":2,\"densityFalloff\":10,\"depthBelowEarthForMaxDensity\":0," \
+				"\"numViewRaySamples\":10,\"numSunRaySamples\":5,\"scatteringStrength\":100,\"wavelengths\":{\"r\":700,\"g\":530,\"b\":440},\"display\":false}}," \
+				"\"mapImagery\":{\"backgroundBase\":{\"name\":\"Bing Maps: Aerial Imagery with labels\",\"visible\":true,\"transparentBackground\":false," \
+				"\"url\":\"https://dev.test.net/REST/v1/Imagery/Metadata/AerialWithLabels?o=json&incl=ImageryProviders&key={bingKey}\",\"formatId\":\"BingMaps\"," \
+				"\"provider\":{\"name\":\"BingProvider\",\"type\":3}}},\"lights\":{\"solar\":{\"intensity\":0},\"ambient\":{\"intensity\":0.55},\"portrait\":{\"intensity\":0.8}," \
+				"\"specularIntensity\":0}}},\"code\":{\"spec\":\"0x1\",\"scope\":\"0x1\",\"value\":\"\"},\"model\":\"0x10\"}," \
+				"\"viewDefinitionProps\":{\"classFullName\":\"BisCore:SpatialViewDefinition\",\"jsonProperties\":{\"viewDetails\":{}},\"code\":{\"spec\":\"0x1\",\"scope\":\"0x1\"," \
+				"\"value\":\"\"},\"model\":\"0x10\",\"categorySelectorId\":\"0\",\"displayStyleId\":\"0\",\"cameraOn\":true,\"origin\":[61.18413816135583,-5.737108595657904,6.9723644948156185]," \
+				"\"extents\":[2.5791900968344437,1.8184076521127042,1.2895950484174423],\"angles\":{\"roll\":-90},\"camera\":{\"lens\":90.00000000000115,\"focusDist\":1.2895950484171959," \
+				"\"eye\":[62.47373320977305,-7.5267036440751,7.8815683208719705]},\"modelSelectorId\":\"0\"},\"emphasizeElementsProps\":{},\"perModelCategoryVisibility\":[]," \
+				"\"hiddenModels\":[],\"hiddenCategories\":[],\"lastModified\":1724229077000,\"extensions\":{\"EmphasizeElements\":{\"emphasizeElementsProps\":{}}," \
+				"\"PerModelCategoryVisibility\":{\"perModelCategoryVisibilityProp\":[]}},\"thumbnailId\":\"f552fc81-fe71-49d4-bbcf-2872e2c0e579\"}}," \
+				"\"displayName\":\"AlexView2\",\"tags\":[],\"extensions\":[{\"extensionName\":\"EmphasizeElements\"," \
+				"\"markdownUrl\":\"https://www.test.com/\",\"schemaUrl\":\"https://www.test.com/\",\"data\":{\"emphasizeElementsProps\":{}}," \
+				"\"_links\":{\"iTwin\":{\"href\":\"https://api.test.com/iTwins/5e15184e-6d3c-43fd-ad04-e28b4b39485e\"}," \
+				"\"project\":{\"href\":\"https://api.test.com/projects/5e15184e-6d3c-43fd-ad04-e28b4b39485e\"}," \
+				"\"imodel\":{\"href\":\"https://api.test.com/imodels/ce302230-920b-464a-a7e0-e57aed2a3f37\"}," \
+				"\"savedView\":{\"href\":\"https://api.test.com/savedviews/AWei5oyoEPVDtrgMH7XZeXNOGBVePG39Q60E4otLOUheMCIwzguSSkan4OV67So_Nw\"}}}," \
+				"{\"extensionName\":\"PerModelCategoryVisibility\",\"markdownUrl\":\"https://www.test.com/\"," \
+				"\"schemaUrl\":\"https://www.test.com/\",\"data\":{\"perModelCategoryVisibilityProps\":[]},\"_links\":{\"iTwin\":{" \
+				"\"href\":\"https://api.test.com/iTwins/5e15184e-6d3c-43fd-ad04-e28b4b39485e\"}," \
+				"\"project\":{\"href\":\"https://api.test.com/projects/5e15184e-6d3c-43fd-ad04-e28b4b39485e\"}," \
+				"\"imodel\":{\"href\":\"https://api.test.com/imodels/ce302230-920b-464a-a7e0-e57aed2a3f37\"}," \
+				"\"savedView\":{\"href\":\"https://api.test.com/savedviews/AWei5oyoEPVDtrgMH7XZeXNOGBVePG39Q60E4otLOUheMCIwzguSSkan4OV67So_Nw\"}}}]," \
+				"\"_links\":{\"creator\":{\"href\":\"https://api.test.com/accesscontrol/iTwins/5e15184e-6d3c-43fd-ad04-e28b4b39485e/members/aabbccdd-aaaa-bbbb-cccc-dddddddd\"}," \
+				"\"iTwin\":{\"href\":\"https://api.test.com/iTwins/5e15184e-6d3c-43fd-ad04-e28b4b39485e\"}," \
+				"\"project\":{\"href\":\"https://api.test.com/projects/5e15184e-6d3c-43fd-ad04-e28b4b39485e\"}," \
+				"\"imodel\":{\"href\":\"https://api.test.com/imodels/ce302230-920b-464a-a7e0-e57aed2a3f37\"}," \
+				"\"image\":{\"href\":\"https://api.test.com/savedviews/AWei5oyoEPVDtrgMH7XZeXNOGBVePG39Q60E4otLOUheMCIwzguSSkan4OV67So_Nw/image?size=full\"}," \
+				"\"thumbnail\":{\"href\":\"https://api.test.com/savedviews/AWei5oyoEPVDtrgMH7XZeXNOGBVePG39Q60E4otLOUheMCIwzguSSkan4OV67So_Nw/image\"}}}}"
 			);
 		}
 		return Response(cpr::status::HTTP_NOT_FOUND, "Page not found.");
@@ -670,7 +735,7 @@ private:
 				"\r\n      \"northEast\" : {\r\n        \"latitude\": 28.587753137096165,\r\n        \"longitude\" : -81.33756635398319\r\n      }\r\n    }," \
 				"\r\n    \"accessControl\": \"ITwin\",\r\n    \"modifiedDateTime\" : \"2024-05-27T12:20:01Z\"," \
 				"\r\n    \"lastAccessedDateTime\" : \"2024-06-18T08:07:48Z\"," \
-				"\r\n    \"createdDateTime\" : \"2024-03-19T12:39:00Z\",\r\n    \"ownerId\" : \"0a483d73-ffce-4d52-9af4-a9927d07aa82\"}}"
+				"\r\n    \"createdDateTime\" : \"2024-03-19T12:39:00Z\",\r\n    \"ownerId\" : \"aabbccdd-aaaa-bbbb-cccc-dddddddd\"}}"
 			);
 		}
 		if (url.ends_with("readaccess")
@@ -691,6 +756,81 @@ private:
 		return Response(cpr::status::HTTP_NOT_FOUND, "Page not found.");
 	}
 
+	/// Process /imodel/rpc/ requests
+	Response ProcessIModelRPCTest(
+		const std::string& url,
+		const std::string& method,
+		const std::string& data,
+		const std::vector<UrlArg>& urlArguments,
+		const std::vector<Header>& headers) const
+	{
+		CHECK_ITWIN_HEADERS("v1");
+		if (url.ends_with("/PresentationRpcInterface-4.1.0-getElementProperties")
+			&& url.find("/" ITWINID_CAYMUS_EAP "/") != std::string::npos
+			&& url.find("/" IMODELID_BUILDING "/") != std::string::npos
+			&& url.find("/" CHANGESETID_BUILDING "/") != std::string::npos
+			&& method == "POST"
+			&& data == "[{\"key\":\"" IMODELID_BUILDING ":" CHANGESETID_BUILDING "\",\"iTwinId\":\"" ITWINID_CAYMUS_EAP "\",\"iModelId\":\"" IMODELID_BUILDING  "\",\"changeset\":{\"id\":\"" CHANGESETID_BUILDING "\"}},{\"elementId\":\"0x20000001baf\"}]")
+		{
+			//---------------------------------------------------------------------------
+			// GetElementProperties
+			//---------------------------------------------------------------------------
+			return Response(cpr::status::HTTP_OK,
+				"{\"statusCode\":0,\"result\":{\"class\":\"Physical Object\",\"id\":\"0x20000001baf\",\"label\":\"Shape [2-309]\"," \
+				"\"items\":{\"@Presentation:selectedItems.categoryLabel@\":{\"type\":\"category\",\"items\":{\"Model\":{\"type\":\"primitive\",\"value\":\"West Wing, BSI300AE9-Shell.dgn, Composite\"}," \
+				"\"Code\":{\"type\":\"primitive\",\"value\":\"\"},\"User Label\":{\"type\":\"primitive\",\"value\":\"Shape\"},\"Category\":{\"type\":\"primitive\",\"value\":\"A-G321-G3-Windw\"}," \
+				"\"Physical Material\":{\"type\":\"primitive\",\"value\":\"\"},\"Source Information\":{\"type\":\"category\",\"items\":{\"Source Element ID\":{\"type\":\"array\",\"valueType\":\"primitive\"," \
+				"\"values\":[\"45631\"]},\"Model Source\":{\"type\":\"category\",\"items\":{\"Repository Link\":{\"type\":\"array\",\"valueType\":\"struct\"," \
+				"\"values\":[{\"Path\":{\"type\":\"primitive\",\"value\":\"F:/Bentley/BuildingProject/Workspace/Projects/Building Project/dgn/BSI300AE9-Shell.dgn\"}," \
+				"\"Name\":{\"type\":\"primitive\",\"value\":\"BSI300AE9-Shell.dgn\"}}]}}},\"Document Link\":{\"type\":\"category\",\"items\":{\"Repository Link\":{\"type\":\"array\",\"valueType\":\"struct\"," \
+				"\"values\":[{\"Code\":{\"type\":\"primitive\",\"value\":\"bsi300ae9-shell.dgn\"},\"Name\":{\"type\":\"primitive\",\"value\":\"BSI300AE9-Shell.dgn\"},\"Path\":{\"type\":\"primitive\"," \
+				"\"value\":\"F:/Bentley/BuildingProject/Workspace/Projects/Building Project/dgn/BSI300AE9-Shell.dgn\"},\"Description\":{\"type\":\"primitive\",\"value\":\"\"}," \
+				"\"Format\":{\"type\":\"primitive\",\"value\":\"\"}}]}}}}}}}}}}"
+			);
+		}
+		if (url.ends_with("/IModelReadRpcInterface-3.6.0-getConnectionProps")
+			&& method == "POST")
+		{
+			//---------------------------------------------------------------------------
+			// GetIModelProperties
+			//---------------------------------------------------------------------------
+			if (url.find("/" ITWINID_CAYMUS_EAP "/") != std::string::npos
+				&& url.find("/" IMODELID_BUILDING "/") != std::string::npos
+				&& url.find("/" CHANGESETID_BUILDING "/") != std::string::npos
+				&& data == "[{\"iTwinId\":\"" ITWINID_CAYMUS_EAP "\",\"iModelId\":\"" IMODELID_BUILDING  "\",\"changeset\":{\"id\":\"" CHANGESETID_BUILDING "\"}}]")
+			{
+				return Response(cpr::status::HTTP_OK,
+					"{\"name\":\"Building\",\"rootSubject\":{\"name\":\"Building\"},\"projectExtents\":{\"low\":[-244.59492798331735,-303.66127815647087,-28.27051340710871]," \
+					"\"high\":[409.678652192302,249.78031406156776,33.397180631459555]},\"globalOrigin\":[0,0,0],\"key\":\"cb6052c0-c4a0-41c3-8914-b1ba7d8b8c49:694305dbe2e5626267920f6a3f1e23db707674ba\"," \
+					"\"iTwinId\":\"5e15184e-6d3c-43fd-ad04-e28b4b39485e\",\"iModelId\":\"cb6052c0-c4a0-41c3-8914-b1ba7d8b8c49\",\"changeset\":{\"id\":\"694305dbe2e5626267920f6a3f1e23db707674ba\",\"index\":12}}"
+				);
+			}
+			if (url.find("/" ITWINID_STADIUM_RN_QA "/") != std::string::npos
+				&& url.find("/" IMODELID_STADIUM "/") != std::string::npos
+				&& url.find("/" CHANGESETID_STADIUM "/") != std::string::npos
+				&& data == "[{\"iTwinId\":\"" ITWINID_STADIUM_RN_QA "\",\"iModelId\":\"" IMODELID_STADIUM  "\",\"changeset\":{\"id\":\"" CHANGESETID_STADIUM "\"}}]")
+			{
+				return Response(cpr::status::HTTP_OK,
+					"{\"name\":\"Stadium QA 04 22\",\"rootSubject\":{\"name\":\"Stadium QA 04 22\"},\"projectExtents\":{\"low\":[32344.267871807926,31348.272780176438,-478.7556455931467]," \
+					"\"high\":[33088.69387347796,32680.341868920772,144.21825526358407]},\"globalOrigin\":[0,0,0],\"ecefLocation\":{\"origin\":[-1497600.1543352203,6198968.877963936,112371.07286524471]," \
+					"\"orientation\":{\"pitch\":-0.0009652883917540237,\"roll\":88.69419530866284,\"yaw\":-166.12431911119472}," \
+					"\"transform\":[[-0.9707926309201866,0.005448576994240284,-0.2397540955179029,-1497600.1543352203],[-0.23980964627116919,-0.02212705835700035,0.9705661505307014,6198968.877963936]," \
+					"[-0.000016847014194354415,0.9997136355086695,0.02278861835233834,112371.07286524471]],\"cartographicOrigin\":{\"latitude\":0.022790512521193126,\"longitude\":1.812972949468464," \
+					"\"height\":-167.26869516478132},\"xVector\":[-0.9707926309201866,-0.23980964627116919,-0.000016847014194354415]," \
+					"\"yVector\":[0.005448576994240284,-0.02212705835700035,0.9997136355086695]},\"geographicCoordinateSystem\":{\"horizontalCRS\":{\"id\":\"EPSG:3414\",\"description\":\"SVY21 / Singapore TM\"," \
+					"\"source\":\"EPSG version 7.6\",\"epsg\":3414,\"datumId\":\"SVY21\",\"datum\":{\"id\":\"SVY21\",\"description\":\"Singapore SVY21\"," \
+					"\"source\":\"Various including Singapore Land Authority\",\"ellipsoidId\":\"WGS84\",\"ellipsoid\":{\"equatorialRadius\":6378137," \
+					"\"polarRadius\":6356752.3142,\"id\":\"WGS84\",\"description\":\"World Geodetic System of 1984, GEM 10C\",\"source\":\"US Defense Mapping Agency, TR-8350.2-B, December 1987\"," \
+					"\"epsg\":7030},\"transforms\":[{\"method\":\"None\"}]},\"unit\":\"Meter\",\"projection\":{\"method\":\"TransverseMercator\",\"falseEasting\":28001.642,\"falseNorthing\":38744.572," \
+					"\"centralMeridian\":103.83333333333331,\"latitudeOfOrigin\":1.3666666666666667,\"scaleFactor\":1},\"extent\":{\"southWest\":{\"latitude\":1.1166666666666667," \
+					"\"longitude\":103.61666666666666},\"northEast\":{\"latitude\":1.45,\"longitude\":104.15}}},\"verticalCRS\":{\"id\":\"ELLIPSOID\"}}," \
+					"\"key\":\"e04bfa36-d4ce-4482-8057-cbd73ec80d23:50c2eb88e48e7556635504cec91a6811b5939122\",\"iTwinId\":\"a2a1ee72-7fb2-402d-a588-1d873aeaff3e\"," \
+					"\"iModelId\":\"e04bfa36-d4ce-4482-8057-cbd73ec80d23\",\"changeset\":{\"id\":\"50c2eb88e48e7556635504cec91a6811b5939122\",\"index\":63}}"
+				);
+			}
+		}
+		return Response(cpr::status::HTTP_NOT_FOUND, "Page not found.");
+	}
 };
 
 /*static*/
@@ -758,6 +898,21 @@ public:
 
 	IMPLEMENT_OBS_CALLBACK(OnRealityDataRetrieved, FITwinRealityDataInfos);
 	IMPLEMENT_OBS_CALLBACK(OnRealityData3DInfoRetrieved, FITwinRealityData3DInfo);
+
+	IMPLEMENT_OBS_CALLBACK(OnElementPropertiesRetrieved, FElementProperties);
+
+	std::function<bool(bool, bool, FProjectExtents const&, bool, FEcefLocation const&)> OnIModelPropertiesRetrievedFunc;
+
+	virtual void OnIModelPropertiesRetrieved(bool bSuccess,
+		bool bHasExtents, FProjectExtents const& Extents,
+		bool bHasEcefLocation, FEcefLocation const& EcefLocation) override
+	{
+		OnResponseReceived();
+		if (OnIModelPropertiesRetrievedFunc)
+		{
+			OnIModelPropertiesRetrievedFunc(bSuccess, bHasExtents, Extents, bHasEcefLocation, EcefLocation);
+		}
+	}
 
 private:
 	int NumPendingRequests = 0;
@@ -932,7 +1087,7 @@ bool FITwinWebServicesRequestTest::RunTest(const FString& /*Parameters*/)
 			else
 			{
 				UTEST_TRUE("CheckError", TestErrorMessage(
-					TEXT("code 404: Not Found\n\tError [iTwinNotFound]: Requested iTwin is not available.")));
+					TEXT("[GetITwinInfo] code 404: Not Found\n\tError [iTwinNotFound]: Requested iTwin is not available.")));
 			}
 			return true;
 		};
@@ -1003,7 +1158,7 @@ bool FITwinWebServicesRequestTest::RunTest(const FString& /*Parameters*/)
 			{
 				UTEST_EQUAL("Num", iModels.Num(), 0);
 				UTEST_TRUE("CheckError", TestErrorMessage(
-					TEXT("code 422: Unknown\n\tError [InvalidiModelsRequest]: Cannot get iModels.\n\tDetails: [InvalidValue] 'toto' is not a valid 'iTwinId' value. (target: iTwinId)")));
+					TEXT("[GetIModels] code 422: Unknown\n\tError [InvalidiModelsRequest]: Cannot get iModels.\n\tDetails: [InvalidValue] 'toto' is not a valid 'iTwinId' value. (target: iTwinId)")));
 			}
 			return true;
 		};
@@ -1186,16 +1341,35 @@ bool FITwinWebServicesRequestTest::RunTest(const FString& /*Parameters*/)
 
 	SECTION("GetSavedView")
 	{
-		Observer->AddPendingRequest();
 		Observer->OnSavedViewRetrievedFunc = [&,this]
 		(bool bSuccess, FSavedView const& SavedView, FSavedViewInfo const& SavedViewInfo)
 		{
 			UTEST_TRUE("Get Saved View request result", bSuccess);
-			UTEST_TRUE("CheckSavedView", CheckSavedView(SavedView));
-			UTEST_TRUE("CheckSavedViewInfo", CheckSavedViewInfo(SavedViewInfo));
+			if (SavedViewInfo.Id == TEXT(SAVEDVIEWID_PHOTO_REALISTIC_RENDERING_VIEW02))
+			{
+				UTEST_TRUE("CheckSavedView", CheckSavedView(SavedView));
+				UTEST_TRUE("CheckSavedViewInfo", CheckSavedViewInfo(SavedViewInfo));
+			}
+			else
+			{
+				// AlexView2
+				UTEST_EQUAL("Id", SavedViewInfo.Id, TEXT(SAVEDVIEWID_BUILDING_ALEXVIEW2));
+				UTEST_EQUAL("DisplayName", SavedViewInfo.DisplayName, TEXT("AlexView2"));
+				UTEST_EQUAL("Shared", SavedViewInfo.bShared, true);
+
+				UTEST_TRUE("Origin", FVector::PointsAreNear(SavedView.Origin, FVector(62.47373320977305, -7.5267036440751, 7.8815683208719705), UE_SMALL_NUMBER));
+				UTEST_TRUE("Extents", FVector::PointsAreNear(SavedView.Extents, FVector(2.5791900968344437, 1.8184076521127042, 1.2895950484174423), UE_SMALL_NUMBER));
+				UTEST_TRUE("Angles", FMath::IsNearlyEqual(SavedView.Angles.Yaw, 0., UE_SMALL_NUMBER)
+					&& FMath::IsNearlyEqual(SavedView.Angles.Pitch, 0., UE_SMALL_NUMBER)
+					&& FMath::IsNearlyEqual(SavedView.Angles.Roll, -90., UE_SMALL_NUMBER));
+			}
 			return true;
 		};
+		Observer->AddPendingRequest();
 		WebServices->GetSavedView(SAVEDVIEWID_PHOTO_REALISTIC_RENDERING_VIEW02);
+
+		Observer->AddPendingRequest();
+		WebServices->GetSavedView(SAVEDVIEWID_BUILDING_ALEXVIEW2);
 	}
 
 	SECTION("EditSavedView")
@@ -1262,7 +1436,7 @@ bool FITwinWebServicesRequestTest::RunTest(const FString& /*Parameters*/)
 			{
 				UTEST_EQUAL("Delete Saved View should fail", bSuccess, false);
 				UTEST_EQUAL("ErrorMessage", Response,
-					TEXT("code 422: Unknown\n\tError [InvalidSavedviewsRequest]: Cannot delete savedview.\n\tDetails: [InvalidChange] Update operations not supported on legacy savedviews."));
+					TEXT("[DeleteSavedView] code 422: Unknown\n\tError [InvalidSavedviewsRequest]: Cannot delete savedview.\n\tDetails: [InvalidChange] Update operations not supported on legacy savedviews."));
 			}
 			else
 			{
@@ -1295,7 +1469,7 @@ bool FITwinWebServicesRequestTest::RunTest(const FString& /*Parameters*/)
 			{
 				UTEST_EQUAL("Num", realityDataArray.Num(), 0);
 				UTEST_TRUE("CheckError", TestErrorMessage(
-					TEXT("code 422: Unknown\n\tError [InvalidRealityDataRequest]: Invalid RealityData request.\n\tDetails: [InvalidParameter] The value 'toto' is not valid. (target: iTwinId)")));
+					TEXT("[GetRealityData] code 422: Unknown\n\tError [InvalidRealityDataRequest]: Invalid RealityData request.\n\tDetails: [InvalidParameter] The value 'toto' is not valid. (target: iTwinId)")));
 			}
 			return true;
 		};
@@ -1330,6 +1504,113 @@ bool FITwinWebServicesRequestTest::RunTest(const FString& /*Parameters*/)
 			return true;
 		};
 		WebServices->GetRealityData3DInfo(ITWINID_CAYMUS_EAP, REALITYDATAID_ORLANDO);
+	}
+
+	SECTION("GetElementProperties")
+	{
+		Observer->AddPendingRequest();
+		Observer->OnElementPropertiesRetrievedFunc = [this](bool bSuccess, FElementProperties const& InProps)
+		{
+			UTEST_TRUE("GetElementProperties request result", bSuccess);
+			TArray<FElementProperty> const& bimProps(InProps.Properties);
+			UTEST_EQUAL("NumProperties", bimProps.Num(), 4);
+
+			UTEST_EQUAL("Property Name", bimProps[0].Name, TEXT("Selected Item"));
+			UTEST_EQUAL("NumAttributes", bimProps[0].Attributes.Num(), 5);
+			UTEST_EQUAL("Attr Name", bimProps[0].Attributes[0].Name, TEXT("Model"));
+			UTEST_EQUAL("Attr Value", bimProps[0].Attributes[0].Value, TEXT("West Wing, BSI300AE9-Shell.dgn, Composite"));
+			UTEST_EQUAL("Attr Name", bimProps[0].Attributes[3].Name, TEXT("Category"));
+			UTEST_EQUAL("Attr Value", bimProps[0].Attributes[3].Value, TEXT("A-G321-G3-Windw"));
+			UTEST_EQUAL("Attr Name", bimProps[0].Attributes[4].Name, TEXT("Physical Material"));
+			UTEST_EQUAL("Attr Value", bimProps[0].Attributes[4].Value, TEXT(""));
+
+			UTEST_EQUAL("Property Name", bimProps[1].Name, TEXT("Source Information"));
+			UTEST_EQUAL("NumAttributes", bimProps[1].Attributes.Num(), 1);
+			UTEST_EQUAL("Attr Name", bimProps[1].Attributes[0].Name, TEXT("Source Element ID"));
+			UTEST_EQUAL("Attr Value", bimProps[1].Attributes[0].Value, TEXT("45631"));
+
+			UTEST_EQUAL("Property Name", bimProps[2].Name, TEXT("Model Source"));
+			UTEST_EQUAL("NumAttributes", bimProps[2].Attributes.Num(), 2);
+			UTEST_EQUAL("Attr Name", bimProps[2].Attributes[0].Name, TEXT("Path"));
+			UTEST_EQUAL("Attr Value", bimProps[2].Attributes[0].Value, TEXT("F:/Bentley/BuildingProject/Workspace/Projects/Building Project/dgn/BSI300AE9-Shell.dgn"));
+			UTEST_EQUAL("Attr Name", bimProps[2].Attributes[1].Name, TEXT("Name"));
+			UTEST_EQUAL("Attr Value", bimProps[2].Attributes[1].Value, TEXT("BSI300AE9-Shell.dgn"));
+
+			UTEST_EQUAL("Property Name", bimProps[3].Name, TEXT("Document Link"));
+			UTEST_EQUAL("NumAttributes", bimProps[3].Attributes.Num(), 5);
+			UTEST_EQUAL("Attr Name", bimProps[3].Attributes[0].Name, TEXT("Code"));
+			UTEST_EQUAL("Attr Value", bimProps[3].Attributes[0].Value, TEXT("bsi300ae9-shell.dgn"));
+			UTEST_EQUAL("Attr Name", bimProps[3].Attributes[1].Name, TEXT("Name"));
+			UTEST_EQUAL("Attr Value", bimProps[3].Attributes[1].Value, TEXT("BSI300AE9-Shell.dgn"));
+			UTEST_EQUAL("Attr Name", bimProps[3].Attributes[4].Name, TEXT("Format"));
+			UTEST_EQUAL("Attr Value", bimProps[3].Attributes[4].Value, TEXT(""));
+
+			return true;
+		};
+		WebServices->GetElementProperties(ITWINID_CAYMUS_EAP, IMODELID_BUILDING, CHANGESETID_BUILDING, "0x20000001baf");
+	}
+
+	SECTION("GetIModelProperties")
+	{
+		Observer->OnIModelPropertiesRetrievedFunc = [this](bool bSuccess,
+			bool bHasExtents, FProjectExtents const& Extents,
+			bool bHasEcefLocation, FEcefLocation const& EcefLocation)
+		{
+			UTEST_TRUE("GetIModelProperties request result", bSuccess);
+			UTEST_TRUE("bHasExtents", bHasExtents);
+
+#define UTEST_VEC_EQUAL(VecName, CurrentVal, ExpectedVal) \
+	UTEST_TRUE(VecName " X", FMath::IsNearlyEqual(CurrentVal.X, ExpectedVal.X, UE_SMALL_NUMBER)); \
+	UTEST_TRUE(VecName " Y", FMath::IsNearlyEqual(CurrentVal.Y, ExpectedVal.Y, UE_SMALL_NUMBER)); \
+	UTEST_TRUE(VecName " Z", FMath::IsNearlyEqual(CurrentVal.Z, ExpectedVal.Z, UE_SMALL_NUMBER));
+
+#define UTEST_EXTENTS_EQUAL(ModelName, CurrentExt, ExpectedLow, ExpectedHigh) \
+	UTEST_VEC_EQUAL(ModelName " Extents Low", CurrentExt.Low, ExpectedLow);		\
+	UTEST_VEC_EQUAL(ModelName " Extents High", CurrentExt.High, ExpectedHigh);
+
+			if (bHasEcefLocation)
+			{
+				const FVector StadiumLow = FVector(32344.267871807926, 31348.272780176438, -478.7556455931467);
+				const FVector StadiumHigh = FVector(33088.69387347796, 32680.341868920772, 144.21825526358407);
+				UTEST_EXTENTS_EQUAL("Stadium", Extents, StadiumLow, StadiumHigh);
+
+				UTEST_TRUE("HasCartographicOrigin", EcefLocation.bHasCartographicOrigin);
+				UTEST_TRUE("HasTransform", EcefLocation.bHasTransform);
+				UTEST_TRUE("HasVectors", EcefLocation.bHasVectors);
+
+				UTEST_TRUE("CartographicOrigin H", FMath::IsNearlyEqual(EcefLocation.CartographicOrigin.Height, -167.26869516478132, UE_SMALL_NUMBER));
+				UTEST_TRUE("CartographicOrigin Lat.", FMath::IsNearlyEqual(EcefLocation.CartographicOrigin.Latitude, 0.022790512521193126, UE_SMALL_NUMBER));
+				UTEST_TRUE("CartographicOrigin Long.", FMath::IsNearlyEqual(EcefLocation.CartographicOrigin.Longitude, 1.8129729494684641, UE_SMALL_NUMBER));
+
+				UTEST_TRUE("Orientation P", FMath::IsNearlyEqual(EcefLocation.Orientation.Pitch, -0.00096528839175402366, UE_SMALL_NUMBER));
+				UTEST_TRUE("Orientation Y", FMath::IsNearlyEqual(EcefLocation.Orientation.Yaw, -166.12431911119472, UE_SMALL_NUMBER));
+				UTEST_TRUE("Orientation R", FMath::IsNearlyEqual(EcefLocation.Orientation.Roll, 88.694195308662842, UE_SMALL_NUMBER));
+
+				UTEST_TRUE("Transform", EcefLocation.Transform.Equals(
+					FMatrix(
+						{ -0.97079263092018664, 0.0054485769942402840, -0.23975409551790289, -1497600.1543352203 },
+						{ -0.23980964627116919, -0.022127058357000351, 0.97056615053070139, 6198968.8779639360 },
+						{ -1.6847014194354415e-05, 0.99971363550866954, 0.022788618352338339, 112371.07286524471 },
+						{ 0., 0., 0., 1. })));
+
+				UTEST_VEC_EQUAL("xVector", EcefLocation.xVector, FVector(-0.97079263092018664, -0.23980964627116919, -1.6847014194354415e-05));
+				UTEST_VEC_EQUAL("yVector", EcefLocation.yVector, FVector(0.005448576994240284, -0.02212705835700035, 0.9997136355086695));
+			}
+			else
+			{
+				const FVector BuildingLow = FVector(-244.59492798331735, -303.66127815647087, -28.27051340710871);
+				const FVector BuildingHigh = FVector(409.678652192302, 249.78031406156776, 33.397180631459555);
+				UTEST_EXTENTS_EQUAL("Building", Extents, BuildingLow, BuildingHigh);
+			}
+			return true;
+		};
+		// iModel without ECEF location
+		Observer->AddPendingRequest();
+		WebServices->GetIModelProperties(ITWINID_CAYMUS_EAP, IMODELID_BUILDING, CHANGESETID_BUILDING);
+
+		// iModel with ECEF location
+		Observer->AddPendingRequest();
+		WebServices->GetIModelProperties(ITWINID_STADIUM_RN_QA, IMODELID_STADIUM, CHANGESETID_STADIUM);
 	}
 
 	ADD_LATENT_AUTOMATION_COMMAND(FNUTWaitForMockServerResponse(Observer));

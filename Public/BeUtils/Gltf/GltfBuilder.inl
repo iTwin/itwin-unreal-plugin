@@ -62,15 +62,26 @@ void GltfBuilder::MeshPrimitive::SetColors(const std::vector<std::array<_T, _n>>
 }
 
 template<class _T>
-void GltfBuilder::MeshPrimitive::SetFeatureIds(const std::vector<std::array<_T, 1>>& featureIds)
+void GltfBuilder::MeshPrimitive::SetFeatureIds(const std::vector<std::array<_T, 1>>& featureIds,
+	bool bShareBufferForMatIDs /*= false*/)
 {
-	primitive_.attributes["_FEATURE_ID_0"] = builder_.AddAccessor(
+	int32_t const accessorIndex = builder_.AddAccessor(
 		builder_.AddBufferView(featureIds, CesiumGltf::BufferView::Target::ARRAY_BUFFER),
 		featureIds, false);
-	auto& featureId = primitive_.addExtension<CesiumGltf::ExtensionExtMeshFeatures>().featureIds.emplace_back();
+	primitive_.attributes.emplace("_FEATURE_ID_0", accessorIndex);
+	auto& extension = primitive_.addExtension<CesiumGltf::ExtensionExtMeshFeatures>();
+	auto& featureId = extension.featureIds.emplace_back();
 	featureId.featureCount = (*std::max_element(featureIds.begin(), featureIds.end()))[0];
 	featureId.attribute = 0;
 	featureId.propertyTable = 0;
+
+	if (bShareBufferForMatIDs)
+	{
+		auto& featureId_matID = extension.featureIds.emplace_back();
+		featureId_matID.featureCount = featureId.featureCount;
+		featureId_matID.attribute = 0;
+		featureId_matID.propertyTable = 1;
+	}
 }
 
 template<class _T>

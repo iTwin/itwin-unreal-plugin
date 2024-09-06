@@ -25,9 +25,11 @@ public class ITwinRuntime : ModuleRules
 			"HTTP",
 			"HTTPServer",
 			"Json",
+			"JsonUtilities",
 			"PlatformCryptoOpenSSL",
 			"RenderCore",
 			"RHI",
+			"SDKCore",
 			"Slate",
 			"SlateCore",
 		});

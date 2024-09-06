@@ -29,17 +29,13 @@ namespace SDK::Core
 
 namespace SDK::Core::Impl
 {
-	void HttpCpr::SetBaseUrl(const std::string& url)
-	{
-		url_ = url;
-	}
 
 	void HttpCpr::SetBasicAuth(const std::string& login, const std::string& passwd)
 	{
 		auth_ = std::make_unique<cpr::Authentication>(login, passwd, cpr::AuthMode::BASIC);
 	}
 
-	std::pair<long, std::string> HttpCpr::Put(const std::string& url,
+	Http::Response HttpCpr::Put(const std::string& url,
 											  const std::string& body /*= "" */,
 											  const Headers& headers /*= {} */)
 	{
@@ -48,18 +44,20 @@ namespace SDK::Core::Impl
 			h[i.first] = i.second;
 		cpr::Response r;
 		if (auth_)
-			r = cpr::Put(cpr::Url{ url_ + '/' + url }
+			r = cpr::Put(cpr::Url{ GetBaseUrl() + '/' + url }
 				, cpr::Body{ body }
+				, h
 				, *auth_
 			);
 		else
-			r = cpr::Put(cpr::Url{ url_ + '/' + url }
+			r = cpr::Put(cpr::Url{ GetBaseUrl() + '/' + url }
 				, cpr::Body{ body }
+				, h
 		);
 		return std::make_pair(r.status_code, r.text);
 	}
 
-	std::pair<long, std::string> HttpCpr::Patch(const std::string& url,
+	Http::Response HttpCpr::Patch(const std::string& url,
 												const std::string& body /*= "" */,
 												const Headers& headers /*= {} */)
 	{
@@ -68,18 +66,20 @@ namespace SDK::Core::Impl
 			h[i.first] = i.second;
 		cpr::Response r;
 		if (auth_)
-			r = cpr::Patch(cpr::Url{ url_ + '/' + url }
+			r = cpr::Patch(cpr::Url{ GetBaseUrl() + '/' + url }
 				, cpr::Body{ body }
+				, h
 				, *auth_
 			);
 		else
-			r = cpr::Patch(cpr::Url{ url_ + '/' + url }
+			r = cpr::Patch(cpr::Url{ GetBaseUrl() + '/' + url }
 				, cpr::Body{ body }
+				, h
 		);
 		return std::make_pair(r.status_code, r.text);
 	}
 
-	std::pair<long, std::string> HttpCpr::Post(const std::string& url,
+	Http::Response HttpCpr::Post(const std::string& url,
 											   const std::string& body /*= "" */,
 											   const Headers& headers /*= {} */)
 	{
@@ -88,18 +88,20 @@ namespace SDK::Core::Impl
 			h[i.first] = i.second;
 		cpr::Response r;
 		if (auth_)
-			r = cpr::Post(cpr::Url{ url_ + '/' + url }
+			r = cpr::Post(cpr::Url{ GetBaseUrl() + '/' + url }
 				, cpr::Body{ body }
+				, h
 				, *auth_
 			);
 		else
-			r = cpr::Post(cpr::Url{ url_ + '/' + url }
+			r = cpr::Post(cpr::Url{ GetBaseUrl() + '/' + url }
 				, cpr::Body{ body }
+				, h
 		);
 		return std::make_pair(r.status_code, r.text);
 	}
 
-	std::pair<long, std::string> HttpCpr::Get(const std::string& url,
+	Http::Response HttpCpr::Get(const std::string& url,
 											  const std::string& body /*= "" */,
 											  const Headers& headers /*= {} */,
 											  bool isFullUrl /*= false*/)
@@ -109,20 +111,20 @@ namespace SDK::Core::Impl
 			h[i.first] = i.second;
 		cpr::Response r;
 		if (auth_)
-			r = cpr::Get(cpr::Url{ isFullUrl ? url : (url_ + '/' + url) }
+			r = cpr::Get(cpr::Url{ isFullUrl ? url : (GetBaseUrl() + '/' + url) }
 				, cpr::Body{ body }
 				, h
 				, *auth_
 			);
 		else
-			r = cpr::Get(cpr::Url{ isFullUrl ? url : (url_ + '/' + url) }
-				, h
+			r = cpr::Get(cpr::Url{ isFullUrl ? url : (GetBaseUrl() + '/' + url) }
 				, cpr::Body{ body }
+				, h
 		);
 		return std::make_pair(r.status_code, r.text);
 	}
 
-	std::pair<long, std::string> HttpCpr::Delete(const std::string& url,
+	Http::Response HttpCpr::Delete(const std::string& url,
 												 const std::string& body /*= "" */,
 												 const Headers& headers /*= {} */)
 	{
@@ -131,15 +133,15 @@ namespace SDK::Core::Impl
 			h[i.first] = i.second;
 		cpr::Response r;
 		if (auth_)
-			r = cpr::Delete(cpr::Url{ url_ + '/' + url }
+			r = cpr::Delete(cpr::Url{ GetBaseUrl() + '/' + url }
 				, cpr::Body{ body }
 				, h
 				, *auth_
 			);
 		else
-			r = cpr::Delete(cpr::Url{ url_ + '/' + url }
-				, h
+			r = cpr::Delete(cpr::Url{ GetBaseUrl() + '/' + url }
 				, cpr::Body{ body }
+				, h
 		);
 		return std::make_pair(r.status_code, r.text);
 	}

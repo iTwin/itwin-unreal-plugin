@@ -38,7 +38,7 @@ We recorded a quick start video on [YouTube](https://www.youtube.com/watch?v=quf
 1. Go to the [Releases](https://github.com/iTwin/itwin-unreal-plugin/releases) page.
 2. Download ITwinForUnreal.zip from the latest release.
 3. Extract the zip archive to Unreal Engine's `Engine/Plugins/Marketplace` folder.<br>
-   For example, on Unreal Engine 5.3 on Windows, this is typically `C:\Program Files\Epic Games\UE_5.\Engine\Plugins\Marketplace`.<br>
+   For example, on Unreal Engine 5.3 on Windows, this is typically `C:\Program Files\Epic Games\UE_5.3\Engine\Plugins\Marketplace`.<br>
    You may need to create the `Marketplace` folder yourself.<br>
    After extraction, you should have a folder `Engine/Plugins/Marketplace/ITwinForUnreal/Binaries` for example.
 4. The plugin is now ready to use.
@@ -52,7 +52,8 @@ For example: `C:\MyUnrealApp\Plugins\ITwinForUnreal`.
 
 1. If you installed the plugin in the Unreal Engine folder, enable the plugin `iTwin for Unreal` as explained [here](https://dev.epicgames.com/documentation/en-us/unreal-engine/working-with-plugins-in-unreal-engine).
 2. If not done yet, [configure your iTwin Platform account](#configure-itwin-platform) and take note of your app's client ID.
-3. To access your iModels from your Unreal app, you will have to provide the iTwin app ID to the plugin.<br>
+3. Make sure the plugin and its content is visible in the content browser: in the "Settings" menu of the content browser window, enable "Show Engine Content" and "Show Plugin Content".
+4. To access your iModels from your Unreal app, you will have to provide the iTwin app ID to the plugin.<br>
    This can be done in several ways:
    - Drag and drop an `ITwinAppIdHelper` actor from the Content Browser into your level.<br>
      This actor can be found in the content browser inside folder `Plugins/iTwin for Unreal C++ Classes/ITwinRuntime/Public`.<br>
@@ -61,7 +62,7 @@ For example: `C:\MyUnrealApp\Plugins\ITwinForUnreal`.
      This method is useful if you want to simply add an iModel manually into your level inside the Unreal Editor (see below).
    - If you use C++ code or Blueprint, you can instead directly call the static function `AITwinServerConnection::SetITwinAppID()`.<br>
      This is typically done in your app's module `StartupModule()` function (if using C++), or in the `BeginPlay` event of your Game Mode (if using Blueprints).
-4. To manually add an iModel into your level inside the Unreal Editor, drag and drop an `ITwinIModel` actor from the Content Browser into your level.<br>
+5. To manually add an iModel into your level inside the Unreal Editor, drag and drop an `ITwinIModel` actor from the Content Browser into your level.<br>
    This actor can be found in the content browser inside folder `Plugins/iTwin for Unreal C++ Classes/ITwinRuntime/Public`.<br>
    Then, in the actor's Details panel, go to the `Loading` section and fill in these fields:
    - `Loading Method`: `Automatic`
@@ -142,6 +143,30 @@ Developer Mode for Windows must be enabled, as explained [here](https://learn.mi
 6. Hit F5 to build and run the test app (UnrealProjects/ITwinTestApp in the solution explorer).
 7. Once compilation is finished and VS has launched UnrealEditor, hit alt+P (play in editor) to actually start the app.
 
+### Build and run on MAC ARM
+
+1. Clone the vcpkg repo somewhere on your machine.<br>
+`git clone https://github.com/microsoft/vcpkg.git`
+2. Create an environment variable VCPKG_ROOT pointing to your local vcpkg repo.
+   You can also set the VCPKG_ROOT as a cmake variable.
+3. Clone the repo and its submodules.<br>
+`git clone https://github.com/iTwin/itwin-unreal-plugin.git`<br>
+`cd itwin-unreal-plugin`<br>
+`git submodule update --init --recursive`<br>
+4. Run CMake (command-line or GUI) and generate your build folder.<br>
+   You need to select CMake preset "macosXcodeARM".<br>
+   You also have to ensure that clang will compile for arm and not x86.<br>
+   Command-line example, supposing current directory is your repo root:<br>
+`cmake -S . -B ../Build/itwin-unreal-plugin --preset macosXcodeARM -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_APPLE_SILICON_PROCESSOR=arm64`
+5. Build the targets InstallCesiumDependencies and then ITwinTestApp.<br>
+   Some of the targets use xcodebuild that does not handle well multithreading, we recommend that you use --parallel 1:<br>
+`cmake --build . --parallel 12 --target InstallCesiumDependencies`<br>
+`cmake --build . --parallel 1 --target ITwinTestApp`
+6. To launch ITwinTestApp in Unreal, use the target Run_ITwinTestApp_Editor:<br>
+`cmake  --build . --parallel 1 --target  Run_ITwinTestApp_Editor`
+7. Once compilation is finished and cmake has launched UnrealEditor, hit alt+P (play in editor) to actually start the app.
+
+
 ### Clean Build
 
 1. remove your cmake Build folder
@@ -151,37 +176,38 @@ Developer Mode for Windows must be enabled, as explained [here](https://learn.mi
 
 - Packaging an application that uses both the iTwin plugin and the Cesium plugin will not work (errors about duplicate c++ symbols).<br>
   As a workaround, you can disable the Cesium plugin and add your tilesets as explained [here](#load-external-tileset).
+- On MacOS, the synchro schedules are not yet supported.
 
 ## Support
 
 We are looking forward to your feedback and your ideas for the plugin. If you encounter any bugs, please use the Issues tab to report any bugs.
 
-## 5. Getting 4D animations from Synchro working in the plugin
-Build 0.1.9 adds initial support for playing back 4D animations. Since this is an early access version, there are a few steps and limitations to consider. Please follow allong the following process:
+## Getting 4D animations from Synchro working in the plugin
+Build 0.1.10 offers preliminary support for playing back 4D animations. Since this is an early access version, there are a few steps and limitations to consider.
 
-1. First, it is important to note that projects hosted in the East US region datacenter cannot yet access schedules data from the plugin, because of specific technical difficulties on these servers. This will of course be fixed in future builds.
-You can see the region by scrolling down from the "Manage project details" panel.<br> 
-![Screenshot of Synchro control's web interface](docs/Synchro1.jpg)<br>
-![Screenshot of Synchro control's web interface](docs/Synchro2.jpg)<br>
-2. To be able to access schedules data, the project must have been resynchronized recently: projects not actively used and synchronized before mid-July of this year will probably need to be resynchronized, either by submitting actual changes to the project, or by changing any of the synchronization settings in the "Edit iModel" panel for the iModel bearing the 4D schedule:<br>
+Current limitations related to 4D schedules:
+* The macOS version of the plugin does not support the 4D schedules yet.
+* Transformations and animations along 3D paths are not supported yet (even if you uncheck the checkbox in the Replay settings).
+* When new geometry is received from the streaming server, typically better Level-of-Detail meshes, the animation is not immediately known, nor instantly applied to the visualization. This results in chunks of geometry appearing even though they should be invisible at the current time in the schedule, for example. The visual should correct itself after some time has passed.
+* Please do not change the materials used by the _AITwinCesiumTileset_ actor as this would most likely prevent the animation (including visibilities and cutting planes) from being applied.
+
+Please follow along the following process:
+
+1. To be able to access schedules data, the project must have been resynchronized recently: projects not actively used and/or synchronized before _mid-July_ of this year (_mid-August_ for projects hosted on **East US** datacenter) will definitely need to be resynchronized, either by submitting actual changes to the project, or by changing any of the synchronization settings in the **Edit iModel** panel for the iModel bearing the 4D schedule (actual list of available settings can vary depending on the iModel's history):<br>
 ![Screenshot of Synchro control's web interface](docs/Synchro3.jpg)<br>
 ![Screenshot of Synchro control's web interface](docs/Synchro4.jpg)<br>
-3. When "playing" an Unreal level and loading an iModel, the schedule data will be queried for all displayed geometries. After setting up the app Id and creating the iModel actor in your Unreal level, the geometries are immediately visible, but you need to play the level ("Play in Editor") for the 4D schedules to be enabled. Also, as a temporary workaround, after starting to play the level, you need to select the iModel and click "Update iModel": the tileset will be destroyed and re-created, and only then will the Schedule data start downloading.<br>
-![Screenshot of the update button in Unreal Engine](docs/Synchro8.jpg)<br>
+2. After setting up the app Id and creating the iModel actor in your Unreal level, the geometries start appearing, and the schedule data is queried for all received geometries<br>
 This can take some time and you can see the pending queries in the "Output log" panel. Moving in the scene will stack more pending batches, when new tiles become visible or resolution changes occur.
 When waiting long enough, all pending queries will be handled, and a summary is visible in the Output log:<br>
 ![Screenshot of Unreal Engine's output log](docs/Synchro5.jpg)<br>
-4. Select the iModel in the Outliner, and select its Synchro4DSchedules component in the Details panel: you will see the Replay settings there, where you can:
-   *"Jump to beginning": jump to the start of the schedule (the default is a time far in the future in order to see the completed project)
-   *"Jump to end" of schedule
-   *Set the replay speed (in days of schedule time per second of replay time), or use "Auto replay speed" to fit the whole animation in 30 seconds of replay time.
-   *You can edit the "Schedule Time" field manually, to jump to a specific time point.
-   *"Play"/"Pause" the schedule animation
-   *"Stop" will pause the animation but also display all geometries with their original color and opacities, as if there were no schedules at all.<br>
+3. Select the iModel in the Outliner, and select its Synchro4DSchedules component in the Details panel: you will see the Replay settings there, where you can:
+   * "Jump to beginning": jump to the start of the schedule (the default is a time far in the future in order to see the completed project)
+   * "Jump to end" of schedule
+   * Set the replay speed (as an FTimespan of schedule time per second of replay time), or use "Auto replay speed" to fit the whole animation in 30 seconds of replay time.
+   * You can edit the "Schedule Time" field manually, to jump to a specific time point.
+   * "Play"/"Pause" the schedule animation
+   * "Stop" will pause the animation but also display all geometries with their original color and opacities, as if there were no schedules at all.<br>
 ![Screenshot of Unreal Engine's Synchro settings](docs/Synchro6.jpg)<br>
-5. There are also advanced Replay settings to optionally disable coloring, opacities or cutting planes during the animation, or to Mask out non-animated Elements which may be confusing when looking at the animation
-(NOTE: that transformations and 3D paths are not supported yet - even if you uncheck the box)<br>
+4. There are also advanced Replay settings to optionally disable coloring, visibilities or cutting planes during the animation, or to 'Mask out non-animated Elements' which may be confusing when looking at the animation.
 ![Screenshot of further Unreal Engine Synchro settings](docs/Synchro7.jpg)
-
-
 

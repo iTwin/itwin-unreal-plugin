@@ -36,7 +36,7 @@ namespace SDK::Core
 
 #define INSTANCE_STRUCT_MEMBERS \
 			std::string name;\
-			double matrix[12];\
+			std::array<double, 12> matrix;\
 			std::optional<std::string> colorshift;\
 			std::string groupid;\
 			std::string objref;
@@ -54,7 +54,7 @@ namespace SDK::Core
 
 		struct SJsonInEmpty	{};
 
-		void LoadInstancesGroups(const std::string& decorationId)
+		void LoadInstancesGroups(const std::string& decorationId, const std::string& accessToken)
 		{
 			SJsonInEmpty jIn;
 
@@ -74,8 +74,11 @@ namespace SDK::Core
 
 			SJsonOut jOut;
 
+			Http::Headers headers;
+			headers.emplace_back("Authorization", std::string("Bearer ") + accessToken);
+
 			long status = GetHttp()->GetJsonJBody(
-				jOut, std::string("instancesgroup?decorationid=") + decorationId, jIn);
+				jOut, decorationId + "/instancesgroups", jIn, headers);
 
 			if (status == 200 || status == 201)
 			{
@@ -96,14 +99,17 @@ namespace SDK::Core
 			}
 		}
 
-		void LoadInstances(const std::string& decorationId)
+		void LoadInstances(const std::string& decorationId, const std::string& accessToken)
 		{
 			SJsonInEmpty jIn;
 			struct SJsonOut { int total_rows; std::vector<SJsonInstWithId> rows; SJsonLink _links; };
 			SJsonOut jOut;
 
+			Http::Headers headers;
+			headers.emplace_back("Authorization", std::string("Bearer ") + accessToken);
+
 			long status = GetHttp()->GetJsonJBody(
-				jOut, std::string("instances?decorationid=") + decorationId, jIn);
+				jOut, decorationId + "/instances", jIn, headers);
 			bool continueLoading = true;
 
 			while (continueLoading)
@@ -125,7 +131,7 @@ namespace SDK::Core
 					{
 						inst->SetColorShift(row.colorshift.value());
 					}
-					std::memcpy(&mat[0], row.matrix, 12*sizeof(double));
+					std::memcpy(&mat[0], row.matrix.data(), 12*sizeof(double));
 					inst->SetMatrix(mat);
 
 					SharedInstGroupMap::const_iterator itGroup = mapIdToInstGroups_.find(row.groupid);
@@ -143,7 +149,7 @@ namespace SDK::Core
 
 				if (jOut._links.next.has_value() && !jOut._links.next.value().empty())
 				{
-					status = GetHttp()->GetJsonJBody(jOut, jOut._links.next.value(), jIn, {}, true);
+					status = GetHttp()->GetJsonJBody(jOut, jOut._links.next.value(), jIn, headers, true);
 				}
 				else
 				{
@@ -152,21 +158,26 @@ namespace SDK::Core
 			}
 		}
 
-		void LoadDataFromServer(const std::string& decorationId)
+		void LoadDataFromServer(const std::string& decorationId, const std::string& accessToken)
 		{
-			LoadInstancesGroups(decorationId);
-			LoadInstances(decorationId);
+			LoadInstancesGroups(decorationId, accessToken);
+			LoadInstances(decorationId, accessToken);
 		}
 
-		void SaveInstancesGroup(const std::string& decorationId, std::shared_ptr<IInstancesGroup>& instGroup)
+		void SaveInstancesGroup(
+			const std::string& decorationId, const std::string& accessToken,
+			std::shared_ptr<IInstancesGroup>& instGroup)
 		{
 			struct SJsonInstGroup {	std::string name; std::optional<std::string> userData; };
 			SJsonInstGroup jIn{ .name = instGroup->GetName() };
 			struct SJsonOut { std::string id; };
 			SJsonOut jOut;
 
+			Http::Headers headers;
+			headers.emplace_back("Authorization", std::string("Bearer ") + accessToken);
+
 			long status = GetHttp()->PostJsonJBody(
-				jOut, std::string("instancesgroup?decorationid=") + decorationId, jIn);
+				jOut, decorationId + "/instancesgroups", jIn, headers);
 
 			if (status == 200 || status == 201)
 			{
@@ -179,10 +190,10 @@ namespace SDK::Core
 		}
 
 		template<class T>
-		void CopyInstance(T& dst, const SDK::Core::IInstance& src)
+		void CopyInstance(T& dst, const IInstance& src)
 		{
 			dst.name = src.GetName();
-			std::memcpy(dst.matrix, &src.GetMatrix()[0], 12*sizeof(double));
+			std::memcpy(dst.matrix.data(), &src.GetMatrix()[0], 12*sizeof(double));
 			dst.colorshift = src.GetColorShift();
 			dst.objref = src.GetObjectRef();
 			if (src.GetGroup())
@@ -191,7 +202,9 @@ namespace SDK::Core
 			}
 		}
 
-		void SaveInstances(const std::string& decorationId, SharedInstVect& instances)
+		void SaveInstances(
+			const std::string& decorationId, const std::string& accessToken,
+			SharedInstVect& instances)
 		{
 			struct SJsonInstVect { std::vector<SJsonInst> instances; };
 			struct SJsonInstWithIdVect { std::vector<SJsonInstWithId> instances; };
@@ -224,6 +237,9 @@ namespace SDK::Core
 				++instCount;
 			}
 
+			Http::Headers headers;
+			headers.emplace_back("Authorization", std::string("Bearer ") + accessToken);
+
 			// Post (new instances)
 			if (!jInPost.instances.empty())
 			{
@@ -231,7 +247,7 @@ namespace SDK::Core
 				struct SJsonInstOutVect	{ std::vector<SJsonInstOut> instances; };
 				SJsonInstOutVect jOutPost;
 				long status = GetHttp()->PostJsonJBody(
-					jOutPost, std::string("instances?decorationid=") + decorationId, jInPost);
+					jOutPost, decorationId + "/instances", jInPost, headers);
 
 				if (status == 200 || status == 201)
 				{
@@ -239,7 +255,7 @@ namespace SDK::Core
 					{
 						for(size_t i = 0; i < newInstIndices.size(); ++i)
 						{
-							SDK::Core::IInstance& inst = *instances[newInstIndices[i]];
+							IInstance& inst = *instances[newInstIndices[i]];
 							inst.SetId(jOutPost.instances[i].id);
 							inst.MarkForUpdate(Database, false);
 						}
@@ -257,7 +273,7 @@ namespace SDK::Core
 				struct SJsonInstOutUpd { int64_t numUpdated; };
 				SJsonInstOutUpd jOutPut;
 				long status = GetHttp()->PutJsonJBody(
-					jOutPut, std::string("instances?decorationid=") + decorationId, jInPut);
+					jOutPut, decorationId + "/instances", jInPut, headers);
 
 				if (status == 200 || status == 201)
 				{
@@ -276,7 +292,7 @@ namespace SDK::Core
 			}
 		}
 
-		void DeleteInstances(const std::string& decorationId, SharedInstVect& instances)
+		void DeleteInstances(const std::string& decorationId, const std::string& accessToken, SharedInstVect& instances)
 		{
 			if (!instances.empty())
 			{
@@ -289,8 +305,11 @@ namespace SDK::Core
 					jIn.ids[i] = instances[i]->GetId();
 				}
 
+				Http::Headers headers;
+				headers.emplace_back("Authorization", std::string("Bearer ") + accessToken);
+
 				long status = GetHttp()->DeleteJsonJBody(
-					jOut, std::string("instances?decorationid=") + decorationId, jIn);
+					jOut, decorationId + "/instances", jIn, headers);
 
 				if (status != 200 && status != 201)
 				{
@@ -301,24 +320,24 @@ namespace SDK::Core
 			}
 		}
 
-		void SaveDataOnServer(const std::string& decorationId)
+		void SaveDataOnServer(const std::string& decorationId, const std::string& accessToken)
 		{
 			// Save groups
 			for (auto& instGroup : instancesGroups_)
 			{
-				SaveInstancesGroup(decorationId, instGroup);
+				SaveInstancesGroup(decorationId, accessToken, instGroup);
 			}
 
 			// Save instances
 			for (auto& instVec : mapObjectRefToInstances_)
 			{
-				SaveInstances(decorationId, instVec.second);
+				SaveInstances(decorationId, accessToken, instVec.second);
 			}
 
 			// Delete instances
 			for (auto& instVec : mapObjectRefToDeletedInstances_)
 			{
-				DeleteInstances(decorationId, instVec.second);
+				DeleteInstances(decorationId, accessToken, instVec.second);
 			}
 		}
 
@@ -339,7 +358,7 @@ namespace SDK::Core
 			currentInstances.resize(static_cast<size_t>(count));
 			for (uint64_t i = oldSize; i < count; ++i)
 			{
-				currentInstances[i] = SDK::Core::IInstance::New();
+				currentInstances[i] = IInstance::New();
 			}
 		}
 
@@ -397,14 +416,14 @@ namespace SDK::Core
 		}
 	};
 
-	void InstancesManager::LoadDataFromServer(const std::string& decorationId)
+	void InstancesManager::LoadDataFromServer(const std::string& decorationId, const std::string& accessToken)
 	{
-		GetImpl().LoadDataFromServer(decorationId);
+		GetImpl().LoadDataFromServer(decorationId, accessToken);
 	}
 
-	void InstancesManager::SaveDataOnServer(const std::string& decorationId)
+	void InstancesManager::SaveDataOnServer(const std::string& decorationId, const std::string& accessToken)
 	{
-		GetImpl().SaveDataOnServer(decorationId);
+		GetImpl().SaveDataOnServer(decorationId, accessToken);
 	}
 
 	uint64_t InstancesManager::GetInstanceCountByObjectRef(const std::string& objectRef) const

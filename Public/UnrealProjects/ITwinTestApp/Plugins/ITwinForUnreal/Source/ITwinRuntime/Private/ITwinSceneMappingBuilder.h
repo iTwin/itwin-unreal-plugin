@@ -25,7 +25,12 @@ public:
 		const TWeakObjectPtr<UMaterialInstanceDynamic>& pMaterial,
 		const FITwinCesiumMeshData& CesiumData) override;
 
-	virtual bool ShouldAllocateUVForFeatures() const override;
+	virtual void BeforeTileDestruction(
+		const Cesium3DTilesSelection::Tile& Tile,
+		USceneComponent* TileGltfComponent) override;
+
+	virtual uint32 BakeFeatureIDsInVertexUVs(std::optional<uint32> featuresAccessorIndex,
+		FITwinCesiumMeshData const& CesiumMeshData, FStaticMeshLODResources& LODResources) const override;
 
 	virtual UMaterialInstanceDynamic* CreateMaterial_GameThread(
 		CesiumGltf::MeshPrimitive const* pMeshPrimitive,

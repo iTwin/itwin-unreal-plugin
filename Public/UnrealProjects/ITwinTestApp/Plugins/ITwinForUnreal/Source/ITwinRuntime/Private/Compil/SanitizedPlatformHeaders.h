@@ -14,4 +14,5 @@
 #ifdef WIN32
 #include <Windows/MinWindows.h>
 #undef OPAQUE // defined in wingdi.h but Cesium has a constant with that name
+#undef GetCurrentTime
 #endif

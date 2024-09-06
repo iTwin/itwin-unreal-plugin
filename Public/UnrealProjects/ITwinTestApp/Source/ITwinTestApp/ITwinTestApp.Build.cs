@@ -23,11 +23,12 @@ public class ITwinTestApp : ModuleRules
 			"HTTP",
 			"HTTPServer",
 			"InputCore",
+			"ITwinCesiumRuntime",
 			"ITwinRuntime",
 			"Json",
 			"PlatformCryptoOpenSSL",
 			"WebBrowser",
-            "SDKCore",
+			"SDKCore",
         });
 		PrivateDependencyModuleNames.AddRange(new string[]{
             "Slate",

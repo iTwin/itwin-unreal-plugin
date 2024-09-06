@@ -23,7 +23,7 @@ namespace ITwinCesium::Metada
 	static const FString MODEL_NAME			= TEXT("model");
 	static const FString SUBCATEGORY_NAME	= TEXT("subcategory");
 
-	// material IDs are about to be added in Cesium Mesh-Export, in slot _FEATURE_ID_1
+	// material IDs are about to be added in Cesium Mesh-Export, in a separate table
 	static const int64 MATERIAL_FEATURE_ID_SLOT = 1;
 	static const FString MATERIAL_NAME		= TEXT("material");
 }

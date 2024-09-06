@@ -945,6 +945,36 @@ FName createSafeName(
   return FName(combined.c_str());
 }
 
+    // Log only once per unsupported primitive mode
+    struct PrimModeLogHelper
+    {
+        std::array<std::atomic_bool, (size_t)MeshPrimitive::Mode::TRIANGLE_FAN + 1> alreadyLogged_;
+
+        PrimModeLogHelper()
+            : alreadyLogged_{ {
+                {false},{false},{false},{false},{false},{false},{false}
+                } }
+        {
+        }
+
+        inline void OnUnsupportedMode(int32_t primMode) {
+            bool bLog = false;
+            if (primMode < 0 || primMode >= (int32_t)alreadyLogged_.size()) {
+                ensureMsgf(false, TEXT("Unknown primitive mode %d!"), primMode);
+                bLog = true;
+            }
+            else if (!alreadyLogged_[(size_t)primMode].exchange(true)) {
+                bLog = true;
+            }
+            if (bLog) {
+                UE_LOG(
+                    LogITwinCesium,
+                    Warning,
+                    TEXT("Primitive mode %d is not supported"),
+                    primMode);
+            }
+        }
+    };
 } // namespace
 
 template <class TIndexAccessor>
@@ -966,11 +996,8 @@ static void loadPrimitive(
       primitive.mode != MeshPrimitive::Mode::TRIANGLE_STRIP &&
       primitive.mode != MeshPrimitive::Mode::POINTS) {
     // TODO: add support for other primitive types.
-    UE_LOG(
-        LogITwinCesium,
-        Warning,
-        TEXT("Primitive mode %d is not supported"),
-        primitive.mode);
+    static PrimModeLogHelper primLogger;
+    primLogger.OnUnsupportedMode(primitive.mode);
     return;
   }
 
@@ -1493,6 +1520,11 @@ static void loadPrimitive(
     computeTangentSpace(StaticMeshBuildVertices);
   }
 
+  // For iTwin scene mapping mechanism (used both for Synchro 4D schedules and selection highlight), we
+  // need to access vertex data from the CPU (in packaged game, if we don't set this flag, the data can
+  // become inaccessible at any time...)
+  const bool bNeedsCPUAccess = true;
+
   {
     TRACE_CPUPROFILER_EVENT_SCOPE(Cesium::InitBuffers)
 
@@ -1501,11 +1533,6 @@ static void loadPrimitive(
     // precision when using 16-bit floats.
     LODResources.VertexBuffers.StaticMeshVertexBuffer.SetUseFullPrecisionUVs(
         true);
-
-    // For iTwin scene mapping mechanism (used both for Synchro 4D schedules and selection highlight), we
-    // need to access vertex data from the CPU (in packaged game, if we don't set this flag, the data can
-    // become inaccessible at any time...)
-    const bool bNeedsCPUAccess = true;
 
     LODResources.VertexBuffers.PositionVertexBuffer.Init(
         StaticMeshBuildVertices,
@@ -1520,9 +1547,7 @@ static void loadPrimitive(
     uint32 NumTexCoords =
         gltfToUnrealTexCoordMap.size() == 0 ? 1
                                             : gltfToUnrealTexCoordMap.size();
-    if (primitiveResult.MeshBuildCallbacks.IsValid()
-        && primitiveResult.MeshBuildCallbacks.Pin()->ShouldAllocateUVForFeatures()
-        && !bHasBakedMetaDataInUVs
+    if (!bHasBakedMetaDataInUVs
         && NumTexCoords < MAX_STATIC_TEXCOORDS)
     {
         // add an additional UV layer in case we need to bake features in UVs on demand
@@ -1537,6 +1562,13 @@ static void loadPrimitive(
         StaticMeshBuildVertices,
         NumTexCoords,
         VtxBufferFlags);
+
+    if (!bHasBakedMetaDataInUVs && primitiveResult.MeshBuildCallbacks.IsValid())
+    {
+        primitiveResult.MeshBuildCallbacks.Pin()->BakeFeatureIDsInVertexUVs(std::nullopt,
+            { &primitive, pModelResult->Metadata, primitiveResult.Features, gltfToUnrealTexCoordMap },
+            LODResources);
+    }
   }
 
   FStaticMeshSectionArray& Sections = LODResources.Sections;
@@ -1559,6 +1591,9 @@ static void loadPrimitive(
 
   {
     TRACE_CPUPROFILER_EVENT_SCOPE(Cesium::SetIndices)
+    if (bNeedsCPUAccess) {
+        LODResources.IndexBuffer.TrySetAllowCPUAccess(true);
+    }
     LODResources.IndexBuffer.SetIndices(
         indices,
         StaticMeshBuildVertices.Num() >= std::numeric_limits<uint16>::max()

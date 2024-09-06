@@ -40,6 +40,8 @@ public:
 	UFUNCTION(BlueprintCallable)
 	void ShowPanel(int Index);
 	UFUNCTION(BlueprintCallable)
+	void ShowErrorPanel(const FString& Error);
+	UFUNCTION(BlueprintCallable)
 	void AddITwin(const FString& DisplayName, const FString& Value);
 	UFUNCTION(BlueprintCallable)
 	void AddIModel(const FString& DisplayName, const FString& Value);
