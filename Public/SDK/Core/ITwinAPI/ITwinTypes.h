@@ -146,11 +146,18 @@ MODULE_EXPORT namespace SDK::Core
 		std::optional<double> roll;
 	};
 
+	struct DisplayStyle
+	{
+		std::optional<std::string> renderTimeline;
+		std::optional<double> timePoint = 0;
+	};
+
 	struct SavedView
 	{
 		std::array<double, 3> origin = { 0, 0, 0 };
 		std::array<double, 3> extents = { 0, 0, 0 };
 		Rotator angles;
+		std::optional<DisplayStyle> displayStyle;
 	};
 
 
@@ -213,6 +220,28 @@ MODULE_EXPORT namespace SDK::Core
 	struct ITwinMaterialPropertiesMap
 	{
 		std::map<std::string, ITwinMaterialProperties> data_;
+	};
+
+	// from https://www.itwinjs.org/v3/reference/core-common/entities/texturedata/
+	enum class ImageSourceFormat : uint8_t
+	{
+		Jpeg = 0,
+		Png = 2,
+		Svg = 3
+	};
+	enum class TextureTransparency : uint8_t
+	{
+		Opaque = 0,
+		Translucent = 1,
+		Mixed = 2
+	};
+	struct ITwinTextureData
+	{
+		int width = 0;
+		int height = 0;
+		std::optional<ImageSourceFormat> format;
+		std::optional<TextureTransparency> transparency;
+		std::vector<uint8_t> bytes;
 	};
 
 	using OptionalVec3D = std::optional<std::array<double, 3>>;

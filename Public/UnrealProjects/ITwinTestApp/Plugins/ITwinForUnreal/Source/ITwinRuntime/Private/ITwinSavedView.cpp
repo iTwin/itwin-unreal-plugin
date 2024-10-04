@@ -8,6 +8,7 @@
 
 #include <ITwinSavedView.h>
 #include <ITwinServerConnection.h>
+#include <ITwinUtilityLibrary.h>
 #include <ITwinWebServices/ITwinWebServices.h>
 #include <HttpModule.h>
 #include <Kismet/KismetMathLibrary.h>
@@ -56,71 +57,6 @@ public:
 	}
 };
 
-namespace
-{
-	// Conversions from iTwin to UE and vice versa
-	inline void ITwinCameraToUE(
-		FVector const& Location_ITwin, FRotator const& Rotation_ITwin,
-		FVector& Location_UE, FRotator& Rotation_UE)
-	{
-		// Convert iTwin camera to UE
-		Location_UE = Location_ITwin * FVector(100, -100, 100);
-
-		Rotation_UE = Rotation_ITwin;
-		Rotation_UE.Yaw *= -1;
-		Rotation_UE = Rotation_UE.GetInverse();
-		Rotation_UE = UKismetMathLibrary::ComposeRotators(FRotator(-90, -90, 0), Rotation_UE);
-	}
-
-	inline void ITwinSavedViewToUE(
-		FSavedView const& SavedView,
-		FVector& Location_UE, FRotator& Rotation_UE)
-	{
-		ITwinCameraToUE(SavedView.Origin, SavedView.Angles, Location_UE, Rotation_UE);
-	}
-
-	inline void UECameraToITwin(
-		FVector const& Location_UE, FRotator const& Rotation_UE,
-		FVector& Location_ITwin, FRotator& Rotation_ITwin)
-	{
-		//UE_LOG(LogTemp, Log, TEXT("Location UE: %s"), *FString::Printf(TEXT("[%.2f,%.2f,%.2f]"), Location_UE.X, Location_UE.Y, Location_UE.Z));
-		//UE_LOG(LogTemp, Log, TEXT("Rotation UE: %s"), *FString::Printf(TEXT("[%.2f,%.2f,%.2f]"), Rotation_UE.Yaw, Rotation_UE.Pitch, Rotation_UE.Roll));
-
-		// Convert position to iTwin
-		Location_ITwin = Location_UE;
-		Location_ITwin /= FVector(100.0, -100.0, 100.0);
-
-		// Convert rotation to iTwin
-		Rotation_ITwin = Rotation_UE;
-		FRotator const rot(-90.0, -90.0, 0.0);
-		Rotation_ITwin = UKismetMathLibrary::ComposeRotators(rot.GetInverse(), Rotation_ITwin);
-		Rotation_ITwin = Rotation_ITwin.GetInverse();
-		Rotation_ITwin.Yaw *= -1.0;
-
-		//UE_LOG(LogTemp, Log, TEXT("Location ITwin: %s"), *FString::Printf(TEXT("[%.2f,%.2f,%.2f]"), Location_ITwin.X, Location_ITwin.Y, Location_ITwin.Z));
-		//UE_LOG(LogTemp, Log, TEXT("Rotation ITwin: %s"), *FString::Printf(TEXT("[%.2f,%.2f,%.2f]"), Rotation_ITwin.Yaw, Rotation_ITwin.Pitch, Rotation_ITwin.Roll));
-	}
-}
-
-namespace ITwin
-{
-	void UECameraToSavedView(AActor const& Pawn, FSavedView& OutSavedView)
-	{
-		UECameraToITwin(Pawn.GetActorLocation(), Pawn.GetActorRotation(),
-			OutSavedView.Origin, OutSavedView.Angles);
-	}
-
-	bool GetSavedViewFromPlayerController(UWorld const* World, FSavedView& OutSavedView)
-	{
-		APlayerController const* Controller = World ? World->GetFirstPlayerController() : nullptr;
-		APawn const* Pawn = Controller ? Controller->GetPawn() : nullptr;
-		if (!Pawn)
-			return false;
-		UECameraToSavedView(*Pawn, OutSavedView);
-		return true;
-	}
-}
-
 AITwinSavedView::AITwinSavedView()
 	:Impl(MakePimpl<FImpl>(*this))
 {
@@ -157,23 +93,13 @@ void AITwinSavedView::OnSavedViewDeleted(bool bSuccess, FString const& InSavedVi
 	}
 }
 
-void AITwinSavedView::OnSavedViewRetrieved(bool bSuccess, FSavedView const& SavedView, FSavedViewInfo const& SavedViewInfo)
+void AITwinSavedView::OnSavedViewRetrieved(bool bSuccess, FSavedView const& SavedView,
+										   FSavedViewInfo const& SavedViewInfo)
 {
 	if (!bSuccess)
 		return;
-#if WITH_EDITOR
-	SetActorLabel(SavedViewInfo.DisplayName);
-#endif
 
-	// convert iTwin cam to UE
-	FVector svLocation;
-	FRotator svRotation;
-	ITwinSavedViewToUE(SavedView, svLocation, svRotation);
-
-	// set actor transform
-	SetActorLocation(svLocation);
-	SetActorRotation(svRotation);
-	Impl->bSavedViewTransformIsSet = true;
+	OnSavedViewEdited(bSuccess, SavedView, SavedViewInfo);
 
 	// Perform pending operation now, if any
 	switch (Impl->PendingOperation)
@@ -190,28 +116,33 @@ void AITwinSavedView::OnSavedViewRetrieved(bool bSuccess, FSavedView const& Save
 	Impl->PendingOperation = FImpl::EPendingOperation::None;
 }
 
-void AITwinSavedView::OnSavedViewEdited(bool bSuccess, FSavedView const& SavedView, FSavedViewInfo const& SavedViewInfo)
+void AITwinSavedView::OnSavedViewEdited(bool bSuccess, FSavedView const& SavedView,
+										FSavedViewInfo const& SavedViewInfo)
 {
 	if (!bSuccess)
 		return;
-	//Rename
+
+	// rename
 #if WITH_EDITOR
 	SetActorLabel(SavedViewInfo.DisplayName);
 #endif
-	// Retake
-	// convert itwin to ue
-	FVector camPos;
-	FRotator camRot;
-	ITwinSavedViewToUE(SavedView, camPos, camRot);
-	this->SetActorLocation(camPos);
-	this->SetActorRotation(camRot);
+
+	// usually, saved views are owned by a AITwinIModel actor (except those created manually from scratch)
+	AITwinIModel* OwnerIModel = Cast<AITwinIModel>(GetOwner());
+	if (!OwnerIModel)
+		return;
+	FTransform const& Transform = UITwinUtilityLibrary::GetSavedViewUnrealTransform(OwnerIModel, SavedView);
+	// Not SetActorTransform? To preserve scaling?
+	SetActorLocation(Transform.GetLocation());
+	SetActorRotation(Transform.GetRotation());
+	Impl->bSavedViewTransformIsSet = true;
 }
 
 void AITwinSavedView::UpdateSavedView()
 {
 	if (SavedViewId.IsEmpty())
 	{
-		UE_LOG(LogTemp, Error, TEXT("ITwinSavedView has no SavedViewId"));
+		BE_LOGE("ITwinAPI", "ITwinSavedView has no SavedViewId");
 		return;
 	}
 	if (CheckServerConnection() != AITwinServiceActor::EConnectionStatus::Connected)
@@ -229,7 +160,7 @@ void AITwinSavedView::MoveToSavedView()
 {
 	if (SavedViewId.IsEmpty())
 	{
-		UE_LOG(LogTemp, Error, TEXT("ITwinSavedView has no SavedViewId - cannot move to it"));
+		BE_LOGE("ITwinAPI", "ITwinSavedView has no SavedViewId - cannot move to it");
 		return;
 	}
 	UWorld const* World = GetWorld();
@@ -262,7 +193,7 @@ void AITwinSavedView::DeleteSavedView()
 {
 	if (SavedViewId.IsEmpty())
 	{
-		UE_LOG(LogTemp, Error, TEXT("ITwinSavedView with no SavedViewId cannot be deleted"));
+		BE_LOGE("ITwinAPI", "ITwinSavedView with no SavedViewId cannot be deleted");
 		return;
 	}
 	UpdateWebServices();
@@ -276,7 +207,7 @@ void AITwinSavedView::RenameSavedView()
 {
 	if (SavedViewId.IsEmpty())
 	{
-		UE_LOG(LogTemp, Error, TEXT("ITwinSavedView with no SavedViewId cannot be renamed"));
+		BE_LOGE("ITwinAPI", "ITwinSavedView with no SavedViewId cannot be renamed");
 		return;
 	}
 	if (!Impl->bSavedViewTransformIsSet)
@@ -287,15 +218,18 @@ void AITwinSavedView::RenameSavedView()
 		return;
 	}
 
-	FVector camPos_ITwin;
-	FRotator camRot_ITwin;
-	UECameraToITwin(GetActorLocation(), GetActorRotation(), camPos_ITwin, camRot_ITwin);
+	// usually, saved views are owned by a AITwinIModel actor (except those created manually from scratch)
+	AITwinIModel* OwnerIModel = Cast<AITwinIModel>(GetOwner());
+	if (!OwnerIModel)
+		return;
+	FSavedView const CurrentSV = UITwinUtilityLibrary::GetSavedViewFromUnrealTransform(OwnerIModel,
+		// Not GetActorTransform? To skip scaling?
+		FTransform(GetActorRotation(), GetActorLocation()));
 
 	UpdateWebServices();
 	if (WebServices && !DisplayName.IsEmpty())
 	{
-		WebServices->EditSavedView({ camPos_ITwin, FVector(0.0, 0.0, 0.0), camRot_ITwin },
-			{ SavedViewId, DisplayName, true });
+		WebServices->EditSavedView(CurrentSV, { SavedViewId, DisplayName, true });
 	}
 }
 
@@ -303,12 +237,16 @@ void AITwinSavedView::RetakeSavedView()
 {
 	if (SavedViewId.IsEmpty())
 	{
-		UE_LOG(LogTemp, Error, TEXT("ITwinSavedView with no SavedViewId cannot be edited"));
+		BE_LOGE("ITwinAPI", "ITwinSavedView with no SavedViewId cannot be edited");
 		return;
 	}
 
+	// usually, saved views are owned by a AITwinIModel actor (except those created manually from scratch)
+	AITwinIModel* OwnerIModel = Cast<AITwinIModel>(GetOwner());
+	if (!OwnerIModel)
+		return;
 	FSavedView ModifiedSV;
-	if (!ITwin::GetSavedViewFromPlayerController(GetWorld(), ModifiedSV))
+	if (!UITwinUtilityLibrary::GetSavedViewFromPlayerController(OwnerIModel, ModifiedSV))
 	{
 		return;
 	}

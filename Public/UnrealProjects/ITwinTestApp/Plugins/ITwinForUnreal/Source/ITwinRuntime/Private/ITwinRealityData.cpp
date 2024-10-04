@@ -9,6 +9,7 @@
 #include <ITwinRealityData.h>
 #include <ITwinGeolocation.h>
 #include <ITwinServerConnection.h>
+#include <ITwinSetupMaterials.h>
 #include <ITwinCesium3DTileset.h>
 
 #include <Dom/JsonObject.h>
@@ -63,6 +64,8 @@ public:
 		}
 		else
 			Tileset->SetGeoreference(Geoloc->LocalReference.Get());
+		// Make use of our own materials (important for packaged version!)
+		ITwin::SetupMaterials(*Tileset, Owner);
 	}
 };
 

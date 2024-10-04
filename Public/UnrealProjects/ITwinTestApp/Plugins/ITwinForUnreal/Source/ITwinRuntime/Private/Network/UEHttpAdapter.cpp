@@ -49,6 +49,17 @@ public:
 			{
 				Response.first = UEResponse->GetResponseCode();
 				Response.second = TCHAR_TO_ANSI(*UEResponse->GetContentAsString());
+				if (RequestPtr && RequestPtr->NeedRawData() && UEResponse->GetContentLength() > 0)
+				{
+					// In case we receive some binary data, we may want to get it and not just a (truncated)
+					// string...
+					const TArray<uint8>& content = UEResponse->GetContent();
+					Response.rawdata_ = std::make_shared<SDK::Core::Http::RawData>();
+					SDK::Core::Http::RawData& rawdata(*Response.rawdata_);
+					rawdata.reserve(content.Num());
+					for (uint8 b : content)
+						rawdata.push_back(b);
+				}
 			}
 			else
 			{

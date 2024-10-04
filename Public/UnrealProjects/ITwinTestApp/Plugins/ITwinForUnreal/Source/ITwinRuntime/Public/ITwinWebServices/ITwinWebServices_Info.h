@@ -170,6 +170,18 @@ struct FSavedViewInfos
 };
 
 USTRUCT(BlueprintType)
+struct FDisplayStyle
+{
+	GENERATED_USTRUCT_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "SavedView")
+		FString RenderTimeline;
+
+	UPROPERTY(BlueprintReadWrite, Category = "SavedView")
+		double TimePoint = 0.0;
+};
+
+USTRUCT(BlueprintType)
 struct FSavedView
 {
 	GENERATED_USTRUCT_BODY()
@@ -182,6 +194,9 @@ struct FSavedView
 
 	UPROPERTY(BlueprintReadWrite, Category = "SavedView")
 		FRotator Angles = FRotator::ZeroRotator;
+
+	UPROPERTY(BlueprintReadWrite, Category = "SavedView")
+		FDisplayStyle DisplayStyle;
 };
 
 USTRUCT(BlueprintType)
@@ -190,16 +205,16 @@ struct FSavedViewGroupInfo
 	GENERATED_USTRUCT_BODY()
 
 	UPROPERTY(BlueprintReadWrite, Category = "SavedViewGroup")
-	FString Id;
+		FString Id;
 
 	UPROPERTY(BlueprintReadWrite, Category = "SavedViewGroup")
-	FString DisplayName;
+		FString DisplayName;
 
 	UPROPERTY(BlueprintReadWrite, Category = "SavedViewGroup")
-	bool bShared = false;
+		bool bShared = false;
 
 	UPROPERTY(BlueprintReadWrite, Category = "SavedViewGroupInfo")
-	bool bReadOnly = false;
+		bool bReadOnly = false;
 };
 
 USTRUCT(BlueprintType)
@@ -208,7 +223,7 @@ struct FSavedViewGroupInfos
 	GENERATED_USTRUCT_BODY()
 
 	UPROPERTY(BlueprintReadOnly, Category = "SavedViewGroup")
-	TArray<FSavedViewGroupInfo> SavedViewGroups;
+		TArray<FSavedViewGroupInfo> SavedViewGroups;
 };
 
 USTRUCT(BlueprintType)
@@ -258,10 +273,10 @@ struct FElementAttribute
 	GENERATED_USTRUCT_BODY()
 
 	UPROPERTY(BlueprintReadOnly, Category = "BIMInfo")
-	FString Name;
+		FString Name;
 
 	UPROPERTY(BlueprintReadOnly, Category = "BIMInfo")
-	FString Value;
+		FString Value;
 };
 
 USTRUCT(BlueprintType)
@@ -270,10 +285,10 @@ struct FElementProperty
 	GENERATED_USTRUCT_BODY()
 
 	UPROPERTY(BlueprintReadOnly, Category = "BIMInfo")
-	FString Name;
+		FString Name;
 
 	UPROPERTY(BlueprintReadOnly, Category = "BIMInfo")
-	TArray<FElementAttribute> Attributes;
+		TArray<FElementAttribute> Attributes;
 };
 
 USTRUCT(BlueprintType)
@@ -282,7 +297,7 @@ struct FElementProperties
 	GENERATED_USTRUCT_BODY()
 
 	UPROPERTY(BlueprintReadOnly, Category = "BIMInfo")
-	TArray<FElementProperty> Properties;
+		TArray<FElementProperty> Properties;
 };
 
 USTRUCT(BlueprintType)
@@ -291,10 +306,10 @@ struct FProjectExtents
 	GENERATED_USTRUCT_BODY()
 
 	UPROPERTY(BlueprintReadOnly, Category = "IModelProps")
-	FVector High = FVector(0, 0, 0);
+		FVector High = FVector(0, 0, 0);
 
 	UPROPERTY(BlueprintReadOnly, Category = "IModelProps")
-	FVector Low = FVector(0, 0, 0);
+		FVector Low = FVector(0, 0, 0);
 };
 
 USTRUCT(BlueprintType)
@@ -303,13 +318,13 @@ struct FCartographicProps
 	GENERATED_USTRUCT_BODY()
 
 	UPROPERTY(BlueprintReadOnly, Category = "IModelProps")
-	double Height = 0.0;
+		double Height = 0.0;
 
 	UPROPERTY(BlueprintReadOnly, Category = "IModelProps")
-	double Latitude = 0.0;
+		double Latitude = 0.0;
 
 	UPROPERTY(BlueprintReadOnly, Category = "IModelProps")
-	double Longitude = 0.0;
+		double Longitude = 0.0;
 };
 
 USTRUCT(BlueprintType)
@@ -319,25 +334,25 @@ struct FEcefLocation
 	
 	//! Indicates whether CartographicOrigin member contains valid data.
 	UPROPERTY(BlueprintReadOnly, Category = "IModelProps")
-	bool bHasCartographicOrigin = false;
+		bool bHasCartographicOrigin = false;
 	UPROPERTY(BlueprintReadOnly, Category = "IModelProps")
-	FCartographicProps CartographicOrigin;
+		FCartographicProps CartographicOrigin;
 	UPROPERTY(BlueprintReadOnly, Category = "IModelProps")
-	FRotator Orientation = FRotator::ZeroRotator;
+		FRotator Orientation = FRotator::ZeroRotator;
 	UPROPERTY(BlueprintReadOnly, Category = "IModelProps")
-	FVector Origin = FVector(0, 0, 0);
+		FVector Origin = FVector(0, 0, 0);
 	//! Indicates whether Transform member contains valid data.
 	UPROPERTY(BlueprintReadOnly, Category = "IModelProps")
-	bool bHasTransform = false;
+		bool bHasTransform = false;
 	UPROPERTY(BlueprintReadOnly, Category = "IModelProps")
-	FMatrix Transform = FMatrix::Identity;
+		FMatrix Transform = FMatrix::Identity;
 	//! Indicates whether xVector & yVector members contain valid data.
 	UPROPERTY(BlueprintReadOnly, Category = "IModelProps")
-	bool bHasVectors = false;
+		bool bHasVectors = false;
 	UPROPERTY(BlueprintReadOnly, Category = "IModelProps")
-	FVector xVector = FVector(0, 0, 0);
+		FVector xVector = FVector(0, 0, 0);
 	UPROPERTY(BlueprintReadOnly, Category = "IModelProps")
-	FVector yVector = FVector(0, 0, 0);
+		FVector yVector = FVector(0, 0, 0);
 };
 
 

@@ -55,7 +55,7 @@ FReusableJsonQueries<SimultaneousRequestsT>::FImpl::FImpl(
 	TCHAR const* const InRecordToFolder, int const InRecorderSessionIndex,
 	TCHAR const* const InSimulateFromFolder,
 	std::optional<ReusableJsonQueries::EReplayMode> const InReplayMode,
-	FScheduleQueryingDelegate const& InOnScheduleQueryingStatusChanged,
+	FScheduleQueryingDelegate const* InOnScheduleQueryingStatusChanged,
 	std::function<FString()> const& InGetBearerToken)
 : BaseUrlNoSlash(InBaseUrlNoSlash)
 , CheckRequest(InCheckRequest)
@@ -310,7 +310,7 @@ FReusableJsonQueries<SimultaneousRequestsT>::FReusableJsonQueries(FString const&
 		ReusableJsonQueries::FMutex& InMutex, TCHAR const* const InRecordToFolder,
 		int const InRecorderSessionIndex, TCHAR const* const InSimulateFromFolder,
 		std::optional<ReusableJsonQueries::EReplayMode> const ReplayMode,
-		FScheduleQueryingDelegate const& OnScheduleQueryingStatusChanged,
+		FScheduleQueryingDelegate const* OnScheduleQueryingStatusChanged,
 		std::function<FString()> const& InGetBearerToken)
 : Impl(MakePimpl<FReusableJsonQueries<SimultaneousRequestsT>::FImpl>(
 	InBaseUrlNoSlash, AllocateRequest, InCheckRequest, InMutex, InRecordToFolder, InRecorderSessionIndex, 
@@ -335,7 +335,8 @@ void FReusableJsonQueries<SimultaneousRequestsT>::HandlePendingQueries()
 			if (!Impl->bIsRunning)
 			{
 				Impl->bIsRunning = true;
-				Impl->OnScheduleQueryingStatusChanged.Broadcast(Impl->bIsRunning);
+				if (Impl->OnScheduleQueryingStatusChanged)
+					Impl->OnScheduleQueryingStatusChanged->Broadcast(Impl->bIsRunning);
 			}
 		}
 		else
@@ -345,7 +346,8 @@ void FReusableJsonQueries<SimultaneousRequestsT>::HandlePendingQueries()
 				if (Impl->bIsRunning)
 				{
 					Impl->bIsRunning = false;
-					Impl->OnScheduleQueryingStatusChanged.Broadcast(Impl->bIsRunning);
+					if (Impl->OnScheduleQueryingStatusChanged)
+						Impl->OnScheduleQueryingStatusChanged->Broadcast(Impl->bIsRunning);
 				}
 			}
 			else

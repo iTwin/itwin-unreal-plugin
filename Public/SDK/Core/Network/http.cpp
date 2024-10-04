@@ -23,7 +23,7 @@ namespace SDK::Core
 		baseUrl_ = url;
 	}
 
-	std::pair<long, std::string> Http::GetJson(const std::string& url, const std::string& body, const Headers& hi, bool isFullUrl /*= false*/)
+	Http::Response Http::GetJson(const std::string& url, const std::string& body, const Headers& hi, bool isFullUrl /*= false*/)
 	{
 		Headers h(hi);
 		h.emplace_back("accept", "application/json");
@@ -31,7 +31,7 @@ namespace SDK::Core
 		return Get(url, body, h, isFullUrl);
 	}
 
-	std::pair<long, std::string> Http::PutJson(const std::string& url, const std::string& body, const Headers& hi)
+	Http::Response Http::PutJson(const std::string& url, const std::string& body, const Headers& hi)
 	{
 		Headers h(hi);
 		h.emplace_back("accept", "application/json");
@@ -39,7 +39,7 @@ namespace SDK::Core
 		return Put(url, body, h);
 	}
 
-	std::pair<long, std::string> Http::PatchJson(const std::string& url, const std::string& body, const Headers& hi)
+	Http::Response Http::PatchJson(const std::string& url, const std::string& body, const Headers& hi)
 	{
 		Headers h(hi);
 		h.emplace_back("accept", "application/json");
@@ -47,7 +47,7 @@ namespace SDK::Core
 		return Patch(url, body, h);
 	}
 
-	std::pair<long, std::string> Http::PostJson(const std::string& url, const std::string& body, const Headers& hi)
+	Http::Response Http::PostJson(const std::string& url, const std::string& body, const Headers& hi)
 	{
 		Headers h(hi);
 		h.emplace_back("accept", "application/json");
@@ -55,7 +55,7 @@ namespace SDK::Core
 		return Post(url, body, h);
 	}
 
-	std::pair<long, std::string> Http::DeleteJson(const std::string& url, const std::string& body, const Headers& hi)
+	Http::Response Http::DeleteJson(const std::string& url, const std::string& body, const Headers& hi)
 	{
 		Headers h(hi);
 		h.emplace_back("accept", "application/json");

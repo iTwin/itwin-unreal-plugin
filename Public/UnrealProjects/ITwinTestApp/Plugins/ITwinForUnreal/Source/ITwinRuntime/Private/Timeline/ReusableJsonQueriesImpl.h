@@ -86,7 +86,7 @@ class FReusableJsonQueries<SimultaneousRequestsT>::FImpl
 	/// Flag tracking the status of "RequestsInBatch != 0 || !NextBatches.empty()" in order to trigger
 	/// OnScheduleQueryingStatusChanged when it changes
 	bool bIsRunning = false;
-	FScheduleQueryingDelegate const& OnScheduleQueryingStatusChanged;
+	FScheduleQueryingDelegate const* OnScheduleQueryingStatusChanged = nullptr;
 
 	/// Number of requests in the current "batch", which is a grouping of requests which ordering is not
 	/// relevant. Incremented when stacking requests, decremented when finishing a request.
@@ -128,7 +128,7 @@ public:
 		TCHAR const* const InRecordToFolder, int const InRecorderSessionIndex,
 		TCHAR const* const InSimulateFromFolder,
 		std::optional<ReusableJsonQueries::EReplayMode> const InReplayMode,
-		FScheduleQueryingDelegate const& OnScheduleQueryingStatusChanged,
+		FScheduleQueryingDelegate const* OnScheduleQueryingStatusChanged,
 		std::function<FString()> const& GetBearerToken);
 
 }; // class FReusableJsonQueries<SimultaneousRequestsT>::FImpl

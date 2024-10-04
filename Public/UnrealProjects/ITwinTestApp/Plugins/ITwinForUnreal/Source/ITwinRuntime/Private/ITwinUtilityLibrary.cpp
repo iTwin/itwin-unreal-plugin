@@ -8,7 +8,7 @@
 
 #include <ITwinUtilityLibrary.h>
 #include <ITwinRuntime/Private/Compil/SanitizedPlatformHeaders.h>
-#include <iTwinWebServices/ITwinWebServices_Info.h>
+#include <ITwinWebServices/ITwinWebServices_Info.h>
 #include <Kismet/KismetMathLibrary.h>
 #include <CesiumGeospatial/LocalHorizontalCoordinateSystem.h>
 #include <ITwinGeolocation.h>
@@ -100,7 +100,8 @@ FTransform UITwinUtilityLibrary::GetSavedViewUnrealTransform(const AITwinIModel*
 	}
 	// If this assert is triggered, this means the saved view has a non-null roll but is not looking
 	// perfectly up or down. This case is not handled.
-	check(std::abs(Rotator.Roll) < 1e-5);
+	// RQ: replaced check by ensure here to avoid crash
+	ensure(std::abs(Rotator.Roll) < 1e-5);
 	return Transform;
 }
 
@@ -121,11 +122,24 @@ FSavedView UITwinUtilityLibrary::GetSavedViewFromUnrealTransform(const AITwinIMo
 	auto ITwinTransform = UKismetMathLibrary::Conv_MatrixToTransform(UKismetMathLibrary::Conv_TransformToMatrix(Transform));
 	ITwinTransform *= UKismetMathLibrary::Conv_MatrixToTransform(
 		IModel->GetTileset()->GetGeoreference()->ComputeUnrealToEarthCenteredEarthFixedTransformation());
-	ITwinTransform *= UKismetMathLibrary::Conv_MatrixToTransform(ConvertMatrix_GlmToUnreal(
-		CesiumGeospatial::LocalHorizontalCoordinateSystem(
-			CesiumGeospatial::Ellipsoid::WGS84.cartographicToCartesian(CesiumGeospatial::Cartographic(0, 0)))
-		.getEcefToLocalTransformation()));
-	ITwinTransform *= FTransform(FRotator::ZeroRotator, 0.5 * (IModel->GetProjectExtents()->Low + IModel->GetProjectExtents()->High));
+	if (IModel->GetEcefLocation())
+	{
+		ITwinTransform *= FTransform(
+				UITwinUtilityLibrary::ConvertRotator_ITwinToUnreal(IModel->GetEcefLocation()->Orientation),
+				IModel->GetEcefLocation()->Origin)
+			.Inverse();
+	}
+	else
+	{
+		ITwinTransform *= UKismetMathLibrary::Conv_MatrixToTransform(ConvertMatrix_GlmToUnreal(
+				CesiumGeospatial::LocalHorizontalCoordinateSystem(
+					CesiumGeospatial::Ellipsoid::WGS84.cartographicToCartesian(CesiumGeospatial::Cartographic(0, 0)))
+				.getEcefToLocalTransformation()))
+			* (IModel->GetProjectExtents()
+				? FTransform(FRotator::ZeroRotator,
+							 0.5 * (IModel->GetProjectExtents()->Low + IModel->GetProjectExtents()->High))
+				: FTransform());
+	}
 	Location_ITwin = ITwinTransform.GetLocation();
 	return SavedView;
 }

@@ -41,8 +41,40 @@ set_target_properties(fmt PROPERTIES FOLDER "SDK/External")
 #message( " >>> fmt directory: ${fmt_SOURCE_DIR}")
 include_directories(${fmt_SOURCE_DIR}/include)
 
+### =========== cpr =========== 
 find_package(cpr REQUIRED)
+
+### =========== libassert =========== 
 find_package(libassert CONFIG REQUIRED)
+
+### =========== plog =========== 
+FetchContent_Declare(plog
+    GIT_REPOSITORY https://github.com/SergiusTheBest/plog.git
+	GIT_TAG 1.1.10
+	GIT_SHALLOW ON 
+)
+
+FetchContent_MakeAvailable(plog)
+set_target_properties(plog PROPERTIES FOLDER "SDK/External")
+include_directories(${plog_SOURCE_DIR}/include)
+message("inc:${plog_SOURCE_DIR}/include")
+
+
+### =============== expected =============== 
+if ( NOT DEFINED expected_INCLUDE_DIR )
+	FetchContent_Declare(
+		expected
+		GIT_REPOSITORY https://github.com/martinmoene/expected-lite.git
+		GIT_TAG v0.8.0 
+		EXCLUDE_FROM_ALL
+	)
+
+	FetchContent_MakeAvailable(expected)	
+	set ( expected_INCLUDE_DIR ${expected_SOURCE_DIR}/include ) 
+endif ()
+
+include_directories(${expected_INCLUDE_DIR})
+message("expected_INCLUDE_DIR: ${expected_INCLUDE_DIR}")
 
 if(SDK_ADDUNITTEST)
 	find_package(Catch2 3 REQUIRED)

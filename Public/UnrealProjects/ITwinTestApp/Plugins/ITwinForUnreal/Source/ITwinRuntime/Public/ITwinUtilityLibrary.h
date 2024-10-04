@@ -21,12 +21,10 @@ public:
 	//! taking into account geolocation etc.
 	UFUNCTION(BlueprintCallable, Category = "iTwin")
 	static FTransform GetSavedViewUnrealTransform(const AITwinIModel* IModel, const FSavedView& SavedView);
-	//! Returns the Itwin saved view for the given Unreal transform,
-	//! taking geolocation into account.
+	//! Returns the Itwin saved view for the given Unreal transfo taking geolocation into account.
 	UFUNCTION(BlueprintCallable, Category = "iTwin")
 	static FSavedView GetSavedViewFromUnrealTransform(const AITwinIModel* IModel, const FTransform& Transform);
-	//! Returns the Itwin saved view for the current Unreal view,
-	//! taking geolocation into account.
+	//! Returns the Itwin saved view for the current Unreal view, taking geolocation into account.
 	UFUNCTION(BlueprintCallable, Category = "iTwin")
 	static bool GetSavedViewFromPlayerController(const AITwinIModel* IModel, FSavedView& OutSavedView);
 	//! Converts yaw/pitch/roll angles from iTwin convention to Unreal convention,

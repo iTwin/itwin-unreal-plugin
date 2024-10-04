@@ -25,7 +25,18 @@ MODULE_EXPORT namespace SDK::Core {
 	{
 	public:
 		using Headers = std::vector<std::pair<std::string, std::string>>;
-		using Response = std::pair<long, std::string>;
+
+		using RawData = std::vector<uint8_t>;
+		using RawDataPtr = std::shared_ptr<RawData>;
+
+		// using Response = std::pair<long, std::string>;
+		//	-> keeping first/second below to avoid having to change all calls...
+		struct Response
+		{
+			long first = 0;
+			std::string second;
+			RawDataPtr rawdata_; // only provided if the request asks it
+		};
 
 		void SetBaseUrl(const std::string& url);
 		std::string const& GetBaseUrl() const { return baseUrl_; }
@@ -110,7 +121,7 @@ MODULE_EXPORT namespace SDK::Core {
 		template<typename Type>
 		long DeleteJson(Type& t, const std::string& url, const std::string& body, const Headers& h = {})
 		{
-			std::pair<long, std::string> r = DeleteJson(url, body, h);
+			Response r = DeleteJson(url, body, h);
 			if (r.first == 200)
 				Json::FromString(t, r.second);
 			return r.first;

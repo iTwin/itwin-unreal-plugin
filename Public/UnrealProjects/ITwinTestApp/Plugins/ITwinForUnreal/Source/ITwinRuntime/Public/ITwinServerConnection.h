@@ -44,17 +44,15 @@ public:
 	UPROPERTY(Category = "iTwin",
 		EditAnywhere)
 	EITwinEnvironment Environment = EITwinEnvironment::Invalid;
-	
-	//! OAuth access token, without any prefix (eg. it should not start with "Bearer ").
-	UPROPERTY(Category = "iTwin",
-		EditAnywhere,
-		Transient)
-	FString AccessToken;
 
 	FString UrlPrefix() const;
 
+	//! Return the OAuth access token for this environment, if any.
 	UFUNCTION(BlueprintCallable, Category = "iTwin")
-	bool HasAccessToken() const { return !AccessToken.IsEmpty(); }
+	FString GetAccessToken() const;
+
+	UFUNCTION(BlueprintCallable, Category = "iTwin")
+	bool HasAccessToken() const { return !GetAccessToken().IsEmpty(); }
 
 	static bool CheckRequest(FHttpRequestPtr const& CompletedRequest, FHttpResponsePtr const& Response,
 							 bool connectedSuccessfully, FString* pstrError = nullptr);

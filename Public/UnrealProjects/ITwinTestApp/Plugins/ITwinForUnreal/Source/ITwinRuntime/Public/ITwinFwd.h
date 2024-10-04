@@ -22,3 +22,4 @@ class FITwinRealityData;
 class FITwinSynchro4DAnimator;
 class UITwinSynchro4DSchedules;
 class FITwinSynchro4DSchedulesInternals;
+class UITwinWebServices;

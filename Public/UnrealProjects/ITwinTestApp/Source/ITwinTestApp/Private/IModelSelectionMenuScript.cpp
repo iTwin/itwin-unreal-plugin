@@ -61,7 +61,8 @@ void AIModelSelectionMenuScript::IModelLoaded(bool bSuccess)
 	TopPanel->SetIModel3DInfoInCoordSystem(IModel3dInfo_UE, EITwinCoordSystem::UE);
 
 	TopPanel->GetAllSavedViews();
-	TopPanel->ZoomOnIModel();
+	IModel->ZoomOnIModel();
+	IModel->AdjustPawnSpeedToExtents();
 }
 
 void AIModelSelectionMenuScript::OnLeftMouseButtonPressed()

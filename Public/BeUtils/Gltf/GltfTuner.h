@@ -19,8 +19,10 @@ namespace BeUtils
 struct ITwinMaterialInfo
 {
 	uint64_t id = 0;
-	std::string name;
+	std::string name; // UTF-8 encoding
 };
+
+class GltfMaterialHelper;
 
 using ITwinMaterialInfoReadCallback = std::function<void(std::vector<ITwinMaterialInfo> const&)>;
 
@@ -60,6 +62,8 @@ public:
 	bool HasITwinMaterialInfo() const;
 	std::vector<ITwinMaterialInfo> GetITwinMaterialInfo() const;
 	void SetMaterialInfoReadCallback(ITwinMaterialInfoReadCallback const&);
+
+	void SetMaterialHelper(std::shared_ptr<GltfMaterialHelper> const& matHelper);
 
 private:
 	class Impl;

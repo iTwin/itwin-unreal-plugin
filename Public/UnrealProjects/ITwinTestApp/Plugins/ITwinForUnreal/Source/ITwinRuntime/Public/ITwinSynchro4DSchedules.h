@@ -63,18 +63,6 @@ public:
 		BlueprintCallable)
 	void ResetSchedules();
 
-	/// Restrict the QueryAll action to tasks starting (or ending) at or after this date. Ignored if
-	/// QueryAllUntilTime and QueryAllFromTime are strictly equal.
-	UPROPERTY(Category = "Schedules Querying",
-		EditAnywhere)
-	FDateTime QueryAllFromTime = FDateTime::UtcNow();//see ScheduleTime about UtcNow()
-
-	/// Restrict the QueryAll action to tasks starting (or ending) at or before this date. Ignored if
-	/// QueryAllUntilTime and QueryAllFromTime are strictly equal.
-	UPROPERTY(Category = "Schedules Querying",
-		EditAnywhere)
-	FDateTime QueryAllUntilTime = FDateTime::UtcNow();//see ScheduleTime about UtcNow()
-
 	/// Launches asynchronous querying of schedule data for an Element and around its assigned tasks,
 	/// searching before and after the Element's tasks by a specified time extent (both can be zero).
 	/// \param ElementID Hexadecimal or decimal number representing the ElementID, which should be an
@@ -99,7 +87,7 @@ public:
 
 	/// Called when the full time range of the Schedule is known, with the StartTime and EndTime passed as
 	/// arguments. FDateTime::MinValue() is passed twice when no tasks were found in the schedule.
-	/// Never called when bDebugPrefetchAllTasksAndAppearanceProfiles is false.
+	/// Never called when bPrefetchAllTasksAndAppearanceProfiles is false.
 	UPROPERTY(BlueprintAssignable)
 	FScheduleTimeRangeDelegate OnScheduleTimeRangeKnown;
 
@@ -115,38 +103,32 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FScheduleQueryingDelegate OnScheduleQueryingStatusChanged;
 
-#if WITH_EDITORONLY_DATA
-	/// In-editor helper to only request the task for this Element using QueryElementsTasks (enter a decimal
-	/// or hexadecimal Element ID here).
-	UPROPERTY(Category = "Schedules Test Query",
-		EditAnywhere)
-	FString QueryOnlyThisElementSchedule;
+	UPROPERTY(Category = "Schedules Querying|Advanced", EditAnywhere)
+	int ScheduleQueriesServerPagination = 10000;
 
-	/// In-editor helper to request the tasks "around" the time where "QueryOnlyThisElementSchedule" is
-	/// participating to its own tasks. Format is DDDDDDDD.HH:MM:SS.SSSSSSSS. Positive values will extend
-	/// the time range /before/ the start and /after the end of the tasks involving 
-	/// "QueryOnlyThisElementSchedule" (see QueryAroundElementTasks for comparison). Negative values are
-	/// still possible, for example if you want the overlapping tasks with a minimum overlap margin.
-	UPROPERTY(Category = "Schedules Test Query",
-		EditAnywhere)
-	FTimespan QueryScheduleBeforeAndAfterElement;
-#endif // WITH_EDITORONLY_DATA
-
-#if WITH_EDITOR
-	/// In-editor helper to launch the asynchronous querying of partial schedules data for
-	/// "QueryOnlyThisElementSchedule", extending the search to elements with tasks happening around the
-	/// same time if "QueryScheduleBeforeAndAfterElement" is set.
-	UFUNCTION(Category = "Schedules Test Query",
-		CallInEditor,
-		BlueprintCallable)
-	void SendPartialQuery();
-#endif // WITH_EDITOR
-
-	/// Query all 4D Schedules tasks and apperance profiles at once as soon as the Schedule Id is known for
+	/// Query all 4D Schedules tasks and appearance profiles at once as soon as the Schedule Id is known for
 	/// an iModel. This will vastly speed up querying animation bindings (half the time is typically spared)
-	UPROPERTY(Category = "Schedules Querying|Debug",
+	UPROPERTY(Category = "Schedules Querying|Advanced",
 		EditAnywhere)
-	bool bDebugPrefetchAllTasksAndAppearanceProfiles = true;
+	bool bPrefetchAllTasksAndAppearanceProfiles = true;
+
+	UPROPERTY(Category = "Schedules Querying|Advanced", EditAnywhere)
+	uint64 ScheduleQueriesMaxElementIDsFilterSize = 500;
+
+	/// Query all 4D Schedules animated Element bindings profiles at once as soon as the Schedule task list
+	/// is known for an iModel. This will speed up querying animation bindings, and also avoid unpleasant
+	/// transient display states when receiving new Cesium tiles (typically those of finer LOD).
+	/// Only relevant when bPrefetchAllTasksAndAppearanceProfiles is true, and also ignored when
+	/// bDebugWithDummyTimelines is true.
+	UPROPERTY(Category = "Schedules Querying|Advanced",
+		EditAnywhere)
+	bool bPrefetchAllElementAnimationBindings = true;
+
+	UPROPERTY(Category = "Schedules Querying|Advanced", EditAnywhere)
+	uint64 ScheduleQueriesMaxTaskIDsFilterSize = 100;
+
+	UPROPERTY(Category = "Schedules Querying|Advanced", EditAnywhere)
+	uint64 ScheduleQueriesBindingsPagination = 30000;
 
 	/// Use the correct schedules' task but use random appearance profiles (color, opacity and growth
 	/// simulations) for visual debugging.
@@ -177,6 +159,45 @@ public:
 	UPROPERTY(Category = "Schedules Querying|Debug",
 		EditAnywhere)
 	FString DebugSimulateSessionQueries;
+
+#if WITH_EDITORONLY_DATA
+	/// In-editor helper to only request the task for this Element using QueryElementsTasks (enter a decimal
+	/// or hexadecimal Element ID here).
+	UPROPERTY(Category = "Schedules Test Query",
+		EditAnywhere)
+	FString QueryOnlyThisElementSchedule;
+
+	/// In-editor helper to request the tasks "around" the time where "QueryOnlyThisElementSchedule" is
+	/// participating to its own tasks. Format is DDDDDDDD.HH:MM:SS.SSSSSSSS. Positive values will extend
+	/// the time range /before/ the start and /after the end of the tasks involving 
+	/// "QueryOnlyThisElementSchedule" (see QueryAroundElementTasks for comparison). Negative values are
+	/// still possible, for example if you want the overlapping tasks with a minimum overlap margin.
+	UPROPERTY(Category = "Schedules Test Query",
+		EditAnywhere)
+	FTimespan QueryScheduleBeforeAndAfterElement;
+#endif // WITH_EDITORONLY_DATA
+
+#if WITH_EDITOR
+	/// In-editor helper to launch the asynchronous querying of partial schedules data for
+	/// "QueryOnlyThisElementSchedule", extending the search to elements with tasks happening around the
+	/// same time if "QueryScheduleBeforeAndAfterElement" is set.
+	UFUNCTION(Category = "Schedules Test Query",
+		CallInEditor,
+		BlueprintCallable)
+	void SendPartialQuery();
+#endif // WITH_EDITOR
+
+	/// Restrict the QueryAll action to tasks starting (or ending) at or after this date. Ignored if
+	/// QueryAllUntilTime and QueryAllFromTime are strictly equal.
+	UPROPERTY(Category = "Schedules Test Query",
+		EditAnywhere)
+	FDateTime QueryAllFromTime = FDateTime::UtcNow();//see ScheduleTime about UtcNow()
+
+	/// Restrict the QueryAll action to tasks starting (or ending) at or before this date. Ignored if
+	/// QueryAllUntilTime and QueryAllFromTime are strictly equal.
+	UPROPERTY(Category = "Schedules Test Query",
+		EditAnywhere)
+	FDateTime QueryAllUntilTime = FDateTime::UtcNow();//see ScheduleTime about UtcNow()
 
 	// Note: local time (Now() insead of UtcNow()) is just not possible because in that case the TZ offset
 	// (+0200 for GMT+2) is added in the Outliner field! The variable needs to be UTC it seems, and the
@@ -252,7 +273,7 @@ public:
 	/// Split applying animation on Elements among subsequent ticks to avoid spending more than this amount
 	/// of time each time. Visual update only occurs once the whole iModel (?) has been updated, though.
 	UPROPERTY(Category = "Schedules Replay|Settings", EditAnywhere)
-	double MaxTimelineUpdateMilliseconds = 30;
+	double MaxTimelineUpdateMilliseconds = 100;
 
 	/// Disable application of color highlights on animated Elements
 	UPROPERTY(Category = "Schedules Replay|Settings", EditAnywhere)
@@ -289,6 +310,8 @@ public:
 	// Must be marked UFUNCTION to be bound to a delegate...
 	UFUNCTION()
 	void LogStatisticsUponQueryLoopStatusChange(bool bQueryLoopIsRunning);
+	UFUNCTION()
+	void LogStatisticsUponFullScheduleReceived(FDateTime StartTime, FDateTime EndTime);
 
 private:
 	class FImpl;

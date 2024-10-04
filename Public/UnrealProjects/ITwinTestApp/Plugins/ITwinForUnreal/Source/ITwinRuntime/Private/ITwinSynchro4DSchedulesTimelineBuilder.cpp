@@ -11,6 +11,7 @@
 #include "ITwinIModelInternals.h"
 #include "ITwinSceneMapping.h"
 #include "ITwinSynchro4DSchedules.h"
+#include "ITwinSynchro4DSchedulesInternals.h"
 #include <Compil/BeforeNonUnrealIncludes.h>
 	#include <BeHeaders/Compil/AlwaysFalse.h>
 #include <Compil/AfterNonUnrealIncludes.h>
@@ -22,6 +23,10 @@
 void AddColorToTimeline(FITwinElementTimeline& ElementTimeline,
 						FAppearanceProfile const& Profile, FTimeRangeInSeconds const& Time)
 {
+	if (Profile.ProfileType == EProfileAction::Neutral) // handled in AddVisibilityToTimeline
+	{
+		return;
+	}
 	if (Profile.StartAppearance.bUseOriginalColor
 		&& Profile.ActiveAppearance.Base.bUseOriginalColor
 		&& Profile.FinishAppearance.bUseOriginalColor)
@@ -66,15 +71,15 @@ FVector GetCuttingPlaneOrientation(FActiveAppearance const& Appearance)
 	case EGrowthSimulationMode::Right2Left:
 		Orientation = -FVector::XAxisVector;
 		break;
-	case EGrowthSimulationMode::Front2Back:
+	case EGrowthSimulationMode::Back2Front: // iModel to UE: invert Y axis
 		Orientation = FVector::YAxisVector;
 		break;
-	case EGrowthSimulationMode::Back2Front:
+	case EGrowthSimulationMode::Front2Back: // iModel to UE: invert Y axis
 		Orientation = -FVector::YAxisVector;
 		break;
 	case EGrowthSimulationMode::Custom:
 		Orientation = { Appearance.GrowthDirectionCustom.X,
-						Appearance.GrowthDirectionCustom.Y,
+						-Appearance.GrowthDirectionCustom.Y, // iModel to UE: invert Y axis
 						Appearance.GrowthDirectionCustom.Z };
 		Orientation.Normalize();
 		break;
@@ -85,14 +90,16 @@ FVector GetCuttingPlaneOrientation(FActiveAppearance const& Appearance)
 		ensure(false);
 		break;
 	}
-	return Appearance.bInvertGrowth ? (-Orientation) : Orientation;
+	// No, bInvertGrowth only changes the BBox boundary from which we start, not the direction
+	return /*Appearance.bInvertGrowth ? (-Orientation) :*/ Orientation;
 }
 	
 void AddCuttingPlaneToTimeline(FITwinElementTimeline& ElementTimeline, FAppearanceProfile const& Profile,
 							   FTimeRangeInSeconds const& Time)
 {
 	auto const& GrowthAppearance = Profile.ActiveAppearance;// all others are ignored...
-	if (GrowthAppearance.GrowthSimulationMode > EGrowthSimulationMode::Custom)
+	if (GrowthAppearance.GrowthSimulationMode > EGrowthSimulationMode::Custom
+		|| Profile.ProfileType == EProfileAction::Neutral) // handled in AddVisibilityToTimeline
 	{
 		return;
 	}
@@ -102,30 +109,31 @@ void AddCuttingPlaneToTimeline(FITwinElementTimeline& ElementTimeline, FAppearan
 		return;
 	}
 	using namespace ITwin::Timeline;
-	bool const bVisibleOutsideTask = (Profile.ProfileType == EProfileAction::Neutral
-								   || Profile.ProfileType == EProfileAction::Maintenance);
+	bool const bVisibleOutsideTask = (Profile.ProfileType == EProfileAction::Maintenance);
+	// 'bInvertGrowth' is "Simulate as Remove" in SynchroPro, but it is only applicable to Maintenance
+	// and Temporary tasks, for which the default growth behaves like Install, and thus needs can a custom
+	// flag to be inverted and behave like a Remove action.
+	bool const bInvertGrowth = (Profile.ProfileType == EProfileAction::Remove)
+		|| (GrowthAppearance.bInvertGrowth && (Profile.ProfileType == EProfileAction::Maintenance
+											|| Profile.ProfileType == EProfileAction::Temporary));
 	// Regular growth means "building (new or temp) stuff", while inverted growth means "removing"
 	// (dismantling) existing/temp stuff. Before new/temp stuff is built, or after existing/temp stuff is
 	// removed, visibility is 0 anyway so the cutting plane setting does not matter, thus we only need a
 	// 'Step' keyframe when FullyRemoved before (resp. after) the task but the growth status starts
 	// (resp. ends) at FullyGrown.
-	if (bVisibleOutsideTask && !GrowthAppearance.bInvertGrowth)
+	if (bVisibleOutsideTask && !bInvertGrowth)
 	{
-		ElementTimeline.SetCuttingPlaneAt(Time.first - KEYFRAME_TIME_EPSILON, {},
-										  EGrowthStatus::FullyGrown, EInterpolation::Step);
+		ElementTimeline.SetCuttingPlaneAt(Time.first, {}, EGrowthStatus::FullyGrown, EInterpolation::Step);
 	}
-	ElementTimeline.SetCuttingPlaneAt(Time.first, PlaneOrientation,
-		GrowthAppearance.bInvertGrowth ? EGrowthStatus::DeferredFullyGrown
-									   : EGrowthStatus::DeferredFullyRemoved,
+	ElementTimeline.SetCuttingPlaneAt(Time.first + KEYFRAME_TIME_EPSILON, PlaneOrientation,
+		bInvertGrowth ? EGrowthStatus::DeferredFullyGrown : EGrowthStatus::DeferredFullyRemoved,
 		EInterpolation::Linear);
-	ElementTimeline.SetCuttingPlaneAt(Time.second, PlaneOrientation,
-		GrowthAppearance.bInvertGrowth ? EGrowthStatus::DeferredFullyRemoved
-									   : EGrowthStatus::DeferredFullyGrown,
+	ElementTimeline.SetCuttingPlaneAt(Time.second - KEYFRAME_TIME_EPSILON, PlaneOrientation,
+		bInvertGrowth ? EGrowthStatus::DeferredFullyRemoved : EGrowthStatus::DeferredFullyGrown,
 		EInterpolation::Step);
-	if (bVisibleOutsideTask && GrowthAppearance.bInvertGrowth)
+	if (bVisibleOutsideTask && bInvertGrowth)
 	{
-		ElementTimeline.SetCuttingPlaneAt(Time.second + KEYFRAME_TIME_EPSILON, {},
-										  EGrowthStatus::FullyGrown, EInterpolation::Step);
+		ElementTimeline.SetCuttingPlaneAt(Time.second, {}, EGrowthStatus::FullyGrown, EInterpolation::Step);
 	}
 }
 	
@@ -135,7 +143,7 @@ void AddVisibilityToTimeline(FITwinElementTimeline& ElementTimeline,
 	using namespace ITwin::Timeline;
 	if (Profile.ProfileType == EProfileAction::Neutral)
 	{
-		// Element just disappears at start of task?!
+		// "Neutral" means "neutralize", ie. the Element is hidden the whole time!
 		ElementTimeline.SetVisibilityAt(Time.first, 0, EInterpolation::Step);
 	}
 	else
@@ -353,6 +361,7 @@ template<typename ElemDesignationContainer>
 void InsertAnimatedMeshSubElemsRecursively(FIModelElementsKey const& AnimationKey,
 	FITwinSceneMapping& Scene, ElemDesignationContainer const& Elements,
 	FITwinScheduleTimeline& MainTimeline, std::set<ITwinElementID>& OutSet,
+	bool const bPrefetchAllElementAnimationBindings,
 	std::vector<ITwinElementID>* OutElemsDiff = nullptr)
 {
 	for (auto const ElementDesignation : Elements)
@@ -363,7 +372,11 @@ void InsertAnimatedMeshSubElemsRecursively(FIModelElementsKey const& AnimationKe
 		{
 			Elem.AnimationKeys.push_back(AnimationKey);
 		}
-		if (Elem.bHasMesh)
+		// When pre-fetching bindings, no Element has been received yet... It's annoying to have to add the
+		// Elements to their timeline(s) only once some geometry has been received for them :/
+		// On the other hand adding intermediate non-leaves Elements has some cost later on when iterating
+		// on a timeline's AnimatedMeshElements: let's assume only leave nodes have meshes? TODO_GCO
+		if ((bPrefetchAllElementAnimationBindings && Elem.SubElemsInVec.empty()) || Elem.bHasMesh)
 		{
 			if (!OutSet.insert(Elem.Id).second)
 				continue; // already in set: no need for RemoveNonAnimatedDuplicate nor recursion
@@ -376,7 +389,7 @@ void InsertAnimatedMeshSubElemsRecursively(FIModelElementsKey const& AnimationKe
 		}
 		// assume both bHasMesh==true and having child Elements is possible, altho I don't really know
 		Detail::InsertAnimatedMeshSubElemsRecursively(AnimationKey, Scene, Elem.SubElemsInVec, MainTimeline,
-													  OutSet, OutElemsDiff);
+			OutSet, bPrefetchAllElementAnimationBindings, OutElemsDiff);
 	}
 }
 
@@ -426,7 +439,9 @@ void FITwinScheduleTimelineBuilder::UpdateAnimationGroupInTimeline(size_t const 
 		FITwinSceneMapping& Scene = GetInternals(*IModel).SceneMapping;
 		std::vector<ITwinElementID> ElementsSetDiff;
 		Detail::InsertAnimatedMeshSubElemsRecursively(FIModelElementsKey(GroupIndex), Scene, GroupElements,
-			MainTimeline, Timeline->IModelElementsRef(), &ElementsSetDiff);
+			MainTimeline, Timeline->IModelElementsRef(),
+			GetInternals(*Owner).PrefetchAllElementAnimationBindings(),
+			&ElementsSetDiff);
 		::Detail::HideNonAnimatedDuplicates(Scene, ElementsSetDiff, MainTimeline);
 		Timeline->OnIModelElementsAdded(); // just invalidates group's BBox
 		OnElementsTimelineModified(*Timeline, &ElementsSetDiff);
@@ -452,8 +467,8 @@ void FITwinScheduleTimelineBuilder::AddAnimationBindingToTimeline(FITwinSchedule
 	FITwinSceneMapping& Scene = GetInternals(*IModel).SceneMapping;
 	std::set<ITwinElementID> AnimatedMeshElements;
 	Detail::InsertAnimatedMeshSubElemsRecursively(AnimationKey, Scene, BoundElements, MainTimeline,
-												  AnimatedMeshElements);
-	if (!ensure(!AnimatedMeshElements.empty()))
+		AnimatedMeshElements, GetInternals(*Owner).PrefetchAllElementAnimationBindings());
+	if (AnimatedMeshElements.empty()) // no 'ensure', it seems to happen in rare cases
 		return;
 	FITwinElementTimeline& ElementTimeline = MainTimeline.ElementTimelineFor(AnimationKey,
 																			 AnimatedMeshElements);

@@ -29,11 +29,13 @@ MODULE_EXPORT namespace SDK::Core
 		virtual void SetInstanceCountByObjectRef(const std::string& objectRef, uint64_t count) = 0;
 		/// Get instances by object reference
 		virtual void GetInstancesByObjectRef(const std::string& objectRef, SharedInstVect& instances) const = 0;
-		/// Remove instances by object reference (indices must be in ascending order)
-		virtual void RemoveInstancesByObjectRef(const std::string& objectRef, const std::vector<int32_t> indices) = 0;
-		/// Get all instances
-		virtual const SharedInstVect& GetInstances() const = 0;
-		/// Get object refererences
+		/// Remove instances by object reference (indices must be in descending order)
+		virtual void RemoveInstancesByObjectRef(const std::string& objectRef, const std::vector<int32_t> indicesInDescendingOrder) = 0;
+		/// Check if there are instances
+		virtual bool HasInstances() const = 0;
+		/// Check if there are instances to save on the server
+		virtual bool HasInstancesToSave() const = 0;
+		/// Get object references
 		virtual std::vector<std::string> GetObjectReferences() const = 0;
 
 		/// Add instances group
@@ -56,11 +58,13 @@ MODULE_EXPORT namespace SDK::Core
 		void SetInstanceCountByObjectRef(const std::string& objectRef, uint64_t count) override;
 		/// Get instances by object reference
 		void GetInstancesByObjectRef(const std::string& objectRef, SharedInstVect& instances) const override;
-		/// Remove instances by object reference (indices must be in ascending order)
-		void RemoveInstancesByObjectRef(const std::string& objectRef, const std::vector<int32_t> indices) override;
-		/// Get all instances
-		const SharedInstVect& GetInstances() const override;
-		/// Get object refererences
+		/// Remove instances by object reference (indices must be in descending order)
+		void RemoveInstancesByObjectRef(const std::string& objectRef, const std::vector<int32_t> indicesInDescendingOrder) override;
+		/// Check if there are instances
+		bool HasInstances() const override;
+		/// Check if there are instances to save on the server
+		bool HasInstancesToSave() const override;
+		/// Get object references
 		std::vector<std::string> GetObjectReferences() const override;
 
 		/// Add instances group

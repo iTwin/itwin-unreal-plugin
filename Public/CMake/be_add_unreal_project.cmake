@@ -98,10 +98,12 @@ function (getVcpkgPackageName dependency result)
 	# So what we do here is take the lowercase string to the left of "::".
 	# This transforms "Catch2::Catch2WithMain" into "catch2".
 	string (REGEX REPLACE "::.*" "" package ${dependency})
-	string (TOLOWER ${package} package)
-	if (${package} IN_LIST BE_VCPKG_PACKAGES)
-		set (result_local ${package})
-	endif ()
+	if(NOT ${package} STREQUAL "")
+		string (TOLOWER ${package} package)
+		if (${package} IN_LIST BE_VCPKG_PACKAGES)
+			set (result_local ${package})
+		endif ()
+	endif()
 	set (${result} ${result_local} PARENT_SCOPE)
 endfunction ()
 
@@ -339,7 +341,6 @@ function (be_add_unreal_project projectDir)
 			endwhile ()
 			foreach (dependency ${allDependencyTargets})
 				# Create symlinks to the header files of the dependency, except for those in Extern/ (boost...) for which a link to the folder is enough
-				set (isDependencyExtern FALSE)
 				get_property (depSourceDir TARGET ${dependency} PROPERTY SOURCE_DIR)
 				get_property (depBinaryDir TARGET ${dependency} PROPERTY BINARY_DIR)
 				# Check if the dependency source dir is in the CMake "source" or "binary" directory.
@@ -452,6 +453,23 @@ function (be_add_unreal_project projectDir)
 				endif ()
 				list (APPEND setupExternFilesDependencies ${dependency})
 			endforeach ()
+			# Create extra directory symlinks (currently just one: BeHeaders/BuildConfig/, used for options)
+			get_property (extraFolders GLOBAL PROPERTY beExtraFoldersToSymlink)
+			foreach (extraFolder ${extraFolders})
+				# Check if the extra dir is in the CMake "source" or "binary" directory.
+				getRelativePathChecked ("${CMAKE_SOURCE_DIR}" "${extraFolder}" extraFolderRel)
+				if (extraFolderRel)
+					# Same remark as above: we want to retrieve the source dir relative to Public or Private dir.
+					string (REGEX REPLACE "^:[^/]*/" "" extraFolderRel ":${extraFolderRel}")
+				else ()
+					getRelativePathChecked ("${CMAKE_BINARY_DIR}" "${extraFolder}" extraFolderRel)
+				endif ()
+				if (NOT extraFolderRel)
+					message (SEND_ERROR "Cannot compute relative path for extra directory \"${extraFolder}\".")
+				endif ()
+				set (linkPath "${projectAbsDir}${srcDirRel}/Source/ThirdParty/Include/${extraFolderRel}")
+				createSymlink ("${extraFolder}" "${linkPath}" addedFiles_local)
+			endforeach()
 			foreach (dependency ${allDependencyPackages})
 				foreach (item ${BE_VCPKG_INCLUDES_${dependency}})
 					string (APPEND setupExternFilesCommands "CreateSymlink('${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/include/${item}', '${projectAbsDir}${srcDirRel}/Source/ThirdParty/Include/${item}')\n")
@@ -703,24 +721,24 @@ function (be_add_unreal_project projectDir)
 		# Create targets linking to xcode proj generated earlier
 		if (CMAKE_OSX_ARCHITECTURES)
 			add_custom_target( ${projectName}_Game
-				COMMAND "xcodebuild" "build" "-scheme" "${projectName}" "-configuration" "$<$<CONFIG:UnrealDebug>:DebugGame>$<$<CONFIG:Release>:Development>" "-project" "${projectAbsDir}/Intermediate/ProjectFiles/${projectName} (Mac).xcodeproj" "-arch" "${CMAKE_OSX_ARCHITECTURES}"
+				COMMAND "xcodebuild" "-quiet" "build" "-scheme" "${projectName}" "-configuration" "$<$<CONFIG:UnrealDebug>:DebugGame>$<$<CONFIG:Release>:Development>" "-project" "${projectAbsDir}/Intermediate/ProjectFiles/${projectName} (Mac).xcodeproj" "-arch" "${CMAKE_OSX_ARCHITECTURES}"
 				VERBATIM
 			)
 		else()
 			add_custom_target( ${projectName}_Game
-				COMMAND "xcodebuild" "build" "-scheme" "${projectName}" "-configuration" "$<$<CONFIG:UnrealDebug>:DebugGame>$<$<CONFIG:Release>:Development>" "-project" "${projectAbsDir}/Intermediate/ProjectFiles/${projectName} (Mac).xcodeproj"
+				COMMAND "xcodebuild" "-quiet" "build" "-scheme" "${projectName}" "-configuration" "$<$<CONFIG:UnrealDebug>:DebugGame>$<$<CONFIG:Release>:Development>" "-project" "${projectAbsDir}/Intermediate/ProjectFiles/${projectName} (Mac).xcodeproj"
 				VERBATIM
 			)
 		endif()
 	
 		if (CMAKE_OSX_ARCHITECTURES)
 			add_custom_target( ${projectName}_Editor 
-				COMMAND "xcodebuild" "build" "-scheme" "${projectName}Editor" "-configuration" "$<$<CONFIG:UnrealDebug>:DebugGame>$<$<CONFIG:Release>:Development>" "-project" "${projectAbsDir}/Intermediate/ProjectFiles/${projectName}Editor (Mac).xcodeproj" "-arch" "${CMAKE_OSX_ARCHITECTURES}"
+				COMMAND "xcodebuild" "-quiet" "build" "-scheme" "${projectName}Editor" "-configuration" "$<$<CONFIG:UnrealDebug>:DebugGame>$<$<CONFIG:Release>:Development>" "-project" "${projectAbsDir}/Intermediate/ProjectFiles/${projectName}Editor (Mac).xcodeproj" "-arch" "${CMAKE_OSX_ARCHITECTURES}"
 				VERBATIM
 			)
 		else()
 			add_custom_target( ${projectName}_Editor 
-				COMMAND "xcodebuild" "build" "-scheme" "${projectName}Editor" "-configuration" "$<$<CONFIG:UnrealDebug>:DebugGame>$<$<CONFIG:Release>:Development>" "-project" "${projectAbsDir}/Intermediate/ProjectFiles/${projectName}Editor (Mac).xcodeproj"
+				COMMAND "xcodebuild" "-quiet" "build" "-scheme" "${projectName}Editor" "-configuration" "$<$<CONFIG:UnrealDebug>:DebugGame>$<$<CONFIG:Release>:Development>" "-project" "${projectAbsDir}/Intermediate/ProjectFiles/${projectName}Editor (Mac).xcodeproj"
 				VERBATIM
 			)
 		endif()

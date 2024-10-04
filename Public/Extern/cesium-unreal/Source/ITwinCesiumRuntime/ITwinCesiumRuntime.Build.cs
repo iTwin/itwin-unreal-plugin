@@ -173,9 +173,13 @@ public class ITwinCesiumRuntime : ModuleRules
         }
 
 
+        // We need to define _LEGACY_CODE_ASSUMES... when using
+        // Visual Studio 17.11 or later so that the string view
+        // header still includes xstring 
         PublicDefinitions.AddRange(
             new string[]
             {
+                "_LEGACY_CODE_ASSUMES_STRING_VIEW_INCLUDES_XSTRING",
                 "SPDLOG_COMPILED_LIB",
                 "LIBASYNC_STATIC",
                 "GLM_FORCE_XYZW_ONLY",

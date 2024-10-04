@@ -88,7 +88,7 @@ public:
 		TCHAR const* const InSavedFolderForReplay, int const SchedApiSession,
 		TCHAR const* const InSimulateFromFolder,
 		std::optional<ReusableJsonQueries::EReplayMode> const ReplayMode,
-		FScheduleQueryingDelegate const& OnScheduleQueryingStatusChanged,
+		FScheduleQueryingDelegate const* OnScheduleQueryingStatusChanged,
 		std::function<FString()> const& GetBearerToken);
 
 	void ChangeRemoteUrl(FString const& NewRemoteUrl);

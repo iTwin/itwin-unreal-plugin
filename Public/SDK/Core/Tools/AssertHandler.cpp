@@ -8,6 +8,7 @@
 
 
 #include "AssertHandler.h"
+#include "Log.h"
 #include <iostream>
 
 namespace SDK::Core::Tools
@@ -20,25 +21,33 @@ namespace SDK::Core::Tools
 		return p;
 		};
 
-    void libassert_default_failure_handler(const libassert::assertion_info& info) {
-        libassert::enable_virtual_terminal_processing_if_needed(); // for terminal colors on windows
-        std::string message = info.to_string(
-            libassert::terminal_width(libassert::stderr_fileno),
-            libassert::isatty(libassert::stderr_fileno)
-            ? libassert::get_color_scheme()
-            : libassert::color_scheme::blank
-        );
-        std::cerr << message << std::endl;
+    void AssertHandlerFct(const libassert::assertion_info& info) {
         switch (info.type) {
         case libassert::assert_type::assertion:
         case libassert::assert_type::debug_assertion:
         case libassert::assert_type::assumption:
-            (void)fflush(stderr);
+            if (BE_GETLOG("BE_ASSERT"))
+            {
+                BE_LOGD("BE_ASSERT", info.to_string(0, libassert::color_scheme::blank));
+            }
+            else
+            {
+                std::cerr << info.to_string() << std::endl;
+                (void)fflush(stderr);
+            }
             break;
         case libassert::assert_type::panic:
         case libassert::assert_type::unreachable:
-            (void)fflush(stderr);
-            std::abort();
+            if (BE_GETLOG("BE_ASSERT"))
+            {
+                BE_LOGD("BE_ASSERT", info.to_string(0, libassert::color_scheme::blank));
+            }
+            else
+            {
+                std::cerr << info.to_string() << std::endl;
+                (void)fflush(stderr);
+            }
+             std::abort();
             // Breaking here as debug CRT allows aborts to be ignored, if someone wants to make a
             // debug build of this library
             break;
@@ -52,17 +61,19 @@ namespace SDK::Core::Tools
 		if (g_assert)
 			g_assert->Handler(info);
 		else
-			libassert_default_failure_handler(info);
+            AssertHandlerFct(info);
     }
 
-	void InitAssertHandler() 
+	void InitAssertHandler(std::string const& moduleName)
 	{
+        InitLog(std::string("log_") + moduleName + ".txt");
+        CreateLogChannel("BE_ASSERT", Level::debug);
 		g_assert = IAssertHandler::New();
         libassert::set_failure_handler(FailureHandler);
 	}
 
     void AssertHandler::Handler(const libassert::assertion_info& info) {
-        libassert_default_failure_handler(info);
+        AssertHandlerFct(info);
     }
 
 }

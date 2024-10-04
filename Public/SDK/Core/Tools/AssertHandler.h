@@ -27,5 +27,5 @@ namespace SDK::Core::Tools
 		void Handler(const libassert::assertion_info& info) override;
 	};
 
-	void InitAssertHandler();
+	void InitAssertHandler(std::string const& moduleName);
 }

@@ -42,7 +42,7 @@ private:
 	UPROPERTY()
 	FString SelectedITwinId;
 	UFUNCTION(BlueprintCallable)
-	void AuthError(bool bSuccess, FString Error);
+	void OnAuthorizationDone(bool bSuccess, FString AuthError);
 	UFUNCTION(BlueprintCallable)
 	void GetITwinsCompleted(bool bSuccess, FITwinInfos ITwins);
 	UFUNCTION(BlueprintCallable)

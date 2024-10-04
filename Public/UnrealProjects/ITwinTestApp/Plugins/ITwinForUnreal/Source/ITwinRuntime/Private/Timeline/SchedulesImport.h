@@ -28,7 +28,12 @@ public:
 	FITwinSchedulesImport& operator=(FITwinSchedulesImport&& Other);
 	FString ToString() const;
 
-	bool IsReady() const;
+	/// Tells whether the connection information was set up and the structure is ready to start querying
+	bool IsReadyToQuery() const;
+	/// When pre-fetching everything, including animation bindings, tells whether everything has been received.
+	/// Otherwise, always returns false because we cannot know if we have everything.
+	bool HasFullSchedule() const;
+	size_t NumTasks() const;
 	void ResetConnection(FString const& ITwinAkaProjectAkaContextId, FString const& IModelId);
 	void SetSchedulesImportObservers(FOnAnimationBindingAdded const& InOnAnimBindingAdded,
 									 FOnAnimationGroupModified const& InOnAnimationGroupModified);
@@ -50,7 +55,7 @@ public:
 		FDateTime const UntilTime = {}, std::function<void(bool/*success*/)>&& OnQueriesCompleted = {});
 
 private:
+	UITwinSynchro4DSchedules* Owner;///< Never nullptr, not a ref because of move-assignment op
 	class FImpl;
 	TPimplPtr<FImpl> Impl;
-	UITwinSynchro4DSchedules* Owner;///< Never nullptr, not a ref because of move-assignment op
 };

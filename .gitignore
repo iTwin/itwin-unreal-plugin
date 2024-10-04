@@ -41,6 +41,5 @@
 # Special case for plugin that is symlinked to an external source folder.
 Private/UnrealProjects/Carrot/Plugins/ITwinForUnreal/
 
-
-
-
+# Ignore headers created by cmake for optional features
+Public/BeHeaders/BuildConfig/*.h

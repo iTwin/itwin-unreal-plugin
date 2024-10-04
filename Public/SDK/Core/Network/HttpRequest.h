@@ -54,6 +54,9 @@ MODULE_EXPORT namespace SDK::Core
 
 		virtual bool CheckResponse(Response const& response, std::string& requestError) const;
 
+		bool NeedRawData() const { return needRawData_; }
+		void SetNeedRawData(bool b);
+
 	protected:
 		virtual void DoSetVerb(EVerb verb);
 		virtual void DoSetResponseCallback(ResponseCallback const& callback);
@@ -65,6 +68,10 @@ MODULE_EXPORT namespace SDK::Core
 		RequestID id_ = NO_REQUEST;
 
 		ResponseCallback responseCallback_;
+
+		// In some cases (download of binary data...), we need the full response and not just its conversion
+		// to a string (which can be truncated...)
+		bool needRawData_ = false;
 	};
 
 }

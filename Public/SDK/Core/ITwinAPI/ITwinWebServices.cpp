@@ -8,6 +8,7 @@
 
 #include "ITwinWebServices.h"
 
+#include "ITwinAuthManager.h"
 #include "ITwinWebServicesObserver.h"
 
 #include <../BeHeaders/Compil/CleanUpGuard.h>
@@ -116,7 +117,6 @@ namespace SDK::Core
 		mutable Mutex mutex_;
 		std::shared_ptr< std::atomic_bool > isThisValid_; // same principle as in #FReusableJsonQueries::FImpl
 
-		std::string authToken_;
 		IITwinWebServicesObserver* observer_ = nullptr;
 
 		struct LastError
@@ -179,15 +179,12 @@ namespace SDK::Core
 	std::string ITwinWebServices::GetAuthToken() const
 	{
 		std::string authToken;
-		Impl::Lock Lock(impl_->mutex_);
-		authToken = impl_->authToken_;
+		auto const& authMngr = ITwinAuthManager::GetInstance(env_);
+		if (authMngr)
+		{
+			authMngr->GetAccessToken(authToken);
+		}
 		return authToken;
-	}
-
-	void ITwinWebServices::SetAuthToken(std::string const& token)
-	{
-		Impl::Lock Lock(impl_->mutex_);
-		impl_->authToken_ = token;
 	}
 
 	void ITwinWebServices::SetObserver(IITwinWebServicesObserver* InObserver)
@@ -252,6 +249,9 @@ namespace SDK::Core
 		// In such case, we will not even try to run the http request.
 		bool badlyFormed = false;
 
+		// Specific to requests fetching binary data (such as GetTextureData)
+		bool needRawData = false;
+
 		bool HasCustomHeader(std::string const& headerKey) const
 		{
 			return CustomHeaders.find(headerKey) != CustomHeaders.end();
@@ -302,6 +302,11 @@ namespace SDK::Core
 			return HttpRequest::NO_REQUEST;
 		}
 		request->SetVerb(requestInfo.Verb);
+
+		if (requestInfo.needRawData)
+		{
+			request->SetNeedRawData(true);
+		}
 
 		Http::Headers headers;
 		headers.reserve(requestInfo.CustomHeaders.size() + 4);
@@ -507,7 +512,8 @@ namespace SDK::Core
 		struct ITwinExportRequest
 		{
 			std::string iModelId;
-			std::string contextId; // aka iTwinID
+			std::optional<std::string> contextId; // aka iTwinId, need one or the other
+			std::optional<std::string> iTwinId; // aka contextId
 			std::string changesetId;
 			std::string exportType;
 		};
@@ -562,7 +568,7 @@ namespace SDK::Core
 			exportInfo.displayName = fullInfo.displayName;
 			exportInfo.status = fullInfo.status;
 			exportInfo.iModelId = fullInfo.request.iModelId;
-			exportInfo.iTwinId = fullInfo.request.contextId;
+			exportInfo.iTwinId = *fullInfo.request.iTwinId;
 			exportInfo.changesetId = fullInfo.request.changesetId;
 			exportInfo.lastModified = fullInfo.lastModified.value_or("");
 			if (fullInfo.status == "Complete" && fullInfo._links)
@@ -570,7 +576,9 @@ namespace SDK::Core
 				exportInfo.meshUrl = Detail::FormatMeshUrl(fullInfo._links->mesh.href);
 			}
 		}
-	}
+		// For Mesh Export Service's statistics, these need to be passed as URL parameters (NOT custom headers)
+		static const std::string getExportsCommonUrlParams("exportType=CESIUM&cdn=1&client=Unreal");
+	} // ns Detail
 
 	void ITwinWebServices::GetExports(std::string const& iModelId, std::string const& changesetId)
 	{
@@ -579,20 +587,13 @@ namespace SDK::Core
 		{
 			__func__,
 			HttpRequest::EVerb::Get,
-			std::string("/mesh-export/?iModelId=") + iModelId + "&changesetId=" + changesetId,
+			std::string("/mesh-export/?iModelId=") + iModelId + "&changesetId=" + changesetId
+				+ "&" + Detail::getExportsCommonUrlParams,
 			"application/vnd.bentley.itwin-platform.v1+json",
-			{},
-			{},
-			{
-				// The following headers have been added following suggestion by Daniel Iborra.
-				// This header is supposed to filter exports, but it is not implemented yet on server.
-				// Therefore we need to keep our own filter on the response for now.
-				{ "exportType", "CESIUM" },
-				{ "cdn", "1" }, // Activates CDN, improves performance
-				{ "client", "Unreal" }, // For stats
-				// (end of headers suggested by Daniel Iborra)
-			},
-			iModelId.empty()
+			{}, // content type
+			{}, // content string
+			{}, // custom headers (map)
+			iModelId.empty() // badlyFormed
 		};
 		TProcessHttpRequest<ITwinExportInfos>(
 			requestInfo,
@@ -617,15 +618,28 @@ namespace SDK::Core
 			});
 			// only keep Cesium exports
 			Infos.exports.reserve(exports.size());
-			for (ExportFullInfo const& fullInfo : exports)
+			for (ExportFullInfo& fullInfo : exports)
 			{
 				if (fullInfo.request.exportType == "CESIUM")
 				{
+					if (!fullInfo.request.iTwinId)
+					{
+						if (fullInfo.request.contextId)
+							std::swap(fullInfo.request.contextId, fullInfo.request.iTwinId);
+						else
+						{
+							strError = std::string("entry has neither iTwinId nor contextId");
+							continue;
+						}
+					}
 					ITwinExportInfo& exportInfo = Infos.exports.emplace_back();
 					Detail::SimplifyExportInfo(exportInfo, fullInfo);
 				}
 			}
-			return true;
+			if (Infos.exports.empty() && !strError.empty())
+				return false;
+			else
+				return true;
 		},
 			[this](bool bResult, ITwinExportInfos const& resultData, HttpRequest::RequestID)
 		{
@@ -638,15 +652,17 @@ namespace SDK::Core
 
 	void ITwinWebServices::GetExportInfo(std::string const& exportId)
 	{
-		ITwinAPIRequestInfo requestInfo =
+		const ITwinAPIRequestInfo requestInfo =
 		{
 			__func__,
 			HttpRequest::EVerb::Get,
-			std::string("/mesh-export/") + exportId,
-			"application/vnd.bentley.itwin-platform.v1+json"
+			std::string("/mesh-export/") + exportId + "?" + Detail::getExportsCommonUrlParams,
+			"application/vnd.bentley.itwin-platform.v1+json",
+			{}, // content type
+			{}, // content string
+			{}, // custom headers (map)
+			exportId.empty() // badlyFormed
 		};
-		requestInfo.badlyFormed = exportId.empty();
-
 		TProcessHttpRequest<ITwinExportInfo>(
 			requestInfo,
 			[](ITwinExportInfo& Export, Http::Response const& response, std::string& strError) -> bool
@@ -663,8 +679,22 @@ namespace SDK::Core
 			}
 			if (exportHolder.export_.value().request.exportType != "CESIUM")
 			{
-				strError = std::string("unsupported export type: ") + exportHolder.export_.value().request.exportType;
+				strError = std::string("unsupported export type: ")
+					+ exportHolder.export_.value().request.exportType;
 				return false;
+			}
+			if (!exportHolder.export_.value().request.iTwinId)
+			{
+				if (exportHolder.export_.value().request.contextId)
+				{
+					std::swap(exportHolder.export_.value().request.iTwinId,
+							  exportHolder.export_.value().request.contextId);
+				}
+				else
+				{
+					strError = std::string("entry has neither iTwinId nor contextId");
+					return false;
+				}
 			}
 			Detail::SimplifyExportInfo(Export, exportHolder.export_.value());
 			return true;
@@ -748,12 +778,20 @@ namespace SDK::Core
 			double focusDist = 0.0;
 			std::array<double, 3> eye = { 0, 0, 0 };
 		};
+		struct DisplayStyle
+		{
+			std::optional<std::string> renderTimeline;
+			std::optional<double> timePoint = 0.0;
+		};
 		struct Itwin3dView
 		{
 			std::array<double, 3> origin = { 0, 0, 0 };
 			std::array<double, 3> extents = { 0, 0, 0 };
 			Rotator angles;
 			std::optional<CameraInfo> camera;
+			//optional here in case users created saved views with the old version 
+			//that didn't contain a displayStyle field
+			std::optional<DisplayStyle> displayStyle;
 		};
 		struct SavedView3DData
 		{
@@ -781,6 +819,14 @@ namespace SDK::Core
 					svData.savedView.origin = itwin3dView.origin;
 				svData.savedView.extents = itwin3dView.extents;
 				svData.savedView.angles = itwin3dView.angles;
+				if (itwin3dView.displayStyle)
+				{
+					svData.savedView.displayStyle.emplace();
+					if (itwin3dView.displayStyle->renderTimeline)
+						svData.savedView.displayStyle->renderTimeline = itwin3dView.displayStyle->renderTimeline;
+					if (itwin3dView.displayStyle->timePoint)
+						svData.savedView.displayStyle->timePoint = itwin3dView.displayStyle->timePoint;
+				}
 				svData.savedViewInfo.id = std::move(fullInfo.id);
 				svData.savedViewInfo.displayName = std::move(fullInfo.displayName);
 				svData.savedViewInfo.shared = fullInfo.shared;
@@ -1009,6 +1055,15 @@ namespace SDK::Core
 			itwin3dView.angles = savedView.angles;
 			itwin3dView.camera.emplace();
 			itwin3dView.camera->eye = savedView.origin;
+			if (savedView.displayStyle)
+			{
+				if (!savedView.displayStyle->renderTimeline.value().empty())
+				{
+					itwin3dView.displayStyle.emplace();
+					itwin3dView.displayStyle->renderTimeline = savedView.displayStyle->renderTimeline;
+					itwin3dView.displayStyle->timePoint = savedView.displayStyle->timePoint;
+				}
+			}
 		}
 	}
 
@@ -1933,5 +1988,150 @@ namespace SDK::Core
 		std::string const& materialId)
 	{
 		GetMaterialListProperties(iTwinId, iModelId, iChangesetId, { materialId });
+	}
+
+	void ITwinWebServices::GetTextureData(
+		std::string const& iTwinId, std::string const& iModelId, std::string const& iChangesetId,
+		std::string const& textureId)
+	{
+		ITwinAPIRequestInfo requestInfo = {
+			__func__,
+			HttpRequest::EVerb::Post,
+			std::string("/imodel/rpc/v4/mode/1/context/") + iTwinId
+				+ "/imodel/" + iModelId
+				+ "/changeset/" + iChangesetId + "/IModelReadRpcInterface-3.6.0-queryTextureData",
+			"application/vnd.bentley.itwin-platform.v1+json",
+
+			/*** additional settings for POST ***/
+			"text/plain",
+			"[{\"iTwinId\":\"" + iTwinId
+			+ "\",\"iModelId\":\"" + iModelId
+			+ "\",\"changeset\":{\"id\":\"" + iChangesetId
+			+ "\"}},{\"name\":\"" + textureId
+			+ "\"}]"
+		};
+		requestInfo.badlyFormed = iTwinId.empty() || iModelId.empty() || iChangesetId.empty() || textureId.empty();
+
+		// Here we need the *full* retrieved response, not just a string
+		requestInfo.needRawData = true;
+
+		TProcessHttpRequest<ITwinTextureData>(
+			requestInfo,
+			[this](ITwinTextureData& itwinTexture, Http::Response const& response, std::string& strError) -> bool
+		{
+			if (!response.rawdata_)
+			{
+				strError = "internal error (missing binary data)";
+				return false;
+			}
+			struct BytesInfo
+			{
+				std::optional<bool> isBinary;
+				std::optional<int> index;
+				uint32_t size = 0;
+				std::optional<uint32_t> chunks;
+			};
+			struct TexDataJsonPart
+			{
+				int width = 0;
+				int height = 0;
+				int format = -1;
+				std::optional<int> transparency;
+				BytesInfo bytes;
+			};
+
+			/* The response does not start with the JSON part directly :
+
+----------------------------058561453697718044834493
+Content-Disposition: form-data; name="objects"
+
+{"width":215,"height":346,"format":2,"transparency":2,"bytes":{"isBinary":true,"index":0,"size":30455,"chunks":1}}
+----------------------------058561453697718044834493
+Content-Disposition: form-data; name="data-0"
+Content-Type: application/octet-stream
+
+			*/
+
+			auto const extractJson = [](std::string const& r) -> std::string
+			{
+				auto startPos = r.find('{');
+				if (startPos == std::string::npos)
+					return {};
+				int openedBrackets = 1;
+				auto curPos = startPos;
+				while (openedBrackets > 0)
+				{
+					auto nextPos = r.find_first_of("{}", curPos + 1);
+					if (nextPos == std::string::npos)
+						break;
+					if (r.at(nextPos) == '{')
+						openedBrackets++;
+					else
+						openedBrackets--;
+					curPos = nextPos;
+				}
+				if (openedBrackets != 0)
+				{
+					// BE_ISSUE("mismatch in delimiters");
+					return {};
+				}
+				return r.substr(startPos, curPos + 1 - startPos);
+			};
+			TexDataJsonPart texDataJson;
+			if (!Json::FromString(texDataJson, extractJson(response.second), strError))
+			{
+				return false;
+			}
+			if (texDataJson.bytes.size == 0)
+			{
+				strError = "null texture size";
+				return false;
+			}
+			itwinTexture.width = texDataJson.width;
+			itwinTexture.height = texDataJson.height;
+			if (texDataJson.format >= 0 && texDataJson.format <= 3)
+			{
+				itwinTexture.format = static_cast<ImageSourceFormat>(texDataJson.format);
+			}
+			if (texDataJson.transparency)
+			{
+				itwinTexture.transparency = static_cast<TextureTransparency>(*texDataJson.transparency);
+			}
+
+			// Extract the binary part from the response's raw data
+			auto const& rawdata(*response.rawdata_);
+			const std::string_view octetStream("octet-stream");
+			size_t startBinaryPos = response.second.find(octetStream);
+			if (startBinaryPos == std::string::npos)
+			{
+				strError = "could not find octet-stream chunk";
+				return false;
+			}
+			startBinaryPos += octetStream.size();
+			startBinaryPos = response.second.find_first_not_of("\r\n", startBinaryPos);
+			if (startBinaryPos == std::string::npos)
+			{
+				strError = "could not recover binary data start";
+				return false;
+			}
+			if (startBinaryPos + texDataJson.bytes.size > rawdata.size())
+			{
+				strError = "mismatch string content vs raw data";
+				return false;
+			}
+			itwinTexture.bytes.resize(texDataJson.bytes.size);
+			std::copy(
+				rawdata.begin() + startBinaryPos,
+				rawdata.begin() + startBinaryPos + texDataJson.bytes.size,
+				itwinTexture.bytes.data());
+			return true;
+		},
+			[this, textureId](bool bResult, ITwinTextureData const& resultData, HttpRequest::RequestID)
+		{
+			if (impl_->observer_)
+			{
+				impl_->observer_->OnTextureDataRetrieved(bResult, textureId, resultData);
+			}
+		});
 	}
 }

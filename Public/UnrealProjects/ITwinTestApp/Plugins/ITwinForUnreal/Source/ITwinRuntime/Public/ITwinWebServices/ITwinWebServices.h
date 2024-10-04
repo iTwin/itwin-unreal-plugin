@@ -51,7 +51,7 @@ public:
 	UITwinWebServices();
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
-	void CheckAuthorization();
+	bool CheckAuthorization();
 
 	//! Returns the last error encountered, if any.
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
@@ -138,7 +138,9 @@ public:
 	void GetMaterialListProperties(
 		FString iTwinId, FString iModelId, FString iChangesetId,
 		TArray<FString> MaterialIds);
-
+	void GetTextureData(
+		FString iTwinId, FString iModelId, FString iChangesetId,
+		FString TextureId);
 
 	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
 	FOnAuthorizationChecked OnAuthorizationChecked;
@@ -229,11 +231,19 @@ public:
 
 	static void SetITwinAppIDArray(ITwin::AppIDArray const& iTwinAppIDs);
 
-	static UITwinWebServices* GetWorkingInstance();
+	static bool GetActiveConnection(TObjectPtr<AITwinServerConnection>& OutConnection,
+		const UObject* WorldContextObject);
 
 	static bool SaveToken(FString const& InInfo, EITwinEnvironment Env);
+	static bool SaveToken(FString const& InInfo, EITwinEnvironment Env, TArray<uint8> const& Key, FString const& FileSuffix);
+
 	static bool LoadToken(FString& OutInfo, EITwinEnvironment Env);
-	static void DeleteTokenFile(EITwinEnvironment Env);
+	static bool LoadToken(FString& OutInfo, EITwinEnvironment Env, TArray<uint8> const& Key, FString const& FileSuffix);
+
+	static void DeleteTokenFile(EITwinEnvironment Env, FString const& FileSuffix = {});
+
+	//! Can be called to customize the scopes used to request the authorization.
+	static void AddScopes(FString const& ExtraScopes);
 
 	static void SetLogErrors(bool bInLogErrors);
 	static bool ShouldLogErrors() { return bLogErrors; }
@@ -245,11 +255,17 @@ public:
 
 
 private:
+	/// Returns the current instance, ie. the one currently processing a request response callback.
+	/// Beware it will return null as soon as we are not currently executing such callback, which can be a
+	/// source of confusion and bugs.
+	/// \see GetActiveConnection, in which we handle the null case, for example (only working if we do not
+	/// mix different environments in a same session...)
+	static UITwinWebServices* GetWorkingInstance();
+
 	bool TryGetServerConnection(bool bAllowBroadcastAuthResult);
 	void OnAuthDoneImpl(bool bSuccess, FString const& Error, bool bBroadcastResult = true);
 
 	virtual void OnAuthorizationDone(bool bSuccess, FString const& Error) override;
-	FString GetAuthToken() const;
 
 	void DoGetiModelChangesets(FString const& iModelId, bool bRestrictToLatest);
 

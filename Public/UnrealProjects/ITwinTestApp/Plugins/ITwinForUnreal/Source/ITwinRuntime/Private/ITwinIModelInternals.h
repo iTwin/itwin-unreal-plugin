@@ -36,7 +36,7 @@ public:
 	{
 		for (auto& [TileID, SceneTile] : SceneMapping.KnownTiles)
 		{
-			if (bVisibleOnly && !SceneTile.HasVisibleMesh())
+			if (bVisibleOnly && !SceneTile.HasAnyVisibleMesh())
 			{
 				continue;
 			}

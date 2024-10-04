@@ -11,8 +11,7 @@
 #include "ITwinSceneMapping.h"
 #include <ITwinMetadataConstants.h>
 
-
-#include <Components/StaticMeshComponent.h>
+#include <ITwinExtractedMeshComponent.h>
 #include <Engine/StaticMesh.h>
 #include <Materials/Material.h>
 #include <Materials/MaterialInstanceDynamic.h>
@@ -23,6 +22,7 @@
 #include <ITwinCesiumModelMetadata.h>
 #include <ITwinCesiumPrimitiveFeatures.h>
 
+#include <CesiumGltf/ExtensionITwinMaterialID.h>
 #include <CesiumGltf/MeshPrimitive.h>
 
 
@@ -39,7 +39,7 @@ FITwinGltfMeshComponentWrapper::FITwinGltfMeshComponentWrapper(
 {
     if (CesiumData.pMeshPrimitive)
     {
-        // store the uvAccessor index for features, in case we need to bake them later
+        // Store the uvAccessor index for features, in case we need to bake them later
         // (see #BakeFeatureIDsInVertexUVs)
         auto featAccessorIt = CesiumData.pMeshPrimitive->attributes.find("_FEATURE_ID_0");
         if (featAccessorIt != CesiumData.pMeshPrimitive->attributes.end()) {
@@ -49,6 +49,14 @@ FITwinGltfMeshComponentWrapper::FITwinGltfMeshComponentWrapper(
             if (uvIndexIt != CesiumData.GltfToUnrealTexCoordMap.cend()) {
                 uvIndexForFeatures_ = uvIndexIt->second;
             }
+        }
+
+        // Test if this primitive is linked to a specific ITwin Material ID (test extension specially added
+        // by our gltf tuning process.
+        auto const* matIdExt = CesiumData.pMeshPrimitive->getExtension<CesiumGltf::ExtensionITwinMaterialID>();
+        if (matIdExt)
+        {
+            iTwinMaterialID_ = matIdExt->materialId;
         }
     }
 }
@@ -230,7 +238,7 @@ FITwinGltfMeshComponentWrapper::EMetadataStatus FITwinGltfMeshComponentWrapper::
     if (bUseMeshSections)
     {
         // all faces should have been added to sections
-        check(static_cast<int64>(AccumFaces) == NumTriangles);
+        checkSlow(static_cast<int64>(AccumFaces) == NumTriangles);
 
         return EMetadataStatus::SortedByElement;
     }
@@ -245,7 +253,7 @@ bool FITwinGltfMeshComponentWrapper::ExtractElement(
     FITwinExtractedEntity& ExtractedEntity,
     FITwinMeshExtractionOptions const& Options /*= {}*/)
 {
-    checkf(Element != ITwinElementID(-1), TEXT("trying to extract invalid ElementID"));
+    checkfSlow(Element != ITwinElementID(-1), TEXT("trying to extract invalid ElementID"));
 
     if (!metadataStatus_)
     {
@@ -277,7 +285,7 @@ bool FITwinGltfMeshComponentWrapper::ExtractElement(
         else
         {
             // slower mode (parse meta-data again)
-            check(*metadataStatus_ == EMetadataStatus::UnsortedMetadata);
+            checkSlow(*metadataStatus_ == EMetadataStatus::UnsortedMetadata);
             return ExtractElement_SLOW(
                 Element,
                 itSection->second.NumTriangles,
@@ -291,7 +299,7 @@ bool FITwinGltfMeshComponentWrapper::ExtractElement(
         return false;
 
     default:
-        checkf(false, TEXT("unhandled case: %d"), static_cast<int>(*metadataStatus_));
+        ensureMsgf(false, TEXT("unhandled case: %d"), static_cast<int>(*metadataStatus_));
         return false;
     }
 }
@@ -300,7 +308,7 @@ void FITwinGltfMeshComponentWrapper::InitExtractedMeshComponent(
     FITwinExtractedEntity& ExtractedEntity,
     FName const& MeshName) const
 {
-    UStaticMeshComponent* pMesh = NewObject<UStaticMeshComponent>(
+    UITwinExtractedMeshComponent* pMesh = NewObject<UITwinExtractedMeshComponent>(
         gltfMeshComponent_.Get(),
         MeshName);
 
@@ -337,12 +345,12 @@ bool FITwinGltfMeshComponentWrapper::FinalizeExtractedEntity(
 {
     if (!ExtractedEntity.MeshComponent.IsValid() || !SrcStaticMesh)
     {
-        checkf(false, TEXT("mesh destroyed before finalization!"));
+        ensureMsgf(false, TEXT("mesh destroyed before finalization!"));
         return false;
     }
     if (StaticMeshBuildVertices.IsEmpty() || Indices.IsEmpty())
     {
-        checkf(false, TEXT("nothing to extract"));
+        ensureMsgf(false, TEXT("nothing to extract"));
         return false;
     }
     const FStaticMeshLODResources& SrcLODResources = SrcStaticMesh->GetRenderData()->LODResources[0];
@@ -490,9 +498,10 @@ bool FITwinGltfMeshComponentWrapper::FinalizeExtractedEntity(
                     InsertedClr.first->second);
             }
             MaterialToUse = pNewMaterial;
+            if (ensure(Options.SceneTile))
+                Options.SceneTile->Materials.push_back(MaterialToUse);
 
-            // The texture in the newly created material instance will have to be setup
-            // afterwards
+            // The texture in the newly created material instance will have to be setup afterwards
             ExtractedEntity.TextureFlags.HighlightsAndOpacitiesFlags.Invalidate();
         }
 
@@ -625,7 +634,7 @@ namespace
         BuildVertices.Shrink();
 
         // normally, the number of extracted faces is predictable
-        check(Indices.GetSlack() == 0);
+        checkSlow(Indices.GetSlack() == 0);
         Indices.Shrink();
     }
 
@@ -634,7 +643,7 @@ namespace
         auto DstVtxId = VtxIndicesMap.try_emplace(SrcVtxId, NextNewVertexIndex);
         if (DstVtxId.second) // was inserted
         {
-            checkf(NextNewVertexIndex == BuildVertices.Num(), TEXT("bad invariant!"));
+            checkfSlow(NextNewVertexIndex == BuildVertices.Num(), TEXT("bad invariant!"));
 
             // copy vertex now
             FStaticMeshBuildVertex& DstBuildVertex = BuildVertices.Add_GetRef(FStaticMeshBuildVertex{});
@@ -692,7 +701,7 @@ namespace
         else
         {
             // already copied before
-            checkf(false, TEXT("unknown vertex %u!"), SrcVtxId);
+            checkfSlow(false, TEXT("unknown vertex %u!"), SrcVtxId);
         }
     }
 }
@@ -707,7 +716,7 @@ bool FITwinGltfMeshComponentWrapper::ExtractMeshSectionElement(
     if (!SrcStaticMesh) {
         return false;
     }
-    checkf(MeshSection.IsValid(), TEXT("invalid section!"));
+    checkfSlow(MeshSection.IsValid(), TEXT("invalid section!"));
 
     const FString MeshEltName = gltfMeshComponent_->GetName()
         + FString::Printf(TEXT("_ELT_%llu_SECTION"), Element.value());
@@ -935,9 +944,11 @@ void FITwinGltfMeshComponentWrapper::HideOriginalMeshComponent(bool bHide /*= tr
 uint32 FITwinGltfMeshComponentWrapper::ExtractSomeElements(
     FITwinSceneTile& SceneTile,
     float Percentage,
-    FITwinMeshExtractionOptions const& Options /*= {}*/)
+    FITwinMeshExtractionOptions const& InOptions /*= {}*/)
 {
     uint32 nExtracted = 0;
+    FITwinMeshExtractionOptions Options = InOptions;
+    Options.SceneTile = &SceneTile;
 
 #if ENABLE_DRAW_DEBUG
     if (!metadataStatus_)
@@ -1089,4 +1100,37 @@ uint32 FITwinGltfMeshComponentWrapper::BakeFeatureIDsInVertexUVs(
         VtxBuffer.SetVertexUV(vtxIndex, uvIndex, FVector2f(fFeatureId, 0.0f));
     }
     return uvIndex;
+}
+
+
+void FITwinGltfMeshComponentWrapper::ForEachMaterialInstance(std::function<void(UMaterialInstanceDynamic&)> const& Func)
+{
+    const TObjectPtr<UStaticMesh> SrcStaticMesh = GetSourceStaticMesh();
+    if (!SrcStaticMesh) {
+        return;
+    }
+    UMaterialInstanceDynamic* Mat = Cast<UMaterialInstanceDynamic>(SrcStaticMesh->GetMaterial(0));
+    if (Mat)
+    {
+        Func(*Mat);
+    }
+
+    // By construction (see #InitExtractedMeshComponent), extracted entities are children of gltfMeshComponent_
+    TArray<USceneComponent*> Children;
+    gltfMeshComponent_->GetChildrenComponents(false /*bIncludeAllDescendants*/, Children);
+    for (auto& Child : Children)
+    {
+        if (auto* ExtractedMeshComp = Cast<UStaticMeshComponent>(Child))
+        {
+            const TObjectPtr<UStaticMesh> ExtractedStaticMesh = ExtractedMeshComp->GetStaticMesh();
+            if (ExtractedStaticMesh)
+            {
+                Mat = Cast<UMaterialInstanceDynamic>(ExtractedStaticMesh->GetMaterial(0));
+                if (Mat)
+                {
+                    Func(*Mat);
+                }
+            }
+        }
+    }
 }

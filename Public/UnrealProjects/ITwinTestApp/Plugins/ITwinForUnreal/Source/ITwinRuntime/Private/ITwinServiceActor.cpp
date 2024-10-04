@@ -10,6 +10,7 @@
 #include <ITwinServiceActor.h>
 #include <ITwinServerConnection.h>
 #include <ITwinWebServices/ITwinWebServices.h>
+#include <Engine/World.h>
 
 
 DEFINE_LOG_CATEGORY(LogITwin);
@@ -30,10 +31,11 @@ void AITwinServiceActor::Destroyed()
 
 void AITwinServiceActor::UpdateWebServices()
 {
-	if (!ServerConnection && UITwinWebServices::GetWorkingInstance())
+	if (!ServerConnection)
 	{
 		// Happens when the requests are made from blueprints, typically in the previous 3DFT plugin
-		UITwinWebServices::GetWorkingInstance()->GetServerConnection(ServerConnection);
+		// Also happens in Carrot, with the new startup panel (for good reasons).
+		UITwinWebServices::GetActiveConnection(ServerConnection, GetWorld());
 	}
 	const bool bHasValidWebServices = WebServices && WebServices->IsValidLowLevel();
 	const bool bHasChangedConnection =
@@ -84,8 +86,10 @@ AITwinServiceActor::CheckServerConnection(bool bRequestAuthorisationIfNeeded /*=
 		}
 		else if (bRequestAuthorisationIfNeeded)
 		{
-			WebServices->CheckAuthorization();
-			return EConnectionStatus::InProgress;
+			if (WebServices->CheckAuthorization())
+				return EConnectionStatus::Connected;
+			else
+				return EConnectionStatus::InProgress;
 		}
 	}
 	return EConnectionStatus::NotConnected;
@@ -109,7 +113,8 @@ void AITwinServiceActor::OnAuthorizationDone(bool bSuccess, FString const& AuthE
 	}
 	else
 	{
-		UE_LOG(LogITwinHttp, Error, TEXT("[%s] Authorization failure (%s)"), GetObserverName(), *AuthError);
+		BE_LOGE("ITwinAPI", "[" << TCHAR_TO_UTF8(GetObserverName()) << "] Authorization failure: "
+			<< TCHAR_TO_UTF8(*AuthError));
 	}
 }
 

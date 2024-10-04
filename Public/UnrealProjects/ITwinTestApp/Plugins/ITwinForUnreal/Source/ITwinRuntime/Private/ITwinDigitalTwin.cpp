@@ -124,7 +124,7 @@ void AITwinDigitalTwin::UpdateITwin()
 {
 	if (ITwinId.IsEmpty())
 	{
-		UE_LOG(LogTemp, Error, TEXT("ITwinDigitalTwin with no ITwinId cannot be updated"));
+		BE_LOGE("ITwinAPI", "ITwinDigitalTwin with no ITwinId cannot be updated");
 		return;
 	}
 

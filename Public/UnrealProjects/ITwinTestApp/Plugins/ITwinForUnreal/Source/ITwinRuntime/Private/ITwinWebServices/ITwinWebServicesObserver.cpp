@@ -101,3 +101,7 @@ void FITwinDefaultWebServicesObserver::OnMaterialPropertiesRetrieved(bool bSucce
 {
 	ensureMsgf(false, TEXT("%s does not handle querying material properties"), GetObserverName());
 }
+void FITwinDefaultWebServicesObserver::OnTextureDataRetrieved(bool bSuccess, std::string const& , SDK::Core::ITwinTextureData const& )
+{
+	ensureMsgf(false, TEXT("%s does not handle querying texture data"), GetObserverName());
+}

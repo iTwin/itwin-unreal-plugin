@@ -10,10 +10,9 @@
 #include <ITwinRuntime/Private/Compil/SanitizedPlatformHeaders.h>
 #include <TopMenuWidgetImpl.h>
 #include <ITwinIModel.h>
-#include <iTwinWebServices/iTwinWebServices.h>
+#include <ITwinWebServices/ITwinWebServices.h>
 #include <Camera/CameraActor.h>
 #include <Camera/CameraComponent.h>
-#include <GameFramework/FloatingPawnMovement.h>
 #include <GameFramework/Pawn.h>
 #include <GameFramework/PlayerController.h>
 #include <Kismet/GameplayStatics.h>
@@ -64,49 +63,36 @@ void ATopMenu::SetIModel3DInfoInCoordSystem(const FITwinIModel3DInfo& IModelInfo
 	DstInfo = IModelInfo;
 }
 
+static AITwinIModel* GetTheIModel(UWorld* World)
+{
+	return Cast<AITwinIModel>(UGameplayStatics::GetActorOfClass(World, AITwinIModel::StaticClass()));
+}
+
 void ATopMenu::GetAllSavedViews()
 {
-	AITwinIModel* IModel = Cast<AITwinIModel>(UGameplayStatics::GetActorOfClass(GetWorld(), AITwinIModel::StaticClass()));
-	if (ensure(IModel != nullptr))
-	{
+	AITwinIModel* IModel = GetTheIModel(GetWorld());
+	if (!ensure(IModel != nullptr))
+		return;
+
+	if (!ITwinWebService->OnGetSavedViewsComplete.IsAlreadyBound(IModel, &AITwinIModel::OnSavedViewsRetrieved))
 		ITwinWebService->OnGetSavedViewsComplete.AddDynamic(IModel, &AITwinIModel::OnSavedViewsRetrieved);
-
-		UITwinWebServices* IModelWebServices = IModel->GetMutableWebServices();
-		if (IModelWebServices)
-		{
-			// bind the add/delete saved view callback so that we update the list of saved views in the UI
-			IModelWebServices->OnAddSavedViewComplete.AddDynamic(this, &ATopMenu::SavedViewAdded);
-			IModelWebServices->OnDeleteSavedViewComplete.AddDynamic(this, &ATopMenu::SavedViewDeleted);
-		}
+	UITwinWebServices* IModelWebServices = IModel->GetMutableWebServices();
+	if (IModelWebServices
+		&& !IModelWebServices->OnAddSavedViewComplete.IsAlreadyBound(this, &ATopMenu::SavedViewAdded))
+	{
+		// bind the add/delete saved view callback so that we update the list of saved views in the UI
+		IModelWebServices->OnAddSavedViewComplete.AddDynamic(this, &ATopMenu::SavedViewAdded);
+		IModelWebServices->OnDeleteSavedViewComplete.AddDynamic(this, &ATopMenu::SavedViewDeleted);
 	}
-
 	ITwinWebService->GetAllSavedViews(ITwinId, IModelId);
 }
 
 void ATopMenu::ZoomOnIModel()
 {
-	auto* Pawn = GetWorld()->GetFirstPlayerController()->GetPawnOrSpectator();
-	if (!ensure(Pawn))
+	AITwinIModel* IModel = GetTheIModel(GetWorld());
+	if (!ensure(IModel != nullptr))
 		return;
-	// working in ITwin coordinate system here like in former 3DFT plugin would make no sense at all here...
-	auto const& IModel3dInfo = GetIModel3DInfoInCoordSystem(EITwinCoordSystem::UE);
-	auto* MvtComp = Cast<UFloatingPawnMovement>(Pawn->GetMovementComponent());
-	if (MvtComp)
-	{
-		float const OldSpeed = MvtComp->MaxSpeed;
-		// Adjust max speed to project extent: target a whole extent traversal time of 10s?
-		MvtComp->MaxSpeed = FVector::Distance(IModel3dInfo.BoundingBoxMin, IModel3dInfo.BoundingBoxMax) / 10.f;
-		MvtComp->Acceleration *= 0.5 * (MvtComp->MaxSpeed / OldSpeed);
-		MvtComp->Deceleration *= MvtComp->MaxSpeed / OldSpeed;
-	}
-	GetWorld()->GetFirstPlayerController()->GetPawnOrSpectator()->SetActorLocation(
-		(0.5 * (IModel3dInfo.BoundingBoxMin + IModel3dInfo.BoundingBoxMax))
-			// "0.5" is empirical, let's not be too far from the center of things, iModels tend to have
-			// a large context around the actual area of interest...
-			- FMath::Max(0.5 * FVector::Distance(IModel3dInfo.BoundingBoxMin, IModel3dInfo.BoundingBoxMax),
-						 10000)
-				* ((AActor*)GetWorld()->GetFirstPlayerController())->GetActorForwardVector(),
-		false, nullptr, ETeleportType::TeleportPhysics);
+	IModel->ZoomOnIModel();
 }
 
 void ATopMenu::UpdateElementId(bool bVisible, const FString& ElementId)
@@ -163,7 +149,7 @@ void ATopMenu::OnZoom()
 
 void ATopMenu::StartCameraMovementToSavedView(float& OutBlendTime, ACameraActor*& Actor, FTransform& Transform, const FSavedView& SavedView, float BlendTime)
 {
-	AITwinIModel* IModel = Cast<AITwinIModel>(UGameplayStatics::GetActorOfClass(GetWorld(), AITwinIModel::StaticClass()));
+	AITwinIModel* IModel = GetTheIModel(GetWorld());
 	if (!ensure(IModel != nullptr))
 		return;
 	OutBlendTime = BlendTime;

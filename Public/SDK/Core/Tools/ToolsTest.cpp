@@ -9,7 +9,6 @@
 #include <catch2/catch_all.hpp>
 
 #include "Tools.h"
-#include <libassert/assert-catch2.hpp>
 #include <iostream>
 
 using namespace SDK::Core;
@@ -55,15 +54,15 @@ TEST_CASE("Tools:Extension")
 	std::shared_ptr<MyExtension> ext(new MyExtension);
 	myclass.AddExtension(ext);
 
-	BE_ASSERT(myclass.HasExtension<MyExtension>() == true);
-	BE_ASSERT(myclass.GetExtension<MyExtension>().get() == ext.get());
+	REQUIRE(myclass.HasExtension<MyExtension>() == true);
+	REQUIRE(myclass.GetExtension<MyExtension>().get() == ext.get());
 
-	BE_ASSERT(myclass.GetExtension<BadExt>().get() == nullptr);
-	BE_ASSERT(myclass.HasExtension<BadExt>() == false);
+	REQUIRE(myclass.GetExtension<BadExt>().get() == nullptr);
+	REQUIRE(myclass.HasExtension<BadExt>() == false);
 
 	myclass.RemoveExtension<MyExtension>();
-	BE_ASSERT(myclass.HasExtension<MyExtension>() == false);
-	BE_ASSERT(myclass.GetExtension<MyExtension>().get() == nullptr);
+	REQUIRE(myclass.HasExtension<MyExtension>() == false);
+	REQUIRE(myclass.GetExtension<MyExtension>().get() == nullptr);
 }
 
 namespace InterfaceTest {
@@ -111,7 +110,7 @@ namespace InterfaceTest {
 		}
 		
 		int Fct1() override {
-			BE_ASSERT(BaseClass::Fct1() == 245);
+			REQUIRE(BaseClass::Fct1() == 245);
 			return 654;
 		}
 		
@@ -145,8 +144,8 @@ TEST_CASE("Tools:Interface")
 	// check with base class
 	{
 		std::shared_ptr<IMyClass> pObj = IMyClass::New();
-		BE_ASSERT(pObj->Fct1() == 245);
-		BE_ASSERT(pObj->GetDynTypeId() == MyClass::GetTypeId());
+		REQUIRE(pObj->Fct1() == 245);
+		REQUIRE(pObj->GetDynTypeId() == MyClass::GetTypeId());
 	}
 	{
 		// We want MyExtendedClass to be instantiate everywhere we need a IMyClass, so we define the "New" function.
@@ -156,26 +155,117 @@ TEST_CASE("Tools:Interface")
 			});
 
 		std::shared_ptr<IMyClass> pObj = IMyClass::New();
-		BE_ASSERT(pObj->Fct1() == 654);
-		BE_ASSERT(pObj->GetDynTypeId() == MyExtendedClass::GetTypeId());
-		BE_ASSERT(pObj->IsTypeOf(MyClass::GetTypeId()) == true);
-		BE_ASSERT(pObj->IsTypeOf(MyExtendedClass2::GetTypeId()) == true);
-		BE_ASSERT(pObj->IsTypeOf(DummyClass::GetTypeId()) == false);
-		BE_ASSERT(pObj->IsTypeOf(MyExtendedClass::GetTypeId()) == true);
+		REQUIRE(pObj->Fct1() == 654);
+		REQUIRE(pObj->GetDynTypeId() == MyExtendedClass::GetTypeId());
+		REQUIRE(pObj->IsTypeOf(MyClass::GetTypeId()) == true);
+		REQUIRE(pObj->IsTypeOf(MyExtendedClass2::GetTypeId()) == true);
+		REQUIRE(pObj->IsTypeOf(DummyClass::GetTypeId()) == false);
+		REQUIRE(pObj->IsTypeOf(MyExtendedClass::GetTypeId()) == true);
 		if (pObj->GetDynTypeId() == MyExtendedClass::GetTypeId())
 		{
 			std::shared_ptr<MyExtendedClass> ext = std::static_pointer_cast<MyExtendedClass>(pObj);
-			BE_ASSERT(ext->Fct2() == 987);
+			REQUIRE(ext->Fct2() == 987);
 		}
 
 		auto obj2 = Tools::DynamicCast<MyExtendedClass2>(pObj);
-		BE_ASSERT((bool)obj2 == true);
+		REQUIRE((bool)obj2 == true);
 		if (obj2)
 		{
-			BE_ASSERT(obj2->Fct3() == 741);
+			REQUIRE(obj2->Fct3() == 741);
 		}
 	}
 }
+
+static std::vector<std::string> g_LogList;
+class MyLog : public SDK::Core::Tools::Log
+{
+public:
+	MyLog(std::string s, SDK::Core::Tools::Level level):SDK::Core::Tools::Log(s, level)
+	{}
+
+	void DoLog(const std::string& msg, SDK::Core::Tools::Level sev, const char* srcPath, const char* func, int line)
+	{
+		g_LogList.push_back(msg);
+		SDK::Core::Tools::Log::DoLog(msg, sev, srcPath, func, line);
+	}
+};
+
+TEST_CASE("Tools:Log")
+{
+	using namespace Tools;
+
+	ILog::SetNewFct([](std::string s, Level level) {
+		std::shared_ptr<ILog> p(static_cast<MyLog*>(new MyLog(s, level)));
+		return p;
+		});
+
+	InitLog("log_Test.txt");
+
+	CreateLogChannel("test", Level::info);
+	BE_LOGD("test", "print:" << 99); // should not be log
+	BE_LOGI("test", "print:" << 10); //should be log
+	BE_LOGI("test", "早上好" << 52); //should be log
+	BE_LOGI("test1", "print2:" << 33); // should not be log
+
+	REQUIRE(g_LogList.size() == 2);
+	REQUIRE(g_LogList[0] == "print:10");
+	REQUIRE(g_LogList[1] == "早上好52");
+
+	BE_GETLOG("test")->SetLevel(Level::debug);
+	BE_LOGD("test", "print:" << 99);
+
+	REQUIRE(g_LogList.size() == 3);
+	REQUIRE(g_LogList[2] == "print:99"); //should be log now
+
+}
+
+SDK::expected<int, std::string> to_int(char const* const text)
+{
+	char* pos = nullptr;
+	auto value = strtol(text, &pos, 0);
+
+	if (pos != text) 
+		return value;
+	else
+		return SDK::make_unexpected(std::string("'") + text + "' isn't a number");
+}
+
+SDK::expected<void, std::string> TestExpected(int i)
+{
+	if (i > 0)
+		return {}; // same as: SDK::expected<void, std::string>() but shorter
+	else
+		return SDK::make_unexpected("i is neg number");
+}
+
+TEST_CASE("Tools:expected")
+{
+	{
+		auto ei = to_int("toto");
+		REQUIRE((bool)ei == false);
+		REQUIRE(ei.has_value() == false);
+		REQUIRE(ei.error() == "'toto' isn't a number");
+	}
+
+	{
+		auto ei = to_int("45");
+		REQUIRE(ei.has_value() == true);
+		REQUIRE(*ei == 45);
+	}
+
+	{
+		auto ei = TestExpected(1);
+		REQUIRE((bool)ei == true);
+	}
+
+	{
+		auto ei = TestExpected(-11);
+		REQUIRE((bool)ei == false);
+		REQUIRE(ei.error() == "i is neg number");
+	}
+}
+
+
 
 std::string g_AssertCheckStr;
 class MyAssertHandler :public SDK::Core::Tools::AssertHandler
@@ -204,12 +294,23 @@ TEST_CASE("Tools:AssertHandler")
 		return p;
 		});
 
-	InitAssertHandler();
+	InitAssertHandler("Test");
 	auto myVar = "test param";
 	BE_ASSERT(false == true, "test assert", myVar); // ignore this assert when debugging
 	BE_ISSUE("test Issue texte"); // ignore this assert when debugging
 	REQUIRE(g_AssertCheckStr == "success &ddefe");
 	//restore previous handler
 	IAssertHandler::SetNewFct(prevHandler);
-	InitAssertHandler();
+	InitAssertHandler("Test");
+}
+
+int main(int argc, char* argv[]) {
+	// setup ...
+	SDK::Core::Tools::InitAssertHandler("Test"); // to prevent assert to abort (default behaviour of libassert)
+
+	int result = Catch::Session().run(argc, argv);
+
+	// clean-up...
+
+	return result;
 }

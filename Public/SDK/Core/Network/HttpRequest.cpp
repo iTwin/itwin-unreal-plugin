@@ -59,6 +59,11 @@ namespace SDK::Core
 		DoSetResponseCallback(callback);
 	}
 
+	void HttpRequest::SetNeedRawData(bool b)
+	{
+		needRawData_ = b;
+	}
+
 	void HttpRequest::DoSetResponseCallback(ResponseCallback const& /*callback*/)
 	{
 

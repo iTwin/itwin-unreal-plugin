@@ -94,7 +94,7 @@ namespace
 		return Key;
 	}
 
-	FString GetTokenFilename(EITwinEnvironment Env, bool bCreateDir)
+	FString GetTokenFilename(EITwinEnvironment Env, FString const& FileSuffix, bool bCreateDir)
 	{
 		FString OutDir = FPlatformProcess::UserSettingsDir();
 		if (OutDir.IsEmpty())
@@ -107,7 +107,7 @@ namespace
 			IFileManager::Get().MakeDirectory(*TokenDir, true);
 		}
 		return FPaths::Combine(TokenDir,
-			ITwinServerEnvironment::GetUrlPrefix(Env) + TEXT("AdvVizCnx") + TokenFileSuffix + TEXT(".dat"));
+			ITwinServerEnvironment::GetUrlPrefix(Env) + TEXT("AdvVizCnx") + FileSuffix + TokenFileSuffix + TEXT(".dat"));
 	}
 }
 
@@ -144,10 +144,11 @@ void UITwinWebServices::SetupTestMode(EITwinEnvironment Env, FString const& InTo
 #endif //WITH_TESTS
 
 /*static*/
-bool UITwinWebServices::SaveToken(FString const& Token, EITwinEnvironment Env)
+bool UITwinWebServices::SaveToken(FString const& Token, EITwinEnvironment Env,
+	TArray<uint8> const& Key, FString const& FileSuffix)
 {
 	const bool bIsDeletingToken = Token.IsEmpty();
-	FString OutputFileName = GetTokenFilename(Env, !bIsDeletingToken);
+	FString OutputFileName = GetTokenFilename(Env, FileSuffix, !bIsDeletingToken);
 	if (OutputFileName.IsEmpty())
 	{
 		return false;
@@ -161,11 +162,18 @@ bool UITwinWebServices::SaveToken(FString const& Token, EITwinEnvironment Env)
 		}
 		return true;
 	}
+
+	if (Key.Num() != 32)
+	{
+		ensureMsgf(false, TEXT("wrong key"));
+		return false;
+	}
+
 	EPlatformCryptoResult EncryptResult = EPlatformCryptoResult::Failure;
 	TArray<uint8> OutCiphertext = FEncryptionContextOpenSSL().Encrypt_AES_256_ECB(
 		TArrayView<const uint8>(
 			(const uint8*)StringCast<ANSICHAR>(*Token).Get(), Token.Len()),
-		GetKey(Env), EncryptResult);
+		Key, EncryptResult);
 	if (EncryptResult != EPlatformCryptoResult::Success)
 	{
 		return false;
@@ -190,9 +198,21 @@ bool UITwinWebServices::SaveToken(FString const& Token, EITwinEnvironment Env)
 }
 
 /*static*/
-bool UITwinWebServices::LoadToken(FString& OutToken, EITwinEnvironment Env)
+bool UITwinWebServices::SaveToken(FString const& Token, EITwinEnvironment Env)
 {
-	FString TokenFileName = GetTokenFilename(Env, false);
+	return SaveToken(Token, Env, GetKey(Env), {});
+}
+
+/*static*/
+bool UITwinWebServices::LoadToken(FString& OutToken, EITwinEnvironment Env,
+	TArray<uint8> const& Key, FString const& FileSuffix)
+{
+	if (Key.Num() != 32)
+	{
+		ensureMsgf(false, TEXT("wrong key"));
+		return false;
+	}
+	FString TokenFileName = GetTokenFilename(Env, FileSuffix, false);
 	if (!FPaths::FileExists(TokenFileName))
 	{
 		return false;
@@ -220,7 +240,7 @@ bool UITwinWebServices::LoadToken(FString& OutToken, EITwinEnvironment Env)
 
 	EPlatformCryptoResult EncryptResult = EPlatformCryptoResult::Failure;
 	TArray<uint8> Plaintext = FEncryptionContextOpenSSL().Decrypt_AES_256_ECB(
-		Ciphertext, GetKey(Env), EncryptResult);
+		Ciphertext, Key, EncryptResult);
 	if (EncryptResult != EPlatformCryptoResult::Success)
 	{
 		return false;
@@ -238,10 +258,23 @@ bool UITwinWebServices::LoadToken(FString& OutToken, EITwinEnvironment Env)
 }
 
 /*static*/
-void UITwinWebServices::DeleteTokenFile(EITwinEnvironment Env)
+bool UITwinWebServices::LoadToken(FString& OutToken, EITwinEnvironment Env)
 {
-	SaveToken({}, Env);
+	return LoadToken(OutToken, Env, GetKey(Env), {});
 }
+
+/*static*/
+void UITwinWebServices::DeleteTokenFile(EITwinEnvironment Env, FString const& FileSuffix /*= {}*/)
+{
+	SaveToken({}, Env, {}, FileSuffix);
+}
+
+/*static*/
+void UITwinWebServices::AddScopes(FString const& ExtraScopes)
+{
+	FITwinAuthorizationManager::AddScopes(ExtraScopes);
+}
+
 
 class UITwinWebServices::FImpl
 	: public SDK::Core::ITwinWebServices
@@ -263,20 +296,17 @@ class UITwinWebServices::FImpl
 
 
 public:
-	FImpl(UITwinWebServices& Owner)
-		: owner_(Owner)
-	{
-		SDK::Core::ITwinWebServices::SetObserver(this);
-	}
+	FImpl(UITwinWebServices& Owner);
+	~FImpl();
 
-	~FImpl()
-	{
-		SDK::Core::ITwinWebServices::SetObserver(nullptr);
-		if (authManager_)
-		{
-			authManager_->RemoveObserver(&owner_);
-		}
-	}
+	/// Initialize the manager handling tokens for current Environment, and register itself as observer for
+	/// the latter.
+	void InitAuthManager(EITwinEnvironment InEnvironment);
+
+	/// Unregister itself from current manager, and reset it.
+	void ResetAuthManager();
+
+	void SetEnvironment(EITwinEnvironment InEnvironment);
 
 	virtual void OnRequestError(std::string const& strError) override;
 
@@ -305,6 +335,7 @@ public:
 	virtual void OnIModelPropertiesRetrieved(bool bSuccess, SDK::Core::IModelProperties const& props) override;
 	virtual void OnIModelQueried(bool bSuccess, std::string const& QueryResult) override;
 	virtual void OnMaterialPropertiesRetrieved(bool bSuccess, SDK::Core::ITwinMaterialPropertiesMap const& props) override;
+	virtual void OnTextureDataRetrieved(bool bSuccess, std::string const& textureId, SDK::Core::ITwinTextureData const& textureData) override;
 };
 
 
@@ -351,6 +382,12 @@ namespace
 		ToCoreVec3(SavedView.Origin, coreSV.origin);
 		ToCoreVec3(SavedView.Extents, coreSV.extents);
 		ToCoreRotator(SavedView.Angles, coreSV.angles);
+		if (!SavedView.DisplayStyle.RenderTimeline.IsEmpty())
+		{
+			coreSV.displayStyle.emplace();
+			coreSV.displayStyle->renderTimeline = TCHAR_TO_ANSI(*SavedView.DisplayStyle.RenderTimeline);
+			coreSV.displayStyle->timePoint = SavedView.DisplayStyle.TimePoint;
+		}
 	}
 	inline void ToCoreSavedViewInfo(FSavedViewInfo const& SavedViewInfo, SDK::Core::SavedViewInfo& coreSV)
 	{
@@ -384,12 +421,113 @@ UITwinWebServices* UITwinWebServices::GetWorkingInstance()
 	return nullptr;
 }
 
+/*static*/
+bool UITwinWebServices::GetActiveConnection(TObjectPtr<AITwinServerConnection>& OutConnection,
+	const UObject* WorldContextObject)
+{
+	if (GetWorkingInstance())
+	{
+		GetWorkingInstance()->GetServerConnection(OutConnection);
+	}
+	else
+	{
+		// Quick fix for Carrot MVP - GetWorkingInstance only works if it's called in a callback of a http
+		// request - however, when it's not the case, it's often very easy to recover a correct instance,
+		// because in the packaged game, there is only one unique environment at one time (Prod).
+		TArray<AActor*> itwinServerActors;
+		UGameplayStatics::GetAllActorsOfClass(
+			WorldContextObject, AITwinServerConnection::StaticClass(), itwinServerActors);
+		EITwinEnvironment commonEnv = EITwinEnvironment::Invalid;
+		AITwinServerConnection* firstValidConnection = nullptr;
+		for (AActor* servConn : itwinServerActors)
+		{
+			AITwinServerConnection* existingConnection = Cast<AITwinServerConnection>(servConn);
+			if (existingConnection
+				&& existingConnection->IsValidLowLevel()
+				// Ignore any ServerConnection which has not been assigned any valid environment.
+				&& existingConnection->Environment != EITwinEnvironment::Invalid
+				&& existingConnection->HasAccessToken())
+			{
+				if (!firstValidConnection)
+				{
+					firstValidConnection = existingConnection;
+					commonEnv = existingConnection->Environment;
+				}
+				if (commonEnv != existingConnection->Environment)
+				{
+					// distinct environments are present, so we cannot decide which connection to use
+					commonEnv = EITwinEnvironment::Invalid;
+					break;
+				}
+			}
+		}
+		if (firstValidConnection && commonEnv != EITwinEnvironment::Invalid)
+		{
+			OutConnection = firstValidConnection;
+		}
+	}
+	return OutConnection.Get() != nullptr;
+}
+
+UITwinWebServices::FImpl::FImpl(UITwinWebServices& Owner)
+	: owner_(Owner)
+{
+	SDK::Core::ITwinWebServices::SetObserver(this);
+}
+
+
+UITwinWebServices::FImpl::~FImpl()
+{
+	SDK::Core::ITwinWebServices::SetObserver(nullptr);
+	ResetAuthManager();
+}
+
+void UITwinWebServices::FImpl::InitAuthManager(EITwinEnvironment InEnvironment)
+{
+	if (authManager_)
+	{
+		ResetAuthManager();
+	}
+
+	// Initiate the manager handling tokens for current Environment
+	authManager_ = FITwinAuthorizationManager::GetInstance(InEnvironment);
+	authManager_->AddObserver(&owner_);
+}
+
+void UITwinWebServices::FImpl::ResetAuthManager()
+{
+	if (authManager_)
+	{
+		authManager_->RemoveObserver(&owner_);
+		authManager_.reset();
+	}
+}
+
+void UITwinWebServices::FImpl::SetEnvironment(EITwinEnvironment InEnvironment)
+{
+	// The enum should be exactly identical in SDK Core and here...
+	// We could investigate on ways to expose existing enumeration in blueprints without having to duplicate
+	// it...
+	static_assert(static_cast<EITwinEnvironment>(SDK::Core::EITwinEnvironment::Prod) == EITwinEnvironment::Prod
+		&& static_cast<EITwinEnvironment>(SDK::Core::EITwinEnvironment::Invalid) == EITwinEnvironment::Invalid,
+		"EITwinEnvironment enum definition mismatch");
+
+	SDK::Core::EITwinEnvironment const coreEnv =
+		static_cast<SDK::Core::EITwinEnvironment>(InEnvironment);
+	SDK::Core::EITwinEnvironment const oldCoreEnv = GetEnvironment();
+	SDK::Core::ITwinWebServices::SetEnvironment(coreEnv);
+	if (coreEnv != oldCoreEnv && authManager_)
+	{
+		// Make sure we point at the right manager
+		InitAuthManager(InEnvironment);
+	}
+}
+
 void UITwinWebServices::FImpl::OnRequestError(std::string const& strError)
 {
 	if (UITwinWebServices::ShouldLogErrors())
 	{
-		UE_LOG(LogITwinHttp, Error, TEXT("iTwin request failed with: %s"),
-			*FString(strError.c_str()));
+		BE_LOGE("ITwinAPI", "iTwin request failed with: " << strError);
 	}
 }
 
@@ -555,11 +693,17 @@ void UITwinWebServices::FImpl::OnSavedViewGroupInfosRetrieved(bool bSuccess, SDK
 
 void UITwinWebServices::FImpl::OnSavedViewRetrieved(bool bSuccess, SDK::Core::SavedView const& coreSV, SDK::Core::SavedViewInfo const& coreSVInfo)
 {
-	const FSavedView SavedView = {
+	FSavedView SavedView = {
 		FromCoreVec3(coreSV.origin),
 		FromCoreVec3(coreSV.extents),
-		FromCoreRotator(coreSV.angles)
+		FromCoreRotator(coreSV.angles),
+		FDisplayStyle()
 	};
+	if (coreSV.displayStyle)
+	{
+		SavedView.DisplayStyle.RenderTimeline = coreSV.displayStyle->renderTimeline.value_or("").c_str();
+		SavedView.DisplayStyle.TimePoint = coreSV.displayStyle->timePoint.value_or(0.);
+	}
 	const FSavedViewInfo SavedViewInfo = {
 		coreSVInfo.id.c_str(),
 		coreSVInfo.displayName.c_str(),
@@ -760,6 +904,14 @@ void UITwinWebServices::FImpl::OnMaterialPropertiesRetrieved(bool bSuccess, SDK:
 	}
 }
 
+void UITwinWebServices::FImpl::OnTextureDataRetrieved(bool bSuccess, std::string const& textureId, SDK::Core::ITwinTextureData const& textureData)
+{
+	if (observer_)
+	{
+		observer_->OnTextureDataRetrieved(bSuccess, textureId, textureData);
+	}
+}
+
 /// UITwinWebServices
 UITwinWebServices::UITwinWebServices()
 	: Impl(MakePimpl<UITwinWebServices::FImpl>(*this))
@@ -820,31 +972,27 @@ void UITwinWebServices::SetServerConnection(TObjectPtr<AITwinServerConnection> c
 void UITwinWebServices::SetEnvironment(EITwinEnvironment InEnvironment)
 {
 	this->Environment = InEnvironment;
-
-	// the enum should be exactly identical in SDK Core and here...
-	static_assert(static_cast<EITwinEnvironment>(SDK::Core::EITwinEnvironment::Prod) == EITwinEnvironment::Prod
-		&& static_cast<EITwinEnvironment>(SDK::Core::EITwinEnvironment::Invalid) == EITwinEnvironment::Invalid,
-		"EITwinEnvironment enum definition mismatch");
-
-	Impl->SetEnvironment(static_cast<SDK::Core::EITwinEnvironment>(InEnvironment));
+	Impl->SetEnvironment(InEnvironment);
 }
 
 bool UITwinWebServices::TryGetServerConnection(bool bAllowBroadcastAuthResult)
 {
+	if (ServerConnection && ServerConnection->HasAccessToken())
 	{
-		FImpl::FLock Lock(Impl->mutex_);
-		if (ServerConnection && ServerConnection->HasAccessToken())
+		// We already have an access token for this environment. Bypass the authorization process, but make
+		// sure we broadcast the success if needed, as some code logic is placed in the callback (typically
+		// in ITwinSelector)
+		if (bAllowBroadcastAuthResult)
 		{
-			Impl->SetAuthToken(TCHAR_TO_ANSI(*ServerConnection->AccessToken));
-			return true;
+			OnAuthDoneImpl(true, {}, true /*bAllowBroadcastAuthResult*/);
 		}
+		return true;
 	}
 
 	// Initiate the manager handling tokens for current Environment
 	if (!Impl->authManager_)
 	{
-		Impl->authManager_ = FITwinAuthorizationManager::GetInstance(Environment);
-		Impl->authManager_->AddObserver(this);
+		Impl->InitAuthManager(Environment);
 	}
 
 	// First try to use existing access token for current Environment, if any.
@@ -899,15 +1047,16 @@ bool UITwinWebServices::InitServerConnectionFromWorld()
 	}
 }
 
-void UITwinWebServices::CheckAuthorization()
+bool UITwinWebServices::CheckAuthorization()
 {
 	if (TryGetServerConnection(true))
 	{
 		// We could get a valid server connection. No need to do anything more (note that the token
 		// will be automatically refreshed when approaching its expiration: no need to check that).
-		return;
+		return true;
 	}
 	Impl->authManager_->CheckAuthorization();
+	return false;
 }
 
 void UITwinWebServices::OnAuthDoneImpl(bool bSuccess, FString const& Error, bool bBroadcastResult /*= true*/)
@@ -940,9 +1089,7 @@ void UITwinWebServices::OnAuthDoneImpl(bool bSuccess, FString const& Error, bool
 			ServerConnection = GetWorld()->SpawnActor<AITwinServerConnection>();
 		}
 		ServerConnection->Environment = this->Environment;
-		Impl->authManager_->GetAccessToken(ServerConnection->AccessToken);
-		checkf(ServerConnection->HasAccessToken(), TEXT("Upon success, an access token is expected!"));
-		Impl->SetAuthToken(TCHAR_TO_ANSI(*ServerConnection->AccessToken));
+		ensureMsgf(ServerConnection->HasAccessToken(), TEXT("Upon success, an access token is expected!"));
 	}
 
 	if (bBroadcastResult)
@@ -958,17 +1105,6 @@ void UITwinWebServices::OnAuthDoneImpl(bool bSuccess, FString const& Error, bool
 void UITwinWebServices::OnAuthorizationDone(bool bSuccess, FString const& Error)
 {
 	OnAuthDoneImpl(bSuccess, Error, true);
-}
-
-FString UITwinWebServices::GetAuthToken() const
-{
-	FString authToken;
-	FImpl::FLock Lock(Impl->mutex_);
-	if (ServerConnection && ServerConnection->IsValidLowLevelFast(false))
-	{
-		authToken = ServerConnection->AccessToken;
-	}
-	return authToken;
 }
 
 void UITwinWebServices::GetServerConnection(TObjectPtr<AITwinServerConnection>& OutConnection) const
@@ -1235,5 +1371,16 @@ void UITwinWebServices::GetMaterialListProperties(
 		Impl->GetMaterialListProperties(
 			TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId), TCHAR_TO_ANSI(*iChangesetId),
 			coreMatIds);
+	});
+}
+
+void UITwinWebServices::GetTextureData(
+	FString iTwinId, FString iModelId, FString iChangesetId,
+	FString TextureId)
+{
+	DoRequest([this, iTwinId, iModelId, iChangesetId, TextureId]() {
+		Impl->GetTextureData(
+			TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId), TCHAR_TO_ANSI(*iChangesetId),
+			TCHAR_TO_ANSI(*TextureId));
 	});
 }

@@ -2,9 +2,11 @@
 # we have to map Unreal configs to CMake configs (see be_add_unreal_project).
 # As a result, only a subset of CMake configs are supported.
 set (CMAKE_CONFIGURATION_TYPES UnrealDebug Release)
+# Add string view definition to fix include problems in Visual Studio 17.11
 # Change some compiler/linker flags, applied to both our targets and the external (ceesium) targets.
 # Enable debug info in Release config.
 if(WIN32)
+	add_definitions("-D_LEGACY_CODE_ASSUMES_STRING_VIEW_INCLUDES_XSTRING")
 	set (CMAKE_CXX_FLAGS_RELEASE " ${CMAKE_CXX_FLAGS_RELEASE} /Zi")
 	set (CMAKE_EXE_LINKER_FLAGS_RELEASE " ${CMAKE_EXE_LINKER_FLAGS_RELEASE} /DEBUG")
 	set (CMAKE_SHARED_LINKER_FLAGS_RELEASE " ${CMAKE_SHARED_LINKER_FLAGS_RELEASE} /DEBUG")
@@ -17,10 +19,16 @@ set (beRequiredPythonVersion "3.9")
 if("${Python3_VERSION}" VERSION_LESS "${beRequiredPythonVersion}")
 	message (FATAL_ERROR "Python version required is ${beRequiredPythonVersion}, but found ${Python3_VERSION}.")
 endif ()
+
+define_property (GLOBAL PROPERTY beExtraFoldersToSymlink
+	BRIEF_DOCS "Contains extra folders to symlink - introduced for optional features"
+	FULL_DOCS "Contains the absolute paths of extra folders to symlink")
 include ("${CMAKE_CURRENT_LIST_DIR}/be_get_vcpkg_infos.cmake")
-set ( glm_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/Public/Extern/cesium-unreal/extern/cesium-native/extern/glm" )
+set ( glm_INCLUDE_DIR      "${CMAKE_SOURCE_DIR}/Public/Extern/cesium-unreal/extern/cesium-native/extern/glm" )
+set ( expected_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/Public/Extern/cesium-unreal/extern/cesium-native/extern/expected-lite/include" )
 add_subdirectory(Public/SDK)
 include ("${CMAKE_CURRENT_LIST_DIR}/advanced_option.cmake")
+include ("${CMAKE_CURRENT_LIST_DIR}/be_add_feature_option.cmake")
 include ("${CMAKE_CURRENT_LIST_DIR}/options.cmake")
 include ("${CMAKE_CURRENT_LIST_DIR}/be_add_unreal_project.cmake")
 include ("${CMAKE_CURRENT_LIST_DIR}/be_get_targets.cmake")

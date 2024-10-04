@@ -17,7 +17,6 @@ namespace SDK::Core
 	{
 	public:
 		std::shared_ptr<Http> http_;
-		SharedInstVect instances_;
 		SharedInstGroupVect instancesGroups_;
 		SharedInstGroupMap mapIdToInstGroups_;
 		std::map<std::string, SharedInstVect> mapObjectRefToInstances_;
@@ -25,6 +24,14 @@ namespace SDK::Core
 
 		std::shared_ptr<Http>& GetHttp() { return http_; }
 		void SetHttp(const std::shared_ptr<Http>& http) { http_ = http; }
+
+		void Clear()
+		{
+			instancesGroups_.clear();
+			mapIdToInstGroups_.clear();
+			mapObjectRefToInstances_.clear();
+			mapObjectRefToDeletedInstances_.clear();
+		}
 
 		// Some structures used in I/O functions
 		struct SJsonLink
@@ -38,7 +45,7 @@ namespace SDK::Core
 			std::string name;\
 			std::array<double, 12> matrix;\
 			std::optional<std::string> colorshift;\
-			std::string groupid;\
+			std::optional<std::string> groupid;\
 			std::string objref;
 
 		struct SJsonInst
@@ -95,7 +102,7 @@ namespace SDK::Core
 			}
 			else
 			{
-				throw std::string("Load instances groups failed. http status:" + std::to_string(status));
+				BE_LOGW("ITwinDecoration", "Load instances groups failed. Http status: " << status);
 			}
 		}
 
@@ -117,7 +124,7 @@ namespace SDK::Core
 				if (status != 200 && status != 201)
 				{
 					continueLoading = false;
-					throw std::string("Load instances failed. http status:" + std::to_string(status));
+					BE_LOGW("ITwinDecoration", "Load instances failed. Http status: " << status);
 				}
 
 				crtmath::dmat4x3 mat;
@@ -134,14 +141,16 @@ namespace SDK::Core
 					std::memcpy(&mat[0], row.matrix.data(), 12*sizeof(double));
 					inst->SetMatrix(mat);
 
-					SharedInstGroupMap::const_iterator itGroup = mapIdToInstGroups_.find(row.groupid);
-					if (itGroup != mapIdToInstGroups_.end())
+					if (row.groupid.has_value())
 					{
-						inst->SetGroup(itGroup->second);
+						SharedInstGroupMap::const_iterator itGroup = mapIdToInstGroups_.find(row.groupid.value());
+						if (itGroup != mapIdToInstGroups_.end())
+						{
+							inst->SetGroup(itGroup->second);
+						}
 					}
 
 					std::shared_ptr<Instance> sharedInst(inst);
-					instances_.push_back(sharedInst);
 					mapObjectRefToInstances_[row.objref].push_back(sharedInst);
 				}
 
@@ -160,6 +169,7 @@ namespace SDK::Core
 
 		void LoadDataFromServer(const std::string& decorationId, const std::string& accessToken)
 		{
+			Clear();
 			LoadInstancesGroups(decorationId, accessToken);
 			LoadInstances(decorationId, accessToken);
 		}
@@ -168,6 +178,11 @@ namespace SDK::Core
 			const std::string& decorationId, const std::string& accessToken,
 			std::shared_ptr<IInstancesGroup>& instGroup)
 		{
+			if (!instGroup->GetId().empty())
+			{
+				return; // skip groups already present on the server
+			}
+
 			struct SJsonInstGroup {	std::string name; std::optional<std::string> userData; };
 			SJsonInstGroup jIn{ .name = instGroup->GetName() };
 			struct SJsonOut { std::string id; };
@@ -185,7 +200,7 @@ namespace SDK::Core
 			}
 			else
 			{
-				throw std::string("Save instances group failed. http status:" + std::to_string(status));
+				BE_LOGW("ITwinDecoration", "Save instances group failed. Http status: " << status);
 			}
 		}
 
@@ -263,7 +278,7 @@ namespace SDK::Core
 				}
 				else
 				{
-					throw std::string("Saving new instances failed. Http status:" + std::to_string(status));
+					BE_LOGW("ITwinDecoration", "Saving new instances failed. Http status: " << status);
 				}
 			}
 
@@ -287,7 +302,7 @@ namespace SDK::Core
 				}
 				else
 				{
-					throw std::string("Saving new instances failed. Http status:" + std::to_string(status));
+					BE_LOGW("ITwinDecoration", "Updating instances failed. Http status: " << status);
 				}
 			}
 		}
@@ -313,7 +328,7 @@ namespace SDK::Core
 
 				if (status != 200 && status != 201)
 				{
-					throw std::string("Deleting instances failed. Http status:" + std::to_string(status));
+					BE_LOGW("ITwinDecoration", "Deleting instances failed. Http status: " << status);
 				}
 
 				instances.clear();
@@ -373,26 +388,54 @@ namespace SDK::Core
 		}
 
 		void RemoveInstancesByObjectRef(
-			const std::string& objectRef, const std::vector<int32_t> indices)
+			const std::string& objectRef, const std::vector<int32_t> indicesInDescendingOrder)
 		{
 			SharedInstVect& currentInstances = mapObjectRefToInstances_[objectRef];
 			SharedInstVect& deletedInstances =  mapObjectRefToDeletedInstances_[objectRef];
 
-			int32_t lastIndex = -1;
-			for (auto it = indices.rbegin(); it != indices.rend(); it++)
+			for (auto const& index : indicesInDescendingOrder)
 			{
-				if (lastIndex == -1 || *it < lastIndex)
+				if (index < currentInstances.size())
 				{
-					deletedInstances.push_back(currentInstances[*it]);
-					currentInstances.erase(currentInstances.begin() + *it);
+					deletedInstances.push_back(currentInstances[index]);
+					currentInstances.erase(currentInstances.begin() + index);
 				}
-				lastIndex = *it;
 			}
 		}
 
-		const SharedInstVect& GetInstances() const
+		bool HasInstances() const
 		{
-			return instances_;
+			for (const auto& it : mapObjectRefToInstances_)
+			{
+				if (!it.second.empty())
+				{
+					return true;
+				}
+			}
+			return false;
+		}
+
+		bool HasInstancesToSave() const
+		{
+			for (const auto& it : mapObjectRefToInstances_)
+			{
+				for (const auto& inst : it.second)
+				{
+					if (inst->GetId().empty() ||
+						inst->IsMarkedForUpdate(Database))
+					{
+						return true;
+					}
+				}
+			}
+			for (const auto& it : mapObjectRefToDeletedInstances_)
+			{
+				if (!it.second.empty())
+				{
+					return true;
+				}
+			}
+			return false;
 		}
 
 		std::vector<std::string> GetObjectReferences() const
@@ -441,14 +484,19 @@ namespace SDK::Core
 		GetImpl().GetInstancesByObjectRef(objectRef, instances);
 	}
 
-	void InstancesManager::RemoveInstancesByObjectRef(const std::string& objectRef, const std::vector<int32_t> indices)
+	void InstancesManager::RemoveInstancesByObjectRef(const std::string& objectRef, const std::vector<int32_t> indicesInDescendingOrder)
 	{
-		GetImpl().RemoveInstancesByObjectRef(objectRef, indices);
+		GetImpl().RemoveInstancesByObjectRef(objectRef, indicesInDescendingOrder);
 	}
 
-	const SharedInstVect& InstancesManager::GetInstances() const
+	bool InstancesManager::HasInstances() const
 	{
-		return GetImpl().GetInstances();
+		return GetImpl().HasInstances();
+	}
+
+	bool InstancesManager::HasInstancesToSave() const
+	{
+		return GetImpl().HasInstancesToSave();
 	}
 
 	std::vector<std::string> InstancesManager::GetObjectReferences() const

@@ -23,6 +23,7 @@ class FITwinSceneTile;
 struct FITwinExtractedEntity;
 struct FITwinCesiumPropertyTableProperty;
 class UMaterialInterface;
+class UMaterialInstanceDynamic;
 class UStaticMesh;
 class UStaticMeshComponent;
 
@@ -36,6 +37,7 @@ struct FITwinMeshExtractionOptions
     /// to use for this creation. If none is provided, we will use the base material of
     /// the material instance used by the original mesh.
     UMaterialInterface* BaseMaterialForNewInstance = nullptr;
+    FITwinSceneTile* SceneTile = nullptr;
     std::optional<std::pair<FMaterialParameterInfo, float>> ScalarParameterToSet;
 
     /// Mostly for debugging purpose: assign a random color depending on the Element ID.
@@ -102,6 +104,15 @@ public:
     UStaticMeshComponent const* GetMeshComponent() const {
         return gltfMeshComponent_.IsValid() ? gltfMeshComponent_.Get() : nullptr;
     }
+    UStaticMeshComponent* MeshComponent() {
+        return gltfMeshComponent_.IsValid() ? gltfMeshComponent_.Get() : nullptr;
+    }
+
+    bool HasITwinMaterialID(uint64_t MatID) const { return iTwinMaterialID_ && *iTwinMaterialID_ == MatID; }
+
+    /// Apply Func to all material instances linked to this mesh (including extracted entities if any).
+    void ForEachMaterialInstance(std::function<void(UMaterialInstanceDynamic&)> const& Func);
+
 
 private:
 
@@ -206,5 +217,8 @@ private:
     /// If we bake feature IDs in per-vertex UVs, this will store the
     /// corresponding UV index.
     std::optional<uint32> uvIndexForFeatures_ = std::nullopt;
+    /// Contains the iTwin material ID corresponding to the primitive, if any (ie. when some material tuning
+    /// was requested, and thus the gltf tuner split the result agains this material ID).
+    std::optional<uint64_t> iTwinMaterialID_ = std::nullopt;
 };
 

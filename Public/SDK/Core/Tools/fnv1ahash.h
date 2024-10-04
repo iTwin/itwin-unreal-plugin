@@ -6,7 +6,7 @@
 |
 +--------------------------------------------------------------------------------------*/
 
-
+#pragma once
 namespace SDK::Core::Tools::Internal
 {
 	// FNV1a c++11 constexpr compile time hash functions, 64 bit

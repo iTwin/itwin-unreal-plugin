@@ -9,6 +9,7 @@
 #pragma once
 
 #include "ITwinAuthorizationObserver.h"
+#include <string>
 
 struct FChangesetInfos;
 struct FIModelInfos;
@@ -30,6 +31,7 @@ struct FEcefLocation;
 namespace SDK::Core {
 	// TODO_JDE convert ITwinMaterialProperties into something we can manipulate through blueprints...
 	struct ITwinMaterialPropertiesMap;
+	struct ITwinTextureData;
 }
 
 class ITWINRUNTIME_API IITwinWebServicesObserver : public IITwinAuthorizationObserver
@@ -66,6 +68,7 @@ public:
 	virtual void OnIModelQueried(bool bSuccess, FString const& QueryResult) = 0;
 
 	virtual void OnMaterialPropertiesRetrieved(bool bSuccess, SDK::Core::ITwinMaterialPropertiesMap const& props) = 0;
+	virtual void OnTextureDataRetrieved(bool bSuccess, std::string const& textureId, SDK::Core::ITwinTextureData const& textureData) = 0;
 };
 
 
@@ -100,6 +103,7 @@ public:
 	virtual void OnIModelQueried(bool bSuccess, FString const& QueryResult) override;
 
 	virtual void OnMaterialPropertiesRetrieved(bool bSuccess, SDK::Core::ITwinMaterialPropertiesMap const& props) override;
+	virtual void OnTextureDataRetrieved(bool bSuccess, std::string const& textureId, SDK::Core::ITwinTextureData const& textureData) override;
 
 protected:
 	virtual const TCHAR* GetObserverName() const = 0;

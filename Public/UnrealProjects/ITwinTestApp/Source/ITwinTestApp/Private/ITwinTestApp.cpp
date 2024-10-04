@@ -8,12 +8,6 @@
 
 #include <ITwinTestApp.h>
 
-#include <ITwinRuntime/Private/Compil/BeforeNonUnrealIncludes.h>
-#	include <Core/Visualization/Visualization.h>
-#	include <Core/Tools/Tools.h>
-#	include <filesystem>
-#include <ITwinRuntime/Private/Compil/AfterNonUnrealIncludes.h>
-
 #include <Modules/ModuleManager.h>
 #include <ITwinServerConnection.h>
 #include <ITwinTestAppConfig/ITwinTestAppConfig.h>
@@ -29,25 +23,6 @@ public:
 
 void FITwinGameModuleImpl::StartupModule()
 {
-	///// Temporary code to test library link
-	using namespace SDK::Core;
-	std::filesystem::path filePath("test.conf");
-	std::filesystem::remove(filePath);
-
-	{
-		std::ofstream f(filePath);
-		f << "{\"server\":{\"server\":\"plop\", \"port\":2345, \"urlapiprefix\":\"api/v1\"}}";
-	}
-
-	auto config = SDK::Core::Config::LoadFromFile(filePath);
-	Config::Init(config);
-
-	Tools::InitAssertHandler();
-	//BE_ASSERT(true == false);
-	//BE_DEBUG_ASSERT(true == false);
-	/////
-	
-	
 	Super::StartupModule();
 
 	// propagate current App IDs to the ITwin plugin

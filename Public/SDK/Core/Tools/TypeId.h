@@ -7,7 +7,7 @@
 +--------------------------------------------------------------------------------------*/
 
 #pragma once
-#include "fnv1ahash.h"
+#include "Hash.h"
 
 namespace SDK::Core::Tools
 {
@@ -22,11 +22,6 @@ namespace SDK::Core::Tools
 			return __PRETTY_FUNCTION__;
 #endif
 		}
-	}
-
-	inline constexpr std::uint64_t GenHash(const char* txt)
-	{
-		return Internal::hash_64_fnv1a_const(txt);
 	}
 
 	template<typename T>

@@ -9,6 +9,7 @@
 #pragma once
 
 #include <Kismet/BlueprintFunctionLibrary.h>
+#include <Helpers/ITwinPickingOptions.h>
 #include <Helpers.generated.h>
 
 UCLASS()
@@ -18,4 +19,8 @@ class ITWINTESTAPP_API UHelpers: public UBlueprintFunctionLibrary
 public:
 	UFUNCTION(BlueprintCallable, meta=(WorldContext="WorldContextObject"))
 	static void PickMouseElements(const UObject* WorldContextObject, bool& bValid, FString& ElementId);
+
+	UFUNCTION(BlueprintCallable, meta=(WorldContext="WorldContextObject"))
+	static void PickUnderCursorWithOptions(const UObject* WorldContextObject, bool& bValid, FString& ElementId,
+		FITwinPickingOptions const& Options);
 };

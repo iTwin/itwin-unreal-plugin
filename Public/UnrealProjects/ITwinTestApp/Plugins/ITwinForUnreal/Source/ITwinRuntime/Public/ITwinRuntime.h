@@ -13,4 +13,7 @@
 
 class FITwinRuntimeModule : public IModuleInterface
 {
+	using Super = IModuleInterface;
+public:
+	virtual void StartupModule() override;
 };

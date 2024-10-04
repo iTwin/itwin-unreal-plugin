@@ -86,7 +86,7 @@ AITwinCesiumCreditSystem::GetDefaultCreditSystem(const UObject* WorldContextObje
   // loader object that retrieves the blueprint class in its constructor. We can
   // destroy the loader immediately once it's done since it will have already
   // set CesiumCreditSystemBP.
-  if (!CesiumCreditSystemBP) {
+  if (!CesiumCreditSystemBP || !IsValid(CesiumCreditSystemBP)) {
     UITwinCesiumCreditSystemBPLoader* bpLoader =
         NewObject<UITwinCesiumCreditSystemBPLoader>();
     CesiumCreditSystemBP = bpLoader->CesiumCreditSystemBP.LoadSynchronous();

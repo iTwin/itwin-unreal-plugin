@@ -5,6 +5,10 @@ add_library(Tools OBJECT
 		Types.h
 		Extension.h
 		Assert.h
+		Error.h
+		Log.h
+		Log.cpp
+		Hash.h
 		AssertHandler.h
 		AssertHandler.cpp
 		Extension.cpp
@@ -28,7 +32,7 @@ if(SDK_ADDUNITTEST)
 	set_target_properties(ToolsTest PROPERTIES FOLDER "SDK/Core/Tests")
 	target_link_libraries(ToolsTest PRIVATE 
 							Tools
-							Catch2::Catch2WithMain
+							Catch2::Catch2
 						)
 	if (MSVC)
 		target_compile_options(ToolsTest PRIVATE "/Zc:preprocessor")

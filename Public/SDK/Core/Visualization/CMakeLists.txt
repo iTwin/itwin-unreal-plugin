@@ -11,9 +11,11 @@ add_library(Visualization STATIC
 		InstancesGroup.cpp
 		InstancesManager.h
 		InstancesManager.cpp
+		MaterialPersistence.cpp
+		MaterialPersistence.h
 )
 target_compile_features(Visualization PRIVATE ${DefaultCXXSTD})
-target_link_libraries(Visualization PRIVATE
+target_link_libraries(Visualization PUBLIC
 						ITwinAPI
 						Network
 						Tools

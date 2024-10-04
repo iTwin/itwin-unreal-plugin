@@ -69,6 +69,10 @@ public:
 		std::vector<TWeakObjectPtr<UMaterialInstanceDynamic>> const& Materials,
 		FMaterialParameterInfo const& TextureAttachment) const;
 
+#if WITH_EDITORONLY_DATA
+	bool WriteTextureToFile(FString const& FileName);
+#endif
+
 private:
 	uint32 TotalUsedPixels = 0;///< Keep BEFORE TextureDimension!
 	int32 TextureDimension = 0;///< Dimension of the square texture

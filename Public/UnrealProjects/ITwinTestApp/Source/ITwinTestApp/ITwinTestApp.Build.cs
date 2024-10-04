@@ -28,7 +28,6 @@ public class ITwinTestApp : ModuleRules
 			"Json",
 			"PlatformCryptoOpenSSL",
 			"WebBrowser",
-			"SDKCore",
         });
 		PrivateDependencyModuleNames.AddRange(new string[]{
             "Slate",

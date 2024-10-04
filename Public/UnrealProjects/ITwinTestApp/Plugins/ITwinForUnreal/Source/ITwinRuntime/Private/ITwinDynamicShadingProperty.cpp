@@ -18,6 +18,14 @@
 #include "Rendering/Texture2DResource.h"
 #include "RenderingThread.h"
 
+// For debugging...
+#define ITWIN_SAVE_DYNTEX_TO_FILE() 0
+
+
+#if ITWIN_SAVE_DYNTEX_TO_FILE()
+#include "ImageUtils.h"
+#endif
+
 #include <cmath>
 
 namespace Detail {
@@ -267,19 +275,22 @@ bool FITwinDynamicShadingProperty<DataType, NumChannels>::UpdateTexture(/*bool b
 {
 	if (Texture == nullptr)
 	{
-		UE_LOG(LogTemp, Warning,
+		UE_LOG(LogITwin, Warning,
 			TEXT("Dynamic Texture tried to Update Texture but it hasn't been initialized!"));
 		return true;
 	}
-	if (!bNeedUpdate) return false;
+	if (!bNeedUpdate)
+		return false;
 
 	auto* TextureRHI = ((FTexture2DResource*)Texture->GetResource())->GetTexture2DRHI();
 	// tested in UpdateTextureRegions too but bNeedUpdate requires this early exit, which needs to be toggled
 	// as soon as the copy is made I think, not in DataCleanupFunc
-	if (!TextureRHI) return true;
+	if (!TextureRHI)
+		return true;
 
 	bNeedUpdate = false;
-	// Note: UpdateTextureRegions makes the copy of the source data itself
+	// Note: UpdateTextureRegions passes the data ptr to RHIUpdateTexture2D (in a deferred manner, of course,
+	// since the function is called on the render thread). RHIUpdateTexture2D takes care of copying the data.
 	Texture->UpdateTextureRegions(0/*Mip*/, 1/*NumRegions*/, TextureRegion.get(), TextureDataBytesPerRow,
 		TextureDataBytesPerPixel, reinterpret_cast<uint8*>(&TextureData[0]));
 	return true;
@@ -351,6 +362,8 @@ template<typename DataType, int NumChannels>
 void FITwinDynamicShadingProperty<DataType, NumChannels>::SetPixelsAlpha(
 	std::vector<ITwinFeatureID> const& Pixels, DataType const Value)
 {
+	if (Pixels.empty())
+		return;
 	constexpr int Channel = Detail::GetTextureAlphaChannelIndex<DataType, NumChannels>();
 	for (auto&& Pixel : Pixels)
 	{
@@ -363,6 +376,8 @@ template<typename DataType, int NumChannels>
 void FITwinDynamicShadingProperty<DataType, NumChannels>::SetPixelsExceptAlpha(
 	std::vector<ITwinFeatureID> const& Pixels, std::array<DataType, NumChannels> const& Value)
 {
+	if (Pixels.empty())
+		return;
 	constexpr int AlphaChan = Detail::GetTextureAlphaChannelIndex<DataType, NumChannels>();
 	for (auto&& Pixel : Pixels)
 	{
@@ -412,12 +427,63 @@ template<typename DataType, int NumChannels>
 void FITwinDynamicShadingProperty<DataType, NumChannels>::SetPixels(
 	std::vector<ITwinFeatureID> const& Pixels, std::array<DataType, NumChannels> const& Value)
 {
+	if (Pixels.empty())
+		return;
 	for (auto&& Pixel : Pixels)
 	{
 		SetPixel(Pixel, Value);
 	}
 	bNeedUpdate = true;
 }
+
+
+
+#if WITH_EDITORONLY_DATA
+
+template<typename DataType, int NumChannels>
+bool FITwinDynamicShadingProperty<DataType, NumChannels>::WriteTextureToFile(FString const& FileName)
+{
+#if ITWIN_SAVE_DYNTEX_TO_FILE()
+	if (!Texture)
+		return false;
+	if (GetTextureUpdateState() != ETextureState::UpdateDone)
+	{
+		UpdateTexture();
+		return false;
+	}
+	Texture->UpdateResource();
+	FTexture2DMipMap* MM = &Texture->GetPlatformData()->Mips[0];
+	int w = MM->SizeX;
+	int h = MM->SizeY;
+	TArray64<uint8> MipData;
+	MipData.InsertZeroed(0, w * h * 4);
+
+	FByteBulkData* RawImageData = &MM->BulkData;
+	{
+		uint8 const* FormatedImageData = static_cast<uint8 const*>(RawImageData->Lock(LOCK_READ_ONLY));
+		for (uint8& dst : MipData)
+		{
+			dst = *FormatedImageData;
+			FormatedImageData++;
+		}
+		RawImageData->Unlock();
+	}
+
+	FImage Image;
+	Image.RawData = MoveTemp(MipData);
+	Image.SizeX = w;
+	Image.SizeY = h;
+	Image.NumSlices = 1;
+	Image.Format = ERawImageFormat::BGRA8;
+	Image.GammaSpace = EGammaSpace::sRGB;
+
+	return FImageUtils::SaveImageByExtension(*FileName, Image);
+#else
+	return false;
+#endif
+}
+
+#endif // WITH_EDITORONLY_DATA
 
 template class FITwinDynamicShadingProperty<uint8, 4>; // BGRA8
 template class FITwinDynamicShadingProperty<float, 4>; // *A*BGR32f

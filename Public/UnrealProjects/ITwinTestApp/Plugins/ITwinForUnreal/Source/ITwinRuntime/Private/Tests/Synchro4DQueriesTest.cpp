@@ -408,7 +408,8 @@ namespace TestSynchro4DQueries
 				Binding.AnimatedEntities = ITwinElementID(42);
 				Binding.TaskId = TEXT("<TaskId>");
 				Binding.TaskInVec = 0;
-				Sched.Tasks.push_back(FScheduleTask{ {}, TEXT("<TaskName>"), FTimeRangeInSeconds{0., 12.} });
+				Sched.Tasks.push_back(FScheduleTask{ {}, TEXT("<TaskId>"), TEXT("<TaskName>"),
+													 FTimeRangeInSeconds{0., 12.} });
 				Sched.KnownTasks[Binding.TaskId] = 0;
 				Binding.AppearanceProfileId = TEXT("<AppearanceProfileId>");
 				Binding.AppearanceProfileInVec = 0;

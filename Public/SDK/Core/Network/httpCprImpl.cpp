@@ -54,7 +54,7 @@ namespace SDK::Core::Impl
 				, cpr::Body{ body }
 				, h
 		);
-		return std::make_pair(r.status_code, r.text);
+		return { r.status_code, r.text };
 	}
 
 	Http::Response HttpCpr::Patch(const std::string& url,
@@ -76,7 +76,7 @@ namespace SDK::Core::Impl
 				, cpr::Body{ body }
 				, h
 		);
-		return std::make_pair(r.status_code, r.text);
+		return { r.status_code, r.text };
 	}
 
 	Http::Response HttpCpr::Post(const std::string& url,
@@ -98,7 +98,7 @@ namespace SDK::Core::Impl
 				, cpr::Body{ body }
 				, h
 		);
-		return std::make_pair(r.status_code, r.text);
+		return { r.status_code, r.text };
 	}
 
 	Http::Response HttpCpr::Get(const std::string& url,
@@ -121,7 +121,7 @@ namespace SDK::Core::Impl
 				, cpr::Body{ body }
 				, h
 		);
-		return std::make_pair(r.status_code, r.text);
+		return { r.status_code, r.text };
 	}
 
 	Http::Response HttpCpr::Delete(const std::string& url,
@@ -143,7 +143,7 @@ namespace SDK::Core::Impl
 				, cpr::Body{ body }
 				, h
 		);
-		return std::make_pair(r.status_code, r.text);
+		return { r.status_code, r.text };
 	}
 
 }

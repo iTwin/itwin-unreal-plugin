@@ -16,6 +16,8 @@
 #include <CesiumMaterialType.h>
 #include <CesiumTileIDHash.h>
 
+#include <UObject/WeakObjectPtrTemplates.h>
+
 #include <functional>
 #include <mutex>
 #include <optional>
@@ -27,6 +29,8 @@ using CesiumTileID = Cesium3DTilesSelection::TileID;
 class UMaterialInterface;
 class UObject;
 class FITwinSchedule;
+class FITwinSceneTile;
+class UMaterialInstanceDynamic;
 
 namespace TestSynchro4DQueries
 {
@@ -46,6 +50,17 @@ class FITwinSynchro4DSchedulesInternals
 	FITwinSchedulesImport SchedulesApi; // <== must be declared AFTER Builder
 	std::recursive_mutex& Mutex;
 	std::vector<FITwinSchedule>& Schedules;
+
+	/// For use when PrefetchAllElementAnimationBindings() returns true only
+	enum class EApplySchedule
+	{
+		WaitForFullSchedule, ///< Do nothing until full schedule has been received
+		Ongoing, ///< Timelines are being applied over several ticks to avoid a big lag
+		/// Timelines have been applied once after full schedule received (but only for Elements currently
+		/// present in the scene, of course)
+		InitialPassDone
+	};
+	EApplySchedule ApplySchedule = EApplySchedule::WaitForFullSchedule;
 
 	/// Query deferred to the next tick because otherwise textures (highlights/opacities, cut planes...) may
 	/// be allocated once before the full tile was notified, and would have had to be resized later...
@@ -74,6 +89,7 @@ public:
 	UMaterialInterface* GetMasterMaterial(ECesiumMaterialType Type,
 										  UObject& MaterialOwner);
 
+	[[nodiscard]] bool HasFullSchedule() const;
 	[[nodiscard]] FITwinScheduleTimeline& Timeline();
 	[[nodiscard]] FITwinScheduleTimeline const& GetTimeline() const;
 	void ForEachElementTimeline(ITwinElementID const ElementID,
@@ -82,8 +98,10 @@ public:
 	/// \param Func Function to execute for each schedule. Returning false will skip the visit of the
 	///		remaining schedules not yet visited.
 	void VisitSchedules(std::function<bool(FITwinSchedule const&)> const& Func) const;
-
-	void OnNewTileMeshBuilt(CesiumTileID const& TileId, std::set<ITwinElementID>&& MeshElementIDs);
+	bool PrefetchAllElementAnimationBindings() const;
+	void OnNewTileMeshBuilt(CesiumTileID const& TileId, std::set<ITwinElementID>&& MeshElementIDs,
+		const TWeakObjectPtr<UMaterialInstanceDynamic>& pMaterial, bool const bFirstTimeSeenTile,
+		FITwinSceneTile& SceneTile);
 	void SetScheduleTimeRangeIsKnown();
 
 	FITwinSchedulesImport& GetSchedulesApiReadyForUnitTesting();

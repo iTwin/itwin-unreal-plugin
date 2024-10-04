@@ -17,13 +17,17 @@
 	#endif // !MODULE_EXPORT
 #endif
 
+// The macro below is left empty for now, until there is an handling of errors
+// in the Visualization SDK
+#define VIZ_SDK_WARN(FORMAT, ...)
+
 MODULE_EXPORT namespace SDK::Core
 {
 	namespace Config {
 		struct SServer
 		{
 			std::string server;
-			int port;
+			int port = -1;
 			std::string urlapiprefix;
 		};
 

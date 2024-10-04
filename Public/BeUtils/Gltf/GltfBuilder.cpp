@@ -10,6 +10,7 @@
 #include <CesiumGltf/Model.h>
 #include <CesiumGltf/ExtensionModelExtStructuralMetadata.h>
 #include <CesiumGltf/ExtensionITwinMaterialID.h>
+#include <SDK/Core/Tools/Assert.h>
 
 namespace BeUtils
 {
@@ -93,8 +94,8 @@ void GltfBuilder::AddMetadataProperty(const std::string& className,
 	}
 	{
 		auto& propertyTable = extension.propertyTables[featureSetIndex];
-		assert(propertyTable.classProperty == className);
-		assert(propertyTable.count == values.size());
+		BE_ASSERT(propertyTable.classProperty == className);
+		BE_ASSERT(propertyTable.count == values.size());
 
 		auto& property = propertyTable.properties[propertyName];
 		property.values = AddBufferView(values, {});

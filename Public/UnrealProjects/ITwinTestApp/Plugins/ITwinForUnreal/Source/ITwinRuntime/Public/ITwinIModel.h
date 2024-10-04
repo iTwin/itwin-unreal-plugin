@@ -12,6 +12,7 @@
 #include <ITwinServiceActor.h>
 #include <Templates/PimplPtr.h>
 #include <ITwinFwd.h>
+#include <memory>
 #include <ITwinIModel.generated.h>
 
 struct FITwinIModel3DInfo;
@@ -19,7 +20,12 @@ struct FChangesetInfos;
 struct FITwinExportInfos;
 struct FITwinCesium3DTilesetLoadFailureDetails;
 struct FSavedViewInfos;
-
+namespace SDK::Core
+{
+	enum class EChannelType : uint8_t;
+	struct ITwinMaterial;
+	class MaterialPersistenceManager;
+}
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnIModelLoaded, bool, bSuccess);
 
@@ -50,9 +56,14 @@ struct ITWINRUNTIME_API FITwinCustomMaterial
 		VisibleAnywhere)
 	FString Name;
 
+	//! TEMPORARY MODE - REPLACES THE WHOLE BASE MATERIAL
 	UPROPERTY(Category = "iTwin",
 		EditAnywhere)
 	TObjectPtr<UMaterialInterface> Material;
+
+	UPROPERTY(Category = "iTwin",
+		EditAnywhere)
+	bool bAdvancedConversion = false;
 };
 
 
@@ -74,8 +85,9 @@ public:
 		VisibleAnywhere)
 	FString ITwinId;
 
-	//! Editable changeset ID.
-	//! If left empty, the latest changeset will be used.
+	//! Editable changeset ID. Use of the latest changeset can be asked explicitly by setting the special value
+	//! "LATEST" here (case insensitive). If LoadingMethod is ELoadingMethod::LM_Manual, the latest changeset will
+	//! also be used automatically when the changesetId is empty.
 	//! See ResolvedChangesetId.
 	UPROPERTY(Category = "iTwin|Loading",
 		meta = (EditCondition = "LoadingMethod == ELoadingMethod::LM_Automatic"),
@@ -83,7 +95,8 @@ public:
 	FString ChangesetId;
 
 	//! The resolved changeset ID, computed as follows:
-	//! - If ChangesetId is not empty, then ResolvedChangesetId is same as ChangesetId.
+	//! - If ChangesetId is not empty and not "LATEST" (case insensitive), then ResolvedChangesetId is same
+	//!	  as ChangesetId.
 	//! - Otherwise, ResolvedChangesetId is the latest changeset given by the iModel Hub.
 	//!   Note that in this case, if the iModel does not have any changeset (only a baseline file)
 	//!   then ResolvedChangesetId will be empty.
@@ -94,26 +107,21 @@ public:
 	//! Indicates whether ResolvedChangesetId has been computed/updated and is valid.
 	UPROPERTY(Category = "iTwin|Loading",
 		VisibleAnywhere)
-	bool bResolvedChangesetIdValid;
+	bool bResolvedChangesetIdValid = false;
 
 	//! Current export status of the iModel.
 	//! Call Export() to update this status.
 	UPROPERTY(Category = "iTwin|Loading",
 		VisibleAnywhere)
-	EITwinExportStatus ExportStatus;
+	EITwinExportStatus ExportStatus = EITwinExportStatus::Unknown;
 
 	//! WORK IN PROGRESS - UNRELEASED - Synchro4D schedules found on this iModel.
 	UPROPERTY(Category = "iTwin",
 		VisibleAnywhere)
 	UITwinSynchro4DSchedules* Synchro4DSchedules = nullptr;
 
-	//! WORK IN PROGRESS - UNRELEASED - material customization.
-	UPROPERTY()
-	TMap<uint64, FITwinCustomMaterial> CustomMaterials;
-
-
+public:
 	AITwinIModel();
-	virtual void BeginPlay() override;
 	virtual void Destroyed() override;
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
@@ -133,6 +141,11 @@ public:
 		CallInEditor,
 		BlueprintCallable)
 	void ZoomOnIModel();
+
+	UFUNCTION(Category = "iTwin",
+		CallInEditor,
+		BlueprintCallable)
+	void AdjustPawnSpeedToExtents();
 
 	UFUNCTION(Category = "iTwin|Info",
 		BlueprintCallable)
@@ -187,12 +200,19 @@ public:
 		BlueprintCallable)
 	void Retune();
 
-	//! Return true if the tuner has some material information which was not yet used to pre-fill the map
-	//! of iTwin materials which can be customized.
-	bool ShouldFillMaterialInfoFromTuner() const;
 
-	//! Fills the map of known iTwin materials, if it was read from the tileset.
-	void FillMaterialInfoFromTuner();
+	//! Returns the map of ITwin material info - the key being the iTwin Material ID, and the value, the
+	//! display name of the material.
+	TMap<uint64, FString> GetITwinMaterialMap() const;
+	FString GetMaterialName(uint64_t MaterialId) const;
+
+	//! Minimal API for material tuning in Carrot MVP
+	double GetMaterialChannelIntensity(uint64_t MaterialId, SDK::Core::EChannelType Channel) const;
+	void SetMaterialChannelIntensity(uint64_t MaterialId, SDK::Core::EChannelType Channel, double Intensity);
+
+	using MaterialPersistencePtr = std::shared_ptr<SDK::Core::MaterialPersistenceManager>;
+	static void SetMaterialPersistenceManager(MaterialPersistencePtr const& Mngr);
+
 
 	UFUNCTION()
 	void OnSavedViewsRetrieved(bool bSuccess, FSavedViewInfos SavedViews);
@@ -205,6 +225,11 @@ public:
 	const FEcefLocation* GetEcefLocation() const;
 	//! Returns null if the tileset has not been constructed yet.
 	const AITwinCesium3DTileset* GetTileset() const;
+
+	void HideTileset(bool bHide);
+
+	FString GetExportID() const { return ExportId; }
+
 private:
 	void AutoExportAndLoad();
 	void TestExportCompletionAfterDelay(FString const& InExportId, float DelayInSeconds);
@@ -215,9 +240,11 @@ private:
 	void UpdateAfterLoadingUIEvent();
 	void DestroyTileset();
 
+	//! Fills the map of known iTwin materials, if it was read from the tileset.
+	void FillMaterialInfoFromTuner();
 	//! Retune the tileset if needed, to ensure that all materials customized by the user (or about to be...)
 	//! can be applied to individual meshes.
-	void SplitGltfModelForCustomMaterials();
+	void SplitGltfModelForCustomMaterials(bool bForceRetune = false);
 
 	/// overridden from AITwinServiceActor:
 	virtual void UpdateOnSuccessfulAuthorization() override;
@@ -227,6 +254,8 @@ private:
 	virtual void OnExportInfosRetrieved(bool bSuccess, FITwinExportInfos const& ExportInfos) override;
 	virtual void OnExportInfoRetrieved(bool bSuccess, FITwinExportInfo const& ExportInfo) override;
 	virtual void OnExportStarted(bool bSuccess, FString const& InExportId) override;
+	virtual void OnIModelPropertiesRetrieved(bool bSuccess, bool bHasExtents, FProjectExtents const& Extents,
+		bool bHasEcefLocation, FEcefLocation const& EcefLocation) override;
 	virtual void OnSavedViewInfosRetrieved(bool bSuccess, FSavedViewInfos const& Infos) override;
 	virtual void OnSavedViewRetrieved(bool bSuccess, FSavedView const& SavedView, FSavedViewInfo const& SavedViewInfo) override;
 	virtual void OnSavedViewAdded(bool bSuccess, FSavedViewInfo const& SavedViewInfo) override;
@@ -234,6 +263,7 @@ private:
 	virtual void OnSavedViewEdited(bool bSuccess, FSavedView const& SavedView, FSavedViewInfo const& SavedViewInfo) override;
 	virtual void OnElementPropertiesRetrieved(bool bSuccess, FElementProperties const& ElementProps) override;
 	virtual void OnMaterialPropertiesRetrieved(bool bSuccess, SDK::Core::ITwinMaterialPropertiesMap const& props) override;
+	virtual void OnTextureDataRetrieved(bool bSuccess, std::string const& textureId, SDK::Core::ITwinTextureData const& textureData) override;
 	virtual void OnIModelQueried(bool bSuccess, FString const& QueryResult) override;
 
 	/// overridden from FITwinDefaultWebServicesObserver:
@@ -255,6 +285,18 @@ private:
 		meta = (EditCondition = "LoadingMethod == ELoadingMethod::LM_Manual"),
 		EditAnywhere)
 	FString ExportId;
+
+	//! WORK IN PROGRESS - UNRELEASED - material customization.
+	UPROPERTY(Category = "iTwin",
+		EditAnywhere,
+		Meta = (EditCondition = "bCanReplaceMaterials", EditConditionHides))
+	TMap<uint64, FITwinCustomMaterial> CustomMaterials;
+
+	UPROPERTY()
+	bool bCanReplaceMaterials = false;
+
+	//! Persistence manager for material settings (temporary mode).
+	static MaterialPersistencePtr MaterialPersistenceMngr;
 
 	//! FITwinIModelImplAccess is defined in ITwinImodel.cpp, so it is only usable here.
 	//! It is needed for some free functions (console commands) to access the impl.

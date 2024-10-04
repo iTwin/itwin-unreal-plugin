@@ -36,6 +36,7 @@ MODULE_EXPORT namespace SDK::Core
 	struct IModelProperties;
 	struct ITwinMaterialProperties;
 	struct ITwinMaterialPropertiesMap;
+	struct ITwinTextureData;
 
 	/// Custom callbacks which can be used to perform some updates once a request is done.
 	class IITwinWebServicesObserver
@@ -77,6 +78,8 @@ MODULE_EXPORT namespace SDK::Core
 		virtual void OnIModelQueried(bool bSuccess, std::string const& Response) = 0;
 
 		virtual void OnMaterialPropertiesRetrieved(bool bSuccess, ITwinMaterialPropertiesMap const& props) = 0;
+
+		virtual void OnTextureDataRetrieved(bool bSuccess, std::string const& textureId, ITwinTextureData const& textureData) = 0;
 	};
 
 
@@ -109,6 +112,7 @@ MODULE_EXPORT namespace SDK::Core
 		void OnIModelPropertiesRetrieved(bool bSuccess, IModelProperties const& props) override;
 		void OnIModelQueried(bool bSuccess, std::string const& Response) override;
 		void OnMaterialPropertiesRetrieved(bool bSuccess, ITwinMaterialPropertiesMap const& props) override;
+		void OnTextureDataRetrieved(bool bSuccess, std::string const& textureId, ITwinTextureData const& textureData) override;
 
 	protected:
 		virtual std::string GetObserverName() const = 0;

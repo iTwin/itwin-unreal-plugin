@@ -39,6 +39,12 @@ class UMaterialInterface;
 class UPrimitiveComponent;
 class UStaticMeshComponent;
 class FITwinSceneMappingBuilder;
+class UITwinExtractedMeshComponent;
+
+namespace SDK::Core
+{
+	enum class EChannelType : uint8_t;
+}
 
 template <class T, std::size_t N> using FSmallVec = boost::container::small_vector<T, N>;
 
@@ -128,10 +134,6 @@ struct FITwinElementFeaturesInTile
 	std::vector<ITwinFeatureID> Features;
 
 	/// All material instances for this tile which are applied on Features of this ElementID.
-	/// May not actually be needed, since any material parameter changes should mean updating the tile's
-	/// textures only, and those will be shared by all of the tile's materials.
-	/// But if some parameter has to be changed per ElementID and per-material, then it would be faster to
-	/// have that kind of mapping.
 	std::vector<TWeakObjectPtr<UMaterialInstanceDynamic>> Materials;
 
 	FITwinSynchro4DTextureFlags TextureFlags = {};
@@ -165,7 +167,7 @@ struct FITwinExtractedEntity
 	/// be transformed
 	bool bIsCurrentlyTransformed = false;
 	/// Something than can be used to transform the entity in the UE world.
-	TWeakObjectPtr<UStaticMeshComponent> MeshComponent;
+	TWeakObjectPtr<UITwinExtractedMeshComponent> MeshComponent;
 	/// UV index where feature IDs were baked
 	std::optional<uint32> FeatureIDsUVIndex;
 	/// Material used to render the entity in the UE world
@@ -194,11 +196,10 @@ public:
 	using ExtractedEntityVec = FSmallVec<FITwinExtractedEntity, 4>;
 	using ExtractedEntityMap = std::unordered_map<ITwinElementID, ExtractedEntityVec>;
 
-
 	/// Maximum Feature ID in the tile. Only relevant when it does not equal ITwin::NOT_FEATURE.
 	ITwinFeatureID MaxFeatureID = ITwin::NOT_FEATURE;
 
-	/// May or may not be useful to keep the list of all material instances for each tile
+	/// List of all material instances in this tile, including those created for extracted Elements
 	std::vector<TWeakObjectPtr<UMaterialInstanceDynamic>> Materials;
 	/// RGBA texture where the 'RGB' part is the Synchro Highlight color (used by both opaque and translucent
 	/// materials). The 'A' part will be used by the translucent materials for opacity animation. It can
@@ -213,6 +214,11 @@ public:
 	/// RGBA texture where the 'RGB' part is the selection Highlight color (used to highlight the selected
 	/// iTwin Element during picking).
 	std::unique_ptr<FITwinDynamicShadingBGRA8Property> SelectionHighlights;
+	/// Flagged when entering FITwinSceneMappingBuilder::OnMeshConstructed for this tile, which triggers the
+	/// hiding of all its materials (through the "forced opacity" setting), until the 4D animation has been
+	/// applied again for *all* timelines, at which point the tile is made visible again. Note that before the
+	/// full schedule has been received (or lacking any schedule at all), all tiles are of course visible.
+	bool bNewMeshesToAnimate = true;
 
 	/// Lists the different mesh components created in this tile
 	std::vector<FITwinGltfMeshComponentWrapper> GltfMeshes;
@@ -224,7 +230,7 @@ public:
 	/// Bake feature IDs in per-vertex UVs if needed
 	void BakeFeatureIDsInVertexUVs(bool bUpdatingTile = false);
 	/// Whether at least once of the tile meshes is (valid and) visible
-	bool HasVisibleMesh() const;
+	bool HasAnyVisibleMesh() const;
 
 	/// Finds the FITwinElementFeaturesInTile for the passed Element ID or return nullptr
 	FITwinElementFeaturesInTile const* FindElementFeatures(ITwinElementID const& ElemID) const;
@@ -248,7 +254,7 @@ public:
 	void ForEachExtractedElement(std::function<void(FITwinExtractedEntity&)> const& Func);
 
 	bool SelectElement(ITwinElementID const& InElemID, bool& bHasUpdatedTextures, UWorld const* World);
-	void UpdateSelectionTextureInMaterials();
+	void UpdateSelectionTextureInMaterials(bool& bHasUpdatedTextures);
 	void DrawTileBox(UWorld const* World) const;
 
 	template<typename ElementsCont>
@@ -258,6 +264,9 @@ public:
 	void ForEachExtractedElement(ElementsCont const& ForElementIDs,
 								 std::function<void(FITwinExtractedEntity&)> const& Func);
 
+	/// Edit all material instances created from a primitive configured to match a given ITwin material ID.
+	void ForEachMaterialInstanceMatchingID(uint64_t ITwinMaterialID,
+										   std::function<void(UMaterialInstanceDynamic&)> const& Func);
 
 private:
 	/// Used to fill the textures (see (*) on TITwinFeatureID) for non-extracted Elements.
@@ -353,7 +362,8 @@ private:
 
 public:
 	std::unordered_map<CesiumTileID, FITwinSceneTile> KnownTiles;
-	std::function<void(CesiumTileID const&, std::set<ITwinElementID>&&)> OnNewTileMeshBuilt;
+	std::function<void(CesiumTileID const&, std::set<ITwinElementID>&&,
+		TWeakObjectPtr<UMaterialInstanceDynamic> const&, bool const, FITwinSceneTile&)> OnNewTileMeshBuilt;
 
 	FITwinSceneMapping();
 
@@ -387,7 +397,7 @@ public:
 	int ParseSourceElementIDs(FString const& JsonStr);
 	FDuplicateElementsVec const& GetDuplicateElements(ITwinElementID const ElemID) const;
 
-	void OnElementsTimelineModified(CesiumTileID const& TileID, FITwinSceneTile& SceneTile,
+	bool OnElementsTimelineModified(CesiumTileID const& TileID, FITwinSceneTile& SceneTile,
 									FITwinElementTimeline& ModifiedTimeline,
 									std::vector<ITwinElementID> const* OnlyForElements = nullptr);
 	/// See long comment before call, in FITwinSynchro4DSchedulesInternals::HandleReceivedElements.
@@ -419,6 +429,7 @@ public:
 		return CesiumToUnrealTransform;
 	}
 
+	static void SetForcedOpacity(TWeakObjectPtr<UMaterialInstanceDynamic> const& Mat, float const Opacity);
 	static void SetupFeatureIdUVIndex(FITwinSceneTile& SceneTile,
 									  FITwinElementFeaturesInTile& ElementFeaturesInTile);
 	static void SetupFeatureIdUVIndex(FITwinSceneTile& SceneTile, FITwinExtractedEntity& ExtractedEntity);
@@ -475,6 +486,10 @@ public:
 
 	/// Reset everything - should only be called before the tileset is reloaded.
 	void Reset();
+
+	/// Edit a parameter in all Unreal materials created for the given ITwin material.
+	void SetITwinMaterialChannelIntensity(uint64_t ITwinMaterialID,
+		SDK::Core::EChannelType Channel, double Intensity);
 
 private:
 	/// Extracts the given element in the given tile. New Unreal entities may be created.

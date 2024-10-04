@@ -18,6 +18,7 @@
 #include <fstream>
 #include <rapidjson/document.h>
 #include <rapidjson/prettywriter.h>
+#include <SDK/Core/Tools/Assert.h>
 
 struct Vertex
 {
@@ -95,7 +96,7 @@ void FillPrimitiveFeatureIds(BeUtils::GltfBuilder::MeshPrimitive& primitive,
 		setFeatureIds((float*)0);
 		break;
 	default:
-		assert(false);
+		BE_ISSUE("unsupported featureId componentType", featureIdFormat.componentType);
 		break;
 	}
 }
@@ -121,7 +122,7 @@ void AddMeshPrimitive(const AddMeshPrimitiveArgs& args)
 						case CesiumGltf::MeshPrimitive::Mode::LINE_STRIP:
 						case CesiumGltf::MeshPrimitive::Mode::TRIANGLE_STRIP:
 						case CesiumGltf::MeshPrimitive::Mode::TRIANGLE_FAN:
-							assert (args.patches.size() == 1);
+							BE_ASSERT(args.patches.size() == 1);
 							for (int i = 0; i < (int)patch.size(); ++i)
 								indices.push_back({ComponentType(patchIndex0+i)});
 							break;
@@ -155,7 +156,7 @@ void AddMeshPrimitive(const AddMeshPrimitiveArgs& args)
 				setIndices((uint32_t*)0);
 				break;
 			default:
-				assert(false);
+				BE_ISSUE("unsupported indexFormat componentType", args.indexFormat.componentType);
 				break;
 		}
 	}
@@ -227,7 +228,7 @@ void AddMeshPrimitive(const AddMeshPrimitiveArgs& args)
 				else if (args.colorFormat.type == CesiumGltf::Accessor::Type::VEC3)
 					setColor2((std::array<ComponentType, 3>*)0);
 				else
-					assert(false);
+					BE_ISSUE("unsupported colorFormat type", args.colorFormat.type);
 			};
 		switch (args.colorFormat.componentType)
 		{
@@ -242,7 +243,7 @@ void AddMeshPrimitive(const AddMeshPrimitiveArgs& args)
 				setColors1((float*)0);
 				break;
 			default:
-				assert(false);
+				BE_ISSUE("unsupported colorFormat componentType", args.colorFormat.componentType);
 				break;
 		}
 	}

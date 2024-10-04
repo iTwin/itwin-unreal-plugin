@@ -14,10 +14,6 @@
 #include <ITwinGeolocation.h>
 #include <Math/UEMathExts.h>
 
-#include <Components/StaticMeshComponent.h>
-#include <Engine/StaticMesh.h>
-#include <StaticMeshResources.h>
-
 #include <ITwinCesium3DTileset.h>
 #include <ITwinCesiumFeatureIdSet.h>
 #include <ITwinCesiumMetadataPickingBlueprintLibrary.h>
@@ -27,7 +23,10 @@
 #include <CesiumGltf/ExtensionITwinMaterialID.h>
 #include <CesiumGltf/MeshPrimitive.h>
 
+#include <Components/StaticMeshComponent.h>
+#include <Engine/StaticMesh.h>
 #include <Materials/MaterialInstanceDynamic.h>
+#include <StaticMeshResources.h>
 
 #include <set>
 
@@ -64,8 +63,9 @@ void FITwinSceneMappingBuilder::OnMeshConstructed(
     const FITwinCesiumMeshData& CesiumData)
 {
     auto const tileId = Tile.getTileID();
-    FITwinSceneTile& sceneTile = SceneMapping.KnownTiles[tileId];
-    const int64 FeatureIDSetIndex = ITwinCesium::Metada::ELEMENT_FEATURE_ID_SLOT; // always look in 1st set (_FEATURE_ID_0)
+    auto KnownT = SceneMapping.KnownTiles.try_emplace(tileId, FITwinSceneTile{});
+    FITwinSceneTile& sceneTile = KnownT.first->second;
+    sceneTile.bNewMeshesToAnimate = true;
 
     const TObjectPtr<UStaticMesh> StaticMesh = MeshComponent->GetStaticMesh();
     if (!StaticMesh
@@ -147,6 +147,8 @@ void FITwinSceneMappingBuilder::OnMeshConstructed(
         SceneMapping.IModelBBox_ITwin += MeshBox.Max;
     }
 
+    // always look in 1st set (_FEATURE_ID_0)
+    const int64 FeatureIDSetIndex = ITwinCesium::Metada::ELEMENT_FEATURE_ID_SLOT;
     const FITwinCesiumPrimitiveFeatures& Features(CesiumData.Features);
     const FITwinCesiumPropertyTableProperty* pElementProperty =
         UITwinCesiumMetadataPickingBlueprintLibrary::FindValidProperty(
@@ -177,6 +179,7 @@ void FITwinSceneMappingBuilder::OnMeshConstructed(
     // TODO_GCO/TODO_JDE
 
     std::set<ITwinFeatureID> recordedFeatureIDs;
+    bool bHasAddedMaterialToSceneTile = false;
     std::unordered_map<ITwinFeatureID, ITwinElementID> featureIDToElementID;
     std::set<ITwinElementID> MeshElementIDs;
     const uint32 NumVertices = PositionBuffer.GetNumVertices();
@@ -228,7 +231,12 @@ void FITwinSceneMappingBuilder::OnMeshConstructed(
                     // The material is always different (each primitive uses its own
                     // material instance).
                     TileData.Materials.push_back(pMaterial);
-                    sceneTile.Materials.push_back(pMaterial);
+
+                    if (!bHasAddedMaterialToSceneTile)
+                    {
+                        sceneTile.Materials.push_back(pMaterial);
+                        bHasAddedMaterialToSceneTile = true;
+                    }
                 }
             }
             else
@@ -247,7 +255,7 @@ void FITwinSceneMappingBuilder::OnMeshConstructed(
         }
     }
     if (SceneMapping.OnNewTileMeshBuilt)
-        SceneMapping.OnNewTileMeshBuilt(tileId, std::move(MeshElementIDs));
+        SceneMapping.OnNewTileMeshBuilt(tileId, std::move(MeshElementIDs), pMaterial, KnownT.second, sceneTile);
 }
 
 uint32 FITwinSceneMappingBuilder::BakeFeatureIDsInVertexUVs(std::optional<uint32> featuresAccessorIndex,
@@ -265,6 +273,8 @@ FITwinSceneMappingBuilder::FITwinSceneMappingBuilder(FITwinSceneMapping& InScene
 {
 }
 
+#if ITWIN_ALLOW_REPLACE_BASE_MATERIAL()
+
 UMaterialInstanceDynamic* FITwinSceneMappingBuilder::CreateMaterial_GameThread(
     CesiumGltf::MeshPrimitive const* pMeshPrimitive,
     UMaterialInterface*& pBaseMaterial,
@@ -276,11 +286,6 @@ UMaterialInstanceDynamic* FITwinSceneMappingBuilder::CreateMaterial_GameThread(
         auto const* matIdExt = pMeshPrimitive->getExtension<CesiumGltf::ExtensionITwinMaterialID>();
         if (matIdExt)
             iTwinMaterialID = matIdExt->materialId;
-    }
-    if (IModel.ShouldFillMaterialInfoFromTuner())
-    {
-        // Map of iTwin materials not yet ready: see if we have loaded the list from tileset.json
-        IModel.FillMaterialInfoFromTuner();
     }
     UMaterialInterface* CustomBaseMaterial = nullptr;
     if (iTwinMaterialID)
@@ -317,6 +322,9 @@ UMaterialInstanceDynamic* FITwinSceneMappingBuilder::CreateMaterial_GameThread(
     }
     return pMat;
 }
+
+#endif // ITWIN_ALLOW_REPLACE_BASE_MATERIAL
+
 
 void FITwinSceneMappingBuilder::BeforeTileDestruction(
     const Cesium3DTilesSelection::Tile& Tile,

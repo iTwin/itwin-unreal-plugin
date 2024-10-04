@@ -1,6 +1,10 @@
 
 add_library ( ITwinAPI OBJECT
+	ITwinAuthManager.cpp
+	ITwinAuthManager.h
 	ITwinEnvironment.h
+	ITwinMaterial.cpp
+	ITwinMaterial.h
 	ITwinTypes.h
 	ITwinWebServices.cpp
 	ITwinWebServices.h
@@ -8,6 +12,9 @@ add_library ( ITwinAPI OBJECT
 	ITwinWebServicesObserver.h
 )
 target_compile_features ( ITwinAPI PRIVATE ${DefaultCXXSTD} )
+if ( MSVC )
+	set_source_files_properties ( ITwinWebServices.cpp PROPERTIES COMPILE_FLAGS " /bigobj" )
+endif ()
 target_link_libraries( ITwinAPI PRIVATE 
 					   Network
 					   Tools

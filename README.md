@@ -12,9 +12,8 @@ This SDK will be regularly updated. We appreciate your feedback to turn this exc
 ## Supported features
 - Real-time 3D rendering, navigation and visualization of iModels with high performance; other iTwin related data will be added in future updates.
 - Accessing saved views 
-- Exposed API for custom blueprints (for loading reality data, for example) 
-
-Please note that 4D animation is not part of this initial build, but it is one of our top priorities and will be added as soon as possible.
+- Exposed API for custom blueprints (for loading reality data, for example)
+- 4D animation playback
 
 ### <a id="load-external-tileset"></a>Ability to load external tilesets
 It is possible to load "external" tilesets (ie. non-iModels, like tileset coming from Cesium Ion server) by following these steps:
@@ -32,8 +31,11 @@ To run Unreal Engine, make sure you are using a dedicated GPU. The performance l
 
 We recorded a quick start video on [YouTube](https://www.youtube.com/watch?v=quf4t4LsqXw). Read on for the written steps of the installation process.
 
+## How to use the plugin - pre-compiled or as the source code
+The plugin is available in two versions: a pre-compiled version for using it out-of-the box with no coding knowledge required, and as the source code. If you are a user who wants to view iModels in Unreal Engine, you need to download the plugin from the [Releases](https://github.com/iTwin/itwin-unreal-plugin/releases) page as explained below. This is the **pre-compiled** version. If you are a C++ developer and want to develop your own application using Unreal Engine and would like to utilize the iTwin for Unreal plugin in your custom application, you need to download the **source code** and compile the plugin yourself. To get the source code, you will need to clone the repo to your local hard drive.
 
-## <a id="install-plugin"></a> 1. Installing the precompiled iTwin plugin for Unreal
+## Using the pre-compiled plugin
+### <a id="install-plugin"></a> 1. Installing the precompiled iTwin plugin for Unreal
 
 1. Go to the [Releases](https://github.com/iTwin/itwin-unreal-plugin/releases) page.
 2. Download ITwinForUnreal.zip from the latest release.
@@ -46,9 +48,9 @@ We recorded a quick start video on [YouTube](https://www.youtube.com/watch?v=quf
 If you do not want to install the plugin in the Unreal Engine folder and instead prefer to put it directly in your Unreal project, just extract the zip archive inside your app's `Plugins` folder (you may need to create this folder).<br>
 For example: `C:\MyUnrealApp\Plugins\ITwinForUnreal`.
 
-## 2. Using the installed iTwin plugin inside Unreal Engine
+### 1. Using the installed iTwin plugin inside Unreal Engine
 
-### <a id="use-plugin-in-new-project"></a> In a new project
+#### <a id="use-plugin-in-new-project"></a> Step 1: In a new project...
 
 1. If you installed the plugin in the Unreal Engine folder, enable the plugin `iTwin for Unreal` as explained [here](https://dev.epicgames.com/documentation/en-us/unreal-engine/working-with-plugins-in-unreal-engine).
 2. If not done yet, [configure your iTwin Platform account](#configure-itwin-platform) and take note of your app's client ID.
@@ -74,7 +76,7 @@ For example: `C:\MyUnrealApp\Plugins\ITwinForUnreal`.
    This can take a long time, depending on the complexity of your iModel. Once the export is complete, the iModel will appear in the viewport.
 
 
-### In an existing project which uses the [3DFT plugin](https://github.com/iTwin/unreal-engine-3dft-plugin)
+#### ...or in an existing project which uses the [3DFT plugin](https://github.com/iTwin/unreal-engine-3dft-plugin)
 
 1. Make sure your project is using Unreal Engine version 5.3.<br>
    See "Change a Project's Unreal Engine Version" [here](https://dev.epicgames.com/documentation/en-us/unreal-engine/managing-game-code-in-unreal-engine?application_version=5.3).
@@ -97,7 +99,7 @@ For example: `C:\MyUnrealApp\Plugins\ITwinForUnreal`.
 
 Now, if you open your .uproject in the Unreal Editor, it should (build and) run without any error.
 
-## <a id="configure-itwin-platform"></a> 3. Configure access to the iTwin Platform
+### <a id="configure-itwin-platform"></a> Step 2: Configure access to the iTwin Platform
 
 Create and configure your iTwin Platform account:<br>
 1. Go to the [iTwin Platform developer portal](https://developer.bentley.com/) and create an account.<br>
@@ -106,7 +108,7 @@ Create and configure your iTwin Platform account:<br>
    - Application type: Native
    - Redirect URIs: http://localhost:3000/signin-callback
 
-## 4. Developing with Unreal Engine: Compiling the plugin yourself
+## 2. Developing with Unreal Engine: Compiling the plugin yourself
 
 ### Prerequisites
 
@@ -183,31 +185,31 @@ Developer Mode for Windows must be enabled, as explained [here](https://learn.mi
 We are looking forward to your feedback and your ideas for the plugin. If you encounter any bugs, please use the Issues tab to report any bugs.
 
 ## Getting 4D animations from Synchro working in the plugin
-Build 0.1.10 offers preliminary support for playing back 4D animations. Since this is an early access version, there are a few steps and limitations to consider.
+Build 0.1.11 offers preliminary support for playing back 4D animations. Since this is an early access version, there are a few steps and limitations to consider.
 
 Current limitations related to 4D schedules:
 * The macOS version of the plugin does not support the 4D schedules yet.
 * Transformations and animations along 3D paths are not supported yet (even if you uncheck the checkbox in the Replay settings).
-* When new geometry is received from the streaming server, typically better Level-of-Detail meshes, the animation is not immediately known, nor instantly applied to the visualization. This results in chunks of geometry appearing even though they should be invisible at the current time in the schedule, for example. The visual should correct itself after some time has passed.
+* When geometry is loaded by the Cesium subcomponent, either received from the streaming server, or reloaded from cache, the animation is not immediately applied to the visualization. To avoid showing geometry in a state inconsistent with the current Schedule time, the geometry is hidden entirely until its display state is made consistent. This results in transient cubic-shaped holes in the model. On complex models, a few seconds can pass before the visualization is complete again.
 * Please do not change the materials used by the _AITwinCesiumTileset_ actor as this would most likely prevent the animation (including visibilities and cutting planes) from being applied.
 
-Please follow along the following process:
+We recorded [a video on YouTube](https://www.youtube.com/watch?v=lVu1oj7URv4) to get you up and running with 4D animations. To read the written description, please follow along the following process:
 
-1. To be able to access schedules data, the project must have been resynchronized recently: projects not actively used and/or synchronized before _mid-July_ of this year (_mid-August_ for projects hosted on **East US** datacenter) will definitely need to be resynchronized, either by submitting actual changes to the project, or by changing any of the synchronization settings in the **Edit iModel** panel for the iModel bearing the 4D schedule (actual list of available settings can vary depending on the iModel's history):<br>
+1. To be able to access schedules data, the project must have been resynchronized recently: projects not actively used and/or synchronized before _mid-July_ of this year (_mid-August_ for projects hosted on **East US** datacenter) may need to be resynchronized, although thousands of projects have been synchronized on users' behalf to minimize explicit actions from them: check the last synchronization date on Synchro Control.<br> Synchronizing is done either by submitting actual changes to the project, or by changing any of the synchronization settings in the **Edit iModel** panel for the iModel bearing the 4D schedule (actual list of available settings can vary depending on the iModel's history):<br>
 ![Screenshot of Synchro control's web interface](docs/Synchro3.jpg)<br>
 ![Screenshot of Synchro control's web interface](docs/Synchro4.jpg)<br>
 2. After setting up the app Id and creating the iModel actor in your Unreal level, the geometries start appearing, and the schedule data is queried for all received geometries<br>
-This can take some time and you can see the pending queries in the "Output log" panel. Moving in the scene will stack more pending batches, when new tiles become visible or resolution changes occur.
-When waiting long enough, all pending queries will be handled, and a summary is visible in the Output log:<br>
+You can see the running queries in the "Output log" panel.<br>
+When the Schedule data has been fully received, a summary is visible in the Output log:<br>
 ![Screenshot of Unreal Engine's output log](docs/Synchro5.jpg)<br>
 3. Select the iModel in the Outliner, and select its Synchro4DSchedules component in the Details panel: you will see the Replay settings there, where you can:
-   * "Jump to beginning": jump to the start of the schedule (the default is a time far in the future in order to see the completed project)
-   * "Jump to end" of schedule
-   * Set the replay speed (as an FTimespan of schedule time per second of replay time), or use "Auto replay speed" to fit the whole animation in 30 seconds of replay time.
-   * You can edit the "Schedule Time" field manually, to jump to a specific time point.
-   * "Play"/"Pause" the schedule animation
-   * "Stop" will pause the animation but also display all geometries with their original color and opacities, as if there were no schedules at all.<br>
+   * __Jump to beginning__: jump to the start of the schedule (the default is a time far in the future in order to see the completed project)
+   * __Jump to end__ of schedule
+   * Set the replay speed (as an FTimespan of schedule time per second of replay time), or use __Auto replay speed__ to fit the whole animation in 30 seconds of replay time.
+   * You can edit the __Schedule Time__ field manually, to jump to a specific time point.
+   * __Play__/__Pause__ the schedule animation
+   * __Stop__ will pause the animation but also display all geometries with their original color and opacities, as if there were no schedule at all.<br>
 ![Screenshot of Unreal Engine's Synchro settings](docs/Synchro6.jpg)<br>
-4. There are also advanced Replay settings to optionally disable coloring, visibilities or cutting planes during the animation, or to 'Mask out non-animated Elements' which may be confusing when looking at the animation.
+4. There are also advanced Replay settings to optionally disable coloring, visibilities or cutting planes during the animation, or to 'Mask out non-animated Elements' which may be confusing when looking at the animation.<br>
 ![Screenshot of further Unreal Engine Synchro settings](docs/Synchro7.jpg)
 

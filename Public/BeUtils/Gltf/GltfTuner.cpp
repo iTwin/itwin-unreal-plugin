@@ -7,6 +7,8 @@
 +--------------------------------------------------------------------------------------*/
 
 #include <BeUtils/Gltf/GltfTuner.h>
+
+#include "GltfMaterialHelper.h"
 #include <CesiumGltf/ExtensionModelExtStructuralMetadata.h>
 #include <CesiumGltf/AccessorView.h>
 #include <boost/pfr/functors.hpp>
@@ -15,6 +17,7 @@
 #include <boost/mpl/front.hpp>
 #include <BeUtils/Gltf/GltfBuilder.h>
 #include <rapidjson/document.h>
+#include <SDK/Core/Tools/Assert.h>
 
 namespace BeUtils
 {
@@ -147,9 +150,19 @@ public:
 	std::optional<UInt64AccessorView> elementPropertyTableView_;
 	std::optional<UInt64AccessorView> materialPropertyTableView_;
 
-	GltfTunerHelper(const CesiumGltf::Model& model, const GltfTunerRulesEx& rules)
+	const std::shared_ptr<GltfMaterialHelper>& materialHelper_;
+	struct GltfMaterialInfo
+	{
+		int32_t gltfMaterialIndex_ = 0; // index in the array of gltf materials
+		bool bOverrideColor_ = false; // whether we should override the colors baked in mesh vertices
+	};
+	std::unordered_map<uint64_t, GltfMaterialInfo> itwinToGltfMaterial_; // iTwin MaterialId -> gltf Material index
+	std::unordered_map<std::string, int32_t> itwinToGltTextures_; // iTwin TextureId -> gltf Texture index
+
+	GltfTunerHelper(const CesiumGltf::Model& model, const GltfTunerRulesEx& rules, const std::shared_ptr<GltfMaterialHelper>& materialHelper)
 		:model_(model)
 		,rules_(rules)
+		, materialHelper_(materialHelper)
 	{
 	}
 	CesiumGltf::Model Tune()
@@ -227,6 +240,10 @@ public:
 		const int64_t materialPropertyTableIndex = findPropertyTable(materialPropertyTableView_, "material",
 			elementPropertyTableIndex == 0 ? 1 : 0);
 
+		auto gltfMaterials = model_.materials;
+		auto gltfTextures = model_.textures;
+		auto gltfImages = model_.images;
+
 		// Process the primitives of each mesh.
 		// Note: we do not merge primitives belonging to different meshes,
 		// since it would break the structure of the model's scene.
@@ -262,7 +279,7 @@ public:
 				// material IDs, if present, should use the same buffer as features.
 				// If this is no longer true, please blame here to revert to a previous version using a
 				// separate buffer
-				assert(!primHasMaterialIDs || materialFeatIdsAccessorIndex == elementFeatIdsAccessorIndex);
+				BE_ASSERT(!primHasMaterialIDs || materialFeatIdsAccessorIndex == elementFeatIdsAccessorIndex);
 
 				const auto colorAttributeIt = primitive.attributes.find("COLOR_0");
 				// Process the primitive using typed accessors for data that can may have different types.
@@ -287,14 +304,24 @@ public:
 			{
 				const auto& clusterId = clusterEntry->first;
 				const auto& cluster = clusterEntry->second;
-				auto primitive = gltfBuilder.AddMeshPrimitive((int)gltfBuilder.GetModel().meshes.size()-1, clusterId.material_, clusterId.mode_);
+				int32_t materialId = clusterId.material_;
+				bool bOverrideColor = false;
+				if (clusterId.itwinMaterialID_ && materialId >= 0 && materialHelper_)
+				{
+					// The final primitive will have 1 iTwin material.
+					// See if we should also tune the corresponding gltf material.
+					materialId = ConvertITwinMaterial(*clusterId.itwinMaterialID_,
+						materialId, gltfMaterials, gltfTextures, gltfImages,
+						bOverrideColor, cluster.colors_);
+				}
+				auto primitive = gltfBuilder.AddMeshPrimitive((int)gltfBuilder.GetModel().meshes.size()-1, materialId, clusterId.mode_);
 				primitive.SetIndices(cluster.indices_, true);
 				primitive.SetPositions(cluster.positions_);
 				if (!cluster.normals_.empty())
 					primitive.SetNormals(cluster.normals_);
 				if (!cluster.uvs_.empty())
 					primitive.SetUVs(cluster.uvs_);
-				if (!cluster.colors_.empty())
+				if (!cluster.colors_.empty() && !bOverrideColor)
 					primitive.SetColors(cluster.colors_);
 				if (!cluster.featureIds_.empty())
 					primitive.SetFeatureIds(cluster.featureIds_, clusterId.hasMaterialFeatureId_);
@@ -312,13 +339,13 @@ public:
 		gltfBuilder.GetModel().extensionsRequired = model_.extensionsRequired;
 		gltfBuilder.GetModel().asset = model_.asset;
 		gltfBuilder.GetModel().cameras = model_.cameras;
-		gltfBuilder.GetModel().images = model_.images;
-		gltfBuilder.GetModel().materials = model_.materials;
+		gltfBuilder.GetModel().images = gltfImages;
+		gltfBuilder.GetModel().materials = gltfMaterials;
 		gltfBuilder.GetModel().nodes = model_.nodes;
 		gltfBuilder.GetModel().samplers = model_.samplers;
 		gltfBuilder.GetModel().scene = model_.scene;
 		gltfBuilder.GetModel().scenes = model_.scenes;
-		gltfBuilder.GetModel().textures = model_.textures;
+		gltfBuilder.GetModel().textures = gltfTextures;
 		return std::move(gltfBuilder.GetModel());
 	}
 private:
@@ -443,7 +470,7 @@ private:
 
 				// Material IDs can now be combined with features
 				const bool hasMaterialFeatureId = primProps.hasMaterialFeatureId_;
-				assert(!hasMaterialFeatureId || (hasFeatureId && materialPropertyTableView_));
+				BE_ASSERT(!hasMaterialFeatureId || (hasFeatureId && materialPropertyTableView_));
 
 				// Get the original material identifier in the iModel, if it was exported by the Mesh-Export
 				// Service (should be the case in 08/2024)
@@ -576,6 +603,250 @@ private:
 				break;
 		}
 	}
+
+	int32_t ConvertITwinTexture(std::string const& itwinTextureId,
+		std::vector<CesiumGltf::Texture>& textures,
+		std::vector<CesiumGltf::Image>& images)
+	{
+		auto it = itwinToGltTextures_.find(itwinTextureId);
+		if (it != itwinToGltTextures_.end())
+		{
+			// This iTwin texture has already been converted.
+			return it->second;
+		}
+		int32_t gltfTexId = -1;
+		// Test if the corresponding texture is available locally.
+		auto const& texturePath = materialHelper_->GetITwinTextureLocalPath(itwinTextureId);
+		if (!texturePath.empty())
+		{
+			// Create one gltf image and one gltf texture
+			gltfTexId = static_cast<int32_t>(textures.size());
+			CesiumGltf::Texture& gltfTexture = textures.emplace_back();
+			gltfTexture.source = static_cast<int32_t>(images.size());
+			CesiumGltf::Image& gltfImage = images.emplace_back();
+
+			// since c++20, this uses now char8_t...
+			auto const tex_u8string = texturePath.generic_u8string();
+			gltfImage.uri = "file:///" + std::string(tex_u8string.begin(), tex_u8string.end());
+		}
+		itwinToGltTextures_.emplace(itwinTextureId, gltfTexId);
+		return gltfTexId;
+	}
+
+	int32_t ConvertITwinMaterial(uint64_t itwinMatId,
+		int32_t gltfMatId,
+		std::vector<CesiumGltf::Material>& materials,
+		std::vector<CesiumGltf::Texture>& textures,
+		std::vector<CesiumGltf::Image>& images,
+		bool& bOverrideColor,
+		std::vector<std::array<uint8_t, 4>> const& meshColors)
+	{
+		auto it = itwinToGltfMaterial_.find(itwinMatId);
+		if (it != itwinToGltfMaterial_.end())
+		{
+			// This iTwin material has already been converted.
+			bOverrideColor = it->second.bOverrideColor_;
+			return it->second.gltfMaterialIndex_;
+		}
+		BE_ASSERT(materialHelper_.get() != nullptr);
+		GltfMaterialHelper::Lock lock(materialHelper_->GetMutex());
+		auto const itwinMatInfo = materialHelper_->GetITwinMaterialInfo(itwinMatId, lock);
+		auto const* itwinProps = itwinMatInfo.first;
+		auto const* itwinMatDef = itwinMatInfo.second;
+
+
+		/*** minimum support for Carrot MVP ***/
+		if (itwinMatDef)
+		{
+			bool const hasCustomRoughness = itwinMatDef->channels[(size_t)SDK::Core::EChannelType::Roughness].has_value();
+			bool const hasCustomMetallic = itwinMatDef->channels[(size_t)SDK::Core::EChannelType::Metallic].has_value();
+			bool const hasCustomTransparency = itwinMatDef->channels[(size_t)SDK::Core::EChannelType::Transparency].has_value();
+			bool const hasCustomAlpha = itwinMatDef->channels[(size_t)SDK::Core::EChannelType::Alpha].has_value();
+
+			// Initial gltf material produced by the Mesh Export Service
+			CesiumGltf::Material const& orgMaterial(materials[gltfMatId]);
+
+			std::optional<CesiumGltf::Material> customMaterial;
+
+			if (hasCustomRoughness || hasCustomMetallic || hasCustomTransparency || hasCustomAlpha)
+			{
+				// First copy the gltf material produced by the Mesh Export Service.
+				customMaterial.emplace(orgMaterial);
+
+				if (!customMaterial->pbrMetallicRoughness)
+				{
+					customMaterial->pbrMetallicRoughness.emplace();
+				}
+
+				if (hasCustomRoughness)
+				{
+					customMaterial->pbrMetallicRoughness->roughnessFactor =
+						itwinMatDef->channels[(size_t)SDK::Core::EChannelType::Roughness]->intensity;
+				}
+				if (hasCustomMetallic)
+				{
+					customMaterial->pbrMetallicRoughness->metallicFactor =
+						itwinMatDef->channels[(size_t)SDK::Core::EChannelType::Metallic]->intensity;
+				}
+				if (hasCustomTransparency || hasCustomAlpha)
+				{
+					// If this is the first time we change the transparency of this material, store its
+					// initial alpha mode (could be blend, opaque or masked).
+					std::string initialAlphaMode;
+					if (!materialHelper_->GetMaterialInitialAlphaMode(itwinMatId, initialAlphaMode, lock))
+					{
+						materialHelper_->StoreMaterialInitialAlphaMode(itwinMatId, orgMaterial.alphaMode, lock);
+						initialAlphaMode = orgMaterial.alphaMode;
+					}
+					double const alpha = (hasCustomAlpha
+						? itwinMatDef->channels[(size_t)SDK::Core::EChannelType::Alpha]->intensity
+						: (1. - itwinMatDef->channels[(size_t)SDK::Core::EChannelType::Transparency]->intensity));
+					bool bEnforceOpaque = false;
+					if (alpha < 1.)
+					{
+						// Enforce the use of the translucent base material.
+						customMaterial->alphaMode = CesiumGltf::Material::AlphaMode::BLEND;
+					}
+					else
+					{
+						customMaterial->alphaMode = initialAlphaMode;
+						if (initialAlphaMode == CesiumGltf::Material::AlphaMode::BLEND)
+						{
+							// if the model was transparent in the model (glass) and we turn it opaque, we
+							// need to enforce the alpha mode as well:
+							customMaterial->alphaMode = CesiumGltf::Material::AlphaMode::OPAQUE;
+							bEnforceOpaque = true;
+						}
+					}
+					auto& baseColorFactor = customMaterial->pbrMetallicRoughness->baseColorFactor;
+					if (baseColorFactor.size() < 4)
+					{
+						// Just in case...
+						baseColorFactor.resize(4, 1.);
+					}
+					baseColorFactor[3] = alpha;
+					if (bEnforceOpaque && !meshColors.empty())
+					{
+						// In such case, we need to override the per-vertex colors, as they contain the
+						// baked value of alpha, so with an opaque material, this would activate some Cesium
+						// alpha dithering, which is not what the user wants if he is turning some glasses
+						// totally opaque...
+						// Just keep the RGB component of the original color, if any.
+						auto const& baseColorU8 = meshColors[0];
+						baseColorFactor[0] = static_cast<double>(baseColorU8[0]) / 255.0;
+						baseColorFactor[1] = static_cast<double>(baseColorU8[1]) / 255.0;
+						baseColorFactor[2] = static_cast<double>(baseColorU8[2]) / 255.0;
+						bOverrideColor = true;
+					}
+				}
+			}
+
+			if (customMaterial)
+			{
+				gltfMatId = static_cast<int32_t>(materials.size());
+				// Append the new material - beware it may invalidate orgMaterial!
+				materials.emplace_back(std::move(*customMaterial));
+			}
+		}
+
+#if 0 // TODO_JDE - move relevant properties to itwinMatDef instead...
+		if (itwinProps)
+		{
+			// Initial gltf material produced by the Mesh Export Service
+			CesiumGltf::Material const& orgMaterial(materials[gltfMatId]);
+
+			auto const& itwinMaps = itwinProps->maps;
+			std::optional<CesiumGltf::Material> customMaterial;
+
+			using RgbColor = std::array<double, 3>;
+			RgbColor const* pBaseColor = nullptr;
+
+			std::string const* itwinColorTexId = nullptr;
+			std::string const* itwinNormalTexId = nullptr;
+
+			// See if the material has a base color.
+			// Note that if the material also has a color texture, we ignore the base color, as done in the
+			// Mesh Export Service (see boolean textureShouldOverrideColor in ConvertMaterialsToCesium).
+			bool hasColorTexture = orgMaterial.pbrMetallicRoughness
+				&& orgMaterial.pbrMetallicRoughness->baseColorTexture;
+
+			auto itColorMap = itwinMaps.find("Pattern");
+			if (itColorMap != itwinMaps.end())
+			{
+				itwinColorTexId = TryGetMaterialAttribute<std::string>(itColorMap->second, "TextureId");
+
+				hasColorTexture = (itwinColorTexId != nullptr);
+			}
+
+			if (!hasColorTexture
+				&& GetMaterialBoolProperty(*itwinProps, "HasBaseColor"))
+			{
+				pBaseColor = TryGetMaterialProperty<RgbColor>(*itwinProps, "color");
+			}
+
+			//// TEMPORARY TEST
+			//// when the converted material uses a Bump texture, convert it to a normal map.
+			//auto itBump = itwinMaps.find("Bump");
+			//if (itBump != itwinMaps.end())
+			//{
+			//	itwinNormalTexId = TryGetMaterialAttribute<std::string>(itBump->second, "TextureId");
+			//}
+
+			if (pBaseColor || itwinColorTexId || itwinNormalTexId)
+			{
+				// First copy the gltf material produced by the Mesh Export Service.
+				customMaterial.emplace(orgMaterial);
+
+				if (itwinColorTexId)
+				{
+					int32_t colorTexIndex = ConvertITwinTexture(*itwinColorTexId, textures, images);
+					if (colorTexIndex >= 0)
+					{
+						if (!customMaterial->pbrMetallicRoughness)
+						{
+							customMaterial->pbrMetallicRoughness.emplace();
+						}
+						customMaterial->pbrMetallicRoughness->baseColorTexture.emplace();
+						customMaterial->pbrMetallicRoughness->baseColorTexture->index = colorTexIndex;
+					}
+				}
+				if (itwinNormalTexId)
+				{
+					int32_t normTexIndex = ConvertITwinTexture(*itwinNormalTexId, textures, images);
+					if (normTexIndex >= 0)
+					{
+						customMaterial->normalTexture.emplace();
+						customMaterial->normalTexture->index = normTexIndex;
+					}
+				}
+				if (pBaseColor)
+				{
+					if (!customMaterial->pbrMetallicRoughness)
+					{
+						customMaterial->pbrMetallicRoughness.emplace();
+					}
+					customMaterial->pbrMetallicRoughness->baseColorFactor =
+					{
+						(*pBaseColor)[0],
+						(*pBaseColor)[1],
+						(*pBaseColor)[2],
+						1.0
+					};
+					bOverrideColor = true;
+				}
+			}
+			if (customMaterial)
+			{
+				gltfMatId = static_cast<int32_t>(materials.size());
+				// Append the new material - beware it may invalidate orgMaterial!
+				materials.emplace_back(std::move(*customMaterial));
+			}
+		}
+#endif // 0
+
+		itwinToGltfMaterial_.emplace(itwinMatId, GltfMaterialInfo{ gltfMatId, bOverrideColor });
+		return gltfMatId;
+	}
 };
 
 } // unnamed namespace
@@ -594,6 +865,7 @@ public:
 	std::mutex mutex_;
 
 	std::vector<ITwinMaterialInfo> itwinMaterials_;
+	std::shared_ptr<GltfMaterialHelper> materialHelper_;
 };
 
 GltfTuner::GltfTuner()
@@ -625,7 +897,7 @@ CesiumGltf::Model GltfTuner::Tune(const CesiumGltf::Model& model)
 			for (const auto elementId: impl_->rulesEx_.elementGroups_[groupIndex].elements_)
 				impl_->rulesEx_.elementToGroup_[elementId] = groupIndex;
 	}
-	return GltfTunerHelper(model, impl_->rulesEx_).Tune();
+	return GltfTunerHelper(model, impl_->rulesEx_, impl_->materialHelper_).Tune();
 }
 
 void GltfTuner::SetRules(Rules&& rules)
@@ -702,7 +974,7 @@ void GltfTuner::ParseTilesetJson(const rapidjson::Document& tilesetJson)
 		}
 		ITwinMaterialInfo& matInfo = itwinMaterials.emplace_back();
 		matInfo.id = Detail::ToUint64(idIt->value);
-		matInfo.name = nameIt->value.GetString();
+		matInfo.name = nameIt->value.GetString(); // UTF-8 encoded
 	}
 	{
 		std::scoped_lock lock(impl_->mutex_);
@@ -730,6 +1002,11 @@ std::vector<ITwinMaterialInfo> GltfTuner::GetITwinMaterialInfo() const
 void GltfTuner::SetMaterialInfoReadCallback(ITwinMaterialInfoReadCallback const& readCallback)
 {
 	onMaterialInfoParsed_ = readCallback;
+}
+
+void GltfTuner::SetMaterialHelper(std::shared_ptr<GltfMaterialHelper> const& matHelper)
+{
+	impl_->materialHelper_ = matHelper;
 }
 
 } // namespace BeUtils

@@ -12,6 +12,7 @@
 #include <Dom/JsonObject.h>
 #include <Dom/JsonValue.h>
 #include <Interfaces/IHttpResponse.h>
+#include <ITwinWebServices/ITwinAuthorizationManager.h>
 #include <ITwinWebServices/ITwinWebServices.h>
 #include <Serialization/JsonReader.h>
 #include <Serialization/JsonSerializer.h>
@@ -22,6 +23,17 @@
 #include <Compil/AfterNonUnrealIncludes.h>
 
 DEFINE_LOG_CATEGORY(LogITwinHttp);
+
+FString AITwinServerConnection::GetAccessToken() const
+{
+	FString AccessToken;
+	auto const& AuthMngr = FITwinAuthorizationManager::GetInstance(Environment);
+	if (ensure(AuthMngr))
+	{
+		AuthMngr->GetAccessToken(AccessToken);
+	}
+	return AccessToken;
+}
 
 /// Checks the request status, response code, and logs any failure (does not assert)
 /// \return Whether the request's response is valid and can be processed further
@@ -39,8 +51,8 @@ bool AITwinServerConnection::CheckRequest(FHttpRequestPtr const& CompletedReques
 		{
 			if (UITwinWebServices::ShouldLogErrors())
 			{
-				UE_LOG(LogITwinHttp, Error, TEXT("Request to %s failed with %s"),
-					*CompletedRequest->GetURL(), *requestError);
+				BE_LOGE("ITwinAPI", "Request to " << TCHAR_TO_UTF8(*CompletedRequest->GetURL())
+					<< " failed with " << TCHAR_TO_UTF8(*requestError));
 			}
 		}
 		if (pstrError)
@@ -61,13 +73,11 @@ bool AITwinServerConnection::CheckRequest(FHttpRequestPtr const& CompletedReques
 			*EHttpResponseCodes::GetDescription(
 				(EHttpResponseCodes::Type)Response->GetResponseCode()).ToString());
 
-		// TODO_GCO: tmp stuff to investigate "unauthorized" errors for Daniel W. & others
-		if (401 == (int)Response->GetResponseCode())
-		{
-			requestError += FString::Printf(TEXT(", with auth header: %s"),
-											*CompletedRequest->GetHeader(TEXT("Authorization")));
-		}
-		// END TMP TODO_GCO
+		// Used to investigate "401: unauthorized" errors (cause was apparently an obsolete token kept in the
+		// FReusableJsonQueries. Might still be useful later for other 401 (or 403) errors:
+		//if (401 == (int)Response->GetResponseCode())
+		//	requestError += FString::Printf(TEXT(", with auth header: %s"),
+		//									*CompletedRequest->GetHeader(TEXT("Authorization")));
 
 		// see if we can get more information in the response
 		std::string detailedError = SDK::Core::ITwinWebServices::GetErrorDescriptionFromJson(

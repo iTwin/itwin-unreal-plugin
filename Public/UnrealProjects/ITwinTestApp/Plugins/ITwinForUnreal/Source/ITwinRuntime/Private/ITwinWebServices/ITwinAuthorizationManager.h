@@ -17,9 +17,14 @@
 
 #include <array>
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <mutex>
 
+namespace SDK::Core
+{
+	class ITwinAuthManager;
+}
 
 class IITwinAuthorizationObserver;
 
@@ -27,18 +32,20 @@ class IITwinAuthorizationObserver;
 /// The aim is to manage only one token per environment (the access token *and* the refresh token,
 /// if applicable).
 
-class FITwinAuthorizationManager
+class ITWINRUNTIME_API FITwinAuthorizationManager
 {
 public:
 	using SharedInstance = std::shared_ptr<FITwinAuthorizationManager>;
 
 	static void SetITwinAppIDArray(ITwin::AppIDArray const& ITwinAppIDs);
 	static bool HasITwinAppID(EITwinEnvironment Env);
+	static void AddScopes(FString const& ExtraScopes);
 
 	static SharedInstance& GetInstance(EITwinEnvironment Env);
 
 	~FITwinAuthorizationManager();
 
+	FString GetITwinAppId() const;
 	void AddObserver(IITwinAuthorizationObserver* Observer);
 	void RemoveObserver(IITwinAuthorizationObserver* Observer);
 
@@ -47,9 +54,20 @@ public:
 
 	bool HasAccessToken() const;
 	void GetAccessToken(FString& OutAccessToken) const;
+	//! Used by the "Open shared iTwin" feature: overrides the regular access token
+	//! with the one provided as argument, so that GetAccessToken() returns the
+	//! "override" token instead of the regular one.
+	//! Pass an empty string to restore the regular token.
+	void SetOverrideAccessToken(const FString& InAccessToken);
 
 	bool IsAuthorizationInProgress() const;
 
+	/// "Extension" for desktop application.
+	using FTokenGrantedObserverFunc = std::function<void(FString const& InToken, FITwinAuthorizationInfo const& InAuthInfo)>;
+	using FReloadTokenFunc = std::function<bool(FString& OutToken, FITwinAuthorizationInfo& OutAuthInfo)>;
+
+	void SetTokenGrantedObserverFunc(FTokenGrantedObserverFunc const& Func);
+	void SetReloadTokenFunc(FReloadTokenFunc const& Func);
 
 private:
 	FITwinAuthorizationManager(EITwinEnvironment Env);
@@ -63,8 +81,13 @@ private:
 	void ResetRefreshToken();
 
 	/// Update the authorization information upon successful server response
+	enum class EAuthContext
+	{
+		StdRequest,
+		Reload
+	};
 	void SetAuthorizationInfo(FString const& InAccessToken,
-		FITwinAuthorizationInfo const& InAuthInfo, bool bAutoRefresh = true);
+		FITwinAuthorizationInfo const& InAuthInfo, EAuthContext AuthContext = EAuthContext::StdRequest);
 
 	void NotifyResult(bool bSuccess, FString const& Error);
 
@@ -91,6 +114,7 @@ private:
 	using FLock = std::lock_guard<std::recursive_mutex>;
 	mutable FMutex Mutex;
 	FString AccessToken;
+	FString OverrideAccessToken;
 	FITwinAuthorizationInfo AuthInfo;
 	int LoadRefreshTokenAttempts = 0;
 
@@ -101,6 +125,12 @@ private:
 	FTSTicker::FDelegateHandle RefreshAuthDelegate;
 	FTSTicker::FDelegateHandle RestartAuthDelegate;
 	std::atomic_bool bHasBoundAuthPort = false;
+
+	using CoreManager = SDK::Core::ITwinAuthManager;
+	std::shared_ptr<CoreManager> CoreImpl;
+
+	FTokenGrantedObserverFunc OnTokenGrantedFunc;
+	FReloadTokenFunc ReloadTokenFunc;
 
 	using Pool = std::array<SharedInstance, (size_t)EITwinEnvironment::Invalid>;
 	static Pool Instances;

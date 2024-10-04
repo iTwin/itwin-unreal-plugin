@@ -27,7 +27,13 @@ namespace SDK::Core
 		{
 			g_config.config_ = config;
 			g_config.defaultHttp_ = Http::New();
-			g_config.defaultHttp_->SetBaseUrl(config.server.server + ":" + std::to_string(config.server.port) + config.server.urlapiprefix);
+			std::string baseUrl = config.server.server;
+			if (config.server.port >= 0)
+			{
+				baseUrl += ":" + std::to_string(config.server.port);
+			}
+			baseUrl += config.server.urlapiprefix;
+			g_config.defaultHttp_->SetBaseUrl(baseUrl);
 		}
 
 		SConfig LoadFromFile(std::filesystem::path& path)
@@ -44,7 +50,9 @@ namespace SDK::Core
 	std::shared_ptr<Http>& GetDefaultHttp()
 	{
 		if (!Config::g_config.defaultHttp_)
-			throw std::string("Default Http not defined. Call Config::Init.");
+		{
+			VIZ_SDK_WARN(std::string("Default Http not defined. Call Config::Init."));
+		}
 		return Config::g_config.defaultHttp_;
 	}
 }

@@ -274,7 +274,7 @@ void MainTimelineBase<_ObjectTimeline>::IncludeTimeRange(FTimeRangeInSeconds con
 
 template<class _ObjectTimeline>
 std::shared_ptr<_ObjectTimeline> MainTimelineBase<_ObjectTimeline>::AddTimeline(
-	const ObjectTimelinePtr& Timeline)
+	const std::shared_ptr<_ObjectTimeline>& Timeline)
 {
 	auto Result = Container.push_back(Timeline);
 	// Note: "AddTimeline" is now called from ElementTimelineFor, when creating an empty timeline, in that

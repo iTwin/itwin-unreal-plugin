@@ -12,11 +12,11 @@
 #include <ITwinIModel.h>
 #include <ITwinIModelInternals.h>
 #include <ITwinSceneMapping.h>
+#include <ITwinExtractedMeshComponent.h>
 #include <Timeline/Timeline.h>
 #include <Timeline/TimeInSeconds.h>
 #include <Timeline/SchedulesConstants.h>
 
-#include <Components/StaticMeshComponent.h>
 #include <GenericPlatform/GenericPlatformTime.h>
 #include <Materials/MaterialInstanceDynamic.h>
 #include <Math/Plane.h>
@@ -53,6 +53,8 @@ class FITwinSynchro4DAnimator::FImpl
 	/// Time it last took to apply the whole animation (informative)
 	double TimeToApplyAllTimelines = 0;
 
+	std::unordered_set<FITwinSceneTile*> HasNewMeshesToAnimate;
+
 	void ApplyAnimation(bool const bForceUpdateAll);
 
 public:
@@ -67,52 +69,42 @@ FITwinSynchro4DAnimator::FITwinSynchro4DAnimator(UITwinSynchro4DSchedules& InOwn
 
 void FITwinSynchro4DAnimator::TickAnimation(float DeltaTime, bool const bNewTilesReceived)
 {
-	if (Impl->bIsPlaying && !Owner.GetReplaySpeed().IsZero())
+	if (!Impl->bIsPlaying && !Impl->bIsPaused)
 	{
-		auto&& ScheduleEnd = GetInternals(Owner).GetTimeline().GetDateRange().GetUpperBound();
-		// Avoid incrementing time when clicking Play repeatedly at the end of the schedule...
-		if (ScheduleEnd.IsClosed() && Owner.ScheduleTime >= ScheduleEnd.GetValue())
+		auto* IModel = Cast<AITwinIModel>(Owner.GetOwner());
+		if (!IModel)
+			return;
+		FITwinIModelInternals& IModelInternals = GetInternals(*IModel);
+		// Set visibility here since animation will not be applied! May still flick off and on but the whole
+		// system is a temporary solution anyway...
+		for (auto&& [_, SceneTile] : IModelInternals.SceneMapping.KnownTiles)
 		{
-			Pause();
-			if (bNewTilesReceived)
-				Impl->ApplyAnimation(true);
-		}
-		else
-		{
-			Owner.ScheduleTime += DeltaTime * Owner.GetReplaySpeed();
-			if (ScheduleEnd.IsClosed() && Owner.ScheduleTime >= ScheduleEnd.GetValue())
+			if (SceneTile.bNewMeshesToAnimate)
 			{
-				Owner.ScheduleTime = ScheduleEnd.GetValue();
-				Pause();
+				SceneTile.bNewMeshesToAnimate = false;
+				for (auto&& Mat : SceneTile.Materials)
+					FITwinSceneMapping::SetForcedOpacity(Mat, -1.f);
 			}
-			OnChangedScheduleTime(bNewTilesReceived);
 		}
+		return;
 	}
-	else if (Impl->bIsPlaying || Impl->bIsPaused)
+	auto&& ScheduleRange = GetInternals(Owner).GetTimeline().GetDateRange();
+	// Avoid incrementing time when clicking Play repeatedly at the end of the schedule (positive speeds,
+	// also handle reverse playback)
+	if ((Owner.GetReplaySpeed() > 0. && ScheduleRange.GetUpperBound().IsClosed()
+			&& Owner.ScheduleTime >= ScheduleRange.GetUpperBound().GetValue())
+		|| (Owner.GetReplaySpeed() < 0. && ScheduleRange.GetLowerBound().IsClosed()
+			&& Owner.ScheduleTime <= ScheduleRange.GetLowerBound().GetValue()))
 	{
-		// TODO_GCO: note that despite this, newly received meshes will still show up temporarily without the
-		// animation effects applied (typically, visible before being built...), ie there's at least sth
-		// to fix with respect to ordering (assuming cesium meshes are received _before_ the schedules component
-		// is ticked!). Also, fixing ordering will not even be sufficient because of the splitting of
-		// ApplyAnimation among successive ticks...
-		if (bNewTilesReceived)
-			Impl->ApplyAnimation(true);
-		// Animation is applied over several ticks, ie it will always be behind the theoretical ScheduleTime:
-		// we need to continue applying the animation even when Paused and until we're done
-		// ("Impl->NextTimelineToUpdate == 0"), *and* no more "update all" has been requested, *and* the
-		// animation time has caught up with the schedule time!
-		else
-		{
-			// Set bNeedUpdateAll even if a single timeline has changed: it's not as inefficient as it looks,
-			// because each timeline has its own flag, which is tested in ApplyAnimation's loop on timelines.
-			Impl->bNeedUpdateAll |= GetInternals(Owner).Timeline().TestNewOrModifiedAndResetFlag();
-
-			if (Impl->bNeedUpdateAll || Impl->NextTimelineToUpdate != 0
-				|| ITwin::Time::ToDateTime(Impl->AnimationTime) != Owner.ScheduleTime)
-			{
-				Impl->ApplyAnimation(false);
-			}
-		}
+		Pause();
+	}
+	if (Impl->bIsPlaying)
+	{
+		Owner.ScheduleTime += DeltaTime * Owner.GetReplaySpeed();
+	}
+	if (Impl->bIsPlaying || Impl->bIsPaused)
+	{
+		Impl->ApplyAnimation(bNewTilesReceived);
 	}
 }
 
@@ -130,8 +122,9 @@ void FITwinSynchro4DAnimator::Pause()
 	if (Impl->bIsPlaying)
 	{
 		Impl->bIsPlaying = false;
-		Impl->bIsPaused = true;
 	}
+	// If already Stop'd, using Pause can be still useful to diplay the animation without changing the time
+	Impl->bIsPaused = true;
 }
 
 void FITwinSynchro4DAnimator::Stop()
@@ -169,9 +162,7 @@ void FITwinSynchro4DAnimator::Stop()
 
 void FITwinSynchro4DAnimator::OnChangedScheduleTime(bool const bForceUpdateAll)
 {
-	// Don't wait next tick, speed can be 0, when setting a new time manually
-	if (Impl->bIsPlaying || Impl->bIsPaused)
-		Impl->ApplyAnimation(bForceUpdateAll);
+	TickAnimation(0.f, bForceUpdateAll);
 }
 
 void FITwinSynchro4DAnimator::OnChangedAnimationSpeed()
@@ -440,12 +431,57 @@ void FITwinSynchro4DAnimator::FImpl::ApplyAnimation(bool const bForceUpdateAll)
 	AITwinIModel* IModel = Cast<AITwinIModel>(Schedules.GetOwner());
 	if (!IModel || Timeline.GetContainer().empty())
 		return;
-	if (LastAnimationTime && Schedules.ScheduleTime == ITwin::Time::ToDateTime(*LastAnimationTime)
+
+	FITwinIModelInternals& IModelInternals = GetInternals(*IModel);
+	bool bHasUpdatedTextures = false;
+	if (IModelInternals.SceneMapping.NewTilesReceivedHaveTextures(bHasUpdatedTextures))
+	{
+		// restart from scratch
+		LastAnimationTime.reset();
+		NextTimelineToUpdate = 0;
+		TimeToApplyAllTimelines = 0;
+		for (auto& SceneTile : HasNewMeshesToAnimate)
+		{
+			SceneTile->bNewMeshesToAnimate = true;
+		}
+		HasNewMeshesToAnimate.clear();
+		if (bHasUpdatedTextures)
+		{
+			// Don't do UpdateInMaterials in same tick :/ but nothing guarantees that the render thread will
+			// have processed our UpdateTexture messages before next tick, right?
+			// TODO_GCO: sync with UpdateTextureRegions's DataCleanup functor?
+			//	if so, please also update FITwinSceneTile::UpdateSelectionTextureInMaterials, which currently
+			//	makes the same assumptions...
+			// Because of the early exit, we need the next call to TickAnimation to enter ApplyAnimation even
+			// when paused *and* NextTimelineToUpdate == 0, to finish the rest of the job!
+			// Since we have reset LastAnimationTime anyway, let's set this flag:
+			bNeedUpdateAll = true;
+			return;
+		}
+	}
+	IModelInternals.SceneMapping.HandleNewTileTexturesNeedUpateInMaterials();
+
+	if (NextTimelineToUpdate == 0)
+	{
+		AnimationTime = ITwin::Time::FromDateTime(Schedules.ScheduleTime);
+		// As a precaution, don't start applying animation as long as some textures are dirty.
+		// "Useful"(is it?) only the first time, except when new timelines are added
+		if (IModelInternals.SceneMapping.UpdateAllTextures() != 0)
+		{
+			// Because of the early exit, we need the next call to TickAnimation to enter ApplyAnimation even
+			// when paused *and* NextTimelineToUpdate == 0, to finish the rest of the job!
+			bNeedUpdateAll = true;
+			UE_LOG(LogITwin, Verbose, TEXT("Skipping ApplyAnimation (dirty textures)"));
+			return;
+		}
+	}
+
+	if (LastAnimationTime
+		&& std::abs(ITwin::Time::FromDateTime(Schedules.ScheduleTime) - (*LastAnimationTime)) < 0.01//seconds
 		&& !bForceUpdateAll && !bNeedUpdateAll && NextTimelineToUpdate == 0)
 	{
 		return;
 	}
-	FITwinIModelInternals& IModelInternals = GetInternals(*IModel);
 	auto const& GroupBBoxGetter = std::bind(&FITwinIModelInternals::GetBoundingBox, &IModelInternals,
 											std::placeholders::_1);
 	auto const& BBoxGetter = std::bind(&FITwinSceneMapping::GetBoundingBox, &IModelInternals.SceneMapping,
@@ -460,51 +496,32 @@ void FITwinSynchro4DAnimator::FImpl::ApplyAnimation(bool const bForceUpdateAll)
 	}
 	if (!LastAnimationTime)
 		bNeedUpdateAll = true;
-
-	bool bHasUpdatedTextures = false;
-	if (IModelInternals.SceneMapping.NewTilesReceivedHaveTextures(bHasUpdatedTextures))
-	{
-		// restart from scratch
-		LastAnimationTime.reset();
-		NextTimelineToUpdate = 0;
-		TimeToApplyAllTimelines = 0;
-		if (bHasUpdatedTextures)
-		{
-			// Don't do UpdateInMaterials in same tick :/ but nothing guarantees that the render thread will
-			// have processed or UpdateTexture messages before next tick, right?
-			// TODO_GCO: sync with UpdateTextureRegions's DataCleanup functor?
-			// Because of the early exit, we need the next call to TickAnimation to enter ApplyAnimation even
-			// when paused *and* NextTimelineToUpdate == 0, to finish the rest of the job!
-			// Since we have reset LastAnimationTime anyway, let's set this flag:
-			bNeedUpdateAll = true;
-			return;
-		}
-	}
-	IModelInternals.SceneMapping.HandleNewTileTexturesNeedUpateInMaterials();
 	double const TimelineUpdateEnd = // store time before handling masking of duplicates in condition below
 		FPlatformTime::Seconds() + (Schedules.MaxTimelineUpdateMilliseconds / 1000.);
-	if (NextTimelineToUpdate == 0)
+	if (bNeedUpdateAll)
 	{
-		AnimationTime = ITwin::Time::FromDateTime(Schedules.ScheduleTime);
-		// As a precaution, don't start applying animation as long as some textures are dirty.
-		// "Useful"(is it?) only the first time, except when new timelines are added
-		if (IModelInternals.SceneMapping.UpdateAllTextures() != 0)
-		{
-			// Because of the early exit, we need the next call to TickAnimation to enter ApplyAnimation even
-			// when paused *and* NextTimelineToUpdate == 0, to finish the rest of the job!
-			bNeedUpdateAll = true;
-			UE_LOG(LogITwin, Verbose, TEXT("Skipping ApplyAnimation (dirty textures)"));
-			return;
-		}
-		if (bNeedUpdateAll)
+		if (NextTimelineToUpdate == 0)
 		{
 			IModelInternals.ProcessElementsInEachTile(Timeline.GetNonAnimatedDuplicates(),
 				std::bind(&::Detail::ForceHideBatchedElement, std::placeholders::_2, std::placeholders::_3),
 				[](FITwinSceneTile&, FITwinExtractedEntity&) {}, false);
 		}
 	}
-	if (!bNeedUpdateAll)
+	else
+	{
 		TimeIncrement.emplace(std::minmax(*LastAnimationTime, AnimationTime));
+	}
+	if (NextTimelineToUpdate == 0)
+	{
+		for (auto&& [_, SceneTile] : IModelInternals.SceneMapping.KnownTiles)
+		{
+			if (SceneTile.bNewMeshesToAnimate)
+			{
+				SceneTile.bNewMeshesToAnimate = false;
+				HasNewMeshesToAnimate.insert(&SceneTile);
+			}
+		}
+	}
 	auto&& AllTimelines = Timeline.GetContainer();
 	size_t const FirstTimelineUpdated = NextTimelineToUpdate;
 	size_t const NumberOfTimelines = AllTimelines.size();
@@ -613,6 +630,14 @@ void FITwinSynchro4DAnimator::FImpl::ApplyAnimation(bool const bForceUpdateAll)
 		if (bHasUpdatedSomething)
 		{
 			IModelInternals.SceneMapping.UpdateAllTextures();
+			for (auto& SceneTile : HasNewMeshesToAnimate)
+			{
+				if (SceneTile->bNewMeshesToAnimate) // was reset in the meantime => do not show tile!
+					continue;
+				for (auto&& Mat : SceneTile->Materials)
+					FITwinSceneMapping::SetForcedOpacity(Mat, -1.f);
+			}
+			HasNewMeshesToAnimate.clear();
 		}
 		bHasUpdatedSomething = false;
 		if (bNeedUpdateAllAgain)

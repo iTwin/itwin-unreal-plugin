@@ -50,9 +50,14 @@ namespace SDK::Core {
 			{
 				jsonDeco_ = std::move(jOut.data);
 				id_ = jOut.id;
+				BE_LOGI("ITwinDecoration", "Created decoration for itwin " << itwinid
+					<< " (ID: " << id_ << ")");
 			}
 			else
-				throw std::string("Create decoration failed. http status:" + std::to_string(status));
+			{
+				BE_LOGW("ITwinDecoration", "Could not create decoration for itwin " << itwinid
+					<< ". Http status: " << status);
+			}
 		}
 
 		void Get(const std::string& id, const std::string& accessToken)
@@ -64,9 +69,12 @@ namespace SDK::Core {
 			if (status == 200)
 			{
 				id_ = id;
+				BE_LOGI("ITwinDecoration", "Loaded decoration with ID " << id_);
 			}
 			else
-				throw std::string("Load decoration failed. http status:" + std::to_string(status));
+			{
+				BE_LOGW("ITwinDecoration", "Load decoration failed. Http status: " << status);
+			}
 		}
 
 		void Delete()
@@ -75,7 +83,11 @@ namespace SDK::Core {
 			auto status = GetHttp()->Delete(s, "");
 			if (status.first != 200)
 			{
-				throw std::string("Delete decoration failed. http status:" + std::to_string(status.first));
+				BE_LOGW("ITwinDecoration", "Delete decoration failed. Http status: " << status.first);
+			}
+			else
+			{
+				BE_LOGI("ITwinDecoration", "Deleted decoration with ID " << id_);
 			}
 			id_ = "";
 			jsonDeco_ = SJsonDeco();
@@ -168,6 +180,7 @@ namespace SDK::Core {
 
 		if (status == 200 || status == 201)
 		{
+			BE_LOGI("ITwinDecoration", "Found " << jOut.rows.size() << " decoration(s) for iTwin " << itwinid);
 			for (auto& row : jOut.rows)
 			{
 				std::shared_ptr<SDK::Core::IDecoration> deco = SDK::Core::IDecoration::New();
@@ -176,8 +189,9 @@ namespace SDK::Core {
 			}
 		}
 		else
-			throw std::string("Load decorations failed. http status:" + std::to_string(status));
-
+		{
+			BE_LOGW("ITwinDecoration", "Load decorations failed. Http status: " << status);
+		}
 
 		return decorations;
 	}

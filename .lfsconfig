@@ -1,0 +1,2 @@
+[lfs]
+    fetchexclude = Private/UnrealProjects/Carrot/Content/CarrotLibrary

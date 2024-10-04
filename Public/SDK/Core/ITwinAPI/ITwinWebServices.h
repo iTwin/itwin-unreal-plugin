@@ -30,12 +30,11 @@ MODULE_EXPORT namespace SDK::Core
 		ITwinWebServices();
 		~ITwinWebServices();
 
+		EITwinEnvironment GetEnvironment() const { return env_; }
 		void SetEnvironment(EITwinEnvironment env);
 
 		//! Returns the authorization token, if any.
 		std::string GetAuthToken() const;
-
-		void SetAuthToken(std::string const& token);
 
 		//! Change the server URL - only used for unit testing
 		void SetCustomServerURL(std::string const& serverUrl);
@@ -104,6 +103,10 @@ MODULE_EXPORT namespace SDK::Core
 		void GetMaterialProperties(
 			std::string const& iTwinId, std::string const& iModelId, std::string const& iChangesetId,
 			std::string const& materialId);
+
+		void GetTextureData(
+			std::string const& iTwinId, std::string const& iModelId, std::string const& iChangesetId,
+			std::string const& textureId);
 
 		static ITwinWebServices* GetWorkingInstance();
 

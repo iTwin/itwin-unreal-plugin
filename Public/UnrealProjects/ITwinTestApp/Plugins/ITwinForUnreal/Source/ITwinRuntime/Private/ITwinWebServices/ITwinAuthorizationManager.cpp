@@ -25,7 +25,8 @@
 #include <Misc/Base64.h>
 
 #include <Compil/BeforeNonUnrealIncludes.h>
-	#include <BeHeaders/Compil/CleanUpGuard.h>
+#	include <BeHeaders/Compil/CleanUpGuard.h>
+#	include <Core/ITwinAPI/ITwinAuthManager.h>
 #include <Compil/AfterNonUnrealIncludes.h>
 
 
@@ -38,19 +39,43 @@
 #endif
 
 
-struct FAuthorizationCredentials
+class FAuthorizationCredentials
 {
+public:
 	static constexpr int LocalhostPort = 3000;
 	static constexpr auto RedirectUriEndpoint = TEXT("/signin-callback");
-	static constexpr auto Scope = TEXT("itwin-platform") \
-		OPTIONAL_OFFLINE_ACCESS_SCOPE \
-		;
 
 	static ITwin::AppIDArray ITwinAppIDs;
 
+private:
+	static constexpr auto MinimalScope = TEXT("itwin-platform") \
+		OPTIONAL_OFFLINE_ACCESS_SCOPE \
+		;
+	// Additional scopes may be added by the client application (this is the case in Carrot currently).
+	static FString ExtraScopes;
+
+public:
 	static FString GetRedirectUri()
 	{
 		return FString::Printf(TEXT("http://localhost:%d%s"), LocalhostPort, RedirectUriEndpoint);
+	}
+	static FString GetScope()
+	{
+		return ExtraScopes + MinimalScope;
+	}
+	static void AddScopes(FString const& InExtraScopes)
+	{
+		// Make sure we add a separator if needed.
+		FString const ScopesToAdd = InExtraScopes.TrimStartAndEnd();
+		if (!ExtraScopes.IsEmpty())
+		{
+			ExtraScopes += TEXT(" ");
+		}
+		ExtraScopes += ScopesToAdd;
+		if (!ExtraScopes.IsEmpty())
+		{
+			ExtraScopes += TEXT(" ");
+		}
 	}
 
 	static FString GetITwinAppId(EITwinEnvironment Env)
@@ -84,6 +109,9 @@ namespace ITwin
 ITwin::AppIDArray FAuthorizationCredentials::ITwinAppIDs;
 
 /*static*/
+FString FAuthorizationCredentials::ExtraScopes;
+
+/*static*/
 void FITwinAuthorizationManager::SetITwinAppIDArray(ITwin::AppIDArray const& ITwinAppIDs)
 {
 	FAuthorizationCredentials::ITwinAppIDs = ITwinAppIDs;
@@ -97,6 +125,12 @@ bool FITwinAuthorizationManager::HasITwinAppID(EITwinEnvironment Env)
 }
 
 /*static*/
+void FITwinAuthorizationManager::AddScopes(FString const& ExtraScopes)
+{
+	FAuthorizationCredentials::AddScopes(ExtraScopes);
+}
+
+/*static*/
 FITwinAuthorizationManager::Pool FITwinAuthorizationManager::Instances;
 
 /*static*/
@@ -105,7 +139,7 @@ FITwinAuthorizationManager::SharedInstance& FITwinAuthorizationManager::GetInsta
 	static std::mutex PoolMutex;
 
 	const size_t EnvIndex = (size_t)Env;
-	checkf(EnvIndex < Instances.size(), TEXT("Invalid environement (index: %u)"), EnvIndex);
+	checkf(EnvIndex < Instances.size(), TEXT("Invalid environment (index: %u)"), EnvIndex);
 
 	std::unique_lock<std::mutex> lock(PoolMutex);
 	if (!Instances[EnvIndex])
@@ -119,6 +153,8 @@ FITwinAuthorizationManager::SharedInstance& FITwinAuthorizationManager::GetInsta
 FITwinAuthorizationManager::FITwinAuthorizationManager(EITwinEnvironment Env)
 	: Environment(Env)
 {
+	CoreImpl = SDK::Core::ITwinAuthManager::GetInstance(
+		static_cast<SDK::Core::EITwinEnvironment>(Env));
 	IsThisValid = std::make_shared<std::atomic_bool>(true);
 }
 
@@ -154,14 +190,19 @@ void FITwinAuthorizationManager::ResetRestartTicker()
 
 bool FITwinAuthorizationManager::HasAccessToken() const
 {
-	FLock Lock(this->Mutex);
-	return !this->AccessToken.IsEmpty();
+	return CoreImpl->HasAccessToken();
 }
 
 void FITwinAuthorizationManager::GetAccessToken(FString& OutAccessToken) const
 {
-	FLock Lock(this->Mutex);
-	OutAccessToken = this->AccessToken;
+	std::string accessToken;
+	CoreImpl->GetAccessToken(accessToken);
+	OutAccessToken = accessToken.c_str();
+}
+
+void FITwinAuthorizationManager::SetOverrideAccessToken(const FString& InAccessToken)
+{
+	CoreImpl->SetOverrideAccessToken(TCHAR_TO_ANSI(*InAccessToken));
 }
 
 bool FITwinAuthorizationManager::HasRefreshToken() const
@@ -198,6 +239,18 @@ bool FITwinAuthorizationManager::TryLoadRefreshToken()
 		// Fill AuthInfo
 		AuthInfo.RefreshToken = RefreshToken;
 	}
+	if (bHasRefreshToken && ReloadTokenFunc)
+	{
+		// Custom function to reload a non-expired token.
+		FString ReadAccessToken;
+		FITwinAuthorizationInfo ReadAuthInfo;
+		if (ReloadTokenFunc(ReadAccessToken, ReadAuthInfo))
+		{
+			ReadAuthInfo.RefreshToken = RefreshToken;
+			ReadAuthInfo.CreationTime = FApp::GetCurrentTime();
+			SetAuthorizationInfo(ReadAccessToken, ReadAuthInfo, EAuthContext::Reload);
+		}
+	}
 	return bHasRefreshToken;
 }
 
@@ -211,11 +264,11 @@ void FITwinAuthorizationManager::ResetRefreshToken()
 void FITwinAuthorizationManager::SetAuthorizationInfo(
 	FString const& InAccessToken,
 	FITwinAuthorizationInfo const& InAuthInfo,
-	bool bAutoRefresh /*= true*/)
+	EAuthContext AuthContext /*= EAuthContext::StdRequest*/)
 {
-	FLock Lock(this->Mutex);
+	CoreImpl->SetAccessToken(TCHAR_TO_ANSI(*InAccessToken));
 
-	AccessToken = InAccessToken;
+	FLock Lock(this->Mutex);
 
 	bool const bSameRefreshToken = (AuthInfo.RefreshToken == InAuthInfo.RefreshToken);
 	AuthInfo = InAuthInfo;
@@ -223,11 +276,20 @@ void FITwinAuthorizationManager::SetAuthorizationInfo(
 	if (!bSameRefreshToken)
 	{
 		// save new information to enable refresh upon future sessions (if a new refresh token was
-		// retrieved) or avoid reusing and expired one if none was newly fetched.
+		// retrieved) or avoid reusing an expired one if none was newly fetched.
 		UITwinWebServices::SaveToken(AuthInfo.RefreshToken, Environment);
 	}
+
+	if (AuthContext == EAuthContext::StdRequest && OnTokenGrantedFunc)
+	{
+		// Custom observer function.
+		OnTokenGrantedFunc(InAccessToken, InAuthInfo);
+	}
+
 	ResetRefreshTicker();
-	if (bAutoRefresh && !InAuthInfo.RefreshToken.IsEmpty())
+
+#if USE_REFRESH_TOKEN()
+	if (!InAuthInfo.RefreshToken.IsEmpty())
 	{
 		// usually, iTwin access tokens expire after 3600 seconds
 		// let's try to refresh it *before* its actual expiration
@@ -246,6 +308,7 @@ void FITwinAuthorizationManager::SetAuthorizationInfo(
 			return false; // One tick
 		}), TickerDelay);
 	}
+#endif //USE_REFRESH_TOKEN
 }
 
 
@@ -282,7 +345,7 @@ namespace // imported from unreal-engine-3dft-plugin
 			+ "/connect/authorize?response_type=code"
 			+ "&client_id=" + FAuthorizationCredentials::GetITwinAppId(Env)
 			+ "&redirect_uri=" + FPlatformHttp::UrlEncode(RedirectUri)
-			+ "&scope=" + FPlatformHttp::UrlEncode(FAuthorizationCredentials::Scope)
+			+ "&scope=" + FPlatformHttp::UrlEncode(FAuthorizationCredentials::GetScope())
 			+ PromptParam
 			+ "&state=" + State
 			+ "&code_challenge=" + CodeChallenge
@@ -295,6 +358,15 @@ namespace // imported from unreal-engine-3dft-plugin
 		}
 		return "";
 	}
+}
+
+FString FITwinAuthorizationManager::GetITwinAppId() const
+{
+	if (ensure(HasITwinAppID(Environment)))
+	{
+		return FAuthorizationCredentials::GetITwinAppId(Environment);
+	}
+	return {};
 }
 
 void FITwinAuthorizationManager::AddObserver(IITwinAuthorizationObserver* Observer)
@@ -329,7 +401,7 @@ void FITwinAuthorizationManager::ProcessTokenRequest(
 	const FString clientId = FAuthorizationCredentials::GetITwinAppId(Environment);
 	if (clientId.IsEmpty())
 	{
-		UE_LOG(LogITwinHttp, Error, TEXT("The iTwin App ID is missing. Please refer to the plugin documentation."));
+		BE_LOGE("ITwinAPI", "The iTwin App ID is missing. Please refer to the plugin documentation.");
 		return;
 	}
 
@@ -360,7 +432,7 @@ void FITwinAuthorizationManager::ProcessTokenRequest(
 		+ refreshParams
 		+ "&code=" + authorizationCode
 		+ "&code_verifier=" + verifier
-		+ "&scope=" + FPlatformHttp::UrlEncode(FAuthorizationCredentials::Scope));
+		+ "&scope=" + FPlatformHttp::UrlEncode(FAuthorizationCredentials::GetScope()));
 	tokenRequest->OnProcessRequestComplete().BindLambda(
 		[=, this, IsValidLambda = this->IsThisValid]
 		(FHttpRequestPtr request, FHttpResponsePtr response, bool connectedSuccessfully)
@@ -386,14 +458,14 @@ void FITwinAuthorizationManager::ProcessTokenRequest(
 				// automatic refresh attempt through a timer => just log the result of the refresh request
 				if (bHasAuthToken)
 				{
-					UE_LOG(LogITwinHttp, Display, TEXT("iTwin authorization successfully refreshed"));
+					BE_LOGI("ITwinAPI", "iTwin authorization successfully refreshed");
 				}
 				else
 				{
 					const double remainingTime = this->GetExpirationTime() - FApp::GetCurrentTime();
 					const int remainingSec = static_cast<int>(std::max(0., remainingTime));
-					UE_LOG(LogITwinHttp, Error, TEXT("Could not refresh the authorization (expiring in %d seconds):\n%s"),
-						remainingSec, *requestError);
+					BE_LOGE("ITwinAPI", "Could not refresh the authorization (expiring in "
+						<< remainingSec << " seconds) - error: " << TCHAR_TO_UTF8(*requestError));
 				}
 			}
 			else
@@ -478,7 +550,13 @@ void FITwinAuthorizationManager::CheckAuthorization()
 	const FString state = GenerateRandomCharacters(10);
 	const FString verifier = GenerateRandomCharacters(128);
 
-	TryLoadRefreshToken();
+	const bool bHasLoadedRefreshTok = TryLoadRefreshToken();
+	if (bHasLoadedRefreshTok && HasAccessToken())
+	{
+		// We could reload a non-expired token.
+		this->NotifyResult(true, {});
+		return;
+	}
 
 	auto routeHandle = MakeShared<FHttpRouteHandle>();
 	*routeHandle = FHttpServerModule::Get().GetHttpRouter(FAuthorizationCredentials::LocalhostPort)
@@ -507,7 +585,7 @@ void FITwinAuthorizationManager::CheckAuthorization()
 			}
 			else
 			{
-				FString const HtmlError = request.QueryParams["error_description"].Replace(TEXT("+"), TEXT(" "));
+				FString const HtmlError = request.QueryParams.FindRef("error_description").Replace(TEXT("+"), TEXT(" "));
 				HtmlText = FString::Printf(TEXT("<h1>Error signin in!</h1><br/>%s<br/><br/>You can close this browser window and return to the application."),
 					*HtmlError);
 			}
@@ -566,4 +644,14 @@ bool FITwinAuthorizationManager::IsAuthorizationInProgress() const
 	if (HasAccessToken())
 		return false;
 	return bHasBoundAuthPort.load();
+}
+
+void FITwinAuthorizationManager::SetTokenGrantedObserverFunc(FTokenGrantedObserverFunc const& Func)
+{
+	OnTokenGrantedFunc = Func;
+}
+
+void FITwinAuthorizationManager::SetReloadTokenFunc(FReloadTokenFunc const& Func)
+{
+	ReloadTokenFunc = Func;
 }

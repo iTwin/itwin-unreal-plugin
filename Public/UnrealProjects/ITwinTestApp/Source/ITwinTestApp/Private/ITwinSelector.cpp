@@ -8,7 +8,7 @@
 
 #include <ITwinSelector.h>
 #include <ITwinSelectorWidgetImpl.h>
-#include <iTwinWebServices/iTwinWebServices.h>
+#include <ITwinWebServices/ITwinWebServices.h>
 #include <Components/TextBlock.h>
 #include <TimerManager.h>
 #include <UObject/StrongObjectPtr.h>
@@ -25,7 +25,7 @@ void AITwinSelector::BeginPlay()
 	// or Dev environment in the test app.
 	ITwinWebService->InitServerConnectionFromWorld();
 	// Check authorization
-	ITwinWebService->OnAuthorizationChecked.AddDynamic(this, &AITwinSelector::AuthError);
+	ITwinWebService->OnAuthorizationChecked.AddDynamic(this, &AITwinSelector::OnAuthorizationDone);
 	ITwinWebService->CheckAuthorization();
 }
 
@@ -40,11 +40,11 @@ FString AITwinSelector::GetIModelDisplayName(const FString& iModelId) const
 	return DisplayName;
 }
 
-void AITwinSelector::AuthError(bool bSuccess, FString Error)
+void AITwinSelector::OnAuthorizationDone(bool bSuccess, FString AuthError)
 {
 	if (!bSuccess)
 	{
-		UI->ShowErrorPanel(Error);
+		UI->ShowErrorPanel(AuthError);
 		return;
 	}
 	// iTwin combobox
@@ -118,12 +118,12 @@ void AITwinSelector::OnExportsCompleted(bool bSuccess, FITwinExportInfos Exports
 {
 	FString Status;
 	FindExport(Status, Exports);
-	if (Status == "Complete")
+	if (Status == TEXT("Complete"))
 	{
 		LoadIModel();
 		return;
 	}
-	if (Status == "Processing")
+	if (Status == TEXT("Processing"))
 	{
 		UI->ShowPanel(1);
 		FTimerHandle TimerHandle;
@@ -133,8 +133,17 @@ void AITwinSelector::OnExportsCompleted(bool bSuccess, FITwinExportInfos Exports
 			}), 5, false);
 		return;
 	}
-	UI->ShowPanel(1);
-	ITwinWebService->StartExport(SelectedIModelId, SelectedChangesetId);
+	if (!bSuccess)
+	{
+		UI->ShowErrorPanel(FString::Printf(
+			TEXT("Error listing available Exports for:\niTwin: %s\niModel: %s\nchangeset: %s"),
+			*SelectedITwinId, *SelectedIModelId, *SelectedChangesetId));
+	}
+	else
+	{
+		UI->ShowPanel(1);
+		ITwinWebService->StartExport(SelectedIModelId, SelectedChangesetId);
+	}
 }
 
 void AITwinSelector::OnStartExportComplete(bool bSuccess, FString ExportId)
@@ -150,7 +159,7 @@ void AITwinSelector::OnStartExportComplete(bool bSuccess, FString ExportId)
 	}
 }
 
-void AITwinSelector::GetExportInfoComplete(bool bSuccess, FITwinExportInfo Export)
+void AITwinSelector::GetExportInfoComplete(bool /*bSuccess*/, FITwinExportInfo Export)
 {
 	FString State;
 	GetExportState(State, Export);
@@ -159,7 +168,7 @@ void AITwinSelector::GetExportInfoComplete(bool bSuccess, FITwinExportInfo Expor
 		LoadIModel();
 		return;
 	}
-	if (State == TEXT("Invalid"))
+	if (State == TEXT("Invalid")) // bSuccess is probably false, or maybe we passed an outdated exportId
 	{
 		UI->ShowErrorPanel({});
 		return;

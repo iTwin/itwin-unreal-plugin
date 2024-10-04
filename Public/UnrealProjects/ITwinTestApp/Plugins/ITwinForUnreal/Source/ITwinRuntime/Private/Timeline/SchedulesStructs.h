@@ -68,7 +68,7 @@ public: // Note: ordered for best packing, not semantics (keep order or change l
 	/// Growth direction for the case EGrowthSimulationMode::Custom. Note that it is expressed in the
 	/// transformed base (see FTransformAssignment).
 	FVector GrowthDirectionCustom;
-	float FinishAlpha; ///< Alpha at the end of the task
+	float FinishAlpha = 1.f; ///< Alpha at the end of the task
 	/// Growth direction, either along a common axis, or custom, expressed in the iTwin base/convention.
 	/// Note that it should be interpreted in the transformed base (see FTransformAssignment).
 	EGrowthSimulationMode GrowthSimulationMode = EGrowthSimulationMode::None;
@@ -177,6 +177,7 @@ public:
 class FScheduleTask : public FAnimationBindingProperty
 {
 public:
+	FString Id;
 	FString Name;
 	/// Task's start and finish times using dates in UTC time, expressed in seconds since Midnight
 	/// 00:00:00, January 1, 0001

@@ -95,6 +95,9 @@ void SetDefaultConfig()
 	config.server.port = GetHttpMock()->getPort();
 	config.server.urlapiprefix = "/advviz/v1/decorations";
 	Config::Init(config);
+
+	Tools::InitLog("log_Test.txt");
+	Tools::CreateLogChannel("ITwinDecoration", Tools::Level::info);
 }
 
 TEST_CASE("Visualization"){

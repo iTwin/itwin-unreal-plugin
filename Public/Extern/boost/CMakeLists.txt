@@ -134,8 +134,8 @@ set(boostHeaders
 	./container/container_fwd.hpp
 	./container/detail/advanced_insert_int.hpp
 	./container/detail/algorithm.hpp
-	./container/detail/alloc_helpers.hpp
 	./container/detail/allocation_type.hpp
+	./container/detail/alloc_helpers.hpp
 	./container/detail/config_begin.hpp
 	./container/detail/config_end.hpp
 	./container/detail/construct_in_place.hpp
@@ -660,6 +660,7 @@ set(boostHeaders
 	./move/detail/pointer_element.hpp
 	./move/detail/reverse_iterator.hpp
 	./move/detail/std_ns_begin.hpp
+	./move/detail/std_ns_end.hpp
 	./move/detail/to_raw_pointer.hpp
 	./move/detail/type_traits.hpp
 	./move/detail/workaround.hpp
@@ -1571,11 +1572,13 @@ set(boostHeaders
 	./multi_index/detail/auto_space.hpp
 	./multi_index/detail/bad_archive_exception.hpp
 	./multi_index/detail/base_type.hpp
+	./multi_index/detail/bidir_node_iterator.hpp
 	./multi_index/detail/bucket_array.hpp
 	./multi_index/detail/converter.hpp
 	./multi_index/detail/copy_map.hpp
 	./multi_index/detail/define_if_constexpr_macro.hpp
 	./multi_index/detail/do_not_copy_elements_tag.hpp
+	./multi_index/detail/duplicates_iterator.hpp
 	./multi_index/detail/hash_index_args.hpp
 	./multi_index/detail/hash_index_iterator.hpp
 	./multi_index/detail/hash_index_node.hpp
@@ -1598,7 +1601,10 @@ set(boostHeaders
 	./multi_index/detail/node_type.hpp
 	./multi_index/detail/no_duplicate_tags.hpp
 	./multi_index/detail/ord_index_args.hpp
+	./multi_index/detail/ord_index_impl.hpp
 	./multi_index/detail/ord_index_impl_fwd.hpp
+	./multi_index/detail/ord_index_node.hpp
+	./multi_index/detail/ord_index_ops.hpp
 	./multi_index/detail/promotes_arg.hpp
 	./multi_index/detail/raw_ptr.hpp
 	./multi_index/detail/restore_wstrict_aliasing.hpp
@@ -1611,13 +1617,19 @@ set(boostHeaders
 	./multi_index/detail/scoped_bilock.hpp
 	./multi_index/detail/scope_guard.hpp
 	./multi_index/detail/serialization_version.hpp
+	./multi_index/detail/uintptr_type.hpp
+	./multi_index/detail/unbounded.hpp
 	./multi_index/detail/undef_if_constexpr_macro.hpp
+	./multi_index/detail/value_compare.hpp
 	./multi_index/detail/vartempl_support.hpp
+	./multi_index/global_fun.hpp
 	./multi_index/hashed_index.hpp
 	./multi_index/hashed_index_fwd.hpp
 	./multi_index/identity.hpp
 	./multi_index/identity_fwd.hpp
 	./multi_index/indexed_by.hpp
+	./multi_index/member.hpp
+	./multi_index/ordered_index.hpp
 	./multi_index/ordered_index_fwd.hpp
 	./multi_index/random_access_index.hpp
 	./multi_index/random_access_index_fwd.hpp
