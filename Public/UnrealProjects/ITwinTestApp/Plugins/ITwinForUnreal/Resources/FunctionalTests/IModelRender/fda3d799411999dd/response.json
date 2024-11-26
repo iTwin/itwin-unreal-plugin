@@ -1,0 +1,4 @@
+{
+    "status": 200,
+    "body": "{\"kind\":1,\"error\":\"\",\"status\":1,\"stats\":{\"cpuTime\":112,\"totalTime\":1,\"timeLimit\":60000,\"memLimit\":8388608,\"memUsed\":2},\"rowCount\":0,\"meta\":[{\"className\":\"\",\"accessString\":\"ECInstanceId\",\"generated\":false,\"index\":0,\"jsonName\":\"id\",\"name\":\"ECInstanceId\",\"extendedType\":\"Id\",\"typeName\":\"long\"},{\"className\":\"\",\"accessString\":\"SourceECInstanceId\",\"generated\":false,\"index\":1,\"jsonName\":\"sourceId\",\"name\":\"SourceECInstanceId\",\"extendedType\":\"SourceId\",\"typeName\":\"long\"}],\"data\":[]}"
+}

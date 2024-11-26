@@ -85,7 +85,7 @@ namespace SDK::Core
 			headers.emplace_back("Authorization", std::string("Bearer ") + accessToken);
 
 			long status = GetHttp()->GetJsonJBody(
-				jOut, decorationId + "/instancesgroups", jIn, headers);
+				jOut, "decorations/" + decorationId + "/instancesgroups", jIn, headers);
 
 			if (status == 200 || status == 201)
 			{
@@ -116,7 +116,7 @@ namespace SDK::Core
 			headers.emplace_back("Authorization", std::string("Bearer ") + accessToken);
 
 			long status = GetHttp()->GetJsonJBody(
-				jOut, decorationId + "/instances", jIn, headers);
+				jOut, "decorations/" + decorationId + + "/instances", jIn, headers);
 			bool continueLoading = true;
 
 			while (continueLoading)
@@ -192,7 +192,7 @@ namespace SDK::Core
 			headers.emplace_back("Authorization", std::string("Bearer ") + accessToken);
 
 			long status = GetHttp()->PostJsonJBody(
-				jOut, decorationId + "/instancesgroups", jIn, headers);
+				jOut, "decorations/" + decorationId + "/instancesgroups", jIn, headers);
 
 			if (status == 200 || status == 201)
 			{
@@ -262,7 +262,7 @@ namespace SDK::Core
 				struct SJsonInstOutVect	{ std::vector<SJsonInstOut> instances; };
 				SJsonInstOutVect jOutPost;
 				long status = GetHttp()->PostJsonJBody(
-					jOutPost, decorationId + "/instances", jInPost, headers);
+					jOutPost, "decorations/" + decorationId + "/instances", jInPost, headers);
 
 				if (status == 200 || status == 201)
 				{
@@ -288,7 +288,7 @@ namespace SDK::Core
 				struct SJsonInstOutUpd { int64_t numUpdated; };
 				SJsonInstOutUpd jOutPut;
 				long status = GetHttp()->PutJsonJBody(
-					jOutPut, decorationId + "/instances", jInPut, headers);
+					jOutPut, "decorations/" + decorationId  + "/instances", jInPut, headers);
 
 				if (status == 200 || status == 201)
 				{
@@ -324,7 +324,7 @@ namespace SDK::Core
 				headers.emplace_back("Authorization", std::string("Bearer ") + accessToken);
 
 				long status = GetHttp()->DeleteJsonJBody(
-					jOut, decorationId + "/instances", jIn, headers);
+					jOut, "decorations/" + decorationId + "/instances", jIn, headers);
 
 				if (status != 200 && status != 201)
 				{

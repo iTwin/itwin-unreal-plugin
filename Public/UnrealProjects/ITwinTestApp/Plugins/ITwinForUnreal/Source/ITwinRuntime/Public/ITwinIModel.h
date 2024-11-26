@@ -9,9 +9,10 @@
 #pragma once
 
 #include <ITwinCoordSystem.h>
+#include <ITwinFwd.h>
+#include <ITwinLoadInfo.h>
 #include <ITwinServiceActor.h>
 #include <Templates/PimplPtr.h>
-#include <ITwinFwd.h>
 #include <memory>
 #include <ITwinIModel.generated.h>
 
@@ -25,6 +26,10 @@ namespace SDK::Core
 	enum class EChannelType : uint8_t;
 	struct ITwinMaterial;
 	class MaterialPersistenceManager;
+}
+namespace BeUtils
+{
+	class GltfMaterialHelper;
 }
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnIModelLoaded, bool, bSuccess);
@@ -115,7 +120,7 @@ public:
 		VisibleAnywhere)
 	EITwinExportStatus ExportStatus = EITwinExportStatus::Unknown;
 
-	//! WORK IN PROGRESS - UNRELEASED - Synchro4D schedules found on this iModel.
+	//! Synchro4D schedules found on this iModel.
 	UPROPERTY(Category = "iTwin",
 		VisibleAnywhere)
 	UITwinSynchro4DSchedules* Synchro4DSchedules = nullptr;
@@ -127,6 +132,7 @@ public:
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 #endif
 	virtual void PostLoad() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 	//! To be called at least once after ServerConnection, IModelId, ChangesetId have been set.
 	//! This will query the mesh export service for a corresponding export, and if complete one is found,
@@ -153,8 +159,15 @@ public:
 
 	UFUNCTION(Category = "iTwin|Info",
 		BlueprintCallable)
-	void GetModel3DInfoInCoordSystem(FITwinIModel3DInfo& OutInfo, EITwinCoordSystem CoordSystem,
-		bool bGetLegacy3DFTValue = false) const;
+	void GetModel3DInfoInCoordSystem(FITwinIModel3DInfo& OutInfo, EITwinCoordSystem CoordSystem) const;
+
+	UFUNCTION(Category = "iTwin|Load",
+		BlueprintCallable)
+	void SetModelLoadInfo(FITwinLoadInfo InLoadInfo);
+
+	UFUNCTION(Category = "iTwin|Load",
+		BlueprintCallable)
+	FITwinLoadInfo GetModelLoadInfo() const;
 
 	UFUNCTION(Category = "iTwin|Load",
 		BlueprintCallable)
@@ -210,8 +223,42 @@ public:
 	double GetMaterialChannelIntensity(uint64_t MaterialId, SDK::Core::EChannelType Channel) const;
 	void SetMaterialChannelIntensity(uint64_t MaterialId, SDK::Core::EChannelType Channel, double Intensity);
 
+	FLinearColor GetMaterialChannelColor(uint64_t MaterialId, SDK::Core::EChannelType Channel) const;
+	void SetMaterialChannelColor(uint64_t MaterialId, SDK::Core::EChannelType Channel, FLinearColor const& Color);
+
+	FString GetMaterialChannelTextureID(uint64_t MaterialId, SDK::Core::EChannelType Channel) const;
+	void SetMaterialChannelTextureID(uint64_t MaterialId, SDK::Core::EChannelType Channel, FString const& TextureId);
+
+	using GltfMaterialHelperPtr = std::shared_ptr<BeUtils::GltfMaterialHelper>;
+	std::shared_ptr<BeUtils::GltfMaterialHelper> const& GetGltfMaterialHelper() const;
+
 	using MaterialPersistencePtr = std::shared_ptr<SDK::Core::MaterialPersistenceManager>;
 	static void SetMaterialPersistenceManager(MaterialPersistencePtr const& Mngr);
+	static MaterialPersistencePtr const& GetMaterialPersistenceManager();
+
+	//! Detect material customized by user, and trigger a re-tuning if needed (called when data is loaded
+	//! from the persistence manager).
+	void DetectCustomizedMaterials();
+
+	//! Enforce reloading material definitions as read from the material persistence manager.
+	void ReloadCustomizedMaterials();
+
+	enum class EOffsetContext
+	{
+		UserEdition,
+		Reload
+	};
+	void SetModelOffset(FVector Pos, FVector Rot, EOffsetContext Context = EOffsetContext::UserEdition);
+
+	//! Start loading the decoration attached to this model, if any.
+	UFUNCTION(Category = "iTwin",
+		BlueprintCallable)
+	void LoadDecoration();
+
+	//! Posts a request to start saving the decoration attached to this model, if any.
+	UFUNCTION(Category = "iTwin",
+		BlueprintCallable)
+	void SaveDecoration();
 
 
 	UFUNCTION()
@@ -227,10 +274,12 @@ public:
 	const AITwinCesium3DTileset* GetTileset() const;
 
 	void HideTileset(bool bHide);
-
+	void SetMaximumScreenSpaceError(double InMaximumScreenSpaceError);
 	FString GetExportID() const { return ExportId; }
+	void LoadModelFromInfos(FITwinExportInfo const& ExportInfo);
 
 private:
+	void LoadDecorationIfNeeded();
 	void AutoExportAndLoad();
 	void TestExportCompletionAfterDelay(FString const& InExportId, float DelayInSeconds);
 
@@ -245,6 +294,15 @@ private:
 	//! Retune the tileset if needed, to ensure that all materials customized by the user (or about to be...)
 	//! can be applied to individual meshes.
 	void SplitGltfModelForCustomMaterials(bool bForceRetune = false);
+
+	template <typename MaterialParamHelper>
+	void TSetMaterialChannelParam(MaterialParamHelper const& Helper, uint64_t MaterialId);
+
+	FString GetMaterialChannelColorTextureID(uint64_t MaterialId, SDK::Core::EChannelType Channel) const;
+	FString GetMaterialChannelIntensityTextureID(uint64_t MaterialId, SDK::Core::EChannelType Channel) const;
+
+	void SetMaterialChannelColorTextureID(uint64_t MaterialId, SDK::Core::EChannelType Channel, FString const& TextureId);
+	void SetMaterialChannelIntensityTextureID(uint64_t MaterialId, SDK::Core::EChannelType Channel, FString const& TextureId);
 
 	/// overridden from AITwinServiceActor:
 	virtual void UpdateOnSuccessfulAuthorization() override;
@@ -264,7 +322,7 @@ private:
 	virtual void OnElementPropertiesRetrieved(bool bSuccess, FElementProperties const& ElementProps) override;
 	virtual void OnMaterialPropertiesRetrieved(bool bSuccess, SDK::Core::ITwinMaterialPropertiesMap const& props) override;
 	virtual void OnTextureDataRetrieved(bool bSuccess, std::string const& textureId, SDK::Core::ITwinTextureData const& textureData) override;
-	virtual void OnIModelQueried(bool bSuccess, FString const& QueryResult) override;
+	virtual void OnIModelQueried(bool bSuccess, FString const& QueryResult, HttpRequestID const&) override;
 
 	/// overridden from FITwinDefaultWebServicesObserver:
 	virtual const TCHAR* GetObserverName() const override;

@@ -26,7 +26,8 @@ class FITwinScheduleTimelineBuilder
 	friend class FITwinSynchro4DSchedulesInternals;
 
 	UITwinSynchro4DSchedules const* Owner;
-	std::optional<FTransform> const* CesiumToUnrealTransform;
+	std::optional<FTransform> const* IModel2UnrealTransfo;
+	FVector SynchroOriginUE;
 	FITwinScheduleTimeline MainTimeline;
 	FOnElementsTimelineModified OnElementsTimelineModified;
 
@@ -37,9 +38,10 @@ class FITwinScheduleTimelineBuilder
 
 public:
 	FITwinScheduleTimelineBuilder(UITwinSynchro4DSchedules const& InOwner,
-								  std::optional<FTransform> const& InCesiumToUnrealTransform)
+			std::optional<FTransform> const& InIModel2UnrealTransfo, FVector const& InSynchroOriginUE)
 		: Owner(&InOwner)
-		, CesiumToUnrealTransform(&InCesiumToUnrealTransform)
+		, IModel2UnrealTransfo(&InIModel2UnrealTransfo)
+		, SynchroOriginUE(InSynchroOriginUE)
 	{
 	}
 

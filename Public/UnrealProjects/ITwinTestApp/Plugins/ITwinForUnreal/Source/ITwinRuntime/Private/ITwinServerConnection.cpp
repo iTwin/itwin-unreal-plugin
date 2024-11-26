@@ -26,33 +26,42 @@ DEFINE_LOG_CATEGORY(LogITwinHttp);
 
 FString AITwinServerConnection::GetAccessToken() const
 {
-	FString AccessToken;
-	auto const& AuthMngr = FITwinAuthorizationManager::GetInstance(Environment);
+	std::string AccessToken;
+	auto const& AuthMngr = FITwinAuthorizationManager::GetInstance(
+		static_cast<SDK::Core::EITwinEnvironment>(Environment));
 	if (ensure(AuthMngr))
 	{
 		AuthMngr->GetAccessToken(AccessToken);
 	}
-	return AccessToken;
+	return AccessToken.c_str();
 }
 
 /// Checks the request status, response code, and logs any failure (does not assert)
 /// \return Whether the request's response is valid and can be processed further
 /*static*/
 bool AITwinServerConnection::CheckRequest(FHttpRequestPtr const& CompletedRequest,
-										  FHttpResponsePtr const& Response,
-										  bool connectedSuccessfully,
-										  FString* pstrError /*= nullptr*/)
+	FHttpResponsePtr const& Response, bool connectedSuccessfully, FString* pstrError /*= nullptr*/,
+	bool const bWillRetry /*= false*/)
 {
 	FString requestError;
 
-	Be::CleanUpGuard FillErrorCleanup([&requestError, &CompletedRequest, pstrError]
+	Be::CleanUpGuard FillErrorCleanup([&requestError, &CompletedRequest, pstrError, bWillRetry]
 	{
 		if (!requestError.IsEmpty())
 		{
 			if (UITwinWebServices::ShouldLogErrors())
 			{
-				BE_LOGE("ITwinAPI", "Request to " << TCHAR_TO_UTF8(*CompletedRequest->GetURL())
-					<< " failed with " << TCHAR_TO_UTF8(*requestError));
+				if (bWillRetry)
+				{
+					BE_LOGW("ITwinAPI", "Request failed (but will retry), to "
+						<< TCHAR_TO_UTF8(*CompletedRequest->GetURL())
+						<< ", with " << TCHAR_TO_UTF8(*requestError));
+				}
+				else
+				{
+					BE_LOGE("ITwinAPI", "Request to " << TCHAR_TO_UTF8(*CompletedRequest->GetURL())
+						<< " failed with " << TCHAR_TO_UTF8(*requestError));
+				}
 			}
 		}
 		if (pstrError)
@@ -102,7 +111,7 @@ void AITwinServerConnection::SetITwinAppIDArray(ITwin::AppIDArray const& ITwinAp
 
 void AITwinServerConnection::SetITwinAppID(const FString& AppID)
 {
-	UITwinWebServices::SetITwinAppIDArray({AppID});
+	UITwinWebServices::SetITwinAppIDArray({ TCHAR_TO_UTF8(*AppID) });
 }
 
 FString AITwinServerConnection::UrlPrefix() const

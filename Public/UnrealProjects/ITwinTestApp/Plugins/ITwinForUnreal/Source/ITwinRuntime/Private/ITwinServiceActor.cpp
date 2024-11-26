@@ -20,13 +20,15 @@ AITwinServiceActor::AITwinServiceActor()
 
 }
 
-void AITwinServiceActor::Destroyed()
+void AITwinServiceActor::BeginDestroy()
 {
-	Super::Destroyed();
 	if (WebServices)
 	{
+		// Make sure we won't execute any Http request callback while the object is half-destroyed, as it can
+		// make Unreal crash on exit, *included* during the packaging (and thus block it randomly...)
 		WebServices->SetObserver(nullptr);
 	}
+	Super::BeginDestroy();
 }
 
 void AITwinServiceActor::UpdateWebServices()
@@ -50,6 +52,21 @@ void AITwinServiceActor::UpdateWebServices()
 	}
 }
 
+#if WITH_TESTS
+void AITwinServiceActor::SetTestMode(FString const& ServerUrl)
+{
+	// Set a fake access token, to prevent the AuthorizationManager from trying to retrieve a real token
+	FITwinAuthorizationManager::GetInstance(SDK::Core::EITwinEnvironment::Prod)->SetOverrideAccessToken("TestToken");
+	// Create ServerConnection & WebServices pointing to the mock server.
+	ServerConnection = NewObject<AITwinServerConnection>(this);
+	ServerConnection->Environment = EITwinEnvironment::Prod;
+	WebServices = NewObject<UITwinWebServices>(this);
+	WebServices->SetServerConnection(ServerConnection);
+	WebServices->SetTestServerURL(ServerUrl);
+	WebServices->SetObserver(this);
+}
+#endif // WITH_TESTS
+
 const UITwinWebServices* AITwinServiceActor::GetWebServices() const
 {
 	return WebServices.Get();
@@ -68,31 +85,27 @@ const TCHAR* AITwinServiceActor::GetObserverName() const
 	return TEXT("<unknown>");
 }
 
-AITwinServiceActor::EConnectionStatus
-AITwinServiceActor::CheckServerConnection(bool bRequestAuthorisationIfNeeded /*= true*/)
+SDK::Core::EITwinAuthStatus AITwinServiceActor::CheckServerConnection(bool bRequestAuthorisationIfNeeded /*= true*/)
 {
 	UpdateWebServices();
 	if (ServerConnection && ServerConnection->HasAccessToken())
 	{
 		// Assume the access token is valid (this is the case if the authorization is performed internally,
 		// but not if the user types random character in the ServerConnection instance, of course...)
-		return EConnectionStatus::Connected;
+		return SDK::Core::EITwinAuthStatus::Success;
 	}
 	if (ensureMsgf(WebServices, TEXT("WebServices was not yet created")))
 	{
 		if (WebServices->IsAuthorizationInProgress())
 		{
-			return EConnectionStatus::InProgress;
+			return SDK::Core::EITwinAuthStatus::InProgress;
 		}
 		else if (bRequestAuthorisationIfNeeded)
 		{
-			if (WebServices->CheckAuthorization())
-				return EConnectionStatus::Connected;
-			else
-				return EConnectionStatus::InProgress;
+			return WebServices->CheckAuthorizationStatus();
 		}
 	}
-	return EConnectionStatus::NotConnected;
+	return SDK::Core::EITwinAuthStatus::None;
 }
 
 void AITwinServiceActor::UpdateOnSuccessfulAuthorization()
@@ -100,7 +113,7 @@ void AITwinServiceActor::UpdateOnSuccessfulAuthorization()
 
 }
 
-void AITwinServiceActor::OnAuthorizationDone(bool bSuccess, FString const& AuthError)
+void AITwinServiceActor::OnAuthorizationDone(bool bSuccess, std::string const& AuthError)
 {
 	if (bSuccess)
 	{
@@ -113,8 +126,7 @@ void AITwinServiceActor::OnAuthorizationDone(bool bSuccess, FString const& AuthE
 	}
 	else
 	{
-		BE_LOGE("ITwinAPI", "[" << TCHAR_TO_UTF8(GetObserverName()) << "] Authorization failure: "
-			<< TCHAR_TO_UTF8(*AuthError));
+		BE_LOGE("ITwinAPI", "[" << TCHAR_TO_UTF8(GetObserverName()) << "] Authorization failure: " << AuthError);
 	}
 }
 

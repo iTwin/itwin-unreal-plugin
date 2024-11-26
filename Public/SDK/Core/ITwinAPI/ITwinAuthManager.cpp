@@ -9,10 +9,162 @@
 
 #include "ITwinAuthManager.h"
 
+#include "ITwinAuthObserver.h"
+#include "ITwinWebServices.h"
+#include <../BeHeaders/Compil/CleanUpGuard.h>
+
 #include <Core/Tools/Assert.h>
+
+#include <fmt/format.h>
+
+#include <Core/Json/Json.h>
+#include <Core/Network/HttpRequest.h>
+#include <Core/Network/IHttpRouter.h>
+
+#include <curl/curl.h>
+
+#include <random>
+
 
 namespace SDK::Core
 {
+
+
+	template<>
+	std::function<std::shared_ptr<ITwinAuthManager>(EITwinEnvironment env)> Tools::Factory<ITwinAuthManager, EITwinEnvironment>::newFct_
+		= [](EITwinEnvironment /*env*/) {
+		BE_ISSUE("ITwinAuthManager cannot be instantiated directly - need platform specific overrides");
+		std::shared_ptr<ITwinAuthManager> nullMngr;
+		return nullMngr;
+	};
+
+
+#define USE_REFRESH_TOKEN() 1
+
+#if USE_REFRESH_TOKEN()
+#define OPTIONAL_OFFLINE_ACCESS_SCOPE " offline_access"
+#else
+#define OPTIONAL_OFFLINE_ACCESS_SCOPE ""
+#endif
+
+
+	[[nodiscard]] std::string trim(const std::string& source)
+	{
+		std::string s(source);
+		s.erase(0, s.find_first_not_of(" \n\r\t"));
+		s.erase(s.find_last_not_of(" \n\r\t") + 1);
+		return s;
+	}
+
+	class ITwinAuthManager::Credentials
+	{
+	public:
+		static constexpr int LocalhostPort = 3000;
+		static constexpr auto RedirectUriEndpoint = "/signin-callback";
+
+		static AppIDArray AppIDs;
+
+	private:
+		static constexpr auto minimalScope_ = "itwin-platform" \
+			OPTIONAL_OFFLINE_ACCESS_SCOPE \
+			;
+		// Additional scopes may be added by the client application (this is the case in Carrot currently).
+		static std::string extraScopes_;
+
+	public:
+		static std::string GetRedirectUri()
+		{
+			return fmt::format("http://localhost:{}{}", LocalhostPort, RedirectUriEndpoint);
+		}
+		static std::string GetScope()
+		{
+			return extraScopes_ + minimalScope_;
+		}
+		static bool AddScope(std::string const& extraScope)
+		{
+			// Make sure we add a separator if needed.
+			std::string const scopeToAdd = trim(extraScope);
+			if (scopeToAdd.empty())
+				return false;
+			if (GetScope().find(scopeToAdd) != std::string::npos)
+				return false; // already there
+			if (!extraScopes_.empty())
+			{
+				extraScopes_ += " ";
+			}
+			extraScopes_ += scopeToAdd + " ";
+			return true;
+		}
+
+		static std::string const& GetAppID(EITwinEnvironment env)
+		{
+			// Use "ensure" instead of "check" here, so that the app will not stop (crash) if the user
+			// did not correctly set the app ID, which is likely to happen if user just wants to try
+			// the ITwinTestApp without having read the doc completely.
+			// In this case, a more "friendly" error message is displayed by the app.
+			BE_ASSERT(!AppIDs[(size_t)env].empty(), "iTwin App ID not initialized for current env");
+			return AppIDs[(size_t)env];
+		}
+
+		static std::string GetITwinIMSRootUrl(EITwinEnvironment env)
+		{
+			// Dev env must use QA ims.
+			const std::string imsUrlPrefix = ((env == EITwinEnvironment::Prod) ? "" : "qa-");
+			return std::string("https://") + imsUrlPrefix + "ims.bentley.com";
+		}
+	};
+
+	/*static*/
+	ITwinAuthManager::AppIDArray ITwinAuthManager::Credentials::AppIDs;
+
+	/*static*/
+	std::string ITwinAuthManager::Credentials::extraScopes_;
+
+	/*static*/
+	void ITwinAuthManager::SetAppIDArray(AppIDArray const& ITwinAppIDs)
+	{
+		Credentials::AppIDs = ITwinAppIDs;
+	}
+
+	/*static*/
+	bool ITwinAuthManager::HasAppID(EITwinEnvironment env)
+	{
+		if ((size_t)env < Credentials::AppIDs.size())
+		{
+			return !Credentials::AppIDs[(size_t)env].empty();
+		}
+		BE_ISSUE("invalid env", (size_t)env);
+		return false;
+	}
+
+	/*static*/
+	std::string ITwinAuthManager::GetAppID(EITwinEnvironment env)
+	{
+		if ((size_t)env < Credentials::AppIDs.size())
+		{
+			return Credentials::GetAppID(env);
+		}
+		BE_ISSUE("invalid env", (size_t)env);
+		return {};
+	}
+
+	/*static*/
+	void ITwinAuthManager::AddScope(std::string const& extraScope)
+	{
+		Credentials::AddScope(extraScope);
+	}
+
+	/*static*/
+	bool ITwinAuthManager::HasScope(std::string const& scope)
+	{
+		return Credentials::GetScope().find(scope) != std::string::npos;
+	}
+
+	/*static*/
+	std::string ITwinAuthManager::GetRedirectUri()
+	{
+		return Credentials::GetRedirectUri();
+	}
 
 	/*static*/
 	ITwinAuthManager::Pool ITwinAuthManager::instances_;
@@ -28,7 +180,7 @@ namespace SDK::Core
 		std::unique_lock<std::mutex> lock(PoolMutex);
 		if (!instances_[envIndex])
 		{
-			instances_[envIndex].reset(new ITwinAuthManager(env));
+			instances_[envIndex] = ITwinAuthManager::New(env);
 		}
 		return instances_[envIndex];
 	}
@@ -37,33 +189,49 @@ namespace SDK::Core
 	ITwinAuthManager::ITwinAuthManager(EITwinEnvironment env)
 		: env_(env)
 	{
+		stillValid_ = std::make_shared<std::atomic_bool>(true);
+
+		http_ = Http::New();
+		http_->SetBaseUrl(Credentials::GetITwinIMSRootUrl(env_));
 	}
 
 	ITwinAuthManager::~ITwinAuthManager()
 	{
+		*stillValid_ = false;
 	}
+
+	void ITwinAuthManager::ResetRefreshTicker()
+	{
+		UniqueDelayedCall("refreshAuth", {}, -1.f);
+	}
+
+	void ITwinAuthManager::ResetRestartTicker()
+	{
+		UniqueDelayedCall("restartAuth", {}, -1.f);
+	}
+
 
 	bool ITwinAuthManager::HasAccessToken() const
 	{
-		FLock Lock(mutex_);
+		Lock lock(mutex_);
 		return !GetCurrentAccessToken().empty();
 	}
 
 	void ITwinAuthManager::GetAccessToken(std::string& outAccessToken) const
 	{
-		FLock Lock(mutex_);
+		Lock lock(mutex_);
 		outAccessToken = GetCurrentAccessToken();
 	}
 
 	void ITwinAuthManager::SetAccessToken(std::string const& accessToken)
 	{
-		FLock Lock(mutex_);
+		Lock lock(mutex_);
 		accessToken_ = accessToken;
 	}
 
 	void ITwinAuthManager::SetOverrideAccessToken(std::string const& accessToken)
 	{
-		FLock Lock(mutex_);
+		Lock lock(mutex_);
 		overrideAccessToken_ = accessToken;
 	}
 
@@ -71,4 +239,557 @@ namespace SDK::Core
 	{
 		return !overrideAccessToken_.empty() ? overrideAccessToken_ : accessToken_;
 	}
+
+
+	bool ITwinAuthManager::HasRefreshToken() const
+	{
+		Lock lock(mutex_);
+		return !authInfo_.RefreshToken.empty();
+	}
+
+	void ITwinAuthManager::GetRefreshToken(std::string& OutRefreshToken) const
+	{
+		Lock lock(mutex_);
+		OutRefreshToken = authInfo_.RefreshToken;
+	}
+
+	std::chrono::system_clock::time_point ITwinAuthManager::GetExpirationTime() const
+	{
+		Lock lock(mutex_);
+		return authInfo_.GetExpirationTime();
+	}
+
+	bool ITwinAuthManager::TryLoadRefreshToken()
+	{
+		Lock lock(mutex_);
+		if (loadRefreshTokenAttempts_ > 0)
+		{
+			// Only load the refresh token once.
+			return false;
+		}
+		std::string refreshToken;
+		bool const bHasRefreshToken = LoadPrivateData(refreshToken);
+		loadRefreshTokenAttempts_++;
+		if (bHasRefreshToken)
+		{
+			// Fill AuthInfo
+			authInfo_.RefreshToken = refreshToken;
+		}
+		if (bHasRefreshToken)
+		{
+			// Try to reload a non-expired token.
+			std::string readAccessToken;
+			ITwinAuthInfo readAuthInfo;
+			if (ReloadAccessToken(readAccessToken, readAuthInfo))
+			{
+				readAuthInfo.RefreshToken = refreshToken;
+				readAuthInfo.CreationTime = std::chrono::system_clock::now();
+				SetAuthorizationInfo(readAccessToken, readAuthInfo, EAuthContext::Reload);
+			}
+		}
+		return bHasRefreshToken;
+	}
+
+	void ITwinAuthManager::ResetRefreshToken()
+	{
+		Lock lock(mutex_);
+		authInfo_.RefreshToken.clear();
+		SavePrivateData({});
+	}
+
+	void ITwinAuthManager::SetAuthorizationInfo(
+		std::string const& accessToken,
+		ITwinAuthInfo const& authInfo,
+		EAuthContext AuthContext /*= EAuthContext::StdRequest*/)
+	{
+		SetAccessToken(accessToken);
+
+		Lock lock(mutex_);
+
+		bool const bSameRefreshToken = (authInfo_.RefreshToken == authInfo.RefreshToken);
+		authInfo_ = authInfo;
+
+		if (!bSameRefreshToken)
+		{
+			// Save new information to enable refresh upon future sessions (if a new refresh token was
+			// retrieved) or avoid reusing an expired one if none was newly fetched.
+			SavePrivateData(authInfo_.RefreshToken);
+		}
+
+		if (AuthContext == EAuthContext::StdRequest
+			&& !accessToken.empty())
+		{
+			// Also save the access token to minimize the need for interactive login when we relaunch the
+			// same application/plugin before the expiration time of the token.
+			SaveAccessToken(accessToken);
+		}
+
+		ResetRefreshTicker();
+
+#if USE_REFRESH_TOKEN()
+		if (!authInfo.RefreshToken.empty())
+		{
+			// usually, iTwin access tokens expire after 3600 seconds
+			// let's try to refresh it *before* its actual expiration
+			float fDelay = (authInfo_.ExpiresIn > 0)
+				? 0.90f * authInfo_.ExpiresIn
+				: 60.f * 30;
+			UniqueDelayedCall("refreshAuth",
+				[this, IsValidLambda = this->stillValid_]() -> bool
+			{
+				if (*IsValidLambda)
+				{
+					this->ProcessTokenRequest(authInfo_.CodeVerifier, authInfo_.AuthorizationCode,
+						ETokenMode::Refresh, true /*automatic_refresh*/);
+				}
+				return false; // One tick
+			}, fDelay);
+		}
+#endif //USE_REFRESH_TOKEN
+	}
+
+	std::string ITwinAuthManager::GetAppID() const
+	{
+		if (HasAppID(env_))
+		{
+			return Credentials::GetAppID(env_);
+		}
+		BE_ISSUE("no AppID for environment", (size_t)env_);
+		return {};
+	}
+
+	std::string ITwinAuthManager::GetScope() const
+	{
+		return Credentials::GetScope();
+	}
+	std::string ITwinAuthManager::GetIMSBaseUrl() const
+	{
+		return Credentials::GetITwinIMSRootUrl(env_);
+	}
+
+	void ITwinAuthManager::AddObserver(ITwinAuthObserver* observer)
+	{
+		Lock lock(mutex_);
+		auto it = std::find(observers_.begin(), observers_.end(), observer);
+		if (it == observers_.end())
+		{
+			observers_.push_back(observer);
+		}
+	}
+
+	void ITwinAuthManager::RemoveObserver(ITwinAuthObserver* observer)
+	{
+		Lock lock(mutex_);
+		std::erase(observers_, observer);
+	}
+
+	void ITwinAuthManager::NotifyResult(bool bSuccess, std::string const& strError)
+	{
+		Lock lock(mutex_);
+		for (auto* observer : this->observers_)
+		{
+			observer->OnAuthorizationDone(bSuccess, strError);
+		}
+	}
+
+
+
+	namespace
+	{
+		std::string GenerateRandomCharacters(size_t amountOfCharacters)
+		{
+			const char* Values = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+			constexpr size_t nbValues = sizeof(Values);
+			std::string result;
+			result.reserve(amountOfCharacters);
+
+			std::mt19937 rng;
+
+			const std::time_t curTime = std::chrono::system_clock::to_time_t(
+				std::chrono::system_clock::now());
+			rng.seed((int)curTime);
+			for (size_t i = 0; i < amountOfCharacters; ++i)
+			{
+				result.append(1u, Values[rng() % nbValues]);
+			}
+			return result;
+		}
+
+		std::string UrlEncode(const std::string& decoded)
+		{
+			const auto encoded_value = curl_easy_escape(nullptr, decoded.c_str(), static_cast<int>(decoded.length()));
+			std::string result(encoded_value);
+			curl_free(encoded_value);
+			return result;
+		}
+	}
+
+
+	RequestID ITwinAuthManager::ProcessTokenRequest(
+		std::string const& verifier,
+		std::string const& authorizationCode,
+		ETokenMode tokenMode, bool bIsAutomaticRefresh /*= false*/)
+	{
+		const std::string clientId = GetAppID();
+		if (clientId.empty())
+		{
+			BE_LOGE("ITwinAPI", "The iTwin App ID is missing. Please refer to the plugin documentation.");
+			return HttpRequest::NO_REQUEST;
+		}
+
+		const auto request = HttpRequest::New();
+		if (!request)
+		{
+			return HttpRequest::NO_REQUEST;
+		}
+		request->SetVerb(EVerb::Post);
+
+		Http::Headers headers;
+		headers.emplace_back("Content-Type", "application/x-www-form-urlencoded");
+		headers.emplace_back("X-Correlation-ID", request->GetRequestID());
+
+		std::string grantType = "authorization_code";
+		std::string refreshParams;
+
+		if (tokenMode == ETokenMode::Refresh)
+		{
+			Lock lock(mutex_);
+			if (!authInfo_.RefreshToken.empty())
+			{
+				grantType = "refresh_token";
+				refreshParams = std::string("&refresh_token=") + authInfo_.RefreshToken;
+			}
+		}
+		const std::string redirectUri = Credentials::GetRedirectUri();
+		std::string const requestBody = std::string("grant_type=") + grantType
+			+ "&client_id=" + clientId
+			+ "&redirect_uri=" + UrlEncode(redirectUri)
+			+ refreshParams
+			+ "&code=" + authorizationCode
+			+ "&code_verifier=" + verifier
+			+ "&scope=" + UrlEncode(Credentials::GetScope());
+
+
+		using RequestPtr = HttpRequest::RequestPtr;
+		using Response = HttpRequest::Response;
+		request->SetResponseCallback(
+			[this, IsValidLambda = this->stillValid_, authorizationCode, verifier, tokenMode, bIsAutomaticRefresh]
+			(RequestPtr const& request, Response const& response)
+		{
+			if (!(*IsValidLambda))
+			{
+				// see comments in #ReusableJsonQueries.cpp
+				return;
+			}
+
+			bool bHasAuthToken = false;
+			std::string requestError;
+			Be::CleanUpGuard resultGuard([this, &requestError, &bHasAuthToken, tokenMode, bIsAutomaticRefresh]
+			{
+				if (tokenMode == ETokenMode::Refresh && !bHasAuthToken)
+				{
+					// reset the refresh token (probably wrong or expired)
+					this->ResetRefreshToken();
+				}
+
+				if (bIsAutomaticRefresh)
+				{
+					// automatic refresh attempt through a timer => just log the result of the refresh request
+					if (bHasAuthToken)
+					{
+						BE_LOGI("ITwinAPI", "iTwin authorization successfully refreshed");
+					}
+					else
+					{
+						int remainingSeconds = 0;
+						auto const expTime = this->GetExpirationTime();
+						auto const now = std::chrono::system_clock::now();
+						if (expTime > now)
+						{
+							remainingSeconds = static_cast<int>(
+								std::chrono::duration_cast<std::chrono::seconds>(expTime - now).count());
+						}
+						BE_LOGE("ITwinAPI", "Could not refresh the authorization (expiring in "
+							<< remainingSeconds << " seconds) - error: " << requestError);
+					}
+				}
+				else
+				{
+					// This is the initial authorization.
+
+					// If the refresh token read from the user settings was wrong or expired, restart the
+					// authorization process from scratch, without broadcasting the initial failure (the user
+					// will have to allow permissions again).
+					if (!bHasAuthToken && tokenMode == ETokenMode::Refresh)
+					{
+						this->RestartAuthorizationLater();
+					}
+					else
+					{
+						this->NotifyResult(bHasAuthToken, requestError);
+					}
+				}
+			});
+
+			if (!request->CheckResponse(response, requestError))
+			{
+				if (!response.second.empty())
+				{
+					// Try to parse iTwin error
+					requestError += ITwinWebServices::GetErrorDescriptionFromJson(response.second,
+						requestError.empty() ? "" : "\t");
+				}
+				return;
+			}
+
+			struct ITwinAuthData
+			{
+				std::string access_token;
+				std::optional<std::string> refresh_token;
+				std::optional<std::string> token_type;
+				std::optional<int> expires_in;
+			} authData;
+			if (!Json::FromString(authData, response.second, requestError))
+			{
+				return;
+			}
+
+			// store expiration and automatic refresh info
+			ITwinAuthInfo authInfo;
+			authInfo.AuthorizationCode = authorizationCode;
+			authInfo.CodeVerifier = verifier;
+			authInfo.RefreshToken = authData.refresh_token.value_or("");
+			authInfo.ExpiresIn = authData.expires_in.value_or(0);
+
+			bHasAuthToken = !authData.access_token.empty();
+			if (bHasAuthToken)
+			{
+				this->SetAuthorizationInfo(authData.access_token, authInfo);
+			}
+			else
+			{
+				requestError = "No access token";
+			}
+
+			// emphasize the handling of the result (even though it would be done automatically)
+			resultGuard.cleanup();
+		});
+		request->Process(*http_, "/connect/token", requestBody, headers);
+
+		return request->GetRequestID();
+	}
+
+	EITwinAuthStatus ITwinAuthManager::CheckAuthorization()
+	{
+		if (HasAccessToken())
+		{
+			return EITwinAuthStatus::Success;
+		}
+		if (IsAuthorizationInProgress())
+		{
+			// Do not accumulate authorization requests! (see itwin-unreal-plugin/issues/7)
+			return EITwinAuthStatus::InProgress;
+		}
+		const std::string clientId = GetAppID();
+		if (clientId.empty())
+		{
+			std::string const Error = "The iTwin App ID is missing. Please refer to the plugin documentation.";
+			this->NotifyResult(false, Error);
+			return EITwinAuthStatus::Failed;
+		}
+
+		BE_ASSERT(!hasBoundAuthPort_, "Authorization process already in progress...");
+
+		const std::string state = GenerateRandomCharacters(10);
+		const std::string verifier = GenerateRandomCharacters(128);
+
+		const bool bHasLoadedRefreshTok = TryLoadRefreshToken();
+		if (bHasLoadedRefreshTok && HasAccessToken())
+		{
+			// We could reload a non-expired token.
+			this->NotifyResult(true, {});
+			return EITwinAuthStatus::Success;
+		}
+
+		if (!httpRouter_)
+		{
+			httpRouter_ = IHttpRouter::New();
+		}
+		if (!httpRouter_)
+		{
+			std::string const Error = "No support for Http Router. Cannot request access.";
+			this->NotifyResult(false, Error);
+			return EITwinAuthStatus::Failed;
+		}
+		auto routeHandle = httpRouter_->MakeRouteHandler();
+		httpRouter_->BindRoute(routeHandle,
+			Credentials::LocalhostPort,
+			Credentials::RedirectUriEndpoint,
+			EVerb::Get,
+			[=, this, httpRouter = this->httpRouter_, IsValidRequestHandler = this->stillValid_]
+			(std::map<std::string, std::string> const& queryParams, std::string& outHtmlText)
+		{
+			if (!(*IsValidRequestHandler))
+			{
+				return;
+			}
+			if (queryParams.contains("code")
+				&& queryParams.contains("state") && queryParams.at("state") == state)
+			{
+				ProcessTokenRequest(verifier, queryParams.at("code"),
+					HasRefreshToken() ? ETokenMode::Refresh : ETokenMode::Standard);
+				outHtmlText = "<h1>Sign in was successful!</h1>You can close this browser window and return to the application.";
+			}
+			else if (queryParams.contains("error"))
+			{
+				if (HasRefreshToken())
+				{
+					// the refresh token read from user config has probably expired
+					// => try again after resetting the refresh token
+					ResetRefreshToken();
+					RestartAuthorizationLater();
+				}
+				else
+				{
+					std::string htmlError;
+					auto itDesc = queryParams.find("error_description");
+					if (itDesc != queryParams.end())
+					{
+						htmlError = itDesc->second;
+						std::replace(htmlError.begin(), htmlError.end(), '+', ' ');
+					}
+					outHtmlText = fmt::format("<h1>Error signin in!</h1><br/>{}<br/><br/>You can close this browser window and return to the application.",
+						htmlError);
+				}
+			}
+			hasBoundAuthPort_ = false;
+		});
+		if (routeHandle && routeHandle->IsValid())
+		{
+			hasBoundAuthPort_ = true;
+		}
+
+		// Open Web Browser
+		std::string brwError;
+		if (!LaunchWebBrowser(state, verifier, brwError))
+		{
+			this->NotifyResult(false, brwError);
+			return EITwinAuthStatus::Failed;
+		}
+		return EITwinAuthStatus::InProgress;
+	}
+
+
+	void ITwinAuthManager::RestartAuthorizationLater()
+	{
+		// We cannot just call CheckAuthorization in the middle of the process, because we must ensure we can
+		// rebind our router on the same port, which requires we have unbounded the previous instance...
+		// Therefore the use of a ticker here
+		ResetRestartTicker();
+		UniqueDelayedCall("restartAuth",
+			[this, IsValidLambda = this->stillValid_]() -> bool
+		{
+			if (*IsValidLambda)
+			{
+				if (!hasBoundAuthPort_)
+				{
+					CheckAuthorization();
+					return false; // stop ticking
+				}
+				return true;
+			}
+			else
+			{
+				return false; // stop ticking
+			}
+		}, 0.200f /*TickerDelay: 200 ms*/);
+	}
+
+
+	bool ITwinAuthManager::IsAuthorizationInProgress() const
+	{
+		if (HasAccessToken())
+			return false;
+		return hasBoundAuthPort_.load();
+	}
+
+	bool ITwinAuthManager::SaveAccessToken(std::string const& accessToken) const
+	{
+		if (!accessToken.empty()
+			&& authInfo_.ExpiresIn > 0
+			&& !authInfo_.CodeVerifier.empty()
+			&& !authInfo_.AuthorizationCode.empty()
+			&& !authInfo_.RefreshToken.empty())
+		{
+			// Also save the access token to minimize the need for interactive login when we relaunch the
+			// same application/plugin before the expiration time of the token.
+			std::chrono::system_clock::time_point ExpirationTimePoint = std::chrono::system_clock::now()
+				+ std::chrono::seconds(authInfo_.ExpiresIn);
+			const std::time_t ExpirationTime = std::chrono::system_clock::to_time_t(ExpirationTimePoint);
+			return SavePrivateData(
+				fmt::format("{} + {} + {} + {}",
+					accessToken, authInfo_.CodeVerifier, authInfo_.AuthorizationCode,
+					static_cast<int64_t>(ExpirationTime)),
+				1 /*keyIndex*/);
+		}
+		return false;
+	}
+
+	namespace
+	{
+		std::vector<std::string> Tokenize(std::string const& src, std::string const& separator)
+		{
+			const size_t sepLen = separator.length();
+			std::vector<std::string> res;
+			size_t posStart = 0;
+			size_t posEnd = 0;
+			do {
+				posEnd = src.find(separator, posStart);
+				if (posEnd != std::string::npos)
+				{
+					res.push_back(src.substr(posStart, posEnd - posStart));
+					posStart = posEnd + sepLen;
+				}
+			} while (posEnd != std::string::npos);
+			res.push_back(src.substr(posStart));
+			return res;
+		}
+	}
+
+	bool ITwinAuthManager::ReloadAccessToken(std::string& readAccessToken, ITwinAuthInfo& readAuthInfo) const
+	{
+		std::string fullInfo;
+		if (!LoadPrivateData(fullInfo, 1 /*keyIndex*/))
+		{
+			return false;
+		}
+		bool bStillValidToken = false;
+		std::vector<std::string> tokens = Tokenize(fullInfo, " + ");
+		if (tokens.size() == 4)
+		{
+			readAccessToken = tokens[0];
+			readAuthInfo.CodeVerifier = tokens[1];
+			readAuthInfo.AuthorizationCode = tokens[2];
+			int64_t expTime = std::stoll(tokens[3].c_str());
+			if (expTime > 0
+				&& !readAuthInfo.CodeVerifier.empty()
+				&& !readAuthInfo.AuthorizationCode.empty())
+			{
+				auto const ExpirationTime = std::chrono::system_clock::from_time_t(std::time_t{ expTime });
+				auto const Now = std::chrono::system_clock::now();
+				if (ExpirationTime > Now)
+				{
+					auto NbSeconds = std::chrono::duration_cast<std::chrono::seconds>(ExpirationTime - Now).count();
+					if (NbSeconds > 60 && NbSeconds < 3600 * 24)
+					{
+						readAuthInfo.ExpiresIn = static_cast<int>(NbSeconds);
+						BE_LOGI("ITwinAPI", "Authorization found - expires in " << readAuthInfo.ExpiresIn << " seconds");
+						bStillValidToken = true;
+					}
+				}
+			}
+		}
+		return bStillValidToken && !readAccessToken.empty();
+	}
+
 }

@@ -26,22 +26,6 @@
 namespace ITwin::Timeline
 {
 
-template<class _Values>
-std::size_t hash_value(const PropertyEntry<_Values>& v) noexcept
-{
-	std::size_t seed = 0;
-	boost::hash_combine(seed, (const PropertyEntryBase&)v);
-	boost::hash_combine(seed, (const _Values&)v);
-	return seed;
-}
-
-template<class _Values>
-bool operator ==(const PropertyEntry<_Values>& x, const PropertyEntry<_Values>& y)
-{
-	return (const PropertyEntryBase&)x == (const PropertyEntryBase&)y &&
-		(const _Values&)x == (const _Values&)y;
-}
-
 template<class _PropertyValues>
 void PropertyTimeline<_PropertyValues>::Prune()
 {
@@ -51,7 +35,7 @@ void PropertyTimeline<_PropertyValues>::Prune()
 	// entire animation remains correct.
 	// Otherwise, the time range displayed in the timeline may be shortened, which is confusing
 	// for the user, because he expects to see the same dates as in Synchro.
-	boost::optional<PropertyEntry<_PropertyValues>> lastEntry;
+	std::optional<PropertyEntry<_PropertyValues>> lastEntry;
 	while (Values.size() >= 2 &&
 		static_cast<_PropertyValues const&>(*Values.rbegin())
 			== static_cast<_PropertyValues const&>(*(++Values.rbegin())))
@@ -75,7 +59,7 @@ bool PropertyTimeline<_PropertyValues>::HasNoEffect() const
 }
 
 template<class _PropertyValues>
-boost::optional<_PropertyValues> PropertyTimeline<_PropertyValues>::GetStateAtTime(double time,
+std::optional<_PropertyValues> PropertyTimeline<_PropertyValues>::GetStateAtTime(double time,
 	StateAtEntryTimeBehavior entryTimeBehavior, void* userData) const
 {
 	if (Values.empty())
@@ -135,18 +119,6 @@ boost::optional<_PropertyValues> PropertyTimeline<_PropertyValues>::GetStateAtTi
 	return {};
 }
 
-template<class _PropertyValues>
-std::size_t hash_value(const PropertyTimeline<_PropertyValues>& v) noexcept
-{
-	return boost::hash_value(v.Values);
-}
-
-template<class _PropertyValues>
-bool operator ==(const PropertyTimeline<_PropertyValues>& x, const PropertyTimeline<_PropertyValues>& y)
-{
-	return x.Values == y.Values;
-}
-
 template<class _Metadata> ObjectTimeline<_Metadata>::~ObjectTimeline() {}
 
 template<class _Metadata>
@@ -180,7 +152,8 @@ FTimeRangeInSeconds ObjectTimeline<_Metadata>::GetTimeRange() const
 template<class _Metadata>
 FDateRange ObjectTimeline<_Metadata>::GetDateRange() const
 {
-	return ITwin::Time::ToDateRange(GetTimeRange());
+	auto const TimeRange = GetTimeRange();
+	return (TimeRange.first < TimeRange.second) ? ITwin::Time::ToDateRange(TimeRange) : FDateRange();
 }
 
 template<class _Metadata>
@@ -234,17 +207,6 @@ void ObjectTimeline<_Metadata>::ToJson(TSharedRef<FJsonObject>& JsonObj) const
 		});
 }
 
-template<class _Metadata>
-std::size_t hash_value(const ObjectTimeline<_Metadata>& Timeline) noexcept
-{
-	size_t Seed = 0;
-	boost::fusion::for_each(Timeline, [&](const auto& PropertyTimeline)
-		{
-			boost::hash_combine(Seed, PropertyTimeline);
-		});
-	return Seed;
-}
-
 template<class _ObjectTimeline>
 const FTimeRangeInSeconds& MainTimelineBase<_ObjectTimeline>::GetTimeRange() const
 {
@@ -254,7 +216,7 @@ const FTimeRangeInSeconds& MainTimelineBase<_ObjectTimeline>::GetTimeRange() con
 template<class _ObjectTimeline>
 FDateRange MainTimelineBase<_ObjectTimeline>::GetDateRange() const
 {
-	return ITwin::Time::ToDateRange(TimeRange);
+	return (TimeRange.first < TimeRange.second) ? ITwin::Time::ToDateRange(TimeRange) : FDateRange();
 }
 
 template<class _ObjectTimeline>
@@ -273,10 +235,10 @@ void MainTimelineBase<_ObjectTimeline>::IncludeTimeRange(FTimeRangeInSeconds con
 }
 
 template<class _ObjectTimeline>
-std::shared_ptr<_ObjectTimeline> MainTimelineBase<_ObjectTimeline>::AddTimeline(
+std::shared_ptr<_ObjectTimeline> const& MainTimelineBase<_ObjectTimeline>::AddTimeline(
 	const std::shared_ptr<_ObjectTimeline>& Timeline)
 {
-	auto Result = Container.push_back(Timeline);
+	Container.push_back(Timeline);
 	// Note: "AddTimeline" is now called from ElementTimelineFor, when creating an empty timeline, in that
 	// case this call is pointless, but let's keep it to preserve also the other use case (adding an already
 	// filled timeline, for example in unit testing - see other call to IncludeTimeRange done only in
@@ -284,7 +246,7 @@ std::shared_ptr<_ObjectTimeline> MainTimelineBase<_ObjectTimeline>::AddTimeline(
 	// Note 2: IncludeTimeRange is also now included directly from SchedulesImport.cpp in case of pre-fetching
 	// of all Tasks, in which case this is again redundant.
 	IncludeTimeRange(*Timeline);
-	return Result.second ? Timeline : *Result.first;
+	return Container.back();
 }
 
 } // namespace ITwin::Timeline

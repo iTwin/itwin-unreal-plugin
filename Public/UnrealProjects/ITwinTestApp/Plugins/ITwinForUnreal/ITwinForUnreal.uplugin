@@ -25,6 +25,11 @@
 			"Type": "Runtime",
 			"LoadingPhase": "PostConfigInit",
 			"WhitelistPlatforms": [ "Win64", "Mac", "Linux", "Android", "IOS" ]
+		},
+		{
+			"Name": "UE5Coro",
+			"Type": "Runtime",
+			"LoadingPhase": "PostConfigInit"
 		}
 	],
 	"Plugins": [

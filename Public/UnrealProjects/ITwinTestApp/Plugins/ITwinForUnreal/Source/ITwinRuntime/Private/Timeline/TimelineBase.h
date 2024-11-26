@@ -12,12 +12,6 @@
 #include <Timeline/TimeInSeconds.h>
 
 #include <Compil/BeforeNonUnrealIncludes.h>
-	#include <boost/multi_index_container.hpp>
-	#include <boost/multi_index/identity.hpp>
-	#include <boost/multi_index/random_access_index.hpp>
-	#include <boost/multi_index/hashed_index.hpp>
-	#include <boost/operators.hpp>
-	#include <boost/optional.hpp>
 	#include <BeHeaders/Compil/Attributes.h>
 	#include <BeHeaders/Util/Enumerations.h>
 #include <Compil/AfterNonUnrealIncludes.h>
@@ -54,15 +48,13 @@ enum class EInterpolation : int32_t
 
 //! Base class for entries (ie keyframes).
 //! Contains base data that must be available in all types of entries.
-class PropertyEntryBase: boost::equality_comparable<PropertyEntryBase>
+class PropertyEntryBase
 {
 public:
 	double Time = {};
 	EInterpolation Interpolation = {};
 };
 
-std::size_t hash_value(const PropertyEntryBase& v) noexcept;
-bool operator ==(const PropertyEntryBase& x, const PropertyEntryBase& y);
 bool operator <(const PropertyEntryBase& x, const PropertyEntryBase& y);
 
 //! Generic entry with custom values.
@@ -70,14 +62,9 @@ template<class _Values>
 class PropertyEntry
 	:public PropertyEntryBase
 	,public _Values
-	,boost::equality_comparable<PropertyEntry<_Values>>
 {
 };
 
-template<class _Values>
-std::size_t hash_value(const PropertyEntry<_Values>& v) noexcept;
-template<class _Values>
-bool operator ==(const PropertyEntry<_Values>& x, const PropertyEntry<_Values>& y);
 template<class _Values>
 bool NoEffect(const _Values& Prop);
 
@@ -97,7 +84,7 @@ enum class StateAtEntryTimeBehavior
 //! A PropertyTimeline is basically a list of entries, with the ability to retrieve the state
 //! at any given time, by interpolating the property values.
 template<class _PropertyValues>
-class PropertyTimeline: boost::equality_comparable<PropertyTimeline<_PropertyValues>>
+class PropertyTimeline
 {
 public:
 	using PropertyValues = _PropertyValues;
@@ -112,14 +99,9 @@ public:
 	//! Tells whether the timeline will have no effect at all (useful to trim print-outs)
 	bool HasNoEffect() const;
 	//! Returns the interpolated property values at the given time.
-	[[nodiscard]] boost::optional<_PropertyValues> GetStateAtTime(double time,
+	[[nodiscard]] std::optional<_PropertyValues> GetStateAtTime(double time,
 		StateAtEntryTimeBehavior entryTimeBehavior, void* userData) const;
 };
-
-template<class _PropertyValues>
-std::size_t hash_value(const PropertyTimeline<_PropertyValues>& v) noexcept;
-template<class _PropertyValues>
-bool operator ==(const PropertyTimeline<_PropertyValues>& x, const PropertyTimeline<_PropertyValues>& y);
 
 template<class _Base, class _ObjectState>
 struct ObjectTimelineMetadata
@@ -142,15 +124,13 @@ public:
 	using PropertyOptionals = typename _Metadata::ObjectState;
 	[[nodiscard]] PropertyOptionals GetStateAtTime(double time, StateAtEntryTimeBehavior entryTimeBehavior,
 												   void* userData) const;
-	//! Returns the union of the time ranges of all PropertyTimelines for this object.
+	/// \return The union of the time ranges of all PropertyTimelines for this object.
 	[[nodiscard]] FTimeRangeInSeconds GetTimeRange() const;
+	/// \return A valid range if the timeline is not empty, or FDateRange() otherwise
 	[[nodiscard]] FDateRange GetDateRange() const;
 
 	virtual void ToJson(TSharedRef<FJsonObject>& JsonObj) const;
 };
-
-template<class _Metadata>
-std::size_t hash_value(const ObjectTimeline<_Metadata>& timeline) noexcept;
 
 //! A MainTimelineBase is a group of ObjectTimeline's.
 template<class _ObjectTimeline>
@@ -159,23 +139,16 @@ class MainTimelineBase
 public:
 	using ObjectTimeline = _ObjectTimeline;
 	using ObjectTimelinePtr = std::shared_ptr<_ObjectTimeline>;
-	using TimelineObjectContainer = boost::multi_index_container<
-		ObjectTimelinePtr,
-		boost::multi_index::indexed_by<
-			boost::multi_index::random_access<>,
-			boost::multi_index::hashed_unique<boost::multi_index::identity<ObjectTimelinePtr>>,
-			boost::multi_index::hashed_unique<boost::multi_index::identity<_ObjectTimeline>>
-		>
-	>;
-	CONSTRUCT_ENUMERATION(TimelineObjectContainerTags, (Index, Ptr, Value));
+	using TimelineObjectContainer = std::vector<ObjectTimelinePtr>;
 	virtual ~MainTimelineBase() {}
 	[[nodiscard]] const TimelineObjectContainer& GetContainer() const { return Container; }
 	[[nodiscard]] TimelineObjectContainer& GetContainer() { return Container; }
 	[[nodiscard]] const FTimeRangeInSeconds& GetTimeRange() const;
+	/// \return A valid range if any of the contained timeline is not empty, or FDateRange() otherwise
 	[[nodiscard]] FDateRange GetDateRange() const;
 	void IncludeTimeRange(const _ObjectTimeline& Object);
 	void IncludeTimeRange(const FTimeRangeInSeconds& CustomRange);
-	ObjectTimelinePtr AddTimeline(const ObjectTimelinePtr& object);
+	ObjectTimelinePtr const& AddTimeline(const ObjectTimelinePtr& object);
 
 protected:
 	TimelineObjectContainer Container;

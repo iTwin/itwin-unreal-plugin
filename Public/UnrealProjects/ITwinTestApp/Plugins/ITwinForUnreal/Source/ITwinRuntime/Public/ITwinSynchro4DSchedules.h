@@ -33,6 +33,12 @@ public:
 	UITwinSynchro4DSchedules();
 	UITwinSynchro4DSchedules(bool bDoNotBuildTimelines);
 
+	UPROPERTY(EditAnywhere, Category = "iTwin")
+	UMaterialInterface* BaseMaterialMasked = nullptr;
+
+	UPROPERTY(EditAnywhere, Category = "iTwin")
+	UMaterialInterface* BaseMaterialTranslucent = nullptr;
+
 	UPROPERTY(Category = "Schedules Querying",
 		VisibleAnywhere)
 	FString ScheduleId;
@@ -85,23 +91,45 @@ public:
 		BlueprintCallable)
 	void QueryElementsTasks(TArray<FString> const& Elements);
 
-	/// Called when the full time range of the Schedule is known, with the StartTime and EndTime passed as
-	/// arguments. FDateTime::MinValue() is passed twice when no tasks were found in the schedule.
+	/// Tells whether the whole 4D Schedule is available locally. Until then, the 4D animation cannot be
+	/// replayed. Note that the total time range of the project can be known before the whole Schedule is
+	/// ready (see OnScheduleTimeRangeKnown)
+	UFUNCTION(Category = "Schedules Querying",
+		BlueprintCallable)
+	bool IsAvailable() const;
+
+	/// Called when the time range of the whole Schedule is known, with the StartTime and EndTime passed as
+	/// arguments. FDateTime::MinValue() is passed twice when there is on schedule, or no tasks were found
+	/// in the schedule.
 	/// Never called when bPrefetchAllTasksAndAppearanceProfiles is false.
+	/// Known limitation: in case of connection or server failures preventing schedule information from being
+	/// retrieved (despite retries), the delegate is never called.
 	UPROPERTY(BlueprintAssignable)
 	FScheduleTimeRangeDelegate OnScheduleTimeRangeKnown;
 
 	/// Returns the time range of the Schedule, if any and already currently known. Will return FDateRange()
-	/// when either there is no schedule, or its data has not been received yet.
+	/// when either there is no schedule, the schedule has zero task, or the task data has not yet been
+	/// received.
 	/// Use OnScheduleTimeRangeKnown if you'd rather wait and be notified when the final value of the time
 	/// range is known.
 	//UFUNCTION() <== FDateRange not UFUNCTION-able...
-	FDateRange GetDateRange() const;
+	[[nodiscard]] FDateRange GetDateRange() const;
 
 	/// Called when the status of the Schedule data request process changes: the parameter passed is 'true'
 	/// when some more data needs to be requested, or 'false' when all requests have been processed.
 	UPROPERTY(BlueprintAssignable)
 	FScheduleQueryingDelegate OnScheduleQueryingStatusChanged;
+
+	/// Force redownloading schedules instead of using cached results, and do not write new schedules to
+	/// the cache. Does *not* clear the existing cache.
+	UPROPERTY(Category = "Schedules Querying|Advanced", EditAnywhere)
+	bool bDisableCaching = false;
+	/// Clear the persistence cache (for this schedule only)
+	UFUNCTION(Category = "Schedules Querying", BlueprintCallable, CallInEditor)
+	void ClearCacheOnlyThis();
+	/// Clear the persistence cache (for all currently cached schedules of the current Environment)
+	UFUNCTION(Category = "Schedules Querying", BlueprintCallable, CallInEditor)
+	void ClearCacheAllSchedules();
 
 	UPROPERTY(Category = "Schedules Querying|Advanced", EditAnywhere)
 	int ScheduleQueriesServerPagination = 10000;
@@ -148,14 +176,19 @@ public:
 	FString DebugDumpAsJsonAfterQueryAll;
 
 	/// When not empty, persist all queries and their replies (for later replay/simulation) to the indicated
-	/// folder inside the project's Saved folder. Superceded by DebugSimulateSessionQueries.
+	/// folder inside the project's Saved folder. Note that this mode is now almost useless, since downloads
+	/// are usually cached (see bDisableCaching), but two situations can still warrant its use: firstly, when
+	/// you want to save the initial requests for an iModel's schedule Id, which is not cache since we need
+	/// it before starting to cache (a schedule is identified by its own Id, not its iModel's). And secondly,
+	/// for testing purposes, in case you want to record a requests session without "polluting" your cache.
+	/// Superceded by DebugSimulateSessionQueries.
 	UPROPERTY(Category = "Schedules Querying|Debug",
 		EditAnywhere)
 	FString DebugRecordSessionQueries;
 
 	/// When not empty, simulate all queries and their replies (for later replay/simulation) using the
 	/// persisted query/reply pairs read from the specified subfolder inside the project's Saved folder.
-	/// Takes precedence over DebugRecordSessionQueries.
+	/// Takes precedence over both normal caching (ie. disables it), and also DebugRecordSessionQueries.
 	UPROPERTY(Category = "Schedules Querying|Debug",
 		EditAnywhere)
 	FString DebugSimulateSessionQueries;
@@ -270,10 +303,17 @@ public:
 		BlueprintCallable)
 	void Stop();
 
+	/// Mask out entirely the tiles just loaded that do not have the 4D animation fully applied. This is
+	/// actually a global flag that will apply to all iModels.
+	UPROPERTY(Category = "Schedules Replay|Settings", EditAnywhere)
+	bool bMaskTilesUntilFullyAnimated = false;
+	UFUNCTION(Category = "Schedules Replay|Settings", BlueprintCallable)
+	void ToggleMaskTilesUntilFullyAnimated();
+
 	/// Split applying animation on Elements among subsequent ticks to avoid spending more than this amount
 	/// of time each time. Visual update only occurs once the whole iModel (?) has been updated, though.
 	UPROPERTY(Category = "Schedules Replay|Settings", EditAnywhere)
-	double MaxTimelineUpdateMilliseconds = 100;
+	double MaxTimelineUpdateMilliseconds = 50;
 
 	/// Disable application of color highlights on animated Elements
 	UPROPERTY(Category = "Schedules Replay|Settings", EditAnywhere)
@@ -287,9 +327,9 @@ public:
 	UPROPERTY(Category = "Schedules Replay|Settings", EditAnywhere)
 	bool bDisableCuttingPlanes = false;
 
-	/// Disable the scheduled animation of Elements' transformations (like movement along 3D paths)
+	/// Disable the Elements' transformations in the 4D Schedule (static or following a 3D paths)
 	UPROPERTY(Category = "Schedules Replay|Settings", EditAnywhere)
-	bool bDisableTransforms = true;
+	bool bDisableTransforms = false;
 
 	/// Fade out all non-animated elements, ultimately using partial transparency, but for the moment a
 	/// neutral light grey color is used instead. Note that tiles where no animated element is present will
@@ -304,7 +344,7 @@ public:
 	#if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 	#endif
-
+	void OnIModelEndPlay();
 	void TickSchedules(float DeltaTime);
 
 	// Must be marked UFUNCTION to be bound to a delegate...

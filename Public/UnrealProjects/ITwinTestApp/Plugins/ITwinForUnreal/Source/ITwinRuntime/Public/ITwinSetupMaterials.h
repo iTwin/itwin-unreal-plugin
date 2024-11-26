@@ -12,8 +12,10 @@
 #include <CoreMinimal.h>
 
 class AITwinCesium3DTileset;
+class UITwinSynchro4DSchedules;
 
 namespace ITwin
 {
-	ITWINRUNTIME_API void SetupMaterials(AITwinCesium3DTileset& Tileset, UObject& MaterialOwner);
+	ITWINRUNTIME_API void SetupMaterials(AITwinCesium3DTileset& Tileset,
+										 UITwinSynchro4DSchedules* SchedulesComp = nullptr);
 }

@@ -11,7 +11,6 @@
 #include <rfl.hpp>
 #include <string>
 #include <stdexcept>
-#include <Core/Json/Json.h>
 
 namespace SDK::Core::Json {
 
@@ -20,17 +19,25 @@ namespace SDK::Core::Json {
 		return rfl::json::write(t);
 	}
 
+	template<typename Type, typename From>
+	inline bool FromStream(Type& t, From& s, std::string& parseError) {
+		auto result = rfl::json::read<Type>(s);
+		auto const optErr = result.error();
+		if (optErr)
+		{
+			parseError = optErr->what();
+			return false;
+		}
+		else
+		{
+			t = result.value();
+			return true;
+		}
+	}
+
 	template<typename Type>
 	inline bool FromString(Type& t, const std::string& s, std::string& parseError) {
-		bool bHasParseError = false;
-		try {
-			t = rfl::json::read<Type>(s).value();
-		}
-		catch (std::exception const& e) {
-			parseError = e.what();
-			bHasParseError = true;
-		}
-		return !bHasParseError;
+		return FromStream(t, s, parseError);
 	}
 
 	template<typename Type>

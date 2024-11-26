@@ -33,8 +33,10 @@ public:
 	/// When pre-fetching everything, including animation bindings, tells whether everything has been received.
 	/// Otherwise, always returns false because we cannot know if we have everything.
 	bool HasFullSchedule() const;
+	void UninitializeCache();
 	size_t NumTasks() const;
-	void ResetConnection(FString const& ITwinAkaProjectAkaContextId, FString const& IModelId);
+	void ResetConnection(FString const& ITwinAkaProjectAkaContextId, FString const& IModelId,
+						 FString const& InChangesetId);
 	void SetSchedulesImportObservers(FOnAnimationBindingAdded const& InOnAnimBindingAdded,
 									 FOnAnimationGroupModified const& InOnAnimationGroupModified);
 	std::pair<int, int> HandlePendingQueries();

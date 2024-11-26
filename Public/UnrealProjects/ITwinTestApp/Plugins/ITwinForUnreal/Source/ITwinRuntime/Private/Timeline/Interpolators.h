@@ -8,8 +8,6 @@
 
 #pragma once
 
-#include "CoreMinimal.h"
-
 #include <Compil/BeforeNonUnrealIncludes.h>
 	#include <BeHeaders/StrongTypes/TaggedValue.h>
 #include <Compil/AfterNonUnrealIncludes.h>

@@ -105,7 +105,7 @@ void AITwinPickingActor::PickUnderCursorWithOptions(FString& ElementId, FVector2
 					// This is disabled in Carrot MVP, where only the selection of material matters.
 					doPickElement = IModelInternals.OnClickedElement(EltID, HitResult);
 				}
-				if (doPickElement)
+				if (doPickElement && !IModelInternals.IsElementHiddenInSavedView(EltID))
 				{
 					DejaVu.insert(EltID);
 					PickedEltID = EltID;
@@ -134,7 +134,7 @@ void AITwinPickingActor::PickUnderCursorWithOptions(FString& ElementId, FVector2
 	if (PickedEltID != ITwin::NOT_ELEMENT)
 	{
 		// convert picked element ID to string.
-		ElementId = FString::Printf(TEXT("0x%I64x"), PickedEltID.value());
+		ElementId = ITwin::ToString(PickedEltID);
 
 #if ENABLE_DRAW_DEBUG
 		if (PickedMaterial)

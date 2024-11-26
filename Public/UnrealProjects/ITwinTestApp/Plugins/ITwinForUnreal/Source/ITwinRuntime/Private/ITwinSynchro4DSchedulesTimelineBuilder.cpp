@@ -12,6 +12,7 @@
 #include "ITwinSceneMapping.h"
 #include "ITwinSynchro4DSchedules.h"
 #include "ITwinSynchro4DSchedulesInternals.h"
+#include "ITwinUtilityLibrary.h"
 #include <Compil/BeforeNonUnrealIncludes.h>
 	#include <BeHeaders/Compil/AlwaysFalse.h>
 #include <Compil/AfterNonUnrealIncludes.h>
@@ -27,28 +28,40 @@ void AddColorToTimeline(FITwinElementTimeline& ElementTimeline,
 	{
 		return;
 	}
-	if (Profile.StartAppearance.bUseOriginalColor
-		&& Profile.ActiveAppearance.Base.bUseOriginalColor
-		&& Profile.FinishAppearance.bUseOriginalColor)
-	{
-		return;
-	}
+	// Wrong in the case of successive tasks: we could get the same problem with colors as with growth
+	// reported there: https://dev.azure.com/bentleycs/e-onsoftware/_workitems/edit/1551970
+	//if (Profile.StartAppearance.bUseOriginalColor
+	//	&& Profile.ActiveAppearance.Base.bUseOriginalColor
+	//	&& Profile.FinishAppearance.bUseOriginalColor)
+	//{
+	//	return;
+	//}
+	// Note: ProfileType is already handled in ParseAppearanceProfileDetails so that bUseOriginalColor
+	// are correctly set, so no need to test ProfileType here
 	using namespace ITwin::Timeline;
-	ElementTimeline.SetColorAt(Time.first,
-		Profile.StartAppearance.bUseOriginalColor ? std::nullopt
-			: std::optional<FVector>(Profile.StartAppearance.Color),
-		EInterpolation::Step);
-
-	ElementTimeline.SetColorAt(Time.first + KEYFRAME_TIME_EPSILON,
-		Profile.ActiveAppearance.Base.bUseOriginalColor ? std::nullopt
-			: std::optional<FVector>(Profile.ActiveAppearance.Base.Color),
-		EInterpolation::Step);
-
-	ElementTimeline.SetColorAt(Time.second,
-		Profile.FinishAppearance.bUseOriginalColor ? std::nullopt
-			: std::optional<FVector>(Profile.FinishAppearance.Color),
-		// See comment on EInterpolation::Next for an alternative
-		EInterpolation::Step);
+	auto const ColorBefore = Profile.StartAppearance.bUseOriginalColor
+		? std::nullopt : std::optional<FVector>(Profile.StartAppearance.Color);
+	auto const StartColor = Profile.ActiveAppearance.Base.bUseOriginalColor
+		? std::nullopt : std::optional<FVector>(Profile.ActiveAppearance.Base.Color);
+	if (ColorBefore != StartColor)
+	{
+		ElementTimeline.SetColorAt(Time.first - KEYFRAME_TIME_EPSILON, ColorBefore, EInterpolation::Step);
+	}
+	// Since we don't need the epsilon for the following calls to SetColorAt, don't test it here, in case we
+	// get extra short tasks but user still expects to see the StartColor when time is exactly Time.first
+	bool const bZeroTimeTask = ((Time.second /*- KEYFRAME_TIME_EPSILON*/) <= Time.first);
+	auto const ColorAfter = Profile.FinishAppearance.bUseOriginalColor
+		? std::nullopt : std::optional<FVector>(Profile.FinishAppearance.Color);
+	if (bZeroTimeTask)
+	{
+		ElementTimeline.SetColorAt(Time.first, ColorAfter, EInterpolation::Step);
+	}
+	else
+	{
+		// The difference with Visibilities is that there is no FinishColor (no color interp)
+		ElementTimeline.SetColorAt(Time.first, StartColor, EInterpolation::Step);
+		ElementTimeline.SetColorAt(Time.second, ColorAfter, EInterpolation::Step);
+	}
 }
 
 /// IMPORTANT: the orientation here is such that it points into the half space that is *cut out*,
@@ -93,14 +106,42 @@ FVector GetCuttingPlaneOrientation(FActiveAppearance const& Appearance)
 	// No, bInvertGrowth only changes the BBox boundary from which we start, not the direction
 	return /*Appearance.bInvertGrowth ? (-Orientation) :*/ Orientation;
 }
-	
+
 void AddCuttingPlaneToTimeline(FITwinElementTimeline& ElementTimeline, FAppearanceProfile const& Profile,
 							   FTimeRangeInSeconds const& Time)
 {
 	auto const& GrowthAppearance = Profile.ActiveAppearance;// all others are ignored...
-	if (GrowthAppearance.GrowthSimulationMode > EGrowthSimulationMode::Custom
-		|| Profile.ProfileType == EProfileAction::Neutral) // handled in AddVisibilityToTimeline
+	if (Profile.ProfileType == EProfileAction::Neutral) // handled in AddVisibilityToTimeline
 	{
+		return;
+	}
+	bool const bZeroTimeTask = ((Time.second - KEYFRAME_TIME_EPSILON) <= Time.first);
+	if (bZeroTimeTask)
+	{
+		return; // nothing to do, FullyGrown/FullyRemoved states would be handled by Visibilities already
+	}
+	using namespace ITwin::Timeline;
+	if (GrowthAppearance.GrowthSimulationMode == EGrowthSimulationMode::None
+		|| GrowthAppearance.GrowthSimulationMode == EGrowthSimulationMode::Unknown)
+	{
+		// We need this keyframe for (at least) these cases of successive tasks:
+		//	* Growth-simulated "Remove" or "Temporary" task A followed by non-growth-simulated task B
+		//	  (of any on-Neutral kind): without these, task A's "FullyRemoved" keyframe would also apply
+		//	  during task B!
+		//	* Non-growth-simulated "Install" or "Maintenance" task A followed by growth-simulated task B of
+		//	  kind "Install" or "Temporary": without these, task B's "FullyRemoved" keyframe would also apply
+		//	  during task A!
+		// From https://dev.azure.com/bentleycs/e-onsoftware/_workitems/edit/1551970
+		if (EProfileAction::Remove == Profile.ProfileType
+			|| EProfileAction::Maintenance == Profile.ProfileType)
+		{
+			ElementTimeline.SetCuttingPlaneAt(Time.first, {}, EGrowthStatus::FullyGrown, EInterpolation::Step);
+		}
+		if (EProfileAction::Install == Profile.ProfileType
+			|| EProfileAction::Maintenance == Profile.ProfileType)
+		{
+			ElementTimeline.SetCuttingPlaneAt(Time.second, {}, EGrowthStatus::FullyGrown, EInterpolation::Step);
+		}
 		return;
 	}
 	auto&& PlaneOrientation = GetCuttingPlaneOrientation(GrowthAppearance);
@@ -108,7 +149,6 @@ void AddCuttingPlaneToTimeline(FITwinElementTimeline& ElementTimeline, FAppearan
 	{
 		return;
 	}
-	using namespace ITwin::Timeline;
 	bool const bVisibleOutsideTask = (Profile.ProfileType == EProfileAction::Maintenance);
 	// 'bInvertGrowth' is "Simulate as Remove" in SynchroPro, but it is only applicable to Maintenance
 	// and Temporary tasks, for which the default growth behaves like Install, and thus needs can a custom
@@ -160,75 +200,118 @@ void AddVisibilityToTimeline(FITwinElementTimeline& ElementTimeline,
 		{
 			return;
 		}
-		auto const StartAlpha = Profile.ActiveAppearance.Base.bUseOriginalAlpha
-			? std::nullopt : std::optional<float>(Profile.ActiveAppearance.Base.Alpha);
-		ElementTimeline.SetVisibilityAt(Time.first,
+		bool const bZeroTimeTask = ((Time.second - KEYFRAME_TIME_EPSILON) <= Time.first);
+		float const AlphaBefore =
 			(EProfileAction::Install == Profile.ProfileType
-				|| EProfileAction::Temporary == Profile.ProfileType) ? 0.f : StartAlpha,
-			EInterpolation::Step);
-
-		auto const FinishAlpha = Profile.FinishAppearance.bUseOriginalAlpha
-			? std::nullopt : std::optional<float>(Profile.FinishAppearance.Alpha);
-		if (StartAlpha == FinishAlpha
-			|| (!StartAlpha && FinishAlpha && *FinishAlpha == 1.f)
-			|| (!FinishAlpha && StartAlpha && *StartAlpha == 1.f))
+				|| EProfileAction::Temporary == Profile.ProfileType) ? 0.f
+			: (Profile.StartAppearance.bUseOriginalAlpha ? 1.f : Profile.StartAppearance.Alpha);
+		float const AlphaAfter =
+			(EProfileAction::Remove == Profile.ProfileType
+				|| EProfileAction::Temporary == Profile.ProfileType) ? 0.f
+			: (Profile.FinishAppearance.bUseOriginalAlpha ? 1.f : Profile.FinishAppearance.Alpha);
+		if (bZeroTimeTask)
 		{
-			ElementTimeline.SetVisibilityAt(Time.first + KEYFRAME_TIME_EPSILON,
-											StartAlpha, EInterpolation::Step);
+			if (AlphaBefore != AlphaAfter)
+			{
+				ElementTimeline.SetVisibilityAt(Time.first - KEYFRAME_TIME_EPSILON,
+												AlphaBefore, EInterpolation::Step);
+			}
+			ElementTimeline.SetVisibilityAt(Time.second, AlphaAfter, EInterpolation::Step);
+			return;
+		}
+		float const StartAlpha =
+			Profile.ActiveAppearance.Base.bUseOriginalAlpha ? 1.f : Profile.ActiveAppearance.Base.Alpha;
+		float const FinishAlpha =
+			Profile.ActiveAppearance.Base.bUseOriginalAlpha ? 1.f : Profile.ActiveAppearance.FinishAlpha;
+		if (AlphaBefore != StartAlpha)
+		{
+			ElementTimeline.SetVisibilityAt(Time.first - KEYFRAME_TIME_EPSILON,
+											AlphaBefore, EInterpolation::Step);
+		}
+		if (StartAlpha == FinishAlpha)
+		{
+			ElementTimeline.SetVisibilityAt(Time.first, StartAlpha, EInterpolation::Step);
 		}
 		else
 		{
-			ElementTimeline.SetVisibilityAt(Time.first + KEYFRAME_TIME_EPSILON,
-											StartAlpha, EInterpolation::Linear);
+			ElementTimeline.SetVisibilityAt(Time.first, StartAlpha, EInterpolation::Linear);
 			ElementTimeline.SetVisibilityAt(Time.second - KEYFRAME_TIME_EPSILON,
 											FinishAlpha, EInterpolation::Step);
 		}
-		ElementTimeline.SetVisibilityAt(Time.second,
-			(EProfileAction::Remove == Profile.ProfileType
-				|| EProfileAction::Temporary == Profile.ProfileType) ? 0.f : FinishAlpha,
-			// See comment on EInterpolation::Next for an alternative
-			EInterpolation::Step);
+		if (AlphaAfter != FinishAlpha)
+		{
+			ElementTimeline.SetVisibilityAt(Time.second, AlphaAfter, EInterpolation::Step);
+		}
 	}
 }
 
-void AddStaticTransformToTimeline(FITwinElementTimeline& ElementTimeline, FTransform const& TransformUE,
-								  FTimeRangeInSeconds const& Time)
+void AddStaticTransformToTimeline(FITwinElementTimeline& ElementTimeline, FTimeRangeInSeconds const& TaskTimes,
+	FTransform const& Transform, FTransform const& IModel2UnrealTransfo, FVector const& SynchroOriginUE)
 {
 	using namespace ITwin::Timeline;
 	// Let's keep the possible anterior transformation set:
-	//ElementTimeline.SetTransformationDisabledAt(Time.first, EInterpolation::Step);
-	ElementTimeline.SetTransformationAt(Time.first /*+ KEYFRAME_TIME_EPSILON*/, TransformUE,
-		FDeferredAnchorPos::MakeSharedCustom(FVector::Zero()), EInterpolation::Step);
-	ElementTimeline.SetTransformationDisabledAt(Time.second, EInterpolation::Step);
+	//ElementTimeline.SetTransformationDisabledAt(TaskTimes.first, EInterpolation::Step);
+	ElementTimeline.SetTransformationAt(TaskTimes.first /*+ KEYFRAME_TIME_EPSILON*/,
+		IModel2UnrealTransfo.TransformVector(Transform.GetTranslation())
+			- SynchroOriginUE,
+		// See comment in Add3DPathTransformToTimeline about Y inversion...
+		FQuat(UITwinUtilityLibrary::ConvertRotator_ITwinToUnreal(Transform.GetRotation().Rotator())),
+		// Anything but 'Original' as long as bDeferred is kept false and offset zero, which are the defaults
+		FDeferredAnchor{ EAnchorPoint::Static, false, FVector::ZeroVector },
+		EInterpolation::Step);
+	ElementTimeline.SetTransformationDisabledAt(TaskTimes.second, EInterpolation::Step);
 }
 
 template<typename KeyframeIt>
-void Add3DPathTransformToTimeline(FITwinElementTimeline& ElementTimeline, FTimeRangeInSeconds const& Time,
+void Add3DPathTransformToTimeline(FITwinElementTimeline& ElementTimeline, FTimeRangeInSeconds const& TaskTimes,
 	std::variant<ITwin::Timeline::EAnchorPoint, FVector> const& TransformAnchor,
-	KeyframeIt const KeyframeBegin, KeyframeIt const KeyframeEnd, FTransform const& CesiumToUnreal)
+	KeyframeIt const KeyframeBegin, KeyframeIt const KeyframeEnd, FTransform const& IModel2UnrealTransfo,
+	FVector const& SynchroOriginUE)
 {
+	if (KeyframeBegin == KeyframeEnd)
+		return;
 	using namespace ITwin::Timeline;
 	// Let's keep the possible anterior transformation set:
-	//ElementTimeline.SetTransformationDisabledAt(Time.first, EInterpolation::Step);
-	double const TaskDuration = Time.second - Time.first;
-	std::shared_ptr<FDeferredAnchorPos> SharedAnchor; // share anchor info with all keyframes
-    std::visit([&SharedAnchor](auto&& Var)
+	//ElementTimeline.SetTransformationDisabledAt(TaskTimes.first, EInterpolation::Step);
+	double const TaskDuration = TaskTimes.second - TaskTimes.first;
+	FDeferredAnchor BaseAnchor;
+    std::visit([&BaseAnchor, &IModel2UnrealTransfo](auto&& Var)
 		{
 			using T = std::decay_t<decltype(Var)>;
 			if constexpr (std::is_same_v<T, EAnchorPoint>)
-				SharedAnchor = std::move(FDeferredAnchorPos::MakeShared(Var));
+			{
+				if (EAnchorPoint::Original != Var)
+				{
+					BaseAnchor.bDeferred = true;
+					BaseAnchor.AnchorPoint = Var;
+				}
+			}
 			else if constexpr (std::is_same_v<T, FVector>)
-				SharedAnchor = std::move(FDeferredAnchorPos::MakeSharedCustom(Var));
+			{
+				BaseAnchor.bDeferred = false;
+				BaseAnchor.AnchorPoint = EAnchorPoint::Custom;
+				BaseAnchor.Offset = IModel2UnrealTransfo.TransformVector(Var);
+			}
 			else static_assert(always_false_v<T>, "non-exhaustive visitor!");
 		},
 		TransformAnchor);
+	FVector const IModelRelativePos = (ITwin::Timeline::EAnchorPoint::Original == BaseAnchor.AnchorPoint)
+									  ? KeyframeBegin->Transform.GetLocation() : FVector::ZeroVector;
+	FVector const UnrealRelativePos = (ITwin::Timeline::EAnchorPoint::Original == BaseAnchor.AnchorPoint)
+									  ? FVector::ZeroVector : SynchroOriginUE;
 	for (KeyframeIt Key = KeyframeBegin; Key != KeyframeEnd; ++Key)
 	{
 		// FTransform composition order is the opposite of matrix (and quaternion) composition order, see this
 		// example from UE doc (from Math/Transform[Non]Vectorized.h):
-		// LocalToWorld = (DeltaRotation * LocalToWorld) will change rotation in local space by DeltaRotation
-		ElementTimeline.SetTransformationAt(Time.first + Key->RelativeTime * TaskDuration,
-			Key->Transform * CesiumToUnreal, SharedAnchor, EInterpolation::Linear);
+		// "LocalToWorld = (DeltaRotation * LocalToWorld) will change rotation in local space by DeltaRotation"
+		ElementTimeline.SetTransformationAt(TaskTimes.first + Key->RelativeTime * TaskDuration,
+			IModel2UnrealTransfo.TransformVector(Key->Transform.GetTranslation() - IModelRelativePos)
+				- UnrealRelativePos,
+			// Note: I swapped the rotation axis's Y component in SchedulesImport... I tried transforming
+			// Key->Transform by IModel2UnrealTransfo here to get the Y inversion "naturally" but it didn't work!
+			// (with or without this ConvertRotator_ITwinToUnreal call)
+			FQuat(UITwinUtilityLibrary::ConvertRotator_ITwinToUnreal(Key->Transform.GetRotation().Rotator())),
+			BaseAnchor, EInterpolation::Linear);
 	}
 }
 
@@ -490,32 +573,32 @@ void FITwinScheduleTimelineBuilder::AddAnimationBindingToTimeline(FITwinSchedule
 			auto&& TransfoAssignment = Schedule.TransfoAssignments[Binding.TransfoAssignmentInVec];
 			if (Binding.bStaticTransform)
 			{
-				if (ensure(CesiumToUnrealTransform && *CesiumToUnrealTransform))
-				{
-					AddStaticTransformToTimeline(ElementTimeline,
-						// see comment about FTransform composition order in Add3DPathTransformToTimeline
-						std::get<0>(TransfoAssignment.Transformation) * CesiumToUnrealTransform->value(),
-						Task.TimeRange);
-				}
+				// Disabled while waiting for https://dev.azure.com/bentleycs/Synchro/_workitems/edit/1538989
+				//if (ensure(IModel2UnrealTransfo && *IModel2UnrealTransfo))
+				//{
+				//	AddStaticTransformToTimeline(ElementTimeline, Task.TimeRange,
+				//		std::get<0>(TransfoAssignment.Transformation), IModel2UnrealTransfo->value(),
+				//		SynchroOriginUE);
+				//}
 			}
 			else
 			{
 				auto&& PathAssignment = std::get<1>(TransfoAssignment.Transformation);
 				if (ensure(ITwin::INVALID_IDX != PathAssignment.Animation3DPathInVec
-							&& CesiumToUnrealTransform && *CesiumToUnrealTransform))
+							&& IModel2UnrealTransfo && *IModel2UnrealTransfo))
 				{
 					auto&& Path3D = Schedule.Animation3DPaths[PathAssignment.Animation3DPathInVec].Keyframes;
 					if (PathAssignment.b3DPathReverseDirection)
 					{
 						Add3DPathTransformToTimeline(ElementTimeline, Task.TimeRange,
 							PathAssignment.TransformAnchor, Path3D.rbegin(), Path3D.rend(), //<== reversed
-							CesiumToUnrealTransform->value());
+							IModel2UnrealTransfo->value(), SynchroOriginUE);
 					}
 					else
 					{
 						Add3DPathTransformToTimeline(ElementTimeline, Task.TimeRange,
 							PathAssignment.TransformAnchor, Path3D.begin(), Path3D.end(),
-							CesiumToUnrealTransform->value());
+							IModel2UnrealTransfo->value(), SynchroOriginUE);
 					}
 				}
 			}

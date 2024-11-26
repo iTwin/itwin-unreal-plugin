@@ -17,6 +17,8 @@
 	#endif // !MODULE_EXPORT
 #endif
 
+#include "ITwinRequestTypes.h"
+
 MODULE_EXPORT namespace SDK::Core
 {
 	struct ChangesetInfos;
@@ -61,6 +63,7 @@ MODULE_EXPORT namespace SDK::Core
 
 		virtual void OnSavedViewInfosRetrieved(bool bSuccess, SavedViewInfos const& infos) = 0;
 		virtual void OnSavedViewRetrieved(bool bSuccess, SavedView const& savedView, SavedViewInfo const& info) = 0;
+		virtual void OnSavedViewExtensionRetrieved(bool bSuccess, std::string const& savedViewId, std::string const& data) = 0;
 		virtual void OnSavedViewThumbnailRetrieved(bool bSuccess, std::string const& ThumbnailURL, std::string const& SavedViewId) = 0;
 		virtual void OnSavedViewThumbnailUpdated(bool bSuccess, std::string const& SavedViewId, std::string const& Response) = 0;
 		virtual void OnSavedViewGroupInfosRetrieved(bool bSuccess, SavedViewGroupInfos const& infos) = 0;
@@ -75,7 +78,7 @@ MODULE_EXPORT namespace SDK::Core
 		virtual void OnElementPropertiesRetrieved(bool bSuccess, ITwinElementProperties const& props) = 0;
 
 		virtual void OnIModelPropertiesRetrieved(bool bSuccess, IModelProperties const& props) = 0;
-		virtual void OnIModelQueried(bool bSuccess, std::string const& Response) = 0;
+		virtual void OnIModelQueried(bool bSuccess, std::string const& Response, RequestID const&) = 0;
 
 		virtual void OnMaterialPropertiesRetrieved(bool bSuccess, ITwinMaterialPropertiesMap const& props) = 0;
 
@@ -99,6 +102,7 @@ MODULE_EXPORT namespace SDK::Core
 		void OnExportStarted(bool bSuccess, std::string const& InExportId) override;
 		void OnSavedViewInfosRetrieved(bool bSuccess, SavedViewInfos const& infos) override;
 		void OnSavedViewRetrieved(bool bSuccess, SavedView const& savedView, SavedViewInfo const& info) override;
+		void OnSavedViewExtensionRetrieved(bool bSuccess, std::string const& SavedViewId, std::string const& data) override;
 		void OnSavedViewThumbnailRetrieved(bool bSuccess, std::string const& ThumbnailURL, std::string const& SavedViewId) override;
 		void OnSavedViewThumbnailUpdated(bool bSuccess, std::string const& SavedViewId, std::string const& Response) override;
 		void OnSavedViewGroupInfosRetrieved(bool bSuccess, SavedViewGroupInfos const& infos) override;
@@ -110,7 +114,7 @@ MODULE_EXPORT namespace SDK::Core
 		void OnRealityData3DInfoRetrieved(bool bSuccess, ITwinRealityData3DInfo const& info) override;
 		void OnElementPropertiesRetrieved(bool bSuccess, ITwinElementProperties const& props) override;
 		void OnIModelPropertiesRetrieved(bool bSuccess, IModelProperties const& props) override;
-		void OnIModelQueried(bool bSuccess, std::string const& Response) override;
+		void OnIModelQueried(bool bSuccess, std::string const& Response, RequestID const&) override;
 		void OnMaterialPropertiesRetrieved(bool bSuccess, ITwinMaterialPropertiesMap const& props) override;
 		void OnTextureDataRetrieved(bool bSuccess, std::string const& textureId, ITwinTextureData const& textureData) override;
 

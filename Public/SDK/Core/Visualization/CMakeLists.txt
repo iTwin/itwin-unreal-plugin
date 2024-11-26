@@ -13,6 +13,8 @@ add_library(Visualization STATIC
 		InstancesManager.cpp
 		MaterialPersistence.cpp
 		MaterialPersistence.h
+		ScenePersistence.cpp
+		ScenePersistence.h
 )
 target_compile_features(Visualization PRIVATE ${DefaultCXXSTD})
 target_link_libraries(Visualization PUBLIC

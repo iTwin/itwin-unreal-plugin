@@ -44,6 +44,23 @@ namespace Be
 		: x( x )
 		{ BE_ASSERT_MSG(x, "you must pass a payload"); }
 
+		/// See https://stackoverflow.com/questions/3106110/what-are-move-semantics
+		/// Implementing the assignment like that avoids reimplementing both ctor
+		/// and dtor semantics in the assignment operator: since the parameter is
+		/// a copy (either a full copy or a moved copy, depending on what it was
+		/// assigned from), we just have to swap members and don't need to bother
+		/// about anything else.
+		CleanUpGuardT(CleanUpGuardT<T>&& From) { *this = From; }
+		CleanUpGuardT<T>& operator=(CleanUpGuardT<T> From)
+		{
+			std::swap(x, From.x);
+			From.release();
+		}
+
+		CleanUpGuardT(CleanUpGuardT<T> const&) = delete;
+		CleanUpGuardT<T>& operator=(CleanUpGuardT<T> const&) = delete;
+		CleanUpGuardT<T>& operator=(CleanUpGuardT<T>&&) = delete;
+
 		~CleanUpGuardT()
 		{
 			if (x)

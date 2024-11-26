@@ -8,6 +8,7 @@
 
 
 #include "UEHttpAdapter.h"
+#include "HttpUtils.h"
 
 #include <Interfaces/IHttpResponse.h>
 #include <HttpModule.h>
@@ -20,18 +21,9 @@ public:
 	{
 	}
 
-	void SetVerb(EVerb eVerb)
+	void SetVerb(SDK::Core::EVerb eVerb)
 	{
-		FString Verb;
-		switch (eVerb)
-		{
-		case EVerb::Delete: Verb = TEXT("DELETE"); break;
-		case EVerb::Get:	Verb = TEXT("GET"); break;
-		case EVerb::Patch:	Verb = TEXT("PATCH"); break;
-		case EVerb::Post:	Verb = TEXT("POST"); break;
-		case EVerb::Put:	Verb = TEXT("PUT"); break;
-		}
-		UERequest->SetVerb(Verb);
+		UERequest->SetVerb(ITwinHttp::GetVerbString(eVerb));
 	}
 
 	static const long HTTP_CONNECT_ERR = -2;
@@ -42,7 +34,7 @@ public:
 	{
 		UERequest->OnProcessRequestComplete().BindLambda(
 			[this, ResultCallback = callback, RequestPtr = requestPtr]
-			(FHttpRequestPtr UERequest, FHttpResponsePtr UEResponse, bool connectedSuccessfully)
+			(FHttpRequestPtr pUERequest, FHttpResponsePtr UEResponse, bool connectedSuccessfully)
 		{
 			SDK::Core::Http::Response Response;
 			if (connectedSuccessfully)
@@ -136,7 +128,7 @@ bool FUEHttpRequest::CheckResponse(Response const& response, std::string& reques
 	return Impl->CheckResponse(response, requestError);
 }
 
-void FUEHttpRequest::DoSetVerb(EVerb verb)
+void FUEHttpRequest::DoSetVerb(SDK::Core::EVerb verb)
 {
 	Impl->SetVerb(verb);
 }

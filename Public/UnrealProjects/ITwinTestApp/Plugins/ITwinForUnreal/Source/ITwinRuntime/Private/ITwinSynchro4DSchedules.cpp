@@ -13,6 +13,7 @@
 #include <ITwinServerConnection.h>
 #include <ITwinIModel.h>
 #include <ITwinIModelInternals.h>
+#include <Network/JsonQueriesCache.h>
 #include <Timeline/AnchorPoint.h>
 #include <Timeline/TimeInSeconds.h>
 #include <Timeline/SchedulesConstants.h>
@@ -21,9 +22,11 @@
 
 #include <HAL/PlatformFileManager.h>
 #include <Logging/LogMacros.h>
+#include <Materials/MaterialInstance.h>
 #include <Materials/MaterialInterface.h>
 #include <Misc/FileHelper.h>
 #include <Misc/Paths.h>
+#include <UObject/ConstructorHelpers.h>
 #include <mutex>
 #include <optional>
 #include <unordered_set>
@@ -57,18 +60,32 @@ public: // for TPimplPtr
 	}
 };
 
-static std::optional<FTransform> const& GetCesiumToUnrealTransform(UITwinSynchro4DSchedules& Owner)
+static std::optional<FTransform> const& GetIModel2UnrealTransfo(UITwinSynchro4DSchedules& Owner)
 {
 	AITwinIModel* IModel = Cast<AITwinIModel>(Owner.GetOwner());
 	if (/*ensure*/(IModel)) // the CDO is in that case...
 	{
 		FITwinIModelInternals& IModelInternals = GetInternals(*IModel);
-		return IModelInternals.SceneMapping.GetCesiumToUnrealTransform();
+		return IModelInternals.SceneMapping.GetIModel2UnrealTransfo();
 	}
 	else
 	{
 		static std::optional<FTransform> Dummy; // left uninit, will error out later anyway
 		return Dummy;
+	}
+}
+
+static FVector const& GetSynchro4DOriginUE(UITwinSynchro4DSchedules& Owner)
+{
+	AITwinIModel* IModel = Cast<AITwinIModel>(Owner.GetOwner());
+	if (/*ensure*/(IModel)) // the CDO is in that case...
+	{
+		FITwinIModelInternals& IModelInternals = GetInternals(*IModel);
+		return IModelInternals.SceneMapping.GetSynchro4DOriginUE();
+	}
+	else
+	{
+		return FVector::ZeroVector;
 	}
 }
 
@@ -91,7 +108,7 @@ FITwinSynchro4DSchedulesInternals::FITwinSynchro4DSchedulesInternals(UITwinSynch
 	std::vector<FITwinSchedule>& InSchedules)
 :
 	Owner(InOwner), bDoNotBuildTimelines(InDoNotBuildTimelines)
-	, Builder(InOwner, GetCesiumToUnrealTransform(InOwner))
+	, Builder(InOwner, GetIModel2UnrealTransfo(InOwner), GetSynchro4DOriginUE(InOwner))
 	, SchedulesApi(InOwner, InMutex, InSchedules), Mutex(InMutex), Schedules(InSchedules)
 {
 }
@@ -108,8 +125,9 @@ FITwinScheduleTimeline const& FITwinSynchro4DSchedulesInternals::GetTimeline() c
 
 void FITwinSynchro4DSchedulesInternals::SetScheduleTimeRangeIsKnown()
 {
+	// NOT Owner.GetDateRange(), which relies on ScheduleTimeRangeIsKnown set below!
 	auto const& DateRange = GetTimeline().GetDateRange();
-	if (DateRange.HasLowerBound() && DateRange.HasUpperBound())
+	if (DateRange != FDateRange())
 	{
 		ScheduleTimeRangeIsKnown = true;
 		Owner.OnScheduleTimeRangeKnown.Broadcast(DateRange.GetLowerBoundValue(),
@@ -174,13 +192,17 @@ void FITwinSynchro4DSchedulesInternals::OnNewTileMeshBuilt(CesiumTileID const& T
 	if (MeshElementIDs.empty()
 		|| (PrefetchAllElementAnimationBindings() && EApplySchedule::InitialPassDone != ApplySchedule))
 	{
-		SceneTile.bNewMeshesToAnimate = false; // schedule not yet applied so we don't care
+		// schedule not yet applied so we don't care - irrelevant if !s_bMaskTilesUntilFullyAnimated
+		SceneTile.bNewMeshesToAnimate = false;
 		// Note: don't use bFirstTimeSeenTile because we never know when a tile is finished loading anyway :/
 		return;
 	}
-	// When schedule is applied, default to "invisible" to avoid popping meshes (you get popping holes
-	// instead, much better! :-))
-	FITwinSceneMapping::SetForcedOpacity(pMaterial, 0.f);
+	if (ITwin::Synchro4D::s_bMaskTilesUntilFullyAnimated)
+	{
+		// When schedule is applied, default to "invisible" to avoid popping meshes (you get popping holes
+		// instead, much better! :-))
+		FITwinSceneMapping::SetForcedOpacity(pMaterial, 0.f);
+	}
 	// MeshElementIDs is actually moved only in case of insertion, otherwise it is untouched
 	auto Entry = ElementsReceived.try_emplace(TileId, std::move(MeshElementIDs));
 	if (!Entry.second) // was not inserted, merge with existing set:
@@ -196,9 +218,14 @@ bool FITwinSynchro4DSchedulesInternals::PrefetchAllElementAnimationBindings() co
 		&& !Owner.bDebugWithDummyTimelines;
 }
 
+bool FITwinSynchro4DSchedulesInternals::IsPrefetchedAvailableAndApplied() const
+{
+	return PrefetchAllElementAnimationBindings() && EApplySchedule::InitialPassDone == ApplySchedule;
+}
+
 void FITwinSynchro4DSchedulesInternals::HandleReceivedElements(bool& bNewTilesReceived)
 {
-	if (!IsReady() || ElementsReceived.empty())
+	if (!IsReadyToQuery() || ElementsReceived.empty())
 		return;
 
 	// In principle, OnElementsTimelineModified must be called for each timeline applying to an Element (or
@@ -210,48 +237,21 @@ void FITwinSynchro4DSchedulesInternals::HandleReceivedElements(bool& bNewTilesRe
 	// to take care of Elements already animated _in other tiles_. Elements not yet animated were passed on
 	// to QueryElementsTasks anyway, so OnElementsTimelineModified would be called for them later if needed.
 	// With PrefetchAllElementAnimationBindings, the situation is reversed: we have all bindings (once
-	// HasFullSchedule returns true), so OnElementsTimelineModified needs to be called on all Elements, because
+	// IsAvailable() returns true), so OnElementsTimelineModified needs to be called on all Elements, because
 	// no new query will be made.
 
 	// But we will do as if we received all Elements on any given timeline at the same time, to
 	// avoid calculating the map<Timeline, vector<ElementsReceived>> we would need...
 	auto& SceneMapping = GetInternals(*Cast<AITwinIModel>(Owner.GetOwner())).SceneMapping;
-	if (PrefetchAllElementAnimationBindings())
-	{
-		if (EApplySchedule::InitialPassDone == ApplySchedule) // implies SchedulesApi.HasFullSchedule()
-		{
-			for (auto const& TileMeshElements : ElementsReceived)
-			{
-				bNewTilesReceived |= SceneMapping.ReplicateAnimatedElementsSetupInTile(TileMeshElements);
-			}
-			std::unordered_set<FIModelElementsKey> Timelines;
-			for (auto const& TileMeshElements : ElementsReceived)
-			{
-				auto SceneTileFound = SceneMapping.KnownTiles.find(TileMeshElements.first);
-				if (!ensure(SceneMapping.KnownTiles.end() != SceneTileFound))
-					continue;
-				Timelines.clear();
-				for (auto const Elem : TileMeshElements.second)
-					for (auto const AnimKey : SceneMapping.GetElement(Elem).AnimationKeys)
-						Timelines.insert(AnimKey);
-				for (auto const AnimKey : Timelines)
-				{
-					auto* ElementTimeline = Timeline().GetElementTimelineFor(AnimKey);
-					if (!ensure(ElementTimeline))
-						continue;
-					bNewTilesReceived |= SceneMapping.OnElementsTimelineModified(
-						TileMeshElements.first, SceneTileFound->second, *ElementTimeline);
-				}
-			}
-			ElementsReceived.clear();
-		}
-	}
-	else
+	if (!PrefetchAllElementAnimationBindings() || EApplySchedule::InitialPassDone == ApplySchedule)
 	{
 		for (auto const& TileMeshElements : ElementsReceived)
 		{
 			bNewTilesReceived |= SceneMapping.ReplicateAnimatedElementsSetupInTile(TileMeshElements);
 		}
+	}
+	if (!PrefetchAllElementAnimationBindings())
+	{
 		// ElementIDs are already mapped in the SchedulesApi structures to avoid redundant requests, so it
 		// was redundant to merge the sets here, until we needed to add the parent Elements as well:
 		std::set<ITwinElementID> MergedSet;
@@ -271,8 +271,6 @@ void FITwinSynchro4DSchedulesInternals::HandleReceivedElements(bool& bNewTilesRe
 			}
 			SetsIt->second.clear();
 		}
-		ElementsReceived.clear();
-
 		if (Owner.bDebugWithDummyTimelines)
 		{
 			std::lock_guard<std::recursive_mutex> Lock(Mutex);
@@ -300,47 +298,18 @@ void FITwinSynchro4DSchedulesInternals::HandleReceivedElements(bool& bNewTilesRe
 			SchedulesApi.QueryElementsTasks(MergedSet);
 		}
 	}
-}
-
-/*static*/
-void FITwinSynchro4DSchedulesInternals::GetAnimatableMaterials(UMaterialInterface*& OpaqueMat,
-	UMaterialInterface*& TranslucentMat, UObject& MaterialOwner)
-{
-	static UMaterialInterface* BaseMaterialMasked = nullptr;
-	static UMaterialInterface* BaseMaterialTranslucent = nullptr;
-	if (!BaseMaterialMasked || !IsValid(BaseMaterialMasked))
-	{
-		BaseMaterialMasked = Cast<UMaterialInterface>(StaticLoadObject(
-			UMaterialInterface::StaticClass(), &MaterialOwner,
-			TEXT("/ITwinForUnreal/ITwin/Materials/MI_ITwinInstance")));
-		BaseMaterialTranslucent = Cast<UMaterialInterface>(StaticLoadObject(
-			UMaterialInterface::StaticClass(), &MaterialOwner,
-			TEXT("/ITwinForUnreal/ITwin/Materials/MI_ITwinInstanceTranslucent")));
-	}
-	if (BaseMaterialMasked && BaseMaterialTranslucent)
-	{
-		OpaqueMat = BaseMaterialMasked;
-		TranslucentMat = BaseMaterialTranslucent;
-	}
-	else
-	{
-		OpaqueMat = nullptr;
-		TranslucentMat = nullptr;
-		check(false);
-	}
+	ElementsReceived.clear();
 }
 
 UMaterialInterface* FITwinSynchro4DSchedulesInternals::GetMasterMaterial(
-	ECesiumMaterialType Type, UObject& MaterialOwner)
+	ECesiumMaterialType Type, UITwinSynchro4DSchedules& SchedulesComp)
 {
-	UMaterialInterface* OpaqueMat, * TranslucentMat;
-	GetAnimatableMaterials(OpaqueMat, TranslucentMat, MaterialOwner);
 	switch (Type)
 	{
 	case ECesiumMaterialType::Opaque:
-		return OpaqueMat;
+		return SchedulesComp.BaseMaterialMasked;
 	case ECesiumMaterialType::Translucent:
-		return TranslucentMat;
+		return SchedulesComp.BaseMaterialTranslucent;
 	case ECesiumMaterialType::Water:
 		checkf(false, TEXT("Water material not implemented for Synchro4D"));
 		break;
@@ -382,54 +351,59 @@ void FITwinSynchro4DSchedulesInternals::FinalizeCuttingPlaneEquation(
 
 /*static*/
 void FITwinSynchro4DSchedulesInternals::FinalizeAnchorPos(
-	ITwin::Timeline::FDeferredAnchorPos const& Deferred, FBox const& ElementsWorldBox)
+	ITwin::Timeline::FDeferredAnchor const& Deferred, FBox const& ElementsWorldBox)
 {
+	ensure(Deferred.bDeferred);
 	FVector Center, Extents;
 	ElementsWorldBox.GetCenterAndExtents(Center, Extents);
+	// Note: 'Extents' is half (Max - Min)
 	switch (Deferred.AnchorPoint)
 	{
-	// What to do with Original? Used in Stadium-RN-QA - TODO_GCO: ask about it or test in SynchroPro
-	case ITwin::Timeline::EAnchorPoint::Original:
 	case ITwin::Timeline::EAnchorPoint::Center:
-		Deferred.Pos = Center;
+		Deferred.Offset = FVector::ZeroVector;
 		break;
-	case ITwin::Timeline::EAnchorPoint::Bottom:
-		Deferred.Pos = Center - Extents.Z; // yes, Extents is half (Max - Min)
+	case ITwin::Timeline::EAnchorPoint::MinX:
+		Deferred.Offset = FVector(Extents.X, 0, 0);
 		break;
-	case ITwin::Timeline::EAnchorPoint::Top:
-		Deferred.Pos = Center + Extents.Z;
+	case ITwin::Timeline::EAnchorPoint::MaxX:
+		Deferred.Offset = FVector(-Extents.X, 0, 0);
 		break;
-	case ITwin::Timeline::EAnchorPoint::Left:
-		Deferred.Pos = Center - Extents.X;
+	case ITwin::Timeline::EAnchorPoint::MinY:
+		Deferred.Offset = FVector(0, Extents.Y, 0);
 		break;
-	case ITwin::Timeline::EAnchorPoint::Right:
-		Deferred.Pos = Center + Extents.X;
+	case ITwin::Timeline::EAnchorPoint::MaxY:
+		Deferred.Offset = FVector(0, -Extents.Y, 0);
 		break;
-	case ITwin::Timeline::EAnchorPoint::Front:
-		Deferred.Pos = Center - Extents.Y;
+	case ITwin::Timeline::EAnchorPoint::MinZ:
+		Deferred.Offset = FVector(0, 0, Extents.Z);
 		break;
-	case ITwin::Timeline::EAnchorPoint::Back:
-		Deferred.Pos = Center + Extents.Y;
+	case ITwin::Timeline::EAnchorPoint::MaxZ:
+		Deferred.Offset = FVector(0, 0, -Extents.Z);
 		break;
 	case ITwin::Timeline::EAnchorPoint::Custom:
+		break;
+	case ITwin::Timeline::EAnchorPoint::Original: // shouldn't be deferred
+	case ITwin::Timeline::EAnchorPoint::Static: // shouldn't be deferred
 	default:
-		ensure(false); // 'Custom' is not deferred, the rest is invalid
+		ensure(false);
 		break;
 	}
-	Deferred.AnchorPoint = ITwin::Timeline::EAnchorPoint::Custom;
+	Deferred.bDeferred = false;
 }
 
-bool FITwinSynchro4DSchedulesInternals::IsReady() const
+bool FITwinSynchro4DSchedulesInternals::IsReadyToQuery() const
 {
 	return SchedulesApi.IsReadyToQuery(); // other members need no particular init
 }
 
 void FITwinSynchro4DSchedulesInternals::Reset()
 {
+	ApplySchedule = EApplySchedule::WaitForFullSchedule;
 	Schedules.clear();
 	// see comment below about ordering:
 	SchedulesApi = FITwinSchedulesImport(Owner, Mutex, Schedules);
-	Builder = FITwinScheduleTimelineBuilder(Owner, GetCesiumToUnrealTransform(Owner));
+	Builder = FITwinScheduleTimelineBuilder(
+		Owner, GetIModel2UnrealTransfo(Owner), GetSynchro4DOriginUE(Owner));
 	if (!bDoNotBuildTimelines)
 	{
 		SchedulesApi.SetSchedulesImportObservers(
@@ -460,7 +434,7 @@ void FITwinSynchro4DSchedulesInternals::Reset()
 
 FITwinSchedulesImport& FITwinSynchro4DSchedulesInternals::GetSchedulesApiReadyForUnitTesting()
 {
-	ensure(IsReady() || ResetSchedules());
+	ensure(IsReadyToQuery() || ResetSchedules());
 	return SchedulesApi;
 }
 
@@ -476,6 +450,20 @@ UITwinSynchro4DSchedules::UITwinSynchro4DSchedules()
 UITwinSynchro4DSchedules::UITwinSynchro4DSchedules(bool bDoNotBuildTimelines)
 	: Impl(MakePimpl<FImpl>(*this, bDoNotBuildTimelines))
 {
+	// Do like in UITwinCesiumGltfComponent's ctor to avoid crashes when changing level?
+	// (from Carrot's Dashboard typically...)
+	// Structure to hold one-time initialization
+	struct FConstructorStatics {
+		ConstructorHelpers::FObjectFinder<UMaterialInstance> BaseMaterialMasked;
+		ConstructorHelpers::FObjectFinder<UMaterialInstance> BaseMaterialTranslucent;
+		FConstructorStatics()
+			: BaseMaterialMasked(TEXT("/ITwinForUnreal/ITwin/Materials/MI_ITwinInstance"))
+			, BaseMaterialTranslucent(TEXT("/ITwinForUnreal/ITwin/Materials/MI_ITwinInstanceTranslucent"))
+		{}
+	};
+	static FConstructorStatics ConstructorStatics;
+	this->BaseMaterialMasked = ConstructorStatics.BaseMaterialMasked.Object;
+	this->BaseMaterialTranslucent = ConstructorStatics.BaseMaterialTranslucent.Object;
 }
 
 FDateRange UITwinSynchro4DSchedules::GetDateRange() const
@@ -525,12 +513,10 @@ void UITwinSynchro4DSchedules::TickSchedules(float DeltaTime)
 	else if (Impl->Internals.PrefetchAllElementAnimationBindings()
 		&& FITwinSynchro4DSchedulesInternals::EApplySchedule::InitialPassDone != Impl->Internals.ApplySchedule)
 	{
-		if (Impl->Internals.SchedulesApi.HasFullSchedule())
+		if (IsAvailable())
 		{
 			auto const& Timelines = Impl->Internals.Builder.Timeline().GetContainer();
 			auto& SceneMapping = GetInternals(*Cast<AITwinIModel>(GetOwner())).SceneMapping;
-			// TODO_GCO: incremental processing of above loop using FImpl::EApplySchedule::Ongoing?
-			// (think "element mesh extraction for partial transparency/transformations"...)
 			for (auto& [TileID, SceneTile] : SceneMapping.KnownTiles)
 				for (auto& ElementTimeline : Timelines)
 					SceneMapping.OnElementsTimelineModified(TileID, SceneTile, *ElementTimeline);
@@ -555,21 +541,21 @@ void UITwinSynchro4DSchedules::TickSchedules(float DeltaTime)
 
 void FITwinSynchro4DSchedulesInternals::UpdateConnection(bool const bOnlyIfReady)
 {
-	if (!bOnlyIfReady || IsReady())
+	if (!bOnlyIfReady || IsReadyToQuery())
 	{
 		AITwinIModel& IModel = *Cast<AITwinIModel>(Owner.GetOwner());
-		SchedulesApi.ResetConnection(IModel.ITwinId, IModel.IModelId);
+		SchedulesApi.ResetConnection(IModel.ITwinId, IModel.IModelId, IModel.ChangesetId);
 	}
 }
 
-bool FITwinSynchro4DSchedulesInternals::HasFullSchedule() const
+bool UITwinSynchro4DSchedules::IsAvailable() const
 {
-	return SchedulesApi.HasFullSchedule();
+	return Impl->Internals.SchedulesApi.HasFullSchedule();
 }
 
 void UITwinSynchro4DSchedules::UpdateConnection()
 {
-	if (Impl->Internals.IsReady())
+	if (Impl->Internals.IsReadyToQuery())
 		Impl->bUpdateConnectionIfReadyNeeded = true;
 }
 
@@ -614,7 +600,7 @@ bool FITwinSynchro4DSchedulesInternals::ResetSchedules()
 
 	IModelInternals.SceneMapping.SetMaterialGetter(
 		std::bind(&FITwinSynchro4DSchedulesInternals::GetMasterMaterial, this,
-					std::placeholders::_1, std::ref(*IModel)));
+					std::placeholders::_1, std::ref(Owner)));
 
 	Reset();
 	Builder.SetOnElementsTimelineModified(std::bind(
@@ -651,7 +637,7 @@ bool FITwinSynchro4DSchedulesInternals::ResetSchedules()
 
 void UITwinSynchro4DSchedules::QueryAll()
 {
-	if (!Impl->Internals.IsReady()) return;
+	if (!Impl->Internals.IsReadyToQuery()) return;
 	Impl->Internals.SchedulesApi.QueryEntireSchedules(QueryAllFromTime, QueryAllUntilTime,
 		DebugDumpAsJsonAfterQueryAll.IsEmpty() ? std::function<void(bool)>() :
 		[this, Dest=DebugDumpAsJsonAfterQueryAll] (bool bSuccess)
@@ -665,21 +651,21 @@ void UITwinSynchro4DSchedules::QueryAll()
 				Path.Append(".json");
 			if (FileManager.FileExists(*Path))
 				FileManager.DeleteFile(*Path);
-			FFileHelper::SaveStringToFile(TimelineAsJson, *Path);
+			FFileHelper::SaveStringToFile(TimelineAsJson, *Path, FFileHelper::EEncodingOptions::ForceUTF8);
 		});
 }
 
 void UITwinSynchro4DSchedules::QueryAroundElementTasks(FString const ElementID,
 	FTimespan const MarginFromStart, FTimespan const MarginFromEnd)
 {
-	if (!Impl->Internals.IsReady()) return;
+	if (!Impl->Internals.IsReadyToQuery()) return;
 	Impl->Internals.SchedulesApi.QueryAroundElementTasks(ITwin::ParseElementID(ElementID),
 														 MarginFromStart, MarginFromEnd);
 }
 
 void UITwinSynchro4DSchedules::QueryElementsTasks(TArray<FString> const& Elements)
 {
-	if (!Impl->Internals.IsReady()) return;
+	if (!Impl->Internals.IsReadyToQuery()) return;
 	std::set<ITwinElementID> ElementIDs;
 	for (auto&& Elem : Elements)
 	{
@@ -707,20 +693,20 @@ void UITwinSynchro4DSchedules::Stop()
 
 void UITwinSynchro4DSchedules::JumpToBeginning()
 {
-	auto&& ScheduleStart = Impl->Internals.GetTimeline().GetDateRange().GetLowerBound();
-	if (ScheduleStart.IsClosed() && ScheduleTime != ScheduleStart.GetValue())
+	auto const DateRange = GetDateRange();
+	if (DateRange != FDateRange())
 	{
-		ScheduleTime = ScheduleStart.GetValue();
+		ScheduleTime = DateRange.GetLowerBoundValue();
 		Impl->Animator.OnChangedScheduleTime(false);
 	}
 }
 
 void UITwinSynchro4DSchedules::JumpToEnd()
 {
-	auto&& ScheduleEnd = Impl->Internals.GetTimeline().GetDateRange().GetUpperBound();
-	if (ScheduleEnd.IsClosed() && ScheduleTime != ScheduleEnd.GetValue())
+	auto const DateRange = GetDateRange();
+	if (DateRange != FDateRange())
 	{
-		ScheduleTime = ScheduleEnd.GetValue();
+		ScheduleTime = DateRange.GetUpperBoundValue();
 		Impl->Animator.OnChangedScheduleTime(false);
 	}
 }
@@ -757,6 +743,45 @@ void UITwinSynchro4DSchedules::SetReplaySpeed(FTimespan NewReplaySpeed)
 	//if (ReplaySpeed != NewReplaySpeed) <== don't: see PostEditChangeProperty
 	ReplaySpeed = NewReplaySpeed;
 	Impl->Animator.OnChangedAnimationSpeed();
+}
+
+void UITwinSynchro4DSchedules::ClearCacheOnlyThis()
+{
+	if (!ScheduleId.IsEmpty() && !ScheduleId.StartsWith(TEXT("Unknown")))
+	{
+		AITwinIModel* IModel = Cast<AITwinIModel>(GetOwner());
+		if (!IModel) {
+			ensure(false); return;
+		}
+		FString const CacheFolder = QueriesCache::GetCacheFolder(QueriesCache::ESubtype::Schedules,
+			IModel->ServerConnection->Environment, IModel->ITwinId, IModel->IModelId, IModel->ChangesetId,
+			ScheduleId);
+		if (ensure(!CacheFolder.IsEmpty()))
+			IFileManager::Get().DeleteDirectory(*CacheFolder, /*requireExists*/false, /*recurse*/true);
+	}
+}
+
+void UITwinSynchro4DSchedules::ClearCacheAllSchedules()
+{
+	AITwinIModel* IModel = Cast<AITwinIModel>(GetOwner());
+	if (!IModel) {
+		ensure(false); return;
+	}
+	FString const CacheFolder = QueriesCache::GetCacheFolder(QueriesCache::ESubtype::Schedules,
+		IModel->ServerConnection->Environment, {}, {}, {});
+	if (ensure(!CacheFolder.IsEmpty()))
+		IFileManager::Get().DeleteDirectory(*CacheFolder, /*requireExists*/false, /*recurse*/true);
+}
+
+void UITwinSynchro4DSchedules::ToggleMaskTilesUntilFullyAnimated()
+{
+	ITwin::Synchro4D::s_bMaskTilesUntilFullyAnimated = !ITwin::Synchro4D::s_bMaskTilesUntilFullyAnimated;
+	bMaskTilesUntilFullyAnimated = ITwin::Synchro4D::s_bMaskTilesUntilFullyAnimated;
+}
+
+void UITwinSynchro4DSchedules::OnIModelEndPlay()
+{
+	Impl->Internals.SchedulesApi.UninitializeCache();
 }
 
 #if WITH_EDITOR
@@ -801,9 +826,14 @@ void UITwinSynchro4DSchedules::PostEditChangeProperty(FPropertyChangedEvent& Pro
 		Impl->Animator.OnMaskOutNonAnimatedElements();
 	}
 	else if (Name == GET_MEMBER_NAME_CHECKED(UITwinSynchro4DSchedules, DebugRecordSessionQueries)
-		  || Name == GET_MEMBER_NAME_CHECKED(UITwinSynchro4DSchedules, DebugSimulateSessionQueries))
+		  || Name == GET_MEMBER_NAME_CHECKED(UITwinSynchro4DSchedules, DebugSimulateSessionQueries)
+		  || Name == GET_MEMBER_NAME_CHECKED(UITwinSynchro4DSchedules, bDisableCaching))
 	{
 		ResetSchedules();
+	}
+	else if (Name == GET_MEMBER_NAME_CHECKED(UITwinSynchro4DSchedules, bMaskTilesUntilFullyAnimated))
+	{
+		ITwin::Synchro4D::s_bMaskTilesUntilFullyAnimated = bMaskTilesUntilFullyAnimated;
 	}
 }
 #endif // WITH_EDITOR

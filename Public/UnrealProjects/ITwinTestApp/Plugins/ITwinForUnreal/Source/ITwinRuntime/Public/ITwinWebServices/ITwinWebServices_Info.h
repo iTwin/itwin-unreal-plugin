@@ -155,6 +155,12 @@ struct FSavedViewInfo
 
 	UPROPERTY(BlueprintReadWrite, Category = "SavedViewInfo")
 		bool bShared = false;
+
+	UPROPERTY(BlueprintReadWrite, Category = "SavedViewInfo")
+		FString CreationTime;
+
+	UPROPERTY(BlueprintReadWrite, Category = "SavedViewInfo")
+		TArray<FString> Extensions;
 };
 
 USTRUCT(BlueprintType)
@@ -195,8 +201,23 @@ struct FSavedView
 	UPROPERTY(BlueprintReadWrite, Category = "SavedView")
 		FRotator Angles = FRotator::ZeroRotator;
 
+	UPROPERTY(BlueprintReadOnly, Category = "SavedView")
+		TArray<FString> HiddenCategories;
+
+	UPROPERTY(BlueprintReadOnly, Category = "SavedView")
+		TArray<FString> HiddenModels;
+
+	UPROPERTY(BlueprintReadOnly, Category = "SavedView")
+		TArray<FString> HiddenElements;
+
 	UPROPERTY(BlueprintReadWrite, Category = "SavedView")
 		FDisplayStyle DisplayStyle;
+
+	UPROPERTY(BlueprintReadWrite, Category = "SavedView")
+		FVector FrustumOrigin = FVector(0, 0, 0);
+
+	UPROPERTY(BlueprintReadWrite, Category = "SavedView")
+		double FocusDist = 0.0;
 };
 
 USTRUCT(BlueprintType)
@@ -310,6 +331,12 @@ struct FProjectExtents
 
 	UPROPERTY(BlueprintReadOnly, Category = "IModelProps")
 		FVector Low = FVector(0, 0, 0);
+
+	//! Global offset of the iModel with respect to its spatial coordinates (do not confuse with
+	//! FEcefLocation::Origin). Placed here because FEcefLocation is optional and its presence means
+	//! the iModel is geolocated.
+	UPROPERTY(BlueprintReadOnly, Category = "IModelProps")
+		FVector GlobalOrigin = FVector(0, 0, 0);
 };
 
 USTRUCT(BlueprintType)
@@ -339,6 +366,7 @@ struct FEcefLocation
 		FCartographicProps CartographicOrigin;
 	UPROPERTY(BlueprintReadOnly, Category = "IModelProps")
 		FRotator Orientation = FRotator::ZeroRotator;
+	//! ECEF Origin of the iModel spatial coordinates (do not confuse with FProjectExtents::GlobalOrigin)
 	UPROPERTY(BlueprintReadOnly, Category = "IModelProps")
 		FVector Origin = FVector(0, 0, 0);
 	//! Indicates whether Transform member contains valid data.

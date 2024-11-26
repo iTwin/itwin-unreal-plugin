@@ -19,6 +19,8 @@
 
 #include "Interpolators.h"
 
+#include <optional>
+
 #define _ITWIN_TIMELINE_DETAIL_DEFINE_PROPERTY_VALUES_IMPL_1(unusedSeq, unusedData, elem)	\
 	BOOST_PP_TUPLE_ELEM(0, elem), BOOST_PP_TUPLE_ELEM(1, elem)
 
@@ -29,7 +31,7 @@
 	BOOST_PP_TUPLE_ELEM(1, elem)
 
 #define _ITWIN_TIMELINE_DETAIL_DEFINE_OBJECT_PROPERTIES_IMPL_1(unusedSeq, unusedData, elem)	\
-	boost::optional<BOOST_PP_TUPLE_ELEM(0, elem)>, BOOST_PP_TUPLE_ELEM(1, elem)
+	std::optional<BOOST_PP_TUPLE_ELEM(0, elem)>, BOOST_PP_TUPLE_ELEM(1, elem)
 
 #define _ITWIN_TIMELINE_DETAIL_DEFINE_OBJECT_PROPERTIES_IMPL_2(unusedSeq, unusedData, elem)	\
 	::ITwin::Timeline::PropertyTimeline<BOOST_PP_TUPLE_ELEM(0, elem)>, BOOST_PP_TUPLE_ELEM(1, elem)

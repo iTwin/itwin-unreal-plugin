@@ -19,7 +19,7 @@ class ITWINTESTAPP_API AITwinSelector: public AActor
 {
 	GENERATED_BODY()
 public:
-	DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(FLoadModelEvent, FString, IModelId, FString, ExportId, FString, ChangesetId, FString, ITwinId);
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_SixParams(FLoadModelEvent, FString, IModelId, FString, ExportId, FString, ChangesetId, FString, ITwinId, FString, DisplayName, FString, MeshUrl);
 	UPROPERTY()
 	FLoadModelEvent LoadModel;
 
@@ -41,6 +41,10 @@ private:
 	FString SelectedChangesetId;
 	UPROPERTY()
 	FString SelectedITwinId;
+	UPROPERTY()
+	FString SelectedDisplayName;
+	UPROPERTY()
+	FString SelectedMeshUrl;
 	UFUNCTION(BlueprintCallable)
 	void OnAuthorizationDone(bool bSuccess, FString AuthError);
 	UFUNCTION(BlueprintCallable)

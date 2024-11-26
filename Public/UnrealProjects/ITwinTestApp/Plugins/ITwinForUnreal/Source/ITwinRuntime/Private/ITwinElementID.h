@@ -28,4 +28,5 @@ namespace ITwin
 	constexpr ITwinElementID NOT_ELEMENT{ 0 };
 
 	ITwinElementID ParseElementID(FString FromStr); // SchedulesImport.cpp
+	FString ToString(ITwinElementID const& Elem); // ITwinIModel.cpp
 }

@@ -9,6 +9,13 @@
 #pragma once
 
 #include <Math/Range.h>
+#include <Math/UnrealMathUtility.h> // FMath::RoundToInt
+#include <Misc/DateTime.h>
+#include <Misc/Timespan.h>
+
+#include <algorithm>	// std::min/max
+#include <limits>		// std::numeric_limits
+#include <utility>		// std::pair
 
 using FTimeRangeInSeconds = std::pair<double, double>;///< Same origin as FDateTime
 

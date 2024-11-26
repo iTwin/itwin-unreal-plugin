@@ -12,6 +12,7 @@
 #include <Components/TextBlock.h>
 #include <TimerManager.h>
 #include <UObject/StrongObjectPtr.h>
+#include <Decoration/ITwinDecorationServiceSettings.h>
 
 void AITwinSelector::BeginPlay()
 {
@@ -21,9 +22,6 @@ void AITwinSelector::BeginPlay()
 		TEXT("/Script/UMGEditor.WidgetBlueprint'/Game/UX/ITwinSelectorWidget.ITwinSelectorWidget_C'")));
 	UI->AddToViewport();
 	ITwinWebService = NewObject<UITwinWebServices>(this);
-	// See if a server connection was instantiated before playing the level: this is an easy trick to test QA
-	// or Dev environment in the test app.
-	ITwinWebService->InitServerConnectionFromWorld();
 	// Check authorization
 	ITwinWebService->OnAuthorizationChecked.AddDynamic(this, &AITwinSelector::OnAuthorizationDone);
 	ITwinWebService->CheckAuthorization();
@@ -127,7 +125,8 @@ void AITwinSelector::OnExportsCompleted(bool bSuccess, FITwinExportInfos Exports
 	{
 		UI->ShowPanel(1);
 		FTimerHandle TimerHandle;
-		GetWorldTimerManager().SetTimer(TimerHandle, FTimerDelegate::CreateLambda([this, _ = TStrongObjectPtr<AITwinSelector>(this)]
+		GetWorldTimerManager().SetTimer(TimerHandle, FTimerDelegate::CreateLambda(
+			[this, _ = TStrongObjectPtr<AITwinSelector>(this)]
 			{
 				ITwinWebService->GetExports(SelectedIModelId, SelectedChangesetId);
 			}), 5, false);
@@ -174,7 +173,8 @@ void AITwinSelector::GetExportInfoComplete(bool /*bSuccess*/, FITwinExportInfo E
 		return;
 	}
 	FTimerHandle TimerHandle;
-	GetWorldTimerManager().SetTimer(TimerHandle, FTimerDelegate::CreateLambda([this, _ = TStrongObjectPtr<AITwinSelector>(this)]
+	GetWorldTimerManager().SetTimer(TimerHandle, FTimerDelegate::CreateLambda(
+		[this, _ = TStrongObjectPtr<AITwinSelector>(this)]
 		{
 			ITwinWebService->GetExportInfo(SelectedExportId);
 		}), 5, false);
@@ -188,6 +188,8 @@ void AITwinSelector::FindExport(FString& Status, const FITwinExportInfos& Export
 		if (ExportInfo.Status != "Invalid")
 		{
 			SelectedExportId = ExportInfo.Id;
+			SelectedDisplayName = ExportInfo.DisplayName;
+			SelectedMeshUrl = ExportInfo.MeshUrl;
 			LastStatus = ExportInfo.Status;
 			break;
 		}
@@ -207,7 +209,8 @@ void AITwinSelector::FindExport(FString& Status, const FITwinExportInfos& Export
 
 void AITwinSelector::LoadIModel()
 {
-	LoadModel.Broadcast(SelectedIModelId, SelectedExportId, SelectedChangesetId, SelectedITwinId/*, ServerConnection*/);
+	LoadModel.Broadcast(SelectedIModelId, SelectedExportId, SelectedChangesetId, SelectedITwinId,
+						SelectedDisplayName, SelectedMeshUrl);
 	UI->SetVisibility(ESlateVisibility::Hidden);
 }
 

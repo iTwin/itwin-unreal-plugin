@@ -138,6 +138,13 @@ namespace SDK::Core::Tools
 			logMap[hash] = ILog::New(channel, level);
 	}
 
-
+	void CreateAdvVizLogChannels()
+	{
+		CreateLogChannel("ITwinAPI", Level::info);
+		CreateLogChannel("ITwinScene", Level::info);
+		CreateLogChannel("ITwinDecoration", Level::info);
+		CreateLogChannel("App", Level::info);
+		CreateLogChannel("AppUI", Level::info);
+	}
 }
 

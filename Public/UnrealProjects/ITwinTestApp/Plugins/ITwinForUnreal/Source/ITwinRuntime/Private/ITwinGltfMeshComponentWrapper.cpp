@@ -499,7 +499,7 @@ bool FITwinGltfMeshComponentWrapper::FinalizeExtractedEntity(
             }
             MaterialToUse = pNewMaterial;
             if (ensure(Options.SceneTile))
-                Options.SceneTile->Materials.push_back(MaterialToUse);
+                Options.SceneTile->AddMaterial(MaterialToUse);
 
             // The texture in the newly created material instance will have to be setup afterwards
             ExtractedEntity.TextureFlags.HighlightsAndOpacitiesFlags.Invalidate();
@@ -967,12 +967,12 @@ uint32 FITwinGltfMeshComponentWrapper::ExtractSomeElements(
         std::ceil(elementSections_.size() * Percentage));
     for (auto const& [EltID, MeshSection] : elementSections_)
     {
-        // test if the element was extracted previously
-        if (SceneTile.FindExtractedElement(EltID) == nullptr)
+        auto&& ExtractionEntry = SceneTile.ExtractedElement(EltID);
+        if (ExtractionEntry.second) // was inserted, ie not extracted previously
         {
             // extract it now
-            auto& ExtractedEntities = SceneTile.ExtractedElement(EltID)->second;
-            auto& ExtractedEntity = ExtractedEntities.emplace_back(FITwinExtractedEntity{ EltID });
+            auto& ExtractedEntity =
+                ExtractionEntry.first->second.emplace_back(FITwinExtractedEntity{ EltID });
             if (ExtractElement(EltID, ExtractedEntity, Options))
             {
                 nExtracted++;
@@ -981,16 +981,14 @@ uint32 FITwinGltfMeshComponentWrapper::ExtractSomeElements(
             }
             else
             {
-                ExtractedEntities.pop_back();
+                ExtractionEntry.first->second.pop_back();
             }
         }
     }
-    
 #endif // ENABLE_DRAW_DEBUG
 
     return nExtracted;
 }
-
 
 std::optional<uint32> FITwinGltfMeshComponentWrapper::BakeFeatureIDsInVertexUVs()
 {

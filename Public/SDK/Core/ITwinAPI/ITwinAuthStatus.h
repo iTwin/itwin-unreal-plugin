@@ -1,6 +1,6 @@
 /*--------------------------------------------------------------------------------------+
 |
-|     $Source: ITwinAuthorizationObserver.h $
+|     $Source: ITwinAuthStatus.h $
 |
 |  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
 |
@@ -9,12 +9,20 @@
 
 #pragma once
 
-#include "CoreMinimal.h"
+#ifndef SDK_CPPMODULES
+#	ifndef MODULE_EXPORT
+#		define MODULE_EXPORT
+#	endif // !MODULE_EXPORT
+#endif
 
-class ITWINRUNTIME_API IITwinAuthorizationObserver
+
+MODULE_EXPORT namespace SDK::Core
 {
-public:
-	virtual ~IITwinAuthorizationObserver() = default;
-
-	virtual void OnAuthorizationDone(bool bSuccess, FString const& Error) = 0;
-};
+	enum class EITwinAuthStatus : uint8_t
+	{
+		None,
+		InProgress,
+		Success,
+		Failed
+	};
+}

@@ -35,6 +35,16 @@ public:
 		BlueprintCallable)
 	void UpdateITwin();
 
+	//! Start loading the decoration attached to this iTwin, if any.
+	UFUNCTION(Category = "iTwin",
+		BlueprintCallable)
+	void LoadDecoration();
+
+	//! Posts a request to start saving the decoration attached to this iTwin, if any.
+	UFUNCTION(Category = "iTwin",
+		BlueprintCallable)
+	void SaveDecoration();
+
 private:
 	/// overridden from AITwinServiceActor:
 	virtual void UpdateOnSuccessfulAuthorization() override;

@@ -86,10 +86,15 @@ AITwinCesiumCreditSystem::GetDefaultCreditSystem(const UObject* WorldContextObje
   // loader object that retrieves the blueprint class in its constructor. We can
   // destroy the loader immediately once it's done since it will have already
   // set CesiumCreditSystemBP.
-  if (!CesiumCreditSystemBP || !IsValid(CesiumCreditSystemBP)) {
+  if (!IsValid(CesiumCreditSystemBP)) {
+    if (CesiumCreditSystemBP) CesiumCreditSystemBP->RemoveFromRoot();
     UITwinCesiumCreditSystemBPLoader* bpLoader =
         NewObject<UITwinCesiumCreditSystemBPLoader>();
     CesiumCreditSystemBP = bpLoader->CesiumCreditSystemBP.LoadSynchronous();
+    // Bentley/Ghislain: work around crashes when loading several iModels successively through Carrot's
+    // Dashboard. Maybe overkill, but can't think yet of anything else safe enough: I even had a crash
+    // inside the above call to IsValid!
+    CesiumCreditSystemBP->AddToRoot();
     bpLoader->ConditionalBeginDestroy();
   }
 

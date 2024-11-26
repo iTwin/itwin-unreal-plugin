@@ -1,0 +1,4 @@
+{
+    "urlSuffix": "/imodel/rpc/v4/mode/1/context/5e15184e-6d3c-43fd-ad04-e28b4b39485e/imodel/b53cebea-451f-4433-942f-eabda9c11d21/changeset/0/IModelReadRpcInterface-3.6.0-queryRows",
+    "body": "[{\"iTwinId\":\"5e15184e-6d3c-43fd-ad04-e28b4b39485e\",\"iModelId\":\"b53cebea-451f-4433-942f-eabda9c11d21\",\"changeset\":{\"id\":\"\"}},{\"limit\":{\"offset\":0,\"count\":50000},\"rowFormat\":1,\"convertClassIdsToClassNames\":true,\"kind\":1,\"valueFormat\":0,\"query\":\"SELECT Element.Id, Identifier FROM bis.ExternalSourceAspect\"}]"
+}

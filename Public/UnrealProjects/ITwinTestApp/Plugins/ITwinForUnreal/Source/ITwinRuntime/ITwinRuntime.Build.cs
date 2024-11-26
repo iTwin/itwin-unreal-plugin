@@ -21,7 +21,9 @@ public class ITwinRuntime : ModuleRules
 		PrivateDependencyModuleNames.AddRange(new string[]{
 			"ITwinCesiumRuntime",
 			"CoreUObject",
+			"DeveloperSettings",
 			"Engine",
+			"Foliage",
 			"HTTP",
 			"HTTPServer",
 			"Json",
@@ -32,7 +34,17 @@ public class ITwinRuntime : ModuleRules
 			"SDKCore",
 			"Slate",
 			"SlateCore",
+			"UE5Coro",
 		});
+		if (Target.bBuildEditor)
+		{
+			PrivateDependencyModuleNames.AddRange(new string[]{
+				"FunctionalTesting",
+				"Projects",
+				"ScreenShotComparisonTools",
+				"UnrealEd",
+			});
+		}
 		string libFolder = "UnrealDebug";
 		string libExtension = ".lib";
 		string libPrefix = "";

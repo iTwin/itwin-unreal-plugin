@@ -22,9 +22,10 @@
 	#endif // !MODULE_EXPORT
 #endif
 
+#include "ITwinRequestTypes.h"
+
 MODULE_EXPORT namespace SDK::Core
 {
-
 	/// =====================================================================================================
 	/// Important remark: those types respect the schema defined for iTwin APIs: do not rename any member
 	/// unless you were notified a change in the corresponding iTwin service.
@@ -112,12 +113,18 @@ MODULE_EXPORT namespace SDK::Core
 		std::vector<ChangesetInfo> changesets;
 	};
 
+	struct SavedViewExtensionsInfo
+	{
+		std::string extensionName;
+	};
 
 	struct SavedViewInfo
 	{
 		std::string id;
 		std::string displayName;
 		bool shared = false;
+		std::string creationTime;
+		std::vector<SavedViewExtensionsInfo> extensions;
 	};
 
 	struct SavedViewInfos
@@ -157,7 +164,12 @@ MODULE_EXPORT namespace SDK::Core
 		std::array<double, 3> origin = { 0, 0, 0 };
 		std::array<double, 3> extents = { 0, 0, 0 };
 		Rotator angles;
+		std::optional<std::vector<std::string>> hiddenCategories;
+		std::optional<std::vector<std::string>> hiddenModels;
+		std::optional<std::vector<std::string>> hiddenElements;
 		std::optional<DisplayStyle> displayStyle;
+		std::array<double, 3> frustumOrigin = { 0, 0, 0 };
+		double focusDist = 0.;
 	};
 
 

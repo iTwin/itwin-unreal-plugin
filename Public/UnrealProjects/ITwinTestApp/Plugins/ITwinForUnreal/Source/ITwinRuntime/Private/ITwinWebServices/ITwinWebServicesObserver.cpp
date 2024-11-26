@@ -7,9 +7,9 @@
 +--------------------------------------------------------------------------------------*/
 
 #include <ITwinWebServices/ITwinWebServicesObserver.h>
+#include "Misc/AssertionMacros.h"
 
-
-void FITwinDefaultWebServicesObserver::OnAuthorizationDone(bool bSuccess, FString const& Error)
+void FITwinDefaultWebServicesObserver::OnAuthorizationDone(bool bSuccess, std::string const& Error)
 {
 	ensureMsgf(false, TEXT("%s does not handle authorization"), GetObserverName());
 }
@@ -65,6 +65,10 @@ void FITwinDefaultWebServicesObserver::OnSavedViewRetrieved(bool bSuccess, FSave
 {
 	ensureMsgf(false, TEXT("%s does not handle SavedViews"), GetObserverName());
 }
+void FITwinDefaultWebServicesObserver::OnSavedViewExtensionRetrieved(bool bSuccess, FString const& SavedViewId, FString const& Data)
+{
+	ensureMsgf(false, TEXT("%s does not handle SavedViews"), GetObserverName());
+}
 void FITwinDefaultWebServicesObserver::OnSavedViewThumbnailRetrieved(bool bSuccess, FString const& SavedViewThumbnail, FString const& SavedViewId)
 {
 	checkf(false, TEXT("%s does not handle SavedViews"), GetObserverName());
@@ -93,7 +97,7 @@ void FITwinDefaultWebServicesObserver::OnIModelPropertiesRetrieved(bool bSuccess
 {
 	ensureMsgf(false, TEXT("%s does not handle querying IModel properties"), GetObserverName());
 }
-void FITwinDefaultWebServicesObserver::OnIModelQueried(bool bSuccess, FString const& QueryResult)
+void FITwinDefaultWebServicesObserver::OnIModelQueried(bool bSuccess, FString const& QueryResult, HttpRequestID const&)
 {
 	ensureMsgf(false, TEXT("%s does not handle querying iModels"), GetObserverName());
 }

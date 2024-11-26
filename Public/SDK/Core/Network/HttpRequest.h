@@ -10,27 +10,16 @@
 #pragma once
 
 #include "http.h"
+#include <Core/ITwinAPI/ITwinRequestTypes.h>
 
 MODULE_EXPORT namespace SDK::Core
 {
-
 	class HttpRequest : public Tools::Factory<HttpRequest>
 		, public Tools::ExtensionSupport
 		, public std::enable_shared_from_this<HttpRequest>
 	{
 	public:
-		enum class EVerb : uint8_t
-		{
-			Delete,
-			Get,
-			Patch,
-			Post,
-			Put
-		};
-
-		/// Unique request ID
-		using RequestID = uint32_t;
-		static const RequestID NO_REQUEST = 0xFFFFFFFF;
+		static const RequestID NO_REQUEST;
 
 		HttpRequest();
 		virtual ~HttpRequest();

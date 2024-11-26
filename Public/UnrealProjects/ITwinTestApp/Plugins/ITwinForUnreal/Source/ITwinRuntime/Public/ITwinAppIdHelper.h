@@ -24,6 +24,10 @@ class ITWINRUNTIME_API AITwinAppIdHelper : public AActor
 {
 	GENERATED_BODY()
 public:
+	//! Depending on the context, we may want to disable this behavior totally (typically when loading a
+	//! level in the game, after having grabbed an access token with a previous application ID).
+	static void FreezeAppId();
+
 	virtual void PostLoad() override;
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
@@ -35,4 +39,6 @@ private:
 	UPROPERTY(Category = "iTwin",
 		EditAnywhere)
 	FString AppId;
+
+	static bool bFreezeAppId;
 };

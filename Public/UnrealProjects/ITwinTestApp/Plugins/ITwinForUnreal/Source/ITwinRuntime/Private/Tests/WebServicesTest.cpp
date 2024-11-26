@@ -19,7 +19,6 @@
 #include <ITwinWebServices/ITwinWebServicesObserver.h>
 
 #include <Compil/BeforeNonUnrealIncludes.h>
-	#include <BeHeaders/Compil/CleanUpGuard.h>
 	#include <cpr/cpr.h>
 	#include <httpmockserver/mock_server.h>
 	#include <httpmockserver/port_searcher.h>
@@ -44,19 +43,19 @@ bool FITwinWebServicesTest::RunTest(const FString& /*Parameters*/)
 		}
 		// Since tokens are saved on a per-environment basis, we need to choose one, even though this has no
 		// real impact on the test
-		EITwinEnvironment const TestEnv = EITwinEnvironment::Prod;
+		SDK::Core::EITwinEnvironment const TestEnv = SDK::Core::EITwinEnvironment::Prod;
 		// Avoid conflicting with the true application (or another instance of the same test running in
 		// parallel...), and provide with a default iTwin App ID if there is none currently.
 		FString TokenFileSuffixForTest = FString::Printf(TEXT("_Test_%d"), FPlatformProcess::GetCurrentProcessId());
-		UITwinWebServices::SetupTestMode(TestEnv, TokenFileSuffixForTest);
+		FITwinAuthorizationManager::SetupTestMode(TestEnv, TokenFileSuffixForTest);
 
-		UTEST_TRUE("SaveToken", UITwinWebServices::SaveToken(SrcToken, TestEnv));
+		UTEST_TRUE("SaveToken", FITwinAuthorizationManager::SaveToken(SrcToken, TestEnv));
 		FString ReadToken;
-		UTEST_TRUE("LoadToken", UITwinWebServices::LoadToken(ReadToken, TestEnv));
+		UTEST_TRUE("LoadToken", FITwinAuthorizationManager::LoadToken(ReadToken, TestEnv));
 		UTEST_EQUAL("Unchanged Token", ReadToken, SrcToken);
 
 		// Cleanup
-		UITwinWebServices::DeleteTokenFile(TestEnv);
+		FITwinAuthorizationManager::DeleteTokenFile(TestEnv);
 	}
 	return true;
 }
@@ -424,6 +423,11 @@ private:
 			// GetExports - PhotoRealisticRendering
 			//---------------------------------------------------------------------------
 			return Response(cpr::status::HTTP_OK, "{\"exports\":[" \
+				"{\"id\":\"ed456436-ed0a-488c-a5f2-4115e7d8e311\",\"displayName\":\"PhotoRealisticRendering\",\"status\":\"Complete\",\"lastModified\":\"2024-06-20T15:06:47.548Z\"," \
+				"\"request\":{\"iModelId\":\"4dcf6dee-e7f1-4ed8-81f2-125402b9ac95\",\"changesetId\":\"\"," \
+				"\"exportType\":\"CESIUM\",\"exporterVersion\":\"1.0\",\"exportTypeVersion\":\"1.1\",\"currentExporterVersion\":\"1.0\"," \
+				"\"contextId\":\"e72496bd-03a5-4ad8-8a51-b14e827603b1\"}," \
+				"\"_links\":{\"mesh\":{\"href\":\"https://gltf59.blob.net/ed456436-ed0a-488c-a5f2-4115e7d8e311?sv=2024-05-04&spr=https&se=2024-06-22T23%3A59%3A59Z&sr=c&sp=rl&sig=1pievrXlFCSwmErxnSsIS4STny9y9oz%2B3P5j%2FsbPkgA%3D\"}}}," \
 				"{\"id\":\"00af52a3-a416-4e37-99e9-6de56368bc37\",\"displayName\":\"PhotoRealisticRendering\",\"status\":\"Complete\",\"lastModified\":\"2024-06-05T13:37:17.574Z\"," \
 				"\"request\":{\"iModelId\":\"4dcf6dee-e7f1-4ed8-81f2-125402b9ac95\",\"changesetId\":\"\"," \
 				"\"exportType\":\"CESIUM\",\"exporterVersion\":\"1.0\",\"exportTypeVersion\":\"1.1\",\"currentExporterVersion\":\"1.0\"," \
@@ -437,12 +441,7 @@ private:
 				"{\"id\":\"1d7eb244-cec9-4f62-909b-fb4755c37d83\",\"displayName\":\"PhotoRealisticRendering\",\"status\":\"Complete\",\"lastModified\":\"2024-06-05T13:51:14.999Z\"," \
 				"\"request\":{\"iModelId\":\"4dcf6dee-e7f1-4ed8-81f2-125402b9ac95\",\"changesetId\":\"\"," \
 				"\"exportType\":\"GLTF\",\"exporterVersion\":\"1.0\",\"exportTypeVersion\":\"1.0\",\"currentExporterVersion\":\"1.0\",\"contextId\":\"e72496bd-03a5-4ad8-8a51-b14e827603b1\"}," \
-				"\"_links\":{\"mesh\":{\"href\":\"https://gltf59.blob.net/1d7eb244-cec9-4f62-909b-fb4755c37d83?sv=2024-05-04&spr=https&se=2024-06-22T23%3A59%3A59Z&sr=c&sp=rl&sig=alK49gFhKRILyHFf%2FFRgVl3Lr1ARN%2Bkg8KFrLxomjqE%3D\"}}}," \
-				"{\"id\":\"ed456436-ed0a-488c-a5f2-4115e7d8e311\",\"displayName\":\"PhotoRealisticRendering\",\"status\":\"Complete\",\"lastModified\":\"2024-06-20T15:06:47.548Z\"," \
-				"\"request\":{\"iModelId\":\"4dcf6dee-e7f1-4ed8-81f2-125402b9ac95\",\"changesetId\":\"\"," \
-				"\"exportType\":\"CESIUM\",\"exporterVersion\":\"1.0\",\"exportTypeVersion\":\"1.1\",\"currentExporterVersion\":\"1.0\"," \
-				"\"contextId\":\"e72496bd-03a5-4ad8-8a51-b14e827603b1\"}," \
-				"\"_links\":{\"mesh\":{\"href\":\"https://gltf59.blob.net/ed456436-ed0a-488c-a5f2-4115e7d8e311?sv=2024-05-04&spr=https&se=2024-06-22T23%3A59%3A59Z&sr=c&sp=rl&sig=1pievrXlFCSwmErxnSsIS4STny9y9oz%2B3P5j%2FsbPkgA%3D\"}}}]," \
+				"\"_links\":{\"mesh\":{\"href\":\"https://gltf59.blob.net/1d7eb244-cec9-4f62-909b-fb4755c37d83?sv=2024-05-04&spr=https&se=2024-06-22T23%3A59%3A59Z&sr=c&sp=rl&sig=alK49gFhKRILyHFf%2FFRgVl3Lr1ARN%2Bkg8KFrLxomjqE%3D\"}}}]," \
 				"\"_links\":{\"self\":{\"href\":\"https://api.test.com/mesh-export/?$skip=0&$top=100&iModelId=4dcf6dee-e7f1-4ed8-81f2-125402b9ac95\"}}}"
 			);
 		}
@@ -475,7 +474,10 @@ private:
 		StringMap argMap = ToArgMap(urlArguments);
 		StringMap headerMap = ToArgMap(headers);
 
-#define SAVEDVIEW_02_DATA "\"savedViewData\":{\"itwin3dView\":{\"origin\":[-1.79,-0.69,1.59],\"extents\":[0.0,0.0,0.0],\"angles\":{\"yaw\":-1.69,\"pitch\":-50.43,\"roll\":-92.19},\"camera\":{\"lens\":0.0,\"focusDist\":0.0,\"eye\":[-1.79,-0.69,1.59]}}},\"displayName\":\"view02\",\"shared\":true,\"tagIds\":[]"
+#define SAVEDVIEW_02_DATA "\"savedViewData\":" \
+			"{\"itwin3dView\":{\"origin\":[0.0,0.0,0.0],\"extents\":[0.0,0.0,0.0],\"angles\":{\"yaw\":-1.69,\"pitch\":-50.43,\"roll\":-92.19},\"camera\":{\"lens\":90.0,\"focusDist\":0.0,\"eye\":[-1.79,-0.69,1.59]}," \
+			"\"displayStyle\":{\"viewflags\":{\"renderMode\":6,\"noConstructions\":false},\"environment\":{\"sky\":{\"display\":true,\"twoColor\":true,\"skyColor\":{\"red\":222,\"green\":242,\"blue\":255}," \
+			"\"groundColor\":{\"red\":240,\"green\":236,\"blue\":232},\"zenithColor\":{\"red\":222,\"green\":242,\"blue\":255},\"nadirColor\":{\"red\":240,\"green\":236,\"blue\":232}}}}}},\"displayName\":\"view02\",\"shared\":true,\"tagIds\":[]"
 
 #define ADD_SAVEDVIEW_02_DATA "{\"iTwinId\":\"e72496bd-03a5-4ad8-8a51-b14e827603b1\",\"iModelId\":\"4dcf6dee-e7f1-4ed8-81f2-125402b9ac95\"," SAVEDVIEW_02_DATA "}"
 
@@ -931,9 +933,9 @@ bool FITwinAPITestHelper::Init()
 	WebServices = NewObject<UITwinWebServices>();
 	ServerConnection = NewObject<AITwinServerConnection>();
 
-	const EITwinEnvironment Env = EITwinEnvironment::Prod;
-	ServerConnection->Environment = Env;
-	FITwinAuthorizationManager::GetInstance(Env)->SetOverrideAccessToken(TEXT(ITWINTEST_ACCESS_TOKEN));
+	const SDK::Core::EITwinEnvironment Env = SDK::Core::EITwinEnvironment::Prod;
+	ServerConnection->Environment = static_cast<EITwinEnvironment>(Env);
+	FITwinAuthorizationManager::GetInstance(Env)->SetOverrideAccessToken(ITWINTEST_ACCESS_TOKEN);
 	WebServices->SetServerConnection(ServerConnection);
 	WebServices->SetTestServerURL(url.c_str());
 	Observer = std::make_shared<ITwinTestWebServicesObserver>();
@@ -1169,10 +1171,9 @@ bool FITwinWebServicesRequestTest::RunTest(const FString& /*Parameters*/)
 		{
 			UTEST_TRUE("Get Exports request result", bSuccess);
 			TArray<FITwinExportInfo> const& ExportInfos(Infos.ExportInfos);
-			if (ExportInfos.Num() == 1)
+			if (ExportInfos[0].Id == WindTurbine_CesiumExportId)
 			{
 				// WindTurbine
-				UTEST_EQUAL("Id", ExportInfos[0].Id, WindTurbine_CesiumExportId);
 				UTEST_EQUAL("DisplayName", ExportInfos[0].DisplayName, TEXT("WindTurbine"));
 				UTEST_EQUAL("Status", ExportInfos[0].Status, TEXT("Complete"));
 				UTEST_EQUAL("iModelId", ExportInfos[0].iModelId, TEXT(IMODELID_WIND_TURBINE));
@@ -1183,7 +1184,8 @@ bool FITwinWebServicesRequestTest::RunTest(const FString& /*Parameters*/)
 			else
 			{
 				// PhotoRealisticRendering
-				UTEST_EQUAL("NumExports", ExportInfos.Num(), 3);
+				// we only keep one now in SDK::Core::ITwinWebServices::GetExports
+				UTEST_EQUAL("NumExports", ExportInfos.Num(), 1/*Was: 3*/);
 				for (FITwinExportInfo const& Info : ExportInfos)
 				{
 					UTEST_EQUAL("DisplayName", Info.DisplayName, TEXT("PhotoRealisticRendering"));
@@ -1194,10 +1196,10 @@ bool FITwinWebServicesRequestTest::RunTest(const FString& /*Parameters*/)
 				}
 				// result is sorted by date, with only Cesium exports
 				UTEST_EQUAL("Id 0", ExportInfos[0].Id, TEXT("ed456436-ed0a-488c-a5f2-4115e7d8e311"));
-				UTEST_EQUAL("Id 1", ExportInfos[1].Id, TEXT("1485a12a-c4f6-416f-bb79-e1fe478a3220"));
+				//UTEST_EQUAL("Id 1", ExportInfos[1].Id, TEXT("1485a12a-c4f6-416f-bb79-e1fe478a3220"));
 				// I left the old export version 0.2[.0] for this one, instead of 0.2.8.1, so that it was
 				// filtered out by WebServices, but we can no longer (and should not) test versions
-				UTEST_EQUAL("Id 2", ExportInfos[2].Id, TEXT("00af52a3-a416-4e37-99e9-6de56368bc37"));
+				//UTEST_EQUAL("Id 2", ExportInfos[2].Id, TEXT("00af52a3-a416-4e37-99e9-6de56368bc37"));
 			}
 			return true;
 		};

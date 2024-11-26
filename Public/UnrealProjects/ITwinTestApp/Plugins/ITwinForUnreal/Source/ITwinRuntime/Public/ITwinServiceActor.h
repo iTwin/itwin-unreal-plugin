@@ -14,6 +14,10 @@
 #include <ITwinWebServices/ITwinWebServicesObserver.h>
 #include <Logging/LogMacros.h>
 
+#include <ITwinRuntime/Private/Compil/BeforeNonUnrealIncludes.h>
+#	include <SDK/Core/ITwinAPI/ITwinAuthStatus.h>
+#include <ITwinRuntime/Private/Compil/AfterNonUnrealIncludes.h>
+
 #include <ITwinServiceActor.generated.h>
 
 class UITwinWebServices;
@@ -34,7 +38,7 @@ public:
 
 
 	AITwinServiceActor();
-	virtual void Destroyed() override;
+	virtual void BeginDestroy() override;
 
 	UFUNCTION(Category = "iTwin",
 		BlueprintCallable)
@@ -44,6 +48,12 @@ public:
 		BlueprintCallable)
 	UITwinWebServices* GetMutableWebServices();
 
+#if WITH_TESTS
+	//! Used in automated tests, to enable mocking of web services.
+	//! \param ServerUrl The url of the mock server to use (eg "http://localhost:1234").
+	void SetTestMode(FString const& ServerUrl);
+#endif
+
 protected:
 	UPROPERTY()
 	TObjectPtr<UITwinWebServices> WebServices;
@@ -51,17 +61,11 @@ protected:
 
 	void UpdateWebServices();
 
-	enum class EConnectionStatus : uint8
-	{
-		NotConnected,
-		InProgress,
-		Connected
-	};
 
 	/// Returns current connection status
 	/// If bRequestAuthorisationIfNeeded is true and no valid connection currently exists, triggers an
 	/// authorization request.
-	EConnectionStatus CheckServerConnection(bool bRequestAuthorisationIfNeeded = true);
+	SDK::Core::EITwinAuthStatus CheckServerConnection(bool bRequestAuthorisationIfNeeded = true);
 
 	/// overridden from FITwinDefaultWebServicesObserver:
 	virtual const TCHAR* GetObserverName() const override;
@@ -70,6 +74,6 @@ protected:
 private:
 	virtual void UpdateOnSuccessfulAuthorization();
 
-	/// overridden from FITwinDefaultWebServicesObserver:
-	virtual void OnAuthorizationDone(bool bSuccess, FString const& Error) override;
+	/// overridden from SDK::Core::ITwinAuthObserver:
+	virtual void OnAuthorizationDone(bool bSuccess, std::string const& Error) override;
 };

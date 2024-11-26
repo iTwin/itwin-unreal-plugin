@@ -13,8 +13,19 @@
 #include "CoreMinimal.h"
 #include "UObject/NoExportTypes.h"
 #include <ITwinServerConnection.h>
-#include "ITwinAuthorizationObserver.h"
 #include "ITwinWebServices_Info.h"
+
+#include <ITwinRuntime/Private/Compil/BeforeNonUnrealIncludes.h>
+#	include <SDK/Core/ITwinAPI/ITwinAuthObserver.h>
+#	include <SDK/Core/ITwinAPI/ITwinAuthStatus.h>
+#	include <SDK/Core/ITwinAPI/ITwinRequestTypes.h>
+#include <ITwinRuntime/Private/Compil/AfterNonUnrealIncludes.h>
+
+namespace SDK::Core
+{
+	class ITwinAuthManager;
+}
+
 #include "ITwinWebServices.generated.h"
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnAuthorizationChecked, bool, bSuccess, FString, Error);
@@ -32,6 +43,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGetSavedViewsComplete, bool, bSu
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGetSavedViewGroupsComplete, bool, bSuccess, FSavedViewGroupInfos, SavedViewGroups);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnAddSavedViewGroupComplete, bool, bSuccess, FSavedViewGroupInfo, SavedViewGroupInfo);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnGetSavedViewComplete, bool, bSuccess, FSavedView, SavedView, FSavedViewInfo, SavedViewInfo);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnGetSavedViewExtensionComplete, bool, bSuccess, FString, SavedViewId, FString, ExtensionData);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnGetSavedViewThumbnailComplete, bool, bSuccess, FString, SavedViewThumbnail, FString, SavedViewId);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnUpdateSavedViewThumbnailComplete, bool, bSuccess, FString, SavedViewId, FString, Response);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGetRealityDataComplete, bool, bSuccess, FITwinRealityDataInfos, RealityDataInfos);
@@ -41,10 +53,12 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_FiveParams(FOnGetIModelPropertiesComplete, bo
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnQueryIModelComplete, bool, bSuccess, FString, QueryResult);
 
 class FJsonObject;
+class FJsonQueriesCache;
 class IITwinWebServicesObserver;
+using HttpRequestID = FString;
 
 UCLASS(BlueprintType)
-class ITWINRUNTIME_API UITwinWebServices : public UObject, public IITwinAuthorizationObserver
+class ITWINRUNTIME_API UITwinWebServices : public UObject, public SDK::Core::ITwinAuthObserver
 {
 	GENERATED_BODY()
 public:
@@ -52,6 +66,8 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
 	bool CheckAuthorization();
+
+	SDK::Core::EITwinAuthStatus CheckAuthorizationStatus();
 
 	//! Returns the last error encountered, if any.
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
@@ -78,13 +94,13 @@ public:
 	void GetiModelLatestChangeset(FString iModelId);
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
-	void GetExports(FString iModelId, FString iChangesetId);
+	void GetExports(FString iModelId, FString ChangesetId);
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
 	void GetExportInfo(FString ExportId);
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
-	void StartExport(FString iModelId, FString iChangesetId);
+	void StartExport(FString iModelId, FString ChangesetId);
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
 	void GetAllSavedViews(FString iTwinId, FString iModelId, FString GroupId = "");
@@ -97,6 +113,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
 	void GetSavedView(FString SavedViewId);
+
+	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
+	void GetSavedViewExtension(FString SavedViewId, FString ExtensionName);
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
 	void GetSavedViewThumbnail(FString SavedViewId);
@@ -123,23 +142,28 @@ public:
 
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
-	void GetElementProperties(FString iTwinId, FString iModelId, FString iChangesetId, FString ElementId);
+	void GetElementProperties(FString iTwinId, FString iModelId, FString ChangesetId, FString ElementId);
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
-	void GetIModelProperties(FString iTwinId, FString iModelId, FString iChangesetId);
+	void GetIModelProperties(FString iTwinId, FString iModelId, FString ChangesetId);
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
-	void QueryIModel(FString iTwinId, FString iModelId, FString iChangesetId, FString ECSQLQuery, int Offset,
+	void QueryIModel(FString iTwinId, FString iModelId, FString ChangesetId, FString ECSQLQuery, int Offset,
 					 int Count);
+	SDK::Core::ITwinAPIRequestInfo InfosToQueryIModel(FString iTwinId, FString iModelId,
+		FString ChangesetId, FString ECSQLQuery, int Offset, int Count);
+	HttpRequestID QueryIModelRows(FString iTwinId, FString iModelId, FString ChangesetId,
+								  FString ECSQLQuery, int Offset, int Count,
+								  SDK::Core::ITwinAPIRequestInfo const* RequestInfo = nullptr);
 
 	void GetMaterialProperties(
-		FString iTwinId, FString iModelId, FString iChangesetId,
+		FString iTwinId, FString iModelId, FString ChangesetId,
 		FString MaterialId);
 	void GetMaterialListProperties(
-		FString iTwinId, FString iModelId, FString iChangesetId,
+		FString iTwinId, FString iModelId, FString ChangesetId,
 		TArray<FString> MaterialIds);
 	void GetTextureData(
-		FString iTwinId, FString iModelId, FString iChangesetId,
+		FString iTwinId, FString iModelId, FString ChangesetId,
 		FString TextureId);
 
 	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
@@ -182,6 +206,9 @@ public:
 	FOnGetSavedViewComplete OnGetSavedViewComplete;
 
 	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
+	FOnGetSavedViewExtensionComplete OnGetSavedViewExtensionComplete;
+
+	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
 	FOnGetSavedViewGroupsComplete OnGetSavedViewGroupsComplete;
 
 	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
@@ -215,6 +242,8 @@ public:
 	void SetEnvironment(EITwinEnvironment InEnvironment);
 
 	bool IsAuthorizationInProgress() const;
+	using AuthManagerPtr = std::shared_ptr<SDK::Core::ITwinAuthManager>;
+	AuthManagerPtr& GetAuthManager() const;
 	void SetServerConnection(TObjectPtr<AITwinServerConnection> const& InConnection);
 
 	//! Initialize the server connection from the level, if all connection actors in the level are using the
@@ -231,19 +260,12 @@ public:
 
 	static void SetITwinAppIDArray(ITwin::AppIDArray const& iTwinAppIDs);
 
+	//! Can be called to customize the scopes used to request the authorization.
+	static void AddScope(FString const& ExtraScope);
+
+
 	static bool GetActiveConnection(TObjectPtr<AITwinServerConnection>& OutConnection,
 		const UObject* WorldContextObject);
-
-	static bool SaveToken(FString const& InInfo, EITwinEnvironment Env);
-	static bool SaveToken(FString const& InInfo, EITwinEnvironment Env, TArray<uint8> const& Key, FString const& FileSuffix);
-
-	static bool LoadToken(FString& OutInfo, EITwinEnvironment Env);
-	static bool LoadToken(FString& OutInfo, EITwinEnvironment Env, TArray<uint8> const& Key, FString const& FileSuffix);
-
-	static void DeleteTokenFile(EITwinEnvironment Env, FString const& FileSuffix = {});
-
-	//! Can be called to customize the scopes used to request the authorization.
-	static void AddScopes(FString const& ExtraScopes);
 
 	static void SetLogErrors(bool bInLogErrors);
 	static bool ShouldLogErrors() { return bLogErrors; }
@@ -263,22 +285,19 @@ private:
 	static UITwinWebServices* GetWorkingInstance();
 
 	bool TryGetServerConnection(bool bAllowBroadcastAuthResult);
-	void OnAuthDoneImpl(bool bSuccess, FString const& Error, bool bBroadcastResult = true);
+	void OnAuthDoneImpl(bool bSuccess, std::string const& Error, bool bBroadcastResult = true);
 
-	virtual void OnAuthorizationDone(bool bSuccess, FString const& Error) override;
+	virtual void OnAuthorizationDone(bool bSuccess, std::string const& Error) override;
 
 	void DoGetiModelChangesets(FString const& iModelId, bool bRestrictToLatest);
 
-	/// This Request ID is relative to each instance of UITwinWebServices, it is *not* a global unique
-	/// identifier for requests (hence it should be kept private...)
-	/// For now its only purpose is to test if the last error message was created for current request or not.
-	using RequestID = uint32;
-
 	//! Returns the error stored for the given request, if any.
-	FString GetRequestError(RequestID InRequestId) const;
+	FString GetRequestError(HttpRequestID const& InRequestId) const;
 
 	template <typename FunctorType>
 	void DoRequest(FunctorType&& InFunctor);
+	template <typename FunctorType>
+	HttpRequestID DoRequestRetID(FunctorType&& InFunctor);
 
 private:
 	UPROPERTY()

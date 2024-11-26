@@ -14,6 +14,7 @@
 #include <Logging/LogMacros.h>
 #include <UObject/Object.h>
 #include <array>
+#include <string>
 #include <ITwinServerConnection.generated.h>
 
 UENUM()
@@ -29,7 +30,7 @@ namespace ITwin
 {
 	// App ID can be depend on the chosen environment, so we store all possible values
 	static constexpr size_t ENV_COUNT = static_cast<size_t>(EITwinEnvironment::Invalid) + 1;
-	using AppIDArray = std::array<FString, ENV_COUNT>;
+	using AppIDArray = std::array<std::string, ENV_COUNT>;
 }
 
 //! Stores common information used to access the iTwin Web APIs.
@@ -55,7 +56,7 @@ public:
 	bool HasAccessToken() const { return !GetAccessToken().IsEmpty(); }
 
 	static bool CheckRequest(FHttpRequestPtr const& CompletedRequest, FHttpResponsePtr const& Response,
-							 bool connectedSuccessfully, FString* pstrError = nullptr);
+		bool connectedSuccessfully, FString* pstrError = nullptr, bool const bWillRetry = false);
 	//! Sets the app ID for all environments.
 	//! This function is useful only for Bentley apps, which may use non-Prod envs.
 	static void SetITwinAppIDArray(ITwin::AppIDArray const& ITwinAppIDs);

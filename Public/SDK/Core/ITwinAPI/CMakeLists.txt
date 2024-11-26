@@ -1,10 +1,16 @@
 
 add_library ( ITwinAPI OBJECT
+	ITwinAuthInfo.h
 	ITwinAuthManager.cpp
 	ITwinAuthManager.h
+	ITwinAuthObserver.h
+	ITwinAuthStatus.h
 	ITwinEnvironment.h
 	ITwinMaterial.cpp
 	ITwinMaterial.h
+	ITwinScene.h
+	ITwinRequestDump.h
+	ITwinRequestTypes.h
 	ITwinTypes.h
 	ITwinWebServices.cpp
 	ITwinWebServices.h

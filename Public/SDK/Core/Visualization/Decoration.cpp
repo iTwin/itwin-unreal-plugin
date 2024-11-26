@@ -45,7 +45,7 @@ namespace SDK::Core {
 			Http::Headers headers;
 			headers.emplace_back("Authorization", std::string("Bearer ") + accessToken);
 
-			long status = GetHttp()->PostJsonJBody(jOut, std::string(""), jIn, headers);
+			long status = GetHttp()->PostJsonJBody(jOut, std::string("decorations"), jIn, headers);
 			if (status == 200 || status == 201)
 			{
 				jsonDeco_ = std::move(jOut.data);
@@ -65,7 +65,7 @@ namespace SDK::Core {
 			Http::Headers headers;
 			headers.emplace_back("Authorization", std::string("Bearer ") + accessToken);
 
-			long status = GetHttp()->GetJson(jsonDeco_, id, "", headers);
+			long status = GetHttp()->GetJson(jsonDeco_, "decorations/"+ id, "", headers);
 			if (status == 200)
 			{
 				id_ = id;
@@ -176,7 +176,7 @@ namespace SDK::Core {
 
 		SJsonInEmpty jIn;
 		SJsonOut jOut;
-		long status = http->GetJsonJBody(jOut, "?iTwinId=" + itwinid, jIn, headers);
+		long status = http->GetJsonJBody(jOut, "decorations?iTwinId=" + itwinid, jIn, headers);
 
 		if (status == 200 || status == 201)
 		{

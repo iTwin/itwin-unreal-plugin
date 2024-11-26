@@ -74,12 +74,6 @@ public:
 	int32_t test_stuff_;
 };
 
-bool operator ==(const Test_ElementTimelineEx& x, const Test_ElementTimelineEx& y)
-{
-	return (const Test_ElementTimelineEx::Super&)x == (const Test_ElementTimelineEx::Super&)y &&
-		x.test_stuff_ == y.test_stuff_;
-}
-
 template<class _T>
 std::enable_if_t<std::is_arithmetic<_T>::value, bool> AreApproxEqualGeneric(const _T& x, const _T& y)
 {
@@ -87,7 +81,7 @@ std::enable_if_t<std::is_arithmetic<_T>::value, bool> AreApproxEqualGeneric(cons
 }
 
 template<class _T>
-bool AreApproxEqualGeneric(const boost::optional<_T>& x, const boost::optional<_T>& y)
+bool AreApproxEqualGeneric(const std::optional<_T>& x, const std::optional<_T>& y)
 {
 	return (bool)x == (bool)y && (!x || AreApproxEqualGeneric(*x, *y));
 }

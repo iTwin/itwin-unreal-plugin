@@ -20,7 +20,7 @@ MODULE_EXPORT namespace SDK::Core
 		virtual void Create(
 			const std::string& name, const std::string& itwinid,
 			const std::string& accessToken) = 0;
-		/// Retreive the decoration from server
+		/// Retrieve the decoration from server
 		virtual void Get(const std::string& id, const std::string& accessToken) = 0;
 		/// Delete the decoration on server
 		virtual void Delete() = 0;
@@ -35,7 +35,7 @@ MODULE_EXPORT namespace SDK::Core
 		void Create(
 			const std::string& name, const std::string& itwinid,
 			const std::string& accessToken) override;
-		/// Retreive the decoration from server
+		/// Retrieve the decoration from server
 		void Get(const std::string& id, const std::string& accessToken) override;
 		/// Delete the decoration on server
 		void Delete() override;

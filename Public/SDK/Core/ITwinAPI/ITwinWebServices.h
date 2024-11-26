@@ -19,6 +19,8 @@
 #include "ITwinEnvironment.h"
 #include "ITwinTypes.h"
 
+#include <optional>
+
 MODULE_EXPORT namespace SDK::Core
 {
 	class IITwinWebServicesObserver;
@@ -69,6 +71,8 @@ MODULE_EXPORT namespace SDK::Core
 
 		void GetAllSavedViews(std::string const& iTwinId, std::string const& iModelId, std::string const& groupId = "");
 		void GetSavedView(std::string const& savedViewId);
+		
+		void GetSavedViewExtension(std::string const& savedViewId, std::string const& extensionName);
 
 		void GetSavedViewThumbnail(std::string const& SavedViewId);
 		void UpdateSavedViewThumbnail(std::string const& SavedViewId, std::string const& ThumbnailURL);
@@ -87,25 +91,28 @@ MODULE_EXPORT namespace SDK::Core
 		void EditSavedView(SavedView const& savedView, SavedViewInfo const& savedViewInfo);
 
 		void GetElementProperties(
-			std::string const& iTwinId, std::string const& iModelId, std::string const& iChangesetId,
+			std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId,
 			std::string const& elementId);
 
 		void GetIModelProperties(
-			std::string const& iTwinId, std::string const& iModelId, std::string const& iChangesetId);
+			std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId);
 
-		void QueryIModel(
-			std::string const& iTwinId, std::string const& iModelId, std::string const& iChangesetId,
+		ITwinAPIRequestInfo InfosToQueryIModel(
+			std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId,
 			std::string const& ECSQLQuery, int offset, int count);
+		RequestID QueryIModel(
+			std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId,
+			std::string const& ECSQLQuery, int offset, int count, ITwinAPIRequestInfo const* requestInfo);
 
 		void GetMaterialListProperties(
-			std::string const& iTwinId, std::string const& iModelId, std::string const& iChangesetId,
+			std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId,
 			std::vector<std::string> const& materialIds);
 		void GetMaterialProperties(
-			std::string const& iTwinId, std::string const& iModelId, std::string const& iChangesetId,
+			std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId,
 			std::string const& materialId);
 
 		void GetTextureData(
-			std::string const& iTwinId, std::string const& iModelId, std::string const& iChangesetId,
+			std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId,
 			std::string const& textureId);
 
 		static ITwinWebServices* GetWorkingInstance();
@@ -118,15 +125,10 @@ MODULE_EXPORT namespace SDK::Core
 
 
 	protected:
-		/// This Request ID is relative to each instance of UITwinWebServices, it is *not* a global unique
-		/// identifier for requests (hence it should be kept private...)
-		/// For now its only purpose is to test if the last error message was created for current request or not.
-		using RequestID = uint32_t;
-
-		void SetLastError(std::string const& error, RequestID requestId);
+		void SetLastError(std::string const& error, RequestID const& requestId);
 
 		//! Returns the error stored for the given request, if any.
-		std::string GetRequestError(RequestID requestId) const;
+		std::string GetRequestError(RequestID const& requestId) const;
 
 
 	private:
@@ -136,9 +138,6 @@ MODULE_EXPORT namespace SDK::Core
 		/// needed.
 		template <typename Func>
 		void ModifyServerSetting(Func const& functor);
-
-
-		struct ITwinAPIRequestInfo;
 
 		template <typename ResultDataType, class FunctorType, class DelegateAsFunctor>
 		RequestID TProcessHttpRequest(

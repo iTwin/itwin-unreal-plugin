@@ -39,6 +39,13 @@ public:
 	virtual uint32 BakeFeatureIDsInVertexUVs(std::optional<uint32> featuresAccessorIndex,
 		FITwinCesiumMeshData const& CesiumMeshData, FStaticMeshLODResources& LODResources) const override;
 
+	enum class EPropertyType : uint8
+	{
+		Element,
+		Category,
+		Model
+	};
+
 #if ITWIN_ALLOW_REPLACE_BASE_MATERIAL()
 	virtual UMaterialInstanceDynamic* CreateMaterial_GameThread(
 		CesiumGltf::MeshPrimitive const* pMeshPrimitive,

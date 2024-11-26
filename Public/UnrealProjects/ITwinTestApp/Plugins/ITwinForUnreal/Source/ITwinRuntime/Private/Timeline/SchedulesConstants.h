@@ -10,10 +10,10 @@
 
 /// Disable transformations-related code for the time being, to avoid the performance cost of extracting
 /// entities for transformations which will not actually work in the first release of the Schedules code
-#define SYNCHRO4D_ENABLE_TRANSFORMATIONS() 0
+#define SYNCHRO4D_ENABLE_TRANSFORMATIONS() 1
 
 /// Small time offset in seconds, used to avoid strictly superimposed key frames
-#define KEYFRAME_TIME_EPSILON 1.
+#define KEYFRAME_TIME_EPSILON .01
 
 #define PRIVATE_S4D_BGR_DISABLED_VAL 0
 #define PRIVATE_S4D_BGR_DISABLED \
@@ -39,6 +39,8 @@ namespace ITwin::Synchro4D
 		}
 		return ColorBGR;
 	}
+
+	extern bool s_bMaskTilesUntilFullyAnimated; // ITwinSynchro4DAnimator.cpp
 }
 
 /// Special BGR value to signal coloring should be disabled in the material shader.

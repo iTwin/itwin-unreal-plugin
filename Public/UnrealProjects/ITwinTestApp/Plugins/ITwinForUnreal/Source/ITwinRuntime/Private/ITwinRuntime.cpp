@@ -33,5 +33,5 @@ void FITwinRuntimeModule::StartupModule()
 	// We need to initialize the assertion handler here too (we have a different DLL for each Plugin, and
 	// a DLL for the App as well...)
 	SDK::Core::Tools::InitAssertHandler("ITwinRuntime");
-	SDK::Core::Tools::CreateLogChannel("ITwinAPI", SDK::Core::Tools::Level::info);
+	SDK::Core::Tools::CreateAdvVizLogChannels();
 }

@@ -8,8 +8,11 @@
 
 #pragma once
 
-#include "ITwinAuthorizationObserver.h"
-#include <string>
+#include <ITwinRuntime/Private/Compil/BeforeNonUnrealIncludes.h>
+#	include <SDK/Core/ITwinAPI/ITwinAuthObserver.h>
+#include <ITwinRuntime/Private/Compil/AfterNonUnrealIncludes.h>
+
+#include "ITwinWebServices_Info.h"
 
 struct FChangesetInfos;
 struct FIModelInfos;
@@ -34,7 +37,9 @@ namespace SDK::Core {
 	struct ITwinTextureData;
 }
 
-class ITWINRUNTIME_API IITwinWebServicesObserver : public IITwinAuthorizationObserver
+using HttpRequestID = FString;
+
+class ITWINRUNTIME_API IITwinWebServicesObserver : public SDK::Core::ITwinAuthObserver
 {
 public:
 	virtual ~IITwinWebServicesObserver() = default;
@@ -56,6 +61,7 @@ public:
 
 	virtual void OnSavedViewInfosRetrieved(bool bSuccess, FSavedViewInfos const& Infos) = 0;
 	virtual void OnSavedViewRetrieved(bool bSuccess, FSavedView const& SavedView, FSavedViewInfo const& SavedViewInfo) = 0;
+	virtual void OnSavedViewExtensionRetrieved(bool bSuccess, FString const& SavedViewId, FString const& Data) = 0;
 	virtual void OnSavedViewThumbnailRetrieved(bool bSuccess, FString const& SavedViewThumbnail, FString const& SavedViewId) = 0;
 	virtual void OnSavedViewThumbnailUpdated(bool bSuccess, FString const& SavedViewId, FString const& Response) = 0;
 	virtual void OnSavedViewGroupInfosRetrieved(bool bSuccess, FSavedViewGroupInfos const& Infos) = 0;
@@ -65,7 +71,7 @@ public:
 	virtual void OnSavedViewEdited(bool bSuccess, FSavedView const& SavedView, FSavedViewInfo const& SavedViewInfo) = 0;
 	virtual void OnElementPropertiesRetrieved(bool bSuccess, FElementProperties const& ElementProps) = 0;
 	virtual void OnIModelPropertiesRetrieved(bool bSuccess, bool bHasExtents, FProjectExtents const& Extents, bool bHasEcefLocation, FEcefLocation const& EcefLocation) = 0;
-	virtual void OnIModelQueried(bool bSuccess, FString const& QueryResult) = 0;
+	virtual void OnIModelQueried(bool bSuccess, FString const& QueryResult, HttpRequestID const& RequestID) = 0;
 
 	virtual void OnMaterialPropertiesRetrieved(bool bSuccess, SDK::Core::ITwinMaterialPropertiesMap const& props) = 0;
 	virtual void OnTextureDataRetrieved(bool bSuccess, std::string const& textureId, SDK::Core::ITwinTextureData const& textureData) = 0;
@@ -79,7 +85,7 @@ class ITWINRUNTIME_API FITwinDefaultWebServicesObserver : public IITwinWebServic
 {
 public:
 	/// overridden from IITwinWebServicesObserver:
-	virtual void OnAuthorizationDone(bool bSuccess, FString const& Error) override;
+	virtual void OnAuthorizationDone(bool bSuccess, std::string const& Error) override;
 	virtual void OnITwinsRetrieved(bool bSuccess, FITwinInfos const& Infos) override;
 	virtual void OnITwinInfoRetrieved(bool bSuccess, FITwinInfo const& Info) override;
 	virtual void OnIModelsRetrieved(bool bSuccess, FIModelInfos const& Infos) override;
@@ -91,6 +97,7 @@ public:
 	virtual void OnExportStarted(bool bSuccess, FString const& InExportId) override;
 	virtual void OnSavedViewInfosRetrieved(bool bSuccess, FSavedViewInfos const& Infos) override;
 	virtual void OnSavedViewRetrieved(bool bSuccess, FSavedView const& SavedView, FSavedViewInfo const& SavedViewInfo) override;
+	virtual void OnSavedViewExtensionRetrieved(bool bSuccess, FString const& SavedViewId, FString const& Data) override;
 	virtual void OnSavedViewThumbnailRetrieved(bool bSuccess, FString const& SavedViewThumbnail, FString const& SavedViewId) override;
 	virtual void OnSavedViewThumbnailUpdated(bool bSuccess, FString const& SavedViewId, FString const& Response) override;
 	virtual void OnSavedViewGroupInfosRetrieved(bool bSuccess, FSavedViewGroupInfos const& Infos) override;
@@ -100,7 +107,7 @@ public:
 	virtual void OnSavedViewEdited(bool bSuccess, FSavedView const& SavedView, FSavedViewInfo const& SavedViewInfo) override;
 	virtual void OnElementPropertiesRetrieved(bool bSuccess, FElementProperties const& ElementProps) override;
 	virtual void OnIModelPropertiesRetrieved(bool bSuccess, bool bHasExtents, FProjectExtents const& Extents, bool bHasEcefLocation, FEcefLocation const& EcefLocation) override;
-	virtual void OnIModelQueried(bool bSuccess, FString const& QueryResult) override;
+	virtual void OnIModelQueried(bool bSuccess, FString const& QueryResult, HttpRequestID const& RequestID) override;
 
 	virtual void OnMaterialPropertiesRetrieved(bool bSuccess, SDK::Core::ITwinMaterialPropertiesMap const& props) override;
 	virtual void OnTextureDataRetrieved(bool bSuccess, std::string const& textureId, SDK::Core::ITwinTextureData const& textureData) override;

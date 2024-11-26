@@ -30,13 +30,28 @@
 #include <Serialization/JsonSerializer.h>
 #include <unordered_set>
 
+namespace ITwin
+{
+	extern void LoadDecoration(FITwinLoadInfo const& Info, UWorld* World);
+	extern void SaveDecoration(FITwinLoadInfo const& Info, UWorld const* World);
+}
+
 class AITwinDigitalTwin::FImpl
 {
 public:
 	AITwinDigitalTwin& Owner;
 
+	// Some operations require to first fetch a valid server connection
+	enum class EOperationUponAuth : uint8
+	{
+		None,
+		Update,
+		LoadDecoration
+	};
+	EOperationUponAuth PendingOperation = EOperationUponAuth::None;
+
 	FImpl(AITwinDigitalTwin& InOwner)
-		:Owner(InOwner)
+		: Owner(InOwner)
 	{
 	}
 
@@ -62,7 +77,18 @@ const TCHAR* AITwinDigitalTwin::GetObserverName() const
 
 void AITwinDigitalTwin::UpdateOnSuccessfulAuthorization()
 {
-	UpdateITwin();
+	switch (Impl->PendingOperation)
+	{
+	case FImpl::EOperationUponAuth::Update:
+		UpdateITwin();
+		break;
+	case FImpl::EOperationUponAuth::LoadDecoration:
+		LoadDecoration();
+		break;
+	case FImpl::EOperationUponAuth::None:
+		break;
+	}
+	Impl->PendingOperation = FImpl::EOperationUponAuth::None;
 }
 
 void AITwinDigitalTwin::OnITwinInfoRetrieved(bool bSuccess, FITwinInfo const& Info)
@@ -131,9 +157,10 @@ void AITwinDigitalTwin::UpdateITwin()
 	if (!Children.IsEmpty())
 		return;
 
-	if (CheckServerConnection() != AITwinServiceActor::EConnectionStatus::Connected)
+	if (CheckServerConnection() != SDK::Core::EITwinAuthStatus::Success)
 	{
 		// No authorization yet: postpone the actual update (see OnAuthorizationDone)
+		Impl->PendingOperation = FImpl::EOperationUponAuth::Update;
 		return;
 	}
 
@@ -147,6 +174,32 @@ void AITwinDigitalTwin::UpdateITwin()
 
 	// fetch reality data
 	WebServices->GetRealityData(ITwinId);
+}
+
+void AITwinDigitalTwin::LoadDecoration()
+{
+	if (ITwinId.IsEmpty())
+	{
+		BE_LOGE("ITwinAPI", "ITwinID is required to load decoration");
+		return;
+	}
+
+	// If no access token has been retrieved yet, make sure we request one.
+	if (CheckServerConnection() != SDK::Core::EITwinAuthStatus::Success)
+	{
+		Impl->PendingOperation = FImpl::EOperationUponAuth::LoadDecoration;
+		return;
+	}
+	FITwinLoadInfo Info;
+	Info.ITwinId = ITwinId;
+	ITwin::LoadDecoration(Info, GetWorld());
+}
+
+void AITwinDigitalTwin::SaveDecoration()
+{
+	FITwinLoadInfo Info;
+	Info.ITwinId = ITwinId;
+	ITwin::SaveDecoration(Info, GetWorld());
 }
 
 #if WITH_EDITOR

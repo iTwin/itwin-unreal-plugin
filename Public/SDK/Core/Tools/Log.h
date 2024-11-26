@@ -58,6 +58,8 @@ namespace SDK::Core::Tools
 
 	void InitLog(std::string const& logBasename);
 	void CreateLogChannel(const char* name, Level level = Level::info);
+	// Initialize the channels used inside the Visualization library.
+	void CreateAdvVizLogChannels();
 
 	ILogPtr GetLog(const std::uint64_t channel, const char* name);
 }

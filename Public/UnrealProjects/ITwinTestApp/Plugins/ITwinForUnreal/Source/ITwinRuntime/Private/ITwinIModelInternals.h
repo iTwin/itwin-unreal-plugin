@@ -80,9 +80,13 @@ public:
 	void OnElementsTimelineModified(FITwinElementTimeline& ModifiedTimeline,
 									std::vector<ITwinElementID> const* OnlyForElements = nullptr);
 
+	bool IsElementHiddenInSavedView(ITwinElementID const Element) const;
+
 	bool OnClickedElement(ITwinElementID const Element, FHitResult const& HitResult);
 
 	bool SelectElement(ITwinElementID const InElementID);
+
+	void HideElements(std::vector<ITwinElementID> const& InElementIDs);
 
 	//! Returns the selected Element's ID, if an Element is selected, or ITwin::NOT_ELEMENT.
 	ITwinElementID GetSelectedElement() const;

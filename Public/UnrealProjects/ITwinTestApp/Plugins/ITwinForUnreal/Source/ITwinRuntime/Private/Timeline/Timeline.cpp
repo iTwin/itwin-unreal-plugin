@@ -7,7 +7,7 @@
 +--------------------------------------------------------------------------------------*/
 
 // from vue.git/Caymus/IModelUsdNodeAddonUtils/Timeline.cpp
-//	and vue.git/viewer/Code/IModelJs/IModelModule/RenderSchedule.cpp
+//	and vue.git/viewer/Code/RealTimeBuilder/IModel/RenderSchedule.cpp
 
 #include "Timeline.h"
 #include <Timeline/TimelineBase.h>
@@ -184,29 +184,16 @@ bool ElementTimelineEx::HasPartialVisibility() const
 	return false;
 }
 
-/*static*/
-std::shared_ptr<FDeferredAnchorPos> FDeferredAnchorPos::MakeShared(EAnchorPoint const Anchor)
+void ElementTimelineEx::SetTransformationAt(double const Time, FVector const& InPosition,
+	FQuat const& InRotation, FDeferredAnchor const& DefrdAnchor, EInterpolation const Interp)
 {
-	check(Anchor != EAnchorPoint::Custom);
-	return std::make_shared<FDeferredAnchorPos>(FDeferredAnchorPos{ Anchor, FVector::Zero() });
-}
-
-/*static*/
-std::shared_ptr<FDeferredAnchorPos> FDeferredAnchorPos::MakeSharedCustom(FVector const& CustomAnchor)
-{
-	return std::make_shared<FDeferredAnchorPos>(FDeferredAnchorPos{ EAnchorPoint::Custom, CustomAnchor });
-}
-
-void ElementTimelineEx::SetTransformationAt(double const Time, FTransform const& InTransform,
-	std::shared_ptr<FDeferredAnchorPos> SharedAnchor, EInterpolation const Interp)
-{
-	check(SharedAnchor);
 	PropertyEntry<PTransform> Entry;
 	Entry.Time = Time;
 	Entry.Interpolation = Interp;
 	Entry.bIsTransformed = ITwin::Flag::Present;
-	Entry.Transform = InTransform;
-	Entry.DefrdAnchor = SharedAnchor;
+	Entry.Position = InPosition;
+	Entry.Rotation = InRotation;
+	Entry.DefrdAnchor = DefrdAnchor;
 	Transform.Values.insert(Entry);
 }
 
@@ -216,7 +203,8 @@ void ElementTimelineEx::SetTransformationDisabledAt(double const Time, EInterpol
 	Entry.Time = Time;
 	Entry.Interpolation = Interp;
 	Entry.bIsTransformed = ITwin::Flag::Absent;
-	Entry.Transform = FTransform::Identity;
+	Entry.Position = FVector::ZeroVector;
+	Entry.Rotation = FQuat::Identity;
 	Transform.Values.insert(Entry);
 }
 
@@ -287,13 +275,12 @@ TSharedPtr<FJsonValue> ToJsonValue(PTransform const& Prop)
 	if (Prop.bIsTransformed)
 	{
 		auto JsonObj = MakeShared<FJsonObject>();
-		auto&& Translation = Prop.Transform.GetTranslation();
+		auto&& Translation = Prop.Position;
 		JsonObj->SetArrayField(TEXT("translation"), TArray<TSharedPtr<FJsonValue>>(
 			{ MakeShared<FJsonValueNumber>(Translation.X),
 			  MakeShared<FJsonValueNumber>(Translation.Y),
 			  MakeShared<FJsonValueNumber>(Translation.Z) }));
-		FQuat const OrientationQuat = Prop.Transform.GetRotation().GetNormalized();
-		FVector Orientation = OrientationQuat.ToRotationVector();
+		FVector Orientation = Prop.Rotation.ToRotationVector();
 		double LenIsAngle = Orientation.SquaredLength();
 		if (LenIsAngle != 0.)
 		{
@@ -305,28 +292,16 @@ TSharedPtr<FJsonValue> ToJsonValue(PTransform const& Prop)
 				  MakeShared<FJsonValueNumber>(Orientation.Z) }));
 			JsonObj->SetNumberField(TEXT("rotationAngleDegrees"), FMath::RadiansToDegrees(LenIsAngle));
 		}
-		auto&& Scale = Prop.Transform.GetScale3D();
-		if (Scale != FVector::OneVector)
+		if (Prop.DefrdAnchor.IsDeferred() || EAnchorPoint::Static == Prop.DefrdAnchor.AnchorPoint)
 		{
-			JsonObj->SetArrayField(TEXT("scale"), TArray<TSharedPtr<FJsonValue>>(
-				{ MakeShared<FJsonValueNumber>(Scale.X),
-				  MakeShared<FJsonValueNumber>(Scale.Y),
-				  MakeShared<FJsonValueNumber>(Scale.Z) }));
+			JsonObj->SetStringField(TEXT("anchor"), GetAnchorPointString(Prop.DefrdAnchor.AnchorPoint));
 		}
-		// should be the case, even though static transforms are defined without an anchor at the moment
-		if (Prop.DefrdAnchor)
+		else
 		{
-			if (Prop.DefrdAnchor->AnchorPoint != EAnchorPoint::Custom)
-			{
-				JsonObj->SetStringField(TEXT("anchor"), GetAnchorPointString(Prop.DefrdAnchor->AnchorPoint));
-			}
-			else
-			{
-				JsonObj->SetArrayField(TEXT("anchor"), TArray<TSharedPtr<FJsonValue>>(
-					{ MakeShared<FJsonValueNumber>(Prop.DefrdAnchor->Pos.X),
-						MakeShared<FJsonValueNumber>(Prop.DefrdAnchor->Pos.Y),
-						MakeShared<FJsonValueNumber>(Prop.DefrdAnchor->Pos.Z) }));
-			}
+			JsonObj->SetArrayField(TEXT("anchor"), TArray<TSharedPtr<FJsonValue>>(
+				{ MakeShared<FJsonValueNumber>(Prop.DefrdAnchor.Offset.X),
+					MakeShared<FJsonValueNumber>(Prop.DefrdAnchor.Offset.Y),
+					MakeShared<FJsonValueNumber>(Prop.DefrdAnchor.Offset.Z) }));
 		}
 		return MakeShared<FJsonValueObject>(std::move(JsonObj));
 	}
@@ -342,7 +317,7 @@ void ElementTimelineEx::ToJson(TSharedRef<FJsonObject>& JsonObj) const
 	for (auto&& Elem : IModelElements)
 	{
 		// no uint64 json value :/
-		JsonElems.Add(MakeShared<FJsonValueString>(FString::Printf(TEXT("0x%I64x"), Elem.value())));
+		JsonElems.Add(MakeShared<FJsonValueString>(ITwin::ToString(Elem)));
 	}
 	JsonObj->SetArrayField(TEXT("elementIds"), JsonElems);
 	Super::ToJson(JsonObj);
@@ -367,62 +342,6 @@ FString ElementTimelineEx::ToCondensedJsonString() const
 FString ElementTimelineEx::ToPrettyJsonString() const
 {
 	return ToJsonString<TPrettyJsonPrintPolicy<TCHAR>>();
-}
-
-bool operator ==(const PColor& x, const PColor& y)
-{
-	// If bHasColor is false in both, do not check Value.
-	return x.bHasColor == y.bHasColor &&
-		(!x.bHasColor || x.Value == y.Value);
-}
-
-bool operator ==(const PClippingPlane& x, const PClippingPlane& y)
-{
-	return (((int)x.DefrdPlaneEq.GrowthStatus & Detail::GrowthStatus::IgnoreDeferred)
-				== ((int)y.DefrdPlaneEq.GrowthStatus & Detail::GrowthStatus::IgnoreDeferred))
-		&& x.DefrdPlaneEq.PlaneOrientation == y.DefrdPlaneEq.PlaneOrientation
-		&& (x.DefrdPlaneEq.IsDeferred() || x.DefrdPlaneEq.PlaneW == y.DefrdPlaneEq.PlaneW);
-}
-
-std::size_t hash_value(const FDeferredPlaneEquation& v) noexcept
-{
-	std::size_t seed = 0;
-	boost::hash_combine(seed, v.PlaneOrientation);
-	boost::hash_combine(seed, (int)v.GrowthStatus & Detail::GrowthStatus::IgnoreDeferred);
-	if (!v.IsDeferred())
-		boost::hash_combine(seed, v.PlaneW);
-	return seed;
-}
-
-// Only suited to compare exact keyframes (FP comparisons...) applying to the same Elements group
-bool operator ==(const PTransform& x, const PTransform& y)
-{
-	if (x.bIsTransformed == y.bIsTransformed
-		&& (!x.bIsTransformed
-			// should we use approximate equality?
-			|| FITwinMathExts::StrictlyEqualTransforms(x.Transform, y.Transform)))
-	{
-		if (x.DefrdAnchor->AnchorPoint != y.DefrdAnchor->AnchorPoint) return false;
-		return (x.DefrdAnchor->AnchorPoint != EAnchorPoint::Custom
-			|| x.DefrdAnchor->Pos == y.DefrdAnchor->Pos);
-	}
-	return false;
-}
-
-std::size_t hash_value(const ElementTimelineEx& Timeline) noexcept
-{
-	size_t seed = hash_value((ElementTimelineEx::Super const&)Timeline);
-	if (std::holds_alternative<ITwinElementID>(Timeline.GetIModelElementsKey().Key))
-		boost::hash_combine(seed, std::get<0>(Timeline.GetIModelElementsKey().Key).value());
-	else
-		boost::hash_combine(seed, std::get<1>(Timeline.GetIModelElementsKey().Key));
-	return seed;
-}
-
-bool operator ==(const ElementTimelineEx& A, const ElementTimelineEx& B)
-{
-	return (const ElementTimelineEx::Super&)A == (const ElementTimelineEx::Super&)B
-		&& A.GetIModelElementsKey() == B.GetIModelElementsKey();
 }
 
 //FMatrix TransformToMatrix(const PTransform& t)

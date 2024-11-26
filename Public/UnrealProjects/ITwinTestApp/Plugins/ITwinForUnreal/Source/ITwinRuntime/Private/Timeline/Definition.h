@@ -77,8 +77,8 @@ namespace ITwin::Timeline { template<typename PropertyClass> FString _iTwinTimel
 //! };
 //! struct ElementStateBase // Actually a boost::fusion::sequence
 //! {
-//!     boost::optional<PVisibility> Visibility;
-//!     boost::optional<PColor> Color;
+//!     std::optional<PVisibility> Visibility;
+//!     std::optional<PColor> Color;
 //! };
 //! using ElementState = BoostFusionUtils::SequenceEx<ElementStateBase>;
 //! struct ElementTimelineBase // Actually a boost::fusion::sequence

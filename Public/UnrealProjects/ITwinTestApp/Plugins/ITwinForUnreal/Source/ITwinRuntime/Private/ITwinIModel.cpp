@@ -9,6 +9,7 @@
 #include <ITwinIModel.h>
 #include <ITwinIModelInternals.h>
 #include <ITwinIModel3DInfo.h>
+#include <ITwinIModelSettings.h>
 #include <ITwinDigitalTwin.h>
 #include <ITwinGeoLocation.h>
 #include <ITwinSavedView.h>
@@ -20,29 +21,34 @@
 #include <ITwinSynchro4DSchedulesInternals.h>
 #include <ITwinCesium3DTileset.h>
 #include <ITwinCesium3DTilesetLoadFailureDetails.h>
+#include <ITwinUtilityLibrary.h>
 #include <ITwinWebServices/ITwinWebServices.h>
 #include <BeUtils/Gltf/GltfTuner.h>
+#include <Network/JsonQueriesCache.h>
+#include <Timeline/Timeline.h>
+
 #include <Dom/JsonObject.h>
 #include <DrawDebugHelpers.h>
 #include <Engine/RendererSettings.h>
+#include <Engine/Texture2D.h>
 #include <EngineUtils.h>
 #include <GameFramework/FloatingPawnMovement.h>
 #include <GameFramework/Pawn.h>
 #include <GameFramework/PlayerController.h>
 #include <HttpModule.h>
+#include <ImageUtils.h>
 #include <Interfaces/IHttpResponse.h>
 #include <Kismet/KismetMathLibrary.h>
 #include <Math/Box.h>
 #include <Serialization/JsonReader.h>
 #include <Serialization/JsonSerializer.h>
 #include <JsonObjectConverter.h>
-#include <Timeline/Timeline.h>
-#include <ITwinUtilityLibrary.h>
 
 #include <Compil/BeforeNonUnrealIncludes.h>
 #	include <BeHeaders/BuildConfig/MaterialTuning.h>
 #	include <BeHeaders/BuildConfig/AdvancedMaterialConversion.h>
 #	include <BeUtils/Gltf/GltfMaterialHelper.h>
+#	include <BeUtils/Gltf/GltfMaterialTuner.h>
 #	include <Core/ITwinAPI/ITwinMaterial.h>
 #	include <Core/ITwinAPI/ITwinTypes.h>
 #	include <Core/Visualization/MaterialPersistence.h>
@@ -55,13 +61,35 @@
 
 namespace ITwin
 {
-	void SetupMaterials(AITwinCesium3DTileset& Tileset, UObject& MaterialOwner)
+	void SetupMaterials(AITwinCesium3DTileset& Tileset, UITwinSynchro4DSchedules* SchedulesComp /*= nullptr*/)
 	{
-		UMaterialInterface* OpaqueMaterial = nullptr, * TranslucentMaterial = nullptr;
-		FITwinSynchro4DSchedulesInternals::GetAnimatableMaterials(OpaqueMaterial, TranslucentMaterial, MaterialOwner);
-		if (OpaqueMaterial) Tileset.SetMaterial(OpaqueMaterial);
-		if (TranslucentMaterial) Tileset.SetTranslucentMaterial(TranslucentMaterial);
+		if (!SchedulesComp)
+		{
+			SchedulesComp = Cast<UITwinSynchro4DSchedules>(
+				UITwinSynchro4DSchedules::StaticClass()->GetDefaultObject());
+		}
+		if (IsValid(SchedulesComp->BaseMaterialMasked))
+		{
+			Tileset.SetMaterial(SchedulesComp->BaseMaterialMasked);
+			if (SchedulesComp)
+				SchedulesComp->BaseMaterialMasked = SchedulesComp->BaseMaterialMasked;
+		}
+		if (SchedulesComp->BaseMaterialTranslucent)
+		{
+			Tileset.SetTranslucentMaterial(SchedulesComp->BaseMaterialTranslucent);
+			if (SchedulesComp)
+				SchedulesComp->BaseMaterialTranslucent = SchedulesComp->BaseMaterialTranslucent;
+		}
 	}
+
+	FString ToString(ITwinElementID const& Elem)
+	{
+		return FString::Printf(TEXT("0x%I64x"), Elem.value());
+	}
+
+	extern bool ShouldLoadDecoration(FITwinLoadInfo const& Info, UWorld const* World);
+	extern void LoadDecoration(FITwinLoadInfo const& Info, UWorld* World);
+	extern void SaveDecoration(FITwinLoadInfo const& Info, UWorld const* World);
 }
 
 class AITwinIModel::FImpl
@@ -85,6 +113,7 @@ public:
 		None,
 		Load,
 		Update,
+		LoadDecoration
 	};
 	EOperationUponAuth PendingOperation = EOperationUponAuth::None;
 	bool bAutoStartExportIfNeeded = false;
@@ -95,9 +124,18 @@ public:
 	};
 	std::optional<FIModelProperties> IModelProperties; //!< Empty means not inited yet.
 
+	enum class EElementsMetadata : uint8 {
+		Hierarchy, SourceIdentifiers
+	};
+
 	FImpl(AITwinIModel& InOwner)
-		: Owner(InOwner), Internals(InOwner), ElementMetadataQuerying(InOwner)
+		: Owner(InOwner), Internals(InOwner)
 	{
+		if (!Owner.HasAnyFlags(RF_ClassDefaultObject))
+		{
+			ElementsHierarchyQuerying.emplace(InOwner, EElementsMetadata::Hierarchy);
+			ElementsSourceQuerying.emplace(InOwner, EElementsMetadata::SourceIdentifiers);
+		}
 		// create a callback to fill our scene mapping when meshes are loaded
 		SceneMappingBuilder = MakeShared<FITwinSceneMappingBuilder>(Internals.SceneMapping, Owner);
 
@@ -177,26 +215,34 @@ public:
 				{
 					// Multiple calls, unlikely as they are, would not be a problem, except that setting
 					// OnNewTileMeshBuilt would be redundant.
-					SetupSynchro4DSchedules(*AsTileset);
+					SetupSynchro4DSchedules(*AsTileset, *GetDefault<UITwinIModelSettings>());
 				}
 			}
 		}
 	}
 
-	void SetupSynchro4DSchedules(AITwinCesium3DTileset& Tileset)
+	void SetupSynchro4DSchedules(AITwinCesium3DTileset& Tileset, UITwinIModelSettings const& Settings)
 	{
 		if (!Owner.Synchro4DSchedules)
 			return;
+		auto& S4D = *Owner.Synchro4DSchedules;
+		S4D.MaxTimelineUpdateMilliseconds = Settings.Synchro4DMaxTimelineUpdateMilliseconds;
+		S4D.ScheduleQueriesServerPagination = Settings.Synchro4DQueriesDefaultPagination;
+		S4D.ScheduleQueriesBindingsPagination = Settings.Synchro4DQueriesBindingsPagination;
+		S4D.bDisableColoring = Settings.bSynchro4DDisableColoring;
+		S4D.bDisableVisibilities = Settings.bSynchro4DDisableVisibilities;
+		S4D.bDisableCuttingPlanes = Settings.bSynchro4DDisableCuttingPlanes;
+		S4D.bDisableTransforms = Settings.bSynchro4DDisableTransforms;
+		S4D.bMaskTilesUntilFullyAnimated = Settings.bSynchro4DMaskTilesUntilFullyAnimated;
 		if (!ensure(!GetDefault<URendererSettings>()->bOrderedIndependentTransparencyEnable))
 		{
 			// see OIT-related posts in
 			// https://forums.unrealengine.com/t/ue5-gpu-crashed-or-d3d-device-removed/524297/168:
 			// it could be a problem with all transparencies (and "mask opacity"), not just cutting planes!
 			UE_LOG(LogITwin, Error, TEXT("bOrderedIndependentTransparencyEnable=true will crash cut planes, sorry! See if 'r.OIT.SortedPixels' is in your DefaultEngine.ini, in section [/Script/Engine.RendererSettings], if not, add it set to False (and relaunch the app or Editor).\nDISABLING ALL Cutting Planes (aka. growth simulation) in the Synchro4D schedules!"));
-			Owner.Synchro4DSchedules->bDisableCuttingPlanes = true;
+			S4D.bDisableCuttingPlanes = true;
 		}
-		Internals.SceneMapping.OnNewTileMeshBuilt =
-			[&SchedulesInternals = GetInternals(*Owner.Synchro4DSchedules)]
+		Internals.SceneMapping.OnNewTileMeshBuilt = [&SchedulesInternals = GetInternals(S4D)]
 			(CesiumTileID const& TileID, std::set<ITwinElementID>&& MeshElements,
 			 TWeakObjectPtr<UMaterialInstanceDynamic> const& pMaterial, bool const bFirstTimeSeenTile,
 			 FITwinSceneTile& SceneTile)
@@ -212,12 +258,12 @@ public:
 		// Now done in the main ticker function (see AITwinIModel's ctor) because we need to wait for the end
 		// of the Elements metadata properties queries (Elements hierarchy + Source IDs) to make proper sense
 		// of the animation bindings received.
-		//GetInternals(*Owner.Synchro4DSchedules).MakeReady(); <== MakeReady used to call ResetSchedules
+		//GetInternals(S4D).MakeReady(); <== MakeReady used to call ResetSchedules
 	}
 
 	void SetupMaterials(AITwinCesium3DTileset& Tileset)
 	{
-		ITwin::SetupMaterials(Tileset, Owner);
+		ITwin::SetupMaterials(Tileset, Owner.Synchro4DSchedules);
 	}
 
 	/// Extracts the given element, in all known tiles.
@@ -388,8 +434,9 @@ public:
 #endif //ENABLE_DRAW_DEBUG
 
 	/// Used to query info about all Elements of the iModel by reading rows from its database tables through
-	/// a paginated series of HTTP RPC requests. We'll read first the parent-child relationships, then the
-	/// "Source Element ID" (aka "Identifier") information, successively.
+	/// a paginated series of HTTP RPC requests. We'll use an instance to get the the parent-child
+	/// relationships, and (concurrently) another for the "Source Element ID" (aka "Identifier") information,
+	/// successively.
 	class FQueryElementMetadataPageByPage
 	{
 	public:
@@ -399,35 +446,62 @@ public:
 
 	private:
 		AITwinIModel& Owner;
-		/// TODO_GCO: a bit hacky, would be cleaner to use 2 instances of this class, working in succession,
-		/// or maybe in parallel (which would mean using the RequestID to determine which emitter to forward
-		/// the replies to)
-		enum class EElementsMetadata {
-			Hierarchy, SourceIdentifiers
-		};
+		EElementsMetadata const KindOfMetadata;
+		FString const ECSQLQueryString;
+		FString const BatchMsg;
+		std::optional<SDK::Core::ITwinAPIRequestInfo> RequestInfo;
+		FString LastCacheFolderUsed;
+		FJsonQueriesCache Cache;
+		ITwinHttp::FMutex Mutex;
+
 		EState State = EState::NotStarted;
-		int QueryRowStart = 0, TotalRowsParsed = 0;
-		EElementsMetadata KindOfMetadata = EElementsMetadata::Hierarchy;
-		FString BatchMsg;
+		int QueryRowStart = 0, TotalRowsParsed = 0, RetriesLeft = 0/*see DoRestart*/;
+		HttpRequestID CurrentRequestID;
 		static const int QueryRowCount = 50000;
 
 		void DoRestart()
 		{
-			UE_LOG(LogITwin, Display, TEXT("Elements metadata queries interrupted, restarting..."));
 			QueryRowStart = TotalRowsParsed = 0;
-			KindOfMetadata = EElementsMetadata::Hierarchy;
-			BatchMsg = TEXT("Element parent-child pairs");
+			RetriesLeft = 2;
+			FString const CacheFolder = QueriesCache::GetCacheFolder(
+				(KindOfMetadata == EElementsMetadata::Hierarchy) 
+					? QueriesCache::ESubtype::ElementsHierarchies : QueriesCache::ESubtype::ElementsSourceIDs,
+				Owner.ServerConnection->Environment, Owner.ITwinId, Owner.IModelId, Owner.ChangesetId);
+			if (LastCacheFolderUsed != CacheFolder && ensure(!CacheFolder.IsEmpty()))
+			{
+				if (!Cache.Initialize(CacheFolder, Owner.ServerConnection->Environment,
+									  Owner.GetActorNameOrLabel() + TEXT(" - ") + BatchMsg))
+				{
+					UE_LOG(LogITwin, Warning, TEXT("Something went wrong while setting up the local http cache for Elements metadata queries - cache will NOT be used!"));
+				}
+				LastCacheFolderUsed = CacheFolder;
+			}
+			// TODO_GCO: we could get count first with "SELECT COUNT(*) FROM [Table]", which would allow to
+			// parallelize requests more but also reserve vectors optimally in ParseHierarchyTree (and in
+			// ParseSourceElementIDs maybe too), and also implement progress reporting.
 			QueryNextPage();
 		}
 
 	public:
-		FQueryElementMetadataPageByPage(AITwinIModel& InOwner) : Owner(InOwner) {}
+		FQueryElementMetadataPageByPage(AITwinIModel& InOwner, EElementsMetadata const InKindOfMetadata)
+			: Owner(InOwner)
+			, KindOfMetadata(InKindOfMetadata)
+			, ECSQLQueryString((InKindOfMetadata == EElementsMetadata::Hierarchy)
+					? TEXT("SELECT ECInstanceID, SourceECInstanceID FROM bis.ElementOwnsChildElements")
+					: TEXT("SELECT Element.Id, Identifier FROM bis.ExternalSourceAspect"))
+			, BatchMsg((InKindOfMetadata == EElementsMetadata::Hierarchy) ? TEXT("Element parent-child pairs")
+																		  : TEXT("Source Element IDs"))
+			, Cache(InOwner)
+		{}
+
 		EState GetState() const { return State; }
 
 		void Restart()
 		{
 			if (EState::NotStarted == State || EState::Finished == State || EState::StoppedOnError == State)
 			{
+				Cache.Reset(); // reinit, we may have a new changesetId for example
+				UE_LOG(LogITwin, Display, TEXT("Elements metadata queries (re)starting..."));
 				DoRestart();
 			}
 			else
@@ -439,66 +513,117 @@ public:
 		void QueryNextPage()
 		{
 			State = EState::Running;
-			switch (KindOfMetadata)
-			{
-			case EElementsMetadata::Hierarchy:
-				Owner.WebServices->QueryIModel(Owner.ITwinId, Owner.IModelId, Owner.ResolvedChangesetId,
-					TEXT("SELECT ECInstanceID, SourceECInstanceID FROM bis.ElementOwnsChildElements"),
-					QueryRowStart, QueryRowCount);
-				break;
-			case EElementsMetadata::SourceIdentifiers:
-				Owner.WebServices->QueryIModel(Owner.ITwinId, Owner.IModelId, Owner.ResolvedChangesetId,
-					TEXT("SELECT Element.Id, Identifier FROM bis.ExternalSourceAspect"),
-					QueryRowStart, QueryRowCount);
-				break;
-			default:
-				ensure(false);
-				break;
-			}
+			RequestInfo.emplace(Owner.WebServices->InfosToQueryIModel(Owner.ITwinId, Owner.IModelId, 
+				Owner.ResolvedChangesetId, ECSQLQueryString, QueryRowStart, QueryRowCount));
 			QueryRowStart += QueryRowCount;
+			auto const Hit = Cache.LookUp(*RequestInfo, Mutex);
+			if (Hit)
+			{
+				CurrentRequestID.Empty();
+				OnQueryCompleted({}, true, Cache.Read(*Hit));
+				// Now just return, ie read only one response per tick even if everything's in the cache.
+				// The alternative, while still not blocking the game thread, would be to use a worker thread,
+				// but there is no synchronization mechanism on SceneMapping to allow that yet.
+			}
+			else
+			{
+				CurrentRequestID = Owner.WebServices->QueryIModelRows(Owner.ITwinId, Owner.IModelId,
+					Owner.ResolvedChangesetId, ECSQLQueryString, QueryRowStart, QueryRowCount,
+					&(*RequestInfo));
+			}
 		}
 
-		void OnQueryCompleted(bool bSuccess, FString const& QueryResult)
+		/// \return Whether the reply was to a request emitted by this instance of metadata requester, and was
+		///			thus parsed here.
+		bool OnQueryCompleted(HttpRequestID const& RequestID, bool const bSuccess,
+			std::variant<FString, TSharedPtr<FJsonObject>> const& QueryResult)
 		{
+			bool const bFromCache = (QueryResult.index() == 1);
+			if (!bFromCache && CurrentRequestID != RequestID)
+			{
+				return false; // we didn't emit this request
+			}
 			if (EState::NeedRestart == State)
 			{
+				UE_LOG(LogITwin, Display, TEXT("Elements metadata queries interrupted, will restart..."));
 				DoRestart();
-				return;
+				return true;
 			}
-			if (!ensure(bSuccess))
+			if (!bSuccess)
 			{
-				BE_LOGE("ITwinAPI", "Total " << TCHAR_TO_UTF8(*BatchMsg)
-					<< " retrieved: " << TotalRowsParsed << ", stopping on error!");
-				State = EState::StoppedOnError;
-				return;
+				if (RetriesLeft > 0)
+				{
+					BE_LOGW("ITwinAPI", "Total " << TCHAR_TO_UTF8(*BatchMsg)
+						<< " retrieved: " << TotalRowsParsed << ", got an http error! (will retry)");
+					--RetriesLeft;
+					QueryRowStart -= QueryRowCount; // TODO_GCO: maybe reduce QueryRowCount too at some point?
+					FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda(
+						[this, IModel = TWeakObjectPtr<AITwinIModel>(&Owner)] (float /*Delta*/)
+						{
+							if (IModel.IsValid())
+							{
+								QueryNextPage();
+							}
+							return false;//single call
+						}),
+						(RetriesLeft == 0) ? 8. : 2.); // delay in seconds before retry
+				}
+				else
+				{
+					BE_LOGE("ITwinAPI", "Total " << TCHAR_TO_UTF8(*BatchMsg)
+						<< " retrieved: " << TotalRowsParsed << ", stopping on error after 2 retries!");
+					State = EState::StoppedOnError;
+				}
+				return true;
 			}
-			// Testing RowsParsed vs QueryRowCount would be risky since we might get errors
-			// when parsing some rows...
-			int const RowsParsed = (EElementsMetadata::Hierarchy == KindOfMetadata)
-				? GetInternals(Owner).SceneMapping.ParseHierarchyTree(QueryResult)
-				: GetInternals(Owner).SceneMapping.ParseSourceElementIDs(QueryResult);
+			int RowsParsed = 0;
+			TSharedPtr<FJsonObject> JsonObj;
+			if (bFromCache)
+			{
+				JsonObj = std::get<1>(QueryResult);
+			}
+			else
+			{
+				Cache.Write(*RequestInfo, std::get<0>(QueryResult), true, Mutex);
+				auto Reader = TJsonReaderFactory<TCHAR>::Create(std::get<0>(QueryResult));
+				if (!FJsonSerializer::Deserialize(Reader, JsonObj))
+					JsonObj.Reset();
+			}
+			if (JsonObj.IsValid())
+			{
+				TArray<TSharedPtr<FJsonValue>> const* JsonRows = nullptr;
+				if (JsonObj->TryGetArrayField(TEXT("data"), JsonRows))
+				{
+					RowsParsed = (EElementsMetadata::Hierarchy == KindOfMetadata)
+						? GetInternals(Owner).SceneMapping.ParseHierarchyTree(*JsonRows)
+						: GetInternals(Owner).SceneMapping.ParseSourceElementIDs(*JsonRows);
+				}
+			}
 			TotalRowsParsed += RowsParsed;
 			if (RowsParsed > 0)
 			{
-				UE_LOG(LogITwin, Verbose, TEXT("%s retrieved: %d, asking for more..."), *BatchMsg,
-										  TotalRowsParsed);
+				UE_LOG(LogITwin, Verbose, TEXT("%s retrieved from %s: %d, asking for more..."), *BatchMsg,
+					bFromCache ? TEXT("cache") : TEXT("remote"), TotalRowsParsed);
+				RetriesLeft = 2;
 				QueryNextPage();
 			}
 			else
 			{
-				UE_LOG(LogITwin, Display, TEXT("Total %s retrieved: %d."), *BatchMsg, TotalRowsParsed);
-				if (EElementsMetadata::Hierarchy == KindOfMetadata)
-				{
-					KindOfMetadata = EElementsMetadata::SourceIdentifiers;
-					QueryRowStart = TotalRowsParsed = 0;
-					BatchMsg = TEXT("Source Element IDs");
-					QueryNextPage();
-				}
-				else State = EState::Finished;
+				UE_LOG(LogITwin, Display, TEXT("Total %s retrieved from %s: %d."), *BatchMsg,
+					/*likely all retrieved from same source...*/bFromCache ? TEXT("cache") : TEXT("remote"),
+					TotalRowsParsed);
+				State = EState::Finished;
 			}
+			return true;
+		}
+
+		void OnIModelEndPlay()
+		{
+			Cache.Uninitialize();
 		}
 	};
-	FQueryElementMetadataPageByPage ElementMetadataQuerying;
+	std::optional<FQueryElementMetadataPageByPage> ElementsHierarchyQuerying;
+	std::optional<FQueryElementMetadataPageByPage> ElementsSourceQuerying;
 
 }; // class AITwinIModel::FImpl
 
@@ -519,6 +644,7 @@ FITwinIModelInternals& GetInternals(AITwinIModel& IModel)
 void AITwinIModel::FImpl::MakeTileset(std::optional<FITwinExportInfo> const& ExportInfo /*= {}*/)
 {
 	if (!ensure(ExportInfo || ExportInfoPendingLoad)) return;
+	if (!ensure(IModelProperties)) return;
 
 	FITwinExportInfo const CompleteInfo = ExportInfo ? (*ExportInfo) : (*ExportInfoPendingLoad);
 	ExportInfoPendingLoad.reset();
@@ -526,10 +652,11 @@ void AITwinIModel::FImpl::MakeTileset(std::optional<FITwinExportInfo> const& Exp
 	GetInternals(Owner).SceneMapping.Reset();
 	Owner.DestroyTileset();
 
-	// We need to query the hierarchy of iModel Elements using several "paginated" requests sent
+	// We need to query these metadata of iModel Elements using several "paginated" requests sent
 	// successively, but we also need to support interrupting and restart queries from scratch
 	// because this code path can be executed several times for an iModel, eg. upon UpdateIModel
-	ElementMetadataQuerying.Restart();
+	ElementsHierarchyQuerying->Restart();
+	ElementsSourceQuerying->Restart();
 	// It seems risky to NOT do a ResetSchedules here: for example, FITwinElement::AnimationKeys are
 	// not set, MainTimeline::NonAnimatedDuplicates is empty, etc.
 	// To avoid redownloading everything, we could just "reinterpret" the known schedule data...?
@@ -562,13 +689,14 @@ void AITwinIModel::FImpl::MakeTileset(std::optional<FITwinExportInfo> const& Exp
 	Tileset->SetGltfTuner(GltfTuner);
 	Tileset->SetTilesetSource(EITwinTilesetSource::FromUrl);
 	Tileset->SetUrl(CompleteInfo.MeshUrl);
-	Tileset->MaximumCachedBytes = 1024 * 1024 * 1024; // the default was 256MB...
+
+	auto const Settings = GetDefault<UITwinIModelSettings>();
+	Tileset->MaximumCachedBytes = std::max(0ULL, Settings->CesiumMaximumCachedMegaBytes * 1024 * 1024ULL);
 	// Avoid unloading/reloading tiles when merely rotating the camera
 	//Tileset->EnableFrustumCulling = false; // implied by SetUseLodTransitions(true)
 	Tileset->SetUseLodTransitions(true);
 	Tileset->LodTransitionLength = 1.f;
 
-	check(IModelProperties);
 	if (IModelProperties->EcefLocation)
 	{
 		// iModel is geolocated.
@@ -579,12 +707,10 @@ void AITwinIModel::FImpl::MakeTileset(std::optional<FITwinExportInfo> const& Exp
 			Geoloc->GeoReference->SetOriginPlacement(EITwinOriginPlacement::CartographicOrigin);
 			// Put georeference at the cartographic coordinates of the center of the iModel's extents.
 			Geoloc->GeoReference->SetOriginEarthCenteredEarthFixed(
-				FTransform(
-					UITwinUtilityLibrary::ConvertRotator_ITwinToUnreal(IModelProperties->EcefLocation->Orientation),
-					IModelProperties->EcefLocation->Origin)
-				.TransformPosition(IModelProperties->ProjectExtents
-					? 0.5 * (IModelProperties->ProjectExtents->Low + IModelProperties->ProjectExtents->High)
-					: FVector::ZeroVector));
+				UITwinUtilityLibrary::GetIModelToEcefTransform(&Owner)
+					.TransformPosition(IModelProperties->ProjectExtents
+						? 0.5 * (IModelProperties->ProjectExtents->Low + IModelProperties->ProjectExtents->High)
+						: FVector::ZeroVector));
 		}
 	}
 	else
@@ -592,8 +718,12 @@ void AITwinIModel::FImpl::MakeTileset(std::optional<FITwinExportInfo> const& Exp
 		// iModel is not geolocated.
 		Tileset->SetGeoreference(Geoloc->LocalReference.Get());
 	}
+	Internals.SceneMapping.SetIModel2UnrealInfos(UITwinUtilityLibrary::GetIModelToUnrealTransform(&Owner),
+		IModelProperties->ProjectExtents
+			? (0.5 * (IModelProperties->ProjectExtents->Low + IModelProperties->ProjectExtents->High))
+			: FVector::ZeroVector);
 	if (Owner.Synchro4DSchedules)
-		SetupSynchro4DSchedules(*Tileset);
+		SetupSynchro4DSchedules(*Tileset, *Settings);
 	else
 		// useful when commenting out schedules component's default creation for testing?
 		SetupMaterials(*Tileset);
@@ -613,7 +743,7 @@ AITwinIModel::AITwinIModel()
 	// Forbid the replacement of the base material (it was introduced for debugging/investigation purposes,
 	// at the end, we will only allow editing a given set of parameters).
 	bCanReplaceMaterials = ITwin::HasAdvancedMaterialConversion();
-	if (ITwin::HasMaterialTuning())
+	if (!HasAnyFlags(RF_ClassDefaultObject) && ITwin::HasMaterialTuning())
 	{
 		// As soon as material IDs are read, launch a request to RPC service to get the corresponding material
 		// properties
@@ -632,35 +762,18 @@ AITwinIModel::AITwinIModel()
 			// Pre-fill material slots in the material helper, and detect potential user customizations
 			// (in Carrot MVP, they are stored in the decoration service).
 			int NumCustomMaterials = 0;
-			BeUtils::GltfMaterialHelper::Lock Lock(Impl->GltfMatHelper->GetMutex());
-			for (BeUtils::ITwinMaterialInfo const& MatInfo : MaterialInfos)
 			{
-				auto MaterialSlot = Impl->GltfMatHelper->CreateITwinMaterialSlot(MatInfo.id, Lock);
-
-				// If the material uses custom settings, activate advanced conversion so that the tuning
-				// can handle it.
-				auto const* ItwinMat = MaterialSlot.second;
-				if (ItwinMat
-					&& (
-						ItwinMat->DefinesChannel(SDK::Core::EChannelType::Roughness)
-						|| ItwinMat->DefinesChannel(SDK::Core::EChannelType::Metallic)
-						|| ItwinMat->DefinesChannel(SDK::Core::EChannelType::Transparency)
-						|| ItwinMat->DefinesChannel(SDK::Core::EChannelType::Alpha)
-					))
+				BeUtils::GltfMaterialHelper::Lock Lock(Impl->GltfMatHelper->GetMutex());
+				for (BeUtils::ITwinMaterialInfo const& MatInfo : MaterialInfos)
 				{
-					FITwinCustomMaterial* CustomMat = CustomMaterials.Find(MatInfo.id);
-					if (ensure(CustomMat))
-					{
-						CustomMat->bAdvancedConversion = true;
-						NumCustomMaterials++;
-					}
+					Impl->GltfMatHelper->CreateITwinMaterialSlot(MatInfo.id, Lock);
 				}
 			}
-			if (NumCustomMaterials > 0)
-			{
-				// Request a different gltf tuning.
-				SplitGltfModelForCustomMaterials();
-			}
+			// If material customizations were already loaded from the decoration server (this is done
+			// asynchronously), detect them at once so that the 1st displayed tileset directly shows the
+			// customized materials. If not, this will be done when the decoration data has finished loading,
+			// which may trigger a -re-tuning, and thus some visual artifacts...
+			DetectCustomizedMaterials();
 
 			// Then launch a request to fetch all material properties.
 			TArray<FString> MaterialIds;
@@ -675,24 +788,31 @@ AITwinIModel::AITwinIModel()
 		});
 	}
 
-	// Single ticker for all iModel updates (selection highlight, schedules queries and replay...)
-	// to avoid spawning multiple ones everywhere needed
-	FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda(
-		[This = TWeakObjectPtr<AITwinIModel>(this)] (float Delta)
-		{
-			if (This.IsValid())
+	if (!HasAnyFlags(RF_ClassDefaultObject))
+	{
+		// Single ticker for all iModel updates (selection highlight, schedules queries and replay...)
+		// to avoid spawning multiple ones everywhere needed.
+		// Ticker _required_, using TickActor would mean working only in-game, not in the editor!
+		// (see 5e882a5b690c5c553fc1ad064a98cc496902cbe0...)
+		FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda(
+			[This = TWeakObjectPtr<AITwinIModel>(this)](float Delta)
 			{
-				GetInternals(*This).SceneMapping.UpdateSelectionAndHighlightTextures();
-				if (This->Synchro4DSchedules && 
-					AITwinIModel::FImpl::FQueryElementMetadataPageByPage::EState::Finished
-						== This->Impl->ElementMetadataQuerying.GetState())
+				if (This.IsValid())
 				{
-					This->Synchro4DSchedules->TickSchedules(Delta);
+					GetInternals(*This).SceneMapping.UpdateSelectionAndHighlightTextures();
+					if (This->Synchro4DSchedules
+						&& AITwinIModel::FImpl::FQueryElementMetadataPageByPage::EState::Finished
+						== This->Impl->ElementsHierarchyQuerying->GetState()
+						&& AITwinIModel::FImpl::FQueryElementMetadataPageByPage::EState::Finished
+						== This->Impl->ElementsSourceQuerying->GetState())
+					{
+						This->Synchro4DSchedules->TickSchedules(Delta);
+					}
+					return true; // repeated tick
 				}
-				return true; // repeated tick
-			}
-			else return false;
-		}));
+				else return false;
+			}));
+	}
 }
 
 void AITwinIModel::UpdateIModel()
@@ -705,7 +825,7 @@ void AITwinIModel::UpdateIModel()
 
 	// If no access token has been retrieved yet, make sure we request an authentication and then process
 	// the actual update.
-	if (CheckServerConnection() != AITwinServiceActor::EConnectionStatus::Connected)
+	if (CheckServerConnection() != SDK::Core::EITwinAuthStatus::Success)
 	{
 		Impl->PendingOperation = FImpl::EOperationUponAuth::Update;
 		return;
@@ -720,12 +840,15 @@ void AITwinIModel::UpdateIModel()
 
 void AITwinIModel::ZoomOnIModel()
 {
-	FBox const& IModelBox = Impl->Internals.SceneMapping.GetIModelBoundingBox(EITwinCoordSystem::UE);
-	// Not always valid (if no tile was ever loaded!)
-	if (IModelBox.IsValid)
-	{
-		FImpl::ZoomOn(IModelBox, GetWorld());
-	}
+	// We zoom on the bounding box of the iModel, computed like this:
+	// Make a box from the project extents, then convert it to Unreal space, then add the (manual) tileset transform.
+	auto* const TileSet = GetTileset();
+	if (!TileSet)
+		return;
+	if (!(Impl->IModelProperties && Impl->IModelProperties->ProjectExtents))
+		return;
+	FImpl::ZoomOn(FBox(Impl->IModelProperties->ProjectExtents->Low, Impl->IModelProperties->ProjectExtents->High).TransformBy(
+		UITwinUtilityLibrary::GetIModelToUnrealTransform(this)*TileSet->GetTransform()), GetWorld());
 }
 
 void AITwinIModel::AdjustPawnSpeedToExtents()
@@ -758,39 +881,50 @@ void AITwinIModel::AutoExportAndLoad()
 	}
 }
 
-void AITwinIModel::GetModel3DInfoInCoordSystem(FITwinIModel3DInfo& OutInfo, EITwinCoordSystem CoordSystem,
-	bool bGetLegacy3DFTValue /*= false*/) const
+void AITwinIModel::GetModel3DInfoInCoordSystem(FITwinIModel3DInfo& OutInfo, EITwinCoordSystem CoordSystem) const
 {
-	FBox const& IModelBBox = Impl->Internals.SceneMapping.GetIModelBoundingBox(CoordSystem);
-	if (IModelBBox.IsValid)
+	if (Impl->IModelProperties->ProjectExtents)
 	{
-		OutInfo.BoundingBoxMin = IModelBBox.Min;
-		OutInfo.BoundingBoxMax = IModelBBox.Max;
+		if (EITwinCoordSystem::UE == CoordSystem
+			&& Impl->Internals.SceneMapping.GetIModel2UnrealTransfo())
+		{
+			FBox const Box = FBox(Impl->IModelProperties->ProjectExtents->Low
+									- Impl->IModelProperties->ProjectExtents->GlobalOrigin,
+								  Impl->IModelProperties->ProjectExtents->High
+									- Impl->IModelProperties->ProjectExtents->GlobalOrigin)
+				.TransformBy(*Impl->Internals.SceneMapping.GetIModel2UnrealTransfo());
+			OutInfo.BoundingBoxMin = Box.Min;
+			OutInfo.BoundingBoxMax = Box.Max;
+		}
+		else
+		{
+			OutInfo.BoundingBoxMin = Impl->IModelProperties->ProjectExtents->Low
+				- Impl->IModelProperties->ProjectExtents->GlobalOrigin;
+			OutInfo.BoundingBoxMax = Impl->IModelProperties->ProjectExtents->High
+				- Impl->IModelProperties->ProjectExtents->GlobalOrigin;
+		}
 	}
-	// The 'ModelCenter' used in 3DFT plugin is defined as the translation of the iModel (which is an offset
-	// existing in the iModel itself, and can be found in Cesium export by retrieving the translation of the
-	// root tile). It was mainly (and probably only) to adjust the savedViews in the 3DFT plugin, due to the
-	// way the coordinate system of the iModel was handled in the legacy 3DFT display engine.
-	// This offset should *not* be done with Cesium tiles, so we decided to always return zero except if the
-	// customer explicitly request this former value (and then it would be interesting to know why he does
-	// this...)
-	if (bGetLegacy3DFTValue)
+	// TODO_GCO GlobalOrigin here?
+	OutInfo.ModelCenter = FVector::ZeroVector;
+	if (EITwinCoordSystem::ITwin == CoordSystem)
 	{
-		OutInfo.ModelCenter = Impl->Internals.SceneMapping.GetModelCenter(CoordSystem);
-	}
-	else
-	{
-		OutInfo.ModelCenter = FVector(0, 0, 0);
+		FRotator DummyRotator;
+		UITwinUtilityLibrary::GetIModelBaseFromUnrealTransform(this, FTransform(OutInfo.ModelCenter), 
+															   OutInfo.ModelCenter, DummyRotator);
 	}
 }
 
 void AITwinIModel::GetModel3DInfo(FITwinIModel3DInfo& Info) const
 {
 	// For compatibility with former 3DFT plugin, we work in the iTwin coordinate system here.
-	// However, we'll retrieve a null ModelCenter to avoid breaking savedViews totally (see comments in
-	// ATopMenu::#StartCameraMovementToSavedView, which is the C++ version of the blueprint provided in
-	// default 3DFT level.
-	GetModel3DInfoInCoordSystem(Info, EITwinCoordSystem::ITwin, false);
+	GetModel3DInfoInCoordSystem(Info, EITwinCoordSystem::ITwin);
+	// The 'ModelCenter' used in 3DFT plugin is defined as the translation of the iModel (which is an offset
+	// existing in the iModel itself, and can be found in Cesium export by retrieving the translation of the
+	// root tile). It was mainly (and probably only) to adjust the savedViews in the 3DFT plugin, due to the
+	// way the coordinate system of the iModel was handled in the legacy 3DFT display engine.
+	// This offset should *not* be done with Cesium tiles, so historically we decided to always return zero
+	// here to avoid breaking savedViews totally:
+	Info.ModelCenter = FVector::ZeroVector;
 }
 
 namespace ITwin
@@ -825,6 +959,19 @@ namespace ITwin
 	}
 }
 
+void AITwinIModel::SetModelLoadInfo(FITwinLoadInfo Info)
+{
+	ITwinId = Info.ITwinId;
+	IModelId = Info.IModelId;
+	ChangesetId = Info.ChangesetId;
+	ExportId = Info.ExportId;
+#if WITH_EDITOR
+	// Use the display name of the iModel preferably
+	if (!Info.IModelDisplayName.IsEmpty())
+		SetActorLabel(Info.IModelDisplayName);
+#endif
+}
+
 void AITwinIModel::LoadModel(FString InExportId)
 {
 	UpdateWebServices();
@@ -832,6 +979,22 @@ void AITwinIModel::LoadModel(FString InExportId)
 	{
 		WebServices->GetExportInfo(InExportId);
 	}
+}
+
+FITwinLoadInfo AITwinIModel::GetModelLoadInfo() const
+{
+	FITwinLoadInfo Info;
+	Info.ITwinId = ITwinId;
+	Info.IModelId = IModelId;
+	Info.ChangesetId = GetSelectedChangeset();
+	Info.ExportId = ExportId;
+	return Info;
+}
+
+void AITwinIModel::LoadModelFromInfos(FITwinExportInfo const& ExportInfo)
+{
+	UpdateWebServices();
+	OnExportInfoRetrieved(true, ExportInfo);
 }
 
 FString AITwinIModel::GetSelectedChangeset() const
@@ -915,10 +1078,14 @@ void AITwinIModel::OnExportInfosRetrieved(bool bSuccess, FITwinExportInfos const
 			<< " is empty!");
 		return;
 	}
+	UE_LOG(LogITwin, Verbose, TEXT("Proceeding to load iTwin %s with export %s"),
+							  *CompleteInfo->iTwinId, *CompleteInfo->Id);
 	ExportStatus = EITwinExportStatus::Complete;
 	// in Automatic mode, it is still empty and must be set here because the 4D apis require it:
 	ITwinId = CompleteInfo->iTwinId;
 	ExportId = CompleteInfo->Id; // informative only (needed here for  Automatic mode)
+	// Start retrieving the decoration if needed (usually, it is triggered before)
+	LoadDecorationIfNeeded();
 	// To assign the correct georeference to the tileset, we need some properties of the iModel
 	// (whether it is geolocated, its extents...), which are retrieved by a specific request.
 	// At this point, it is very likely the properties have not been retrieved yet
@@ -940,10 +1107,35 @@ void AITwinIModel::OnIModelPropertiesRetrieved(bool bSuccess, bool bHasExtents, 
 	Impl->IModelProperties.emplace();
 	if (bSuccess)
 	{
-		if (bHasExtents)
+		if (bHasExtents || Extents.GlobalOrigin != FVector::ZeroVector)
+		{
 			Impl->IModelProperties->ProjectExtents = Extents;
+			if (bHasExtents)
+			{
+				UE_LOG(LogITwin, Display,
+					TEXT("iModel project extents: min=%s, max=%s, centered on %s"),
+					*Impl->IModelProperties->ProjectExtents->Low.ToString(),
+					*Impl->IModelProperties->ProjectExtents->High.ToString(),
+					*(0.5 * (Impl->IModelProperties->ProjectExtents->Low
+						   + Impl->IModelProperties->ProjectExtents->High)).ToString());
+			}
+			UE_LOG(LogITwin, Display, TEXT("iModel global origin: %s"),
+				*Impl->IModelProperties->ProjectExtents->GlobalOrigin.ToString());
+		}
 		if (bHasEcefLocation)
+		{
 			Impl->IModelProperties->EcefLocation = EcefLocation;
+			UE_LOG(LogITwin, Display, TEXT("iModel Earth origin: %s, orientation: %s"),
+				*Impl->IModelProperties->EcefLocation->Origin.ToString(),
+				*Impl->IModelProperties->EcefLocation->Orientation.ToString());
+			if (Impl->IModelProperties->EcefLocation->bHasCartographicOrigin)
+			{
+				UE_LOG(LogITwin, Display, TEXT("iModel cartographic origin: lg.=%.8f lat.=%.8f H=%.2f"),
+					Impl->IModelProperties->EcefLocation->CartographicOrigin.Longitude,
+					Impl->IModelProperties->EcefLocation->CartographicOrigin.Latitude,
+					Impl->IModelProperties->EcefLocation->CartographicOrigin.Height);
+			}
+		}
 	}
 	// Now that properties have been retrieved, we can construct the tileset.
 	Impl->MakeTileset();
@@ -990,9 +1182,14 @@ void AITwinIModel::OnElementPropertiesRetrieved(bool bSuccess, FElementPropertie
 	UE_LOG(LogITwin, Display, TEXT("Element properties retrieved: %s"), *JSONString);
 }
 
-void AITwinIModel::OnIModelQueried(bool bSuccess, FString const& QueryResult)
+void AITwinIModel::OnIModelQueried(bool bSuccess, FString const& QueryResult, HttpRequestID const& RequestID)
 {
-	Impl->ElementMetadataQuerying.OnQueryCompleted(bSuccess, QueryResult);
+	// One and only one of the two "requesters" should handle this reply
+	if (!Impl->ElementsHierarchyQuerying->OnQueryCompleted(RequestID, bSuccess, QueryResult)
+		&& !Impl->ElementsSourceQuerying->OnQueryCompleted(RequestID, bSuccess, QueryResult))
+	{
+		BE_LOGE("ITwinAPI", "iModel request ID not recognized: " << TCHAR_TO_UTF8(*RequestID));
+	}
 }
 
 void AITwinIModel::OnMaterialPropertiesRetrieved(bool bSuccess, SDK::Core::ITwinMaterialPropertiesMap const& props)
@@ -1097,6 +1294,98 @@ void AITwinIModel::FillMaterialInfoFromTuner()
 	Impl->bHasFilledMaterialInfoFromTuner = true;
 }
 
+
+
+void AITwinIModel::LoadDecoration()
+{
+	if (ITwinId.IsEmpty() || IModelId.IsEmpty())
+	{
+		BE_LOGE("ITwinAPI", "ITwinID and IModelId are required to load decoration");
+		return;
+	}
+
+	// If no access token has been retrieved yet, make sure we request one.
+	if (CheckServerConnection() != SDK::Core::EITwinAuthStatus::Success)
+	{
+		Impl->PendingOperation = FImpl::EOperationUponAuth::LoadDecoration;
+		return;
+	}
+	ITwin::LoadDecoration(GetModelLoadInfo(), GetWorld());
+}
+
+void AITwinIModel::LoadDecorationIfNeeded()
+{
+	if (ITwinId.IsEmpty() || IModelId.IsEmpty())
+		return;
+	if (CheckServerConnection(false) != SDK::Core::EITwinAuthStatus::Success)
+		return;
+	FITwinLoadInfo const Info = GetModelLoadInfo();
+	if (ITwin::ShouldLoadDecoration(Info, GetWorld()))
+	{
+		ITwin::LoadDecoration(Info, GetWorld());
+	}
+}
+
+void AITwinIModel::SaveDecoration()
+{
+	ITwin::SaveDecoration(GetModelLoadInfo(), GetWorld());
+}
+
+void AITwinIModel::DetectCustomizedMaterials()
+{
+	// Detect user customizations (in Carrot MVP, they are stored in the decoration service).
+	int NumCustomMaterials = 0;
+	BeUtils::GltfMaterialHelper::Lock Lock(Impl->GltfMatHelper->GetMutex());
+
+	// Initialize persistence at low level, if it has not yet been done (eg. when creating the iModel
+	// manually in Editor, and clicking LoadDecoration...).
+	if (MaterialPersistenceMngr
+		&& !Impl->GltfMatHelper->HasPersistenceInfo()
+		&& ensure(!IModelId.IsEmpty()))
+	{
+		Impl->GltfMatHelper->SetPersistenceInfo(TCHAR_TO_ANSI(*IModelId), MaterialPersistenceMngr);
+	}
+
+	// See if some material definitions can be loaded from the decoration service.
+	size_t LoadedSettings = Impl->GltfMatHelper->LoadMaterialCustomizations(Lock);
+	if (LoadedSettings == 0)
+	{
+		return;
+	}
+
+	for (auto& [MatID, CustomMat] : CustomMaterials)
+	{
+		if (Impl->GltfMatHelper->HasCustomDefinition(MatID, Lock))
+		{
+			// If the material uses custom settings, activate advanced conversion so that the tuning
+			// can handle it.
+			if (!CustomMat.bAdvancedConversion)
+			{
+				CustomMat.bAdvancedConversion = true;
+				NumCustomMaterials++;
+			}
+		}
+	}
+	if (NumCustomMaterials > 0)
+	{
+		// Request a different gltf tuning.
+		SplitGltfModelForCustomMaterials();
+	}
+}
+
+void AITwinIModel::ReloadCustomizedMaterials()
+{
+	int NumCustomMaterials = 0;
+	BeUtils::GltfMaterialHelper::Lock Lock(Impl->GltfMatHelper->GetMutex());
+	size_t LoadedSettings = Impl->GltfMatHelper->LoadMaterialCustomizations(Lock, true);
+	for (auto& [MatID, CustomMat] : CustomMaterials)
+	{
+		CustomMat.bAdvancedConversion = Impl->GltfMatHelper->HasCustomDefinition(MatID, Lock);
+	}
+	SplitGltfModelForCustomMaterials();
+	RefreshTileset();
+}
+
 void AITwinIModel::SplitGltfModelForCustomMaterials(bool bForceRetune /*= false*/)
 {
 	std::unordered_set<uint64_t> MatIDsToSplit;
@@ -1144,51 +1433,279 @@ double AITwinIModel::GetMaterialChannelIntensity(uint64_t MaterialId, SDK::Core:
 	return Impl->GltfMatHelper->GetChannelIntensity(MaterialId, Channel);
 }
 
-void AITwinIModel::SetMaterialChannelIntensity(uint64_t MaterialId, SDK::Core::EChannelType Channel, double Intensity)
+namespace
 {
+	template <typename ParamType>
+	struct MaterialParamHelperBase
+	{
+		using ParameterType = ParamType;
+
+		BeUtils::GltfMaterialHelper& GltfMatHelper;
+		SDK::Core::EChannelType const Channel;
+		ParamType const NewValue;
+
+		MaterialParamHelperBase(BeUtils::GltfMaterialHelper& GltfHelper,
+								SDK::Core::EChannelType InChannel,
+								ParamType const& NewParamValue)
+			: GltfMatHelper(GltfHelper)
+			, Channel(InChannel)
+			, NewValue(NewParamValue)
+		{}
+	};
+
+	class MaterialIntensityHelper : public MaterialParamHelperBase<double>
+	{
+		using Super = MaterialParamHelperBase<double>;
+
+	public:
+		using ParamType = double;
+
+		MaterialIntensityHelper(BeUtils::GltfMaterialHelper& GltfHelper,
+								SDK::Core::EChannelType InChannel,
+								double NewIntensity)
+			: MaterialParamHelperBase(GltfHelper, InChannel, NewIntensity)
+		{}
+
+		ParamType GetCurrentValue(uint64_t MaterialId) const
+		{
+			return GltfMatHelper.GetChannelIntensity(MaterialId, this->Channel);
+		}
+
+		void SetNewValue(uint64_t MaterialId, bool& bModifiedValue) const
+		{
+			GltfMatHelper.SetChannelIntensity(MaterialId, this->Channel, this->NewValue, bModifiedValue);
+		}
+
+		void ApplyNewValueToScene(uint64_t MaterialId, FITwinSceneMapping& SceneMapping) const
+		{
+			SceneMapping.SetITwinMaterialChannelIntensity(MaterialId, this->Channel, this->NewValue);
+		}
+
+		bool NeedSwitchTranslucency(const double CurrentIntensity) const
+		{
+			double const CurrentTransparency = (Channel == SDK::Core::EChannelType::Transparency)
+				? CurrentIntensity
+				: (1. - CurrentIntensity);
+			double const NewTransparency = (Channel == SDK::Core::EChannelType::Transparency)
+				? this->NewValue
+				: (1. - this->NewValue);
+
+			bool const bCurrentTranslucent = (std::fabs(CurrentTransparency) > 1e-5);
+			bool const bNewTranslucent = (std::fabs(NewTransparency) > 1e-5);
+			return bCurrentTranslucent != bNewTranslucent;
+		}
+	};
+
+	class MaterialMapParamHelper : public MaterialParamHelperBase<SDK::Core::ITwinChannelMap>
+	{
+		using Super = MaterialParamHelperBase<SDK::Core::ITwinChannelMap>;
+
+	public:
+		using ParamType = SDK::Core::ITwinChannelMap;
+
+		MaterialMapParamHelper(std::shared_ptr<BeUtils::GltfMaterialHelper> const& GltfHelperPtr,
+			SDK::Core::EChannelType InChannel,
+			SDK::Core::ITwinChannelMap const& NewMap)
+			: Super(*GltfHelperPtr, InChannel, NewMap)
+			, MatHelperPtr(GltfHelperPtr)
+			, NewTexPath(NewMap.texture)
+		{
+
+		}
+
+		bool BuildMergedTexture(uint64_t MaterialId) const
+		{
+			if (!NewTexPath.empty())
+			{
+				BeUtils::GltfMaterialHelper::Lock Lock(GltfMatHelper.GetMutex());
+				// Some channels require to be merged together (color+alpha), (metallic+roughness) or
+				// formatted to use a given R,G,B,A component
+				// => handle those cases here or else we would lose some information.
+				if (this->Channel == SDK::Core::EChannelType::Alpha
+					|| (this->Channel == SDK::Core::EChannelType::Color && GltfMatHelper.HasChannelMap(MaterialId, SDK::Core::EChannelType::Alpha, Lock)))
+				{
+					BeUtils::GltfMaterialTuner MatTuner(MatHelperPtr);
+					auto const glTFTexturePath = MatTuner.MergeColorAlpha(
+						GltfMatHelper.GetChannelColorMap(MaterialId, SDK::Core::EChannelType::Color, Lock).texture,
+						GltfMatHelper.GetChannelIntensityMap(MaterialId, SDK::Core::EChannelType::Alpha, Lock).texture,
+						this->bNeedTranslucentMat,
+						Lock);
+					if (!glTFTexturePath.empty())
+					{
+						NewTexPath = glTFTexturePath.generic_string();
+						return true;
+					}
+				}
+			}
+			return false;
+		}
+
+		void ApplyNewValueToScene(uint64_t MaterialId, FITwinSceneMapping& SceneMapping) const
+		{
+			UTexture2D* NewTexture = nullptr;
+			if (!NewTexPath.empty())
+			{
+				NewTexture = FImageUtils::ImportFileAsTexture2D(UTF8_TO_TCHAR(NewTexPath.c_str()));
+			}
+			SceneMapping.SetITwinMaterialChannelTexture(MaterialId, this->Channel, NewTexture);
+		}
+
+	protected:
+		std::shared_ptr<BeUtils::GltfMaterialHelper> const& MatHelperPtr;
+		mutable bool bNeedTranslucentMat = false;
+		mutable std::string NewTexPath;
+	};
+
+	class MaterialIntensityMapHelper : public MaterialMapParamHelper
+	{
+		using Super = MaterialMapParamHelper;
+
+	public:
+		MaterialIntensityMapHelper(std::shared_ptr<BeUtils::GltfMaterialHelper> const& GltfHelperPtr,
+			SDK::Core::EChannelType InChannel,
+			SDK::Core::ITwinChannelMap const& NewMap)
+			: Super(GltfHelperPtr, InChannel, NewMap)
+		{}
+
+		ParamType GetCurrentValue(uint64_t MaterialId) const
+		{
+			return GltfMatHelper.GetChannelIntensityMap(MaterialId, this->Channel);
+		}
+
+		void SetNewValue(uint64_t MaterialId, bool& bModifiedValue) const
+		{
+			// Before changing the alpha map, retrieve the current alpha mode, if any.
+			{
+				BeUtils::GltfMaterialHelper::Lock Lock(GltfMatHelper.GetMutex());
+				GltfMatHelper.GetCurrentAlphaMode(MaterialId, CurrentAlphaMode, Lock);
+			}
+
+			GltfMatHelper.SetChannelIntensityMap(MaterialId, this->Channel, this->NewValue, bModifiedValue);
+
+			BuildMergedTexture(MaterialId);
+		}
+
+		bool NeedSwitchTranslucency(ParamType const& /*CurrentMap*/) const
+		{
+			// If the user changes the opacity map but the previous one was already requiring translucency,
+			// there is no need to re-tune. Therefore we compare with the current alpha mode (if the latter
+			// is unknown, it means we have never customized this material before, and thus we will have to
+			// do it now...
+			return bNeedTranslucentMat != (CurrentAlphaMode == CesiumGltf::Material::AlphaMode::BLEND);
+		}
+
+	private:
+		mutable std::string CurrentAlphaMode;
+	};
+
+	class MaterialColorHelper : public MaterialParamHelperBase<SDK::Core::ITwinColor>
+	{
+		using ITwinColor = SDK::Core::ITwinColor;
+		using Super = MaterialParamHelperBase<ITwinColor>;
+
+	public:
+		using ParamType = ITwinColor;
+
+
+		MaterialColorHelper(BeUtils::GltfMaterialHelper& GltfHelper,
+							SDK::Core::EChannelType InChannel,
+							ITwinColor const& NewColor)
+			: MaterialParamHelperBase(GltfHelper, InChannel, NewColor)
+		{}
+
+		ParamType GetCurrentValue(uint64_t MaterialId) const
+		{
+			return GltfMatHelper.GetChannelColor(MaterialId, this->Channel);
+		}
+
+		void SetNewValue(uint64_t MaterialId, bool& bModifiedValue) const
+		{
+			GltfMatHelper.SetChannelColor(MaterialId, this->Channel, this->NewValue, bModifiedValue);
+		}
+
+		void ApplyNewValueToScene(uint64_t MaterialId, FITwinSceneMapping& SceneMapping) const
+		{
+			SceneMapping.SetITwinMaterialChannelColor(
+				MaterialId, this->Channel, this->NewValue);
+		}
+
+		bool NeedSwitchTranslucency(ParamType const& /*CurrentIntensity*/) const
+		{
+			// Changing the color of transparency/opacity just makes no sense!
+			ensureMsgf(false, TEXT("invalid combination (color vs opacity)"));
+			return false;
+		}
+	};
+
+	class MaterialColorMapHelper : public MaterialMapParamHelper
+	{
+		using Super = MaterialMapParamHelper;
+
+	public:
+		MaterialColorMapHelper(std::shared_ptr<BeUtils::GltfMaterialHelper> const& GltfHelperPtr,
+			SDK::Core::EChannelType InChannel,
+			SDK::Core::ITwinChannelMap const& NewMap)
+			: Super(GltfHelperPtr, InChannel, NewMap)
+		{}
+
+		ParamType GetCurrentValue(uint64_t MaterialId) const
+		{
+			return GltfMatHelper.GetChannelColorMap(MaterialId, this->Channel);
+		}
+
+		void SetNewValue(uint64_t MaterialId, bool& bModifiedValue) const
+		{
+			GltfMatHelper.SetChannelColorMap(MaterialId, this->Channel, this->NewValue, bModifiedValue);
+
+			BuildMergedTexture(MaterialId);
+		}
+
+		bool NeedSwitchTranslucency(ParamType const& /*CurrentMap*/) const
+		{
+			// Changing the color of transparency/opacity just makes no sense!
+			ensureMsgf(false, TEXT("invalid combination (color vs opacity)"));
+			return false;
+		}
+	};
+}
+
+template <typename MaterialParamHelper>
+void AITwinIModel::TSetMaterialChannelParam(MaterialParamHelper const& Helper, uint64_t MaterialId)
+{
+	using ParameterType = typename MaterialParamHelper::ParamType;
 	FITwinCustomMaterial* CustomMat = CustomMaterials.Find(MaterialId);
 	if (!ensureMsgf(CustomMat, TEXT("unknown material ID")))
 	{
 		return;
 	}
 
+	SDK::Core::EChannelType const Channel(Helper.Channel);
 	bool const bTestTranslucencySwitch = (Channel == SDK::Core::EChannelType::Transparency
 		|| Channel == SDK::Core::EChannelType::Alpha);
-	std::optional<double> CurrentIntensityOpt;
+	std::optional<ParameterType> CurrentValueOpt;
 	if (bTestTranslucencySwitch)
 	{
 		// Store initial value before changing it (see test below).
-		CurrentIntensityOpt = GetMaterialChannelIntensity(MaterialId, Channel);
+		CurrentValueOpt = Helper.GetCurrentValue(MaterialId);
 	}
 
 	bool bModifiedValue(false);
-	Impl->GltfMatHelper->SetChannelIntensity(MaterialId, Channel, Intensity, bModifiedValue);
+	Helper.SetNewValue(MaterialId, bModifiedValue);
 	if (!bModifiedValue)
 	{
-		// Avoid useless gltf splitting! (this method is called when selecting a material in the panel, with
+		// Avoid useless glTF splitting! (this method is called when selecting a material in the panel, with
 		// initial value...)
 		return;
 	}
 
-	// If this is the first time we edit this material, we will have to request a new gltf tuning.
+	// If this is the first time we edit this material, we will have to request a new glTF tuning.
 	bool bNeedGltfTuning = !CustomMat->bAdvancedConversion;
 	CustomMat->bAdvancedConversion = true;
 
 	// Special case for transparency/alpha: may require we change the base material (translucent or not)
 	if (bTestTranslucencySwitch)
 	{
-		double const CurrentIntensity = *CurrentIntensityOpt;
-		double const CurrentTransparency = (Channel == SDK::Core::EChannelType::Transparency)
-			? CurrentIntensity
-			: (1. - CurrentIntensity);
-		double const NewTransparency = (Channel == SDK::Core::EChannelType::Transparency)
-			? Intensity
-			: (1. - Intensity);
-
-		bool const bCurrentTranslucent = (std::fabs(CurrentTransparency) > 1e-5);
-		bool const bNewTranslucent = (std::fabs(NewTransparency) > 1e-5);
-
-		if (bCurrentTranslucent != bNewTranslucent)
+		if (Helper.NeedSwitchTranslucency(*CurrentValueOpt))
 		{
 			// The base material itself will have to change (from opaque to translucent or vice versa)
 			// => trigger a retuning (I am not sure if it is safe to change the base material of a material
@@ -1208,9 +1725,94 @@ void AITwinIModel::SetMaterialChannelIntensity(uint64_t MaterialId, SDK::Core::E
 	{
 		// No need to rebuild the full tileset. Instead, change the corresponding parameter in the
 		// Unreal material instance, using the mapping.
-		GetInternals(*this).SceneMapping.SetITwinMaterialChannelIntensity(
-			MaterialId, Channel, Intensity);
+		Helper.ApplyNewValueToScene(MaterialId, GetInternals(*this).SceneMapping);
 	}
+}
+
+void AITwinIModel::SetMaterialChannelIntensity(uint64_t MaterialId, SDK::Core::EChannelType Channel, double Intensity)
+{
+	MaterialIntensityHelper Helper(*Impl->GltfMatHelper, Channel, Intensity);
+	TSetMaterialChannelParam(Helper, MaterialId);
+}
+
+FLinearColor AITwinIModel::GetMaterialChannelColor(uint64_t MaterialId, SDK::Core::EChannelType Channel) const
+{
+	auto const Color = Impl->GltfMatHelper->GetChannelColor(MaterialId, Channel);
+	return { (float)Color[0], (float)Color[1], (float)Color[2], (float)Color[3] };
+}
+
+void AITwinIModel::SetMaterialChannelColor(uint64_t MaterialId, SDK::Core::EChannelType Channel, FLinearColor const& Color)
+{
+	SDK::Core::ITwinColor NewColor;
+	NewColor[0] = Color.R;
+	NewColor[1] = Color.G;
+	NewColor[2] = Color.B;
+	NewColor[3] = Color.A;
+	MaterialColorHelper Helper(*Impl->GltfMatHelper, Channel, NewColor);
+	TSetMaterialChannelParam(Helper, MaterialId);
+}
+
+FString AITwinIModel::GetMaterialChannelColorTextureID(uint64_t MaterialId, SDK::Core::EChannelType Channel) const
+{
+	return UTF8_TO_TCHAR(Impl->GltfMatHelper->GetChannelColorMap(MaterialId, Channel).texture.c_str());
+}
+
+FString AITwinIModel::GetMaterialChannelIntensityTextureID(uint64_t MaterialId, SDK::Core::EChannelType Channel) const
+{
+	return UTF8_TO_TCHAR(Impl->GltfMatHelper->GetChannelIntensityMap(MaterialId, Channel).texture.c_str());
+}
+
+FString AITwinIModel::GetMaterialChannelTextureID(uint64_t MaterialId, SDK::Core::EChannelType Channel) const
+{
+	// Distinguish color from intensity textures.
+	if (Channel == SDK::Core::EChannelType::Color
+		|| Channel == SDK::Core::EChannelType::Normal)
+	{
+		return GetMaterialChannelColorTextureID(MaterialId, Channel);
+	}
+	else
+	{
+		// For other channels, the map defines an intensity
+		return GetMaterialChannelIntensityTextureID(MaterialId, Channel);
+	}
+}
+
+void AITwinIModel::SetMaterialChannelColorTextureID(uint64_t MaterialId, SDK::Core::EChannelType Channel,
+	FString const& TextureId)
+{
+	SDK::Core::ITwinChannelMap NewMap;
+	NewMap.texture = TCHAR_TO_UTF8(*TextureId);
+	MaterialColorMapHelper Helper(Impl->GltfMatHelper, Channel, NewMap);
+	TSetMaterialChannelParam(Helper, MaterialId);
+}
+
+void AITwinIModel::SetMaterialChannelIntensityTextureID(uint64_t MaterialId, SDK::Core::EChannelType Channel,
+	FString const& TextureId)
+{
+	SDK::Core::ITwinChannelMap NewMap;
+	NewMap.texture = TCHAR_TO_UTF8(*TextureId);
+	MaterialIntensityMapHelper Helper(Impl->GltfMatHelper, Channel, NewMap);
+	TSetMaterialChannelParam(Helper, MaterialId);
+}
+
+void AITwinIModel::SetMaterialChannelTextureID(uint64_t MaterialId, SDK::Core::EChannelType Channel, FString const& TextureId)
+{
+	// Distinguish color from intensity textures.
+	if (Channel == SDK::Core::EChannelType::Color
+		|| Channel == SDK::Core::EChannelType::Normal)
+	{
+		SetMaterialChannelColorTextureID(MaterialId, Channel, TextureId);
+	}
+	else
+	{
+		// For other channels, the map defines an intensity
+		SetMaterialChannelIntensityTextureID(MaterialId, Channel, TextureId);
+	}
+}
+
+std::shared_ptr<BeUtils::GltfMaterialHelper> const& AITwinIModel::GetGltfMaterialHelper() const
+{
+	return Impl->GltfMatHelper;
 }
 
 /*** Material persistence (Carrot Application only for now) ***/
@@ -1222,6 +1824,36 @@ AITwinIModel::MaterialPersistencePtr AITwinIModel::MaterialPersistenceMngr;
 void AITwinIModel::SetMaterialPersistenceManager(MaterialPersistencePtr const& Mngr)
 {
 	MaterialPersistenceMngr = Mngr;
+}
+
+/*static*/
+AITwinIModel::MaterialPersistencePtr const& AITwinIModel::GetMaterialPersistenceManager()
+{
+	return MaterialPersistenceMngr;
+}
+
+void AITwinIModel::SetModelOffset(FVector Pos, FVector Rot, EOffsetContext Context /*= UserEdition*/)
+{
+	SetActorLocationAndRotation(Pos, FQuat::MakeFromEuler(Rot));
+	if (Context == EOffsetContext::Reload)
+	{
+		// If the tileset has already been created (which can happen since decoration loading is
+		// asynchronous), let's enforce its refresh, to avoid huge issues with bounding boxes
+		// computed for 4D...
+		if (GetTileset())
+		{
+			RefreshTileset();
+		}
+	}
+	else
+	{
+		// From Object Properties panel => notify the persistence manager...
+		if (MaterialPersistenceMngr && !IModelId.IsEmpty())
+		{
+			MaterialPersistenceMngr->SetModelOffset(
+				TCHAR_TO_UTF8(*IModelId), { Pos.X, Pos.Y, Pos.Z }, { Rot.X, Rot.Y, Rot.Z });
+		}
+	}
 }
 
 
@@ -1314,8 +1946,9 @@ void AITwinIModel::OnSavedViewsRetrieved(bool bSuccess, FSavedViewInfos SavedVie
 
 const FProjectExtents* AITwinIModel::GetProjectExtents() const
 {
-	return Impl->IModelProperties && Impl->IModelProperties->ProjectExtents ?
-		&*Impl->IModelProperties->ProjectExtents : nullptr;
+	return (Impl->IModelProperties && Impl->IModelProperties->ProjectExtents
+			&& Impl->IModelProperties->ProjectExtents->High != Impl->IModelProperties->ProjectExtents->Low)
+		? &*Impl->IModelProperties->ProjectExtents : nullptr;
 }
 
 const FEcefLocation* AITwinIModel::GetEcefLocation() const
@@ -1337,6 +1970,13 @@ void AITwinIModel::HideTileset(bool bHide)
 	for (auto& Child : Children)
 		if (auto* Tileset = Cast<AITwinCesium3DTileset>(Child.Get()))
 			Tileset->SetActorHiddenInGame(bHide);
+}
+
+void AITwinIModel::SetMaximumScreenSpaceError(double InMaximumScreenSpaceError)
+{
+	for (auto& Child : Children)
+		if (auto* Tileset = Cast<AITwinCesium3DTileset>(Child.Get()))
+			Tileset->SetMaximumScreenSpaceError(InMaximumScreenSpaceError);
 }
 
 void AITwinIModel::OnSavedViewRetrieved(bool bSuccess, FSavedView const& SavedView, FSavedViewInfo const& SavedViewInfo)
@@ -1474,6 +2114,9 @@ void AITwinIModel::UpdateOnSuccessfulAuthorization()
 	case FImpl::EOperationUponAuth::Update:
 		UpdateIModel();
 		break;
+	case FImpl::EOperationUponAuth::LoadDecoration:
+		LoadDecoration();
+		break;
 	case FImpl::EOperationUponAuth::None:
 		break;
 	}
@@ -1484,7 +2127,7 @@ void AITwinIModel::OnLoadingUIEvent()
 {
 	// If no access token has been retrieved yet, make sure we request an authentication and then
 	// process the actual loading request(s).
-	if (CheckServerConnection() != AITwinServiceActor::EConnectionStatus::Connected)
+	if (CheckServerConnection() != SDK::Core::EITwinAuthStatus::Success)
 	{
 		Impl->PendingOperation = FImpl::EOperationUponAuth::Load;
 		return;
@@ -1520,6 +2163,14 @@ void AITwinIModel::PostEditChangeProperty(struct FPropertyChangedEvent& e)
 
 #endif // WITH_EDITOR
 
+bool FITwinIModelInternals::IsElementHiddenInSavedView(ITwinElementID const Element) const
+{
+	for (const auto& [TileID, SceneTile] : SceneMapping.KnownTiles)
+	{
+		return SceneTile.IsElementHiddenInSavedView(Element);
+	}
+	return false;
+}
 
 void AITwinIModel::PostLoad()
 {
@@ -1550,6 +2201,17 @@ void AITwinIModel::PostLoad()
 	}
 }
 
+void AITwinIModel::EndPlay(const EEndPlayReason::Type EndPlayReason) /*override*/
+{
+	if (Impl->ElementsHierarchyQuerying)
+		Impl->ElementsHierarchyQuerying->OnIModelEndPlay();
+	if (Impl->ElementsSourceQuerying)
+		Impl->ElementsSourceQuerying->OnIModelEndPlay();
+	if (Synchro4DSchedules)
+		Synchro4DSchedules->OnIModelEndPlay();
+	Super::EndPlay(EndPlayReason);
+}
+
 void FITwinIModelInternals::OnElementsTimelineModified(FITwinElementTimeline& ModifiedTimeline,
 	std::vector<ITwinElementID> const* OnlyForElements/*= nullptr*/)
 {
@@ -1558,7 +2220,10 @@ void FITwinIModelInternals::OnElementsTimelineModified(FITwinElementTimeline& Mo
 		return;
 	auto&& SchedInternals = GetInternals(*Schedules);
 	SchedInternals.Timeline().OnElementsTimelineModified(ModifiedTimeline);
-	if (SchedInternals.HasFullSchedule())
+	// In practice, we no longer enter this section now: the whole schedule is pre-fetched and, before it is
+	// fully received, the test below skips the KnownTiles loop and, when it's full, the function is never
+	// called again.
+	if (Schedules->IsAvailable())
 	{
 		for (auto& SceneTile : SceneMapping.KnownTiles)
 		{
@@ -1575,8 +2240,13 @@ bool FITwinIModelInternals::OnClickedElement(ITwinElementID const Element,
 		return false; // filtered out internally, most likely Element is masked out
 
 	FBox const& BBox = SceneMapping.GetBoundingBox(Element);
-	UE_LOG(LogITwin, Display, TEXT("ElementID 0x%I64x found in iModel %s with BBox %s centered on %s"),
-		Element.value(), *Owner.GetActorNameOrLabel(), *BBox.ToString(), *BBox.GetCenter().ToString());
+	FVector CtrIModel; FRotator Trash(ForceInitToZero);
+	UITwinUtilityLibrary::GetIModelBaseFromUnrealTransform(
+		&Owner, FTransform(Trash, BBox.GetCenter()), CtrIModel, Trash);
+	UE_LOG(LogITwin, Display,
+		TEXT("ElementID 0x%I64x found in iModel %s with BBox %s centered on %s (in iModel spatial coords.: %s)"),
+		Element.value(), *Owner.GetActorNameOrLabel(), *BBox.ToString(), *BBox.GetCenter().ToString(),
+		*CtrIModel.ToString());
 
 #if ENABLE_DRAW_DEBUG
 	// Draw element bounding box for a few seconds for debugging
@@ -1625,8 +2295,8 @@ bool FITwinIModelInternals::OnClickedElement(ITwinElementID const Element,
 	}
 #endif // ENABLE_DRAW_DEBUG
 
-	Owner.GetMutableWebServices()->GetElementProperties(Owner.ITwinId, Owner.IModelId, Owner.GetSelectedChangeset(),
-		FString::Printf(TEXT("0x%I64x"), Element.value()));
+	Owner.GetMutableWebServices()->GetElementProperties(Owner.ITwinId, Owner.IModelId, 
+		Owner.GetSelectedChangeset(), ITwin::ToString(Element));
 
 	UITwinSynchro4DSchedules* Schedules = Owner.FindComponentByClass<UITwinSynchro4DSchedules>();
 	if (!Schedules)
@@ -1642,6 +2312,11 @@ bool FITwinIModelInternals::OnClickedElement(ITwinElementID const Element,
 bool FITwinIModelInternals::SelectElement(ITwinElementID const InElementID)
 {
 	return SceneMapping.SelectElement(InElementID, Owner.GetWorld());
+}
+
+void FITwinIModelInternals::HideElements(std::vector<ITwinElementID> const& InElementIDs)
+{
+	SceneMapping.HideElements(InElementIDs);
 }
 
 ITwinElementID FITwinIModelInternals::GetSelectedElement() const
@@ -1814,8 +2489,9 @@ namespace ITwin
 		{
 			for (TActorIterator<AITwinIModel> IModelIter(World); IModelIter; ++IModelIter)
 			{
-				FBox const& IModelBBox =
-					GetInternals(**IModelIter).SceneMapping.GetIModelBoundingBox(EITwinCoordSystem::UE);
+				FITwinIModel3DInfo OutInfo;
+				(*IModelIter)->GetModel3DInfoInCoordSystem(OutInfo, EITwinCoordSystem::UE);
+				FBox const IModelBBox(OutInfo.BoundingBoxMin, OutInfo.BoundingBoxMax);
 				if (IModelBBox.IsValid)
 				{
 					if (FocusedBBox.IsValid) FocusedBBox += IModelBBox;

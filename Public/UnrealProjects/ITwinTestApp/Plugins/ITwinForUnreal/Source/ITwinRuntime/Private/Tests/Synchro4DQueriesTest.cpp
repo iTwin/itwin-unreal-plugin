@@ -538,7 +538,7 @@ void Synchro4DImportSpec::CheckEntireScheduleMatchesJson()
 	if (RefJson != TimelineAsJson)
 	{
 		Path.Append(".differs");
-		FFileHelper::SaveStringToFile(TimelineAsJson, *Path);
+		FFileHelper::SaveStringToFile(TimelineAsJson, *Path, FFileHelper::EEncodingOptions::ForceUTF8);
 	}
 }
 void Synchro4DImportSpec::Define()

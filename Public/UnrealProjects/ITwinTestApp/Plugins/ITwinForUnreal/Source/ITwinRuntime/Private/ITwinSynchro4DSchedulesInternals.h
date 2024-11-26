@@ -55,7 +55,6 @@ class FITwinSynchro4DSchedulesInternals
 	enum class EApplySchedule
 	{
 		WaitForFullSchedule, ///< Do nothing until full schedule has been received
-		Ongoing, ///< Timelines are being applied over several ticks to avoid a big lag
 		/// Timelines have been applied once after full schedule received (but only for Elements currently
 		/// present in the scene, of course)
 		InitialPassDone
@@ -78,18 +77,15 @@ class FITwinSynchro4DSchedulesInternals
 	void UpdateConnection(bool const bOnlyIfReady);
 	bool ResetSchedules();
 	void Reset();
-	bool IsReady() const;
+	bool IsReadyToQuery() const;
 
 public:
 	FITwinSynchro4DSchedulesInternals(UITwinSynchro4DSchedules& Owner, bool const InDoNotBuildTimelines,
 									  std::recursive_mutex& Mutex, std::vector<FITwinSchedule>& Schedules);
 
-	static void GetAnimatableMaterials(UMaterialInterface*& OpaqueMat, UMaterialInterface*& TranslucentMat,
-									   UObject& MaterialOwner);
 	UMaterialInterface* GetMasterMaterial(ECesiumMaterialType Type,
-										  UObject& MaterialOwner);
+										  UITwinSynchro4DSchedules& SchedulesComp);
 
-	[[nodiscard]] bool HasFullSchedule() const;
 	[[nodiscard]] FITwinScheduleTimeline& Timeline();
 	[[nodiscard]] FITwinScheduleTimeline const& GetTimeline() const;
 	void ForEachElementTimeline(ITwinElementID const ElementID,
@@ -99,6 +95,7 @@ public:
 	///		remaining schedules not yet visited.
 	void VisitSchedules(std::function<bool(FITwinSchedule const&)> const& Func) const;
 	bool PrefetchAllElementAnimationBindings() const;
+	bool IsPrefetchedAvailableAndApplied() const;
 	void OnNewTileMeshBuilt(CesiumTileID const& TileId, std::set<ITwinElementID>&& MeshElementIDs,
 		const TWeakObjectPtr<UMaterialInstanceDynamic>& pMaterial, bool const bFirstTimeSeenTile,
 		FITwinSceneTile& SceneTile);
@@ -113,6 +110,6 @@ public:
 	///		to all Features of a given Element)
 	static void FinalizeCuttingPlaneEquation(ITwin::Timeline::FDeferredPlaneEquation const& Deferred,
 											 FBox const& ElementsWorldBox);
-	static void FinalizeAnchorPos(ITwin::Timeline::FDeferredAnchorPos const& Deferred,
+	static void FinalizeAnchorPos(ITwin::Timeline::FDeferredAnchor const& Deferred,
 								  FBox const& ElementsWorldBox);
 };

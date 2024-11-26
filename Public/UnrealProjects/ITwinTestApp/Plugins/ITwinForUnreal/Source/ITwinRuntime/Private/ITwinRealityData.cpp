@@ -65,7 +65,7 @@ public:
 		else
 			Tileset->SetGeoreference(Geoloc->LocalReference.Get());
 		// Make use of our own materials (important for packaged version!)
-		ITwin::SetupMaterials(*Tileset, Owner);
+		ITwin::SetupMaterials(*Tileset);
 	}
 };
 
@@ -104,7 +104,7 @@ void AITwinRealityData::UpdateRealityData()
 {
 	if (HasTileset())
 		return;
-	if (CheckServerConnection() != AITwinServiceActor::EConnectionStatus::Connected)
+	if (CheckServerConnection() != SDK::Core::EITwinAuthStatus::Success)
 	{
 		// No authorization yet: postpone the actual update (see OnAuthorizationDone)
 		return;

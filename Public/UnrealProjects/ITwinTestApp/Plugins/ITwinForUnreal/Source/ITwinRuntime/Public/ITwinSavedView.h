@@ -72,6 +72,11 @@ public:
 		BlueprintCallable)
 	void RetakeSavedView();
 
+	UFUNCTION(Category = "iTwin",
+		meta = (WorldContext = "WorldContextObject"),
+		BlueprintCallable)
+	static void HideElements(const UObject* WorldContextObject, FSavedView const& SavedView);
+
 private:
 	class FImpl;
 	TPimplPtr<FImpl> Impl;

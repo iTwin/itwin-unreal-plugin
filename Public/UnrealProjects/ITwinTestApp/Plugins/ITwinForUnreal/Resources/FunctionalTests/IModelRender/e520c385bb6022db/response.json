@@ -1,0 +1,4 @@
+{
+    "status": 200,
+    "body": "{\"name\":\"UTF8_ADE_InstancesTest\",\"rootSubject\":{\"name\":\"UTF8_ADE_InstancesTest\"},\"projectExtents\":{\"low\":[-373.8869805398789,-139.18885230488164,-20.0001],\"high\":[219.09798210597796,367.04770561401455,56.442389816768085]},\"globalOrigin\":[0,0,0],\"key\":\"b53cebea-451f-4433-942f-eabda9c11d21:\",\"iTwinId\":\"5e15184e-6d3c-43fd-ad04-e28b4b39485e\",\"iModelId\":\"b53cebea-451f-4433-942f-eabda9c11d21\",\"changeset\":{\"id\":\"\",\"index\":0}}"
+}

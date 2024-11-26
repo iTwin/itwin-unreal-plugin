@@ -66,6 +66,10 @@ namespace SDK::Core
 	{
 		ITWIN_SDK_WARN(GetObserverName() + " does not handle SavedViews");
 	}
+	void ITwinDefaultWebServicesObserver::OnSavedViewExtensionRetrieved(bool /*bSuccess*/, std::string const&, std::string const&)
+	{
+		ITWIN_SDK_WARN(GetObserverName() + " does not handle SavedViews");
+	}
 	void ITwinDefaultWebServicesObserver::OnSavedViewThumbnailRetrieved(bool /*bSuccess*/, std::string const&, std::string const&)
 	{
 		ITWIN_SDK_WARN(GetObserverName() + " does not handle SavedViews");
@@ -102,7 +106,7 @@ namespace SDK::Core
 	{
 		ITWIN_SDK_WARN(GetObserverName() + " does not handle IModel properties");
 	}
-	void ITwinDefaultWebServicesObserver::OnIModelQueried(bool /*bSuccess*/, std::string const&)
+	void ITwinDefaultWebServicesObserver::OnIModelQueried(bool /*bSuccess*/, std::string const&, RequestID const&)
 	{
 		ITWIN_SDK_WARN(GetObserverName() + " does not handle querying IModel");
 	}

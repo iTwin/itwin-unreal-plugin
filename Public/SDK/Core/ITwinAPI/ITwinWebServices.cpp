@@ -7,7 +7,7 @@
 +--------------------------------------------------------------------------------------*/
 
 #include "ITwinWebServices.h"
-
+#include <Core/ITwinApi/ITwinRequestDump.h>
 #include "ITwinAuthManager.h"
 #include "ITwinWebServicesObserver.h"
 
@@ -197,7 +197,7 @@ namespace SDK::Core
 		return impl_->observer_ == observer;
 	}
 
-	void ITwinWebServices::SetLastError(std::string const& strError, RequestID requestID)
+	void ITwinWebServices::SetLastError(std::string const& strError, RequestID const& requestID)
 	{
 		Impl::Lock Lock(impl_->mutex_);
 		impl_->lastError_.msg_ = strError;
@@ -215,7 +215,7 @@ namespace SDK::Core
 		return impl_->lastError_.msg_;
 	}
 
-	std::string ITwinWebServices::GetRequestError(RequestID requestID) const
+	std::string ITwinWebServices::GetRequestError(RequestID const& requestID) const
 	{
 		Impl::Lock Lock(impl_->mutex_);
 		if (impl_->lastError_.requestId_ == requestID)
@@ -232,32 +232,6 @@ namespace SDK::Core
 		return !outError.empty();
 	}
 
-	struct ITwinWebServices::ITwinAPIRequestInfo
-	{
-		const std::string ShortName; // short name used in errors, identifying the request easily
-		const HttpRequest::EVerb Verb = HttpRequest::EVerb::Get;
-		std::string UrlSuffix;
-		const std::string AcceptHeader;
-
-		const std::string ContentType;
-		const std::string ContentString;
-
-		std::map<std::string, std::string> CustomHeaders;
-
-		// In some cases, we can determine in advance that the request is ill-formed (typically if a
-		// mandatory ID is missing...).
-		// In such case, we will not even try to run the http request.
-		bool badlyFormed = false;
-
-		// Specific to requests fetching binary data (such as GetTextureData)
-		bool needRawData = false;
-
-		bool HasCustomHeader(std::string const& headerKey) const
-		{
-			return CustomHeaders.find(headerKey) != CustomHeaders.end();
-		}
-	};
-
 	void ITwinWebServices::SetCustomServerURL(std::string const& serverUrl)
 	{
 		ModifyServerSetting([this, &serverUrl] { impl_->customServerURL_ = serverUrl; });
@@ -273,8 +247,16 @@ namespace SDK::Core
 		return GetITwinAPIRootUrl(this->env_);
 	}
 
+	namespace
+	{
+	//! Set this variable to true in the debugger to dump all requests & responses.
+	//! The generated files can then be used in automatic tests, to mock the web services.
+	//! See For example IModelRenderTest.cpp. 
+	static bool g_ShouldDumpRequests = false;
+	} // unnamed namespace
+
 	template <typename ResultDataType, class FunctorType, class DelegateAsFunctor>
-	ITwinWebServices::RequestID ITwinWebServices::TProcessHttpRequest(
+	RequestID ITwinWebServices::TProcessHttpRequest(
 		ITwinAPIRequestInfo const& requestInfo,
 		FunctorType&& InFunctor,
 		DelegateAsFunctor&& InResultFunctor)
@@ -309,7 +291,7 @@ namespace SDK::Core
 		}
 
 		Http::Headers headers;
-		headers.reserve(requestInfo.CustomHeaders.size() + 4);
+		headers.reserve(requestInfo.CustomHeaders.size() + 5);
 
 		// Fill headers
 		if (!requestInfo.HasCustomHeader("Prefer"))
@@ -324,12 +306,24 @@ namespace SDK::Core
 		}
 		
 		headers.emplace_back("Authorization", std::string("Bearer ") + authToken);
+		headers.emplace_back("X-Correlation-ID", request->GetRequestID());
 
 		// add custom headers, if any
 		for (auto const& [key, value] : requestInfo.CustomHeaders) {
 			headers.emplace_back(key, value);
 		}
 
+		std::filesystem::path requestDumpPath;
+		if (g_ShouldDumpRequests)
+		{
+			// Dump request to temp folder.
+			requestDumpPath = std::filesystem::temp_directory_path()/"iTwinRequestDump"/
+				RequestDump::GetRequestHash(requestInfo.UrlSuffix, requestInfo.ContentString);
+			std::filesystem::remove_all(requestDumpPath);
+			std::filesystem::create_directories(requestDumpPath);
+			std::ofstream(requestDumpPath/"request.json") << rfl::json::write(
+				RequestDump::Request{requestInfo.UrlSuffix, requestInfo.ContentString}, YYJSON_WRITE_PRETTY);
+		}
 		using RequestPtr = HttpRequest::RequestPtr;
 		using Response = HttpRequest::Response;
 		request->SetResponseCallback(
@@ -337,9 +331,19 @@ namespace SDK::Core
 			IsValidLambda = this->impl_->isThisValid_,
 			requestShortName = requestInfo.ShortName,
 			ResponseProcessor = std::move(InFunctor),
-			ResultCallback = std::move(InResultFunctor)]
+			ResultCallback = std::move(InResultFunctor),
+			requestDumpPath]
 			(RequestPtr const& request, Response const& response)
 		{
+			if (!requestDumpPath.empty())
+			{
+				// Dump response to temp folder.
+				std::ofstream(requestDumpPath/"response.json") << rfl::json::write(
+					RequestDump::Response{response.first, response.second}, YYJSON_WRITE_PRETTY);
+				if (response.rawdata_)
+					std::ofstream(requestDumpPath/"response.bin").write(
+						(const char*)response.rawdata_->data(), response.rawdata_->size());
+			}
 			if (!(*IsValidLambda))
 			{
 				// see comments in #ReusableJsonQueries.cpp
@@ -399,7 +403,7 @@ namespace SDK::Core
 		ITwinAPIRequestInfo iTwinRequestInfo =
 		{
 			__func__,
-			HttpRequest::EVerb::Get,
+			EVerb::Get,
 			std::string("/itwins/") + iTwinId,
 			"application/vnd.bentley.itwin-platform.v1+json"
 		};
@@ -420,7 +424,7 @@ namespace SDK::Core
 			iTwinInfo = std::move(infoHolder.iTwin);
 			return true;
 		},
-			[this](bool bResult, ITwinInfo const& resultData, HttpRequest::RequestID)
+			[this](bool bResult, ITwinInfo const& resultData, RequestID const&)
 		{
 			if (impl_->observer_)
 			{
@@ -434,7 +438,7 @@ namespace SDK::Core
 		static const ITwinAPIRequestInfo requestInfo =
 		{
 			__func__,
-			HttpRequest::EVerb::Get,
+			EVerb::Get,
 			"/itwins/recents?subClass=Project&status=Active&$top=1000",
 			"application/vnd.bentley.itwin-platform.v1+json"
 		};
@@ -444,7 +448,7 @@ namespace SDK::Core
 		{
 			return Json::FromString(iTwinInfos, response.second, strError);
 		},
-			[this](bool bResult, ITwinInfos const& resultData, HttpRequest::RequestID)
+			[this](bool bResult, ITwinInfos const& resultData, RequestID const&)
 		{
 			if (impl_->observer_)
 			{
@@ -458,7 +462,7 @@ namespace SDK::Core
 		ITwinAPIRequestInfo requestInfo =
 		{
 			"GetIModels",
-			HttpRequest::EVerb::Get,
+			EVerb::Get,
 			std::string("/imodels/?iTwinId=") + iTwinId + "&$top=100",
 			"application/vnd.bentley.itwin-platform.v2+json"
 		};
@@ -470,7 +474,7 @@ namespace SDK::Core
 		{
 			return Json::FromString(iModelInfos, response.second, strError);
 		},
-			[this](bool bResult, IModelInfos const& resultData, HttpRequest::RequestID)
+			[this](bool bResult, IModelInfos const& resultData, RequestID const&)
 		{
 			if (impl_->observer_)
 			{
@@ -484,7 +488,7 @@ namespace SDK::Core
 		ITwinAPIRequestInfo requestInfo =
 		{
 			__func__,
-			HttpRequest::EVerb::Get,
+			EVerb::Get,
 			std::string("/imodels/") + iModelId + "/changesets?"
 			+ (bRestrictToLatest ? "$top=1&" : "")
 			+ "$orderBy=index+desc",
@@ -498,7 +502,7 @@ namespace SDK::Core
 		{
 			return Json::FromString(Infos, response.second, strError);
 		},
-			[this](bool bResult, ChangesetInfos const& resultData, HttpRequest::RequestID)
+			[this](bool bResult, ChangesetInfos const& resultData, RequestID const&)
 		{
 			if (impl_->observer_)
 			{
@@ -576,7 +580,12 @@ namespace SDK::Core
 				exportInfo.meshUrl = Detail::FormatMeshUrl(fullInfo._links->mesh.href);
 			}
 		}
-		// For Mesh Export Service's statistics, these need to be passed as URL parameters (NOT custom headers)
+		// URL parameters:
+		//	* exportType=CESIUM to filter out non-cesium exports
+		//	* cdn=1 to enable Content Delivery Network (will be the default after YII, says D.Iborra)
+		//	* client=Unreal for identification
+		// For Mesh Export Service's statistics, these need to be passed as URL parameters
+		// (NOT custom headers - at least for client=Unreal, don't know about the others)
 		static const std::string getExportsCommonUrlParams("exportType=CESIUM&cdn=1&client=Unreal");
 	} // ns Detail
 
@@ -585,17 +594,18 @@ namespace SDK::Core
 		// Beware changesetID can be empty (if the iModel has none).
 		const ITwinAPIRequestInfo requestInfo =
 		{
-			__func__,
-			HttpRequest::EVerb::Get,
-			std::string("/mesh-export/?iModelId=") + iModelId + "&changesetId=" + changesetId
-				+ "&" + Detail::getExportsCommonUrlParams,
-			"application/vnd.bentley.itwin-platform.v1+json",
-			{}, // content type
-			{}, // content string
-			{}, // custom headers (map)
-			iModelId.empty() // badlyFormed
+			.ShortName		= __func__,
+			.Verb			= EVerb::Get,
+			// $top=1 to get only the latest export for a given iModelId and changesetId
+			.UrlSuffix		= std::string("/mesh-export/?$top=1&iModelId=") + iModelId + "&changesetId="
+								+ changesetId + "&" + Detail::getExportsCommonUrlParams,
+			.AcceptHeader	= "application/vnd.bentley.itwin-platform.v1+json",
+			.ContentType	= {}, // content type
+			.ContentString	= {}, // content string
+			.CustomHeaders	= {}, // custom headers (map)
+			.badlyFormed	= iModelId.empty() // badlyFormed
 		};
-		TProcessHttpRequest<ITwinExportInfos>(
+		TProcessHttpRequest<ITwinExportInfos>( // could now use ITwinExportInfo (singular) TODO_GCO
 			requestInfo,
 			[](ITwinExportInfos& Infos, Http::Response const& response, std::string& strError) -> bool
 		{
@@ -609,31 +619,29 @@ namespace SDK::Core
 			{
 				return false;
 			}
-
-			// sort by decreasing modification time
-			std::vector<ExportFullInfo>& exports(exportsHolder.exports);
-			std::stable_sort(exports.begin(), exports.end(),
-				[](ExportFullInfo const& A, ExportFullInfo const& B) {
-				return A.lastModified > B.lastModified;
-			});
-			// only keep Cesium exports
-			Infos.exports.reserve(exports.size());
-			for (ExportFullInfo& fullInfo : exports)
+			// There should be only one now (see $top=1 parameter in URL)
+			if (!exportsHolder.exports.empty())
 			{
-				if (fullInfo.request.exportType == "CESIUM")
+				auto&& fullInfo = exportsHolder.exports[0];
+				if (fullInfo.request.exportType != "CESIUM")
+				{
+					strError = std::string("entry has wrong exportType instead of CESIUM, got: ")
+						+ fullInfo.request.exportType;
+				}
+				else
 				{
 					if (!fullInfo.request.iTwinId)
 					{
 						if (fullInfo.request.contextId)
 							std::swap(fullInfo.request.contextId, fullInfo.request.iTwinId);
 						else
-						{
 							strError = std::string("entry has neither iTwinId nor contextId");
-							continue;
-						}
 					}
-					ITwinExportInfo& exportInfo = Infos.exports.emplace_back();
-					Detail::SimplifyExportInfo(exportInfo, fullInfo);
+					if (fullInfo.request.iTwinId)
+					{
+						ITwinExportInfo& exportInfo = Infos.exports.emplace_back();
+						Detail::SimplifyExportInfo(exportInfo, fullInfo);
+					}
 				}
 			}
 			if (Infos.exports.empty() && !strError.empty())
@@ -641,7 +649,7 @@ namespace SDK::Core
 			else
 				return true;
 		},
-			[this](bool bResult, ITwinExportInfos const& resultData, HttpRequest::RequestID)
+			[this](bool bResult, ITwinExportInfos const& resultData, RequestID const&)
 		{
 			if (impl_->observer_)
 			{
@@ -654,14 +662,14 @@ namespace SDK::Core
 	{
 		const ITwinAPIRequestInfo requestInfo =
 		{
-			__func__,
-			HttpRequest::EVerb::Get,
-			std::string("/mesh-export/") + exportId + "?" + Detail::getExportsCommonUrlParams,
-			"application/vnd.bentley.itwin-platform.v1+json",
-			{}, // content type
-			{}, // content string
-			{}, // custom headers (map)
-			exportId.empty() // badlyFormed
+			.ShortName		= __func__,
+			.Verb			= EVerb::Get,
+			.UrlSuffix		= std::string("/mesh-export/") + exportId + "?" + Detail::getExportsCommonUrlParams,
+			.AcceptHeader	= "application/vnd.bentley.itwin-platform.v1+json",
+			.ContentType	= {},
+			.ContentString	= {},
+			.CustomHeaders	= {}, // map
+			.badlyFormed	= exportId.empty()
 		};
 		TProcessHttpRequest<ITwinExportInfo>(
 			requestInfo,
@@ -699,7 +707,7 @@ namespace SDK::Core
 			Detail::SimplifyExportInfo(Export, exportHolder.export_.value());
 			return true;
 		},
-			[this](bool bResult, ITwinExportInfo const& resultData, HttpRequest::RequestID)
+			[this](bool bResult, ITwinExportInfo const& resultData, RequestID const&)
 		{
 			if (impl_->observer_)
 			{
@@ -721,18 +729,14 @@ namespace SDK::Core
 
 		const ITwinAPIRequestInfo requestInfo =
 		{
-			__func__,
-			HttpRequest::EVerb::Post,
-			"/mesh-export",
-			"application/vnd.bentley.itwin-platform.v1+json",
-
-			/*** additional settings for POST ***/
-			"application/json",
-			exportParams_Json,
-
-			{ { "use-new-exporter", "3" } },
-
-			iModelId.empty()
+			.ShortName		= __func__,
+			.Verb			= EVerb::Post,
+			.UrlSuffix		= "/mesh-export",
+			.AcceptHeader	= "application/vnd.bentley.itwin-platform.v1+json",
+			.ContentType	= "application/json",
+			.ContentString	= exportParams_Json,
+			.CustomHeaders	= { { "use-new-exporter", "3" } },
+			.badlyFormed	= iModelId.empty()
 		};
 		TProcessHttpRequest<std::string>(
 			requestInfo,
@@ -754,7 +758,7 @@ namespace SDK::Core
 			outExportId = exportHolder.export_.value().id;
 			return true;
 		},
-			[this](bool bResult, std::string const& exportId, HttpRequest::RequestID)
+			[this](bool bResult, std::string const& exportId, RequestID const&)
 		{
 			if (impl_->observer_)
 			{
@@ -774,14 +778,50 @@ namespace SDK::Core
 
 		struct CameraInfo
 		{
-			double lens = 0.0;
+			double lens = 90.0;
 			double focusDist = 0.0;
 			std::array<double, 3> eye = { 0, 0, 0 };
+		};
+		struct ViewFlags
+		{
+			int renderMode = 6;
+			std::optional<bool> noConstructions = false;
+		};
+		struct Color
+		{
+			int red;
+			int green;
+			int blue;
+		};
+		struct Sky
+		{
+			bool display = true;
+			std::optional<bool> twoColor = true;
+			Color skyColor = {222, 242, 255};
+			Color groundColor = {240, 236, 232};
+			Color zenithColor = skyColor;
+			Color nadirColor = groundColor;
+		};
+		struct Environment
+		{
+			Sky sky;
 		};
 		struct DisplayStyle
 		{
 			std::optional<std::string> renderTimeline;
-			std::optional<double> timePoint = 0.0;
+			std::optional<double> timePoint;
+			//optional below for retro-compatibility with Synchro saved views created inside Carrot,
+			//which only used to contain fields renderTimeline and timePoint.
+			std::optional<ViewFlags> viewflags;
+			std::optional<Environment> environment;
+		};
+		struct Models
+		{
+			std::vector<std::string> disabled;
+		};
+		struct Categories
+		{
+			std::vector<std::string> disabled;
 		};
 		struct Itwin3dView
 		{
@@ -792,10 +832,21 @@ namespace SDK::Core
 			//optional here in case users created saved views with the old version 
 			//that didn't contain a displayStyle field
 			std::optional<DisplayStyle> displayStyle;
+			std::optional<Models> models;
+			std::optional<Categories> categories;
+		};
+		struct EmphasizeElementsProps
+		{
+			std::optional<std::vector<std::string>> neverDrawn;
+		};
+		struct LegacyView
+		{
+			std::optional<EmphasizeElementsProps> emphasizeElementsProps;
 		};
 		struct SavedView3DData
 		{
 			Itwin3dView itwin3dView;
+			std::optional<LegacyView> legacyView;
 		};
 		struct SavedViewFullInfo
 		{
@@ -803,6 +854,7 @@ namespace SDK::Core
 			std::string displayName;
 			bool shared = false;
 			SavedView3DData savedViewData;
+			std::vector<SavedViewExtensionsInfo> extensions;
 		};
 
 		struct SavedViewFullInfoHolder
@@ -819,6 +871,16 @@ namespace SDK::Core
 					svData.savedView.origin = itwin3dView.origin;
 				svData.savedView.extents = itwin3dView.extents;
 				svData.savedView.angles = itwin3dView.angles;
+				if (itwin3dView.categories)
+					svData.savedView.hiddenCategories = itwin3dView.categories->disabled;
+				if (itwin3dView.models)
+					svData.savedView.hiddenModels = itwin3dView.models->disabled;
+				if (fullInfo.savedViewData.legacyView)
+				{
+					LegacyView const& legacyView(fullInfo.savedViewData.legacyView.value());
+					if (legacyView.emphasizeElementsProps)
+						svData.savedView.hiddenElements = legacyView.emphasizeElementsProps->neverDrawn;
+				}
 				if (itwin3dView.displayStyle)
 				{
 					svData.savedView.displayStyle.emplace();
@@ -830,6 +892,7 @@ namespace SDK::Core
 				svData.savedViewInfo.id = std::move(fullInfo.id);
 				svData.savedViewInfo.displayName = std::move(fullInfo.displayName);
 				svData.savedViewInfo.shared = fullInfo.shared;
+				svData.savedViewInfo.extensions = fullInfo.extensions;
 			}
 		};
 	}
@@ -839,7 +902,7 @@ namespace SDK::Core
 		ITwinAPIRequestInfo requestInfo =
 		{
 			__func__,
-			HttpRequest::EVerb::Get,
+			EVerb::Get,
 			(!groupId.empty() ? std::string("/savedviews?groupId=") + groupId : std::string("/savedviews?iTwinId=") + iTwinId + "&iModelId=" + iModelId),
 			"application/vnd.bentley.itwin-platform.v1+json",
 			"application/json",
@@ -855,7 +918,7 @@ namespace SDK::Core
 			infos.groupId = groupId;
 			return true;
 		},
-			[this](bool bResult, SavedViewInfos const& resultData, HttpRequest::RequestID)
+			[this](bool bResult, SavedViewInfos const& resultData, RequestID const&)
 		{
 			if (impl_->observer_)
 			{
@@ -869,7 +932,7 @@ namespace SDK::Core
 		ITwinAPIRequestInfo groupsRequestInfo = 
 		{
 			__func__,
-			HttpRequest::EVerb::Get,
+			EVerb::Get,
 			std::string("/savedviews/groups?iTwinId=") + iTwinId + "&iModelId=" + iModelId,
 			"application/vnd.bentley.itwin-platform.v1+json",
 			"application/json",
@@ -882,7 +945,7 @@ namespace SDK::Core
 			{
 				return Json::FromString(Infos, response.second, strError);
 			},
-			[this](bool bResult, SavedViewGroupInfos const& ResultData, HttpRequest::RequestID)
+			[this](bool bResult, SavedViewGroupInfos const& ResultData, RequestID const&)
 			{
 				if (impl_->observer_)
 				{
@@ -896,7 +959,7 @@ namespace SDK::Core
 		ITwinAPIRequestInfo requestInfo =
 		{
 			__func__,
-			HttpRequest::EVerb::Get,
+			EVerb::Get,
 			std::string("/savedviews/") + savedViewId,
 			"application/vnd.bentley.itwin-platform.v1+json",
 			"application/json",
@@ -917,7 +980,7 @@ namespace SDK::Core
 			svInfoHolder.MoveToSavedViewData(SVData);
 			return true;
 		},
-			[this](bool bResult, SavedViewData const& SVData, HttpRequest::RequestID)
+			[this](bool bResult, SavedViewData const& SVData, RequestID const&)
 		{
 			if (impl_->observer_)
 			{
@@ -930,7 +993,7 @@ namespace SDK::Core
 	{
 		const ITwinAPIRequestInfo savedViewsRequestInfo = {
 			__func__,
-			HttpRequest::EVerb::Get,
+			EVerb::Get,
 			std::string("/savedviews/") + SavedViewId + std::string("/image"),
 			"application/vnd.bentley.itwin-platform.v1+json",
 			"application/json",
@@ -956,7 +1019,7 @@ namespace SDK::Core
 				SVData.SavedViewId = SavedViewId;
 				return true;
 			},
-			[this](bool bResult, ResData const& SVData, HttpRequest::RequestID)
+			[this](bool bResult, ResData const& SVData, RequestID const&)
 			{
 				if (impl_->observer_)
 				{
@@ -969,7 +1032,7 @@ namespace SDK::Core
 	{
 		const ITwinAPIRequestInfo savedViewsRequestInfo = {
 			__func__,
-			HttpRequest::EVerb::Put,
+			EVerb::Put,
 			std::string("/savedviews/") + SavedViewId + std::string("/image"),
 			"application/vnd.bentley.itwin-platform.v1+json",
 
@@ -979,7 +1042,7 @@ namespace SDK::Core
 			+ "\"}"
 		};
 		
-		RequestID const requestID = TProcessHttpRequest<std::string>(
+		TProcessHttpRequest<std::string>(
 			savedViewsRequestInfo,
 			[](std::string& ErrorCode, Http::Response const& response, std::string& /*strError*/) -> bool
 			{
@@ -992,7 +1055,7 @@ namespace SDK::Core
 				ErrorCode = {};
 				return true;
 			},
-			[this, SavedViewId](bool bResult, std::string const& strResponse, HttpRequest::RequestID requestId)
+			[this, SavedViewId](bool bResult, std::string const& strResponse, RequestID const& requestId)
 			{
 				// in UpdateSavedViewThumbnail, the callbacks expect an error message (in case of failure)
 				// => if none is provided, and if the last error recorded corresponds to our request, use the
@@ -1008,6 +1071,46 @@ namespace SDK::Core
 				}
 			}
 		);
+	}
+
+	void ITwinWebServices::GetSavedViewExtension(std::string const& savedViewId, std::string const& extensionName)
+	{
+		ITwinAPIRequestInfo requestInfo =
+		{
+			__func__,
+			EVerb::Get,
+			std::string("/savedviews/") + savedViewId + std::string("/extensions/") + extensionName,
+			"application/vnd.bentley.itwin-platform.v1+json",
+			"application/json",
+		};
+		requestInfo.badlyFormed = savedViewId.empty() || extensionName.empty();
+
+		TProcessHttpRequest<std::string>(
+			requestInfo,
+			[](std::string& data, Http::Response const& response, std::string& strError) -> bool
+			{
+				struct ExtensionData
+				{
+					std::string data;
+				};
+				struct SavedViewExtension
+				{
+					ExtensionData extension;
+				} extInfoHolder;
+				if (!Json::FromString(extInfoHolder, response.second, strError))
+				{
+					return false;
+				}
+				data = extInfoHolder.extension.data;
+				return true;
+			},
+			[this, savedViewId](bool bResult, std::string const& data, RequestID const&)
+			{
+				if (impl_->observer_)
+				{
+					impl_->observer_->OnSavedViewExtensionRetrieved(bResult, savedViewId, data);
+				}
+			});
 	}
 
 
@@ -1050,16 +1153,19 @@ namespace SDK::Core
 			outInfo.shared = savedViewInfo.shared;
 
 			Itwin3dView& itwin3dView(outInfo.savedViewData.itwin3dView);
-			itwin3dView.origin = savedView.origin;
+			itwin3dView.origin = savedView.frustumOrigin;
 			itwin3dView.extents = savedView.extents;
 			itwin3dView.angles = savedView.angles;
 			itwin3dView.camera.emplace();
 			itwin3dView.camera->eye = savedView.origin;
+			itwin3dView.camera->focusDist = savedView.focusDist;
+			itwin3dView.displayStyle.emplace();
+			itwin3dView.displayStyle->viewflags.emplace();
+			itwin3dView.displayStyle->environment.emplace();
 			if (savedView.displayStyle)
 			{
 				if (!savedView.displayStyle->renderTimeline.value().empty())
 				{
-					itwin3dView.displayStyle.emplace();
 					itwin3dView.displayStyle->renderTimeline = savedView.displayStyle->renderTimeline;
 					itwin3dView.displayStyle->timePoint = savedView.displayStyle->timePoint;
 				}
@@ -1081,7 +1187,7 @@ namespace SDK::Core
 		ITwinAPIRequestInfo requestInfo =
 		{
 			__func__,
-			HttpRequest::EVerb::Post,
+			EVerb::Post,
 			"/savedviews/",
 			"application/vnd.bentley.itwin-platform.v1+json",
 
@@ -1106,7 +1212,7 @@ namespace SDK::Core
 			info = std::move(svHolder.savedView);
 			return true;
 		},
-			[this](bool bResult, SavedViewInfo const& resultData, HttpRequest::RequestID)
+			[this](bool bResult, SavedViewInfo const& resultData, RequestID const&)
 		{
 			this->OnSavedViewAdded(bResult, resultData);
 		}
@@ -1133,7 +1239,7 @@ namespace SDK::Core
 		ITwinAPIRequestInfo requestInfo =
 		{
 			__func__,
-			HttpRequest::EVerb::Post,
+			EVerb::Post,
 			"/savedviews/groups",
 			"application/vnd.bentley.itwin-platform.v1+json",
 
@@ -1158,7 +1264,7 @@ namespace SDK::Core
 				info = std::move(groupHolder.group);
 				return true;
 			},
-			[this](bool bResult, SavedViewGroupInfo const& resultData, HttpRequest::RequestID)
+			[this](bool bResult, SavedViewGroupInfo const& resultData, RequestID const&)
 			{
 				if (impl_->observer_)
 				{
@@ -1172,7 +1278,7 @@ namespace SDK::Core
 	{
 		ITwinAPIRequestInfo requestInfo = {
 			__func__,
-			HttpRequest::EVerb::Delete,
+			EVerb::Delete,
 			std::string("/savedviews/") + savedViewId,
 			"application/vnd.bentley.itwin-platform.v1+json"
 		};
@@ -1191,7 +1297,7 @@ namespace SDK::Core
 			outError = {};
 			return true;
 		},
-			[this, savedViewId](bool bResult, std::string const& strResponse, HttpRequest::RequestID requestId)
+			[this, savedViewId](bool bResult, std::string const& strResponse, RequestID const& requestId)
 		{
 			// in DeleteSavedView, the callbacks expect an error message (in case of failure)
 			// => if none if provided, and if the last error recorded corresponds to our request, use the
@@ -1223,7 +1329,7 @@ namespace SDK::Core
 		ITwinAPIRequestInfo requestInfo =
 		{
 			__func__,
-			HttpRequest::EVerb::Patch,
+			EVerb::Patch,
 			std::string("/savedviews/") + savedViewInfo.id,
 			"application/vnd.bentley.itwin-platform.v1+json",
 
@@ -1247,7 +1353,7 @@ namespace SDK::Core
 			svInfoHolder.MoveToSavedViewData(editSVData);
 			return true;
 		},
-			[this](bool bResult, EditSavedViewData const& editSVData, HttpRequest::RequestID)
+			[this](bool bResult, EditSavedViewData const& editSVData, RequestID const&)
 		{
 			if (impl_->observer_)
 			{
@@ -1262,7 +1368,7 @@ namespace SDK::Core
 		const ITwinAPIRequestInfo requestInfo =
 		{
 			__func__,
-			HttpRequest::EVerb::Get,
+			EVerb::Get,
 			std::string("/reality-management/reality-data/?iTwinId=") + iTwinId + "&types=Cesium3DTiles&$top=100",
 			"application/vnd.bentley.itwin-platform.v1+json",
 			"",
@@ -1280,7 +1386,7 @@ namespace SDK::Core
 		{
 			return Json::FromString(RealityData, response.second, strError);
 		},
-			[this](bool bResult, ITwinRealityDataInfos const& resultData, HttpRequest::RequestID)
+			[this](bool bResult, ITwinRealityDataInfos const& resultData, RequestID const&)
 		{
 			if (impl_->observer_)
 			{
@@ -1305,7 +1411,7 @@ namespace SDK::Core
 		ITwinAPIRequestInfo requestInfo =
 		{
 			__func__,
-			HttpRequest::EVerb::Get,
+			EVerb::Get,
 			std::string("/reality-management/reality-data/") + realityDataId + "?iTwinId=" + iTwinId,
 			"application/vnd.bentley.itwin-platform.v1+json"
 		};
@@ -1339,7 +1445,7 @@ namespace SDK::Core
 			const ITwinAPIRequestInfo realDataRequestInfo =
 			{
 				"GetRealityData3DInfo-part2",
-				HttpRequest::EVerb::Get,
+				EVerb::Get,
 				std::string("/reality-management/reality-data/") + realityDataId + "/readaccess?iTwinId=" + iTwinId,
 				"application/vnd.bentley.itwin-platform.v1+json"
 			};
@@ -1375,7 +1481,7 @@ namespace SDK::Core
 					detailedInfo.rootDocument);
 				return true;
 			},
-				[this](bool bResult, ITwinRealityData3DInfo const& FinalResultData, HttpRequest::RequestID)
+				[this](bool bResult, ITwinRealityData3DInfo const& FinalResultData, RequestID const&)
 			{
 				// This is for the 2nd request: broadcast final result
 				if (impl_->observer_)
@@ -1386,7 +1492,7 @@ namespace SDK::Core
 
 			return true;
 		},
-			[this](bool bResult, ITwinRealityData3DInfo const& PartialResultData, HttpRequest::RequestID)
+			[this](bool bResult, ITwinRealityData3DInfo const& PartialResultData, RequestID const&)
 		{
 			// result of the 1st request: only broadcast it in case of failure
 			if (!bResult)
@@ -1540,17 +1646,29 @@ namespace SDK::Core
 		};
 	}
 
+	namespace
+	{
+	//! When sending an "iModel RPC" request for an iModel without any changeset
+	//! (ie. iModel having just a baseline file), we should pass "0" in the URL.
+	std::string GetIModelRpcUrlChangeset(const std::string& rawChangesetId)
+	{
+		if (rawChangesetId.empty())
+			return "0";
+		return rawChangesetId;
+	}
+	} // unnamed namespace
+
 	void ITwinWebServices::GetElementProperties(
 		std::string const& iTwinId, std::string const& iModelId,
-		std::string const& iChangesetId, std::string const& elementId)
+		std::string const& changesetId, std::string const& elementId)
 	{
-		std::string const key = fmt::format("{}:{}", iModelId, iChangesetId);
+		std::string const key = fmt::format("{}:{}", iModelId, changesetId);
 
 		ITwinAPIRequestInfo requestInfo = {
 			__func__,
-			HttpRequest::EVerb::Post,
+			EVerb::Post,
 			std::string("/imodel/rpc/v4/mode/1/context/") + iTwinId + "/imodel/" + iModelId
-			+ "/changeset/" + iChangesetId + "/PresentationRpcInterface-4.1.0-getElementProperties",
+			+ "/changeset/" + GetIModelRpcUrlChangeset(changesetId) + "/PresentationRpcInterface-4.1.0-getElementProperties",
 			"application/vnd.bentley.itwin-platform.v1+json",
 
 			/*** additional settings for POST ***/
@@ -1558,11 +1676,11 @@ namespace SDK::Core
 			"[{\"key\":\"" + key
 			+ "\",\"iTwinId\":\"" + iTwinId
 			+ "\",\"iModelId\":\"" + iModelId
-			+ "\",\"changeset\":{\"id\":\"" + iChangesetId
+			+ "\",\"changeset\":{\"id\":\"" + changesetId
 			+ "\"}},{\"elementId\":\"" + elementId
 			+ "\"}]"
 		};
-		requestInfo.badlyFormed = iTwinId.empty() || iModelId.empty() || iChangesetId.empty() || elementId.empty();
+		requestInfo.badlyFormed = iTwinId.empty() || iModelId.empty() || elementId.empty();
 
 		TProcessHttpRequest<ITwinElementProperties>(
 			requestInfo,
@@ -1587,7 +1705,7 @@ namespace SDK::Core
 			strError += propBuilder.GetError();
 			return strError.empty();
 		},
-			[this](bool bResult, ITwinElementProperties const& resultData, HttpRequest::RequestID)
+			[this](bool bResult, ITwinElementProperties const& resultData, RequestID const&)
 		{
 			if (impl_->observer_)
 			{
@@ -1597,23 +1715,23 @@ namespace SDK::Core
 		);
 	}
 
-	void ITwinWebServices::GetIModelProperties(std::string const& iTwinId, std::string const& iModelId, std::string const& iChangesetId)
+	void ITwinWebServices::GetIModelProperties(std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId)
 	{
 		ITwinAPIRequestInfo requestInfo = {
 			__func__,
-			HttpRequest::EVerb::Post,
+			EVerb::Post,
 			std::string("/imodel/rpc/v4/mode/1/context/") + iTwinId + "/imodel/" + iModelId
-			+ "/changeset/" + iChangesetId + "/IModelReadRpcInterface-3.6.0-getConnectionProps",
+			+ "/changeset/" + GetIModelRpcUrlChangeset(changesetId) + "/IModelReadRpcInterface-3.6.0-getConnectionProps",
 			"application/vnd.bentley.itwin-platform.v1+json",
 
 			/*** additional settings for POST ***/
 			"text/plain",
 			"[{\"iTwinId\":\"" + iTwinId
 			+ "\",\"iModelId\":\"" + iModelId
-			+ "\",\"changeset\":{\"id\":\"" + iChangesetId
+			+ "\",\"changeset\":{\"id\":\"" + changesetId
 			+ "\"}}]"
 		};
-		requestInfo.badlyFormed = iTwinId.empty() || iModelId.empty() || iChangesetId.empty();
+		requestInfo.badlyFormed = iTwinId.empty() || iModelId.empty();
 
 		TProcessHttpRequest<IModelProperties>(
 			requestInfo,
@@ -1621,7 +1739,7 @@ namespace SDK::Core
 		{
 			return Json::FromString(iModelProps, response.second, strError);
 		},
-			[this](bool bResult, IModelProperties const& resultData, HttpRequest::RequestID)
+			[this](bool bResult, IModelProperties const& resultData, RequestID const&)
 		{
 			if (impl_->observer_)
 			{
@@ -1630,32 +1748,45 @@ namespace SDK::Core
 		});
 	}
 
-	void ITwinWebServices::QueryIModel(
-		std::string const& iTwinId, std::string const& iModelId, std::string const& iChangesetId,
+	ITwinAPIRequestInfo ITwinWebServices::InfosToQueryIModel(
+		std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId,
 		std::string const& ECSQLQuery, int offset, int count)
 	{
-		ITwinAPIRequestInfo requestInfo = {
+		ITwinAPIRequestInfo requestInfo{
 			__func__,
-			HttpRequest::EVerb::Post,
+			EVerb::Post,
 			std::string("/imodel/rpc/v4/mode/1/context/") + iTwinId + "/imodel/" + iModelId 
-			+ "/changeset/" + iChangesetId + "/IModelReadRpcInterface-3.6.0-queryRows",
+			+ "/changeset/" + GetIModelRpcUrlChangeset(changesetId) + "/IModelReadRpcInterface-3.6.0-queryRows",
 			"application/vnd.bentley.itwin-platform.v1+json",
 
 			/*** additional settings for POST ***/
 			"text/plain",
 			"[{\"iTwinId\":\"" + iTwinId
 			+ "\",\"iModelId\":\"" + iModelId
-			+ "\",\"changeset\":{\"id\":\"" + iChangesetId
+			+ "\",\"changeset\":{\"id\":\"" + changesetId
 			+ "\"}},{\"limit\":{\"offset\":" + std::to_string(offset)
 			+ ",\"count\":" + std::to_string(count)
-			+ "},\"rowFormat\":1,\"convertClassIdsToClassNames\":true,\"kind\":1,\"valueFormat\":0,\"query\":\"" + ECSQLQuery
+			+ "},\"rowFormat\":1,\"convertClassIdsToClassNames\":true,\"kind\":1,\"valueFormat\":0," \
+				"\"query\":\"" + ECSQLQuery
 			+ "\"}]"
 		};
-		requestInfo.badlyFormed = iTwinId.empty() || iModelId.empty() || iChangesetId.empty()
-			|| ECSQLQuery.empty();
+		requestInfo.badlyFormed = iTwinId.empty() || iModelId.empty() || ECSQLQuery.empty();
+		return requestInfo;
+	}
 
-		TProcessHttpRequest<std::string>(
-			requestInfo,
+	RequestID ITwinWebServices::QueryIModel(
+		std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId,
+		std::string const& ECSQLQuery, int offset, int count, ITwinAPIRequestInfo const* requestInfo)
+	{
+		std::optional<ITwinAPIRequestInfo> optRequestInfo;
+		if (!requestInfo)
+		{
+			optRequestInfo.emplace(InfosToQueryIModel(iTwinId, iModelId, changesetId, ECSQLQuery, offset,
+													  count));
+			requestInfo = &(*optRequestInfo);
+		}
+		return TProcessHttpRequest<std::string>(
+			*requestInfo,
 			[](std::string &Infos, Http::Response const& response, std::string& strError) -> bool
 			{
 				struct DataHolder { rfl::Generic data; };
@@ -1667,11 +1798,11 @@ namespace SDK::Core
 				Infos = response.second;
 				return true;
 			},
-			[this](bool bResult, std::string const& ResultData, HttpRequest::RequestID)
+			[this](bool bResult, std::string const& ResultData, RequestID const& requestId)
 			{
 				if (impl_->observer_)
 				{
-					impl_->observer_->OnIModelQueried(bResult, ResultData);
+					impl_->observer_->OnIModelQueried(bResult, ResultData, requestId);
 				}
 			}
 		);
@@ -1897,26 +2028,26 @@ namespace SDK::Core
 	}
 
 	void ITwinWebServices::GetMaterialListProperties(
-		std::string const& iTwinId, std::string const& iModelId, std::string const& iChangesetId,
+		std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId,
 		std::vector<std::string> const& materialIds)
 	{
 		std::string const jsonMatIDs = Json::ToString(materialIds);
 		ITwinAPIRequestInfo requestInfo = {
 			__func__,
-			HttpRequest::EVerb::Post,
+			EVerb::Post,
 			std::string("/imodel/rpc/v4/mode/1/context/") + iTwinId + "/imodel/" + iModelId
-			+ "/changeset/" + iChangesetId + "/IModelReadRpcInterface-3.6.0-getElementProps",
+			+ "/changeset/" + GetIModelRpcUrlChangeset(changesetId) + "/IModelReadRpcInterface-3.6.0-getElementProps",
 			"application/vnd.bentley.itwin-platform.v1+json",
 
 			/*** additional settings for POST ***/
 			"text/plain",
 			"[{\"iTwinId\":\"" + iTwinId
 			+ "\",\"iModelId\":\"" + iModelId
-			+ "\",\"changeset\":{\"id\":\"" + iChangesetId
+			+ "\",\"changeset\":{\"id\":\"" + changesetId
 			+ "\"}}," + jsonMatIDs
 			+ "]"
 		};
-		requestInfo.badlyFormed = iTwinId.empty() || iModelId.empty() || iChangesetId.empty() || materialIds.empty();
+		requestInfo.badlyFormed = iTwinId.empty() || iModelId.empty() || materialIds.empty();
 
 		TProcessHttpRequest<ITwinMaterialPropertiesMap>(
 			requestInfo,
@@ -1973,7 +2104,7 @@ namespace SDK::Core
 			}
 			return strError.empty();
 		},
-			[this](bool bResult, ITwinMaterialPropertiesMap const& resultData, HttpRequest::RequestID)
+			[this](bool bResult, ITwinMaterialPropertiesMap const& resultData, RequestID const&)
 		{
 			if (impl_->observer_)
 			{
@@ -1984,33 +2115,33 @@ namespace SDK::Core
 	}
 
 	void ITwinWebServices::GetMaterialProperties(
-		std::string const& iTwinId, std::string const& iModelId, std::string const& iChangesetId,
+		std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId,
 		std::string const& materialId)
 	{
-		GetMaterialListProperties(iTwinId, iModelId, iChangesetId, { materialId });
+		GetMaterialListProperties(iTwinId, iModelId, changesetId, { materialId });
 	}
 
 	void ITwinWebServices::GetTextureData(
-		std::string const& iTwinId, std::string const& iModelId, std::string const& iChangesetId,
+		std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId,
 		std::string const& textureId)
 	{
 		ITwinAPIRequestInfo requestInfo = {
 			__func__,
-			HttpRequest::EVerb::Post,
+			EVerb::Post,
 			std::string("/imodel/rpc/v4/mode/1/context/") + iTwinId
 				+ "/imodel/" + iModelId
-				+ "/changeset/" + iChangesetId + "/IModelReadRpcInterface-3.6.0-queryTextureData",
+				+ "/changeset/" + GetIModelRpcUrlChangeset(changesetId) + "/IModelReadRpcInterface-3.6.0-queryTextureData",
 			"application/vnd.bentley.itwin-platform.v1+json",
 
 			/*** additional settings for POST ***/
 			"text/plain",
 			"[{\"iTwinId\":\"" + iTwinId
 			+ "\",\"iModelId\":\"" + iModelId
-			+ "\",\"changeset\":{\"id\":\"" + iChangesetId
+			+ "\",\"changeset\":{\"id\":\"" + changesetId
 			+ "\"}},{\"name\":\"" + textureId
 			+ "\"}]"
 		};
-		requestInfo.badlyFormed = iTwinId.empty() || iModelId.empty() || iChangesetId.empty() || textureId.empty();
+		requestInfo.badlyFormed = iTwinId.empty() || iModelId.empty() || textureId.empty();
 
 		// Here we need the *full* retrieved response, not just a string
 		requestInfo.needRawData = true;
@@ -2126,7 +2257,7 @@ Content-Type: application/octet-stream
 				itwinTexture.bytes.data());
 			return true;
 		},
-			[this, textureId](bool bResult, ITwinTextureData const& resultData, HttpRequest::RequestID)
+			[this, textureId](bool bResult, ITwinTextureData const& resultData, RequestID const&)
 		{
 			if (impl_->observer_)
 			{

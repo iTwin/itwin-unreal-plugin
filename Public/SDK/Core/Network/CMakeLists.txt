@@ -7,6 +7,8 @@ add_library(Network OBJECT
 		httpCprImpl.cpp
 		HttpRequest.h
 		HttpRequest.cpp
+		IHttpRouter.h
+		IHttpRouter.cpp
 )
 target_compile_features(Network PRIVATE ${DefaultCXXSTD})
 target_link_libraries(Network PRIVATE 
@@ -16,7 +18,7 @@ target_link_libraries(Network PRIVATE
 					 ) 
 
 set_target_properties(Network PROPERTIES FOLDER "SDK/Core") 
-
+target_link_libraries(Network PUBLIC libassert::assert)
 
 if(SDK_ADDUNITTEST)
 	add_executable(NetworkTest NetworkHttpTest.cpp)

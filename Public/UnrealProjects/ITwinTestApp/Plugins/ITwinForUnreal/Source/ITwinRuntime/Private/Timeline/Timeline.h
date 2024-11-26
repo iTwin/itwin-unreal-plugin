@@ -7,7 +7,7 @@
 +--------------------------------------------------------------------------------------*/
 
 // from vue.git/Caymus/IModelUsdNodeAddonUtils/Timeline.h
-// (semantically the same as vue.git/viewer/Code/IModelJs/IModelModule/RenderSchedule.h
+// (semantically the same as vue.git/viewer/Code/RealTimeBuilder/IModel/RenderSchedule.h
 //  but without the V1/V2/V3 versions)
 
 #pragma once
@@ -77,34 +77,39 @@ ITWIN_TIMELINE_DEFINE_PROPERTY_VALUES(PColor,
 	(ITwin::Flag::FPresence, bHasColor)
 	(FVector, Value)
 )
-[[nodiscard]] bool operator ==(const PColor& x, const PColor& y);
 [[nodiscard]] TSharedPtr<FJsonValue> ToJsonValue(PColor const& Prop);
 inline bool NoEffect(PColor const& Prop) { return !Prop.bHasColor; }
 
-/// Offset relative to an Elements group's bounding box center, to consider before applying the
-/// transformation necessary to follow a 3D path.
-/// Deferred because, like growth simulation, it is often defined as the center of a face of the BBox.
-/// As opposed to growth simulation, it can also be defined explicitly. Shared among all keyframes of a given
-/// animation3dPath assignment.
-struct FDeferredAnchorPos
+/// Offset from the Elements group's axis-aligned bounding box center, to apply after the rotation at a given
+/// keyframe. Keep in mind that anchor is a property of a path assignment, ie to use for the whole
+/// path for a given task. But we cannot precompute it once for the whole path, because interpolation
+/// wouldn't work: interpolation of the rotated offsets != offset after interpolated rotation! At each
+/// animation tick, we'll have to interpolate the rotation, then only rotate the local offset.
+/// That's why rotation has to be in there, because interpolation works at the timeline property field level.
+struct FDeferredAnchor
 {
-	static std::shared_ptr<FDeferredAnchorPos> MakeShared(EAnchorPoint const Anchor);
-	static std::shared_ptr<FDeferredAnchorPos> MakeSharedCustom(FVector const& CustomAnchor);
+	EAnchorPoint AnchorPoint = EAnchorPoint::Original;
+	mutable bool bDeferred = false;///< No offset to compute when using 'Original [Position]'
+	/// When 'AnchorPoint' is not 'Original', this is the world offset in UE coordinates between the BBox
+	/// center and the anchor point, WITHOUT rotation applied.
+	/// When 'bDeferred' is true, this member is irrelevant /unless/ it's the 'Custom' offset (converted from 
+	/// its original definition in iModel coordinates). After 'bDeferred' has been toggled off, the offset has
+	/// been computed here from the Element (group)'s BBox
+	mutable FVector Offset = FVector::ZeroVector;
 
-	/// If it was not 'Custom' from the start, it is set to 'Custom' once the actual anchor pos has been
-	/// computed.
-	mutable EAnchorPoint AnchorPoint = EAnchorPoint::Center;
-	mutable FVector Pos;
-
-	bool IsDeferred() const { return AnchorPoint != EAnchorPoint::Custom; }
+	bool IsDeferred() const { return bDeferred; }
 };
 
+// 'Position' is the absolute UE world coordinate of the keyframe, /except/ for 'Original' anchor point, in
+// which case it is a relative translation from the initial (non-animated) position.
+// 'Rotation' is the relative rotation of the Element at the given keyframe, in UE convention, around
+// the anchor point.
 ITWIN_TIMELINE_DEFINE_PROPERTY_VALUES(PTransform,
 	(ITwin::Flag::FPresence, bIsTransformed)
-	(std::shared_ptr<FDeferredAnchorPos>, DefrdAnchor)
-	(FTransform, Transform)
+	(FVector, Position)
+	(FQuat, Rotation)
+	(FDeferredAnchor, DefrdAnchor)
 )
-[[nodiscard]] bool operator ==(const PTransform& x, const PTransform& y);
 [[nodiscard]] TSharedPtr<FJsonValue> ToJsonValue(PTransform const&);
 inline bool NoEffect(PTransform const& Prop) { return !Prop.bIsTransformed; }
 //[[nodiscard]] FMatrix TransformToMatrix(const PTransform& t);
@@ -113,7 +118,8 @@ namespace Detail::GrowthStatus
 {
 	namespace Bit { enum EBit { Removed, Grown, Deferred }; }
 	namespace Mask {
-		enum EMask { Removed = 1 << Bit::Removed, Grown = 1 << Bit::Grown, Deferred = 1 << Bit::Deferred };
+		enum EMask { Removed = (1 << Bit::Removed), Grown = (1 << Bit::Grown),
+					 Deferred = (1 << Bit::Deferred) };
 	}
 	constexpr int IgnoreDeferred = ~Mask::Deferred; ///< to be ANDed with
 }
@@ -142,7 +148,7 @@ enum class EGrowthStatus : uint8_t
 /// as the growth status as mutable
 struct FDeferredPlaneEquation
 {
-	/// Orientation of the cutting plane, to be used when
+	/// Orientation of the cutting plane
 	FVector3f PlaneOrientation;
 	/// The necessarily deferred (until BBoxes are known for the Elements) translation (W) component of the
 	/// plane equation, ie. actually set only when !IsDeferred() (ie depending on GrowthStatus)
@@ -166,12 +172,10 @@ struct FDeferredPlaneEquation
 		}
 	}
 };
-[[nodiscard]] std::size_t hash_value(const FDeferredPlaneEquation& v) noexcept;
 
 ITWIN_TIMELINE_DEFINE_PROPERTY_VALUES(PClippingPlane,
 	(FDeferredPlaneEquation, DefrdPlaneEq)
 )
-[[nodiscard]] bool operator ==(const PClippingPlane& x, const PClippingPlane& y);
 [[nodiscard]] TSharedPtr<FJsonValue> ToJsonValue(PClippingPlane const&);
 inline bool NoEffect(PClippingPlane const& Prop) {
 	return EGrowthStatus::DeferredFullyGrown == Prop.DefrdPlaneEq.GrowthStatus
@@ -240,8 +244,8 @@ public:
 	[[nodiscard]] bool HasPartialVisibility() const;
 	void SetVisibilityAt(double const Time, std::optional<float> Alpha, EInterpolation const Interp);
 	/// Sets a transformation at a given time, expressed in the UE world reference system
-	void SetTransformationAt(double const Time, FTransform const& Transform,
-		std::shared_ptr<FDeferredAnchorPos> SharedAnchor, EInterpolation const Interp);
+	void SetTransformationAt(double const Time, FVector const& Position, FQuat const& Rotation,
+		FDeferredAnchor const& DefrdAnchor, EInterpolation const Interp);
 	void SetTransformationDisabledAt(double const Time, EInterpolation const Interp);
 
 	void ToJson(TSharedRef<FJsonObject>& JsonObj) const override;
@@ -249,8 +253,6 @@ public:
 	[[nodiscard]] FString ToPrettyJsonString() const;
 	[[nodiscard]] FString ToCondensedJsonString() const;
 };
-std::size_t hash_value(const ElementTimelineEx& Timeline) noexcept;
-bool operator ==(const ElementTimelineEx& A, const ElementTimelineEx& B);
 
 class MainTimeline : public MainTimelineBase<ElementTimelineEx>
 {

@@ -58,5 +58,15 @@
     "name": "libassert",
     "url": "https://github.com/jeremy-rifkin/libassert",
     "license": [ "MIT" ]
+  },
+  {
+    "name": "stduuid",
+    "url": "https://github.com/mariusbancila/stduuid",
+    "license": [ "MIT" ]
+  }
+  {
+    "name": "UE5Coro",
+    "url": "https://github.com/landelare/ue5coro",
+    "license": ["BSD-3-Clause-Clear"]
   }
 ]

@@ -17,6 +17,9 @@
 #include <Engine/World.h>
 #include <GameFramework/Pawn.h>
 #include <GameFramework/PlayerController.h>
+#include <Kismet/GameplayStatics.h>
+#include <ITwinIModel.h>
+#include <ITwinIModelInternals.h>
 
 class AITwinSavedView::FImpl
 {
@@ -93,7 +96,33 @@ void AITwinSavedView::OnSavedViewDeleted(bool bSuccess, FString const& InSavedVi
 	}
 }
 
-void AITwinSavedView::OnSavedViewRetrieved(bool bSuccess, FSavedView const& SavedView,
+/*static*/ void AITwinSavedView::HideElements(const UObject* WorldContextObject, FSavedView const& SavedView)
+{
+	if (!IsValid(WorldContextObject))
+		return;
+	AITwinIModel* const iModel = Cast<AITwinIModel>(UGameplayStatics::GetActorOfClass(WorldContextObject->GetWorld(), AITwinIModel::StaticClass()));
+	TArray<FString> allHiddenIds;
+	allHiddenIds.Append(SavedView.HiddenElements);
+	allHiddenIds.Append(SavedView.HiddenCategories);
+	allHiddenIds.Append(SavedView.HiddenModels);
+	std::vector<ITwinElementID> mergedIds;
+	FITwinIModelInternals& IModelInternals = GetInternals(*iModel);
+	for (auto& elId : allHiddenIds)
+	{
+		// Update selection highlight
+		ITwinElementID PickedEltID = ITwin::ParseElementID(elId);// ex: "0x20000001241"
+		auto const& CategoryIDToElementIDs = IModelInternals.SceneMapping.CategoryIDToElementIDs[PickedEltID];
+		auto const& ModelIDToElementIDs = IModelInternals.SceneMapping.ModelIDToElementIDs[PickedEltID];
+		bool isElementID = CategoryIDToElementIDs.empty() && ModelIDToElementIDs.empty();
+		mergedIds.insert(mergedIds.end(), CategoryIDToElementIDs.begin(), CategoryIDToElementIDs.end());
+		mergedIds.insert(mergedIds.end(), ModelIDToElementIDs.begin(), ModelIDToElementIDs.end());
+		if (isElementID)
+			mergedIds.push_back(PickedEltID);
+	}
+	IModelInternals.HideElements(mergedIds);
+}
+
+void AITwinSavedView::OnSavedViewRetrieved(bool bSuccess, FSavedView const& SavedView, 
 										   FSavedViewInfo const& SavedViewInfo)
 {
 	if (!bSuccess)
@@ -145,7 +174,7 @@ void AITwinSavedView::UpdateSavedView()
 		BE_LOGE("ITwinAPI", "ITwinSavedView has no SavedViewId");
 		return;
 	}
-	if (CheckServerConnection() != AITwinServiceActor::EConnectionStatus::Connected)
+	if (CheckServerConnection() != SDK::Core::EITwinAuthStatus::Success)
 	{
 		// No authorization yet: postpone the actual update (see UpdateOnSuccessfulAuthorization)
 		return;

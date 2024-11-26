@@ -52,6 +52,24 @@ FMatrix CreateMatrixFromGlm(const glm::dmat4& m) noexcept {
       FVector(m[3].x, m[3].y, m[3].z));
 }
 
+namespace
+{
+    ITwinElementID FeatureIDToITwinID(const FITwinCesiumPropertyTableProperty* pProperty, const int64 FeatureID)
+    {
+        return ITwinElementID(
+            UITwinCesiumMetadataValueBlueprintLibrary::GetUnsignedInteger64(
+                UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetValue(
+                    *pProperty,
+                    FeatureID),
+                ITwin::NOT_ELEMENT.value()));
+    }
+
+    template <typename E>
+    constexpr typename std::underlying_type<E>::type to_underlying(E e) {
+        return static_cast<typename std::underlying_type<E>::type>(e);
+    }
+}
+
 //=======================================================================================
 // class FITwinSceneMappingBuilder
 //=======================================================================================
@@ -65,7 +83,7 @@ void FITwinSceneMappingBuilder::OnMeshConstructed(
     auto const tileId = Tile.getTileID();
     auto KnownT = SceneMapping.KnownTiles.try_emplace(tileId, FITwinSceneTile{});
     FITwinSceneTile& sceneTile = KnownT.first->second;
-    sceneTile.bNewMeshesToAnimate = true;
+    sceneTile.bNewMeshesToAnimate = true;//irrelevant if !s_bMaskTilesUntilFullyAnimated
 
     const TObjectPtr<UStaticMesh> StaticMesh = MeshComponent->GetStaticMesh();
     if (!StaticMesh
@@ -106,57 +124,29 @@ void FITwinSceneMappingBuilder::OnMeshConstructed(
     {
         Tileset = Cast<AITwinCesium3DTileset>(MeshComponent->GetAttachParent()->GetOwner());
     }
-    if (!SceneMapping.CesiumToUnrealTransform && ensure(Tileset))
-    {
-        SceneMapping.CesiumToUnrealTransform.emplace(FTransform(CreateMatrixFromGlm(
-            Tileset->GetCesiumTilesetToUnrealRelativeWorldTransform())));
-    }
-    if (!SceneMapping.ModelCenter_ITwin)
-    {
-        // the ModelCenter, as used in 3DFT plugin, can be retrieved by fetching the translation of the
-        // root tile
-        // here again, please do not change this code without testing saved views in 3DFT level...
-        auto const* rootTile = &Tile;
-        while (rootTile->getParent() != nullptr)
-        {
-            rootTile = rootTile->getParent();
-        }
-        auto const& tsfTranslation = rootTile->getTransform()[3];
-        SceneMapping.ModelCenter_ITwin.emplace(tsfTranslation[0], tsfTranslation[1], tsfTranslation[2]);
-        if (ensure(SceneMapping.CesiumToUnrealTransform && !SceneMapping.ModelCenter_UE))
-        {
-            SceneMapping.ModelCenter_UE.emplace(
-                SceneMapping.CesiumToUnrealTransform->TransformPosition(*SceneMapping.ModelCenter_ITwin));
-        }
-    }
     // Note: geoloc must have been set before, MeshComponent->GetComponentTransform depends on it!
-    auto MeshBox = StaticMesh->GetBoundingBox();
     auto const& Transform = MeshComponent->GetComponentTransform();
-    // Update global bounding box, both in Unreal and "ITwin" coordinate system
-    // Beware the code for ITwin coordinate system should not be modified without testing saved views with
-    // the default level of the former 3DFT plugin!
-    if (MeshBox.IsValid)
-    {
-        SceneMapping.IModelBBox_UE += Transform.TransformPosition(MeshBox.Min);
-        SceneMapping.IModelBBox_UE += Transform.TransformPosition(MeshBox.Max);
-
-        // For iTwin coordinate system: swap Y with Z (compensate what is done previously)
-        std::swap(MeshBox.Min.Y, MeshBox.Min.Z);
-        std::swap(MeshBox.Max.Y, MeshBox.Max.Z);
-        SceneMapping.IModelBBox_ITwin += MeshBox.Min;
-        SceneMapping.IModelBBox_ITwin += MeshBox.Max;
-    }
 
     // always look in 1st set (_FEATURE_ID_0)
     const int64 FeatureIDSetIndex = ITwinCesium::Metada::ELEMENT_FEATURE_ID_SLOT;
     const FITwinCesiumPrimitiveFeatures& Features(CesiumData.Features);
-    const FITwinCesiumPropertyTableProperty* pElementProperty =
-        UITwinCesiumMetadataPickingBlueprintLibrary::FindValidProperty(
-            Features,
-            CesiumData.Metadata,
-            ITwinCesium::Metada::ELEMENT_NAME,
-            FeatureIDSetIndex);
-    if (pElementProperty == nullptr)
+    constexpr int MetaDataNamesCount = 3;
+    std::array<FString, MetaDataNamesCount> MetaDataNames = { 
+        ITwinCesium::Metada::ELEMENT_NAME, 
+        ITwinCesium::Metada::SUBCATEGORY_NAME, 
+        ITwinCesium::Metada::MODEL_NAME 
+    };
+    std::array<const FITwinCesiumPropertyTableProperty*, MetaDataNamesCount> pProperties;
+    for (int i = 0; i < MetaDataNamesCount; i++)
+    {
+        pProperties[i] = 
+            UITwinCesiumMetadataPickingBlueprintLibrary::FindValidProperty(
+                Features,
+                CesiumData.Metadata,
+                MetaDataNames[i],
+                FeatureIDSetIndex);
+    }
+    if (pProperties[to_underlying(EPropertyType::Element)] == nullptr)
     {
         return;
     }
@@ -173,63 +163,62 @@ void FITwinSceneMappingBuilder::OnMeshConstructed(
     const FStaticMeshLODResources& LODResources = StaticMesh->GetRenderData()->LODResources[0];
     const FPositionVertexBuffer& PositionBuffer = LODResources.VertexBuffers.PositionVertexBuffer;
 
-    // For now, we fill the mapping for all elements found in the primitive
-    // At the end, we should probably restrict this to a given set of
-    // ElementIDs, depending on what we can "animate" in Synchro (?)
-    // TODO_GCO/TODO_JDE
-
-    std::set<ITwinFeatureID> recordedFeatureIDs;
     bool bHasAddedMaterialToSceneTile = false;
-    std::unordered_map<ITwinFeatureID, ITwinElementID> featureIDToElementID;
-    std::set<ITwinElementID> MeshElementIDs;
+    std::unordered_map<ITwinFeatureID, ITwinElementID> FeatureToElemID;
     const uint32 NumVertices = PositionBuffer.GetNumVertices();
+    FITwinElement Dummy;
+    FITwinElement* pElemStruct = &Dummy;
+    ITwinElementID LastElem = ITwin::NOT_ELEMENT;
+    ITwinFeatureID LastFeature = ITwin::NOT_FEATURE;
     for (uint32 vtxIndex(0); vtxIndex < NumVertices; vtxIndex++)
     {
         const int64 FeatureID =
             UITwinCesiumFeatureIdSetBlueprintLibrary::GetFeatureIDForVertex(
                 FeatureIdSet,
                 static_cast<int64>(vtxIndex));
-        ITwinElementID ElementID = ITwin::NOT_ELEMENT;
-        if (FeatureID >= 0)
+        if (FeatureID < 0)
+            continue;
+
+        const ITwinFeatureID ITwinFeatID = ITwinFeatureID(FeatureID);
+        if (ITwinFeatID != LastFeature) // almost always the same => optimize
         {
-            // only record a given feature once (obviously, many vertices
-            // belong to a same feature...)
-            const ITwinFeatureID ITwinFeatID = ITwinFeatureID(FeatureID);
-            if (recordedFeatureIDs.insert(ITwinFeatID).second)
+            auto Known = FeatureToElemID.try_emplace(ITwinFeatID, ITwinElementID{});
+            ITwinElementID& ElementID = Known.first->second;
+            LastFeature = ITwinFeatID;
+            // only record a given feature once (obviously, many vertices belong to a same feature...)
+            if (Known.second) // was inserted -> first time encountered
             {
-                // update max feature ID for tile
-                if (sceneTile.MaxFeatureID == ITwin::NOT_FEATURE
-                    || ITwinFeatID > sceneTile.MaxFeatureID)
+                if (ITwinFeatID > sceneTile.MaxFeatureID || sceneTile.MaxFeatureID == ITwin::NOT_FEATURE)
                 {
                     sceneTile.MaxFeatureID = ITwinFeatID;
                 }
                 // fetch the ElementID corresponding to this feature
-                ElementID = ITwinElementID(
-                    UITwinCesiumMetadataValueBlueprintLibrary::GetUnsignedInteger64(
-                        UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetValue(
-                            *pElementProperty,
-                            FeatureID),
-                        ITwin::NOT_ELEMENT.value()));
-                featureIDToElementID[ITwinFeatID] = ElementID;
+                ElementID = FeatureIDToITwinID(pProperties[to_underlying(EPropertyType::Element)], FeatureID);
                 if (ElementID != ITwin::NOT_ELEMENT)
                 {
-                    FITwinElementFeaturesInTile& TileData = sceneTile.ElementFeatures(ElementID)->second;
-                    MeshElementIDs.insert(ElementID);
+                    if (ElementID != LastElem) // actually the case 99% of the time
+                    {
+                        // fetch the CategoryID and ModelID corresponding to this feature
+                        ITwinElementID CategoryID =
+                            FeatureIDToITwinID(pProperties[to_underlying(EPropertyType::Category)], FeatureID);
+                        CategoryID--;
+                        ITwinElementID const ModelID =
+                            FeatureIDToITwinID(pProperties[to_underlying(EPropertyType::Model)], FeatureID);
+                        SceneMapping.CategoryIDToElementIDs[CategoryID].insert(ElementID);
+                        SceneMapping.ModelIDToElementIDs[ModelID].insert(ElementID);
+                    }
                     // There can be duplicates here (as several primitives can have the
                     // same features in a given tile) so we filter them here.
-                    //
-                    // TODO_JDE:
-                    // We should profile a bit, and see if we can use a set or flat_set
-                    // instead.
-                    if (std::find(
-                        TileData.Features.begin(),
-                        TileData.Features.end(),
-                        ITwinFeatID) == TileData.Features.end())
+                    // TODO_JDE: We should profile a bit, and see if we can use a set optimized for small
+                    // sizes? (Note: flat_set is based on std::vector by default, and its ordering requirement
+                    // probably makes it slower than a mere vector for our use case)
+                    FITwinElementFeaturesInTile& TileData = sceneTile.ElementFeatures(ElementID)->second;
+                    if (std::find(TileData.Features.begin(), TileData.Features.end(), ITwinFeatID)
+                        == TileData.Features.end())
                     {
                         TileData.Features.push_back(ITwinFeatID);
                     }
-                    // The material is always different (each primitive uses its own
-                    // material instance).
+                    // The material is always different (each primitive uses its own material instance).
                     TileData.Materials.push_back(pMaterial);
 
                     if (!bHasAddedMaterialToSceneTile)
@@ -239,23 +228,27 @@ void FITwinSceneMappingBuilder::OnMeshConstructed(
                     }
                 }
             }
-            else
-            {
-                check(featureIDToElementID.find(ITwinFeatID) != featureIDToElementID.end());
-                ElementID = featureIDToElementID[ITwinFeatID];
-            }
-
-            if (ElementID != ITwin::NOT_ELEMENT)
-            {
-                // update BBox
-                auto& Elem = SceneMapping.ElementFor(ElementID);
-                Elem.bHasMesh = true;
-                Elem.BBox += Transform.TransformPosition(FVector3d(PositionBuffer.VertexPosition(vtxIndex)));
-            }
+            LastElem = ElementID;
+        }
+        // update BBox with each new vertex position
+        if (LastElem != ITwin::NOT_ELEMENT)
+        {
+            // Almost always the same => optimize
+            if (LastElem != pElemStruct->Id)
+                pElemStruct = &SceneMapping.ElementFor(LastElem);
+            pElemStruct->bHasMesh = true;
+            pElemStruct->BBox +=
+                Transform.TransformPosition(FVector3d(PositionBuffer.VertexPosition(vtxIndex)));
         }
     }
     if (SceneMapping.OnNewTileMeshBuilt)
+    {
+        std::set<ITwinElementID> MeshElementIDs;
+        for (auto&& [_, ElemID] : FeatureToElemID)
+            if (ITwin::NOT_ELEMENT != ElemID)
+                MeshElementIDs.insert(ElemID);
         SceneMapping.OnNewTileMeshBuilt(tileId, std::move(MeshElementIDs), pMaterial, KnownT.second, sceneTile);
+    }
 }
 
 uint32 FITwinSceneMappingBuilder::BakeFeatureIDsInVertexUVs(std::optional<uint32> featuresAccessorIndex,
@@ -330,7 +323,7 @@ void FITwinSceneMappingBuilder::BeforeTileDestruction(
     const Cesium3DTilesSelection::Tile& Tile,
     USceneComponent* TileGltfComponent)
 {
-    // The passed component is the scene component cerated for the given tile (UITwinCesiumGltfComponent).
+    // The passed component is the scene component created for the given tile (UITwinCesiumGltfComponent).
     // Its children are the primitive components (UITwinCesiumGltfPrimitiveComponent), on which we point in
     // FITwinGltfMeshComponentWrapper => remove any wrapper pointing on the components about to be freed.
     // Note that they may not exist in the mapping, typically in case we have to apply some tuning, or for

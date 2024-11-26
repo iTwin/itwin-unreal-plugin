@@ -32,7 +32,7 @@ public:
 		std::string& requestError) const override;
 
 protected:
-	virtual void DoSetVerb(EVerb verb) override;
+	virtual void DoSetVerb(SDK::Core::EVerb verb) override;
 	virtual void DoSetResponseCallback(ResponseCallback const& callback) override;
 
 private:

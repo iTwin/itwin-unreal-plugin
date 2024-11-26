@@ -297,7 +297,7 @@ public:
 	/// actually avoid those redundant calls I guess...
 	/// BUT mostly so that the many per-Element binding, received as independent items but that are part of 
 	/// the same FAnimationBinding, can find their common entry in the AnimationBindings member!
-	/// The string Id properties are used for the key hashing, not the matching *InVec, as they are not
+	/// The string Id properties are used for the key hashing, but the matching *InVec are not as they are not
 	/// supposed to be known yet (see doc on FAnimationBinding for the list of properties).
 	std::unordered_map<FAnimationBinding, size_t/*index in AnimationBindings*/> KnownAnimationBindings;
 

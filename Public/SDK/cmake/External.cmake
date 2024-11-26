@@ -47,6 +47,9 @@ find_package(cpr REQUIRED)
 ### =========== libassert =========== 
 find_package(libassert CONFIG REQUIRED)
 
+### =========== Marius Bancila's stduuid =========== 
+find_package(stduuid CONFIG REQUIRED)
+
 ### =========== plog =========== 
 FetchContent_Declare(plog
     GIT_REPOSITORY https://github.com/SergiusTheBest/plog.git

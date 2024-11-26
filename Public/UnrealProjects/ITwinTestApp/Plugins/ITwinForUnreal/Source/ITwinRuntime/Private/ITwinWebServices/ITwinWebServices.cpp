@@ -15,23 +15,16 @@
 
 #include <ITwinServerEnvironment.h>
 #include <ITwinWebServices/ITwinWebServicesObserver.h>
+#include <Decoration/ITwinDecorationServiceSettings.h>
+#include <Network/JsonQueriesCache.h>
 #include <Network/UEHttpAdapter.h>
 
 #include <Kismet/GameplayStatics.h>
 
-#include <Serialization/ArchiveProxy.h>
-#include <Serialization/MemoryReader.h>
-#include <Serialization/MemoryWriter.h>
-
-#include <Misc/FileHelper.h>
-#include <Misc/Paths.h>
-#include <PlatformCryptoTypes.h>
-#include <HAL/FileManager.h>
-
 #include <Engine/World.h>
 
 #include <Compil/BeforeNonUnrealIncludes.h>
-#	include <BeHeaders/Compil/CleanUpGuard.h>
+#	include <Core/ITwinAPI/ITwinRequestTypes.h>
 #	include <Core/ITwinAPI/ITwinWebServices.h>
 #	include <Core/ITwinAPI/ITwinWebServicesObserver.h>
 #include <Compil/AfterNonUnrealIncludes.h>
@@ -39,16 +32,12 @@
 
 namespace ITwin
 {
-	extern FString GetITwinAppId(EITwinEnvironment Env);
+	// Filled by InitServerConnectionFromWorld in case we find a custom server connection in world.
+	static std::optional<EITwinEnvironment> PreferredEnvironment;
 }
 
 namespace
 {
-	inline FString GetITwinAPIRootUrl(EITwinEnvironment Env)
-	{
-		return TEXT("https://") + ITwinServerEnvironment::GetUrlPrefix(Env) + TEXT("api.bentley.com");
-	}
-
 	static UITwinWebServices* WorkingInstance = nullptr;
 
 	struct [[nodiscard]] ScopedWorkingWebServices
@@ -66,55 +55,12 @@ namespace
 			WorkingInstance = PreviousInstance;
 		}
 	};
-
-	// only used for unit tests
-	static FString TokenFileSuffix;
-
-
-	/// Return an AES256 (symmetric) key
-	TArray<uint8> GetKey(EITwinEnvironment Env)
-	{
-		// This handler uses AES256, which has 32-byte keys.
-		static const int32 KeySizeInBytes = 32;
-
-		// Build a deterministic key from the application ID and user/computer data. The goal of this
-		// encryption is just to secure the token for an external individual not having access to the code of
-		// the plugin...
-		FString KeyRoot = FString(FPlatformProcess::ComputerName()).Replace(TEXT(" "), TEXT("")).Left(10);
-		KeyRoot += FString(FPlatformProcess::UserName()).Replace(TEXT(" "), TEXT("")).Left(10);
-		KeyRoot += ITwin::GetITwinAppId(Env).Reverse().Replace(TEXT("-"), TEXT("A"));
-		while (KeyRoot.Len() < KeySizeInBytes)
-		{
-			KeyRoot.Append(*KeyRoot.Reverse());
-		}
-		TArray<uint8> Key;
-		Key.Reset(KeySizeInBytes);
-		Key.Append(
-				   TArrayView<const uint8>((const uint8*)StringCast<ANSICHAR>(*KeyRoot).Get(), KeySizeInBytes).GetData(), KeySizeInBytes);
-		return Key;
-	}
-
-	FString GetTokenFilename(EITwinEnvironment Env, FString const& FileSuffix, bool bCreateDir)
-	{
-		FString OutDir = FPlatformProcess::UserSettingsDir();
-		if (OutDir.IsEmpty())
-		{
-			return {};
-		}
-		FString const TokenDir = FPaths::Combine(OutDir, TEXT("Bentley"), TEXT("Cache"));
-		if (bCreateDir && !IFileManager::Get().DirectoryExists(*TokenDir))
-		{
-			IFileManager::Get().MakeDirectory(*TokenDir, true);
-		}
-		return FPaths::Combine(TokenDir,
-			ITwinServerEnvironment::GetUrlPrefix(Env) + TEXT("AdvVizCnx") + FileSuffix + TokenFileSuffix + TEXT(".dat"));
-	}
 }
 
 /*static*/
 void UITwinWebServices::SetITwinAppIDArray(ITwin::AppIDArray const& ITwinAppIDs)
 {
-	FITwinAuthorizationManager::SetITwinAppIDArray(ITwinAppIDs);
+	FITwinAuthorizationManager::SetAppIDArray(ITwinAppIDs);
 }
 
 /*static*/
@@ -127,152 +73,11 @@ void UITwinWebServices::SetLogErrors(bool bInLogErrors)
 }
 
 
-#if WITH_TESTS
 
 /*static*/
-void UITwinWebServices::SetupTestMode(EITwinEnvironment Env, FString const& InTokenFileSuffix)
+void UITwinWebServices::AddScope(FString const& ExtraScope)
 {
-	// for unit tests, allow running without iTwin App ID, and use a special suffix for filenames to avoid
-	// any conflict with the normal run.
-	if (!FITwinAuthorizationManager::HasITwinAppID(Env))
-	{
-		UITwinWebServices::SetITwinAppIDArray({ TEXT("ThisIsADummyAppIDForTesting") });
-	}
-	checkf(!InTokenFileSuffix.IsEmpty(), TEXT("a unique suffix is required to avoid conflicts"));
-	TokenFileSuffix = InTokenFileSuffix;
-}
-#endif //WITH_TESTS
-
-/*static*/
-bool UITwinWebServices::SaveToken(FString const& Token, EITwinEnvironment Env,
-	TArray<uint8> const& Key, FString const& FileSuffix)
-{
-	const bool bIsDeletingToken = Token.IsEmpty();
-	FString OutputFileName = GetTokenFilename(Env, FileSuffix, !bIsDeletingToken);
-	if (OutputFileName.IsEmpty())
-	{
-		return false;
-	}
-	if (bIsDeletingToken)
-	{
-		// just remove the file, if it exists: this will discard any old refresh token
-		if (IFileManager::Get().FileExists(*OutputFileName))
-		{
-			IFileManager::Get().Delete(*OutputFileName);
-		}
-		return true;
-	}
-
-	if (Key.Num() != 32)
-	{
-		ensureMsgf(false, TEXT("wrong key"));
-		return false;
-	}
-
-	EPlatformCryptoResult EncryptResult = EPlatformCryptoResult::Failure;
-	TArray<uint8> OutCiphertext = FEncryptionContextOpenSSL().Encrypt_AES_256_ECB(
-		TArrayView<const uint8>(
-			(const uint8*)StringCast<ANSICHAR>(*Token).Get(), Token.Len()),
-		Key, EncryptResult);
-	if (EncryptResult != EPlatformCryptoResult::Success)
-	{
-		return false;
-	}
-	TArray<uint8> rawData;
-	FMemoryWriter memWriter(rawData, true);
-	FArchiveProxy archive(memWriter);
-	memWriter.SetIsSaving(true);
-
-	uint32 TokenLen = Token.Len();
-	archive << TokenLen;
-	archive << OutCiphertext;
-
-	if (rawData.Num())
-	{
-		return FFileHelper::SaveArrayToFile(rawData, *OutputFileName);
-	}
-	else
-	{
-		return false;
-	}
-}
-
-/*static*/
-bool UITwinWebServices::SaveToken(FString const& Token, EITwinEnvironment Env)
-{
-	return SaveToken(Token, Env, GetKey(Env), {});
-}
-
-/*static*/
-bool UITwinWebServices::LoadToken(FString& OutToken, EITwinEnvironment Env,
-	TArray<uint8> const& Key, FString const& FileSuffix)
-{
-	if (Key.Num() != 32)
-	{
-		ensureMsgf(false, TEXT("wrong key"));
-		return false;
-	}
-	FString TokenFileName = GetTokenFilename(Env, FileSuffix, false);
-	if (!FPaths::FileExists(TokenFileName))
-	{
-		return false;
-	}
-
-	TArray<uint8> rawData;
-	if (!FFileHelper::LoadFileToArray(rawData, *TokenFileName))
-	{
-		return false;
-	}
-
-	FMemoryReader memReader(rawData, true);
-	FArchiveProxy archive(memReader);
-	memReader.SetIsLoading(true);
-
-	uint32 TokenLen = 0;
-	TArray<uint8> Ciphertext;
-	archive << TokenLen;
-	archive << Ciphertext;
-
-	if (TokenLen == 0)
-	{
-		return false;
-	}
-
-	EPlatformCryptoResult EncryptResult = EPlatformCryptoResult::Failure;
-	TArray<uint8> Plaintext = FEncryptionContextOpenSSL().Decrypt_AES_256_ECB(
-		Ciphertext, Key, EncryptResult);
-	if (EncryptResult != EPlatformCryptoResult::Success)
-	{
-		return false;
-	}
-	if (Plaintext.Num() < (int32)TokenLen)
-	{
-		return false;
-	}
-	OutToken.Reset(TokenLen);
-	for (uint32 i = 0; i < TokenLen; ++i)
-	{
-		OutToken.AppendChar(static_cast<TCHAR>(Plaintext[i]));
-	}
-	return true;
-}
-
-/*static*/
-bool UITwinWebServices::LoadToken(FString& OutToken, EITwinEnvironment Env)
-{
-	return LoadToken(OutToken, Env, GetKey(Env), {});
-}
-
-/*static*/
-void UITwinWebServices::DeleteTokenFile(EITwinEnvironment Env, FString const& FileSuffix /*= {}*/)
-{
-	SaveToken({}, Env, {}, FileSuffix);
-}
-
-/*static*/
-void UITwinWebServices::AddScopes(FString const& ExtraScopes)
-{
-	FITwinAuthorizationManager::AddScopes(ExtraScopes);
+	FITwinAuthorizationManager::AddScope(TCHAR_TO_UTF8(*ExtraScope));
 }
 
 
@@ -322,6 +127,7 @@ public:
 	virtual void OnExportStarted(bool bSuccess, std::string const& InExportId) override;
 	virtual void OnSavedViewInfosRetrieved(bool bSuccess, SDK::Core::SavedViewInfos const& infos) override;
 	virtual void OnSavedViewRetrieved(bool bSuccess, SDK::Core::SavedView const& savedView, SDK::Core::SavedViewInfo const& info) override;
+	virtual void OnSavedViewExtensionRetrieved(bool bSuccess, std::string const& SavedViewId, std::string const& data) override;
 	virtual void OnSavedViewThumbnailRetrieved(bool bSuccess, std::string const& SavedViewThumbnail, std::string const& SavedViewId) override;
 	virtual void OnSavedViewThumbnailUpdated(bool bSuccess, std::string const& SavedViewId, std::string const& Response) override;
 	virtual void OnSavedViewGroupInfosRetrieved(bool bSuccess, SDK::Core::SavedViewGroupInfos const& coreInfos) override;
@@ -333,7 +139,7 @@ public:
 	virtual void OnRealityData3DInfoRetrieved(bool bSuccess, SDK::Core::ITwinRealityData3DInfo const& info) override;
 	virtual void OnElementPropertiesRetrieved(bool bSuccess, SDK::Core::ITwinElementProperties const& props) override;
 	virtual void OnIModelPropertiesRetrieved(bool bSuccess, SDK::Core::IModelProperties const& props) override;
-	virtual void OnIModelQueried(bool bSuccess, std::string const& QueryResult) override;
+	virtual void OnIModelQueried(bool bSuccess, std::string const& QueryResult, SDK::Core::RequestID const&) override;
 	virtual void OnMaterialPropertiesRetrieved(bool bSuccess, SDK::Core::ITwinMaterialPropertiesMap const& props) override;
 	virtual void OnTextureDataRetrieved(bool bSuccess, std::string const& textureId, SDK::Core::ITwinTextureData const& textureData) override;
 };
@@ -377,10 +183,20 @@ namespace
 			InRotator.yaw.value_or(0.),
 			InRotator.roll.value_or(0.));
 	}
+	inline TArray<FString> FromCoreStringVector(std::vector<std::string> const& InVec)
+	{
+		TArray<FString> Array;
+		Array.Reserve(InVec.size());
+		for (const auto& hiddenModel : InVec)
+			Array.Add(hiddenModel.c_str());
+		return Array;
+	}
 	inline void ToCoreSavedView(FSavedView const& SavedView, SDK::Core::SavedView& coreSV)
 	{
 		ToCoreVec3(SavedView.Origin, coreSV.origin);
 		ToCoreVec3(SavedView.Extents, coreSV.extents);
+		ToCoreVec3(SavedView.FrustumOrigin, coreSV.frustumOrigin);
+		coreSV.focusDist = SavedView.FocusDist;
 		ToCoreRotator(SavedView.Angles, coreSV.angles);
 		if (!SavedView.DisplayStyle.RenderTimeline.IsEmpty())
 		{
@@ -392,13 +208,13 @@ namespace
 	inline void ToCoreSavedViewInfo(FSavedViewInfo const& SavedViewInfo, SDK::Core::SavedViewInfo& coreSV)
 	{
 		coreSV.id = TCHAR_TO_ANSI(*SavedViewInfo.Id);
-		coreSV.displayName = TCHAR_TO_ANSI(*SavedViewInfo.DisplayName);
+		coreSV.displayName = TCHAR_TO_UTF8(*SavedViewInfo.DisplayName);
 		coreSV.shared = SavedViewInfo.bShared;
 	}
 	inline void ToCoreSavedViewGroupInfo(FSavedViewGroupInfo const& SavedViewGroupInfo, SDK::Core::SavedViewGroupInfo& coreSVGroup)
 	{
 		coreSVGroup.id = TCHAR_TO_ANSI(*SavedViewGroupInfo.Id);
-		coreSVGroup.displayName = TCHAR_TO_ANSI(*SavedViewGroupInfo.DisplayName);
+		coreSVGroup.displayName = TCHAR_TO_UTF8(*SavedViewGroupInfo.DisplayName);
 		coreSVGroup.shared = SavedViewGroupInfo.bShared;
 		coreSVGroup.readOnly = SavedViewGroupInfo.bReadOnly;
 	}
@@ -490,7 +306,8 @@ void UITwinWebServices::FImpl::InitAuthManager(EITwinEnvironment InEnvironment)
 	}
 
 	// Initiate the manager handling tokens for current Environment
-	authManager_ = FITwinAuthorizationManager::GetInstance(InEnvironment);
+	authManager_ = FITwinAuthorizationManager::GetInstance(
+		static_cast<SDK::Core::EITwinEnvironment>(InEnvironment));
 	authManager_->AddObserver(&owner_);
 }
 
@@ -538,7 +355,7 @@ void UITwinWebServices::FImpl::OnITwinsRetrieved(bool bSuccess, SDK::Core::ITwin
 	Algo::Transform(coreInfos.iTwins, infos.iTwins,
 		[](SDK::Core::ITwinInfo const& V) -> FITwinInfo { return {
 			V.id.c_str(),
-			V.displayName.c_str(),
+			UTF8_TO_TCHAR(V.displayName.c_str()),
 			V.status.c_str(),
 			V.number.c_str()
 		};
@@ -555,7 +372,7 @@ void UITwinWebServices::FImpl::OnITwinInfoRetrieved(bool bSuccess, SDK::Core::IT
 	FITwinInfo const info =
 	{
 		coreInfo.id.c_str(),
-		coreInfo.displayName.c_str(),
+		UTF8_TO_TCHAR(coreInfo.displayName.c_str()),
 		coreInfo.status.c_str(),
 		coreInfo.number.c_str()
 	};
@@ -573,7 +390,7 @@ void UITwinWebServices::FImpl::OnIModelsRetrieved(bool bSuccess, SDK::Core::IMod
 	Algo::Transform(coreInfos.iModels, infos.iModels,
 		[](SDK::Core::IModelInfo const& V) -> FIModelInfo { return {
 			V.id.c_str(),
-			V.displayName.c_str()
+			UTF8_TO_TCHAR(V.displayName.c_str())
 		};
 	});
 	owner_.OnGetiTwiniModelsComplete.Broadcast(bSuccess, infos);
@@ -590,8 +407,8 @@ void UITwinWebServices::FImpl::OnChangesetsRetrieved(bool bSuccess, SDK::Core::C
 	Algo::Transform(coreInfos.changesets, infos.Changesets,
 		[](SDK::Core::ChangesetInfo const& V) -> FChangesetInfo { return {
 			V.id.c_str(),
-			V.displayName.c_str(),
-			V.description.value_or("").c_str(),
+			UTF8_TO_TCHAR(V.displayName.c_str()),
+			UTF8_TO_TCHAR(V.description.value_or("").c_str()),
 			V.index
 		};
 	});
@@ -609,7 +426,7 @@ void UITwinWebServices::FImpl::OnExportInfosRetrieved(bool bSuccess, SDK::Core::
 	Algo::Transform(coreInfos.exports, infos.ExportInfos,
 		[](SDK::Core::ITwinExportInfo const& V) -> FITwinExportInfo { return {
 			V.id.c_str(),
-			V.displayName.c_str(),
+			UTF8_TO_TCHAR(V.displayName.c_str()),
 			V.status.c_str(),
 			V.iModelId.c_str(),
 			V.iTwinId.c_str(),
@@ -629,7 +446,7 @@ void UITwinWebServices::FImpl::OnExportInfoRetrieved(bool bSuccess, SDK::Core::I
 	FITwinExportInfo const info =
 	{
 		coreInfo.id.c_str(),
-		coreInfo.displayName.c_str(),
+		UTF8_TO_TCHAR(coreInfo.displayName.c_str()),
 		coreInfo.status.c_str(),
 		coreInfo.iModelId.c_str(),
 		coreInfo.iTwinId.c_str(),
@@ -653,16 +470,33 @@ void UITwinWebServices::FImpl::OnExportStarted(bool bSuccess, std::string const&
 	}
 }
 
+void UITwinWebServices::FImpl::OnSavedViewExtensionRetrieved(bool bSuccess, std::string const& id, std::string const& data)
+{
+	FString ExtensionData = data.c_str();
+	FString SavedViewId = id.c_str();
+	owner_.OnGetSavedViewExtensionComplete.Broadcast(bSuccess, SavedViewId, ExtensionData);
+	if (observer_)
+	{
+		observer_->OnSavedViewExtensionRetrieved(bSuccess, SavedViewId, ExtensionData);
+	}
+}
+
 void UITwinWebServices::FImpl::OnSavedViewInfosRetrieved(bool bSuccess, SDK::Core::SavedViewInfos const& coreInfos)
 {
 	FSavedViewInfos infos;
 	infos.SavedViews.Reserve(coreInfos.savedViews.size());
 	Algo::Transform(coreInfos.savedViews, infos.SavedViews,
-		[](SDK::Core::SavedViewInfo const& V) -> FSavedViewInfo { return {
-			V.id.c_str(),
-			V.displayName.c_str(),
-			V.shared
-		};
+		[](SDK::Core::SavedViewInfo const& V) -> FSavedViewInfo { 
+			FSavedViewInfo info = {
+				V.id.c_str(),
+				UTF8_TO_TCHAR(V.displayName.c_str()),
+				V.shared,
+				UTF8_TO_TCHAR(V.creationTime.c_str())
+			};
+			info.Extensions.Reserve(V.extensions.size());
+			for (const auto& ext : V.extensions)
+				info.Extensions.Add(ext.extensionName.c_str());
+			return info;
 	});
 	infos.GroupId = coreInfos.groupId.value_or("").c_str();
 	owner_.OnGetSavedViewsComplete.Broadcast(bSuccess, infos);
@@ -679,7 +513,7 @@ void UITwinWebServices::FImpl::OnSavedViewGroupInfosRetrieved(bool bSuccess, SDK
 	Algo::Transform(coreInfos.groups, infos.SavedViewGroups,
 		[](SDK::Core::SavedViewGroupInfo const& V) -> FSavedViewGroupInfo { return {
 			V.id.c_str(),
-			V.displayName.c_str(),
+			UTF8_TO_TCHAR(V.displayName.c_str()),
 			V.shared,
 			V.readOnly
 		};
@@ -697,18 +531,30 @@ void UITwinWebServices::FImpl::OnSavedViewRetrieved(bool bSuccess, SDK::Core::Sa
 		FromCoreVec3(coreSV.origin),
 		FromCoreVec3(coreSV.extents),
 		FromCoreRotator(coreSV.angles),
+		TArray<FString>(),
+		TArray<FString>(),
+		TArray<FString>(),
 		FDisplayStyle()
 	};
+	if (coreSV.hiddenCategories)
+		SavedView.HiddenCategories = FromCoreStringVector(coreSV.hiddenCategories.value());
+	if (coreSV.hiddenModels)
+		SavedView.HiddenModels = FromCoreStringVector(coreSV.hiddenModels.value());
+	if (coreSV.hiddenElements)
+		SavedView.HiddenElements = FromCoreStringVector(coreSV.hiddenElements.value());
 	if (coreSV.displayStyle)
 	{
 		SavedView.DisplayStyle.RenderTimeline = coreSV.displayStyle->renderTimeline.value_or("").c_str();
 		SavedView.DisplayStyle.TimePoint = coreSV.displayStyle->timePoint.value_or(0.);
 	}
-	const FSavedViewInfo SavedViewInfo = {
+	FSavedViewInfo SavedViewInfo = {
 		coreSVInfo.id.c_str(),
-		coreSVInfo.displayName.c_str(),
+		UTF8_TO_TCHAR(coreSVInfo.displayName.c_str()),
 		coreSVInfo.shared
 	};
+	SavedViewInfo.Extensions.Reserve(coreSVInfo.extensions.size());
+	for (const auto& ext : coreSVInfo.extensions)
+		SavedViewInfo.Extensions.Add(ext.extensionName.c_str());
 	owner_.OnGetSavedViewComplete.Broadcast(bSuccess, SavedView, SavedViewInfo);
 	if (observer_)
 	{
@@ -738,8 +584,9 @@ void UITwinWebServices::FImpl::OnSavedViewAdded(bool bSuccess, SDK::Core::SavedV
 {
 	const FSavedViewInfo SavedViewInfo = {
 		coreSVInfo.id.c_str(),
-		coreSVInfo.displayName.c_str(),
-		coreSVInfo.shared
+		UTF8_TO_TCHAR(coreSVInfo.displayName.c_str()),
+		coreSVInfo.shared,
+		UTF8_TO_TCHAR(coreSVInfo.creationTime.c_str())
 	};
 	owner_.OnSavedViewAdded(bSuccess, SavedViewInfo);
 }
@@ -748,7 +595,7 @@ void UITwinWebServices::FImpl::OnSavedViewGroupAdded(bool bSuccess, SDK::Core::S
 {
 	const FSavedViewGroupInfo SavedViewGroupInfo = {
 		coreGroupInfo.id.c_str(),
-		coreGroupInfo.displayName.c_str(),
+		UTF8_TO_TCHAR(coreGroupInfo.displayName.c_str()),
 		coreGroupInfo.shared,
 		coreGroupInfo.readOnly
 	};
@@ -773,7 +620,7 @@ void UITwinWebServices::FImpl::OnSavedViewEdited(bool bSuccess, SDK::Core::Saved
 	};
 	const FSavedViewInfo SavedViewInfo = {
 		coreSVInfo.id.c_str(),
-		coreSVInfo.displayName.c_str(),
+		UTF8_TO_TCHAR(coreSVInfo.displayName.c_str()),
 		coreSVInfo.shared
 	};
 	owner_.OnEditSavedViewComplete.Broadcast(bSuccess, SavedView, SavedViewInfo);
@@ -790,7 +637,7 @@ void UITwinWebServices::FImpl::OnRealityDataRetrieved(bool bSuccess, SDK::Core::
 	Algo::Transform(coreInfos.realityData, infos.Infos,
 		[](SDK::Core::ITwinRealityDataInfo const& V) -> FITwinRealityDataInfo { return {
 			V.id.c_str(),
-			V.displayName.c_str()
+			UTF8_TO_TCHAR(V.displayName.c_str())
 		};
 	});
 	owner_.OnGetRealityDataComplete.Broadcast(bSuccess, infos);
@@ -804,7 +651,7 @@ void UITwinWebServices::FImpl::OnRealityData3DInfoRetrieved(bool bSuccess, SDK::
 {
 	FITwinRealityData3DInfo info;
 	info.Id = coreInfo.id.c_str();
-	info.DisplayName = coreInfo.displayName.c_str();
+	info.DisplayName = UTF8_TO_TCHAR(coreInfo.displayName.c_str());
 	info.bGeolocated = coreInfo.bGeolocated;
 	info.ExtentNorthEast.Latitude = coreInfo.extentNorthEast.latitude;
 	info.ExtentNorthEast.Longitude = coreInfo.extentNorthEast.longitude;
@@ -878,6 +725,8 @@ void UITwinWebServices::FImpl::OnIModelPropertiesRetrieved(bool bSuccess, SDK::C
 			EcefLocation.yVector = FromCoreVec3(*coreEcef.yVector);
 		}
 	}
+	if (coreProps.globalOrigin)
+		ProjectExtents.GlobalOrigin = FromCoreVec3(*coreProps.globalOrigin);
 	
 	owner_.OnGetIModelPropertiesComplete.Broadcast(bSuccess, bHasExtents, ProjectExtents, bHasEcefLocation, EcefLocation);
 	if (observer_)
@@ -886,12 +735,14 @@ void UITwinWebServices::FImpl::OnIModelPropertiesRetrieved(bool bSuccess, SDK::C
 	}
 }
 
-void UITwinWebServices::FImpl::OnIModelQueried(bool bSuccess, std::string const& QueryResult)
+void UITwinWebServices::FImpl::OnIModelQueried(bool bSuccess, std::string const& QueryResult,
+											   SDK::Core::RequestID const& FromRequestID)
 {
 	owner_.OnQueryIModelComplete.Broadcast(bSuccess, FString(QueryResult.c_str()));
 	if (observer_)
 	{
-		observer_->OnIModelQueried(bSuccess, FString(QueryResult.c_str()));
+		observer_->OnIModelQueried(bSuccess, FString(QueryResult.c_str()),
+								   HttpRequestID(FromRequestID.c_str()));
 	}
 }
 
@@ -916,17 +767,47 @@ void UITwinWebServices::FImpl::OnTextureDataRetrieved(bool bSuccess, std::string
 UITwinWebServices::UITwinWebServices()
 	: Impl(MakePimpl<UITwinWebServices::FImpl>(*this))
 {
-	// Adapt Unreal to SDK Core's Http request
-	static bool bHasInitHttp = false;
-	if (!bHasInitHttp)
+	// Adapt Unreal to SDK Core's Http request and authentication management
+	static bool bHasInitSDKCore = false;
+	if (!bHasInitSDKCore)
 	{
-		bHasInitHttp = true;
+		bHasInitSDKCore = true;
 
 		using namespace SDK::Core;
+
 		HttpRequest::SetNewFct([]() {
 			std::shared_ptr<HttpRequest> p(static_cast<HttpRequest*>(new FUEHttpRequest));
 			return p;
 		});
+
+		FITwinAuthorizationManager::OnStartup();
+	}
+
+	static bool bHasTestedDecoScope = false;
+	if (!bHasTestedDecoScope && !HasAnyFlags(RF_ClassDefaultObject))
+	{
+		// Test whether we should grant access to the Decoration Service in the current application.
+		// This is disabled by default (as long as the decoration service is not deployed in Prod...)
+		// Note that in Carrot, we do this without condition (see AMainLevelScript::BeginPlay).
+		UITwinDecorationServiceSettings const* DecoSettings = GetDefault<UITwinDecorationServiceSettings>();
+		if (ensure(DecoSettings)
+			&& DecoSettings->EarlyAccessProgram
+			&& !DecoSettings->ExtraITwinScope.IsEmpty())
+		{
+			UITwinWebServices::AddScope(DecoSettings->ExtraITwinScope);
+		}
+		bHasTestedDecoScope = true;
+	}
+
+	if (ITwin::PreferredEnvironment)
+	{
+		SetEnvironment(*ITwin::PreferredEnvironment);
+	}
+	else if (!HasAnyFlags(RF_ClassDefaultObject))
+	{
+		// See if a server connection was instantiated before playing the level: this is an easy trick to
+		// test QA or Dev environment in the test app.
+		InitServerConnectionFromWorld();
 	}
 
 #if 0 // IS_BE_DEV()
@@ -957,6 +838,12 @@ bool UITwinWebServices::IsAuthorizationInProgress() const
 		return false;
 	}
 	return Impl->authManager_->IsAuthorizationInProgress();
+}
+
+UITwinWebServices::AuthManagerPtr& UITwinWebServices::GetAuthManager() const
+{
+	return FITwinAuthorizationManager::GetInstance(
+		static_cast<SDK::Core::EITwinEnvironment>(Environment));
 }
 
 void UITwinWebServices::SetServerConnection(TObjectPtr<AITwinServerConnection> const& InConnection)
@@ -1039,6 +926,8 @@ bool UITwinWebServices::InitServerConnectionFromWorld()
 	if (firstValidConnection && commonEnv != EITwinEnvironment::Invalid)
 	{
 		SetServerConnection(firstValidConnection);
+		// Register this environment as the preferred one.
+		ITwin::PreferredEnvironment = commonEnv;
 		return true;
 	}
 	else
@@ -1047,19 +936,23 @@ bool UITwinWebServices::InitServerConnectionFromWorld()
 	}
 }
 
-bool UITwinWebServices::CheckAuthorization()
+SDK::Core::EITwinAuthStatus UITwinWebServices::CheckAuthorizationStatus()
 {
 	if (TryGetServerConnection(true))
 	{
 		// We could get a valid server connection. No need to do anything more (note that the token
 		// will be automatically refreshed when approaching its expiration: no need to check that).
-		return true;
+		return SDK::Core::EITwinAuthStatus::Success;
 	}
-	Impl->authManager_->CheckAuthorization();
-	return false;
+	return Impl->authManager_->CheckAuthorization();
 }
 
-void UITwinWebServices::OnAuthDoneImpl(bool bSuccess, FString const& Error, bool bBroadcastResult /*= true*/)
+bool UITwinWebServices::CheckAuthorization()
+{
+	return CheckAuthorizationStatus() == SDK::Core::EITwinAuthStatus::Success;
+}
+
+void UITwinWebServices::OnAuthDoneImpl(bool bSuccess, std::string const& Error, bool bBroadcastResult /*= true*/)
 {
 	ScopedWorkingWebServices WorkingInstanceSetter(this);
 
@@ -1094,7 +987,7 @@ void UITwinWebServices::OnAuthDoneImpl(bool bSuccess, FString const& Error, bool
 
 	if (bBroadcastResult)
 	{
-		OnAuthorizationChecked.Broadcast(bSuccess, Error);
+		OnAuthorizationChecked.Broadcast(bSuccess, UTF8_TO_TCHAR(Error.c_str()));
 		if (Impl->observer_)
 		{
 			Impl->observer_->OnAuthorizationDone(bSuccess, Error);
@@ -1102,7 +995,7 @@ void UITwinWebServices::OnAuthDoneImpl(bool bSuccess, FString const& Error, bool
 	}
 }
 
-void UITwinWebServices::OnAuthorizationDone(bool bSuccess, FString const& Error)
+void UITwinWebServices::OnAuthorizationDone(bool bSuccess, std::string const& Error)
 {
 	OnAuthDoneImpl(bSuccess, Error, true);
 }
@@ -1149,6 +1042,10 @@ bool UITwinWebServices::ConsumeLastError(FString& OutError)
 	return bHasError;
 }
 
+FString UITwinWebServices::GetRequestError(HttpRequestID const& InRequestId) const
+{
+	return Impl->GetRequestError(TCHAR_TO_ANSI(*InRequestId)).c_str();
+}
 
 #if WITH_TESTS
 void UITwinWebServices::SetTestServerURL(FString const& ServerUrl)
@@ -1171,6 +1068,16 @@ void UITwinWebServices::DoRequest(FunctorType&& InFunctor)
 		return;
 	}
 	InFunctor();
+}
+
+template <typename FunctorType>
+HttpRequestID UITwinWebServices::DoRequestRetID(FunctorType&& InFunctor)
+{
+	if (!TryGetServerConnection(false))
+	{
+		return HttpRequestID{};
+	}
+	return InFunctor();
 }
 
 void UITwinWebServices::GetITwinInfo(FString ITwinId)
@@ -1242,6 +1149,13 @@ void UITwinWebServices::GetSavedViewGroups(FString iTwinId, FString iModelId)
 void UITwinWebServices::GetSavedView(FString SavedViewId)
 {
 	DoRequest([this, SavedViewId]() { Impl->GetSavedView(TCHAR_TO_ANSI(*SavedViewId)); });
+}
+
+void UITwinWebServices::GetSavedViewExtension(FString SavedViewId, FString ExtensionName)
+{
+	DoRequest([this, SavedViewId, ExtensionName]() { 
+		Impl->GetSavedViewExtension(TCHAR_TO_ANSI(*SavedViewId), TCHAR_TO_ANSI(*ExtensionName)); 
+	});
 }
 
 void UITwinWebServices::GetSavedViewThumbnail(FString SavedViewId)
@@ -1325,62 +1239,78 @@ void UITwinWebServices::GetRealityData3DInfo(FString ITwinId, FString RealityDat
 }
 
 
-void UITwinWebServices::GetElementProperties(FString iTwinId, FString iModelId, FString iChangesetId, FString ElementId)
+void UITwinWebServices::GetElementProperties(FString iTwinId, FString iModelId, FString ChangesetId, FString ElementId)
 {
-	DoRequest([this, iTwinId, iModelId, iChangesetId, ElementId]() {
-		Impl->GetElementProperties(TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId), TCHAR_TO_ANSI(*iChangesetId), TCHAR_TO_ANSI(*ElementId));
+	DoRequest([this, iTwinId, iModelId, ChangesetId, ElementId]() {
+		Impl->GetElementProperties(TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId), TCHAR_TO_ANSI(*ChangesetId), TCHAR_TO_ANSI(*ElementId));
 	});
 }
 
-void UITwinWebServices::GetIModelProperties(FString iTwinId, FString iModelId, FString iChangesetId)
+void UITwinWebServices::GetIModelProperties(FString iTwinId, FString iModelId, FString ChangesetId)
 {
-	DoRequest([this, iTwinId, iModelId, iChangesetId]() {
-		Impl->GetIModelProperties(TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId), TCHAR_TO_ANSI(*iChangesetId));
+	DoRequest([this, iTwinId, iModelId, ChangesetId]() {
+		Impl->GetIModelProperties(TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId), TCHAR_TO_ANSI(*ChangesetId));
 	});
 }
 
-void UITwinWebServices::QueryIModel(FString iTwinId, FString iModelId, FString iChangesetId,
+void UITwinWebServices::QueryIModel(FString iTwinId, FString iModelId, FString ChangesetId,
 									FString ECSQLQuery, int Offset, int Count)
 {
-	DoRequest([this, iTwinId, iModelId, iChangesetId, ECSQLQuery, Offset, Count]() {
-		Impl->QueryIModel(TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId), TCHAR_TO_ANSI(*iChangesetId),
-						  TCHAR_TO_ANSI(*ECSQLQuery), Offset, Count);
-	});
+	QueryIModelRows(iTwinId, iModelId, ChangesetId, ECSQLQuery, Offset, Count);
+}
+
+SDK::Core::ITwinAPIRequestInfo UITwinWebServices::InfosToQueryIModel(FString iTwinId, FString iModelId,
+	FString ChangesetId, FString ECSQLQuery, int Offset, int Count)
+{
+	return Impl->InfosToQueryIModel(TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId),
+		TCHAR_TO_ANSI(*ChangesetId), TCHAR_TO_ANSI(*ECSQLQuery), Offset, Count);
+}
+
+HttpRequestID UITwinWebServices::QueryIModelRows(FString iTwinId, FString iModelId, FString ChangesetId,
+	FString ECSQLQuery, int Offset, int Count, SDK::Core::ITwinAPIRequestInfo const* RequestInfo/*=nullptr*/)
+{
+	return DoRequestRetID(
+		[this, iTwinId, iModelId, ChangesetId, ECSQLQuery, Offset, Count, RequestInfo]()
+		{
+			auto const ReqID = Impl->QueryIModel(TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId),
+				TCHAR_TO_ANSI(*ChangesetId), TCHAR_TO_ANSI(*ECSQLQuery), Offset, Count, RequestInfo);
+			return HttpRequestID(ReqID.c_str());
+		});
 }
 
 void UITwinWebServices::GetMaterialProperties(
-	FString iTwinId, FString iModelId, FString iChangesetId,
+	FString iTwinId, FString iModelId, FString ChangesetId,
 	FString MaterialId)
 {
-	DoRequest([this, iTwinId, iModelId, iChangesetId, MaterialId]() {
+	DoRequest([this, iTwinId, iModelId, ChangesetId, MaterialId]() {
 		Impl->GetMaterialProperties(
-			TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId), TCHAR_TO_ANSI(*iChangesetId),
+			TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId), TCHAR_TO_ANSI(*ChangesetId),
 			TCHAR_TO_ANSI(*MaterialId));
 	});
 }
 
 void UITwinWebServices::GetMaterialListProperties(
-	FString iTwinId, FString iModelId, FString iChangesetId,
+	FString iTwinId, FString iModelId, FString ChangesetId,
 	TArray<FString> MaterialIds)
 {
-	DoRequest([this, iTwinId, iModelId, iChangesetId, MaterialIds]() {
+	DoRequest([this, iTwinId, iModelId, ChangesetId, MaterialIds]() {
 		std::vector<std::string> coreMatIds;
 		coreMatIds.reserve(MaterialIds.Num());
 		for (FString const& id : MaterialIds)
 			coreMatIds.push_back(TCHAR_TO_ANSI(*id));
 		Impl->GetMaterialListProperties(
-			TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId), TCHAR_TO_ANSI(*iChangesetId),
+			TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId), TCHAR_TO_ANSI(*ChangesetId),
 			coreMatIds);
 	});
 }
 
 void UITwinWebServices::GetTextureData(
-	FString iTwinId, FString iModelId, FString iChangesetId,
+	FString iTwinId, FString iModelId, FString ChangesetId,
 	FString TextureId)
 {
-	DoRequest([this, iTwinId, iModelId, iChangesetId, TextureId]() {
+	DoRequest([this, iTwinId, iModelId, ChangesetId, TextureId]() {
 		Impl->GetTextureData(
-			TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId), TCHAR_TO_ANSI(*iChangesetId),
+			TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId), TCHAR_TO_ANSI(*ChangesetId),
 			TCHAR_TO_ANSI(*TextureId));
 	});
 }

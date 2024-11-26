@@ -11,6 +11,7 @@
 #include <Engine/LevelScriptActor.h>
 #include <IModelSelectionMenuScript.generated.h>
 
+class AITwinDecorationHelper;
 class AITwinIModel;
 class AITwinSelector;
 class ATopMenu;
@@ -38,8 +39,11 @@ private:
 	FString ExportId;
 	UPROPERTY()
 	AITwinIModel* IModel = nullptr;
+	UPROPERTY()
+	TObjectPtr<AITwinDecorationHelper> DecoHelper;
 	UFUNCTION(BlueprintCallable)
-	void OnLoadIModel(FString InIModelId, FString InExportId, FString InChangesetId, FString InITwinId);
+	void OnLoadIModel(FString InIModelId, FString InExportId, FString InChangesetId, FString InITwinId,
+					  FString DisplayName, FString MeshUrl);
 	UFUNCTION(BlueprintCallable)
 	void IModelLoaded(bool bSuccess);
 	void OnLeftMouseButtonPressed();

@@ -56,7 +56,10 @@ if (Synchro4D_RGBA.x + Synchro4D_RGBA.y + Synchro4D_RGBA.z == 0)
 	else
 	{
 		Synchro4D_RGBA = Selection_RGBA_DATA.Load(int3(_czm_pixelX, _czm_pixelY, 0));
-		Synchro4D_RGBA.w = _czm_alpha;
+		if (_czm_alpha == 0)
+		{
+			Synchro4D_RGBA.w = 0;
+		}
 	}
 }
 return FeatureID;

@@ -787,7 +787,9 @@ function (be_add_unreal_project projectDir)
 			# UnrealEditor-Win64-DebugGame.exe loads the DebugGame binaries (this config is mapped to CMake Debug config).
 			# Other CMake configs (if any) are not supported, so we add a dummy command that will try to run an unexisting command with an explicit name.
 			COMMAND "$<$<NOT:$<CONFIG:UnrealDebug,Release>>:TARGET_NOT_COMPATIBLE_WITH_THIS_CONFIG>"
-			COMMAND "${UnrealLaunchPath}" "${projectAbsDir}/${projectName}.uproject" "-ExecCmds=\"Automation RunTests Bentley${extraTests};Quit\"" -unattended -nopause -editor -stdout
+			# Add -nosound option to avoid weird errors in FAudioDevice::Teardown() at end of tests on some machines,
+			# which causes the target to fail even if all tests succeed.
+			COMMAND "${UnrealLaunchPath}" "${projectAbsDir}/${projectName}.uproject" "-ExecCmds=\"Automation RunTests Bentley${extraTests};Quit\"" -unattended -nopause -editor -stdout -nosound
 		)
 		set_target_properties (RunTests_${projectName} PROPERTIES FOLDER "UnrealProjects/Tests")
 		add_dependencies (RunTests_${projectName} ${projectName}_Editor)

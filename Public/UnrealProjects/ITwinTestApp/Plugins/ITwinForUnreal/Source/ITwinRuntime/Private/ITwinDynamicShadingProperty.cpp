@@ -119,7 +119,7 @@ FITwinDynamicShadingProperty<DataType, NumChannels>::FITwinDynamicShadingPropert
 template<typename DataType, int NumChannels>
 FITwinDynamicShadingProperty<DataType, NumChannels>::~FITwinDynamicShadingProperty()
 {
-	if (Texture && Texture->IsValidLowLevel())
+	if (IsValid(Texture) && Texture->IsValidLowLevel())
 	{
 		Texture->RemoveFromRoot();
 	}
@@ -153,7 +153,7 @@ void FITwinDynamicShadingProperty<DataType, NumChannels>::UpdateInMaterial(
 	TWeakObjectPtr<UMaterialInstanceDynamic> const& MatPtr,
 	FMaterialParameterInfo const& TextureAttachment) const
 {
-	if (MatPtr.IsValid())
+	if (MatPtr.IsValid() && ensure(IsValid(Texture)))
 		MatPtr->SetTextureParameterValueByInfo(TextureAttachment, Texture);
 }
 
@@ -162,6 +162,8 @@ void FITwinDynamicShadingProperty<DataType, NumChannels>::UpdateInMaterials(
 	std::vector<TWeakObjectPtr<UMaterialInstanceDynamic>> const& Materials,
 	FMaterialParameterInfo const& TextureAttachment) const
 {
+	if (!ensure(IsValid(Texture)))
+		return;
 	for (auto&& MatPtr : Materials)
 	{
 		if (MatPtr.IsValid())
@@ -273,10 +275,10 @@ void FITwinDynamicShadingProperty<DataType, NumChannels>::InitializeTexture(
 template<typename DataType, int NumChannels>
 bool FITwinDynamicShadingProperty<DataType, NumChannels>::UpdateTexture(/*bool bFreeData*/)
 {
-	if (Texture == nullptr)
+	if (!IsValid(Texture))
 	{
 		UE_LOG(LogITwin, Warning,
-			TEXT("Dynamic Texture tried to Update Texture but it hasn't been initialized!"));
+			TEXT("Dynamic Texture's update attempt while Texture isn't init'd or already GC'd!"));
 		return true;
 	}
 	if (!bNeedUpdate)
@@ -444,7 +446,7 @@ template<typename DataType, int NumChannels>
 bool FITwinDynamicShadingProperty<DataType, NumChannels>::WriteTextureToFile(FString const& FileName)
 {
 #if ITWIN_SAVE_DYNTEX_TO_FILE()
-	if (!Texture)
+	if (!IsValid(Texture))
 		return false;
 	if (GetTextureUpdateState() != ETextureState::UpdateDone)
 	{
