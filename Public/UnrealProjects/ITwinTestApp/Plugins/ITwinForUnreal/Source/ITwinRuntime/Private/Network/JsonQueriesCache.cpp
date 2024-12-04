@@ -289,13 +289,23 @@ FJsonQueriesCache::FJsonQueriesCache(UObject const& Owner) : Impl(MakePimpl<FImp
 	check(!Owner.HasAnyFlags(RF_ClassDefaultObject));
 }
 
-int FJsonQueriesCache::CurrentTimestamp() const
+bool FJsonQueriesCache::IsValid() const
 {
-	return (Impl->PathBase.IsEmpty() ? (-1) : Impl->RecorderTimestamp);
+	return !Impl->PathBase.IsEmpty();
 }
 
-void FJsonQueriesCache::Reset()
+int FJsonQueriesCache::CurrentTimestamp() const
 {
+	return (IsValid() ? Impl->RecorderTimestamp : (-1));
+}
+
+void FJsonQueriesCache::Uninitialize()
+{
+	if (IsValid() && Impl->Manager)
+	{
+		Impl->Manager->MarkAsUsed(*this, Impl->Entry, FJsonQueriesCacheManager::EUseFlag::Unloading);
+	}
+	Impl->Manager.reset();
 	Impl->PathBase.Empty();
 	QueriesCache::FSessionMap Tmp;
 	Impl->SessionMap.swap(Tmp);
@@ -305,7 +315,7 @@ void FJsonQueriesCache::Reset()
 
 void FJsonQueriesCache::ClearFromDisk()
 {
-	if (!Impl->PathBase.IsEmpty())
+	if (IsValid())
 		IFileManager::Get().DeleteDirectory(*Impl->PathBase, /*requireExists*/false, /*recurse*/true);
 }
 
@@ -347,7 +357,7 @@ bool FJsonQueriesCache::Initialize(FString CacheFolder, EITwinEnvironment const 
 	{
 		UE_LOG(ITwinQuery, Error, TEXT("Error loading cache: %s\nClearing cache folder %s to avoid mixing corrupt and new data"), *ParseError, *CacheFolder);
 		IFileManager::Get().DeleteDirectory(*CacheFolder, /*requireExists*/false, /*recurse*/true);
-		Reset();
+		Uninitialize();
 		// was reset and folder deleted, but set them up again to use for recording what we will (re-)download
 		Impl->PathBase = CacheFolder;
 		ensure(IFileManager::Get().MakeDirectory(*CacheFolder, /*recurse*/true));
@@ -355,19 +365,10 @@ bool FJsonQueriesCache::Initialize(FString CacheFolder, EITwinEnvironment const 
 	}
 }
 
-void FJsonQueriesCache::Uninitialize()
-{
-	if (Impl->Manager)
-	{
-		Impl->Manager->MarkAsUsed(*this, Impl->Entry, FJsonQueriesCacheManager::EUseFlag::Unloading);
-		Impl->Manager.reset();
-	}
-}
-
 FJsonQueriesCache::~FJsonQueriesCache()
 {
-	if (!ensure(!Impl->Manager))
-		Uninitialize(); // kind of a safety, but in UE dtor are not even always called...
+	if (Impl->Manager) // this case happens when in Editor only (not PIE) then closing Unreal
+		Uninitialize();
 }
 
 bool FJsonQueriesCache::LoadSessionSimulation(FString const& SimulateFromFolder)
@@ -410,6 +411,8 @@ void FJsonQueriesCache::Write(TSharedRef<FJsonObject>& JsonObj, int const Respon
 	FString const& ContentAsString, bool const bConnectedSuccessfully, ITwinHttp::FMutex& Mutex,
 	int const QueryTimestamp)
 {
+	if (!ensure(IsValid()))
+		return;
 	if (Impl->bIsRecordingForSimulation)
 	{
 		ensure(QueryTimestamp != -1);
@@ -519,7 +522,7 @@ void FJsonQueriesCache::ToJson(FHttpRequestPtr const& Req, TSharedRef<FJsonObjec
 
 void FJsonQueriesCache::RecordQuery(FHttpRequestPtr const& Request, ITwinHttp::FMutex& Mutex)
 {
-	if (!Impl->PathBase.IsEmpty())
+	if (IsValid())
 	{
 		ITwinHttp::FLock Lock(Mutex);
 		auto JsonObj = MakeShared<FJsonObject>();

@@ -38,6 +38,35 @@ public:
 		Category = "iTwin")
 	int IModelMaximumCachedMegaBytes = 4096;
 
+	/// Whether to enable point-and-click selection on iModel meshes: this requires the creation of special
+	/// "physics" meshes that can adversely impact performance and memory footprint on large models. Set to
+	/// false if you know you won't need collision nor selection in the 3D viewport.
+	UPROPERTY(
+		Config,
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "iTwin")
+	bool IModelCreatePhysicsMeshes = true;
+
+	/**
+	 * From AITwinCesium3DTileset::MaximumScreenSpaceError:
+	 *
+	 * The maximum number of pixels of error when rendering this tileset.
+	 *
+	 * This is used to select an appropriate level-of-detail: A low value
+	 * will cause many tiles with a high level of detail to be loaded,
+	 * causing a finer visual representation of the tiles, but with a
+	 * higher performance cost for loading and rendering. A higher value will
+	 * cause a coarser visual representation, with lower performance
+	 * requirements.
+	 */
+	UPROPERTY(
+		Config,
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "iTwin")
+	double TilesetMaximumScreenSpaceError = 16.0;
+
 	/// Split applying animation on Elements among subsequent ticks to avoid spending more than this amount
 	/// of time each time. Visual update only occurs once the whole iModel (?) has been updated, though.
 	UPROPERTY(

@@ -15,6 +15,7 @@
 
 #include <functional>
 #include <mutex>
+#include <set>
 #include <vector>
 
 constexpr uint16_t SimultaneousRequestsAllowed = 6;

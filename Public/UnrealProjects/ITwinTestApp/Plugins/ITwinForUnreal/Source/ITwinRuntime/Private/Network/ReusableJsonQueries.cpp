@@ -514,7 +514,7 @@ void FReusableJsonQueries<SimultaneousRequestsT>::UninitializeCache()
 template<uint16_t SimultaneousRequestsT>
 void FReusableJsonQueries<SimultaneousRequestsT>::ClearCacheFromMemory()
 {
-	Impl->Cache.Reset();
+	Impl->Cache.Uninitialize();
 	Impl->ReplayMode = ReusableJsonQueries::EReplayMode::None;
 }
 

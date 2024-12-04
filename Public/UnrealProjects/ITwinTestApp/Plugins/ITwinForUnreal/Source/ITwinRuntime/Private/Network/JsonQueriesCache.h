@@ -71,14 +71,15 @@ public:
 	explicit FJsonQueriesCache(UObject const& Owner);
 	~FJsonQueriesCache();
 
-	void Uninitialize();
-
+	bool IsValid() const;
 	/// Actually initializes the cache for your "session"
 	[[nodiscard]] bool Initialize(FString CacheFolder, EITwinEnvironment const Environment,
 		FString const& DisplayName, bool const bIsRecordingForSimulation = false);
 	/// Reset to uninitialized state (as if just default-constructed), clearing memory in the process
-	/// (but not the disk folder! see ClearFromDisk)
-	void Reset();
+	/// (but not the disk folder! see ClearFromDisk). Must be called by an owner UObject when it is about to
+	/// become garbage-collectable, for example in AActor::EndPlay, because when the owner's destructor will
+	/// be called, it may be too late already to use the static(!) data in the cache implementation details.
+	void Uninitialize();
 	[[nodiscard]] bool LoadSessionSimulation(FString const& SimulateFromFolder);
 	/// Deletes the filesystem folder containing the cache data
 	void ClearFromDisk();

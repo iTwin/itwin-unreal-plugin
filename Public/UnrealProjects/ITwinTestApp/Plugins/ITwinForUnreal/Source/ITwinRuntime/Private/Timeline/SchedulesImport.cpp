@@ -1469,7 +1469,15 @@ void FITwinSchedulesImport::FImpl::RequestTransfoAssignment(ReusableJsonQueries:
 				}
 				else if (TransformListIncomplete.second == false)
 					CompletedProperty(Sched, TransformAssignment.Bindings, Lock, TEXT("Path3dAssign"));
-				//else: incomplete but already queried, just wait for completion
+				else
+				{
+					// incomplete but already queried: wait for completion, but also transfer responsibility
+					// of checking and notifying the completed bindings (same reason as above)
+					std::copy(TransformAssignment.Bindings.cbegin(), TransformAssignment.Bindings.cend(),
+						std::back_inserter(
+							Sched.Animation3DPaths[TransfoAsPath.Animation3DPathInVec].Bindings));
+					TransformAssignment.Bindings.clear();
+				}
 			}
 		});
 }

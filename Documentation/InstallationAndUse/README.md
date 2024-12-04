@@ -66,3 +66,22 @@ It is also possible to load "external" tilesets (ie. non-iModels, like tileset c
   This actor can be found in the content browser inside folder `Plugins/iTwin for Unreal C++ Classes/ITwinCesiumRuntime/Public`.<br>
 - In the actor's Details panel, in the `Cesium` section, fill the `Source`, `Url`, `Ion Asset ID`, `Ion Access token` fields depending on the source of your tileset.
 
+## Configuration file
+Some advanced settings can be configured in a ".ini" configuration file located at `C:\Users\<YOUR_USERNAME>\AppData\Local\Unreal Engine\Engine\Config\UserEngine.ini`.
+Be careful to use the exact subfolders as shown above, as Unreal Engine uses other configuration files at similar locations, but only editing this one will allow the plugin to access the settings.
+
+The setting entries must be added to a `[/Script/ITwinRuntime.ITwinIModelSettings]` section as shown in this example (here with all default values):
+
+```
+[/Script/ITwinRuntime.ITwinIModelSettings]
+CesiumMaximumCachedMegaBytes=1024
+IModelMaximumCachedMegaBytes=4096
+IModelCreatePhysicsMeshes=true
+TilesetMaximumScreenSpaceError=16.0
+Synchro4DMaxTimelineUpdateMilliseconds=50
+Synchro4DQueriesDefaultPagination=10000
+Synchro4DQueriesBindingsPagination=30000
+```
+Use a semi-colon `;` at the beginning of a line to comment it out.
+
+See the plugin's `ITwinForUnreal\Source\ITwinRuntime\Public\ITwinIModelSettings.h` file for a detailed documentation of all available settings.

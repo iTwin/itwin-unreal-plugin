@@ -500,7 +500,7 @@ public:
 		{
 			if (EState::NotStarted == State || EState::Finished == State || EState::StoppedOnError == State)
 			{
-				Cache.Reset(); // reinit, we may have a new changesetId for example
+				Cache.Uninitialize(); // reinit, we may have a new changesetId for example
 				UE_LOG(LogITwin, Display, TEXT("Elements metadata queries (re)starting..."));
 				DoRestart();
 			}
@@ -516,7 +516,7 @@ public:
 			RequestInfo.emplace(Owner.WebServices->InfosToQueryIModel(Owner.ITwinId, Owner.IModelId, 
 				Owner.ResolvedChangesetId, ECSQLQueryString, QueryRowStart, QueryRowCount));
 			QueryRowStart += QueryRowCount;
-			auto const Hit = Cache.LookUp(*RequestInfo, Mutex);
+			auto const Hit = Cache.IsValid() ? Cache.LookUp(*RequestInfo, Mutex) : std::nullopt;
 			if (Hit)
 			{
 				CurrentRequestID.Empty();
@@ -584,7 +584,8 @@ public:
 			}
 			else
 			{
-				Cache.Write(*RequestInfo, std::get<0>(QueryResult), true, Mutex);
+				if (Cache.IsValid())
+					Cache.Write(*RequestInfo, std::get<0>(QueryResult), true, Mutex);
 				auto Reader = TJsonReaderFactory<TCHAR>::Create(std::get<0>(QueryResult));
 				if (!FJsonSerializer::Deserialize(Reader, JsonObj))
 					JsonObj.Reset();
@@ -612,6 +613,9 @@ public:
 				UE_LOG(LogITwin, Display, TEXT("Total %s retrieved from %s: %d."), *BatchMsg,
 					/*likely all retrieved from same source...*/bFromCache ? TEXT("cache") : TEXT("remote"),
 					TotalRowsParsed);
+				// This call will release hold of the cache folder, which will "often" allow reuse by cloned
+				// actor when entering PIE (unless it was not yet finished downloading, of course)
+				Cache.Uninitialize();
 				State = EState::Finished;
 			}
 			return true;
@@ -680,17 +684,19 @@ void AITwinIModel::FImpl::MakeTileset(std::optional<FITwinExportInfo> const& Exp
 	Tileset->SetActorLabel(Owner.GetActorLabel() + TEXT(" tileset"));
 #endif
 	Tileset->AttachToActor(&Owner, FAttachmentTransformRules::KeepRelativeTransform);
+
+	auto const Settings = GetDefault<UITwinIModelSettings>();
 	// TODO_GCO: Necessary for picking, unless there is another method that does
 	// not require the Physics data? Note that pawn collisions need to be disabled to
 	// still allow navigation through meshes (see SetActorEnableCollision).
-	//Tileset->SetCreatePhysicsMeshes(false);
+	Tileset->SetCreatePhysicsMeshes(Settings->IModelCreatePhysicsMeshes);
+	Tileset->SetMaximumScreenSpaceError(Settings->TilesetMaximumScreenSpaceError);
 	// connect mesh creation callback
 	Tileset->SetMeshBuildCallbacks(SceneMappingBuilder);
 	Tileset->SetGltfTuner(GltfTuner);
 	Tileset->SetTilesetSource(EITwinTilesetSource::FromUrl);
 	Tileset->SetUrl(CompleteInfo.MeshUrl);
 
-	auto const Settings = GetDefault<UITwinIModelSettings>();
 	Tileset->MaximumCachedBytes = std::max(0ULL, Settings->CesiumMaximumCachedMegaBytes * 1024 * 1024ULL);
 	// Avoid unloading/reloading tiles when merely rotating the camera
 	//Tileset->EnableFrustumCulling = false; // implied by SetUseLodTransitions(true)
