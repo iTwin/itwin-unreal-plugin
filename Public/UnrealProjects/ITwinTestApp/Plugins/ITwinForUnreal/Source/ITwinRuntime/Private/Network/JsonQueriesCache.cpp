@@ -2,13 +2,13 @@
 |
 |     $Source: JsonQueriesCache.cpp $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
 #include "JsonQueriesCache.h"
 #include "JsonQueriesCacheInit.h"
-#include <Compil/StdHash.h>
+#include <Hashing/UnrealString.h>
 #include <ITwinIModelSettings.h>
 #include <ITwinServerConnection.h>
 #include <ITwinServerEnvironment.h>
@@ -36,12 +36,17 @@ namespace QueriesCache
 	FString GetCacheFolder(ESubtype const Type, EITwinEnvironment const Environment, FString const& ITwinId,
 		FString const& IModelId, FString const& ChangesetId, FString const& ExtraStr/* = {}*/)
 	{
+		// Note that an empty changeset is valid: it's the "baseline", although rare, it happens, eg. when
+		// creating an iModel with https://developer.bentley.com/apis/imodels-v2/operations/create-imodel/
+		// then https://developer.bentley.com/apis/imodels-v2/operations/complete-imodel-baseline-file-upload/
+		ensureMsgf(ChangesetId.ToLower() != TEXT("latest"), TEXT("Need to pass the resolved changeset!"));
 		FString SubtypeFolder;
 		switch (Type)
 		{
-		case ESubtype::Schedules:			SubtypeFolder = TEXT("Schedules"); break;
-		case ESubtype::ElementsHierarchies: SubtypeFolder = TEXT("ElemTrees"); break;
-		case ESubtype::ElementsSourceIDs:	SubtypeFolder = TEXT("ElemSrcID"); break;
+		case ESubtype::Schedules:				SubtypeFolder = TEXT("Schedules"); break;
+		case ESubtype::ElementsHierarchies:		SubtypeFolder = TEXT("ElemTrees"); break;
+		case ESubtype::ElementsSourceIDs:		SubtypeFolder = TEXT("ElemSrcID"); break;
+		case ESubtype::MaterialMLPrediction:	SubtypeFolder = TEXT("MaterialMLPrediction"); break;
 		default: ensure(false); return {};
 		}
 		FString const CacheFolder = FPaths::Combine(FPlatformProcess::UserSettingsDir(),
@@ -108,6 +113,7 @@ public:
 			QueriesCache::GetCacheFolder(QueriesCache::ESubtype::ElementsHierarchies, Env, {}, {}, {}),
 			QueriesCache::GetCacheFolder(QueriesCache::ESubtype::ElementsSourceIDs, Env, {}, {}, {}),
 			QueriesCache::GetCacheFolder(QueriesCache::ESubtype::Schedules, Env, {}, {}, {}),
+			//QueriesCache::GetCacheFolder(QueriesCache::ESubtype::MaterialMLPrediction, Env, {}, {}, {}),
 		};
 		for (FString const& Dir : SubcacheFolders)
 		{

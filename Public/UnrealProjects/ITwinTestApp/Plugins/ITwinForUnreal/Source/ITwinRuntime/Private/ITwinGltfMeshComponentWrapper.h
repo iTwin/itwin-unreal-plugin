@@ -2,14 +2,13 @@
 |
 |     $Source: ITwinGltfMeshComponentWrapper.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
 #pragma once
 
 #include <ITwinCesiumMeshBuildCallbacks.h>
-#include "Components.h"
 #include "MaterialTypes.h"
 
 #include <ITwinElementID.h>
@@ -32,7 +31,6 @@ struct FITwinMeshExtractionOptions
 {
     /// Whether the extracted component should use a distinct material instance
     bool bCreateNewMaterialInstance = false;
-    bool bSetupMatForTileTexturesNow = false;
     /// When a new material instance is to be created, we may supply the base material
     /// to use for this creation. If none is provided, we will use the base material of
     /// the material instance used by the original mesh.
@@ -51,9 +49,11 @@ struct FITwinMeshExtractionOptions
 class FITwinGltfMeshComponentWrapper
 {
 public:
-    static uint32 BakeFeatureIDsInVertexUVs(std::optional<uint32> featuresAccessorIndex,
+    static std::optional<uint32> BakeFeatureIDsInVertexUVs(std::optional<uint32> featuresAccessorIndex,
         ICesiumMeshBuildCallbacks::FITwinCesiumMeshData const& CesiumData,
-        FStaticMeshLODResources& LODResources);
+        bool duplicateVertices,
+        TArray<FStaticMeshBuildVertex>& vertices,
+        TArray<uint32> const& indices);
 
 public:
     FITwinGltfMeshComponentWrapper(
@@ -79,10 +79,10 @@ public:
 
     bool CanExtractElement(ITwinElementID const ElementID);
 
-    /// Bake FeatureID in a vertex UV channel
+    /// Get the known uvIndexForFeatures_ or try to determine it by baking FeatureIDs in a vertex UV channel
     /// \return the UV channel index used to fill the information, or nullopt if meta-
-    /// data was not available or does not contain features.
-    std::optional<uint32> BakeFeatureIDsInVertexUVs();
+    ///     data was not available or does not contain features.
+    std::optional<uint32> GetOrBakeFeatureIDsInVertexUVs();
 
     /// Returns whether the mesh component holds the feature IDs baked in its per-vertex
     /// UV coordinates.
@@ -108,6 +108,7 @@ public:
         return gltfMeshComponent_.IsValid() ? gltfMeshComponent_.Get() : nullptr;
     }
 
+    std::optional<uint64_t> const& GetITwinMaterialIDOpt() const { return iTwinMaterialID_; }
     bool HasITwinMaterialID(uint64_t MatID) const { return iTwinMaterialID_ && *iTwinMaterialID_ == MatID; }
 
     /// Apply Func to all material instances linked to this mesh (including extracted entities if any).

@@ -6,10 +6,10 @@
 	url = https://github.com/uriparser/uriparser.git
 [submodule "Public/Extern/cesium-unreal/extern/cesium-native/extern/draco"]
 	path = Public/Extern/cesium-unreal/extern/cesium-native/extern/draco
-	url = https://github.com/google/draco.git
+	url = https://github.com/GhisBntly/draco.git
 [submodule "Public/Extern/cesium-unreal/extern/cesium-native/extern/earcut"]
 	path = Public/Extern/cesium-unreal/extern/cesium-native/extern/earcut
-	url = https://github.com/mapbox/earcut.hpp.git
+	url = https://github.com/GhisBntly/earcut.git
 [submodule "Public/Extern/cesium-unreal/extern/cesium-native/extern/Catch2"]
 	path = Public/Extern/cesium-unreal/extern/cesium-native/extern/Catch2
 	url = https://github.com/catchorg/Catch2.git
@@ -30,7 +30,7 @@
 	url = https://github.com/Tencent/rapidjson.git
 [submodule "Public/Extern/cesium-unreal/extern/cesium-native/extern/stb"]
 	path = Public/Extern/cesium-unreal/extern/cesium-native/extern/stb
-	url = https://github.com/nothings/stb.git
+	url = https://github.com/GhisBntly/stb.git
 [submodule "Public/Extern/cesium-unreal/extern/cesium-native/extern/cpp-httplib"]
 	path = Public/Extern/cesium-unreal/extern/cesium-native/extern/cpp-httplib
 	url = https://github.com/yhirose/cpp-httplib.git
@@ -48,7 +48,7 @@
 	url = https://github.com/google/s2geometry.git
 [submodule "Public/Extern/cesium-unreal/extern/cesium-native/extern/KTX-Software"]
 	path = Public/Extern/cesium-unreal/extern/cesium-native/extern/KTX-Software
-	url = https://github.com/CesiumGS/KTX-Software.git
+	url = https://github.com/GhisBntly/KTX-Software.git
 [submodule "Public/Extern/cesium-unreal/extern/cesium-native/extern/libwebp"]
 	path = Public/Extern/cesium-unreal/extern/cesium-native/extern/libwebp
 	url = https://github.com/webmproject/libwebp
@@ -60,7 +60,7 @@
 	url = https://github.com/martinmoene/expected-lite.git
 [submodule "Public/Extern/cesium-unreal/extern/cesium-native/extern/libjpeg-turbo"]
 	path = Public/Extern/cesium-unreal/extern/cesium-native/extern/libjpeg-turbo
-	url = https://github.com/CesiumGS/libjpeg-turbo.git
+	url = https://github.com/GhisBntly/libjpeg-turbo.git
 [submodule "Public/Extern/cesium-unreal/extern/cesium-native/extern/zlib"]
 	path = Public/Extern/cesium-unreal/extern/cesium-native/extern/zlib
 	url = https://github.com/madler/zlib.git

@@ -2,7 +2,7 @@
 |
 |     $Source: WebServicesTest.cpp $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -853,7 +853,7 @@ public:
 	IMPLEMENT_OBS_CALLBACK(OnRealityDataRetrieved, FITwinRealityDataInfos);
 	IMPLEMENT_OBS_CALLBACK(OnRealityData3DInfoRetrieved, FITwinRealityData3DInfo);
 
-	IMPLEMENT_OBS_CALLBACK(OnElementPropertiesRetrieved, FElementProperties);
+	IMPLEMENT_OBS_CALLBACK_TWO_ARGS(OnElementPropertiesRetrieved, FElementProperties, FString);
 
 	std::function<bool(bool, bool, FProjectExtents const&, bool, FEcefLocation const&)> OnIModelPropertiesRetrievedFunc;
 
@@ -1364,7 +1364,6 @@ bool FITwinWebServicesRequestTest::RunTest(const FString& /*Parameters*/)
 		};
 		WebServices->AddSavedView(
 			TEXT(ITWINID_TESTS_ALEXW),
-			TEXT(IMODELID_PHOTO_REALISTIC_RENDERING),
 			{
 				FVector(-1.79, -0.69, 1.59),
 				FVector(0.0, 0.0, 0.0),
@@ -1374,7 +1373,8 @@ bool FITwinWebServicesRequestTest::RunTest(const FString& /*Parameters*/)
 				TEXT(""),
 				TEXT("view02"),
 				true
-			});
+			},
+			TEXT(IMODELID_PHOTO_REALISTIC_RENDERING));
 	}
 
 	SECTION("DeleteSavedView")
@@ -1464,7 +1464,7 @@ bool FITwinWebServicesRequestTest::RunTest(const FString& /*Parameters*/)
 	SECTION("GetElementProperties")
 	{
 		Observer->AddPendingRequest();
-		Observer->OnElementPropertiesRetrievedFunc = [this](bool bSuccess, FElementProperties const& InProps)
+		Observer->OnElementPropertiesRetrievedFunc = [this](bool bSuccess, FElementProperties const& InProps, FString const& InElementId)
 		{
 			UTEST_TRUE("GetElementProperties request result", bSuccess);
 			TArray<FElementProperty> const& bimProps(InProps.Properties);
@@ -1500,6 +1500,7 @@ bool FITwinWebServicesRequestTest::RunTest(const FString& /*Parameters*/)
 			UTEST_EQUAL("Attr Name", bimProps[3].Attributes[4].Name, TEXT("Format"));
 			UTEST_EQUAL("Attr Value", bimProps[3].Attributes[4].Value, TEXT(""));
 
+			UTEST_EQUAL("Element Id", InElementId, TEXT("0x20000001baf"));
 			return true;
 		};
 		WebServices->GetElementProperties(ITWINID_CAYMUS_EAP, IMODELID_BUILDING, CHANGESETID_BUILDING, "0x20000001baf");

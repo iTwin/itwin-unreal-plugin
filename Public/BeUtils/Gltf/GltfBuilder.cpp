@@ -2,7 +2,7 @@
 |
 |     $Source: GltfBuilder.cpp $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -10,7 +10,13 @@
 #include <CesiumGltf/Model.h>
 #include <CesiumGltf/ExtensionModelExtStructuralMetadata.h>
 #include <CesiumGltf/ExtensionITwinMaterialID.h>
+#include <CesiumGltfContent/GltfUtilities.h>
 #include <SDK/Core/Tools/Assert.h>
+
+#include <glm/mat4x4.hpp>
+#include <glm/ext/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
+#include <glm/gtc/matrix_inverse.hpp>
 
 namespace BeUtils
 {
@@ -114,6 +120,131 @@ int32_t GltfBuilder::AddMaterial()
 {
 	impl_->model_.materials.emplace_back();
 	return int32_t(impl_->model_.materials.size()-1);
+}
+
+namespace
+{
+	// Very naive and fast normal computation
+	void ComputeFlatNormals(
+		const std::vector<std::array<float, 3>>& positions,
+		std::vector<std::array<float, 3>>& outNormals,
+		const std::vector<std::array<uint32_t, 1>>& indices)
+	{
+		size_t const nbVerts = positions.size();
+		size_t const nbIndices = indices.size();
+		std::vector<bool> isNormalSet(nbVerts, false);
+		std::vector<std::array<float, 3>> normals(nbVerts, { 0., 0., 1. });
+
+		auto const setIfNeeded = [&](uint32_t const ind, glm::vec3 const& n)
+		{
+			if (!isNormalSet[ind]) {
+				auto& normal(normals[ind]);
+				normal = { n.x, n.y, n.z };
+				isNormalSet[ind] = true;
+			}
+		};
+
+		for (size_t curIndex(0); curIndex + 2 < nbIndices; curIndex += 3)
+		{
+			uint32_t const ind0 = indices[curIndex + 0][0];
+			uint32_t const ind1 = indices[curIndex + 1][0];
+			uint32_t const ind2 = indices[curIndex + 2][0];
+			auto const& pos0 = positions[ind0];
+			auto const& pos1 = positions[ind1];
+			auto const& pos2 = positions[ind2];
+			glm::vec3 const p0(pos0[0], pos0[1], pos0[2]);
+			glm::vec3 const p1(pos1[0], pos1[1], pos1[2]);
+			glm::vec3 const p2(pos2[0], pos2[1], pos2[2]);
+			glm::vec3 normal = glm::cross(p1 - p0, p2 - p0);
+			if (fabs(normal.x) + fabs(normal.y) + fabs(normal.z) > 1e-7f)
+			{
+				normal = glm::normalize(normal);
+				setIfNeeded(ind0, normal);
+				setIfNeeded(ind1, normal);
+				setIfNeeded(ind2, normal);
+			}
+		}
+		outNormals.swap(normals);
+	}
+}
+
+bool GltfBuilder::ComputeFastUVs(MeshPrimitive& primitive,
+	const std::vector<std::array<float, 3>>& positions,
+	const std::vector<std::array<float, 3>>& srcNormals,
+	const std::vector<std::array<uint32_t, 1>>& indices,
+	const glm::dmat4& tileTransform,
+	const CesiumGltf::Node* gltfNode)
+{
+	if (positions.empty())
+	{
+		return false;
+	}
+	// If no normals are provided, use some flat normals:
+	std::vector<std::array<float, 3>> flatNormals;
+	if (srcNormals.empty())
+	{
+		ComputeFlatNormals(positions, flatNormals, indices);
+	}
+	auto const& normals = srcNormals.empty() ? flatNormals : srcNormals;
+	if (positions.size() != normals.size())
+	{
+		BE_ISSUE("expecting one position and one normal per vertex");
+		return false;
+	}
+
+	using namespace CesiumGltfContent;
+	glm::dmat4 rootTransform = tileTransform;
+	rootTransform = GltfUtilities::applyRtcCenter(impl_->model_, rootTransform);
+	rootTransform = GltfUtilities::applyGltfUpAxisTransform(impl_->model_, rootTransform);
+	glm::dmat4 fullTransform;
+	if (gltfNode)
+		fullTransform = rootTransform * CesiumGltf::getNodeTransform(*gltfNode, glm::dmat4x4(1.0));
+	else
+		fullTransform = rootTransform;
+	const glm::dmat3 normalTsf = glm::inverseTranspose(glm::dmat3(fullTransform));
+
+	const size_t nbVerts = positions.size();
+
+	std::vector<std::array<float, 2>> uvs;
+	uvs.resize(nbVerts);
+
+	// Very fast and basic UV computation
+	for (size_t i(0); i < nbVerts; ++i)
+	{
+		auto& uv = uvs[i];
+
+		auto const& pos_i = positions[i];
+		const glm::vec3 position = { pos_i[0], pos_i[1], pos_i[2] };
+		const glm::dvec3 p =
+			glm::dvec3(fullTransform * glm::dvec4(position, 1.0));
+
+		auto const& n_i = normals[i];
+		const glm::vec3 normal = { n_i[0], n_i[1], n_i[2] };
+		const glm::dvec3 n =
+			normalTsf * glm::dvec3(normal);
+
+		const auto nx = std::fabs(n.x);
+		const auto ny = std::fabs(n.y);
+		const auto nz = std::fabs(n.z);
+
+		if (nz > ny && nz > nx)
+		{
+			// projection along Z axis
+			uv = { (float)p.x, (float)p.y };
+		}
+		else if (ny > nx && ny > nz)
+		{
+			// projection along Y axis
+			uv = { (float)p.x, (float)p.z };
+		}
+		else
+		{
+			// projection along X axis
+			uv = { (float)p.y, (float)p.z };
+		}
+	}
+	primitive.SetUVs(uvs);
+	return true;
 }
 
 int32_t GltfBuilder::AddBufferView(const void* data,

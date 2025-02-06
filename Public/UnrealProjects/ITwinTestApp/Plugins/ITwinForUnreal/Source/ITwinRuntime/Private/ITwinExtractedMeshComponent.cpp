@@ -2,7 +2,7 @@
 |
 |     $Source: ITwinExtractedMeshComponent.cpp $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -26,7 +26,7 @@ UITwinExtractedMeshComponent::~UITwinExtractedMeshComponent()
 
 void UITwinExtractedMeshComponent::OnVisibilityChanged()
 {
-	if (bFullyHidden && GetVisibleFlag())
+	if (FullyHidden && (*FullyHidden) && GetVisibleFlag())
 	{
 		// Visibility is being set from outside, eg. by the Cesium visibility rules => ensure we do not show
 		// the extracted mesh if we are not allowed to...
@@ -39,24 +39,27 @@ void UITwinExtractedMeshComponent::OnVisibilityChanged()
 
 void UITwinExtractedMeshComponent::SetFullyHidden(bool bHidden)
 {
-	bFullyHidden = bHidden;
-	bool bNewVisibility = !bHidden;
-	if (!bFullyHidden)
+	if (!FullyHidden || (*FullyHidden) != bHidden)
 	{
-		// If the parent component (ie. the mesh this entity was extracted from) is hidden, we should not
-		// show the extracted mesh.
-		USceneComponent* pParent = GetAttachParent();
-		if (pParent && IsValid(pParent))
+		FullyHidden = bHidden;
+		bool bNewVisibility = !bHidden;
+		if (bNewVisibility)
 		{
-			bNewVisibility = pParent->IsVisible();
+			// If the parent component (ie. the mesh this entity was extracted from) is hidden, we should not
+			// show the extracted mesh.
+			USceneComponent* pParent = GetAttachParent();
+			if (ensure(IsValid(pParent)))
+			{
+				bNewVisibility = pParent->IsVisible();
+			}
 		}
+		SetVisibility(bNewVisibility, /*bPropagateToChildren*/true);
 	}
-	SetVisibility(bNewVisibility, /*bPropagateToChildren*/true);
 }
 
 bool UITwinExtractedMeshComponent::IsVisible() const
 {
-	if (bFullyHidden)
+	if (FullyHidden && (*FullyHidden))
 	{
 		return false;
 	}
@@ -65,7 +68,7 @@ bool UITwinExtractedMeshComponent::IsVisible() const
 
 bool UITwinExtractedMeshComponent::IsVisibleInEditor() const
 {
-	if (bFullyHidden)
+	if (FullyHidden && (*FullyHidden))
 	{
 		return false;
 	}

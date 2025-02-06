@@ -2,7 +2,7 @@
 |
 |     $Source: ITwinDecorationServiceSettings.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -12,6 +12,11 @@
 #include "CoreMinimal.h"
 #include "Engine/DeveloperSettings.h"
 #include "ITwinDecorationServiceSettings.generated.h"
+
+
+/// The iTwin scope needed to access iTwin Decorations.
+#define ITWIN_DECORATIONS_SCOPE "itwin-decorations"
+
 
 /**
  * Stores runtime settings for the iTwin Decoration Service.
@@ -27,7 +32,7 @@ public:
 		BlueprintReadOnly,
 		Category = "Connection",
 		meta = (ConfigRestartRequired = true))
-	bool UseLocalServer = false;
+	bool bUseLocalServer = false;
 
 	UPROPERTY(
 		Config,
@@ -58,15 +63,28 @@ public:
 		Config,
 		EditAnywhere,
 		BlueprintReadOnly,
-		Category = "Access",
+		Category = "Connection",
 		meta = (ConfigRestartRequired = true))
-	FString ExtraITwinScope;
+	FString CustomEnv = {};
 
+	/// In case your application requires an additional iTwin scope, you can set it here. If several scopes
+	/// are needed, use a white space as separator.
 	UPROPERTY(
 		Config,
 		EditAnywhere,
 		BlueprintReadOnly,
 		Category = "Access",
 		meta = (ConfigRestartRequired = true))
-	bool EarlyAccessProgram = false;
+	FString AdditionalITwinScope = {};
+
+	/// Enable the visualization of iTwin decorations (populations, custom materials...) attached to your
+	/// iModels inside your plugin.
+	/// This requires the `itwin-decorations` scope to be added to your iTwin App beforehand.
+	UPROPERTY(
+		Config,
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "Access",
+		meta = (ConfigRestartRequired = true))
+	bool bLoadDecorationsInPlugin = false;
 };

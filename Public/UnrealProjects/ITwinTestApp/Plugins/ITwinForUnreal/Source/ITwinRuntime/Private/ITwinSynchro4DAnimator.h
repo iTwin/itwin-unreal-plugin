@@ -2,7 +2,7 @@
 |
 |     $Source: ITwinSynchro4DAnimator.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -11,6 +11,7 @@
 #include <Templates/PimplPtr.h>
 
 class UITwinSynchro4DSchedules;
+class FITwinSceneTile;
 
 /// Class owned by an UITwinSynchro4DSchedules component which role is to enact the construction
 /// schedules' animations for the iModel. It manages an internal mapping from "game time" to script time,
@@ -27,12 +28,13 @@ public:
 	void OnChangedScheduleRenderSetting();
 	void OnMaskOutNonAnimatedElements();
 	void OnFadeOutNonAnimatedElements();
+	void ApplyAnimationOnTile(FITwinSceneTile& SceneTile);
 
 	void Play();
 	void Pause();
 	void Stop();
 
-	void TickAnimation(float DeltaTime, bool const bNewTilesReceived);
+	void TickAnimation(float DeltaTime, bool const bForceUpdateAll);
 
 	class FImpl;
 private:

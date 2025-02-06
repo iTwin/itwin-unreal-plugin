@@ -2,7 +2,7 @@
 |
 |     $Source: ITwinRuntime.cpp $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -25,7 +25,7 @@ void FITwinRuntimeModule::StartupModule()
 	// Redirect BE_LOGX macros to Unreal Editor logs.
 	using namespace SDK::Core;
 	Tools::ILog::SetNewFct([](std::string s, Tools::Level level) {
-		std::shared_ptr<Tools::ILog> p(static_cast<Tools::ILog*>(new FITwinUELogAdapter(s, level)));
+		Tools::ILog* p(static_cast<Tools::ILog*>(new FITwinUELogAdapter(s, level)));
 		return p;
 	});
 #endif

@@ -2,7 +2,7 @@
 |
 |     $Source: ITwinWebServicesObserver.cpp $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -89,7 +89,7 @@ void FITwinDefaultWebServicesObserver::OnSavedViewEdited(bool bSuccess, FSavedVi
 {
 	ensureMsgf(false, TEXT("%s does not handle SavedViews"), GetObserverName());
 }
-void FITwinDefaultWebServicesObserver::OnElementPropertiesRetrieved(bool bSuccess, FElementProperties const& ElementProps)
+void FITwinDefaultWebServicesObserver::OnElementPropertiesRetrieved(bool bSuccess, FElementProperties const& ElementProps, FString const& ElementId)
 {
 	ensureMsgf(false, TEXT("%s does not handle BIM Info"), GetObserverName());
 }
@@ -108,4 +108,12 @@ void FITwinDefaultWebServicesObserver::OnMaterialPropertiesRetrieved(bool bSucce
 void FITwinDefaultWebServicesObserver::OnTextureDataRetrieved(bool bSuccess, std::string const& , SDK::Core::ITwinTextureData const& )
 {
 	ensureMsgf(false, TEXT("%s does not handle querying texture data"), GetObserverName());
+}
+void FITwinDefaultWebServicesObserver::OnMatMLPredictionRetrieved(bool bSuccess, SDK::Core::ITwinMaterialPrediction const&)
+{
+	ensureMsgf(false, TEXT("%s does not handle material predictions"), GetObserverName());
+}
+void FITwinDefaultWebServicesObserver::OnMatMLPredictionProgress(float )
+{
+	ensureMsgf(false, TEXT("%s does not handle material predictions"), GetObserverName());
 }

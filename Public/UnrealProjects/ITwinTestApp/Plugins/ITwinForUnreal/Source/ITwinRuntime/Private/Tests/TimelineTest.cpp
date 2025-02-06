@@ -2,7 +2,7 @@
 |
 |     $Source: TimelineTest.cpp $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -13,7 +13,7 @@
 #include <Misc/AutomationTest.h>
 #include <Misc/LowLevelTestAdapter.h>
 
-#include <Boost/BoostHash.h>
+#include <Hashing/UnrealMath.h>
 #include <Timeline/Definition.h>
 
 namespace ITwin::Timeline {

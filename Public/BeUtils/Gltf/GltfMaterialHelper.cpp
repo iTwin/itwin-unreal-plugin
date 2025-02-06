@@ -2,7 +2,7 @@
 |
 |     $Source: GltfMaterialHelper.cpp $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -12,7 +12,9 @@
 
 #include <CesiumGltf/Material.h>
 
+#include <SDK/Core/ITwinAPI/ITwinMaterial.inl>
 #include <SDK/Core/Tools/Assert.h>
+#include <SDK/Core/Tools/Log.h>
 #include <SDK/Core/Visualization/MaterialPersistence.h>
 
 #include <fstream>
@@ -70,7 +72,11 @@ void GltfMaterialHelper::SetITwinMaterialProperties(uint64_t matID, SDK::Core::I
 		std::string const* pTextureId = TryGetMaterialAttribute<std::string>(mapData, "TextureId");
 		if (pTextureId)
 		{
-			textureDataMap_.try_emplace(*pTextureId, TextureData{});
+			// Those textures are identified with a @ITWIN_ prefix, to avoid confusing them with textures
+			// selected by user or loaded from the decoration service.
+			textureDataMap_.try_emplace(
+				TextureKey{ *pTextureId, SDK::Core::ETextureSource::ITwin },
+				TextureData{});
 		}
 	}
 }
@@ -104,13 +110,7 @@ bool GltfMaterialHelper::HasCustomDefinition(uint64_t matID, Lock const& lock) c
 	// If the material uses custom settings, activate advanced conversion so that the tuning
 	// can handle it.
 	auto const* itwinMat = materialInfo.second;
-	return (itwinMat
-		&& (
-			itwinMat->DefinesChannel(SDK::Core::EChannelType::Roughness)
-			|| itwinMat->DefinesChannel(SDK::Core::EChannelType::Metallic)
-			|| itwinMat->DefinesChannel(SDK::Core::EChannelType::Transparency)
-			|| itwinMat->DefinesChannel(SDK::Core::EChannelType::Alpha)
-			));
+	return itwinMat && SDK::Core::HasCustomSettings(*itwinMat);
 }
 
 bool GltfMaterialHelper::StoreInitialAlphaMode(uint64_t matID, std::string const& alphaMode, Lock const&)
@@ -166,37 +166,82 @@ double GltfMaterialHelper::GetChannelDefaultIntensity(SDK::Core::EChannelType ch
 	SDK::Core::ITwinMaterialProperties const& itwinProps)
 {
 	// Currently, the materials exported by the Mesh Export Service are not really PBR, but do initialize
-	// some of the gltf (PBR) material properties with non-zero constants.
+	// some of the glTF (PBR) material properties with non-zero constants.
 	// For now, unless iTwin material become themselves PBR, use those constants here to match
 	// the default settings used when cesium tiles are loaded (so that the percentage displayed in the UI
 	// matches the actual PBR value of the Cesium material).
 	//
 	// The corresponding code can be found in tileset-publisher, GltfModelMaker::AddMaterial.
 	//
-	// If you add the handling of another channel here, please update #TSetChannelParam to retrieve the
-	// correct value when saving to DB (see #matDefToStore).
+	// If you add the handling of another channel here, please update #CompleteDefinitionWithDefaultValues to
+	// retrieve the correct value when saving to DB.
+	switch (channel)
+	{
+	case SDK::Core::EChannelType::Metallic:
+	{
+		// Use same formula as in Mesh Export Service
+		// Since https://github.com/iTwin/imodel-native-internal/pull/698
+		// (see ConvertMaterialToMetallicRoughness in <imodel-native-internal>/iModelCore/Visualization/TilesetPublisher/tiler/CesiumTileWriter.cpp)
+		double const* pSpecularValue = TryGetMaterialProperty<double>(itwinProps, "specular");
+		if (pSpecularValue
+			&& *pSpecularValue > 0.25
+			&& GetChannelDefaultColorMap(SDK::Core::EChannelType::Color, itwinProps).IsEmpty())
+		{
+			return 1.;
+		}
+		else
+		{
+			return 0.;
+		}
+	}
+	case SDK::Core::EChannelType::Roughness:
+	{
+		// Idem: see ConvertMaterialToMetallicRoughness
+		// Specular exponent is named "finish" in IModelReadRpcInterface.
+		double specularExponent = 0.;
+		if (GetMaterialBoolProperty(itwinProps, "HasFinish"))
+		{
+			double const* pFinishValue = TryGetMaterialProperty<double>(itwinProps, "finish");
+			if (pFinishValue)
+			{
+				specularExponent = fabs(*pFinishValue);
+			}
+			else
+			{
+				// default value found in https://github.com/iTwin/itwinjs-core/blob/release/4.8.x/core/common/src/MaterialProps.ts#L191
+				specularExponent = 13.5;
+			}
+		}
+		return sqrt(2.0 / (specularExponent + 2.0));
+	}
 
-	if (channel == SDK::Core::EChannelType::Roughness)
+	case SDK::Core::EChannelType::Normal:
+	case SDK::Core::EChannelType::AmbientOcclusion:
 	{
 		return 1.;
 	}
 
-	if (channel == SDK::Core::EChannelType::Alpha
-		|| channel == SDK::Core::EChannelType::Transparency)
+	case SDK::Core::EChannelType::Alpha:
+	case SDK::Core::EChannelType::Transparency:
 	{
+		double itwinTransparency = 0.;
 		// for opacity/alpha, test the 'transmit' setting of the original material
 		// see https://www.itwinjs.org/reference/core-backend/elements/rendermaterialelement/rendermaterialelement.params/transmit/
 		double const* pTransmitValue = TryGetMaterialProperty<double>(itwinProps, "transmit");
 		if (pTransmitValue)
 		{
 			BE_ASSERT(*pTransmitValue >= 0. && *pTransmitValue <= 1.);
-			const double dTransp = std::clamp(*pTransmitValue, 0., 1.);
-			return channel == SDK::Core::EChannelType::Transparency
-				? dTransp
-				: (1. - dTransp);
+			itwinTransparency = std::clamp(*pTransmitValue, 0., 1.);
 		}
+		return channel == SDK::Core::EChannelType::Transparency
+			? itwinTransparency
+			: (1. - itwinTransparency);
+	}
+	default:
+		break;
 	}
 
+	// All other channels take zero as default
 	return 0.;
 }
 
@@ -216,6 +261,23 @@ namespace
 	inline bool ApproxEquals(SDK::Core::ITwinChannelMap const& map1, SDK::Core::ITwinChannelMap const& map2)
 	{
 		return map1.texture == map2.texture;
+	}
+	inline bool ApproxEquals(SDK::Core::EMaterialKind const& val1, SDK::Core::EMaterialKind const& val2)
+	{
+		return val1 == val2;
+	}
+	inline bool ApproxEquals(SDK::Core::ITwinUVTransform const& tsf1, SDK::Core::ITwinUVTransform const& tsf2)
+	{
+		if (std::fabs(tsf1.offset[0] - tsf2.offset[0]) > 1e-4) return false;
+		if (std::fabs(tsf1.offset[1] - tsf2.offset[1]) > 1e-4) return false;
+		if (std::fabs(tsf1.scale[0] - tsf2.scale[0]) > 1e-4) return false;
+		if (std::fabs(tsf1.scale[1] - tsf2.scale[1]) > 1e-4) return false;
+		if (std::fabs(tsf1.rotation - tsf2.rotation) > 1e-4) return false;
+		return true;
+	}
+	inline bool ApproxEquals(std::string const& val1, std::string const& val2)
+	{
+		return val1 == val2;
 	}
 
 	template <typename ParamType>
@@ -284,9 +346,15 @@ namespace
 			return this->gltfMatHelper_.GetChannelIntensityMap(matID, this->channel_, lock);
 		}
 
-		void SetNewValue(uint64_t /*matID*/, SDK::Core::ITwinMaterial& matDefinition,
-			GltfMaterialHelper::Lock const&) const
+		void SetNewValue(uint64_t matID, SDK::Core::ITwinMaterial& matDefinition,
+			GltfMaterialHelper::Lock const& lock) const
 		{
+			if (!matDefinition.DefinesChannel(this->channel_))
+			{
+				// Make sure we bake the default intensity for this channel before adding the texture
+				matDefinition.SetChannelIntensity(this->channel_,
+					this->gltfMatHelper_.GetChannelIntensity(matID, this->channel_, lock));
+			}
 			matDefinition.SetChannelIntensityMap(this->channel_, this->newValue_);
 		}
 	};
@@ -337,13 +405,21 @@ namespace
 		void SetNewValue(uint64_t matID, SDK::Core::ITwinMaterial& matDefinition,
 			GltfMaterialHelper::Lock const& lock) const
 		{
-			if (this->channel_ == SDK::Core::EChannelType::Color
-				&& !matDefinition.DefinesChannel(this->channel_))
+			if (!matDefinition.DefinesChannel(this->channel_))
 			{
 				// Make sure we store the current base color in the custom definition, in order not to alter
 				// the material too much!
-				matDefinition.SetChannelColor(this->channel_,
-					this->gltfMatHelper_.GetChannelColor(matID, this->channel_, lock));
+				if (this->channel_ == SDK::Core::EChannelType::Color)
+				{
+					matDefinition.SetChannelColor(this->channel_,
+						this->gltfMatHelper_.GetChannelColor(matID, this->channel_, lock));
+				}
+				else
+				{
+					// idem for Normal, except we bake an intensity and not a color
+					matDefinition.SetChannelIntensity(this->channel_,
+						this->gltfMatHelper_.GetChannelIntensity(matID, this->channel_, lock));
+				}
 			}
 			matDefinition.SetChannelColorMap(this->channel_, this->newValue_);
 		}
@@ -365,6 +441,79 @@ namespace
 		}
 		return false;
 	}
+
+	class UVTransformHelper : public ParamHelperBase<SDK::Core::ITwinUVTransform>
+	{
+		using Super = ParamHelperBase<SDK::Core::ITwinUVTransform>;
+
+	public:
+		using ParamType = SDK::Core::ITwinUVTransform;
+
+		UVTransformHelper(GltfMaterialHelper& GltfHelper,
+			SDK::Core::ITwinUVTransform const& newUVTransform)
+			: Super(GltfHelper, SDK::Core::EChannelType::ENUM_END, newUVTransform)
+		{}
+
+		ParamType GetCurrentValue(uint64_t matID, GltfMaterialHelper::Lock const& lock) const
+		{
+			return this->gltfMatHelper_.GetUVTransform(matID, lock);
+		}
+
+		void SetNewValue(uint64_t /*matID*/, SDK::Core::ITwinMaterial& matDefinition,
+			GltfMaterialHelper::Lock const&) const
+		{
+			matDefinition.uvTransform = this->newValue_;
+		}
+	};
+
+	class MaterialKindHelper : public ParamHelperBase<SDK::Core::EMaterialKind>
+	{
+		using Super = ParamHelperBase<SDK::Core::EMaterialKind>;
+
+	public:
+		using ParamType = SDK::Core::EMaterialKind;
+
+		MaterialKindHelper(GltfMaterialHelper& GltfHelper,
+			SDK::Core::EMaterialKind const& newKind)
+			: Super(GltfHelper, SDK::Core::EChannelType::ENUM_END, newKind)
+		{}
+
+		ParamType GetCurrentValue(uint64_t matID, GltfMaterialHelper::Lock const& lock) const
+		{
+			return this->gltfMatHelper_.GetMaterialKind(matID, lock);
+		}
+
+		void SetNewValue(uint64_t /*matID*/, SDK::Core::ITwinMaterial& matDefinition,
+			GltfMaterialHelper::Lock const&) const
+		{
+			matDefinition.kind = this->newValue_;
+		}
+	};
+
+	class MaterialNameHelper : public ParamHelperBase<std::string>
+	{
+		using Super = ParamHelperBase<std::string>;
+
+	public:
+		using ParamType = std::string;
+
+		MaterialNameHelper(GltfMaterialHelper& GltfHelper,
+			std::string const& newName)
+			: Super(GltfHelper, SDK::Core::EChannelType::ENUM_END, newName)
+		{}
+
+		ParamType GetCurrentValue(uint64_t matID, GltfMaterialHelper::Lock const& lock) const
+		{
+			return this->gltfMatHelper_.GetMaterialName(matID, lock);
+		}
+
+		void SetNewValue(uint64_t /*matID*/, SDK::Core::ITwinMaterial& matDefinition,
+			GltfMaterialHelper::Lock const&) const
+		{
+			matDefinition.displayName = this->newValue_;
+		}
+	};
+
 }
 
 double GltfMaterialHelper::GetChannelIntensity(uint64_t matID, SDK::Core::EChannelType channel, Lock const&) const
@@ -390,6 +539,23 @@ double GltfMaterialHelper::GetChannelIntensity(uint64_t matID, SDK::Core::EChann
 	return GetChannelIntensity(matID, channel, lock);
 }
 
+void GltfMaterialHelper::CompleteDefinitionWithDefaultValues(SDK::Core::ITwinMaterial& matDefinition,
+	uint64_t matID, Lock const& lock) const
+{
+	for (auto eChan : {
+		SDK::Core::EChannelType::Metallic,
+		SDK::Core::EChannelType::Roughness,
+		SDK::Core::EChannelType::Opacity })
+	{
+		matDefinition.SetChannelIntensity(eChan, GetChannelIntensity(matID, eChan, lock));
+	}
+	for (auto eChan : { SDK::Core::EChannelType::Color })
+	{
+		matDefinition.SetChannelColor(eChan, GetChannelColor(matID, eChan, lock));
+		matDefinition.SetChannelColorMap(eChan, GetChannelColorMap(matID, eChan, lock));
+	}
+}
+
 template <typename ParamHelper>
 void GltfMaterialHelper::TSetChannelParam(ParamHelper const& helper, uint64_t matID, bool& bValueModified)
 {
@@ -413,15 +579,7 @@ void GltfMaterialHelper::TSetChannelParam(ParamHelper const& helper, uint64_t ma
 			// Note that we now pass the *full* definition of the material, because there is no guarantee
 			// that default values are the same in our plugin and in the decoration service.
 			SDK::Core::ITwinMaterial matDefToStore(matDefinition);
-			for (auto eChan : { SDK::Core::EChannelType::Roughness, SDK::Core::EChannelType::Transparency })
-			{
-				matDefToStore.SetChannelIntensity(eChan, GetChannelIntensity(matID, eChan, lock));
-			}
-			for (auto eChan : { SDK::Core::EChannelType::Color })
-			{
-				matDefToStore.SetChannelColor(eChan, GetChannelColor(matID, eChan, lock));
-				matDefToStore.SetChannelColorMap(eChan, GetChannelColorMap(matID, eChan, lock));
-			}
+			CompleteDefinitionWithDefaultValues(matDefToStore, matID, lock);
 			persistenceMngr_->SetMaterialSettings(iModelID_, matID, matDefToStore);
 		}
 	}
@@ -440,8 +598,8 @@ void GltfMaterialHelper::SetChannelIntensity(uint64_t matID, SDK::Core::EChannel
 GltfMaterialHelper::ITwinColor GltfMaterialHelper::GetChannelDefaultColor(SDK::Core::EChannelType channel,
 	SDK::Core::ITwinMaterialProperties const& itwinProps)
 {
-	// If you add the handling of another channel here, please update #TSetChannelParam to retrieve the
-	// correct color when saving to DB (see #matDefToStore).
+	// If you add the handling of another channel here, please update #CompleteDefinitionWithDefaultValues to
+	// retrieve the correct color when saving to DB.
 
 	if (channel == SDK::Core::EChannelType::Color)
 	{
@@ -513,8 +671,9 @@ void GltfMaterialHelper::SetChannelColor(uint64_t matID, SDK::Core::EChannelType
 SDK::Core::ITwinChannelMap GltfMaterialHelper::GetChannelDefaultIntensityMap(SDK::Core::EChannelType /*channel*/,
 	SDK::Core::ITwinMaterialProperties const& /*itwinProps*/)
 {
-	// If you add the handling of another channel here, please update #TSetChannelParam to retrieve the
-	// correct intensity map when saving to DB (see #matDefToStore).
+	// If you add the handling of another channel here, please update #CompleteDefinitionWithDefaultValues to
+	// retrieve the correct intensity map when saving to DB.
+	// Also update #MaterialUsingTextures for the detection of the first texture map.
 
 	// I only found bump maps in Dgn material properties (and we do not expose them...)
 	return {};
@@ -554,15 +713,19 @@ void GltfMaterialHelper::SetChannelIntensityMap(uint64_t matID, SDK::Core::EChan
 SDK::Core::ITwinChannelMap GltfMaterialHelper::GetChannelDefaultColorMap(SDK::Core::EChannelType channel,
 	SDK::Core::ITwinMaterialProperties const& itwinProps)
 {
-	// If you add the handling of another channel here, please update #TSetChannelParam to retrieve the
-	// correct color map when saving to DB (see #matDefToStore).
+	// If you add the handling of another channel here, please update #CompleteDefinitionWithDefaultValues to
+	// retrieve the correct color map when saving to DB.
+	// Also update #MaterialUsingTextures for the detection of the first texture map.
 
 	if (channel == SDK::Core::EChannelType::Color)
 	{
 		std::string itwinColorTexId;
 		if (FindColorMapTexture(itwinProps, itwinColorTexId))
 		{
-			return ITwinChannelMap{ itwinColorTexId };
+			return ITwinChannelMap{
+				.texture = itwinColorTexId,
+				.eSource = SDK::Core::ETextureSource::ITwin
+			};
 		}
 	}
 	return {};
@@ -597,25 +760,83 @@ void GltfMaterialHelper::SetChannelColorMap(uint64_t matID, SDK::Core::EChannelT
 	TSetChannelParam(colorMapSetter, matID, bValueModified);
 }
 
-bool GltfMaterialHelper::HasChannelMap(uint64_t matID, SDK::Core::EChannelType channel, Lock const& lock) const
+SDK::Core::ITwinChannelMap GltfMaterialHelper::GetChannelMap(uint64_t matID, SDK::Core::EChannelType channel, Lock const& lock) const
 {
 	// Distinguish color from intensity textures.
 	if (channel == SDK::Core::EChannelType::Color
 		|| channel == SDK::Core::EChannelType::Normal)
 	{
-		return !GetChannelColorMap(matID, channel, lock).IsEmpty();
+		return GetChannelColorMap(matID, channel, lock);
 	}
 	else
 	{
 		// For other channels, the map defines an intensity
-		return !GetChannelIntensityMap(matID, channel, lock).IsEmpty();
+		return GetChannelIntensityMap(matID, channel, lock);
 	}
+}
+
+SDK::Core::ITwinChannelMap GltfMaterialHelper::GetChannelMap(uint64_t matID, SDK::Core::EChannelType channel) const
+{
+	Lock lock(mutex_);
+	return GetChannelMap(matID, channel, lock);
+}
+
+bool GltfMaterialHelper::HasChannelMap(uint64_t matID, SDK::Core::EChannelType channel, Lock const& lock) const
+{
+	return !GetChannelMap(matID, channel, lock).IsEmpty();
 }
 
 bool GltfMaterialHelper::HasChannelMap(uint64_t matID, SDK::Core::EChannelType channel) const
 {
 	Lock lock(mutex_);
 	return HasChannelMap(matID, channel, lock);
+}
+
+bool GltfMaterialHelper::MaterialUsingTextures(uint64_t matID, Lock const&) const
+{
+	auto itMat = materialMap_.find(matID);
+	if (itMat != materialMap_.end())
+	{
+		auto const& matDefinition = itMat->second.iTwinMaterialDefinition_;
+		if (matDefinition.HasTextureMap())
+			return true;
+		// Test default settings (those exported by the MES)
+		// For now, only Color is available, but this code should be synchronized with
+		// #GetChannelDefaultColorMap and #GetChannelDefaultIntensityMap...
+		if (!GetChannelDefaultColorMap(SDK::Core::EChannelType::Color, itMat->second.iTwinProps_).IsEmpty())
+			return true;
+	}
+	return false;
+}
+
+bool GltfMaterialHelper::GetMaterialFullDefinition(uint64_t matID, SDK::Core::ITwinMaterial& matDefinition) const
+{
+	Lock lock(mutex_);
+	auto itMat = materialMap_.find(matID);
+	if (itMat == materialMap_.end())
+	{
+		return false;
+	}
+	matDefinition = itMat->second.iTwinMaterialDefinition_;
+
+	// Use default values for all properties which were not customized:
+	CompleteDefinitionWithDefaultValues(matDefinition, matID, lock);
+
+	return true;;
+}
+
+void GltfMaterialHelper::SetMaterialFullDefinition(uint64_t matID, SDK::Core::ITwinMaterial const& matDefinition)
+{
+	Lock lock(mutex_);
+	auto itMat = materialMap_.find(matID);
+	if (itMat != materialMap_.end())
+	{
+		itMat->second.iTwinMaterialDefinition_ = matDefinition;
+		if (persistenceMngr_)
+		{
+			persistenceMngr_->SetMaterialSettings(iModelID_, matID, matDefinition);
+		}
+	}
 }
 
 void GltfMaterialHelper::SetTextureDirectory(std::filesystem::path const& textureDir, Lock const&)
@@ -664,11 +885,11 @@ void GltfMaterialHelper::FlushTextureDirectory()
 	}
 }
 
-bool GltfMaterialHelper::SetITwinTextureData(std::string const& strTextureID, SDK::Core::ITwinTextureData const& textureData)
+bool GltfMaterialHelper::SetITwinTextureData(std::string const& itwinTextureID, SDK::Core::ITwinTextureData const& textureData)
 {
 	if (textureData.bytes.empty() || textureData.width == 0 || textureData.height == 0)
 	{
-		BE_ISSUE("empty texture", strTextureID);
+		BE_ISSUE("empty texture", itwinTextureID);
 		return false;
 	}
 	if (!textureData.format)
@@ -684,14 +905,15 @@ bool GltfMaterialHelper::SetITwinTextureData(std::string const& strTextureID, SD
 		BE_ISSUE("texture directory error: ", dirError);
 		return false;
 	}
-	auto itTex = textureDataMap_.find(strTextureID);
+	TextureKey const textureKey = { itwinTextureID, SDK::Core::ETextureSource::ITwin };
+	auto itTex = textureDataMap_.find(textureKey);
 	if (itTex == textureDataMap_.end())
 	{
-		BE_ISSUE("unknown texture", strTextureID);
+		BE_ISSUE("unknown iTwin texture", itwinTextureID);
 		return false;
 	}
 	std::filesystem::path& outputPath(itTex->second.path_);
-	outputPath = textureDir_ / strTextureID;
+	outputPath = textureDir_ / itwinTextureID;
 	// Save the texture - build a path depending on its format.
 	switch (*textureData.format)
 	{
@@ -719,9 +941,10 @@ bool GltfMaterialHelper::SetITwinTextureData(std::string const& strTextureID, SD
 	return writeOK;
 }
 
-std::filesystem::path const& GltfMaterialHelper::GetITwinTextureLocalPath(std::string const& strTextureID, Lock const&) const
+std::filesystem::path const& GltfMaterialHelper::GetTextureLocalPath(std::string const& textureID,
+	SDK::Core::ETextureSource texSource, Lock const&) const
 {
-	auto itTex = textureDataMap_.find(strTextureID);
+	auto itTex = textureDataMap_.find(TextureKey{ textureID, texSource });
 	if (itTex != textureDataMap_.end()
 		&& itTex->second.IsAvailable())
 	{
@@ -731,10 +954,27 @@ std::filesystem::path const& GltfMaterialHelper::GetITwinTextureLocalPath(std::s
 	return emptyPath;
 }
 
-std::filesystem::path const& GltfMaterialHelper::GetITwinTextureLocalPath(std::string const& strTextureID) const
+std::filesystem::path const& GltfMaterialHelper::GetTextureLocalPath(std::string const& textureID,
+	SDK::Core::ETextureSource texSource) const
 {
 	Lock lock(mutex_);
-	return GetITwinTextureLocalPath(strTextureID, lock);
+	return GetTextureLocalPath(textureID, texSource, lock);
+}
+
+GltfMaterialHelper::TextureAccess GltfMaterialHelper::GetTextureAccess(std::string const& textureID,
+	SDK::Core::ETextureSource texSource, Lock const&) const
+{
+	auto itTex = textureDataMap_.find(TextureKey{ textureID, texSource });
+	if (itTex != textureDataMap_.end()
+		&& itTex->second.IsAvailable())
+	{
+		return {
+			itTex->second.path_,
+			itTex->second.cesiumImage_.has_value() ? &(itTex->second.cesiumImage_.value()) : nullptr
+		};
+	}
+	static const std::filesystem::path emptyPath;
+	return { emptyPath, nullptr };
 }
 
 std::string GltfMaterialHelper::FindOrCreateTextureID(std::filesystem::path const& texturePath)
@@ -745,11 +985,19 @@ std::string GltfMaterialHelper::FindOrCreateTextureID(std::filesystem::path cons
 	newEntry.isAvailableOpt_ = std::filesystem::exists(texturePath, ec);
 
 	std::filesystem::path const canonicalPath = std::filesystem::canonical(texturePath, ec);
-	std::string const pathAsId = canonicalPath.generic_string();
+	std::string pathAsId = canonicalPath.generic_string();
+	if (pathAsId.empty())
+	{
+		BE_LOGE("ITwinMaterial",
+			"Error making path '" << texturePath.generic_string() << "' canonical: " << ec);
+		pathAsId = texturePath.generic_string();
+	}
 
 	{
 		Lock lock(mutex_);
-		textureDataMap_.try_emplace(pathAsId, newEntry);
+		textureDataMap_.try_emplace(
+			TextureKey{ pathAsId, SDK::Core::ETextureSource::LocalDisk },
+			newEntry);
 	}
 
 	return pathAsId;
@@ -787,15 +1035,95 @@ void GltfMaterialHelper::ListITwinTexturesToDownload(std::vector<std::string>& m
 		if (!texData.isAvailableOpt_)
 		{
 			// Look for the texture in the cache
-			texData.path_ = FindTextureInCache(texId);
+			texData.path_ = FindTextureInCache(texId.id);
 			texData.isAvailableOpt_ = !texData.path_.empty();
 		}
 
-		if (!texData.IsAvailable())
+		// Only consider iTwin textures here (those downloaded from iModelRpc interface)
+		if (!texData.IsAvailable()
+			&& texId.eSource == SDK::Core::ETextureSource::ITwin)
 		{
-			missingTextureIds.push_back(texId);
+			missingTextureIds.emplace_back(texId.id);
 		}
 	}
+}
+
+
+SDK::Core::ITwinUVTransform GltfMaterialHelper::GetUVTransform(uint64_t matID, Lock const&) const
+{
+	auto itMat = materialMap_.find(matID);
+	if (itMat != materialMap_.end())
+	{
+		auto const& matDefinition = itMat->second.iTwinMaterialDefinition_;
+		return matDefinition.uvTransform;
+	}
+	else
+	{
+		return ITwinUVTransform::NullTransform();
+	}
+}
+
+SDK::Core::ITwinUVTransform GltfMaterialHelper::GetUVTransform(uint64_t matID) const
+{
+	Lock lock(mutex_);
+	return GetUVTransform(matID, lock);
+}
+
+void GltfMaterialHelper::SetUVTransform(uint64_t matID, ITwinUVTransform const& uvTransform, bool& bValueModified)
+{
+	UVTransformHelper uvTsfHelper(*this, uvTransform);
+	TSetChannelParam(uvTsfHelper, matID, bValueModified);
+}
+
+SDK::Core::EMaterialKind GltfMaterialHelper::GetMaterialKind(uint64_t matID, Lock const&) const
+{
+	auto itMat = materialMap_.find(matID);
+	if (itMat != materialMap_.end())
+	{
+		auto const& matDefinition = itMat->second.iTwinMaterialDefinition_;
+		return matDefinition.kind;
+	}
+	return SDK::Core::EMaterialKind::PBR;
+}
+
+SDK::Core::EMaterialKind GltfMaterialHelper::GetMaterialKind(uint64_t matID) const
+{
+	Lock lock(mutex_);
+	return GetMaterialKind(matID, lock);
+}
+
+void GltfMaterialHelper::SetMaterialKind(uint64_t matID, SDK::Core::EMaterialKind newKind, bool& bValueModified)
+{
+	MaterialKindHelper nameHelper(*this, newKind);
+	TSetChannelParam(nameHelper, matID, bValueModified);
+}
+
+std::string GltfMaterialHelper::GetMaterialName(uint64_t matID, Lock const&) const
+{
+	auto itMat = materialMap_.find(matID);
+	if (itMat != materialMap_.end())
+	{
+		auto const& matDefinition = itMat->second.iTwinMaterialDefinition_;
+		return matDefinition.displayName;
+	}
+	else
+	{
+		return {};
+	}
+}
+
+std::string GltfMaterialHelper::GetMaterialName(uint64_t matID) const
+{
+	Lock lock(mutex_);
+	return GetMaterialName(matID, lock);
+}
+
+bool GltfMaterialHelper::SetMaterialName(uint64_t matID, std::string const& newName)
+{
+	MaterialNameHelper nameHelper(*this, newName);
+	bool bValueModified = false;
+	TSetChannelParam(nameHelper, matID, bValueModified);
+	return bValueModified;
 }
 
 void GltfMaterialHelper::SetPersistenceInfo(std::string const& iModelID, MaterialPersistencePtr const& mngr)
@@ -829,6 +1157,33 @@ size_t GltfMaterialHelper::LoadMaterialCustomizations(Lock const& lock, bool res
 		}
 	}
 	return nbLoadedMatDefinitions;
+}
+
+std::string GltfMaterialHelper::GetTextureURL(std::string const& textureId, SDK::Core::ETextureSource texSource) const
+{
+	if (persistenceMngr_)
+	{
+		return persistenceMngr_->GetTextureURL(textureId, texSource);
+	}
+	else
+	{
+		BE_ISSUE("no persistence manager to retrieve the decoration files URL from");
+		return {};
+	}
+}
+
+GltfMaterialHelper::TextureAccess GltfMaterialHelper::StoreCesiumImage(TextureKey const& textureKey,
+	CesiumGltf::Image&& cesiumImage,
+	Lock const&)
+{
+	auto ret = textureDataMap_.try_emplace(textureKey, TextureData{});
+	auto& newEntry = ret.first->second;
+	newEntry.cesiumImage_ = std::move(cesiumImage);
+
+	return {
+		newEntry.path_,
+		&(newEntry.cesiumImage_.value())
+	};
 }
 
 } // namespace BeUtils

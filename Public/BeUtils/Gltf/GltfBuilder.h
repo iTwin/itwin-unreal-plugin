@@ -2,7 +2,7 @@
 |
 |     $Source: GltfBuilder.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -13,10 +13,13 @@
 #include <memory>
 #include <optional>
 
+#include <glm/fwd.hpp>
+
 namespace CesiumGltf
 {
 class MeshPrimitive;
 class Model;
+struct Node;
 }
 
 namespace BeUtils
@@ -60,6 +63,15 @@ public:
 		size_t featureSetIndex = 0);
 	MeshPrimitive AddMeshPrimitive(int32_t mesh, int32_t material, int32_t mode);
 	int32_t AddMaterial();
+	//! Compute some default UVs for the given primitive, when none were read from the initial glTF model
+	//! but we need some for custom materials.
+	bool ComputeFastUVs(MeshPrimitive& primitive,
+		const std::vector<std::array<float, 3>>& positions,
+		const std::vector<std::array<float, 3>>& normals,
+		const std::vector<std::array<uint32_t, 1>>& indices,
+		const glm::dmat4& tileTransform,
+		const CesiumGltf::Node* gltfNode);
+
 private:
 	class Impl;
 	const std::unique_ptr<Impl> impl_;

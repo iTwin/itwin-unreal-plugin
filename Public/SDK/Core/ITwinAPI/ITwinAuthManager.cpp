@@ -2,7 +2,7 @@
 |
 |     $Source: ITwinAuthManager.cpp $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -22,22 +22,26 @@
 #include <Core/Network/IHttpRouter.h>
 
 #include <curl/curl.h>
-
+#include "../Singleton/singleton.h"
 #include <random>
 
 
 namespace SDK::Core
 {
-
+	template<>
+	Tools::Factory<ITwinAuthManager, EITwinEnvironment>::Globals::Globals()
+	{
+		newFct_ = [](EITwinEnvironment /*env*/) {
+			BE_ISSUE("ITwinAuthManager cannot be instantiated directly - need platform specific overrides");
+			return nullptr;
+			};
+	}
 
 	template<>
-	std::function<std::shared_ptr<ITwinAuthManager>(EITwinEnvironment env)> Tools::Factory<ITwinAuthManager, EITwinEnvironment>::newFct_
-		= [](EITwinEnvironment /*env*/) {
-		BE_ISSUE("ITwinAuthManager cannot be instantiated directly - need platform specific overrides");
-		std::shared_ptr<ITwinAuthManager> nullMngr;
-		return nullMngr;
-	};
-
+	Tools::Factory<ITwinAuthManager, EITwinEnvironment>::Globals& Tools::Factory<ITwinAuthManager, EITwinEnvironment>::GetGlobals()
+	{
+		return singleton<Tools::Factory<ITwinAuthManager, EITwinEnvironment>::Globals>();
+	}
 
 #define USE_REFRESH_TOKEN() 1
 
@@ -167,7 +171,10 @@ namespace SDK::Core
 	}
 
 	/*static*/
-	ITwinAuthManager::Pool ITwinAuthManager::instances_;
+	ITwinAuthManager::Globals& ITwinAuthManager::GetGlobals()
+	{
+		return singleton<ITwinAuthManager::Globals>();
+	}
 
 	/*static*/
 	ITwinAuthManager::SharedInstance& ITwinAuthManager::GetInstance(EITwinEnvironment env)
@@ -175,14 +182,17 @@ namespace SDK::Core
 		static std::mutex PoolMutex;
 
 		const size_t envIndex = (size_t)env;
-		BE_ASSERT(envIndex < instances_.size(), "Invalid environment", envIndex);
+		Globals& globals = GetGlobals();
+
+		BE_ASSERT(envIndex < globals.instances_.size(), "Invalid environment", envIndex);
 
 		std::unique_lock<std::mutex> lock(PoolMutex);
-		if (!instances_[envIndex])
+		
+		if (!globals.instances_[envIndex])
 		{
-			instances_[envIndex] = ITwinAuthManager::New(env);
+			globals.instances_[envIndex].reset(ITwinAuthManager::New(env));
 		}
-		return instances_[envIndex];
+		return globals.instances_[envIndex];
 	}
 
 
@@ -191,7 +201,7 @@ namespace SDK::Core
 	{
 		stillValid_ = std::make_shared<std::atomic_bool>(true);
 
-		http_ = Http::New();
+		http_.reset(Http::New());
 		http_->SetBaseUrl(Credentials::GetITwinIMSRootUrl(env_));
 	}
 
@@ -437,7 +447,7 @@ namespace SDK::Core
 			return HttpRequest::NO_REQUEST;
 		}
 
-		const auto request = HttpRequest::New();
+		const auto request = std::shared_ptr<HttpRequest>(HttpRequest::New());
 		if (!request)
 		{
 			return HttpRequest::NO_REQUEST;
@@ -613,7 +623,7 @@ namespace SDK::Core
 
 		if (!httpRouter_)
 		{
-			httpRouter_ = IHttpRouter::New();
+			httpRouter_.reset(IHttpRouter::New());
 		}
 		if (!httpRouter_)
 		{

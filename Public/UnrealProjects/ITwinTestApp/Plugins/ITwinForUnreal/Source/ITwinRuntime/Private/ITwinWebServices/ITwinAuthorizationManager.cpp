@@ -2,7 +2,7 @@
 |
 |     $Source: ITwinAuthorizationManager.cpp $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -169,12 +169,12 @@ void FITwinAuthorizationManager::OnStartup()
 	using namespace SDK::Core;
 
 	ITwinAuthManager::SetNewFct([](SDK::Core::EITwinEnvironment Env) {
-		std::shared_ptr<ITwinAuthManager> p(static_cast<ITwinAuthManager*>(new FITwinAuthorizationManager(Env)));
+		ITwinAuthManager* p(static_cast<ITwinAuthManager*>(new FITwinAuthorizationManager(Env)));
 		return p;
 	});
 
 	SDK::Core::IHttpRouter::SetNewFct([]() {
-		std::shared_ptr<SDK::Core::IHttpRouter> p(static_cast<SDK::Core::IHttpRouter*>(new FUEHttpRouter()));
+		SDK::Core::IHttpRouter* p(static_cast<SDK::Core::IHttpRouter*>(new FUEHttpRouter()));
 		return p;
 	});
 }

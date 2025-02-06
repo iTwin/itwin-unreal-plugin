@@ -2,7 +2,7 @@
 |
 |     $Source: ITwinDecorationHelper.cpp $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -18,8 +18,10 @@
 #include <EngineUtils.h> // for TActorIterator<>
 #include <Engine/GameViewportClient.h>
 
+#include <AnimTimeline/ITwinTimelineActor.h>
 #include <ITwinCesium3DTileset.h>
 #include <ITwinIModel.h>
+#include <ITwinRealityData.h>
 #include <ITwinServerConnection.h>
 #include <Population/ITwinPopulation.h>
 
@@ -27,12 +29,12 @@
 #include <Materials/MaterialInstanceDynamic.h>
 
 #include <Async/Async.h>
-#include <Misc/MessageDialog.h>
 #include <atomic>
 #include <chrono>
 
 #include <Compil/BeforeNonUnrealIncludes.h>
 #	include "SDK/Core/Visualization/MaterialPersistence.h"
+#	include "SDK/Core/Visualization/Timeline.h"
 #	include "SDK/Core/ITwinAPI/ITwinAuthManager.h"
 #	include <BeHeaders/Compil/CleanUpGuard.h>
 #   include "SDK/Core/Visualization/ScenePersistence.h"
@@ -83,12 +85,7 @@ namespace ITwin
 		static bool bHasCheckedScope = false;
 		if (!bHasCheckedScope)
 		{
-			UITwinDecorationServiceSettings const* DecoSettings = GetDefault<UITwinDecorationServiceSettings>();
-			if (ensure(DecoSettings) && !DecoSettings->ExtraITwinScope.IsEmpty())
-			{
-				bHasDecoScope = SDK::Core::ITwinAuthManager::HasScope(
-					TCHAR_TO_UTF8(*DecoSettings->ExtraITwinScope));
-			}
+			bHasDecoScope = SDK::Core::ITwinAuthManager::HasScope(ITWIN_DECORATIONS_SCOPE);
 			bHasCheckedScope = true;
 		}
 		if (!bHasDecoScope)
@@ -127,6 +124,67 @@ namespace ITwin
 			DecoHelper->SaveDecoration(false /*bPromptUser*/);
 		}
 	}
+
+	std::string ConvertToStdString(const FString& fstring)
+	{
+		return (const char*)StringCast<UTF8CHAR>(*fstring).Get();
+	}
+
+	static ITwinSceneInfo LinkToSceneInfo(const SDK::Core::Link& l)
+	{
+		using namespace SDK::Core;
+
+		ITwinSceneInfo s;
+		if(l.HasQuality())
+			s.Quality = l.GetQuality();
+		if (l.HasVisibility())
+			s.Visibility = l.GetVisibility();
+		FMatrix dstMat;
+		FVector dstPos;
+		if (l.HasTransform())
+		{
+			s.Offset = FTransform();
+			const dmat3x4& srcMat = l.GetTransform();
+			for (unsigned i = 0; i < 3; ++i)
+			{
+				for (unsigned j = 0; j < 3; ++j)
+				{
+					dstMat.M[j][i] = ColRow3x4(srcMat, i, j);
+				}
+			}
+			dstPos.X = ColRow3x4(srcMat, 0, 3);
+			dstPos.Y = ColRow3x4(srcMat, 1, 3);
+			dstPos.Z = ColRow3x4(srcMat, 2, 3);
+			s.Offset->SetFromMatrix(dstMat);
+			s.Offset->SetTranslation(dstPos);
+		}
+		return s;
+	}
+
+	static void SceneToLink(const ITwinSceneInfo& si, std::shared_ptr<SDK::Core::Link> l)
+	{
+		if (si.Visibility.has_value())
+			l->SetVisibility(*si.Visibility);
+		if (si.Quality.has_value())
+			l->SetQuality(*si.Quality);
+		if (si.Offset.has_value())
+		{
+			std::array<double, 12> dstTransform;
+			FMatrix srcMat = si.Offset->ToMatrixWithScale();
+			for (int32 i = 0; i < 3; ++i)
+			{
+				for (int32 j = 0; j < 3; ++j)
+				{
+					dstTransform[i*4+j] = srcMat.M[j][i];
+				}
+			}
+			FVector srcPos = si.Offset->GetTranslation();
+			dstTransform[3] = srcPos.X;
+			dstTransform[7] = srcPos.Y;
+			dstTransform[11] = srcPos.Z;
+			l->SetTransform(dstTransform);
+		}
+	}
 }
 
 /* -------------------------- class AITwinDecorationHelper::FImpl ---------------------------*/
@@ -147,10 +205,27 @@ public:
 	FImpl(AITwinDecorationHelper& InOwner);
 	~FImpl();
 
+	bool IsPopulationEnabled() const { return bPopulationEnabled; }
+	bool IsMaterialEditionEnabled() const { return bMaterialEditionEnabled; }
+
 	EAsyncTask GetAsyncTask() const { return CurrentAsyncTask.load(); }
 	bool IsRunningAsyncTask(EAsyncTask TaskType) const;
+	bool IsRunningAsyncLoadTask() const;
+
+	// Initialize the connection with the decoration service (if needed). This will not try trigger any
+	// communication with the server.
+	void InitDecorationService();
+
+	void SetLoadedITwinInfo(FITwinLoadInfo const& LoadedSceneInfo);
+	FITwinLoadInfo const& GetLoadedITwinInfo() const;
+	bool HasITwinID() const;
+
+	std::string GetDecorationAccessToken() const;
 
 	void StartLoadingDecoration(const UObject* WorldContextObject);
+
+
+	bool ShouldSaveDecoration(bool bPromptUser) const;
 
 	struct SaveRequestOptions
 	{
@@ -159,6 +234,10 @@ public:
 		bool bPromptUser = true;
 	};
 	void SaveDecoration(SaveRequestOptions const& opts);
+
+	std::shared_ptr<SDK::Core::ITimeline> GetTimeline() const;
+
+	void DeleteAllCustomMaterials();
 
 	// Ask confirmation if the task is taking too long - return true if the user confirmed the abortion.
 	bool ShouldAbort();
@@ -181,7 +260,30 @@ private:
 	};
 	void OnAsyncTaskDone_GameThread(ETaskExitStatus TaskExitStatus, bool bSuccess);
 
+	// This will share all data with DecorationIO.
+	std::shared_ptr<FDecorationAsyncIOHelper> GetDecorationAsyncIOHelper() const;
+
+	void LoadPopulationsInGame(bool bHasLoadedPopulations);
+
+	void OnCustomMaterialsLoaded_GameThread(bool bHasLoadedMaterials);
+
+	void OnDecorationSaved_GameThread(bool bSuccess, bool bHasResetMaterials);
+
+	void OnSceneLoad_GameThread(bool bSuccess);
+
+
+public:
+	// For loading and saving
+	std::shared_ptr<FDecorationAsyncIOHelper> DecorationIO;
+
+	EITwinDecorationClientMode ClientMode = EITwinDecorationClientMode::Unknown;
+
 private:
+	// Initially, both Population and Material edition are disabled, until we have loaded the corresponding
+	// information (which can be empty of course) from the decoration service.
+	bool bPopulationEnabled = false;
+	bool bMaterialEditionEnabled = false;
+
 	std::atomic<EAsyncTask> CurrentAsyncTask = EAsyncTask::None;
 	std::shared_ptr<std::atomic_bool> IsThisValid = std::make_shared<std::atomic_bool>(true);
 	std::atomic_bool CurrentAsyncTaskDone = false;
@@ -199,6 +301,7 @@ private:
 AITwinDecorationHelper::FImpl::FImpl(AITwinDecorationHelper& InOwner)
 	: Owner(InOwner)
 {
+	DecorationIO = std::make_shared<FDecorationAsyncIOHelper>();
 }
 
 AITwinDecorationHelper::FImpl::~FImpl()
@@ -245,6 +348,15 @@ bool AITwinDecorationHelper::FImpl::ShouldAbort()
 bool AITwinDecorationHelper::FImpl::IsRunningAsyncTask(EAsyncTask TaskType) const
 {
 	return GetAsyncTask() == TaskType && !CurrentAsyncTaskDone;
+}
+
+bool AITwinDecorationHelper::FImpl::IsRunningAsyncLoadTask() const
+{
+	auto const CurTask = GetAsyncTask();
+	return (CurTask == EAsyncTask::LoadScenes
+		|| CurTask == EAsyncTask::LoadMaterials
+		|| CurTask == EAsyncTask::LoadPopulations)
+		&& !CurrentAsyncTaskDone;
 }
 
 template <typename TaskFunc>
@@ -316,15 +428,15 @@ void AITwinDecorationHelper::FImpl::OnAsyncTaskDone_GameThread(ETaskExitStatus T
 	case EAsyncTask::LoadMaterials:
 		if (TaskExitStatus == ETaskExitStatus::Completed)
 		{
-			Owner.OnCustomMaterialsLoaded_GameThread(bSuccess);
+			OnCustomMaterialsLoaded_GameThread(bSuccess);
 
 			// After loading materials, start loading populations
 			// Access token has to be retrieved in game thread.
-			std::string const AccessToken = Owner.GetDecorationAccessToken();
+			std::string const AccessToken = GetDecorationAccessToken();
 			// The communication with the service is done in a separate thread.
 			// Then the actual loading of populations in the game engine is performed in game thread.
 			// Share all data for use in the lambda (the game mode may be deleted while the lambda is executed).
-			auto DecoIO = Owner.GetDecorationAsyncIOHelper();
+			auto DecoIO = GetDecorationAsyncIOHelper();
 			StartAsyncTask(EAsyncTask::LoadPopulations,
 				[DecoIO, AccessToken]() { return DecoIO->LoadPopulationsFromServer(AccessToken); });
 		}
@@ -333,28 +445,35 @@ void AITwinDecorationHelper::FImpl::OnAsyncTaskDone_GameThread(ETaskExitStatus T
 	case EAsyncTask::LoadPopulations:
 		if (TaskExitStatus == ETaskExitStatus::Completed)
 		{
-			Owner.LoadPopulationsInGame(bSuccess);
+			LoadPopulationsInGame(bSuccess);
+
+			// The loading of decoration is now done.
+			Owner.OnDecorationLoaded.Broadcast();
 		}
 		break;
 
 	case EAsyncTask::LoadScenes:
 		if (TaskExitStatus == ETaskExitStatus::Completed)
 		{
-			Owner.OnSceneLoad_GameThread(bSuccess);
+			OnSceneLoad_GameThread(bSuccess);
 			if (bSuccess)
 			{
 				// prevent save flags from being set during update of the UI
-				Owner.decorationIO->scene->SetShoudlSave(false);
-
+				DecorationIO->scene->SetShoudlSave(false);
 			}
 			// Start the asynchronous loading of materials, then populations.
 			AsyncLoadMaterials();
+
+			// Finish timeline initialization
+			AITwinTimelineActor* tla = (AITwinTimelineActor*)UGameplayStatics::GetActorOfClass(Owner.GetWorld(), AITwinTimelineActor::StaticClass());
+			if (tla)
+				tla->OnLoad();
 		}
 		break;
 
 	case EAsyncTask::SaveDecoration:
 		{
-			Owner.OnDecorationSaved_GameThread(bSuccess, bIsDeletingCustomMaterials);
+			OnDecorationSaved_GameThread(bSuccess, bIsDeletingCustomMaterials);
 
 			bIsDeletingCustomMaterials = false;
 		}
@@ -379,23 +498,40 @@ namespace ITwinMsg
 	}
 }
 
+void AITwinDecorationHelper::FImpl::InitDecorationService()
+{
+	DecorationIO->InitDecorationService(Owner.GetWorld());
+}
+
+void AITwinDecorationHelper::FImpl::SetLoadedITwinInfo(FITwinLoadInfo const& LoadedSceneInfo)
+{
+	DecorationIO->SetLoadedITwinInfo(LoadedSceneInfo);
+
+	// Initialize decoration service asap (important for presentations, typically: the material persistence
+	// manager should be instantiated *before* the IModel starts to load the tileset...)
+	InitDecorationService();
+}
+
+FITwinLoadInfo const& AITwinDecorationHelper::FImpl::GetLoadedITwinInfo() const
+{
+	return DecorationIO->GetLoadedITwinInfo();
+}
+
+bool AITwinDecorationHelper::FImpl::HasITwinID() const
+{
+	return !DecorationIO->LoadedITwinInfo.ITwinId.IsEmpty();
+}
+
+std::shared_ptr<FDecorationAsyncIOHelper> AITwinDecorationHelper::FImpl::GetDecorationAsyncIOHelper() const
+{
+	checkSlow(DecorationIO->IsInitialized());
+	return DecorationIO;
+}
+
 void AITwinDecorationHelper::FImpl::StartLoadingDecoration(const UObject* WorldContextObject)
 {
-	auto DecoIO = Owner.GetDecorationAsyncIOHelper();
+	auto DecoIO = GetDecorationAsyncIOHelper();
 	DecoIO->InitDecorationService(WorldContextObject);
-
-	// Detect the case of baked presentations: disable persistence of iModel offset & geo-location in this
-	// case (avoid confusion as those levels already contain baked offsets & geo-location).
-	auto const& PersitenceMngr = AITwinIModel::GetMaterialPersistenceManager();
-	if (ensure(PersitenceMngr))
-	{
-		TArray<AActor*> TilesetActors;
-		UGameplayStatics::GetAllActorsOfClass(WorldContextObject, AITwinCesium3DTileset::StaticClass(), TilesetActors);
-		if (TilesetActors.Num() > 0)
-		{
-			PersitenceMngr->EnableOffsetAndGeoLocation(false);
-		}
-	}
 
 	// Start the asynchronous loading of Scene then, materials, then populations.
 	AsyncLoadScene();
@@ -404,39 +540,73 @@ void AITwinDecorationHelper::FImpl::StartLoadingDecoration(const UObject* WorldC
 void AITwinDecorationHelper::FImpl::AsyncLoadMaterials()
 {
 	// Access token has to be retrieved in game thread.
-	std::string const AccessToken = Owner.GetDecorationAccessToken();
+	std::string const AccessToken = GetDecorationAccessToken();
+
+	// Gather all iModels in the scene (must be done in game thread.
+	TMap<FString, TWeakObjectPtr<AITwinIModel>> idToIModel;
+	for (TActorIterator<AITwinIModel> IModelIter(Owner.GetWorld()); IModelIter; ++IModelIter)
+	{
+		idToIModel.Emplace((**IModelIter).IModelId, *IModelIter);
+	}
 
 	// Share all data for use in the lambda (the game mode may be deleted while the lambda is executed).
-	auto DecoIO = Owner.GetDecorationAsyncIOHelper();
+	auto DecoIO = GetDecorationAsyncIOHelper();
 	StartAsyncTask(EAsyncTask::LoadMaterials,
-		[DecoIO, AccessToken]() { return DecoIO->LoadCustomMaterials(AccessToken); });
+		[DecoIO, AccessToken, idToIModel]() { return DecoIO->LoadCustomMaterials(AccessToken, idToIModel); });
 }
+
 void AITwinDecorationHelper::FImpl::AsyncLoadScene()
 {
 	// Access token has to be retrieved in game thread.
-	std::string const AccessToken = Owner.GetDecorationAccessToken();
+	std::string const AccessToken = GetDecorationAccessToken();
+
+	AITwinTimelineActor* timelineActor = (AITwinTimelineActor*)UGameplayStatics::GetActorOfClass(Owner.GetWorld(), AITwinTimelineActor::StaticClass());
 
 	// Share all data for use in the lambda (the game mode may be deleted while the lambda is executed).
-	auto DecoIO = Owner.GetDecorationAsyncIOHelper();
+	auto DecoIO = GetDecorationAsyncIOHelper();
 	StartAsyncTask(EAsyncTask::LoadScenes,
-		[DecoIO, AccessToken]() { return DecoIO->LoadSceneFromServer(AccessToken); });
+		[DecoIO, AccessToken, timelineActor]() {
+			std::shared_ptr<SDK::Core::ITimeline> timeline;
+			auto ret = DecoIO->LoadSceneFromServer(AccessToken, timeline);
+			if (ret && timeline && timelineActor)
+			{
+				timelineActor->SetTimelineSDK(timeline);
+			}
+			return ret;
+		});
 
+}
+
+std::shared_ptr<SDK::Core::ITimeline> AITwinDecorationHelper::FImpl::GetTimeline() const
+{
+	TStrongObjectPtr<AITwinTimelineActor> timelineActor;
+	timelineActor.Reset((AITwinTimelineActor*)UGameplayStatics::GetActorOfClass(Owner.GetWorld(), AITwinTimelineActor::StaticClass()));
+
+	BE_ASSERT(timelineActor.IsValid() || ClientMode != EITwinDecorationClientMode::AdvVizApp,
+		"in advanced visualization mode, we should have a valid timeline");
+	if (timelineActor.IsValid())
+	{
+		return timelineActor->GetTimelineSDK();
+	}
+	return {};
 }
 
 void AITwinDecorationHelper::FImpl::SaveDecoration(SaveRequestOptions const& opts)
 {
-	if (!Owner.ShouldSaveDecoration(opts.bPromptUser))
+	if (!ShouldSaveDecoration(opts.bPromptUser))
 		return;
 
 	bIsDeletingCustomMaterials = opts.bUponCustomMaterialsDeletion;
 
+	std::shared_ptr<SDK::Core::ITimeline> timeline(GetTimeline());
+
 	// Access token has to be retrieved in game thread.
-	std::string const AccessToken = Owner.GetDecorationAccessToken();
-	auto DecoIO = Owner.GetDecorationAsyncIOHelper();
+	std::string const AccessToken = GetDecorationAccessToken();
+	auto DecoIO = GetDecorationAsyncIOHelper();
 	StartAsyncTask(EAsyncTask::SaveDecoration,
-		[DecoIO, AccessToken]() {  
+		[DecoIO, AccessToken, timeline]() {
 			 bool err1 = DecoIO->SaveDecorationToServer(AccessToken);
-			 bool err2 = DecoIO->SaveSceneToServer(AccessToken);
+			 bool err2 = DecoIO->SaveSceneToServer(AccessToken, timeline);
 			 return err1 && err2;
 		},
 		ITwinMsg::GetConfirmAbortSaveMsg());
@@ -457,60 +627,64 @@ void AITwinDecorationHelper::FImpl::SaveDecoration(SaveRequestOptions const& opt
 	}
 }
 
+std::string AITwinDecorationHelper::FImpl::GetDecorationAccessToken() const
+{
+	// We test AITwinServerConnection here, considering that there is only one active instance in most cases.
+	// This should be improved if we allow mixing QA and Prod iTwins in a same session, which is
+	// theoretically already possible in the plugin... TODO_JDE
+	std::string AccessToken;
+	AITwinServerConnection* serverConnection = Cast<AITwinServerConnection>(
+		UGameplayStatics::GetActorOfClass(Owner.GetWorld(), AITwinServerConnection::StaticClass()));
+	if (serverConnection && serverConnection->HasAccessToken())
+	{
+		serverConnection->GetAccessTokenStdString(AccessToken);
+	}
+	return AccessToken;
+}
+
 
 /* --------------------------- class AITwinDecorationHelper ---------------------------------*/
 
 AITwinDecorationHelper::AITwinDecorationHelper()
 	: Impl(MakePimpl<FImpl>(*this))
 {
-	decorationIO = std::make_shared<FDecorationAsyncIOHelper>();
+}
+
+bool AITwinDecorationHelper::IsPopulationEnabled() const
+{
+	return Impl->IsPopulationEnabled();
+}
+
+bool AITwinDecorationHelper::IsMaterialEditionEnabled() const
+{
+	return Impl->IsMaterialEditionEnabled();
+}
+
+
+void AITwinDecorationHelper::SetDecorationClientMode(EITwinDecorationClientMode ClientMode)
+{
+	Impl->ClientMode = ClientMode;
+}
+
+EITwinDecorationClientMode AITwinDecorationHelper::GetDecorationClientMode() const
+{
+	return Impl->ClientMode;
 }
 
 void AITwinDecorationHelper::SetLoadedITwinInfo(FITwinLoadInfo InLoadedITwinInfo)
 {
-	decorationIO->SetLoadedITwinInfo(InLoadedITwinInfo);
-
-	// Initialize decoration service asap (important for presentations, typically: the material persistence
-	// manager should be instantiated *before* the IModel starts to load the tileset...)
-	InitDecorationService();
+	Impl->SetLoadedITwinInfo(InLoadedITwinInfo);
 }
 
 FITwinLoadInfo AITwinDecorationHelper::GetLoadedITwinInfo() const
 {
-	return decorationIO->GetLoadedITwinInfo();
+	return Impl->GetLoadedITwinInfo();
 }
 
-
-std::string AITwinDecorationHelper::GetDecorationAccessToken() const
-{
-	// We test AITwinServerConnection here, considering that there is only one active instance in most cases.
-	// This should be improved if we allow mixing QA and Prod iTwins in a same session, which is
-	// theoretically already possible in the plugin... TODO_JDE
-	FString Token;
-	AITwinServerConnection* serverConnection = Cast<AITwinServerConnection>(
-		UGameplayStatics::GetActorOfClass(GetWorld(), AITwinServerConnection::StaticClass()));
-	if (serverConnection && serverConnection->HasAccessToken())
-	{
-		Token = serverConnection->GetAccessToken();
-	}
-	return TCHAR_TO_UTF8(*Token);
-}
-
-void AITwinDecorationHelper::InitDecorationService()
-{
-	decorationIO->InitDecorationService(GetWorld());
-}
-
-std::shared_ptr<FDecorationAsyncIOHelper> AITwinDecorationHelper::GetDecorationAsyncIOHelper() const
-{
-	checkSlow(decorationIO->IsInitialized());
-	return decorationIO;
-}
-
-void AITwinDecorationHelper::LoadPopulationsInGame(bool bHasLoadedPopulations)
+void AITwinDecorationHelper::FImpl::LoadPopulationsInGame(bool bHasLoadedPopulations)
 {
 	checkSlow(IsInGameThread());
-	auto& instancesManager(decorationIO->instancesManager);
+	auto& instancesManager(DecorationIO->instancesManager);
 	if (!instancesManager)
 		return;
 
@@ -518,7 +692,7 @@ void AITwinDecorationHelper::LoadPopulationsInGame(bool bHasLoadedPopulations)
 	const SDK::Core::SharedInstGroupVect& instGroups = instancesManager->GetInstancesGroups();
 	if (!instGroups.empty())
 	{
-		decorationIO->instancesGroup = instGroups[0];
+		DecorationIO->instancesGroup = instGroups[0];
 	}
 
 	if (!(GEngine && GEngine->GameViewport))
@@ -531,7 +705,7 @@ void AITwinDecorationHelper::LoadPopulationsInGame(bool bHasLoadedPopulations)
 	std::vector<std::string> objReferences = instancesManager->GetObjectReferences();
 	for (const auto& objRef : objReferences)
 	{
-		AITwinPopulation* population = GetOrCreatePopulation(FString(objRef.c_str()));
+		AITwinPopulation* population = Owner.GetOrCreatePopulation(FString(objRef.c_str()));
 		if (population)
 		{
 			population->UpdateInstancesFromSDKCoreToUE();
@@ -539,17 +713,12 @@ void AITwinDecorationHelper::LoadPopulationsInGame(bool bHasLoadedPopulations)
 	}
 	bPopulationEnabled = true;
 
-	OnPopulationsLoaded.Broadcast(true);
-}
-
-bool AITwinDecorationHelper::HasITwinID() const
-{
-	return !decorationIO->LoadedITwinInfo.ITwinId.IsEmpty();
+	Owner.OnPopulationsLoaded.Broadcast(true);
 }
 
 void AITwinDecorationHelper::LoadDecoration()
 {
-	if (!ensure(HasITwinID()))
+	if (!ensure(Impl->HasITwinID()))
 	{
 		return;
 	}
@@ -557,48 +726,42 @@ void AITwinDecorationHelper::LoadDecoration()
 	Impl->StartLoadingDecoration(GetWorld());
 }
 
-void AITwinDecorationHelper::OnCustomMaterialsLoaded_GameThread(bool bHasLoadedMaterials)
+bool AITwinDecorationHelper::IsLoadingDecoration() const
+{
+	return Impl->IsRunningAsyncLoadTask();
+}
+
+void AITwinDecorationHelper::FImpl::OnCustomMaterialsLoaded_GameThread(bool bHasLoadedMaterials)
 {
 	checkSlow(IsInGameThread());
 
 	// Materials were now loaded from the decoration service. If the tileset has already been loaded, we
 	// may have to re-tune & refresh it depending on custom material definitions.
-	if (bHasLoadedMaterials && decorationIO->materialPersistenceMngr)
+	if (bHasLoadedMaterials && DecorationIO->materialPersistenceMngr)
 	{
+		const UWorld* World = Owner.GetWorld();
 		// We may have loaded material definitions for several iModel.
 		std::vector<std::string> iModelIds;
-		decorationIO->materialPersistenceMngr->ListIModelsWithMaterialSettings(iModelIds);
+		DecorationIO->materialPersistenceMngr->ListIModelsWithMaterialSettings(iModelIds);
 		for (std::string const& imodelid : iModelIds)
 		{
-			AITwinIModel* IModel = ITwin::GetIModelByID(UTF8_TO_TCHAR(imodelid.c_str()), GetWorld());
+			AITwinIModel* IModel = ITwin::GetIModelByID(UTF8_TO_TCHAR(imodelid.c_str()), World);
 			if (IModel)
 			{
 				IModel->DetectCustomizedMaterials();
-
-				// We now also retrieve the potential iModel offset and geo-location for the Google tileset
-				// from some specific materials (quick & dirtiest thing ever...)
-
-				std::array<double, 3> posOffset = { 0., 0., 0. };
-				std::array<double, 3> rotOffset = { 0., 0., 0. };
-				if (decorationIO->materialPersistenceMngr->GetModelOffset(imodelid, posOffset, rotOffset))
-				{
-					FVector Pos((float)posOffset[0], (float)posOffset[1], (float)posOffset[2]);
-					FVector Rot((float)rotOffset[0], (float)rotOffset[1], (float)rotOffset[2]);
-					IModel->SetModelOffset(Pos, Rot, AITwinIModel::EOffsetContext::Reload);
-				}
 			}
 		}
 		// Also update the Google tileset if needed (note that it can be instantiated *before* the materials
-		// are loaded asynchronously...
-		OnMaterialsLoaded.Broadcast(true);
+		// are loaded asynchronously...)
+		Owner.OnMaterialsLoaded.Broadcast(true);
 	}
 
 	bMaterialEditionEnabled = true;
 }
 
-bool AITwinDecorationHelper::ShouldSaveDecoration(bool bPromptUser /*= true*/) const
+bool AITwinDecorationHelper::FImpl::ShouldSaveDecoration(bool bPromptUser) const
 {
-	if (!HasITwinID() || !decorationIO->decoration)
+	if (!HasITwinID() || !DecorationIO->decoration)
 	{
 		return false;
 	}
@@ -609,22 +772,30 @@ bool AITwinDecorationHelper::ShouldSaveDecoration(bool bPromptUser /*= true*/) c
 		return false;
 	}
 
-	bool const saveInstances = decorationIO->instancesManager
-		&& decorationIO->instancesManager->HasInstancesToSave();
-	bool const saveMaterials = decorationIO->materialPersistenceMngr
-		&& decorationIO->materialPersistenceMngr->NeedUpdateDB();
-	bool const saveScenes = decorationIO->scene->ShoudlSave();
-	if (!saveInstances && !saveMaterials && !saveScenes)
+	bool const saveInstances = DecorationIO->instancesManager
+		&& DecorationIO->instancesManager->HasInstancesToSave();
+	bool const saveMaterials = DecorationIO->materialPersistenceMngr
+		&& DecorationIO->materialPersistenceMngr->NeedUpdateDB();
+	bool const saveScenes = DecorationIO->scene->ShouldSave();
+	bool const saveTimeline = GetTimeline() && GetTimeline()->ShouldSave();
+	
+
+	if (!saveInstances && !saveMaterials && !saveScenes && !saveTimeline)
 		return false;
 
 	if (bPromptUser &&
 		FMessageDialog::Open(EAppMsgCategory::Info, EAppMsgType::YesNo,
-			FText::FromString("Do you want to save the decoration?"),
+			FText::FromString("Do you want to save the scene?"),
 			FText::FromString("")) != EAppReturnType::Yes)
 	{
 		return false;
 	}
 	return true;
+}
+
+bool AITwinDecorationHelper::ShouldSaveDecoration(bool bPromptUser /*= true*/) const
+{
+	return Impl->ShouldSaveDecoration(bPromptUser);
 }
 
 void AITwinDecorationHelper::SaveDecoration(bool bPromptUser /*= true*/)
@@ -637,33 +808,121 @@ void AITwinDecorationHelper::SaveDecorationOnExit()
 	Impl->SaveDecoration(FImpl::SaveRequestOptions{ .bUponExit = true });
 }
 
-void AITwinDecorationHelper::OnDecorationSaved_GameThread(bool bSaved, bool bHasResetMaterials)
+void AITwinDecorationHelper::FImpl::OnDecorationSaved_GameThread(bool bSaved, bool bHasResetMaterials)
 {
-	OnDecorationSaved.Broadcast(bSaved);
+	Owner.OnDecorationSaved.Broadcast(bSaved);
 
 	if (bSaved && bHasResetMaterials)
 	{
 		// Now that material definitions have been reset, update the iModel
-		AITwinIModel* IModel = ITwin::GetIModelByID(GetLoadedITwinInfo().IModelId, GetWorld());
+		AITwinIModel* IModel = ITwin::GetIModelByID(GetLoadedITwinInfo().IModelId, Owner.GetWorld());
 		if (IModel)
 		{
 			IModel->ReloadCustomizedMaterials();
 		}
 	}
 }
-
-void AITwinDecorationHelper::OnSceneLoad_GameThread(bool bSuccess)
+void AITwinDecorationHelper::OnIModelLoaded(bool bSuccess, FString StringId)
 {
-	OnnSceneLoaded.Broadcast(bSuccess);
+	for (TActorIterator<AITwinIModel> IModelIter(GetWorld()); IModelIter; ++IModelIter)
+	{
+		//find imodel
+		if (IModelIter->IModelId == StringId)
+		{
+			//find link
+			auto key = std::make_pair(EITwinModelType::IModel, IModelIter->IModelId);
+			auto iter = Impl->DecorationIO->links.find(key);
+			if (iter != Impl->DecorationIO->links.end())
+			{
+				auto si = ITwin::LinkToSceneInfo(*iter->second);
+				if (si.Offset.has_value())
+				{
+					IModelIter->SetActorTransform(*si.Offset, false, nullptr, ETeleportType::TeleportPhysics);
+					IModelIter->OnIModelOffsetChanged();
+				}
+				if (si.Visibility.has_value())
+					IModelIter->HideTileset(!*si.Visibility);
+				if (si.Quality.has_value())
+					IModelIter->SetTilesetQuality(*si.Quality);
+			}
+		}
+	}
+}
+	
+void AITwinDecorationHelper::OnRealityDatalLoaded(bool bSuccess, FString StringId)
+{
+	for (TActorIterator<AITwinRealityData> IReallIter(GetWorld()); IReallIter; ++IReallIter)
+	{
+		//find RealityData
+		if (IReallIter->RealityDataId == StringId)
+		{
+			//find link
+			auto key = std::make_pair(EITwinModelType::RealityData, IReallIter->RealityDataId);
+			auto iter = Impl->DecorationIO->links.find(key);
+			if (iter != Impl->DecorationIO->links.end())
+			{
+				auto si = ITwin::LinkToSceneInfo(*iter->second);
+				if (si.Offset.has_value())
+					IReallIter->SetActorTransform(*si.Offset, true);
+				if (si.Visibility.has_value())
+					IReallIter->HideTileset(!*si.Visibility);
+				if (si.Quality.has_value())
+					IReallIter->SetTilesetQuality(*si.Quality);
+			}
+		}
+	}
 }
 
-AITwinPopulation* AITwinDecorationHelper::GetOrCreatePopulation(FString assetPath)
+void AITwinDecorationHelper::FImpl::OnSceneLoad_GameThread(bool bSuccess)
+{
+	for (TActorIterator<AITwinIModel> IModelIter(Owner.GetWorld()); IModelIter; ++IModelIter)
+	{
+		auto key = std::make_pair(EITwinModelType::IModel, IModelIter->IModelId);
+		auto iter = DecorationIO->links.find(key);
+		if (iter != DecorationIO->links.end())
+		{
+			auto si = ITwin::LinkToSceneInfo(*iter->second);
+			if (si.Offset.has_value())
+				IModelIter->SetActorTransform(*si.Offset, true);
+			if (si.Visibility.has_value())
+				IModelIter->HideTileset(!*si.Visibility);
+			if (si.Quality.has_value())
+				IModelIter->SetTilesetQuality(*si.Quality);
+
+			IModelIter->OnIModelLoaded.AddDynamic(&Owner, &AITwinDecorationHelper::OnIModelLoaded);
+
+		}
+	}
+	for (TActorIterator<AITwinRealityData> IReallIter(Owner.GetWorld()); IReallIter; ++IReallIter)
+	{
+		auto key = std::make_pair(EITwinModelType::RealityData, IReallIter->RealityDataId);
+		auto iter = DecorationIO->links.find(key);
+		if (iter != DecorationIO->links.end())
+		{
+			if (iter->second->HasTransform())
+			{
+				auto si = ITwin::LinkToSceneInfo(*iter->second);
+				if (si.Offset.has_value())
+					IReallIter->SetActorTransform(*si.Offset, true);
+				if (si.Visibility.has_value())
+					IReallIter->HideTileset(!*si.Visibility);
+				if (si.Quality.has_value())
+					IReallIter->SetTilesetQuality(*si.Quality);
+				//IReallIter->OnRealityDatalLoaded.AddDynamic(&Owner, &AITwinDecorationHelper::OnRealityDatalLoaded);
+			}
+		}
+	}
+
+	Owner.OnSceneLoaded.Broadcast(bSuccess);
+}
+
+AITwinPopulation* AITwinDecorationHelper::GetPopulation(FString assetPath) const
 {
 	TArray<AActor*> populations;
     UGameplayStatics::GetAllActorsOfClass(
 		GetWorld(), AITwinPopulation::StaticClass(), populations);
 
-	std::string stdAssetPath = TCHAR_TO_UTF8(*assetPath);
+	std::string stdAssetPath = ITwin::ConvertToStdString(assetPath);
 
     for (AActor* actor : populations)
     {
@@ -673,6 +932,19 @@ AITwinPopulation* AITwinDecorationHelper::GetOrCreatePopulation(FString assetPat
 			return pop;
 		}
 	}
+
+	return nullptr;
+}
+
+AITwinPopulation* AITwinDecorationHelper::GetOrCreatePopulation(FString assetPath) const
+{
+	AITwinPopulation* population = GetPopulation(assetPath);
+
+	if (population)
+	{
+		return population;
+	}
+
 	// Spawn a new actor with a deferred call in order to be able
 	// to set the static mesh before BeginPlay is called.
 	FTransform spawnTransform;
@@ -680,7 +952,7 @@ AITwinPopulation* AITwinDecorationHelper::GetOrCreatePopulation(FString assetPat
 		this, AITwinPopulation::StaticClass(), spawnTransform,
 		ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
 
-	AITwinPopulation* population = Cast<AITwinPopulation>(newActor);
+	population = Cast<AITwinPopulation>(newActor);
 
 	if (!population)
 	{
@@ -702,28 +974,97 @@ AITwinPopulation* AITwinDecorationHelper::GetOrCreatePopulation(FString assetPat
 
 	UGameplayStatics::FinishSpawningActor(newActor, spawnTransform);
 
-	population->SetInstancesManager(decorationIO->instancesManager);
-	population->SetInstancesGroup(decorationIO->instancesGroup);
-	population->SetObjectRef(stdAssetPath);
+	population->SetInstancesManager(Impl->DecorationIO->instancesManager);
+	population->SetInstancesGroup(Impl->DecorationIO->instancesGroup);
+	population->SetObjectRef(ITwin::ConvertToStdString(assetPath));
 
 	return population;
 }
 
+int32 AITwinDecorationHelper::GetPopulationInstanceCount(FString assetPath) const
+{
+	AITwinPopulation* population = GetPopulation(assetPath);
+
+	if (population)
+	{
+		return population->GetNumberOfInstances();
+	}
+
+	return 0;
+}
+
 SDK::Core::ITwinAtmosphereSettings AITwinDecorationHelper::GetAtmosphereSettings() const
 {
-	return decorationIO->scene->GetAtmosphere();
+	return Impl->DecorationIO->scene->GetAtmosphere();
 }
 
 void AITwinDecorationHelper::SetAtmosphereSettings(const SDK::Core::ITwinAtmosphereSettings& as) const
 {
-	if (decorationIO && decorationIO->scene)
-		 decorationIO->scene->SetAtmosphere(as);
+	if (Impl->DecorationIO && Impl->DecorationIO->scene)
+		Impl->DecorationIO->scene->SetAtmosphere(as);
+}
+SDK::Core::ITwinSceneSettings AITwinDecorationHelper::GetSceneSettings() const
+{
+	return Impl->DecorationIO->scene->GetSceneSettings();
+}
+
+void AITwinDecorationHelper::SetSceneSettings(const SDK::Core::ITwinSceneSettings& as) const
+{
+	if (Impl->DecorationIO && Impl->DecorationIO->scene)
+		Impl->DecorationIO->scene->SetSceneSettings(as);
+}
+
+
+ITwinSceneInfo AITwinDecorationHelper::GetSceneInfo(EITwinModelType ct, const FString& id) const
+{
+	auto key = std::make_pair(ct, id);
+	if (Impl->DecorationIO && Impl->DecorationIO->scene)
+	{
+		auto iter = Impl->DecorationIO->links.find(key);
+		if (iter != Impl->DecorationIO->links.end())
+			return ITwin::LinkToSceneInfo(*iter->second);
+
+	}
+	return ITwinSceneInfo();
+}
+
+void AITwinDecorationHelper::SetSceneInfo(EITwinModelType ct, const FString& id, const ITwinSceneInfo& si) const
+{
+
+	auto key = std::make_pair(ct, id);
+	if (Impl->DecorationIO && Impl->DecorationIO->scene)
+	{
+		auto iter = Impl->DecorationIO->links.find(key);
+		std::shared_ptr<SDK::Core::Link> sp;
+
+		if (iter == Impl->DecorationIO->links.end())
+			sp = Impl->DecorationIO->CreateLink(ct, id);
+		else
+			sp = iter->second;
+
+		if (sp)
+		{
+			ITwin::SceneToLink(si, sp);
+		}
+
+	}
+}
+
+
+std::vector<std::pair<EITwinModelType, FString>> AITwinDecorationHelper::GetLinkedElements() const
+{
+	std::vector<std::pair<EITwinModelType, FString>>  res;
+	for (auto link : Impl->DecorationIO->links)
+	{
+		res.push_back(link.first);
+	}
+	return res;
 }
 
 //std::shared_ptr<SDK::Core::IScenePersistence> AITwinDecorationHelper::GetScene() const
 //{
-//	if (decorationIO)
-//		return decorationIO->scene;
+//	if (DecorationIO)
+//		return DecorationIO->scene;
 //	else return std::shared_ptr<SDK::Core::IScenePersistence>();
 //
 //}
@@ -741,7 +1082,7 @@ void AITwinDecorationHelper::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	Super::EndPlay(EndPlayReason);
 
-	decorationIO->RequestStop();
+	Impl->DecorationIO->RequestStop();
 }
 
 
@@ -755,11 +1096,12 @@ void AITwinDecorationHelper::OnCloseRequested(FViewport*)
 	BeforeCloseLevel();
 }
 
-void AITwinDecorationHelper::DeleteAllCustomMaterials()
+void AITwinDecorationHelper::FImpl::DeleteAllCustomMaterials()
+
 {
 	if (!IsMaterialEditionEnabled())
 		return;
-	if (!(decorationIO && decorationIO->materialPersistenceMngr))
+	if (!(DecorationIO && DecorationIO->materialPersistenceMngr))
 		return;
 	auto const LoadedInfo = GetLoadedITwinInfo();
 	if (LoadedInfo.IModelId.IsEmpty())
@@ -772,11 +1114,16 @@ void AITwinDecorationHelper::DeleteAllCustomMaterials()
 		FText::FromString("")) == EAppReturnType::Yes)
 	{
 		const std::string imodelId = TCHAR_TO_UTF8(*LoadedInfo.IModelId);
-		decorationIO->materialPersistenceMngr->RequestDeleteIModelMaterialsInDB(imodelId);
+		DecorationIO->materialPersistenceMngr->RequestDeleteIModelMaterialsInDB(imodelId);
 
 		// Propose to save at once (with a specific flag set to perform refresh at the end).
-		Impl->SaveDecoration(FImpl::SaveRequestOptions{ .bUponCustomMaterialsDeletion = true });
+		SaveDecoration(SaveRequestOptions{ .bUponCustomMaterialsDeletion = true });
 	}
+}
+
+void AITwinDecorationHelper::DeleteAllCustomMaterials()
+{
+	Impl->DeleteAllCustomMaterials();
 }
 
 #if WITH_EDITOR
@@ -795,3 +1142,81 @@ static FAutoConsoleCommandWithWorldAndArgs FCmd_ITwinResetCustomMaterialDefiniti
 );
 
 #endif // WITH_EDITOR
+
+AITwinDecorationHelper::SaveLocker::SaveLocker()
+{
+
+}
+
+AITwinDecorationHelper::SaveLocker::~SaveLocker()
+{
+
+}
+
+class AITwinDecorationHelper::SaveLockerImpl : public AITwinDecorationHelper::SaveLocker
+{
+public:
+	SaveLockerImpl(AITwinDecorationHelper* __this)
+		:_this(__this)
+	{
+		_this->Lock(this);
+	}
+	AITwinDecorationHelper* _this;
+	~SaveLockerImpl()
+	{
+		_this->Unlock(this);
+	}
+
+	bool sceneStatus;
+	bool timelineStatus;
+	std::map< std::pair<EITwinModelType, FString>, bool > linksStatus;
+
+};
+std::shared_ptr<AITwinDecorationHelper::SaveLocker> AITwinDecorationHelper::LockSave()
+{
+	return std::shared_ptr<AITwinDecorationHelper::SaveLocker>(new SaveLockerImpl(this));
+}
+void AITwinDecorationHelper::Lock(SaveLockerImpl* saver)
+{
+	saver->sceneStatus = Impl->DecorationIO->scene && Impl->DecorationIO->scene->ShouldSave();
+	for (auto link : Impl->DecorationIO->links)
+	{
+		saver->linksStatus[link.first] = link.second->ShouldSave();
+	}
+	saver->timelineStatus = Impl->GetTimeline() && Impl->GetTimeline()->ShouldSave();
+}
+
+void AITwinDecorationHelper::Unlock(SaveLockerImpl* saver )
+{
+	if (Impl->DecorationIO->scene)
+	{
+		Impl->DecorationIO->scene->SetShoudlSave(saver->sceneStatus);
+	}
+	for (auto link : Impl->DecorationIO->links)
+	{
+		if (saver->linksStatus.find(link.first) == saver->linksStatus.end())
+		{
+			link.second->SetShouldSave(false);
+		}
+		else
+		{
+			link.second->SetShouldSave(saver->linksStatus[link.first]);
+		}
+	}
+	if (Impl->GetTimeline())
+		Impl->GetTimeline()->SetShouldSave(saver->timelineStatus);
+}
+
+void AITwinDecorationHelper::DeleteLoadedScene()
+{
+
+	if (FMessageDialog::Open(EAppMsgCategory::Info, EAppMsgType::YesNo,
+		FText::FromString("Do you want to delete the current scene?"),
+		FText::FromString("")) != EAppReturnType::Yes)
+	{
+		return;
+	}
+	std::string const accessToken = Impl->GetDecorationAccessToken();
+
+	Impl->DecorationIO->scene->Delete(accessToken);
+}

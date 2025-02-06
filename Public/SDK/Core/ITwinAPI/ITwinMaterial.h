@@ -2,7 +2,7 @@
 |
 |     $Source: ITwinMaterial.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -21,6 +21,8 @@
 MODULE_EXPORT namespace SDK::Core
 {
 
+#define ITWIN_MAT_LIBRARY_TAG "<MatLibrary>"
+
 	///==================================================================================
 	/// SIMPLIFIED VERSION
 	///==================================================================================
@@ -37,16 +39,30 @@ MODULE_EXPORT namespace SDK::Core
 
 	enum class ETextureChannel : uint8_t
 	{
-		R,
+		R = 0,
 		G,
 		B,
 		A
 	};
 
+	enum class ETextureSource : uint8_t
+	{
+		LocalDisk = 0,
+		ITwin,
+		Decoration,
+		Library,
+	};
+
+	// Special tag which can be used to nullify a texture (typically if the original model exported by the
+	// Mesh Export Service provides with an albedo map but the user wants to discard it).
+	static constexpr auto NONE_TEXTURE = "0";
+
 	struct ITwinChannelMap
 	{
-		// placeholder for real image
+		/// Placeholder for real image.
 		std::string texture;
+		/// Identifies the source repository.
+		ETextureSource eSource = ETextureSource::LocalDisk;
 
 		ETilingMode tilingH = ETilingMode::Once;
 		ETilingMode tilingV = ETilingMode::Once;
@@ -58,6 +74,8 @@ MODULE_EXPORT namespace SDK::Core
 
 		bool operator == (ITwinChannelMap const& rhs) const;
 		bool IsEmpty() const { return texture.empty(); }
+		bool IsDiscarded() const { return texture == NONE_TEXTURE; }
+		bool HasTexture() const { return !IsEmpty() && !IsDiscarded(); }
 	};
 
 	struct ITwinChannel
@@ -69,6 +87,9 @@ MODULE_EXPORT namespace SDK::Core
 		ITwinChannelMap intensityMap; // always grayscale
 
 		bool operator == (ITwinChannel const& rhs) const;
+		bool HasTextureMap() const {
+			return colorMap.HasTexture() || intensityMap.HasTexture();
+		}
 	};
 
 	enum class EMaterialKind : uint8_t
@@ -87,6 +108,7 @@ MODULE_EXPORT namespace SDK::Core
 		AmbientOcclusion,
 
 		Alpha,
+		Opacity = Alpha,
 		Transparency,
 
 		Bump,
@@ -101,11 +123,50 @@ MODULE_EXPORT namespace SDK::Core
 		ENUM_END
 	};
 
+	std::string GetChannelName(EChannelType chan);
+
+	/**
+	 * Per material UV transformation (analog to ExtensionKhrTextureTransform, but applied to all textures
+	 * in the material...)
+	 */
+	struct ITwinUVTransform
+	{
+		/**
+		 * @brief The offset of the UV coordinate origin as a factor of the texture
+		 * dimensions.
+		 */
+		std::array<double, 2> offset = { 0., 0. };
+
+		/**
+		 * @brief The scale factor applied to the components of the UV coordinates.
+		 */
+		std::array<double, 2> scale = { 1., 1. };
+
+		/**
+		 * @brief Rotate the UVs by this many radians counter-clockwise around the
+		 * origin.
+		 */
+		double rotation = 0.;
+
+
+		static ITwinUVTransform NullTransform();
+
+		/// Return whether an actual transformation is defined.
+		bool HasTransform() const;
+
+		bool operator == (ITwinUVTransform const& rhs) const;
+		bool operator != (ITwinUVTransform const& rhs) const {
+			return !(*this == rhs);
+		}
+	};
+
+
 	struct ITwinMaterial
 	{
 		EMaterialKind kind = EMaterialKind::PBR;
-		
 		std::array< std::optional<ITwinChannel>, (size_t)EChannelType::ENUM_END > channels;
+		ITwinUVTransform uvTransform;
+		std::string displayName;
 
 
 		/// Return true if this material holds a definition for the given channel.
@@ -128,6 +189,15 @@ MODULE_EXPORT namespace SDK::Core
 
 		void SetChannelColor(EChannelType channel, ITwinColor const& color);
 		void SetChannelColorMap(EChannelType channel, ITwinChannelMap const& colorMap);
+
+		/// Simplified texture access (as for a given channel, we support either an intensity map or a color
+		/// map, and never both...
+		std::optional<ITwinChannelMap> GetChannelMapOpt(EChannelType channel) const;
+		void SetChannelMap(EChannelType channel, ITwinChannelMap const& texMap);
+		ITwinChannelMap& GetMutableChannelMap(EChannelType channel);
+
+		bool HasTextureMap() const;
+		bool HasUVTransform() const { return uvTransform.HasTransform(); }
 	};
 
 }

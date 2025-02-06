@@ -2,7 +2,7 @@
 |
 |     $Source: ITwinServerConnection.cpp $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -24,15 +24,23 @@
 
 DEFINE_LOG_CATEGORY(LogITwinHttp);
 
+
+bool AITwinServerConnection::GetAccessTokenStdString(std::string& AccessToken) const
+{
+	auto const& AuthMngr = FITwinAuthorizationManager::GetInstance(
+		static_cast<SDK::Core::EITwinEnvironment>(Environment));
+	if (!ensure(AuthMngr))
+	{
+		return false;
+	}
+	AuthMngr->GetAccessToken(AccessToken);
+	return !AccessToken.empty();
+}
+
 FString AITwinServerConnection::GetAccessToken() const
 {
 	std::string AccessToken;
-	auto const& AuthMngr = FITwinAuthorizationManager::GetInstance(
-		static_cast<SDK::Core::EITwinEnvironment>(Environment));
-	if (ensure(AuthMngr))
-	{
-		AuthMngr->GetAccessToken(AccessToken);
-	}
+	GetAccessTokenStdString(AccessToken);
 	return AccessToken.c_str();
 }
 
@@ -118,3 +126,19 @@ FString AITwinServerConnection::UrlPrefix() const
 {
 	return ITwinServerEnvironment::GetUrlPrefix(Environment);
 }
+
+#if WITH_EDITOR
+void AITwinServerConnection::PostEditChangeProperty(FPropertyChangedEvent& e)
+{
+	Super::PostEditChangeProperty(e);
+
+	FName const PropertyName = (e.Property != nullptr) ? e.Property->GetFName() : NAME_None;
+	if (PropertyName == GET_MEMBER_NAME_CHECKED(AITwinServerConnection, Environment)
+		&& Environment != EITwinEnvironment::Invalid)
+	{
+		// When we explicitly modify the iTwin environment of a connection from the Editor, make it
+		// the preferred environment for next PIE session...
+		UITwinWebServices::SetPreferredEnvironment(Environment);
+	}
+}
+#endif // WITH_EDITOR

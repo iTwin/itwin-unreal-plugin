@@ -2,7 +2,7 @@
 |
 |     $Source: HttpRequest.cpp $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -11,14 +11,21 @@
 
 #include <mutex>
 #include <stduuid/uuid.h>
+#include "../Singleton/singleton.h"
 
 namespace SDK::Core
 {
 	template<>
-	std::function<std::shared_ptr<HttpRequest>()> Tools::Factory<HttpRequest>::newFct_ = []() {
-		std::shared_ptr<HttpRequest> p(new HttpRequest());
-		return p;
-	};
+	Tools::Factory<HttpRequest>::Globals::Globals()
+	{
+		newFct_ = []() {return new HttpRequest(); };
+	}
+
+	template<>
+	Tools::Factory<HttpRequest>::Globals& Tools::Factory<HttpRequest>::GetGlobals()
+	{
+		return singleton<Tools::Factory<HttpRequest>::Globals>();
+	}
 
 	/*static*/ const RequestID HttpRequest::NO_REQUEST = "NONE";
 

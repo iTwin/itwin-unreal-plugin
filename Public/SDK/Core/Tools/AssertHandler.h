@@ -2,7 +2,7 @@
 |
 |     $Source: AssertHandler.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -15,7 +15,7 @@
 
 namespace SDK::Core::Tools
 {
-	class IAssertHandler : public Tools::Factory<IAssertHandler>, public std::enable_shared_from_this<IAssertHandler>
+	class IAssertHandler : public Tools::Factory<IAssertHandler>
 	{
 	public:
 		virtual void Handler(const libassert::assertion_info& info) = 0;

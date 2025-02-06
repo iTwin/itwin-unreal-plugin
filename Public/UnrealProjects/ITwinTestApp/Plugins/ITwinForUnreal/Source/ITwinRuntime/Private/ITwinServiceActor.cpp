@@ -2,15 +2,18 @@
 |
 |     $Source: ITwinServiceActor.cpp $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
 
 #include <ITwinServiceActor.h>
 #include <ITwinServerConnection.h>
+#include <ITwinWebServices/ITwinAuthorizationManager.h>
 #include <ITwinWebServices/ITwinWebServices.h>
 #include <Engine/World.h>
+
+#include <SDK/Core/Tools/Log.h>
 
 
 DEFINE_LOG_CATEGORY(LogITwin);
@@ -130,3 +133,24 @@ void AITwinServiceActor::OnAuthorizationDone(bool bSuccess, std::string const& A
 	}
 }
 
+
+FString AITwinServiceActor::GetAccessToken() const
+{
+	if (ServerConnection)
+	{
+		return ServerConnection->GetAccessToken();
+	}
+	BE_LOGE("ITwinAPI", "[" << TCHAR_TO_UTF8(GetObserverName()) << "] No access token");
+	return {};
+}
+
+std::string AITwinServiceActor::GetAccessTokenStdString() const
+{
+	std::string AccessToken;
+	if (ServerConnection && ServerConnection->GetAccessTokenStdString(AccessToken))
+	{
+		return AccessToken;
+	}
+	BE_LOGE("ITwinAPI", "[" << TCHAR_TO_UTF8(GetObserverName()) << "] No access token");
+	return {};
+}

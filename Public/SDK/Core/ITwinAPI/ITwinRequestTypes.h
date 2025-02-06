@@ -2,7 +2,7 @@
 |
 |     $Source: ITwinRequestTypes.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -37,8 +37,8 @@ MODULE_EXPORT namespace SDK::Core
 		std::string UrlSuffix;
 		const std::string AcceptHeader;
 
-		const std::string ContentType;
-		const std::string ContentString;
+		std::string ContentType;
+		std::string ContentString;
 
 		std::map<std::string, std::string> CustomHeaders;
 

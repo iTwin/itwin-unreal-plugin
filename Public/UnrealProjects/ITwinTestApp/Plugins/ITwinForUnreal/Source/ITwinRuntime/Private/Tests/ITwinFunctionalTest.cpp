@@ -2,7 +2,7 @@
 |
 |     $Source: ITwinFunctionalTest.cpp $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -18,6 +18,7 @@
 #include <FunctionalTestingHelper.h>
 #include <Interfaces/IScreenShotToolsModule.h>
 #include <IAutomationControllerModule.h>
+#include <Interfaces/IPluginManager.h>
 #endif // WITH_EDITOR
 
 #if WITH_EDITOR
@@ -109,11 +110,15 @@ UE5Coro::TCoroutine<> TakeScreenshot(const FString Name)
 	Options.Resolution = {640, 360}; // Use low resolution to avoid bloating ADO.
 	const auto DelegateHandle = FAutomationTestFramework::Get().OnScreenshotTakenAndCompared.AddLambda([&]()
 		{
+			UE_LOG(LogFunctionalTest, Display, TEXT("OnScreenshotTakenAndCompared, now = %lld"), FDateTime::UtcNow().GetTicks());
 			Promise.SetValue();
 		});
 	auto* const World = AutomationCommon::GetAnyGameWorld();
+	UE_LOG(LogFunctionalTest, Display, TEXT("Before TakeAutomationScreenshot, now = %lld"), FDateTime::UtcNow().GetTicks());
 	UAutomationBlueprintFunctionLibrary::TakeAutomationScreenshot(World, {-1, -1, nullptr, World}, Name, {}, Options);
+	UE_LOG(LogFunctionalTest, Display, TEXT("Before co_await, now = %lld"), FDateTime::UtcNow().GetTicks());
 	co_await Promise.GetFuture();
+	UE_LOG(LogFunctionalTest, Display, TEXT("After co_await, now = %lld"), FDateTime::UtcNow().GetTicks());
 	FAutomationTestFramework::Get().OnScreenshotTakenAndCompared.Remove(DelegateHandle);
 	// Move the scrennshot files to the final directory.
 	FModuleManager::LoadModuleChecked<IScreenShotToolsModule>("ScreenShotComparisonTools").GetScreenShotManager()->
@@ -126,6 +131,10 @@ UE5Coro::TCoroutine<> TakeScreenshot(const FString Name)
 	{
 		TArray<FString> ScreenshotFiles;
 		IFileManager::Get().FindFilesRecursive(ScreenshotFiles, *(Detail::GetResultsFinalDir()/TEXT("Functional")/Name), TEXT("Incoming.png"), true, false);
+		UE_LOG(LogFunctionalTest, Display, TEXT("ScreenshotFiles num = %d"), ScreenshotFiles.Num());
+		UE_LOG(LogFunctionalTest, Display, TEXT("BeforeScreenshotDate = %lld"), BeforeScreenshotDate.GetTicks());
+		for (const auto& ScreenshotFile: ScreenshotFiles)
+			UE_LOG(LogFunctionalTest, Display, TEXT("Found screenshot file \"%s\", timestamp = %lld"), *ScreenshotFile, IFileManager::Get().GetTimeStamp(*ScreenshotFile).GetTicks());
 		ScreenshotFiles = ScreenshotFiles.FilterByPredicate([&](const auto& X){return IFileManager::Get().GetTimeStamp(*X) >= BeforeScreenshotDate;});
 		if (ScreenshotFiles.Num() != 1)
 		{
@@ -178,7 +187,9 @@ bool FITwinFunctionalTest::RunTest(const FString& Parameters)
 					FString Xml;
 					Xml += TEXT("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
 					Xml += TEXT("<testsuites>\n");
-					Xml += TEXT("<testsuite name=\"ITwinFunctional\">\n");
+					// Prefix test suite name with target/platform/config, to distinguish reports on ADO.
+					Xml += FString::Format(TEXT("<testsuite name=\"ITwinFunctional_{0}_{1}_{2}\">\n"),
+						{FPlatformMisc::GetUBTTargetName(), FPlatformMisc::GetUBTPlatform(), FModuleManager::GetUBTConfiguration()});
 					for (const auto& [TestName, ExecInfo]: ITwin::Tests::Detail::GetFunctionalStaticData().ExecInfos)
 					{
 						Xml += FString::Format(TEXT("<testcase name=\"{0}\">\n"), {TestName});

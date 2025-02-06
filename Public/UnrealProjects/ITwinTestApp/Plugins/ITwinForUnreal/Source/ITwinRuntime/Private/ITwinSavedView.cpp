@@ -2,12 +2,13 @@
 |
 |     $Source: ITwinSavedView.cpp $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
 #include <ITwinSavedView.h>
 #include <ITwinServerConnection.h>
+#include <ITwinSynchro4DSchedules.h>
 #include <ITwinUtilityLibrary.h>
 #include <ITwinWebServices/ITwinWebServices.h>
 #include <HttpModule.h>
@@ -21,6 +22,11 @@
 #include <ITwinIModel.h>
 #include <ITwinIModelInternals.h>
 
+#if WITH_EDITOR
+	#include "Editor.h"
+	#include "LevelEditorViewport.h"
+#endif // WITH_EDITOR
+
 class AITwinSavedView::FImpl
 {
 public:
@@ -33,16 +39,22 @@ public:
 		Rename
 	};
 	AITwinSavedView& Owner;
+	FSavedView SavedViewData;
 	bool bSavedViewTransformIsSet = false;
 	EPendingOperation PendingOperation = EPendingOperation::None;
 	UTimelineComponent* TimelineComponent = nullptr;
 	UCurveFloat* CurveFloat = nullptr;
+	FVector StartPos;
+	FRotator StartRot;
+	std::function<void(FVector const&, FRotator const&)> OnMoveToSavedViewTick;
 
 	FImpl(AITwinSavedView& InOwner)
-		:Owner(InOwner)
+		: Owner(InOwner)
 	{
 		TimelineComponent = Owner.CreateDefaultSubobject<UTimelineComponent>(TEXT("TimelineComponent"));
 		TimelineComponent->SetLooping(false);
+		TimelineComponent->PrimaryComponentTick.bCanEverTick = true;
+		TimelineComponent->bTickInEditor = true;
 		FOnTimelineFloat TimelineTickDelegate;
 		TimelineTickDelegate.BindUFunction(&Owner, "OnTimelineTick");
 		CurveFloat = NewObject<UCurveFloat>();
@@ -51,6 +63,13 @@ public:
 		TimelineComponent->AddInterpFloat(CurveFloat, TimelineTickDelegate);
 		TimelineComponent->SetTimelineLengthMode(ETimelineLengthMode::TL_TimelineLength);
 	}
+	void WillMoveToSavedViewFrom(FVector const& InStartPos, FRotator const& InStartRot,
+		std::function<void(FVector const&, FRotator const&)> const& InOnMoveToSavedViewTick)
+	{
+		StartPos = InStartPos;
+		StartRot = InStartRot;
+		OnMoveToSavedViewTick = InOnMoveToSavedViewTick;
+	}
 	void DestroyChildren()
 	{
 		const auto ChildrenCopy = Owner.Children;
@@ -58,23 +77,53 @@ public:
 			Owner.GetWorld()->DestroyActor(Child);
 		Owner.Children.Empty();
 	}
+	void ApplyScheduleTime()
+	{
+		// saved views are owned by an iModel actor (except those created manually from scratch)
+		AITwinIModel* OwnerIModel = Cast<AITwinIModel>(Owner.GetOwner());
+		if (OwnerIModel && OwnerIModel->Synchro4DSchedules
+			&& !SavedViewData.DisplayStyle.RenderTimeline.IsEmpty())
+		{
+			OwnerIModel->Synchro4DSchedules->SetScheduleTime(
+				FDateTime::FromUnixTimestamp(SavedViewData.DisplayStyle.TimePoint));
+			// If playing, it makes sense to pause replay when moving to saved view.
+			// If not, setting the schedule time will have no effect! In that case, "Pause()" actually
+			// has the effect of redisplaying the schedule, without changing the ScheduleTime
+			OwnerIModel->Synchro4DSchedules->Pause();
+		}
+	}
 };
 
 AITwinSavedView::AITwinSavedView()
-	:Impl(MakePimpl<FImpl>(*this))
+	: Impl(MakePimpl<FImpl>(*this))
 {
 	SetRootComponent(CreateDefaultSubobject<USceneComponent>(TEXT("root")));
 }
 
-void AITwinSavedView::OnTimelineTick(const float& output)
+#if WITH_EDITOR
+bool AITwinSavedView::IsMovingToSavedView() const
 {
-	auto svPos = GetActorLocation();
-	auto svRot = GetActorRotation();
-	auto startPos = GetWorld()->GetFirstPlayerController()->GetPawn()->GetActorLocation();
-	auto startRot = GetWorld()->GetFirstPlayerController()->GetPawn()->GetActorRotation();
-	GetWorld()->GetFirstPlayerController()->GetPawn()->SetActorLocation(UKismetMathLibrary::VLerp(startPos, svPos, output),false, nullptr, ETeleportType::TeleportPhysics);
-	svRot.Roll = 0;
-	GetWorld()->GetFirstPlayerController()->GetPawn()->SetActorRotation(UKismetMathLibrary::RLerp(startRot, svRot, output, true));
+	return Impl->TimelineComponent->IsPlaying();
+}
+#endif // WITH_EDITOR
+
+void AITwinSavedView::OnTimelineTick(const float& Output)
+{
+	auto const TickPos = UKismetMathLibrary::VLerp(Impl->StartPos, GetActorLocation(), Output);
+	auto const TickRot = UKismetMathLibrary::RLerp(Impl->StartRot, GetActorRotation(), Output, true);
+	if (Impl->OnMoveToSavedViewTick)
+	{
+		Impl->OnMoveToSavedViewTick(TickPos, TickRot);
+	}
+	else if (GetWorld() && GetWorld()->GetFirstPlayerController()
+		&& GetWorld()->GetFirstPlayerController()->GetPawn())
+	{
+		GetWorld()->GetFirstPlayerController()->GetPawn()->SetActorLocation(
+			TickPos, false, nullptr, ETeleportType::TeleportPhysics);
+		GetWorld()->GetFirstPlayerController()->SetControlRotation(TickRot);
+	}
+	if (1.f == Output)
+		Impl->ApplyScheduleTime();
 }
 
 void AITwinSavedView::OnSavedViewDeleted(bool bSuccess, FString const& InSavedViewId, FString const& Response)
@@ -101,11 +150,13 @@ void AITwinSavedView::OnSavedViewDeleted(bool bSuccess, FString const& InSavedVi
 	if (!IsValid(WorldContextObject))
 		return;
 	AITwinIModel* const iModel = Cast<AITwinIModel>(UGameplayStatics::GetActorOfClass(WorldContextObject->GetWorld(), AITwinIModel::StaticClass()));
+	if (!iModel)
+		return;
 	TArray<FString> allHiddenIds;
 	allHiddenIds.Append(SavedView.HiddenElements);
 	allHiddenIds.Append(SavedView.HiddenCategories);
 	allHiddenIds.Append(SavedView.HiddenModels);
-	std::vector<ITwinElementID> mergedIds;
+	std::unordered_set<ITwinElementID> mergedIds;
 	FITwinIModelInternals& IModelInternals = GetInternals(*iModel);
 	for (auto& elId : allHiddenIds)
 	{
@@ -114,12 +165,12 @@ void AITwinSavedView::OnSavedViewDeleted(bool bSuccess, FString const& InSavedVi
 		auto const& CategoryIDToElementIDs = IModelInternals.SceneMapping.CategoryIDToElementIDs[PickedEltID];
 		auto const& ModelIDToElementIDs = IModelInternals.SceneMapping.ModelIDToElementIDs[PickedEltID];
 		bool isElementID = CategoryIDToElementIDs.empty() && ModelIDToElementIDs.empty();
-		mergedIds.insert(mergedIds.end(), CategoryIDToElementIDs.begin(), CategoryIDToElementIDs.end());
-		mergedIds.insert(mergedIds.end(), ModelIDToElementIDs.begin(), ModelIDToElementIDs.end());
+		mergedIds.insert(CategoryIDToElementIDs.begin(), CategoryIDToElementIDs.end());
+		mergedIds.insert(ModelIDToElementIDs.begin(), ModelIDToElementIDs.end());
 		if (isElementID)
-			mergedIds.push_back(PickedEltID);
+			mergedIds.insert(PickedEltID);
 	}
-	IModelInternals.HideElements(mergedIds);
+	IModelInternals.HideElements(mergedIds, false);
 }
 
 void AITwinSavedView::OnSavedViewRetrieved(bool bSuccess, FSavedView const& SavedView, 
@@ -129,7 +180,7 @@ void AITwinSavedView::OnSavedViewRetrieved(bool bSuccess, FSavedView const& Save
 		return;
 
 	OnSavedViewEdited(bSuccess, SavedView, SavedViewInfo);
-
+	Impl->SavedViewData = SavedView;
 	// Perform pending operation now, if any
 	switch (Impl->PendingOperation)
 	{
@@ -195,27 +246,58 @@ void AITwinSavedView::MoveToSavedView()
 	UWorld const* World = GetWorld();
 	APlayerController* Controller = World ? World->GetFirstPlayerController() : nullptr;
 	APawn* Pawn = Controller ? Controller->GetPawn() : nullptr;
-	if (!Pawn)
-		return;
-
-	if (!Impl->bSavedViewTransformIsSet)
+	if (Impl->bSavedViewTransformIsSet)
 	{
-		// fetch the saved view data before we can move to it
+		auto EndRot = GetActorRotation();
+		EndRot.Roll = 0.;
+		if (Pawn)
+		{
+			checkSlow(GetWorld()->GetFirstPlayerController() == Controller && Controller->GetPawn() == Pawn);
+			auto StartRot = Pawn->GetActorRotation();
+			Impl->WillMoveToSavedViewFrom(Pawn->GetActorLocation(), Pawn->GetActorRotation(), {});
+			Impl->TimelineComponent->PlayFromStart();
+		}
+		else // no Pawn (nor Controller): we're probably in the Editor
+		{
+		#if WITH_EDITOR
+			auto* PoV = StaticCast<FEditorViewportClient*>(GEditor->GetActiveViewport()->GetClient());
+			if (PoV)
+			{
+				// Interp doesn't work, even with the ShouldTickIfViewportsOnly override: I stepped as far as
+				// FloatEntry.InterpFunc.ExecuteIfBound(Val): the functor is bound, but the delegate
+				// (AITwinSavedView::OnTimelineTick) is not called!?!
+				// (I also tried with PrimaryActorTick.bCanEverTick = true; on the Saved view actor but, no,
+				// actor and component are ticked independently it seems.
+				//
+				//Impl->WillMoveToSavedViewFrom(PoV->GetViewLocation(), PoV->GetViewRotation(),
+				//	[](FVector const& TickPos, FRotator const& TickRot)
+				//	{
+				//		auto* PoV =
+				//			StaticCast<FEditorViewportClient*>(GEditor->GetActiveViewport()->GetClient());
+				//		if (PoV)
+				//		{
+				//			PoV->SetViewLocation(TickPos);
+				//			PoV->SetViewRotation(TickRot);
+				//		}
+				//	});
+				//Impl->TimelineComponent->PlayFromStart();
+
+				// We could bypass TimelineComponent entirely and interpolate manually from the iModel global
+				// ticker (or AITwinSavedView::Tick, using ShouldTickIfViewportsOnly?), but is it worth it?
+				// => let's just teleport there for the time being:
+				PoV->SetViewLocation(GetActorLocation());
+				PoV->SetViewRotation(EndRot);
+				Impl->ApplyScheduleTime();
+			}
+		#endif // WITH_EDITOR
+		}
+		HideElements(GetWorld(), Impl->SavedViewData);
+	}
+	else // fetch the saved view data before we can move to it
+	{
 		Impl->PendingOperation = FImpl::EPendingOperation::Move;
 		UpdateSavedView();
-		return;
 	}
-	auto camPos = GetActorLocation();
-	auto camRot = GetActorRotation();
-	Pawn->bUseControllerRotationPitch = 0;
-	Pawn->bUseControllerRotationYaw = 0;
-	Impl->TimelineComponent->PlayFromStart();
-
-	checkSlow(GetWorld()->GetFirstPlayerController() == Controller && Controller->GetPawn() == Pawn);
-	camRot.Roll = 0;
-	Pawn->bUseControllerRotationPitch = 1;
-	Pawn->bUseControllerRotationYaw = 1;
-	Controller->SetControlRotation(camRot);
 }
 
 void AITwinSavedView::DeleteSavedView()

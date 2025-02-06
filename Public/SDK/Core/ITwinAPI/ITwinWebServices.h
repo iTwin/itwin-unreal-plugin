@@ -2,7 +2,7 @@
 |
 |     $Source: ITwinWebServices.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -10,15 +10,19 @@
 #pragma once
 
 #ifndef SDK_CPPMODULES
-	#include <mutex>
-	#ifndef MODULE_EXPORT
-		#define MODULE_EXPORT
-	#endif // !MODULE_EXPORT
+#	include <functional>
+#	include <mutex>
+#	ifndef MODULE_EXPORT
+#		define MODULE_EXPORT
+#	endif
 #endif
 
 #include "ITwinEnvironment.h"
+#include "ITwinMatMLPredictionEnums.h"
 #include "ITwinTypes.h"
 
+#include <filesystem>
+#include <functional>
 #include <optional>
 
 MODULE_EXPORT namespace SDK::Core
@@ -69,7 +73,8 @@ MODULE_EXPORT namespace SDK::Core
 		void GetRealityData3DInfo(std::string const& iTwinId, std::string const& realityDataId);
 
 
-		void GetAllSavedViews(std::string const& iTwinId, std::string const& iModelId, std::string const& groupId = "");
+		void GetAllSavedViews(std::string const& iTwinId, std::string const& iModelId, std::string const& groupId = "",
+							  int Top = 100, int Skip = 0);
 		void GetSavedView(std::string const& savedViewId);
 		
 		void GetSavedViewExtension(std::string const& savedViewId, std::string const& extensionName);
@@ -81,8 +86,8 @@ MODULE_EXPORT namespace SDK::Core
 		void AddSavedViewGroup(std::string const& iTwinId, std::string const& iModelId,
 			SavedViewGroupInfo const& savedViewGroupInfo);
 
-		void AddSavedView(std::string const& iTwinId, std::string const& iModelId,
-			SavedView const& savedView, SavedViewInfo const& savedViewInfo, std::string const& groupId = "");
+		void AddSavedView(std::string const& iTwinId, SavedView const& savedView, 
+			SavedViewInfo const& savedViewInfo, std::string const& iModelId = "", std::string const& groupId = "");
 		void OnSavedViewAdded(bool bSuccess, SavedViewInfo const& savedViewInfo);
 
 		void DeleteSavedView(std::string const& savedViewId);
@@ -100,9 +105,10 @@ MODULE_EXPORT namespace SDK::Core
 		ITwinAPIRequestInfo InfosToQueryIModel(
 			std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId,
 			std::string const& ECSQLQuery, int offset, int count);
-		RequestID QueryIModel(
+		void QueryIModel(
 			std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId,
-			std::string const& ECSQLQuery, int offset, int count, ITwinAPIRequestInfo const* requestInfo);
+			std::string const& ECSQLQuery, int offset, int count,
+			std::function<void(RequestID const&)>&& notifRequestID, ITwinAPIRequestInfo const* requestInfo);
 
 		void GetMaterialListProperties(
 			std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId,
@@ -110,10 +116,16 @@ MODULE_EXPORT namespace SDK::Core
 		void GetMaterialProperties(
 			std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId,
 			std::string const& materialId);
-
 		void GetTextureData(
 			std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId,
 			std::string const& textureId);
+
+		bool IsSetupForForMaterialMLPrediction() const;
+		void SetMaterialMLPredictionCacheFolder(std::filesystem::path const& cacheFolder);
+		void SetupForMaterialMLPrediction();
+		EITwinMatMLPredictionStatus GetMaterialMLPrediction(
+			std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId);
+
 
 		static ITwinWebServices* GetWorkingInstance();
 
@@ -125,7 +137,7 @@ MODULE_EXPORT namespace SDK::Core
 
 
 	protected:
-		void SetLastError(std::string const& error, RequestID const& requestId);
+		void SetLastError(std::string const& error, RequestID const& requestId, int retriesLeft);
 
 		//! Returns the error stored for the given request, if any.
 		std::string GetRequestError(RequestID const& requestId) const;
@@ -138,12 +150,6 @@ MODULE_EXPORT namespace SDK::Core
 		/// needed.
 		template <typename Func>
 		void ModifyServerSetting(Func const& functor);
-
-		template <typename ResultDataType, class FunctorType, class DelegateAsFunctor>
-		RequestID TProcessHttpRequest(
-			ITwinAPIRequestInfo const& requestInfo,
-			FunctorType&& processingFunctor,
-			DelegateAsFunctor&& resultCallbackFunctor);
 
 	private:
 		class Impl;

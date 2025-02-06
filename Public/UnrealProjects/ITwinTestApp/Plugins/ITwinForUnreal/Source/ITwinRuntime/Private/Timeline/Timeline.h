@@ -2,7 +2,7 @@
 |
 |     $Source: Timeline.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -14,48 +14,25 @@
 
 #include "CoreMinimal.h"
 #include "Math/Vector.h"
+
+#include <Hashing/UnrealMath.h>
+#include <ITwinElementID.h>
 #include <Timeline/AnchorPoint.h>
 #include <Timeline/Definition.h>
+#include <Timeline/TimelineBase.h>
+#include <Timeline/TimelineTypes.h>
 
-#include <Boost/BoostHash.h>
 #include <Compil/BeforeNonUnrealIncludes.h>
 	#include <BeHeaders/Compil/AlwaysFalse.h>
 	#include <BeHeaders/StrongTypes/TaggedValue.h>
 #include <Compil/AfterNonUnrealIncludes.h>
-#include <ITwinElementID.h>
-#include "TimelineBase.h"
+
 #include <memory>
 #include <optional>
-#include <set>
 #include <unordered_map>
-#include <variant>
 
 class AActor;
 class FJsonValue;
-
-class FIModelElementsKey
-{
-public:
-	static FIModelElementsKey NOT_ANIMATED;
-	std::variant<ITwinElementID, size_t/*GroupInVec*/> Key;
-	explicit FIModelElementsKey(ITwinElementID const& ElementID) : Key(ElementID) {}
-	explicit FIModelElementsKey(size_t const& GroupIndex) : Key(GroupIndex) {}
-};
-
-inline bool operator ==(FIModelElementsKey const& A, FIModelElementsKey const& B)
-{
-	return A.Key == B.Key;
-}
-
-template <>
-struct std::hash<FIModelElementsKey>
-{
-public:
-	size_t operator()(FIModelElementsKey const& ElementsKey) const
-	{
-		return std::hash<std::variant<ITwinElementID, size_t>>()(ElementsKey.Key);
-	}
-};
 
 namespace ITwin::Flag {
 
@@ -90,8 +67,9 @@ struct FDeferredAnchor
 {
 	EAnchorPoint AnchorPoint = EAnchorPoint::Original;
 	mutable bool bDeferred = false;///< No offset to compute when using 'Original [Position]'
-	/// When 'AnchorPoint' is not 'Original', this is the world offset in UE coordinates between the BBox
-	/// center and the anchor point, WITHOUT rotation applied.
+	/// When 'AnchorPoint' is not 'Original', this is the offset between the BBox center and the anchor point,
+	/// WITHOUT keyframe rotation applied, expressed as fully transformed Unreal-space coords (ie. including
+	/// a possible iModel transformation aka "offset").
 	/// When 'bDeferred' is true, this member is irrelevant /unless/ it's the 'Custom' offset (converted from 
 	/// its original definition in iModel coordinates). After 'bDeferred' has been toggled off, the offset has
 	/// been computed here from the Element (group)'s BBox
@@ -144,12 +122,13 @@ enum class EGrowthStatus : uint8_t
 	DeferredFullyGrown = (FullyGrown | Detail::GrowthStatus::Mask::Deferred),
 };
 
-/// Note: a separate structure is necessary in order to set the possibly deferred component (PlaneW) as well
-/// as the growth status as mutable
 struct FDeferredPlaneEquation
 {
-	/// Orientation of the cutting plane
-	FVector3f PlaneOrientation;
+	/// Orientation of the cutting plane, first stored in Unreal world coordinates AS IF iModel were
+	/// untransformed (it's much easier to compute Position in FinalizeCuttingPlaneEquation using an AABB),
+	/// then when "finalized", the plane orientation is also transformed by the iModel's transform/offset.
+	mutable FVector3f PlaneOrientation;
+	PTransform const* TransformKeyframe = nullptr;
 	/// The necessarily deferred (until BBoxes are known for the Elements) translation (W) component of the
 	/// plane equation, ie. actually set only when !IsDeferred() (ie depending on GrowthStatus)
 	mutable float PlaneW;
@@ -202,7 +181,7 @@ public:
 
 private:
 	FIModelElementsKey IModelElementsKey;
-	std::set<ITwinElementID> IModelElements;
+	FElementsGroup IModelElements;
 	/// Cache of offsets between each Element's BBox center and the center of the whole group's BBox
 	/// (only in the case of a group of Elements - see FIModelElementsKey)
 	std::unordered_map<ITwinElementID, FVector> IModelElementOffsets;
@@ -212,22 +191,24 @@ private:
 
 public:
 	ElementTimelineEx(FIModelElementsKey const InIModelElementsKey,
-					  std::set<ITwinElementID> const& InIModelElements)
+					  FElementsGroup const& InIModelElements)
 		: IModelElementsKey(InIModelElementsKey), IModelElements(InIModelElements) {}
+
+	void* ExtraData = nullptr; ///< Pointer to opaque structure, currently for optimization data
 
 	void SetModified() { bModified = true; }
 	bool IsModified() const { return bModified; }
 	bool TestModifiedAndResetFlag() { bool const tmp = bModified; bModified = false; return tmp; }
 
 	[[nodiscard]] FIModelElementsKey const& GetIModelElementsKey() const { return IModelElementsKey; }
-	[[nodiscard]] std::set<ITwinElementID>& IModelElementsRef() { return IModelElements; }
-	[[nodiscard]] std::set<ITwinElementID> const& GetIModelElements() const { return IModelElements; }
+	[[nodiscard]] FElementsGroup& IModelElementsRef() { return IModelElements; }
+	[[nodiscard]] FElementsGroup const& GetIModelElements() const { return IModelElements; }
 	void OnIModelElementsAdded() { bIModelElementsBBoxNeedsUpdate = true; }
 	[[nodiscard]] FVector const& GetIModelElementOffsetInGroup(ITwinElementID const ElementID,
-		std::function<FBox(std::set<ITwinElementID> const&)> const& GroupBBoxGetter,
+		std::function<FBox(FElementsGroup const&)> const& GroupBBoxGetter,
 		std::function<FBox const&(ITwinElementID const)> const& SingleBBoxGetter);
 	[[nodiscard]] FBox const& GetIModelElementsBBox(
-		std::function<FBox(std::set<ITwinElementID> const&)> ElementsBBoxGetter);
+		std::function<FBox(FElementsGroup const&)> ElementsBBoxGetter);
 	/// SLOW!
 	[[nodiscard]] bool AppliesToElement(ITwinElementID const& ElementID) const;
 	/// Returns the total number of keyframes in the timeline
@@ -236,15 +217,18 @@ public:
 	void SetColorAt(double const Time, std::optional<FVector> Color, EInterpolation const Interp);
 	/// Note: the fourth coordinate of the plane equation is not passed, because we can't generally expect to
 	/// have the Element's bounding box when creating the timeline's keyframes.
+	/// \param InTransformKeyframe Optional transformation of the Element(s) to account for when finalizing 
+	///		the plane equation based on their bounding box.
 	void SetCuttingPlaneAt(double const Time, std::optional<FVector> PlaneOrientation,
-						   EGrowthStatus const GrowthStatus, EInterpolation const Interp);
+		EGrowthStatus const GrowthStatus, EInterpolation const Interp,
+		PTransform const* const InTransformKeyframe = nullptr);
 	/// \return Whether the timeline has any CuttingPlane keyframe where fullyHidden_ is true
 	[[nodiscard]] bool HasFullyHidingCuttingPlaneKeyframes() const;
 	/// \return Whether the timeline has any Visibility keyframe where the transparency is neither 0 nor 1
 	[[nodiscard]] bool HasPartialVisibility() const;
 	void SetVisibilityAt(double const Time, std::optional<float> Alpha, EInterpolation const Interp);
 	/// Sets a transformation at a given time, expressed in the UE world reference system
-	void SetTransformationAt(double const Time, FVector const& Position, FQuat const& Rotation,
+	PTransform const& SetTransformationAt(double const Time, FVector const& Position, FQuat const& Rotation,
 		FDeferredAnchor const& DefrdAnchor, EInterpolation const Interp);
 	void SetTransformationDisabledAt(double const Time, EInterpolation const Interp);
 
@@ -261,7 +245,7 @@ class MainTimeline : public MainTimelineBase<ElementTimelineEx>
 	/// Maps each animated Element or group of Elements to a single timeline that applies only to it
 	std::unordered_map<FIModelElementsKey, int/*timeline index*/> ElementsKeyToTimeline;
 	/// See HideNonAnimatedDuplicates in ITwinSynchro4DSchedulesTimelineBuilder.cpp
-	std::set<ITwinElementID> NonAnimatedDuplicates;
+	FElementsGroup NonAnimatedDuplicates;
 	bool bHasNewOrModifiedTimeline_ = false;
 
 public:
@@ -269,23 +253,23 @@ public:
 	bool TestNewOrModifiedAndResetFlag() {
 		bool tmp = bHasNewOrModifiedTimeline_; bHasNewOrModifiedTimeline_ = false; return tmp;
 	}
-	std::set<ITwinElementID> const& GetNonAnimatedDuplicates() const { return NonAnimatedDuplicates; }
+	FElementsGroup const& GetNonAnimatedDuplicates() const { return NonAnimatedDuplicates; }
 	void AddNonAnimatedDuplicate(ITwinElementID const Elem);
 	void RemoveNonAnimatedDuplicate(ITwinElementID const Elem);
 	// Removed: test FITwinElement::AnimationKeys instead
 	//[[nodiscard]] bool HasTimelineForElement(ITwinElementID const& ElementID) const;
 	/// Get or create and return a timeline for the Element or group of Elements.
 	[[nodiscard]] ElementTimelineEx& ElementTimelineFor(FIModelElementsKey const IModelElementsKey,
-														std::set<ITwinElementID> const& Elements);
+														FElementsGroup const& Elements);
 	/// Get an existing timeline for the Element or group of Elements.
 	/// \return An existing timeline, or nullptr if none was found.
-	[[nodiscard]] ElementTimelineEx* GetElementTimelineFor(FIModelElementsKey const IModelElementsKey) const;
+	[[nodiscard]] ElementTimelineEx* GetElementTimelineFor(FIModelElementsKey const IModelElementsKey,
+														   int* Index = nullptr) const;
 
 	template<typename JsonPrintPolicy> [[nodiscard]] FString ToJsonString() const;
 	[[nodiscard]] FString ToPrettyJsonString() const;
 	[[nodiscard]] FString ToCondensedJsonString() const;
 
-	/// TODO_GCO: Not sure I'll need that?
 	void FixColor();
 
 	// In case we need the elementTimelineId_ inside ElementTimelineEx, we'd have to override this:

@@ -1,8 +1,8 @@
 /*--------------------------------------------------------------------------------------+
 |
-|     $Source: StdHash.h $
+|     $Source: UnrealString.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -22,4 +22,9 @@ public:
 	}
 };
 
+}
+
+inline std::size_t hash_value(FString const& v) noexcept
+{
+	return GetTypeHash(v);
 }

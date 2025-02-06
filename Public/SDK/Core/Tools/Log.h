@@ -2,7 +2,7 @@
 |
 |     $Source: Log.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -29,7 +29,7 @@ namespace SDK::Core::Tools
 
 	// Note: string are utf8
 
-	class ILog: public Tools::Factory<ILog, std::string /*name*/, Level>, public std::enable_shared_from_this<ILog>
+	class ILog: public Tools::Factory<ILog, std::string /*name*/, Level>
 	{
 	public:
 		virtual void DoLog(const std::string& msg, Level sev, const char* srcPath, const char* func, int line) = 0;

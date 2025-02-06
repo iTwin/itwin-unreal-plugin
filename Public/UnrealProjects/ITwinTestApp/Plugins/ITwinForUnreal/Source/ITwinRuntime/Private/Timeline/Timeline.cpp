@@ -2,7 +2,7 @@
 |
 |     $Source: Timeline.cpp $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -28,7 +28,7 @@
 namespace ITwin::Timeline {
 
 ElementTimelineEx& MainTimeline::ElementTimelineFor(FIModelElementsKey const ElementsKey,
-													std::set<ITwinElementID> const& IModelElements)
+													FElementsGroup const& IModelElements)
 {
 	int const Index = (int)GetContainer().size();
 	const auto ItAndFlag = ElementsKeyToTimeline.try_emplace(ElementsKey, Index);
@@ -58,13 +58,18 @@ void MainTimeline::OnElementsTimelineModified(ElementTimelineEx& ModifiedTimelin
 	bHasNewOrModifiedTimeline_ = true;
 }
 
-ElementTimelineEx* MainTimeline::GetElementTimelineFor(FIModelElementsKey const ElementsKey) const
+ElementTimelineEx* MainTimeline::GetElementTimelineFor(FIModelElementsKey const ElementsKey,
+													   int* Index/*= nullptr*/) const
 {
 	const auto It = ElementsKeyToTimeline.find(ElementsKey);
 	if (It == ElementsKeyToTimeline.end())
 		return nullptr;
 	else
+	{
+		if (Index)
+			*Index = It->second;
 		return GetContainer()[It->second].get();
+	}
 }
 
 void MainTimeline::AddNonAnimatedDuplicate(ITwinElementID const Elem)
@@ -116,18 +121,20 @@ void ElementTimelineEx::SetColorAt(double const Time, std::optional<FVector> InC
 	}
 }
 
-void ElementTimelineEx::SetCuttingPlaneAt(double const Time, std::optional<FVector> PlaneOrientation,
-	EGrowthStatus const GrowthStatus, EInterpolation const Interp)
+void ElementTimelineEx::SetCuttingPlaneAt(double const Time, std::optional<FVector> InPlaneOrientation,
+	EGrowthStatus const InGrowthStatus, EInterpolation const Interp,
+	PTransform const* const InTransformKeyframe/*=nullptr*/)
 {
 	PropertyEntry<PClippingPlane> Entry;
 	Entry.Time = Time;
 	Entry.Interpolation = Interp;
 	Entry.DefrdPlaneEq = FDeferredPlaneEquation{
-		PlaneOrientation ? FVector3f(*PlaneOrientation) : FVector3f::ZeroVector,
-		/*need init, see operator ==*/0.f,
-		GrowthStatus
+		.PlaneOrientation = InPlaneOrientation ? FVector3f(*InPlaneOrientation) : FVector3f::ZeroVector,
+		.TransformKeyframe = InTransformKeyframe,
+		.PlaneW = 0.f,/*need init, see operator==*/
+		.GrowthStatus = InGrowthStatus
 	};
-	check(Entry.DefrdPlaneEq.IsDeferred() || !PlaneOrientation); // otherwise need to pass W as well
+	check(Entry.DefrdPlaneEq.IsDeferred() || !InPlaneOrientation); // otherwise need to pass W as well
 	ClippingPlane.Values.insert(Entry);
 }
 
@@ -184,7 +191,7 @@ bool ElementTimelineEx::HasPartialVisibility() const
 	return false;
 }
 
-void ElementTimelineEx::SetTransformationAt(double const Time, FVector const& InPosition,
+PTransform const& ElementTimelineEx::SetTransformationAt(double const Time, FVector const& InPosition,
 	FQuat const& InRotation, FDeferredAnchor const& DefrdAnchor, EInterpolation const Interp)
 {
 	PropertyEntry<PTransform> Entry;
@@ -194,7 +201,7 @@ void ElementTimelineEx::SetTransformationAt(double const Time, FVector const& In
 	Entry.Position = InPosition;
 	Entry.Rotation = InRotation;
 	Entry.DefrdAnchor = DefrdAnchor;
-	Transform.Values.insert(Entry);
+	return *Transform.Values.insert(Entry).first;
 }
 
 void ElementTimelineEx::SetTransformationDisabledAt(double const Time, EInterpolation const Interp)
@@ -209,7 +216,7 @@ void ElementTimelineEx::SetTransformationDisabledAt(double const Time, EInterpol
 }
 
 FBox const& ElementTimelineEx::GetIModelElementsBBox(
-	std::function<FBox(std::set<ITwinElementID> const&)> ElementsBBoxGetter)
+	std::function<FBox(FElementsGroup const&)> ElementsBBoxGetter)
 {
 	if (bIModelElementsBBoxNeedsUpdate)
 	{
@@ -220,7 +227,7 @@ FBox const& ElementTimelineEx::GetIModelElementsBBox(
 }
 
 FVector const& ElementTimelineEx::GetIModelElementOffsetInGroup(ITwinElementID const ElementID,
-	std::function<FBox(std::set<ITwinElementID> const&)> const& GroupBBoxGetter,
+	std::function<FBox(FElementsGroup const&)> const& GroupBBoxGetter,
 	std::function<FBox const&(ITwinElementID const)> const& SingleBBoxGetter)
 {
 	if (1 == IModelElements.size())

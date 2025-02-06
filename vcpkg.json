@@ -5,16 +5,11 @@
     ,"libmicrohttpd"
     ,"libassert"
     ,"stduuid"
-  ],"builtin-baseline": "04b0cf2b3fd1752d3c3db969cbc10ba0a4613cee"
-  ,"overrides": [
-    {
-      "name": "cpr",
-      "version": "1.10.5#2"
-    },
-    {
-      "name": "libassert",
-      "version": "2.1.0"
+    ,{
+      "name": "grpc",
+      "features": [ "codegen" ]
     }
-   ]
+    ,"protobuf"
+    ,"utf8-range"
+  ],"builtin-baseline": "1a66c32c6f90c2f646529975c3c076ed3dbdae0c"
 }
-

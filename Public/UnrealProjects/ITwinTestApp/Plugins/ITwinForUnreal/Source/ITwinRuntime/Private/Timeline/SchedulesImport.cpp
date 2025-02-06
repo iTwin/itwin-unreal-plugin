@@ -2,7 +2,7 @@
 |
 |     $Source: SchedulesImport.cpp $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -44,14 +44,6 @@ DEFINE_LOG_CATEGORY(ITwinS4DImport);
 #define S4D_WARN(FORMAT, ...) UE_LOG(ITwinS4DImport, Warning, FORMAT, ##__VA_ARGS__)
 #define S4D_ERROR(FORMAT, ...) UE_LOG(ITwinS4DImport, Error, FORMAT, ##__VA_ARGS__)
 
-/// Required this early otherwise compiling "TPimplPtr<...> Queries;" below will complain
-/// ONLY when building this single compile unit, when fastcompiling one gets error C2961:
-/// 'FReusableJsonQueries<8>': inconsistent explicit instantiations, a previous explicit instantiation
-/// did not specify 'extern template' (depending on the order of inclusion of the CPPs, of course...).
-#ifndef REUSABLEJSONQUERIES_TEMPLATE_INSTANTIATED
-extern template class FReusableJsonQueries<SimultaneousRequestsAllowed>;// ReusableJsonQueries.cpp
-#endif
-
 namespace ITwin_TestOverrides
 {
 	// See comment on declaration in SchedulesConstants.h
@@ -71,7 +63,7 @@ private:
 	FOnAnimationBindingAdded OnAnimationBindingAdded =
 		[](FITwinSchedule const&, size_t const/*AnimIdx*/, FLock&) {};
 	FOnAnimationGroupModified OnAnimationGroupModified =
-		[](size_t const/*GroupIdx*/, std::set<ITwinElementID> const& /*GroupElements*/, FLock&) {};
+		[](size_t const/*GroupIdx*/, FElementsGroup const&/*GroupElements*/, FLock&) {};
 	ITwinHttp::FMutex& Mutex;///< TODO_GCO: use a per-Schedule mutex?
 	const int RequestPagination;///< pageSize for paginated requests EXCEPT animation bindings
 	/// When passing a collection of ElementIDs to filter a request, we need to cap the size for performance
@@ -87,7 +79,7 @@ private:
 	FString ITwinId, TargetedIModelId, ChangesetId; ///< Set in FITwinSchedulesImport::ResetConnection
 	EITwinSchedulesGeneration SchedulesGeneration = EITwinSchedulesGeneration::Unknown;
 	std::vector<FITwinSchedule>& Schedules;
-	TPimplPtr<FReusableJsonQueries<SimultaneousRequestsAllowed>> Queries;
+	TPimplPtr<FReusableJsonQueries> Queries;
 
 public:
 	FImpl(FITwinSchedulesImport const& InOwner, ITwinHttp::FMutex& InMutex,
@@ -1406,14 +1398,33 @@ void FITwinSchedulesImport::FImpl::RequestTransfoAssignment(ReusableJsonQueries:
 				if (ensure(TransfoArray.Num() == 16))
 				{
 					FMatrix Mat;
-					for (int Row = 0; Row < 4; ++Row)
-						for (int Col = 0; Col < 4; ++Col)
+					// From https://rodolphe-vaillant.fr/entry/145/unreal-engine-c-tmap-doc-sheet-1:
+					// Matrix elements are accessed with: FMatrix::M[rowIndex][columnIndex]
+					// Unreal's convention is to use a row-matrix representation:
+					//	X.x  X.y  X.z  0.0 // Basis vector X
+					//	Y.x  Y.y  Y.z  0.0 // Basis vector Y
+					//	Z.x  Z.y  Z.z  0.0 // Basis vector Z
+					//	T.x  T.y  T.z  1.0 // Translation vector
+					// 4D api gives the matrix row by row, interpreted with the normal math convention,
+					// ie. the first axis of the new base is { M[0][0], M[1][0], M[2][0] }
+					for (int Col = 0; Col < 4; ++Col)
+					{
+						for (int Row = 0; Row < 4; ++Row)
 						{
-							if (!TransfoArray[4 * Row + Col]->TryGetNumber(Mat.M[Row][Col]))
+							// instead of Mat.M[Row][Col], because of the above
+							double& DestVal = Mat.M[Col][Row];
+							if (!TransfoArray[4 * Row + Col]->TryGetNumber(DestVal))
 							{
 								ensure(false); return;
 							}
+							// Doing this introduces a Scale.X:=-1, which is then lost when converting to a
+							// keyframe. And it didn't even seem it would've worked with this anyway :/
+							// See FITwinSynchro4DSchedulesInternals::ComputeTransformFromFinalizedKeyframe and
+							// comment in AddStaticTransformToTimeline... -_-
+							//if (1 == Col)
+							//	DestVal *= -1.;
 						}
+					}
 					StaticTransform.emplace(Mat);
 				}
 				else return;
@@ -1524,7 +1535,6 @@ void FITwinSchedulesImport::FImpl::Request3DPath(ReusableJsonQueries::FStackingT
 				double AngleDegrees;
 				JSON_GETNUMBER_OR(*RotObj, "angle", AngleDegrees, continue)
 				if (AngleDegrees == 0. || !ParseVector(*RotObj, RotAxis)) continue;
-				RotAxis.Y = -RotAxis.Y;
 				Keyframe.Transform.SetRotation(FQuat(RotAxis, FMath::DegreesToRadians(AngleDegrees)));
 			}
 			FLock Lock(Mutex);
@@ -1592,6 +1602,8 @@ void FITwinSchedulesImport::FImpl::ResetConnection(FString const& ITwinAkaProjec
 			ITwinId = ITwinAkaProjectAkaContextId;
 			TargetedIModelId = IModelId;
 			ChangesetId = InChangesetId;
+			// See also comment about empty changeset in QueriesCache::GetCacheFolder():
+			ensureMsgf(ChangesetId.ToLower() != TEXT("latest"), TEXT("Need to pass the resolved changeset!"));
 			if (SchedulesInternals().PrefetchAllElementAnimationBindings())
 				Owner->Owner->OnScheduleQueryingStatusChanged.Broadcast(true);
 		}
@@ -1603,7 +1615,7 @@ void FITwinSchedulesImport::FImpl::ResetConnection(FString const& ITwinAkaProjec
 				else
 					return TEXT("_TokenError_");
 			};
-		Queries = MakePimpl<FReusableJsonQueries<SimultaneousRequestsAllowed>>(
+		Queries = MakePimpl<FReusableJsonQueries>(
 			*Owner->Owner,
 			GetSchedulesAPIBaseUrl(),
 			[]()
@@ -1615,6 +1627,7 @@ void FITwinSchedulesImport::FImpl::ResetConnection(FString const& ITwinAkaProjec
 				Request->SetHeader("Content-Type", AcceptJson);
 				return Request;
 			},
+			/*SimultaneousRequestsAllowed =*/ 6,
 			std::bind(&AITwinServerConnection::CheckRequest, std::placeholders::_1, std::placeholders::_2,
 					  std::placeholders::_3, std::placeholders::_4, std::placeholders::_5),
 			Mutex,

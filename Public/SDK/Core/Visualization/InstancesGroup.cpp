@@ -2,12 +2,13 @@
 |
 |     $Source: InstancesGroup.cpp $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
 #include "InstancesGroup.h"
 #include "Config.h"
+#include "../Singleton/singleton.h"
 
 namespace SDK::Core
 {
@@ -51,8 +52,18 @@ namespace SDK::Core
 	}
 
 	template<>
-	std::function<std::shared_ptr<IInstancesGroup>()> Tools::Factory<IInstancesGroup>::newFct_ = []() {
-		std::shared_ptr<IInstancesGroup> p(static_cast<IInstancesGroup*>(new InstancesGroup()));
-		return p;
-		};
+	Tools::Factory<IInstancesGroup>::Globals::Globals()
+	{
+		newFct_ = []() {
+			IInstancesGroup* p(static_cast<IInstancesGroup*>(new InstancesGroup()));
+			return p;
+			};
+	}
+
+	template<>
+	Tools::Factory<IInstancesGroup>::Globals& Tools::Factory<IInstancesGroup>::GetGlobals()
+	{
+		return singleton<Tools::Factory<IInstancesGroup>::Globals>();
+	}
+
 }

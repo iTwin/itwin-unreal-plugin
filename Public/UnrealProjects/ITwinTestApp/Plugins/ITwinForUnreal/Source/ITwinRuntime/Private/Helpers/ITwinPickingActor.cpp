@@ -2,7 +2,7 @@
 |
 |     $Source: ITwinPickingActor.cpp $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -50,8 +50,21 @@ namespace ITwin
 		std::function<void(FHitResult const&, std::unordered_set<ITwinElementID>&)> const& HitResultHandler,
 		uint32 const* pMaxUniqueElementsHit);
 
-	std::optional<uint64_t> GetMaterialIDFromHit(FHitResult const& HitResult)
+	std::optional<uint64_t> GetMaterialIDFromHit(FHitResult const& HitResult, AITwinIModel& IModel)
 	{
+		// When visualizing ML-based material predictions, we ignore the material IDs present in source
+		// meta-data, and replace them with custom material IDs depending on the ML inference
+		// => just test the material ID that we may have baked in the mesh.
+		if (IModel.VisualizeMaterialMLPrediction() && HitResult.Component.IsValid())
+		{
+			FITwinIModelInternals const& IModelInternals = GetInternals(IModel);
+			auto const* pMeshWrapper = IModelInternals.SceneMapping.FindGlTFMeshWrapper(HitResult.Component.Get());
+			if (pMeshWrapper)
+			{
+				return pMeshWrapper->GetITwinMaterialIDOpt();
+			}
+		}
+		// General case: test meta-data produced by the Mesh Export Service.
 		TMap<FString, FITwinCesiumMetadataValue> const Table1 =
 			UITwinCesiumMetadataPickingBlueprintLibrary::GetPropertyTableValuesFromHit(
 				HitResult, ITwinCesium::Metada::MATERIAL_FEATURE_ID_SLOT);
@@ -113,7 +126,7 @@ void AITwinPickingActor::PickUnderCursorWithOptions(FString& ElementId, FVector2
 
 					if (Options.bSelectMaterial)
 					{
-						PickedMaterial = ITwin::GetMaterialIDFromHit(HitResult);
+						PickedMaterial = ITwin::GetMaterialIDFromHit(HitResult, *iModel);
 						bHasTestedMaterial = true;
 					}
 				}
@@ -122,7 +135,7 @@ void AITwinPickingActor::PickUnderCursorWithOptions(FString& ElementId, FVector2
 		if (Options.bSelectMaterial && !bHasTestedMaterial)
 		{
 			// Some primitive parts may not be assigned any ElementID but still have a valid ITwin material.
-			auto MatOpt = ITwin::GetMaterialIDFromHit(HitResult);
+			auto MatOpt = ITwin::GetMaterialIDFromHit(HitResult, *iModel);
 			if (MatOpt && !PickedMaterial)
 			{
 				PickedMaterial = MatOpt;
@@ -135,7 +148,7 @@ void AITwinPickingActor::PickUnderCursorWithOptions(FString& ElementId, FVector2
 	{
 		// convert picked element ID to string.
 		ElementId = ITwin::ToString(PickedEltID);
-
+		OnElemPicked.Broadcast(ElementId);
 #if ENABLE_DRAW_DEBUG
 		if (PickedMaterial)
 		{
@@ -143,6 +156,12 @@ void AITwinPickingActor::PickUnderCursorWithOptions(FString& ElementId, FVector2
 				*PickedMaterial, *iModel->GetMaterialName(*PickedMaterial));
 		}
 #endif
+	}
+	//remove highlight if we don't click on the imodel
+	else
+	{
+		DeSelect(iModel);
+		OnElemPicked.Broadcast("");
 	}
 	if (PickedMaterial)
 	{
@@ -154,4 +173,12 @@ void AITwinPickingActor::PickObjectAtMousePosition(FString& ElementId, FVector2D
 	AITwinIModel* iModel)
 {
 	PickUnderCursorWithOptions(ElementId, MousePosition, iModel, {});
+}
+
+void AITwinPickingActor::DeSelect(AITwinIModel* iModel)
+{
+	if (ensure(iModel))
+	{
+		iModel->DeSelectElements();
+	}
 }

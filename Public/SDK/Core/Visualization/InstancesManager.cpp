@@ -2,7 +2,7 @@
 |
 |     $Source: InstancesManager.cpp $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -10,6 +10,7 @@
 #include "Core/Network/Network.h"
 #include "Config.h"
 #include "InstancesGroup.h"
+#include "../Singleton/singleton.h"
 
 namespace SDK::Core
 {
@@ -127,7 +128,7 @@ namespace SDK::Core
 					BE_LOGW("ITwinDecoration", "Load instances failed. Http status: " << status);
 				}
 
-				crtmath::dmat4x3 mat;
+				dmat3x4 mat;
 				for (auto& row : jOut.rows)
 				{
 					Instance* inst = new Instance();
@@ -373,7 +374,7 @@ namespace SDK::Core
 			currentInstances.resize(static_cast<size_t>(count));
 			for (uint64_t i = oldSize; i < count; ++i)
 			{
-				currentInstances[i] = IInstance::New();
+				currentInstances[i].reset(IInstance::New());
 			}
 		}
 
@@ -538,8 +539,15 @@ namespace SDK::Core
 	}
 
 	template<>
-	std::function<std::shared_ptr<IInstancesManager>()> Tools::Factory<IInstancesManager>::newFct_ = []() {
-		std::shared_ptr<IInstancesManager> p(static_cast<IInstancesManager*>(new InstancesManager()));
-		return p;
-		};
+	Tools::Factory<IInstancesManager>::Globals::Globals()
+	{
+		newFct_ = []() {return static_cast<IInstancesManager*>(new InstancesManager());};
+	}
+
+	template<>
+	Tools::Factory<IInstancesManager>::Globals& Tools::Factory<IInstancesManager>::GetGlobals()
+	{
+		return singleton<Tools::Factory<IInstancesManager>::Globals>();
+	}
+
 }

@@ -2,7 +2,7 @@
 |
 |     $Source: ITwinWebServicesObserver.cpp $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -18,9 +18,8 @@
 
 namespace SDK::Core
 {
-	void ITwinDefaultWebServicesObserver::OnRequestError(std::string const& /*strError*/)
+	void ITwinDefaultWebServicesObserver::OnRequestError(std::string const& /*strError*/, int /*retriesLeft*/)
 	{
-
 	}
 	void ITwinDefaultWebServicesObserver::OnITwinsRetrieved(bool /*bSuccess*/, ITwinInfos const&)
 	{
@@ -98,7 +97,7 @@ namespace SDK::Core
 	{
 		ITWIN_SDK_WARN(GetObserverName() + " does not handle RealityData");
 	}
-	void ITwinDefaultWebServicesObserver::OnElementPropertiesRetrieved(bool /*bSuccess*/, ITwinElementProperties const&)
+	void ITwinDefaultWebServicesObserver::OnElementPropertiesRetrieved(bool /*bSuccess*/, ITwinElementProperties const&, std::string const&)
 	{
 		ITWIN_SDK_WARN(GetObserverName() + " does not handle Element properties");
 	}
@@ -113,5 +112,13 @@ namespace SDK::Core
 	void ITwinDefaultWebServicesObserver::OnMaterialPropertiesRetrieved(bool /*bSuccess*/, ITwinMaterialPropertiesMap const&)
 	{
 		ITWIN_SDK_WARN(GetObserverName() + " does not handle material properties");
+	}
+	void ITwinDefaultWebServicesObserver::OnMatMLPredictionRetrieved(bool /*bSuccess*/, ITwinMaterialPrediction const&)
+	{
+		ITWIN_SDK_WARN(GetObserverName() + " does not handle material predictions");
+	}
+	void ITwinDefaultWebServicesObserver::OnMatMLPredictionProgress(float /*fProgressRatio*/)
+	{
+		ITWIN_SDK_WARN(GetObserverName() + " does not handle material predictions");
 	}
 }

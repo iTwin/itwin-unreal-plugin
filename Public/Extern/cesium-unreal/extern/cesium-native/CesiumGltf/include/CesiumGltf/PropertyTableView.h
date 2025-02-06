@@ -181,8 +181,11 @@ public:
               PropertyTablePropertyViewStatus::ErrorInvalidPropertyTable));
       return;
     }
-
-    const ClassProperty* pClassProperty = getClassProperty(propertyId);
+    //quick and dirty hack to support geometryClass enum
+    //(waiting for a proper fix from Cesium in January 25)
+    //todo => remove this in Jan 25
+    ClassProperty* pClassProperty =
+        const_cast<ClassProperty*>(getClassProperty(propertyId));
     if (!pClassProperty) {
       callback(
           propertyId,
@@ -190,7 +193,10 @@ public:
               PropertyTablePropertyViewStatus::ErrorNonexistentProperty));
       return;
     }
-
+    //todo => remove this after Cesium fix in Jan 25
+    if (pClassProperty->type == ClassProperty::Type::ENUM) {
+      pClassProperty->type = ClassProperty::Type::SCALAR;
+    }
     PropertyType type = convertStringToPropertyType(pClassProperty->type);
     PropertyComponentType componentType = PropertyComponentType::None;
     if (pClassProperty->componentType) {

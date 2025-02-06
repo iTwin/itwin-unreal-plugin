@@ -2,11 +2,10 @@
 |
 |     $Source: Log.cpp $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
-#pragma once
 
 #include <catch2/catch_session.hpp>
 #include <array>
@@ -23,6 +22,7 @@
 
 #include "LockableObject.h"
 #include "Assert.h"
+#include "../Singleton/singleton.h"
 
 #ifdef _WIN32
 #include "plog/Appenders/DebugOutputAppender.h"
@@ -43,6 +43,26 @@ namespace SDK::Core::Tools::Internal
 }
 #endif 
 
+namespace SDK::Core::Tools::Internal
+{ 
+	struct LogGlobals
+	{
+		plog::Logger<PLOG_DEFAULT_INSTANCE_ID>* plog_;
+		RWLockableObject<std::unordered_map<std::uint64_t, ILogPtr>, std::shared_mutex> logMap;
+		bool logInitialised = false;
+		LogGlobals()
+		{
+			static plog::Logger<PLOG_DEFAULT_INSTANCE_ID> logger(plog::verbose); // should be ok because LogGlobals() is called only once
+			plog_ = plog::get<PLOG_DEFAULT_INSTANCE_ID>();
+		}
+	};
+
+	LogGlobals& GetLogGlobals()
+	{
+		return singleton<LogGlobals>();
+	}
+}
+
 namespace SDK::Core::Tools
 {
 	static std::array<plog::Severity, int(Level::verbose) + 1> g_LevelToSeverity = {
@@ -57,14 +77,22 @@ namespace SDK::Core::Tools
 	void Log::DoLog(const std::string& msg, Level lev, const char* srcPath, const char* func, int line)
 	{
 		plog::Severity sev(g_LevelToSeverity[int(lev)]);
-		(*plog::get<PLOG_DEFAULT_INSTANCE_ID>()) += plog::Record(sev, func, line, srcPath, nullptr, PLOG_DEFAULT_INSTANCE_ID).ref() << "[" << name_ << "] " << msg;
+		(*Internal::GetLogGlobals().plog_) += plog::Record(sev, func, line, srcPath, nullptr, PLOG_DEFAULT_INSTANCE_ID).ref() << "[" << name_ << "] " << msg;
 	}
 
 	template<>
-	std::function<std::shared_ptr<ILog>(std::string, Level level)> Tools::Factory<ILog, std::string, Level>::newFct_ = [](std::string s, Level level) {
-		std::shared_ptr<ILog> p(static_cast<ILog*>(new Log(s, level)));
-		return p;
+	Tools::Factory<ILog, std::string, Level>::Globals::Globals()
+	{
+		newFct_ = [](std::string s, Level level){
+				return static_cast<ILog*>(new Log(s, level));
 		};
+	}
+
+	template<>
+	Tools::Factory<ILog, std::string, Level>::Globals& Tools::Factory<ILog, std::string, Level>::GetGlobals()
+	{
+		return singleton<Tools::Factory<ILog, std::string, Level>::Globals>();
+	}
 
 	Log::Log(std::string name, Level lev):name_(name), level_(lev)
 	{
@@ -87,12 +115,12 @@ namespace SDK::Core::Tools
 		return lev <= level_;
 	}
 
+
 	void InitLog(std::string const& logBasename)
 	{
-		static bool logInitialised = false;
-		if (!logInitialised)
+		if (!Internal::GetLogGlobals().logInitialised)
 		{
-			logInitialised = true;
+			Internal::GetLogGlobals().logInitialised = true;
 			std::filesystem::path tmpPath = std::filesystem::temp_directory_path();
 			tmpPath /= "ITwinAdvViz/Logs";
 			std::error_code ec;
@@ -106,17 +134,17 @@ namespace SDK::Core::Tools
 				5 /* max_files*/);
 			static plog::ConsoleAppender<plog::TxtFormatter> consoleAppender;
 
-			auto &appender = plog::init(plog::verbose, &consoleAppender).addAppender(&fileAppender);
+			auto& appender = Internal::GetLogGlobals().plog_->addAppender(&consoleAppender).addAppender(&fileAppender);
 			Internal::AddVSDebugOutput(appender);
 		}
 	}
 
-	static RWLockableObject<std::unordered_map<std::uint64_t, ILogPtr>, std::shared_mutex> g_logMap;
+
 
 	ILogPtr GetLog(const std::uint64_t channel, const char* name)
 	{
 		{
-			auto logMap1(g_logMap.GetRAutoLock());
+			auto logMap1(Internal::GetLogGlobals().logMap.GetRAutoLock());
 			auto& logMap = logMap1.Get();
 
 			auto it = logMap.find(channel);
@@ -129,13 +157,13 @@ namespace SDK::Core::Tools
 
 	void CreateLogChannel(const char* channel, Level level)
 	{
-		auto logMap1(g_logMap.GetAutoLock());
+		auto logMap1(Internal::GetLogGlobals().logMap.GetAutoLock());
 		auto& logMap = logMap1.Get();
 
 		auto hash = GenHash(channel);
 		auto it = logMap.find(hash);
 		if (it == logMap.end())
-			logMap[hash] = ILog::New(channel, level);
+			logMap[hash] = std::shared_ptr<ILog>(ILog::New(channel, level));
 	}
 
 	void CreateAdvVizLogChannels()
@@ -143,8 +171,10 @@ namespace SDK::Core::Tools
 		CreateLogChannel("ITwinAPI", Level::info);
 		CreateLogChannel("ITwinScene", Level::info);
 		CreateLogChannel("ITwinDecoration", Level::info);
+		CreateLogChannel("ITwinMaterial", Level::info);
 		CreateLogChannel("App", Level::info);
 		CreateLogChannel("AppUI", Level::info);
+		CreateLogChannel("Timeline", Level::info);
 	}
 }
 

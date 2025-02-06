@@ -77,7 +77,7 @@ public:
       UMaterialInterface* BaseTranslucentMaterial,
       UMaterialInterface* BaseWaterMaterial,
       FITwinCustomDepthParameters CustomDepthParameters,
-      const Cesium3DTilesSelection::Tile& tile,
+      Cesium3DTilesSelection::Tile& tile,
       bool createNavCollision);
 
   UITwinCesiumGltfComponent();
@@ -122,10 +122,13 @@ public:
   virtual void SetCollisionEnabled(ECollisionEnabled::Type NewType);
 
   virtual void BeginDestroy() override;
+  virtual void OnVisibilityChanged() override;
 
   void UpdateFade(float fadePercentage, bool fadingIn);
 
 private:
   UPROPERTY()
   UTexture2D* Transparent1x1 = nullptr;
+
+  std::function<void(bool/*visible*/)> ITwinVisibilityChanged;
 };

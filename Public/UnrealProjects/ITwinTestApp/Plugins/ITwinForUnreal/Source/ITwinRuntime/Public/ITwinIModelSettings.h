@@ -2,7 +2,7 @@
 |
 |     $Source: ITwinIModelSettings.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -121,13 +121,23 @@ public:
 		BlueprintReadOnly,
 		Category = "iTwin")
 	bool bSynchro4DDisableTransforms = false;
-	
-	/// Mask out entirely the tiles just loaded that do not have the 4D animation fully applied. This is
-	/// actually a global flag that will apply to all iModels.
+
+	/// Enable prediction of materials based on an iTwin Machine Learning api. The api is still under
+	/// development. It requires some specific scopes to be added to your iTwin App.
 	UPROPERTY(
 		Config,
 		EditAnywhere,
 		BlueprintReadOnly,
-		Category = "iTwin")
-	bool bSynchro4DMaskTilesUntilFullyAnimated = false;
+		Category = "iTwin",
+		meta = (ConfigRestartRequired = true))
+	bool bEnableML_MaterialPrediction = false;
+
+	/// Whether materials can be exported locally (internal tool).
+	UPROPERTY(
+		Config,
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "iTwin",
+		meta = (ConfigRestartRequired = true))
+	bool bEnableMaterialExport = false;
 };

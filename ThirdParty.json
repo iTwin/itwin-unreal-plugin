@@ -68,5 +68,10 @@
     "name": "UE5Coro",
     "url": "https://github.com/landelare/ue5coro",
     "license": ["BSD-3-Clause-Clear"]
+  },
+  {
+    "name": "singleton-cpp",
+    "url": "https://github.com/xhawk18/singleton-cpp",
+    "license": [ "MIT" ]
   }
 ]

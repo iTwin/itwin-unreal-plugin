@@ -2,7 +2,7 @@
 |
 |     $Source: ITwinServerConnection.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -46,11 +46,17 @@ public:
 		EditAnywhere)
 	EITwinEnvironment Environment = EITwinEnvironment::Invalid;
 
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif
+
 	FString UrlPrefix() const;
 
 	//! Return the OAuth access token for this environment, if any.
 	UFUNCTION(BlueprintCallable, Category = "iTwin")
 	FString GetAccessToken() const;
+
+	bool GetAccessTokenStdString(std::string& AccessToken) const;
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin")
 	bool HasAccessToken() const { return !GetAccessToken().IsEmpty(); }

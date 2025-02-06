@@ -2,7 +2,7 @@
 |
 |     $Source: ITwinIModel.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -12,6 +12,7 @@
 #include <ITwinFwd.h>
 #include <ITwinLoadInfo.h>
 #include <ITwinServiceActor.h>
+#include <MaterialPrediction/ITwinMaterialPredictionStatus.h>
 #include <Templates/PimplPtr.h>
 #include <memory>
 #include <ITwinIModel.generated.h>
@@ -24,15 +25,30 @@ struct FSavedViewInfos;
 namespace SDK::Core
 {
 	enum class EChannelType : uint8_t;
+	enum class ETextureSource : uint8_t;
+	enum class EMaterialKind : uint8_t;
 	struct ITwinMaterial;
+	struct ITwinUVTransform;
 	class MaterialPersistenceManager;
 }
 namespace BeUtils
 {
 	class GltfMaterialHelper;
 }
+namespace ITwin
+{
+	//! Get a max-screenspace-error value from a percentage (value in range [0;1])
+	ITWINRUNTIME_API double ToScreenSpaceError(float QualityValue);
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnIModelLoaded, bool, bSuccess);
+	//! Adjust the tileset quality, given a percentage (value in range [0;1])
+	ITWINRUNTIME_API void SetTilesetQuality(AITwinCesium3DTileset& Tileset, float Value);
+
+	//! Returns the tileset quality as a percentage (value in range [0;1])
+	ITWINRUNTIME_API float GetTilesetQuality(AITwinCesium3DTileset const& Tileset);
+
+}
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnIModelLoaded, bool, bSuccess, FString, IModelId);
 
 UENUM()
 enum class EITwinExportStatus : uint8
@@ -49,26 +65,6 @@ enum class ELoadingMethod : uint8
 {
 	LM_Automatic UMETA(DisplayName = "Automatic"),
 	LM_Manual UMETA(DisplayName = "Manual")
-};
-
-
-USTRUCT()
-struct ITWINRUNTIME_API FITwinCustomMaterial
-{
-	GENERATED_BODY()
-
-	UPROPERTY(Category = "iTwin",
-		VisibleAnywhere)
-	FString Name;
-
-	//! TEMPORARY MODE - REPLACES THE WHOLE BASE MATERIAL
-	UPROPERTY(Category = "iTwin",
-		EditAnywhere)
-	TObjectPtr<UMaterialInterface> Material;
-
-	UPROPERTY(Category = "iTwin",
-		EditAnywhere)
-	bool bAdvancedConversion = false;
 };
 
 
@@ -127,12 +123,22 @@ public:
 
 public:
 	AITwinIModel();
+	~AITwinIModel();
+	/// Called when placed in editor or spawned: override to force spawning by default at (0,0,0), otherwise
+	/// you get a geo offset that you probably didn't want in the first place. I had tried
+	/// OnConstruction(FTransform) first but, bad idea, it gets called everytime the construction script is
+	/// re-run, for example after editing property fields!! (witnessed when changing schedule component's 
+	/// time...)
+	virtual void PostActorCreated() override;
+	virtual void BeginDestroy() override;
 	virtual void Destroyed() override;
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 #endif
 	virtual void PostLoad() override;
+	virtual void Tick(float DeltaTime) override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+	virtual bool ShouldTickIfViewportsOnly() const override { return true; }
 
 	//! To be called at least once after ServerConnection, IModelId, ChangesetId have been set.
 	//! This will query the mesh export service for a corresponding export, and if complete one is found,
@@ -197,6 +203,18 @@ public:
 
 	UFUNCTION(Category = "iTwin",
 		BlueprintCallable)
+	void ShowConstructionData(bool bShow, ULightComponent* SunLight = nullptr);
+
+	UPROPERTY(Category = "iTwin", EditAnywhere)
+	bool bShowConstructionData = true;
+
+	//! Deselect any element previously selected. This will disable the selection highlight, if any.
+	UFUNCTION(Category = "iTwin",
+		BlueprintCallable)
+	void DeSelectElements();
+
+	UFUNCTION(Category = "iTwin",
+		BlueprintCallable)
 	void AddSavedView(const FString& displayName);
 
 	UFUNCTION(Category = "iTwin|Load",
@@ -226,8 +244,24 @@ public:
 	FLinearColor GetMaterialChannelColor(uint64_t MaterialId, SDK::Core::EChannelType Channel) const;
 	void SetMaterialChannelColor(uint64_t MaterialId, SDK::Core::EChannelType Channel, FLinearColor const& Color);
 
-	FString GetMaterialChannelTextureID(uint64_t MaterialId, SDK::Core::EChannelType Channel) const;
-	void SetMaterialChannelTextureID(uint64_t MaterialId, SDK::Core::EChannelType Channel, FString const& TextureId);
+	FString GetMaterialChannelTextureID(uint64_t MaterialId, SDK::Core::EChannelType Channel, SDK::Core::ETextureSource& OutSource) const;
+	void SetMaterialChannelTextureID(uint64_t MaterialId, SDK::Core::EChannelType Channel,
+		FString const& TextureId, SDK::Core::ETextureSource eSource);
+
+	SDK::Core::ITwinUVTransform GetMaterialUVTransform(uint64_t MaterialId) const;
+	void SetMaterialUVTransform(uint64_t MaterialId, SDK::Core::ITwinUVTransform const& UVTransform);
+
+	SDK::Core::EMaterialKind GetMaterialKind(uint64_t MaterialId) const;
+	void SetMaterialKind(uint64_t MaterialId, SDK::Core::EMaterialKind NewKind);
+
+	//! Rename a material.
+	bool SetMaterialName(uint64_t MaterialId, FString const& NewName);
+
+	//! Load a material from an asset file (expecting an asset of class #UITwinMaterialDataAsset).
+	bool LoadMaterialFromAssetFile(uint64_t MaterialId, FString const& AssetFilePath);
+
+	//! Return a texture that nullifies the given channel (and thus can be used as default texture for it).
+	UTexture2D* GetDefaultTextureForChannel(SDK::Core::EChannelType Channel) const;
 
 	using GltfMaterialHelperPtr = std::shared_ptr<BeUtils::GltfMaterialHelper>;
 	std::shared_ptr<BeUtils::GltfMaterialHelper> const& GetGltfMaterialHelper() const;
@@ -236,6 +270,7 @@ public:
 	static void SetMaterialPersistenceManager(MaterialPersistencePtr const& Mngr);
 	static MaterialPersistencePtr const& GetMaterialPersistenceManager();
 
+
 	//! Detect material customized by user, and trigger a re-tuning if needed (called when data is loaded
 	//! from the persistence manager).
 	void DetectCustomizedMaterials();
@@ -243,12 +278,39 @@ public:
 	//! Enforce reloading material definitions as read from the material persistence manager.
 	void ReloadCustomizedMaterials();
 
-	enum class EOffsetContext
-	{
-		UserEdition,
-		Reload
-	};
-	void SetModelOffset(FVector Pos, FVector Rot, EOffsetContext Context = EOffsetContext::UserEdition);
+	//! Initiate the Machine Learning service for material predictions.
+	UFUNCTION(Category = "iTwin|Materials",
+		BlueprintCallable)
+	void LoadMaterialMLPrediction();
+
+	//! Toggle the ML-based material prediction mode on or off.
+	UFUNCTION(Category = "iTwin|Materials",
+		BlueprintCallable)
+	void ToggleMLMaterialPrediction(bool bActivate);
+
+	UFUNCTION(Category = "iTwin|Materials",
+		BlueprintCallable)
+	bool IsMaterialMLPredictionActivated() const {
+		return bActivateMLMaterialPrediction;
+	}
+
+	UFUNCTION(Category = "iTwin|Materials",
+		BlueprintCallable)
+	EITwinMaterialPredictionStatus GetMaterialMLPredictionStatus() const {
+		return MLMaterialPredictionStatus;
+	}
+
+	UFUNCTION(Category = "iTwin|Materials",
+		BlueprintCallable)
+	bool VisualizeMaterialMLPrediction() const {
+		return bActivateMLMaterialPrediction && MLMaterialPredictionStatus == EITwinMaterialPredictionStatus::Complete;
+	}
+	void SetMaterialMLPredictionObserver(IITwinWebServicesObserver* observer);
+	IITwinWebServicesObserver* GetMaterialMLPredictionObserver() const;
+
+	/// Reset iModel manual "offset" (= scene placement customization), and persist it to Cloud
+	void SetModelOffset(FVector Pos, FVector Rot);
+	void OnIModelOffsetChanged();
 
 	//! Start loading the decoration attached to this model, if any.
 	UFUNCTION(Category = "iTwin",
@@ -265,6 +327,9 @@ public:
 	void OnSavedViewsRetrieved(bool bSuccess, FSavedViewInfos SavedViews);
 	UFUNCTION()
 	void OnSavedViewInfoAdded(bool bSuccess, FSavedViewInfo SavedViewInfo);
+	UFUNCTION()
+	void OnSceneLoaded(bool success);
+
 
 	//! Returns null if the iModel does not have extents, or if it is not known yet.
 	const FProjectExtents* GetProjectExtents() const;
@@ -274,35 +339,18 @@ public:
 	const AITwinCesium3DTileset* GetTileset() const;
 
 	void HideTileset(bool bHide);
+	bool IsTilesetHidden();
 	void SetMaximumScreenSpaceError(double InMaximumScreenSpaceError);
+	//Helper of SetMaximumScreenSpaceError :  Adjust the tileset quality, given a percentage (value in range [0;1])
+	void SetTilesetQuality(float Value);
+	float GetTilesetQuality() const;
 	FString GetExportID() const { return ExportId; }
 	void LoadModelFromInfos(FITwinExportInfo const& ExportInfo);
+	//! Returns the list of IDs of the supported (ie. having Cesium format) reality data attached to the iModel.
+	TFuture<TArray<FString>> GetAttachedRealityDataIds();
 
 private:
-	void LoadDecorationIfNeeded();
-	void AutoExportAndLoad();
-	void TestExportCompletionAfterDelay(FString const& InExportId, float DelayInSeconds);
-
 	void SetResolvedChangesetId(FString const& InChangesetId);
-
-	void OnLoadingUIEvent();
-	void UpdateAfterLoadingUIEvent();
-	void DestroyTileset();
-
-	//! Fills the map of known iTwin materials, if it was read from the tileset.
-	void FillMaterialInfoFromTuner();
-	//! Retune the tileset if needed, to ensure that all materials customized by the user (or about to be...)
-	//! can be applied to individual meshes.
-	void SplitGltfModelForCustomMaterials(bool bForceRetune = false);
-
-	template <typename MaterialParamHelper>
-	void TSetMaterialChannelParam(MaterialParamHelper const& Helper, uint64_t MaterialId);
-
-	FString GetMaterialChannelColorTextureID(uint64_t MaterialId, SDK::Core::EChannelType Channel) const;
-	FString GetMaterialChannelIntensityTextureID(uint64_t MaterialId, SDK::Core::EChannelType Channel) const;
-
-	void SetMaterialChannelColorTextureID(uint64_t MaterialId, SDK::Core::EChannelType Channel, FString const& TextureId);
-	void SetMaterialChannelIntensityTextureID(uint64_t MaterialId, SDK::Core::EChannelType Channel, FString const& TextureId);
 
 	/// overridden from AITwinServiceActor:
 	virtual void UpdateOnSuccessfulAuthorization() override;
@@ -319,10 +367,12 @@ private:
 	virtual void OnSavedViewAdded(bool bSuccess, FSavedViewInfo const& SavedViewInfo) override;
 	virtual void OnSavedViewDeleted(bool bSuccess, FString const& SavedViewId, FString const& Response) override;
 	virtual void OnSavedViewEdited(bool bSuccess, FSavedView const& SavedView, FSavedViewInfo const& SavedViewInfo) override;
-	virtual void OnElementPropertiesRetrieved(bool bSuccess, FElementProperties const& ElementProps) override;
+	virtual void OnElementPropertiesRetrieved(bool bSuccess, FElementProperties const& ElementProps, FString const& ElementId) override;
 	virtual void OnMaterialPropertiesRetrieved(bool bSuccess, SDK::Core::ITwinMaterialPropertiesMap const& props) override;
 	virtual void OnTextureDataRetrieved(bool bSuccess, std::string const& textureId, SDK::Core::ITwinTextureData const& textureData) override;
 	virtual void OnIModelQueried(bool bSuccess, FString const& QueryResult, HttpRequestID const&) override;
+	virtual void OnMatMLPredictionRetrieved(bool bSuccess, SDK::Core::ITwinMaterialPrediction const& prediction) override;
+	virtual void OnMatMLPredictionProgress(float fProgressRatio) override;
 
 	/// overridden from FITwinDefaultWebServicesObserver:
 	virtual const TCHAR* GetObserverName() const override;
@@ -344,16 +394,35 @@ private:
 		EditAnywhere)
 	FString ExportId;
 
-	//! WORK IN PROGRESS - UNRELEASED - material customization.
-	UPROPERTY(Category = "iTwin",
-		EditAnywhere,
-		Meta = (EditCondition = "bCanReplaceMaterials", EditConditionHides))
-	TMap<uint64, FITwinCustomMaterial> CustomMaterials;
+
+	//! Default textures to nullify some material effects
+	UPROPERTY()
+	UTexture2D* NoColorTexture = nullptr;
+	UPROPERTY()
+	UTexture2D* NoNormalTexture = nullptr;
+	UPROPERTY()
+	UTexture2D* NoMetallicRoughnessTexture = nullptr;
+
+	//! ML - Material Prediction
+	UPROPERTY()
+	TObjectPtr<UITwinWebServices> MaterialMLPredictionWS;
 
 	UPROPERTY()
-	bool bCanReplaceMaterials = false;
+	bool bEnableMLMaterialPrediction = false;
 
-	//! Persistence manager for material settings (temporary mode).
+	//! Activate material prediction based on machine learning API.
+	UPROPERTY(Category = "iTwin|Materials",
+		EditAnywhere,
+		Meta = (EditCondition = "bEnableMLMaterialPrediction", EditConditionHides))
+	bool bActivateMLMaterialPrediction = false;
+
+	//! Current status of ML-based material prediction for the iModel.
+	UPROPERTY(Category = "iTwin|Materials",
+		VisibleAnywhere,
+		Meta = (EditCondition = "bEnableMLMaterialPrediction", EditConditionHides))
+	EITwinMaterialPredictionStatus MLMaterialPredictionStatus = EITwinMaterialPredictionStatus::Unknown;
+
+	//! Persistence manager for material settings.
 	static MaterialPersistencePtr MaterialPersistenceMngr;
 
 	//! FITwinIModelImplAccess is defined in ITwinImodel.cpp, so it is only usable here.

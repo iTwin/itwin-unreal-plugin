@@ -2,7 +2,7 @@
 |
 |     $Source: ITwinSynchro4DSchedules.cpp $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -55,37 +55,23 @@ class UITwinSynchro4DSchedules::FImpl
 public: // for TPimplPtr
 	FImpl(UITwinSynchro4DSchedules& InOwner, bool const InDoNotBuildTimelines)
 		: Owner(InOwner), Animator(InOwner)
-		, Internals(InOwner, InDoNotBuildTimelines, Mutex, Schedules)
+		, Internals(InOwner, InDoNotBuildTimelines, Mutex, Schedules, Animator)
 	{
 	}
 };
 
-static std::optional<FTransform> const& GetIModel2UnrealTransfo(UITwinSynchro4DSchedules& Owner)
+static FITwinCoordConversions const& GetIModel2UnrealCoordConv(UITwinSynchro4DSchedules& Owner)
 {
 	AITwinIModel* IModel = Cast<AITwinIModel>(Owner.GetOwner());
 	if (/*ensure*/(IModel)) // the CDO is in that case...
 	{
 		FITwinIModelInternals& IModelInternals = GetInternals(*IModel);
-		return IModelInternals.SceneMapping.GetIModel2UnrealTransfo();
+		return IModelInternals.SceneMapping.GetIModel2UnrealCoordConv();
 	}
 	else
 	{
-		static std::optional<FTransform> Dummy; // left uninit, will error out later anyway
+		static FITwinCoordConversions Dummy;
 		return Dummy;
-	}
-}
-
-static FVector const& GetSynchro4DOriginUE(UITwinSynchro4DSchedules& Owner)
-{
-	AITwinIModel* IModel = Cast<AITwinIModel>(Owner.GetOwner());
-	if (/*ensure*/(IModel)) // the CDO is in that case...
-	{
-		FITwinIModelInternals& IModelInternals = GetInternals(*IModel);
-		return IModelInternals.SceneMapping.GetSynchro4DOriginUE();
-	}
-	else
-	{
-		return FVector::ZeroVector;
 	}
 }
 
@@ -105,12 +91,25 @@ FITwinSynchro4DSchedulesInternals const& GetInternals(UITwinSynchro4DSchedules c
 
 FITwinSynchro4DSchedulesInternals::FITwinSynchro4DSchedulesInternals(UITwinSynchro4DSchedules& InOwner,
 	bool const InDoNotBuildTimelines, std::recursive_mutex& InMutex,
-	std::vector<FITwinSchedule>& InSchedules)
+	std::vector<FITwinSchedule>& InSchedules, FITwinSynchro4DAnimator& InAnimator)
 :
 	Owner(InOwner), bDoNotBuildTimelines(InDoNotBuildTimelines)
-	, Builder(InOwner, GetIModel2UnrealTransfo(InOwner), GetSynchro4DOriginUE(InOwner))
+	, Builder(InOwner, GetIModel2UnrealCoordConv(InOwner))
 	, SchedulesApi(InOwner, InMutex, InSchedules), Mutex(InMutex), Schedules(InSchedules)
+	, Animator(InAnimator)
 {
+}
+
+void FITwinSynchro4DSchedulesInternals::CheckInitialized(AITwinIModel& IModel)
+{
+	if (!Uniniter)
+	{
+		Uniniter = GetInternals(IModel).Uniniter;
+		Uniniter->Register([this] {
+			SchedulesApi.UninitializeCache();
+			Builder.Uninitialize();
+		});
+	}
 }
 
 FITwinScheduleTimeline& FITwinSynchro4DSchedulesInternals::Timeline()
@@ -146,7 +145,7 @@ void FITwinSynchro4DSchedulesInternals::ForEachElementTimeline(ITwinElementID co
 	auto const& MainTimeline = GetTimeline();
 	auto& SceneMapping = GetInternals(*Cast<AITwinIModel>(Owner.GetOwner())).SceneMapping;
 	auto const& Elem = SceneMapping.GetElement(ElementID);
-	for (auto AnimKey : Elem.AnimationKeys)
+	for (auto&& AnimKey : Elem.AnimationKeys)
 	{
 		auto const* Timeline = MainTimeline.GetElementTimelineFor(AnimKey);
 		if (Timeline)
@@ -185,29 +184,19 @@ void FITwinSynchro4DSchedulesInternals::MutateSchedules(
 /// loaded before calling OnElementsTimelineModified, to avoid resizing property textures. But it might not
 /// be sufficient if 1/ meshes of a same tile are loaded by different ticks (which DOES happen, UNLESS it's
 /// only an effect of our GltfTuner?!) - and 2/ new FeatureIDs are discovered in non-first ticks...
-void FITwinSynchro4DSchedulesInternals::OnNewTileMeshBuilt(CesiumTileID const& TileId,
-	std::set<ITwinElementID>&& MeshElementIDs, const TWeakObjectPtr<UMaterialInstanceDynamic>& pMaterial,
-	bool const /*bFirstTimeSeenTile*/, FITwinSceneTile& SceneTile)
+void FITwinSynchro4DSchedulesInternals::OnNewTileMeshBuilt(ITwinScene::TileIdx const& TileRank,
+	std::unordered_set<ITwinScene::ElemIdx>&& MeshElements,
+	const TWeakObjectPtr<UMaterialInstanceDynamic>& pMaterial, FITwinSceneTile& SceneTile)
 {
-	if (MeshElementIDs.empty()
-		|| (PrefetchAllElementAnimationBindings() && EApplySchedule::InitialPassDone != ApplySchedule))
+	if (MeshElements.empty())
 	{
-		// schedule not yet applied so we don't care - irrelevant if !s_bMaskTilesUntilFullyAnimated
-		SceneTile.bNewMeshesToAnimate = false;
-		// Note: don't use bFirstTimeSeenTile because we never know when a tile is finished loading anyway :/
 		return;
 	}
-	if (ITwin::Synchro4D::s_bMaskTilesUntilFullyAnimated)
-	{
-		// When schedule is applied, default to "invisible" to avoid popping meshes (you get popping holes
-		// instead, much better! :-))
-		FITwinSceneMapping::SetForcedOpacity(pMaterial, 0.f);
-	}
-	// MeshElementIDs is actually moved only in case of insertion, otherwise it is untouched
-	auto Entry = ElementsReceived.try_emplace(TileId, std::move(MeshElementIDs));
+	// MeshElements is actually moved only in case of insertion, otherwise it is untouched
+	auto Entry = ElementsReceived.try_emplace(TileRank, std::move(MeshElements));
 	if (!Entry.second) // was not inserted, merge with existing set:
 	{
-		for (auto&& Elem : MeshElementIDs)
+		for (auto&& Elem : MeshElements)
 			Entry.first->second.insert(Elem);
 	}
 }
@@ -223,53 +212,133 @@ bool FITwinSynchro4DSchedulesInternals::IsPrefetchedAvailableAndApplied() const
 	return PrefetchAllElementAnimationBindings() && EApplySchedule::InitialPassDone == ApplySchedule;
 }
 
-void FITwinSynchro4DSchedulesInternals::HandleReceivedElements(bool& bNewTilesReceived)
+bool FITwinSynchro4DSchedulesInternals::OnNewTileBuilt(FITwinSceneTile& SceneTile)
 {
-	if (!IsReadyToQuery() || ElementsReceived.empty())
+	if (IsPrefetchedAvailableAndApplied())
+	{
+		SceneTile.pCesiumTile->setRenderEngineReadiness(false);
+		SetupAndApply4DAnimationSingleTile(SceneTile);
+		return true;
+	}
+	return false;
+}
+
+void FITwinSynchro4DSchedulesInternals::HideNonAnimatedDuplicates(FITwinSceneTile& SceneTile,
+																  FElementsGroup const& NonAnimatedDuplicates)
+{
+	// Just iterate on the smallest collection, but both branches do the same thing of course
+	if (NonAnimatedDuplicates.size() < SceneTile.NumElementsFeatures())
+	{
+		for (auto&& ElemID : NonAnimatedDuplicates)
+		{
+			auto* ElemInTile = SceneTile.FindElementFeaturesSLOW(ElemID);
+			if (ElemInTile)
+				SceneTile.HighlightsAndOpacities->SetPixelsAlpha(ElemInTile->Features, 0);
+		}
+	}
+	else
+	{
+		SceneTile.ForEachElementFeatures(
+			[&SceneTile, &NonAnimatedDuplicates](FITwinElementFeaturesInTile& ElemInTile)
+			{
+				if (NonAnimatedDuplicates.end() != NonAnimatedDuplicates.find(ElemInTile.ElementID))
+					SceneTile.HighlightsAndOpacities->SetPixelsAlpha(ElemInTile.Features, 0);
+			});
+	}
+}
+
+void FITwinSynchro4DSchedulesInternals::SetupAndApply4DAnimationSingleTile(FITwinSceneTile& SceneTile)
+{
+	if (!SceneTile.bIsSetupFor4DAnimation)
+	{
+		Setup4DAnimationSingleTile(SceneTile, {}, nullptr);
+	}
+	Animator.ApplyAnimationOnTile(SceneTile);
+}
+
+void FITwinSynchro4DSchedulesInternals::Setup4DAnimationSingleTile(FITwinSceneTile& SceneTile,
+	std::optional<ITwinScene::TileIdx> TileRank, std::unordered_set<ITwinScene::ElemIdx> const* Elements)
+{
+	auto& SceneMapping = GetInternals(*Cast<AITwinIModel>(Owner.GetOwner())).SceneMapping;
+	if (!TileRank)
+		TileRank.emplace(SceneMapping.KnownTileRank(SceneTile));
+	std::optional<typename decltype(ElementsReceived)::iterator> Pending;
+	if (!Elements)
+	{
+		Pending.emplace(ElementsReceived.find(*TileRank));
+		if (!ensure(ElementsReceived.end() != Pending))
+			return;
+		Elements = &((*Pending)->second);
+	}
+	std::unordered_set<FIModelElementsKey> Timelines;
+	auto&& MainTimeline = Timeline();
+	if (!ensure(SceneTile.IsLoaded() && !SceneTile.bIsSetupFor4DAnimation))
+		return;
+	SceneTile.bIsSetupFor4DAnimation = true;
+	if (SceneTile.TimelinesIndices.empty()) // preserved when tile is unloaded then reloaded
+	{
+		for (auto&& Elem : (*Elements))
+			for (auto&& AnimKey : SceneMapping.GetElement(Elem).AnimationKeys)
+				Timelines.insert(AnimKey);
+		SceneTile.TimelinesIndices.reserve(Timelines.size());
+		for (auto&& AnimKey : Timelines)
+		{
+			int Index;
+			auto* ElementTimeline = MainTimeline.GetElementTimelineFor(AnimKey, &Index);
+			if (ensure(ElementTimeline))
+				SceneTile.TimelinesIndices.push_back(Index);
+		}
+	}
+	if (Pending)
+		ElementsReceived.erase(*Pending);
+	auto&& AllTimelines = MainTimeline.GetContainer();
+	for (auto&& Index : SceneTile.TimelinesIndices)
+	{
+		SceneMapping.OnElementsTimelineModified(*TileRank, *AllTimelines[Index]
+			// can't pass this, the expected param is a vector ptr (but only because
+			// InsertAnimatedMeshSubElemsRecursively says so, it could be changed),
+			// BUT we only handle fully loaded tiles anyway:
+			/* , &TileMeshElements.second*/);
+	}
+	if (SceneTile.HighlightsAndOpacities)
+		HideNonAnimatedDuplicates(SceneTile, MainTimeline.GetNonAnimatedDuplicates());
+}
+
+void FITwinSynchro4DSchedulesInternals::HandleReceivedElements(bool& bNew4DAnimTexToUpdate)
+{
+	if (ElementsReceived.empty())
 		return;
 
 	// In principle, OnElementsTimelineModified must be called for each timeline applying to an Element (or
 	// one of its ancester node Element, or a group containing an Element) that has been received, with the
 	// exact set of Elements received, because the code depends on the kind of keyframes present, and flags
 	// are set on ElementFeaturesInTile individually.
-	// Initially, before we pre-fetched all animation bindings, we had no direct mapping from the Elements to
-	// their timeline(s), so ReplicateAnimatedElementsSetupInTile and the TileRequirements system was added
+	// Initially, before we pre-fetched animation bindings, we had no direct mapping from the Elements to their
+	// timeline(s), so ReplicateAnimElemTextureSetupInTile & the FElemAnimRequirements system was added
 	// to take care of Elements already animated _in other tiles_. Elements not yet animated were passed on
 	// to QueryElementsTasks anyway, so OnElementsTimelineModified would be called for them later if needed.
 	// With PrefetchAllElementAnimationBindings, the situation is reversed: we have all bindings (once
 	// IsAvailable() returns true), so OnElementsTimelineModified needs to be called on all Elements, because
 	// no new query will be made.
-
-	// But we will do as if we received all Elements on any given timeline at the same time, to
-	// avoid calculating the map<Timeline, vector<ElementsReceived>> we would need...
 	auto& SceneMapping = GetInternals(*Cast<AITwinIModel>(Owner.GetOwner())).SceneMapping;
-	if (!PrefetchAllElementAnimationBindings() || EApplySchedule::InitialPassDone == ApplySchedule)
+
+	// Note: only used by initial pass now
+	if (PrefetchAllElementAnimationBindings() && ensure(Owner.IsAvailable()))
+	{
+		for (auto const& [TileRank, TileElems] : ElementsReceived)
+		{
+			auto& SceneTile = SceneMapping.KnownTile(TileRank);
+			// may have been unloaded while waiting for ElementsReceived to be processed, typically while
+			// waiting for the schedule to be fully available!
+			if (SceneTile.IsLoaded())
+				Setup4DAnimationSingleTile(SceneTile, TileRank, &TileElems);
+		}
+	}
+	else if (IsReadyToQuery() || Owner.bDebugWithDummyTimelines)
 	{
 		for (auto const& TileMeshElements : ElementsReceived)
 		{
-			bNewTilesReceived |= SceneMapping.ReplicateAnimatedElementsSetupInTile(TileMeshElements);
-		}
-	}
-	if (!PrefetchAllElementAnimationBindings())
-	{
-		// ElementIDs are already mapped in the SchedulesApi structures to avoid redundant requests, so it
-		// was redundant to merge the sets here, until we needed to add the parent Elements as well:
-		std::set<ITwinElementID> MergedSet;
-		for (auto SetsIt = ElementsReceived.begin(); SetsIt != ElementsReceived.end(); ++SetsIt)
-		{
-			for (auto const& ElemID : SetsIt->second)
-			{
-				FITwinElement const* pElem = &SceneMapping.GetElement(ElemID);
-				while (true)
-				{
-					if (!MergedSet.insert(pElem->Id).second)
-						break; // if already present, all its parents are, too
-					if (ITwinScene::NOT_ELEM == pElem->ParentInVec)
-						break;
-					pElem = &SceneMapping.GetElement(pElem->ParentInVec);
-				}
-			}
-			SetsIt->second.clear();
+			bNew4DAnimTexToUpdate |= SceneMapping.ReplicateAnimElemTextureSetupInTile(TileMeshElements);
 		}
 		if (Owner.bDebugWithDummyTimelines)
 		{
@@ -282,8 +351,9 @@ void FITwinSynchro4DSchedulesInternals::HandleReceivedElements(bool& bNewTilesRe
 				size_t const BindingIdx = Sched.AnimationBindings.size();
 				size_t const GroupIdx = Sched.Groups.size();
 				Sched.AnimationBindings.emplace_back();
-				Sched.Groups.emplace_back();
-				Sched.Groups[GroupIdx].swap(TileElements.second);
+				auto& Group = Sched.Groups.emplace_back();
+				for (auto&& Elem : TileElements.second)
+					Group.insert(SceneMapping.GetElement(Elem).ElementID);
 				// Set just enough stuff to use AddAnimationBindingToTimeline
 				auto& Binding = Sched.AnimationBindings[BindingIdx];
 				Binding.AnimatedEntities = FString::Printf(TEXT("DummyGroup%llu"), GroupIdx);
@@ -295,6 +365,25 @@ void FITwinSynchro4DSchedulesInternals::HandleReceivedElements(bool& bNewTilesRe
 		}
 		else
 		{
+			// ElementIDs are already mapped in the SchedulesApi structures to avoid redundant requests, so it
+			// was redundant to merge the sets here, until we needed to add the parent Elements as well:
+			std::set<ITwinElementID> MergedSet;
+			for (auto SetsIt = ElementsReceived.begin(); SetsIt != ElementsReceived.end(); ++SetsIt)
+			{
+				for (auto const& ElemID : SetsIt->second)
+				{
+					FITwinElement const* pElem = &SceneMapping.GetElement(ElemID);
+					while (true)
+					{
+						if (!MergedSet.insert(pElem->ElementID).second)
+							break; // if already present, all its parents are, too
+						if (ITwinScene::NOT_ELEM == pElem->ParentInVec)
+							break;
+						pElem = &SceneMapping.GetElement(pElem->ParentInVec);
+					}
+				}
+				SetsIt->second.clear();
+			}
 			SchedulesApi.QueryElementsTasks(MergedSet);
 		}
 	}
@@ -318,11 +407,81 @@ UMaterialInterface* FITwinSynchro4DSchedulesInternals::GetMasterMaterial(
 }
 
 /*static*/
-void FITwinSynchro4DSchedulesInternals::FinalizeCuttingPlaneEquation(
-	ITwin::Timeline::FDeferredPlaneEquation const& Deferred, FBox const& ElementsWorldBox)
+/// \param ElementsBBoxCenter in World-UE space AS IF iModel were untransformed
+FTransform FITwinSynchro4DSchedulesInternals::ComputeTransformFromFinalizedKeyframe(
+	FITwinCoordConversions const& CoordConv, ITwin::Timeline::PTransform const& TransfoKey, 
+	FVector const& ElementsBBoxCenter, bool const bWantsResultAsIfIModelUntransformed)
 {
+	if (ITwin::Timeline::EAnchorPoint::Static == TransfoKey.DefrdAnchor.AnchorPoint)
+	{
+		// Desperate solution: just switch back to iModel space!
+		// See comments in AddStaticTransformToTimeline and RequestTransfoAssignment...
+		// Maybe it was all related to FTransform::Inverse being buggy...
+		if (bWantsResultAsIfIModelUntransformed)
+		{
+			return UITwinUtilityLibrary::Inverse(CoordConv.IModelToUntransformedIModelInUE)
+				 * FTransform(TransfoKey.Rotation)
+				 * FTransform(TransfoKey.Position)
+				 * CoordConv.IModelToUntransformedIModelInUE;
+		}
+		else
+		{
+			return CoordConv.UnrealToIModel
+				 * FTransform(TransfoKey.Rotation)
+				 * FTransform(TransfoKey.Position)
+				 * CoordConv.IModelToUnreal;
+		}
+	}
+	else
+	{
+		// For 'Original [Position]' anchoring, Keyframes simply store relative translations.
+		bool const bPositionIsRelative =
+			ITwin::Timeline::EAnchorPoint::Original == TransfoKey.DefrdAnchor.AnchorPoint;
+		// Location of the Element's reference point (origin of its local CRS) is unknown, since
+		// the local CRS is lost when Elements are merged into the Gltf meshes by the Mesh export!
+		// The only case where it seemed to me that it would be needed is when rotating a single
+		// Element using the 'Original' anchor, in which case I assumed the Element's origin should be
+		// used instead of the group's BBox center: but we don't have actual examples of bugs coming
+		// from the current code, and it's not even sure SynchroPro has knowledge of the Element's
+		// local base: see azdev#1582839, where additional geometry is used to enforce the desired BBox
+		// center for rotation!
+		ensure(!bWantsResultAsIfIModelUntransformed);
+		FVector const ElemGroupAnchor = CoordConv.IModelTilesetTransform.TransformPosition(ElementsBBoxCenter)
+			- TransfoKey.DefrdAnchor.Offset;
+		return FTransform(-ElemGroupAnchor)
+			* FTransform(TransfoKey.Rotation)
+			* (bPositionIsRelative
+				? FTransform(ElemGroupAnchor + TransfoKey.Position)
+				: FTransform(TransfoKey.Position));
+	}
+}
+
+/*static*/
+void FITwinSynchro4DSchedulesInternals::FinalizeCuttingPlaneEquation(FITwinCoordConversions const& CoordConv,
+	ITwin::Timeline::FDeferredPlaneEquation const& Deferred, FBox const& OriginalElementsBox)
+{
+	// Must have been "finalized" before us:
+	ensure(!Deferred.TransformKeyframe
+		|| (!Deferred.TransformKeyframe->DefrdAnchor.IsDeferred()
+			&& ITwin::Timeline::EAnchorPoint::Static == Deferred.TransformKeyframe->DefrdAnchor.AnchorPoint));
 	ensure(Deferred.PlaneOrientation.IsUnit());
-	FBox const ExpandedBox = ElementsWorldBox.ExpandBy(0.01 * ElementsWorldBox.GetSize());
+	// Necessarily static assignment - growth simulation disabled along 3D Paths
+	std::optional<FBox> AsAssignedBox;
+	if (Deferred.TransformKeyframe)
+	{
+		// Use the transformed box instead of the transformed object's box: can lead to errors (large ones, in
+		// border cases) but the only alternative is to compute the world BBox of the rotated object, which is
+		// much more CPU-intensive...)
+		AsAssignedBox.emplace(OriginalElementsBox.TransformBy(
+			FITwinSynchro4DSchedulesInternals::ComputeTransformFromFinalizedKeyframe(CoordConv,
+				*Deferred.TransformKeyframe, OriginalElementsBox.GetCenter(),
+				/*bWantsResultAsIfIModelUntransformed*/true)
+			.ToMatrixNoScale()));
+	}
+	// OriginalElementsBox, like Deferred.PlaneOrientation, is in World-UE space AS IF iModel
+	// were untransformed
+	FBox const& ElementsBox = AsAssignedBox ? (*AsAssignedBox) : OriginalElementsBox;
+	FBox const ExpandedBox = ElementsBox.ExpandBy(0.01 * ElementsBox.GetSize());
 	FVector Position;
 	switch (Deferred.GrowthStatus)
 	{
@@ -340,25 +499,46 @@ void FITwinSynchro4DSchedulesInternals::FinalizeCuttingPlaneEquation(
 						   (Deferred.PlaneOrientation.Z > 0) ? ExpandedBox.Min.Z : ExpandedBox.Max.Z);
 		Deferred.GrowthStatus = ITwin::Timeline::EGrowthStatus::FullyRemoved;
 		break;
-	default:
+	default: [[unlikely]]
 		ensure(false);
 		Position = ExpandedBox.GetCenter();
 		break;
 	}
-	// Note: TVector(const UE::Math::TVector4<T>& V); is NOT explicit, which is a shame IMHO
-	Deferred.PlaneW = FVector3f(Position).Dot(Deferred.PlaneOrientation);
+	Position = CoordConv.IModelTilesetTransform.TransformPosition(Position);
+	FVector PlaneOrientationUE =
+		CoordConv.IModelTilesetTransform.TransformVector(FVector(Deferred.PlaneOrientation));
+	PlaneOrientationUE.Normalize();
+	// Note: PlaneOrientation and PlaneW could be merged again into a single TVector4 now that PlaneOrientation
+	// is also mutable, but be careful that TVector(const UE::Math::TVector4<T>& V); is NOT explicit, which is
+	// a shame IMHO esp. since conversions between float/double variants are.
+	Deferred.PlaneW = static_cast<float>(Position.Dot(PlaneOrientationUE));
+	Deferred.PlaneOrientation = FVector3f(PlaneOrientationUE);
 }
 
 /*static*/
-void FITwinSynchro4DSchedulesInternals::FinalizeAnchorPos(
-	ITwin::Timeline::FDeferredAnchor const& Deferred, FBox const& ElementsWorldBox)
+void FITwinSynchro4DSchedulesInternals::FinalizeAnchorPos(FITwinCoordConversions const& CoordConv,
+	ITwin::Timeline::FDeferredAnchor const& Deferred, FBox const& ElementsBox)
 {
 	ensure(Deferred.bDeferred);
 	FVector Center, Extents;
-	ElementsWorldBox.GetCenterAndExtents(Center, Extents);
+	// ElementsBox is in World-UE space AS IF iModel were untransformed
+	ElementsBox.GetCenterAndExtents(Center, Extents);
 	// Note: 'Extents' is half (Max - Min)
 	switch (Deferred.AnchorPoint)
 	{
+	case ITwin::Timeline::EAnchorPoint::Custom:
+		// Note: Add3DPathTransformToTimeline already transforms the custom offset with
+		// IModel2UnrealTransfo, so Y inversion and iModel/tileset transform are included
+		Deferred.bDeferred = false;
+		return;
+
+	case ITwin::Timeline::EAnchorPoint::Original: [[unlikely]] // shouldn't be deferred
+	case ITwin::Timeline::EAnchorPoint::Static:   [[unlikely]] // shouldn't be deferred
+	default: [[unlikely]]
+		ensure(false);
+		Deferred.bDeferred = false;
+		return;
+
 	case ITwin::Timeline::EAnchorPoint::Center:
 		Deferred.Offset = FVector::ZeroVector;
 		break;
@@ -369,10 +549,10 @@ void FITwinSynchro4DSchedulesInternals::FinalizeAnchorPos(
 		Deferred.Offset = FVector(-Extents.X, 0, 0);
 		break;
 	case ITwin::Timeline::EAnchorPoint::MinY:
-		Deferred.Offset = FVector(0, Extents.Y, 0);
+		Deferred.Offset = FVector(0, -Extents.Y, 0);
 		break;
 	case ITwin::Timeline::EAnchorPoint::MaxY:
-		Deferred.Offset = FVector(0, -Extents.Y, 0);
+		Deferred.Offset = FVector(0, Extents.Y, 0);
 		break;
 	case ITwin::Timeline::EAnchorPoint::MinZ:
 		Deferred.Offset = FVector(0, 0, Extents.Z);
@@ -380,14 +560,8 @@ void FITwinSynchro4DSchedulesInternals::FinalizeAnchorPos(
 	case ITwin::Timeline::EAnchorPoint::MaxZ:
 		Deferred.Offset = FVector(0, 0, -Extents.Z);
 		break;
-	case ITwin::Timeline::EAnchorPoint::Custom:
-		break;
-	case ITwin::Timeline::EAnchorPoint::Original: // shouldn't be deferred
-	case ITwin::Timeline::EAnchorPoint::Static: // shouldn't be deferred
-	default:
-		ensure(false);
-		break;
 	}
+	Deferred.Offset = CoordConv.IModelTilesetTransform.TransformVector(Deferred.Offset);
 	Deferred.bDeferred = false;
 }
 
@@ -402,8 +576,8 @@ void FITwinSynchro4DSchedulesInternals::Reset()
 	Schedules.clear();
 	// see comment below about ordering:
 	SchedulesApi = FITwinSchedulesImport(Owner, Mutex, Schedules);
-	Builder = FITwinScheduleTimelineBuilder(
-		Owner, GetIModel2UnrealTransfo(Owner), GetSynchro4DOriginUE(Owner));
+	Builder.Uninitialize();
+	Builder = FITwinScheduleTimelineBuilder(Owner, GetIModel2UnrealCoordConv(Owner));
 	if (!bDoNotBuildTimelines)
 	{
 		SchedulesApi.SetSchedulesImportObservers(
@@ -438,6 +612,95 @@ FITwinSchedulesImport& FITwinSynchro4DSchedulesInternals::GetSchedulesApiReadyFo
 	return SchedulesApi;
 }
 
+void FITwinSynchro4DSchedulesInternals::UpdateConnection(bool const bOnlyIfReady)
+{
+	if (!bOnlyIfReady || IsReadyToQuery())
+	{
+		AITwinIModel& IModel = *Cast<AITwinIModel>(Owner.GetOwner());
+		// See comment about empty changeset in QueriesCache::GetCacheFolder():
+		ensureMsgf(!IModel.GetSelectedChangeset().IsEmpty() || IModel.ChangesetId.IsEmpty(),
+				   TEXT("Selected changeset shouldn't be empty!"));
+		SchedulesApi.ResetConnection(IModel.ITwinId, IModel.IModelId, IModel.GetSelectedChangeset());
+	}
+}
+
+// Note: must have been called at least once before any actual querying.
+bool FITwinSynchro4DSchedulesInternals::ResetSchedules()
+{
+	AITwinIModel* IModel = Cast<AITwinIModel>(Owner.GetOwner());
+	if (!IModel)
+		return false;
+	if (IModel->ITwinId.IsEmpty()) // happens transitorily in iTwinTestApp...
+		return false;
+	if (!IModel->ServerConnection)
+		return false; // e.g. happens when an iModel is created from scratch by the user
+	FITwinIModelInternals& IModelInternals = GetInternals(*IModel);
+
+	IModelInternals.SceneMapping.SetTimelineGetter(
+		std::bind(&FITwinSynchro4DSchedulesInternals::GetTimeline, this));
+
+	IModelInternals.SceneMapping.SetMaterialGetter(
+		std::bind(&FITwinSynchro4DSchedulesInternals::GetMasterMaterial, this,
+					std::placeholders::_1, std::ref(Owner)));
+
+	// this deletes the Builder, and clears all data structures which have the scope of the timeline even
+	// though they may be stored somewhere else more appropriate, like FITwinElementTimeline::ExtraData and
+	// FITwinSceneTile::TimelinesIndices
+	Reset();
+
+	Builder.Initialize(std::bind(
+		&FITwinIModelInternals::OnElementsTimelineModified, &IModelInternals,
+															std::placeholders::_1, std::placeholders::_2));
+	UpdateConnection(false);
+
+	if (PrefetchAllElementAnimationBindings())
+	{
+		// If the tileset is already loaded, we need to re-fill ElementsReceived with all tiles and Elements,
+		// so that the Timeline optimization structures (FITwinElementTimeline::ExtraData) are re-created
+		ElementsReceived.clear();
+		IModelInternals.SceneMapping.ForEachKnownTile(
+			[&AllReceived=this->ElementsReceived, &SceneMapping=IModelInternals.SceneMapping]
+			(FITwinSceneTile& SceneTile)
+			{
+				if (!SceneTile.IsLoaded())
+					return;
+				SceneTile.bIsSetupFor4DAnimation = false;
+				std::unordered_set<ITwinScene::ElemIdx> TileElems;
+				SceneTile.ForEachElementFeatures([&TileElems](FITwinElementFeaturesInTile const& ElemInTile)
+					{
+						TileElems.insert(ElemInTile.SceneRank);
+					});
+				AllReceived.emplace(SceneMapping.KnownTileRank(SceneTile), std::move(TileElems));
+			});
+	}
+	else
+	{
+		// If the tileset is already loaded, we need to trigger QueryElementsTasks for all Elements for which
+		// we have already received some mesh parts, but also for all their parents/ancesters, which may have
+		// anim bindings that will also animate the children.
+		auto const& AllElems = IModelInternals.SceneMapping.GetElements();
+		std::set<ITwinElementID> ElementIDs;
+		for (auto const& Elem : AllElems)
+		{
+			if (Elem.bHasMesh) // start from leaves (can intermediate nodes have their own geom too?)
+			{
+				FITwinElement const* pElem = &Elem;
+				while (true)
+				{
+					if (!ElementIDs.insert(pElem->ElementID).second)
+						break; // if already present, all its parents are, too
+					if (ITwinScene::NOT_ELEM == pElem->ParentInVec)
+						break;
+					pElem = &IModelInternals.SceneMapping.GetElement(pElem->ParentInVec);
+				}
+			}
+		}
+		if (!ElementIDs.empty())
+			SchedulesApi.QueryElementsTasks(ElementIDs);
+	}
+	return true;
+}
+
 //---------------------------------------------------------------------------------------
 // class UITwinSynchro4DSchedules
 //---------------------------------------------------------------------------------------
@@ -456,14 +719,23 @@ UITwinSynchro4DSchedules::UITwinSynchro4DSchedules(bool bDoNotBuildTimelines)
 	struct FConstructorStatics {
 		ConstructorHelpers::FObjectFinder<UMaterialInstance> BaseMaterialMasked;
 		ConstructorHelpers::FObjectFinder<UMaterialInstance> BaseMaterialTranslucent;
+		ConstructorHelpers::FObjectFinder<UMaterialInstance> BaseMaterialGlass;
 		FConstructorStatics()
 			: BaseMaterialMasked(TEXT("/ITwinForUnreal/ITwin/Materials/MI_ITwinInstance"))
 			, BaseMaterialTranslucent(TEXT("/ITwinForUnreal/ITwin/Materials/MI_ITwinInstanceTranslucent"))
+			, BaseMaterialGlass(TEXT("/ITwinForUnreal/ITwin/Materials/MI_ITwinGlass"))
 		{}
 	};
 	static FConstructorStatics ConstructorStatics;
 	this->BaseMaterialMasked = ConstructorStatics.BaseMaterialMasked.Object;
 	this->BaseMaterialTranslucent = ConstructorStatics.BaseMaterialTranslucent.Object;
+	this->BaseMaterialGlass = ConstructorStatics.BaseMaterialGlass.Object;
+}
+
+UITwinSynchro4DSchedules::~UITwinSynchro4DSchedules()
+{
+	if (Impl->Internals.Uniniter) // CDO has none
+		Impl->Internals.Uniniter->Run();
 }
 
 FDateRange UITwinSynchro4DSchedules::GetDateRange() const
@@ -480,6 +752,7 @@ void UITwinSynchro4DSchedules::TickSchedules(float DeltaTime)
 	AITwinIModel* IModel = Cast<AITwinIModel>(GetOwner());
 	if (!IModel)
 		return; // fine, happens between constructor and registration to parent iModel
+	Impl->Internals.CheckInitialized(*IModel);
 
 	if (!IModel->ServerConnection // happens when an iModel is created from scratch by the user
 		|| IModel->ITwinId.IsEmpty()) // happens transitorily in iTwinTestApp...
@@ -515,37 +788,46 @@ void UITwinSynchro4DSchedules::TickSchedules(float DeltaTime)
 	{
 		if (IsAvailable())
 		{
-			auto const& Timelines = Impl->Internals.Builder.Timeline().GetContainer();
-			auto& SceneMapping = GetInternals(*Cast<AITwinIModel>(GetOwner())).SceneMapping;
-			for (auto& [TileID, SceneTile] : SceneMapping.KnownTiles)
-				for (auto& ElementTimeline : Timelines)
-					SceneMapping.OnElementsTimelineModified(TileID, SceneTile, *ElementTimeline);
+			bool dummy = false;
+			Impl->Internals.HandleReceivedElements(dummy);
 			Impl->Internals.ApplySchedule = FITwinSynchro4DSchedulesInternals::EApplySchedule::InitialPassDone;
 			Impl->Animator.TickAnimation(DeltaTime, true);
 		}
 		else
 		{
 			Impl->Internals.SchedulesApi.HandlePendingQueries();
-			// For selection textures: not needed, UpdateSelectionAndHighlightTextures called from iModel tick
-			//GetInternals(*Cast<AITwinIModel>(GetOwner())).SceneMapping.UpdateAllTextures();
+			// For selection textures: not needed, UpdateSelectingAndHidingTextures called from iModel tick
+			//GetInternals(*Cast<AITwinIModel>(GetOwner())).SceneMapping.Update4DAnimTextures();
 		}
 	}
 	else
 	{
-		bool bNewTilesReceived = false;
-		Impl->Internals.HandleReceivedElements(bNewTilesReceived);
+		bool bNew4DAnimTexToUpdate = false;
+		if (!Impl->Internals.PrefetchAllElementAnimationBindings())
+		{
+			Impl->Internals.HandleReceivedElements(bNew4DAnimTexToUpdate);
+		}
+		ensure(Impl->Internals.ElementsReceived.empty());
 		Impl->Internals.SchedulesApi.HandlePendingQueries();
-		Impl->Animator.TickAnimation(DeltaTime, bNewTilesReceived);
+		Impl->Animator.TickAnimation(DeltaTime, bNew4DAnimTexToUpdate);
 	}
 }
 
-void FITwinSynchro4DSchedulesInternals::UpdateConnection(bool const bOnlyIfReady)
+void UITwinSynchro4DSchedules::OnVisibilityChanged(FITwinSceneTile& SceneTile, bool bVisible)
 {
-	if (!bOnlyIfReady || IsReadyToQuery())
+	if (!IsAvailable())
+		return;
+	if (bVisible)
 	{
-		AITwinIModel& IModel = *Cast<AITwinIModel>(Owner.GetOwner());
-		SchedulesApi.ResetConnection(IModel.ITwinId, IModel.IModelId, IModel.ChangesetId);
+		ensure(!SceneTile.bVisible);
+		// Note: usually the tile was set up in OnNewTileBuilt but it is still possible, that
+		// SceneTile.bIsSetupFor4DAnimation is false here: it happens when OnNewTileBuilt has been
+		// called before the schedule was fully loaded, but OnVisibilityChanged is called after.
+		// I could call TickSchedules _after_ HandleTilesHavingChangedVisibility in
+		// AITwinIModel::Tick, but it would most likely lead to other problems...
+		Impl->Internals.SetupAndApply4DAnimationSingleTile(SceneTile);
 	}
+	//SceneTile->bVisible = bVisible; <== NO, done by FITwinIModelInternals::OnVisibilityChanged
 }
 
 bool UITwinSynchro4DSchedules::IsAvailable() const
@@ -581,58 +863,6 @@ void UITwinSynchro4DSchedules::LogStatisticsUponFullScheduleReceived(FDateTime S
 {
 	UE_LOG(LogITwinSched, Display, TEXT("Schedule tasks received: %llu between %s and %s"),
 		Impl->Internals.SchedulesApi.NumTasks(), *StartTime.ToString(), *EndTime.ToString());
-}
-
-// Note: must have been called at least once before any actual querying.
-bool FITwinSynchro4DSchedulesInternals::ResetSchedules()
-{
-	AITwinIModel* IModel = Cast<AITwinIModel>(Owner.GetOwner());
-	if (!IModel)
-		return false;
-	if (IModel->ITwinId.IsEmpty()) // happens transitorily in iTwinTestApp...
-		return false;
-	if (!IModel->ServerConnection)
-		return false; // e.g. happens when an iModel is created from scratch by the user
-	FITwinIModelInternals& IModelInternals = GetInternals(*IModel);
-
-	IModelInternals.SceneMapping.SetTimelineGetter(
-		std::bind(&FITwinSynchro4DSchedulesInternals::GetTimeline, this));
-
-	IModelInternals.SceneMapping.SetMaterialGetter(
-		std::bind(&FITwinSynchro4DSchedulesInternals::GetMasterMaterial, this,
-					std::placeholders::_1, std::ref(Owner)));
-
-	Reset();
-	Builder.SetOnElementsTimelineModified(std::bind(
-		&FITwinIModelInternals::OnElementsTimelineModified, &IModelInternals,
-															std::placeholders::_1, std::placeholders::_2));
-	UpdateConnection(false);
-
-	// If the tileset is already loaded, we need to trigger QueryElementsTasks for all Elements for which we
-	// have already received some mesh parts, but also for all their parents/ancesters, which may have anim
-	// bindings that will also animate the children.
-	auto const& AllElems = IModelInternals.SceneMapping.GetElements();
-	if (!PrefetchAllElementAnimationBindings() && !AllElems.empty())
-	{
-		std::set<ITwinElementID> ElementIDs;
-		for (auto const& Elem : AllElems)
-		{
-			if (Elem.bHasMesh) // start from leaves (can intermediate nodes have their own geom too?)
-			{
-				FITwinElement const* pElem = &Elem;
-				while (true)
-				{
-					if (!ElementIDs.insert(pElem->Id).second)
-						break; // if already present, all its parents are, too
-					if (ITwinScene::NOT_ELEM == pElem->ParentInVec)
-						break;
-					pElem = &IModelInternals.SceneMapping.GetElement(pElem->ParentInVec);
-				}
-			}
-		}
-		SchedulesApi.QueryElementsTasks(ElementIDs);
-	}
-	return true;
 }
 
 void UITwinSynchro4DSchedules::QueryAll()
@@ -721,7 +951,7 @@ void UITwinSynchro4DSchedules::AutoReplaySpeed()
 	}
 }
 
-FDateTime UITwinSynchro4DSchedules::GetScheduleTime()
+FDateTime UITwinSynchro4DSchedules::GetScheduleTime() const
 {
 	return ScheduleTime;
 }
@@ -733,7 +963,7 @@ void UITwinSynchro4DSchedules::SetScheduleTime(FDateTime NewScheduleTime)
 	Impl->Animator.OnChangedScheduleTime(false);
 }
 
-FTimespan UITwinSynchro4DSchedules::GetReplaySpeed()
+FTimespan UITwinSynchro4DSchedules::GetReplaySpeed() const
 {
 	return ReplaySpeed;
 }
@@ -771,17 +1001,6 @@ void UITwinSynchro4DSchedules::ClearCacheAllSchedules()
 		IModel->ServerConnection->Environment, {}, {}, {});
 	if (ensure(!CacheFolder.IsEmpty()))
 		IFileManager::Get().DeleteDirectory(*CacheFolder, /*requireExists*/false, /*recurse*/true);
-}
-
-void UITwinSynchro4DSchedules::ToggleMaskTilesUntilFullyAnimated()
-{
-	ITwin::Synchro4D::s_bMaskTilesUntilFullyAnimated = !ITwin::Synchro4D::s_bMaskTilesUntilFullyAnimated;
-	bMaskTilesUntilFullyAnimated = ITwin::Synchro4D::s_bMaskTilesUntilFullyAnimated;
-}
-
-void UITwinSynchro4DSchedules::OnIModelEndPlay()
-{
-	Impl->Internals.SchedulesApi.UninitializeCache();
 }
 
 #if WITH_EDITOR
@@ -830,10 +1049,6 @@ void UITwinSynchro4DSchedules::PostEditChangeProperty(FPropertyChangedEvent& Pro
 		  || Name == GET_MEMBER_NAME_CHECKED(UITwinSynchro4DSchedules, bDisableCaching))
 	{
 		ResetSchedules();
-	}
-	else if (Name == GET_MEMBER_NAME_CHECKED(UITwinSynchro4DSchedules, bMaskTilesUntilFullyAnimated))
-	{
-		ITwin::Synchro4D::s_bMaskTilesUntilFullyAnimated = bMaskTilesUntilFullyAnimated;
 	}
 }
 #endif // WITH_EDITOR

@@ -2,7 +2,7 @@
 |
 |     $Source: ITwinTypes.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -144,6 +144,7 @@ MODULE_EXPORT namespace SDK::Core
 	struct SavedViewGroupInfos
 	{
 		std::vector<SavedViewGroupInfo> groups;
+		std::optional<std::string> iModelId;
 	};
 
 	struct Rotator

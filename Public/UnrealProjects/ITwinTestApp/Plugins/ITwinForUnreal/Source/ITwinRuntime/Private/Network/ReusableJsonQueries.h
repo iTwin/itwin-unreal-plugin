@@ -2,7 +2,7 @@
 |
 |     $Source: ReusableJsonQueries.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -92,12 +92,11 @@ namespace ReusableJsonQueries
 	};
 }
 
-template<uint16_t SimultaneousRequestsT>
 class FReusableJsonQueries
 {
 public:
-	FReusableJsonQueries(UObject const& Owner,
-		FString const& RemoteUrl, FAllocateRequest const& AllocateRequest,
+	FReusableJsonQueries(UObject const& Owner, FString const& RemoteUrl,
+		FAllocateRequest const& AllocateRequest, uint8_t const SimultaneousRequestsAllowed,
 		FCheckRequest const& CheckRequest, ITwinHttp::FMutex& Mutex,
 		TCHAR const* const InSavedFolderForReplay, int const InRecorderSessionIndex,
 		TCHAR const* const InSimulateFromFolder,

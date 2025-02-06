@@ -2,18 +2,20 @@
 |
 |     $Source: ITwinWebServices.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
 #pragma once
 
+#include <functional>
 #include <mutex>
 
 #include "CoreMinimal.h"
 #include "UObject/NoExportTypes.h"
 #include <ITwinServerConnection.h>
 #include "ITwinWebServices_Info.h"
+#include <MaterialPrediction/ITwinMaterialPredictionStatus.h>
 
 #include <ITwinRuntime/Private/Compil/BeforeNonUnrealIncludes.h>
 #	include <SDK/Core/ITwinAPI/ITwinAuthObserver.h>
@@ -48,7 +50,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnGetSavedViewThumbnailComplete,
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnUpdateSavedViewThumbnailComplete, bool, bSuccess, FString, SavedViewId, FString, Response);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGetRealityDataComplete, bool, bSuccess, FITwinRealityDataInfos, RealityDataInfos);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGetRealityData3DInfoComplete, bool, bSuccess, FITwinRealityData3DInfo, RealityDataInfo);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGetElementPropertiesComplete, bool, bSuccess, FElementProperties, ElementProps);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnGetElementPropertiesComplete, bool, bSuccess, FElementProperties, ElementProps, FString, ElementId);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_FiveParams(FOnGetIModelPropertiesComplete, bool, bSuccess, bool, bHasExtents, FProjectExtents, Extents, bool, bHasEcefLocation, FEcefLocation, EcefLocation);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnQueryIModelComplete, bool, bSuccess, FString, QueryResult);
 
@@ -103,10 +105,10 @@ public:
 	void StartExport(FString iModelId, FString ChangesetId);
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
-	void GetAllSavedViews(FString iTwinId, FString iModelId, FString GroupId = "");
+	void GetAllSavedViews(FString iTwinId, FString iModelId, FString GroupId = "", int Top = 100, int Skip = 0);
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
-	void GetSavedViewGroups(FString iTwinId, FString iModelId);
+	void GetSavedViewGroups(FString iTwinId, FString iModelId = "");
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
 	void AddSavedViewGroup(FString ITwinId, FString IModelId, FSavedViewGroupInfo SavedViewGroupInfo);
@@ -124,7 +126,7 @@ public:
 	void UpdateSavedViewThumbnail(FString SavedViewId, FString ThumbnailURL);
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
-	void AddSavedView(FString ITwinId, FString IModelId, FSavedView SavedView, FSavedViewInfo SavedViewInfo, FString GroupId = "");
+	void AddSavedView(FString ITwinId, FSavedView SavedView, FSavedViewInfo SavedViewInfo, FString IModelId = "", FString GroupId = "");
 	void OnSavedViewAdded(bool bSuccess, FSavedViewInfo const& SavedViewInfo);
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
@@ -152,9 +154,9 @@ public:
 					 int Count);
 	SDK::Core::ITwinAPIRequestInfo InfosToQueryIModel(FString iTwinId, FString iModelId,
 		FString ChangesetId, FString ECSQLQuery, int Offset, int Count);
-	HttpRequestID QueryIModelRows(FString iTwinId, FString iModelId, FString ChangesetId,
-								  FString ECSQLQuery, int Offset, int Count,
-								  SDK::Core::ITwinAPIRequestInfo const* RequestInfo = nullptr);
+	void QueryIModelRows(FString iTwinId, FString iModelId, FString ChangesetId,
+		FString ECSQLQuery, int Offset, int Count, std::function<void(HttpRequestID)>&& NotifyRequestID,
+		SDK::Core::ITwinAPIRequestInfo const* RequestInfo = nullptr);
 
 	void GetMaterialProperties(
 		FString iTwinId, FString iModelId, FString ChangesetId,
@@ -165,6 +167,17 @@ public:
 	void GetTextureData(
 		FString iTwinId, FString iModelId, FString ChangesetId,
 		FString TextureId);
+
+	//!------------------------------------------------------------------------------------------------------
+	//! WORK IN PROGRESS - UNRELEASED - material predictions using machine learning.
+	//!
+	//! Change the server to be compatible with ML Material Assignment. Beware it will make all other iTwin
+	//! services unavailable from this actor, since the base URL is different...
+	void SetupForMaterialMLPrediction();
+	EITwinMaterialPredictionStatus GetMaterialMLPrediction(FString iTwinId, FString iModelId,
+														   FString ChangesetId);
+	//-------------------------------------------------------------------------------------------------------
+
 
 	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
 	FOnAuthorizationChecked OnAuthorizationChecked;
@@ -262,6 +275,8 @@ public:
 
 	//! Can be called to customize the scopes used to request the authorization.
 	static void AddScope(FString const& ExtraScope);
+
+	static void SetPreferredEnvironment(EITwinEnvironment Env);
 
 
 	static bool GetActiveConnection(TObjectPtr<AITwinServerConnection>& OutConnection,

@@ -2,7 +2,7 @@
 |
 |     $Source: ReusableJsonQueriesImpl.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -16,27 +16,26 @@
 
 #include "CoreMinimal.h"
 
-#include <array>
 #include <memory>
+#include <vector>
 
-template<uint16_t SimultaneousRequestsT> class FRequestHandler;
+class FRequestHandler;
 
-template<uint16_t SimultaneousRequestsT>
-class FReusableJsonQueries<SimultaneousRequestsT>::FImpl
+class FReusableJsonQueries::FImpl
 {
-	friend class FReusableJsonQueries<SimultaneousRequestsT>;
+	friend class FReusableJsonQueries;
 
 	class FRequestHandler
 	{
 		/// JsonQueries and FromPool usable as long as (*IsJsonQueriesValid)
 		std::shared_ptr<bool> IsJsonQueriesValid;
-		FReusableJsonQueries<SimultaneousRequestsT>::FImpl& JsonQueries;
+		FReusableJsonQueries::FImpl& JsonQueries;
 		FPoolRequest& FromPool;
 		FRequestArgs RequestArgs;
 		int QueryTimestamp;
 
 	public:
-		FRequestHandler(FReusableJsonQueries<SimultaneousRequestsT>::FImpl& InJsonQueries,
+		FRequestHandler(FReusableJsonQueries::FImpl& InJsonQueries,
 			FPoolRequest& InFromPool, FRequestArgs&& InRequestArgs, int const InQueryTimestamp)
 		:
 			IsJsonQueriesValid(InJsonQueries.IsThisValid) // need to copy shared_ptr
@@ -69,9 +68,9 @@ class FReusableJsonQueries<SimultaneousRequestsT>::FImpl
 	ReusableJsonQueries::FStackedBatches NextBatches;
 
 	/// ProcessRequest doc says a Request can be re-used (but not while still being processed, obviously)
-	std::array<FPoolRequest, SimultaneousRequestsT> RequestsPool;
+	std::vector<FPoolRequest> RequestsPool;
 	ReusableJsonQueries::FStackedRequests RequestsInQueue;
-	std::atomic<uint16_t> AvailableRequestSlots{ SimultaneousRequestsT };
+	std::atomic<uint16_t> AvailableRequestSlots{ 0 };
 
 	/// Stats: total number of requests emitted in the lifetime of this instance
 	size_t TotalRequestsCount = 0;
@@ -100,10 +99,10 @@ public:
 	///		queries exactly (you can't query tasks on separate elements if they were queried together during
 	///		the recording session).
 	FImpl(UObject const& Owner, FString const& InBaseUrlNoSlash, FAllocateRequest const& AllocateRequest,
-		FCheckRequest const& InCheckRequest, ITwinHttp::FMutex& InMutex,
-		TCHAR const* const InRecordToFolder, int const InRecorderSessionIndex,
+		uint8_t const SimultaneousRequestsAllowed, FCheckRequest const& InCheckRequest,
+		ITwinHttp::FMutex& InMutex, TCHAR const* const InRecordToFolder, int const InRecorderSessionIndex,
 		TCHAR const* const InSimulateFromFolder,
 		FScheduleQueryingDelegate const* OnScheduleQueryingStatusChanged,
 		std::function<FString()> const& GetBearerToken);
 
-}; // class FReusableJsonQueries<SimultaneousRequestsT>::FImpl
+}; // class FReusableJsonQueries::FImpl

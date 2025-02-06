@@ -2,7 +2,7 @@
 |
 |     $Source: JsonQueriesCache.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -29,7 +29,10 @@ namespace QueriesCache
 {
 	enum class ESubtype : uint8_t
 	{
-		Schedules, ElementsHierarchies, ElementsSourceIDs
+		Schedules,
+		ElementsHierarchies,
+		ElementsSourceIDs,
+		MaterialMLPrediction,
 	};
 
 	/// \param ITwinId If empty, the base folder for all caches of the passed Type is returned. IModelId,

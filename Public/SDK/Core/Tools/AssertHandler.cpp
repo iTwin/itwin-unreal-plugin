@@ -2,7 +2,7 @@
 |
 |     $Source: AssertHandler.cpp $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -10,16 +10,23 @@
 #include "AssertHandler.h"
 #include "Log.h"
 #include <iostream>
+#include "../Singleton/singleton.h"
 
 namespace SDK::Core::Tools
 {
 	std::shared_ptr<IAssertHandler> g_assert;
 
-	template<>
-	std::function<std::shared_ptr<IAssertHandler>()> Tools::Factory<IAssertHandler>::newFct_ = []() {
-		std::shared_ptr<IAssertHandler> p(static_cast<IAssertHandler*>(new AssertHandler()));
-		return p;
-		};
+    template<>
+    Tools::Factory<IAssertHandler>::Globals::Globals()
+    {
+        newFct_ = []() { return static_cast<IAssertHandler*>(new AssertHandler()); };
+    }
+
+    template<>
+    Tools::Factory<IAssertHandler>::Globals& Tools::Factory<IAssertHandler>::GetGlobals()
+    {
+        return singleton<Tools::Factory<IAssertHandler>::Globals>();
+    }
 
     void AssertHandlerFct(const libassert::assertion_info& info) {
         switch (info.type) {
@@ -68,7 +75,7 @@ namespace SDK::Core::Tools
 	{
         InitLog(std::string("log_") + moduleName + ".txt");
         CreateLogChannel("BE_ASSERT", Level::debug);
-		g_assert = IAssertHandler::New();
+        g_assert.reset(IAssertHandler::New());
         libassert::set_failure_handler(FailureHandler);
 	}
 

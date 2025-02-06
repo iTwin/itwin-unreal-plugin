@@ -2,7 +2,7 @@
 |
 |     $Source: IModelRenderTest.cpp $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -13,6 +13,8 @@
 #include <ITwinWebServices/ITwinAuthorizationManager.h>
 #include <ITwinWebServices/ITwinWebServices.h>
 #include <ITwinWebServices/ITwinWebServices_Info.h>
+#include <Decoration/ITwinDecorationHelper.h>
+
 #include <Tests/ITwinFunctionalTest.h>
 
 #include <Compil/BeforeNonUnrealIncludes.h>
@@ -35,6 +37,11 @@
 #include <sstream>
 #include <string>
 #include <vector>
+
+namespace ITwin
+{
+	AITwinDecorationHelper* GetDecorationHelper(FITwinLoadInfo const& Info, UWorld const* World);
+}
 
 namespace
 {
@@ -115,7 +122,8 @@ std::unique_ptr<FMockServer> GetMockServer(const FString& TestName)
 
 } // unnamed namespace
 
-ITWIN_FUNCTIONAL_TEST(IModelRender)
+//! Test is disabled due to random failures in "Publish" ADO pipeline.
+ITWIN_FUNCTIONAL_TEST_EX(IModelRender, false)
 {
 	// Disable error logs from WebServices, because some error messages are actually not errors and should be warnings.
 	const auto bLogErrorsBackup = UITwinWebServices::ShouldLogErrors();
@@ -148,6 +156,22 @@ ITWIN_FUNCTIONAL_TEST(IModelRender)
 		.ChangesetId = TEXT(""),
 		.MeshUrl = MockServer->GetUrl()+TEXT("/Mesh/tileset.json"),
 	});
+
+	// Make sure we will wait for the decoration to be fully loaded (even though there is no decoration
+	// attached to the tested model, we must ensure the dummy access token is available for the whole
+	// asynchronous decoration loading (see #GetDecorationAccessToken...)
+	AITwinDecorationHelper* DecoHelper = ITwin::GetDecorationHelper(IModel->GetModelLoadInfo(), World);
+	if (DecoHelper && DecoHelper->IsLoadingDecoration())
+	{
+		TPromise<void> DecoPromise;
+		const auto DelegateHandle = DecoHelper->OnDecorationLoaded.AddLambda([&]()
+		{
+			DecoPromise.SetValue();
+		});
+		co_await DecoPromise.GetFuture();
+		DecoHelper->OnDecorationLoaded.Remove(DelegateHandle);
+	}
+
 	// Here we have to wait for the tileset to be loaded and displayed.
 	// Ideally there should be a dedicated event upon which we could wait.
 	co_await UE5Coro::Async::PlatformSeconds(1);

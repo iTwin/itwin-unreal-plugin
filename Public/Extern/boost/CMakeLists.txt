@@ -20,6 +20,17 @@
 #	find -type f \( -name "*.h" -o -name "*.hpp" \)
 # (you can check there are only 'h' and 'hpp' files with: find -type f | sed -e 's/\.h$/.hpp/' | grep -v \.hpp
 set(boostHeaders
+	./algorithm/string/compare.hpp
+	./algorithm/string/concept.hpp
+	./algorithm/string/config.hpp
+	./algorithm/string/constants.hpp
+	./algorithm/string/detail/finder.hpp
+	./algorithm/string/detail/find_iterator.hpp
+	./algorithm/string/detail/util.hpp
+	./algorithm/string/finder.hpp
+	./algorithm/string/find_iterator.hpp
+	./algorithm/string/iter_find.hpp
+	./algorithm/string/split.hpp
 	./assert/source_location.hpp
 	./assert.hpp
 	./bind/arg.hpp
@@ -39,6 +50,16 @@ set(boostHeaders
 	./bind/std_placeholders.hpp
 	./bind/storage.hpp
 	./call_traits.hpp
+	./concept/assert.hpp
+	./concept/detail/backward_compatibility.hpp
+	./concept/detail/borland.hpp
+	./concept/detail/concept_def.hpp
+	./concept/detail/concept_undef.hpp
+	./concept/detail/general.hpp
+	./concept/detail/has_constraints.hpp
+	./concept/detail/msvc.hpp
+	./concept/usage.hpp
+	./concept_check.hpp
 	./config/abi/borland_prefix.hpp
 	./config/abi/borland_suffix.hpp
 	./config/abi/msvc_prefix.hpp
@@ -175,6 +196,8 @@ set(boostHeaders
 	./core/allocator_access.hpp
 	./core/allocator_traits.hpp
 	./core/bit.hpp
+	./core/checked_delete.hpp
+	./core/demangle.hpp
 	./core/empty_value.hpp
 	./core/enable_if.hpp
 	./core/explicit_operator_bool.hpp
@@ -185,6 +208,7 @@ set(boostHeaders
 	./core/pointer_traits.hpp
 	./core/ref.hpp
 	./core/serialization.hpp
+	./core/typeinfo.hpp
 	./core/use_default.hpp
 	./cstdint.hpp
 	./current_function.hpp
@@ -201,7 +225,28 @@ set(boostHeaders
 	./detail/select_type.hpp
 	./detail/workaround.hpp
 	./exception/exception.hpp
+	./function/detail/epilogue.hpp
+	./function/detail/function_iterate.hpp
+	./function/detail/maybe_include.hpp
+	./function/detail/prologue.hpp
+	./function/detail/requires_cxx11.hpp
+	./function/function0.hpp
+	./function/function1.hpp
+	./function/function10.hpp
+	./function/function2.hpp
+	./function/function3.hpp
+	./function/function4.hpp
+	./function/function5.hpp
+	./function/function6.hpp
+	./function/function7.hpp
+	./function/function8.hpp
+	./function/function9.hpp
+	./function/function_base.hpp
+	./function/function_fwd.hpp
+	./function/function_template.hpp
+	./function.hpp
 	./functional/hash.hpp
+	./function_equal.hpp
 	./fusion/adapted/mpl/detail/at_impl.hpp
 	./fusion/adapted/mpl/detail/begin_impl.hpp
 	./fusion/adapted/mpl/detail/category_of_impl.hpp
@@ -619,17 +664,23 @@ set(boostHeaders
 	./intrusive/pointer_rebind.hpp
 	./intrusive/pointer_traits.hpp
 	./is_placeholder.hpp
+	./iterator/advance.hpp
 	./iterator/detail/config_def.hpp
 	./iterator/detail/config_undef.hpp
 	./iterator/detail/enable_if.hpp
 	./iterator/detail/facade_iterator_category.hpp
+	./iterator/distance.hpp
 	./iterator/interoperable.hpp
+	./iterator/is_iterator.hpp
 	./iterator/iterator_adaptor.hpp
 	./iterator/iterator_categories.hpp
+	./iterator/iterator_concepts.hpp
 	./iterator/iterator_facade.hpp
 	./iterator/iterator_traits.hpp
 	./iterator/reverse_iterator.hpp
+	./iterator/transform_iterator.hpp
 	./limits.hpp
+	./mem_fn.hpp
 	./move/adl_move_swap.hpp
 	./move/algo/adaptive_merge.hpp
 	./move/algo/detail/adaptive_sort_merge.hpp
@@ -1637,6 +1688,7 @@ set(boostHeaders
 	./multi_index/tag.hpp
 	./multi_index_container.hpp
 	./multi_index_container_fwd.hpp
+	./next_prior.hpp
 	./none.hpp
 	./none_t.hpp
 	./operators.hpp
@@ -1685,6 +1737,8 @@ set(boostHeaders
 	./pfr/tuple_size.hpp
 	./preprocessor/arithmetic/add.hpp
 	./preprocessor/arithmetic/dec.hpp
+	./preprocessor/arithmetic/detail/div_base.hpp
+	./preprocessor/arithmetic/detail/is_1_number.hpp
 	./preprocessor/arithmetic/detail/is_maximum_number.hpp
 	./preprocessor/arithmetic/detail/is_minimum_number.hpp
 	./preprocessor/arithmetic/detail/maximum_number.hpp
@@ -1695,6 +1749,7 @@ set(boostHeaders
 	./preprocessor/arithmetic/limits/inc_1024.hpp
 	./preprocessor/arithmetic/limits/inc_256.hpp
 	./preprocessor/arithmetic/limits/inc_512.hpp
+	./preprocessor/arithmetic/mod.hpp
 	./preprocessor/arithmetic/sub.hpp
 	./preprocessor/array/data.hpp
 	./preprocessor/array/elem.hpp
@@ -1711,6 +1766,7 @@ set(boostHeaders
 	./preprocessor/comparison/not_equal.hpp
 	./preprocessor/config/config.hpp
 	./preprocessor/config/limits.hpp
+	./preprocessor/control/deduce_d.hpp
 	./preprocessor/control/detail/dmc/while.hpp
 	./preprocessor/control/detail/edg/limits/while_1024.hpp
 	./preprocessor/control/detail/edg/limits/while_256.hpp
@@ -1891,6 +1947,7 @@ set(boostHeaders
 	./preprocessor/repetition/limits/repeat_512.hpp
 	./preprocessor/repetition/repeat.hpp
 	./preprocessor/repetition/repeat_from_to.hpp
+	./preprocessor/seq/cat.hpp
 	./preprocessor/seq/detail/is_empty.hpp
 	./preprocessor/seq/detail/limits/split_1024.hpp
 	./preprocessor/seq/detail/limits/split_256.hpp
@@ -1955,6 +2012,39 @@ set(boostHeaders
 	./preprocessor/variadic/limits/size_64.hpp
 	./preprocessor/variadic/size.hpp
 	./preprocessor/variadic/to_seq.hpp
+	./range/algorithm/equal.hpp
+	./range/as_literal.hpp
+	./range/begin.hpp
+	./range/concepts.hpp
+	./range/config.hpp
+	./range/const_iterator.hpp
+	./range/detail/common.hpp
+	./range/detail/extract_optional_type.hpp
+	./range/detail/has_member_size.hpp
+	./range/detail/implementation_help.hpp
+	./range/detail/misc_concept.hpp
+	./range/detail/msvc_has_iterator_workaround.hpp
+	./range/detail/safe_bool.hpp
+	./range/detail/sfinae.hpp
+	./range/detail/str_types.hpp
+	./range/difference_type.hpp
+	./range/distance.hpp
+	./range/empty.hpp
+	./range/end.hpp
+	./range/functions.hpp
+	./range/has_range_iterator.hpp
+	./range/iterator.hpp
+	./range/iterator_range.hpp
+	./range/iterator_range_core.hpp
+	./range/iterator_range_io.hpp
+	./range/mutable_iterator.hpp
+	./range/range_fwd.hpp
+	./range/rbegin.hpp
+	./range/rend.hpp
+	./range/reverse_iterator.hpp
+	./range/size.hpp
+	./range/size_type.hpp
+	./range/value_type.hpp
 	./smart_ptr/detail/lightweight_mutex.hpp
 	./smart_ptr/detail/lwm_pthreads.hpp
 	./smart_ptr/detail/lwm_std_mutex.hpp
@@ -1977,17 +2067,21 @@ set(boostHeaders
 	./type_traits/add_volatile.hpp
 	./type_traits/aligned_storage.hpp
 	./type_traits/alignment_of.hpp
+	./type_traits/composite_traits.hpp
 	./type_traits/conditional.hpp
 	./type_traits/conjunction.hpp
+	./type_traits/conversion_traits.hpp
 	./type_traits/cv_traits.hpp
 	./type_traits/decay.hpp
 	./type_traits/declval.hpp
 	./type_traits/detail/config.hpp
+	./type_traits/detail/has_binary_operator.hpp
 	./type_traits/detail/is_function_cxx_03.hpp
 	./type_traits/detail/is_function_cxx_11.hpp
 	./type_traits/detail/is_function_msvc10_fix.hpp
 	./type_traits/detail/is_function_ptr_helper.hpp
 	./type_traits/detail/is_function_ptr_tester.hpp
+	./type_traits/detail/is_likely_lambda.hpp
 	./type_traits/detail/is_member_function_pointer_cxx_03.hpp
 	./type_traits/detail/is_member_function_pointer_cxx_11.hpp
 	./type_traits/detail/is_mem_fun_pointer_impl.hpp
@@ -1997,12 +2091,17 @@ set(boostHeaders
 	./type_traits/disjunction.hpp
 	./type_traits/enable_if.hpp
 	./type_traits/function_traits.hpp
+	./type_traits/has_minus.hpp
+	./type_traits/has_minus_assign.hpp
 	./type_traits/has_nothrow_assign.hpp
 	./type_traits/has_nothrow_constructor.hpp
 	./type_traits/has_nothrow_copy.hpp
+	./type_traits/has_plus.hpp
+	./type_traits/has_plus_assign.hpp
 	./type_traits/has_trivial_assign.hpp
 	./type_traits/has_trivial_constructor.hpp
 	./type_traits/has_trivial_copy.hpp
+	./type_traits/has_trivial_destructor.hpp
 	./type_traits/has_trivial_move_assign.hpp
 	./type_traits/has_trivial_move_constructor.hpp
 	./type_traits/integral_constant.hpp
@@ -2026,6 +2125,7 @@ set(boostHeaders
 	./type_traits/is_final.hpp
 	./type_traits/is_floating_point.hpp
 	./type_traits/is_function.hpp
+	./type_traits/is_fundamental.hpp
 	./type_traits/is_integral.hpp
 	./type_traits/is_lvalue_reference.hpp
 	./type_traits/is_member_function_pointer.hpp
@@ -2040,9 +2140,14 @@ set(boostHeaders
 	./type_traits/is_rvalue_reference.hpp
 	./type_traits/is_same.hpp
 	./type_traits/is_scalar.hpp
+	./type_traits/is_signed.hpp
 	./type_traits/is_union.hpp
+	./type_traits/is_unsigned.hpp
 	./type_traits/is_void.hpp
 	./type_traits/is_volatile.hpp
+	./type_traits/make_unsigned.hpp
+	./type_traits/make_void.hpp
+	./type_traits/negation.hpp
 	./type_traits/remove_all_extents.hpp
 	./type_traits/remove_bounds.hpp
 	./type_traits/remove_const.hpp
@@ -2077,12 +2182,15 @@ set(boostHeaders
 	./unordered_map.hpp
 	./unordered_set.hpp
 	./utility/base_from_member.hpp
+	./utility/binary.hpp
 	./utility/compare_pointees.hpp
 	./utility/declval.hpp
 	./utility/detail/result_of_iterate.hpp
 	./utility/detail/result_of_variadic.hpp
 	./utility/enable_if.hpp
+	./utility/identity_type.hpp
 	./utility/result_of.hpp
+	./utility.hpp
 	./version.hpp
 	./visit_each.hpp
 )

@@ -2,11 +2,13 @@
 |
 |     $Source: ITwinDynamicShadingProperty.cpp $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
 #include "ITwinDynamicShadingProperty.h"
+#include "ITwinServiceActor.h" // for LogITwin
+
 #include <Compil/BeforeNonUnrealIncludes.h>
 	#include <BeHeaders/Compil/AlwaysFalse.h>
 #include <Compil/AfterNonUnrealIncludes.h>
@@ -14,9 +16,9 @@
 #include "Engine/Texture2D.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "MaterialTypes.h"
-#include "RHICommandList.h"
 #include "Rendering/Texture2DResource.h"
 #include "RenderingThread.h"
+#include "RHICommandList.h"
 
 // For debugging...
 #define ITWIN_SAVE_DYNTEX_TO_FILE() 0
@@ -99,20 +101,36 @@ constexpr int GetTextureAlphaChannelIndex()
 
 }
 
+/*static*/
+template<typename DataType, int NumChannels>
+void FITwinDynamicShadingProperty<DataType, NumChannels>::Create(
+	std::shared_ptr<ThisType>& OwnerPtr,
+	ITwinFeatureID const MaxAddressableFeatureID,
+	std::optional<std::array<DataType, NumChannels>> const& FillWithValue)
+{
+	// Private constructor is inaccessible to std::make_shared...
+	//OwnerPtr = std::make_shared<ThisType>(MaxAddressableFeatureID, FillWithValue, OwnerPtr);
+	OwnerPtr.reset(new ThisType(MaxAddressableFeatureID, FillWithValue, OwnerPtr));
+}
+
 template<typename DataType, int NumChannels>
 FITwinDynamicShadingProperty<DataType, NumChannels>::FITwinDynamicShadingProperty(
 		ITwinFeatureID const MaxAddressableFeatureID,
-		std::optional<std::array<DataType, NumChannels>> const& FillWithValue)
-	: TotalUsedPixels(MaxAddressableFeatureID.value() + 1)
+		std::optional<std::array<DataType, NumChannels>> const& FillWithValue,
+		std::shared_ptr<ThisType> const& InOwnerPtr)
+	: TextureDataBytesPerPixel(NumChannels * sizeof(DataType))
+	// Don't create 1x1 textures: see azdev#1559500
+	, TotalUsedPixels(std::max(4u, MaxAddressableFeatureID.value() + 1))
 	, TextureDimension(static_cast<int32>(std::ceil(std::sqrt((double)TotalUsedPixels))))
+	, TextureDataBytesPerRow(TextureDimension * TextureDataBytesPerPixel)
+	, TextureDataBytesTotal(TextureDimension * TextureDataBytesPerRow)
+	, TextureComponentsPerRow(NumChannels * (size_t)TextureDimension)
+	, TextureDataTransferBuffer(TextureDimension * TextureComponentsPerRow, DataType(0))
+	, TextureRegion(0, 0, 0, 0, TextureDimension, TextureDimension)
+	, OwnerPtr(InOwnerPtr)
 {
-	TextureDataBytesPerPixel = NumChannels * sizeof(DataType);
-	TextureDataBytesPerRow = TextureDimension * TextureDataBytesPerPixel;
-	TextureDataBytesTotal = TextureDimension * TextureDataBytesPerRow;
-	TextureComponentsPerRow = NumChannels * (size_t)TextureDimension;
 	// Yes, TextureData contains DataType values, not uint8!
-	TextureData.resize(TextureDimension * TextureComponentsPerRow);
-	TextureRegion = std::make_unique<FUpdateTextureRegion2D>(0, 0, 0, 0, TextureDimension, TextureDimension);
+	TextureData.resize(TextureDimension * TextureComponentsPerRow, DataType(0));
 	InitializeTexture(FillWithValue);
 }
 
@@ -149,26 +167,32 @@ FITwinDynamicShadingProperty<DataType, NumChannels>::~FITwinDynamicShadingProper
 //}
 
 template<typename DataType, int NumChannels>
-void FITwinDynamicShadingProperty<DataType, NumChannels>::UpdateInMaterial(
+bool FITwinDynamicShadingProperty<DataType, NumChannels>::SetupInMaterial(
 	TWeakObjectPtr<UMaterialInstanceDynamic> const& MatPtr,
-	FMaterialParameterInfo const& TextureAttachment) const
+	FMaterialParameterInfo const& TextureAttachment)
 {
-	if (MatPtr.IsValid() && ensure(IsValid(Texture)))
-		MatPtr->SetTextureParameterValueByInfo(TextureAttachment, Texture);
+	return SetupInMaterials({ MatPtr }, TextureAttachment);
 }
 
 template<typename DataType, int NumChannels>
-void FITwinDynamicShadingProperty<DataType, NumChannels>::UpdateInMaterials(
+bool FITwinDynamicShadingProperty<DataType, NumChannels>::SetupInMaterials(
 	std::vector<TWeakObjectPtr<UMaterialInstanceDynamic>> const& Materials,
-	FMaterialParameterInfo const& TextureAttachment) const
+	FMaterialParameterInfo const& TextureAttachment)
 {
+	if (!AllowUpdatingMaterials())
+	{
+		if (!UpdateTasksInProgress) // this means TextureRHI was nullptr
+			UpdateTexture();
+		return false;
+	}
 	if (!ensure(IsValid(Texture)))
-		return;
+		return false;
 	for (auto&& MatPtr : Materials)
 	{
 		if (MatPtr.IsValid())
 			MatPtr->SetTextureParameterValueByInfo(TextureAttachment, Texture);
 	}
+	return true;
 }
 
 template<typename DataType, int NumChannels>
@@ -199,7 +223,7 @@ void FITwinDynamicShadingProperty<DataType, NumChannels>::FillAllChannelsWith(Da
 			memcpy(DstPtr, SrcPtr, TextureDataBytesPerRow);
 		}
 	}
-	bNeedUpdate = true;
+	InvalidateTexture();
 }
 
 template<typename DataType, int NumChannels>
@@ -224,7 +248,7 @@ void FITwinDynamicShadingProperty<DataType, NumChannels>::FillWith(
 		DataType* const DstPtr = SrcPtr + row * TextureComponentsPerRow;
 		memcpy(DstPtr, SrcPtr, TextureDataBytesPerRow);
 	}
-	bNeedUpdate = true;
+	InvalidateTexture();
 }
 
 template<typename DataType, int NumChannels>
@@ -243,7 +267,7 @@ void FITwinDynamicShadingProperty<DataType, NumChannels>::FillWith(
 			++TexPtr;
 		}
 	}
-	bNeedUpdate = true;
+	InvalidateTexture();
 }
 
 template<typename DataType, int NumChannels>
@@ -273,7 +297,7 @@ void FITwinDynamicShadingProperty<DataType, NumChannels>::InitializeTexture(
 }
 
 template<typename DataType, int NumChannels>
-bool FITwinDynamicShadingProperty<DataType, NumChannels>::UpdateTexture(/*bool bFreeData*/)
+bool FITwinDynamicShadingProperty<DataType, NumChannels>::UpdateTexture()
 {
 	if (!IsValid(Texture))
 	{
@@ -282,19 +306,63 @@ bool FITwinDynamicShadingProperty<DataType, NumChannels>::UpdateTexture(/*bool b
 		return true;
 	}
 	if (!bNeedUpdate)
+	{
 		return false;
-
+	}
 	auto* TextureRHI = ((FTexture2DResource*)Texture->GetResource())->GetTexture2DRHI();
-	// tested in UpdateTextureRegions too but bNeedUpdate requires this early exit, which needs to be toggled
-	// as soon as the copy is made I think, not in DataCleanupFunc
+	// tested in UpdateTextureRegions too but bNeedUpdate requires this early exit
 	if (!TextureRHI)
+	{
 		return true;
+	}
 
 	bNeedUpdate = false;
-	// Note: UpdateTextureRegions passes the data ptr to RHIUpdateTexture2D (in a deferred manner, of course,
-	// since the function is called on the render thread). RHIUpdateTexture2D takes care of copying the data.
-	Texture->UpdateTextureRegions(0/*Mip*/, 1/*NumRegions*/, TextureRegion.get(), TextureDataBytesPerRow,
-		TextureDataBytesPerPixel, reinterpret_cast<uint8*>(&TextureData[0]));
+	// Note: UpdateTextureRegions passes the data *pointer* to RHIUpdateTexture2D (in a deferred manner, of
+	// course, since the function is called on the render thread). Only RHIUpdateTexture2D copies the data!
+	// => thus we need to copy TextureData in a second buffer, so that we do not modify the values while they
+	// are read by the render thread / RHI thread.
+	// Also note we protect the data from deletion by copying the shared pointers of both the transfer buffer
+	// and "this" instance in the lambda capture list below. The 'Texture' and 'TextureRegion' members are
+	// thus protected because FITwinSceneTile::Unload no longer destroys the texture if update messages are
+	// still pending.
+	std::shared_ptr<DataVec> TransferBuffer;
+	if (UpdateTasksInProgress > 0)
+	{
+		// Here we need to allocate another buffer, since TextureDataTransferBuffer is already in use...
+		// Note that TextureRegion is never modified, so it can be shared by all tasks without problem.
+		TransferBuffer = std::make_shared<DataVec>();
+		*TransferBuffer = TextureData;
+	}
+	else
+	{
+		// I wanted to avoid needless copies by swapping vectors instead, along with a bNeedCopyOnWrite flag
+		// so that only in that case write methods would copy TextureDataTransferBuffer back into TextureData
+		// before writing. But to actually avoid the copy (when the update message is handled before any new
+		// write is attempted to the texture), we would also need to swap back the vectors in the
+		// clean-up function, which is not possible safely since we use no mutex to synchronize it with the
+		// game thread execution flow.
+		// We could do it in the future if we have to use a mutex for some other imperious reason, or if it is
+		// found preferrable performance-wise.
+		TextureDataTransferBuffer = TextureData;
+	}
+	// Use the cleanup function (executed by the RHI thread) to decrement this counter when the update is done
+	UpdateTasksInProgress++;
+
+	Texture->UpdateTextureRegions(0/*Mip*/, 1/*NumRegions*/, &TextureRegion,
+		TextureDataBytesPerRow, TextureDataBytesPerPixel,
+		reinterpret_cast<uint8*>(TransferBuffer ? TransferBuffer->data() : TextureDataTransferBuffer.data()),
+		[ this, ThisOwnerPtr = this->OwnerPtr/*extend "this" lifetime until end of clean-up lambda*/,
+		  ShTransferBuffer = TransferBuffer ]
+		(uint8* /*SrcData*/, const FUpdateTextureRegion2D* /*Regions*/)
+		{
+			// Just testing *IsValidLambda (now removed) was not thread-safe: the CPU might have switched to the
+			// game thread just after the test, and proceed to destroying "this"! So the whole instance had to
+			// become a shared object so that its lifetime could be extended as long as needed without having to
+			// synchronize this lambda and the destructor.
+			ensureMsgf(UpdateTasksInProgress.load() > 0, TEXT("Mismatch in task counter"));
+			UpdateTasksInProgress--;
+			bHasBeenUpdatedAtLeastOnce = true;
+		});
 	return true;
 }
 
@@ -302,7 +370,7 @@ template<typename DataType, int NumChannels>
 void FITwinDynamicShadingProperty<DataType, NumChannels>::SetPixel(uint32 const Pixel,
 	std::array<DataType, NumChannels> const& Value)
 {
-	if (Pixel >= TotalUsedPixels)
+	if (Pixel >= TotalUsedPixels) [[unlikely]]
 	{
 		check(false);
 		return;
@@ -313,14 +381,35 @@ void FITwinDynamicShadingProperty<DataType, NumChannels>::SetPixel(uint32 const 
 		*TexPtr = ChanVal;
 		++TexPtr;
 	}
-	bNeedUpdate = true;
+	InvalidateTexture();
+}
+
+template<typename DataType, int NumChannels>
+void FITwinDynamicShadingProperty<DataType, NumChannels>::SetPixel(uint32 const Pixel,
+	std::array<DataType, NumChannels> const& Value, std::array<bool, NumChannels> const& Mask)
+{
+	if (Pixel >= TotalUsedPixels) [[unlikely]]
+	{
+		check(false);
+		return;
+	}
+	DataType* TexPtr = &TextureData[Pixel * NumChannels];
+	for (int c = 0; c < NumChannels; ++c)
+	{
+		if (Mask[c])
+		{
+			*TexPtr = Value[c];
+		}
+		++TexPtr;
+	}
+	InvalidateTexture();
 }
 
 template<typename DataType, int NumChannels>
 std::array<DataType, NumChannels> FITwinDynamicShadingProperty<DataType, NumChannels>::GetPixel(
 	uint32 const Pixel) const
 {
-	if (Pixel >= TotalUsedPixels)
+	if (Pixel >= TotalUsedPixels) [[unlikely]]
 	{
 		check(false);
 		return {};
@@ -343,10 +432,17 @@ void FITwinDynamicShadingProperty<DataType, NumChannels>::SetPixel(ITwinFeatureI
 }
 
 template<typename DataType, int NumChannels>
+void FITwinDynamicShadingProperty<DataType, NumChannels>::SetPixel(ITwinFeatureID const Pixel,
+	std::array<DataType, NumChannels> const& Value, std::array<bool, NumChannels> const& Mask)
+{
+	SetPixel(Pixel.value(), Value, Mask);
+}
+
+template<typename DataType, int NumChannels>
 void FITwinDynamicShadingProperty<DataType, NumChannels>::SetPixel(int32 X, int32 Y,
 	std::array<DataType, NumChannels> const& Value)
 {
-	if (X < 0 || Y < 0 || X >= TextureDimension || Y >= TextureDimension)
+	if (X < 0 || Y < 0 || X >= TextureDimension || Y >= TextureDimension) [[unlikely]]
 	{
 		check(false);
 		return;
@@ -357,61 +453,51 @@ void FITwinDynamicShadingProperty<DataType, NumChannels>::SetPixel(int32 X, int3
 		*TexPtr = ChanVal;
 		++TexPtr;
 	}
-	bNeedUpdate = true;
+	InvalidateTexture();
 }
 
 template<typename DataType, int NumChannels>
 void FITwinDynamicShadingProperty<DataType, NumChannels>::SetPixelsAlpha(
 	std::vector<ITwinFeatureID> const& Pixels, DataType const Value)
 {
-	if (Pixels.empty())
+	if (Pixels.empty()) [[unlikely]]
 		return;
 	constexpr int Channel = Detail::GetTextureAlphaChannelIndex<DataType, NumChannels>();
 	for (auto&& Pixel : Pixels)
 	{
 		TextureData[Pixel.value() * NumChannels + Channel] = Value;
 	}
-	bNeedUpdate = true;
+	InvalidateTexture();
 }
 
 template<typename DataType, int NumChannels>
 void FITwinDynamicShadingProperty<DataType, NumChannels>::SetPixelsExceptAlpha(
 	std::vector<ITwinFeatureID> const& Pixels, std::array<DataType, NumChannels> const& Value)
 {
-	if (Pixels.empty())
+	if (Pixels.empty()) [[unlikely]]
 		return;
 	constexpr int AlphaChan = Detail::GetTextureAlphaChannelIndex<DataType, NumChannels>();
 	for (auto&& Pixel : Pixels)
 	{
 		for (int c = 0; c < NumChannels; ++c)
 		{
-			if (c != AlphaChan)
+			if (c != AlphaChan) [[likely]]
 			{
 				TextureData[Pixel.value() * NumChannels + c] = Value[c];
 			}
 		}
 	}
-	bNeedUpdate = true;
+	InvalidateTexture();
 }
 
 template<typename DataType, int NumChannels>
 void FITwinDynamicShadingProperty<DataType, NumChannels>::SetAllPixelsExceptAlpha(
 	std::array<DataType, NumChannels> const& Value)
 {
-	constexpr int AlphaChan = Detail::GetTextureAlphaChannelIndex<DataType, NumChannels>();
-	DataType* TexPtr = &TextureData[0];
-	for (uint32 p = 0; p < TotalUsedPixels; ++p)
-	{
-		for (int c = 0; c < NumChannels; ++c)
-		{
-			if (c != AlphaChan)
-			{
-				*TexPtr = Value[c];
-			}
-			++TexPtr;
-		}
-	}
-	bNeedUpdate = true;
+	std::array<bool, NumChannels> Mask;
+	std::fill(Mask.begin(), Mask.end(), true);
+	Mask[Detail::GetTextureAlphaChannelIndex<DataType, NumChannels>()] = false;
+	FillWith(Value, Mask);
 }
 
 template<typename DataType, int NumChannels>
@@ -422,22 +508,35 @@ void FITwinDynamicShadingProperty<DataType, NumChannels>::SetAllPixelsAlpha(Data
 	{
 		*TexPtr = Value;
 	}
-	bNeedUpdate = true;
+	InvalidateTexture();
 }
 
 template<typename DataType, int NumChannels>
 void FITwinDynamicShadingProperty<DataType, NumChannels>::SetPixels(
 	std::vector<ITwinFeatureID> const& Pixels, std::array<DataType, NumChannels> const& Value)
 {
-	if (Pixels.empty())
+	if (Pixels.empty()) [[unlikely]]
 		return;
 	for (auto&& Pixel : Pixels)
 	{
 		SetPixel(Pixel, Value);
 	}
-	bNeedUpdate = true;
+	InvalidateTexture();
 }
 
+template<typename DataType, int NumChannels>
+void FITwinDynamicShadingProperty<DataType, NumChannels>::SetPixels(
+	std::vector<ITwinFeatureID> const& Pixels, std::array<DataType, NumChannels> const& Value,
+	std::array<bool, NumChannels> const& Mask)
+{
+	if (Pixels.empty()) [[unlikely]]
+		return;
+	for (auto&& Pixel : Pixels)
+	{
+		SetPixel(Pixel, Value, Mask);
+	}
+	InvalidateTexture();
+}
 
 
 #if WITH_EDITORONLY_DATA
@@ -448,10 +547,13 @@ bool FITwinDynamicShadingProperty<DataType, NumChannels>::WriteTextureToFile(FSt
 #if ITWIN_SAVE_DYNTEX_TO_FILE()
 	if (!IsValid(Texture))
 		return false;
-	if (GetTextureUpdateState() != ETextureState::UpdateDone)
+	if (bNeedUpdate)
 	{
 		UpdateTexture();
-		return false;
+	}
+	while (UpdateTasksInProgress > 0)
+	{
+		FPlatformProcess::Sleep(0.05f);
 	}
 	Texture->UpdateResource();
 	FTexture2DMipMap* MM = &Texture->GetPlatformData()->Mips[0];

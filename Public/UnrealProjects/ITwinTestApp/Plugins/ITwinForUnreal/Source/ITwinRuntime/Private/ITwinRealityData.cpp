@@ -2,7 +2,7 @@
 |
 |     $Source: ITwinRealityData.cpp $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -11,6 +11,7 @@
 #include <ITwinServerConnection.h>
 #include <ITwinSetupMaterials.h>
 #include <ITwinCesium3DTileset.h>
+#include <ITwinIModel.h>
 
 #include <Dom/JsonObject.h>
 #include <Dom/JsonValue.h>
@@ -20,6 +21,9 @@
 #include <ITwinWebServices/ITwinWebServices.h>
 #include <Serialization/JsonReader.h>
 #include <Serialization/JsonSerializer.h>
+#include "Decoration/ITwinDecorationHelper.h"
+
+#include <EngineUtils.h> // for TActorIterator<>
 
 class AITwinRealityData::FImpl
 {
@@ -27,6 +31,7 @@ public:
 	AITwinRealityData& Owner;
 	double Latitude = 0;
 	double Longitude = 0;
+	AITwinDecorationHelper* DecorationPersistenceMgr = nullptr;
 	FImpl(AITwinRealityData& InOwner)
 		: Owner(InOwner)
 	{
@@ -67,6 +72,23 @@ public:
 		// Make use of our own materials (important for packaged version!)
 		ITwin::SetupMaterials(*Tileset);
 	}
+
+	void DestroyTileset();
+	void OnLoadingUIEvent();
+	void FindPersistenceMgr()
+	{
+		if (DecorationPersistenceMgr)
+			return;
+		//Look if a helper already exists:
+		for (TActorIterator<AITwinDecorationHelper> DecoIter(Owner.GetWorld()); DecoIter; ++DecoIter)
+		{
+			DecorationPersistenceMgr = *DecoIter;
+		}
+		if (DecorationPersistenceMgr)
+		{
+			DecorationPersistenceMgr->OnSceneLoaded.AddDynamic(&Owner, &AITwinRealityData::OnSceneLoaded);
+		}
+	}
 };
 
 AITwinRealityData::AITwinRealityData()
@@ -100,6 +122,16 @@ void AITwinRealityData::OnRealityData3DInfoRetrieved(bool bSuccess, FITwinRealit
 	}
 }
 
+bool AITwinRealityData::HasRealityDataIdentifiers() const
+{
+	return !RealityDataId.IsEmpty() && !ITwinId.IsEmpty();
+}
+
+void AITwinRealityData::OnSceneLoaded(bool success)
+{
+
+}
+
 void AITwinRealityData::UpdateRealityData()
 {
 	if (HasTileset())
@@ -109,7 +141,7 @@ void AITwinRealityData::UpdateRealityData()
 		// No authorization yet: postpone the actual update (see OnAuthorizationDone)
 		return;
 	}
-	if (WebServices && !RealityDataId.IsEmpty() && !ITwinId.IsEmpty())
+	if (WebServices && HasRealityDataIdentifiers())
 	{
 		WebServices->GetRealityData3DInfo(ITwinId, RealityDataId);
 	}
@@ -122,33 +154,123 @@ namespace ITwin
 
 bool AITwinRealityData::HasTileset() const
 {
-	for (auto const& Child : Children)
-	{
-		if (Cast<AITwinCesium3DTileset const>(Child.Get()))
-		{
-			return true;
-		}
-	}
-	return false;
+	return GetTileset() != nullptr;
 }
 
-void AITwinRealityData::DestroyTileset()
+const AITwinCesium3DTileset* AITwinRealityData::GetTileset() const
 {
-	ITwin::DestroyTilesetsInActor(*this);
+	for (auto& Child : Children)
+	{
+		if (auto* Tileset = Cast<AITwinCesium3DTileset>(Child.Get()))
+		{
+			return Tileset;
+		}
+	}
+	return nullptr;
+}
+
+AITwinCesium3DTileset* AITwinRealityData::GetMutableTileset()
+{
+	return const_cast<AITwinCesium3DTileset*>(GetTileset());
+}
+
+void AITwinRealityData::HideTileset(bool bHide)
+{
+	for (auto& Child : Children)
+	{
+		if (auto* Tileset = Cast<AITwinCesium3DTileset>(Child.Get()))
+		{
+			Tileset->SetActorHiddenInGame(bHide);
+		}
+	}
+	if (!Impl->DecorationPersistenceMgr)
+		Impl->FindPersistenceMgr();
+	if (Impl->DecorationPersistenceMgr)
+	{
+		auto ss = Impl->DecorationPersistenceMgr->GetSceneInfo(EITwinModelType::RealityData, RealityDataId);
+		if (!ss.Visibility.has_value() || *ss.Visibility != !bHide)
+		{
+			ss.Quality = !bHide;
+			Impl->DecorationPersistenceMgr->SetSceneInfo(EITwinModelType::RealityData, RealityDataId, ss);
+		}
+	}
+}
+bool AITwinRealityData::IsTilesetHidden()
+{
+	auto tileset = GetTileset();
+	if (!tileset)
+		return false;
+	return tileset->IsHidden();
+}
+void AITwinRealityData::SetMaximumScreenSpaceError(double InMaximumScreenSpaceError)
+{
+	for (auto& Child : Children)
+	{
+		if (auto* Tileset = Cast<AITwinCesium3DTileset>(Child.Get()))
+		{
+			Tileset->SetMaximumScreenSpaceError(InMaximumScreenSpaceError);
+		}
+	}
+}
+
+void AITwinRealityData::SetTilesetQuality(float Value)
+{
+	SetMaximumScreenSpaceError(ITwin::ToScreenSpaceError(Value));
+	if (!Impl->DecorationPersistenceMgr)
+		Impl->FindPersistenceMgr();
+	if (Impl->DecorationPersistenceMgr)
+	{
+		auto ss = Impl->DecorationPersistenceMgr->GetSceneInfo(EITwinModelType::RealityData, RealityDataId);
+		if (!ss.Quality.has_value() || fabs(*ss.Quality - Value) > 1e-5)
+		{
+			ss.Quality = Value;
+			Impl->DecorationPersistenceMgr->SetSceneInfo(EITwinModelType::RealityData, RealityDataId, ss);
+		}
+	}
+}
+
+float AITwinRealityData::GetTilesetQuality() const
+{
+	AITwinCesium3DTileset const* Tileset = GetTileset();
+	if (Tileset)
+	{
+		return ITwin::GetTilesetQuality(*Tileset);
+	}
+	else
+	{
+		return 0.f;
+	}
+}
+
+std::optional<FCartographicProps> AITwinRealityData::GetNativeGeoreference() const
+{
+	if (bGeolocated)
+	{
+		FCartographicProps Props;
+		Props.Latitude = Impl->Latitude;
+		Props.Longitude = Impl->Longitude;
+		return std::optional<FCartographicProps>(Props);
+	}
+	return std::optional<FCartographicProps>();
+}
+
+void AITwinRealityData::FImpl::DestroyTileset()
+{
+	ITwin::DestroyTilesetsInActor(Owner);
 }
 
 void AITwinRealityData::Reset()
 {
-	DestroyTileset();
+	Impl->DestroyTileset();
 }
 
-void AITwinRealityData::OnLoadingUIEvent()
+void AITwinRealityData::FImpl::OnLoadingUIEvent()
 {
 	DestroyTileset();
 
-	if (!RealityDataId.IsEmpty() && !ITwinId.IsEmpty())
+	if (Owner.HasRealityDataIdentifiers())
 	{
-		UpdateRealityData();
+		Owner.UpdateRealityData();
 	}
 }
 
@@ -162,7 +284,7 @@ void AITwinRealityData::PostEditChangeProperty(FPropertyChangedEvent& e)
 		||
 		PropertyName == GET_MEMBER_NAME_CHECKED(AITwinRealityData, ITwinId))
 	{
-		OnLoadingUIEvent();
+		Impl->OnLoadingUIEvent();
 	}
 }
 #endif //WITH_EDITOR
@@ -171,9 +293,9 @@ void AITwinRealityData::PostLoad()
 {
 	Super::PostLoad();
 
-	if (!RealityDataId.IsEmpty() && !ITwinId.IsEmpty())
+	if (HasRealityDataIdentifiers())
 	{
-		OnLoadingUIEvent();
+		Impl->OnLoadingUIEvent();
 	}
 }
 
@@ -194,3 +316,15 @@ void AITwinRealityData::Destroyed()
 	for (auto& Child: ChildrenCopy)
 		GetWorld()->DestroyActor(Child);
 }
+
+void AITwinRealityData::SetOffset(const FVector& Pos, const FVector& Rot)
+{
+	SetActorLocationAndRotation(Pos, FQuat::MakeFromEuler(Rot));
+}
+
+void AITwinRealityData::GetOffset(FVector& Pos, FVector& Rot) const
+{
+	Pos = GetActorLocation() / 100.0;
+	Rot = GetActorRotation().Euler();
+}
+

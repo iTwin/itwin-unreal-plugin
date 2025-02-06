@@ -2,7 +2,7 @@
 |
 |     $Source: InstancesManager.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -15,7 +15,7 @@
 
 MODULE_EXPORT namespace SDK::Core 
 {
-	class IInstancesManager : public Tools::Factory<IInstancesManager>, public std::enable_shared_from_this<IInstancesManager>
+	class IInstancesManager : public Tools::Factory<IInstancesManager>
 	{
 	public:
 		/// Load the data from the server

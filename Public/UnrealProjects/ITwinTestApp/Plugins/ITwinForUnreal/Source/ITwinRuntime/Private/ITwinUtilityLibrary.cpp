@@ -2,21 +2,38 @@
 |
 |     $Source: ITwinUtilityLibrary.cpp $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
 #include <ITwinUtilityLibrary.h>
 #include <ITwinRuntime/Private/Compil/SanitizedPlatformHeaders.h>
-#include <ITwinWebServices/ITwinWebServices_Info.h>
-#include <Kismet/KismetMathLibrary.h>
 #include <CesiumGeospatial/LocalHorizontalCoordinateSystem.h>
-#include <ITwinGeolocation.h>
-#include <ITwinCesiumGeoreference.h>
-#include <ITwinIModel.h>
 #include <ITwinCesium3DTileset.h>
-#include <GameFramework/Pawn.h>
+#include <ITwinCesiumGeoreference.h>
+#include <ITwinGeolocation.h>
+#include <ITwinIModel.h>
+#include <ITwinWebServices/ITwinWebServices_Info.h>
+
 #include <Engine/GameViewportClient.h>
+#include <GameFramework/Pawn.h>
+#include <GameFramework/PlayerController.h>
+#include <Kismet/GameplayStatics.h>
+#include <Kismet/KismetMathLibrary.h>
+#include <UObject/UObjectIterator.h>
+
+FITwinCoordConversions::FITwinCoordConversions()
+	: IModelToUnreal(FTransform::Identity)
+	, UnrealToIModel(FTransform::Identity)
+	, IModelToUntransformedIModelInUE(FTransform::Identity)
+	, IModelTilesetTransform(FTransform::Identity)
+{
+}
+
+FTransform UITwinUtilityLibrary::Inverse(FTransform const& Transform)
+{
+	return FTransform(Transform.ToMatrixWithScale().Inverse());
+}
 
 FRotator UITwinUtilityLibrary::ConvertRotator_ITwinToUnreal(const FRotator& ITwinRotator)
 {
@@ -59,9 +76,8 @@ FTransform UITwinUtilityLibrary::GetIModelToEcefTransform(const AITwinIModel* IM
 	else
 	{
 		return (IModel->GetProjectExtents()
-				? FTransform(FRotator::ZeroRotator,
-							 -0.5 * (IModel->GetProjectExtents()->Low + IModel->GetProjectExtents()->High))
-				: FTransform())
+				? FTransform(-0.5 * (IModel->GetProjectExtents()->Low + IModel->GetProjectExtents()->High))
+				: FTransform::Identity)
 			* UKismetMathLibrary::Conv_MatrixToTransform(UITwinUtilityLibrary::ConvertMatrix_GlmToUnreal(
 				CesiumGS::LocalHorizontalCoordinateSystem(
 					CesiumGS::Ellipsoid::WGS84.cartographicToCartesian(CesiumGS::Cartographic(0, 0)))
@@ -75,10 +91,9 @@ FTransform UITwinUtilityLibrary::GetEcefToIModelTransform(const AITwinIModel* IM
 	namespace CesiumGS = CesiumGeospatial;
 	if (IModel->GetEcefLocation())
 	{
-		return FTransform(
+		return UITwinUtilityLibrary::Inverse(FTransform(
 			UITwinUtilityLibrary::ConvertRotator_ITwinToUnreal(IModel->GetEcefLocation()->Orientation),
-			IModel->GetEcefLocation()->Origin)
-		.Inverse();
+			IModel->GetEcefLocation()->Origin));
 	}
 	else
 	{
@@ -89,21 +104,53 @@ FTransform UITwinUtilityLibrary::GetEcefToIModelTransform(const AITwinIModel* IM
 			* (IModel->GetProjectExtents()
 				? FTransform(FRotator::ZeroRotator,
 							 0.5 * (IModel->GetProjectExtents()->Low + IModel->GetProjectExtents()->High))
-				: FTransform());
+				: FTransform::Identity);
 	}
 }
 
-FTransform UITwinUtilityLibrary::GetEcefToUnrealTransform(const AITwinIModel* IModel)
+namespace
+{
+	FTransform IModelTilesetToUnreal(const AITwinIModel* IModel)
+	{
+		if (!IModel) 
+			return FTransform::Identity;
+		if (!IModel->GetTileset())
+			return IModel->ActorToWorld();
+		// Because they are parented, this includes the iModel's transformation, which is usually where
+		// iModel's placement customization is done (since tilesets are recreated on various occasions).
+		// But in the unlikely case that someone has set a transformation on the tileset as well (in the
+		// Editor, typically), let's take it into account but note that this means various data will be
+		// wrong until we do RefreshTileset and ResetSchedules... For the SDK, we should probably listen
+		// on any tileset transformation change in the UI and put it on the iModel instead (or discard)
+		return IModel->GetTileset()->GetTransform();
+	}
+}
+
+FTransform UITwinUtilityLibrary::GetEcefToUnrealTransform(const AITwinIModel* IModel,
+	FTransform& EcefToUntransformedIModelInUE)
 {
 	// [ECEF space]->[Unreal space].
-	return UKismetMathLibrary::Conv_MatrixToTransform(
-		IModel->GetTileset()->GetGeoreference()->ComputeEarthCenteredEarthFixedToUnrealTransformation());
+	TObjectIterator<APlayerController> Itr;
+	const AITwinCesium3DTileset* Tileset = IModel ? IModel->GetTileset() : nullptr;
+	const auto Georeference = Tileset ? Tileset->GetGeoreference() :
+		Cast<AITwinCesiumGeoreference>(UGameplayStatics::GetActorOfClass(
+			Itr->GetWorld(), AITwinCesiumGeoreference::StaticClass()));
+	FITwinCoordConversions Result;
+	EcefToUntransformedIModelInUE = UKismetMathLibrary::Conv_MatrixToTransform(
+		Georeference->ComputeEarthCenteredEarthFixedToUnrealTransformation());
+	return EcefToUntransformedIModelInUE * IModelTilesetToUnreal(IModel);
 }
 
 FTransform UITwinUtilityLibrary::GetUnrealToEcefTransform(const AITwinIModel* IModel)
 {
-	return UKismetMathLibrary::Conv_MatrixToTransform(
-		IModel->GetTileset()->GetGeoreference()->ComputeUnrealToEarthCenteredEarthFixedTransformation());
+	TObjectIterator<APlayerController> Itr;
+	const AITwinCesium3DTileset* Tileset = IModel ? IModel->GetTileset() : nullptr;
+	const auto Georeference = Tileset ? Tileset->GetGeoreference() :
+		Cast<AITwinCesiumGeoreference>(UGameplayStatics::GetActorOfClass(
+			Itr->GetWorld(), AITwinCesiumGeoreference::StaticClass()));
+	return UITwinUtilityLibrary::Inverse(IModelTilesetToUnreal(IModel))
+		* UKismetMathLibrary::Conv_MatrixToTransform(
+			Georeference->ComputeUnrealToEarthCenteredEarthFixedTransformation());
 }
 
 FTransform UITwinUtilityLibrary::StandardizeAndFixAngles(FTransform Transform)
@@ -143,7 +190,26 @@ FTransform UITwinUtilityLibrary::StandardizeAndFixAngles(FTransform Transform)
 
 FTransform UITwinUtilityLibrary::GetIModelToUnrealTransform(const AITwinIModel* IModel)
 {
-	return StandardizeAndFixAngles(GetIModelToEcefTransform(IModel) * GetEcefToUnrealTransform(IModel));
+	FTransform Temp;
+	return StandardizeAndFixAngles(GetIModelToEcefTransform(IModel) * GetEcefToUnrealTransform(IModel, Temp));
+}
+
+void UITwinUtilityLibrary::GetIModelCoordinateConversions(AITwinIModel const& IModel,
+														  FITwinCoordConversions& OutCoordConv)
+{
+	FTransform const IModelToEcefTransform = GetIModelToEcefTransform(&IModel);
+	OutCoordConv.IModelToUnreal = IModelToEcefTransform
+		* GetEcefToUnrealTransform(&IModel,
+			/*actually EcefToUntransformedIModelInUE:*/OutCoordConv.IModelToUntransformedIModelInUE);
+	OutCoordConv.IModelToUntransformedIModelInUE = IModelToEcefTransform
+		* OutCoordConv.IModelToUntransformedIModelInUE;
+	OutCoordConv.UnrealToIModel = UITwinUtilityLibrary::Inverse(OutCoordConv.IModelToUnreal);
+
+	OutCoordConv.IModelTilesetTransform = StandardizeAndFixAngles(IModelTilesetToUnreal(&IModel));
+	OutCoordConv.IModelToUnreal = StandardizeAndFixAngles(OutCoordConv.IModelToUnreal);
+	OutCoordConv.IModelToUntransformedIModelInUE =
+		StandardizeAndFixAngles(OutCoordConv.IModelToUntransformedIModelInUE);
+	OutCoordConv.UnrealToIModel = StandardizeAndFixAngles(OutCoordConv.UnrealToIModel);
 }
 
 FTransform UITwinUtilityLibrary::GetSavedViewUnrealTransform(const AITwinIModel* IModel,
@@ -157,6 +223,9 @@ FTransform UITwinUtilityLibrary::GetSavedViewUnrealTransform(const AITwinIModel*
 	// We have to build a transform that converts from Unreal camera space to Unreal world space.
 	// This is done by combining these transforms:
 	// [Unreal camera space]->[IModel camera space]->[iModel spatial coords]->[ECEF space]->[Unreal space].
+	// 
+	// We also handle the case where IModel is null, happens when the saved view is only attached to an itwin
+	// and not to an imodel
 	auto Transform =
 		// [Unreal camera space with camera pointing towards X+ (Unreal convention)]
 		// ->[Unreal camera space with camera pointing towards Z- (ITwin convention)]
@@ -169,12 +238,9 @@ FTransform UITwinUtilityLibrary::GetSavedViewUnrealTransform(const AITwinIModel*
 		* FTransform(
 			ConvertRotator_ITwinToUnreal(SavedView.Angles).GetInverse(),
 			SavedView.Origin)
-		* GetIModelToEcefTransform(IModel);
-	return StandardizeAndFixAngles(Transform
-		* GetEcefToUnrealTransform(IModel)
-		// "Add" the manual transformation applied to the iModel tileset,
-		// so that the camera position is consistent relative to the iModel.
-		* IModel->GetTileset()->GetTransform());
+		* (IModel ? GetIModelToEcefTransform(IModel) : FTransform::Identity);
+	FTransform Temp;
+	return StandardizeAndFixAngles(Transform * GetEcefToUnrealTransform(IModel, Temp));
 }
 
 void UITwinUtilityLibrary::GetIModelBaseFromUnrealTransform(const AITwinIModel* IModel,
@@ -184,7 +250,7 @@ void UITwinUtilityLibrary::GetIModelBaseFromUnrealTransform(const AITwinIModel* 
 		FTransform(FRotator::ZeroRotator, FVector::ZeroVector, FVector(1, -1, 1))
 		* FTransform(FRotator(0, 90, 90))
 		* Transform * GetUnrealToEcefTransform(IModel)
-		* GetEcefToIModelTransform(IModel);
+		* (IModel ? GetEcefToIModelTransform(IModel) : FTransform::Identity);
 	Location_ITwin = ITwinTransform.GetLocation();
 	Rotation_ITwin = ITwinTransform.Rotator().GetInverse();
 	Rotation_ITwin.Roll *= -1.0;
@@ -196,7 +262,10 @@ void UITwinUtilityLibrary::GetSavedViewFrustumFromUnrealTransform(const AITwinIM
 	const FTransform& Transform, FSavedView& SavedView)
 {
 	//0. Get current camera positon/direction
-	APlayerController const* PlayerController = IModel->GetWorld()->GetFirstPlayerController();
+	TObjectIterator<APlayerController> Itr;
+	ensure(*Itr != nullptr);
+	UWorld* World = IModel ? IModel->GetWorld() : Itr->GetWorld();
+	APlayerController const* PlayerController = *Itr;
 	if (!PlayerController)
 		return;
 	FVector CamPosition = Transform.GetTranslation();
@@ -221,10 +290,10 @@ void UITwinUtilityLibrary::GetSavedViewFrustumFromUnrealTransform(const AITwinIM
 	FVector::FReal const TraceExtent = 1000 * 100 /*ie 1km*/;
 	FVector const TraceStart = WorldLoc;
 	FVector const TraceEnd = WorldLoc + WorldDir * TraceExtent;
-	bool bFrontIntersectionFound = IModel->GetWorld()->LineTraceMultiByObjectType(AllHits, TraceStart, TraceEnd,
+	bool bFrontIntersectionFound = World->LineTraceMultiByObjectType(AllHits, TraceStart, TraceEnd,
 		FCollisionObjectQueryParams::AllObjects, queryParams);
 	TArray<FHitResult> BackHits;
-	bool bHasBackHits = IModel->GetWorld()->LineTraceMultiByObjectType(BackHits, TraceEnd, TraceStart,
+	bool bHasBackHits = World->LineTraceMultiByObjectType(BackHits, TraceEnd, TraceStart,
 		FCollisionObjectQueryParams::AllObjects, queryParams);
 	if (bHasBackHits && !bFrontIntersectionFound)
 		AllHits = BackHits;
@@ -244,18 +313,19 @@ void UITwinUtilityLibrary::GetSavedViewFrustumFromUnrealTransform(const AITwinIM
 		(2.0 * FocusDist_ITwin) / AspectRatio, FocusDist_ITwin };
 	FRotator DummyRotator = FRotator::ZeroRotator;
 	FVector FarBottomLeft;
-	UITwinUtilityLibrary::GetIModelBaseFromUnrealTransform(IModel, 
-		FTransform(Inter)*IModel->GetTileset()->GetTransform().Inverse(), 
-		FarBottomLeft, DummyRotator);
+	const AITwinCesium3DTileset* Tileset = IModel ? IModel->GetTileset() : nullptr;
+	UITwinUtilityLibrary::GetIModelBaseFromUnrealTransform(
+		IModel, FTransform(Inter), FarBottomLeft, DummyRotator);
 	SavedView.FrustumOrigin = FarBottomLeft;
 }
 
 namespace
 {
-	APawn const* GetPlayerControllerPawn(const AITwinIModel* IModel)
+	APawn const* GetPlayerControllerPawn()
 	{
-		UWorld* World = IModel->GetWorld();
-		APlayerController const* Controller = World ? World->GetFirstPlayerController() : nullptr;
+		TObjectIterator<APlayerController> Itr;
+		ensure(*Itr != nullptr);
+		APlayerController const* Controller = *Itr;
 		APawn const* Pawn = Controller ? Controller->GetPawn() : nullptr;
 		return Pawn;
 	}
@@ -278,18 +348,14 @@ FSavedView UITwinUtilityLibrary::GetSavedViewFromUnrealTransform(const AITwinIMo
 {
 	FSavedView SavedView;
 	GetSavedViewFrustumFromUnrealTransform(IModel, Transform, SavedView);
-	GetIModelBaseFromUnrealTransform(IModel,
-		// "Remove" the manual transformation applied to the iModel tileset.
-		// so that the camera position is consistent relative to the iModel.
-		Transform*IModel->GetTileset()->GetTransform().Inverse(), 
-		SavedView.Origin, SavedView.Angles);
+	GetIModelBaseFromUnrealTransform(IModel, Transform, SavedView.Origin, SavedView.Angles);
 	return SavedView;
 }
 
 bool UITwinUtilityLibrary::GetSavedViewFromPlayerController(const AITwinIModel* IModel,
 															FSavedView& OutSavedView)
 {
-	APawn const* Pawn = GetPlayerControllerPawn(IModel);
+	APawn const* Pawn = GetPlayerControllerPawn();
 	if (!Pawn)
 		return false;
 	const auto& Location_UE = Pawn->GetActorLocation();

@@ -2,7 +2,7 @@
 |
 |     $Source: InstancesGroup.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -22,7 +22,7 @@
 
 MODULE_EXPORT namespace SDK::Core
 {	
-	class IInstancesGroup : public Tools::Factory<IInstancesGroup>, public std::enable_shared_from_this<IInstancesGroup>
+	class IInstancesGroup : public Tools::Factory<IInstancesGroup>
 	{
 	public:
 		/// Get the group identifier

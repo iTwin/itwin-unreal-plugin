@@ -2,7 +2,7 @@
 |
 |     $Source: ITwinSceneMappingBuilder.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -11,50 +11,54 @@
 #include <ITwinCesiumMeshBuildCallbacks.h>
 
 class AITwinIModel;
-class FITwinSceneMapping;
-
-// In initial tests, we granted the possibility to override the base material completely, in order to let us
-// pick a replacement material from Unreal content browser. This will not be the final workflow (as it would
-// be incompatible with Synchro4D or even selection highlights, and would also raise issues if the picked
-// material is not double-sided...)
-// Keep code just for debugging purpose for now.
-#define ITWIN_ALLOW_REPLACE_BASE_MATERIAL() 0
 
 class FITwinSceneMappingBuilder : public ICesiumMeshBuildCallbacks
 {
 	using Super = ICesiumMeshBuildCallbacks;
 public:
-	FITwinSceneMappingBuilder(FITwinSceneMapping& SceneMapping, AITwinIModel& IModel);
+	FITwinSceneMappingBuilder(AITwinIModel& IModel);
 
 	virtual void OnMeshConstructed(
-		const Cesium3DTilesSelection::Tile& Tile,
+		Cesium3DTilesSelection::Tile& Tile,
 		const TWeakObjectPtr<UStaticMeshComponent>& MeshComponent,
 		const TWeakObjectPtr<UMaterialInstanceDynamic>& pMaterial,
 		const FITwinCesiumMeshData& CesiumData) override;
+
+	virtual void OnTileConstructed(const Cesium3DTilesSelection::Tile& Tile) override;
+
+	virtual void OnVisibilityChanged(const Cesium3DTilesSelection::TileID& TileID, bool visible) override;
 
 	virtual void BeforeTileDestruction(
 		const Cesium3DTilesSelection::Tile& Tile,
 		USceneComponent* TileGltfComponent) override;
 
-	virtual uint32 BakeFeatureIDsInVertexUVs(std::optional<uint32> featuresAccessorIndex,
-		FITwinCesiumMeshData const& CesiumMeshData, FStaticMeshLODResources& LODResources) const override;
+	virtual std::optional<uint32> BakeFeatureIDsInVertexUVs(std::optional<uint32> featuresAccessorIndex,
+		FITwinCesiumMeshData const& CesiumMeshData,
+		bool duplicateVertices,
+		TArray<FStaticMeshBuildVertex>& vertices,
+		TArray<uint32> const& indices) const override;
 
 	enum class EPropertyType : uint8
 	{
 		Element,
 		Category,
-		Model
+		Model,
+		Geometry
 	};
 
-#if ITWIN_ALLOW_REPLACE_BASE_MATERIAL()
 	virtual UMaterialInstanceDynamic* CreateMaterial_GameThread(
 		CesiumGltf::MeshPrimitive const* pMeshPrimitive,
 		UMaterialInterface*& pBaseMaterial,
 		UObject* InOuter,
 		FName const& Name) override;
-#endif
+
+	virtual void TuneMaterial(
+		CesiumGltf::Material const& glTFmaterial,
+		CesiumGltf::MaterialPBRMetallicRoughness const& pbr,
+		UMaterialInstanceDynamic* pMaterial,
+		EMaterialParameterAssociation association,
+		int32 index) const override;
 
 private:
-	FITwinSceneMapping& SceneMapping;
 	AITwinIModel& IModel;
 };

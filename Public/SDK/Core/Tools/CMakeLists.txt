@@ -15,10 +15,13 @@ add_library(Tools OBJECT
 		FactoryClass.h
 		FactoryClass.cpp
 		fnv1ahash.h
+		JsonCacheUtilities.h
+		JsonCacheUtilities.cpp
+		StrongTypeId.h
 )
 target_compile_features(Tools PRIVATE ${DefaultCXXSTD})
 set_target_properties(Tools PROPERTIES FOLDER "SDK/Core") 
-target_link_libraries(Tools PUBLIC libassert::assert)
+target_link_libraries(Tools PUBLIC libassert::assert Singleton)
 
 if ( DEFINED glm_INCLUDE_DIR )
 	target_include_directories(Tools PUBLIC ${glm_INCLUDE_DIR} )
@@ -34,6 +37,11 @@ if(SDK_ADDUNITTEST)
 							Tools
 							Catch2::Catch2
 						)
+	add_custom_command(TARGET ToolsTest POST_BUILD
+		COMMAND ${CMAKE_COMMAND} -E copy
+			$<TARGET_FILE:Singleton>
+			$<TARGET_FILE_DIR:ToolsTest>)
+
 	if (MSVC)
 		target_compile_options(ToolsTest PRIVATE "/Zc:preprocessor")
 	endif()

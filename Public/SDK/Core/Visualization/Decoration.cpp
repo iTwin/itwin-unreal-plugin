@@ -2,12 +2,13 @@
 |
 |     $Source: Decoration.cpp $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
 #include "Decoration.h"
 #include "Config.h"
+#include "../Singleton/singleton.h"
 
 namespace SDK::Core {
 
@@ -95,10 +96,19 @@ namespace SDK::Core {
 	};
 
 	template<>
-	std::function<std::shared_ptr<IDecoration>()> Tools::Factory<IDecoration>::newFct_ = []() {
-		std::shared_ptr<IDecoration> p(static_cast<IDecoration*>(new Decoration()));
-		return p;
-		};
+	Tools::Factory<IDecoration>::Globals::Globals()
+	{
+		newFct_ = []() {
+			IDecoration* p(static_cast<IDecoration*>(new Decoration()));
+			return p;
+			};
+	}
+
+	template<>
+	Tools::Factory<IDecoration>::Globals& Tools::Factory<IDecoration>::GetGlobals()
+	{
+		return singleton<Tools::Factory<IDecoration>::Globals>();
+	}
 
 	void Decoration::SetHttp(std::shared_ptr<Http> http)
 	{
@@ -183,7 +193,7 @@ namespace SDK::Core {
 			BE_LOGI("ITwinDecoration", "Found " << jOut.rows.size() << " decoration(s) for iTwin " << itwinid);
 			for (auto& row : jOut.rows)
 			{
-				std::shared_ptr<SDK::Core::IDecoration> deco = SDK::Core::IDecoration::New();
+				std::shared_ptr<SDK::Core::IDecoration> deco(SDK::Core::IDecoration::New());
 				deco->Get(row.id, accessToken);
 				decorations.push_back(deco);
 			}

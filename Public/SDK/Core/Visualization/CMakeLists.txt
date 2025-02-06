@@ -15,13 +15,20 @@ add_library(Visualization STATIC
 		MaterialPersistence.h
 		ScenePersistence.cpp
 		ScenePersistence.h
+		TextureKey.h
+		Timeline.cpp
+		Timeline.h
 )
 target_compile_features(Visualization PRIVATE ${DefaultCXXSTD})
 target_link_libraries(Visualization PUBLIC
 						ITwinAPI
 						Network
 						Tools
-					 ) 
+					 )
+target_link_libraries(Visualization PRIVATE
+						fmt::fmt-header-only
+						Singleton
+					 )
 set_target_properties(Visualization PROPERTIES FOLDER "SDK/Core") 
 
 if(SDK_ADDUNITTEST)
@@ -38,6 +45,12 @@ if(SDK_ADDUNITTEST)
 							httpmockserver
 							Catch2::Catch2WithMain
 						)
+
+	add_custom_command(TARGET VisualizationTest POST_BUILD
+		COMMAND ${CMAKE_COMMAND} -E copy
+			$<TARGET_FILE:Singleton>
+			$<TARGET_FILE_DIR:VisualizationTest>)
+
 	if (MSVC)
 		target_compile_options(VisualizationTest PRIVATE "/Zc:preprocessor")
 	endif()

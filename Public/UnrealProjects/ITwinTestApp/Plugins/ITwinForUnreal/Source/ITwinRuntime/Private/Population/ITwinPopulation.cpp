@@ -2,7 +2,7 @@
 |
 |     $Source: ITwinPopulation.cpp $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -76,20 +76,21 @@ namespace
 	void UpdateSDKCoreInstanceTransform(
 		SDK::Core::IInstance& dstInstance, const FTransform& srcInstanceTransform)
 	{
+		using namespace SDK::Core;
 		FMatrix srcMat = srcInstanceTransform.ToMatrixWithScale();
 		FVector srcPos = srcInstanceTransform.GetTranslation();
 
-		crtmath::dmat4x3 dstTransform;
+		dmat3x4 dstTransform;
 		for (int32 i = 0; i < 3; ++i)
 		{
 			for (int32 j = 0; j < 3; ++j)
 			{
-				dstTransform[i][j] = srcMat.M[i][j];
+				ColRow3x4(dstTransform,j,i) = srcMat.M[i][j];
 			}
 		}
-		dstTransform[3][0] = srcPos.X;
-		dstTransform[3][1] = srcPos.Y;
-		dstTransform[3][2] = srcPos.Z;
+		ColRow3x4(dstTransform,0,3) = srcPos.X;
+		ColRow3x4(dstTransform,1,3) = srcPos.Y;
+		ColRow3x4(dstTransform,2,3) = srcPos.Z;
 
 		dstInstance.SetMatrix(dstTransform);
 	}
@@ -114,23 +115,61 @@ namespace
 		dstInstance.SetName(TCHAR_TO_UTF8(*srcInstance.name));
 	}
 
+	bool checkVersion = true;
+	bool isOldVersion = false;
+
 	void UpdateUnrealInstance(
-		UnrealInstanceInfo& dstInstance, const SDK::Core::IInstance& srcInstance)
+		UnrealInstanceInfo& dstInstance, /*const*/ SDK::Core::IInstance& srcInstance)
 	{
-		FMatrix dstMat;
+		FMatrix dstMat(FMatrix::Identity);
 		FVector dstPos;
 
-		const crtmath::dmat4x3& srcMat = srcInstance.GetMatrix();
-		for (int32 i = 0; i < 3; ++i)
+		using namespace SDK::Core;
+		// Temporary code for beta users:
+		//   In earlier versions of the SDK and ITwinForUnreal, the transformation of instances
+		//   used 4x3 matrices, which didn't follow the convention specified in the decoration
+		//   service, using 3x4 matrices. This case is detected below by testing 2 values of the
+		//   matrix: if they are greater than 100, it is very probably a translation value because
+		//   the scale shouldn't vary much around 1. Then the matrix is fixed and the instance is
+		//   marked to be resaved (when the user will close the scene). When removing this code
+		//   later, the const attribute for srcInstance in the declaration should be restored.
+		const dmat3x4& srcMat = srcInstance.GetMatrix();
+		if (checkVersion)
 		{
-			for (int32 j = 0; j < 3; ++j)
-			{
-				dstMat.M[i][j] = srcMat[i][j];
-			}
+			isOldVersion = fabs(ColRow3x4(srcMat, 2, 1)) > 100. || fabs(ColRow3x4(srcMat, 2, 2)) > 100.;
+			checkVersion = false;
 		}
-		dstPos.X = srcMat[3][0];
-		dstPos.Y = srcMat[3][1];
-		dstPos.Z = srcMat[3][2];
+
+		if (isOldVersion)
+			{
+			dmat3x4 newSrcMat;
+			ColRow3x4(newSrcMat,0, 0) = ColRow3x4(srcMat,0, 0);
+			ColRow3x4(newSrcMat,1, 0) = ColRow3x4(srcMat,0, 1);
+			ColRow3x4(newSrcMat,2, 0) = ColRow3x4(srcMat,0, 2);
+			ColRow3x4(newSrcMat,0, 1) = ColRow3x4(srcMat,0, 3);
+			ColRow3x4(newSrcMat,1, 1) = ColRow3x4(srcMat,1, 0);
+			ColRow3x4(newSrcMat,2, 1) = ColRow3x4(srcMat,1, 1);
+			ColRow3x4(newSrcMat,0, 2) = ColRow3x4(srcMat,1, 2);
+			ColRow3x4(newSrcMat,1, 2) = ColRow3x4(srcMat,1, 3);
+			ColRow3x4(newSrcMat,2, 2) = ColRow3x4(srcMat,2, 0);
+			ColRow3x4(newSrcMat,0, 3) = ColRow3x4(srcMat,2, 1);
+			ColRow3x4(newSrcMat,1, 3) = ColRow3x4(srcMat,2, 2);
+			ColRow3x4(newSrcMat,2, 3) = ColRow3x4(srcMat,2, 3);
+
+			srcInstance.SetMatrix(newSrcMat);
+			srcInstance.MarkForUpdate(SDK::Core::Database);
+			}
+
+		for (unsigned i = 0; i < 3; ++i)
+		{
+			for (unsigned j = 0; j < 3; ++j)
+			{
+				dstMat.M[j][i] = ColRow3x4(srcMat,i, j);
+		}
+		}
+		dstPos.X = ColRow3x4(srcMat,0, 3);
+		dstPos.Y = ColRow3x4(srcMat,1, 3);
+		dstPos.Z = ColRow3x4(srcMat,2, 3);
 
 		dstInstance.transform.SetFromMatrix(dstMat);
 		dstInstance.transform.SetTranslation(dstPos);
@@ -172,11 +211,6 @@ void AITwinPopulation::SetInstanceTransform(int32 instanceIndex, const FTransfor
 			inst.MarkForUpdate(SDK::Core::Database);
 		}
 	}
-}
-
-void AITwinPopulation::SetLastInstanceTransform(const FTransform& tm)
-{
-	SetInstanceTransform(meshComp->GetInstanceCount() - 1, tm);
 }
 
 FVector AITwinPopulation::GetInstanceColorVariation(int32 instanceIndex) const
@@ -319,6 +353,9 @@ void AITwinPopulation::AddInstance(const FTransform& transform)
 
 void AITwinPopulation::RemoveInstance(int32 instIndex)
 {
+	if (instIndex < 0 || instIndex > meshComp->GetInstanceCount())
+		return;
+
 	meshComp->RemoveInstance(instIndex);
 
 	std::vector<int32_t> indices;
@@ -348,6 +385,8 @@ void AITwinPopulation::UpdateInstancesFromSDKCoreToUE()
 	instancesTM.SetNum(numInst);
 	TArray<float> instancesColorVar;
 	instancesColorVar.SetNum(numInst*3);
+
+	checkVersion = true;
 
 	for(size_t i = 0; i < numInst; ++i)
 	{
@@ -566,7 +605,7 @@ void AITwinPopulation::BeginPlay()
 		meshComp->SetStaticMesh(mesh.Get());
 		meshComp->SetMobility(EComponentMobility::Static);
 
-		meshComp->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+		meshComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		meshComp->SetEnableGravity(false);
 
 		// Disable AO to get a better framerate (the unreal editor disables it

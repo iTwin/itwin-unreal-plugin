@@ -1,8 +1,8 @@
 /*--------------------------------------------------------------------------------------+
 |
-|     $Source: BoostHash.h $
+|     $Source: UnrealMath.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -46,8 +46,3 @@ std::size_t hash_value(const UEMathType& v) noexcept
 }
 
 } // ns UE::Math
-
-inline std::size_t hash_value(FString const& v) noexcept
-{
-	return GetTypeHash(v);
-}

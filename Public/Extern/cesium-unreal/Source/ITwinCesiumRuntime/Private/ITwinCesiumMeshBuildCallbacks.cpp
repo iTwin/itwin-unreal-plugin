@@ -26,3 +26,12 @@ UMaterialInstanceDynamic* ICesiumMeshBuildCallbacks::CreateMaterial_GameThread(
     // Default implementation: just create a new instance
     return UMaterialInstanceDynamic::Create(pBaseMaterial, InOuter, Name);
 }
+
+void ICesiumMeshBuildCallbacks::TuneMaterial(
+    CesiumGltf::Material const& /*glTFmaterial*/,
+    CesiumGltf::MaterialPBRMetallicRoughness const& /*pbr*/,
+    UMaterialInstanceDynamic* /*pMaterial*/,
+    EMaterialParameterAssociation /*association*/,
+    int32 /*index*/) const {
+
+}

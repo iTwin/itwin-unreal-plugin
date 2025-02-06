@@ -2,7 +2,7 @@
 |
 |     $Source: FactoryClass.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -21,12 +21,17 @@ namespace SDK::Core::Tools
 	class Factory
 	{
 	public:
-		static std::shared_ptr<Type> New(Args...args) { return newFct_(args...); }
-		static void SetNewFct(std::function<std::shared_ptr<Type>(Args...)> fct) { newFct_ = fct; }
-		static std::function<std::shared_ptr<Type>(Args...)> GetNewFct() { return newFct_; }
+		typedef std::function<Type* (Args...)> NewFctT;
+		static Type* New(Args...args) { return GetGlobals().newFct_(args...); }
+		static void SetNewFct(NewFctT fct) { GetGlobals().newFct_ = fct; }
+		static NewFctT GetNewFct() { return GetGlobals().newFct_; }
 		virtual ~Factory() {} //class derivate from Factory needs virtual destructor
 	private:
-		static std::function<std::shared_ptr<Type>(Args...)> newFct_;
+		struct Globals {
+			NewFctT newFct_;
+			Globals();
+		};
+		static Globals& GetGlobals();
 	};
 
 }

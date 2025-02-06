@@ -31,7 +31,7 @@
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_FAILURE_USERMSG
 #include <stb_image.h>
-#include <stb_image_resize.h>
+#include <stb_image_resize2.h>
 #include <turbojpeg.h>
 
 using namespace CesiumAsync;
@@ -935,7 +935,7 @@ std::optional<std::string> GltfReader::generateMipMaps(ImageCesium& image) {
     image.mipPositions[mipIndex].byteOffset = byteOffset;
     image.mipPositions[mipIndex].byteSize = byteSize;
 
-    if (!stbir_resize_uint8(
+    if (!stbir_resize_uint8_linear(
             reinterpret_cast<const unsigned char*>(
                 &image.pixelData[lastByteOffset]),
             lastWidth,
@@ -945,7 +945,7 @@ std::optional<std::string> GltfReader::generateMipMaps(ImageCesium& image) {
             mipWidth,
             mipHeight,
             0,
-            image.channels)) {
+            static_cast<stbir_pixel_layout>(image.channels))) {
       // Remove any added mipmaps.
       image.mipPositions.clear();
       image.pixelData.resize(imageByteSize);

@@ -133,7 +133,7 @@ public:
   };
 
   static std::optional<Type>
-  getTypeFromNumberOfComponents(int8_t numComponents) {
+  getTypeFromNumberOfComponents(uint8_t numComponents) {
     switch (numComponents) {
     case 1:
       return Type::SCALAR;

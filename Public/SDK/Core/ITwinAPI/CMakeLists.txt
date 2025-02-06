@@ -8,6 +8,9 @@ add_library ( ITwinAPI OBJECT
 	ITwinEnvironment.h
 	ITwinMaterial.cpp
 	ITwinMaterial.h
+	ITwinMaterial.inl
+	ITwinMaterialPrediction.h
+	ITwinMatMLPredictionEnums.h
 	ITwinScene.h
 	ITwinRequestDump.h
 	ITwinRequestTypes.h

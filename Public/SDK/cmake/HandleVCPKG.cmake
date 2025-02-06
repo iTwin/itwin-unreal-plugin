@@ -10,6 +10,7 @@ if(NOT EXISTS "${CMAKE_TOOLCHAIN_FILE}" OR NOT DEFINED VCPKG_TARGET_TRIPLET)
 	#test presence of env VCPKG_ROOT 
 	if(NOT DEFINED ENV{VCPKG_ROOT})
 		#there is no env varbale, test cmake variable
+		message ("ENV  VCPKG_ROOT not defined" )
 		if( NOT DEFINED VCPKG_ROOT)
 			#there is no cmake varbale, create it with an empty path so that we can browse it in cmake-gui
 			set (VCPKG_ROOT "" CACHE PATH "Set VCKPG REPO PATH"  )
@@ -17,7 +18,7 @@ if(NOT EXISTS "${CMAKE_TOOLCHAIN_FILE}" OR NOT DEFINED VCPKG_TARGET_TRIPLET)
 		endif()
 	else()
 		#convert env variable to cmake variable 
-		#message ("ENV  VCPKG_ROOT is set $ENV{VCPKG_ROOT}" )
+		message ("ENV  VCPKG_ROOT is set $ENV{VCPKG_ROOT}" )
 		cmake_path(SET VCPKG_ROOT $ENV{VCPKG_ROOT})
 	endif()
 	

@@ -21,4 +21,4 @@ namespace CesiumGltf {
 		 */
 		uint64_t materialId = 0;
 	};
-} // namespace ITwinCesium
+} // namespace CesiumGltf

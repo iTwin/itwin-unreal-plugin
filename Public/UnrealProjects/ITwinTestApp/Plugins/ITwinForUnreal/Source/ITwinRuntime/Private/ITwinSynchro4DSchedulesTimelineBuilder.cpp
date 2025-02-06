@@ -2,7 +2,7 @@
 |
 |     $Source: ITwinSynchro4DSchedulesTimelineBuilder.cpp $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -84,15 +84,15 @@ FVector GetCuttingPlaneOrientation(FActiveAppearance const& Appearance)
 	case EGrowthSimulationMode::Right2Left:
 		Orientation = -FVector::XAxisVector;
 		break;
-	case EGrowthSimulationMode::Back2Front: // iModel to UE: invert Y axis
+	case EGrowthSimulationMode::Front2Back:
 		Orientation = FVector::YAxisVector;
 		break;
-	case EGrowthSimulationMode::Front2Back: // iModel to UE: invert Y axis
+	case EGrowthSimulationMode::Back2Front:
 		Orientation = -FVector::YAxisVector;
 		break;
 	case EGrowthSimulationMode::Custom:
 		Orientation = { Appearance.GrowthDirectionCustom.X,
-						-Appearance.GrowthDirectionCustom.Y, // iModel to UE: invert Y axis
+						Appearance.GrowthDirectionCustom.Y,
 						Appearance.GrowthDirectionCustom.Z };
 		Orientation.Normalize();
 		break;
@@ -108,7 +108,8 @@ FVector GetCuttingPlaneOrientation(FActiveAppearance const& Appearance)
 }
 
 void AddCuttingPlaneToTimeline(FITwinElementTimeline& ElementTimeline, FAppearanceProfile const& Profile,
-							   FTimeRangeInSeconds const& Time)
+	FTimeRangeInSeconds const& Time, FITwinCoordConversions const& CoordConv,
+	ITwin::Timeline::PTransform const* const TransformKeyframe = nullptr)
 {
 	auto const& GrowthAppearance = Profile.ActiveAppearance;// all others are ignored...
 	if (Profile.ProfileType == EProfileAction::Neutral) // handled in AddVisibilityToTimeline
@@ -144,11 +145,10 @@ void AddCuttingPlaneToTimeline(FITwinElementTimeline& ElementTimeline, FAppearan
 		}
 		return;
 	}
-	auto&& PlaneOrientation = GetCuttingPlaneOrientation(GrowthAppearance);
-	if (PlaneOrientation.X == 0 && PlaneOrientation.Y == 0 && PlaneOrientation.Z == 0)
-	{
+	FVector PlaneOrientation = CoordConv.IModelToUntransformedIModelInUE
+		.TransformVector(GetCuttingPlaneOrientation(GrowthAppearance));
+	if (!PlaneOrientation.Normalize())
 		return;
-	}
 	bool const bVisibleOutsideTask = (Profile.ProfileType == EProfileAction::Maintenance);
 	// 'bInvertGrowth' is "Simulate as Remove" in SynchroPro, but it is only applicable to Maintenance
 	// and Temporary tasks, for which the default growth behaves like Install, and thus needs can a custom
@@ -167,10 +167,10 @@ void AddCuttingPlaneToTimeline(FITwinElementTimeline& ElementTimeline, FAppearan
 	}
 	ElementTimeline.SetCuttingPlaneAt(Time.first + KEYFRAME_TIME_EPSILON, PlaneOrientation,
 		bInvertGrowth ? EGrowthStatus::DeferredFullyGrown : EGrowthStatus::DeferredFullyRemoved,
-		EInterpolation::Linear);
+		EInterpolation::Linear, TransformKeyframe);
 	ElementTimeline.SetCuttingPlaneAt(Time.second - KEYFRAME_TIME_EPSILON, PlaneOrientation,
 		bInvertGrowth ? EGrowthStatus::DeferredFullyRemoved : EGrowthStatus::DeferredFullyGrown,
-		EInterpolation::Step);
+		EInterpolation::Step, TransformKeyframe);
 	if (bVisibleOutsideTask && bInvertGrowth)
 	{
 		ElementTimeline.SetCuttingPlaneAt(Time.second, {}, EGrowthStatus::FullyGrown, EInterpolation::Step);
@@ -245,28 +245,25 @@ void AddVisibilityToTimeline(FITwinElementTimeline& ElementTimeline,
 	}
 }
 
-void AddStaticTransformToTimeline(FITwinElementTimeline& ElementTimeline, FTimeRangeInSeconds const& TaskTimes,
-	FTransform const& Transform, FTransform const& IModel2UnrealTransfo, FVector const& SynchroOriginUE)
+ITwin::Timeline::PTransform const& AddStaticTransformToTimeline(FITwinElementTimeline& ElementTimeline,
+	FTimeRangeInSeconds const& TaskTimes, FTransform const& Transform, FITwinCoordConversions const&)
 {
 	using namespace ITwin::Timeline;
+	ElementTimeline.SetTransformationDisabledAt(TaskTimes.second, EInterpolation::Step);
 	// Let's keep the possible anterior transformation set:
 	//ElementTimeline.SetTransformationDisabledAt(TaskTimes.first, EInterpolation::Step);
-	ElementTimeline.SetTransformationAt(TaskTimes.first /*+ KEYFRAME_TIME_EPSILON*/,
-		IModel2UnrealTransfo.TransformVector(Transform.GetTranslation())
-			- SynchroOriginUE,
-		// See comment in Add3DPathTransformToTimeline about Y inversion...
-		FQuat(UITwinUtilityLibrary::ConvertRotator_ITwinToUnreal(Transform.GetRotation().Rotator())),
-		// Anything but 'Original' as long as bDeferred is kept false and offset zero, which are the defaults
+	return ElementTimeline.SetTransformationAt(TaskTimes.first /*+ KEYFRAME_TIME_EPSILON*/,
+		// KEEPING iModel-space transform here! I couldn't make static transfos work without hacking directly
+		// in FITwinSynchro4DSchedulesInternals::ComputeTransformFromFinalizedKeyframe... :/
+		Transform.GetTranslation(), Transform.GetRotation(),
 		FDeferredAnchor{ EAnchorPoint::Static, false, FVector::ZeroVector },
 		EInterpolation::Step);
-	ElementTimeline.SetTransformationDisabledAt(TaskTimes.second, EInterpolation::Step);
 }
 
 template<typename KeyframeIt>
 void Add3DPathTransformToTimeline(FITwinElementTimeline& ElementTimeline, FTimeRangeInSeconds const& TaskTimes,
 	std::variant<ITwin::Timeline::EAnchorPoint, FVector> const& TransformAnchor,
-	KeyframeIt const KeyframeBegin, KeyframeIt const KeyframeEnd, FTransform const& IModel2UnrealTransfo,
-	FVector const& SynchroOriginUE)
+	KeyframeIt const KeyframeBegin, KeyframeIt const KeyframeEnd, FITwinCoordConversions const& CoordConv)
 {
 	if (KeyframeBegin == KeyframeEnd)
 		return;
@@ -275,7 +272,7 @@ void Add3DPathTransformToTimeline(FITwinElementTimeline& ElementTimeline, FTimeR
 	//ElementTimeline.SetTransformationDisabledAt(TaskTimes.first, EInterpolation::Step);
 	double const TaskDuration = TaskTimes.second - TaskTimes.first;
 	FDeferredAnchor BaseAnchor;
-    std::visit([&BaseAnchor, &IModel2UnrealTransfo](auto&& Var)
+    std::visit([&BaseAnchor, &CoordConv](auto&& Var)
 		{
 			using T = std::decay_t<decltype(Var)>;
 			if constexpr (std::is_same_v<T, EAnchorPoint>)
@@ -290,32 +287,29 @@ void Add3DPathTransformToTimeline(FITwinElementTimeline& ElementTimeline, FTimeR
 			{
 				BaseAnchor.bDeferred = false;
 				BaseAnchor.AnchorPoint = EAnchorPoint::Custom;
-				BaseAnchor.Offset = IModel2UnrealTransfo.TransformVector(Var);
+				BaseAnchor.Offset = CoordConv.IModelToUnreal.TransformVector(Var);
 			}
 			else static_assert(always_false_v<T>, "non-exhaustive visitor!");
 		},
 		TransformAnchor);
-	FVector const IModelRelativePos = (ITwin::Timeline::EAnchorPoint::Original == BaseAnchor.AnchorPoint)
-									  ? KeyframeBegin->Transform.GetLocation() : FVector::ZeroVector;
-	FVector const UnrealRelativePos = (ITwin::Timeline::EAnchorPoint::Original == BaseAnchor.AnchorPoint)
-									  ? FVector::ZeroVector : SynchroOriginUE;
+	FVector const FirstPos = KeyframeBegin->Transform.GetLocation();
 	for (KeyframeIt Key = KeyframeBegin; Key != KeyframeEnd; ++Key)
 	{
-		// FTransform composition order is the opposite of matrix (and quaternion) composition order, see this
-		// example from UE doc (from Math/Transform[Non]Vectorized.h):
-		// "LocalToWorld = (DeltaRotation * LocalToWorld) will change rotation in local space by DeltaRotation"
+		FVector RotAxis; double Angle;
+		FQuat KeyRot = Key->Transform.GetRotation();
+		KeyRot.Normalize();
+		KeyRot.ToAxisAndAngle(RotAxis, Angle);
+		RotAxis = CoordConv.IModelToUnreal.TransformVector(RotAxis);
+		RotAxis.Normalize();
 		ElementTimeline.SetTransformationAt(TaskTimes.first + Key->RelativeTime * TaskDuration,
-			IModel2UnrealTransfo.TransformVector(Key->Transform.GetTranslation() - IModelRelativePos)
-				- UnrealRelativePos,
-			// Note: I swapped the rotation axis's Y component in SchedulesImport... I tried transforming
-			// Key->Transform by IModel2UnrealTransfo here to get the Y inversion "naturally" but it didn't work!
-			// (with or without this ConvertRotator_ITwinToUnreal call)
-			FQuat(UITwinUtilityLibrary::ConvertRotator_ITwinToUnreal(Key->Transform.GetRotation().Rotator())),
-			BaseAnchor, EInterpolation::Linear);
+			(ITwin::Timeline::EAnchorPoint::Original == BaseAnchor.AnchorPoint)
+				? CoordConv.IModelToUnreal.TransformVector(Key->Transform.GetTranslation() - FirstPos)
+				: CoordConv.IModelToUnreal.TransformPosition(Key->Transform.GetTranslation()),
+			FQuat(RotAxis, Angle), BaseAnchor, EInterpolation::Linear);
 	}
 }
 
-void CreateTestingTimeline(FITwinElementTimeline& Timeline)
+void CreateTestingTimeline(FITwinElementTimeline& Timeline, FITwinCoordConversions const& CoordConv)
 {
 	constexpr double delta = 1000. * KEYFRAME_TIME_EPSILON;
 
@@ -426,14 +420,14 @@ void CreateTestingTimeline(FITwinElementTimeline& Timeline)
 	for (uint8_t i = 0; i <= (int)EGrowthSimulationMode::Custom; ++i)
 	{
 		Profile.ActiveAppearance.GrowthSimulationMode = (EGrowthSimulationMode)i;
-		AddCuttingPlaneToTimeline(Timeline, Profile, incrTimes());
+		AddCuttingPlaneToTimeline(Timeline, Profile, incrTimes(), CoordConv);
 		blinkAndResetBetweenTests();
 	}
 	Profile.ActiveAppearance.bInvertGrowth = true;
 	for (uint8_t i = 0; i <= (int)EGrowthSimulationMode::Custom; ++i)
 	{
 		Profile.ActiveAppearance.GrowthSimulationMode = (EGrowthSimulationMode)i;
-		AddCuttingPlaneToTimeline(Timeline, Profile, incrTimes());
+		AddCuttingPlaneToTimeline(Timeline, Profile, incrTimes(), CoordConv);
 		blinkAndResetBetweenTests();
 	}
 }
@@ -443,13 +437,18 @@ namespace Detail {
 template<typename ElemDesignationContainer>
 void InsertAnimatedMeshSubElemsRecursively(FIModelElementsKey const& AnimationKey,
 	FITwinSceneMapping& Scene, ElemDesignationContainer const& Elements,
-	FITwinScheduleTimeline& MainTimeline, std::set<ITwinElementID>& OutSet,
+	FITwinScheduleTimeline& MainTimeline, FElementsGroup& OutSet,
 	bool const bPrefetchAllElementAnimationBindings,
 	std::vector<ITwinElementID>* OutElemsDiff = nullptr)
 {
 	for (auto const ElementDesignation : Elements)
 	{
-		FITwinElement& Elem = Scene.ElementFor(ElementDesignation);
+		FITwinElement* pElem;
+		if constexpr (std::is_same_v<ITwinElementID, typename ElemDesignationContainer::value_type>)
+			pElem = &Scene.ElementForSLOW(ElementDesignation);
+		else
+			pElem = &Scene.ElementFor(ElementDesignation);
+		FITwinElement& Elem = *pElem;
 		if (Elem.AnimationKeys.end()
 			== std::find(Elem.AnimationKeys.begin(), Elem.AnimationKeys.end(), AnimationKey))
 		{
@@ -461,16 +460,15 @@ void InsertAnimatedMeshSubElemsRecursively(FIModelElementsKey const& AnimationKe
 		// on a timeline's AnimatedMeshElements: let's assume only leave nodes have meshes? TODO_GCO
 		if ((bPrefetchAllElementAnimationBindings && Elem.SubElemsInVec.empty()) || Elem.bHasMesh)
 		{
-			if (!OutSet.insert(Elem.Id).second)
+			if (!OutSet.insert(Elem.ElementID).second)
 				continue; // already in set: no need for RemoveNonAnimatedDuplicate nor recursion
 			else
 			{
-				MainTimeline.RemoveNonAnimatedDuplicate(Elem.Id);
+				MainTimeline.RemoveNonAnimatedDuplicate(Elem.ElementID);
 				if (OutElemsDiff)
-					OutElemsDiff->push_back(Elem.Id);
+					OutElemsDiff->push_back(Elem.ElementID);
 			}
 		}
-		// assume both bHasMesh==true and having child Elements is possible, altho I don't really know
 		Detail::InsertAnimatedMeshSubElemsRecursively(AnimationKey, Scene, Elem.SubElemsInVec, MainTimeline,
 			OutSet, bPrefetchAllElementAnimationBindings, OutElemsDiff);
 	}
@@ -500,7 +498,7 @@ void HideNonAnimatedDuplicates(FITwinSceneMapping const& Scene, ContainerToHandl
 			auto const& Elem = Scene.GetElement(Dupl);
 			if (Elem.AnimationKeys.empty())
 			{
-				MainTimeline.AddNonAnimatedDuplicate(Elem.Id);
+				MainTimeline.AddNonAnimatedDuplicate(Elem.ElementID);
 			}
 		}
 	}
@@ -509,7 +507,7 @@ void HideNonAnimatedDuplicates(FITwinSceneMapping const& Scene, ContainerToHandl
 } // ns Detail
 
 void FITwinScheduleTimelineBuilder::UpdateAnimationGroupInTimeline(size_t const GroupIndex,
-	std::set<ITwinElementID> const& GroupElements, FSchedLock&)
+	FElementsGroup const& GroupElements, FSchedLock&)
 {
 	if (!ensure(OnElementsTimelineModified))
 		return;
@@ -540,15 +538,15 @@ void FITwinScheduleTimelineBuilder::AddAnimationBindingToTimeline(FITwinSchedule
 	bool const bSingleElement = std::holds_alternative<ITwinElementID>(Binding.AnimatedEntities);
 	ITwinElementID const SingleElementID =
 		bSingleElement ? std::get<0>(Binding.AnimatedEntities) : ITwin::NOT_ELEMENT;
-	std::set<ITwinElementID> const& BoundElements =
-		bSingleElement ? std::set<ITwinElementID>{ SingleElementID } : Schedule.Groups[Binding.GroupInVec];
+	FElementsGroup const& BoundElements =
+		bSingleElement ? FElementsGroup{ SingleElementID } : Schedule.Groups[Binding.GroupInVec];
 	FIModelElementsKey const AnimationKey =
 		bSingleElement ? FIModelElementsKey(SingleElementID) : FIModelElementsKey(Binding.GroupInVec);
 	AITwinIModel* IModel = Cast<AITwinIModel>(Owner->GetOwner());
 	if (!ensure(IModel))
 		return;
 	FITwinSceneMapping& Scene = GetInternals(*IModel).SceneMapping;
-	std::set<ITwinElementID> AnimatedMeshElements;
+	FElementsGroup AnimatedMeshElements;
 	Detail::InsertAnimatedMeshSubElemsRecursively(AnimationKey, Scene, BoundElements, MainTimeline,
 		AnimatedMeshElements, GetInternals(*Owner).PrefetchAllElementAnimationBindings());
 	if (AnimatedMeshElements.empty()) // no 'ensure', it seems to happen in rare cases
@@ -558,52 +556,101 @@ void FITwinScheduleTimelineBuilder::AddAnimationBindingToTimeline(FITwinSchedule
 	::Detail::HideNonAnimatedDuplicates(Scene, AnimatedMeshElements, MainTimeline);
 	if (Owner->bDebugWithDummyTimelines)
 	{
-		CreateTestingTimeline(ElementTimeline);
+		CreateTestingTimeline(ElementTimeline, *CoordConversions);
 	}
 	else
 	{
 		auto&& AppearanceProfile = Schedule.AppearanceProfiles[Binding.AppearanceProfileInVec];
 		auto&& Task = Schedule.Tasks[Binding.TaskInVec];
 		AddColorToTimeline(ElementTimeline, AppearanceProfile, Task.TimeRange);
-		AddCuttingPlaneToTimeline(ElementTimeline, AppearanceProfile, Task.TimeRange);
 		AddVisibilityToTimeline(ElementTimeline, AppearanceProfile, Task.TimeRange);
+		ITwin::Timeline::PTransform const* TransformKeyframe = nullptr;
 	#if SYNCHRO4D_ENABLE_TRANSFORMATIONS()
 		if (ITwin::INVALID_IDX != Binding.TransfoAssignmentInVec) // optional
 		{
 			auto&& TransfoAssignment = Schedule.TransfoAssignments[Binding.TransfoAssignmentInVec];
 			if (Binding.bStaticTransform)
 			{
-				// Disabled while waiting for https://dev.azure.com/bentleycs/Synchro/_workitems/edit/1538989
-				//if (ensure(IModel2UnrealTransfo && *IModel2UnrealTransfo))
-				//{
-				//	AddStaticTransformToTimeline(ElementTimeline, Task.TimeRange,
-				//		std::get<0>(TransfoAssignment.Transformation), IModel2UnrealTransfo->value(),
-				//		SynchroOriginUE);
-				//}
+				TransformKeyframe = &AddStaticTransformToTimeline(ElementTimeline, Task.TimeRange,
+					std::get<0>(TransfoAssignment.Transformation), *CoordConversions);
 			}
 			else
 			{
 				auto&& PathAssignment = std::get<1>(TransfoAssignment.Transformation);
-				if (ensure(ITwin::INVALID_IDX != PathAssignment.Animation3DPathInVec
-							&& IModel2UnrealTransfo && *IModel2UnrealTransfo))
+				if (ensure(ITwin::INVALID_IDX != PathAssignment.Animation3DPathInVec))
 				{
 					auto&& Path3D = Schedule.Animation3DPaths[PathAssignment.Animation3DPathInVec].Keyframes;
 					if (PathAssignment.b3DPathReverseDirection)
 					{
 						Add3DPathTransformToTimeline(ElementTimeline, Task.TimeRange,
 							PathAssignment.TransformAnchor, Path3D.rbegin(), Path3D.rend(), //<== reversed
-							IModel2UnrealTransfo->value(), SynchroOriginUE);
+							*CoordConversions);
 					}
 					else
 					{
 						Add3DPathTransformToTimeline(ElementTimeline, Task.TimeRange,
 							PathAssignment.TransformAnchor, Path3D.begin(), Path3D.end(),
-							IModel2UnrealTransfo->value(), SynchroOriginUE);
+							*CoordConversions);
 					}
 				}
 			}
 		}
 	#endif // SYNCHRO4D_ENABLE_TRANSFORMATIONS
+		AddCuttingPlaneToTimeline(ElementTimeline, AppearanceProfile, Task.TimeRange,
+								  *CoordConversions, TransformKeyframe);
 	}
 	if (OnElementsTimelineModified) OnElementsTimelineModified(ElementTimeline, nullptr);
+}
+
+FITwinScheduleTimelineBuilder::FITwinScheduleTimelineBuilder(UITwinSynchro4DSchedules const& InOwner,
+															 FITwinCoordConversions const& InCoordConv)
+	: Owner(&InOwner)
+	, CoordConversions(&InCoordConv)
+{
+}
+
+void FITwinScheduleTimelineBuilder::Initialize(FOnElementsTimelineModified&& InOnElementsTimelineModified)
+{
+	ensure(EInit::Pending == InitState);
+	InitState = EInit::Ready;
+	OnElementsTimelineModified = std::move(InOnElementsTimelineModified);
+}
+
+FITwinScheduleTimelineBuilder& FITwinScheduleTimelineBuilder::operator=(FITwinScheduleTimelineBuilder&& Other)
+{
+	Owner = Other.Owner;
+	CoordConversions = Other.CoordConversions;
+	MainTimeline = Other.MainTimeline;
+	OnElementsTimelineModified = Other.OnElementsTimelineModified;
+	ensure(EInit::Pending == Other.InitState);
+	InitState = Other.InitState;
+	Other.InitState = EInit::Disposable;
+	return *this;
+}
+
+FITwinScheduleTimelineBuilder::~FITwinScheduleTimelineBuilder()
+{
+	ensure(EInit::Ready != InitState); // Pending or Disposable are both OK
+}
+
+void FITwinScheduleTimelineBuilder::Uninitialize()
+{
+	if (!ensure(EInit::Disposable != InitState))
+		return;
+	if (EInit::Pending != InitState)
+	{
+		for (auto const& ElementTimelinePtr : MainTimeline.GetContainer())
+			if (ElementTimelinePtr->ExtraData)
+				delete (static_cast<FTimelineToScene*>(ElementTimelinePtr->ExtraData));
+
+		AITwinIModel* IModel = Cast<AITwinIModel>(Owner->GetOwner());
+		if (ensure(IModel))
+		{
+			GetInternals(*IModel).SceneMapping.ForEachKnownTile([](FITwinSceneTile& SceneTile)
+				{
+					SceneTile.TimelinesIndices.clear();
+				});
+		}
+	}
+	InitState = EInit::Disposable;
 }

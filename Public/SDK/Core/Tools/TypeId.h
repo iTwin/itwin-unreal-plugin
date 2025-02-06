@@ -2,7 +2,7 @@
 |
 |     $Source: TypeId.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -59,5 +59,15 @@ namespace SDK::Core::Tools
 		return {};
 	}
 
+	template<typename T1, typename T2>
+	T1* DynamicCast(T2* pObj)
+	{
+		if (pObj->IsTypeOf(T1::GetTypeId()) == true)
+		{
+			T1* ext = static_cast<T1*>(pObj);
+			return ext;
+		}
+		return {};
+	}
 
 }

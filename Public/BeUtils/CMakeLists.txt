@@ -1,3 +1,4 @@
+include (be_setup_native_lib_flags)
 add_library (BeUtils
 	STATIC
 	Gltf/GltfBuilder.cpp
@@ -9,6 +10,8 @@ add_library (BeUtils
 	Gltf/GltfMaterialHelper.h
 	Gltf/GltfMaterialTuner.cpp
 	Gltf/GltfMaterialTuner.h
+	Misc/MiscUtils.cpp
+	Misc/MiscUtils.h
 )
 target_include_directories (BeUtils PUBLIC
 	"${CMAKE_BINARY_DIR}/Public/CesiumDependencies/Source/ThirdParty/include"

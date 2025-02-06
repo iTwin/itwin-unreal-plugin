@@ -2,7 +2,7 @@
 |
 |     $Source: ITwinWebServicesObserver.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -39,6 +39,7 @@ MODULE_EXPORT namespace SDK::Core
 	struct ITwinMaterialProperties;
 	struct ITwinMaterialPropertiesMap;
 	struct ITwinTextureData;
+	struct ITwinMaterialPrediction;
 
 	/// Custom callbacks which can be used to perform some updates once a request is done.
 	class IITwinWebServicesObserver
@@ -47,7 +48,7 @@ MODULE_EXPORT namespace SDK::Core
 		virtual ~IITwinWebServicesObserver() = default;
 
 		/// Called upon error - could be used for logging purpose, typically.
-		virtual void OnRequestError(std::string const& strError) = 0;
+		virtual void OnRequestError(std::string const& strError, int retriesLeft) = 0;
 
 		virtual void OnITwinsRetrieved(bool bSuccess, ITwinInfos const& infos) = 0;
 
@@ -75,7 +76,7 @@ MODULE_EXPORT namespace SDK::Core
 		virtual void OnRealityDataRetrieved(bool bSuccess, ITwinRealityDataInfos const& infos) = 0;
 		virtual void OnRealityData3DInfoRetrieved(bool bSuccess, ITwinRealityData3DInfo const& info) = 0;
 
-		virtual void OnElementPropertiesRetrieved(bool bSuccess, ITwinElementProperties const& props) = 0;
+		virtual void OnElementPropertiesRetrieved(bool bSuccess, ITwinElementProperties const& props, std::string const& ElementId) = 0;
 
 		virtual void OnIModelPropertiesRetrieved(bool bSuccess, IModelProperties const& props) = 0;
 		virtual void OnIModelQueried(bool bSuccess, std::string const& Response, RequestID const&) = 0;
@@ -83,6 +84,9 @@ MODULE_EXPORT namespace SDK::Core
 		virtual void OnMaterialPropertiesRetrieved(bool bSuccess, ITwinMaterialPropertiesMap const& props) = 0;
 
 		virtual void OnTextureDataRetrieved(bool bSuccess, std::string const& textureId, ITwinTextureData const& textureData) = 0;
+
+		virtual void OnMatMLPredictionRetrieved(bool bSuccess, ITwinMaterialPrediction const& prediction) = 0;
+		virtual void OnMatMLPredictionProgress(float fProgressRatio) = 0;
 	};
 
 
@@ -92,7 +96,7 @@ MODULE_EXPORT namespace SDK::Core
 	class ITwinDefaultWebServicesObserver : public IITwinWebServicesObserver
 	{
 	public:
-		void OnRequestError(std::string const& strError) override;
+		void OnRequestError(std::string const& strError, int retriesLeft) override;
 		void OnITwinsRetrieved(bool bSuccess, ITwinInfos const& infos) override;
 		void OnITwinInfoRetrieved(bool bSuccess, ITwinInfo const& info) override;
 		void OnIModelsRetrieved(bool bSuccess, IModelInfos const& infos) override;
@@ -112,11 +116,13 @@ MODULE_EXPORT namespace SDK::Core
 		void OnSavedViewEdited(bool bSuccess, SavedView const& savedView, SavedViewInfo const& info) override;
 		void OnRealityDataRetrieved(bool bSuccess, ITwinRealityDataInfos const& infos) override;
 		void OnRealityData3DInfoRetrieved(bool bSuccess, ITwinRealityData3DInfo const& info) override;
-		void OnElementPropertiesRetrieved(bool bSuccess, ITwinElementProperties const& props) override;
+		void OnElementPropertiesRetrieved(bool bSuccess, ITwinElementProperties const& props, std::string const& ElementId) override;
 		void OnIModelPropertiesRetrieved(bool bSuccess, IModelProperties const& props) override;
 		void OnIModelQueried(bool bSuccess, std::string const& Response, RequestID const&) override;
 		void OnMaterialPropertiesRetrieved(bool bSuccess, ITwinMaterialPropertiesMap const& props) override;
 		void OnTextureDataRetrieved(bool bSuccess, std::string const& textureId, ITwinTextureData const& textureData) override;
+		void OnMatMLPredictionRetrieved(bool bSuccess, ITwinMaterialPrediction const& prediction) override;
+		void OnMatMLPredictionProgress(float fProgressRatio) override;
 
 	protected:
 		virtual std::string GetObserverName() const = 0;

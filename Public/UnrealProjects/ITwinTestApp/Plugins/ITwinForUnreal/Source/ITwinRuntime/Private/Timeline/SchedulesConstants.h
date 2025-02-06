@@ -2,14 +2,14 @@
 |
 |     $Source: SchedulesConstants.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
 #pragma once
 
-/// Disable transformations-related code for the time being, to avoid the performance cost of extracting
-/// entities for transformations which will not actually work in the first release of the Schedules code
+/// Disable transformations-related code: can still be useful for debugging/profiling, eg. to avoid the
+/// performance cost of extracting entities for transformations, not just ignoring them during replay
 #define SYNCHRO4D_ENABLE_TRANSFORMATIONS() 1
 
 /// Small time offset in seconds, used to avoid strictly superimposed key frames

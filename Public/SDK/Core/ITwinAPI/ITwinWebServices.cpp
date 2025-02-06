@@ -2,11 +2,12 @@
 |
 |     $Source: ITwinWebServices.cpp $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
 #include "ITwinWebServices.h"
+#include <Core/ITwinApi/ITwinMaterialPrediction.h>
 #include <Core/ITwinApi/ITwinRequestDump.h>
 #include "ITwinAuthManager.h"
 #include "ITwinWebServicesObserver.h"
@@ -17,6 +18,7 @@
 
 #include <Core/Json/Json.h>
 #include <Core/Network/HttpRequest.h>
+
 
 namespace SDK::Core
 {
@@ -106,12 +108,21 @@ namespace SDK::Core
 		}
 	}
 
+	static std::string BuildUniqueImplName()
+	{
+		static int WebSrcImplCount = 0;
+
+		const int nextID = WebSrcImplCount++;
+		return fmt::format("ws_{}_", nextID);
+	}
+
 	class ITwinWebServices::Impl
 	{
 		friend class ITwinWebServices;
 
 		ITwinWebServices& owner_;
 
+		std::string const uniqueName_ = BuildUniqueImplName();
 		using Mutex = std::recursive_mutex;
 		using Lock = std::lock_guard<std::recursive_mutex>;
 		mutable Mutex mutex_;
@@ -128,31 +139,161 @@ namespace SDK::Core
 
 		std::string customServerURL_;
 
+		enum class ESpecificServer : uint8_t
+		{
+			None = 0,
+			MaterialPrediction
+		};
+
+		ESpecificServer specificServer_ = ESpecificServer::None;
+
+		enum class EMatMLPredictionStep : uint8_t
+		{
+			Init = 0,
+
+			GetPipeline,
+			CreatePipelineRun,
+			StartPipelineRun,
+			GetPipelineRunStatus,
+			ListResults,
+			GetResult,
+
+			Done
+		};
+		struct MaterialMLPredictionInfo
+		{
+			EMatMLPredictionStep step_ = EMatMLPredictionStep::Init;
+			std::string iTwinId_;
+			std::string iModelId_;
+			std::string changesetId_;
+
+			// Variables filled from the ML service responses
+			std::string pipeline_id_;
+			std::string pipeline_version_ = "1.0";
+			std::string run_id_;
+			int completedSteps_ = 0;
+			std::string result_file_id_;
+			ITwinMaterialPrediction result_;
+		};
+		std::optional<MaterialMLPredictionInfo> matMLPredictionInfo_ = std::nullopt;
+		std::filesystem::path matMLPredictionCacheFolder_;
+		bool isResumingMatMLPrediction_ = false;
+
 	public:
 		Impl(ITwinWebServices& Owner)
 			: owner_(Owner)
 		{
-			isThisValid_ = std::make_shared< std::atomic_bool >(true);
+			isThisValid_ = std::make_shared<std::atomic_bool>(true);
 		}
 
 		~Impl()
 		{
 			*isThisValid_ = false;
 		}
-	};
+
+		using ResultCallback =
+			std::function<bool(Http::Response const& response, RequestID const&, std::string& strError)>;
+
+		inline std::string GetAPIRootURL(EITwinEnvironment env) const
+		{
+			// Use custom URL if defined (in unit tests based on mock server typically).
+			if (!customServerURL_.empty())
+			{
+				return customServerURL_;
+			}
+			// Adapt prefix to current iTwin environment.
+			return std::string("https://") + ITwinServerEnvironment::GetUrlPrefix(env)
+				+ (specificServer_ == ESpecificServer::MaterialPrediction
+					? "connect-ml-service-eus.bentley.com/api/v1.3"
+					: "api.bentley.com");
+		}
+
+		static std::pair<double, int> defaultShouldRetryFunc(int attempt, int httpCode)
+		{
+			if (202 == httpCode)
+			{
+				// Allow more attempts, DB is probably running lengthy background processes to reply our
+				// query (happens the first time a specific changeset is queried after creation).
+				// Here, retry every 20s for 5 minutes:
+				return std::make_pair((attempt >= 0 && attempt < 15) ? 20. : 0., std::max(0, 15 - attempt));
+			}
+			BE_ASSERT(attempt <= 3, "Too many http request attempts?!");
+			switch (attempt)
+			{
+			case 0: return std::make_pair(5., 3); // 1st attempt
+			case 1: return std::make_pair(12., 2);
+			case 2: return std::make_pair(30., 1);
+			case 3: return std::make_pair(30., 0);
+			default:
+				return std::make_pair(0., 0);
+			}
+		}
+
+		/// \param notifyRequestID Notify caller of request ID identifying the request: several calls can be
+		///		made sequentially, because of retries! Also, note that retries are called from unspecified
+		///		threads, so caller functor must take care to protect whatever it does against concurrency.
+		/// \param shouldRetry User-supplied retry policy: for each attempt (even the 1st one = 0, to
+		///		determine the number of retries left!), this is called at least once (but maybe more, in case
+		///		of code 202) to determine the number of seconds to wait before retrying, and the number of
+		///		attempts left, returned as an std::pair. Normally we only need to know whether or not this is
+		///		the last attempt, which failure would mean a hard error instead of a mere warning.
+		///		IMPORTANT: this functor is also used to determine what to do in case of http response
+		///		code 202 = "Accepted" (retry later, or handle as success by returning zero retries).
+		///		The default is to wait and retry several times, because several endpoints (at least
+		///		QueryIModel and GetIModelProperties) were witnessed to return 202 just after an iModel
+		///		changeset has been created, while the DB is being initialized I guess.
+		void ProcessHttpRequest(ITwinAPIRequestInfo const& requestInfo, ResultCallback&& resultCallback,
+			std::function<void(RequestID const&)> && notifyRequestID = {},
+			std::function<std::pair<double, int>(int attempt, int httpCode)> && shouldRetry =
+				std::bind(&ITwinWebServices::Impl::defaultShouldRetryFunc,
+						  std::placeholders::_1, std::placeholders::_2),
+			int const attempt = 0);
+
+		EITwinMatMLPredictionStatus ProcessMatMLPrediction(std::string const& iTwinId,
+			std::string const& iModelId, std::string const& changesetId);
+
+		void SetLastError(std::string const& strError, RequestID const& requestID, int retriesLeft);
+
+	private:
+		ITwinAPIRequestInfo BuildMatMLPredictionRequestInfo(EMatMLPredictionStep eStep);
+		void ProcessMatMLPredictionStep(EMatMLPredictionStep eStep);
+		bool ProcessMatMLPredictionStepWithDelay(EMatMLPredictionStep eStep);
+		std::pair<double, int> ShouldRetryMaterialMLStep(EMatMLPredictionStep eStep, int attempt, int httpCode) const;
+
+		struct MatMLPredictionParseResult
+		{
+			/// Whether we received a valid response.
+			bool parsingOK = false;
+			/// Response parsing error should be filled *only* in case of communication error, not when the
+			/// service fails to compute a prediction for some reason.
+			std::string parsingError;
+			/// Will be set to false when the response indicates a failed or finished job.
+			bool continueJob = false;
+			/// Only used at step GetPipelineRunStatus, which should be retried as long as the pipeline run
+			/// is not finished.
+			bool retryWithDelay = false;
+		};
+		void ParseMatMLPredictionResponse(EMatMLPredictionStep eStep,
+			Http::Response const& response, RequestID const&,
+			MatMLPredictionParseResult& parseResult);
+
+		/// Reset all data retrieved from the ML material prediction server (pipeline ID, run ID...)
+		void ResetMatMLJobData();
+		void RemoveMatMLInfoFile();
+
+	}; // class ITwinWebServices::Impl
 
 
 	ITwinWebServices::ITwinWebServices()
 	{
 		impl_ = std::make_unique<Impl>(*this);
 
-		http_ = Http::New();
+		http_.reset(Http::New());
 		http_->SetBaseUrl(GetAPIRootURL());
 	}
 
 	ITwinWebServices::~ITwinWebServices()
 	{
-
 	}
 
 	template <typename Func>
@@ -197,15 +338,15 @@ namespace SDK::Core
 		return impl_->observer_ == observer;
 	}
 
-	void ITwinWebServices::SetLastError(std::string const& strError, RequestID const& requestID)
+	void ITwinWebServices::Impl::SetLastError(std::string const& strError, RequestID const& requestID,
+		int retriesLeft)
 	{
-		Impl::Lock Lock(impl_->mutex_);
-		impl_->lastError_.msg_ = strError;
-		impl_->lastError_.requestId_ = requestID;
-
-		if (!strError.empty() && impl_->observer_)
+		Lock Lock(mutex_);
+		lastError_.msg_ = strError;
+		lastError_.requestId_ = requestID;
+		if (!strError.empty() && observer_)
 		{
-			impl_->observer_->OnRequestError(strError);
+			observer_->OnRequestError(strError, retriesLeft);
 		}
 	}
 
@@ -239,27 +380,22 @@ namespace SDK::Core
 
 	std::string ITwinWebServices::GetAPIRootURL() const
 	{
-		if (!impl_->customServerURL_.empty())
-		{
-			// automation test is running: use mock server URL instead.
-			return impl_->customServerURL_;
-		}
-		return GetITwinAPIRootUrl(this->env_);
+		return impl_->GetAPIRootURL(env_);
 	}
 
 	namespace
 	{
-	//! Set this variable to true in the debugger to dump all requests & responses.
-	//! The generated files can then be used in automatic tests, to mock the web services.
-	//! See For example IModelRenderTest.cpp. 
-	static bool g_ShouldDumpRequests = false;
+		//! Set this variable to true in the debugger to dump all requests & responses.
+		//! The generated files can then be used in automatic tests, to mock the web services.
+		//! See For example IModelRenderTest.cpp. 
+		static bool g_ShouldDumpRequests = false;
 	} // unnamed namespace
 
-	template <typename ResultDataType, class FunctorType, class DelegateAsFunctor>
-	RequestID ITwinWebServices::TProcessHttpRequest(
-		ITwinAPIRequestInfo const& requestInfo,
-		FunctorType&& InFunctor,
-		DelegateAsFunctor&& InResultFunctor)
+	void ITwinWebServices::Impl::ProcessHttpRequest(ITwinAPIRequestInfo const& requestInfo,
+		ResultCallback&& InResultCallback,
+		std::function<void(RequestID const&)> && notifyRequestID/*= {}*/,
+		std::function<std::pair<double, int>(int attempt, int httpCode)> && shouldRetry/*= {}*/,
+		int const attempt/*= 0*/)
 	{
 		if (requestInfo.badlyFormed)
 		{
@@ -267,24 +403,29 @@ namespace SDK::Core
 			// => do not even try to process any request, but notify the error at once.
 			this->SetLastError(
 				fmt::format("[{}] insufficient parameters to build a valid request.", requestInfo.ShortName),
-				HttpRequest::NO_REQUEST);
-			InResultFunctor(false, {}, HttpRequest::NO_REQUEST);
-			return HttpRequest::NO_REQUEST;
+				HttpRequest::NO_REQUEST, /*no retry in that case*/0);
+			std::string dummyErr;
+			InResultCallback({}, HttpRequest::NO_REQUEST, dummyErr);
+			return;
 		}
+		std::pair<double, int> retryInfo = // in case of failure
+			shouldRetry ? shouldRetry(attempt, 0/*Unset*/) : std::make_pair(0., 0/*no retry on failure!*/);
 
-		std::string const authToken = GetAuthToken();
+		std::string const authToken = owner_.GetAuthToken();
 		if (authToken.empty())
 		{
-			return HttpRequest::NO_REQUEST;
+			return;
 		}
-
-		const auto request = HttpRequest::New();
+		const auto request = std::shared_ptr<HttpRequest>(HttpRequest::New());
 		if (!request)
 		{
-			return HttpRequest::NO_REQUEST;
+			return;
+		}
+		if (notifyRequestID)
+		{
+			notifyRequestID(request->GetRequestID());
 		}
 		request->SetVerb(requestInfo.Verb);
-
 		if (requestInfo.needRawData)
 		{
 			request->SetNeedRawData(true);
@@ -328,12 +469,13 @@ namespace SDK::Core
 		using Response = HttpRequest::Response;
 		request->SetResponseCallback(
 			[this,
-			IsValidLambda = this->impl_->isThisValid_,
-			requestShortName = requestInfo.ShortName,
-			ResponseProcessor = std::move(InFunctor),
-			ResultCallback = std::move(InResultFunctor),
-			requestDumpPath]
-			(RequestPtr const& request, Response const& response)
+			isValidLambda = isThisValid_,
+			requestInfoCopy = requestInfo,
+			resultCallback = std::move(InResultCallback),
+			notifyRequestID = std::move(notifyRequestID),
+			shouldRetry = std::move(shouldRetry),
+			requestDumpPath, attempt, retryInfo/*needs to be mutable*/]
+			(RequestPtr const& request, Response const& response) mutable
 		{
 			if (!requestDumpPath.empty())
 			{
@@ -344,22 +486,61 @@ namespace SDK::Core
 					std::ofstream(requestDumpPath/"response.bin").write(
 						(const char*)response.rawdata_->data(), response.rawdata_->size());
 			}
-			if (!(*IsValidLambda))
+			if (!(*isValidLambda))
 			{
 				// see comments in #ReusableJsonQueries.cpp
 				return;
 			}
 			bool bValidResponse = false;
 			std::string requestError;
-			Be::CleanUpGuard setErrorGuard([&]
+			Be::CleanUpGuard setErrorGuard([&, this] () mutable
 			{
 				// In case of early exit, ensure we store the error and notify the caller
 				this->SetLastError(
-					fmt::format("[{}] {}", requestShortName, requestError),
-					request->GetRequestID());
+					fmt::format("[{}] {}", requestInfoCopy.ShortName, requestError),
+					request->GetRequestID(), retryInfo.second);
 				if (!bValidResponse)
 				{
-					ResultCallback(false, {}, request->GetRequestID());
+					if (retryInfo.second > 0)
+					{
+						// Retry after a delay.
+						double const delayInSeconds = std::max(0.1, retryInfo.first);
+						std::string const delayedCallUniqueID = uniqueName_ + requestInfoCopy.ShortName;
+
+						// TODO_JDE extract delayed call system from ITwinAuthManager and add a doc
+						auto const& authMngr = ITwinAuthManager::GetInstance(owner_.env_);
+						if (authMngr)
+						{
+							authMngr->UniqueDelayedCall(delayedCallUniqueID,
+								[this, isValidRetryLambda = isValidLambda,
+								retry_requestInfo = std::move(requestInfoCopy),
+								retry_resultCallback = std::move(resultCallback),
+								retry_notifyRequestID = std::move(notifyRequestID),
+								retry_shouldRetry = std::move(shouldRetry),
+								attempt]() mutable
+							{
+								if (*isValidRetryLambda)
+								{
+									this->ProcessHttpRequest(
+										retry_requestInfo,
+										std::move(retry_resultCallback),
+										std::move(retry_notifyRequestID),
+										std::move(retry_shouldRetry),
+										attempt + 1);
+								}
+								return false; // only tick once
+							}, delayInSeconds /* in seconds*/);
+						}
+						else
+						{
+							BE_LOGE("ITwinAPI", "No delayed call support => no retry for " << requestInfoCopy.ShortName);
+						}
+					}
+					else
+					{
+						std::string dummyErr;
+						resultCallback({}, request->GetRequestID(), dummyErr);
+					}
 				}
 			});
 
@@ -371,31 +552,38 @@ namespace SDK::Core
 					requestError += GetErrorDescriptionFromJson(response.second,
 						requestError.empty() ? "" : "\t");
 				}
+				// store error and launch retry (through CleanUpGuard above)
 				return;
 			}
-			ResultDataType resultData;
+			// 202 = "Accepted but not immediately processed"! ie response is empty... This seems to happen
+			// when querying an iModel (changeset)'s rows for the first time, maybe because of some posibly
+			// lengthy init process? Should we then retry "indefinitely" or have some specific user feedback,
+			// in case it's really long for BIG iModels?
+			if (response.first == 202)
+			{
+				BE_ASSERT((bool)shouldRetry, "HTTP 202 received: you should handle this case by supplying a non-empty 'shouldRetry' functor!");
+				retryInfo =	shouldRetry ? shouldRetry(attempt, 202) : std::make_pair(0., 0/*no retry on 202!*/);
+				if (retryInfo.second > 0) // caller wants us to retry
+				{
+					requestError += "Received HTTP code 202: request accepted but answer delayed";
+					// store "error" and launch retry (through CleanUpGuard above)
+					return;
+				}
+				// else: handle as a success: resultCallback should handle this case!
+			}
+			ScopedWorkingWebServices WorkingInstanceSetter(&this->owner_);
 			std::string parsingError;
-			bValidResponse = ResponseProcessor(resultData, response, parsingError);
+			bValidResponse = resultCallback(response, request->GetRequestID(), parsingError);
 			if (!parsingError.empty())
 			{
 				requestError += parsingError;
 			}
-
-			// store error, if any
+			// store error and launch retry (through CleanUpGuard above)
 			if (!requestError.empty())
-			{
-				this->SetLastError(
-					fmt::format("[{}] {}", requestShortName, requestError),
-					request->GetRequestID());
-			}
-
-			ScopedWorkingWebServices WorkingInstanceSetter(this);
-			ResultCallback(bValidResponse, resultData, request->GetRequestID());
+				return;
 			setErrorGuard.release();
 		});
-		request->Process(*http_, requestInfo.UrlSuffix, requestInfo.ContentString, headers);
-
-		return request->GetRequestID();
+		request->Process(*owner_.http_, requestInfo.UrlSuffix, requestInfo.ContentString, headers);
 	}
 
 	void ITwinWebServices::GetITwinInfo(std::string const& iTwinId)
@@ -409,27 +597,21 @@ namespace SDK::Core
 		};
 		iTwinRequestInfo.badlyFormed = iTwinId.empty();
 
-		TProcessHttpRequest<ITwinInfo>(
+		impl_->ProcessHttpRequest(
 			iTwinRequestInfo,
-			[](ITwinInfo& iTwinInfo, Http::Response const& response, std::string& strError) -> bool
+			[this](Http::Response const& response, RequestID const&, std::string& strError) -> bool
 		{
 			struct ITwinInfoHolder
 			{
 				ITwinInfo iTwin;
 			} infoHolder;
-			if (!Json::FromString(infoHolder, response.second, strError))
-			{
-				return false;
-			}
-			iTwinInfo = std::move(infoHolder.iTwin);
-			return true;
-		},
-			[this](bool bResult, ITwinInfo const& resultData, RequestID const&)
-		{
+			bool const bResult = response.first >= 0
+				&& Json::FromString(infoHolder, response.second, strError);
 			if (impl_->observer_)
 			{
-				impl_->observer_->OnITwinInfoRetrieved(bResult, resultData);
+				impl_->observer_->OnITwinInfoRetrieved(bResult, infoHolder.iTwin);
 			}
+			return bResult;
 		});
 	}
 
@@ -442,18 +624,18 @@ namespace SDK::Core
 			"/itwins/recents?subClass=Project&status=Active&$top=1000",
 			"application/vnd.bentley.itwin-platform.v1+json"
 		};
-		TProcessHttpRequest<ITwinInfos>(
+		impl_->ProcessHttpRequest(
 			requestInfo,
-			[](ITwinInfos& iTwinInfos, Http::Response const& response, std::string& strError) -> bool
+			[this](Http::Response const& response, RequestID const&, std::string& strError) -> bool
 		{
-			return Json::FromString(iTwinInfos, response.second, strError);
-		},
-			[this](bool bResult, ITwinInfos const& resultData, RequestID const&)
-		{
+			ITwinInfos iTwinInfos;
+			bool const bResult = response.first >= 0
+				&& Json::FromString(iTwinInfos, response.second, strError);
 			if (impl_->observer_)
 			{
-				impl_->observer_->OnITwinsRetrieved(bResult, resultData);
+				impl_->observer_->OnITwinsRetrieved(bResult, iTwinInfos);
 			}
+			return bResult;
 		});
 	}
 
@@ -468,18 +650,18 @@ namespace SDK::Core
 		};
 		requestInfo.badlyFormed = iTwinId.empty();
 
-		TProcessHttpRequest<IModelInfos>(
+		impl_->ProcessHttpRequest(
 			requestInfo,
-			[](IModelInfos& iModelInfos, Http::Response const& response, std::string& strError) -> bool
+			[this](Http::Response const& response, RequestID const&, std::string& strError) -> bool
 		{
-			return Json::FromString(iModelInfos, response.second, strError);
-		},
-			[this](bool bResult, IModelInfos const& resultData, RequestID const&)
-		{
+			IModelInfos iModelInfos;
+			bool const bResult = response.first >= 0
+				&& Json::FromString(iModelInfos, response.second, strError);
 			if (impl_->observer_)
 			{
-				impl_->observer_->OnIModelsRetrieved(bResult, resultData);
+				impl_->observer_->OnIModelsRetrieved(bResult, iModelInfos);
 			}
+			return bResult;
 		});
 	}
 
@@ -496,18 +678,18 @@ namespace SDK::Core
 		};
 		requestInfo.badlyFormed = iModelId.empty();
 
-		TProcessHttpRequest<ChangesetInfos>(
+		impl_->ProcessHttpRequest(
 			requestInfo,
-			[](ChangesetInfos& Infos, Http::Response const& response, std::string& strError) -> bool
+			[this](Http::Response const& response, RequestID const&, std::string& strError) -> bool
 		{
-			return Json::FromString(Infos, response.second, strError);
-		},
-			[this](bool bResult, ChangesetInfos const& resultData, RequestID const&)
-		{
+			ChangesetInfos changesets;
+			bool const bResult = response.first >= 0
+				&& Json::FromString(changesets, response.second, strError);
 			if (impl_->observer_)
 			{
-				impl_->observer_->OnChangesetsRetrieved(bResult, resultData);
+				impl_->observer_->OnChangesetsRetrieved(bResult, changesets);
 			}
+			return bResult;
 		});
 	}
 
@@ -600,27 +782,26 @@ namespace SDK::Core
 			.UrlSuffix		= std::string("/mesh-export/?$top=1&iModelId=") + iModelId + "&changesetId="
 								+ changesetId + "&" + Detail::getExportsCommonUrlParams,
 			.AcceptHeader	= "application/vnd.bentley.itwin-platform.v1+json",
-			.ContentType	= {}, // content type
-			.ContentString	= {}, // content string
-			.CustomHeaders	= {}, // custom headers (map)
-			.badlyFormed	= iModelId.empty() // badlyFormed
+			.badlyFormed	= iModelId.empty()
 		};
-		TProcessHttpRequest<ITwinExportInfos>( // could now use ITwinExportInfo (singular) TODO_GCO
+		impl_->ProcessHttpRequest(
 			requestInfo,
-			[](ITwinExportInfos& Infos, Http::Response const& response, std::string& strError) -> bool
+			[this](Http::Response const& response, RequestID const&, std::string& strError) -> bool
 		{
+			// could now use ITwinExportInfo (singular) TODO_GCO
+			ITwinExportInfos Infos;
+
 			using ExportFullInfo = Detail::ITwinExportFullInfo;
 			struct ITwinExportFullInfoHolder
 			{
 				std::vector<ExportFullInfo> exports;
 			} exportsHolder;
 
-			if (!Json::FromString(exportsHolder, response.second, strError))
-			{
-				return false;
-			}
+			bool const bValidResponse = response.first >= 0
+				&& Json::FromString(exportsHolder, response.second, strError);
+
 			// There should be only one now (see $top=1 parameter in URL)
-			if (!exportsHolder.exports.empty())
+			if (bValidResponse && !exportsHolder.exports.empty())
 			{
 				auto&& fullInfo = exportsHolder.exports[0];
 				if (fullInfo.request.exportType != "CESIUM")
@@ -644,17 +825,14 @@ namespace SDK::Core
 					}
 				}
 			}
-			if (Infos.exports.empty() && !strError.empty())
-				return false;
-			else
-				return true;
-		},
-			[this](bool bResult, ITwinExportInfos const& resultData, RequestID const&)
-		{
+			bool const hasError = Infos.exports.empty() && !strError.empty();
+
+			bool const bResult = bValidResponse && !hasError;
 			if (impl_->observer_)
 			{
-				impl_->observer_->OnExportInfosRetrieved(bResult, resultData);
+				impl_->observer_->OnExportInfosRetrieved(bResult, Infos);
 			}
+			return bResult;
 		});
 	}
 
@@ -666,53 +844,55 @@ namespace SDK::Core
 			.Verb			= EVerb::Get,
 			.UrlSuffix		= std::string("/mesh-export/") + exportId + "?" + Detail::getExportsCommonUrlParams,
 			.AcceptHeader	= "application/vnd.bentley.itwin-platform.v1+json",
-			.ContentType	= {},
-			.ContentString	= {},
-			.CustomHeaders	= {}, // map
 			.badlyFormed	= exportId.empty()
 		};
-		TProcessHttpRequest<ITwinExportInfo>(
+
+		impl_->ProcessHttpRequest(
 			requestInfo,
-			[](ITwinExportInfo& Export, Http::Response const& response, std::string& strError) -> bool
+			[this](Http::Response const& response, RequestID const&, std::string& strError) -> bool
 		{
+			ITwinExportInfo exportInfo;
+
 			using ExportFullInfo = Detail::ITwinExportFullInfo;
 			struct FullInfoHolder
 			{
 				rfl::Rename<"export", ExportFullInfo> export_; // "export" is a c++ keyword...
 			} exportHolder;
 
-			if (!Json::FromString(exportHolder, response.second, strError))
+			bool bResult = response.first >= 0
+				&& Json::FromString(exportHolder, response.second, strError);
+
+			if (bResult) // validate returned export information
 			{
-				return false;
-			}
-			if (exportHolder.export_.value().request.exportType != "CESIUM")
-			{
-				strError = std::string("unsupported export type: ")
-					+ exportHolder.export_.value().request.exportType;
-				return false;
-			}
-			if (!exportHolder.export_.value().request.iTwinId)
-			{
-				if (exportHolder.export_.value().request.contextId)
+				if (exportHolder.export_.value().request.exportType != "CESIUM")
 				{
-					std::swap(exportHolder.export_.value().request.iTwinId,
-							  exportHolder.export_.value().request.contextId);
+					strError = std::string("unsupported export type: ")
+						+ exportHolder.export_.value().request.exportType;
+					bResult = false;
 				}
-				else
+				else if (!exportHolder.export_.value().request.iTwinId)
 				{
-					strError = std::string("entry has neither iTwinId nor contextId");
-					return false;
+					if (exportHolder.export_.value().request.contextId)
+					{
+						std::swap(exportHolder.export_.value().request.iTwinId,
+							exportHolder.export_.value().request.contextId);
+					}
+					else
+					{
+						strError = std::string("entry has neither iTwinId nor contextId");
+						bResult = false;
+					}
 				}
 			}
-			Detail::SimplifyExportInfo(Export, exportHolder.export_.value());
-			return true;
-		},
-			[this](bool bResult, ITwinExportInfo const& resultData, RequestID const&)
-		{
+			if (bResult)
+			{
+				Detail::SimplifyExportInfo(exportInfo, exportHolder.export_.value());
+			}
 			if (impl_->observer_)
 			{
-				impl_->observer_->OnExportInfoRetrieved(bResult, resultData);
+				impl_->observer_->OnExportInfoRetrieved(bResult, exportInfo);
 			}
+			return bResult;
 		});
 	}
 
@@ -725,7 +905,6 @@ namespace SDK::Core
 			std::string exportType;
 		};
 		const ExportParams exportParams = { iModelId, changesetId, "CESIUM" };
-		const std::string exportParams_Json = Json::ToString(exportParams);
 
 		const ITwinAPIRequestInfo requestInfo =
 		{
@@ -734,13 +913,13 @@ namespace SDK::Core
 			.UrlSuffix		= "/mesh-export",
 			.AcceptHeader	= "application/vnd.bentley.itwin-platform.v1+json",
 			.ContentType	= "application/json",
-			.ContentString	= exportParams_Json,
+			.ContentString	= Json::ToString(exportParams),
 			.CustomHeaders	= { { "use-new-exporter", "3" } },
 			.badlyFormed	= iModelId.empty()
 		};
-		TProcessHttpRequest<std::string>(
+		impl_->ProcessHttpRequest(
 			requestInfo,
-			[iModelId](std::string& outExportId, Http::Response const& response, std::string& strError) -> bool
+			[this](Http::Response const& response, RequestID const&, std::string& strError) -> bool
 		{
 			struct ExportBasicInfo
 			{
@@ -751,19 +930,31 @@ namespace SDK::Core
 				rfl::Rename<"export", ExportBasicInfo> export_; // "export" is a c++ keyword...
 			} exportHolder;
 
-			if (!Json::FromString(exportHolder, response.second, strError))
+			bool const bResult = response.first >= 0
+				&& Json::FromString(exportHolder, response.second, strError);
+
+			std::string exportId;
+			if (bResult)
 			{
-				return false;
+				exportId = exportHolder.export_.value().id;
 			}
-			outExportId = exportHolder.export_.value().id;
-			return true;
-		},
-			[this](bool bResult, std::string const& exportId, RequestID const&)
-		{
+
 			if (impl_->observer_)
 			{
 				impl_->observer_->OnExportStarted(bResult, exportId);
 			}
+			return bResult;
+		},
+		{}, // notifyRequestID
+		[](int attempt, int httpCode)
+		{
+			if (202 == httpCode)
+			{
+				// Don't retry, this would start a new export! (or not?)
+				// (no retry for a 202 means "handle as success").
+				return std::make_pair(0., 0);
+			}
+			else return ITwinWebServices::Impl::defaultShouldRetryFunc(attempt, httpCode);
 		});
 	}
 
@@ -897,61 +1088,63 @@ namespace SDK::Core
 		};
 	}
 
-	void ITwinWebServices::GetAllSavedViews(std::string const& iTwinId, std::string const& iModelId, std::string const& groupId /*=""*/)
+	void ITwinWebServices::GetAllSavedViews(std::string const& iTwinId, std::string const& iModelId, std::string const& groupId /*=""*/,
+											int Top /*=100*/, int Skip /*=0*/)
 	{
+		std::string topSkip = std::string("&$top=") + std::to_string(Top) + std::string("&$skip=") + std::to_string(Skip);
 		ITwinAPIRequestInfo requestInfo =
 		{
 			__func__,
 			EVerb::Get,
-			(!groupId.empty() ? std::string("/savedviews?groupId=") + groupId : std::string("/savedviews?iTwinId=") + iTwinId + "&iModelId=" + iModelId),
+			(!groupId.empty() ? std::string("/savedviews?groupId=") + groupId + topSkip : std::string("/savedviews?iTwinId=") + iTwinId + "&iModelId=" + iModelId + topSkip),
 			"application/vnd.bentley.itwin-platform.v1+json",
 			"application/json",
 		};
 		requestInfo.badlyFormed = iTwinId.empty() || iModelId.empty();
 
-		TProcessHttpRequest<SavedViewInfos>(
+		impl_->ProcessHttpRequest(
 			requestInfo,
-			[groupId](SavedViewInfos& infos, Http::Response const& response, std::string& strError) -> bool
+			[this, groupId](Http::Response const& response, RequestID const&, std::string& strError) -> bool
 		{
-			if (!Json::FromString(infos, response.second, strError))
-				return false;
+			SavedViewInfos infos;
+			bool const bResult = response.first >= 0
+				&& Json::FromString(infos, response.second, strError);
 			infos.groupId = groupId;
-			return true;
-		},
-			[this](bool bResult, SavedViewInfos const& resultData, RequestID const&)
-		{
 			if (impl_->observer_)
 			{
-				impl_->observer_->OnSavedViewInfosRetrieved(bResult, resultData);
+				impl_->observer_->OnSavedViewInfosRetrieved(bResult, infos);
 			}
+			return bResult;
 		});
 	}
 
 	void ITwinWebServices::GetSavedViewsGroups(std::string const& iTwinId, std::string const& iModelId)
 	{
-		ITwinAPIRequestInfo groupsRequestInfo = 
+		ITwinAPIRequestInfo requestInfo =
 		{
 			__func__,
 			EVerb::Get,
-			std::string("/savedviews/groups?iTwinId=") + iTwinId + "&iModelId=" + iModelId,
+			std::string("/savedviews/groups?iTwinId=") + iTwinId + (iModelId.empty()? "" : ("&iModelId=" + iModelId)),
 			"application/vnd.bentley.itwin-platform.v1+json",
 			"application/json",
 		};
-		groupsRequestInfo.badlyFormed = iTwinId.empty() || iModelId.empty();
+		requestInfo.badlyFormed = iTwinId.empty();
 
-		TProcessHttpRequest<SavedViewGroupInfos>(
-			groupsRequestInfo,
-			[](SavedViewGroupInfos& Infos, Http::Response const& response, std::string& strError) -> bool
+		impl_->ProcessHttpRequest(
+			requestInfo,
+			[this, iModelId](Http::Response const& response, RequestID const&, std::string& strError) -> bool
+		{
+			SavedViewGroupInfos svGroupInfos;
+			bool const bResult = response.first >= 0
+				&& Json::FromString(svGroupInfos, response.second, strError);
+			if (bResult)
+				svGroupInfos.iModelId = iModelId;
+			if (impl_->observer_)
 			{
-				return Json::FromString(Infos, response.second, strError);
-			},
-			[this](bool bResult, SavedViewGroupInfos const& ResultData, RequestID const&)
-			{
-				if (impl_->observer_)
-				{
-					impl_->observer_->OnSavedViewGroupInfosRetrieved(bResult, ResultData);
-				}
-			});
+				impl_->observer_->OnSavedViewGroupInfosRetrieved(bResult, svGroupInfos);
+			}
+			return bResult;
+		});
 	}
 
 	void ITwinWebServices::GetSavedView(std::string const& savedViewId)
@@ -968,109 +1161,102 @@ namespace SDK::Core
 
 		using SavedViewData = Detail::SavedViewData;
 
-		TProcessHttpRequest<SavedViewData>(
+		impl_->ProcessHttpRequest(
 			requestInfo,
-			[](SavedViewData& SVData, Http::Response const& response, std::string& strError) -> bool
+			[this](Http::Response const& response, RequestID const&, std::string& strError) -> bool
 		{
+			SavedViewData svData;
 			Detail::SavedViewFullInfoHolder svInfoHolder;
-			if (!Json::FromString(svInfoHolder, response.second, strError))
+			bool const bResult = response.first >= 0
+				&& Json::FromString(svInfoHolder, response.second, strError);
+			if (bResult)
 			{
-				return false;
+				svInfoHolder.MoveToSavedViewData(svData);
 			}
-			svInfoHolder.MoveToSavedViewData(SVData);
-			return true;
-		},
-			[this](bool bResult, SavedViewData const& SVData, RequestID const&)
-		{
 			if (impl_->observer_)
 			{
-				impl_->observer_->OnSavedViewRetrieved(bResult, SVData.savedView, SVData.savedViewInfo);
+				impl_->observer_->OnSavedViewRetrieved(bResult, svData.savedView, svData.savedViewInfo);
 			}
+			return bResult;
 		});
 	}
 
-	void ITwinWebServices::GetSavedViewThumbnail(std::string const& SavedViewId)
+	void ITwinWebServices::GetSavedViewThumbnail(std::string const& savedViewId)
 	{
-		const ITwinAPIRequestInfo savedViewsRequestInfo = {
+		const ITwinAPIRequestInfo requestInfo = {
 			__func__,
 			EVerb::Get,
-			std::string("/savedviews/") + SavedViewId + std::string("/image"),
+			std::string("/savedviews/") + savedViewId + std::string("/image"),
 			"application/vnd.bentley.itwin-platform.v1+json",
 			"application/json",
 		};
-		struct ResData
+
+		impl_->ProcessHttpRequest(
+			requestInfo,
+			[this, savedViewId](Http::Response const& response, RequestID const&, std::string& strError) -> bool
 		{
-			std::string ThumbnailURL;
-			std::string SavedViewId;
-		};
-		TProcessHttpRequest<ResData>(
-			savedViewsRequestInfo,
-			[SavedViewId](ResData& SVData, Http::Response const& response, std::string& strError) -> bool
+			struct ThumbnailData
 			{
-				struct ThumbnailData
-				{
-					std::string href;
-				} thumbnailInfoHolder;
-				if (!Json::FromString(thumbnailInfoHolder, response.second, strError))
-				{
-					return false;
-				}
-				SVData.ThumbnailURL = thumbnailInfoHolder.href;
-				SVData.SavedViewId = SavedViewId;
-				return true;
-			},
-			[this](bool bResult, ResData const& SVData, RequestID const&)
+				std::string href;
+			} thumbnailInfoHolder;
+			bool const bResult = response.first >= 0
+				&& Json::FromString(thumbnailInfoHolder, response.second, strError);
+
+			std::string thumbnailURL;
+			if (bResult)
 			{
-				if (impl_->observer_)
-				{
-					impl_->observer_->OnSavedViewThumbnailRetrieved(bResult, SVData.ThumbnailURL, SVData.SavedViewId);
-				}
-			});
+				thumbnailURL = thumbnailInfoHolder.href;
+			}
+			if (impl_->observer_)
+			{
+				impl_->observer_->OnSavedViewThumbnailRetrieved(bResult, thumbnailURL, savedViewId);
+			}
+			return bResult;
+		});
 	}
 
-	void ITwinWebServices::UpdateSavedViewThumbnail(std::string const& SavedViewId, std::string const& ThumbnailURL)
+	void ITwinWebServices::UpdateSavedViewThumbnail(std::string const& savedViewId, std::string const& thumbnailURL)
 	{
-		const ITwinAPIRequestInfo savedViewsRequestInfo = {
-			__func__,
-			EVerb::Put,
-			std::string("/savedviews/") + SavedViewId + std::string("/image"),
-			"application/vnd.bentley.itwin-platform.v1+json",
+		const ITwinAPIRequestInfo requestInfo = {
+			.ShortName		= __func__,
+			.Verb			= EVerb::Put,
+			.UrlSuffix		= std::string("/savedviews/") + savedViewId + std::string("/image"),
+			.AcceptHeader	= "application/vnd.bentley.itwin-platform.v1+json",
 
 			/*** additional settings for POST ***/
-			"application/json",
-			"{\"image\":\"" + ThumbnailURL
-			+ "\"}"
+			.ContentType	= "application/json",
+			.ContentString	= "{\"image\":\"" + thumbnailURL + "\"}"
 		};
 		
-		TProcessHttpRequest<std::string>(
-			savedViewsRequestInfo,
-			[](std::string& ErrorCode, Http::Response const& response, std::string& /*strError*/) -> bool
+		impl_->ProcessHttpRequest(
+			requestInfo,
+			[this, savedViewId](Http::Response const& response, RequestID const& requestId, std::string& strError) -> bool
+		{
+			std::string outError;
+			bool bResult = (response.first >= 0);
+
+			ITwinError iTwinError;
+			if (bResult
+				&& Json::FromString(iTwinError, response.second))
 			{
-				ITwinError iTwinError;
-				if (Json::FromString(iTwinError, response.second))
-				{
-					ErrorCode = GetErrorDescription(iTwinError);
-					return false;
-				}
-				ErrorCode = {};
-				return true;
-			},
-			[this, SavedViewId](bool bResult, std::string const& strResponse, RequestID const& requestId)
-			{
-				// in UpdateSavedViewThumbnail, the callbacks expect an error message (in case of failure)
-				// => if none is provided, and if the last error recorded corresponds to our request, use the
-				// latter as response.
-				std::string OutResponse = strResponse;
-				if (!bResult && OutResponse.empty())
-				{
-					OutResponse = GetRequestError(requestId);
-				}
-				if (impl_->observer_)
-				{
-					impl_->observer_->OnSavedViewThumbnailUpdated(bResult, SavedViewId, OutResponse);
-				}
+				outError = GetErrorDescription(iTwinError);
+				bResult = false;
 			}
-		);
+
+			// Here, the callbacks expects an error message (in case of failure)
+			// => if none is provided, and if the last error recorded corresponds to our request, use the
+			// latter as response.
+			if (!bResult && outError.empty())
+			{
+				outError = GetRequestError(requestId);
+			}
+			if (impl_->observer_)
+			{
+				impl_->observer_->OnSavedViewThumbnailUpdated(bResult, savedViewId, outError);
+			}
+			strError = outError;
+			return bResult;
+		});
 	}
 
 	void ITwinWebServices::GetSavedViewExtension(std::string const& savedViewId, std::string const& extensionName)
@@ -1085,32 +1271,28 @@ namespace SDK::Core
 		};
 		requestInfo.badlyFormed = savedViewId.empty() || extensionName.empty();
 
-		TProcessHttpRequest<std::string>(
+		impl_->ProcessHttpRequest(
 			requestInfo,
-			[](std::string& data, Http::Response const& response, std::string& strError) -> bool
+			[this, savedViewId](Http::Response const& response, RequestID const&, std::string& strError) -> bool
+		{
+			struct ExtensionData
 			{
-				struct ExtensionData
-				{
-					std::string data;
-				};
-				struct SavedViewExtension
-				{
-					ExtensionData extension;
-				} extInfoHolder;
-				if (!Json::FromString(extInfoHolder, response.second, strError))
-				{
-					return false;
-				}
-				data = extInfoHolder.extension.data;
-				return true;
-			},
-			[this, savedViewId](bool bResult, std::string const& data, RequestID const&)
+				std::string data;
+			};
+			struct SavedViewExtension
 			{
-				if (impl_->observer_)
-				{
-					impl_->observer_->OnSavedViewExtensionRetrieved(bResult, savedViewId, data);
-				}
-			});
+				ExtensionData extension;
+			} extInfoHolder;
+
+			bool const bResult = response.first >= 0
+				&& Json::FromString(extInfoHolder, response.second, strError);
+			if (impl_->observer_)
+			{
+				impl_->observer_->OnSavedViewExtensionRetrieved(bResult,
+					savedViewId, extInfoHolder.extension.data);
+			}
+			return bResult;
+		});
 	}
 
 
@@ -1129,7 +1311,7 @@ namespace SDK::Core
 		struct AddSavedViewInfo
 		{
 			std::string iTwinId;
-			std::string iModelId;
+			std::optional<std::string> iModelId;
 			SavedView3DData savedViewData;
 			std::optional<std::string> groupId;
 			std::string displayName;
@@ -1140,7 +1322,7 @@ namespace SDK::Core
 		struct AddSavedViewGroupInfo
 		{
 			std::string iTwinId;
-			std::string iModelId;
+			std::optional<std::string> iModelId;
 			std::string displayName;
 			bool shared = true;
 		};
@@ -1173,50 +1355,46 @@ namespace SDK::Core
 		}
 	}
 
-	void ITwinWebServices::AddSavedView(std::string const& iTwinId, std::string const& iModelId,
-		SavedView const& savedView, SavedViewInfo const& savedViewInfo, std::string const& groupId/*=""*/)
+	void ITwinWebServices::AddSavedView(std::string const& iTwinId, SavedView const& savedView, 
+										SavedViewInfo const& savedViewInfo, std::string const& iModelId/*=""*/, 
+										std::string const& groupId/*=""*/)
 	{
 		Detail::AddSavedViewInfo addInfo;
 		Detail::FillSavedViewEditInfo(addInfo, savedView, savedViewInfo);
 		addInfo.iTwinId = iTwinId;
-		addInfo.iModelId = iModelId;
+		if (!iModelId.empty())
+			addInfo.iModelId = iModelId;
 		if (!groupId.empty())
 			addInfo.groupId = groupId;
-		const std::string addSavedView_Json = Json::ToString(addInfo);
 
-		ITwinAPIRequestInfo requestInfo =
+		ITwinAPIRequestInfo const requestInfo =
 		{
-			__func__,
-			EVerb::Post,
-			"/savedviews/",
-			"application/vnd.bentley.itwin-platform.v1+json",
+			.ShortName		= __func__,
+			.Verb			= EVerb::Post,
+			.UrlSuffix		= "/savedviews/",
+			.AcceptHeader	= "application/vnd.bentley.itwin-platform.v1+json",
 
 			/*** additional settings for POST ***/
-			"application/json",
-			addSavedView_Json
-		};
-		requestInfo.badlyFormed = iTwinId.empty() || iModelId.empty();
+			.ContentType	= "application/json",
+			.ContentString	= Json::ToString(addInfo),
 
-		TProcessHttpRequest<SavedViewInfo>(
+			.badlyFormed	= iTwinId.empty()
+		};
+
+		impl_->ProcessHttpRequest(
 			requestInfo,
-			[](SavedViewInfo& info, Http::Response const& response, std::string& strError) -> bool
+			[this](Http::Response const& response, RequestID const&, std::string& strError) -> bool
 		{
 			struct SavedViewInfoHolder
 			{
 				SavedViewInfo savedView;
 			} svHolder;
-			if (!Json::FromString(svHolder, response.second, strError))
-			{
-				return false;
-			}
-			info = std::move(svHolder.savedView);
-			return true;
-		},
-			[this](bool bResult, SavedViewInfo const& resultData, RequestID const&)
-		{
-			this->OnSavedViewAdded(bResult, resultData);
-		}
-		);
+
+			bool const bResult = response.first >= 0
+				&& Json::FromString(svHolder, response.second, strError);
+			this->OnSavedViewAdded(bResult, svHolder.savedView);
+			return bResult;
+		});
 	}
 
 	void ITwinWebServices::OnSavedViewAdded(bool bSuccess, SavedViewInfo const& savedViewInfo)
@@ -1232,46 +1410,40 @@ namespace SDK::Core
 	{
 		Detail::AddSavedViewGroupInfo addInfo;
 		addInfo.iTwinId = iTwinId;
-		addInfo.iModelId = iModelId;
+		if (!iModelId.empty())
+			addInfo.iModelId = iModelId;
 		addInfo.displayName = savedViewGroupInfo.displayName;
-		const std::string addGroup_Json = Json::ToString(addInfo);
 
-		ITwinAPIRequestInfo requestInfo =
+		ITwinAPIRequestInfo const requestInfo =
 		{
-			__func__,
-			EVerb::Post,
-			"/savedviews/groups",
-			"application/vnd.bentley.itwin-platform.v1+json",
+			.ShortName		= __func__,
+			.Verb			= EVerb::Post,
+			.UrlSuffix		= "/savedviews/groups",
+			.AcceptHeader	= "application/vnd.bentley.itwin-platform.v1+json",
 
 			/*** additional settings for POST ***/
-			"application/json",
-			addGroup_Json
-		};
-		requestInfo.badlyFormed = iTwinId.empty() || iModelId.empty();
+			.ContentType	= "application/json",
+			.ContentString	= Json::ToString(addInfo),
 
-		TProcessHttpRequest<SavedViewGroupInfo>(
+			.badlyFormed	= iTwinId.empty()
+		};
+
+		impl_->ProcessHttpRequest(
 			requestInfo,
-			[](SavedViewGroupInfo& info, Http::Response const& response, std::string& strError) -> bool
+			[this](Http::Response const& response, RequestID const&, std::string& strError) -> bool
+		{
+			struct GroupInfoHolder
 			{
-				struct GroupInfoHolder
-				{
-					SavedViewGroupInfo group;
-				} groupHolder;
-				if (!Json::FromString(groupHolder, response.second, strError))
-				{
-					return false;
-				}
-				info = std::move(groupHolder.group);
-				return true;
-			},
-			[this](bool bResult, SavedViewGroupInfo const& resultData, RequestID const&)
+				SavedViewGroupInfo group;
+			} groupHolder;
+			bool const bResult = response.first >= 0
+				&& Json::FromString(groupHolder, response.second, strError);
+			if (impl_->observer_)
 			{
-				if (impl_->observer_)
-				{
-					impl_->observer_->OnSavedViewGroupAdded(bResult, resultData);
-				}
+				impl_->observer_->OnSavedViewGroupAdded(bResult, groupHolder.group);
 			}
-		);
+			return bResult;
+		});
 	}
 
 	void ITwinWebServices::DeleteSavedView(std::string const& savedViewId)
@@ -1284,32 +1456,30 @@ namespace SDK::Core
 		};
 		requestInfo.badlyFormed = savedViewId.empty();
 
-		TProcessHttpRequest<std::string>(
+		impl_->ProcessHttpRequest(
 			requestInfo,
-			[](std::string& outError, Http::Response const& response, std::string& /*strError*/) -> bool
+			[this, savedViewId](Http::Response const& response, RequestID const& requestId, std::string& strError) -> bool
 		{
+			std::string outError;
+			bool bResult = (response.first >= 0);
+
 			ITwinError iTwinError;
-			if (Json::FromString(iTwinError, response.second))
+			if (bResult && Json::FromString(iTwinError, response.second))
 			{
 				outError = GetErrorDescription(iTwinError);
-				return false;
+				bResult = false;
 			}
-			outError = {};
-			return true;
-		},
-			[this, savedViewId](bool bResult, std::string const& strResponse, RequestID const& requestId)
-		{
-			// in DeleteSavedView, the callbacks expect an error message (in case of failure)
+			// Here the callback expects an error message (in case of failure)
 			// => if none if provided, and if the last error recorded corresponds to our request, use the
 			// latter as response.
-			std::string outResponse = strResponse;
-			if (!bResult && outResponse.empty())
+			if (!bResult && outError.empty())
 			{
-				outResponse = GetRequestError(requestId);
+				outError = GetRequestError(requestId);
 			}
-			this->OnSavedViewDeleted(bResult, savedViewId, outResponse);
-		}
-		);
+			this->OnSavedViewDeleted(bResult, savedViewId, outError);
+			strError = outError;
+			return bResult;
+		});
 	}
 
 	void ITwinWebServices::OnSavedViewDeleted(bool bSuccess, std::string const& savedViewId, std::string const& Response) const
@@ -1324,41 +1494,38 @@ namespace SDK::Core
 	{
 		Detail::SavedViewEditInfo editInfo;
 		Detail::FillSavedViewEditInfo(editInfo, savedView, savedViewInfo);
-		const std::string editSavedView_Json = Json::ToString(editInfo);
 
-		ITwinAPIRequestInfo requestInfo =
+		ITwinAPIRequestInfo const requestInfo =
 		{
-			__func__,
-			EVerb::Patch,
-			std::string("/savedviews/") + savedViewInfo.id,
-			"application/vnd.bentley.itwin-platform.v1+json",
+			.ShortName		= __func__,
+			.Verb			= EVerb::Patch,
+			.UrlSuffix		= std::string("/savedviews/") + savedViewInfo.id,
+			.AcceptHeader	= "application/vnd.bentley.itwin-platform.v1+json",
 
 			/*** additional settings for PATCH ***/
-			"application/json",
-			editSavedView_Json
+			.ContentType	= "application/json",
+			.ContentString	= Json::ToString(editInfo),
+
+			.badlyFormed	= savedViewInfo.id.empty()
 		};
-		requestInfo.badlyFormed = savedViewInfo.id.empty();
 
-		using EditSavedViewData = Detail::SavedViewData;
-
-		TProcessHttpRequest<EditSavedViewData>(
+		impl_->ProcessHttpRequest(
 			requestInfo,
-			[](EditSavedViewData& editSVData, Http::Response const& response, std::string& strError) -> bool
+			[this](Http::Response const& response, RequestID const&, std::string& strError) -> bool
 		{
+			Detail::SavedViewData editSVData;
 			Detail::SavedViewFullInfoHolder svInfoHolder;
-			if (!Json::FromString(svInfoHolder, response.second, strError))
+			bool const bResult = response.first >= 0
+				&& Json::FromString(svInfoHolder, response.second, strError);
+			if (bResult)
 			{
-				return false;
+				svInfoHolder.MoveToSavedViewData(editSVData);
 			}
-			svInfoHolder.MoveToSavedViewData(editSVData);
-			return true;
-		},
-			[this](bool bResult, EditSavedViewData const& editSVData, RequestID const&)
-		{
 			if (impl_->observer_)
 			{
 				impl_->observer_->OnSavedViewEdited(bResult, editSVData.savedView, editSVData.savedViewInfo);
 			}
+			return bResult;
 		});
 	}
 
@@ -1367,31 +1534,32 @@ namespace SDK::Core
 	{
 		const ITwinAPIRequestInfo requestInfo =
 		{
-			__func__,
-			EVerb::Get,
-			std::string("/reality-management/reality-data/?iTwinId=") + iTwinId + "&types=Cesium3DTiles&$top=100",
-			"application/vnd.bentley.itwin-platform.v1+json",
-			"",
-			"",
-			/* custom headers */
+			.ShortName		= __func__,
+			.Verb			= EVerb::Get,
+			.UrlSuffix		= std::string("/reality-management/reality-data/?iTwinId=") + iTwinId + "&types=Cesium3DTiles&$top=100",
+			.AcceptHeader	= "application/vnd.bentley.itwin-platform.v1+json",
+
+			.CustomHeaders	=
 			{
 				{ "Prefer",	"return=minimal" },
 				{ "types",	"Cesium3DTiles" },
 			},
-			iTwinId.empty()
+
+			.badlyFormed	= iTwinId.empty()
 		};
-		TProcessHttpRequest<ITwinRealityDataInfos>(
+
+		impl_->ProcessHttpRequest(
 			requestInfo,
-			[iTwinId](ITwinRealityDataInfos& RealityData, Http::Response const& response, std::string& strError) -> bool
+			[this](Http::Response const& response, RequestID const&, std::string& strError) -> bool
 		{
-			return Json::FromString(RealityData, response.second, strError);
-		},
-			[this](bool bResult, ITwinRealityDataInfos const& resultData, RequestID const&)
-		{
+			ITwinRealityDataInfos realityData;
+			bool const bResult = response.first >= 0
+				&& Json::FromString(realityData, response.second, strError);
 			if (impl_->observer_)
 			{
-				impl_->observer_->OnRealityDataRetrieved(bResult, resultData);
+				impl_->observer_->OnRealityDataRetrieved(bResult, realityData);
 			}
+			return bResult;
 		});
 	}
 
@@ -1417,10 +1585,13 @@ namespace SDK::Core
 		};
 		requestInfo.badlyFormed = iTwinId.empty() || realityDataId.empty();
 
-		TProcessHttpRequest<ITwinRealityData3DInfo>(
+		impl_->ProcessHttpRequest(
 			requestInfo,
-			[this, iTwinId, realityDataId](ITwinRealityData3DInfo& realityData3DInfo, Http::Response const& response, std::string& strError) -> bool
+			[this, iTwinId, realityDataId](Http::Response const& response1, RequestID const&, std::string& strError1) -> bool
 		{
+			ITwinRealityData3DInfo realityData3DInfo;
+			realityData3DInfo.id = realityDataId;
+
 			struct DetailedRealityDataInfo
 			{
 				std::string id;
@@ -1434,11 +1605,19 @@ namespace SDK::Core
 			{
 				DetailedRealityDataInfo realityData;
 			} infoHolder;
-			if (!Json::FromString(infoHolder, response.second, strError))
+
+			bool const bResult1 = response1.first >= 0
+				&& Json::FromString(infoHolder, response1.second, strError1);
+			if (!bResult1)
 			{
+				// the 1st request has failed
+				if (impl_->observer_)
+				{
+					impl_->observer_->OnRealityData3DInfoRetrieved(false, realityData3DInfo);
+				}
 				return false;
 			}
-			realityData3DInfo.id = realityDataId;
+
 			realityData3DInfo.displayName = infoHolder.realityData.displayName;
 
 			// Make a second request to retrieve mesh URL
@@ -1449,11 +1628,13 @@ namespace SDK::Core
 				std::string("/reality-management/reality-data/") + realityDataId + "/readaccess?iTwinId=" + iTwinId,
 				"application/vnd.bentley.itwin-platform.v1+json"
 			};
-			TProcessHttpRequest<ITwinRealityData3DInfo>(
+
+			impl_->ProcessHttpRequest(
 				realDataRequestInfo,
 				[this, realityData3DInfo, detailedInfo = infoHolder.realityData]
-				(ITwinRealityData3DInfo& finalRealityData3DInfo, Http::Response const& response, std::string& strError) -> bool
+				(Http::Response const& response2, RequestID const&, std::string& strError2) -> bool
 			{
+				ITwinRealityData3DInfo finalRealityData3DInfo;
 				finalRealityData3DInfo.id = detailedInfo.id;
 				finalRealityData3DInfo.displayName = detailedInfo.displayName;
 				if (detailedInfo.extent)
@@ -1472,37 +1653,23 @@ namespace SDK::Core
 					RealDataLinks _links;
 				} linkInfo;
 
-				if (!Json::FromString(linkInfo, response.second, strError))
+				bool const bResult2 = response2.first >= 0
+					&& Json::FromString(linkInfo, response2.second, strError2);
+				if (bResult2)
 				{
-					return false;
+					finalRealityData3DInfo.meshUrl = Detail::FormatRealityDataUrl(
+						linkInfo._links.containerUrl.href,
+						detailedInfo.rootDocument);
 				}
-				finalRealityData3DInfo.meshUrl = Detail::FormatRealityDataUrl(
-					linkInfo._links.containerUrl.href,
-					detailedInfo.rootDocument);
-				return true;
-			},
-				[this](bool bResult, ITwinRealityData3DInfo const& FinalResultData, RequestID const&)
-			{
 				// This is for the 2nd request: broadcast final result
 				if (impl_->observer_)
 				{
-					impl_->observer_->OnRealityData3DInfoRetrieved(bResult, FinalResultData);
+					impl_->observer_->OnRealityData3DInfoRetrieved(bResult2, finalRealityData3DInfo);
 				}
+				return bResult2;
 			});
 
 			return true;
-		},
-			[this](bool bResult, ITwinRealityData3DInfo const& PartialResultData, RequestID const&)
-		{
-			// result of the 1st request: only broadcast it in case of failure
-			if (!bResult)
-			{
-				// the 1st request has failed
-				if (impl_->observer_)
-				{
-					impl_->observer_->OnRealityData3DInfoRetrieved(false, PartialResultData);
-				}
-			}
 		});
 	}
 
@@ -1664,87 +1831,94 @@ namespace SDK::Core
 	{
 		std::string const key = fmt::format("{}:{}", iModelId, changesetId);
 
-		ITwinAPIRequestInfo requestInfo = {
-			__func__,
-			EVerb::Post,
-			std::string("/imodel/rpc/v4/mode/1/context/") + iTwinId + "/imodel/" + iModelId
-			+ "/changeset/" + GetIModelRpcUrlChangeset(changesetId) + "/PresentationRpcInterface-4.1.0-getElementProperties",
-			"application/vnd.bentley.itwin-platform.v1+json",
+		ITwinAPIRequestInfo const requestInfo =
+		{
+			.ShortName		= __func__,
+			.Verb			= EVerb::Post,
+			.UrlSuffix		= std::string("/imodel/rpc/v4/mode/1/context/") + iTwinId
+								+ "/imodel/" + iModelId
+								+ "/changeset/" + GetIModelRpcUrlChangeset(changesetId)
+								+ "/PresentationRpcInterface-4.1.0-getElementProperties",
+			.AcceptHeader	= "application/vnd.bentley.itwin-platform.v1+json",
 
 			/*** additional settings for POST ***/
-			"text/plain",
-			"[{\"key\":\"" + key
-			+ "\",\"iTwinId\":\"" + iTwinId
-			+ "\",\"iModelId\":\"" + iModelId
-			+ "\",\"changeset\":{\"id\":\"" + changesetId
-			+ "\"}},{\"elementId\":\"" + elementId
-			+ "\"}]"
-		};
-		requestInfo.badlyFormed = iTwinId.empty() || iModelId.empty() || elementId.empty();
+			.ContentType	= "text/plain",
+			.ContentString	= "[{\"key\":\"" + key
+								+ "\",\"iTwinId\":\"" + iTwinId
+								+ "\",\"iModelId\":\"" + iModelId
+								+ "\",\"changeset\":{\"id\":\"" + changesetId
+								+ "\"}},{\"elementId\":\"" + elementId
+								+ "\"}]",
 
-		TProcessHttpRequest<ITwinElementProperties>(
+			.badlyFormed	= iTwinId.empty() || iModelId.empty() || elementId.empty()
+		};
+
+		impl_->ProcessHttpRequest(
 			requestInfo,
-			[this](ITwinElementProperties& elementProps, Http::Response const& response, std::string& strError) -> bool
+			[this, elementId](Http::Response const& response, RequestID const&, std::string& strError) -> bool
 		{
+			ITwinElementProperties elementProps;
+
 			struct ItemsHolder { rfl::Generic items; };
 			struct ResultHolder { ItemsHolder result; };
 			ResultHolder res;
-			if (!Json::FromString(res, response.second, strError))
+			bool bResult = response.first >= 0
+				&& Json::FromString(res, response.second, strError);
+			if (bResult)
 			{
-				return false;
+				ElementPropertiesVisitor propBuilder(elementProps);
+				try
+				{
+					std::visit(propBuilder, res.result.items.get());
+				}
+				catch (std::exception const& e)
+				{
+					strError = std::string("exception while parsing element properties: ") + e.what() + "\n";
+				}
+				strError += propBuilder.GetError();
+				bResult &= strError.empty();
 			}
-			ElementPropertiesVisitor propBuilder(elementProps);
-			try
-			{
-				std::visit(propBuilder, res.result.items.get());
-			}
-			catch (std::exception const& e)
-			{
-				strError = std::string("exception while parsing element properties: ") + e.what() + "\n";
-			}
-			strError += propBuilder.GetError();
-			return strError.empty();
-		},
-			[this](bool bResult, ITwinElementProperties const& resultData, RequestID const&)
-		{
 			if (impl_->observer_)
 			{
-				impl_->observer_->OnElementPropertiesRetrieved(bResult, resultData);
+				impl_->observer_->OnElementPropertiesRetrieved(bResult, elementProps, elementId);
 			}
-		}
-		);
+			return bResult;
+		});
 	}
 
 	void ITwinWebServices::GetIModelProperties(std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId)
 	{
-		ITwinAPIRequestInfo requestInfo = {
-			__func__,
-			EVerb::Post,
-			std::string("/imodel/rpc/v4/mode/1/context/") + iTwinId + "/imodel/" + iModelId
-			+ "/changeset/" + GetIModelRpcUrlChangeset(changesetId) + "/IModelReadRpcInterface-3.6.0-getConnectionProps",
-			"application/vnd.bentley.itwin-platform.v1+json",
+		ITwinAPIRequestInfo const requestInfo =
+		{
+			.ShortName		= __func__,
+			.Verb			= EVerb::Post,
+			.UrlSuffix		= std::string("/imodel/rpc/v4/mode/1/context/") + iTwinId
+								+ "/imodel/" + iModelId
+								+ "/changeset/" + GetIModelRpcUrlChangeset(changesetId)
+								+ "/IModelReadRpcInterface-3.6.0-getConnectionProps",
+			.AcceptHeader	= "application/vnd.bentley.itwin-platform.v1+json",
 
 			/*** additional settings for POST ***/
-			"text/plain",
-			"[{\"iTwinId\":\"" + iTwinId
-			+ "\",\"iModelId\":\"" + iModelId
-			+ "\",\"changeset\":{\"id\":\"" + changesetId
-			+ "\"}}]"
+			.ContentType	= "text/plain",
+			.ContentString	= "[{\"iTwinId\":\"" + iTwinId
+								+ "\",\"iModelId\":\"" + iModelId
+								+ "\",\"changeset\":{\"id\":\"" + changesetId
+								+ "\"}}]",
+			.badlyFormed	= iTwinId.empty() || iModelId.empty()
 		};
-		requestInfo.badlyFormed = iTwinId.empty() || iModelId.empty();
 
-		TProcessHttpRequest<IModelProperties>(
+		impl_->ProcessHttpRequest(
 			requestInfo,
-			[this](IModelProperties& iModelProps, Http::Response const& response, std::string& strError) -> bool
+			[this](Http::Response const& response, RequestID const&, std::string& strError) -> bool
 		{
-			return Json::FromString(iModelProps, response.second, strError);
-		},
-			[this](bool bResult, IModelProperties const& resultData, RequestID const&)
-		{
+			IModelProperties iModelProps;
+			bool const bResult = response.first >= 0
+				&& Json::FromString(iModelProps, response.second, strError);
 			if (impl_->observer_)
 			{
-				impl_->observer_->OnIModelPropertiesRetrieved(bResult, resultData);
+				impl_->observer_->OnIModelPropertiesRetrieved(bResult, iModelProps);
 			}
+			return bResult;
 		});
 	}
 
@@ -1752,31 +1926,34 @@ namespace SDK::Core
 		std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId,
 		std::string const& ECSQLQuery, int offset, int count)
 	{
-		ITwinAPIRequestInfo requestInfo{
-			__func__,
-			EVerb::Post,
-			std::string("/imodel/rpc/v4/mode/1/context/") + iTwinId + "/imodel/" + iModelId 
-			+ "/changeset/" + GetIModelRpcUrlChangeset(changesetId) + "/IModelReadRpcInterface-3.6.0-queryRows",
-			"application/vnd.bentley.itwin-platform.v1+json",
+		return ITwinAPIRequestInfo{
+			.ShortName		= __func__,
+			.Verb			= EVerb::Post,
+			.UrlSuffix		= std::string("/imodel/rpc/v4/mode/1/context/") + iTwinId
+								+ "/imodel/" + iModelId
+								+ "/changeset/" + GetIModelRpcUrlChangeset(changesetId)
+								+ "/IModelReadRpcInterface-3.6.0-queryRows",
+			.AcceptHeader	= "application/vnd.bentley.itwin-platform.v1+json",
 
 			/*** additional settings for POST ***/
-			"text/plain",
-			"[{\"iTwinId\":\"" + iTwinId
-			+ "\",\"iModelId\":\"" + iModelId
-			+ "\",\"changeset\":{\"id\":\"" + changesetId
-			+ "\"}},{\"limit\":{\"offset\":" + std::to_string(offset)
-			+ ",\"count\":" + std::to_string(count)
-			+ "},\"rowFormat\":1,\"convertClassIdsToClassNames\":true,\"kind\":1,\"valueFormat\":0," \
-				"\"query\":\"" + ECSQLQuery
-			+ "\"}]"
+			.ContentType	= "text/plain",
+			.ContentString	= "[{\"iTwinId\":\"" + iTwinId
+								+ "\",\"iModelId\":\"" + iModelId
+								+ "\",\"changeset\":{\"id\":\"" + changesetId
+								+ "\"}},{\"limit\":{\"offset\":" + std::to_string(offset)
+								+ ",\"count\":" + std::to_string(count)
+								+ "},\"rowFormat\":1,\"convertClassIdsToClassNames\":true,\"kind\":1,\"valueFormat\":0," \
+									"\"query\":\"" + ECSQLQuery
+								+ "\"}]",
+
+			.badlyFormed	= iTwinId.empty() || iModelId.empty() || ECSQLQuery.empty()
 		};
-		requestInfo.badlyFormed = iTwinId.empty() || iModelId.empty() || ECSQLQuery.empty();
-		return requestInfo;
 	}
 
-	RequestID ITwinWebServices::QueryIModel(
+	void ITwinWebServices::QueryIModel(
 		std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId,
-		std::string const& ECSQLQuery, int offset, int count, ITwinAPIRequestInfo const* requestInfo)
+		std::string const& ECSQLQuery, int offset, int count,
+		std::function<void(RequestID const&)>&& notifyRequestID, ITwinAPIRequestInfo const* requestInfo)
 	{
 		std::optional<ITwinAPIRequestInfo> optRequestInfo;
 		if (!requestInfo)
@@ -1785,26 +1962,22 @@ namespace SDK::Core
 													  count));
 			requestInfo = &(*optRequestInfo);
 		}
-		return TProcessHttpRequest<std::string>(
+
+		impl_->ProcessHttpRequest(
 			*requestInfo,
-			[](std::string &Infos, Http::Response const& response, std::string& strError) -> bool
+			[this](Http::Response const& response, RequestID const& requestId, std::string& strError) -> bool
 			{
 				struct DataHolder { rfl::Generic data; };
 				DataHolder res;
-				if (!Json::FromString(res, response.second, strError))
-				{
-					return false;
-				}
-				Infos = response.second;
-				return true;
-			},
-			[this](bool bResult, std::string const& ResultData, RequestID const& requestId)
-			{
+				bool const bResult = response.first >= 0
+					&& Json::FromString(res, response.second, strError);
 				if (impl_->observer_)
 				{
-					impl_->observer_->OnIModelQueried(bResult, ResultData, requestId);
+					impl_->observer_->OnIModelQueried(bResult, response.second, requestId);
 				}
-			}
+				return bResult;
+			},
+			std::move(notifyRequestID)
 		);
 	}
 
@@ -2031,28 +2204,33 @@ namespace SDK::Core
 		std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId,
 		std::vector<std::string> const& materialIds)
 	{
-		std::string const jsonMatIDs = Json::ToString(materialIds);
-		ITwinAPIRequestInfo requestInfo = {
-			__func__,
-			EVerb::Post,
-			std::string("/imodel/rpc/v4/mode/1/context/") + iTwinId + "/imodel/" + iModelId
-			+ "/changeset/" + GetIModelRpcUrlChangeset(changesetId) + "/IModelReadRpcInterface-3.6.0-getElementProps",
-			"application/vnd.bentley.itwin-platform.v1+json",
+		ITwinAPIRequestInfo const requestInfo =
+		{
+			.ShortName		= __func__,
+			.Verb			= EVerb::Post,
+			.UrlSuffix		= std::string("/imodel/rpc/v4/mode/1/context/") + iTwinId
+								+ "/imodel/" + iModelId
+								+ "/changeset/" + GetIModelRpcUrlChangeset(changesetId)
+								+ "/IModelReadRpcInterface-3.6.0-getElementProps",
+			.AcceptHeader	= "application/vnd.bentley.itwin-platform.v1+json",
 
 			/*** additional settings for POST ***/
-			"text/plain",
-			"[{\"iTwinId\":\"" + iTwinId
-			+ "\",\"iModelId\":\"" + iModelId
-			+ "\",\"changeset\":{\"id\":\"" + changesetId
-			+ "\"}}," + jsonMatIDs
-			+ "]"
-		};
-		requestInfo.badlyFormed = iTwinId.empty() || iModelId.empty() || materialIds.empty();
+			.ContentType	= "text/plain",
+			.ContentString	= "[{\"iTwinId\":\"" + iTwinId
+								+ "\",\"iModelId\":\"" + iModelId
+								+ "\",\"changeset\":{\"id\":\"" + changesetId
+								+ "\"}}," + Json::ToString(materialIds)
+								+ "]",
 
-		TProcessHttpRequest<ITwinMaterialPropertiesMap>(
+			.badlyFormed	= iTwinId.empty() || iModelId.empty() || materialIds.empty()
+		};
+
+		impl_->ProcessHttpRequest(
 			requestInfo,
-			[this](ITwinMaterialPropertiesMap& itwinMaterials, Http::Response const& response, std::string& strError) -> bool
+			[this](Http::Response const& response, RequestID const&, std::string& strError) -> bool
 		{
+			ITwinMaterialPropertiesMap itwinMaterials;
+
 			struct MaterialAssets
 			{
 				rfl::Generic renderMaterial;
@@ -2076,10 +2254,8 @@ namespace SDK::Core
 				MaterialJsonProperties jsonProperties;
 			};
 			std::vector<MaterialInfo> infos;
-			if (!Json::FromString(infos, response.second, strError))
-			{
-				return false;
-			}
+			bool bResult = response.first >= 0
+				&& Json::FromString(infos, response.second, strError);
 			for (MaterialInfo const& info : infos)
 			{
 				auto itMatProps = itwinMaterials.data_.emplace(info.id, ITwinMaterialProperties());
@@ -2102,16 +2278,15 @@ namespace SDK::Core
 				}
 				strError += propBuilder.GetError();
 			}
-			return strError.empty();
-		},
-			[this](bool bResult, ITwinMaterialPropertiesMap const& resultData, RequestID const&)
-		{
+			bResult &= strError.empty();
+
 			if (impl_->observer_)
 			{
-				impl_->observer_->OnMaterialPropertiesRetrieved(bResult, resultData);
+				impl_->observer_->OnMaterialPropertiesRetrieved(bResult, itwinMaterials);
 			}
-		}
-		);
+
+			return bResult;
+		});
 	}
 
 	void ITwinWebServices::GetMaterialProperties(
@@ -2121,57 +2296,36 @@ namespace SDK::Core
 		GetMaterialListProperties(iTwinId, iModelId, changesetId, { materialId });
 	}
 
-	void ITwinWebServices::GetTextureData(
-		std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId,
-		std::string const& textureId)
+	static bool ParseTextureResponse(ITwinTextureData& itwinTexture, Http::Response const& response,
+									 std::string& strError)
 	{
-		ITwinAPIRequestInfo requestInfo = {
-			__func__,
-			EVerb::Post,
-			std::string("/imodel/rpc/v4/mode/1/context/") + iTwinId
-				+ "/imodel/" + iModelId
-				+ "/changeset/" + GetIModelRpcUrlChangeset(changesetId) + "/IModelReadRpcInterface-3.6.0-queryTextureData",
-			"application/vnd.bentley.itwin-platform.v1+json",
-
-			/*** additional settings for POST ***/
-			"text/plain",
-			"[{\"iTwinId\":\"" + iTwinId
-			+ "\",\"iModelId\":\"" + iModelId
-			+ "\",\"changeset\":{\"id\":\"" + changesetId
-			+ "\"}},{\"name\":\"" + textureId
-			+ "\"}]"
-		};
-		requestInfo.badlyFormed = iTwinId.empty() || iModelId.empty() || textureId.empty();
-
-		// Here we need the *full* retrieved response, not just a string
-		requestInfo.needRawData = true;
-
-		TProcessHttpRequest<ITwinTextureData>(
-			requestInfo,
-			[this](ITwinTextureData& itwinTexture, Http::Response const& response, std::string& strError) -> bool
+		if (response.first < 0)
 		{
-			if (!response.rawdata_)
-			{
-				strError = "internal error (missing binary data)";
-				return false;
-			}
-			struct BytesInfo
-			{
-				std::optional<bool> isBinary;
-				std::optional<int> index;
-				uint32_t size = 0;
-				std::optional<uint32_t> chunks;
-			};
-			struct TexDataJsonPart
-			{
-				int width = 0;
-				int height = 0;
-				int format = -1;
-				std::optional<int> transparency;
-				BytesInfo bytes;
-			};
+			// Early failure in request.
+			return false;
+		}
+		if (!response.rawdata_)
+		{
+			strError = "internal error (missing binary data)";
+			return false;
+		}
+		struct BytesInfo
+		{
+			std::optional<bool> isBinary;
+			std::optional<int> index;
+			uint32_t size = 0;
+			std::optional<uint32_t> chunks;
+		};
+		struct TexDataJsonPart
+		{
+			int width = 0;
+			int height = 0;
+			int format = -1;
+			std::optional<int> transparency;
+			BytesInfo bytes;
+		};
 
-			/* The response does not start with the JSON part directly :
+		/* The response does not start with the JSON part directly :
 
 ----------------------------058561453697718044834493
 Content-Disposition: form-data; name="objects"
@@ -2181,88 +2335,716 @@ Content-Disposition: form-data; name="objects"
 Content-Disposition: form-data; name="data-0"
 Content-Type: application/octet-stream
 
-			*/
+		*/
 
-			auto const extractJson = [](std::string const& r) -> std::string
-			{
-				auto startPos = r.find('{');
-				if (startPos == std::string::npos)
-					return {};
-				int openedBrackets = 1;
-				auto curPos = startPos;
-				while (openedBrackets > 0)
-				{
-					auto nextPos = r.find_first_of("{}", curPos + 1);
-					if (nextPos == std::string::npos)
-						break;
-					if (r.at(nextPos) == '{')
-						openedBrackets++;
-					else
-						openedBrackets--;
-					curPos = nextPos;
-				}
-				if (openedBrackets != 0)
-				{
-					// BE_ISSUE("mismatch in delimiters");
-					return {};
-				}
-				return r.substr(startPos, curPos + 1 - startPos);
-			};
-			TexDataJsonPart texDataJson;
-			if (!Json::FromString(texDataJson, extractJson(response.second), strError))
-			{
-				return false;
-			}
-			if (texDataJson.bytes.size == 0)
-			{
-				strError = "null texture size";
-				return false;
-			}
-			itwinTexture.width = texDataJson.width;
-			itwinTexture.height = texDataJson.height;
-			if (texDataJson.format >= 0 && texDataJson.format <= 3)
-			{
-				itwinTexture.format = static_cast<ImageSourceFormat>(texDataJson.format);
-			}
-			if (texDataJson.transparency)
-			{
-				itwinTexture.transparency = static_cast<TextureTransparency>(*texDataJson.transparency);
-			}
-
-			// Extract the binary part from the response's raw data
-			auto const& rawdata(*response.rawdata_);
-			const std::string_view octetStream("octet-stream");
-			size_t startBinaryPos = response.second.find(octetStream);
-			if (startBinaryPos == std::string::npos)
-			{
-				strError = "could not find octet-stream chunk";
-				return false;
-			}
-			startBinaryPos += octetStream.size();
-			startBinaryPos = response.second.find_first_not_of("\r\n", startBinaryPos);
-			if (startBinaryPos == std::string::npos)
-			{
-				strError = "could not recover binary data start";
-				return false;
-			}
-			if (startBinaryPos + texDataJson.bytes.size > rawdata.size())
-			{
-				strError = "mismatch string content vs raw data";
-				return false;
-			}
-			itwinTexture.bytes.resize(texDataJson.bytes.size);
-			std::copy(
-				rawdata.begin() + startBinaryPos,
-				rawdata.begin() + startBinaryPos + texDataJson.bytes.size,
-				itwinTexture.bytes.data());
-			return true;
-		},
-			[this, textureId](bool bResult, ITwinTextureData const& resultData, RequestID const&)
+		auto const extractJson = [](std::string const& r) -> std::string
 		{
+			auto startPos = r.find('{');
+			if (startPos == std::string::npos)
+				return {};
+			int openedBrackets = 1;
+			auto curPos = startPos;
+			while (openedBrackets > 0)
+			{
+				auto nextPos = r.find_first_of("{}", curPos + 1);
+				if (nextPos == std::string::npos)
+					break;
+				if (r.at(nextPos) == '{')
+					openedBrackets++;
+				else
+					openedBrackets--;
+				curPos = nextPos;
+			}
+			if (openedBrackets != 0)
+			{
+				// BE_ISSUE("mismatch in delimiters");
+				return {};
+			}
+			return r.substr(startPos, curPos + 1 - startPos);
+		};
+		TexDataJsonPart texDataJson;
+		if (!Json::FromString(texDataJson, extractJson(response.second), strError))
+		{
+			return false;
+		}
+		if (texDataJson.bytes.size == 0)
+		{
+			strError = "null texture size";
+			return false;
+		}
+		itwinTexture.width = texDataJson.width;
+		itwinTexture.height = texDataJson.height;
+		if (texDataJson.format >= 0 && texDataJson.format <= 3)
+		{
+			itwinTexture.format = static_cast<ImageSourceFormat>(texDataJson.format);
+		}
+		if (texDataJson.transparency)
+		{
+			itwinTexture.transparency = static_cast<TextureTransparency>(*texDataJson.transparency);
+		}
+
+		// Extract the binary part from the response's raw data
+		auto const& rawdata(*response.rawdata_);
+		const std::string_view octetStream("octet-stream");
+		size_t startBinaryPos = response.second.find(octetStream);
+		if (startBinaryPos == std::string::npos)
+		{
+			strError = "could not find octet-stream chunk";
+			return false;
+		}
+		startBinaryPos += octetStream.size();
+		startBinaryPos = response.second.find_first_not_of("\r\n", startBinaryPos);
+		if (startBinaryPos == std::string::npos)
+		{
+			strError = "could not recover binary data start";
+			return false;
+		}
+		if (startBinaryPos + texDataJson.bytes.size > rawdata.size())
+		{
+			strError = "mismatch string content vs raw data";
+			return false;
+		}
+		itwinTexture.bytes.resize(texDataJson.bytes.size);
+		std::copy(
+			rawdata.begin() + startBinaryPos,
+			rawdata.begin() + startBinaryPos + texDataJson.bytes.size,
+			itwinTexture.bytes.data());
+		return true;
+	}
+
+
+	void ITwinWebServices::GetTextureData(
+		std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId,
+		std::string const& textureId)
+	{
+		ITwinAPIRequestInfo const requestInfo =
+		{
+			.ShortName		= __func__,
+			.Verb			= EVerb::Post,
+			.UrlSuffix		= std::string("/imodel/rpc/v4/mode/1/context/") + iTwinId
+								+ "/imodel/" + iModelId
+								+ "/changeset/" + GetIModelRpcUrlChangeset(changesetId)
+								+ "/IModelReadRpcInterface-3.6.0-queryTextureData",
+			.AcceptHeader	= "application/vnd.bentley.itwin-platform.v1+json",
+
+			/*** additional settings for POST ***/
+			.ContentType	= "text/plain",
+			.ContentString	= "[{\"iTwinId\":\"" + iTwinId
+								+ "\",\"iModelId\":\"" + iModelId
+								+ "\",\"changeset\":{\"id\":\"" + changesetId
+								+ "\"}},{\"name\":\"" + textureId
+								+ "\"}]",
+
+			.badlyFormed	= iTwinId.empty() || iModelId.empty() || textureId.empty(),
+
+			/* Here we need the* full* retrieved response, not just a string */
+			.needRawData = true
+		};
+
+		impl_->ProcessHttpRequest(
+			requestInfo,
+			[this, textureId](Http::Response const& response, RequestID const&, std::string& strError) -> bool
+		{
+			ITwinTextureData textureData;
+			bool const bResult = ParseTextureResponse(textureData, response, strError);
 			if (impl_->observer_)
 			{
-				impl_->observer_->OnTextureDataRetrieved(bResult, textureId, resultData);
+				impl_->observer_->OnTextureDataRetrieved(bResult, textureId, textureData);
 			}
+			return bResult;
 		});
 	}
+
+	bool ITwinWebServices::IsSetupForForMaterialMLPrediction() const
+	{
+		return impl_->specificServer_ == Impl::ESpecificServer::MaterialPrediction;
+	}
+
+	void ITwinWebServices::SetupForMaterialMLPrediction()
+	{
+		ModifyServerSetting([this] { impl_->specificServer_ = Impl::ESpecificServer::MaterialPrediction; });
+	}
+
+	void ITwinWebServices::SetMaterialMLPredictionCacheFolder(std::filesystem::path const& cacheFolder)
+	{
+		std::error_code ec;
+		std::filesystem::path actualCacheFolder(cacheFolder);
+		if (!cacheFolder.empty())
+		{
+			// Create cache folder if needed.
+			std::error_code ec;
+			if (!std::filesystem::is_directory(cacheFolder, ec)
+				&& !std::filesystem::create_directories(cacheFolder, ec))
+			{
+				actualCacheFolder.clear();
+			}
+		}
+		impl_->matMLPredictionCacheFolder_ = actualCacheFolder;
+	}
+
+	ITwinAPIRequestInfo ITwinWebServices::Impl::BuildMatMLPredictionRequestInfo(EMatMLPredictionStep eStep)
+	{
+		BE_ASSERT(matMLPredictionInfo_
+			&& !matMLPredictionInfo_->iTwinId_.empty()
+			&& !matMLPredictionInfo_->iModelId_.empty());
+
+		// Post or Get
+		bool const usePost = (eStep == EMatMLPredictionStep::CreatePipelineRun
+			|| eStep == EMatMLPredictionStep::StartPipelineRun);
+		ITwinAPIRequestInfo requestInfo = {
+			fmt::format("MatMLPrediction_{}", static_cast<uint8_t>(eStep)),
+			usePost ? EVerb::Post : EVerb::Get,
+			"/InferencePipelines",
+			"application/vnd.bentley.itwin-platform.v1+json"
+		};
+
+		if (eStep == EMatMLPredictionStep::GetPipeline)
+		{
+			// Initial request is used to retrieve the pipeline ID needed for all other steps
+			requestInfo.UrlSuffix += "?name=MaterialAssignment";
+		}
+		else
+		{
+			requestInfo.UrlSuffix += fmt::format("/{}/Runs", matMLPredictionInfo_->pipeline_id_);
+			requestInfo.badlyFormed = matMLPredictionInfo_->pipeline_id_.empty();
+		}
+		if (eStep >= EMatMLPredictionStep::StartPipelineRun)
+		{
+			requestInfo.UrlSuffix += fmt::format("/{}", matMLPredictionInfo_->run_id_);
+			requestInfo.badlyFormed = matMLPredictionInfo_->run_id_.empty();
+		}
+
+		switch (eStep)
+		{
+		default:
+		case EMatMLPredictionStep::Init:
+		case EMatMLPredictionStep::Done:
+			BE_ISSUE("no request for this step");
+			requestInfo.badlyFormed = true;
+			break;
+
+		case EMatMLPredictionStep::GetPipeline:
+			break;
+
+		case EMatMLPredictionStep::CreatePipelineRun:
+		{
+			requestInfo.ContentType = "application/json";
+			requestInfo.ContentString = std::string("{"
+				"\"pipelineVersion\": \"") + matMLPredictionInfo_->pipeline_version_ + "\","
+				"\"iTwinId\": \"" + matMLPredictionInfo_->iTwinId_ + "\","
+				"\"parameters\": { \"iTwinId\": \"" + matMLPredictionInfo_->iTwinId_
+				+ "\", \"iModelId\": \"" + matMLPredictionInfo_->iModelId_
+				+ "\", \"changeSetId\": \"" + matMLPredictionInfo_->changesetId_ + "\" }}";
+			requestInfo.badlyFormed |= matMLPredictionInfo_->iTwinId_.empty()
+				|| matMLPredictionInfo_->iModelId_.empty();
+			break;
+		}
+
+		case EMatMLPredictionStep::StartPipelineRun:
+			requestInfo.UrlSuffix += "/Start";
+			break;
+
+		case EMatMLPredictionStep::GetPipelineRunStatus:
+			break;
+
+		case EMatMLPredictionStep::ListResults:
+			requestInfo.UrlSuffix += "/Results";
+			break;
+
+		case EMatMLPredictionStep::GetResult:
+			requestInfo.UrlSuffix += fmt::format("/Results/{}/Content", matMLPredictionInfo_->result_file_id_);
+			requestInfo.badlyFormed = matMLPredictionInfo_->result_file_id_.empty();
+			break;
+		}
+		BE_ASSERT(!requestInfo.badlyFormed);
+		return requestInfo;
+	}
+
+	namespace Detail
+	{
+		struct InferenceInfo
+		{
+			std::string id;
+			std::string status;
+			std::optional<int> totalSteps;
+			std::optional<int> completedSteps;
+		};
+		struct InferenceInfoHolder
+		{
+			InferenceInfo inference;
+		};
+
+		struct Result
+		{
+			std::string id;
+			std::string name; // will always be "results.json" in our case
+			uint64_t size = 0;
+		};
+		struct ResultVec
+		{
+			std::vector<Result> results;
+		};
+
+		struct InferenceElementInfo
+		{
+			std::string id;
+			std::string confidence; // why not a double?
+		};
+		struct InferenceMaterialEntry
+		{
+			std::string material; // name of the material - eg. "Wood"
+			std::vector<InferenceElementInfo> elements;
+		};
+
+		void TranslateTo(std::vector<InferenceMaterialEntry> const& MLOutput, ITwinMaterialPrediction& predictions)
+		{
+			auto& dstData(predictions.data);
+			dstData.clear();
+			dstData.reserve(MLOutput.size());
+			for (auto const& e : MLOutput)
+			{
+				auto& dstEntry = dstData.emplace_back();
+				dstEntry.material = e.material;
+				dstEntry.elements.reserve(e.elements.size());
+				std::transform(
+					e.elements.begin(), e.elements.end(),
+					std::back_inserter(dstEntry.elements),
+					[](InferenceElementInfo const& eltInfo) noexcept
+				{
+					return std::stoull(eltInfo.id, nullptr, /*base*/16);
+				});
+			}
+		}
+	}
+
+
+	void ITwinWebServices::Impl::ParseMatMLPredictionResponse(EMatMLPredictionStep eStep,
+		Http::Response const& response, RequestID const&,
+		MatMLPredictionParseResult& parseResult)
+	{
+		std::string& parsingError(parseResult.parsingError);
+		// Distinguish 2 kinds of errors: parsing vs failed pipeline creation/run
+		bool& responseOK(parseResult.parsingOK);
+		bool& continueJob(parseResult.continueJob);
+
+		responseOK = continueJob = false;
+		parseResult.retryWithDelay = false; // specific to GetPipelineRunStatus
+
+		if (!(response.first >= 200 && response.first < 300))
+		{
+			parsingError = fmt::format("Error response code: {}", response.first);
+			return;
+		}
+
+		// Most of responses will consist in a description of current run.
+		Detail::InferenceInfoHolder body;
+
+		switch (eStep)
+		{
+		case EMatMLPredictionStep::GetPipeline:
+		{
+			if (observer_)
+			{
+				observer_->OnMatMLPredictionProgress(0.f);
+			}
+			struct PipelineInfo
+			{
+				std::string id;
+				std::optional<std::string> latestVersion;
+				std::optional<std::string> name;
+				std::optional<int> productId;
+			};
+			struct PipelineInfoVec
+			{
+				std::vector<PipelineInfo> pipelines;
+			};
+			PipelineInfoVec vec;
+			responseOK = Json::FromString(vec, response.second, parsingError);
+			continueJob = responseOK && !vec.pipelines.empty();
+			if (continueJob)
+			{
+				// Fill pipeline_id for next requests
+				matMLPredictionInfo_->pipeline_id_ = vec.pipelines[0].id;
+
+				// Also store latest version
+				if (vec.pipelines[0].latestVersion)
+				{
+					matMLPredictionInfo_->pipeline_version_ = *vec.pipelines[0].latestVersion;
+				}
+			}
+			break;
+		}
+
+		case EMatMLPredictionStep::CreatePipelineRun:
+		{
+			responseOK = Json::FromString(body, response.second, parsingError);
+			continueJob = responseOK && !body.inference.id.empty();
+			matMLPredictionInfo_->run_id_ = body.inference.id;
+			break;
+		}
+
+		case EMatMLPredictionStep::StartPipelineRun:
+		{
+			responseOK = Json::FromString(body, response.second, parsingError);
+			continueJob = responseOK && (body.inference.id == matMLPredictionInfo_->run_id_);
+			if (continueJob && !matMLPredictionCacheFolder_.empty())
+			{
+				// Save current pipeline info, in order to be able to resume in a future session, in case the
+				// user quits Carrot before the material prediction job terminates.
+				std::ofstream(matMLPredictionCacheFolder_ / "info.json") << rfl::json::write(
+					*matMLPredictionInfo_, YYJSON_WRITE_PRETTY);
+			}
+			break;
+		}
+
+		case EMatMLPredictionStep::GetPipelineRunStatus:
+		{
+			responseOK = Json::FromString(body, response.second, parsingError);
+			if (responseOK)
+			{
+				continueJob = true;
+
+				// Progression feedback - very coarse for now, based on step indications
+				if (body.inference.completedSteps
+					&& body.inference.totalSteps
+					&& matMLPredictionInfo_->completedSteps_ < *body.inference.completedSteps)
+				{
+					matMLPredictionInfo_->completedSteps_ = *body.inference.completedSteps;
+					float const fTotalSteps = static_cast<float>(*body.inference.totalSteps);
+					if (observer_ && fTotalSteps >= 1.f)
+					{
+						observer_->OnMatMLPredictionProgress(
+							static_cast<float>(matMLPredictionInfo_->completedSteps_) / fTotalSteps);
+					}
+				}
+
+				if (body.inference.status == "Failed")
+				{
+					// The inference has failed => abort
+					BE_LOGE("ITwinAPI", "[ML Material Prediction] A problem has occurred during the inference - abort job");
+
+					// Make sure the failed run will not be tested again in the future
+					RemoveMatMLInfoFile();
+
+					continueJob = false;
+				}
+				else if (body.inference.status != "Succeeded"
+					  && body.inference.status != "Finished")
+				{
+					// Can be "InProgress", "Queued"...
+					parseResult.retryWithDelay = true;
+				}
+			}
+			break;
+		}
+
+		case EMatMLPredictionStep::ListResults:
+		{
+			Detail::ResultVec resVec;
+			responseOK = Json::FromString(resVec, response.second, parsingError);
+			continueJob = responseOK && resVec.results.size() > 0;
+			if (continueJob)
+			{
+				matMLPredictionInfo_->result_file_id_ = resVec.results[0].id;
+			}
+			break;
+		}
+
+		case EMatMLPredictionStep::GetResult:
+		{
+			std::vector<Detail::InferenceMaterialEntry> result;
+			responseOK = Json::FromString(result, response.second, parsingError);
+			continueJob = responseOK;
+			if (continueJob)
+			{
+				// Translate it in a format that is easier to handle by glTF Tuner
+				Detail::TranslateTo(result, matMLPredictionInfo_->result_);
+
+				// Cache this result
+				if (!matMLPredictionCacheFolder_.empty())
+				{
+					std::ofstream(matMLPredictionCacheFolder_ / "results.json") << rfl::json::write(
+						matMLPredictionInfo_->result_, YYJSON_WRITE_PRETTY);
+				}
+			}
+			break;
+		}
+
+		default:
+		case EMatMLPredictionStep::Init:
+		case EMatMLPredictionStep::Done:
+			BE_ISSUE("no response expected for this step");
+			break;
+		}
+	}
+
+	bool ITwinWebServices::Impl::ProcessMatMLPredictionStepWithDelay(EMatMLPredictionStep eStep)
+	{
+		if (!observer_)
+		{
+			// This service helper is now orphan (the level may have been exited...)
+			return false;
+		}
+
+		// Repeat the same step after a delay
+		auto const& authMngr = ITwinAuthManager::GetInstance(owner_.env_);
+		if (authMngr)
+		{
+			authMngr->UniqueDelayedCall(uniqueName_ + "MatMLPredictionPipeline",
+				[this, eStep, isValidLambda = isThisValid_]()
+			{
+				if (*isValidLambda)
+				{
+					ProcessMatMLPredictionStep(eStep);
+				}
+				return false; // only tick once
+			}, 10.0 /* in seconds*/);
+			return true;
+		}
+		else
+		{
+			BE_LOGE("ITwinAPI", "[ML Material Prediction] No delayed call support - abort job");
+			return false;
+		}
+	}
+
+	std::pair<double, int> ITwinWebServices::Impl::ShouldRetryMaterialMLStep(
+		EMatMLPredictionStep eStep, int attempt, int httpCode) const
+	{
+		if (!observer_)
+		{
+			// Do not retry if we are orphan (UE exiting...)
+			return std::make_pair(0., 0);
+		}
+		if (isResumingMatMLPrediction_)
+		{
+			// ...nor if we have resumed a previous job: in such case, the pipeline run may we are requesting
+			// may have been destroyed on the server, typically if it was started a long time ago...
+			// In such case, we will restart from scratch.
+			return std::make_pair(0., 0);
+		}
+
+		// Some Material Prediction steps should *not* be retried
+		switch (eStep)
+		{
+		case EMatMLPredictionStep::GetPipeline:
+		case EMatMLPredictionStep::ListResults:
+		case EMatMLPredictionStep::GetResult:
+			return defaultShouldRetryFunc(attempt, httpCode);
+
+		default:
+		case EMatMLPredictionStep::Init:
+		case EMatMLPredictionStep::Done:
+			BE_ISSUE("invalid ML step");
+			[[fallthrough]];
+		case EMatMLPredictionStep::CreatePipelineRun:
+		case EMatMLPredictionStep::StartPipelineRun:
+		case EMatMLPredictionStep::GetPipelineRunStatus:
+			return std::make_pair(0., 0);
+		}
+	}
+
+	void ITwinWebServices::Impl::ResetMatMLJobData()
+	{
+		matMLPredictionInfo_->pipeline_id_ = {};
+		matMLPredictionInfo_->pipeline_version_ = {};
+		matMLPredictionInfo_->run_id_ = {};
+		matMLPredictionInfo_->result_file_id_ = {};
+		matMLPredictionInfo_->result_ = {};
+	}
+
+	void ITwinWebServices::Impl::RemoveMatMLInfoFile()
+	{
+		// Make sure the failed run will not be tested again in the future
+		if (!matMLPredictionCacheFolder_.empty())
+		{
+			std::error_code ec;
+			auto const matMLInfoFile = matMLPredictionCacheFolder_ / "info.json";
+			if (std::filesystem::exists(matMLInfoFile, ec))
+			{
+				std::filesystem::remove(matMLInfoFile, ec);
+			}
+		}
+	}
+
+	void ITwinWebServices::Impl::ProcessMatMLPredictionStep(EMatMLPredictionStep eStep)
+	{
+		if (specificServer_ != ESpecificServer::MaterialPrediction)
+		{
+			BE_ISSUE("SetupForMaterialMLPrediction not called!");
+			return;
+		}
+		if (!matMLPredictionInfo_)
+		{
+			BE_ISSUE("MaterialMLPredictionInfo not initialized!");
+			return;
+		}
+		if (!observer_)
+		{
+			// This service helper is now orphan (the level may have been exited...)
+			return;
+		}
+		matMLPredictionInfo_->step_ = eStep;
+
+		ProcessHttpRequest(
+			BuildMatMLPredictionRequestInfo(eStep),
+			[this, eStep]
+			(Http::Response const& response, RequestID const& requestId, std::string& parsingError) -> bool
+		{
+			MatMLPredictionParseResult parseResult;
+			ParseMatMLPredictionResponse(eStep, response, requestId, parseResult);
+			parsingError = parseResult.parsingError;
+
+			if (parseResult.continueJob)
+			{
+				if (parseResult.retryWithDelay)
+				{
+					// Repeat the same step after a delay.
+					ProcessMatMLPredictionStepWithDelay(eStep);
+					return true;
+				}
+
+				EMatMLPredictionStep const nextStep = static_cast<EMatMLPredictionStep>(
+					uint8_t(eStep) + 1);
+				if (nextStep == EMatMLPredictionStep::Done)
+				{
+					// We are done - broadcast the result
+					matMLPredictionInfo_->step_ = EMatMLPredictionStep::Done;
+
+					if (observer_)
+					{
+						observer_->OnMatMLPredictionRetrieved(true, matMLPredictionInfo_->result_);
+					}
+				}
+				else
+				{
+					// Launch next request
+					ProcessMatMLPredictionStep(nextStep);
+				}
+			}
+			else if (isResumingMatMLPrediction_)
+			{
+				// Restart from the beginning
+				isResumingMatMLPrediction_ = false;
+				ResetMatMLJobData();
+				RemoveMatMLInfoFile();
+				ProcessMatMLPredictionStep(EMatMLPredictionStep::GetPipeline);
+			}
+			else
+			{
+				// Notify error and abort
+				matMLPredictionInfo_->step_ = EMatMLPredictionStep::Done;
+				if (observer_)
+				{
+					observer_->OnMatMLPredictionRetrieved(false, {});
+				}
+			}
+			return parseResult.parsingOK;
+		},
+			{} /*notifyRequestID*/,
+
+			std::bind(&ITwinWebServices::Impl::ShouldRetryMaterialMLStep,
+				this, eStep, std::placeholders::_1, std::placeholders::_2));
+	}
+
+
+	EITwinMatMLPredictionStatus ITwinWebServices::Impl::ProcessMatMLPrediction(
+		std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId)
+	{
+		if (specificServer_ != ESpecificServer::MaterialPrediction)
+		{
+			BE_ISSUE("SetupForMaterialMLPrediction not called!");
+			return EITwinMatMLPredictionStatus::Failed;
+		}
+		if (iTwinId.empty() || iModelId.empty())
+		{
+			BE_ISSUE("iTwin ID and iModel ID are required");
+			return EITwinMatMLPredictionStatus::Failed;
+		}
+		if (matMLPredictionInfo_
+			&& matMLPredictionInfo_->step_ != EMatMLPredictionStep::Init
+			&& matMLPredictionInfo_->step_ != EMatMLPredictionStep::Done)
+		{
+			return EITwinMatMLPredictionStatus::InProgress;
+		}
+
+		EMatMLPredictionStep initialStep = EMatMLPredictionStep::GetPipeline;
+		isResumingMatMLPrediction_ = false;
+
+		// Before starting a new run (which is heavy in resources), see if we have already cached some
+		// results, or at least created a run which is still in progress.
+		std::error_code ec;
+		if (!matMLPredictionCacheFolder_.empty()
+			&& std::filesystem::is_directory(matMLPredictionCacheFolder_, ec))
+		{
+			// See if we have cached a previous result
+			auto const matMLResultFile = matMLPredictionCacheFolder_ / "results.json";
+			if (std::filesystem::exists(matMLResultFile, ec))
+			{
+				ITwinMaterialPrediction reloadedResult;
+				std::ifstream ifs(matMLResultFile);
+				std::string parseError;
+				if (Json::FromStream(reloadedResult, ifs, parseError))
+				{
+					if (observer_)
+					{
+						observer_->OnMatMLPredictionRetrieved(true, reloadedResult);
+					}
+					return EITwinMatMLPredictionStatus::Complete;
+				}
+				else
+				{
+					std::filesystem::remove(matMLResultFile, ec);
+				}
+			}
+
+			// See if a pipeline run was already created
+			auto const matMLInfoFile = matMLPredictionCacheFolder_ / "info.json";
+			if (std::filesystem::exists(matMLInfoFile, ec))
+			{
+				MaterialMLPredictionInfo reloadedInfo;
+				std::ifstream ifs(matMLInfoFile);
+				std::string parseError;
+				if (Json::FromStream(reloadedInfo, ifs, parseError)
+					&& !reloadedInfo.run_id_.empty())
+				{
+					matMLPredictionInfo_ = reloadedInfo;
+					initialStep = EMatMLPredictionStep::GetPipelineRunStatus;
+					isResumingMatMLPrediction_ = true;
+				}
+				else
+				{
+					std::filesystem::remove(matMLInfoFile, ec);
+				}
+			}
+		}
+
+		if (!matMLPredictionInfo_)
+			matMLPredictionInfo_.emplace();
+		matMLPredictionInfo_->iTwinId_ = iTwinId;
+		matMLPredictionInfo_->iModelId_ = iModelId;
+		matMLPredictionInfo_->changesetId_ = GetIModelRpcUrlChangeset(changesetId); // use "0" if empty
+
+		// Start the process by first step...
+		/*
+			(5. Execute the get-task endpoint.)
+			 6. Execute the get-pipeline endpoint.
+			 7. Execute the create-pipeline-run endpoint.
+			 8. Execute the start-pipeline-run endpoint. This will kick off the run.
+			 9. Execute the get-pipeline-run-status endpoint to poll for the status of the run.
+				Proceed to the next step once you receive the status: Succeeded. If a problem occurs, you will receive a status: Failed.
+			10. Execute the list-results endpoint.
+			11. Execute the get-result endpoint.
+		*/
+		ProcessMatMLPredictionStep(initialStep);
+
+		return EITwinMatMLPredictionStatus::InProgress;
+	}
+
+	EITwinMatMLPredictionStatus ITwinWebServices::GetMaterialMLPrediction(
+		std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId)
+	{
+		return impl_->ProcessMatMLPrediction(iTwinId, iModelId, changesetId);
+	}
+
 }

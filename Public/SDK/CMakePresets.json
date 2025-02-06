@@ -55,6 +55,7 @@
 		  ,"VCPKG_TARGET_TRIPLET": "arm64-osx"
 		  ,"VIZSDK_BUILD_CONTEXT":"Unreal"
 		  ,"SELECTED_PRESET": "${presetName}"
+		  ,"CMAKE_CROSSCOMPILING": "OFF"
       }
     }
 	]

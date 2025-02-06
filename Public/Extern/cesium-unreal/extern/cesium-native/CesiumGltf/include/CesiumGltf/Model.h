@@ -138,4 +138,11 @@ struct CESIUMGLTF_API Model : public ModelSpec {
     }
   }
 };
+
+/**
+ * @brief Get the node transformation matrix.
+ */
+CESIUMGLTF_API glm::dmat4x4
+getNodeTransform(const Node& node, const glm::dmat4x4& rootTransform);
+
 } // namespace CesiumGltf

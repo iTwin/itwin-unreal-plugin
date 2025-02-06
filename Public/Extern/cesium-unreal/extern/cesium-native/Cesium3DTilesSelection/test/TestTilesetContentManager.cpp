@@ -1244,7 +1244,10 @@ TEST_CASE("Test GLTF tune state machine") {
   {
   public:
     int tuneCallCount = 0;
-    CesiumGltf::Model Tune(const CesiumGltf::Model& model) override {
+    CesiumGltf::Model Tune(
+        const CesiumGltf::Model& model,
+        const glm::dmat4& /*tileTransform*/,
+        const glm::dvec4& /*rootTranslation*/) override {
       ++tuneCallCount;
       return model;
     }

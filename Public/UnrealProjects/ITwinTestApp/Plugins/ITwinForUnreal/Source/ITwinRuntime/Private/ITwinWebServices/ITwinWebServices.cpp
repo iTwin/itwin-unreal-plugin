@@ -2,7 +2,7 @@
 |
 |     $Source: ITwinWebServices.cpp $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -34,6 +34,8 @@ namespace ITwin
 {
 	// Filled by InitServerConnectionFromWorld in case we find a custom server connection in world.
 	static std::optional<EITwinEnvironment> PreferredEnvironment;
+
+	ITWINRUNTIME_API bool IsMLMaterialPredictionEnabled();
 }
 
 namespace
@@ -80,6 +82,14 @@ void UITwinWebServices::AddScope(FString const& ExtraScope)
 	FITwinAuthorizationManager::AddScope(TCHAR_TO_UTF8(*ExtraScope));
 }
 
+/*static*/
+void UITwinWebServices::SetPreferredEnvironment(EITwinEnvironment Env)
+{
+	if (ensure(Env != EITwinEnvironment::Invalid))
+	{
+		ITwin::PreferredEnvironment = Env;
+	}
+}
 
 class UITwinWebServices::FImpl
 	: public SDK::Core::ITwinWebServices
@@ -93,11 +103,17 @@ class UITwinWebServices::FImpl
 	using FLock = std::lock_guard<std::recursive_mutex>;
 	mutable FMutex mutex_;
 
-	::IITwinWebServicesObserver* observer_ = nullptr;
+	// Avoid confusion between SDKCore's and iTwinForUnreal's observer
+	using Observer_ITwinRuntime = ::IITwinWebServicesObserver;
+	using Observer_ITwinSDKCore = SDK::Core::IITwinWebServicesObserver;
+
+	Observer_ITwinRuntime* observer_ = nullptr;
 
 	// Some data (mostly tokens) are unique per environment - thus their management is centralized
 	using SharedMngrPtr = FITwinAuthorizationManager::SharedInstance;
 	SharedMngrPtr authManager_;
+
+	//std::optional<FJsonQueriesCache> queriesCache_;
 
 
 public:
@@ -108,12 +124,16 @@ public:
 	/// the latter.
 	void InitAuthManager(EITwinEnvironment InEnvironment);
 
+	void InitMaterialMLCache(FString const& CacheFolder);
+
 	/// Unregister itself from current manager, and reset it.
 	void ResetAuthManager();
 
 	void SetEnvironment(EITwinEnvironment InEnvironment);
 
-	virtual void OnRequestError(std::string const& strError) override;
+	void SetObserver(Observer_ITwinRuntime* InObserver);
+
+	virtual void OnRequestError(std::string const& strError, int retriesLeft) override;
 
 	/// Overridden from SDK::Core::IITwinWebServicesObserver
 	/// This will just perform a conversion from SDKCore types to Unreal ones, and call the appropriate
@@ -137,11 +157,13 @@ public:
 	virtual void OnSavedViewEdited(bool bSuccess, SDK::Core::SavedView const& savedView, SDK::Core::SavedViewInfo const& info) override;
 	virtual void OnRealityDataRetrieved(bool bSuccess, SDK::Core::ITwinRealityDataInfos const& infos) override;
 	virtual void OnRealityData3DInfoRetrieved(bool bSuccess, SDK::Core::ITwinRealityData3DInfo const& info) override;
-	virtual void OnElementPropertiesRetrieved(bool bSuccess, SDK::Core::ITwinElementProperties const& props) override;
+	virtual void OnElementPropertiesRetrieved(bool bSuccess, SDK::Core::ITwinElementProperties const& props, std::string const& ElementId) override;
 	virtual void OnIModelPropertiesRetrieved(bool bSuccess, SDK::Core::IModelProperties const& props) override;
 	virtual void OnIModelQueried(bool bSuccess, std::string const& QueryResult, SDK::Core::RequestID const&) override;
 	virtual void OnMaterialPropertiesRetrieved(bool bSuccess, SDK::Core::ITwinMaterialPropertiesMap const& props) override;
 	virtual void OnTextureDataRetrieved(bool bSuccess, std::string const& textureId, SDK::Core::ITwinTextureData const& textureData) override;
+	virtual void OnMatMLPredictionRetrieved(bool bSuccess, SDK::Core::ITwinMaterialPrediction const& prediction) override;
+	virtual void OnMatMLPredictionProgress(float fProgressRatio) override;
 };
 
 
@@ -340,11 +362,32 @@ void UITwinWebServices::FImpl::SetEnvironment(EITwinEnvironment InEnvironment)
 	}
 }
 
-void UITwinWebServices::FImpl::OnRequestError(std::string const& strError)
+void UITwinWebServices::FImpl::SetObserver(Observer_ITwinRuntime* InObserver)
+{
+	observer_ = InObserver;
+
+	if (InObserver == nullptr
+		&& IsSetupForForMaterialMLPrediction())
+	{
+		// Material ML prediction may retry the same request regularly (with a timer), and we should ensure
+		// we stop repeating this when the IModel is destroyed.
+		SDK::Core::ITwinWebServices::SetObserver(nullptr);
+	}
+}
+
+void UITwinWebServices::FImpl::OnRequestError(std::string const& strError, int retriesLeft)
 {
 	if (UITwinWebServices::ShouldLogErrors())
 	{
-		BE_LOGE("ITwinAPI", "iTwin request failed with: " << strError);
+		if (retriesLeft == 0)
+		{
+			BE_LOGE("ITwinAPI", "iTwin request failed with: " << strError);
+		}
+		else
+		{
+			BE_LOGW("ITwinAPI", "iTwin request failed with: " << strError << " - retries left: "
+				<< retriesLeft);
+		}
 	}
 }
 
@@ -518,6 +561,7 @@ void UITwinWebServices::FImpl::OnSavedViewGroupInfosRetrieved(bool bSuccess, SDK
 			V.readOnly
 		};
 		});
+	infos.IModelId = coreInfos.iModelId.value_or("").c_str();
 	owner_.OnGetSavedViewGroupsComplete.Broadcast(bSuccess, infos);
 	if (observer_)
 	{
@@ -665,7 +709,7 @@ void UITwinWebServices::FImpl::OnRealityData3DInfoRetrieved(bool bSuccess, SDK::
 	}
 }
 
-void UITwinWebServices::FImpl::OnElementPropertiesRetrieved(bool bSuccess, SDK::Core::ITwinElementProperties const& coreProps)
+void UITwinWebServices::FImpl::OnElementPropertiesRetrieved(bool bSuccess, SDK::Core::ITwinElementProperties const& coreProps, std::string const& ElementId)
 {
 	FElementProperties props;
 	props.Properties.Reserve(coreProps.properties.size());
@@ -683,10 +727,11 @@ void UITwinWebServices::FImpl::OnElementPropertiesRetrieved(bool bSuccess, SDK::
 		});
 		return p;
 	});
-	owner_.OnGetElementPropertiesComplete.Broadcast(bSuccess, props);
+	FString Id(ElementId.c_str());
+	owner_.OnGetElementPropertiesComplete.Broadcast(bSuccess, props, Id);
 	if (observer_)
 	{
-		observer_->OnElementPropertiesRetrieved(bSuccess, props);
+		observer_->OnElementPropertiesRetrieved(bSuccess, props, Id);
 	}
 }
 
@@ -748,7 +793,6 @@ void UITwinWebServices::FImpl::OnIModelQueried(bool bSuccess, std::string const&
 
 void UITwinWebServices::FImpl::OnMaterialPropertiesRetrieved(bool bSuccess, SDK::Core::ITwinMaterialPropertiesMap const& coreProps)
 {
-	// TODO_JDE convert ITwinMaterialProperties into something we can manipulate through blueprints...
 	if (observer_)
 	{
 		observer_->OnMaterialPropertiesRetrieved(bSuccess, coreProps);
@@ -763,6 +807,35 @@ void UITwinWebServices::FImpl::OnTextureDataRetrieved(bool bSuccess, std::string
 	}
 }
 
+void UITwinWebServices::FImpl::InitMaterialMLCache(FString const& CacheFolder)
+{
+	//if (!queriesCache_)
+	//{
+	//	queriesCache_.emplace(owner_);
+	//}
+	//if (queriesCache_->Initialize(CacheFolder, owner_.Environment, TEXT("MaterialMLPrediction")))
+	{
+		SetMaterialMLPredictionCacheFolder(TCHAR_TO_UTF8(*CacheFolder));
+	}
+}
+
+void UITwinWebServices::FImpl::OnMatMLPredictionRetrieved(bool bSuccess, SDK::Core::ITwinMaterialPrediction const& prediction)
+{
+	if (observer_)
+	{
+		observer_->OnMatMLPredictionRetrieved(bSuccess, prediction);
+	}
+}
+
+void UITwinWebServices::FImpl::OnMatMLPredictionProgress(float fProgressRatio)
+{
+	if (observer_)
+	{
+		observer_->OnMatMLPredictionProgress(fProgressRatio);
+	}
+}
+
+
 /// UITwinWebServices
 UITwinWebServices::UITwinWebServices()
 	: Impl(MakePimpl<UITwinWebServices::FImpl>(*this))
@@ -776,7 +849,7 @@ UITwinWebServices::UITwinWebServices()
 		using namespace SDK::Core;
 
 		HttpRequest::SetNewFct([]() {
-			std::shared_ptr<HttpRequest> p(static_cast<HttpRequest*>(new FUEHttpRequest));
+			HttpRequest* p(static_cast<HttpRequest*>(new FUEHttpRequest));
 			return p;
 		});
 
@@ -786,15 +859,35 @@ UITwinWebServices::UITwinWebServices()
 	static bool bHasTestedDecoScope = false;
 	if (!bHasTestedDecoScope && !HasAnyFlags(RF_ClassDefaultObject))
 	{
-		// Test whether we should grant access to the Decoration Service in the current application.
-		// This is disabled by default (as long as the decoration service is not deployed in Prod...)
-		// Note that in Carrot, we do this without condition (see AMainLevelScript::BeginPlay).
+		// Append additional iTwin scopes if some were set by the user.
 		UITwinDecorationServiceSettings const* DecoSettings = GetDefault<UITwinDecorationServiceSettings>();
-		if (ensure(DecoSettings)
-			&& DecoSettings->EarlyAccessProgram
-			&& !DecoSettings->ExtraITwinScope.IsEmpty())
+		if (DecoSettings && !DecoSettings->AdditionalITwinScope.IsEmpty())
 		{
-			UITwinWebServices::AddScope(DecoSettings->ExtraITwinScope);
+			UITwinWebServices::AddScope(DecoSettings->AdditionalITwinScope);
+		}
+		// Test whether we should grant access to the Decoration Service in the current application.
+		// This is disabled by default (to avoid forcing all users to add a new scope to their iTwin app).
+		// Note that in Carrot, we do this without condition (see AMainLevelScript::BeginPlay).
+		if (DecoSettings && DecoSettings->bLoadDecorationsInPlugin)
+		{
+			UITwinWebServices::AddScope(TEXT(ITWIN_DECORATIONS_SCOPE));
+		}
+		if (ITwin::IsMLMaterialPredictionEnabled())
+		{
+			UITwinWebServices::AddScope(TEXT("aiml:run-admin aiml:read-backend"));
+		}
+		if (DecoSettings
+			&& !DecoSettings->CustomEnv.IsEmpty()
+			&& !ITwin::PreferredEnvironment)
+		{
+			if (DecoSettings->CustomEnv == "DEV")
+			{
+				ITwin::PreferredEnvironment = EITwinEnvironment::Dev;
+			}
+			else if (DecoSettings->CustomEnv == "QA")
+			{
+				ITwin::PreferredEnvironment = EITwinEnvironment::QA;
+			}
 		}
 		bHasTestedDecoScope = true;
 	}
@@ -809,18 +902,6 @@ UITwinWebServices::UITwinWebServices()
 		// test QA or Dev environment in the test app.
 		InitServerConnectionFromWorld();
 	}
-
-#if 0 // IS_BE_DEV()
-	FString bentleyEnv = FPlatformMisc::GetEnvironmentVariable(TEXT("BENTLEY_ENV"));
-	if (bentleyEnv == "DEV")
-	{
-		SetEnvironment(EITwinEnvironment::Dev);
-	}
-	else if (bentleyEnv == "QA")
-	{
-		SetEnvironment(EITwinEnvironment::QA);
-	}
-#endif
 }
 
 
@@ -1021,7 +1102,7 @@ bool UITwinWebServices::HasSameConnection(AITwinServerConnection const* Connecti
 
 void UITwinWebServices::SetObserver(IITwinWebServicesObserver* InObserver)
 {
-	Impl->observer_ = InObserver;
+	Impl->SetObserver(InObserver);
 }
 
 bool UITwinWebServices::HasObserver(IITwinWebServicesObserver const* Observer) const
@@ -1068,16 +1149,6 @@ void UITwinWebServices::DoRequest(FunctorType&& InFunctor)
 		return;
 	}
 	InFunctor();
-}
-
-template <typename FunctorType>
-HttpRequestID UITwinWebServices::DoRequestRetID(FunctorType&& InFunctor)
-{
-	if (!TryGetServerConnection(false))
-	{
-		return HttpRequestID{};
-	}
-	return InFunctor();
 }
 
 void UITwinWebServices::GetITwinInfo(FString ITwinId)
@@ -1132,14 +1203,14 @@ void UITwinWebServices::StartExport(FString IModelId, FString ChangesetId)
 }
 
 
-void UITwinWebServices::GetAllSavedViews(FString iTwinId, FString iModelId, FString GroupId /*= ""*/)
+void UITwinWebServices::GetAllSavedViews(FString iTwinId, FString iModelId, FString GroupId /*= ""*/, int Top /*= 100*/, int Skip /*= 0*/)
 {
-	DoRequest([this, iTwinId, iModelId, GroupId]() {
-		Impl->GetAllSavedViews(TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId), TCHAR_TO_ANSI(*GroupId));
+	DoRequest([this, iTwinId, iModelId, GroupId, Top, Skip]() {
+		Impl->GetAllSavedViews(TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId), TCHAR_TO_ANSI(*GroupId), Top, Skip);
 	});
 }
 
-void UITwinWebServices::GetSavedViewGroups(FString iTwinId, FString iModelId)
+void UITwinWebServices::GetSavedViewGroups(FString iTwinId, FString iModelId /*= ""*/)
 {
 	DoRequest([this, iTwinId, iModelId]() {
 		Impl->GetSavedViewsGroups(TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId));
@@ -1168,7 +1239,7 @@ void UITwinWebServices::UpdateSavedViewThumbnail(FString SavedViewId, FString Th
 	DoRequest([this, SavedViewId, ThumbnailURL]() { Impl->UpdateSavedViewThumbnail(TCHAR_TO_ANSI(*SavedViewId), TCHAR_TO_ANSI(*ThumbnailURL)); });
 }
 
-void UITwinWebServices::AddSavedView(FString ITwinId, FString IModelId, FSavedView SavedView, FSavedViewInfo SavedViewInfo, FString GroupId /*= ""*/)
+void UITwinWebServices::AddSavedView(FString ITwinId, FSavedView SavedView, FSavedViewInfo SavedViewInfo, FString IModelId /*= ""*/, FString GroupId /*= ""*/)
 {
 	SDK::Core::SavedView coreSV;
 	SDK::Core::SavedViewInfo coreSVInfo;
@@ -1176,8 +1247,8 @@ void UITwinWebServices::AddSavedView(FString ITwinId, FString IModelId, FSavedVi
 	ToCoreSavedViewInfo(SavedViewInfo, coreSVInfo);
 
 	DoRequest([this, ITwinId, IModelId, &coreSV, &coreSVInfo, GroupId]() {
-		Impl->AddSavedView(TCHAR_TO_ANSI(*ITwinId), TCHAR_TO_ANSI(*IModelId),
-			coreSV, coreSVInfo, TCHAR_TO_ANSI(*GroupId));
+		Impl->AddSavedView(TCHAR_TO_ANSI(*ITwinId), coreSV, coreSVInfo, 
+						   TCHAR_TO_ANSI(*IModelId), TCHAR_TO_ANSI(*GroupId));
 	});
 }
 
@@ -1256,7 +1327,7 @@ void UITwinWebServices::GetIModelProperties(FString iTwinId, FString iModelId, F
 void UITwinWebServices::QueryIModel(FString iTwinId, FString iModelId, FString ChangesetId,
 									FString ECSQLQuery, int Offset, int Count)
 {
-	QueryIModelRows(iTwinId, iModelId, ChangesetId, ECSQLQuery, Offset, Count);
+	QueryIModelRows(iTwinId, iModelId, ChangesetId, ECSQLQuery, Offset, Count, {});
 }
 
 SDK::Core::ITwinAPIRequestInfo UITwinWebServices::InfosToQueryIModel(FString iTwinId, FString iModelId,
@@ -1266,15 +1337,19 @@ SDK::Core::ITwinAPIRequestInfo UITwinWebServices::InfosToQueryIModel(FString iTw
 		TCHAR_TO_ANSI(*ChangesetId), TCHAR_TO_ANSI(*ECSQLQuery), Offset, Count);
 }
 
-HttpRequestID UITwinWebServices::QueryIModelRows(FString iTwinId, FString iModelId, FString ChangesetId,
-	FString ECSQLQuery, int Offset, int Count, SDK::Core::ITwinAPIRequestInfo const* RequestInfo/*=nullptr*/)
+void UITwinWebServices::QueryIModelRows(FString iTwinId, FString iModelId, FString ChangesetId,
+	FString ECSQLQuery, int Offset, int Count, std::function<void(HttpRequestID)>&& NotifRequestID,
+	SDK::Core::ITwinAPIRequestInfo const* RequestInfo/*=nullptr*/)
 {
-	return DoRequestRetID(
-		[this, iTwinId, iModelId, ChangesetId, ECSQLQuery, Offset, Count, RequestInfo]()
+	DoRequest(
+		[this, iTwinId, iModelId, ChangesetId, ECSQLQuery, Offset, Count, RequestInfo,
+		 NotifRequestID=std::move(NotifRequestID)] () mutable
 		{
-			auto const ReqID = Impl->QueryIModel(TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId),
-				TCHAR_TO_ANSI(*ChangesetId), TCHAR_TO_ANSI(*ECSQLQuery), Offset, Count, RequestInfo);
-			return HttpRequestID(ReqID.c_str());
+			Impl->QueryIModel(TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId),
+				TCHAR_TO_ANSI(*ChangesetId), TCHAR_TO_ANSI(*ECSQLQuery), Offset, Count,
+				[NotifRequestID = std::move(NotifRequestID)](SDK::Core::RequestID const& RequestID)
+					{ if (NotifRequestID) NotifRequestID(HttpRequestID(RequestID.c_str())); },
+				RequestInfo);
 		});
 }
 
@@ -1313,4 +1388,29 @@ void UITwinWebServices::GetTextureData(
 			TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId), TCHAR_TO_ANSI(*ChangesetId),
 			TCHAR_TO_ANSI(*TextureId));
 	});
+}
+
+void UITwinWebServices::SetupForMaterialMLPrediction()
+{
+	Impl->SetupForMaterialMLPrediction();
+}
+
+EITwinMaterialPredictionStatus UITwinWebServices::GetMaterialMLPrediction(
+	FString iTwinId, FString iModelId, FString ChangesetId)
+{
+	if (!TryGetServerConnection(false))
+	{
+		return EITwinMaterialPredictionStatus::NoAuth;
+	}
+
+	FString const CacheFolder = QueriesCache::GetCacheFolder(
+		QueriesCache::ESubtype::MaterialMLPrediction,
+		this->Environment, iTwinId, iModelId, ChangesetId);
+	Impl->InitMaterialMLCache(CacheFolder);
+
+	return static_cast<EITwinMaterialPredictionStatus>(
+		Impl->GetMaterialMLPrediction(
+			TCHAR_TO_ANSI(*iTwinId),
+			TCHAR_TO_ANSI(*iModelId),
+			TCHAR_TO_ANSI(*ChangesetId)));
 }

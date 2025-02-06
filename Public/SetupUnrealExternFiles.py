@@ -2,7 +2,7 @@
 #
 #     $Source: SetupUnrealExternFiles.py $
 #
-#  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+#  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 #
 #--------------------------------------------------------------------------------------
 
@@ -11,11 +11,24 @@ import sys
 import pathlib
 import os
 import platform
+import shutil
 
 addedFiles = []
 
 hackDuplicateByPlatform = ["zconf.h"]
 
+# The unreal packaging tool does not correctly handle symlinks
+# (it tries to copy the symlink itself instead of the target).
+# The issue occurs for example when packaging the app from the Unreal Editor,
+# when the app depends on dlls.
+# The "good" fix for this issue would be to let the caller of this script decide,
+# for each file, whether we should do a symlink or a copy.
+# But this requires adding more info in the "added" file (to know if the file was
+# copied on purpose), because currently when removing old file we raise an error if
+# the file we try to remove is not a symlink.
+# So as a workaround we simply decided what to do based the file extension.
+def ShouldCopy(path: str):
+	return pathlib.Path(path).suffix.lower() in [".dll"]
 
 def CreateIntermediateFile(target: pathlib.Path):
 	addedFiles.append(target.as_posix())
@@ -68,6 +81,17 @@ def CreateSymlink(target: str, link: str):
 		elif platform.system() == 'Windows':
 			ln2 = pathlib.Path.joinpath(ln.parent,ln.stem+"_win"+ln.suffix)
 			CreateSymlink2(pathlib.Path(Resolve(target)), ln2)
+	elif ShouldCopy(Resolve(target)):
+		# Make a real copy, not a symlink.
+		targetPath = pathlib.Path(Resolve(target))
+		linkPath = pathlib.Path(Resolve(link))
+		addedFiles.append(linkPath.as_posix())
+		if linkPath.exists() and linkPath.lstat().st_mtime >= targetPath.stat().st_mtime:
+			return
+		print(f'Copy "{linkPath}" -> "{targetPath}".')
+		linkPath.unlink(True)
+		linkPath.parent.mkdir(parents=True, exist_ok=True)
+		shutil.copyfile(targetPath, linkPath)
 	else:
 		CreateSymlink2(pathlib.Path(Resolve(target)), pathlib.Path(Resolve(link)))
 	
@@ -115,12 +139,12 @@ for addedFile_old in addedFiles_old:
 		# We cannot know, so it is safer to keep the link.
 		(os.path.islink(addedFile_old) and os.path.exists(os.readlink(addedFile_old)))):
 		continue
-	addedTextFiles = any([addedFile_old.endswith('/'+f) for f in hackDuplicateByPlatform])
-			
-	if not os.path.islink(addedFile_old) and not addedTextFiles:
+	# Was the file actually copied, or was it symlinked?
+	wasCopied = ShouldCopy(addedFile_old) or any([addedFile_old.endswith('/'+f) for f in hackDuplicateByPlatform])
+	if not os.path.islink(addedFile_old) and not wasCopied:
 		print (f'Cannot delete "{addedFile_old}", as it is not a symlink. Deleting it could result in data loss.\nThis is probably a bug in our build scripts.')
 		raise Exception(f'Cannot delete "{addedFile_old}", as it is not a symlink. Deleting it could result in data loss.\nThis is probably a bug in our build scripts.')
-	if addedTextFiles:
+	if wasCopied:
 		print(f'Delete obsolete (not symlink) file "{addedFile_old}".')
 	else:
 		print(f'Delete obsolete symlink "{addedFile_old}".')

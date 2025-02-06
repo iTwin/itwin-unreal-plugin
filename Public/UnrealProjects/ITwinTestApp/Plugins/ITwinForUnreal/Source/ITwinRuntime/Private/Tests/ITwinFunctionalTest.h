@@ -2,7 +2,7 @@
 |
 |     $Source: ITwinFunctionalTest.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -55,7 +55,7 @@ UE5Coro::TCoroutine<> TakeScreenshot(const FString Name);
 //!     actor->ActivateCoolVisualizationFeatures();
 //!     co_await TakeScreenshot(TEXT("Screenshot2"));
 //! }
-#define ITWIN_FUNCTIONAL_TEST(Name) \
+#define ITWIN_FUNCTIONAL_TEST_EX(Name, IsEnabled) \
 	namespace ITwin::Tests \
 	{ \
 	class FFunctionalTest_##Name \
@@ -73,10 +73,13 @@ UE5Coro::TCoroutine<> TakeScreenshot(const FString Name);
 	}; \
 	int FFunctionalTest_##Name::Registrar = [] \
 	{ \
-		Detail::RegisterFunctionalTest(TEXT(#Name), FFunctionalTest_##Name::Run); \
+		if constexpr (IsEnabled) \
+			Detail::RegisterFunctionalTest(TEXT(#Name), FFunctionalTest_##Name::Run); \
 		return 0; \
 	}(); \
 	} \
 	UE5Coro::TCoroutine<> ITwin::Tests::FFunctionalTest_##Name::Run(UWorld* World)
+
+#define ITWIN_FUNCTIONAL_TEST(Name) ITWIN_FUNCTIONAL_TEST_EX(Name, true)
 	
 #endif // WITH_EDITOR

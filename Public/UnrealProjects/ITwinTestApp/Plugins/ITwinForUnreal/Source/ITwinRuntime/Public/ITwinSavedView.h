@@ -2,7 +2,7 @@
 |
 |     $Source: ITwinSavedView.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -64,6 +64,7 @@ public:
 
 	#if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+	bool IsMovingToSavedView() const;
 	#endif
 
 	//! Only saved views created with the plugin can be renamed, legacy saved views are not editable.
@@ -81,9 +82,13 @@ private:
 	class FImpl;
 	TPimplPtr<FImpl> Impl;
 
-
 	UFUNCTION()
 	void OnTimelineTick(const float& output);
+
+	// TODO_GCO: might just work instead of calling TickComponent from the global iModel ticker,
+	// IFF I end up understanding why the OnTimelineTick delegate is not called... (see comment in
+	// AITwinSavedView::MoveToSavedView...)
+	//virtual bool ShouldTickIfViewportsOnly() const override { return true; }
 
 	/// overridden from AITwinServiceActor:
 	virtual void UpdateOnSuccessfulAuthorization() override;

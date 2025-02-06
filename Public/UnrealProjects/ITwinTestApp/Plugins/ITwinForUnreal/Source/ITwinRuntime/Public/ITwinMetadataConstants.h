@@ -2,7 +2,7 @@
 |
 |     $Source: ITwinMetadataConstants.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -22,6 +22,7 @@ namespace ITwinCesium::Metada
 	static const FString ELEMENT_NAME		= TEXT("element");
 	static const FString MODEL_NAME			= TEXT("model");
 	static const FString SUBCATEGORY_NAME	= TEXT("subcategory");
+	static const FString GEOMETRYCLASS_NAME = TEXT("geometryClass");
 
 	// material IDs are about to be added in Cesium Mesh-Export, in a separate table
 	static const int64 MATERIAL_FEATURE_ID_SLOT = 1;

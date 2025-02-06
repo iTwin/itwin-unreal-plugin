@@ -20,6 +20,8 @@
 #include <rapidjson/document.h>
 #include <spdlog/logger.h>
 
+#include <glm/gtc/matrix_access.hpp>
+
 #include <chrono>
 
 using namespace CesiumGltfContent;
@@ -868,15 +870,20 @@ void TilesetContentManager::loadTileContent(
       renderContent->tuneVersion < _externals.gltfTuner->currentVersion) {
       renderContent->tuneState = TileRenderContent::TuneState::WorkerRunning;
       renderContent->tuneVersion = _externals.gltfTuner->currentVersion;
+      glm::dvec4 rootTranslation = glm::dvec4(0., 0., 0., 1.);
+      if (this->_pRootTile)
+        rootTranslation = glm::column(this->_pRootTile->getTransform(), 3);
       _externals.asyncSystem.runInWorkerThread(
         [gltfTuner = _externals.gltfTuner,
         asyncSystem = _externals.asyncSystem,
         &tile,
         contentOptions = tilesetOptions.contentOptions,
-        pAssetAccessor = _externals.pAssetAccessor] {
+        pAssetAccessor = _externals.pAssetAccessor,
+        rootTranslation] {
         const auto& initialModel = tile.getContent().getRenderContent()->getModel();
         const size_t initialNbImages = initialModel.images.size();
-        const auto model = gltfTuner->Tune(initialModel);
+        const auto model = gltfTuner->Tune(initialModel,
+          tile.getTransform(), rootTranslation);
 
         // Resolve external images added by the tuner, if any.
         CesiumGltfReader::GltfReaderResult gltfResult{std::move(model), {}, {}};
@@ -893,7 +900,7 @@ void TilesetContentManager::loadTileContent(
           return CesiumGltfReader::GltfReader::resolveExternalData(
               asyncSystem,
               "" /*baseUrl*/,
-              {} /*requestHeaders*/,
+              gltfTuner->GetHeadersForExternalData(),
               pAssetAccessor,
               gltfOptions,
               std::move(gltfResult));
@@ -1027,7 +1034,8 @@ void TilesetContentManager::loadTileContent(
       .thenImmediately([tileLoadInfo = std::move(tileLoadInfo),
                         projections = std::move(projections),
                         rendererOptions = tilesetOptions.rendererOptions,
-                        gltfTuner = _externals.gltfTuner](
+                        gltfTuner = _externals.gltfTuner,
+                        thiz](
                            TileLoadResult&& result) mutable {
         // the reason we run immediate continuation, instead of in the
         // worker thread, is that the loader may run the task in the main
@@ -1039,12 +1047,17 @@ void TilesetContentManager::loadTileContent(
         if (result.state == TileLoadResultState::Success) {
           if (std::holds_alternative<CesiumGltf::Model>(result.contentKind)) {
             auto asyncSystem = tileLoadInfo.asyncSystem;
+            glm::dvec4 rootTranslation = glm::dvec4(0., 0., 0., 1.);
+            if (thiz->_pRootTile)
+              rootTranslation =
+                  glm::column(thiz->_pRootTile->getTransform(), 3);
             return asyncSystem.runInWorkerThread(
                 [result = std::move(result),
                  projections = std::move(projections),
                  tileLoadInfo = std::move(tileLoadInfo),
                  rendererOptions,
-                 gltfTuner]() mutable {
+                 gltfTuner,
+                 rootTranslation]() mutable {
                   if (gltfTuner) {
                     // Immediately tune the model, otherwise a tuning will be triggered after
                     // the renderer-side resources have been created, which is both a performance
@@ -1053,7 +1066,10 @@ void TilesetContentManager::loadTileContent(
                     // custom materials not applied, because the model is not yet tuned).
                     result.tuneVersion = gltfTuner->currentVersion;
                     auto& model = std::get<CesiumGltf::Model>(result.contentKind);
-                    model = gltfTuner->Tune(model);
+                    model = gltfTuner->Tune(
+                        model,
+                        tileLoadInfo.tileTransform,
+                        rootTranslation);
                   }
                   return postProcessContentInWorkerThread(
                       std::move(result),

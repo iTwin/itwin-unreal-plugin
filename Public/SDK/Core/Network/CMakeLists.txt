@@ -9,12 +9,14 @@ add_library(Network OBJECT
 		HttpRequest.cpp
 		IHttpRouter.h
 		IHttpRouter.cpp
+		HttpGetWithLink.h
 )
 target_compile_features(Network PRIVATE ${DefaultCXXSTD})
 target_link_libraries(Network PRIVATE 
 						cpr::cpr
 						reflectcpp
 						Json
+						Singleton
 					 ) 
 
 set_target_properties(Network PROPERTIES FOLDER "SDK/Core") 
@@ -29,6 +31,13 @@ if(SDK_ADDUNITTEST)
 							Catch2::Catch2WithMain
 							httpmockserver
 						)
+
+	add_custom_command(TARGET NetworkTest POST_BUILD
+		COMMAND ${CMAKE_COMMAND} -E copy
+			$<TARGET_FILE:Singleton>
+			$<TARGET_FILE_DIR:NetworkTest>)
+
+
 	if (MSVC)
 		target_compile_options(NetworkTest PRIVATE "/Zc:preprocessor")
 	endif()

@@ -2,7 +2,7 @@
 |
 |     $Source: ITwinScene.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -16,6 +16,8 @@
 	#endif // !MODULE_EXPORT
 #endif
 
+#include <optional>
+#include <array>
 MODULE_EXPORT namespace SDK::Core
 {
 
@@ -42,6 +44,8 @@ MODULE_EXPORT namespace SDK::Core
 	struct ITwinSceneSettings
 	{
 		bool displayGoogleTiles;
+		double qualityGoogleTiles;
+		std::optional < std::array<double, 3> > geoLocation;
 	};
 	struct ITwinEnvironment
 	{

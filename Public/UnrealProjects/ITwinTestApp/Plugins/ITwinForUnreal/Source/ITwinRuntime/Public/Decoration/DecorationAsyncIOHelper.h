@@ -2,7 +2,7 @@
 |
 |     $Source: DecorationAsyncIOHelper.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -12,6 +12,7 @@
 
 #include <CoreMinimal.h>
 #include <ITwinLoadInfo.h>
+#include <Containers/Map.h>
 
 #include <ITwinRuntime/Private/Compil/BeforeNonUnrealIncludes.h>
 #	include "SDK/Core/Visualization/Decoration.h"
@@ -24,10 +25,11 @@
 namespace SDK::Core
 {
 	class MaterialPersistenceManager;
+	class ITimeline;
 }
 
 class AITwinDecorationHelper;
-
+class AITwinIModel;
 
 class FDecorationAsyncIOHelper
 {
@@ -42,11 +44,13 @@ public:
 	void SetLoadedITwinInfo(FITwinLoadInfo const& InLoadedSceneInfo);
 	FITwinLoadInfo const& GetLoadedITwinInfo() const;
 
-	bool LoadCustomMaterials(std::string const& accessToken);
+	bool LoadCustomMaterials(std::string const& accessToken, TMap<FString, TWeakObjectPtr<AITwinIModel>> const& idToIModel);
 	bool LoadPopulationsFromServer(std::string const& accessToken);
 	bool SaveDecorationToServer(std::string const& accessToken);
-	bool LoadSceneFromServer(std::string const& accessToken);
-	bool SaveSceneToServer(std::string const& accessToken);
+	bool LoadSceneFromServer(std::string const& accessToken, std::shared_ptr<SDK::Core::ITimeline>& timeline);
+	bool LoadSceneFromServer(std::string const& sceneid,std::string const& accessToken);
+	bool SaveSceneToServer(std::string const& accessToken, const std::shared_ptr<SDK::Core::ITimeline>& timeline);
+	std::shared_ptr <SDK::Core::Link>  CreateLink(EITwinModelType ct, const FString& id);
 
 
 private:
@@ -63,6 +67,8 @@ private:
 	std::shared_ptr<SDK::Core::IScenePersistence> scene;
 
 	std::shared_ptr<std::atomic_bool> shouldStop = std::make_shared<std::atomic_bool>(false);
+	bool decorationIsLinked = false;
+	std::map< std::pair<EITwinModelType,FString> , std::shared_ptr<SDK::Core::Link> > links;
 
 	friend class AITwinDecorationHelper;
 };

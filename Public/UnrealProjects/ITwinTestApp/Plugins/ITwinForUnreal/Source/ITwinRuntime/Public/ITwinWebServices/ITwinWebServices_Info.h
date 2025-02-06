@@ -2,7 +2,7 @@
 |
 |     $Source: ITwinWebServices_Info.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -245,6 +245,9 @@ struct FSavedViewGroupInfos
 
 	UPROPERTY(BlueprintReadOnly, Category = "SavedViewGroup")
 		TArray<FSavedViewGroupInfo> SavedViewGroups;
+
+	UPROPERTY(BlueprintReadOnly, Category = "SavedViewGroup")
+		FString IModelId;
 };
 
 USTRUCT(BlueprintType)

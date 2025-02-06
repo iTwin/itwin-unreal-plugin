@@ -2,7 +2,7 @@
 |
 |     $Source: Config.cpp $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -26,7 +26,7 @@ namespace SDK::Core
 		void Init(const SConfig& config)
 		{
 			g_config.config_ = config;
-			g_config.defaultHttp_ = Http::New();
+			g_config.defaultHttp_.reset(Http::New());
 			std::string baseUrl = config.server.server;
 			if (config.server.port >= 0)
 			{

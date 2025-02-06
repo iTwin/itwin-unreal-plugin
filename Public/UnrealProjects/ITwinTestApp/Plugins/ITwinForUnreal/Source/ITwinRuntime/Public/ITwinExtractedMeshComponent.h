@@ -2,7 +2,7 @@
 |
 |     $Source: ITwinExtractedMeshComponent.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -10,6 +10,8 @@
 #pragma once
 
 #include <Components/StaticMeshComponent.h>
+
+#include <optional>
 
 #include "ITwinExtractedMeshComponent.generated.h"
 
@@ -34,5 +36,5 @@ protected:
 	virtual void OnVisibilityChanged() override;
 private:
 	/// One may enforce hiding an extracted component, which should override the mesh visibility.
-	bool bFullyHidden = false;
+	std::optional<bool> FullyHidden;
 };

@@ -93,7 +93,7 @@ endif()
 add_subdirectory(cesium-native)
 
 # cesium-native doesn't require this header to be public, but Cesium for Unreal wants to use it.
-install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/cesium-native/extern/stb/stb_image_resize.h TYPE INCLUDE)
+install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/cesium-native/extern/stb/stb_image_resize2.h TYPE INCLUDE)
 
 # Unreal Engine doesn't include MikkTSpace on Android.
 # So add our own.

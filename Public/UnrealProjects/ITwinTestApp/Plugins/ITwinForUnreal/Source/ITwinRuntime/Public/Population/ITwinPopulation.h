@@ -2,7 +2,7 @@
 |
 |     $Source: ITwinPopulation.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -44,7 +44,6 @@ public:
 
 	FTransform GetInstanceTransform(int32 instanceIndex) const; 
 	void SetInstanceTransform(int32 instanceIndex, const FTransform& tm);
-	void SetLastInstanceTransform(const FTransform& tm);
 
 	FVector GetInstanceColorVariation(int32 instanceIndex) const;
 	void SetInstanceColorVariation(int32 instanceIndex, const FVector& v);

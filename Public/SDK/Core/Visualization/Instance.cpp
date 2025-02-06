@@ -2,12 +2,13 @@
 |
 |     $Source: Instance.cpp $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
 
 #include "Instance.h"
+#include "../Singleton/singleton.h"
 
 namespace SDK::Core
 {
@@ -22,7 +23,7 @@ namespace SDK::Core
 		std::string name_;
 		std::string objectRef_;
 		std::string colorShift_;
-		crtmath::dmat4x3 matrix_;
+		dmat3x4 matrix_;
 
 		// update flags
 		bool updateFlags_[2];
@@ -43,8 +44,8 @@ namespace SDK::Core
 		const std::string& GetColorShift() const { return colorShift_; }
 		void SetColorShift(const std::string& color) { colorShift_ = color; }
 
-		const crtmath::dmat4x3& GetMatrix() const { return matrix_; }
-		void SetMatrix(const crtmath::dmat4x3& mat) { matrix_ = mat; }
+		const dmat3x4& GetMatrix() const { return matrix_; }
+		void SetMatrix(const dmat3x4& mat) { matrix_ = mat; }
 
 		bool IsMarkedForUpdate(const EUpdateTarget& target) const { return updateFlags_[target]; }
 		void MarkForUpdate(const EUpdateTarget& target, bool flag) { updateFlags_[target] = flag; }
@@ -67,8 +68,8 @@ namespace SDK::Core
 	const std::string& Instance::GetColorShift() const { return impl_->GetColorShift(); }
 	void Instance::SetColorShift(const std::string& color) { impl_->SetColorShift(color); }
 
-	const crtmath::dmat4x3& Instance::GetMatrix() const { return impl_->GetMatrix(); }
-	void Instance::SetMatrix(const crtmath::dmat4x3& mat) { impl_->SetMatrix(mat); }
+	const dmat3x4& Instance::GetMatrix() const { return impl_->GetMatrix(); }
+	void Instance::SetMatrix(const dmat3x4& mat) { impl_->SetMatrix(mat); }
 
 	bool Instance::IsMarkedForUpdate(const EUpdateTarget& target) const { return impl_->IsMarkedForUpdate(target); }
 	void Instance::MarkForUpdate(const EUpdateTarget& target, bool flag /*= true*/) { impl_->MarkForUpdate(target, flag); }
@@ -85,8 +86,18 @@ namespace SDK::Core
 	}
 
 	template<>
-	std::function<std::shared_ptr<IInstance>()> Tools::Factory<IInstance>::newFct_ = []() {
-		std::shared_ptr<IInstance> p(static_cast<IInstance*>(new Instance()));
-		return p;
+	Tools::Factory<IInstance>::Globals::Globals()
+	{
+		newFct_ = []() {
+			IInstance* p(static_cast<IInstance*>(new Instance()));
+			return p;
 		};
+	}
+
+	template<>
+	Tools::Factory<IInstance>::Globals& Tools::Factory<IInstance>::GetGlobals()
+	{
+		return singleton<Tools::Factory<IInstance>::Globals>();
+	}
+
 }

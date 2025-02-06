@@ -2,7 +2,7 @@
 |
 |     $Source: ITwinSynchro4DSchedules.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -32,12 +32,16 @@ class ITWINRUNTIME_API UITwinSynchro4DSchedules : public UActorComponent
 public:	
 	UITwinSynchro4DSchedules();
 	UITwinSynchro4DSchedules(bool bDoNotBuildTimelines);
+	~UITwinSynchro4DSchedules();
 
 	UPROPERTY(EditAnywhere, Category = "iTwin")
 	UMaterialInterface* BaseMaterialMasked = nullptr;
 
 	UPROPERTY(EditAnywhere, Category = "iTwin")
 	UMaterialInterface* BaseMaterialTranslucent = nullptr;
+
+	UPROPERTY(EditAnywhere, Category = "iTwin")
+	UMaterialInterface* BaseMaterialGlass = nullptr;
 
 	UPROPERTY(Category = "Schedules Querying",
 		VisibleAnywhere)
@@ -244,7 +248,7 @@ public:
 		BlueprintSetter = SetScheduleTime)
 	FDateTime ScheduleTime = FDateTime(2099, 12, 31, 12, 0, 0);
 	UFUNCTION(BlueprintGetter)
-	FDateTime GetScheduleTime();
+	FDateTime GetScheduleTime() const;
 	UFUNCTION(BlueprintSetter)
 	void SetScheduleTime(FDateTime NewScheduleTime);
 
@@ -257,7 +261,7 @@ public:
 		BlueprintSetter = SetReplaySpeed)
 	FTimespan ReplaySpeed = FTimespan::FromDays(1.);
 	UFUNCTION(BlueprintGetter)
-	FTimespan GetReplaySpeed();
+	FTimespan GetReplaySpeed() const;
 	UFUNCTION(BlueprintSetter)
 	void SetReplaySpeed(FTimespan NewReplaySpeed);
 	
@@ -303,13 +307,6 @@ public:
 		BlueprintCallable)
 	void Stop();
 
-	/// Mask out entirely the tiles just loaded that do not have the 4D animation fully applied. This is
-	/// actually a global flag that will apply to all iModels.
-	UPROPERTY(Category = "Schedules Replay|Settings", EditAnywhere)
-	bool bMaskTilesUntilFullyAnimated = false;
-	UFUNCTION(Category = "Schedules Replay|Settings", BlueprintCallable)
-	void ToggleMaskTilesUntilFullyAnimated();
-
 	/// Split applying animation on Elements among subsequent ticks to avoid spending more than this amount
 	/// of time each time. Visual update only occurs once the whole iModel (?) has been updated, though.
 	UPROPERTY(Category = "Schedules Replay|Settings", EditAnywhere)
@@ -344,8 +341,8 @@ public:
 	#if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 	#endif
-	void OnIModelEndPlay();
 	void TickSchedules(float DeltaTime);
+	void OnVisibilityChanged(FITwinSceneTile& SceneTile, bool bVisible);
 
 	// Must be marked UFUNCTION to be bound to a delegate...
 	UFUNCTION()

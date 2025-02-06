@@ -2,7 +2,7 @@
 |
 |     $Source: IModelSelectionMenuScript.cpp $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -58,7 +58,7 @@ void AIModelSelectionMenuScript::OnLoadIModel(FString InIModelId, FString InExpo
 	IModel->SetModelLoadInfo(Info);
 
 	UITwinDecorationServiceSettings const* DecoSettings = GetDefault<UITwinDecorationServiceSettings>();
-	if (ensure(DecoSettings) && DecoSettings->EarlyAccessProgram)
+	if (ensure(DecoSettings) && DecoSettings->bLoadDecorationsInPlugin)
 	{
 		DecoHelper = GetWorld()->SpawnActor<AITwinDecorationHelper>();
 		DecoHelper->SetLoadedITwinInfo(Info);
@@ -70,8 +70,10 @@ void AIModelSelectionMenuScript::OnLoadIModel(FString InIModelId, FString InExpo
 												 ITwinId, InChangesetId, MeshUrl });
 }
 
-void AIModelSelectionMenuScript::IModelLoaded(bool bSuccess)
+void AIModelSelectionMenuScript::IModelLoaded(bool bSuccess, FString InIModelId)
 {
+	ensure(IModelId == InIModelId);
+
 	FITwinIModel3DInfo Tmp;
 	// for compatibility with former 3DFT plugin, we hold the 2 versions
 	IModel->GetModel3DInfoInCoordSystem(Tmp, EITwinCoordSystem::ITwin);

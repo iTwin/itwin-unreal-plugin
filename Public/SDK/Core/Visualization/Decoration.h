@@ -2,7 +2,7 @@
 |
 |     $Source: Decoration.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -13,7 +13,7 @@
 
 MODULE_EXPORT namespace SDK::Core 
 {
-	class IDecoration : public Tools::Factory<IDecoration>, public std::enable_shared_from_this<IDecoration>
+	class IDecoration : public Tools::Factory<IDecoration>
 	{
 	public:
 		/// Create new decoration on server

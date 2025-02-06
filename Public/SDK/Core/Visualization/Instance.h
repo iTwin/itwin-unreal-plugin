@@ -2,7 +2,7 @@
 |
 |     $Source: Instance.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -29,7 +29,7 @@ MODULE_EXPORT namespace SDK::Core
 		Display = 1
 	};
 
-	class IInstance : public Tools::Factory<IInstance>, public std::enable_shared_from_this<IInstance>
+	class IInstance : public Tools::Factory<IInstance>
 	{
 	public:
 		virtual const std::string& GetId() const = 0;
@@ -44,8 +44,8 @@ MODULE_EXPORT namespace SDK::Core
 		virtual const std::string& GetObjectRef() const = 0;
 		virtual void SetObjectRef(const std::string& objectRef) = 0;
 
-		virtual const crtmath::dmat4x3& GetMatrix() const = 0;
-		virtual void SetMatrix(const crtmath::dmat4x3& mat) = 0;
+		virtual const dmat3x4& GetMatrix() const = 0;
+		virtual void SetMatrix(const dmat3x4& mat) = 0;
 
 		virtual const std::string& GetColorShift() const = 0;
 		virtual void SetColorShift(const std::string& color) = 0;
@@ -69,8 +69,8 @@ MODULE_EXPORT namespace SDK::Core
 		const std::string& GetObjectRef() const override;
 		void SetObjectRef(const std::string& objectRef) override;
 
-		const crtmath::dmat4x3& GetMatrix() const override;
-		void SetMatrix(const crtmath::dmat4x3& mat) override;
+		const dmat3x4& GetMatrix() const override;
+		void SetMatrix(const dmat3x4& mat) override;
 
 		const std::string& GetColorShift() const override;
 		void SetColorShift(const std::string& color) override;

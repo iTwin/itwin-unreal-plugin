@@ -2,7 +2,7 @@
 |
 |     $Source: http.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -21,10 +21,11 @@
 
 MODULE_EXPORT namespace SDK::Core {
 
-	class Http: public Tools::Factory<Http>, public Tools::ExtensionSupport, public std::enable_shared_from_this<Http>
+	class Http: public Tools::Factory<Http>, public Tools::ExtensionSupport
 	{
 	public:
-		using Headers = std::vector<std::pair<std::string, std::string>>;
+		using KeyValueVector = std::vector<std::pair<std::string, std::string>>;
+		using Headers = KeyValueVector;
 
 		using RawData = std::vector<uint8_t>;
 		using RawDataPtr = std::shared_ptr<RawData>;
@@ -33,7 +34,7 @@ MODULE_EXPORT namespace SDK::Core {
 		//	-> keeping first/second below to avoid having to change all calls...
 		struct Response
 		{
-			long first = 0;
+			long first = -1;
 			std::string second;
 			RawDataPtr rawdata_; // only provided if the request asks it
 		};
@@ -45,7 +46,10 @@ MODULE_EXPORT namespace SDK::Core {
 		virtual Response Get(const std::string& url, const std::string& body, const Headers& h = {}, bool isFullUrl = false) = 0;
 		virtual Response Patch(const std::string& url, const std::string& body, const Headers& h = {}) = 0;
 		virtual Response Post(const std::string& url, const std::string& body, const Headers& h = {}) = 0;
+		virtual Response PostFile(const std::string& url, const std::string& fileParamName, const std::string & filePath,
+			const KeyValueVector& extraParams = {}, const Headers& h = {}) = 0;
 		virtual Response Put(const std::string& url, const std::string& body, const Headers& h = {}) = 0;
+		virtual Response PutBinaryFile(const std::string& url, const std::string& filePath, const Headers& headers = {}) = 0;
 		virtual Response Delete(const std::string& url, const std::string& body, const Headers& h = {}) = 0;
 
 		Response GetJson(const std::string& url, const std::string& body, const Headers& h = {}, bool isFullUrl = false);

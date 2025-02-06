@@ -26,4 +26,3 @@ if (NOT EXISTS "${BE_UNREAL_ENGINE_DIR}/Build/BatchFiles")
 endif()
 
 be_add_feature_option( Material_Tuning "Allow editing the iModel's materials" "ITwin" ON )
-be_add_feature_option( Advanced_Material_Conversion "Advanced conversion of iTwin materials (download textures...)" "ITwin" OFF )

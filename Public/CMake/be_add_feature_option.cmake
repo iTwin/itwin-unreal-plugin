@@ -24,10 +24,10 @@ function (be_add_feature_option feature_name feature_desc ns_name default_on)
 	else ()
 		string ( REPLACE "_" "" feature_header_name ${feature_name} )
 	endif ()
-	set (dstFolder "${CMAKE_SOURCE_DIR}/Public/BeHeaders/BuildConfig" )
+	set (dstFolder "${CMAKE_BINARY_DIR}/BeBuildConfig" )
 	configure_file( ${CMAKE_SOURCE_DIR}/Public/Cmake/be_feature_option.h.template ${dstFolder}/${feature_header_name}.h )
 
-	# Append BuildConfig folder to the list of extra folders for symlink in ThirdParty directory
+	# Append BeBuildConfig folder to the list of extra folders for symlink in ThirdParty directory
 	# (only doing it once is sufficient)
 	get_property (extraFolders GLOBAL PROPERTY beExtraFoldersToSymlink)
 	if (NOT ${dstFolder} IN_LIST extraFolders)

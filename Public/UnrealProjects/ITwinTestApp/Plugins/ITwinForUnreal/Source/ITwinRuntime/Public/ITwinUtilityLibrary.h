@@ -2,7 +2,7 @@
 |
 |     $Source: ITwinUtilityLibrary.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -11,6 +11,17 @@
 #include <Kismet/BlueprintFunctionLibrary.h>
 #include <glm/glm.hpp>
 #include <ITwinUtilityLibrary.generated.h>
+
+class FITwinCoordConversions
+{
+public:
+	FITwinCoordConversions();
+
+	FTransform IModelToUnreal;
+	FTransform UnrealToIModel;
+	FTransform IModelToUntransformedIModelInUE;
+	FTransform IModelTilesetTransform;
+};
 
 UCLASS()
 class ITWINRUNTIME_API UITwinUtilityLibrary: public UBlueprintFunctionLibrary
@@ -25,7 +36,8 @@ public:
 	//! Return the transform from ECEF to Unreal space.
 	//! StandardizeAndFixAngles is NOT included in this function.
 	UFUNCTION(BlueprintCallable, Category = "iTwin")
-	static FTransform GetEcefToUnrealTransform(const AITwinIModel* IModel);
+	static FTransform GetEcefToUnrealTransform(const AITwinIModel* IModel,
+											   FTransform& EcefToUntransformedIModelInUE);
 	UFUNCTION(BlueprintCallable, Category = "iTwin")
 	static FTransform GetUnrealToEcefTransform(const AITwinIModel* IModel);
 
@@ -33,8 +45,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "iTwin")
 	static FTransform StandardizeAndFixAngles(FTransform FinalTransformToUnreal);
 
-	//! Returns the transform from the iModel spatial coordinates into Unreal world coordinates, taking into
-	//! account geolocation etc. StandardizeAndFixAngles is included in the call.
+	//! Correctly inverts an FTransform, even when there is non-uniform scaling (SO/53887451)
+	UFUNCTION(BlueprintCallable, Category = "iTwin")
+	static FTransform Inverse(FTransform const& Transform);
+
+	static void GetIModelCoordinateConversions(AITwinIModel const& IModel, FITwinCoordConversions& OutConv);
+
+	//! Returns the transform from the iModel spatial coordinates into Unreal world coordinates, taking thus
+	//! into account both geolocation and possible iModel or Tileset's custom transforms.
+	//! StandardizeAndFixAngles is included in the call.
 	UFUNCTION(BlueprintCallable, Category = "iTwin")
 	static FTransform GetIModelToUnrealTransform(const AITwinIModel* IModel);
 	UFUNCTION(BlueprintCallable, Category = "iTwin")

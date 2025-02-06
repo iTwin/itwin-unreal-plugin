@@ -1433,6 +1433,18 @@ static void loadPrimitive(
         gltfToUnrealTexCoordMap,
         bHasBakedMetaDataInUVs);
   }
+
+  if (!bHasBakedMetaDataInUVs && primitiveResult.MeshBuildCallbacks.IsValid())
+  {
+      auto const uvIndexOpt = primitiveResult.MeshBuildCallbacks.Pin()->BakeFeatureIDsInVertexUVs(
+          std::nullopt,
+          { &primitive, pModelResult->Metadata, primitiveResult.Features, gltfToUnrealTexCoordMap },
+          duplicateVertices,
+          StaticMeshBuildVertices,
+          indices);
+      bHasBakedMetaDataInUVs = uvIndexOpt.has_value();
+  }
+
   PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
   // TangentX: Tangent
@@ -1544,30 +1556,39 @@ static void loadPrimitive(
       ColorVertexBuffer.Init(StaticMeshBuildVertices, bNeedsCPUAccess);
     }
 
-    uint32 NumTexCoords =
-        gltfToUnrealTexCoordMap.size() == 0 ? 1
-                                            : gltfToUnrealTexCoordMap.size();
-    if (!bHasBakedMetaDataInUVs
-        && NumTexCoords < MAX_STATIC_TEXCOORDS)
-    {
-        // add an additional UV layer in case we need to bake features in UVs on demand
-        // (for some reason, this seems to be ignored by Unreal: the mesh is always
-        // created with MAX_STATIC_TEXCOORDS...)
-        NumTexCoords++;
-    }
+    uint32 numberOfTextureCoordinates =
+        gltfToUnrealTexCoordMap.size() == 0
+        ? 1
+        : uint32(gltfToUnrealTexCoordMap.size());
 
-    FStaticMeshVertexBufferFlags VtxBufferFlags;
-    VtxBufferFlags.bNeedsCPUAccess = bNeedsCPUAccess;
-    LODResources.VertexBuffers.StaticMeshVertexBuffer.Init(
-        StaticMeshBuildVertices,
-        NumTexCoords,
-        VtxBufferFlags);
+    FStaticMeshVertexBuffer& vertexBuffer =
+        LODResources.VertexBuffers.StaticMeshVertexBuffer;
+    vertexBuffer.Init(
+        StaticMeshBuildVertices.Num(),
+        numberOfTextureCoordinates,
+        bNeedsCPUAccess);
 
-    if (!bHasBakedMetaDataInUVs && primitiveResult.MeshBuildCallbacks.IsValid())
-    {
-        primitiveResult.MeshBuildCallbacks.Pin()->BakeFeatureIDsInVertexUVs(std::nullopt,
-            { &primitive, pModelResult->Metadata, primitiveResult.Features, gltfToUnrealTexCoordMap },
-            LODResources);
+    // Manually copy the vertices into the buffer. We do this because UE 5.3
+    // and 5.4 have a bug where the overload of `FStaticMeshVertexBuffer::Init`
+    // taking an array of `FStaticMeshBuildVertex` will create a mesh with all 8
+    // sets of texture coordinates, even when we usually only need one or two.
+    // See https://github.com/CesiumGS/cesium-unreal/issues/1513
+    for (uint32 vertexIndex = 0;
+        vertexIndex < uint32(StaticMeshBuildVertices.Num());
+        ++vertexIndex) {
+        const FStaticMeshBuildVertex& source =
+            StaticMeshBuildVertices[vertexIndex];
+
+        vertexBuffer.SetVertexTangents(
+            vertexIndex,
+            source.TangentX,
+            source.TangentY,
+            source.TangentZ);
+        for (uint32 uvIndex = 0; uvIndex < numberOfTextureCoordinates;
+            uvIndex++) {
+            vertexBuffer
+                .SetVertexUV(vertexIndex, uvIndex, source.UVs[uvIndex], false);
+        }
     }
   }
 
@@ -2020,7 +2041,8 @@ static void SetGltfParameterValues(
     const MaterialPBRMetallicRoughness& pbr,
     UMaterialInstanceDynamic* pMaterial,
     EMaterialParameterAssociation association,
-    int32 index) {
+    int32 index,
+    ICesiumMeshBuildCallbacks const* materialTuner) {
   for (auto& textureCoordinateSet : loadResult.textureCoordinateParameters) {
     pMaterial->SetScalarParameterValueByInfo(
         FMaterialParameterInfo(
@@ -2226,6 +2248,11 @@ static void SetGltfParameterValues(
     pMaterial->SetVectorParameterValueByInfo(
         FMaterialParameterInfo("emissiveFactor", association, index),
         FVector(1.0f, 1.0f, 1.0f));
+  }
+
+  // Extra material customizations
+  if (materialTuner) {
+      materialTuner->TuneMaterial(material, pbr, pMaterial, association, index);
   }
 }
 
@@ -2737,7 +2764,7 @@ static void loadPrimitiveGameThreadPart(
     UITwinCesiumGltfComponent* pGltf,
     LoadPrimitiveResult& loadResult,
     const glm::dmat4x4& cesiumToUnrealTransform,
-    const Cesium3DTilesSelection::Tile& tile,
+    Cesium3DTilesSelection::Tile& tile,
     bool createNavCollision,
     AITwinCesium3DTileset* pTilesetActor) {
   TRACE_CPUPROFILER_EVENT_SCOPE(Cesium::LoadPrimitive)
@@ -2829,10 +2856,12 @@ static void loadPrimitiveGameThreadPart(
 #endif
 
   UMaterialInstanceDynamic* pMaterial(nullptr);
-  if (loadResult.MeshBuildCallbacks.IsValid())
+  TSharedPtr<ICesiumMeshBuildCallbacks> MeshBuildCallbacks =
+      loadResult.MeshBuildCallbacks.Pin();
+  if (MeshBuildCallbacks)
   {
       // Possibility to override the material for this primitive
-      pMaterial = loadResult.MeshBuildCallbacks.Pin()->CreateMaterial_GameThread(
+      pMaterial = MeshBuildCallbacks->CreateMaterial_GameThread(
           loadResult.pMeshPrimitive,
           pBaseMaterial,
           nullptr,
@@ -2855,7 +2884,8 @@ static void loadPrimitiveGameThreadPart(
       pbr,
       pMaterial,
       EMaterialParameterAssociation::GlobalParameter,
-      INDEX_NONE);
+      INDEX_NONE,
+      MeshBuildCallbacks.Get());
   ITwinCesium::SetWaterParameterValues(
       model,
       loadResult,
@@ -2901,7 +2931,8 @@ static void loadPrimitiveGameThreadPart(
         pbr,
         pMaterial,
         EMaterialParameterAssociation::LayerParameter,
-        0);
+        0,
+        MeshBuildCallbacks.Get());
 
     // Initialize fade uniform to fully visible, in case LOD transitions
     // are off.
@@ -3019,9 +3050,9 @@ static void loadPrimitiveGameThreadPart(
   // If some tuning is about to be performed, postpone the mesh construction callback, as the present
   // mesh will be replaced by the tuned model afterwards.
   // TODO_AW could we avoid building the UE mesh in this case?
-  if (loadResult.MeshBuildCallbacks.IsValid() && !pTilesetActor->NeedGltfTuning(tile))
+  if (MeshBuildCallbacks && !pTilesetActor->NeedGltfTuning(tile))
   {
-      loadResult.MeshBuildCallbacks.Pin()->OnMeshConstructed(
+      MeshBuildCallbacks->OnMeshConstructed(
           tile,
           pMesh,
           pMaterial,
@@ -3053,7 +3084,7 @@ UITwinCesiumGltfComponent::CreateOffGameThread(
     UMaterialInterface* pBaseTranslucentMaterial,
     UMaterialInterface* pBaseWaterMaterial,
     FITwinCustomDepthParameters CustomDepthParameters,
-    const Cesium3DTilesSelection::Tile& tile,
+    Cesium3DTilesSelection::Tile& tile,
     bool createNavCollision) {
 
   TRACE_CPUPROFILER_EVENT_SCOPE(Cesium::LoadModel)
@@ -3096,9 +3127,11 @@ UITwinCesiumGltfComponent::CreateOffGameThread(
     encodeMetadataGameThreadPart(*Gltf->EncodedMetadata_DEPRECATED);
   }
 
+  LoadGltfResult::LoadPrimitiveResult* pAnyPrimResult = nullptr;
   for (LoadNodeResult& node : pReal->loadModelResult.nodeResults) {
     if (node.meshResult) {
       for (LoadPrimitiveResult& primitive : node.meshResult->primitiveResults) {
+        pAnyPrimResult = &primitive;
         loadPrimitiveGameThreadPart(
             model,
             Gltf,
@@ -3111,9 +3144,26 @@ UITwinCesiumGltfComponent::CreateOffGameThread(
     }
   }
 
+  if (pAnyPrimResult && pAnyPrimResult->MeshBuildCallbacks.IsValid() && !pTilesetActor->NeedGltfTuning(tile))
+  {
+    pAnyPrimResult->MeshBuildCallbacks.Pin()->OnTileConstructed(tile);
+    Gltf->ITwinVisibilityChanged =
+      [MeshBuildCallbacks = pAnyPrimResult->MeshBuildCallbacks, TileId = tile.getTileID()] (bool visible)
+        {
+          if (MeshBuildCallbacks.IsValid())
+            MeshBuildCallbacks.Pin()->OnVisibilityChanged(TileId, visible);
+        };
+  }
+
   Gltf->SetVisibility(false, true);
   Gltf->SetCollisionEnabled(ECollisionEnabled::NoCollision);
   return Gltf;
+}
+
+void UITwinCesiumGltfComponent::OnVisibilityChanged()
+{
+  USceneComponent::OnVisibilityChanged();
+  if (ITwinVisibilityChanged) ITwinVisibilityChanged(GetVisibleFlag());
 }
 
 UITwinCesiumGltfComponent::UITwinCesiumGltfComponent() : USceneComponent() {

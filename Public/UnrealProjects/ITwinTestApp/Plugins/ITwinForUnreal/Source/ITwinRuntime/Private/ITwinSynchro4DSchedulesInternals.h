@@ -2,7 +2,7 @@
 |
 |     $Source: ITwinSynchro4DSchedulesInternals.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -10,11 +10,11 @@
 
 #include <ITwinFwd.h>
 #include <ITwinElementID.h>
+#include <ITwinSceneMappingTypes.h>
 #include <ITwinSynchro4DSchedulesTimelineBuilder.h>
 #include <Timeline/SchedulesImport.h>
 #include <Timeline/Timeline.h>
 #include <CesiumMaterialType.h>
-#include <CesiumTileIDHash.h>
 
 #include <UObject/WeakObjectPtrTemplates.h>
 
@@ -24,12 +24,13 @@
 #include <set>
 #include <unordered_map>
 
-using CesiumTileID = Cesium3DTilesSelection::TileID;
-
 class UMaterialInterface;
 class UObject;
+class FIModelUninitializer;
+class FITwinCoordConversions;
 class FITwinSchedule;
 class FITwinSceneTile;
+class FITwinSynchro4DAnimator;
 class UMaterialInstanceDynamic;
 
 namespace TestSynchro4DQueries
@@ -50,6 +51,8 @@ class FITwinSynchro4DSchedulesInternals
 	FITwinSchedulesImport SchedulesApi; // <== must be declared AFTER Builder
 	std::recursive_mutex& Mutex;
 	std::vector<FITwinSchedule>& Schedules;
+	FITwinSynchro4DAnimator& Animator;
+	std::shared_ptr<FIModelUninitializer> Uniniter;
 
 	/// For use when PrefetchAllElementAnimationBindings() returns true only
 	enum class EApplySchedule
@@ -66,14 +69,18 @@ class FITwinSynchro4DSchedulesInternals
 	/// Not straightforward to handle, and this way we'll have fewer (batches of) queries anyway.
 	/// The map value needs to be ordered because of the set_intersection in 
 	/// FITwinSynchro4DSchedulesInternals::HandleReceivedElements :/
-	std::unordered_map<CesiumTileID, std::set<ITwinElementID>> ElementsReceived;
+	std::unordered_map<ITwinScene::TileIdx, std::unordered_set<ITwinScene::ElemIdx>> ElementsReceived;
 
 	friend void TestSynchro4DQueries::MakeDummySchedule(FITwinSynchro4DSchedulesInternals&);
 
+	void CheckInitialized(AITwinIModel& IModel);
 	void MutateSchedules(std::function<void(std::vector<FITwinSchedule>&)> const& Func);
+	void SetupAndApply4DAnimationSingleTile(FITwinSceneTile& SceneTile);
+	void Setup4DAnimationSingleTile(FITwinSceneTile& SceneTile, std::optional<ITwinScene::TileIdx> TileRank,
+		std::unordered_set<ITwinScene::ElemIdx> const* Elements);
 	/// Deferred processing of the Elements which were notified during the last tick ('last' to avoid doing
 	/// anything before the whole tile has been loaded, since we are notified of the tile meshes one by one)
-	void HandleReceivedElements(bool& bNewTilesReceived);
+	void HandleReceivedElements(bool& bNew4DAnimTexToUpdate);
 	void UpdateConnection(bool const bOnlyIfReady);
 	bool ResetSchedules();
 	void Reset();
@@ -81,7 +88,8 @@ class FITwinSynchro4DSchedulesInternals
 
 public:
 	FITwinSynchro4DSchedulesInternals(UITwinSynchro4DSchedules& Owner, bool const InDoNotBuildTimelines,
-									  std::recursive_mutex& Mutex, std::vector<FITwinSchedule>& Schedules);
+									  std::recursive_mutex& Mutex, std::vector<FITwinSchedule>& Schedules,
+									  FITwinSynchro4DAnimator& Animator);
 
 	UMaterialInterface* GetMasterMaterial(ECesiumMaterialType Type,
 										  UITwinSynchro4DSchedules& SchedulesComp);
@@ -96,20 +104,26 @@ public:
 	void VisitSchedules(std::function<bool(FITwinSchedule const&)> const& Func) const;
 	bool PrefetchAllElementAnimationBindings() const;
 	bool IsPrefetchedAvailableAndApplied() const;
-	void OnNewTileMeshBuilt(CesiumTileID const& TileId, std::set<ITwinElementID>&& MeshElementIDs,
-		const TWeakObjectPtr<UMaterialInstanceDynamic>& pMaterial, bool const bFirstTimeSeenTile,
-		FITwinSceneTile& SceneTile);
+	/// \return Whether the tile's render-readiness was toggled *off*
+	bool OnNewTileBuilt(FITwinSceneTile& SceneTile);
+	void OnNewTileMeshBuilt(ITwinScene::TileIdx const& TileRank,
+		std::unordered_set<ITwinScene::ElemIdx>&& MeshElements,
+		const TWeakObjectPtr<UMaterialInstanceDynamic>& pMaterial, FITwinSceneTile& SceneTile);
 	void SetScheduleTimeRangeIsKnown();
+	void HideNonAnimatedDuplicates(FITwinSceneTile& SceneTile, FElementsGroup const& NonAnimatedDuplicates);
 
 	FITwinSchedulesImport& GetSchedulesApiReadyForUnitTesting();
 
+	static FTransform ComputeTransformFromFinalizedKeyframe(FITwinCoordConversions const& CoordConv,
+		ITwin::Timeline::PTransform const& TransfoKey, FVector const& ElementsBBoxCenter,
+		bool const bWantsResultAsIfIModelUntransformed);
 	/// \param Deferred Passed as const because the whole timeline replay and interpolation code is
 	///		const, but FDeferredPlaneEquation::planeEquation_ is mutable for the purpose of this method.
 	/// \param ElementWorldBox We can only have it in world coordinates, precisely because Elements are
 	///		batched, and we need it in world anyway, for the same reason (applying the same cutting plane
 	///		to all Features of a given Element)
-	static void FinalizeCuttingPlaneEquation(ITwin::Timeline::FDeferredPlaneEquation const& Deferred,
-											 FBox const& ElementsWorldBox);
-	static void FinalizeAnchorPos(ITwin::Timeline::FDeferredAnchor const& Deferred,
-								  FBox const& ElementsWorldBox);
+	static void FinalizeCuttingPlaneEquation(FITwinCoordConversions const& CoordConv,
+		ITwin::Timeline::FDeferredPlaneEquation const& Deferred, FBox const& ElementsBox);
+	static void FinalizeAnchorPos(FITwinCoordConversions const& CoordConv,
+		ITwin::Timeline::FDeferredAnchor const& Deferred, FBox const& ElementsBox);
 };

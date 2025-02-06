@@ -2,7 +2,7 @@
 |
 |     $Source: ToolsTest.cpp $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -132,29 +132,37 @@ namespace InterfaceTest {
 }
 
 template<>
-std::function<std::shared_ptr<InterfaceTest::IMyClass>()> Tools::Factory<InterfaceTest::IMyClass>::newFct_ = []()
+Tools::Factory<InterfaceTest::IMyClass>::Globals::Globals()
 {
-	std::shared_ptr<InterfaceTest::IMyClass> p(static_cast<InterfaceTest::IMyClass*>(new InterfaceTest::MyClass()));
-	return p;
-};
+	newFct_ = [](){
+			return static_cast<InterfaceTest::IMyClass*>(new InterfaceTest::MyClass());
+		};
+}
+
+template<>
+Tools::Factory<InterfaceTest::IMyClass>::Globals& Tools::Factory<InterfaceTest::IMyClass>::GetGlobals()
+{
+	static Tools::Factory<InterfaceTest::IMyClass>::Globals globals;
+	return globals;
+}
 
 TEST_CASE("Tools:Interface")
 {
 	using namespace InterfaceTest;
 	// check with base class
 	{
-		std::shared_ptr<IMyClass> pObj = IMyClass::New();
+		std::shared_ptr<IMyClass> pObj(IMyClass::New());
 		REQUIRE(pObj->Fct1() == 245);
 		REQUIRE(pObj->GetDynTypeId() == MyClass::GetTypeId());
 	}
 	{
 		// We want MyExtendedClass to be instantiate everywhere we need a IMyClass, so we define the "New" function.
 		IMyClass::SetNewFct([]() {
-			std::shared_ptr<IMyClass> p(static_cast<IMyClass*>(new MyExtendedClass));
+			IMyClass* p(static_cast<IMyClass*>(new MyExtendedClass));
 			return p;
 			});
 
-		std::shared_ptr<IMyClass> pObj = IMyClass::New();
+		std::shared_ptr<IMyClass> pObj(IMyClass::New());
 		REQUIRE(pObj->Fct1() == 654);
 		REQUIRE(pObj->GetDynTypeId() == MyExtendedClass::GetTypeId());
 		REQUIRE(pObj->IsTypeOf(MyClass::GetTypeId()) == true);
@@ -195,7 +203,7 @@ TEST_CASE("Tools:Log")
 	using namespace Tools;
 
 	ILog::SetNewFct([](std::string s, Level level) {
-		std::shared_ptr<ILog> p(static_cast<MyLog*>(new MyLog(s, level)));
+		ILog* p(static_cast<MyLog*>(new MyLog(s, level)));
 		return p;
 		});
 
@@ -290,7 +298,7 @@ TEST_CASE("Tools:AssertHandler")
 	using namespace SDK::Core::Tools;
 	auto prevHandler = IAssertHandler::GetNewFct();
 	IAssertHandler::SetNewFct([]() {
-		std::shared_ptr<IAssertHandler> p(static_cast<MyAssertHandler*>(new MyAssertHandler));
+		IAssertHandler* p(static_cast<MyAssertHandler*>(new MyAssertHandler));
 		return p;
 		});
 
@@ -302,6 +310,28 @@ TEST_CASE("Tools:AssertHandler")
 	//restore previous handler
 	IAssertHandler::SetNewFct(prevHandler);
 	InitAssertHandler("Test");
+}
+
+
+
+TEST_CASE("Tools:StrongType")
+{
+	using namespace SDK::Core::Tools;
+
+	class Tag1 {};
+	using TId1 = StrongTypeId<Tag1>;
+
+	class Tag2 {};
+	using TId2 = StrongTypeId<Tag2>;
+
+	TId1 id1("plop");
+	TId2 id2("bob");
+
+	//id1 = "titi"; // compile should fail
+	id1 = TId1("titi"); // ok
+	//id1 = id2; // compile should fail
+	//std::string s = id1; //compile should fail
+	std::string s = static_cast<std::string>(id1);
 }
 
 int main(int argc, char* argv[]) {

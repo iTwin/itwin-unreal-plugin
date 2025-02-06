@@ -2,7 +2,7 @@
 |
 |     $Source: SchedulesStructs.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -11,11 +11,12 @@
 #include "CoreMinimal.h"
 #include <Math/Vector.h>
 
-#include <Compil/StdHash.h>
+#include <Hashing/UnrealString.h>
 #include <ITwinElementID.h>
 #include <Timeline/AnchorPoint.h>
 #include <Timeline/SchedulesConstants.h>
 #include <Timeline/TimeInSeconds.h>
+#include <Timeline/TimelineTypes.h>
 
 #include <Compil/BeforeNonUnrealIncludes.h>
 	#include <BeHeaders/Compil/AlwaysFalse.h>
@@ -25,9 +26,7 @@
 #include <functional>
 #include <mutex>
 #include <optional>
-#include <set>
 #include <unordered_map>
-#include <unordered_set>
 #include <variant>
 #include <vector>
 
@@ -124,11 +123,6 @@ public:
 	FActiveAppearance ActiveAppearance;
 	FSimpleAppearance FinishAppearance;
 };
-
-/// Collection of Elements assigned an animation binding together. Using set instead of unordered_set so that
-/// FITwinSynchro4DSchedulesInternals::HandleReceivedElements can use set_intersection, but this would need
-/// to be benched
-using FElementsGroup = std::set<ITwinElementID>;
 
 /// Keyframe of an animation path
 class FTransformKey
@@ -325,4 +319,4 @@ public:
 using FOnAnimationBindingAdded =
 	std::function<void(FITwinSchedule const&, size_t const/*AnimationBindingIndex*/, FSchedLock&)>;
 using FOnAnimationGroupModified = std::function<
-	void(size_t const/*GroupIndex*/, std::set<ITwinElementID> const&/*GroupElements*/, FSchedLock&)>;
+	void(size_t const/*GroupIndex*/, FElementsGroup const&/*GroupElements*/, FSchedLock&)>;

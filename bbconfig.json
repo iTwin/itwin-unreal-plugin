@@ -1,0 +1,61 @@
+{
+    "Bootstrap":
+    [
+      {
+        "IsPrimary": false,
+        "LocalDir": "${SrcRoot}BuildStrategies",
+        "Name": "BuildStrategies",
+        "RepoType": "Git"
+      },
+      {
+        "IsPrimary": true,
+        "LocalDir": "Carrot",
+        "Name": "Carrot",
+        "RepoType": "Git"
+      }
+    ],
+    "GitRepositories":
+    [
+      {
+        "Branch": "master",
+        "FromLkgs": false,
+        "Guid": "0",
+        "Name": "bentleybuild",
+        "Url": "https://bentleycs@dev.azure.com/bentleycs/Common/_git/BentleyBuild",
+        "UseBranch": true
+      },
+      {
+        "Branch": "main",
+        "FromLkgs": false,
+        "Guid": "0",
+        "Name": "bsicommon",
+        "Url": "https://bentleycs@dev.azure.com/bentleycs/Common/_git/bsicommon",
+        "UseBranch": true
+      },
+      {
+        "Branch": "awalensa/carrot",
+        "FromLkgs": false,
+        "Guid": "0",
+        "Name": "buildstrategies",
+        "Url": "https://bentleycs@dev.azure.com/bentleycs/Common/_git/BuildStrategies",
+        "UseBranch": true
+      },
+      {
+        "Branch": "main",
+        "FromLkgs": false,
+        "Guid": "0",
+        "Name": "eula",
+        "Url": "https://bentleycs@dev.azure.com/bentleycs/Common/_git/Eula",
+        "UseBranch": true
+      }
+    ],
+    "NugetPackages":
+    [
+    ],
+    "UniversalPackages":
+    [
+    ],
+    "LkgSubParts":
+    [
+    ]
+}

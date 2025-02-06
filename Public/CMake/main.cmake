@@ -19,29 +19,31 @@ set (beRequiredPythonVersion "3.9")
 if("${Python3_VERSION}" VERSION_LESS "${beRequiredPythonVersion}")
 	message (FATAL_ERROR "Python version required is ${beRequiredPythonVersion}, but found ${Python3_VERSION}.")
 endif ()
-
+cmake_path(NATIVE_PATH Python3_EXECUTABLE NORMALIZE Python3_EXECUTABLE_NATIVE)
 define_property (GLOBAL PROPERTY beExtraFoldersToSymlink
 	BRIEF_DOCS "Contains extra folders to symlink - introduced for optional features"
 	FULL_DOCS "Contains the absolute paths of extra folders to symlink")
-include ("${CMAKE_CURRENT_LIST_DIR}/be_get_vcpkg_infos.cmake")
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}")
+include (be_get_vcpkg_infos)
 set ( glm_INCLUDE_DIR      "${CMAKE_SOURCE_DIR}/Public/Extern/cesium-unreal/extern/cesium-native/extern/glm" )
 set ( expected_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/Public/Extern/cesium-unreal/extern/cesium-native/extern/expected-lite/include" )
 add_subdirectory(Public/SDK)
-include ("${CMAKE_CURRENT_LIST_DIR}/advanced_option.cmake")
-include ("${CMAKE_CURRENT_LIST_DIR}/be_add_feature_option.cmake")
-include ("${CMAKE_CURRENT_LIST_DIR}/options.cmake")
-include ("${CMAKE_CURRENT_LIST_DIR}/be_add_unreal_project.cmake")
-include ("${CMAKE_CURRENT_LIST_DIR}/be_get_targets.cmake")
-include ("${CMAKE_CURRENT_LIST_DIR}/be_add_test.cmake")
-include ("${CMAKE_CURRENT_LIST_DIR}/jsonUtils.cmake")
+include (advanced_option)
+include (be_add_feature_option)
+include (options)
+include (be_add_unreal_project)
+include (be_get_targets)
+include (be_add_test)
+include (jsonUtils)
+include (be_utils)
 # Add all the targets for the cesium dependencies before changing the global include directories & co.
 add_subdirectory (Public/CesiumDependencies)
 set (CMAKE_CXX_STANDARD 20)
 # Binaries used by Unreal apps/plugins are stored in the same folder "Binaries",
-# independently of the config (Debug, Release...).
+# independently of the config (UnrealDebug, Release...).
 # So to allow building different configs, we have to set a different name for each config
-# (eg. MyLib.dll in Release, and MyLibd.dll in debug).
-set (CMAKE_DEBUG_POSTFIX d)
+# (eg. MyLib.dll in Release, and MyLibd.dll in UnrealDebug).
+set (CMAKE_UNREALDEBUG_POSTFIX d)
 set (CMAKE_MSVC_RUNTIME_LIBRARY MultiThreadedDLL)
 include_directories (
 	"${CMAKE_SOURCE_DIR}/Public"

@@ -2,7 +2,7 @@
 |
 |     $Source: SDKCore.Build.cs $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -21,7 +21,11 @@ public class SDKCore : ModuleRules
 		string libExtension = ".lib";
 		string libPrefix = "";
 		string libSuffix = "lib";
+        string dllExtension = ".dll";
 		string libFolder = "UnrealDebug";
+        string libPostfixDynamic = ".lib";
+		string dllExePath = Path.Combine(PluginDirectory, "Binaries/Win64/");
+
 		if (Target.Configuration == UnrealTargetConfiguration.Development ||
 			Target.Configuration == UnrealTargetConfiguration.Shipping)
 		{
@@ -32,6 +36,9 @@ public class SDKCore : ModuleRules
 			libExtension = ".a";
 			libPrefix = "lib";
 			libSuffix = "";
+            dllExtension = ".dylib";
+            libPostfixDynamic = ".dylib";
+            dllExePath = Path.Combine(PluginDirectory, "Binaries/Mac/");
 		}
 		PublicAdditionalLibraries.AddRange(new string[]{
 			Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, libPrefix + "Visualization" + libExtension),
@@ -41,6 +48,7 @@ public class SDKCore : ModuleRules
 			Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, "libcurl" + libExtension),
             Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, libPrefix + "assert" + libExtension),
             Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, libPrefix + "cpptrace" + libExtension),
+            Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, libPrefix + "Singleton" + libPostfixDynamic),
         });
 
         if (Target.Platform == UnrealTargetPlatform.Mac)
@@ -49,6 +57,9 @@ public class SDKCore : ModuleRules
 				Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, libPrefix + "dwarf" + libExtension), // dependency of cpptrace for macos
 			});
 		}
+
+        string singletonDllName = libPrefix + "Singleton" + dllExtension;
+        RuntimeDependencies.Add("$(TargetOutputDir)/"+ singletonDllName, Path.Combine(dllExePath, singletonDllName));
 
         if (Target.Platform == UnrealTargetPlatform.Win64)
 		{

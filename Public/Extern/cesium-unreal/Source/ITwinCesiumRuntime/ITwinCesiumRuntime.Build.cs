@@ -108,7 +108,6 @@ public class ITwinCesiumRuntime : ModuleRules
             "tinyxml2",
             "turbojpeg",
             "uriparser",
-            "webpdecoder",
             "ktx_read",
         };
 
@@ -121,11 +120,11 @@ public class ITwinCesiumRuntime : ModuleRules
 
         if (Target.Platform == UnrealTargetPlatform.Win64)
         {
-            libs = libs.Concat(new string[] { "tidy_static", "zlibstatic" }).ToArray();
+            libs = libs.Concat(new string[] { "tidy_static", "zlibstatic", "libwebpdecoder" }).ToArray();
         }
         else
         {
-            libs = libs.Concat(new string[] { "tidy", "z" }).ToArray();
+            libs = libs.Concat(new string[] { "tidy", "z", "webpdecoder" }).ToArray();
         }
 
         if (preferDebug)

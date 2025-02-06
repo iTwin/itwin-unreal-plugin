@@ -2,7 +2,7 @@
 |
 |     $Source: GltfTuner.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -55,7 +55,8 @@ public:
 	};
 	GltfTuner();
 	~GltfTuner();
-	virtual CesiumGltf::Model Tune(const CesiumGltf::Model& model) override;
+	virtual CesiumGltf::Model Tune(const CesiumGltf::Model& model,
+		const glm::dmat4& tileTransform, const glm::dvec4& rootTranslation) override;
 	virtual void ParseTilesetJson(const rapidjson::Document& tilesetJson) override;
 	void SetRules(Rules&& rules);
 

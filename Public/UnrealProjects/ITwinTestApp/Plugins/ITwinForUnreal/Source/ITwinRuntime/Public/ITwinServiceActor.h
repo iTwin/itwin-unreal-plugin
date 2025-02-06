@@ -2,7 +2,7 @@
 |
 |     $Source: ITwinServiceActor.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -47,6 +47,12 @@ public:
 	UFUNCTION(Category = "iTwin",
 		BlueprintCallable)
 	UITwinWebServices* GetMutableWebServices();
+
+	UFUNCTION(Category = "iTwin",
+		BlueprintCallable)
+	FString GetAccessToken() const;
+
+	std::string GetAccessTokenStdString() const;
 
 #if WITH_TESTS
 	//! Used in automated tests, to enable mocking of web services.

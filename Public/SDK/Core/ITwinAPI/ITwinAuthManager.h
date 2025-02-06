@@ -2,7 +2,7 @@
 |
 |     $Source: ITwinAuthManager.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -85,6 +85,10 @@ MODULE_EXPORT namespace SDK::Core
 
 		bool IsAuthorizationInProgress() const;
 
+		//! Delay a function call to a certain delay
+		//! (could be moved to an independent class in the future TODO_JDE...)
+		virtual void UniqueDelayedCall(std::string const& uniqueId, std::function<bool()> const& func, float delayInSeconds) = 0;
+
 
 	protected:
 		ITwinAuthManager(EITwinEnvironment Env);
@@ -141,8 +145,6 @@ MODULE_EXPORT namespace SDK::Core
 
 		virtual bool LaunchWebBrowser(std::string const& state, std::string const& codeVerifier, std::string& error) const = 0;
 
-		virtual void UniqueDelayedCall(std::string const& uniqueId, std::function<bool()> const& func, float delayInSeconds) = 0;
-
 
 	protected:
 		const EITwinEnvironment env_;
@@ -165,6 +167,10 @@ MODULE_EXPORT namespace SDK::Core
 		std::vector<ITwinAuthObserver*> observers_;
 
 		using Pool = std::array<SharedInstance, (size_t)EITwinEnvironment::Invalid>;
-		static Pool instances_;
+		struct Globals
+		{
+			Pool instances_;
+		};
+		static Globals& GetGlobals();
 	};
 }

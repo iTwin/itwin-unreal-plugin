@@ -2,7 +2,7 @@
 |
 |     $Source: IModelSelectionMenuScript.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -45,6 +45,6 @@ private:
 	void OnLoadIModel(FString InIModelId, FString InExportId, FString InChangesetId, FString InITwinId,
 					  FString DisplayName, FString MeshUrl);
 	UFUNCTION(BlueprintCallable)
-	void IModelLoaded(bool bSuccess);
+	void IModelLoaded(bool bSuccess, FString InIModelId);
 	void OnLeftMouseButtonPressed();
 };

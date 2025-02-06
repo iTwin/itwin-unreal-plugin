@@ -2,7 +2,7 @@
 |
 |     $Source: ITwinRuntime.Build.cs $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -35,6 +35,10 @@ public class ITwinRuntime : ModuleRules
 			"Slate",
 			"SlateCore",
 			"UE5Coro",
+			"LevelSequence",
+			"CinematicCamera",
+			"MovieScene",
+			"MovieSceneTracks",
 		});
 		if (Target.bBuildEditor)
 		{
@@ -48,6 +52,7 @@ public class ITwinRuntime : ModuleRules
 		string libFolder = "UnrealDebug";
 		string libExtension = ".lib";
 		string libPrefix = "";
+		string libSuffix = "d";
 		if (Target.Platform == UnrealTargetPlatform.Mac)
 		{
 			libExtension = ".a";
@@ -58,11 +63,12 @@ public class ITwinRuntime : ModuleRules
 			Target.Configuration == UnrealTargetConfiguration.Shipping)
 		{
 			libFolder = "Release";
+			libSuffix = "";
 		}
 
 		PublicAdditionalLibraries.AddRange(new string[]{
-			Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, libPrefix + "BeUtils" + libExtension),
-			Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, libPrefix + "httpmockserver" + libExtension),
+			Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, libPrefix + "BeUtils" + libSuffix + libExtension),
+			Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, libPrefix + "httpmockserver" + libSuffix + libExtension),
 			Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, libPrefix + "cpr" + libExtension),
 			Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, "libcurl" + libExtension),
 			Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, "libmicrohttpd" + libExtension),

@@ -2,43 +2,68 @@
 |
 |     $Source: Types.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
 
 #pragma once
+#include <array>
 
-#include <glm/glm.hpp>
-
-namespace crtmath
+namespace SDK::Core
 {
-	typedef glm::vec4	float4;
-	typedef glm::vec3	float3;
-	typedef glm::vec2	float2;
+	typedef std::array<float, 4> float4;
+	typedef std::array<float, 3> float3;
+	typedef std::array<float, 2> float2;
+	typedef std::array<float, 12> mat4x3;
+	typedef std::array<float, 12> mat3x4;
+	typedef std::array<float, 16> mat4x4;
 
-	typedef glm::dmat4 mat4x4d;
-	typedef glm::dvec2 double2;
-	typedef glm::dvec3 double3;
-	typedef glm::dvec4 double4;
-	typedef glm::mat4	Matrix4x4;
-	typedef glm::mat4x3 mat4x3;
-	typedef glm::mat3x4 mat3x4;
-	typedef glm::dmat4x3 dmat4x3;
-	typedef glm::dmat3x4 dmat3x4;
-	typedef mat4x4d	Matrix4x4d;
+	typedef std::array<double, 4> double4;
+	typedef std::array<double, 3> double3;
+	typedef std::array<double, 2> double2;
+	typedef std::array<double, 12> dmat4x3;
+	typedef std::array<double, 12> dmat3x4;
+	typedef std::array<double, 16> dmat4x4;
 
-	typedef Matrix4x4 float4x4;
+	template<typename T>
+	inline T& ColRow(std::array<T, 16>& m, unsigned col, unsigned row)
+	{
+		BE_ASSERT(col < (unsigned)4);
+		BE_ASSERT(row < (unsigned)4);
+		return m[col * 4 + row];
+	}
 
-	typedef glm::ivec2 int2;
-	typedef glm::ivec3 int3;
-	typedef glm::ivec4 int4;
+	template<typename T>
+	inline T& ColRow4x3(std::array<T, 12>& m, unsigned col, unsigned row)
+	{
+		BE_ASSERT(col < (unsigned)4);
+		BE_ASSERT(row < (unsigned)3);
+		return m[col * 3 + row];
+	}
+
+	template<typename T>
+	inline const T& ColRow4x3(const std::array<T, 12>& m, unsigned col, unsigned row)
+	{
+		BE_ASSERT(col < (unsigned)4);
+		BE_ASSERT(row < (unsigned)3);
+		return m[col * 3 + row];
+	}
+
+	template<typename T>
+	inline const T& ColRow3x4(const std::array<T, 12>& m, unsigned col, unsigned row)
+	{
+		BE_ASSERT(col < (unsigned)3);
+		BE_ASSERT(row < (unsigned)4);
+		return m[col * 4 + row];
+	}
+
+	template<typename T>
+	inline T& ColRow3x4(std::array<T, 12>& m, unsigned col, unsigned row)
+	{
+		BE_ASSERT(col < (unsigned)3);
+		BE_ASSERT(row < (unsigned)4);
+		return m[col * 4 + row];
+	}
 	
-	typedef glm::u32vec2 uint2;
-	typedef glm::u32vec3 uint3;
-	typedef glm::u32vec4 uint4;
-
-	typedef glm::bvec2 bool2;
-	typedef glm::bvec3 bool3;
-	typedef glm::bvec4 bool4;
 }

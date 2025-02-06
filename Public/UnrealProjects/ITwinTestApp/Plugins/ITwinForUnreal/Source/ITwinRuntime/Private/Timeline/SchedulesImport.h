@@ -2,7 +2,7 @@
 |
 |     $Source: SchedulesImport.h $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -17,8 +17,6 @@
 #include <mutex>
 #include <set>
 #include <vector>
-
-constexpr uint16_t SimultaneousRequestsAllowed = 6;
 
 class FITwinSchedulesImport
 {

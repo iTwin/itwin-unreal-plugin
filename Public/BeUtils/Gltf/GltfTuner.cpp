@@ -2,7 +2,7 @@
 |
 |     $Source: GltfTuner.cpp $
 |
-|  $Copyright: (c) 2024 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -100,6 +100,25 @@ static int32_t GetConvertedPrimitiveMode(int32_t mode)
 	return mode;
 }
 
+inline bool MaterialUsingTextures(CesiumGltf::Material const& material)
+{
+	if (material.normalTexture
+		|| material.occlusionTexture
+		|| material.emissiveTexture)
+	{
+		return true;
+	}
+	if (material.pbrMetallicRoughness)
+	{
+		if (material.pbrMetallicRoughness->baseColorTexture
+			|| material.pbrMetallicRoughness->metallicRoughnessTexture)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
 //! Rules with additional precomputed derived data.
 struct GltfTunerRulesEx: GltfTuner::Rules
 {
@@ -146,15 +165,20 @@ public:
 		boost::pfr::equal_to<>>;
 	const CesiumGltf::Model& model_; //!< The input model.
 	const GltfTunerRulesEx& rules_;
+	const glm::dmat4& tileTransform_; //!< The tile transformation
 	using UInt64AccessorView = CesiumGltf::AccessorView<uint64_t>;
 	std::optional<UInt64AccessorView> elementPropertyTableView_;
 	std::optional<UInt64AccessorView> materialPropertyTableView_;
 
 
-	GltfTunerHelper(const CesiumGltf::Model& model, const GltfTunerRulesEx& rules, const std::shared_ptr<GltfMaterialHelper>& materialHelper)
+	GltfTunerHelper(const CesiumGltf::Model& model,
+		const GltfTunerRulesEx& rules,
+		const std::shared_ptr<GltfMaterialHelper>& materialHelper,
+		const glm::dmat4& tileTransform)
 		: GltfMaterialTuner(materialHelper)
 		, model_(model)
 		, rules_(rules)
+		, tileTransform_(tileTransform)
 	{
 	}
 	CesiumGltf::Model Tune()
@@ -284,7 +308,9 @@ public:
 					AccessorViews::Maker<AccessorViews::Colors>{colorAttributeIt == primitive.attributes.end() ? -1 : colorAttributeIt->second}),
 					primitive, { .hasMaterialFeatureId_ = primHasMaterialIDs }, clusters);
 			}
+			int32_t const meshIndex = static_cast<int32_t>(gltfBuilder.GetModel().meshes.size());
 			gltfBuilder.GetModel().meshes.emplace_back();
+			CesiumGltf::Node const* nodeUsingThisMesh = nullptr;
 			// To have reproducible output (which is needed for unit tests), we add the primitives
 			// by order of the cluster ID.
 			std::vector<const decltype(clusters)::value_type*> sortedClusters;
@@ -298,6 +324,7 @@ public:
 				const auto& cluster = clusterEntry->second;
 				int32_t materialId = clusterId.material_;
 				bool bOverrideColor = false;
+				bool bCustomMaterial = false;
 				if (clusterId.itwinMaterialID_ && materialId >= 0 && CanConvertITwinMaterials())
 				{
 					// The final primitive will have 1 iTwin material.
@@ -305,14 +332,39 @@ public:
 					materialId = ConvertITwinMaterial(*clusterId.itwinMaterialID_,
 						materialId, gltfMaterials, gltfTextures, gltfImages,
 						bOverrideColor, cluster.colors_);
+					bCustomMaterial = (materialId >= 0 && materialId != clusterId.material_);
 				}
-				auto primitive = gltfBuilder.AddMeshPrimitive((int)gltfBuilder.GetModel().meshes.size()-1, materialId, clusterId.mode_);
+				auto primitive = gltfBuilder.AddMeshPrimitive(meshIndex, materialId, clusterId.mode_);
 				primitive.SetIndices(cluster.indices_, true);
 				primitive.SetPositions(cluster.positions_);
 				if (!cluster.normals_.empty())
 					primitive.SetNormals(cluster.normals_);
 				if (!cluster.uvs_.empty())
+				{
 					primitive.SetUVs(cluster.uvs_);
+				}
+				else if (bCustomMaterial && MaterialUsingTextures(gltfMaterials[materialId]))
+				{
+					// Quick fix for models not using texture originally: they are exported without UVs by
+					// the Mesh Export Service (MES), but we do need UVs to map textures added by the user
+					// afterwards...
+					if (nodeUsingThisMesh == nullptr)
+					{
+						// To avoid continuity issues when a large geometry overlaps in different tiles, we
+						// need a transformation, which can be retrieved from the 1st node using this mesh.
+						// Note that there is often just one mesh (with several primitives) and one node in a
+						// tile...
+						auto itNode = std::find_if(model_.nodes.cbegin(), model_.nodes.end(),
+							[meshIndex](auto const& node) { return node.mesh == meshIndex; });
+						BE_ASSERT(itNode != model_.nodes.end());
+						if (itNode != model_.nodes.end())
+						{
+							nodeUsingThisMesh = &(*itNode);
+						}
+					}
+					gltfBuilder.ComputeFastUVs(primitive, cluster.positions_, cluster.normals_,
+						cluster.indices_, tileTransform_, nodeUsingThisMesh);
+				}
 				if (!cluster.colors_.empty() && !bOverrideColor)
 					primitive.SetColors(cluster.colors_);
 				if (!cluster.featureIds_.empty())
@@ -626,7 +678,8 @@ GltfTuner::~GltfTuner()
 {
 }
 
-CesiumGltf::Model GltfTuner::Tune(const CesiumGltf::Model& model)
+CesiumGltf::Model GltfTuner::Tune(const CesiumGltf::Model& model,
+	const glm::dmat4& tileTransform, const glm::dvec4& rootTranslation)
 {
 	// Test if we should recompute rules derived data.
 	bool isRulesExOutdated = false;
@@ -638,15 +691,23 @@ CesiumGltf::Model GltfTuner::Tune(const CesiumGltf::Model& model)
 			impl_->rulesEx_.version_ = impl_->rulesVersion_;
 			(Rules&)impl_->rulesEx_ = impl_->rules_;
 		}
+
+		if (isRulesExOutdated)
+		{
+			impl_->rulesEx_.elementToGroup_.clear();
+			for (auto groupIndex = 0; groupIndex < impl_->rulesEx_.elementGroups_.size(); ++groupIndex)
+				for (const auto elementId : impl_->rulesEx_.elementGroups_[groupIndex].elements_)
+					impl_->rulesEx_.elementToGroup_[elementId] = groupIndex;
+		}
 	}
-	if (isRulesExOutdated)
-	{
-		impl_->rulesEx_.elementToGroup_.clear();
-		for (auto groupIndex = 0; groupIndex < impl_->rulesEx_.elementGroups_.size(); ++groupIndex)
-			for (const auto elementId: impl_->rulesEx_.elementGroups_[groupIndex].elements_)
-				impl_->rulesEx_.elementToGroup_[elementId] = groupIndex;
-	}
-	return GltfTunerHelper(model, impl_->rulesEx_, impl_->materialHelper_).Tune();
+	// Avoid numeric issues when computing fast UVs from positions, by compensating the (usually huge)
+	// translation of the model.
+	glm::dmat4x4 const tileTransform_shifted = tileTransform - glm::dmat4x4(
+		glm::dvec4(0.),
+		glm::dvec4(0.),
+		glm::dvec4(0.),
+		rootTranslation);
+	return GltfTunerHelper(model, impl_->rulesEx_, impl_->materialHelper_, tileTransform_shifted).Tune();
 }
 
 void GltfTuner::SetRules(Rules&& rules)
