@@ -26,18 +26,18 @@ Person{ .first_name = "Homer",
 	   .age = 45 };
 
 TEST_CASE("JsonTest:json_tostring") {
-	const std::string r = SDK::Core::Json::ToString(homer);
+	const std::string r = AdvViz::SDK::Json::ToString(homer);
 	REQUIRE(r == "{\"first_name\":\"Homer\",\"last_name\":\"Simpson\",\"age\":45}");
 }
 
 TEST_CASE("JsonTest:json_fromstring") {
-	const std::string r = SDK::Core::Json::ToString(homer);
+	const std::string r = AdvViz::SDK::Json::ToString(homer);
 	const std::string json_string("{\"first_name\":\"Homer\",\"last_name\":\"Simpson\",\"age\":45}");
-	Person homer;
-	SDK::Core::Json::FromString(homer, json_string);
-	REQUIRE(homer.first_name == "Homer");
-	REQUIRE(homer.last_name == "Simpson");
-	REQUIRE(homer.age == 45);
+	Person homer_fromstring;
+	AdvViz::SDK::Json::FromString(homer_fromstring, json_string);
+	REQUIRE(homer_fromstring.first_name == "Homer");
+	REQUIRE(homer_fromstring.last_name == "Simpson");
+	REQUIRE(homer_fromstring.age == 45);
 }
 
 #if 0
@@ -73,10 +73,10 @@ TEST_CASE(JsonTest, json_fromstring3) {
 	}\
 "
 );
-	auto generic = SDK::Core::Json::FromString<MyClass2>(json_string);
-	//const std::string r = SDK::Core::Json::ToString(homer);
+	auto generic = AdvViz::SDK::Json::FromString<MyClass2>(json_string);
+	//const std::string r = AdvViz::SDK::Json::ToString(homer);
 	//const std::string json_string("{\"first_name\":\"Homer\",\"last_name\":\"Simpson\",\"age\":45}");
-	//auto homer = SDK::Core::Json::FromString<Person>(json_string);
+	//auto homer = AdvViz::SDK::Json::FromString<Person>(json_string);
 	//REQUIRE(homer.first_name, "Homer");
 	//REQUIRE(homer.last_name, "Simpson");
 	//REQUIRE(homer.age, 45);
@@ -171,16 +171,16 @@ TEST_CASE(JsonTest, json_fromstring2) {
 "
 		);
 
-	//auto generic = SDK::Core::Json::FromString<GenericJSon>(json_string);
+	//auto generic = AdvViz::SDK::Json::FromString<GenericJSon>(json_string);
 	Generic generic;
-	SDK::Core::Json::FromString(generic, json_string);
-	std::string s = SDK::Core::Json::ToString(generic);
+	AdvViz::SDK::Json::FromString(generic, json_string);
+	std::string s = AdvViz::SDK::Json::ToString(generic);
 
 	Generic2 generic2;
-	SDK::Core::Json::FromString(generic2, json_string);
-	//const std::string r = SDK::Core::Json::ToString(homer);
+	AdvViz::SDK::Json::FromString(generic2, json_string);
+	//const std::string r = AdvViz::SDK::Json::ToString(homer);
 	//const std::string json_string("{\"first_name\":\"Homer\",\"last_name\":\"Simpson\",\"age\":45}");
-	//auto homer = SDK::Core::Json::FromString<Person>(json_string);
+	//auto homer = AdvViz::SDK::Json::FromString<Person>(json_string);
 	//REQUIRE(homer.first_name, "Homer");
 	//REQUIRE(homer.last_name, "Simpson");
 	//REQUIRE(homer.age, 45);

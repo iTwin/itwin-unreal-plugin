@@ -1,7 +1,7 @@
 #pragma once
 
-#include "IExtensionJsonHandler.h"
-#include "Library.h"
+#include <CesiumJsonReader/IExtensionJsonHandler.h>
+#include <CesiumJsonReader/Library.h>
 
 #include <functional>
 #include <map>
@@ -49,7 +49,7 @@ class CESIUMJSONREADER_API JsonReaderOptions {
 public:
   /**
    * @brief Gets a value indicating whether the values of unknown properties are
-   * captured in the {@link ExtensibleObject::unknownProperties} field.
+   * captured in the {@link CesiumUtility::ExtensibleObject::unknownProperties} field.
    *
    * If this is false, unknown properties are completely ignored.
    */
@@ -59,7 +59,7 @@ public:
 
   /**
    * @brief Sets a value indicating whether the values of unknown properties are
-   * captured in the {@link ExtensibleObject::unknownProperties} field.
+   * captured in the {@link CesiumUtility::ExtensibleObject::unknownProperties} field.
    *
    * If this is false, unknown properties are completely ignored.
    */
@@ -109,6 +109,15 @@ public:
   }
 
   /**
+   * @brief Returns whether an extension is enabled or disabled.
+   *
+   * By default, all extensions are enabled.
+   *
+   * @param extensionName The name of the extension.
+   */
+  ExtensionState getExtensionState(const std::string& extensionName) const;
+
+  /**
    * @brief Enables or disables an extension.
    *
    * By default, all extensions are enabled. When an enabled extension is
@@ -129,6 +138,14 @@ public:
   void
   setExtensionState(const std::string& extensionName, ExtensionState newState);
 
+  /**
+   * @brief Creates an extension handler for the given extension.
+   *
+   * @param extensionName The name of the extension to create a handler for.
+   * @param extendedObjectType The name of the type of the object that is being
+   * extended.
+   * @returns An \ref IExtensionJsonHandler to read the extension.
+   */
   std::unique_ptr<IExtensionJsonHandler> createExtensionHandler(
       const std::string_view& extensionName,
       const std::string& extendedObjectType) const;

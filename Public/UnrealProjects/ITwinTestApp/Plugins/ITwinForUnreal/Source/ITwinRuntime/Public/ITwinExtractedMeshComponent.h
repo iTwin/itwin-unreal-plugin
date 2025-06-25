@@ -6,35 +6,20 @@
 |
 +--------------------------------------------------------------------------------------*/
 
-
 #pragma once
 
-#include <Components/StaticMeshComponent.h>
-
-#include <optional>
-
-#include "ITwinExtractedMeshComponent.generated.h"
+#include "CesiumCustomVisibilitiesMeshComponent.h" // Original class moved there
 
 /// Mesh component created when extracting a specific iTwin element from a Cesium primitive.
 /// The visibility of those meshes has to be overridden in some cases, to match the animation defined in
 /// Synchro4D schedules.
+using UITwinExtractedMeshComponent = UCesiumCustomVisibilitiesMeshComponent;
 
-UCLASS()
-class UITwinExtractedMeshComponent : public UStaticMeshComponent {
-	GENERATED_BODY()
-
-public:
-	UITwinExtractedMeshComponent();
-	virtual ~UITwinExtractedMeshComponent();
-
-	void SetFullyHidden(bool bHidden);
-
-	bool IsVisible() const override;
-	bool IsVisibleInEditor() const override;
-
-protected:
-	virtual void OnVisibilityChanged() override;
-private:
-	/// One may enforce hiding an extracted component, which should override the mesh visibility.
-	std::optional<bool> FullyHidden;
-};
+class UMaterialInterface;
+class UMaterialInstanceDynamic;
+namespace ITwin
+{
+	UMaterialInstanceDynamic* ChangeBaseMaterialInUEMesh(UStaticMeshComponent& MeshComponent,
+		UMaterialInterface* BaseMaterial,
+		TWeakObjectPtr<UMaterialInstanceDynamic> const* SupposedPreviousMaterial = nullptr);
+}

@@ -11,21 +11,25 @@
 
 
 #include <CoreMinimal.h>
-#include <ITwinLoadInfo.h>
 #include <Containers/Map.h>
+#include <ITwinLoadInfo.h>
 
 #include <ITwinRuntime/Private/Compil/BeforeNonUnrealIncludes.h>
 #	include "SDK/Core/Visualization/Decoration.h"
 #	include "SDK/Core/Visualization/InstancesManager.h"
+#	include "SDK/Core/Visualization/SplinesManager.h"
 #	include "SDK/Core/Visualization/ScenePersistence.h"
+#	include "SDK/Core/Visualization/KeyframeAnimation.h"
 #include <ITwinRuntime/Private/Compil/AfterNonUnrealIncludes.h>
 
 #include <atomic>
+#include <set>
 
-namespace SDK::Core
+namespace AdvViz::SDK
 {
 	class MaterialPersistenceManager;
 	class ITimeline;
+	class ILink;
 }
 
 class AITwinDecorationHelper;
@@ -34,6 +38,9 @@ class AITwinIModel;
 class FDecorationAsyncIOHelper
 {
 public:
+	using LinkSharedPtr = std::shared_ptr<AdvViz::SDK::ILink>;
+	using ModelIdentifier = ITwin::ModelDecorationIdentifier;
+
 	FDecorationAsyncIOHelper() = default;
 
 	void RequestStop();
@@ -41,34 +48,44 @@ public:
 
 	void InitDecorationService(const UObject* WorldContextObject);
 
-	void SetLoadedITwinInfo(FITwinLoadInfo const& InLoadedSceneInfo);
-	FITwinLoadInfo const& GetLoadedITwinInfo() const;
+	void SetLoadedITwinId(const FString& ITwinId);
+	FString GetLoadedITwinId() const;
 
-	bool LoadCustomMaterials(std::string const& accessToken, TMap<FString, TWeakObjectPtr<AITwinIModel>> const& idToIModel);
-	bool LoadPopulationsFromServer(std::string const& accessToken);
-	bool SaveDecorationToServer(std::string const& accessToken);
-	bool LoadSceneFromServer(std::string const& accessToken, std::shared_ptr<SDK::Core::ITimeline>& timeline);
-	bool LoadSceneFromServer(std::string const& sceneid,std::string const& accessToken);
-	bool SaveSceneToServer(std::string const& accessToken, const std::shared_ptr<SDK::Core::ITimeline>& timeline);
-	std::shared_ptr <SDK::Core::Link>  CreateLink(EITwinModelType ct, const FString& id);
+	bool LoadCustomMaterials(TMap<FString, TWeakObjectPtr<AITwinIModel>> const& idToIModel,
+		std::set<std::string> const& specificModels = {});
+	bool LoadPopulationsFromServer();
+	bool LoadAnimationKeyframesFromServer();
+	bool SaveDecorationToServer();
+	bool LoadSceneFromServer();
+	bool SaveSceneToServer();
+
+	LinkSharedPtr CreateLink(ModelIdentifier const& Key);
+	bool LoadSplinesFromServer();
+
+	std::shared_ptr<AdvViz::SDK::ISplinesManager> const& GetSplinesManager();
 
 
 private:
-	bool LoadITwinDecoration(std::string const& accessToken);
+	bool LoadITwinDecoration();
 
 private:
-	FITwinLoadInfo LoadedITwinInfo;
+	FString LoadedITwinId;
 
-	std::shared_ptr<SDK::Core::IDecoration> decoration;
-	std::shared_ptr<SDK::Core::IInstancesManager> instancesManager;
-	std::shared_ptr<SDK::Core::IInstancesGroup> instancesGroup;
-	std::shared_ptr<SDK::Core::MaterialPersistenceManager> materialPersistenceMngr;
+	std::shared_ptr<AdvViz::SDK::IDecoration> decoration;
+	std::shared_ptr<AdvViz::SDK::IInstancesManager> instancesManager_;
+	std::map<AdvViz::SDK::IAnimationKeyframe::Id, AdvViz::SDK::IAnimationKeyframePtr> animationKeyframes;
+	std::shared_ptr<AdvViz::SDK::IInstancesGroup> staticInstancesGroup;
+	std::shared_ptr<AdvViz::SDK::MaterialPersistenceManager> materialPersistenceMngr;
 	std::shared_ptr<FString> decorationITwin; // iTwin ID corresponded to loaded decoration, if any.
-	std::shared_ptr<SDK::Core::IScenePersistence> scene;
+	std::shared_ptr<AdvViz::SDK::IScenePersistence> scene;
+	// std::shared_ptr<AdvViz::SDK::IScenePersistence> DSscene; //scene from decoration service if we use sceneAPI obsolete
+	std::shared_ptr<AdvViz::SDK::ISplinesManager> splinesManager;
 
 	std::shared_ptr<std::atomic_bool> shouldStop = std::make_shared<std::atomic_bool>(false);
 	bool decorationIsLinked = false;
-	std::map< std::pair<EITwinModelType,FString> , std::shared_ptr<SDK::Core::Link> > links;
+	bool bUseDecorationService = false;
+	std::map<ModelIdentifier, LinkSharedPtr> links;
 
 	friend class AITwinDecorationHelper;
+	void PostLoadSceneFromServer();
 };

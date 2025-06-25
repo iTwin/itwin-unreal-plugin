@@ -1,11 +1,3 @@
-/*--------------------------------------------------------------------------------------+
-|
-|     $Source: LatentChain.inl $
-|
-|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
-|
-+--------------------------------------------------------------------------------------*/
-
 // Copyright © Laura Andelare
 // All rights reserved.
 //

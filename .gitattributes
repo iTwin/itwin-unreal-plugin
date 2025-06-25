@@ -7,3 +7,6 @@
 *.lib filter=lfs diff=lfs merge=lfs -text
 *.dll filter=lfs diff=lfs merge=lfs -text
 *.exe filter=lfs diff=lfs merge=lfs -text
+
+# Avoid dummy line-ending diffs showing up when pnppm regenerates this file.
+pnpm-lock.yaml text eol=lf

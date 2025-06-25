@@ -11,15 +11,17 @@
 
 
 #ifndef SDK_CPPMODULES
-	#include <string>
-	#ifndef MODULE_EXPORT
-		#define MODULE_EXPORT
-	#endif // !MODULE_EXPORT
+#	include <string>
+#	include <vector>
+#	ifndef MODULE_EXPORT
+#		define MODULE_EXPORT
+#	endif // !MODULE_EXPORT
 #endif
 
+#include "../AdvVizLinkType.h"
 #include "ITwinRequestTypes.h"
 
-MODULE_EXPORT namespace SDK::Core
+MODULE_EXPORT namespace AdvViz::SDK
 {
 	struct ChangesetInfos;
 	struct IModelInfos;
@@ -40,6 +42,7 @@ MODULE_EXPORT namespace SDK::Core
 	struct ITwinMaterialPropertiesMap;
 	struct ITwinTextureData;
 	struct ITwinMaterialPrediction;
+	struct GeoCoordsReply;
 
 	/// Custom callbacks which can be used to perform some updates once a request is done.
 	class IITwinWebServicesObserver
@@ -48,7 +51,7 @@ MODULE_EXPORT namespace SDK::Core
 		virtual ~IITwinWebServicesObserver() = default;
 
 		/// Called upon error - could be used for logging purpose, typically.
-		virtual void OnRequestError(std::string const& strError, int retriesLeft) = 0;
+		virtual void OnRequestError(std::string const& strError, int retriesLeft, bool bLogError = true) = 0;
 
 		virtual void OnITwinsRetrieved(bool bSuccess, ITwinInfos const& infos) = 0;
 
@@ -65,8 +68,8 @@ MODULE_EXPORT namespace SDK::Core
 		virtual void OnSavedViewInfosRetrieved(bool bSuccess, SavedViewInfos const& infos) = 0;
 		virtual void OnSavedViewRetrieved(bool bSuccess, SavedView const& savedView, SavedViewInfo const& info) = 0;
 		virtual void OnSavedViewExtensionRetrieved(bool bSuccess, std::string const& savedViewId, std::string const& data) = 0;
-		virtual void OnSavedViewThumbnailRetrieved(bool bSuccess, std::string const& ThumbnailURL, std::string const& SavedViewId) = 0;
-		virtual void OnSavedViewThumbnailUpdated(bool bSuccess, std::string const& SavedViewId, std::string const& Response) = 0;
+		virtual void OnSavedViewThumbnailRetrieved(bool bSuccess, std::string const& savedViewId, std::vector<uint8_t> const& rawData) = 0;
+		virtual void OnSavedViewThumbnailUpdated(bool bSuccess, std::string const& savedViewId, std::string const& Response) = 0;
 		virtual void OnSavedViewGroupInfosRetrieved(bool bSuccess, SavedViewGroupInfos const& infos) = 0;
 		virtual void OnSavedViewGroupAdded(bool bSuccess, SavedViewGroupInfo const& info) = 0;
 		virtual void OnSavedViewAdded(bool bSuccess, SavedViewInfo const& info) = 0;
@@ -79,13 +82,15 @@ MODULE_EXPORT namespace SDK::Core
 		virtual void OnElementPropertiesRetrieved(bool bSuccess, ITwinElementProperties const& props, std::string const& ElementId) = 0;
 
 		virtual void OnIModelPropertiesRetrieved(bool bSuccess, IModelProperties const& props) = 0;
+		virtual void OnConvertedIModelCoordsToGeoCoords(bool bSuccess, GeoCoordsReply const& geoCoords,
+														RequestID const& requestId) = 0;
 		virtual void OnIModelQueried(bool bSuccess, std::string const& Response, RequestID const&) = 0;
 
 		virtual void OnMaterialPropertiesRetrieved(bool bSuccess, ITwinMaterialPropertiesMap const& props) = 0;
 
 		virtual void OnTextureDataRetrieved(bool bSuccess, std::string const& textureId, ITwinTextureData const& textureData) = 0;
 
-		virtual void OnMatMLPredictionRetrieved(bool bSuccess, ITwinMaterialPrediction const& prediction) = 0;
+		virtual void OnMatMLPredictionRetrieved(bool bSuccess, ITwinMaterialPrediction const& prediction, std::string const& error = {}) = 0;
 		virtual void OnMatMLPredictionProgress(float fProgressRatio) = 0;
 	};
 
@@ -96,7 +101,7 @@ MODULE_EXPORT namespace SDK::Core
 	class ITwinDefaultWebServicesObserver : public IITwinWebServicesObserver
 	{
 	public:
-		void OnRequestError(std::string const& strError, int retriesLeft) override;
+		void OnRequestError(std::string const& strError, int retriesLeft, bool bLogError = true) override;
 		void OnITwinsRetrieved(bool bSuccess, ITwinInfos const& infos) override;
 		void OnITwinInfoRetrieved(bool bSuccess, ITwinInfo const& info) override;
 		void OnIModelsRetrieved(bool bSuccess, IModelInfos const& infos) override;
@@ -106,9 +111,9 @@ MODULE_EXPORT namespace SDK::Core
 		void OnExportStarted(bool bSuccess, std::string const& InExportId) override;
 		void OnSavedViewInfosRetrieved(bool bSuccess, SavedViewInfos const& infos) override;
 		void OnSavedViewRetrieved(bool bSuccess, SavedView const& savedView, SavedViewInfo const& info) override;
-		void OnSavedViewExtensionRetrieved(bool bSuccess, std::string const& SavedViewId, std::string const& data) override;
-		void OnSavedViewThumbnailRetrieved(bool bSuccess, std::string const& ThumbnailURL, std::string const& SavedViewId) override;
-		void OnSavedViewThumbnailUpdated(bool bSuccess, std::string const& SavedViewId, std::string const& Response) override;
+		void OnSavedViewExtensionRetrieved(bool bSuccess, std::string const& savedViewId, std::string const& data) override;
+		void OnSavedViewThumbnailRetrieved(bool bSuccess, std::string const& savedViewId, std::vector<uint8_t> const& rawData) override;
+		void OnSavedViewThumbnailUpdated(bool bSuccess, std::string const& savedViewId, std::string const& Response) override;
 		void OnSavedViewGroupInfosRetrieved(bool bSuccess, SavedViewGroupInfos const& infos) override;
 		void OnSavedViewGroupAdded(bool bSuccess, SavedViewGroupInfo const& infos) override;
 		void OnSavedViewAdded(bool bSuccess, SavedViewInfo const& info) override;
@@ -118,10 +123,12 @@ MODULE_EXPORT namespace SDK::Core
 		void OnRealityData3DInfoRetrieved(bool bSuccess, ITwinRealityData3DInfo const& info) override;
 		void OnElementPropertiesRetrieved(bool bSuccess, ITwinElementProperties const& props, std::string const& ElementId) override;
 		void OnIModelPropertiesRetrieved(bool bSuccess, IModelProperties const& props) override;
+		void OnConvertedIModelCoordsToGeoCoords(bool bSuccess, GeoCoordsReply const& geoCoords,
+												RequestID const& requestId) override;
 		void OnIModelQueried(bool bSuccess, std::string const& Response, RequestID const&) override;
 		void OnMaterialPropertiesRetrieved(bool bSuccess, ITwinMaterialPropertiesMap const& props) override;
 		void OnTextureDataRetrieved(bool bSuccess, std::string const& textureId, ITwinTextureData const& textureData) override;
-		void OnMatMLPredictionRetrieved(bool bSuccess, ITwinMaterialPrediction const& prediction) override;
+		void OnMatMLPredictionRetrieved(bool bSuccess, ITwinMaterialPrediction const& prediction, std::string const& error = {}) override;
 		void OnMatMLPredictionProgress(float fProgressRatio) override;
 
 	protected:

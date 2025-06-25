@@ -13,10 +13,10 @@
 #include <Core/Tools/Assert.h>
 #include "../Singleton/singleton.h"
 
-namespace SDK::Core
+namespace AdvViz::SDK
 {
 	template<>
-	Tools::Factory<IHttpRouter>::Globals::Globals()
+	 Tools::Factory<IHttpRouter>::Globals::Globals()
 	{
 		newFct_ = []() {
 			BE_ISSUE("No Http router provided directly in SDK");
@@ -25,7 +25,7 @@ namespace SDK::Core
 	}
 
 	template<>
-	Tools::Factory<IHttpRouter>::Globals& Tools::Factory<IHttpRouter>::GetGlobals()
+	 Tools::Factory<IHttpRouter>::Globals& Tools::Factory<IHttpRouter>::GetGlobals()
 	{
 		return singleton<Tools::Factory<IHttpRouter>::Globals>();
 	}

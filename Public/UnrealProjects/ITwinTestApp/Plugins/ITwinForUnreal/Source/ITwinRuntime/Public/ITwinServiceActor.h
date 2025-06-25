@@ -22,7 +22,7 @@
 
 class UITwinWebServices;
 
-DECLARE_LOG_CATEGORY_EXTERN(LogITwin, Log, All);
+ITWINRUNTIME_API DECLARE_LOG_CATEGORY_EXTERN(LogITwin, Log, All);
 
 
 //! Base class for all actors interacting with an iTwin Web Service.
@@ -52,7 +52,6 @@ public:
 		BlueprintCallable)
 	FString GetAccessToken() const;
 
-	std::string GetAccessTokenStdString() const;
 
 #if WITH_TESTS
 	//! Used in automated tests, to enable mocking of web services.
@@ -71,7 +70,7 @@ protected:
 	/// Returns current connection status
 	/// If bRequestAuthorisationIfNeeded is true and no valid connection currently exists, triggers an
 	/// authorization request.
-	SDK::Core::EITwinAuthStatus CheckServerConnection(bool bRequestAuthorisationIfNeeded = true);
+	AdvViz::SDK::EITwinAuthStatus CheckServerConnection(bool bRequestAuthorisationIfNeeded = true);
 
 	/// overridden from FITwinDefaultWebServicesObserver:
 	virtual const TCHAR* GetObserverName() const override;
@@ -80,6 +79,6 @@ protected:
 private:
 	virtual void UpdateOnSuccessfulAuthorization();
 
-	/// overridden from SDK::Core::ITwinAuthObserver:
+	/// overridden from AdvViz::SDK::ITwinAuthObserver:
 	virtual void OnAuthorizationDone(bool bSuccess, std::string const& Error) override;
 };

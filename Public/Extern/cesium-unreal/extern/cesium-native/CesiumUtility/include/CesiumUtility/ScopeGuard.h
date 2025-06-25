@@ -16,7 +16,7 @@ public:
   /**
    * @brief Constructor.
    *
-   * @param ExitFunctionArg The function type to be called when the guard is out
+   * @param exitFunc The function type to be called when the guard is out
    * of scope
    */
   template <
@@ -26,9 +26,9 @@ public:
               std::remove_reference_t<std::remove_const_t<ExitFunctionArg>>,
               ScopeGuard<ExitFunction>>,
           int> = 0>
-  explicit ScopeGuard(ExitFunctionArg&& _exitFunc)
+  explicit ScopeGuard(ExitFunctionArg&& exitFunc)
       : _callExitFuncOnDestruct{true},
-        _exitFunc{std::forward<ExitFunctionArg>(_exitFunc)} {}
+        _exitFunc{std::forward<ExitFunctionArg>(exitFunc)} {}
 
   ScopeGuard(const ScopeGuard& rhs) = delete;
 
@@ -79,6 +79,9 @@ private:
   ExitFunction _exitFunc;
 };
 
-template <typename ExistFunction>
-ScopeGuard(ExistFunction) -> ScopeGuard<ExistFunction>;
+/** @brief Template deduction guide for \ref ScopeGuard to help the compiler
+ * figure out that the type of `ExitFunction` should be the type of the
+ * function passed to the constructor. */
+template <typename ExitFunction>
+ScopeGuard(ExitFunction) -> ScopeGuard<ExitFunction>;
 } // namespace CesiumUtility

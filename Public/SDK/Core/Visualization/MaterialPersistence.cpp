@@ -12,25 +12,30 @@
 
 #include "Core/ITwinAPI/ITwinMaterial.h"
 #include <Core/Json/Json.h>
-#include "Core/Network/Network.h"
+#include "Core/Network/HttpGetWithLink.h"
 #include "Config.h"
 
-#include <curl/curl.h>
 #include <fmt/format.h>
 
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 
-namespace SDK::Core
+namespace AdvViz::SDK
 {
 	class MaterialPersistenceManager::Impl
 	{
 	public:
 		bool NeedUpdateDB() const;
-		void LoadDataFromServer(const std::string& decorationId, const std::string& accessToken);
-		void SaveDataOnServer(const std::string& decorationId, const std::string& accessToken);
+
+		void LoadDataFromServer(std::string const& decorationId, std::set<std::string> const& specificModels = {});
+		bool HasLoadedModel(std::string const& iModelId) const;
+		void SetLoadedModel(std::string const& iModelId, bool bLoaded);
+
+		void SaveDataOnServer(const std::string& decorationId);
 
 		size_t ListIModelsWithMaterialSettings(std::vector<std::string>& iModelIds) const;
+		bool HasMaterialDefinition(std::string const& iModelId, uint64_t materialId) const;
 		bool GetMaterialSettings(std::string const& iModelId, uint64_t materialId, ITwinMaterial& material) const;
 		void SetMaterialSettings(std::string const& iModelId, uint64_t materialId, ITwinMaterial const& material);
 
@@ -42,18 +47,21 @@ namespace SDK::Core
 		void RequestDeleteITwinMaterialsInDB(std::optional<std::string> const& specificIModelID = std::nullopt);
 
 		std::optional<bool> UploadChannelTextureIfNeeded(ITwinChannelMap& texMap,
-			std::string const& decorationId, std::string const& accessToken);
+			std::string const& decorationId);
 
 		bool UploadTexuresIfNeeded(size_t& nUploaded, ITwinMaterial& material,
-			const std::string& decorationId, const std::string& accessToken);
+			const std::string& decorationId);
 
 		void BuildDecorationFilesURL(std::string const& decorationId);
 
+		std::string GetBaseURL(ETextureSource texSource) const;
+		std::string GetRelativeURL(TextureKey const& textureKey) const;
 		std::string GetTextureURL(TextureKey const& textureKey) const;
 
-		PerIModelTextureSet const& GetDecorationTexturesByIModel() const {
-			return perIModelTextures_;
-		}
+		PerIModelTextureSet const& GetDecorationTexturesByIModel() const { return perIModelTextures_; }
+		TextureUsageMap const& GetTextureUsageMap() const { return textureUsageMap_; }
+		TextureUsage GetTextureUsage(TextureKey const& textureKey) const;
+		void AddTextureUsage(TextureKey const& textureKey, EChannelType channel);
 
 		void SetLocalMaterialDirectory(std::filesystem::path const& materialDirectory);
 		size_t LoadMaterialCollection(std::filesystem::path const& materialJsonPath, std::string const& iModelID,
@@ -64,10 +72,15 @@ namespace SDK::Core
 		bool SetMaterialFromKeyValueMap(std::string const& iModelId, uint64_t materialId, KeyValueStringMap const& inMap);
 
 		bool GetMaterialSettingsFromKeyValueMap(KeyValueStringMap const& inMap,
-			ITwinMaterial& outMaterial, TextureKeySet& outTextures) const;
+			ITwinMaterial& outMaterial,
+			TextureKeySet& outTextures,
+			TextureUsageMap& outTextureUsageMap,
+			std::optional<ETextureSource> const& customTexSource = std::nullopt) const;
 
 		std::string ExportAsJson(ITwinMaterial const& material, std::string const& iModelID, uint64_t materialId) const;
-		bool ConvertJsonFileToKeyValueMap(std::filesystem::path const& jsonPath, KeyValueStringMap& outMap) const;
+		bool ConvertJsonFileToKeyValueMap(std::filesystem::path const& jsonPath,
+			std::filesystem::path const& textureDir,
+			KeyValueStringMap& outMap) const;
 
 	private:
 		// For transfer to/from DB
@@ -79,6 +92,7 @@ namespace SDK::Core
 			std::optional<std::string> type;
 			std::optional<std::string> color;
 			std::optional<std::string> albedoMap;
+			std::optional<double> albedoMapFactor;
 			std::optional<double> roughness;
 			std::optional<std::string> roughnessMap;
 			std::optional<double> metallic;
@@ -120,7 +134,9 @@ namespace SDK::Core
 
 		void ParseJSONMaterials(std::vector<SJsonMaterialWithId> const& rows,
 			IModelMaterialMap& dataIO,
-			PerIModelTextureSet& perIModelTextures) const;
+			PerIModelTextureSet& perIModelTextures,
+			TextureUsageMap& textureUsageMap,
+			std::optional<ETextureSource> const& customTexSource = std::nullopt) const;
 		bool ConvertJsonToKeyValueMap(SJsonMaterialWithId const& jsonMat, KeyValueStringMap& outMap) const;
 
 
@@ -130,14 +146,18 @@ namespace SDK::Core
 		std::unordered_map<std::string, std::string> localToDecoTexId_;
 
 		PerIModelTextureSet perIModelTextures_;
+		TextureUsageMap textureUsageMap_;
 
 		mutable Mutex dataMutex_;
 
 		mutable bool needUpdateDB_ = false;
 
+		std::unordered_set<std::string> loadedIModelIds_; // fully loaded model IDs.
+
 		std::shared_ptr<Http> http_;
-		std::string decorationFilesURL_; // depends on loaded decoration ID
-		std::string materialLibraryURL;
+		std::string decorationBaseURL_;
+		std::string decorationFilesRelativeURL_; // depends on loaded decoration ID
+		std::string materialLibraryURL_;
 
 		std::filesystem::path materialDirectory_;
 		std::set<std::string> iModelsForMaterialCollection_;
@@ -178,15 +198,17 @@ namespace SDK::Core
 
 		std::shared_ptr<Http> http;
 		http.reset(Http::New());
-		http->SetBaseUrl(uploadURL.substr(0, sepPos));
-		auto const r = http->PutBinaryFile(urlSuffix, imodelBaselineFilePath.generic_string(), headers);
-		return r.first >= 200 && r.first < 300;
+		http->SetBaseUrl(uploadURL.substr(0, sepPos).c_str());
+		Http::Response const r = http->PutBinaryFile(urlSuffix, imodelBaselineFilePath.generic_string(), headers);
+		return Http::IsSuccessful(r);
 	}
 
 	void MaterialPersistenceManager::Impl::ParseJSONMaterials(
 		std::vector<SJsonMaterialWithId> const& rows,
 		IModelMaterialMap& dataIO,
-		PerIModelTextureSet& perIModelTextures) const
+		PerIModelTextureSet& perIModelTextures,
+		TextureUsageMap& textureUsageMap,
+		std::optional<ETextureSource> const& customTexSource /*= std::nullopt*/) const
 	{
 
 		static const auto stringToMaterialKind = [](std::string const& str)
@@ -230,16 +252,20 @@ namespace SDK::Core
 		// Store the identifiers of all decoration textures used by those materials in imodelTextures.
 
 		static const auto setChannelMap = [&](ITwinMaterial& mat, EChannelType chan,
-			std::optional<std::string> const& inTex, TextureKeySet& imodelTextures)
+			std::optional<std::string> const& inTex,
+			TextureKeySet& imodelTextures,
+			TextureUsageMap& texUsageMap,
+			std::optional<ETextureSource> const& customTexSource)
 		{
 			if (inTex)
 			{
 				// Distinguish 'Decoration' textures (which are to be downloaded from the decoration server)
-				// from 'Library', ones, which should be loaded from the local library.
+				// from 'Library', ones, which should be loaded from the Advanced Visualization library
+				// (packaged with the application).
 				const std::string_view MAT_LIBRARY_PREFIX = ITWIN_MAT_LIBRARY_TAG "/";
 
 				std::string texId = inTex.value();
-				ETextureSource texSource = ETextureSource::Decoration;
+				ETextureSource texSource = customTexSource.value_or(ETextureSource::Decoration);
 
 				if (texId.starts_with(MAT_LIBRARY_PREFIX))
 				{
@@ -248,6 +274,8 @@ namespace SDK::Core
 					// make the distinction upon reading/writing, which can now be done with texSource...
 					texId = texId.substr(MAT_LIBRARY_PREFIX.length());
 				}
+				// We should never encounter textures such as "Metals/0"...
+				BE_ASSERT(texId == NONE_TEXTURE || !texId.ends_with(NONE_TEXTURE));
 
 				ITwinChannelMap const texMap = {
 					.texture = texId,
@@ -255,7 +283,10 @@ namespace SDK::Core
 				};
 				if (texMap.HasTexture())
 				{
-					imodelTextures.insert({texMap.texture, texSource});
+					TextureKey const texKey = { texMap.texture, texSource };
+					imodelTextures.insert(texKey);
+
+					texUsageMap[texKey].AddChannel(chan);
 				}
 				mat.SetChannelMap(chan, texMap);
 			}
@@ -303,12 +334,12 @@ namespace SDK::Core
 			if (customColor)
 				material.SetChannelColor(EChannelType::Color, *customColor);
 
-			setChannelMap(material, EChannelType::Color, row.albedoMap, imodelTextures);
-			setChannelMap(material, EChannelType::Normal, row.normalMap, imodelTextures);
-			setChannelMap(material, EChannelType::Roughness, row.roughnessMap, imodelTextures);
-			setChannelMap(material, EChannelType::Metallic, row.metallicMap, imodelTextures);
-			setChannelMap(material, EChannelType::Alpha, row.opacityMap, imodelTextures);
-			setChannelMap(material, EChannelType::AmbientOcclusion, row.aoMap, imodelTextures);
+			setChannelMap(material, EChannelType::Color, row.albedoMap,			imodelTextures, textureUsageMap, customTexSource);
+			setChannelMap(material, EChannelType::Normal, row.normalMap,		imodelTextures, textureUsageMap, customTexSource);
+			setChannelMap(material, EChannelType::Roughness, row.roughnessMap,	imodelTextures, textureUsageMap, customTexSource);
+			setChannelMap(material, EChannelType::Metallic, row.metallicMap,	imodelTextures, textureUsageMap, customTexSource);
+			setChannelMap(material, EChannelType::Alpha, row.opacityMap,		imodelTextures, textureUsageMap, customTexSource);
+			setChannelMap(material, EChannelType::AmbientOcclusion, row.aoMap,	imodelTextures, textureUsageMap, customTexSource);
 
 			if (row.uvScaling)
 				material.uvTransform.scale = *row.uvScaling;
@@ -317,23 +348,29 @@ namespace SDK::Core
 			if (row.uvRotationAngle)
 				material.uvTransform.rotation = *row.uvRotationAngle;
 
+			// Color texture factor was added lately (AdvViz EAP2).
+			// If now value was retrieved from DB, and the material defines a color channel, ensure we use
+			// the default value.
+			if (row.albedoMapFactor)
+				material.SetChannelIntensity(EChannelType::Color, *row.albedoMapFactor);
+			else if (material.DefinesChannel(EChannelType::Color))
+				material.SetChannelIntensity(EChannelType::Color, 1.0);
+
 			materialInfo.needUpdateDB = false;
 			materialInfo.existsInDB = true;
 		}
 	}
 
-	void MaterialPersistenceManager::Impl::LoadDataFromServer(const std::string& decorationId, const std::string& accessToken)
+	void MaterialPersistenceManager::Impl::LoadDataFromServer(std::string const& decorationId,
+		std::set<std::string> const& specificModels /*= {}*/)
 	{
 		if (decorationId.empty())
 		{
 			BE_ISSUE("decoration ID missing to load material definitions");
 			return;
 		}
-		if (accessToken.empty())
-		{
-			BE_ISSUE("no access token to load material definitions");
-			return;
-		}
+
+		if (specificModels.empty())
 		{
 			Lock lock(dataMutex_);
 			data_.clear();
@@ -348,66 +385,66 @@ namespace SDK::Core
 		// Use a local map for loading, and replace it at the end.
 		IModelMaterialMap dataIO;
 
-		struct SJsonInEmpty {};
 
-		struct SJsonLink
+		auto ret = HttpGetWithLink_ByBatch<SJsonMaterialWithId>(GetHttp(),
+			"decorations/" + decorationId + "/materials",
+			{} /* extra headers*/,
+			[this, &dataIO](std::vector<SJsonMaterialWithId> const& rows) -> expected<void, std::string>
 		{
-			std::optional<std::string> prev;
-			std::optional<std::string> self;
-			std::optional<std::string> next;
-		};
+			ParseJSONMaterials(rows, dataIO, perIModelTextures_, textureUsageMap_);
+			return {};
+		});
 
-		SJsonInEmpty jIn;
-		struct SJsonOut
-		{
-			int total_rows = 0;
-			std::vector<SJsonMaterialWithId> rows;
-			SJsonLink _links;
-		};
-		SJsonOut jOut;
-
-		Http::Headers headers;
-		headers.emplace_back("Authorization", std::string("Bearer ") + accessToken);
-
-		long status = GetHttp()->GetJsonJBody(
-			jOut, "decorations/"+ decorationId + "/materials", jIn, headers);
-		bool continueLoading = true;
-
-		while (continueLoading)
-		{
-			if (status != 200 && status != 201)
+		if (!ret)
 			{
-				continueLoading = false;
-				BE_LOGW("ITwinDecoration", "Load material definitions failed. Http status: " << status);
+			BE_LOGW("ITwinDecoration", "Load material definitions failed. " << ret.error());
 			}
-			ParseJSONMaterials(jOut.rows, dataIO, perIModelTextures_);
-
-			jOut.rows.clear();
-
-			if (jOut._links.next.has_value() && !jOut._links.next.value().empty())
-			{
-				status = GetHttp()->GetJsonJBody(jOut, jOut._links.next.value(), jIn, headers, true);
-			}
-			else
-			{
-				continueLoading = false;
-			}
-		}
 
 		for (auto const& [iModelID, materialMap] : dataIO)
 		{
-			BE_LOGI("ITwinDecoration", "Loaded " << materialMap.size() << " material definitions for imodel " << iModelID);
+			BE_LOGI("ITwinDecoration", "Loaded " << materialMap.size() << " material definition(s) for imodel " << iModelID);
 		}
 
 		// Update the URL used to access textures.
 		BuildDecorationFilesURL(decorationId);
 
+		// Transfer loaded material definitions to internal map.
 		{
 			Lock lock(dataMutex_);
-			data_.swap(dataIO);
+			if (!specificModels.empty())
+			{
+				// Only replace materials for the selected iModel(s).
+				for (std::string const& iModelId : specificModels)
+				{
+					data_.erase(iModelId);
+					auto const itLoadedMats = dataIO.find(iModelId);
+					if (itLoadedMats != dataIO.end())
+					{
+						data_[iModelId] = itLoadedMats->second;
+					}
+				}
+			}
+			else
+			{
+				data_.swap(dataIO);
+				needUpdateDB_ = false;
+			}
 		}
+	}
 
-		needUpdateDB_ = false;
+	bool MaterialPersistenceManager::Impl::HasLoadedModel(std::string const& iModelId) const
+	{
+		Lock lock(dataMutex_);
+		return loadedIModelIds_.contains(iModelId);
+	}
+
+	void MaterialPersistenceManager::Impl::SetLoadedModel(std::string const& iModelId, bool bLoaded)
+	{
+		Lock lock(dataMutex_);
+		if (bLoaded)
+			loadedIModelIds_.insert(iModelId);
+		else
+			loadedIModelIds_.erase(iModelId);
 	}
 
 	void MaterialPersistenceManager::Impl::RequestDeleteITwinMaterialsInDB(
@@ -436,18 +473,18 @@ namespace SDK::Core
 	}
 
 	std::optional<bool> MaterialPersistenceManager::Impl::UploadChannelTextureIfNeeded(ITwinChannelMap& texMap,
-		std::string const& decorationId, std::string const& accessToken)
+		std::string const& decorationId)
 	{
 		if (texMap.eSource != ETextureSource::LocalDisk)
 			return std::nullopt;
 		if (!texMap.HasTexture())
 			return std::nullopt;
 
-		std::string const& filePath = texMap.texture;
+		std::string const filePath = texMap.texture;
 
 		{
-			// See if this texture was already uploaded (typically if a same texture is used in multiple
-			// materials.
+			// See if this texture has been uploaded before (typically if a same texture is used in multiple
+			// materials).
 			Lock lock(dataMutex_);
 			auto itDecoId = localToDecoTexId_.find(filePath);
 			if (itDecoId != localToDecoTexId_.end())
@@ -457,9 +494,6 @@ namespace SDK::Core
 				return std::nullopt;
 			}
 		}
-
-		Http::Headers headers;
-		headers.emplace_back("Authorization", std::string("Bearer ") + accessToken);
 
 		// For the destination filename, we will encode the full path and append the basename, for easier
 		// debugging.
@@ -471,7 +505,7 @@ namespace SDK::Core
 			pathHash, texPath.filename().generic_string());
 		auto const r = GetHttp()->PostFile(
 			"decorations/" + decorationId + "/files",
-			"file", filePath, { { "filename", basename } }, headers);
+			"file", filePath, { { "filename", basename } });
 		bool const uploaded = (r.first == 200 || r.first == 201);
 		if (uploaded)
 		{
@@ -481,6 +515,8 @@ namespace SDK::Core
 
 			Lock lock(dataMutex_);
 			localToDecoTexId_.emplace(filePath, basename);
+
+			BE_LOGI("ITwinDecoration", "Uploaded texture " << filePath << " as " << basename);
 		}
 		else
 		{
@@ -490,7 +526,7 @@ namespace SDK::Core
 	}
 
 	bool MaterialPersistenceManager::Impl::UploadTexuresIfNeeded(size_t& nUploaded, ITwinMaterial& material,
-		const std::string& decorationId, const std::string& accessToken)
+		const std::string& decorationId)
 	{
 		for (uint8_t chanIndex(0) ; chanIndex < (uint8_t)EChannelType::ENUM_END; ++chanIndex)
 		{
@@ -501,7 +537,7 @@ namespace SDK::Core
 				// We need a mutable ITwinChannelMap here, as we may change the map's ID or source.
 				ITwinChannelMap& chanMapRef = material.GetMutableChannelMap(chan);
 				auto uploadOpt = UploadChannelTextureIfNeeded(
-					chanMapRef, decorationId, accessToken);
+					chanMapRef, decorationId);
 				if (uploadOpt)
 				{
 					if (*uploadOpt)
@@ -518,17 +554,25 @@ namespace SDK::Core
 	{
 		if (GetHttp() && !decorationId.empty())
 		{
-			decorationFilesURL_ = GetHttp()->GetBaseUrl() + "/decorations/" + decorationId + "/files/";
+			// Be careful with base URL: Uri::resolve behavior has changed in 2.14.1
+			std::string const baseUrl = GetHttp()->GetBaseUrl();
+			// In our case, this URL does contain sub-folders (corresponding to #urlapiprefix in
+			// Core/Visualization/Config.h...), while Uri::resolve is expecting the "root" of it.
+			std::string urlapiprefix;
+			auto firstSep = baseUrl.find_first_of("/\\", std::string_view("https://").length());
+			if (firstSep != std::string::npos)
+			{
+				decorationBaseURL_ = baseUrl.substr(0, firstSep);
+				urlapiprefix = baseUrl.substr(firstSep);
+			}
+			else
+			{
+				decorationBaseURL_ = baseUrl;
+			}
+			decorationFilesRelativeURL_ = urlapiprefix + "/decorations/" + decorationId + "/files/";
 		}
 	}
 
-	inline std::string EncodeForUrl(std::string const& str)
-	{
-		const auto encoded_value = curl_easy_escape(nullptr, str.c_str(), static_cast<int>(str.length()));
-		std::string result(encoded_value);
-		curl_free(encoded_value);
-		return result;
-	}
 
 	void MaterialPersistenceManager::Impl::SetMaterialLibraryDirectory(std::string const& materialLibraryDirectory)
 	{
@@ -536,29 +580,48 @@ namespace SDK::Core
 
 		// We will use local URIs to load those textures (which will work in packaged builds thanks to
 		// CesiumAsync::IAssetAccessor, which uses UE's file systm API...
-		materialLibraryURL = std::string("file:///") +
+		materialLibraryURL_ = std::string("file:///") +
 			rfl::internal::strings::replace_all(materialLibraryDirectory, "\\", "/");
-		if (!materialLibraryURL.ends_with("/"))
-			materialLibraryURL += "/";
+		if (!materialLibraryURL_.ends_with("/"))
+			materialLibraryURL_ += "/";
+	}
+
+	std::string MaterialPersistenceManager::Impl::GetBaseURL(ETextureSource texSource) const
+	{
+		if (texSource == ETextureSource::Library)
+		{
+			// Remark: following merge with Cesium 2.14.1, we should no longer use the file:/// protocol with
+			// #resolveExternalData: it no longer works in packaged version...
+			BE_ISSUE("file protocol no longer possible in packaged context!");
+			// Use a local uri - note that thanks to CesiumAsync::IAssetAccessor, this is directly
+			// compatible with packaged mode...
+			BE_ASSERT(!materialLibraryURL_.empty());
+			return materialLibraryURL_;
+		}
+		else
+		{
+			BE_ASSERT(!decorationBaseURL_.empty());
+			BE_ASSERT(texSource == ETextureSource::Decoration);
+			return decorationBaseURL_;
+		}
+	}
+
+	std::string MaterialPersistenceManager::Impl::GetRelativeURL(TextureKey const& textureKey) const
+	{
+		BE_DEBUG_ASSERT(textureKey.id != NONE_TEXTURE);
+		std::string relativeURL;
+		if (textureKey.eSource == ETextureSource::Decoration)
+		{
+			BE_ASSERT(!decorationFilesRelativeURL_.empty());
+			relativeURL = decorationFilesRelativeURL_ + "?filename=";
+		}
+		relativeURL += AdvViz::SDK::EncodeForUrl(textureKey.id);
+		return relativeURL;
 	}
 
 	std::string MaterialPersistenceManager::Impl::GetTextureURL(TextureKey const& textureKey) const
 	{
-		BE_ASSERT(!decorationFilesURL_.empty());
-		BE_ASSERT(!materialLibraryURL.empty());
-		BE_DEBUG_ASSERT(textureKey.id != NONE_TEXTURE);
-
-		if (textureKey.eSource == ETextureSource::Library)
-		{
-			// Use a local uri - note that thanks to CesiumAsync::IAssetAccessor, this is directly
-			// compatible with packaged mode...
-			return materialLibraryURL + EncodeForUrl(textureKey.id);
-		}
-		else
-		{
-			BE_ASSERT(textureKey.eSource == ETextureSource::Decoration);
-			return decorationFilesURL_ + "?filename=" + EncodeForUrl(textureKey.id);
-		}
+		return GetBaseURL(textureKey.eSource) + GetRelativeURL(textureKey);
 	}
 
 
@@ -635,6 +698,8 @@ namespace SDK::Core
 		jsonMat.opacityMap =	getChannelMap(material, EChannelType::Alpha);
 		jsonMat.aoMap =			getChannelMap(material, EChannelType::AmbientOcclusion);
 
+		jsonMat.albedoMapFactor = material.GetChannelIntensityOpt(EChannelType::Color);
+
 		if (material.HasUVTransform())
 		{
 			jsonMat.uvScaling = material.uvTransform.scale;
@@ -642,6 +707,7 @@ namespace SDK::Core
 			jsonMat.uvRotationAngle = material.uvTransform.rotation;
 		}
 
+		jsonMat.displayName.reset();
 		if (!material.displayName.empty())
 		{
 			jsonMat.displayName = material.displayName;
@@ -655,7 +721,7 @@ namespace SDK::Core
 		}
 	}
 
-	void MaterialPersistenceManager::Impl::SaveDataOnServer(const std::string& decorationId, const std::string& accessToken)
+	void MaterialPersistenceManager::Impl::SaveDataOnServer(const std::string& decorationId)
 	{
 		struct SJsonMaterialIdVect { std::vector<std::string> ids; };
 		SJsonMaterialWithIdVec jInPost; // for creation
@@ -683,7 +749,7 @@ namespace SDK::Core
 					continue;
 				ITwinMaterial& material(matInfo.settings);
 				size_t nUploaded(0);
-				bool uploadOk = UploadTexuresIfNeeded(nUploaded, material, decorationId, accessToken);
+				bool uploadOk = UploadTexuresIfNeeded(nUploaded, material, decorationId);
 				totalUploadedTextures += nUploaded;
 				if (!uploadOk)
 				{
@@ -749,10 +815,6 @@ namespace SDK::Core
 				}
 			}
 		}
-
-		Http::Headers headers;
-		headers.emplace_back("Authorization", std::string("Bearer ") + accessToken);
-
 		bool hasModifedFlags = false;
 		auto const UpdateDBFlagsOnSuccess = [&dataIO, &hasModifedFlags](bool forExistingInDB)
 		{
@@ -782,10 +844,10 @@ namespace SDK::Core
 			bool deletionOK = false;
 			std::string jOutDelete;
 			long status = GetHttp()->DeleteJsonJBody(
-				jOutDelete,"decorations/"+ decorationId + "/materials", jInDelete, headers);
+				jOutDelete,"decorations/"+ decorationId + "/materials", jInDelete);
 			if (status == 200 || status == 201)
 			{
-				BE_LOGI("ITwinDecoration", "Deleted " << jInDelete.ids.size() << " material definitions. Http status: " << status);
+				BE_LOGI("ITwinDecoration", "Deleted " << jInDelete.ids.size() << " material definition(s). Http status: " << status);
 				deletionOK = true;
 
 				// Now remove all deleted entries
@@ -812,13 +874,13 @@ namespace SDK::Core
 			bool creationOK = false;
 			SJsonMaterialWithIdVec jOutPost;
 			long status = GetHttp()->PostJsonJBody(
-				jOutPost, "decorations/" + decorationId + "/materials", jInPost, headers);
+				jOutPost, "decorations/" + decorationId + "/materials", jInPost);
 
 			if (status == 200 || status == 201)
 			{
 				if (jInPost.materials.size() == jOutPost.materials.size())
 				{
-					BE_LOGI("ITwinDecoration", "Saved " << jInPost.materials.size() << " new material definitions. Http status: " << status);
+					BE_LOGI("ITwinDecoration", "Saved " << jInPost.materials.size() << " new material definition(s). Http status: " << status);
 					UpdateDBFlagsOnSuccess(false);
 					creationOK = true;
 				}
@@ -837,13 +899,13 @@ namespace SDK::Core
 			struct SJsonMaterialOutUpd { int64_t numUpdated = 0; };
 			SJsonMaterialOutUpd jOutPut;
 			long status = GetHttp()->PutJsonJBody(
-				jOutPut, "decorations/" + decorationId + "/materials", jInPut, headers);
+				jOutPut, "decorations/" + decorationId + "/materials", jInPut);
 
 			if (status == 200 || status == 201)
 			{
 				if (jInPut.materials.size() == static_cast<size_t>(jOutPut.numUpdated))
 				{
-					BE_LOGI("ITwinDecoration", "Updated " << jInPut.materials.size() << " material definitions. Http status: " << status);
+					BE_LOGI("ITwinDecoration", "Updated " << jInPut.materials.size() << " material definition(s). Http status: " << status);
 					UpdateDBFlagsOnSuccess(true);
 					updateOK = true;
 				}
@@ -895,6 +957,15 @@ namespace SDK::Core
 		return iModelIds.size();
 	}
 
+	bool MaterialPersistenceManager::Impl::HasMaterialDefinition(std::string const& iModelId, uint64_t materialId) const
+	{
+		Lock lock(dataMutex_);
+		auto itIModel = data_.find(iModelId);
+		if (itIModel == data_.end())
+			return false;
+		return itIModel->second.contains(materialId);
+	}
+
 	bool MaterialPersistenceManager::Impl::GetMaterialSettings(std::string const& iModelId, uint64_t materialId, ITwinMaterial& material) const
 	{
 		Lock lock(dataMutex_);
@@ -921,6 +992,19 @@ namespace SDK::Core
 			storedSettings = material;
 			materialInfo.needUpdateDB = true;
 			InvalidateDB();
+		}
+	}
+
+	TextureUsage MaterialPersistenceManager::Impl::GetTextureUsage(TextureKey const& textureKey) const
+	{
+		return FindTextureUsage(textureUsageMap_, textureKey);
+	}
+
+	void MaterialPersistenceManager::Impl::AddTextureUsage(TextureKey const& textureKey, EChannelType channel)
+	{
+		if (!textureKey.id.empty() && textureKey.id != NONE_TEXTURE)
+		{
+			textureUsageMap_[textureKey].AddChannel(channel);
 		}
 	}
 
@@ -957,7 +1041,9 @@ namespace SDK::Core
 		if (Json::FromStream(jsonMaterials, ifs, parseError))
 		{
 			IModelMaterialMap dataIO;
-			ParseJSONMaterials(jsonMaterials.materials, dataIO, perIModelTextures_);
+
+			PerIModelTextureSet perIModelTextures;
+			ParseJSONMaterials(jsonMaterials.materials, dataIO, perIModelTextures, textureUsageMap_);
 
 			// Append loaded definitions, enforcing their iModel ID from given one.
 			if (!dataIO.empty())
@@ -975,9 +1061,19 @@ namespace SDK::Core
 				loadedMaterials = loadedMats.size();
 				outMatIDToDisplayName = matIDToDisplayName_;
 
+				// Append loaded textures to the iModel's slot.
+				TextureKeySet& imodelTextures = perIModelTextures_[iModelID];
+				for (auto const& [_, texSet] : perIModelTextures)
+				{
+					imodelTextures.insert(texSet.begin(), texSet.end());
+				}
+
 				Lock lock(dataMutex_);
-				data_.erase(iModelID);
-				data_[iModelID] = loadedMats;
+				auto& imodelMats = data_[iModelID];
+				for (auto const& [matId, matInfo] : loadedMats)
+				{
+					imodelMats[matId] = matInfo;
+				}
 			}
 		}
 		return loadedMaterials;
@@ -1019,6 +1115,10 @@ namespace SDK::Core
 		void operator()(const double& dValue) const
 		{
 			currentValue_ += std::to_string(dValue);
+		}
+		void operator()(const std::nullopt_t&) const
+		{
+			error_ << "unhandled std::nullopt_t" << std::endl;
 		}
 
 		void operator()(const std::string& strValue) const
@@ -1107,7 +1207,10 @@ namespace SDK::Core
 	}
 
 	bool MaterialPersistenceManager::Impl::GetMaterialSettingsFromKeyValueMap(KeyValueStringMap const& inMap,
-		ITwinMaterial& outMaterial, TextureKeySet& outTextures) const
+		ITwinMaterial& outMaterial,
+		TextureKeySet& outTextures,
+		TextureUsageMap& outTextureUsageMap,
+		std::optional<ETextureSource> const& customTexSource /*= std::nullopt*/) const
 	{
 		// Rebuild json from map.
 		std::string jsonStr = "{";
@@ -1130,7 +1233,7 @@ namespace SDK::Core
 		}
 		IModelMaterialMap dataIO;
 		PerIModelTextureSet perIModelTextures;
-		ParseJSONMaterials({ jsonMat }, dataIO, perIModelTextures);
+		ParseJSONMaterials({ jsonMat }, dataIO,	perIModelTextures, outTextureUsageMap, customTexSource);
 		if (dataIO.size() != 1)
 		{
 			BE_ISSUE("ParseJSONMaterials failed");
@@ -1150,6 +1253,7 @@ namespace SDK::Core
 		{
 			outTextures = std::move(perIModelTextures.begin()->second);
 		}
+
 		return true;
 	}
 
@@ -1158,7 +1262,8 @@ namespace SDK::Core
 	{
 		ITwinMaterial material;
 		TextureKeySet textures;
-		if (!GetMaterialSettingsFromKeyValueMap(inMap, material, textures))
+		TextureUsageMap textureUsageMap;
+		if (!GetMaterialSettingsFromKeyValueMap(inMap, material, textures, textureUsageMap))
 		{
 			return false;
 		}
@@ -1180,6 +1285,7 @@ namespace SDK::Core
 	}
 
 	bool MaterialPersistenceManager::Impl::ConvertJsonFileToKeyValueMap(std::filesystem::path const& jsonPath,
+		std::filesystem::path const& textureDir,
 		KeyValueStringMap& outMap) const
 	{
 		SJsonMaterialWithId jsonMat;
@@ -1189,7 +1295,38 @@ namespace SDK::Core
 		{
 			return false;
 		}
-		return ConvertJsonToKeyValueMap(jsonMat, outMap);
+		if (!ConvertJsonToKeyValueMap(jsonMat, outMap))
+		{
+			return false;
+		}
+		// Fix texture relative paths, in case the folder organization has been changed compared to (flat)
+		// export time.
+		if (!textureDir.empty())
+		{
+			const std::string quote("\"");
+
+			static auto const trimPath = [](std::string const& source) -> std::string
+			{
+				std::string s(source);
+				s.erase(0, s.find_first_not_of(" \n\r\t\""));
+				s.erase(s.find_last_not_of(" \n\r\t\"") + 1);
+				return s;
+			};
+
+			for (auto& [key, value] : outMap)
+			{
+				if (key.ends_with("Map")
+					&& !value.empty()
+					&& value != "\"\""
+					&& !value.ends_with("/0\""))
+				{
+					auto baseName = std::filesystem::path(trimPath(value)).filename();
+					value = quote + (textureDir / baseName).generic_string() + quote;
+				}
+			}
+		}
+
+		return true;
 	}
 
 	//-----------------------------------------------------------------------------------
@@ -1217,6 +1354,16 @@ namespace SDK::Core
 		GetImpl().SetMaterialLibraryDirectory(materialLibraryDirectory);
 	}
 
+	std::string MaterialPersistenceManager::GetBaseURL(ETextureSource texSource) const
+	{
+		return GetImpl().GetBaseURL(texSource);
+	}
+
+	std::string MaterialPersistenceManager::GetRelativeURL(TextureKey const& textureKey) const
+	{
+		return GetImpl().GetRelativeURL(textureKey);
+	}
+
 	std::string MaterialPersistenceManager::GetTextureURL(std::string const& textureId, ETextureSource texSource) const
 	{
 		return GetImpl().GetTextureURL(TextureKey{ .id= textureId, .eSource = texSource});
@@ -1242,14 +1389,25 @@ namespace SDK::Core
 		return GetImpl().NeedUpdateDB();
 	}
 
-	void MaterialPersistenceManager::LoadDataFromServer(const std::string& decorationId, const std::string& accessToken)
+	bool MaterialPersistenceManager::HasLoadedModel(std::string const& iModelId) const
 	{
-		GetImpl().LoadDataFromServer(decorationId, accessToken);
+		return GetImpl().HasLoadedModel(iModelId);
 	}
 
-	void MaterialPersistenceManager::SaveDataOnServer(const std::string& decorationId, const std::string& accessToken)
+	void MaterialPersistenceManager::SetLoadedModel(std::string const& iModelId, bool bLoaded /*= true*/)
 	{
-		GetImpl().SaveDataOnServer(decorationId, accessToken);
+		GetImpl().SetLoadedModel(iModelId, bLoaded);
+	}
+
+	void MaterialPersistenceManager::LoadDataFromServer(std::string const& decorationId,
+		std::set<std::string> const& specificModels /*= {}*/)
+	{
+		GetImpl().LoadDataFromServer(decorationId, specificModels);
+	}
+
+	void MaterialPersistenceManager::SaveDataOnServer(const std::string& decorationId)
+	{
+		GetImpl().SaveDataOnServer(decorationId);
 	}
 
 	void MaterialPersistenceManager::SetLocalMaterialDirectory(std::filesystem::path const& materialDirectory)
@@ -1274,10 +1432,29 @@ namespace SDK::Core
 		return GetImpl().ListIModelsWithMaterialSettings(iModelIds);
 	}
 
-	void MaterialPersistenceManager::GetDecorationTexturesByIModel(
-		PerIModelTextureSet& outPerIModelTextures) const
+	PerIModelTextureSet const& MaterialPersistenceManager::GetDecorationTexturesByIModel() const
 	{
-		outPerIModelTextures = GetImpl().GetDecorationTexturesByIModel();
+		return GetImpl().GetDecorationTexturesByIModel();
+	}
+
+	TextureUsageMap const& MaterialPersistenceManager::GetTextureUsageMap() const
+	{
+		return GetImpl().GetTextureUsageMap();
+	}
+
+	TextureUsage MaterialPersistenceManager::GetTextureUsage(TextureKey const& textureKey) const
+	{
+		return GetImpl().GetTextureUsage(textureKey);
+	}
+
+	void MaterialPersistenceManager::AddTextureUsage(TextureKey const& textureKey, EChannelType channel)
+	{
+		GetImpl().AddTextureUsage(textureKey, channel);
+	}
+
+	bool MaterialPersistenceManager::HasMaterialDefinition(std::string const& iModelId, uint64_t materialId) const
+	{
+		return GetImpl().HasMaterialDefinition(iModelId, materialId);
 	}
 
 	bool MaterialPersistenceManager::GetMaterialSettings(std::string const& iModelId, uint64_t materialId, ITwinMaterial& material) const
@@ -1313,17 +1490,23 @@ namespace SDK::Core
 	}
 
 	bool MaterialPersistenceManager::GetMaterialSettingsFromKeyValueMap(KeyValueStringMap const& inMap,
-		ITwinMaterial& outMaterial, TextureKeySet& outTextures) const
+		ITwinMaterial& outMaterial,
+		TextureKeySet& outTextures,
+		TextureUsageMap& outTextureUsageMap,
+		std::optional<ETextureSource> const& customTexSource /*= std::nullopt*/) const
 	{
-		return GetImpl().GetMaterialSettingsFromKeyValueMap(inMap, outMaterial, outTextures);
+		return GetImpl().GetMaterialSettingsFromKeyValueMap(inMap,
+			outMaterial, outTextures, outTextureUsageMap,
+			customTexSource);
 	}
 
 	std::string MaterialPersistenceManager::ExportAsJson(ITwinMaterial const& material, std::string const& iModelID, uint64_t materialId) const
 	{
 		return GetImpl().ExportAsJson(material, iModelID, materialId);
 	}
-	bool MaterialPersistenceManager::ConvertJsonFileToKeyValueMap(std::filesystem::path const& jsonPath, KeyValueStringMap& outMap) const
+	bool MaterialPersistenceManager::ConvertJsonFileToKeyValueMap(std::filesystem::path const& jsonPath,
+		std::filesystem::path const& textureDir, KeyValueStringMap& outMap) const
 	{
-		return GetImpl().ConvertJsonFileToKeyValueMap(jsonPath, outMap);
+		return GetImpl().ConvertJsonFileToKeyValueMap(jsonPath, textureDir, outMap);
 	}
 }

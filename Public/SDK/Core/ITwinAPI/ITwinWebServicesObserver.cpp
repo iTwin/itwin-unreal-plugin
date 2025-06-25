@@ -16,9 +16,9 @@
 // typically in Unreal...)
 #define ITWIN_SDK_WARN(FORMAT, ...)
 
-namespace SDK::Core
+namespace AdvViz::SDK
 {
-	void ITwinDefaultWebServicesObserver::OnRequestError(std::string const& /*strError*/, int /*retriesLeft*/)
+	void ITwinDefaultWebServicesObserver::OnRequestError(std::string const& /*strError*/, int /*retriesLeft*/, bool /*bLogError*/ /*= true*/)
 	{
 	}
 	void ITwinDefaultWebServicesObserver::OnITwinsRetrieved(bool /*bSuccess*/, ITwinInfos const&)
@@ -69,7 +69,7 @@ namespace SDK::Core
 	{
 		ITWIN_SDK_WARN(GetObserverName() + " does not handle SavedViews");
 	}
-	void ITwinDefaultWebServicesObserver::OnSavedViewThumbnailRetrieved(bool /*bSuccess*/, std::string const&, std::string const&)
+	void ITwinDefaultWebServicesObserver::OnSavedViewThumbnailRetrieved(bool /*bSuccess*/, std::string const&, std::vector<uint8_t> const&)
 	{
 		ITWIN_SDK_WARN(GetObserverName() + " does not handle SavedViews");
 	}
@@ -105,6 +105,10 @@ namespace SDK::Core
 	{
 		ITWIN_SDK_WARN(GetObserverName() + " does not handle IModel properties");
 	}
+	void ITwinDefaultWebServicesObserver::OnConvertedIModelCoordsToGeoCoords(bool /*bSuccess*/, GeoCoordsReply const&, RequestID const&)
+	{
+		ITWIN_SDK_WARN(GetObserverName() + " does not handle IModel coordinates conversion");
+	}
 	void ITwinDefaultWebServicesObserver::OnIModelQueried(bool /*bSuccess*/, std::string const&, RequestID const&)
 	{
 		ITWIN_SDK_WARN(GetObserverName() + " does not handle querying IModel");
@@ -113,7 +117,7 @@ namespace SDK::Core
 	{
 		ITWIN_SDK_WARN(GetObserverName() + " does not handle material properties");
 	}
-	void ITwinDefaultWebServicesObserver::OnMatMLPredictionRetrieved(bool /*bSuccess*/, ITwinMaterialPrediction const&)
+	void ITwinDefaultWebServicesObserver::OnMatMLPredictionRetrieved(bool /*bSuccess*/, ITwinMaterialPrediction const&, std::string const&)
 	{
 		ITWIN_SDK_WARN(GetObserverName() + " does not handle material predictions");
 	}

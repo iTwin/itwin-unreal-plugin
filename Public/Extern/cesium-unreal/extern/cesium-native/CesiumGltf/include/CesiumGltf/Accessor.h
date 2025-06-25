@@ -1,7 +1,7 @@
 #pragma once
 
-#include "CesiumGltf/AccessorSpec.h"
-#include "CesiumGltf/Library.h"
+#include <CesiumGltf/AccessorSpec.h>
+#include <CesiumGltf/Library.h>
 
 #include <cstdint>
 
@@ -33,6 +33,8 @@ struct CESIUMGLTF_API Accessor final : public AccessorSpec {
    * {@link Accessor::componentType} is not a valid enumeration value.
    */
   static int8_t computeByteSizeOfComponent(int32_t componentType) noexcept;
+
+  Accessor() = default;
 
   /**
    * @brief Computes the number of components for this accessor.

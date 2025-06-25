@@ -6,3 +6,12 @@
 |
 +--------------------------------------------------------------------------------------*/
 
+#include "FactoryClass.h"
+
+namespace AdvViz::SDK::Tools::Internal
+{
+	ADVVIZ_LINK void DefaultDelete(void* p)
+	{
+		::operator delete(p);
+	}
+}

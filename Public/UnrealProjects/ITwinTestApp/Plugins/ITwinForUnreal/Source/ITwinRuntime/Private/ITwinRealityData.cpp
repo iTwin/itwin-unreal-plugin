@@ -7,11 +7,14 @@
 +--------------------------------------------------------------------------------------*/
 
 #include <ITwinRealityData.h>
+
+#include <IncludeITwin3DTileset.h>
 #include <ITwinGeolocation.h>
 #include <ITwinServerConnection.h>
 #include <ITwinSetupMaterials.h>
-#include <ITwinCesium3DTileset.h>
 #include <ITwinIModel.h>
+#include <ITwinTilesetAccess.h>
+#include <ITwinTilesetAccess.inl>
 
 #include <Dom/JsonObject.h>
 #include <Dom/JsonValue.h>
@@ -32,6 +35,8 @@ public:
 	double Latitude = 0;
 	double Longitude = 0;
 	AITwinDecorationHelper* DecorationPersistenceMgr = nullptr;
+	uint32 TilesetLoadedCount = 0;
+
 	FImpl(AITwinRealityData& InOwner)
 		: Owner(InOwner)
 	{
@@ -43,13 +48,13 @@ public:
 		auto&& Geoloc = FITwinGeolocation::Get(*Owner.GetWorld());
 		FActorSpawnParameters SpawnParams;
 		SpawnParams.Owner = &Owner;
-		const auto Tileset = Owner.GetWorld()->SpawnActor<AITwinCesium3DTileset>(SpawnParams);
+		const auto Tileset = Owner.GetWorld()->SpawnActor<ACesium3DTileset>(SpawnParams);
 #if WITH_EDITOR
 		Tileset->SetActorLabel(Owner.GetActorLabel() + TEXT(" tileset"));
 #endif
 		Tileset->AttachToActor(&Owner, FAttachmentTransformRules::KeepRelativeTransform);
 		Tileset->SetCreatePhysicsMeshes(false);
-		Tileset->SetTilesetSource(EITwinTilesetSource::FromUrl);
+		Tileset->SetTilesetSource(ETilesetSource::FromUrl);
 		Tileset->SetUrl(Info.MeshUrl);
 
 		if (Info.bGeolocated)
@@ -57,10 +62,12 @@ public:
 			Owner.bGeolocated = true;
 			Latitude = 0.5 * (Info.ExtentNorthEast.Latitude + Info.ExtentSouthWest.Latitude);
 			Longitude = 0.5 * (Info.ExtentNorthEast.Longitude + Info.ExtentSouthWest.Longitude);
-			if (Geoloc->GeoReference->GetOriginPlacement() == EITwinOriginPlacement::TrueOrigin)
+			if (Geoloc->GeoReference->GetOriginPlacement() == EOriginPlacement::TrueOrigin
+				|| Geoloc->bCanBypassCurrentLocation)
 			{
+				Geoloc->bCanBypassCurrentLocation = false;
 				// Common geolocation is not yet inited, use the location of this reality data.
-				Geoloc->GeoReference->SetOriginPlacement(EITwinOriginPlacement::CartographicOrigin);
+				Geoloc->GeoReference->SetOriginPlacement(EOriginPlacement::CartographicOrigin);
 				Geoloc->GeoReference->SetOriginLatitude(Latitude);
 				Geoloc->GeoReference->SetOriginLongitude(Longitude);
 				Geoloc->GeoReference->SetOriginHeight(0);
@@ -71,6 +78,9 @@ public:
 			Tileset->SetGeoreference(Geoloc->LocalReference.Get());
 		// Make use of our own materials (important for packaged version!)
 		ITwin::SetupMaterials(*Tileset);
+
+		TilesetLoadedCount = 0;
+		Tileset->OnTilesetLoaded.AddDynamic(&Owner, &AITwinRealityData::OnTilesetLoaded);
 	}
 
 	void DestroyTileset();
@@ -136,7 +146,7 @@ void AITwinRealityData::UpdateRealityData()
 {
 	if (HasTileset())
 		return;
-	if (CheckServerConnection() != SDK::Core::EITwinAuthStatus::Success)
+	if (CheckServerConnection() != AdvViz::SDK::EITwinAuthStatus::Success)
 	{
 		// No authorization yet: postpone the actual update (see OnAuthorizationDone)
 		return;
@@ -157,89 +167,65 @@ bool AITwinRealityData::HasTileset() const
 	return GetTileset() != nullptr;
 }
 
-const AITwinCesium3DTileset* AITwinRealityData::GetTileset() const
+const ACesium3DTileset* AITwinRealityData::GetTileset() const
 {
-	for (auto& Child : Children)
-	{
-		if (auto* Tileset = Cast<AITwinCesium3DTileset>(Child.Get()))
-		{
-			return Tileset;
-		}
-	}
-	return nullptr;
+	return ITwin::TGetTileset<ACesium3DTileset const>(*this);
 }
 
-AITwinCesium3DTileset* AITwinRealityData::GetMutableTileset()
+ACesium3DTileset* AITwinRealityData::GetMutableTileset()
 {
-	return const_cast<AITwinCesium3DTileset*>(GetTileset());
+	return ITwin::TGetTileset<ACesium3DTileset>(*this);
 }
 
-void AITwinRealityData::HideTileset(bool bHide)
+
+class AITwinRealityData::FTilesetAccess : public FITwinTilesetAccess
 {
-	for (auto& Child : Children)
-	{
-		if (auto* Tileset = Cast<AITwinCesium3DTileset>(Child.Get()))
-		{
-			Tileset->SetActorHiddenInGame(bHide);
-		}
-	}
-	if (!Impl->DecorationPersistenceMgr)
-		Impl->FindPersistenceMgr();
-	if (Impl->DecorationPersistenceMgr)
-	{
-		auto ss = Impl->DecorationPersistenceMgr->GetSceneInfo(EITwinModelType::RealityData, RealityDataId);
-		if (!ss.Visibility.has_value() || *ss.Visibility != !bHide)
-		{
-			ss.Quality = !bHide;
-			Impl->DecorationPersistenceMgr->SetSceneInfo(EITwinModelType::RealityData, RealityDataId, ss);
-		}
-	}
-}
-bool AITwinRealityData::IsTilesetHidden()
+public:
+	FTilesetAccess(AITwinRealityData& InRealityData);
+
+	virtual ITwin::ModelDecorationIdentifier GetDecorationKey() const override;
+	virtual AITwinDecorationHelper* GetDecorationHelper() const override;
+
+private:
+	AITwinRealityData& RealityData;
+};
+
+AITwinRealityData::FTilesetAccess::FTilesetAccess(AITwinRealityData& InRealityData)
+	: FITwinTilesetAccess(InRealityData)
+	, RealityData(InRealityData)
 {
-	auto tileset = GetTileset();
-	if (!tileset)
-		return false;
-	return tileset->IsHidden();
-}
-void AITwinRealityData::SetMaximumScreenSpaceError(double InMaximumScreenSpaceError)
-{
-	for (auto& Child : Children)
-	{
-		if (auto* Tileset = Cast<AITwinCesium3DTileset>(Child.Get()))
-		{
-			Tileset->SetMaximumScreenSpaceError(InMaximumScreenSpaceError);
-		}
-	}
+
 }
 
-void AITwinRealityData::SetTilesetQuality(float Value)
+
+ITwin::ModelDecorationIdentifier AITwinRealityData::FTilesetAccess::GetDecorationKey() const
 {
-	SetMaximumScreenSpaceError(ITwin::ToScreenSpaceError(Value));
-	if (!Impl->DecorationPersistenceMgr)
-		Impl->FindPersistenceMgr();
-	if (Impl->DecorationPersistenceMgr)
-	{
-		auto ss = Impl->DecorationPersistenceMgr->GetSceneInfo(EITwinModelType::RealityData, RealityDataId);
-		if (!ss.Quality.has_value() || fabs(*ss.Quality - Value) > 1e-5)
-		{
-			ss.Quality = Value;
-			Impl->DecorationPersistenceMgr->SetSceneInfo(EITwinModelType::RealityData, RealityDataId, ss);
-		}
-	}
+	return std::make_pair(EITwinModelType::RealityData, RealityData.RealityDataId);
 }
 
-float AITwinRealityData::GetTilesetQuality() const
+AITwinDecorationHelper* AITwinRealityData::FTilesetAccess::GetDecorationHelper() const
 {
-	AITwinCesium3DTileset const* Tileset = GetTileset();
-	if (Tileset)
+	if (!RealityData.Impl->DecorationPersistenceMgr)
 	{
-		return ITwin::GetTilesetQuality(*Tileset);
+		RealityData.Impl->FindPersistenceMgr();
 	}
-	else
+	return RealityData.Impl->DecorationPersistenceMgr;
+}
+
+TUniquePtr<FITwinTilesetAccess> AITwinRealityData::MakeTilesetAccess()
+{
+	return MakeUnique<FTilesetAccess>(*this);
+}
+
+
+void AITwinRealityData::OnTilesetLoaded()
+{
+	// Read comment in AITwinIModel::OnTilesetLoaded
+	if (Impl->TilesetLoadedCount == 0)
 	{
-		return 0.f;
+		this->OnRealityDataLoaded.Broadcast(true, RealityDataId);
 	}
+	Impl->TilesetLoadedCount++;
 }
 
 std::optional<FCartographicProps> AITwinRealityData::GetNativeGeoreference() const
@@ -304,7 +290,7 @@ void AITwinRealityData::UseAsGeolocation()
 	if (ensure(bGeolocated))
 	{
 		auto&& Geoloc = FITwinGeolocation::Get(*GetWorld());
-		Geoloc->GeoReference->SetOriginPlacement(EITwinOriginPlacement::CartographicOrigin);
+		Geoloc->GeoReference->SetOriginPlacement(EOriginPlacement::CartographicOrigin);
 		Geoloc->GeoReference->SetOriginLatitude(Impl->Latitude);
 		Geoloc->GeoReference->SetOriginLongitude(Impl->Longitude);
 	}
@@ -316,15 +302,3 @@ void AITwinRealityData::Destroyed()
 	for (auto& Child: ChildrenCopy)
 		GetWorld()->DestroyActor(Child);
 }
-
-void AITwinRealityData::SetOffset(const FVector& Pos, const FVector& Rot)
-{
-	SetActorLocationAndRotation(Pos, FQuat::MakeFromEuler(Rot));
-}
-
-void AITwinRealityData::GetOffset(FVector& Pos, FVector& Rot) const
-{
-	Pos = GetActorLocation() / 100.0;
-	Rot = GetActorRotation().Euler();
-}
-

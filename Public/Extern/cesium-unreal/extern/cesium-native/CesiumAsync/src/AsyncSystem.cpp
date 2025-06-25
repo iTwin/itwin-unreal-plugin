@@ -1,8 +1,11 @@
-#include "CesiumAsync/AsyncSystem.h"
+#include "CesiumAsync/Impl/AsyncSystemSchedulers.h"
 
-#include "CesiumAsync/ITaskProcessor.h"
+#include <CesiumAsync/AsyncSystem.h>
+#include <CesiumAsync/ITaskProcessor.h>
+#include <CesiumAsync/ThreadPool.h>
 
-#include <future>
+#include <cstdint>
+#include <memory>
 
 namespace CesiumAsync {
 AsyncSystem::AsyncSystem(

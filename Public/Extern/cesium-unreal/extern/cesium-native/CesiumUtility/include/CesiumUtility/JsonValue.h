@@ -1,8 +1,6 @@
 #pragma once
 
-#include "Library.h"
-
-#include <gsl/narrow>
+#include <CesiumUtility/Library.h>
 
 #include <cmath>
 #include <cstdint>
@@ -18,44 +16,32 @@
 
 namespace CesiumUtility {
 
-struct JsonValueMissingKey : public std::runtime_error {
-  JsonValueMissingKey(const std::string& key)
-      : std::runtime_error(key + " is not present in Object") {}
-};
+/**
+ * @brief Attempts a narrowing conversion of `TFrom` into `TTo` without losing
+ * information. If a lossless conversion can't be performed, `std::nullopt` is
+ * returned.
+ *
+ * @tparam TTo The type to convert to.
+ * @tparam TFrom The type to convert from.
+ * @param from The value to perform the conversion on.
+ */
+template <typename TTo, typename TFrom>
+extern std::optional<TTo> losslessNarrow(TFrom from) noexcept;
 
-struct JsonValueNotRealValue : public std::runtime_error {
-  JsonValueNotRealValue()
-      : std::runtime_error("this->value was not double, uint64_t or int64_t") {}
-};
-
-template <typename T, typename U>
-constexpr std::optional<T> losslessNarrow(U u) noexcept {
-  constexpr const bool is_different_signedness =
-      (std::is_signed<T>::value != std::is_signed<U>::value);
-
-  const T t = gsl::narrow_cast<T>(u);
-
-  if (static_cast<U>(t) != u ||
-      (is_different_signedness && ((t < T{}) != (u < U{})))) {
-    return std::nullopt;
-  }
-
-  return t;
-}
-
-template <typename T, typename U>
-constexpr T losslessNarrowOrDefault(U u, T defaultValue) noexcept {
-  constexpr const bool is_different_signedness =
-      (std::is_signed<T>::value != std::is_signed<U>::value);
-
-  const T t = gsl::narrow_cast<T>(u);
-
-  if (static_cast<U>(t) != u ||
-      (is_different_signedness && ((t < T{}) != (u < U{})))) {
-    return defaultValue;
-  }
-
-  return t;
+/**
+ * @brief Attempts a narrowing conversion of `TFrom` into `TTo` without losing
+ * information. If a lossless conversion can't be performed, `defaultValue` is
+ * returned.
+ *
+ * @tparam TTo The type to convert to.
+ * @tparam TFrom The type to convert from.
+ * @param from The value to perform the conversion on.
+ * @param defaultValue The value that will be returned if a lossless conversion
+ * can't be performed.
+ */
+template <typename TTo, typename TFrom>
+constexpr TTo losslessNarrowOrDefault(TFrom from, TTo defaultValue) noexcept {
+  return losslessNarrow<TTo, TFrom>(from).value_or(defaultValue);
 }
 
 /**
@@ -212,8 +198,17 @@ public:
   JsonValue(std::initializer_list<std::pair<const std::string, JsonValue>> v)
       : value(std::map<std::string, JsonValue>(v)) {}
 
+  /**
+   * @brief Attempts to obtain a pointer to a \ref JsonValue for the given key
+   * on this object.
+   *
+   * @param key The key to lookup.
+   * @returns A pointer to the \ref JsonValue for the provided key, or
+   * `nullptr`.
+   */
   [[nodiscard]] const JsonValue*
   getValuePtrForKey(const std::string& key) const;
+  /** @copydoc getValuePtrForKey */
   [[nodiscard]] JsonValue* getValuePtrForKey(const std::string& key);
 
   /**
@@ -263,31 +258,28 @@ public:
    * @brief Converts the numerical value corresponding to the given key
    * to the provided numerical template type.
 
-   * If this instance is not a {@link JsonValue::Object}, throws
-   * `std::bad_variant_access`. If the key does not exist in this object, throws
-   * `JsonValueMissingKey`. If the named value does not have a numerical type T,
-   *  throws `JsonValueNotRealValue`, if the named value cannot be converted
-   from
-   * `double` / `std::uint64_t` / `std::int64_t` without precision loss, throws
-   * `gsl::narrowing_error`
+   * If this instance is not a {@link JsonValue::Object}, the key does not exist
+   * in this object, the named value does not have a numerical type, or if the
+   * named value cannot be converted from `double` / `std::uint64_t` /
+   * `std::int64_t` without precision loss, returns `std::nullopt`.
    * @tparam To The expected type of the value.
    * @param key The key for which to retrieve the value from this object.
-   * @return The converted value.
-   * @throws If unable to convert the converted value for one of the
-   aforementioned reasons.
+   * @return The converted value, or std::nullopt if it cannot be converted for
+   * any of the previously-mentioned reasons.
    * @remarks Compilation will fail if type 'To' is not an integral / float /
-   double type.
+   * double type.
    */
   template <
       typename To,
       typename std::enable_if<
           std::is_integral<To>::value ||
           std::is_floating_point<To>::value>::type* = nullptr>
-  [[nodiscard]] To getSafeNumericalValueForKey(const std::string& key) const {
+  [[nodiscard]] std::optional<To>
+  getSafeNumericalValueForKey(const std::string& key) const {
     const Object& pObject = std::get<Object>(this->value);
     const auto it = pObject.find(key);
     if (it == pObject.end()) {
-      throw JsonValueMissingKey(key);
+      return std::nullopt;
     }
     return it->second.getSafeNumber<To>();
   }
@@ -303,6 +295,8 @@ public:
    *
    * @tparam To The expected type of the value.
    * @param key The key for which to retrieve the value from this object.
+   * @param defaultValue The value that will be returned if a numerical value
+   * can't be obtained.
    * @return The converted value.
    * @throws If unable to convert the converted value for one of the
    * aforementioned reasons.
@@ -346,32 +340,31 @@ public:
    * type. This function should be used over `getDouble()` / `getUint64()` /
    * `getInt64()` if you plan on casting that type into another smaller type or
    * different type.
-   * @returns The converted type if it can be cast without precision loss.
-   * @throws If the underlying value is not a numerical type or it cannot be
-   *         converted without precision loss.
+   * @returns The converted type if it is numerical and it can be cast without
+   * precision loss; otherwise, std::nullopt.
    */
   template <
       typename To,
       typename std::enable_if<
           std::is_integral<To>::value ||
           std::is_floating_point<To>::value>::type* = nullptr>
-  [[nodiscard]] To getSafeNumber() const {
+  [[nodiscard]] std::optional<To> getSafeNumber() const {
     const std::uint64_t* uInt = std::get_if<std::uint64_t>(&this->value);
     if (uInt) {
-      return gsl::narrow<To>(*uInt);
+      return losslessNarrow<To>(*uInt);
     }
 
     const std::int64_t* sInt = std::get_if<std::int64_t>(&this->value);
     if (sInt) {
-      return gsl::narrow<To>(*sInt);
+      return losslessNarrow<To>(*sInt);
     }
 
     const double* real = std::get_if<double>(&this->value);
     if (real) {
-      return gsl::narrow<To>(*real);
+      return losslessNarrow<To>(*real);
     }
 
-    throw JsonValueNotRealValue();
+    return std::nullopt;
   }
 
   /**
@@ -618,6 +611,57 @@ public:
    */
   [[nodiscard]] inline bool isInt64() const noexcept {
     return std::holds_alternative<std::int64_t>(this->value);
+  }
+
+  /**
+   * @brief Returns `true` if two values are equal.
+   */
+  inline bool operator==(const JsonValue& rhs) const noexcept {
+    return this->value == rhs.value;
+  };
+
+  /**
+   * @brief Returns the size in bytes of this `JsonValue`.
+   */
+  int64_t getSizeBytes() const noexcept {
+    struct Operation {
+      int64_t operator()([[maybe_unused]] const Null& /*inside*/) { return 0; }
+      int64_t operator()([[maybe_unused]] const double& /*inside*/) {
+        return 0;
+      }
+      int64_t operator()([[maybe_unused]] const std::uint64_t& /*inside*/) {
+        return 0;
+      }
+      int64_t operator()([[maybe_unused]] const std::int64_t& /*inside*/) {
+        return 0;
+      }
+      int64_t operator()([[maybe_unused]] const Bool& /*inside*/) { return 0; }
+      int64_t operator()(const String& inside) {
+        return int64_t(inside.capacity() * sizeof(char));
+      }
+      int64_t operator()(const Object& inside) {
+        int64_t accum = 0;
+        accum +=
+            int64_t(inside.size() * (sizeof(std::string) + sizeof(JsonValue)));
+        for (const auto& [k, v] : inside) {
+          accum += int64_t(k.capacity() * sizeof(char) - sizeof(std::string));
+          accum += v.getSizeBytes() - int64_t(sizeof(JsonValue));
+        }
+
+        return accum;
+      }
+      int64_t operator()(const Array& inside) {
+        int64_t accum = 0;
+        accum += int64_t(sizeof(JsonValue) * inside.capacity());
+        for (const JsonValue& v : inside) {
+          accum += v.getSizeBytes() - int64_t(sizeof(JsonValue));
+        }
+        return accum;
+      }
+    };
+
+    return static_cast<int64_t>(sizeof(JsonValue)) +
+           std::visit(Operation{}, this->value);
   }
 
   /**

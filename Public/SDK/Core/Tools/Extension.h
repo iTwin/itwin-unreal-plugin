@@ -9,9 +9,10 @@
 #pragma once
 #include <memory>
 #include <unordered_map>
+#include "../AdvVizLinkType.h"
 #include "TypeId.h"
 
-namespace SDK::Core::Tools
+namespace AdvViz::SDK::Tools
 {
 
 	// Extension base class
@@ -23,7 +24,7 @@ namespace SDK::Core::Tools
 	class ExtensionSupport {
 	public:
 		template<typename T>
-		const std::shared_ptr<T> GetExtension()
+		const std::shared_ptr<T> GetExtension() const
 		{
 			auto it = extension_.find(T::GetTypeId());
 			if (it != extension_.end())

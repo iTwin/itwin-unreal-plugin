@@ -9,8 +9,9 @@
 #include "Decoration.h"
 #include "Config.h"
 #include "../Singleton/singleton.h"
+#include "Core/Network/HttpGetWithLink.h"
 
-namespace SDK::Core {
+namespace AdvViz::SDK {
 
 	struct SJSonGCS
 	{
@@ -36,17 +37,15 @@ namespace SDK::Core {
 		void SetHttp(const std::shared_ptr<Http>& http) { http_ = http; }
 
 		void Create(
-			const std::string& name, const std::string& itwinid, const std::string& accessToken)
+			const std::string& name, const std::string& itwinid)
 		{
 			struct SJsonIn { std::string name; std::string itwinid; };
 			SJsonIn jIn{ name, itwinid };
 			struct SJsonOut { std::string id; SJsonDeco data; };
 			SJsonOut jOut;
 
-			Http::Headers headers;
-			headers.emplace_back("Authorization", std::string("Bearer ") + accessToken);
 
-			long status = GetHttp()->PostJsonJBody(jOut, std::string("decorations"), jIn, headers);
+			long status = GetHttp()->PostJsonJBody(jOut, std::string("decorations"), jIn);
 			if (status == 200 || status == 201)
 			{
 				jsonDeco_ = std::move(jOut.data);
@@ -61,12 +60,10 @@ namespace SDK::Core {
 			}
 		}
 
-		void Get(const std::string& id, const std::string& accessToken)
+		void Get(const std::string& id)
 		{
-			Http::Headers headers;
-			headers.emplace_back("Authorization", std::string("Bearer ") + accessToken);
 
-			long status = GetHttp()->GetJson(jsonDeco_, "decorations/"+ id, "", headers);
+			long status = GetHttp()->GetJson(jsonDeco_, "decorations/"+ id);
 			if (status == 200)
 			{
 				id_ = id;
@@ -81,7 +78,7 @@ namespace SDK::Core {
 		void Delete()
 		{
 			std::string s("decorations/" + id_);
-			auto status = GetHttp()->Delete(s, "");
+			Http::Response status = GetHttp()->Delete(s, "");
 			if (status.first != 200)
 			{
 				BE_LOGW("ITwinDecoration", "Delete decoration failed. Http status: " << status.first);
@@ -115,14 +112,14 @@ namespace SDK::Core {
 		GetImpl().SetHttp(http);
 	}
 
-	void Decoration::Create(const std::string& name, const std::string& itwinid, const std::string& accessToken)
+	void Decoration::Create(const std::string& name, const std::string& itwinid)
 	{
-		GetImpl().Create(name, itwinid, accessToken);
+		GetImpl().Create(name, itwinid);
 	}
 
-	void Decoration::Get(const std::string& id, const std::string& accessToken)
+	void Decoration::Get(const std::string& id)
 	{
-		GetImpl().Get(id, accessToken);
+		GetImpl().Get(id);
 	}
 
 	void Decoration::Delete()
@@ -149,25 +146,13 @@ namespace SDK::Core {
 	}
 
 	std::vector<std::shared_ptr<IDecoration>> GetITwinDecorations(
-		const std::string& itwinid, const std::string& accessToken)
+		const std::string& itwinid)
 	{
 		std::vector<std::shared_ptr<IDecoration>> decorations;
 
 		std::shared_ptr<Http>& http = GetDefaultHttp();
 		if (!http)
 			return decorations;
-
-		Http::Headers headers;
-		headers.emplace_back("Authorization", std::string("Bearer ") + accessToken);
-
-		struct SJsonInEmpty	{};
-
-		struct SJsonLink
-		{
-			std::optional<std::string> prev;
-			std::optional<std::string> self;
-			std::optional<std::string> next;
-		};
 
 		struct SJsonDecoWithId
 		{
@@ -177,30 +162,25 @@ namespace SDK::Core {
 			std::optional<SJSonGCS> gcs;
 		};
 
-		struct SJsonOut
-		{ 
-			int total_rows;
-			std::vector<SJsonDecoWithId> rows;
-			SJsonLink _links;
-		};
-
-		SJsonInEmpty jIn;
-		SJsonOut jOut;
-		long status = http->GetJsonJBody(jOut, "decorations?iTwinId=" + itwinid, jIn, headers);
-
-		if (status == 200 || status == 201)
+		auto ret = HttpGetWithLink<SJsonDecoWithId>(http,
+			"decorations?iTwinId=" + itwinid,
+			{} /* extra headers*/,
+			[&decorations](SJsonDecoWithId const& row) -> expected<void, std::string>
 		{
-			BE_LOGI("ITwinDecoration", "Found " << jOut.rows.size() << " decoration(s) for iTwin " << itwinid);
-			for (auto& row : jOut.rows)
-			{
-				std::shared_ptr<SDK::Core::IDecoration> deco(SDK::Core::IDecoration::New());
-				deco->Get(row.id, accessToken);
-				decorations.push_back(deco);
-			}
+				std::shared_ptr<AdvViz::SDK::IDecoration> deco(AdvViz::SDK::IDecoration::New());
+					deco->Get(row.id);
+					decorations.push_back(deco);
+
+			return {};
+		});
+
+		if (ret)
+		{
+			BE_LOGI("ITwinDecoration", "Found " << decorations.size() << " decoration(s) for iTwin " << itwinid);
 		}
 		else
 		{
-			BE_LOGW("ITwinDecoration", "Load decorations failed. Http status: " << status);
+			BE_LOGW("ITwinDecoration", "Load decorations failed. " << ret.error());
 		}
 
 		return decorations;

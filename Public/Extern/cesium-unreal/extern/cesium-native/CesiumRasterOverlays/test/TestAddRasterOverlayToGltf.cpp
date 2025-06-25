@@ -1,28 +1,54 @@
-#include <CesiumGeometry/Transforms.h>
+#include <CesiumAsync/AsyncSystem.h>
 #include <CesiumGeospatial/Cartographic.h>
 #include <CesiumGeospatial/Ellipsoid.h>
 #include <CesiumGeospatial/GlobeTransforms.h>
 #include <CesiumGltf/AccessorView.h>
+#include <CesiumGltf/BufferView.h>
 #include <CesiumGltf/ExtensionKhrTextureTransform.h>
+#include <CesiumGltf/Image.h>
+#include <CesiumGltf/Material.h>
+#include <CesiumGltf/MaterialPBRMetallicRoughness.h>
+#include <CesiumGltf/Mesh.h>
+#include <CesiumGltf/MeshPrimitive.h>
+#include <CesiumGltf/Sampler.h>
+#include <CesiumGltf/Texture.h>
+#include <CesiumGltf/TextureInfo.h>
 #include <CesiumGltfContent/GltfUtilities.h>
 #include <CesiumGltfContent/ImageManipulation.h>
 #include <CesiumGltfReader/GltfReader.h>
 #include <CesiumGltfWriter/GltfWriter.h>
 #include <CesiumNativeTests/SimpleAssetAccessor.h>
+#include <CesiumNativeTests/SimpleAssetRequest.h>
+#include <CesiumNativeTests/SimpleAssetResponse.h>
 #include <CesiumNativeTests/SimpleTaskProcessor.h>
 #include <CesiumNativeTests/readFile.h>
 #include <CesiumNativeTests/waitForFuture.h>
+#include <CesiumRasterOverlays/RasterOverlayDetails.h>
 #include <CesiumRasterOverlays/RasterOverlayTile.h>
 #include <CesiumRasterOverlays/RasterOverlayTileProvider.h>
 #include <CesiumRasterOverlays/RasterOverlayUtilities.h>
 #include <CesiumRasterOverlays/TileMapServiceRasterOverlay.h>
 #include <CesiumUtility/IntrusivePointer.h>
+#include <CesiumUtility/StringHelpers.h>
 
-#include <catch2/catch.hpp>
-#include <glm/gtc/matrix_transform.hpp>
+#include <doctest/doctest.h>
+#include <glm/ext/matrix_double4x4.hpp>
+#include <glm/ext/matrix_transform.hpp>
+#include <glm/ext/vector_double2.hpp>
+#include <glm/ext/vector_double4.hpp>
+#include <glm/ext/vector_float2.hpp>
+#include <spdlog/spdlog.h>
 
-#include <fstream>
-#include <iostream>
+#include <cstddef>
+#include <cstdint>
+#include <filesystem>
+#include <map>
+#include <memory>
+#include <optional>
+#include <string>
+#include <tuple>
+#include <utility>
+#include <vector>
 
 using namespace CesiumAsync;
 using namespace CesiumGeometry;
@@ -47,7 +73,8 @@ TEST_CASE("Add raster overlay to glTF") {
   // Place the glTF in Philly and make it huge.
   glm::dmat4 enuToFixed = GlobeTransforms::eastNorthUpToFixedFrame(
       Ellipsoid::WGS84.cartographicToCartesian(
-          Cartographic::fromDegrees(-75.14777, 39.95021, 200.0)));
+          Cartographic::fromDegrees(-75.14777, 39.95021, 200.0)),
+      Ellipsoid::WGS84);
   glm::dmat4 scale =
       glm::scale(glm::dmat4(1.0), glm::dvec3(100000.0, 100000.0, 100000.0));
   glm::dmat4 modelToEcef = enuToFixed * scale;
@@ -79,7 +106,8 @@ TEST_CASE("Add raster overlay to glTF") {
         "application/binary",
         CesiumAsync::HttpHeaders{},
         readFile(entry.path()));
-    std::string url = "file:///" + entry.path().generic_u8string();
+    std::string url = "file:///" + StringHelpers::toStringUtf8(
+                                       entry.path().generic_u8string());
     auto pRequest = std::make_unique<SimpleAssetRequest>(
         "GET",
         url,
@@ -93,10 +121,12 @@ TEST_CASE("Add raster overlay to glTF") {
 
   // Create the raster overlay to drape over the glTF.
   std::string tmr =
-      "file:///" + std::filesystem::directory_entry(
-                       dataDir / "Cesium_Logo_Color" / "tilemapresource.xml")
-                       .path()
-                       .generic_u8string();
+      "file:///" +
+      StringHelpers::toStringUtf8(
+          std::filesystem::directory_entry(
+              dataDir / "Cesium_Logo_Color" / "tilemapresource.xml")
+              .path()
+              .generic_u8string());
   IntrusivePointer<TileMapServiceRasterOverlay> pRasterOverlay =
       new TileMapServiceRasterOverlay("test", tmr);
 
@@ -141,7 +171,8 @@ TEST_CASE("Add raster overlay to glTF") {
                     geometricError,
                     16.0, // the Max SSE used to render the geometry
                     details->rasterOverlayProjections[0],
-                    details->rasterOverlayRectangles[0]);
+                    details->rasterOverlayRectangles[0],
+                    Ellipsoid::WGS84);
 
             // Get a raster overlay texture of the proper dimensions.
             IntrusivePointer<RasterOverlayTile> pRasterTile =
@@ -185,7 +216,7 @@ TEST_CASE("Add raster overlay to glTF") {
             // PNG-encode the raster overlay image and store it in the main
             // buffer.
             ImageManipulation::savePng(
-                loadResult.pTile->getImage(),
+                *loadResult.pTile->getImage(),
                 buffer.cesium.data);
 
             BufferView& bufferView = gltf.bufferViews.emplace_back();
@@ -265,7 +296,8 @@ TEST_CASE("Add raster overlay to glTF") {
   const Model& gltfBack = *resultBack.model;
 
   REQUIRE(gltfBack.images.size() == 1);
-  CHECK(!gltfBack.images[0].cesium.pixelData.empty());
+  REQUIRE(gltfBack.images[0].pAsset != nullptr);
+  CHECK(!gltfBack.images[0].pAsset->pixelData.empty());
 
   REQUIRE(!gltfBack.meshes.empty());
   REQUIRE(!gltfBack.meshes[0].primitives.empty());

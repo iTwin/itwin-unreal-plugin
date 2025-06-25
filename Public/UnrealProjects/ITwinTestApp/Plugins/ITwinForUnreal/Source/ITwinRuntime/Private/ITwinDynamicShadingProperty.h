@@ -61,12 +61,15 @@ public:
 	/// optimization is possible: use the other FillPixel when the Mask is all true's.
 	void FillWith(std::array<DataType, NumChannels> const& Value, std::array<bool, NumChannels> const Mask);
 	void FillAllChannelsWith(DataType const Value);///< Fill all channels of all pixels with a constant value
-	void SetPixels(std::vector<ITwinFeatureID> const& Pixels, std::array<DataType, NumChannels> const& Value);
-	void SetPixels(std::vector<ITwinFeatureID> const& Pixels, std::array<DataType, NumChannels> const& Value,
+	template<typename FeatureIDsCont>
+	void SetPixels(FeatureIDsCont const& Pixels, std::array<DataType, NumChannels> const& Value);
+	template<typename FeatureIDsCont>
+	void SetPixels(FeatureIDsCont const& Pixels, std::array<DataType, NumChannels> const& Value,
 				   std::array<bool, NumChannels> const& Mask);
-	void SetPixelsAlpha(std::vector<ITwinFeatureID> const& Pixels, DataType const Value);
-	void SetPixelsExceptAlpha(std::vector<ITwinFeatureID> const& Pixels,
-							  std::array<DataType, NumChannels> const& Value);
+	template<typename FeatureIDsCont>
+	void SetPixelsAlpha(FeatureIDsCont const& Pixels, DataType const Value);
+	template<typename FeatureIDsCont>
+	void SetPixelsExceptAlpha(FeatureIDsCont const& Pixels, std::array<DataType, NumChannels> const& Value);
 	void SetAllPixelsAlpha(DataType const Value);
 	void SetAllPixelsExceptAlpha(std::array<DataType, NumChannels> const& Value);
 
@@ -84,12 +87,11 @@ public:
 	/// case. It may call UpdateTexture itself to trigger the initial update in the render thread, in case
 	/// it wasn't done before or the call was inoperant at the time (possible if GetTexture2DRHI() returned
 	/// null!).
-	[[nodiscard]] bool SetupInMaterial(
-		TWeakObjectPtr<UMaterialInstanceDynamic> const& MatPtr,
-		FMaterialParameterInfo const& TextureAttachment);
-	[[nodiscard]] bool SetupInMaterials(
-		std::vector<TWeakObjectPtr<UMaterialInstanceDynamic>> const& Materials,
-		FMaterialParameterInfo const& TextureAttachment);
+	[[nodiscard]] bool SetupInMaterial(TWeakObjectPtr<UMaterialInstanceDynamic> const& MatPtr,
+									   FMaterialParameterInfo const& TextureAttachment);
+	template<typename MaterialsCont>
+	[[nodiscard]] bool SetupInMaterials(MaterialsCont const& Materials,
+										FMaterialParameterInfo const& TextureAttachment);
 
 #if WITH_EDITORONLY_DATA
 	bool WriteTextureToFile(FString const& FileName);

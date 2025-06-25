@@ -17,6 +17,7 @@
 #	endif
 #endif
 
+#include "../AdvVizLinkType.h"
 #include "ITwinEnvironment.h"
 #include "ITwinMatMLPredictionEnums.h"
 #include "ITwinTypes.h"
@@ -25,7 +26,7 @@
 #include <functional>
 #include <optional>
 
-MODULE_EXPORT namespace SDK::Core
+MODULE_EXPORT namespace AdvViz::SDK
 {
 	class IITwinWebServicesObserver;
 	class Http;
@@ -102,13 +103,23 @@ MODULE_EXPORT namespace SDK::Core
 		void GetIModelProperties(
 			std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId);
 
+		/// Convert from iModel spatial coordinates to WGS84 longitude, latitude and height (above ellipsoid),
+		/// either using the iModel's Geographic Coordinate System if any, or using the ECEF location
+		/// otherwise (but in that case using UITwinUtilityLibrary::GetEcefToIModelTransform should be strictly
+		/// equivalent and much faster than a server round-trip...)
+		void ConvertIModelCoordsToGeoCoords(std::string const& iTwinId,
+			std::string const& iModelId, std::string const& changesetId, double const x, double const y,
+			double const z, std::function<void(RequestID const&)>&& notifyRequestID);
+
 		ITwinAPIRequestInfo InfosToQueryIModel(
 			std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId,
 			std::string const& ECSQLQuery, int offset, int count);
 		void QueryIModel(
 			std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId,
 			std::string const& ECSQLQuery, int offset, int count,
-			std::function<void(RequestID const&)>&& notifRequestID, ITwinAPIRequestInfo const* requestInfo);
+			std::function<void(RequestID const&)>&& notifRequestID,
+			ITwinAPIRequestInfo const* requestInfo,
+			FilterErrorFunc&& filterError = {});
 
 		void GetMaterialListProperties(
 			std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId,
@@ -126,6 +137,10 @@ MODULE_EXPORT namespace SDK::Core
 		EITwinMatMLPredictionStatus GetMaterialMLPrediction(
 			std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId);
 
+		void RunCustomRequest(
+			ITwinAPIRequestInfo const& requestInfo,
+			CustomRequestCallback&& responseCallback,
+			FilterErrorFunc&& filterError = {});
 
 		static ITwinWebServices* GetWorkingInstance();
 

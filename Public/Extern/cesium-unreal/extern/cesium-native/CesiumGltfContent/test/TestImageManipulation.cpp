@@ -1,9 +1,11 @@
-#include <CesiumGltf/ImageCesium.h>
+#include <CesiumGltf/ImageAsset.h>
 #include <CesiumGltfContent/ImageManipulation.h>
 
-#include <catch2/catch.hpp>
+#include <doctest/doctest.h>
 
 #include <algorithm>
+#include <cstddef>
+#include <vector>
 
 using namespace CesiumGltf;
 using namespace CesiumGltfContent;
@@ -128,7 +130,7 @@ TEST_CASE("ImageManipulation::unsafeBlitImage subset of source") {
 }
 
 TEST_CASE("ImageManipulation::blitImage") {
-  ImageCesium target;
+  ImageAsset target;
   target.bytesPerChannel = 2;
   target.channels = 4;
   target.width = 15;
@@ -139,7 +141,7 @@ TEST_CASE("ImageManipulation::blitImage") {
           target.bytesPerChannel),
       std::byte(1));
 
-  ImageCesium source;
+  ImageAsset source;
   source.bytesPerChannel = 2;
   source.channels = 4;
   source.width = 10;
@@ -201,14 +203,14 @@ TEST_CASE("ImageManipulation::blitImage") {
     }
   };
 
-  SECTION("succeeds for non-scaled blit") {
+  SUBCASE("succeeds for non-scaled blit") {
     CHECK(
         ImageManipulation::blitImage(target, targetRect, source, sourceRect) ==
         true);
     verifySuccessfulCopy();
   }
 
-  SECTION("succeeds for a scaled-up blit") {
+  SUBCASE("succeeds for a scaled-up blit") {
     // Resizing is currently only supported for images that use one byte per
     // channel.
     target.bytesPerChannel = 1;
@@ -223,7 +225,7 @@ TEST_CASE("ImageManipulation::blitImage") {
     verifySuccessfulCopy();
   }
 
-  SECTION("succeeds for a scaled-down blit") {
+  SUBCASE("succeeds for a scaled-down blit") {
     // Resizing is currently only supported for images that use one byte per
     // channel.
     target.bytesPerChannel = 1;
@@ -237,7 +239,7 @@ TEST_CASE("ImageManipulation::blitImage") {
     verifySuccessfulCopy();
   }
 
-  SECTION("returns false for mismatched bytesPerChannel") {
+  SUBCASE("returns false for mismatched bytesPerChannel") {
     target.bytesPerChannel = 1;
     CHECK(
         ImageManipulation::blitImage(target, targetRect, source, sourceRect) ==
@@ -245,7 +247,7 @@ TEST_CASE("ImageManipulation::blitImage") {
     verifyTargetUnchanged();
   }
 
-  SECTION("returns false for mismatched channels") {
+  SUBCASE("returns false for mismatched channels") {
     target.channels = 3;
     CHECK(
         ImageManipulation::blitImage(target, targetRect, source, sourceRect) ==
@@ -253,7 +255,7 @@ TEST_CASE("ImageManipulation::blitImage") {
     verifyTargetUnchanged();
   }
 
-  SECTION("returns false when target X is outside target image") {
+  SUBCASE("returns false when target X is outside target image") {
     targetRect.x = 14;
     CHECK(
         ImageManipulation::blitImage(target, targetRect, source, sourceRect) ==
@@ -261,7 +263,7 @@ TEST_CASE("ImageManipulation::blitImage") {
     verifyTargetUnchanged();
   }
 
-  SECTION("returns false when target Y is outside target image") {
+  SUBCASE("returns false when target Y is outside target image") {
     targetRect.y = 6;
     CHECK(
         ImageManipulation::blitImage(target, targetRect, source, sourceRect) ==
@@ -269,7 +271,7 @@ TEST_CASE("ImageManipulation::blitImage") {
     verifyTargetUnchanged();
   }
 
-  SECTION("returns false when target X is negative") {
+  SUBCASE("returns false when target X is negative") {
     targetRect.x = -1;
     CHECK(
         ImageManipulation::blitImage(target, targetRect, source, sourceRect) ==
@@ -277,7 +279,7 @@ TEST_CASE("ImageManipulation::blitImage") {
     verifyTargetUnchanged();
   }
 
-  SECTION("returns false when target Y is negative") {
+  SUBCASE("returns false when target Y is negative") {
     targetRect.y = -1;
     CHECK(
         ImageManipulation::blitImage(target, targetRect, source, sourceRect) ==
@@ -285,7 +287,7 @@ TEST_CASE("ImageManipulation::blitImage") {
     verifyTargetUnchanged();
   }
 
-  SECTION("returns false when source X is outside source image") {
+  SUBCASE("returns false when source X is outside source image") {
     sourceRect.x = 9;
     CHECK(
         ImageManipulation::blitImage(target, targetRect, source, sourceRect) ==
@@ -293,7 +295,7 @@ TEST_CASE("ImageManipulation::blitImage") {
     verifyTargetUnchanged();
   }
 
-  SECTION("returns false when source Y is outside source image") {
+  SUBCASE("returns false when source Y is outside source image") {
     sourceRect.y = 9;
     CHECK(
         ImageManipulation::blitImage(target, targetRect, source, sourceRect) ==
@@ -301,7 +303,7 @@ TEST_CASE("ImageManipulation::blitImage") {
     verifyTargetUnchanged();
   }
 
-  SECTION("returns false when source X is negative") {
+  SUBCASE("returns false when source X is negative") {
     sourceRect.x = -1;
     CHECK(
         ImageManipulation::blitImage(target, targetRect, source, sourceRect) ==
@@ -309,7 +311,7 @@ TEST_CASE("ImageManipulation::blitImage") {
     verifyTargetUnchanged();
   }
 
-  SECTION("returns false when source Y is negative") {
+  SUBCASE("returns false when source Y is negative") {
     sourceRect.y = -1;
     CHECK(
         ImageManipulation::blitImage(target, targetRect, source, sourceRect) ==
@@ -317,14 +319,14 @@ TEST_CASE("ImageManipulation::blitImage") {
     verifyTargetUnchanged();
   }
 
-  SECTION("returns false for a too-small target") {
+  SUBCASE("returns false for a too-small target") {
     target.pixelData.resize(10);
     CHECK(
         ImageManipulation::blitImage(target, targetRect, source, sourceRect) ==
         false);
   }
 
-  SECTION("returns false for a too-small source") {
+  SUBCASE("returns false for a too-small source") {
     source.pixelData.resize(10);
     CHECK(
         ImageManipulation::blitImage(target, targetRect, source, sourceRect) ==

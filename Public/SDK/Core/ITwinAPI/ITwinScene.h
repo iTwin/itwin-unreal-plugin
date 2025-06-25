@@ -18,7 +18,7 @@
 
 #include <optional>
 #include <array>
-MODULE_EXPORT namespace SDK::Core
+MODULE_EXPORT namespace AdvViz::SDK
 {
 
 	///==================================================================================
@@ -39,13 +39,37 @@ MODULE_EXPORT namespace SDK::Core
 		double fog;
 		double exposure;
 		bool useHeliodon;
+		bool operator==(const ITwinAtmosphereSettings& other) const
+		{
+			return fabs(this->sunAzimuth-other.sunAzimuth)<1e-5 
+				&& fabs(this->sunPitch - other.sunPitch) < 1e-5
+				&& fabs(this->heliodonLongitude - other.heliodonLongitude) < 1e-5
+				&& fabs(this->heliodonLatitude - other.heliodonLatitude) < 1e-5
+				&& this->heliodonDate == other.heliodonDate
+				&& fabs(this->weather - other.weather) < 1e-5
+				&& fabs(this->windOrientation - other.windOrientation) < 1e-5
+				&& fabs(this->windForce - other.windForce) < 1e-5
+				&& fabs(this->fog - other.fog) < 1e-5
+				&& fabs(this->exposure - other.exposure) < 1e-5
+				&& this->useHeliodon == other.useHeliodon
+				;
+		}
 	};
 
 	struct ITwinSceneSettings
 	{
-		bool displayGoogleTiles;
-		double qualityGoogleTiles;
+		bool displayGoogleTiles = true;
+		double qualityGoogleTiles = 0.30;
 		std::optional < std::array<double, 3> > geoLocation;
+
+		bool operator==(const ITwinSceneSettings& other) const
+		{
+			return fabs(this->qualityGoogleTiles - other.qualityGoogleTiles) < 1e-5
+				&& this->geoLocation == other.geoLocation
+				&& this->qualityGoogleTiles == other.qualityGoogleTiles
+				;
+
+		}
 	};
 	struct ITwinEnvironment
 	{

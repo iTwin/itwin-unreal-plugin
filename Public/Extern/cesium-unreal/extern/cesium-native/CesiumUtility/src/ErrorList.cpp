@@ -1,6 +1,17 @@
 #include <CesiumUtility/ErrorList.h>
 
+#include <string>
+#include <utility>
+
 namespace CesiumUtility {
+
+/*static*/ ErrorList ErrorList::error(std::string errorMessage) {
+  return ErrorList{{std::move(errorMessage)}, {}};
+}
+
+/*static*/ ErrorList ErrorList::warning(std::string warningMessage) {
+  return ErrorList{{}, {std::move(warningMessage)}};
+}
 
 void ErrorList::merge(const ErrorList& errorList) {
   errors.insert(errors.end(), errorList.errors.begin(), errorList.errors.end());

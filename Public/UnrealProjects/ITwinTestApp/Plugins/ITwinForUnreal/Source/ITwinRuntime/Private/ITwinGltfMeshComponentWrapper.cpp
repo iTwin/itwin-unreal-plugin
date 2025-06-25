@@ -10,29 +10,31 @@
 
 #include "ITwinSceneMapping.h"
 #include <ITwinMetadataConstants.h>
-
+#include <ITwinMetadataPropertyAccess.h>
 #include <ITwinExtractedMeshComponent.h>
 #include <Engine/StaticMesh.h>
 #include <Materials/Material.h>
 #include <Materials/MaterialInstanceDynamic.h>
+#include <Misc/EngineVersionComparison.h>
 #include <StaticMeshResources.h>
 
-#include <ITwinCesiumFeatureIdSet.h>
-#include <ITwinCesiumMetadataPickingBlueprintLibrary.h>
-#include <ITwinCesiumModelMetadata.h>
-#include <ITwinCesiumPrimitiveFeatures.h>
+#include <CesiumFeatureIdSet.h>
+#include <CesiumModelMetadata.h>
+#include <CesiumPrimitiveFeatures.h>
 
-#include <CesiumGltf/ExtensionITwinMaterialID.h>
 #include <CesiumGltf/MeshPrimitive.h>
 
+#include <Compil/BeforeNonUnrealIncludes.h>
+#	include <BeUtils/Gltf/ExtensionITwinMaterialID.h>
+#include <Compil/AfterNonUnrealIncludes.h>
 
 //=======================================================================================
 // class FITwinGltfMeshComponentWrapper
 //=======================================================================================
 FITwinGltfMeshComponentWrapper::FITwinGltfMeshComponentWrapper(
-	const TWeakObjectPtr<UStaticMeshComponent>& MeshComponent,
-	const ICesiumMeshBuildCallbacks::FITwinCesiumMeshData& CesiumData)
-	: gltfMeshComponent_(MeshComponent)
+	UStaticMeshComponent& MeshComponent,
+	ICesiumMeshBuildCallbacks::FCesiumMeshData const& CesiumData)
+	: gltfMeshComponent_(&MeshComponent)
 	, pMetadata_(&CesiumData.Metadata)
 	, pFeatures_(&CesiumData.Features)
 	, pGltfToUnrealTexCoordMap_(&CesiumData.GltfToUnrealTexCoordMap)
@@ -53,7 +55,7 @@ FITwinGltfMeshComponentWrapper::FITwinGltfMeshComponentWrapper(
 
 		// Test if this primitive is linked to a specific ITwin Material ID (test extension specially added
 		// by our gltf tuning process.
-		auto const* matIdExt = CesiumData.pMeshPrimitive->getExtension<CesiumGltf::ExtensionITwinMaterialID>();
+		auto const* matIdExt = CesiumData.pMeshPrimitive->getExtension<BeUtils::ExtensionITwinMaterialID>();
 		if (matIdExt)
 		{
 			iTwinMaterialID_ = matIdExt->materialId;
@@ -84,7 +86,7 @@ TObjectPtr<UStaticMesh> FITwinGltfMeshComponentWrapper::GetSourceStaticMesh() co
 	return StaticMesh;
 }
 
-const FITwinCesiumPropertyTableProperty* FITwinGltfMeshComponentWrapper::FetchElementProperty(
+const FCesiumPropertyTableProperty* FITwinGltfMeshComponentWrapper::FetchElementProperty(
 	int64& FeatureIDSetIndex) const
 {
 	if (pFeatures_ == nullptr || pMetadata_ == nullptr) {
@@ -93,8 +95,8 @@ const FITwinCesiumPropertyTableProperty* FITwinGltfMeshComponentWrapper::FetchEl
 	}
 	FeatureIDSetIndex = ITwinCesium::Metada::ELEMENT_FEATURE_ID_SLOT; // always look in 1st set (_FEATURE_ID_0)
 
-	const FITwinCesiumPropertyTableProperty* pElementProperty =
-		UITwinCesiumMetadataPickingBlueprintLibrary::FindValidProperty(
+	const FCesiumPropertyTableProperty* pElementProperty =
+		FITwinMetadataPropertyAccess::FindValidProperty(
 			*pFeatures_,
 			*pMetadata_,
 			ITwinCesium::Metada::ELEMENT_NAME,
@@ -134,7 +136,7 @@ FITwinGltfMeshComponentWrapper::EMetadataStatus FITwinGltfMeshComponentWrapper::
 	}
 
 	int64 FeatureIDSetIndex = 0;
-	const FITwinCesiumPropertyTableProperty* pElementProperty =
+	const FCesiumPropertyTableProperty* pElementProperty =
 		FetchElementProperty(FeatureIDSetIndex);
 	if (pElementProperty == nullptr) {
 		return EMetadataStatus::MissingMetadata;
@@ -143,13 +145,13 @@ FITwinGltfMeshComponentWrapper::EMetadataStatus FITwinGltfMeshComponentWrapper::
 	TRACE_CPUPROFILER_EVENT_SCOPE(ITwin::Extract::ParseMetaData)
 
 
-	const FITwinCesiumPropertyTableProperty& ITWIN_ElementProperty(*pElementProperty);
+	const FCesiumPropertyTableProperty& ITWIN_ElementProperty(*pElementProperty);
 
 	// note that this has already been checked:
 	// if no featureIDSet exists in features, pITWIN_ElementProperty would be
 	// null...
-	const FITwinCesiumFeatureIdSet& FeatureIdSet =
-		UITwinCesiumPrimitiveFeaturesBlueprintLibrary::GetFeatureIDSets(
+	const FCesiumFeatureIdSet& FeatureIdSet =
+		UCesiumPrimitiveFeaturesBlueprintLibrary::GetFeatureIDSets(
 			*pFeatures_)[FeatureIDSetIndex];
 
 	const FStaticMeshLODResources& LODResources = StaticMesh->GetRenderData()->LODResources[0];
@@ -200,14 +202,14 @@ FITwinGltfMeshComponentWrapper::EMetadataStatus FITwinGltfMeshComponentWrapper::
 	{
 		const uint32 vtxId0 = Indices[3 * FaceIndex];
 		const int64 FeatureID = // not yet an ITwinFeatureID, which is unsigned and 32bits!
-			UITwinCesiumFeatureIdSetBlueprintLibrary::GetFeatureIDForVertex(
+			UCesiumFeatureIdSetBlueprintLibrary::GetFeatureIDForVertex(
 				FeatureIdSet,
 				vtxId0);
 		const ITwinElementID elementID = (FeatureID < 0)
 			? ITwin::NOT_ELEMENT
 			: ITwinElementID(
-				UITwinCesiumMetadataValueBlueprintLibrary::GetUnsignedInteger64(
-					UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetValue(
+				FCesiumMetadataValueAccess ::GetUnsignedInteger64(
+					UCesiumPropertyTablePropertyBlueprintLibrary::GetValue(
 						ITWIN_ElementProperty,
 						FeatureID),
 					ITwin::NOT_ELEMENT.value()));
@@ -328,6 +330,15 @@ void FITwinGltfMeshComponentWrapper::InitExtractedMeshComponent(
 	pMesh->bCastDynamicShadow = gltfMeshComponent_->bCastDynamicShadow;
 
 	ExtractedEntity.MeshComponent = pMesh;
+	// I think this may not always be the final world transform, probably when the gltf primitive's parent
+	// component (the UCesiumGltfComponent) is not yet attached to the tileset, which is done only in
+	// ACesium3DTileset::showTilesToRender, *before* making the tile visible. This could be tested with:
+	//		gltfMeshComponent_->GetAttachParent()->GetAttachParent() == nullptr
+	// But I'm still unsure of how it works exactly, as random issues still pop up, for example I just had
+	// to reset the ExtractedEntity.OriginalTransform's in FITwinSceneMapping::OnVisibilityChanged to fix
+	// issues with GSW Stadium when iModel is offset! But it still doesn't fix azdev#1580583, which happens
+	// even without any iModel transform anyway... So I'll keep this here, hopefully we'll remove extraction
+	// entirely, in the end.
 	ExtractedEntity.OriginalTransform = gltfMeshComponent_->GetComponentTransform();
 }
 
@@ -382,7 +393,7 @@ bool FITwinGltfMeshComponentWrapper::FinalizeExtractedEntity(
 	RenderData->AllocateLODResources(1);
 	FStaticMeshLODResources& LODResources = RenderData->LODResources[0];
 
-	// Same comment as in #loadPrimitive in ITwinCesiumGltfComponent.cpp.
+	// Same comment as in #loadPrimitive in CesiumGltfComponent.cpp.
 	// For extracted pieces, the need for mesh data on the CPU is less obvious, but we get warnings in
 	// Unreal's logs if we do not activate this flag, which may cause troubles in packaged mode...
 	const bool bNeedsCPUAccess = true;
@@ -391,7 +402,8 @@ bool FITwinGltfMeshComponentWrapper::FinalizeExtractedEntity(
 	LODResources.bHasColorVertexData = hasVertexColors;
 
 	{
-		LODResources.VertexBuffers.StaticMeshVertexBuffer.SetUseFullPrecisionUVs(
+		FStaticMeshVertexBuffer& vertexBuffer = LODResources.VertexBuffers.StaticMeshVertexBuffer;
+		vertexBuffer.SetUseFullPrecisionUVs(
 			SrcVertexBuffers.StaticMeshVertexBuffer.GetUseFullPrecisionUVs());
 
 		LODResources.VertexBuffers.PositionVertexBuffer.Init(
@@ -406,12 +418,17 @@ bool FITwinGltfMeshComponentWrapper::FinalizeExtractedEntity(
 		const uint32 NumTexCoords = UVIndexForFeatures.has_value()
 			? (UVIndexForFeatures.value() + 1)
 			: SrcVertexBuffers.StaticMeshVertexBuffer.GetNumTexCoords();
-		FStaticMeshVertexBufferFlags VtxBufferFlags;
-		VtxBufferFlags.bNeedsCPUAccess = bNeedsCPUAccess;
-		LODResources.VertexBuffers.StaticMeshVertexBuffer.Init(
-			StaticMeshBuildVertices,
-			NumTexCoords,
-			VtxBufferFlags);
+
+		vertexBuffer.Init(StaticMeshBuildVertices.Num(), NumTexCoords, bNeedsCPUAccess);
+		// Same fix as in CesiumGltfComponent.cpp's loadPrimitive to work around this issue in UE5.3:
+		// https://github.com/CesiumGS/cesium-unreal/issues/1513
+		for (uint32 vertexIndex = 0; vertexIndex < uint32(StaticMeshBuildVertices.Num()); ++vertexIndex)
+		{
+			const FStaticMeshBuildVertex& source = StaticMeshBuildVertices[vertexIndex];
+			vertexBuffer.SetVertexTangents(vertexIndex, source.TangentX, source.TangentY, source.TangentZ);
+			for (uint32 uvIndex = 0; uvIndex < NumTexCoords; uvIndex++)
+				vertexBuffer.SetVertexUV(vertexIndex, uvIndex, source.UVs[uvIndex], false);
+		}
 	}
 
 	FStaticMeshSectionArray& Sections = LODResources.Sections;
@@ -437,6 +454,9 @@ bool FITwinGltfMeshComponentWrapper::FinalizeExtractedEntity(
 	LODResources.bHasReversedDepthOnlyIndices = SrcLODResources.bHasReversedDepthOnlyIndices;
 
 	RenderData->ScreenSize[0].Default = 1.0f;
+#if !(UE_VERSION_OLDER_THAN(5, 5, 0))
+	RenderData->InitializeRayTracingRepresentationFromRenderingLODs();
+#endif
 
 	pStaticMesh->SetRenderData(std::move(RenderData));
 
@@ -475,7 +495,6 @@ bool FITwinGltfMeshComponentWrapper::FinalizeExtractedEntity(
 			if (Options.bPerElementColorationMode)
 			{
 				static std::unordered_map<ITwinElementID, FLinearColor> eltColorMap;
-				FLinearColor matColor;
 				auto InsertedClr = eltColorMap.try_emplace(EltID);
 				if (InsertedClr.second) // new clr was inserted
 				{
@@ -525,6 +544,7 @@ bool FITwinGltfMeshComponentWrapper::FinalizeExtractedEntity(
 	ExtractedEntity.MeshComponent->SetWorldTransform(ExtractedEntity.OriginalTransform, false,
 													 nullptr, ETeleportType::TeleportPhysics);
 	ExtractedEntity.MeshComponent->RegisterComponent();
+	ExtractedEntity.MeshComponent->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 
 	// Extracted entities should *always* have their Feature IDs baked in UVs
 	if (UVIndexForFeatures)
@@ -540,10 +560,6 @@ bool FITwinGltfMeshComponentWrapper::FinalizeExtractedEntity(
 	{
 		ExtractedEntity.MeshComponent->SetVisibility(false, /*bPropagateToChildren*/true);
 	}
-	// Keep a link to the source mesh, in order to adjust the entity's visibility
-	// - avoid showing the entity in the future if its source is hidden due to the 3D tileset criteria
-	ExtractedEntity.SourceMeshComponent = gltfMeshComponent_;
-
 	return true;
 }
 
@@ -609,7 +625,7 @@ namespace
 		, SrcVtxColors(SrcLODResources.VertexBuffers.ColorVertexBuffer)
 		, UVIndexForFeature(uvIndexForFeatures)
 	{
-		SrcNumTexCoords = SrcVertexBuffer.GetNumTexCoords(); // always MAX_STATIC_TEXCOORDS?
+		SrcNumTexCoords = SrcVertexBuffer.GetNumTexCoords();
 		bHasVtxData = SrcVertexBuffer.GetNumVertices() > 0;
 		bHasVertexColors = SrcVtxColors.GetNumVertices() > 0;
 
@@ -770,9 +786,9 @@ bool FITwinGltfMeshComponentWrapper::ExtractMeshSectionElement(
 		// Feature ID
 		uint32 const UVForFeat = (uint32)pGltfToUnrealTexCoordMap_->size();
 
-		const FITwinCesiumPropertyTableProperty& ITWIN_ElementProperty(*ElementAcc.Prop);
-		const FITwinCesiumFeatureIdSet& FeatureIdSet =
-			UITwinCesiumPrimitiveFeaturesBlueprintLibrary::GetFeatureIDSets(
+		const FCesiumPropertyTableProperty& ITWIN_ElementProperty(*ElementAcc.Prop);
+		const FCesiumFeatureIdSet& FeatureIdSet =
+			UCesiumPrimitiveFeaturesBlueprintLibrary::GetFeatureIDSets(
 				*pFeatures_)[ElementAcc.FeatureIDSetIndex];
 
 		SrcVertexIndex = MeshSection.FirstIndex;
@@ -782,7 +798,7 @@ bool FITwinGltfMeshComponentWrapper::ExtractMeshSectionElement(
 			meshExtractor.SetFeatureForSourceVertex(
 				SrcVtxId,
 				UVForFeat,
-				UITwinCesiumFeatureIdSetBlueprintLibrary::GetFeatureIDForVertex(
+				UCesiumFeatureIdSetBlueprintLibrary::GetFeatureIDForVertex(
 					FeatureIdSet,
 					SrcVtxId));
 		}
@@ -816,15 +832,15 @@ bool FITwinGltfMeshComponentWrapper::ExtractElement_SLOW(
 		return false;
 	}
 	int64 FeatureIDSetIndex = 0;
-	const FITwinCesiumPropertyTableProperty* pElementProperty =
+	const FCesiumPropertyTableProperty* pElementProperty =
 		FetchElementProperty(FeatureIDSetIndex);
 	if (pElementProperty == nullptr) {
 		return false;
 	}
 
-	const FITwinCesiumPropertyTableProperty& ITWIN_ElementProperty(*pElementProperty);
-	const FITwinCesiumFeatureIdSet& FeatureIdSet =
-		UITwinCesiumPrimitiveFeaturesBlueprintLibrary::GetFeatureIDSets(
+	const FCesiumPropertyTableProperty& ITWIN_ElementProperty(*pElementProperty);
+	const FCesiumFeatureIdSet& FeatureIdSet =
+		UCesiumPrimitiveFeaturesBlueprintLibrary::GetFeatureIDSets(
 			*pFeatures_)[FeatureIDSetIndex];
 
 	const FString MeshEltName = gltfMeshComponent_->GetName()
@@ -859,13 +875,13 @@ bool FITwinGltfMeshComponentWrapper::ExtractElement_SLOW(
 	{
 		const uint32 vtxId0 = SrcIndices[3 * FaceIndex];
 		const int64 vtxFeatureID = // not yet an ITwinFeatureID, which is unsigned and 32bits!
-			UITwinCesiumFeatureIdSetBlueprintLibrary::GetFeatureIDForVertex(
+			UCesiumFeatureIdSetBlueprintLibrary::GetFeatureIDForVertex(
 				FeatureIdSet,
 				vtxId0);
 		const ITwinElementID vtxElementID = (vtxFeatureID < 0)
 			? ITwin::NOT_ELEMENT
-			: ITwinElementID(UITwinCesiumMetadataValueBlueprintLibrary::GetUnsignedInteger64(
-				UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetValue(
+			: ITwinElementID(FCesiumMetadataValueAccess::GetUnsignedInteger64(
+				UCesiumPropertyTablePropertyBlueprintLibrary::GetValue(
 					ITWIN_ElementProperty,
 					vtxFeatureID),
 				ITwin::NOT_ELEMENT.value()));
@@ -994,7 +1010,7 @@ uint32 FITwinGltfMeshComponentWrapper::ExtractSomeElements(
 	return nExtracted;
 }
 
-std::optional<uint32> FITwinGltfMeshComponentWrapper::GetOrBakeFeatureIDsInVertexUVs()
+std::optional<uint32> FITwinGltfMeshComponentWrapper::GetFeatureIDsInVertexUVs()
 {
 	if (uvIndexForFeatures_) {
 		// already baked before
@@ -1005,10 +1021,6 @@ std::optional<uint32> FITwinGltfMeshComponentWrapper::GetOrBakeFeatureIDsInVerte
 		return std::nullopt;
 	}
 
-	TObjectPtr<UStaticMesh> StaticMesh = GetSourceStaticMesh();
-	if (!StaticMesh) {
-		return std::nullopt;
-	}
 	if (pGltfToUnrealTexCoordMap_ == nullptr) {
 		checkf(false, TEXT("need to maintain TexCoordMap of GLTF mesh"));
 		return std::nullopt;
@@ -1029,62 +1041,6 @@ std::optional<uint32> FITwinGltfMeshComponentWrapper::GetOrBakeFeatureIDsInVerte
 
 	return uvIndexForFeatures_;
 }
-
-/*static*/
-std::optional<uint32> FITwinGltfMeshComponentWrapper::BakeFeatureIDsInVertexUVs(
-	std::optional<uint32> featuresAccessorIndex,
-	ICesiumMeshBuildCallbacks::FITwinCesiumMeshData const& CesiumData,
-	bool duplicateVertices,
-	TArray<FStaticMeshBuildVertex>& vertices,
-	TArray<uint32> const& indices)
-{
-	if (!featuresAccessorIndex)
-	{
-		check(CesiumData.pMeshPrimitive);
-		auto featAccessorIt = CesiumData.pMeshPrimitive->attributes.find("_FEATURE_ID_0");
-		if (featAccessorIt == CesiumData.pMeshPrimitive->attributes.end())
-		{
-			return std::nullopt;
-		}
-		featuresAccessorIndex = featAccessorIt->second;
-	}
-
-	static const int64 FeatureIDSetIndex = ITwinCesium::Metada::ELEMENT_FEATURE_ID_SLOT;
-	const FITwinCesiumFeatureIdSet& FeatureIdSet = UITwinCesiumPrimitiveFeaturesBlueprintLibrary
-		::GetFeatureIDSets(CesiumData.Features)[FeatureIDSetIndex];
-
-	uint32 const uvIndex = (uint32)CesiumData.GltfToUnrealTexCoordMap.size();
-	check(uvIndex < MAX_STATIC_TEXCOORDS);
-	CesiumData.GltfToUnrealTexCoordMap[*featuresAccessorIndex] = uvIndex;
-
-
-	if (duplicateVertices) {
-		for (int i = 0; i < indices.Num(); ++i) {
-			FStaticMeshBuildVertex& vertex = vertices[i];
-			uint32 vtxIndex = indices[i];
-			int64 const FeatID = UITwinCesiumFeatureIdSetBlueprintLibrary::GetFeatureIDForVertex(
-				FeatureIdSet,
-				static_cast<int64>(vtxIndex));
-			const float fFeatureId = static_cast<float>(
-				(FeatID < 0) ? ITwin::NOT_FEATURE.value() : FeatID);
-			vertex.UVs[uvIndex] = FVector2f(fFeatureId, 0.0f);
-		}
-	}
-	else {
-		for (int i = 0; i < vertices.Num(); ++i) {
-			FStaticMeshBuildVertex& vertex = vertices[i];
-			uint32 vtxIndex = i;
-			int64 const FeatID = UITwinCesiumFeatureIdSetBlueprintLibrary::GetFeatureIDForVertex(
-				FeatureIdSet,
-				static_cast<int64>(vtxIndex));
-			const float fFeatureId = static_cast<float>(
-				(FeatID < 0) ? ITwin::NOT_FEATURE.value() : FeatID);
-			vertex.UVs[uvIndex] = FVector2f(fFeatureId, 0.0f);
-		}
-	}
-	return uvIndex;
-}
-
 
 void FITwinGltfMeshComponentWrapper::ForEachMaterialInstance(std::function<void(UMaterialInstanceDynamic&)> const& Func)
 {
@@ -1116,4 +1072,13 @@ void FITwinGltfMeshComponentWrapper::ForEachMaterialInstance(std::function<void(
 			}
 		}
 	}
+}
+
+void FITwinGltfMeshComponentWrapper::EnforceITwinMaterialID(uint64_t MatID)
+{
+	// This method should only be called in very specific cases (creation of a dummy mapping to apply our
+	// materials to a generic, non-Cesium mesh).
+	ensureMsgf(!iTwinMaterialID_ || *iTwinMaterialID_ == MatID,
+		TEXT("changing iTwin Material ID for a mesh is strange"));
+	iTwinMaterialID_ = MatID;
 }

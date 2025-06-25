@@ -7,36 +7,40 @@
 +--------------------------------------------------------------------------------------*/
 
 #pragma once
+
+#ifndef SDK_CPPMODULES
+#ifndef MODULE_EXPORT
+#define MODULE_EXPORT
+#endif // !MODULE_EXPORT
+#endif
 #include <string>
 #include "Core/Network/Network.h"
 #include "Core/Tools/Tools.h"
 
-MODULE_EXPORT namespace SDK::Core 
+namespace AdvViz::SDK 
 {
-	class IDecoration : public Tools::Factory<IDecoration>
+	class IDecoration : public Tools::Factory<IDecoration>, public Tools::ExtensionSupport
 	{
 	public:
 		/// Create new decoration on server
 		virtual void Create(
-			const std::string& name, const std::string& itwinid,
-			const std::string& accessToken) = 0;
+			const std::string& name, const std::string& itwinid) = 0;
 		/// Retrieve the decoration from server
-		virtual void Get(const std::string& id, const std::string& accessToken) = 0;
+		virtual void Get(const std::string& id) = 0;
 		/// Delete the decoration on server
 		virtual void Delete() = 0;
 		/// Get decoration identifier
 		virtual const std::string& GetId() = 0;
 	};
 
-	class Decoration : public Tools::ExtensionSupport, public IDecoration
+	class ADVVIZ_LINK  Decoration : public IDecoration, Tools::TypeId<Decoration>
 	{
 	public:
 		/// Create new decoration on server
 		void Create(
-			const std::string& name, const std::string& itwinid,
-			const std::string& accessToken) override;
+			const std::string& name, const std::string& itwinid) override;
 		/// Retrieve the decoration from server
-		void Get(const std::string& id, const std::string& accessToken) override;
+		void Get(const std::string& id) override;
 		/// Delete the decoration on server
 		void Delete() override;
 		/// Get decoration identifier
@@ -44,6 +48,10 @@ MODULE_EXPORT namespace SDK::Core
 
 		// Set Http server to use (if none provided, the default created by Config is used.)
 		void SetHttp(std::shared_ptr<Http> http);
+
+		using Tools::TypeId<Decoration>::GetTypeId;
+		std::uint64_t GetDynTypeId() const override { return GetTypeId(); }
+		bool IsTypeOf(std::uint64_t i) const override { return (i == GetTypeId()) || IDecoration::IsTypeOf(i); }
 
 		Decoration(Decoration&) = delete;
 		Decoration(Decoration&&) = delete;
@@ -56,6 +64,5 @@ MODULE_EXPORT namespace SDK::Core
 		Impl& GetImpl();
 	};
 
-	std::vector<std::shared_ptr<IDecoration>> GetITwinDecorations(
-		const std::string& itwinid, const std::string& accessToken);
+	ADVVIZ_LINK std::vector<std::shared_ptr<IDecoration>> GetITwinDecorations(const std::string& itwinid);
 }

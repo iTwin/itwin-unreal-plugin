@@ -1,0 +1,9 @@
+﻿{
+	"url": "https://qa-es-api.bentley.com/4dschedule/v1/schedules/3497df55-60e9-44fd-91ec-3c86473884f5/appearanceProfiles?pageSize=2&pageToken=eyJTa2lwIjo4LCJUb3AiOjJ9",
+	"verb": "GET",
+	"connectedSuccessfully": true,
+	"responseCode": 200
+,
+	"reply": 
+{"items":[{"id":"cee6690f-b307-4410-b7e8-e54063bb6319","parentId":null,"name":"InstallX+","action":"Install","startAppearance":{"color":"#00ff00","useOriginalColor":true,"transparency":0,"useOriginalTransparency":true},"activeAppearance":{"color":"#00ff00","useOriginalColor":false,"useOriginalTransparency":false,"startTransparency":0,"finishTransparency":0,"growthSimulation":{"mode":"LeftRight","direction":{"x":0,"y":0,"z":1},"adjustForTaskPercentComplete":false,"pauseDuringNonWorkingTime":false,"simulateAsRemove":false}},"endAppearance":{"color":"#6495ed","useOriginalColor":false,"transparency":33,"useOriginalTransparency":false}},{"id":"cef22464-9ba1-4833-a13c-b50338936175","parentId":null,"name":"MaintainAsRem","action":"Maintain","startAppearance":{"color":"#ffff00","useOriginalColor":true,"transparency":0,"useOriginalTransparency":true},"activeAppearance":{"color":"#ffff01","useOriginalColor":false,"useOriginalTransparency":false,"startTransparency":0,"finishTransparency":0,"growthSimulation":{"mode":"RightLeft","direction":{"x":0,"y":0,"z":1},"adjustForTaskPercentComplete":false,"pauseDuringNonWorkingTime":false,"simulateAsRemove":true}},"endAppearance":{"color":"#dc143c","useOriginalColor":false,"transparency":0,"useOriginalTransparency":true}}],"nextPageToken":"eyJTa2lwIjoxMCwiVG9wIjoyfQ=="}
+}

@@ -9,7 +9,7 @@
 #pragma once
 #include "fnv1ahash.h"
 
-namespace SDK::Core::Tools
+namespace AdvViz::SDK::Tools
 {
 	inline constexpr std::uint64_t GenHash(const char* txt)
 	{
@@ -31,7 +31,7 @@ namespace SDK::Core::Tools
 	};
 
 	// compile time Hash
-	#define GenHashCT(txt) (SDK::Core::Tools::constN<SDK::Core::Tools::GenHash(txt)>::value::crc)
+	#define GenHashCT(txt) (AdvViz::SDK::Tools::constN<AdvViz::SDK::Tools::GenHash(txt)>::value::crc)
 
 	//
 	//inline constexpr std::uint64_t GenHashCT(const char* txt) {

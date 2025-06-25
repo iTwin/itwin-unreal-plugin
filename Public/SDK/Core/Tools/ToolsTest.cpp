@@ -11,7 +11,7 @@
 #include "Tools.h"
 #include <iostream>
 
-using namespace SDK::Core;
+using namespace AdvViz::SDK;
 
 namespace ExtensionTest {
 	class MyClass : public Tools::ExtensionSupport
@@ -67,7 +67,7 @@ TEST_CASE("Tools:Extension")
 
 namespace InterfaceTest {
 
-	class IMyClass : public Tools::Factory<IMyClass>, public Tools::IDynType
+	class IMyClass : public Tools::Factory<IMyClass>
 	{
 	public:
 		virtual int Fct1() = 0;
@@ -76,8 +76,9 @@ namespace InterfaceTest {
 	class MyClass : public Tools::TypeId<MyClass>, public IMyClass
 	{
 	public:
-		std::uint64_t GetDynTypeId() override { return GetTypeId(); }
-		bool IsTypeOf(std::uint64_t i) override	{ return (i == GetTypeId()); }
+		using Tools::TypeId<MyClass>::GetTypeId;
+		std::uint64_t GetDynTypeId() const override { return GetTypeId(); }
+		bool IsTypeOf(std::uint64_t i) const override	{ return (i == GetTypeId()); }
 		int Fct1() override { return 245; };
 	};
 
@@ -86,8 +87,8 @@ namespace InterfaceTest {
 	public:
 		typedef MyClass BaseClass;
 		using Tools::TypeId<MyExtendedClass2>::GetTypeId;
-		std::uint64_t GetDynTypeId() override { return GetTypeId(); }
-		bool IsTypeOf(std::uint64_t i) override
+		std::uint64_t GetDynTypeId() const override { return GetTypeId(); }
+		bool IsTypeOf(std::uint64_t i) const override
 		{
 			if (i == GetTypeId()) return true;
 			return BaseClass::IsTypeOf(i);
@@ -102,8 +103,8 @@ namespace InterfaceTest {
 	public:
 		typedef MyExtendedClass2 BaseClass;
 		using Tools::TypeId<MyExtendedClass>::GetTypeId;
-		std::uint64_t GetDynTypeId() override { return GetTypeId(); }
-		bool IsTypeOf(std::uint64_t i) override
+		std::uint64_t GetDynTypeId() const override { return GetTypeId(); }
+		bool IsTypeOf(std::uint64_t i) const override
 		{
 			if (i == GetTypeId()) return true;
 			return BaseClass::IsTypeOf(i);
@@ -120,8 +121,8 @@ namespace InterfaceTest {
 
 	class DummyClass : public Tools::IDynType, public Tools::TypeId<DummyClass> {
 	public:
-		std::uint64_t GetDynTypeId() override { return GetTypeId(); }
-		bool IsTypeOf(std::uint64_t i) override
+		std::uint64_t GetDynTypeId() const override { return GetTypeId(); }
+		bool IsTypeOf(std::uint64_t i) const override
 		{
 			if (i == GetTypeId()) return true;
 			return false;
@@ -185,16 +186,16 @@ TEST_CASE("Tools:Interface")
 }
 
 static std::vector<std::string> g_LogList;
-class MyLog : public SDK::Core::Tools::Log
+class MyLog : public AdvViz::SDK::Tools::Log
 {
 public:
-	MyLog(std::string s, SDK::Core::Tools::Level level):SDK::Core::Tools::Log(s, level)
+	MyLog(std::string s, AdvViz::SDK::Tools::Level level):AdvViz::SDK::Tools::Log(s, level)
 	{}
 
-	void DoLog(const std::string& msg, SDK::Core::Tools::Level sev, const char* srcPath, const char* func, int line)
+	void DoLog(const std::string& msg, AdvViz::SDK::Tools::Level sev, const char* srcPath, const char* func, int line)
 	{
 		g_LogList.push_back(msg);
-		SDK::Core::Tools::Log::DoLog(msg, sev, srcPath, func, line);
+		AdvViz::SDK::Tools::Log::DoLog(msg, sev, srcPath, func, line);
 	}
 };
 
@@ -227,7 +228,7 @@ TEST_CASE("Tools:Log")
 
 }
 
-SDK::expected<int, std::string> to_int(char const* const text)
+AdvViz::expected<int, std::string> to_int(char const* const text)
 {
 	char* pos = nullptr;
 	auto value = strtol(text, &pos, 0);
@@ -235,15 +236,15 @@ SDK::expected<int, std::string> to_int(char const* const text)
 	if (pos != text) 
 		return value;
 	else
-		return SDK::make_unexpected(std::string("'") + text + "' isn't a number");
+		return AdvViz::make_unexpected(std::string("'") + text + "' isn't a number");
 }
 
-SDK::expected<void, std::string> TestExpected(int i)
+AdvViz::expected<void, std::string> TestExpected(int i)
 {
 	if (i > 0)
-		return {}; // same as: SDK::expected<void, std::string>() but shorter
+		return {}; // same as: AdvViz::expected<void, std::string>() but shorter
 	else
-		return SDK::make_unexpected("i is neg number");
+		return AdvViz::make_unexpected("i is neg number");
 }
 
 TEST_CASE("Tools:expected")
@@ -276,7 +277,7 @@ TEST_CASE("Tools:expected")
 
 
 std::string g_AssertCheckStr;
-class MyAssertHandler :public SDK::Core::Tools::AssertHandler
+class MyAssertHandler :public AdvViz::SDK::Tools::AssertHandler
 {
 public:
 	void Handler(const libassert::assertion_info& info) override
@@ -295,7 +296,7 @@ public:
 
 TEST_CASE("Tools:AssertHandler")
 {
-	using namespace SDK::Core::Tools;
+	using namespace AdvViz::SDK::Tools;
 	auto prevHandler = IAssertHandler::GetNewFct();
 	IAssertHandler::SetNewFct([]() {
 		IAssertHandler* p(static_cast<MyAssertHandler*>(new MyAssertHandler));
@@ -316,7 +317,7 @@ TEST_CASE("Tools:AssertHandler")
 
 TEST_CASE("Tools:StrongType")
 {
-	using namespace SDK::Core::Tools;
+	using namespace AdvViz::SDK::Tools;
 
 	class Tag1 {};
 	using TId1 = StrongTypeId<Tag1>;
@@ -336,7 +337,7 @@ TEST_CASE("Tools:StrongType")
 
 int main(int argc, char* argv[]) {
 	// setup ...
-	SDK::Core::Tools::InitAssertHandler("Test"); // to prevent assert to abort (default behaviour of libassert)
+	AdvViz::SDK::Tools::InitAssertHandler("Test"); // to prevent assert to abort (default behaviour of libassert)
 
 	int result = Catch::Session().run(argc, argv);
 

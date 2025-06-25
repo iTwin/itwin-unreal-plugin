@@ -1,75 +1,12 @@
-[submodule "Public/Extern/cesium-unreal/extern/cesium-native/extern/glm"]
-	path = Public/Extern/cesium-unreal/extern/cesium-native/extern/glm
-	url = https://github.com/g-truc/glm.git
-[submodule "Public/Extern/cesium-unreal/extern/cesium-native/extern/uriparser"]
-	path = Public/Extern/cesium-unreal/extern/cesium-native/extern/uriparser
-	url = https://github.com/uriparser/uriparser.git
-[submodule "Public/Extern/cesium-unreal/extern/cesium-native/extern/draco"]
-	path = Public/Extern/cesium-unreal/extern/cesium-native/extern/draco
-	url = https://github.com/GhisBntly/draco.git
-[submodule "Public/Extern/cesium-unreal/extern/cesium-native/extern/earcut"]
-	path = Public/Extern/cesium-unreal/extern/cesium-native/extern/earcut
-	url = https://github.com/GhisBntly/earcut.git
-[submodule "Public/Extern/cesium-unreal/extern/cesium-native/extern/Catch2"]
-	path = Public/Extern/cesium-unreal/extern/cesium-native/extern/Catch2
-	url = https://github.com/catchorg/Catch2.git
-[submodule "Public/Extern/cesium-unreal/extern/cesium-native/extern/GSL"]
-	path = Public/Extern/cesium-unreal/extern/cesium-native/extern/GSL
-	url = https://github.com/microsoft/GSL.git
-[submodule "Public/Extern/cesium-unreal/extern/cesium-native/extern/tinyxml2"]
-	path = Public/Extern/cesium-unreal/extern/cesium-native/extern/tinyxml2
-	url = https://github.com/leethomason/tinyxml2.git
-[submodule "Public/Extern/cesium-unreal/extern/cesium-native/extern/asyncplusplus"]
-	path = Public/Extern/cesium-unreal/extern/cesium-native/extern/asyncplusplus
-	url = https://github.com/Amanieu/asyncplusplus.git
-[submodule "Public/Extern/cesium-unreal/extern/cesium-native/extern/spdlog"]
-	path = Public/Extern/cesium-unreal/extern/cesium-native/extern/spdlog
-	url = https://github.com/gabime/spdlog.git
-[submodule "Public/Extern/cesium-unreal/extern/cesium-native/extern/rapidjson"]
-	path = Public/Extern/cesium-unreal/extern/cesium-native/extern/rapidjson
-	url = https://github.com/Tencent/rapidjson.git
-[submodule "Public/Extern/cesium-unreal/extern/cesium-native/extern/stb"]
-	path = Public/Extern/cesium-unreal/extern/cesium-native/extern/stb
-	url = https://github.com/GhisBntly/stb.git
-[submodule "Public/Extern/cesium-unreal/extern/cesium-native/extern/cpp-httplib"]
-	path = Public/Extern/cesium-unreal/extern/cesium-native/extern/cpp-httplib
-	url = https://github.com/yhirose/cpp-httplib.git
-[submodule "Public/Extern/cesium-unreal/extern/cesium-native/extern/CSPRNG"]
-	path = Public/Extern/cesium-unreal/extern/cesium-native/extern/CSPRNG
-	url = https://github.com/Duthomhas/CSPRNG.git
-[submodule "Public/Extern/cesium-unreal/extern/cesium-native/extern/PicoSHA2"]
-	path = Public/Extern/cesium-unreal/extern/cesium-native/extern/PicoSHA2
-	url = https://github.com/okdshin/PicoSHA2.git
 [submodule "Public/Extern/cesium-unreal/extern/cesium-native/extern/cmake-modules"]
 	path = Public/Extern/cesium-unreal/extern/cesium-native/extern/cmake-modules
 	url = https://github.com/bilke/cmake-modules.git
-[submodule "Public/Extern/cesium-unreal/extern/cesium-native/extern/s2geometry"]
-	path = Public/Extern/cesium-unreal/extern/cesium-native/extern/s2geometry
-	url = https://github.com/google/s2geometry.git
-[submodule "Public/Extern/cesium-unreal/extern/cesium-native/extern/KTX-Software"]
-	path = Public/Extern/cesium-unreal/extern/cesium-native/extern/KTX-Software
-	url = https://github.com/GhisBntly/KTX-Software.git
-[submodule "Public/Extern/cesium-unreal/extern/cesium-native/extern/libwebp"]
-	path = Public/Extern/cesium-unreal/extern/cesium-native/extern/libwebp
-	url = https://github.com/webmproject/libwebp
-[submodule "Public/Extern/cesium-unreal/extern/cesium-native/extern/libmorton"]
-	path = Public/Extern/cesium-unreal/extern/cesium-native/extern/libmorton
-	url = https://github.com/Forceflow/libmorton.git
-[submodule "Public/Extern/cesium-unreal/extern/cesium-native/extern/expected-lite"]
-	path = Public/Extern/cesium-unreal/extern/cesium-native/extern/expected-lite
-	url = https://github.com/martinmoene/expected-lite.git
-[submodule "Public/Extern/cesium-unreal/extern/cesium-native/extern/libjpeg-turbo"]
-	path = Public/Extern/cesium-unreal/extern/cesium-native/extern/libjpeg-turbo
-	url = https://github.com/GhisBntly/libjpeg-turbo.git
-[submodule "Public/Extern/cesium-unreal/extern/cesium-native/extern/zlib"]
-	path = Public/Extern/cesium-unreal/extern/cesium-native/extern/zlib
-	url = https://github.com/madler/zlib.git
-[submodule "Public/Extern/cesium-unreal/extern/cesium-native/extern/meshoptimizer"]
-	path = Public/Extern/cesium-unreal/extern/cesium-native/extern/meshoptimizer
-	url = https://github.com/zeux/meshoptimizer
 [submodule "Public/Extern/cesium-unreal/extern/MikkTSpace"]
 	path = Public/Extern/cesium-unreal/extern/MikkTSpace
 	url = https://github.com/mmikk/MikkTSpace.git
 [submodule "Public/Extern/cesium-unreal/extern/tidy-html5"]
 	path = Public/Extern/cesium-unreal/extern/tidy-html5
 	url = https://github.com/htacg/tidy-html5
+[submodule "Public/Extern/cesium-unreal/extern/swl-variant"]
+	path = Public/Extern/cesium-unreal/extern/swl-variant
+	url = https://github.com/kring/swl-variant.git

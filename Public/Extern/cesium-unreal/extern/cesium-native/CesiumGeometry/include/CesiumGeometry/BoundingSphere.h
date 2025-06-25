@@ -1,7 +1,7 @@
 #pragma once
 
-#include "CullingResult.h"
-#include "Library.h"
+#include <CesiumGeometry/CullingResult.h>
+#include <CesiumGeometry/Library.h>
 
 #include <glm/fwd.hpp>
 #include <glm/vec3.hpp>
@@ -61,6 +61,15 @@ public:
    */
   double
   computeDistanceSquaredToPosition(const glm::dvec3& position) const noexcept;
+
+  /**
+   * @brief Computes whether the given position is contained within the bounding
+   * sphere.
+   *
+   * @param position The position.
+   * @return Whether the position is contained within the bounding sphere.
+   */
+  bool contains(const glm::dvec3& position) const noexcept;
 
   /**
    * @brief Transforms this bounding sphere to another coordinate system using a

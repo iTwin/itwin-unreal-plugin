@@ -24,8 +24,8 @@ void UHelpers::PickUnderCursorWithOptions(const UObject* WorldContextObject, boo
 	auto* const IModel = (AITwinIModel*)UGameplayStatics::GetActorOfClass(WorldContextObject, AITwinIModel::StaticClass());
 	if (IModel)
 	{
-		FVector2D MousePosition;
-		PickingActor->PickUnderCursorWithOptions(ElementId, MousePosition, IModel, Options);
+		FVector2D MousePosition; FHitResult HitResult;
+		PickingActor->PickUnderCursorWithOptions(ElementId, MousePosition, IModel, HitResult, Options);
 		bValid = ElementId != "0x0";
 	}
 }

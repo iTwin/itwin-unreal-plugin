@@ -16,7 +16,7 @@
 #	endif // !MODULE_EXPORT
 #endif
 
-MODULE_EXPORT namespace SDK::Core
+MODULE_EXPORT namespace AdvViz::SDK
 {
 	/// Used as callback for iTwin authorization process.
 	class ITwinAuthObserver

@@ -74,8 +74,7 @@ void ATopMenu::GetAllSavedViews()
 	if (!ensure(IModel != nullptr))
 		return;
 
-	if (!ITwinWebService->OnGetSavedViewsComplete.IsAlreadyBound(IModel, &AITwinIModel::OnSavedViewsRetrieved))
-		ITwinWebService->OnGetSavedViewsComplete.AddDynamic(IModel, &AITwinIModel::OnSavedViewsRetrieved);
+	ITwinWebService->OnGetSavedViewsComplete.AddUniqueDynamic(IModel, &AITwinIModel::OnSavedViewsRetrieved);
 	UITwinWebServices* IModelWebServices = IModel->GetMutableWebServices();
 	if (IModelWebServices
 		&& !IModelWebServices->OnAddSavedViewComplete.IsAlreadyBound(this, &ATopMenu::SavedViewAdded))

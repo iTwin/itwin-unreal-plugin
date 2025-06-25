@@ -14,7 +14,9 @@
 #include <ITwinRealityData.generated.h>
 
 struct FCartographicProps;
+class FITwinTilesetAccess;
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnRealityDataLoaded, bool, bSuccess, FString, RealityDataId);
 
 UCLASS()
 class ITWINRUNTIME_API AITwinRealityData : public AITwinServiceActor
@@ -51,25 +53,28 @@ public:
 		BlueprintCallable)
 	void Reset();
 
-	const AITwinCesium3DTileset* GetTileset() const;
-	AITwinCesium3DTileset* GetMutableTileset();
+	const ACesium3DTileset* GetTileset() const;
+	ACesium3DTileset* GetMutableTileset();
 	bool HasTileset() const;
-	void HideTileset(bool bHide);
-	bool IsTilesetHidden();
-	void SetMaximumScreenSpaceError(double InMaximumScreenSpaceError);
-	//Helper of SetMaximumScreenSpaceError :  Adjust the tileset quality, given a percentage (value in range [0;1])
-	void SetTilesetQuality(float Value);
-	float GetTilesetQuality() const;
+
+	UFUNCTION()
+	void OnTilesetLoaded();
+
+	UPROPERTY(Category = "iTwin",
+		BlueprintAssignable)
+	FOnRealityDataLoaded OnRealityDataLoaded;
+
 	std::optional<FCartographicProps> GetNativeGeoreference() const;
 
 	/// Return true if the required identifiers for loading reality data are all set.
 	bool HasRealityDataIdentifiers() const;
 
-		UFUNCTION()
+	UFUNCTION()
 	void OnSceneLoaded(bool success);
 
-	void SetOffset(const FVector &Pos, const FVector& Rot);
-	void GetOffset(FVector &Pos, FVector &Rot) const;
+	bool IsGeolocated() const { return bGeolocated; }
+
+	TUniquePtr<FITwinTilesetAccess> MakeTilesetAccess();
 
 private:
 	UPROPERTY(Category = "iTwin",
@@ -88,4 +93,6 @@ private:
 
 	/// overridden from FITwinDefaultWebServicesObserver
 	virtual const TCHAR* GetObserverName() const override;
+
+	class FTilesetAccess;
 };

@@ -1,6 +1,6 @@
 # Installation and usage of the itwin-unreal-plugin
 
-Follow these instructions to install the pre-compiled plugin into Unreal Engine. If you would like to compile the plugin yourself and then install it, please see [the Readme for developers](https://github.com/iTwin/itwin-unreal-plugin/tree/main/Documentation/ForDevelopers/).
+Follow these instructions to install the pre-compiled plugin into Unreal Engine. If you would like to compile the plugin yourself and then install it, please see [the Readme for developers](../ForDevelopers/).
 
 ## Supported platforms & requirements
 To use the iTwin plugin, you need to create an account at [developer.bentley.com](https://developer.bentley.com). There is a free 90 day trial available. The developer account is required for utilizing the streaming API within the plugin. If your trial period is over and you would like to continue using and testing the plugin, please get in touch with us.<br>
@@ -37,9 +37,13 @@ For example: `C:\MyUnrealApp\Plugins\ITwinForUnreal`.
 
 ### Step 3: Using the installed iTwin plugin inside Unreal Engine
 
-1. If you installed the plugin in the Unreal Engine folder, enable the plugin `iTwin for Unreal` as explained [here](https://dev.epicgames.com/documentation/en-us/unreal-engine/working-with-plugins-in-unreal-engine).
+1. If you installed the plugin in the Unreal Engine folder, enable the plugin `iTwin for Unreal` as explained [in the Epic documentation](https://dev.epicgames.com/documentation/en-us/unreal-engine/working-with-plugins-in-unreal-engine).
+   - Note that you can have both the Cesium and iTwin plugins for Unreal installed but **not** use them together in the same project! All of the core Cesium features are available through the iTwin plugin by adding the right actors and components (the _CesiumEditor_ UI/UX is not included in the iTwin plugin).
+   - Note also that you cannot compile a project using iTwin source code if Cesium is installed, unless you rename the _CesiumForUnreal_'s `uplugin` file, for example appending a `.disabled` suffix to the file, while you are building a project based on the iTwin plugin source code.
 2. If not done yet, [configure your iTwin Platform account](#configure-itwin-platform) and take note of your app's client ID.
-3. Make sure the plugin and its content is visible in the content browser: in the "Settings" menu of the content browser window, enable "Show Engine Content" and "Show Plugin Content".
+3. Make sure that:
+   - the plugin and its content is visible in the content browser: in the "Settings" menu of the content browser window, enable "Show Engine Content" and "Show Plugin Content".
+   - your level does not use a "World Partition": it may work in the Editor but has been known to cause issues when packaging a level as a standalone application.
 4. To access your iModels from your Unreal app, you will have to provide the iTwin app ID to the plugin.<br>
    This can be done in several ways:
    - Drag and drop an `ITwinAppIdHelper` actor from the Content Browser into your level.<br>
@@ -62,8 +66,8 @@ For example: `C:\MyUnrealApp\Plugins\ITwinForUnreal`.
    
 ### <a id="load-external-tileset"></a>Ability to load external tilesets
 It is also possible to load "external" tilesets (ie. non-iModels, like tileset coming from Cesium Ion server) by following these steps:
-- Drag and drop an `ITwinCesium3DTileset` actor from the Content Browser into your level.<br>
-  This actor can be found in the content browser inside folder `Plugins/iTwin for Unreal C++ Classes/ITwinCesiumRuntime/Public`.<br>
+- Drag and drop a `Cesium3DTileset` actor from the Content Browser into your level.<br>
+  This actor can be found in the content browser inside folder `Plugins/iTwin for Unreal C++ Classes/CesiumRuntime/Public`.<br>
 - In the actor's Details panel, in the `Cesium` section, fill the `Source`, `Url`, `Ion Asset ID`, `Ion Access token` fields depending on the source of your tileset.
 
 ## Configuration file

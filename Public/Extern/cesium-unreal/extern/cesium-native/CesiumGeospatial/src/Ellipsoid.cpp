@@ -1,15 +1,21 @@
-#include "CesiumGeospatial/Ellipsoid.h"
-
+#include <CesiumGeospatial/Cartographic.h>
+#include <CesiumGeospatial/Ellipsoid.h>
 #include <CesiumUtility/Math.h>
 
+#include <glm/common.hpp>
+#include <glm/ext/vector_double3.hpp>
 #include <glm/geometric.hpp>
 #include <glm/trigonometric.hpp>
+
+#include <cmath>
+#include <optional>
 
 using namespace CesiumUtility;
 
 namespace CesiumGeospatial {
 
 const Ellipsoid Ellipsoid::WGS84(6378137.0, 6378137.0, 6356752.3142451793);
+const Ellipsoid Ellipsoid::UNIT_SPHERE(1.0, 1.0, 1.0);
 
 glm::dvec3
 Ellipsoid::geodeticSurfaceNormal(const glm::dvec3& position) const noexcept {
@@ -143,6 +149,31 @@ Ellipsoid::scaleToGeodeticSurface(const glm::dvec3& cartesian) const noexcept {
       positionX * xMultiplier,
       positionY * yMultiplier,
       positionZ * zMultiplier);
+}
+
+std::optional<glm::dvec3> Ellipsoid::scaleToGeocentricSurface(
+    const glm::dvec3& cartesian) const noexcept {
+
+  // If the input cartesian is (0, 0, 0), beta will compute to 1.0 / sqrt(0) =
+  // +Infinity. Let's consider this a failure.
+  if (Math::equalsEpsilon(glm::length(cartesian), 0, Math::Epsilon12)) {
+    return std::optional<glm::dvec3>();
+  }
+
+  const double positionX = cartesian.x;
+  const double positionY = cartesian.y;
+  const double positionZ = cartesian.z;
+
+  const double oneOverRadiiSquaredX = this->_oneOverRadiiSquared.x;
+  const double oneOverRadiiSquaredY = this->_oneOverRadiiSquared.y;
+  const double oneOverRadiiSquaredZ = this->_oneOverRadiiSquared.z;
+
+  const double beta = 1.0 / sqrt(
+                                positionX * positionX * oneOverRadiiSquaredX +
+                                positionY * positionY * oneOverRadiiSquaredY +
+                                positionZ * positionZ * oneOverRadiiSquaredZ);
+
+  return glm::dvec3(positionX * beta, positionY * beta, positionZ * beta);
 }
 
 } // namespace CesiumGeospatial

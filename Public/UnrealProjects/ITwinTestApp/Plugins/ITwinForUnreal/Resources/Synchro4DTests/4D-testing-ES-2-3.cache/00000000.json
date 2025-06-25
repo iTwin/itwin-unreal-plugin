@@ -1,0 +1,9 @@
+﻿{
+	"url": "https://qa-es-api.bentley.com/4dschedule/v1/schedules/3497df55-60e9-44fd-91ec-3c86473884f5/tasks?pageSize=2",
+	"verb": "GET",
+	"connectedSuccessfully": true,
+	"responseCode": 200
+,
+	"reply": 
+{"items":[{"id":"0f1c8636-f9ee-46e2-8fd2-9a93cbc04072","percentComplete":0,"actualDuration":null,"actualFinish":null,"actualStart":null,"constraintEarlyDate":null,"constraintLateDate":null,"constraintType":"NoConstraint","durationType":"Fixed","expectedFinish":null,"userDefinedId":"ST00110","name":"Maintain block","parentId":null,"plannedDuration":9866640,"plannedFinish":"2025-09-10T13:44:00Z","plannedStart":"2024-05-20T09:00:00Z","progressType":"Automatic","remainingDuration":null,"isWbs":false,"statusId":"9bb741fb-d514-48b3-8fef-aa24ecd242f7","status":"Planned","type":"Work","url":"","actualPhysicalQuantity":0,"estimatedRate":0,"plannedPhysicalQuantity":0,"remainingPhysicalQuantity":0,"physicalQuantityUnit":"Unknown"},{"id":"e16465cc-73c8-4de8-b316-4efbbefede86","percentComplete":0,"actualDuration":null,"actualFinish":null,"actualStart":null,"constraintEarlyDate":null,"constraintLateDate":null,"constraintType":"NoConstraint","durationType":"Fixed","expectedFinish":null,"userDefinedId":"ST00120","name":"Lift box","parentId":null,"plannedDuration":4498740,"plannedFinish":"2024-12-24T10:39:00Z","plannedStart":"2024-05-20T09:00:00Z","progressType":"Automatic","remainingDuration":null,"isWbs":false,"statusId":"9bb741fb-d514-48b3-8fef-aa24ecd242f7","status":"Planned","type":"Work","url":"","actualPhysicalQuantity":0,"estimatedRate":0,"plannedPhysicalQuantity":0,"remainingPhysicalQuantity":0,"physicalQuantityUnit":"Unknown"}],"nextPageToken":null}
+}

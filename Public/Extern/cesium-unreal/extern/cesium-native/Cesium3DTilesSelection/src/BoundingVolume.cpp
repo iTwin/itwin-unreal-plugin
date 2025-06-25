@@ -1,9 +1,23 @@
-#include "Cesium3DTilesSelection/BoundingVolume.h"
+#include <Cesium3DTilesSelection/BoundingVolume.h>
+#include <CesiumGeometry/BoundingCylinderRegion.h>
+#include <CesiumGeometry/BoundingSphere.h>
+#include <CesiumGeometry/OrientedBoundingBox.h>
+#include <CesiumGeospatial/BoundingRegion.h>
+#include <CesiumGeospatial/BoundingRegionWithLooseFittingHeights.h>
+#include <CesiumGeospatial/Cartographic.h>
+#include <CesiumGeospatial/Ellipsoid.h>
+#include <CesiumGeospatial/GlobeRectangle.h>
+#include <CesiumGeospatial/GlobeTransforms.h>
+#include <CesiumGeospatial/S2CellBoundingVolume.h>
 
-#include "CesiumGeospatial/Cartographic.h"
-#include "CesiumGeospatial/GlobeTransforms.h"
+#include <glm/common.hpp>
+#include <glm/ext/matrix_double3x3.hpp>
+#include <glm/ext/matrix_double4x4.hpp>
+#include <glm/ext/vector_double3.hpp>
 
-#include <glm/gtc/matrix_inverse.hpp>
+#include <cstdint>
+#include <optional>
+#include <variant>
 
 using namespace CesiumGeometry;
 using namespace CesiumGeospatial;
@@ -40,6 +54,11 @@ BoundingVolume transformBoundingVolume(
       // S2 Cells are not transformed.
       return s2CellBoundingVolume;
     }
+
+    BoundingVolume
+    operator()(const BoundingCylinderRegion& boundingCylinderRegion) {
+      return boundingCylinderRegion.transform(transform);
+    }
   };
 
   return std::visit(Operation{transform}, boundingVolume);
@@ -67,21 +86,33 @@ glm::dvec3 getBoundingVolumeCenter(const BoundingVolume& boundingVolume) {
     glm::dvec3 operator()(const S2CellBoundingVolume& s2Cell) noexcept {
       return s2Cell.getCenter();
     }
+
+    glm::dvec3
+    operator()(const BoundingCylinderRegion& boundingCylinderRegion) {
+      return boundingCylinderRegion.getCenter();
+    }
   };
 
   return std::visit(Operation{}, boundingVolume);
 }
 
-std::optional<GlobeRectangle>
-estimateGlobeRectangle(const BoundingVolume& boundingVolume) {
+std::optional<GlobeRectangle> estimateGlobeRectangle(
+    const BoundingVolume& boundingVolume,
+    const CesiumGeospatial::Ellipsoid& ellipsoid) {
   struct Operation {
+    const CesiumGeospatial::Ellipsoid& ellipsoid;
+
     std::optional<GlobeRectangle>
     operator()(const BoundingSphere& boundingSphere) {
+      if (boundingSphere.contains(glm::dvec3(0.0))) {
+        return CesiumGeospatial::GlobeRectangle::MAXIMUM;
+      }
+
       const glm::dvec3& centerEcef = boundingSphere.getCenter();
       double radius = boundingSphere.getRadius();
 
       glm::dmat4 enuToEcef =
-          GlobeTransforms::eastNorthUpToFixedFrame(centerEcef /*, ellipsoid*/);
+          GlobeTransforms::eastNorthUpToFixedFrame(centerEcef, ellipsoid);
       glm::dmat4 ecefBounds = enuToEcef * glm::dmat4(
                                               radius,
                                               0.0,
@@ -101,13 +132,13 @@ estimateGlobeRectangle(const BoundingVolume& boundingVolume) {
                                               1.0);
 
       std::optional<Cartographic> east =
-          Ellipsoid::WGS84.cartesianToCartographic(glm::dvec3(ecefBounds[0]));
+          this->ellipsoid.cartesianToCartographic(glm::dvec3(ecefBounds[0]));
       std::optional<Cartographic> west =
-          Ellipsoid::WGS84.cartesianToCartographic(glm::dvec3(ecefBounds[1]));
+          this->ellipsoid.cartesianToCartographic(glm::dvec3(ecefBounds[1]));
       std::optional<Cartographic> north =
-          Ellipsoid::WGS84.cartesianToCartographic(glm::dvec3(ecefBounds[2]));
+          this->ellipsoid.cartesianToCartographic(glm::dvec3(ecefBounds[2]));
       std::optional<Cartographic> south =
-          Ellipsoid::WGS84.cartesianToCartographic(glm::dvec3(ecefBounds[3]));
+          this->ellipsoid.cartesianToCartographic(glm::dvec3(ecefBounds[3]));
 
       if (!east || !west || !north || !south) {
         return std::nullopt;
@@ -122,6 +153,10 @@ estimateGlobeRectangle(const BoundingVolume& boundingVolume) {
 
     std::optional<GlobeRectangle>
     operator()(const OrientedBoundingBox& orientedBoundingBox) {
+      if (orientedBoundingBox.contains(glm::dvec3(0.0))) {
+        return CesiumGeospatial::GlobeRectangle::MAXIMUM;
+      }
+
       const glm::dvec3& centerEcef = orientedBoundingBox.getCenter();
       const glm::dmat3& halfAxes = orientedBoundingBox.getHalfAxes();
 
@@ -137,7 +172,7 @@ estimateGlobeRectangle(const BoundingVolume& boundingVolume) {
 
       glm::dvec3 vert0Ecef = centerEcef + halfAxes * obbVertices[0];
       std::optional<Cartographic> c =
-          Ellipsoid::WGS84.cartesianToCartographic(vert0Ecef);
+          this->ellipsoid.cartesianToCartographic(vert0Ecef);
       if (!c) {
         return std::nullopt;
       }
@@ -149,7 +184,7 @@ estimateGlobeRectangle(const BoundingVolume& boundingVolume) {
 
       for (int8_t i = 1; i < 8; ++i) {
         glm::dvec3 vertEcef = centerEcef + halfAxes * obbVertices[i];
-        c = Ellipsoid::WGS84.cartesianToCartographic(vertEcef);
+        c = this->ellipsoid.cartesianToCartographic(vertEcef);
         if (!c) {
           return std::nullopt;
         }
@@ -179,9 +214,14 @@ estimateGlobeRectangle(const BoundingVolume& boundingVolume) {
     operator()(const S2CellBoundingVolume& s2Cell) {
       return s2Cell.getCellID().computeBoundingRectangle();
     }
+
+    std::optional<GlobeRectangle>
+    operator()(const BoundingCylinderRegion& boundingCylinderRegion) {
+      return operator()(boundingCylinderRegion.toOrientedBoundingBox());
+    }
   };
 
-  return std::visit(Operation{}, boundingVolume);
+  return std::visit(Operation{ellipsoid}, boundingVolume);
 }
 
 const CesiumGeospatial::BoundingRegion*
@@ -197,9 +237,12 @@ getBoundingRegionFromBoundingVolume(const BoundingVolume& boundingVolume) {
   return pResult;
 }
 
-OrientedBoundingBox
-getOrientedBoundingBoxFromBoundingVolume(const BoundingVolume& boundingVolume) {
+OrientedBoundingBox getOrientedBoundingBoxFromBoundingVolume(
+    const BoundingVolume& boundingVolume,
+    const CesiumGeospatial::Ellipsoid& ellipsoid) {
   struct Operation {
+    const CesiumGeospatial::Ellipsoid& ellipsoid;
+
     OrientedBoundingBox operator()(const BoundingSphere& sphere) const {
       return OrientedBoundingBox::fromSphere(sphere);
     }
@@ -222,11 +265,16 @@ getOrientedBoundingBoxFromBoundingVolume(const BoundingVolume& boundingVolume) {
 
     OrientedBoundingBox
     operator()(const CesiumGeospatial::S2CellBoundingVolume& s2) const {
-      return s2.computeBoundingRegion().getBoundingBox();
+      return s2.computeBoundingRegion(ellipsoid).getBoundingBox();
+    }
+
+    OrientedBoundingBox
+    operator()(const BoundingCylinderRegion& cylinderRegion) const {
+      return cylinderRegion.toOrientedBoundingBox();
     }
   };
 
-  return std::visit(Operation(), boundingVolume);
+  return std::visit(Operation{ellipsoid}, boundingVolume);
 }
 
 } // namespace Cesium3DTilesSelection

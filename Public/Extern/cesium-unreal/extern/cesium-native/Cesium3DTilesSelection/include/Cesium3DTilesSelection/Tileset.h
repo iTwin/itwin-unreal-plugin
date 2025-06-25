@@ -1,28 +1,33 @@
 #pragma once
 
-#include "Library.h"
-#include "RasterOverlayCollection.h"
-#include "Tile.h"
-#include "TilesetContentLoader.h"
-#include "TilesetExternals.h"
-#include "TilesetLoadFailureDetails.h"
-#include "TilesetOptions.h"
-#include "ViewState.h"
-#include "ViewUpdateResult.h"
-
+#include <Cesium3DTilesSelection/Library.h>
+#include <Cesium3DTilesSelection/RasterOverlayCollection.h>
+#include <Cesium3DTilesSelection/SampleHeightResult.h>
+#include <Cesium3DTilesSelection/Tile.h>
+#include <Cesium3DTilesSelection/TilesetContentLoader.h>
+#include <Cesium3DTilesSelection/TilesetExternals.h>
+#include <Cesium3DTilesSelection/TilesetLoadFailureDetails.h>
+#include <Cesium3DTilesSelection/TilesetOptions.h>
+#include <Cesium3DTilesSelection/ViewState.h>
+#include <Cesium3DTilesSelection/ViewUpdateResult.h>
 #include <CesiumAsync/AsyncSystem.h>
 #include <CesiumUtility/IntrusivePointer.h>
 
 #include <rapidjson/fwd.h>
 
+#include <list>
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
 namespace Cesium3DTilesSelection {
+
 class TilesetContentManager;
 class TilesetMetadata;
+class TilesetHeightQuery;
+struct TilesetHeightRequest;
+class TilesetSharedAssetSystem;
 
 /**
  * @brief A <a
@@ -148,6 +153,18 @@ public:
   TilesetOptions& getOptions() noexcept { return this->_options; }
 
   /**
+   * @brief Gets the {@link CesiumGeospatial::Ellipsoid} used by this tileset.
+   */
+  const CesiumGeospatial::Ellipsoid& getEllipsoid() const {
+    return this->_options.ellipsoid;
+  }
+
+  /** @copydoc Tileset::getEllipsoid */
+  CesiumGeospatial::Ellipsoid& getEllipsoid() noexcept {
+    return this->_options.ellipsoid;
+  }
+
+  /**
    * @brief Gets the root tile of this tileset.
    *
    * This may be `nullptr` if there is currently no root tile.
@@ -164,6 +181,14 @@ public:
 
   /** @copydoc Tileset::getOverlays() */
   const RasterOverlayCollection& getOverlays() const noexcept;
+
+  /**
+   * @brief Returns the {@link TilesetSharedAssetSystem} of this tileset.
+   */
+  TilesetSharedAssetSystem& getSharedAssetSystem() noexcept;
+
+  /** @copydoc Tileset::getSharedAssetSystem() */
+  const TilesetSharedAssetSystem& getSharedAssetSystem() const noexcept;
 
   /**
    * @brief Updates this view but waits for all tiles that meet sse to finish
@@ -208,6 +233,14 @@ public:
    * @param callback The function to invoke.
    */
   void forEachLoadedTile(const std::function<void(Tile& tile)>& callback);
+
+  /**
+   * @brief Invokes a function for each tile that is currently loaded.
+   *
+   * @param callback The function to invoke.
+   */
+  void forEachLoadedTile(
+      const std::function<void(const Tile& tile)>& callback) const;
 
   /**
    * @brief Gets the total number of bytes of tile and raster overlay data that
@@ -257,6 +290,30 @@ public:
    * the same metadata instance.
    */
   CesiumAsync::Future<const TilesetMetadata*> loadMetadata();
+
+  /**
+   * @brief Initiates an asynchronous query for the height of this tileset at a
+   * list of cartographic positions (longitude and latitude). The most detailed
+   * available tiles are used to determine each height.
+   *
+   * The height of the input positions is ignored. The output height is
+   * expressed in meters above the ellipsoid (usually WGS84), which should not
+   * be confused with a height above mean sea level.
+   *
+   * Note that {@link Tileset::updateView} must be called periodically, or else
+   * the returned `Future` will never resolve. If you are not using this tileset
+   * for visualization, you can call `updateView` with an empty list of
+   * frustums.
+   *
+   * @param positions The positions for which to sample heights.
+   * @return A future that asynchronously resolves to the result of the height
+   * query.
+   */
+  CesiumAsync::Future<SampleHeightResult> sampleHeightMostDetailed(
+      const std::vector<CesiumGeospatial::Cartographic>& positions);
+
+  Tileset(const Tileset& rhs) = delete;
+  Tileset& operator=(const Tileset& rhs) = delete;
 
 private:
   /**
@@ -414,6 +471,7 @@ private:
   void _processWorkerThreadLoadQueue();
   void _processMainThreadLoadQueue();
 
+  void _clearChildrenRecursively(Tile* pTile) noexcept;
   void _unloadCachedTiles(double timeBudget) noexcept;
   void _markTileVisited(Tile& tile) noexcept;
 
@@ -421,6 +479,8 @@ private:
       const FrameState& frameState,
       float deltaTime,
       ViewUpdateResult& result) const noexcept;
+
+  int getCurrentGltfTuningVersion() const;
 
   TilesetExternals _externals;
   CesiumAsync::AsyncSystem _asyncSystem;
@@ -439,14 +499,14 @@ private:
 
     /**
      * @brief Medium priority tiles that are needed to render the current view
-     * the appropriate level-of-detail.
+     * at the appropriate level-of-detail.
      */
     Normal = 1,
 
     /**
-     * @brief High priority tiles that are causing extra detail to be rendered
-     * in the scene, potentially creating a performance problem and aliasing
-     * artifacts.
+     * @brief High priority tiles whose absence is causing extra detail to be
+     * rendered in the scene, potentially creating a performance problem and
+     * aliasing artifacts.
      */
     Urgent = 2
   };
@@ -483,6 +543,7 @@ private:
 
   std::vector<TileLoadTask> _mainThreadLoadQueue;
   std::vector<TileLoadTask> _workerThreadLoadQueue;
+  std::vector<Tile*> _heightQueryLoadQueue;
 
   Tile::LoadedLinkedList _loadedTiles;
 
@@ -497,6 +558,8 @@ private:
   CesiumUtility::IntrusivePointer<TilesetContentManager>
       _pTilesetContentManager;
 
+  std::list<TilesetHeightRequest> _heightRequests;
+
   void addTileToLoadQueue(
       Tile& tile,
       TileLoadPriorityGroup priorityGroup,
@@ -505,10 +568,8 @@ private:
   static TraversalDetails createTraversalDetailsForSingleTile(
       const FrameState& frameState,
       const Tile& tile,
-      const TileSelectionState& lastFrameSelectionState);
-
-  Tileset(const Tileset& rhs) = delete;
-  Tileset& operator=(const Tileset& rhs) = delete;
+      const TileSelectionState& lastFrameSelectionState,
+      int minGltfTuningVersion);
 };
 
 } // namespace Cesium3DTilesSelection

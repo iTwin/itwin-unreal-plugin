@@ -1,17 +1,19 @@
 #pragma once
 
-#include "CesiumGltf/ImageCesium.h"
-#include "CesiumGltf/PropertyTextureProperty.h"
-#include "CesiumGltf/PropertyTransformations.h"
-#include "CesiumGltf/PropertyTypeTraits.h"
-#include "CesiumGltf/PropertyView.h"
-#include "CesiumGltf/Sampler.h"
-#include "CesiumGltf/SamplerUtility.h"
+#include <CesiumGltf/ImageAsset.h>
+#include <CesiumGltf/KhrTextureTransform.h>
+#include <CesiumGltf/PropertyTextureProperty.h>
+#include <CesiumGltf/PropertyTransformations.h>
+#include <CesiumGltf/PropertyTypeTraits.h>
+#include <CesiumGltf/PropertyView.h>
+#include <CesiumGltf/Sampler.h>
+#include <CesiumGltf/TextureView.h>
+#include <CesiumUtility/Assert.h>
 
 #include <array>
-#include <cassert>
 #include <cmath>
 #include <cstdint>
+#include <optional>
 
 namespace CesiumGltf {
 /**
@@ -28,39 +30,39 @@ public:
    * @brief This property view was initialized from an invalid
    * {@link PropertyTexture}.
    */
-  static const int ErrorInvalidPropertyTexture = 14;
+  static const int ErrorInvalidPropertyTexture = 15;
 
   /**
    * @brief This property view is associated with a {@link ClassProperty} of an
    * unsupported type.
    */
-  static const int ErrorUnsupportedProperty = 15;
+  static const int ErrorUnsupportedProperty = 16;
 
   /**
    * @brief This property view does not have a valid texture index.
    */
-  static const int ErrorInvalidTexture = 16;
+  static const int ErrorInvalidTexture = 17;
 
   /**
    * @brief This property view does not have a valid sampler index.
    */
-  static const int ErrorInvalidSampler = 17;
+  static const int ErrorInvalidSampler = 18;
 
   /**
    * @brief This property view does not have a valid image index.
    */
-  static const int ErrorInvalidImage = 18;
+  static const int ErrorInvalidImage = 19;
 
   /**
    * @brief This property is viewing an empty image.
    */
-  static const int ErrorEmptyImage = 19;
+  static const int ErrorEmptyImage = 20;
 
   /**
    * @brief This property uses an image with multi-byte channels. Only
    * single-byte channels are supported.
    */
-  static const int ErrorInvalidBytesPerChannel = 20;
+  static const int ErrorInvalidBytesPerChannel = 21;
 
   /**
    * @brief The channels of this property texture property are invalid.
@@ -69,7 +71,7 @@ public:
    * more than four channels can be defined for specialized texture
    * formats, this implementation only supports four channels max.
    */
-  static const int ErrorInvalidChannels = 21;
+  static const int ErrorInvalidChannels = 22;
 
   /**
    * @brief The channels of this property texture property do not provide
@@ -77,13 +79,20 @@ public:
    * because an incorrect number of channels was provided, or because the
    * image itself has a different channel count / byte size than expected.
    */
-  static const int ErrorChannelsAndTypeMismatch = 22;
+  static const int ErrorChannelsAndTypeMismatch = 23;
 };
 
+/**
+ * @brief Attempts to obtain a scalar value from the given span of bytes.
+ *
+ * @tparam ElementType The scalar value type to read from `bytes`.
+ * @param bytes A span of bytes to convert into a scalar value.
+ * @returns A value of `ElementType`.
+ */
 template <typename ElementType>
-ElementType assembleScalarValue(const gsl::span<uint8_t> bytes) noexcept {
+ElementType assembleScalarValue(const std::span<uint8_t> bytes) noexcept {
   if constexpr (std::is_same_v<ElementType, float>) {
-    assert(
+    CESIUM_ASSERT(
         bytes.size() == sizeof(float) &&
         "Not enough channel inputs to construct a float.");
     uint32_t resultAsUint = 0;
@@ -107,19 +116,26 @@ ElementType assembleScalarValue(const gsl::span<uint8_t> bytes) noexcept {
   }
 }
 
+/**
+ * @brief Attempts to obtain a vector value from the given span of bytes.
+ *
+ * @tparam ElementType The vector value type to read from `bytes`.
+ * @param bytes A span of bytes to convert into a vector value.
+ * @returns A value of `ElementType`.
+ */
 template <typename ElementType>
-ElementType assembleVecNValue(const gsl::span<uint8_t> bytes) noexcept {
+ElementType assembleVecNValue(const std::span<uint8_t> bytes) noexcept {
   ElementType result = ElementType();
 
-  const glm::length_t N =
-      getDimensionsFromPropertyType(TypeToPropertyType<ElementType>::value);
+  const glm::length_t N = TypeToDimensions<ElementType>::dimensions;
   using T = typename ElementType::value_type;
 
-  assert(
+  CESIUM_ASSERT(
       sizeof(T) <= 2 && "Components cannot be larger than two bytes in size.");
 
   if constexpr (std::is_same_v<T, int16_t>) {
-    assert(N == 2 && "Only vec2s can contain two-byte integer components.");
+    CESIUM_ASSERT(
+        N == 2 && "Only vec2s can contain two-byte integer components.");
     uint16_t x = static_cast<uint16_t>(bytes[0]) |
                  (static_cast<uint16_t>(bytes[1]) << 8);
     uint16_t y = static_cast<uint16_t>(bytes[2]) |
@@ -130,7 +146,8 @@ ElementType assembleVecNValue(const gsl::span<uint8_t> bytes) noexcept {
   }
 
   if constexpr (std::is_same_v<T, uint16_t>) {
-    assert(N == 2 && "Only vec2s can contain two-byte integer components.");
+    CESIUM_ASSERT(
+        N == 2 && "Only vec2s can contain two-byte integer components.");
     result[0] = static_cast<uint16_t>(bytes[0]) |
                 (static_cast<uint16_t>(bytes[1]) << 8);
     result[1] = static_cast<uint16_t>(bytes[2]) |
@@ -152,9 +169,16 @@ ElementType assembleVecNValue(const gsl::span<uint8_t> bytes) noexcept {
   return result;
 }
 
+/**
+ * @brief Attempts to obtain an array value from the given span of bytes.
+ *
+ * @tparam T The element type to read from `bytes`.
+ * @param bytes A span of bytes to convert into an array value.
+ * @returns A \ref PropertyArrayCopy containing the elements read.
+ */
 template <typename T>
-PropertyArrayView<T>
-assembleArrayValue(const gsl::span<uint8_t> bytes) noexcept {
+PropertyArrayCopy<T>
+assembleArrayValue(const std::span<uint8_t> bytes) noexcept {
   std::vector<T> result(bytes.size() / sizeof(T));
 
   if constexpr (sizeof(T) == 2) {
@@ -170,12 +194,23 @@ assembleArrayValue(const gsl::span<uint8_t> bytes) noexcept {
     }
   }
 
-  return PropertyArrayView<T>(std::move(result));
+  return PropertyArrayCopy<T>(std::move(result));
 }
 
+/**
+ * @brief Assembles the given type from the provided channel values of sampling
+ * a texture.
+ *
+ * @tparam ElementType The type of element to assemble.
+ * @param bytes The byte values of the sampled channels of the texture.
+ * @returns The result of \ref assembleScalarValue, \ref assembleVecNValue, or
+ * \ref assembleArrayValue depending on `ElementType`.
+ */
 template <typename ElementType>
-ElementType assembleValueFromChannels(const gsl::span<uint8_t> bytes) noexcept {
-  assert(bytes.size() > 0 && "Channel input must have at least one value.");
+PropertyValueViewToCopy<ElementType>
+assembleValueFromChannels(const std::span<uint8_t> bytes) noexcept {
+  CESIUM_ASSERT(
+      bytes.size() > 0 && "Channel input must have at least one value.");
 
   if constexpr (IsMetadataScalar<ElementType>::value) {
     return assembleScalarValue<ElementType>(bytes);
@@ -191,11 +226,7 @@ ElementType assembleValueFromChannels(const gsl::span<uint8_t> bytes) noexcept {
   }
 }
 
-std::array<uint8_t, 4> sampleNearestPixel(
-    const ImageCesium& image,
-    const std::vector<int64_t>& channels,
-    const double u,
-    const double v);
+#pragma region Non - normalized property
 
 /**
  * @brief A view of the data specified by a {@link PropertyTextureProperty}.
@@ -224,16 +255,14 @@ class PropertyTexturePropertyView;
  */
 template <typename ElementType>
 class PropertyTexturePropertyView<ElementType, false>
-    : public PropertyView<ElementType, false> {
+    : public PropertyView<ElementType, false>, public TextureView {
 public:
   /**
    * @brief Constructs an invalid instance for a non-existent property.
    */
   PropertyTexturePropertyView() noexcept
       : PropertyView<ElementType, false>(),
-        _pSampler(nullptr),
-        _pImage(nullptr),
-        _texCoordSetIndex(0),
+        TextureView(),
         _channels(),
         _swizzle() {}
 
@@ -244,12 +273,10 @@ public:
    */
   PropertyTexturePropertyView(PropertyViewStatusType status) noexcept
       : PropertyView<ElementType, false>(status),
-        _pSampler(nullptr),
-        _pImage(nullptr),
-        _texCoordSetIndex(0),
+        TextureView(),
         _channels(),
         _swizzle() {
-    assert(
+    CESIUM_ASSERT(
         this->_status != PropertyTexturePropertyViewStatus::Valid &&
         "An empty property view should not be constructed with a valid status");
   }
@@ -257,16 +284,13 @@ public:
   /**
    * @brief Constructs an instance of an empty property that specifies a default
    * value. Although this property has no data, it can return the default value
-   * when {@link PropertyTexturePropertyView::get} is called. However,
-   * {@link PropertyTexturePropertyView::getRaw} cannot be used.
+   * when \ref get is called. However, \ref getRaw cannot be used.
    *
    * @param classProperty The {@link ClassProperty} this property conforms to.
    */
   PropertyTexturePropertyView(const ClassProperty& classProperty) noexcept
       : PropertyView<ElementType, false>(classProperty),
-        _pSampler(nullptr),
-        _pImage(nullptr),
-        _texCoordSetIndex(0),
+        TextureView(),
         _channels(),
         _swizzle() {
     if (this->_status != PropertyTexturePropertyViewStatus::Valid) {
@@ -293,21 +317,48 @@ public:
    * @param property The {@link PropertyTextureProperty}
    * @param classProperty The {@link ClassProperty} this property conforms to.
    * @param sampler The {@link Sampler} used by the property.
-   * @param image The {@link ImageCesium} used by the property.
-   * @param channels The code from {@link PropertyTextureProperty::channels}.
+   * @param image The {@link ImageAsset} used by the property.
+   * @param options The options for constructing the view.
    */
   PropertyTexturePropertyView(
       const PropertyTextureProperty& property,
       const ClassProperty& classProperty,
       const Sampler& sampler,
-      const ImageCesium& image) noexcept
+      const ImageAsset& image,
+      const TextureViewOptions& options = TextureViewOptions()) noexcept
       : PropertyView<ElementType, false>(classProperty, property),
-        _pSampler(&sampler),
-        _pImage(&image),
-        _texCoordSetIndex(property.texCoord),
+        TextureView(
+            sampler,
+            image,
+            property.texCoord,
+            property.getExtension<ExtensionKhrTextureTransform>(),
+            options),
         _channels(property.channels),
         _swizzle() {
     if (this->_status != PropertyTexturePropertyViewStatus::Valid) {
+      return;
+    }
+
+    switch (this->getTextureViewStatus()) {
+    case TextureViewStatus::Valid:
+      break;
+    case TextureViewStatus::ErrorInvalidSampler:
+      this->_status = PropertyTexturePropertyViewStatus::ErrorInvalidSampler;
+      return;
+    case TextureViewStatus::ErrorInvalidImage:
+      this->_status = PropertyTexturePropertyViewStatus::ErrorInvalidImage;
+      return;
+    case TextureViewStatus::ErrorEmptyImage:
+      this->_status = PropertyTexturePropertyViewStatus::ErrorEmptyImage;
+      return;
+    case TextureViewStatus::ErrorInvalidBytesPerChannel:
+      this->_status =
+          PropertyTexturePropertyViewStatus::ErrorInvalidBytesPerChannel;
+      return;
+    case TextureViewStatus::ErrorUninitialized:
+    case TextureViewStatus::ErrorInvalidTexture:
+    default:
+      this->_status = PropertyTexturePropertyViewStatus::ErrorInvalidTexture;
       return;
     }
 
@@ -328,7 +379,87 @@ public:
         _swizzle += "a";
         break;
       default:
-        assert(false && "A valid channels vector must be passed to the view.");
+        CESIUM_ASSERT(
+            false && "A valid channels vector must be passed to the view.");
+      }
+    }
+  }
+
+  /**
+   * @brief Construct a view of the data specified by a {@link PropertyTextureProperty}.
+   *
+   * @param property The {@link PropertyTextureProperty}
+   * @param classProperty The {@link ClassProperty} this property conforms to.
+   * @param pEnumDefinition The {@link CesiumGltf::Enum} definition this property uses.
+   * @param sampler The {@link Sampler} used by the property.
+   * @param image The {@link ImageAsset} used by the property.
+   * @param options The options for constructing the view.
+   */
+  PropertyTexturePropertyView(
+      const PropertyTextureProperty& property,
+      const ClassProperty& classProperty,
+      const CesiumGltf::Enum* pEnumDefinition,
+      const Sampler& sampler,
+      const ImageAsset& image,
+      const TextureViewOptions& options = TextureViewOptions()) noexcept
+      : PropertyView<ElementType, false>(
+            classProperty,
+            property,
+            pEnumDefinition),
+        TextureView(
+            sampler,
+            image,
+            property.texCoord,
+            property.getExtension<ExtensionKhrTextureTransform>(),
+            options),
+        _channels(property.channels),
+        _swizzle() {
+    if (this->_status != PropertyTexturePropertyViewStatus::Valid) {
+      return;
+    }
+
+    switch (this->getTextureViewStatus()) {
+    case TextureViewStatus::Valid:
+      break;
+    case TextureViewStatus::ErrorInvalidSampler:
+      this->_status = PropertyTexturePropertyViewStatus::ErrorInvalidSampler;
+      return;
+    case TextureViewStatus::ErrorInvalidImage:
+      this->_status = PropertyTexturePropertyViewStatus::ErrorInvalidImage;
+      return;
+    case TextureViewStatus::ErrorEmptyImage:
+      this->_status = PropertyTexturePropertyViewStatus::ErrorEmptyImage;
+      return;
+    case TextureViewStatus::ErrorInvalidBytesPerChannel:
+      this->_status =
+          PropertyTexturePropertyViewStatus::ErrorInvalidBytesPerChannel;
+      return;
+    case TextureViewStatus::ErrorUninitialized:
+    case TextureViewStatus::ErrorInvalidTexture:
+    default:
+      this->_status = PropertyTexturePropertyViewStatus::ErrorInvalidTexture;
+      return;
+    }
+
+    _swizzle.reserve(_channels.size());
+
+    for (size_t i = 0; i < _channels.size(); ++i) {
+      switch (_channels[i]) {
+      case 0:
+        _swizzle += "r";
+        break;
+      case 1:
+        _swizzle += "g";
+        break;
+      case 2:
+        _swizzle += "b";
+        break;
+      case 3:
+        _swizzle += "a";
+        break;
+      default:
+        CESIUM_ASSERT(
+            false && "A valid channels vector must be passed to the view.");
       }
     }
   }
@@ -350,27 +481,27 @@ public:
    * @return The value of the element, or std::nullopt if it matches the "no
    * data" value
    */
-  std::optional<ElementType> get(double u, double v) const noexcept {
+  std::optional<PropertyValueViewToCopy<ElementType>>
+  get(double u, double v) const noexcept {
     if (this->_status ==
         PropertyTexturePropertyViewStatus::EmptyPropertyWithDefault) {
-      return this->defaultValue();
+      return propertyValueViewToCopy(this->defaultValue());
     }
 
-    ElementType value = getRaw(u, v);
+    PropertyValueViewToCopy<ElementType> value = getRaw(u, v);
 
     if (value == this->noData()) {
-      return this->defaultValue();
+      return propertyValueViewToCopy(this->defaultValue());
+    } else if constexpr (IsMetadataNumeric<ElementType>::value) {
+      return transformValue(value, this->offset(), this->scale());
+    } else if constexpr (IsMetadataNumericArray<ElementType>::value) {
+      return transformArray(
+          propertyValueCopyToView(value),
+          this->offset(),
+          this->scale());
+    } else {
+      return value;
     }
-
-    if constexpr (IsMetadataNumeric<ElementType>::value) {
-      value = transformValue(value, this->offset(), this->scale());
-    }
-
-    if constexpr (IsMetadataNumericArray<ElementType>::value) {
-      value = transformArray(value, this->offset(), this->scale());
-    }
-
-    return value;
   }
 
   /**
@@ -387,43 +518,18 @@ public:
    * @return The value at the nearest pixel to the texture coordinates.
    */
 
-  ElementType getRaw(double u, double v) const noexcept {
-    assert(
+  PropertyValueViewToCopy<ElementType>
+  getRaw(double u, double v) const noexcept {
+    CESIUM_ASSERT(
         this->_status == PropertyTexturePropertyViewStatus::Valid &&
         "Check the status() first to make sure view is valid");
 
-    double wrappedU = applySamplerWrapS(u, this->_pSampler->wrapS);
-    double wrappedV = applySamplerWrapT(v, this->_pSampler->wrapT);
+    std::vector<uint8_t> sample =
+        this->sampleNearestPixel(u, v, this->_channels);
 
-    std::array<uint8_t, 4> sample =
-        sampleNearestPixel(*this->_pImage, this->_channels, wrappedU, wrappedV);
     return assembleValueFromChannels<ElementType>(
-        gsl::span(sample.data(), this->_channels.size()));
+        std::span(sample.data(), this->_channels.size()));
   }
-
-  /**
-   * @brief Get the texture coordinate set index for this property.
-   */
-  int64_t getTexCoordSetIndex() const noexcept {
-    return this->_texCoordSetIndex;
-  }
-
-  /**
-   * @brief Get the sampler describing how to sample the data from the
-   * property's texture.
-   *
-   * This will be nullptr if the property texture property view runs into
-   * problems during construction.
-   */
-  const Sampler* getSampler() const noexcept { return this->_pSampler; }
-
-  /**
-   * @brief Get the image containing this property's data.
-   *
-   * This will be nullptr if the property texture property view runs into
-   * problems during construction.
-   */
-  const ImageCesium* getImage() const noexcept { return this->_pImage; }
 
   /**
    * @brief Gets the channels of this property texture property.
@@ -438,12 +544,13 @@ public:
   const std::string& getSwizzle() const noexcept { return this->_swizzle; }
 
 private:
-  const Sampler* _pSampler;
-  const ImageCesium* _pImage;
-  int64_t _texCoordSetIndex;
   std::vector<int64_t> _channels;
   std::string _swizzle;
 };
+
+#pragma endregion
+
+#pragma region Normalized property
 
 /**
  * @brief A view of the normalized data specified by a
@@ -454,7 +561,7 @@ private:
  */
 template <typename ElementType>
 class PropertyTexturePropertyView<ElementType, true>
-    : public PropertyView<ElementType, true> {
+    : public PropertyView<ElementType, true>, public TextureView {
 private:
   using NormalizedType = typename TypeToNormalizedType<ElementType>::type;
 
@@ -464,9 +571,7 @@ public:
    */
   PropertyTexturePropertyView() noexcept
       : PropertyView<ElementType, true>(),
-        _pSampler(nullptr),
-        _pImage(nullptr),
-        _texCoordSetIndex(0),
+        TextureView(),
         _channels(),
         _swizzle() {}
 
@@ -477,29 +582,26 @@ public:
    */
   PropertyTexturePropertyView(PropertyViewStatusType status) noexcept
       : PropertyView<ElementType, true>(status),
-        _pSampler(nullptr),
-        _pImage(nullptr),
-        _texCoordSetIndex(0),
+        TextureView(),
         _channels(),
         _swizzle() {
-    assert(
+    CESIUM_ASSERT(
         this->_status != PropertyTexturePropertyViewStatus::Valid &&
-        "An empty property view should not be constructed with a valid status");
+        "An empty property view should not be constructed with a valid "
+        "status");
   }
 
   /**
-   * @brief Constructs an instance of an empty property that specifies a default
-   * value. Although this property has no data, it can return the default value
-   * when {@link PropertyTexturePropertyView::get} is called. However,
-   * {@link PropertyTexturePropertyView::getRaw} cannot be used.
+   * @brief Constructs an instance of an empty property that specifies a
+   * default value. Although this property has no data, it can return the
+   * default value when {@link PropertyTexturePropertyView<ElementType, true>::get} is called.
+   * However, {@link PropertyTexturePropertyView<ElementType, true>::getRaw} cannot be used.
    *
    * @param classProperty The {@link ClassProperty} this property conforms to.
    */
   PropertyTexturePropertyView(const ClassProperty& classProperty) noexcept
       : PropertyView<ElementType, true>(classProperty),
-        _pSampler(nullptr),
-        _pImage(nullptr),
-        _texCoordSetIndex(0),
+        TextureView(),
         _channels(),
         _swizzle() {
     if (this->_status != PropertyTexturePropertyViewStatus::Valid) {
@@ -526,21 +628,48 @@ public:
    * @param property The {@link PropertyTextureProperty}
    * @param classProperty The {@link ClassProperty} this property conforms to.
    * @param sampler The {@link Sampler} used by the property.
-   * @param image The {@link ImageCesium} used by the property.
-   * @param channels The value of {@link PropertyTextureProperty::channels}.
+   * @param image The {@link ImageAsset} used by the property.
+   * @param options The options for constructing the view.
    */
   PropertyTexturePropertyView(
       const PropertyTextureProperty& property,
       const ClassProperty& classProperty,
       const Sampler& sampler,
-      const ImageCesium& image) noexcept
+      const ImageAsset& image,
+      const TextureViewOptions& options = TextureViewOptions()) noexcept
       : PropertyView<ElementType, true>(classProperty, property),
-        _pSampler(&sampler),
-        _pImage(&image),
-        _texCoordSetIndex(property.texCoord),
+        TextureView(
+            sampler,
+            image,
+            property.texCoord,
+            property.getExtension<ExtensionKhrTextureTransform>(),
+            options),
         _channels(property.channels),
         _swizzle() {
     if (this->_status != PropertyTexturePropertyViewStatus::Valid) {
+      return;
+    }
+
+    switch (this->getTextureViewStatus()) {
+    case TextureViewStatus::Valid:
+      break;
+    case TextureViewStatus::ErrorInvalidSampler:
+      this->_status = PropertyTexturePropertyViewStatus::ErrorInvalidSampler;
+      return;
+    case TextureViewStatus::ErrorInvalidImage:
+      this->_status = PropertyTexturePropertyViewStatus::ErrorInvalidImage;
+      return;
+    case TextureViewStatus::ErrorEmptyImage:
+      this->_status = PropertyTexturePropertyViewStatus::ErrorEmptyImage;
+      return;
+    case TextureViewStatus::ErrorInvalidBytesPerChannel:
+      this->_status =
+          PropertyTexturePropertyViewStatus::ErrorInvalidBytesPerChannel;
+      return;
+    case TextureViewStatus::ErrorUninitialized:
+    case TextureViewStatus::ErrorInvalidTexture:
+    default:
+      this->_status = PropertyTexturePropertyViewStatus::ErrorInvalidTexture;
       return;
     }
 
@@ -560,7 +689,8 @@ public:
         _swizzle += "a";
         break;
       default:
-        assert(false && "A valid channels vector must be passed to the view.");
+        CESIUM_ASSERT(
+            false && "A valid channels vector must be passed to the view.");
       }
     }
   }
@@ -572,10 +702,10 @@ public:
    * returned. The sampler's wrapping mode will be used when sampling the
    * texture.
    *
-   * If this property has a specified "no data" value, and the retrieved element
-   * is equal to that value, then this will return the property's specified
-   * default value. If the property did not provide a default value, this
-   * returns std::nullopt.
+   * If this property has a specified "no data" value, and the retrieved
+   * element is equal to that value, then this will return the property's
+   * specified default value. If the property did not provide a default value,
+   * this returns std::nullopt.
    *
    * @param u The u-component of the texture coordinates.
    * @param v The v-component of the texture coordinates.
@@ -583,26 +713,23 @@ public:
    * @return The value of the element, or std::nullopt if it matches the "no
    * data" value
    */
-  std::optional<NormalizedType> get(double u, double v) const noexcept {
+  std::optional<PropertyValueViewToCopy<NormalizedType>>
+  get(double u, double v) const noexcept {
     if (this->_status ==
         PropertyTexturePropertyViewStatus::EmptyPropertyWithDefault) {
-      return this->defaultValue();
+      return propertyValueViewToCopy(this->defaultValue());
     }
 
-    ElementType value = getRaw(u, v);
+    PropertyValueViewToCopy<ElementType> value = getRaw(u, v);
 
     if (value == this->noData()) {
-      return this->defaultValue();
-    }
-
-    if constexpr (IsMetadataScalar<ElementType>::value) {
+      return propertyValueViewToCopy(this->defaultValue());
+    } else if constexpr (IsMetadataScalar<ElementType>::value) {
       return transformValue<NormalizedType>(
           normalize<ElementType>(value),
           this->offset(),
           this->scale());
-    }
-
-    if constexpr (IsMetadataVecN<ElementType>::value) {
+    } else if constexpr (IsMetadataVecN<ElementType>::value) {
       constexpr glm::length_t N = ElementType::length();
       using T = typename ElementType::value_type;
       using NormalizedT = typename NormalizedType::value_type;
@@ -610,22 +737,18 @@ public:
           normalize<N, T>(value),
           this->offset(),
           this->scale());
-    }
-
-    if constexpr (IsMetadataArray<ElementType>::value) {
+    } else if constexpr (IsMetadataArray<ElementType>::value) {
       using ArrayElementType = typename MetadataArrayType<ElementType>::type;
       if constexpr (IsMetadataScalar<ArrayElementType>::value) {
         return transformNormalizedArray<ArrayElementType>(
-            value,
+            propertyValueCopyToView(value),
             this->offset(),
             this->scale());
-      }
-
-      if constexpr (IsMetadataVecN<ArrayElementType>::value) {
+      } else if constexpr (IsMetadataVecN<ArrayElementType>::value) {
         constexpr glm::length_t N = ArrayElementType::length();
         using T = typename ArrayElementType::value_type;
         return transformNormalizedVecNArray<N, T>(
-            value,
+            propertyValueCopyToView(value),
             this->offset(),
             this->scale());
       }
@@ -637,8 +760,8 @@ public:
    * coordinates. The sampler's wrapping mode will be used when sampling the
    * texture.
    *
-   * If this property has a specified "no data" value, the raw value will still
-   * be returned, even if it equals the "no data" value.
+   * If this property has a specified "no data" value, the raw value will
+   * still be returned, even if it equals the "no data" value.
    *
    * @param u The u-component of the texture coordinates.
    * @param v The v-component of the texture coordinates.
@@ -646,44 +769,18 @@ public:
    * @return The value at the nearest pixel to the texture coordinates.
    */
 
-  ElementType getRaw(double u, double v) const noexcept {
-    assert(
+  PropertyValueViewToCopy<ElementType>
+  getRaw(double u, double v) const noexcept {
+    CESIUM_ASSERT(
         this->_status == PropertyTexturePropertyViewStatus::Valid &&
         "Check the status() first to make sure view is valid");
 
-    double wrappedU = applySamplerWrapS(u, this->_pSampler->wrapS);
-    double wrappedV = applySamplerWrapT(v, this->_pSampler->wrapT);
-
-    std::array<uint8_t, 4> sample =
-        sampleNearestPixel(*this->_pImage, this->_channels, wrappedU, wrappedV);
+    std::vector<uint8_t> sample =
+        this->sampleNearestPixel(u, v, this->_channels);
 
     return assembleValueFromChannels<ElementType>(
-        gsl::span(sample.data(), this->_channels.size()));
+        std::span(sample.data(), this->_channels.size()));
   }
-
-  /**
-   * @brief Get the texture coordinate set index for this property.
-   */
-  int64_t getTexCoordSetIndex() const noexcept {
-    return this->_texCoordSetIndex;
-  }
-
-  /**
-   * @brief Get the sampler describing how to sample the data from the
-   * property's texture.
-   *
-   * This will be nullptr if the property texture property view runs into
-   * problems during construction.
-   */
-  const Sampler* getSampler() const noexcept { return this->_pSampler; }
-
-  /**
-   * @brief Get the image containing this property's data.
-   *
-   * This will be nullptr if the property texture property view runs into
-   * problems during construction.
-   */
-  const ImageCesium* getImage() const noexcept { return this->_pImage; }
 
   /**
    * @brief Gets the channels of this property texture property.
@@ -698,11 +795,9 @@ public:
   const std::string& getSwizzle() const noexcept { return this->_swizzle; }
 
 private:
-  const Sampler* _pSampler;
-  const ImageCesium* _pImage;
-  int64_t _texCoordSetIndex;
   std::vector<int64_t> _channels;
   std::string _swizzle;
 };
+#pragma endregion
 
 } // namespace CesiumGltf

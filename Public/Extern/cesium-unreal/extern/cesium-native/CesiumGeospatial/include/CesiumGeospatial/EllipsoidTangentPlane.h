@@ -1,11 +1,10 @@
 #pragma once
 
-#include "Ellipsoid.h"
-#include "Library.h"
-
 #include <CesiumGeometry/Plane.h>
+#include <CesiumGeospatial/Ellipsoid.h>
+#include <CesiumGeospatial/Library.h>
 
-#include <glm/mat4x4.hpp>
+#include <glm/fwd.hpp>
 #include <glm/vec2.hpp>
 #include <glm/vec3.hpp>
 
@@ -29,7 +28,7 @@ public:
    */
   EllipsoidTangentPlane(
       const glm::dvec3& origin,
-      const Ellipsoid& ellipsoid = Ellipsoid::WGS84);
+      const Ellipsoid& ellipsoid CESIUM_DEFAULT_ELLIPSOID);
 
   /**
    * @brief Creates a new instance.
@@ -40,7 +39,7 @@ public:
    */
   EllipsoidTangentPlane(
       const glm::dmat4& eastNorthUpToFixedFrame,
-      const Ellipsoid& ellipsoid = Ellipsoid::WGS84);
+      const Ellipsoid& ellipsoid CESIUM_DEFAULT_ELLIPSOID);
 
   /**
    * @brief Returns the {@link Ellipsoid}.
@@ -100,7 +99,7 @@ private:
    */
   static glm::dmat4 computeEastNorthUpToFixedFrame(
       const glm::dvec3& origin,
-      const Ellipsoid& ellipsoid);
+      const Ellipsoid& ellipsoid CESIUM_DEFAULT_ELLIPSOID);
 
   Ellipsoid _ellipsoid;
   glm::dvec3 _origin;

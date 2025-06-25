@@ -1,22 +1,34 @@
+#include <CesiumAsync/Future.h>
 #include <CesiumAsync/IAssetAccessor.h>
 #include <CesiumAsync/IAssetResponse.h>
+#include <CesiumGeometry/QuadtreeTileID.h>
+#include <CesiumGeospatial/Ellipsoid.h>
 #include <CesiumGeospatial/GlobeRectangle.h>
 #include <CesiumGeospatial/Projection.h>
 #include <CesiumGeospatial/WebMercatorProjection.h>
 #include <CesiumRasterOverlays/BingMapsRasterOverlay.h>
 #include <CesiumRasterOverlays/QuadtreeRasterOverlayTileProvider.h>
+#include <CesiumRasterOverlays/RasterOverlay.h>
 #include <CesiumRasterOverlays/RasterOverlayLoadFailureDetails.h>
 #include <CesiumRasterOverlays/RasterOverlayTile.h>
 #include <CesiumRasterOverlays/RasterOverlayTileProvider.h>
 #include <CesiumUtility/CreditSystem.h>
+#include <CesiumUtility/IntrusivePointer.h>
 #include <CesiumUtility/JsonHelpers.h>
-#include <CesiumUtility/Math.h>
 #include <CesiumUtility/Uri.h>
 
+#include <fmt/format.h>
+#include <nonstd/expected.hpp>
 #include <rapidjson/document.h>
 #include <rapidjson/pointer.h>
+#include <spdlog/logger.h>
 
+#include <cstddef>
+#include <cstdint>
+#include <memory>
 #include <optional>
+#include <span>
+#include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -99,7 +111,8 @@ public:
       uint32_t height,
       uint32_t minimumLevel,
       uint32_t maximumLevel,
-      const std::string& culture)
+      const std::string& culture,
+      const CesiumGeospatial::Ellipsoid& ellipsoid)
       : QuadtreeRasterOverlayTileProvider(
             pOwner,
             asyncSystem,
@@ -107,62 +120,58 @@ public:
             bingCredit,
             pPrepareRendererResources,
             pLogger,
-            WebMercatorProjection(),
+            WebMercatorProjection(ellipsoid),
             QuadtreeTilingScheme(
                 WebMercatorProjection::computeMaximumProjectedRectangle(
-                    Ellipsoid::WGS84),
+                    ellipsoid),
                 2,
                 2),
-            WebMercatorProjection::computeMaximumProjectedRectangle(
-                Ellipsoid::WGS84),
+            WebMercatorProjection::computeMaximumProjectedRectangle(ellipsoid),
             minimumLevel,
             maximumLevel,
             width,
             height),
         _credits(perTileCredits),
+        _baseUrl(baseUrl),
         _urlTemplate(urlTemplate),
-        _subdomains(subdomains) {
-    if (this->_urlTemplate.find("n=z") == std::string::npos) {
-      this->_urlTemplate =
-          CesiumUtility::Uri::addQuery(this->_urlTemplate, "n", "z");
-    }
+        _culture(culture),
+        _subdomains(subdomains) {}
 
-    std::string resolvedUrl =
-        CesiumUtility::Uri::resolve(baseUrl, this->_urlTemplate);
-
-    resolvedUrl = CesiumUtility::Uri::substituteTemplateParameters(
-        resolvedUrl,
-        [&culture](const std::string& templateKey) {
-          if (templateKey == "culture") {
-            return culture;
-          }
-
-          // Keep other placeholders
-          return "{" + templateKey + "}";
-        });
-  }
-
-  virtual ~BingMapsTileProvider() {}
+  virtual ~BingMapsTileProvider() = default;
 
 protected:
   virtual CesiumAsync::Future<LoadedRasterOverlayImage> loadQuadtreeTileImage(
       const CesiumGeometry::QuadtreeTileID& tileID) const override {
-    std::string url = CesiumUtility::Uri::substituteTemplateParameters(
-        this->_urlTemplate,
-        [this, &tileID](const std::string& key) {
-          if (key == "quadkey") {
-            return BingMapsTileProvider::tileXYToQuadKey(
-                tileID.level,
-                tileID.x,
-                tileID.computeInvertedY(this->getTilingScheme()));
-          }
-          if (key == "subdomain") {
-            const size_t subdomainIndex =
-                (tileID.level + tileID.x + tileID.y) % this->_subdomains.size();
-            return this->_subdomains[subdomainIndex];
-          }
-          return key;
-        });
+    Uri uri(
+        this->_baseUrl,
+        CesiumUtility::Uri::substituteTemplateParameters(
+            this->_urlTemplate,
+            [this, &tileID](const std::string& key) {
+              if (key == "quadkey") {
+                return BingMapsTileProvider::tileXYToQuadKey(
+                    tileID.level,
+                    tileID.x,
+                    tileID.computeInvertedY(this->getTilingScheme()));
+              }
+              if (key == "subdomain") {
+                const size_t subdomainIndex =
+                    (tileID.level + tileID.x + tileID.y) %
+                    this->_subdomains.size();
+                return this->_subdomains[subdomainIndex];
+              }
+              if (key == "culture") {
+                return this->_culture;
+              }
+              return key;
+            }));
+
+    UriQuery query(uri);
+    if (!query.hasValue("n")) {
+      query.setValue("n", "z");
+      uri.setQuery(query.toQueryString());
+    }
+
+    std::string url = std::string(uri.toString());
 
     LoadTileImageFromUrlOptions options;
     options.allowEmptyImages = true;
@@ -170,7 +179,10 @@ protected:
     options.rectangle = this->getTilingScheme().tileToRectangle(tileID);
     std::vector<Credit>& tileCredits = options.credits =
         this->getOwner().getCredits();
-    tileCredits.push_back(*this->getCredit());
+    const std::optional<Credit>& thisCredit = this->getCredit();
+    if (thisCredit.has_value()) {
+      tileCredits.push_back(*thisCredit);
+    }
 
     const CesiumGeospatial::GlobeRectangle tileRectangle =
         CesiumGeospatial::unprojectRectangleSimple(
@@ -218,7 +230,9 @@ private:
   }
 
   std::vector<CreditAndCoverageAreas> _credits;
+  std::string _baseUrl;
   std::string _urlTemplate;
+  std::string _culture;
   std::vector<std::string> _subdomains;
 };
 
@@ -228,16 +242,14 @@ BingMapsRasterOverlay::BingMapsRasterOverlay(
     const std::string& key,
     const std::string& mapStyle,
     const std::string& culture,
-    const Ellipsoid& ellipsoid,
     const RasterOverlayOptions& overlayOptions)
     : RasterOverlay(name, overlayOptions),
       _url(url),
       _key(key),
       _mapStyle(mapStyle),
-      _culture(culture),
-      _ellipsoid(ellipsoid) {}
+      _culture(culture) {}
 
-BingMapsRasterOverlay::~BingMapsRasterOverlay() {}
+BingMapsRasterOverlay::~BingMapsRasterOverlay() = default;
 
 namespace {
 
@@ -265,13 +277,18 @@ namespace {
  * @param pResource The JSON value for the resource
  * @param pCreditSystem The `CreditSystem` that will create one credit for
  * each attribution
- * @return The `CreditAndCoverageAreas` objects that have been parsed
+ * @return The `CreditAndCoverageAreas` objects that have been parsed, or an
+ * empty vector if pCreditSystem is nullptr.
  */
 std::vector<CreditAndCoverageAreas> collectCredits(
     const rapidjson::Value* pResource,
     const std::shared_ptr<CreditSystem>& pCreditSystem,
     bool showCreditsOnScreen) {
   std::vector<CreditAndCoverageAreas> credits;
+  if (!pCreditSystem) {
+    return credits;
+  }
+
   const auto attributionsIt = pResource->FindMember("imageryProviders");
   if (attributionsIt != pResource->MemberEnd() &&
       attributionsIt->value.IsArray()) {
@@ -339,16 +356,25 @@ BingMapsRasterOverlay::createTileProvider(
         pPrepareRendererResources,
     const std::shared_ptr<spdlog::logger>& pLogger,
     IntrusivePointer<const RasterOverlay> pOwner) const {
-  std::string metadataUrl = CesiumUtility::Uri::resolve(
+  Uri metadataUri(
       this->_url,
       "REST/v1/Imagery/Metadata/" + this->_mapStyle,
       true);
-  metadataUrl =
-      CesiumUtility::Uri::addQuery(metadataUrl, "incl", "ImageryProviders");
-  metadataUrl = CesiumUtility::Uri::addQuery(metadataUrl, "key", this->_key);
-  metadataUrl = CesiumUtility::Uri::addQuery(metadataUrl, "uriScheme", "https");
+
+  UriQuery metadataQuery(metadataUri);
+  metadataQuery.setValue("incl", "ImageryProviders");
+  metadataQuery.setValue("key", this->_key);
+  metadataQuery.setValue("uriScheme", "https");
+  if (!this->_culture.empty()) {
+    metadataQuery.setValue("culture", this->_culture);
+  }
+  metadataUri.setQuery(metadataQuery.toQueryString());
+
+  std::string metadataUrl = std::string(metadataUri.toString());
 
   pOwner = pOwner ? pOwner : this;
+
+  const CesiumGeospatial::Ellipsoid& ellipsoid = this->getOptions().ellipsoid;
 
   auto handleResponse =
       [pOwner,
@@ -357,10 +383,11 @@ BingMapsRasterOverlay::createTileProvider(
        pCreditSystem,
        pPrepareRendererResources,
        pLogger,
+       ellipsoid,
        baseUrl = this->_url,
        culture = this->_culture](
           const std::shared_ptr<IAssetRequest>& pRequest,
-          const gsl::span<const std::byte>& data) -> CreateTileProviderResult {
+          const std::span<const std::byte>& data) -> CreateTileProviderResult {
     rapidjson::Document response;
     response.Parse(reinterpret_cast<const char*>(data.data()), data.size());
 
@@ -436,13 +463,14 @@ BingMapsRasterOverlay::createTileProvider(
         height,
         0,
         maximumLevel,
-        culture);
+        culture,
+        ellipsoid);
   };
 
   auto cacheResultIt = sessionCache.find(metadataUrl);
   if (cacheResultIt != sessionCache.end()) {
     return asyncSystem.createResolvedFuture(
-        handleResponse(nullptr, gsl::span<std::byte>(cacheResultIt->second)));
+        handleResponse(nullptr, std::span<std::byte>(cacheResultIt->second)));
   }
 
   return pAssetAccessor->get(asyncSystem, metadataUrl)

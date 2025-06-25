@@ -1,17 +1,27 @@
-#include "CesiumGeospatial/CartographicPolygon.h"
-
 #include <CesiumGeometry/IntersectionTests.h>
+#include <CesiumGeospatial/CartographicPolygon.h>
+#include <CesiumGeospatial/GlobeRectangle.h>
+#include <CesiumUtility/Math.h>
 
-#include <glm/mat2x2.hpp>
+#include <glm/common.hpp>
+#include <glm/ext/matrix_double2x2.hpp>
+#include <glm/ext/vector_double2.hpp>
+#include <glm/matrix.hpp>
 #include <mapbox/earcut.hpp>
 
 #include <array>
+#include <cstddef>
+#include <cstdint>
+#include <optional>
+#include <utility>
+#include <vector>
 
 using namespace CesiumGeometry;
 
 namespace CesiumGeospatial {
 
-static std::vector<uint32_t>
+namespace {
+std::vector<uint32_t>
 triangulatePolygon(const std::vector<glm::dvec2>& polygon) {
   std::vector<uint32_t> indices;
   const size_t vertexCount = polygon.size();
@@ -51,7 +61,7 @@ triangulatePolygon(const std::vector<glm::dvec2>& polygon) {
   return indices;
 }
 
-static std::optional<GlobeRectangle>
+std::optional<GlobeRectangle>
 computeBoundingRectangle(const std::vector<glm::dvec2>& polygon) {
   const size_t vertexCount = polygon.size();
 
@@ -105,6 +115,7 @@ computeBoundingRectangle(const std::vector<glm::dvec2>& polygon) {
 
   return CesiumGeospatial::GlobeRectangle(west, south, east, north);
 }
+} // namespace
 
 CartographicPolygon::CartographicPolygon(const std::vector<glm::dvec2>& polygon)
     : _vertices(polygon),
@@ -128,9 +139,7 @@ CartographicPolygon::CartographicPolygon(const std::vector<glm::dvec2>& polygon)
       rectangleCorners[0] - rectangleCorners[3]};
 
   // Iterate through all polygons.
-  for (size_t i = 0; i < cartographicPolygons.size(); ++i) {
-    const CartographicPolygon& selection = cartographicPolygons[i];
-
+  for (const auto& selection : cartographicPolygons) {
     const std::optional<CesiumGeospatial::GlobeRectangle>&
         polygonBoundingRectangle = selection.getBoundingRectangle();
     if (!polygonBoundingRectangle ||
@@ -145,7 +154,7 @@ CartographicPolygon::CartographicPolygon(const std::vector<glm::dvec2>& polygon)
     // inside the polygon.
     bool inside = false;
     for (size_t j = 2; j < indices.size(); j += 3) {
-      if (IntersectionTests::pointInTriangle2D(
+      if (IntersectionTests::pointInTriangle(
               rectangleCorners[0],
               vertices[indices[j - 2]],
               vertices[indices[j - 1]],
@@ -220,9 +229,7 @@ CartographicPolygon::CartographicPolygon(const std::vector<glm::dvec2>& polygon)
       rectangleCorners[0] - rectangleCorners[3]};
 
   // Iterate through all polygons.
-  for (size_t i = 0; i < cartographicPolygons.size(); ++i) {
-    const CartographicPolygon& selection = cartographicPolygons[i];
-
+  for (const auto& selection : cartographicPolygons) {
     const std::optional<CesiumGeospatial::GlobeRectangle>&
         polygonBoundingRectangle = selection.getBoundingRectangle();
     if (!polygonBoundingRectangle ||
@@ -234,12 +241,12 @@ CartographicPolygon::CartographicPolygon(const std::vector<glm::dvec2>& polygon)
     const std::vector<uint32_t>& indices = selection.getIndices();
 
     // Check if an arbitrary point on the polygon is in the globe rectangle.
-    if (IntersectionTests::pointInTriangle2D(
+    if (IntersectionTests::pointInTriangle(
             vertices[0],
             rectangleCorners[0],
             rectangleCorners[1],
             rectangleCorners[2]) ||
-        IntersectionTests::pointInTriangle2D(
+        IntersectionTests::pointInTriangle(
             vertices[0],
             rectangleCorners[0],
             rectangleCorners[2],
@@ -250,7 +257,7 @@ CartographicPolygon::CartographicPolygon(const std::vector<glm::dvec2>& polygon)
     // Check if an arbitrary point on the bounding globe rectangle is
     // inside the polygon.
     for (size_t j = 2; j < indices.size(); j += 3) {
-      if (IntersectionTests::pointInTriangle2D(
+      if (IntersectionTests::pointInTriangle(
               rectangleCorners[0],
               vertices[indices[j - 2]],
               vertices[indices[j - 1]],

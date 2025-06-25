@@ -7,19 +7,20 @@
 #include <CesiumJsonReader/JsonReader.h>
 #include <CesiumJsonReader/JsonReaderOptions.h>
 
-#include <gsl/span>
 #include <rapidjson/fwd.h>
 
+#include <span>
 #include <vector>
 
 namespace CesiumGltf {
 struct ExtensionModelExtStructuralMetadata;
-}
+} // namespace CesiumGltf
 
 namespace CesiumGltfReader {
 
 /**
- * @brief Reads {@link ExtensionModelExtStructuralMetadata} instances from JSON.
+ * @brief Reads \ref CesiumGltf::ExtensionModelExtStructuralMetadata
+ * "ExtensionModelExtStructuralMetadata" instances from JSON.
  */
 class CESIUMGLTFREADER_API ExtensionModelExtStructuralMetadataReader {
 public:
@@ -47,13 +48,13 @@ public:
    */
   CesiumJsonReader::ReadJsonResult<
       CesiumGltf::ExtensionModelExtStructuralMetadata>
-  readFromJson(const gsl::span<const std::byte>& data) const;
+  readFromJson(const std::span<const std::byte>& data) const;
 
   /**
    * @brief Reads an instance of ExtensionModelExtStructuralMetadata from a
    * rapidJson::Value.
    *
-   * @param data The buffer from which to read the instance.
+   * @param value The value from which to read the instance.
    * @return The result of reading the instance.
    */
   CesiumJsonReader::ReadJsonResult<
@@ -64,7 +65,7 @@ public:
    * @brief Reads an array of instances of ExtensionModelExtStructuralMetadata
    * from a rapidJson::Value.
    *
-   * @param data The buffer from which to read the array of instances.
+   * @param value The value from which to read the array of instances.
    * @return The result of reading the array of instances.
    */
   CesiumJsonReader::ReadJsonResult<

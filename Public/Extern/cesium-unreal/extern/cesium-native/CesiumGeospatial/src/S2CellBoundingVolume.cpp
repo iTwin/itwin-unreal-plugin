@@ -1,12 +1,22 @@
-#include "CesiumGeospatial/S2CellBoundingVolume.h"
+#include <CesiumGeometry/CullingResult.h>
+#include <CesiumGeometry/Plane.h>
+#include <CesiumGeospatial/BoundingRegion.h>
+#include <CesiumGeospatial/Cartographic.h>
+#include <CesiumGeospatial/Ellipsoid.h>
+#include <CesiumGeospatial/S2CellBoundingVolume.h>
+#include <CesiumUtility/Assert.h>
 
-#include <CesiumUtility/Math.h>
-
+#include <glm/ext/matrix_double3x3.hpp>
+#include <glm/ext/vector_double3.hpp>
 #include <glm/geometric.hpp>
 #include <glm/gtx/norm.hpp>
 #include <glm/matrix.hpp>
 
 #include <array>
+#include <cstddef>
+#include <limits>
+#include <optional>
+#include <span>
 
 using namespace CesiumGeometry;
 using namespace CesiumGeospatial;
@@ -27,7 +37,7 @@ std::array<Plane, 6> computeBoundingPlanes(
   glm::dvec3 centerSurfaceNormal = ellipsoid.geodeticSurfaceNormal(centerPoint);
   std::optional<Cartographic> maybeTopCartographic =
       ellipsoid.cartesianToCartographic(centerPoint);
-  assert(maybeTopCartographic);
+  CESIUM_ASSERT(maybeTopCartographic);
   Cartographic& topCartographic = *maybeTopCartographic;
   topCartographic.height = s2Cell.getMaximumHeight();
   glm::dvec3 top = ellipsoid.cartographicToCartesian(topCartographic);
@@ -148,7 +158,7 @@ glm::dvec3 S2CellBoundingVolume::getCenter() const noexcept {
   return this->_center;
 }
 
-gsl::span<const glm::dvec3> S2CellBoundingVolume::getVertices() const noexcept {
+std::span<const glm::dvec3> S2CellBoundingVolume::getVertices() const noexcept {
   return this->_vertices;
 }
 
@@ -156,9 +166,9 @@ CesiumGeometry::CullingResult S2CellBoundingVolume::intersectPlane(
     const CesiumGeometry::Plane& plane) const noexcept {
   size_t plusCount = 0;
   size_t negCount = 0;
-  for (size_t i = 0; i < this->_vertices.size(); ++i) {
+  for (const auto& vertex : this->_vertices) {
     double distanceToPlane =
-        glm::dot(plane.getNormal(), this->_vertices[i]) + plane.getDistance();
+        glm::dot(plane.getNormal(), vertex) + plane.getDistance();
     if (distanceToPlane < 0.0) {
       ++negCount;
     } else {
@@ -418,14 +428,16 @@ double S2CellBoundingVolume::computeDistanceSquaredToPosition(
       this->_vertices[4 + ((selectedPlaneIndices[1] - 2 + skip) % 4)]);
 }
 
-gsl::span<const CesiumGeometry::Plane>
+std::span<const CesiumGeometry::Plane>
 S2CellBoundingVolume::getBoundingPlanes() const noexcept {
   return this->_boundingPlanes;
 }
 
-BoundingRegion S2CellBoundingVolume::computeBoundingRegion() const noexcept {
+BoundingRegion S2CellBoundingVolume::computeBoundingRegion(
+    const CesiumGeospatial::Ellipsoid& ellipsoid) const noexcept {
   return BoundingRegion(
       this->_cellID.computeBoundingRectangle(),
       this->_minimumHeight,
-      this->_maximumHeight);
+      this->_maximumHeight,
+      ellipsoid);
 }

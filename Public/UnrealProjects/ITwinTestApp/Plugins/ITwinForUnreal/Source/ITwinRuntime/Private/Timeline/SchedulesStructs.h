@@ -11,6 +11,7 @@
 #include "CoreMinimal.h"
 #include <Math/Vector.h>
 
+#include <Hashing/UnrealGuid.h>
 #include <Hashing/UnrealString.h>
 #include <ITwinElementID.h>
 #include <Timeline/AnchorPoint.h>
@@ -136,6 +137,11 @@ public:
 	double RelativeTime = 0.;
 };
 
+inline bool operator<(FTransformKey const& A, FTransformKey const& B)
+{
+	return A.RelativeTime < B.RelativeTime;
+}
+
 /// List of control points of a 3D path. We don't care for the 3D path name and color and thus skip the path
 /// endpoint to query directly the keyframes
 class FAnimation3DPath : public FAnimationBindingProperty
@@ -180,7 +186,7 @@ public:
 
 /// Description of the animation of Elements during a Task: the properties that strictly identify a
 /// binding as unique are the following:<ul>
-/// <li>AnimatedEntities (ie. a single ElementID or the string Id of an FElementsGroup)</li>
+/// <li>AnimatedEntities (ie. a single ElementID or Fed.GUID, or the string Id of an FElementsGroup)</li>
 /// <li>TaskId, to get the animation's time range from a task</li>
 /// <li>AppearanceProfileId, to get the initial, active and final appearance of the elements</li>
 /// <li>TransfoAssignmentId, to get the optional transformation(s) of the elements (static or following
@@ -192,7 +198,8 @@ public:
 	FString TaskId;
 	size_t TaskInVec = ITwin::INVALID_IDX;
 	/// Single Element bound, or Id of the FElementsGroup listing all Elements bound by this animation
-	std::variant<ITwinElementID, FString/*group Id*/> AnimatedEntities{ ITwin::NOT_ELEMENT };
+	std::variant<ITwinElementID, FGuid/*Federated Element GUID*/, FString/*group Id*/>
+		AnimatedEntities{ ITwin::NOT_ELEMENT };
 	/// Index of the item matching AnimatedEntities, in case it is a group, in FITwinSchedule::Groups
 	size_t GroupInVec = ITwin::INVALID_IDX;
 	/// Id of the FAppearanceProfile
@@ -231,6 +238,8 @@ public:
 				using T = std::decay_t<decltype(ElemOrGroupId)>;
 				if constexpr (std::is_same_v<T, ITwinElementID>)
 					boost::hash_combine(Res, std::hash<uint64_t>()(ElemOrGroupId.value()));
+				else if constexpr (std::is_same_v<T, FGuid>)
+					boost::hash_combine(Res, GetTypeHash(ElemOrGroupId));
 				else if constexpr (std::is_same_v<T, FString>)
 					boost::hash_combine(Res, GetTypeHash(ElemOrGroupId));
 				else static_assert(always_false_v<T>, "non-exhaustive visitor!");
@@ -242,13 +251,27 @@ public:
 	}
 };
 
+template <>
+struct std::hash<std::pair<FString, bool>>
+{
+public:
+	size_t operator()(std::pair<FString, bool> const& Key) const
+	{
+		size_t Res = GetTypeHash(Key.first);
+		boost::hash_combine(Res, Key.second);
+		return Res;
+	}
+};
+
 inline bool operator ==(FAnimationBinding const& A, FAnimationBinding const& B)
 {
 	return A.TaskId == B.TaskId
 		&& A.AnimatedEntities.index() == B.AnimatedEntities.index()
-		&& (0 == A.AnimatedEntities.index()
-			? std::get<0>(A.AnimatedEntities) == std::get<0>(B.AnimatedEntities)
-			: std::get<1>(A.AnimatedEntities) == std::get<1>(B.AnimatedEntities))
+		&& (2 == A.AnimatedEntities.index()
+			? std::get<2>(A.AnimatedEntities) == std::get<2>(B.AnimatedEntities)
+			: (1 == A.AnimatedEntities.index()
+				? std::get<1>(A.AnimatedEntities) == std::get<1>(B.AnimatedEntities)
+				: std::get<0>(A.AnimatedEntities) == std::get<0>(B.AnimatedEntities)))
 		&& A.AppearanceProfileId == B.AppearanceProfileId
 		&& A.TransfoAssignmentId == B.TransfoAssignmentId;
 }
@@ -268,14 +291,12 @@ class FITwinSchedule
 {
 public:
 	FString Id, Name; // <== keep first and ordered, for list init
+	/// "Unknown" also means "Not needed", when used with APIM, which hides this detail from us.
 	EITwinSchedulesGeneration Generation = EITwinSchedulesGeneration::Unknown;
 
 	// Not good here, prevents the class from going into a vector (could use a shared pointer? for the moment
 	// the sync will remain in FITwinSchedulesImport::FImpl
 	//std::[recursve_]mutex Mutex;
-
-	/// "user field id" needed for animationBinding/query (EITwinSchedulesGeneration::NextGen only)
-	FString AnimatedEntityUserFieldId;
 
 	std::vector<FAnimationBinding> AnimationBindings;
 	std::vector<FScheduleTask> Tasks;
@@ -298,16 +319,11 @@ public:
 	std::unordered_map<FString, size_t/*index in ...*/> KnownTasks;
 	std::unordered_map<FString, size_t/*index in ...*/> KnownGroups;
 	std::unordered_map<FString, size_t/*index in ...*/> KnownAppearanceProfiles;
-	std::unordered_map<FString, size_t/*index in ...*/> KnownTransfoAssignments;
+	std::unordered_map<std::pair<FString, bool/*bStaticTransform*/>, size_t/*...*/> KnownTransfoAssignments;
 	std::unordered_map<FString, size_t/*index in ...*/> KnownAnimation3DPaths;
 
-	// Note: nothing yet to avoid redundant requests with time range filtering: the whole point of time
-	// filtering is actually questionable since we need the StartAppearance profiles of the very first task
-	// to get the initial display state (same for the last task's EndAppearance for the final state) so...
-	/// Stores VersionToken::None when querying for all tasks of an Element in the schedule (not just for a
-	/// specific time range), and replaces with VersionToken::InitialVersion once the request has been
-	/// processed.
-	std::unordered_map<ITwinElementID, FVersionToken> AnimBindingsFullyKnownForElem;
+	// Removed - blame here
+	//std::unordered_map<ITwinElementID, FVersionToken> AnimBindingsFullyKnownForElem;
 
 	void Reserve(size_t Count);
 
@@ -320,3 +336,4 @@ using FOnAnimationBindingAdded =
 	std::function<void(FITwinSchedule const&, size_t const/*AnimationBindingIndex*/, FSchedLock&)>;
 using FOnAnimationGroupModified = std::function<
 	void(size_t const/*GroupIndex*/, FElementsGroup const&/*GroupElements*/, FSchedLock&)>;
+using FFindElementIDFromGUID = std::function<bool(FGuid const&, ITwinElementID&/*OutElem*/)>;

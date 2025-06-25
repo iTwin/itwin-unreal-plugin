@@ -56,44 +56,21 @@ public:
 	std::unordered_set<ITwinScene::TileIdx> TilesPendingRenderReadiness;
 
 	FITwinIModelInternals(AITwinIModel& InOwner) : Owner(InOwner)
+		, SceneMapping(InOwner.HasAnyFlags(RF_ClassDefaultObject))
 	{
 		Uniniter = std::make_shared<FIModelUninitializer>();
 	}
 
 	/// Will have to look up the ElementIDs in all hashed_unique structures: prefer storing random access
 	/// indices (aka "ranks": see ITwinTile::ElemIdx and ITwinTile::ExtrIdx) for perf-critical tasks
-	template<typename TProcessElementFeaturesInTile, typename TProcessExtractedElementInTile>
-	void ProcessElementsInEachTileSLOW(FElementsGroup const& IModelElements,
-		TProcessElementFeaturesInTile const& ProcElemFeatures,
-		TProcessExtractedElementInTile const& ProcExtractedElem,
-		bool const bVisibleOnly)
-	{
-		SceneMapping.ForEachKnownTile([&](FITwinSceneTile& SceneTile)
-		{
-			if (bVisibleOnly && !SceneTile.bVisible)
-			{
-				return;
-			}
-			for (auto&& Elem : IModelElements)
-			{
-				{	auto* Found = SceneTile.FindElementFeaturesSLOW(Elem);
-					if (Found)
-					{
-						ProcElemFeatures(SceneTile.TileID, SceneTile, *Found);
-					}
-				}
-				{	auto* Found = SceneTile.FindExtractedElementSLOW(Elem);
-					if (Found)
-					{
-						for (FITwinExtractedEntity& ExtrEnt : Found->Entities)
-						{
-							ProcExtractedElem(SceneTile, ExtrEnt);
-						}
-					}
-				}
-			}
-		});
-	}
+	//template<typename TProcessElementFeaturesInTile, typename TProcessExtractedElementInTile>
+	//void ProcessElementsInEachTileSLOW(FElementsGroup const& IModelElements,
+	//	TProcessElementFeaturesInTile const& ProcElemFeatures,
+	//	TProcessExtractedElementInTile const& ProcExtractedElem,
+	//	bool const bVisibleOnly)
+	//{
+	//		Remove, blame here: "extracted" Elements may not be what they seem, when using tuning instead!
+	//}
 
 	FBox GetBoundingBox(FElementsGroup const& Elements) const
 	{
@@ -112,15 +89,20 @@ public:
 	}
 
 	void OnNewTileBuilt(Cesium3DTilesSelection::TileID const& TileID);
+	void UnloadKnownTile(Cesium3DTilesSelection::TileID const& TileID);
 	void OnElementsTimelineModified(FITwinElementTimeline& ModifiedTimeline,
 									std::vector<ITwinElementID> const* OnlyForElements = nullptr);
 	void OnVisibilityChanged(const Cesium3DTilesSelection::TileID& TileID, bool visible);
+	void SetNeedForcedShadowUpdate() const;
 
-	bool IsElementHiddenInSavedView(ITwinElementID const Element) const;
-	bool OnClickedElement(ITwinElementID const Element, FHitResult const& HitResult);
+	bool OnClickedElement(ITwinElementID const Element, FHitResult const& HitResult,
+						  bool const bSelectElement = true);
 	void DescribeElement(ITwinElementID const Element, TWeakObjectPtr<UPrimitiveComponent> HitComponent = {});
-	bool SelectVisibleElement(ITwinElementID const InElementID);
 	void HideElements(std::unordered_set<ITwinElementID> const& InElementIDs, bool IsConstruction);
 	//! Returns the selected Element's ID, if an Element is selected, or ITwin::NOT_ELEMENT.
 	ITwinElementID GetSelectedElement() const;
+	//! Select the given material (use ITwin::NOT_MATERIAL to de-select).
+	void SelectMaterial(ITwinMaterialID const& InMaterialID);
+	//! Reset selection of both Element and Material.
+	void DeSelectAll();
 };

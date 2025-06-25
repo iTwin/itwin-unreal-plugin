@@ -1,10 +1,11 @@
 #pragma once
 
-#include "BoundingRegion.h"
-#include "CesiumGeometry/AxisAlignedBox.h"
-#include "CesiumGeometry/Rectangle.h"
-#include "GeographicProjection.h"
-#include "WebMercatorProjection.h"
+#include <CesiumGeometry/AxisAlignedBox.h>
+#include <CesiumGeometry/Rectangle.h>
+#include <CesiumGeospatial/BoundingRegion.h>
+#include <CesiumGeospatial/Ellipsoid.h>
+#include <CesiumGeospatial/GeographicProjection.h>
+#include <CesiumGeospatial/WebMercatorProjection.h>
 
 #include <glm/vec2.hpp>
 
@@ -86,7 +87,7 @@ GlobeRectangle unprojectRectangleSimple(
  * necessarily true for other projections.
  *
  * @param projection The projection.
- * @param boundingRegion The bounding region to be projected.
+ * @param region The bounding region to be projected.
  * @return The projected box.
  */
 CesiumGeometry::AxisAlignedBox
@@ -102,11 +103,13 @@ projectRegionSimple(const Projection& projection, const BoundingRegion& region);
  *
  * @param projection The projection.
  * @param box The box to be unprojected.
+ * @param ellipsoid The {@link CesiumGeospatial::Ellipsoid}.
  * @return The unprojected bounding region.
  */
 BoundingRegion unprojectRegionSimple(
     const Projection& projection,
-    const CesiumGeometry::AxisAlignedBox& box);
+    const CesiumGeometry::AxisAlignedBox& box,
+    const CesiumGeospatial::Ellipsoid& ellipsoid CESIUM_DEFAULT_ELLIPSOID);
 
 /**
  * @brief Computes the approximate real-world size, in meters, of a given
@@ -127,6 +130,11 @@ glm::dvec2 computeProjectedRectangleSize(
     const Projection& projection,
     const CesiumGeometry::Rectangle& rectangle,
     double maxHeight,
-    const Ellipsoid& ellipsoid = Ellipsoid::WGS84);
+    const Ellipsoid& ellipsoid CESIUM_DEFAULT_ELLIPSOID);
+
+/**
+ * @brief Obtains the ellipsoid used by a Projection variant.
+ */
+const Ellipsoid& getProjectionEllipsoid(const Projection& projection);
 
 } // namespace CesiumGeospatial

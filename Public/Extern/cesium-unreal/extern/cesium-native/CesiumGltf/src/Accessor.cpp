@@ -1,6 +1,9 @@
-#include "CesiumGltf/Accessor.h"
+#include <CesiumGltf/Accessor.h>
+#include <CesiumGltf/BufferView.h>
+#include <CesiumGltf/Model.h>
 
-#include "CesiumGltf/Model.h"
+#include <cstdint>
+#include <string>
 
 namespace CesiumGltf {
 /*static*/ int8_t
@@ -39,9 +42,14 @@ Accessor::computeByteSizeOfComponent(int32_t componentType) noexcept {
   case CesiumGltf::Accessor::ComponentType::SHORT:
   case CesiumGltf::Accessor::ComponentType::UNSIGNED_SHORT:
     return 2;
+  case CesiumGltf::Accessor::ComponentType::INT:
   case CesiumGltf::Accessor::ComponentType::UNSIGNED_INT:
   case CesiumGltf::Accessor::ComponentType::FLOAT:
     return 4;
+  case CesiumGltf::Accessor::ComponentType::INT64:
+  case CesiumGltf::Accessor::ComponentType::UNSIGNED_INT64:
+  case CesiumGltf::Accessor::ComponentType::DOUBLE:
+    return 8;
   default:
     // TODO Print a warning here!
     return 0;
@@ -72,7 +80,8 @@ Accessor::computeByteStride(const CesiumGltf::Model& model) const noexcept {
   if (pBufferView->byteStride && pBufferView->byteStride.value() != 0) {
     return pBufferView->byteStride.value();
   }
-  return computeNumberOfComponents(this->type) *
-         computeByteSizeOfComponent(this->componentType);
+  return static_cast<int64_t>(
+      computeNumberOfComponents(this->type) *
+      computeByteSizeOfComponent(this->componentType));
 }
 } // namespace CesiumGltf

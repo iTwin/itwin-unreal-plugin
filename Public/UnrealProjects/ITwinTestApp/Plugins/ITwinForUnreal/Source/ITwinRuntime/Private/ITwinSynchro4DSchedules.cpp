@@ -7,18 +7,22 @@
 +--------------------------------------------------------------------------------------*/
 
 #include <ITwinSynchro4DSchedules.h>
+#include <ITwinDynamicShadingProperty.h>
+#include <ITwinDynamicShadingProperty.inl>
 #include <ITwinSynchro4DSchedulesInternals.h>
 #include <ITwinSynchro4DSchedulesTimelineBuilder.h>
 #include <ITwinSynchro4DAnimator.h>
 #include <ITwinServerConnection.h>
 #include <ITwinIModel.h>
 #include <ITwinIModelInternals.h>
+#include <ITwinIModelSettings.h>
 #include <Network/JsonQueriesCache.h>
 #include <Timeline/AnchorPoint.h>
 #include <Timeline/TimeInSeconds.h>
 #include <Timeline/SchedulesConstants.h>
 #include <Timeline/SchedulesImport.h>
 #include <Timeline/SchedulesStructs.h>
+#include <IncludeITwin3DTileset.h>
 
 #include <HAL/PlatformFileManager.h>
 #include <Logging/LogMacros.h>
@@ -27,14 +31,50 @@
 #include <Misc/FileHelper.h>
 #include <Misc/Paths.h>
 #include <UObject/ConstructorHelpers.h>
+
 #include <mutex>
 #include <optional>
 #include <unordered_set>
+
+#include <Compil/BeforeNonUnrealIncludes.h>
+#	include <BeUtils/Gltf/GltfTuner.h>
+#include <Compil/AfterNonUnrealIncludes.h>
 
 DECLARE_LOG_CATEGORY_EXTERN(LogITwinSched, Log, All);
 DEFINE_LOG_CATEGORY(LogITwinSched);
 
 constexpr double AUTO_SCRIPT_DURATION = 30.;
+
+namespace ITwin
+{
+	ITWINRUNTIME_API bool GetSynchroDateFromSchedules(TMap<FString, UITwinSynchro4DSchedules*> const& SchedMap, FDateTime& OutDate, FString& ScheduleIDOut)
+	{
+		for (auto const& [Synchro4DSchedulesId, Synchro4DSchedules] : SchedMap)
+			if (IsValid(Synchro4DSchedules) && Synchro4DSchedules->IsAvailable())
+			{
+				OutDate = Synchro4DSchedules->GetScheduleTime();
+				auto&& ScheduleRange = Synchro4DSchedules->GetDateRange();
+				if (ScheduleRange != FDateRange())
+				{
+					if (OutDate < ScheduleRange.GetLowerBoundValue())
+						OutDate = ScheduleRange.GetLowerBoundValue();
+					else if (OutDate > ScheduleRange.GetUpperBoundValue())
+						OutDate = ScheduleRange.GetUpperBoundValue();
+					ScheduleIDOut = Synchro4DSchedulesId;
+					return true;
+				}
+			}
+		return false;
+	}
+
+	ITWINRUNTIME_API void SetSynchroDateToSchedules(TMap<FString, UITwinSynchro4DSchedules*> const& SchedMap, const FDateTime& InDate)
+	{
+		for (auto const& [_, Synchro4DSchedules] : SchedMap)
+			if (IsValid(Synchro4DSchedules) && Synchro4DSchedules->IsAvailable())
+				Synchro4DSchedules->SetScheduleTime(InDate);
+	}
+}
+
 
 class UITwinSynchro4DSchedules::FImpl
 {
@@ -50,7 +90,7 @@ class UITwinSynchro4DSchedules::FImpl
 	FITwinSynchro4DAnimator Animator;
 	FITwinSynchro4DSchedulesInternals Internals; // <== must be declared LAST
 
-	void UpdateConnection(bool const bOnlyIfReady);
+	void UpdateGltfTunerRules();
 
 public: // for TPimplPtr
 	FImpl(UITwinSynchro4DSchedules& InOwner, bool const InDoNotBuildTimelines)
@@ -60,10 +100,150 @@ public: // for TPimplPtr
 	}
 };
 
+void UITwinSynchro4DSchedules::FImpl::UpdateGltfTunerRules()
+{
+	AITwinIModel* IModel = Cast<AITwinIModel>(Owner.GetOwner());
+	if (!ensure(IModel))
+		return;
+	if (!ensure(Internals.GltfTuner))
+	{
+		// TODO_GCO: but existing tiles will not be setup for 4D :/
+		Internals.MinGltfTunerVersionForAnimation = 0;//to apply schedule nonetheless
+		return;
+	}
+	// Called explicitly when toggling flag off from UI, we need to reset 4D tuning rules:
+	if (!Owner.bUseGltfTunerInsteadOfMeshExtraction
+		&& std::numeric_limits<int>::max() != Internals.MinGltfTunerVersionForAnimation)
+	{
+		Internals.MinGltfTunerVersionForAnimation = Internals.GltfTuner->SetAnim4DRules(
+			BeUtils::GltfTuner::Rules());
+		return;
+	}
+	// Note: timelines with neither partial translucency nor transformation (ie only opaque colors
+	// and cut planes) can be ignored here as they don't require Element separation.
+	auto& SceneMapping = GetInternals(*IModel).SceneMapping;
+	std::optional<BeUtils::GltfTuner::Rules::Anim4DGroup> TranslucentNoTransfoGroup;
+	if (EITwin4DGlTFTranslucencyRule::Unlimited == Owner.GlTFTranslucencyRule)
+	{
+		TranslucentNoTransfoGroup.emplace();
+		TranslucentNoTransfoGroup->elements_.reserve(
+			static_cast<size_t>(std::ceil(0.1 * SceneMapping.NumElements())));
+	}
+	BeUtils::GltfTuner::Rules AnimRules;
+	if (EITwin4DGlTFTranslucencyRule::PerElement == Owner.GlTFTranslucencyRule)
+		AnimRules.anim4DGroups_.reserve(static_cast<size_t>(std::ceil(0.1 * SceneMapping.NumElements())));
+	// Groups of transformability needing Elements, grouped by commonality of transforming timelines:
+	// all Elements transformed by the same timeline(s) (one timeline = one or more tasks assignment) can
+	// remain in a single mesh, because transformation operates on the "4D Resource [Group]" as a whole.
+	std::unordered_map<BeUtils::SmallVec<int32_t, 2>, std::vector<uint64_t>> PerTimelineGroups;
+	auto const& MainTimeline = Internals.Builder.GetTimeline();
+	SceneMapping.MutateElements([&MainTimeline, &TranslucentNoTransfoGroup, &PerTimelineGroups,
+								 &Anim4DGroups = AnimRules.anim4DGroups_, &Sched=Owner]
+		(FITwinElement& Elem)
+		{
+			if (Elem.AnimationKeys.empty())
+				return;
+			if (Sched.bPrefetchAllElementAnimationBindings)
+			{
+				// Like in InsertAnimatedMeshSubElemsRecursively, assume no children (= leaf Element) means
+				// that the Element will have bHasMesh=true at some point (but usually not yet!)
+				if (!Elem.SubElemsInVec.empty())
+					return;
+			}
+			else if (!Elem.bHasMesh)
+				return;
+			BeUtils::SmallVec<int32_t, 2> PerTimelineIDs;
+			// bNeedTranslucentMat may have been set in FITwinSceneMapping::OnElementsTimelineModified, where
+			// bDisableVisibilities and bDisablePartialVisibilities are not tested (TODO_GCO: do it) and/or
+			// in case this is not the first time UpdateGltfTunerRules is called! (TODO_GCO: optim?)
+			bool bReallyNeedTranslucentMat = false;
+			for (auto&& AnimKey : Elem.AnimationKeys)
+			{
+				int TimelineIndex = -1;
+				auto const* Timeline = MainTimeline.GetElementTimelineFor(AnimKey, &TimelineIndex);
+				if (ensure(Timeline))
+				{
+					if (// !Elem.Requirements.bNeedTranslucentMat <== NO, need the push_back...! &&
+						Timeline->HasPartialVisibility()
+						&& !Sched.bDisableVisibilities && !Sched.bDisablePartialVisibilities)
+					{
+						if (EITwin4DGlTFTranslucencyRule::PerTimeline == Sched.GlTFTranslucencyRule)
+							PerTimelineIDs.push_back(TimelineIndex);
+						Elem.Requirements.bNeedTranslucentMat = true;
+						bReallyNeedTranslucentMat = true;
+					}
+					Elem.Requirements.bNeedCuttingPlaneTex |= (!Timeline->ClippingPlane.Values.empty())
+						&& (!Sched.bDisableCuttingPlanes);
+					if (!Timeline->Transform.Values.empty() && (!Sched.bDisableTransforms))
+					{
+						if (EITwin4DGlTFTranslucencyRule::PerElement != Sched.GlTFTranslucencyRule
+							|| !bReallyNeedTranslucentMat)
+						{
+							PerTimelineIDs.push_back(TimelineIndex);
+						}
+						Elem.Requirements.bNeedBeTransformable = true;
+					}
+				}
+			}
+			// see comment over tex creation in FITwinSceneMapping::OnElementsTimelineModified:
+			Elem.Requirements.bNeedHiliteAndOpaTex = true;
+			if (EITwin4DGlTFTranslucencyRule::Unlimited == Sched.GlTFTranslucencyRule
+				&& PerTimelineIDs.empty()) // ie !Elem.Requirements.bNeedBeTransformable, in this case
+			{
+				if (bReallyNeedTranslucentMat)
+					TranslucentNoTransfoGroup->elements_.push_back(Elem.ElementID.value());
+			}
+			else if (EITwin4DGlTFTranslucencyRule::PerElement == Sched.GlTFTranslucencyRule
+				&& bReallyNeedTranslucentMat)
+			{
+				Anim4DGroups.emplace_back(BeUtils::GltfTuner::Rules::Anim4DGroup{
+					.elements_ = { Elem.ElementID.value() }, .ids_ = uint64_t(Elem.ElementID.value()) });
+			}
+			else if (!PerTimelineIDs.empty())
+			{
+				std::sort(PerTimelineIDs.begin(), PerTimelineIDs.end());
+				// bNeedTranslucentMat may have been set by non-transforming timelines: need to put
+				// transformable Elements in different groups depending on their need for translucency!
+				// NOT needed when grouping by timeline, since translucent timelines are also in the list
+				// (neither when grouping by Element, obviously)
+				if (EITwin4DGlTFTranslucencyRule::Unlimited == Sched.GlTFTranslucencyRule)
+				{
+					if (bReallyNeedTranslucentMat)
+					{
+						for (auto& Timeline : PerTimelineIDs)
+							Timeline = -Timeline;
+					}
+				}
+				auto Found = PerTimelineGroups.try_emplace(
+					PerTimelineIDs, std::vector<uint64_t>{ Elem.ElementID.value() });
+				if (!Found.second) // was not inserted
+					Found.first->second.push_back(Elem.ElementID.value());
+			}
+		});
+	if (EITwin4DGlTFTranslucencyRule::PerElement != Owner.GlTFTranslucencyRule)
+		AnimRules.anim4DGroups_.reserve(PerTimelineGroups.size()
+			+ (TranslucentNoTransfoGroup && TranslucentNoTransfoGroup->elements_.empty() ? 0 : 1));
+	if (TranslucentNoTransfoGroup && !TranslucentNoTransfoGroup->elements_.empty())
+		AnimRules.anim4DGroups_.emplace_back(std::move(*TranslucentNoTransfoGroup));
+	// Move the transform-only groups into the rules vector, possibly already populated with the
+	// translu-no-transfo group ('Unlimited' case), or single-Elem monogroups ('PerElement' case):
+	for (auto It = PerTimelineGroups.begin(); It != PerTimelineGroups.end(); )
+	{
+		// extract(X) invalidates X (and only X), so (post-)increment It now so that it stays valid
+		auto const Current = It++;
+		// Efficiently move both key and value from map to vector (C++17).
+		// Note: std::move(It->first) compiled but "first" being constant, it was actually copied.
+		auto NodeHandle = PerTimelineGroups.extract(Current);
+		AnimRules.anim4DGroups_.emplace_back(BeUtils::GltfTuner::Rules::Anim4DGroup{
+			std::move(NodeHandle.mapped()), std::move(NodeHandle.key()) });
+	}
+	Internals.MinGltfTunerVersionForAnimation = Internals.GltfTuner->SetAnim4DRules(std::move(AnimRules));
+}
+
 static FITwinCoordConversions const& GetIModel2UnrealCoordConv(UITwinSynchro4DSchedules& Owner)
 {
 	AITwinIModel* IModel = Cast<AITwinIModel>(Owner.GetOwner());
-	if (/*ensure*/(IModel)) // the CDO is in that case...
+	if (/*ensure*/(IModel)) // we can reach this for the CDO...
 	{
 		FITwinIModelInternals& IModelInternals = GetInternals(*IModel);
 		return IModelInternals.SceneMapping.GetIModel2UnrealCoordConv();
@@ -98,6 +278,11 @@ FITwinSynchro4DSchedulesInternals::FITwinSynchro4DSchedulesInternals(UITwinSynch
 	, SchedulesApi(InOwner, InMutex, InSchedules), Mutex(InMutex), Schedules(InSchedules)
 	, Animator(InAnimator)
 {
+}
+
+void FITwinSynchro4DSchedulesInternals::SetGltfTuner(std::shared_ptr<BeUtils::GltfTuner> const& Tuner)
+{
+	GltfTuner = Tuner;
 }
 
 void FITwinSynchro4DSchedulesInternals::CheckInitialized(AITwinIModel& IModel)
@@ -180,13 +365,40 @@ void FITwinSynchro4DSchedulesInternals::MutateSchedules(
 	Func(Schedules);
 }
 
-/// Most of the handling is delayed until the beginning of the next tick, in hope a given tile would be fully
-/// loaded before calling OnElementsTimelineModified, to avoid resizing property textures. But it might not
-/// be sufficient if 1/ meshes of a same tile are loaded by different ticks (which DOES happen, UNLESS it's
-/// only an effect of our GltfTuner?!) - and 2/ new FeatureIDs are discovered in non-first ticks...
+bool FITwinSynchro4DSchedulesInternals::TileCompatibleWithSchedule(ITwinScene::TileIdx const& TileRank) const
+{
+	if (!Owner.bUseGltfTunerInsteadOfMeshExtraction)
+		return true;
+	AITwinIModel* IModel = Cast<AITwinIModel>(Owner.GetOwner());
+	if (!IModel)
+		return false;
+	return TileCompatibleWithSchedule(GetInternals(*IModel).SceneMapping.KnownTile(TileRank));
+}
+
+bool FITwinSynchro4DSchedulesInternals::TileCompatibleWithSchedule(FITwinSceneTile const& SceneTile) const
+{
+	if (!/*ensure*/(GltfTuner)) // might be used for debugging: return true to apply 4D nonetheless
+		return true;
+	if (!Owner.bUseGltfTunerInsteadOfMeshExtraction)
+		return true;
+	return TileTunedForSchedule(SceneTile);
+}
+
+bool FITwinSynchro4DSchedulesInternals::TileTunedForSchedule(FITwinSceneTile const& SceneTile) const
+{
+	auto* renderContent = SceneTile.pCesiumTile ? SceneTile.pCesiumTile->getContent().getRenderContent()
+												: nullptr;
+	if (!renderContent)
+		return false;
+	// When using the glTF tuner, no use storing stuff about loaded tiles until schedule is fully available:
+	// retuning will unload all the SceneTile's anyway (even though the Cesium native tiles are not)!
+	return (MinGltfTunerVersionForAnimation <= renderContent->getModel()._tuneVersion);
+}
+
+/// Most of the handling is delayed until the beginning of the next tick: this was because of past
+/// misunderstandings and especially before OnNewTileBuilt was added. Could simplify...
 void FITwinSynchro4DSchedulesInternals::OnNewTileMeshBuilt(ITwinScene::TileIdx const& TileRank,
-	std::unordered_set<ITwinScene::ElemIdx>&& MeshElements,
-	const TWeakObjectPtr<UMaterialInstanceDynamic>& pMaterial, FITwinSceneTile& SceneTile)
+	std::unordered_set<ITwinScene::ElemIdx>&& MeshElements)
 {
 	if (MeshElements.empty())
 	{
@@ -201,7 +413,13 @@ void FITwinSynchro4DSchedulesInternals::OnNewTileMeshBuilt(ITwinScene::TileIdx c
 	}
 }
 
-bool FITwinSynchro4DSchedulesInternals::PrefetchAllElementAnimationBindings() const
+void FITwinSynchro4DSchedulesInternals::UnloadKnownTile(FITwinSceneTile& /*SceneTile*/,
+														ITwinScene::TileIdx const& TileRank)
+{
+	ElementsReceived.erase(TileRank);
+}
+
+bool FITwinSynchro4DSchedulesInternals::PrefetchWholeSchedule() const
 {
 	return Owner.bPrefetchAllElementAnimationBindings
 		&& !Owner.bDebugWithDummyTimelines;
@@ -209,7 +427,7 @@ bool FITwinSynchro4DSchedulesInternals::PrefetchAllElementAnimationBindings() co
 
 bool FITwinSynchro4DSchedulesInternals::IsPrefetchedAvailableAndApplied() const
 {
-	return PrefetchAllElementAnimationBindings() && EApplySchedule::InitialPassDone == ApplySchedule;
+	return PrefetchWholeSchedule() && EApplySchedule::InitialPassDone == ApplySchedule;
 }
 
 bool FITwinSynchro4DSchedulesInternals::OnNewTileBuilt(FITwinSceneTile& SceneTile)
@@ -226,6 +444,8 @@ bool FITwinSynchro4DSchedulesInternals::OnNewTileBuilt(FITwinSceneTile& SceneTil
 void FITwinSynchro4DSchedulesInternals::HideNonAnimatedDuplicates(FITwinSceneTile& SceneTile,
 																  FElementsGroup const& NonAnimatedDuplicates)
 {
+	if (!SceneTile.HighlightsAndOpacities) // may not exist (SceneTile.bVisible == false, for example)
+		return;
 	// Just iterate on the smallest collection, but both branches do the same thing of course
 	if (NonAnimatedDuplicates.size() < SceneTile.NumElementsFeatures())
 	{
@@ -249,6 +469,14 @@ void FITwinSynchro4DSchedulesInternals::HideNonAnimatedDuplicates(FITwinSceneTil
 
 void FITwinSynchro4DSchedulesInternals::SetupAndApply4DAnimationSingleTile(FITwinSceneTile& SceneTile)
 {
+	if (!TileCompatibleWithSchedule(SceneTile))
+	{
+		auto const& SceneMapping = GetInternals(*Cast<AITwinIModel>(Owner.GetOwner())).SceneMapping;
+		ElementsReceived.erase(SceneMapping.KnownTileRank(SceneTile));
+		// Tile remains non-render-ready: except if you want to for debugging purposes, then uncomment:
+		// SceneTile.pCesiumTile->setRenderEngineReadiness(true);
+		return;
+	}
 	if (!SceneTile.bIsSetupFor4DAnimation)
 	{
 		Setup4DAnimationSingleTile(SceneTile, {}, nullptr);
@@ -266,8 +494,14 @@ void FITwinSynchro4DSchedulesInternals::Setup4DAnimationSingleTile(FITwinSceneTi
 	if (!Elements)
 	{
 		Pending.emplace(ElementsReceived.find(*TileRank));
-		if (!ensure(ElementsReceived.end() != Pending))
+		if (ElementsReceived.end() == (*Pending))
+		{
+			if (ensure(SceneTile.IsLoaded() && SceneTile.MaxFeatureID == ITwin::NOT_FEATURE))
+			{
+				SceneTile.bIsSetupFor4DAnimation = true;//not really, but needed to mark it render-ready
+			}
 			return;
+		}
 		Elements = &((*Pending)->second);
 	}
 	std::unordered_set<FIModelElementsKey> Timelines;
@@ -298,10 +532,12 @@ void FITwinSynchro4DSchedulesInternals::Setup4DAnimationSingleTile(FITwinSceneTi
 			// can't pass this, the expected param is a vector ptr (but only because
 			// InsertAnimatedMeshSubElemsRecursively says so, it could be changed),
 			// BUT we only handle fully loaded tiles anyway:
-			/* , &TileMeshElements.second*/);
+			, nullptr/*&TileMeshElements.second*/
+			, Owner.bUseGltfTunerInsteadOfMeshExtraction
+			, TileTunedForSchedule(SceneTile)
+			, Index);
 	}
-	if (SceneTile.HighlightsAndOpacities)
-		HideNonAnimatedDuplicates(SceneTile, MainTimeline.GetNonAnimatedDuplicates());
+	HideNonAnimatedDuplicates(SceneTile, MainTimeline.GetNonAnimatedDuplicates());
 }
 
 void FITwinSynchro4DSchedulesInternals::HandleReceivedElements(bool& bNew4DAnimTexToUpdate)
@@ -317,20 +553,19 @@ void FITwinSynchro4DSchedulesInternals::HandleReceivedElements(bool& bNew4DAnimT
 	// timeline(s), so ReplicateAnimElemTextureSetupInTile & the FElemAnimRequirements system was added
 	// to take care of Elements already animated _in other tiles_. Elements not yet animated were passed on
 	// to QueryElementsTasks anyway, so OnElementsTimelineModified would be called for them later if needed.
-	// With PrefetchAllElementAnimationBindings, the situation is reversed: we have all bindings (once
+	// With PrefetchWholeSchedule, the situation is reversed: we have all bindings (once
 	// IsAvailable() returns true), so OnElementsTimelineModified needs to be called on all Elements, because
 	// no new query will be made.
 	auto& SceneMapping = GetInternals(*Cast<AITwinIModel>(Owner.GetOwner())).SceneMapping;
 
 	// Note: only used by initial pass now
-	if (PrefetchAllElementAnimationBindings() && ensure(Owner.IsAvailable()))
+	if (PrefetchWholeSchedule() && ensure(Owner.IsAvailable()))
 	{
 		for (auto const& [TileRank, TileElems] : ElementsReceived)
 		{
 			auto& SceneTile = SceneMapping.KnownTile(TileRank);
-			// may have been unloaded while waiting for ElementsReceived to be processed, typically while
-			// waiting for the schedule to be fully available!
-			if (SceneTile.IsLoaded())
+			// may have been unloaded while waiting for ElementsReceived to be processed
+			if (SceneTile.IsLoaded() && TileCompatibleWithSchedule(SceneTile))
 				Setup4DAnimationSingleTile(SceneTile, TileRank, &TileElems);
 		}
 	}
@@ -573,36 +808,41 @@ bool FITwinSynchro4DSchedulesInternals::IsReadyToQuery() const
 void FITwinSynchro4DSchedulesInternals::Reset()
 {
 	ApplySchedule = EApplySchedule::WaitForFullSchedule;
-	Schedules.clear();
-	// see comment below about ordering:
 	SchedulesApi = FITwinSchedulesImport(Owner, Mutex, Schedules);
+	// Clear Schedules AFTER FITwinSchedulesImport::Impl is deleted above, because 1/ schedules can be
+	// accessed by FromPool.AsyncRoutine until they're all finished, which is waited on in
+	// FReusableJsonQueries::FImpl, and 2/ clear() here is called without locking Mutex:
+	for (auto& Sched : Schedules)
+	{
+		// Keep "metadata": this will skip them in RequestSchedules, speeding up Reset a lot by avoiding
+		// a useless repetition of the request.
+		Sched = FITwinSchedule{ Sched.Id, Sched.Name, Sched.Generation };
+	}
+	// See comment below about ordering between SchedulesApi and Builder:
 	Builder.Uninitialize();
 	Builder = FITwinScheduleTimelineBuilder(Owner, GetIModel2UnrealCoordConv(Owner));
 	if (!bDoNotBuildTimelines)
 	{
-		SchedulesApi.SetSchedulesImportObservers(
+		SchedulesApi.SetSchedulesImportConnectors(
 			// getting Builder's pointer here should be safe, because SchedulesApi is deleted /before/
 			// Builder, (both above and in the destructor, as per the members' declaration order), which
 			// will ensure no more request callbacks and thus no more calls to this subsequent callback:
 			std::bind(&FITwinScheduleTimelineBuilder::AddAnimationBindingToTimeline, &Builder,
 					  std::placeholders::_1, std::placeholders::_2, std::placeholders::_3),
 			std::bind(&FITwinScheduleTimelineBuilder::UpdateAnimationGroupInTimeline, &Builder,
-					  std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+					  std::placeholders::_1, std::placeholders::_2, std::placeholders::_3),
+			std::bind(&FITwinSceneMapping::FindElementIDForGUID,
+					  &GetInternals(*Cast<AITwinIModel>(Owner.GetOwner())).SceneMapping,
+					  std::placeholders::_1, std::placeholders::_2));
 	}
 #if WITH_EDITOR
-	if (!PrefetchAllElementAnimationBindings()
-		&& !Owner.OnScheduleQueryingStatusChanged.IsAlreadyBound(&Owner,
-				&UITwinSynchro4DSchedules::LogStatisticsUponQueryLoopStatusChange))
+	if (!PrefetchWholeSchedule())
 	{
-		Owner.OnScheduleQueryingStatusChanged.AddDynamic(&Owner,
-			&UITwinSynchro4DSchedules::LogStatisticsUponQueryLoopStatusChange);
+		Owner.OnScheduleQueryingStatusChanged.AddUniqueDynamic(&Owner,
+			&UITwinSynchro4DSchedules::OnQueryLoopStatusChange);
 	}
-	if (!Owner.OnScheduleTimeRangeKnown.IsAlreadyBound(&Owner,
-		&UITwinSynchro4DSchedules::LogStatisticsUponFullScheduleReceived))
-	{
-		Owner.OnScheduleTimeRangeKnown.AddDynamic(&Owner,
-			&UITwinSynchro4DSchedules::LogStatisticsUponFullScheduleReceived);
-	}
+	Owner.OnScheduleTimeRangeKnown.AddUniqueDynamic(&Owner,
+		&UITwinSynchro4DSchedules::LogStatisticsUponFullScheduleReceived);
 #endif
 }
 
@@ -617,10 +857,8 @@ void FITwinSynchro4DSchedulesInternals::UpdateConnection(bool const bOnlyIfReady
 	if (!bOnlyIfReady || IsReadyToQuery())
 	{
 		AITwinIModel& IModel = *Cast<AITwinIModel>(Owner.GetOwner());
-		// See comment about empty changeset in QueriesCache::GetCacheFolder():
-		ensureMsgf(!IModel.GetSelectedChangeset().IsEmpty() || IModel.ChangesetId.IsEmpty(),
-				   TEXT("Selected changeset shouldn't be empty!"));
-		SchedulesApi.ResetConnection(IModel.ITwinId, IModel.IModelId, IModel.GetSelectedChangeset());
+		if (ensure(IModel.bResolvedChangesetIdValid))
+			SchedulesApi.ResetConnection(IModel.ITwinId, IModel.IModelId, IModel.GetSelectedChangeset());
 	}
 }
 
@@ -653,7 +891,7 @@ bool FITwinSynchro4DSchedulesInternals::ResetSchedules()
 															std::placeholders::_1, std::placeholders::_2));
 	UpdateConnection(false);
 
-	if (PrefetchAllElementAnimationBindings())
+	if (PrefetchWholeSchedule())
 	{
 		// If the tileset is already loaded, we need to re-fill ElementsReceived with all tiles and Elements,
 		// so that the Timeline optimization structures (FITwinElementTimeline::ExtraData) are re-created
@@ -713,23 +951,26 @@ UITwinSynchro4DSchedules::UITwinSynchro4DSchedules()
 UITwinSynchro4DSchedules::UITwinSynchro4DSchedules(bool bDoNotBuildTimelines)
 	: Impl(MakePimpl<FImpl>(*this, bDoNotBuildTimelines))
 {
-	// Do like in UITwinCesiumGltfComponent's ctor to avoid crashes when changing level?
+	// Do like in UCesiumGltfComponent's ctor to avoid crashes when changing level?
 	// (from Carrot's Dashboard typically...)
 	// Structure to hold one-time initialization
 	struct FConstructorStatics {
 		ConstructorHelpers::FObjectFinder<UMaterialInstance> BaseMaterialMasked;
 		ConstructorHelpers::FObjectFinder<UMaterialInstance> BaseMaterialTranslucent;
 		ConstructorHelpers::FObjectFinder<UMaterialInstance> BaseMaterialGlass;
+		ConstructorHelpers::FObjectFinder<UMaterialInstance> BaseMaterialOpaque;
 		FConstructorStatics()
 			: BaseMaterialMasked(TEXT("/ITwinForUnreal/ITwin/Materials/MI_ITwinInstance"))
 			, BaseMaterialTranslucent(TEXT("/ITwinForUnreal/ITwin/Materials/MI_ITwinInstanceTranslucent"))
 			, BaseMaterialGlass(TEXT("/ITwinForUnreal/ITwin/Materials/MI_ITwinGlass"))
+			, BaseMaterialOpaque(TEXT("/ITwinForUnreal/ITwin/Materials/MI_ITwinOpaque"))
 		{}
 	};
 	static FConstructorStatics ConstructorStatics;
 	this->BaseMaterialMasked = ConstructorStatics.BaseMaterialMasked.Object;
 	this->BaseMaterialTranslucent = ConstructorStatics.BaseMaterialTranslucent.Object;
 	this->BaseMaterialGlass = ConstructorStatics.BaseMaterialGlass.Object;
+	this->BaseMaterialOpaque = ConstructorStatics.BaseMaterialOpaque.Object;
 }
 
 UITwinSynchro4DSchedules::~UITwinSynchro4DSchedules()
@@ -744,6 +985,18 @@ FDateRange UITwinSynchro4DSchedules::GetDateRange() const
 		return Impl->Internals.GetTimeline().GetDateRange();
 	else
 		return FDateRange();
+}
+
+FDateTime UITwinSynchro4DSchedules::GetPlannedStartDate() const
+{
+	auto&& ScheduleRange = GetDateRange();
+	return (ScheduleRange != FDateRange()) ? ScheduleRange.GetLowerBoundValue() : FDateTime();
+}
+
+FDateTime UITwinSynchro4DSchedules::GetPlannedEndDate() const
+{
+	auto&& ScheduleRange = GetDateRange();
+	return (ScheduleRange != FDateRange()) ? ScheduleRange.GetUpperBoundValue() : FDateTime();
 }
 
 void UITwinSynchro4DSchedules::TickSchedules(float DeltaTime)
@@ -783,11 +1036,17 @@ void UITwinSynchro4DSchedules::TickSchedules(float DeltaTime)
 		Impl->bUpdateConnectionIfReadyNeeded = false;
 		Impl->Internals.UpdateConnection(true);
 	}
-	else if (Impl->Internals.PrefetchAllElementAnimationBindings()
+	else if (Impl->Internals.PrefetchWholeSchedule()
 		&& FITwinSynchro4DSchedulesInternals::EApplySchedule::InitialPassDone != Impl->Internals.ApplySchedule)
 	{
 		if (IsAvailable())
 		{
+			if (bUseGltfTunerInsteadOfMeshExtraction
+				&& std::numeric_limits<int>::max() == Impl->Internals.MinGltfTunerVersionForAnimation)
+			{
+				ensure(false); // should have been called already
+				Impl->UpdateGltfTunerRules();
+			}
 			bool dummy = false;
 			Impl->Internals.HandleReceivedElements(dummy);
 			Impl->Internals.ApplySchedule = FITwinSynchro4DSchedulesInternals::EApplySchedule::InitialPassDone;
@@ -803,7 +1062,7 @@ void UITwinSynchro4DSchedules::TickSchedules(float DeltaTime)
 	else
 	{
 		bool bNew4DAnimTexToUpdate = false;
-		if (!Impl->Internals.PrefetchAllElementAnimationBindings())
+		if (!Impl->Internals.PrefetchWholeSchedule())
 		{
 			Impl->Internals.HandleReceivedElements(bNew4DAnimTexToUpdate);
 		}
@@ -832,8 +1091,22 @@ void UITwinSynchro4DSchedules::OnVisibilityChanged(FITwinSceneTile& SceneTile, b
 
 bool UITwinSynchro4DSchedules::IsAvailable() const
 {
-	return Impl->Internals.SchedulesApi.HasFullSchedule();
+	return Impl->Internals.SchedulesApi.HasFinishedPrefetching();
 }
+
+bool UITwinSynchro4DSchedules::IsAvailableWithErrors() const
+{
+	return IsAvailable() && Impl->Internals.SchedulesApi.HasFetchingErrors();
+}
+
+FString UITwinSynchro4DSchedules::FirstFetchingErrorString() const
+{
+	if (IsAvailableWithErrors())
+		return Impl->Internals.SchedulesApi.FirstFetchingErrorString();
+	else
+		return FString();
+}
+
 
 void UITwinSynchro4DSchedules::UpdateConnection()
 {
@@ -846,42 +1119,57 @@ void UITwinSynchro4DSchedules::ResetSchedules()
 	Impl->bResetSchedulesNeeded = true;
 }
 
-void UITwinSynchro4DSchedules::LogStatisticsUponQueryLoopStatusChange(bool bQueryLoopIsRunning)
+void UITwinSynchro4DSchedules::OnQueryLoopStatusChange(bool bQueryLoopIsRunning)
 {
 	if (bQueryLoopIsRunning)
 	{
 		UE_LOG(LogITwinSched, Display, TEXT("Query loop (re)started..."));
 	}
-	else
+	else if (IsAvailable())
 	{
 		UE_LOG(LogITwinSched, Display, TEXT("Query loop now idling. %s"),
 										*Impl->Internals.SchedulesApi.ToString());
+		if (bUseGltfTunerInsteadOfMeshExtraction)
+			Impl->UpdateGltfTunerRules();
+		if (!DebugDumpAsJsonAfterQueryAll.IsEmpty())
+			Impl->Internals.Builder.DebugDumpFullTimelinesAsJson(DebugDumpAsJsonAfterQueryAll);
+	}
+	else
+	{
+		UE_LOG(LogITwinSched, Display, TEXT("Query loop now idling: no schedule available."));
 	}
 }
 
 void UITwinSynchro4DSchedules::LogStatisticsUponFullScheduleReceived(FDateTime StartTime, FDateTime EndTime)
 {
-	UE_LOG(LogITwinSched, Display, TEXT("Schedule tasks received: %llu between %s and %s"),
-		Impl->Internals.SchedulesApi.NumTasks(), *StartTime.ToString(), *EndTime.ToString());
+	AITwinIModel* IModel = Cast<AITwinIModel>(GetOwner());
+	if (!ensure(IModel)) return;
+	if (ScheduleId.IsEmpty() || !ensure(!ScheduleId.StartsWith(TEXT("Unknown"))))
+	{
+		UE_LOG(LogITwinSched, Display, TEXT("Finished querying, no schedule for iModel %s"),
+			   *IModel->IModelId);
+	}
+	else if (Impl->Internals.SchedulesApi.NumTasks() > 0)
+	{
+		UE_LOG(LogITwinSched, Display, TEXT("Schedule tasks received: %llu between %s and %s for iModel %s"),
+			   Impl->Internals.SchedulesApi.NumTasks(), *StartTime.ToString(), *EndTime.ToString(),
+			   *IModel->IModelId);
+	}
+	else
+	{
+		UE_LOG(LogITwinSched, Display, TEXT("Finished querying, empty schedule for iModel %s"),
+			   *IModel->IModelId);
+	}
 }
 
 void UITwinSynchro4DSchedules::QueryAll()
 {
 	if (!Impl->Internals.IsReadyToQuery()) return;
 	Impl->Internals.SchedulesApi.QueryEntireSchedules(QueryAllFromTime, QueryAllUntilTime,
-		DebugDumpAsJsonAfterQueryAll.IsEmpty() ? std::function<void(bool)>() :
-		[this, Dest=DebugDumpAsJsonAfterQueryAll] (bool bSuccess)
+		[This=this](bool bSuccess)
 		{
-			if (!bSuccess) return;
-			FString TimelineAsJson = GetInternals(*this).GetTimeline().ToPrettyJsonString();
-			IPlatformFile& FileManager = FPlatformFileManager::Get().GetPlatformFile();
-			FString Path = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir());
-			Path.Append(Dest);
-			if (!Dest.EndsWith(".json"))
-				Path.Append(".json");
-			if (FileManager.FileExists(*Path))
-				FileManager.DeleteFile(*Path);
-			FFileHelper::SaveStringToFile(TimelineAsJson, *Path, FFileHelper::EEncodingOptions::ForceUTF8);
+			if (bSuccess && IsValid(This) && !This->DebugDumpAsJsonAfterQueryAll.IsEmpty())
+				GetInternals(*This).Builder.DebugDumpFullTimelinesAsJson(This->DebugDumpAsJsonAfterQueryAll);
 		});
 }
 
@@ -909,16 +1197,31 @@ void UITwinSynchro4DSchedules::QueryElementsTasks(TArray<FString> const& Element
 void UITwinSynchro4DSchedules::Play()
 {
 	Impl->Animator.Play();
+	//SetNeedForcedShadowUpdate(GetOwner()); <== handled by AITwinIModel::FImpl::ForceShadowUpdatesIfNeeded()
+}
+
+bool UITwinSynchro4DSchedules::IsPlaying() const
+{
+	return Impl->Animator.IsPlaying();
+}
+
+void SetNeedForcedShadowUpdate(AActor* Owner)
+{
+	AITwinIModel* IModel = Cast<AITwinIModel>(Owner);
+	if (!IModel) return;
+	GetInternals(*IModel).SetNeedForcedShadowUpdate();
 }
 
 void UITwinSynchro4DSchedules::Pause()
 {
 	Impl->Animator.Pause();
+	SetNeedForcedShadowUpdate(GetOwner());
 }
 
 void UITwinSynchro4DSchedules::Stop()
 {
 	Impl->Animator.Stop();
+	SetNeedForcedShadowUpdate(GetOwner());
 }
 
 void UITwinSynchro4DSchedules::JumpToBeginning()
@@ -926,8 +1229,7 @@ void UITwinSynchro4DSchedules::JumpToBeginning()
 	auto const DateRange = GetDateRange();
 	if (DateRange != FDateRange())
 	{
-		ScheduleTime = DateRange.GetLowerBoundValue();
-		Impl->Animator.OnChangedScheduleTime(false);
+		SetScheduleTime(DateRange.GetLowerBoundValue());
 	}
 }
 
@@ -936,8 +1238,7 @@ void UITwinSynchro4DSchedules::JumpToEnd()
 	auto const DateRange = GetDateRange();
 	if (DateRange != FDateRange())
 	{
-		ScheduleTime = DateRange.GetUpperBoundValue();
-		Impl->Animator.OnChangedScheduleTime(false);
+		SetScheduleTime(DateRange.GetUpperBoundValue());
 	}
 }
 
@@ -960,7 +1261,11 @@ void UITwinSynchro4DSchedules::SetScheduleTime(FDateTime NewScheduleTime)
 {
 	//if (ScheduleTime != NewScheduleTime) <== don't: see PostEditChangeProperty
 	ScheduleTime = NewScheduleTime;
-	Impl->Animator.OnChangedScheduleTime(false);
+	SetNeedForcedShadowUpdate(GetOwner());
+	// This call used to call TickAnimation, in effect applying the new time right away! This could be a
+	// problem in some border cases, and also if SetScheduleTime was called several times in a given frame.
+	// The call is not actually needed since it will happen in the next iModel tick anyway.
+	//Impl->Animator.OnChangedScheduleTime(false);
 }
 
 FTimespan UITwinSynchro4DSchedules::GetReplaySpeed() const
@@ -985,7 +1290,7 @@ void UITwinSynchro4DSchedules::ClearCacheOnlyThis()
 		}
 		FString const CacheFolder = QueriesCache::GetCacheFolder(QueriesCache::ESubtype::Schedules,
 			IModel->ServerConnection->Environment, IModel->ITwinId, IModel->IModelId, IModel->ChangesetId,
-			ScheduleId);
+			bStream4DFromAPIM ? (FString("APIM_") + ScheduleId) : ScheduleId);
 		if (ensure(!CacheFolder.IsEmpty()))
 			IFileManager::Get().DeleteDirectory(*CacheFolder, /*requireExists*/false, /*recurse*/true);
 	}
@@ -1001,6 +1306,11 @@ void UITwinSynchro4DSchedules::ClearCacheAllSchedules()
 		IModel->ServerConnection->Environment, {}, {}, {});
 	if (ensure(!CacheFolder.IsEmpty()))
 		IFileManager::Get().DeleteDirectory(*CacheFolder, /*requireExists*/false, /*recurse*/true);
+}
+
+void UITwinSynchro4DSchedules::DisableAnimationInTile(void* SceneTile)
+{
+	Impl->Animator.DisableAnimationInTile(*(FITwinSceneTile*)SceneTile);
 }
 
 #if WITH_EDITOR
@@ -1021,6 +1331,7 @@ void UITwinSynchro4DSchedules::PostEditChangeProperty(FPropertyChangedEvent& Pro
 {
 	Super::PostEditChangeProperty(PropertyChangedEvent);
 	auto const Name = PropertyChangedEvent.Property->GetFName();
+	bool bUpdateClassDefaults = false;
 	if (Name == GET_MEMBER_NAME_CHECKED(UITwinSynchro4DSchedules, ScheduleTime))
 	{
 		SetScheduleTime(ScheduleTime);
@@ -1031,24 +1342,72 @@ void UITwinSynchro4DSchedules::PostEditChangeProperty(FPropertyChangedEvent& Pro
 	}
 	else if (Name == GET_MEMBER_NAME_CHECKED(UITwinSynchro4DSchedules, bDisableColoring)
 		  || Name == GET_MEMBER_NAME_CHECKED(UITwinSynchro4DSchedules, bDisableVisibilities)
+		  || Name == GET_MEMBER_NAME_CHECKED(UITwinSynchro4DSchedules, bDisablePartialVisibilities)
 		  || Name == GET_MEMBER_NAME_CHECKED(UITwinSynchro4DSchedules, bDisableCuttingPlanes)
 		  || Name == GET_MEMBER_NAME_CHECKED(UITwinSynchro4DSchedules, bDisableTransforms)
+		  || (bUseGltfTunerInsteadOfMeshExtraction
+			  && Name == GET_MEMBER_NAME_CHECKED(UITwinSynchro4DSchedules, GlTFTranslucencyRule))
 	) {
+		if (bUseGltfTunerInsteadOfMeshExtraction
+			&& (Name == GET_MEMBER_NAME_CHECKED(UITwinSynchro4DSchedules, bDisableVisibilities)
+				|| Name == GET_MEMBER_NAME_CHECKED(UITwinSynchro4DSchedules, bDisablePartialVisibilities)
+				|| Name == GET_MEMBER_NAME_CHECKED(UITwinSynchro4DSchedules, bDisableTransforms)
+				|| Name == GET_MEMBER_NAME_CHECKED(UITwinSynchro4DSchedules, GlTFTranslucencyRule))
+		) {
+			Impl->UpdateGltfTunerRules();
+		}
 		Impl->Animator.OnChangedScheduleRenderSetting();
+		SetNeedForcedShadowUpdate(GetOwner());
+		bUpdateClassDefaults = true;
+	}
+	else if (Name == GET_MEMBER_NAME_CHECKED(UITwinSynchro4DSchedules, bUseGltfTunerInsteadOfMeshExtraction))
+	{
+		// needed to reset tuning, because in that case, ResetSchedules won't call it
+		if (!bUseGltfTunerInsteadOfMeshExtraction)
+			Impl->UpdateGltfTunerRules();
+		ResetSchedules();
+		bUpdateClassDefaults = true;
+	}
+	else if (Name == GET_MEMBER_NAME_CHECKED(UITwinSynchro4DSchedules, MaxTimelineUpdateMilliseconds)
+		|| Name == GET_MEMBER_NAME_CHECKED(UITwinSynchro4DSchedules, ScheduleQueriesServerPagination)
+		|| Name == GET_MEMBER_NAME_CHECKED(UITwinSynchro4DSchedules, ScheduleQueriesBindingsPagination))
+	{
+		bUpdateClassDefaults = true;
 	}
 	else if (Name == GET_MEMBER_NAME_CHECKED(UITwinSynchro4DSchedules, bFadeOutNonAnimatedElements))
 	{
 		Impl->Animator.OnFadeOutNonAnimatedElements();
+		SetNeedForcedShadowUpdate(GetOwner());
 	}
 	else if (Name == GET_MEMBER_NAME_CHECKED(UITwinSynchro4DSchedules, bMaskOutNonAnimatedElements))
 	{
 		Impl->Animator.OnMaskOutNonAnimatedElements();
+		SetNeedForcedShadowUpdate(GetOwner());
 	}
 	else if (Name == GET_MEMBER_NAME_CHECKED(UITwinSynchro4DSchedules, DebugRecordSessionQueries)
 		  || Name == GET_MEMBER_NAME_CHECKED(UITwinSynchro4DSchedules, DebugSimulateSessionQueries)
 		  || Name == GET_MEMBER_NAME_CHECKED(UITwinSynchro4DSchedules, bDisableCaching))
 	{
 		ResetSchedules();
+	}
+	else if (Name == GET_MEMBER_NAME_CHECKED(UITwinSynchro4DSchedules, bStream4DFromAPIM))
+	{
+		ResetSchedules();
+		bUpdateClassDefaults = true;
+	}
+	if (bUpdateClassDefaults)
+	{
+		auto* Settings = GetMutableDefault<UITwinIModelSettings>();
+		Settings->Synchro4DMaxTimelineUpdateMilliseconds = MaxTimelineUpdateMilliseconds;
+		Settings->Synchro4DQueriesDefaultPagination = ScheduleQueriesServerPagination;
+		Settings->Synchro4DQueriesBindingsPagination = ScheduleQueriesBindingsPagination;
+		Settings->bSynchro4DUseGltfTunerInsteadOfMeshExtraction = bUseGltfTunerInsteadOfMeshExtraction;
+		Settings->Synchro4DGlTFTranslucencyRule = GlTFTranslucencyRule;
+		Settings->bSynchro4DDisableColoring = bDisableColoring;
+		Settings->bSynchro4DDisableVisibilities = bDisableVisibilities;
+		Settings->bSynchro4DDisablePartialVisibilities = bDisablePartialVisibilities;
+		Settings->bSynchro4DDisableCuttingPlanes = bDisableCuttingPlanes;
+		Settings->bSynchro4DUseAPIM = bStream4DFromAPIM;
 	}
 }
 #endif // WITH_EDITOR

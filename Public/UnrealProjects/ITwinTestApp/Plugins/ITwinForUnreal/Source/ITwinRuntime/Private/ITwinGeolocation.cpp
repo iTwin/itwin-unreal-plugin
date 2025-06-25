@@ -7,7 +7,7 @@
 +--------------------------------------------------------------------------------------*/
 
 #include <ITwinGeolocation.h>
-#include <ITwinCesiumGeoreference.h>
+#include <CesiumGeoreference.h>
 #include <EngineUtils.h>
 #include <Engine/World.h>
 
@@ -19,7 +19,7 @@ void FITwinGeolocation::CheckInit(UWorld& World)
 	static const TCHAR* LocalRefName = TEXT("iTwinNonGeolocatedReference");
 	if (!GeoReference.IsValid() || !LocalReference.IsValid())
 	{
-		for (TActorIterator<AITwinCesiumGeoreference> GeorefIter(&World); GeorefIter; ++GeorefIter)
+		for (TActorIterator<ACesiumGeoreference> GeorefIter(&World); GeorefIter; ++GeorefIter)
 		{
 			if (!GeoReference.IsValid() && (*GeorefIter)->GetName() == GeoRefName)
 				GeoReference = *GeorefIter;
@@ -31,8 +31,8 @@ void FITwinGeolocation::CheckInit(UWorld& World)
 	{
 		FActorSpawnParameters Params;
 		Params.Name = GeoRefName;
-		GeoReference = World.SpawnActor<AITwinCesiumGeoreference>(Params);
-		GeoReference->SetOriginPlacement(EITwinOriginPlacement::TrueOrigin); // here means "not yet inited"
+		GeoReference = World.SpawnActor<ACesiumGeoreference>(Params);
+		GeoReference->SetOriginPlacement(EOriginPlacement::TrueOrigin); // here means "not yet inited"
 	#if WITH_EDITOR
 		GeoReference->SetActorLabel(GeoRefName);
 	#endif
@@ -41,12 +41,12 @@ void FITwinGeolocation::CheckInit(UWorld& World)
 	{
 		FActorSpawnParameters Params;
 		Params.Name = LocalRefName;
-		LocalReference = World.SpawnActor<AITwinCesiumGeoreference>(Params);
-		LocalReference->Tags.Add(FName("DEFAULT_GEOREFERENCE")); // copied from ITwinCesiumGeoreference.cpp
+		LocalReference = World.SpawnActor<ACesiumGeoreference>(Params);
+		LocalReference->Tags.Add(FName("DEFAULT_GEOREFERENCE")); // copied from CesiumGeoreference.cpp
 		// For non-geolocated iModels, the mesh export service creates a hard-coded fake geolocation
 		// by locating the center of the "project extents" at latitude & longitude 0.
 		// So for those iModels we use a georeference located here.
-		LocalReference->SetOriginPlacement(EITwinOriginPlacement::CartographicOrigin);
+		LocalReference->SetOriginPlacement(EOriginPlacement::CartographicOrigin);
 		LocalReference->SetOriginLongitudeLatitudeHeight(FVector::ZeroVector);
 	#if WITH_EDITOR
 		LocalReference->SetActorLabel(LocalRefName);

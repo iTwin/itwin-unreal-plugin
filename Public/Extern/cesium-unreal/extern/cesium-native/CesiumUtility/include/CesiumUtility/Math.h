@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Library.h"
+#include <CesiumUtility/Library.h>
 
 #include <glm/gtc/epsilon.hpp>
 
@@ -75,19 +75,24 @@ public:
   static constexpr double Epsilon21 = 1e-21;
 
   /**
-   * @brief pi
+   * @brief Pi
    */
   static constexpr double OnePi = 3.14159265358979323846;
 
   /**
-   * @brief two times pi
+   * @brief Two times pi
    */
   static constexpr double TwoPi = OnePi * 2.0;
 
   /**
-   * @brief pi divded by two
+   * @brief Pi divided by two
    */
   static constexpr double PiOverTwo = OnePi / 2.0;
+
+  /**
+   * @brief Pi divided by four
+   */
+  static constexpr double PiOverFour = OnePi / 4.0;
 
   /**
    * @brief Converts a relative to an absolute epsilon, for the epsilon-equality
@@ -98,7 +103,7 @@ public:
    * @tparam Q The GLM qualifier type.
    *
    * @param a The first value.
-   * @param b The the second value.
+   * @param b The second value.
    * @param relativeEpsilon The relative epsilon.
    * @return The absolute epsilon.
    */
@@ -115,7 +120,7 @@ public:
    * check between two values.
    *
    * @param a The first value.
-   * @param b The the second value.
+   * @param b The second value.
    * @param relativeEpsilon The relative epsilon.
    * @return The absolute epsilon.
    */
@@ -134,7 +139,7 @@ public:
    * @tparam Q The GLM qualifier type.
    *
    * @param left The first value.
-   * @param right The the second value.
+   * @param right The second value.
    * @param relativeEpsilon The relative epsilon.
    * @return Whether the values are epsilon-equal
    */
@@ -150,7 +155,7 @@ public:
    * @brief Checks whether two values are equal up to a given relative epsilon.
    *
    * @param left The first value.
-   * @param right The the second value.
+   * @param right The second value.
    * @param relativeEpsilon The relative epsilon.
    * @return Whether the values are epsilon-equal
    */

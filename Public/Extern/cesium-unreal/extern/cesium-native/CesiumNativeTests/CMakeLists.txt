@@ -1,4 +1,5 @@
 add_executable(cesium-native-tests "")
+set_property(TARGET cesium-native-tests PROPERTY FOLDER "Tests")
 configure_cesium_library(cesium-native-tests)
 
 # Add tests here, ensure they define the TEST_SOURCES / TEST_HEADERS
@@ -7,15 +8,17 @@ set(cesium_native_targets
     Cesium3DTiles
     Cesium3DTilesContent
     Cesium3DTilesReader
-    Cesium3DTilesWriter
     Cesium3DTilesSelection
+    Cesium3DTilesWriter
     CesiumAsync
     CesiumGeometry
     CesiumGeospatial
     CesiumGltf
+    CesiumGltfContent
     CesiumGltfReader
     CesiumGltfWriter
     CesiumIonClient
+    CesiumQuantizedMeshTerrain
     CesiumRasterOverlays
     CesiumUtility
 )
@@ -80,12 +83,19 @@ target_include_directories(
         ${test_include_directories}
 )
 
-target_link_libraries(
-    cesium-native-tests
+target_link_libraries(cesium-native-tests
+PUBLIC
+    doctest::doctest
     ${cesium_native_targets}
-    Catch2::Catch2
+PRIVATE
+    s2::s2
+)
+
+target_compile_definitions(cesium-native-tests
+PRIVATE
+  CESIUM_NATIVE_DATA_DIR=\"${CMAKE_CURRENT_LIST_DIR}/../data\"
 )
 
 include(CTest)
-include(Catch)
-catch_discover_tests(cesium-native-tests)
+include(doctest)
+doctest_discover_tests(cesium-native-tests)

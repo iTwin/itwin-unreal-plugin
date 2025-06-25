@@ -1,9 +1,13 @@
 #include <CesiumGeospatial/Cartographic.h>
+#include <CesiumGeospatial/Ellipsoid.h>
 #include <CesiumGeospatial/GlobeTransforms.h>
 #include <CesiumGeospatial/LocalHorizontalCoordinateSystem.h>
+#include <CesiumUtility/Assert.h>
 
+#include <glm/ext/matrix_double3x3.hpp>
+#include <glm/ext/matrix_double4x4.hpp>
+#include <glm/ext/vector_double3.hpp>
 #include <glm/gtc/matrix_inverse.hpp>
-#include <glm/mat3x3.hpp>
 
 using namespace CesiumGeospatial;
 
@@ -58,7 +62,8 @@ LocalHorizontalCoordinateSystem::LocalHorizontalCoordinateSystem(
           xAxisDirection,
           yAxisDirection,
           zAxisDirection,
-          scaleToMeters) {}
+          scaleToMeters,
+          ellipsoid) {}
 
 LocalHorizontalCoordinateSystem::LocalHorizontalCoordinateSystem(
     const glm::dvec3& originEcef,
@@ -68,9 +73,12 @@ LocalHorizontalCoordinateSystem::LocalHorizontalCoordinateSystem(
     double scaleToMeters,
     const Ellipsoid& ellipsoid) {
   // The three axes must be orthogonal
-  assert(directionToAxis(xAxisDirection) != directionToAxis(yAxisDirection));
-  assert(directionToAxis(xAxisDirection) != directionToAxis(zAxisDirection));
-  assert(directionToAxis(yAxisDirection) != directionToAxis(zAxisDirection));
+  CESIUM_ASSERT(
+      directionToAxis(xAxisDirection) != directionToAxis(yAxisDirection));
+  CESIUM_ASSERT(
+      directionToAxis(xAxisDirection) != directionToAxis(zAxisDirection));
+  CESIUM_ASSERT(
+      directionToAxis(yAxisDirection) != directionToAxis(zAxisDirection));
 
   // Construct a local horizontal system with East-North-Up axes (right-handed)
   glm::dmat4 enuToFixed =

@@ -21,7 +21,7 @@ public:
 	{
 	}
 
-	void SetVerb(SDK::Core::EVerb eVerb)
+	void SetVerb(AdvViz::SDK::EVerb eVerb)
 	{
 		UERequest->SetVerb(ITwinHttp::GetVerbString(eVerb));
 	}
@@ -29,14 +29,14 @@ public:
 	static const long HTTP_CONNECT_ERR = -2;
 
 	void SetResponseCallback(
-		SDK::Core::HttpRequest::RequestPtr const& requestPtr,
-		SDK::Core::HttpRequest::ResponseCallback const& callback)
+		AdvViz::SDK::HttpRequest::RequestPtr const& requestPtr,
+		AdvViz::SDK::HttpRequest::ResponseCallback const& callback)
 	{
 		UERequest->OnProcessRequestComplete().BindLambda(
 			[this, ResultCallback = callback, RequestPtr = requestPtr]
 			(FHttpRequestPtr pUERequest, FHttpResponsePtr UEResponse, bool connectedSuccessfully)
 		{
-			SDK::Core::Http::Response Response;
+			AdvViz::SDK::Http::Response Response;
 			if (connectedSuccessfully)
 			{
 				Response.first = UEResponse->GetResponseCode();
@@ -46,8 +46,8 @@ public:
 					// In case we receive some binary data, we may want to get it and not just a (truncated)
 					// string...
 					const TArray<uint8>& content = UEResponse->GetContent();
-					Response.rawdata_ = std::make_shared<SDK::Core::Http::RawData>();
-					SDK::Core::Http::RawData& rawdata(*Response.rawdata_);
+					Response.rawdata_ = std::make_shared<AdvViz::SDK::Http::RawData>();
+					AdvViz::SDK::Http::RawData& rawdata(*Response.rawdata_);
 					rawdata.reserve(content.Num());
 					for (uint8 b : content)
 						rawdata.push_back(b);
@@ -62,12 +62,18 @@ public:
 		});
 	}
 
-	void Process(SDK::Core::Http const& http,
+	void Process(AdvViz::SDK::Http const& http,
 				 std::string const& url,
 				 std::string const& body,
-				 SDK::Core::Http::Headers const& headers)
+				 AdvViz::SDK::Http::Headers const& headers,
+				 bool isFullUrl)
 	{
-		UERequest->SetURL((http.GetBaseUrl() + url).c_str());
+		std::string FullURL;
+		if (isFullUrl)
+			FullURL = url;
+		else
+			FullURL = http.GetBaseUrl() + url;
+		UERequest->SetURL(FullURL.c_str());
 		for (auto const& [Key, Value] : headers)
 		{
 			UERequest->SetHeader(Key.c_str(), Value.c_str());
@@ -80,7 +86,7 @@ public:
 	}
 
 	bool CheckResponse(
-		SDK::Core::Http::Response const& response,
+		AdvViz::SDK::Http::Response const& response,
 		std::string& requestError) const
 	{
 		if (response.first == HTTP_CONNECT_ERR)
@@ -115,12 +121,13 @@ FUEHttpRequest::FUEHttpRequest()
 }
 
 void FUEHttpRequest::Process(
-	SDK::Core::Http& http,
+	AdvViz::SDK::Http& http,
 	std::string const& url,
 	std::string const& body,
-	SDK::Core::Http::Headers const& headers)
+	AdvViz::SDK::Http::Headers const& headers,
+	bool isFullUrl /*= false*/)
 {
-	Impl->Process(http, url, body, headers);
+	Impl->Process(http, url, body, headers, isFullUrl);
 }
 
 bool FUEHttpRequest::CheckResponse(Response const& response, std::string& requestError) const
@@ -128,7 +135,7 @@ bool FUEHttpRequest::CheckResponse(Response const& response, std::string& reques
 	return Impl->CheckResponse(response, requestError);
 }
 
-void FUEHttpRequest::DoSetVerb(SDK::Core::EVerb verb)
+void FUEHttpRequest::DoSetVerb(AdvViz::SDK::EVerb verb)
 {
 	Impl->SetVerb(verb);
 }

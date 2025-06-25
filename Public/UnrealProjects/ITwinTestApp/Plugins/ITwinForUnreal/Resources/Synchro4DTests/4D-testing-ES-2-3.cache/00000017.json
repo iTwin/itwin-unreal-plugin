@@ -1,0 +1,10 @@
+﻿{
+	"url": "https://qa-es-api.bentley.com/4dschedule/v1/schedules/3497df55-60e9-44fd-91ec-3c86473884f5/animationBindings/query?pageSize=3&pageToken=eyJQcmltYXJ5U2tpcFRva2VuIjoiODA0NGZjMWEtZDE2Yy00MWY4LTlkNWItNGMzNGJhNjdmZGUxIiwiU2Vjb25kYXJ5U2tpcFRva2VuIjoiMDg2ZWFlYTUtMDY3Yy00MTZjLWE4MDktMmQwNWIyNjg5NTFhIiwiVHlwZSI6MH0=",
+	"verb": "POST",
+	"payload": "{}",
+	"connectedSuccessfully": true,
+	"responseCode": 200
+,
+	"reply": 
+{"items":[{"taskId":"e16465cc-73c8-4de8-b316-4efbbefede86","animatedEntityId":"0x130000000026","appearanceProfileId":"e6399834-1807-4b99-a6c4-92fc068bdbbe","transformId":null,"resourceId":"afd76af2-6dac-40d6-984d-3a7cca6d01db","resourceGroupId":null,"pathAssignmentId":"9c21c14d-dcbb-489d-9249-5f17604f6fa1"},{"taskId":"e16465cc-73c8-4de8-b316-4efbbefede86","animatedEntityId":"0x130000000024","appearanceProfileId":"cef22464-9ba1-4833-a13c-b50338936175","transformId":null,"resourceId":"8556cfb6-65a2-4815-add1-6e0da3fbb024","resourceGroupId":null,"pathAssignmentId":"b6a1916e-d3c9-409e-9d3a-611a04cf4d86"},{"taskId":"e16465cc-73c8-4de8-b316-4efbbefede86","animatedEntityId":"0x13000000003d","appearanceProfileId":"0a67df06-a8c4-4504-8ee5-0ba292ce752c","transformId":null,"resourceId":"d02f8a4a-b1da-45b8-a949-f0092ebee143","resourceGroupId":null,"pathAssignmentId":"dab1c4f3-3d9d-486f-85b0-87f15b3f5caa"}],"nextPageToken":"eyJQcmltYXJ5U2tpcFRva2VuIjoiZGFiMWM0ZjMtM2Q5ZC00ODZmLTg1YjAtODdmMTViM2Y1Y2FhIiwiU2Vjb25kYXJ5U2tpcFRva2VuIjoiNDQyNDcwYzMtNmM0Ny00NmNmLWIwNTgtY2RlMGE4YmFkMDM5IiwiVHlwZSI6MH0="}
+}

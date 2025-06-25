@@ -29,4 +29,7 @@ namespace BeUtils
 //! @returns A string containing the Reality Data Identifier (otherwise named tile id). If the URL is not a reality data service URL then empty string is returned.
 std::string GetRealityDataIdFromUrl(const std::string& url);
 
+//! Returns whether the given string contains at least the 3 first blocks of a UUID (something like xxxxxxxx-xxxx-xxxx-).
+bool ContainsUUIDLikeSubstring(const std::string& name);
+
 } // namespace BeUtils

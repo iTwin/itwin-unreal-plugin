@@ -1,16 +1,26 @@
-#include "CesiumGeometry/OctreeAvailability.h"
+#include <CesiumGeometry/Availability.h>
+#include <CesiumGeometry/OctreeAvailability.h>
+#include <CesiumGeometry/OctreeTileID.h>
+#include <CesiumGeometry/TileAvailabilityFlags.h>
+#include <CesiumUtility/Assert.h>
 
-#include <cassert>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <optional>
+#include <span>
+#include <utility>
 
 namespace CesiumGeometry {
 
+namespace {
 /**
  * @brief Inserts two 0 bits of spacing between a number's bits.
  *
  * @param i A 10-bit unsigned int.
  * @return A 32-bit unsigned int.
  */
-static uint32_t spread3(uint32_t i) {
+uint32_t spread3(uint32_t i) {
   i = (i ^ (i << 16)) & 0x030000ff;
   i = (i ^ (i << 8)) & 0x0300f00f;
   i = (i ^ (i << 4)) & 0x030c30c3;
@@ -28,9 +38,10 @@ static uint32_t spread3(uint32_t i) {
  * @param z An unsigned 10-bit number to put in places 2, 5, 8, etc.
  * @return The 32-bit unsigned morton index.
  */
-static uint32_t getMortonIndex(uint32_t x, uint32_t y, uint32_t z) {
+uint32_t getMortonIndex(uint32_t x, uint32_t y, uint32_t z) {
   return spread3(z) << 2 | spread3(y) << 1 | spread3(x);
 }
+} // namespace
 
 OctreeAvailability::OctreeAvailability(
     uint32_t subtreeLevels,
@@ -137,7 +148,7 @@ uint8_t OctreeAvailability::computeAvailability(
       uint8_t bitIndex = static_cast<uint8_t>(childSubtreeMortonIndex & 7);
       uint8_t bitMask = static_cast<uint8_t>(1 << bitIndex);
 
-      gsl::span<const std::byte> clippedSubtreeAvailability =
+      std::span<const std::byte> clippedSubtreeAvailability =
           subtreeAvailabilityAccessor.getBufferAccessor().subspan(0, byteIndex);
       uint8_t availabilityByte =
           (uint8_t)subtreeAvailabilityAccessor[byteIndex];
@@ -170,7 +181,7 @@ uint8_t OctreeAvailability::computeAvailability(
   // This is the only case where execution should reach here. It means that a
   // subtree we need to traverse is known to be available, but it isn't yet
   // loaded.
-  assert(pNode == nullptr || pNode->subtree == std::nullopt);
+  CESIUM_ASSERT(pNode == nullptr || pNode->subtree == std::nullopt);
 
   // This means the tile was the root of a subtree that was available, but not
   // loaded. It is not reachable though, pending the load of the subtree. This
@@ -244,7 +255,7 @@ bool OctreeAvailability::addSubtree(
       uint8_t bitIndex = static_cast<uint8_t>(childSubtreeMortonIndex & 7);
       uint8_t bitMask = static_cast<uint8_t>(1 << bitIndex);
 
-      gsl::span<const std::byte> clippedSubtreeAvailability =
+      std::span<const std::byte> clippedSubtreeAvailability =
           subtreeAvailabilityAccessor.getBufferAccessor().subspan(0, byteIndex);
       uint8_t availabilityByte =
           (uint8_t)subtreeAvailabilityAccessor[byteIndex];
@@ -420,7 +431,7 @@ AvailabilityNode* OctreeAvailability::addNode(
     uint8_t bitIndex = static_cast<uint8_t>(mortonIndex & 7);
     uint8_t bitMask = static_cast<uint8_t>(1 << bitIndex);
 
-    gsl::span<const std::byte> clippedSubtreeAvailability =
+    std::span<const std::byte> clippedSubtreeAvailability =
         subtreeAvailabilityAccessor.getBufferAccessor().subspan(0, byteIndex);
     uint8_t availabilityByte = (uint8_t)subtreeAvailabilityAccessor[byteIndex];
 
@@ -491,7 +502,7 @@ std::optional<uint32_t> OctreeAvailability::findChildNodeIndex(
     uint8_t bitIndex = static_cast<uint8_t>(mortonIndex & 7);
     uint8_t bitMask = static_cast<uint8_t>(1 << bitIndex);
 
-    gsl::span<const std::byte> clippedSubtreeAvailability =
+    std::span<const std::byte> clippedSubtreeAvailability =
         subtreeAvailabilityAccessor.getBufferAccessor().subspan(0, byteIndex);
     uint8_t availabilityByte = (uint8_t)subtreeAvailabilityAccessor[byteIndex];
 

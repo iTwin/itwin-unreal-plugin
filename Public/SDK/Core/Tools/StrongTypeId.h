@@ -10,7 +10,7 @@
 #pragma once
 #include <array>
 
-namespace SDK::Core
+namespace AdvViz::SDK
 {
 
 	template<typename T>
@@ -18,9 +18,9 @@ namespace SDK::Core
 	{
 	public:
 		StrongTypeId() {}
-		StrongTypeId(const StrongTypeId&) = default;
-		StrongTypeId(StrongTypeId&&) = default;
-		StrongTypeId& operator=(const StrongTypeId&) = default;
+		StrongTypeId(const StrongTypeId<T>&) = default;
+		StrongTypeId(StrongTypeId<T>&&) = default;
+		StrongTypeId& operator=(const StrongTypeId<T>&) = default;
 
 		explicit StrongTypeId(const std::string& s) :value_(s)
 		{}
@@ -45,6 +45,24 @@ namespace SDK::Core
 			return !value_.empty();
 		}
 
+		void Reset() { value_.clear(); }
+
+		bool operator==(const std::string& v) const
+		{
+			return value_ == v;
+		}
+
+		bool operator==(const StrongTypeId<T>& v) const
+		{
+			return value_ == v.value_;
+		}
+
+		bool operator<(const StrongTypeId<T>& v) const
+		{
+			return value_ < v.value_;
+		}
+
+	private:
 		std::string value_;
 	};
 
@@ -57,3 +75,13 @@ namespace SDK::Core
 	};
 
 }
+
+template<typename T>
+struct std::hash<AdvViz::SDK::StrongTypeId<T>>
+{
+	std::size_t operator()(const AdvViz::SDK::StrongTypeId<T>& s) const noexcept
+	{
+		std::hash<std::string> h;
+		return h((std::string&)s);
+	}
+};

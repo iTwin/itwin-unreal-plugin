@@ -21,6 +21,13 @@ class ITWINRUNTIME_API AITwinSavedView : public AITwinServiceActor
 {
 	GENERATED_BODY()
 public:
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnFinishedMovingToSavedViewEvent);
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnRetrievedThumbnailEvent, FString const&, SavedViewId, UTexture2D*, Tex2D);
+	UPROPERTY()
+	FOnFinishedMovingToSavedViewEvent FinishedMovingToSavedView;
+	UPROPERTY()
+	FOnRetrievedThumbnailEvent RetrievedThumbnail;
+
 	UPROPERTY(Category = "iTwin",
 		EditAnywhere,
 		BlueprintReadOnly)
@@ -33,6 +40,14 @@ public:
 		CallInEditor,
 		BlueprintCallable)
 	void UpdateSavedView();
+
+	UFUNCTION(Category = "iTwin",
+		BlueprintCallable)
+	void UpdateThumbnail(const FString& FullFilePath);
+
+	UFUNCTION(Category = "iTwin",
+		BlueprintCallable)
+	void GetThumbnail();
 
 	//! Only saved views created with the plugin can be deleted,
 	//! legacy saved views are not deletable.
@@ -76,16 +91,13 @@ public:
 	UFUNCTION(Category = "iTwin",
 		meta = (WorldContext = "WorldContextObject"),
 		BlueprintCallable)
-	static void HideElements(const UObject* WorldContextObject, FSavedView const& SavedView);
+	static void HideElements(AITwinIModel* iModel, FSavedView const& SavedView);
 
 private:
 	class FImpl;
 	TPimplPtr<FImpl> Impl;
 
-	UFUNCTION()
-	void OnTimelineTick(const float& output);
-
-	// TODO_GCO: might just work instead of calling TickComponent from the global iModel ticker,
+	// TODO_GCO: might just work instead of calling TickComponent from AITwinIModel::Tick,
 	// IFF I end up understanding why the OnTimelineTick delegate is not called... (see comment in
 	// AITwinSavedView::MoveToSavedView...)
 	//virtual bool ShouldTickIfViewportsOnly() const override { return true; }
@@ -93,11 +105,15 @@ private:
 	/// overridden from AITwinServiceActor:
 	virtual void UpdateOnSuccessfulAuthorization() override;
 
+	FTimerHandle TimerHandle;
+
 	/// overridden from IITwinWebServicesObserver:
 	virtual void OnSavedViewRetrieved(bool bSuccess, FSavedView const& SavedView, FSavedViewInfo const& SavedViewInfo) override;
 	virtual void OnSavedViewAdded(bool bSuccess, FSavedViewInfo const& SavedViewInfo) override;
 	virtual void OnSavedViewDeleted(bool bSuccess, FString const& InSavedViewId, FString const& Response) override;
 	virtual void OnSavedViewEdited(bool bSuccess, FSavedView const& SavedView, FSavedViewInfo const& SavedViewInfo) override;
+	virtual void OnSavedViewThumbnailRetrieved(bool bSuccess, FString const& SavedViewId, TArray<uint8> const& Buffer) override;
+	virtual void OnSavedViewThumbnailUpdated(bool bSuccess, FString const& SavedViewId, FString const& Response) override;
 
 	/// overridden from FITwinDefaultWebServicesObserver
 	virtual const TCHAR* GetObserverName() const override;

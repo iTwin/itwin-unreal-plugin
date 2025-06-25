@@ -12,15 +12,19 @@
 #include <glm/glm.hpp>
 #include <ITwinUtilityLibrary.generated.h>
 
-class FITwinCoordConversions
+USTRUCT()
+struct FITwinCoordConversions
 {
-public:
-	FITwinCoordConversions();
+	GENERATED_USTRUCT_BODY()
 
-	FTransform IModelToUnreal;
-	FTransform UnrealToIModel;
-	FTransform IModelToUntransformedIModelInUE;
-	FTransform IModelTilesetTransform;
+	UPROPERTY()
+	FTransform IModelToUnreal = FTransform::Identity;
+	UPROPERTY()
+	FTransform UnrealToIModel = FTransform::Identity;
+	UPROPERTY()
+	FTransform IModelToUntransformedIModelInUE = FTransform::Identity;
+	UPROPERTY()
+	FTransform IModelTilesetTransform = FTransform::Identity;
 };
 
 UCLASS()

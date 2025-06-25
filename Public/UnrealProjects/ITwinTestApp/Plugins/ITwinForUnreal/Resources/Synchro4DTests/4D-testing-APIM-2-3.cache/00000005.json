@@ -1,0 +1,9 @@
+﻿{
+	"url": "https://qa-api.bentley.com/schedules/3497df55-60e9-44fd-91ec-3c86473884f5/animation-3d-paths/keyframes?$top=2",
+	"verb": "GET",
+	"connectedSuccessfully": true,
+	"responseCode": 200
+,
+	"reply": 
+{"nextPageToken":"eyJQcmltYXJ5U2tpcFRva2VuIjoiMGVmZGExNGYtNmUzOS00YjRjLTgyOTMtYzc2MTZmZjMzOWRkIiwiU2Vjb25kYXJ5U2tpcFRva2VuIjpudWxsLCJUeXBlIjowfQ==","keyframes":[{"pathId":"3f3c6a38-7a7b-4d7a-8550-1585c96cc130","position":{"x":32298.8359375,"y":31818.537109375,"z":4.939210414886475},"rotation":{"angle":90.0,"x":0.0,"y":1.0,"z":0.0},"time":0.4062129557132721},{"pathId":"a16f8cf5-a3a0-4640-ac15-075c509022e5","position":{"x":32562.376953125,"y":31475.376953125,"z":197.37570190429688},"rotation":{"angle":0.0,"x":1.0,"y":0.0,"z":0.0},"time":1.0}],"_links":{"self":{"href":"https://qa-api.bentley.com/schedules/3497df55-60e9-44fd-91ec-3c86473884f5/animation-3d-paths/keyframes?$top=2"},"next":{"href":"https://qa-api.bentley.com/schedules/3497df55-60e9-44fd-91ec-3c86473884f5/animation-3d-paths/keyframes?$top=2&$continuationToken=eyJQcmltYXJ5U2tpcFRva2VuIjoiMGVmZGExNGYtNmUzOS00YjRjLTgyOTMtYzc2MTZmZjMzOWRkIiwiU2Vjb25kYXJ5U2tpcFRva2VuIjpudWxsLCJUeXBlIjowfQ%3d%3d"}}}
+}

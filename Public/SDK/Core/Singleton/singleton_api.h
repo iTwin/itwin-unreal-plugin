@@ -10,6 +10,7 @@
 #ifndef INC_SINGLETON_API_H_
 #define INC_SINGLETON_API_H_
 
+#ifdef SINGLETONDLL
 #if defined(_WIN32) || defined(__CYGWIN__)
 #  if defined(Singleton_EXPORTS) // add by CMake 
 #    ifdef __GNUC__
@@ -39,4 +40,9 @@
 #   error "Do not know how to export classes for this platform"
 #endif
 
+#endif
+#endif//SINGLETONDLL
+
+#ifndef SINGLETON_API
+#define  SINGLETON_API 
 #endif

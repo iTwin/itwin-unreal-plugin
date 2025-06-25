@@ -4,8 +4,8 @@
 #include "Impl/CatchFunction.h"
 #include "Impl/ContinuationFutureType.h"
 #include "Impl/WithTracing.h"
-#include "ThreadPool.h"
 
+#include <CesiumAsync/ThreadPool.h>
 #include <CesiumUtility/Tracing.h>
 
 #include <type_traits>
@@ -123,6 +123,7 @@ public:
    * method returns.
    *
    * @tparam Func The type of the function.
+   * @param threadPool The thread pool where this function will be invoked.
    * @param f The function.
    * @return A future that resolves after the supplied function completes.
    */
@@ -195,7 +196,7 @@ public:
    * values, followed by the result of the current Future.
    *
    * @tparam TPassThrough The types to pass through to the next continuation.
-   * @param value The values to pass through to the next continuation.
+   * @param values The values to pass through to the next continuation.
    * @return A new Future that resolves to a tuple with the pass-through values,
    * followed by the result of the last Future.
    */
@@ -212,10 +213,12 @@ public:
   /**
    * @brief Waits for the future to resolve or reject and returns the result.
    *
-   * This method must not be called from the main thread, the one that calls
-   * {@link AsyncSystem::dispatchMainThreadTasks}. Doing so can lead to a
+   * \attention This method must not be called from the main thread, the one
+   * that calls {@link AsyncSystem::dispatchMainThreadTasks}. Doing so can lead to a
    * deadlock because the main thread tasks will never complete while this
    * method is blocking the main thread.
+   *
+   * To wait in the main thread, use {@link waitInMainThread} instead.
    *
    * @return The value if the future resolves successfully.
    * @throws An exception if the future rejected.
@@ -228,12 +231,43 @@ public:
     return this->_task.get();
   }
 
+  /**
+   * @brief Waits for the future to resolve or reject.
+   *
+   * \attention This method must not be called from the main thread, the one
+   * that calls {@link AsyncSystem::dispatchMainThreadTasks}. Doing so can lead to a
+   * deadlock because the main thread tasks will never complete while this
+   * method is blocking the main thread.
+   *
+   * To wait in the main thread, use {@link waitInMainThread} instead.
+   *
+   * @throws An exception if the future rejected.
+   */
   template <
       typename U = T,
       std::enable_if_t<std::is_same_v<U, T>, int> = 0,
       std::enable_if_t<std::is_same_v<U, void>, int> = 0>
   void wait() const {
     this->_task.get();
+  }
+
+  /**
+   * @brief Waits for this future to resolve or reject in the main thread while
+   * also processing main-thread tasks.
+   *
+   * This method must be called from the main thread.
+   *
+   * The function does not return until {@link Future::isReady} returns true.
+   * In the meantime, main-thread tasks are processed as necessary. This method
+   * does not spin wait; it suspends the calling thread by waiting on a
+   * condition variable when there is no work to do.
+   *
+   * @return The value if the future resolves successfully.
+   * @throws An exception if the future rejected.
+   */
+  T waitInMainThread() {
+    return this->_pSchedulers->mainThread.dispatchUntilTaskCompletes(
+        std::move(this->_task));
   }
 
   /**

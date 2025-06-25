@@ -58,7 +58,7 @@ void MainTimeline::OnElementsTimelineModified(ElementTimelineEx& ModifiedTimelin
 	bHasNewOrModifiedTimeline_ = true;
 }
 
-ElementTimelineEx* MainTimeline::GetElementTimelineFor(FIModelElementsKey const ElementsKey,
+ElementTimelineEx* MainTimeline::GetElementTimelineFor(FIModelElementsKey const& ElementsKey,
 													   int* Index/*= nullptr*/) const
 {
 	const auto It = ElementsKeyToTimeline.find(ElementsKey);
@@ -318,10 +318,23 @@ TSharedPtr<FJsonValue> ToJsonValue(PTransform const& Prop)
 	}
 }
 
+namespace Detail
+{
+	std::set<ITwinElementID> GetSortedElements(MainTimeline::ObjectTimeline const& A)
+	{
+		std::set<ITwinElementID> Sorted;
+		for (auto&& Elem : A.GetIModelElements())
+			Sorted.insert(Elem);
+		return Sorted;
+	}
+}
+
 void ElementTimelineEx::ToJson(TSharedRef<FJsonObject>& JsonObj) const
 {
+	// See MainTimeline::ToJsonString
+	auto SortedElems = Detail::GetSortedElements(*this);
 	TArray<TSharedPtr<FJsonValue>> JsonElems;
-	for (auto&& Elem : IModelElements)
+	for (auto&& Elem : SortedElems)
 	{
 		// no uint64 json value :/
 		JsonElems.Add(MakeShared<FJsonValueString>(ITwin::ToString(Elem)));
@@ -366,11 +379,44 @@ FString ElementTimelineEx::ToPrettyJsonString() const
 //	return mat;
 //}
 
+struct TimelineCompareOrderedElementIDs
+{
+	bool operator()(MainTimeline::ObjectTimelinePtr const& A, MainTimeline::ObjectTimelinePtr const& B) const
+	{
+		// The FElementsGroup must be sorted, too...
+		std::set<ITwinElementID> SortedA = Detail::GetSortedElements(*A);
+		std::set<ITwinElementID> SortedB = Detail::GetSortedElements(*B);
+		auto ItA = SortedA.begin(), ItB = SortedB.begin();
+		for (; ItA != SortedA.end() && ItB != SortedB.end(); ++ItA, ++ItB)
+		{
+			if ((*ItA) != (*ItB))
+			{
+				return (*ItA) < (*ItB);
+			}
+		}
+		// Sets are equal until reaching the end of either or both
+		if (ItA == SortedA.end() && ItB == SortedB.end()) // A == B => !(A < B)
+			return false;
+		else if (ItA == SortedA.end()) // A is shorter (ie subset of B) => A < B
+			return true;
+		else // A superset of B => A > B
+			return false;
+	}
+};
+
 template<typename JsonPrintPolicy> FString MainTimeline::ToJsonString() const
 {
 	TArray<TSharedPtr<FJsonValue>> TimelinesArray;
 	TimelinesArray.Reserve((int32)GetContainer().size());
+	// Use a deterministic ordering, since the order of timelines in the container can depend on the order
+	// of data received from 4D api. ElementsKeyToTimeline isn't suitable either (even with a fixed hash func)
+	// because FIModelElementsKey can be the Elements group index, which also depends on http replies ordering.
+	std::set<ObjectTimelinePtr, TimelineCompareOrderedElementIDs> OrderedTimelines;
 	for (auto&& ElementTimeline : GetContainer())
+	{
+		OrderedTimelines.insert(ElementTimeline);
+	}
+	for (auto&& ElementTimeline : OrderedTimelines)
 	{
 		auto ElementTimelineJsonObj = MakeShared<FJsonObject>();
 		ElementTimeline->ToJson(ElementTimelineJsonObj);

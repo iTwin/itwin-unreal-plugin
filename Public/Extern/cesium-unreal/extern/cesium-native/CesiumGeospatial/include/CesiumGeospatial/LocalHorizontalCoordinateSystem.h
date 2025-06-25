@@ -1,7 +1,7 @@
 #pragma once
 
-#include "Ellipsoid.h"
-#include "Library.h"
+#include <CesiumGeospatial/Ellipsoid.h>
+#include <CesiumGeospatial/Library.h>
 
 #include <glm/mat4x4.hpp>
 #include <glm/vec3.hpp>
@@ -12,6 +12,10 @@ class Cartographic;
 
 namespace CesiumGeospatial {
 
+/**
+ * @brief A local direction, consisting of the four cardinal directions (North,
+ * South, East, West) combined with Up and Down.
+ */
 enum class LocalDirection { East, North, West, South, Up, Down };
 
 /**
@@ -46,13 +50,15 @@ public:
       LocalDirection yAxisDirection = LocalDirection::North,
       LocalDirection zAxisDirection = LocalDirection::Up,
       double scaleToMeters = 1.0,
-      const Ellipsoid& ellipsoid = Ellipsoid::WGS84);
+      // Can't use CESIUM_DEFAULT_ELLIPSOID here because of the other default
+      // parameters
+      const Ellipsoid& ellipsoid = CesiumGeospatial::Ellipsoid::WGS84);
 
   /**
-   * @brief Create a new coordinate system centered at a Earth-Centered,
-   * Earth-Fixed position.
+   * @brief Create a new coordinate system centered at a \ref
+   * what-are-ecef-coordinates "Earth-Centered, Earth-Fixed" position.
    *
-   * @param origin The origin of the coordinate system.
+   * @param originEcef The origin of the coordinate system.
    * @param xAxisDirection The local direction in which the X axis points at the
    * origin.
    * @param yAxisDirection The local direction in which the Y axis points at the
@@ -70,12 +76,12 @@ public:
       LocalDirection yAxisDirection = LocalDirection::North,
       LocalDirection zAxisDirection = LocalDirection::Up,
       double scaleToMeters = 1.0,
-      const Ellipsoid& ellipsoid = Ellipsoid::WGS84);
+      const Ellipsoid& ellipsoid = CesiumGeospatial::Ellipsoid::WGS84);
 
   /**
    * @brief Create a new coordinate system with a specified transformation to
-   * the Earth-Centered, Earth-Fixed frame. This is an advanced constructor and
-   * should be avoided in most cases.
+   * the \ref what-are-ecef-coordinates "Earth-Centered, Earth-Fixed" frame.
+   * This is an advanced constructor and should be avoided in most cases.
    *
    * This constructor can be used to save/restore the state of an instance. It
    * can also be used to create unusual coordinate systems that can't be created
@@ -89,7 +95,8 @@ public:
 
   /**
    * @brief Create a new coordinate system with the specified transformations
-   * between the local frame and the Earth-Centered, Earth-Fixed frame. This is
+   * between the local frame and the
+   * \ref what-are-ecef-coordinates "Earth-Centered, Earth-Fixed" frame. This is
    * an advanced constructor and should be avoided in most cases.
    *
    * This constructor can be used to save/restore the state of an instance. It
@@ -110,8 +117,7 @@ public:
 
   /**
    * @brief Gets the transformation matrix from the local horizontal coordinate
-   * system managed by this instance to the Earth-Centered, Earth-fixed
-   * coordinate system.
+   * system managed by this instance to the \ref what-are-ecef-coordinates.
    *
    * @return The transformation.
    */
@@ -120,9 +126,8 @@ public:
   }
 
   /**
-   * @brief Gets the transformation matrix from the Earth-Centered, Earth-Fixed
-   * (ECEF) coordinate system to the local horizontal coordinate system managed
-   * by this instance.
+   * @brief Gets the transformation matrix from \ref what-are-ecef-coordinates
+   * to the local horizontal coordinate system managed by this instance.
    *
    * @return The transformation.
    */
@@ -132,7 +137,8 @@ public:
 
   /**
    * @brief Converts a position in the local horizontal coordinate system
-   * managed by this instance to Earth-Centered, Earth-Fixed (ECEF).
+   * managed by this instance to
+   * \ref what-are-ecef-coordinates "Earth-Centered, Earth-Fixed (ECEF)".
    *
    * @param localPosition The position in the local coordinate system.
    * @return The equivalent position in the ECEF coordinate system.
@@ -141,7 +147,8 @@ public:
   localPositionToEcef(const glm::dvec3& localPosition) const noexcept;
 
   /**
-   * @brief Converts a position in the Earth-Centered, Earth-Fixed (ECEF)
+   * @brief Converts a position in the
+   * \ref what-are-ecef-coordinates "Earth-Centered, Earth-Fixed (ECEF)"
    * coordinate system to the local horizontal coordinate system managed by this
    * instance.
    *
@@ -152,26 +159,28 @@ public:
 
   /**
    * @brief Converts a direction in the local horizontal coordinate system
-   * managed by this instance to Earth-Centered, Earth-Fixed (ECEF).
+   * managed by this instance to
+   * \ref what-are-ecef-coordinates "Earth-Centered, Earth-Fixed (ECEF)".
    *
    * Because the vector is treated as a direction only, the translation portion
    * of the transformation is ignored.
    *
-   * @param localPosition The direction in the local coordinate system.
+   * @param localDirection The direction in the local coordinate system.
    * @return The equivalent direction in the ECEF coordinate system.
    */
   glm::dvec3
   localDirectionToEcef(const glm::dvec3& localDirection) const noexcept;
 
   /**
-   * @brief Converts a direction in the Earth-Centered, Earth-Fixed (ECEF)
+   * @brief Converts a direction in the
+   * \ref what-are-ecef-coordinates "Earth-Centered, Earth-Fixed (ECEF)"
    * coordinate system to the local horizontal coordinate system managed by this
    * instance.
    *
    * Because the vector is treated as a direction only, the translation portion
    * of the transformation is ignored.
    *
-   * @param ecefPosition The direction in the ECEF coordinate system.
+   * @param ecefDirection The direction in the ECEF coordinate system.
    * @return The equivalent direction in the local coordinate system.
    */
   glm::dvec3

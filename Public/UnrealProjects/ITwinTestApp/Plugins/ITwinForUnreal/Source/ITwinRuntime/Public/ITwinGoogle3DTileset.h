@@ -10,11 +10,7 @@
 
 #pragma once
 
-// Include SanitizedPlatformHeaders.h before ITwinCesium3DTileset.h, or the packaging fails
-// (error min/max in CesiumGltf/AccessorUtility.h...)
-#include <ITwinRuntime/Private/Compil/SanitizedPlatformHeaders.h>
-
-#include <ITwinCesium3DTileset.h>
+#include <IncludeITwin3DTileset.h>
 
 #include <Containers/Array.h>
 #include <Templates/PimplPtr.h>
@@ -22,11 +18,8 @@
 #include <ITwinGoogle3DTileset.generated.h>
 
 
-class UITwinCesiumPolygonRasterOverlay;
-
-
 UCLASS()
-class ITWINRUNTIME_API AITwinGoogle3DTileset : public AITwinCesium3DTileset
+class ITWINRUNTIME_API AITwinGoogle3DTileset : public ACesium3DTileset
 {
 	GENERATED_BODY()
 public:
@@ -37,9 +30,9 @@ public:
 
 	//! Fill the default Google key used to access the Google tileset API.
 	//! This key is private to the user account.
-	static void SetDefaultKey(FString const& DefaultGoogleKey);
+	static void SetDefaultKey(FString const& DefaultGoogleKey, UWorld* World = nullptr);
 
-	static AITwinGoogle3DTileset* MakeInstance(UWorld& World);
+	static AITwinGoogle3DTileset* MakeInstance(UWorld& World, bool bGeneratePhysicsMeshes = false);
 
 	AITwinGoogle3DTileset();
 
@@ -64,8 +57,6 @@ public:
 		BlueprintCallable)
 	bool IsGeoLocationLocked() const;
 
-	void InitPolygonRasterOverlay();
-	UITwinCesiumPolygonRasterOverlay* GetPolygonRasterOverlay() const;
 
 private:
 	class FImpl;
@@ -78,9 +69,9 @@ namespace ITwin
 	/// Return true if the given tileset uses an URL corresponding to Google API. It includes both instances
 	/// of class AITwinGoogle3DTileset (by construction), but also any tileset created manually or coming
 	/// from the time when AITwinGoogle3DTileset did not exist yet.
-	ITWINRUNTIME_API bool IsGoogle3DTileset(const AITwinCesium3DTileset* tileset);
+	ITWINRUNTIME_API bool IsGoogle3DTileset(const ACesium3DTileset* tileset);
 
 	/// Gather all Google3D tilesets in given world, ie. tilesets matching the predicate #IsGoogle3DTileset.
 	ITWINRUNTIME_API void GatherGoogle3DTilesets(const UObject* WorldContextObject,
-		TArray<AITwinCesium3DTileset*>& Out3DMapTilesets);
+		TArray<ACesium3DTileset*>& Out3DMapTilesets);
 }

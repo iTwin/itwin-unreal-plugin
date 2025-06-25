@@ -76,13 +76,13 @@ bool FRecordDirIterator::Visit(const TCHAR* Filename, bool bIsDirectory) /*overr
 	std::string RflParseError;
 	if (!std::filesystem::exists(std::filesystem::path(Filename)))
 		{ ensure(false); return false; }
-	std::string const FileString = SDK::Core::Tools::LoadCacheFileToStringWithoutReply(Filename);
+	std::string const FileString = AdvViz::SDK::Tools::LoadCacheFileToStringWithoutReply(Filename);
 	if (FileString.empty())
 		{ ensure(false); return false; }
 	if (!bSimulationMode || (OutArray.Num() == 3 && OutArray[1] == TEXT("res"))) // reply
 	{
 		FRflReply Reply = { FRflQuery{} };
-		if (!SDK::Core::Json::FromString(Reply, FileString, RflParseError))
+		if (!AdvViz::SDK::Json::FromString(Reply, FileString, RflParseError))
 		{
 			ParsingError = RflParseError.c_str();
 			ensure(false); return false;
@@ -141,7 +141,7 @@ bool FRecordDirIterator::Visit(const TCHAR* Filename, bool bIsDirectory) /*overr
 	else if (/*bSimulationMode &&*/OutArray.Num() == 2 && OutArray[1] == TEXT("req")) // query
 	{
 		FRflQuery Query;
-		if (!SDK::Core::Json::FromString(Query, FileString, RflParseError))
+		if (!AdvViz::SDK::Json::FromString(Query, FileString, RflParseError))
 		{
 			ParsingError = RflParseError.c_str();
 			ensure(false); return false;

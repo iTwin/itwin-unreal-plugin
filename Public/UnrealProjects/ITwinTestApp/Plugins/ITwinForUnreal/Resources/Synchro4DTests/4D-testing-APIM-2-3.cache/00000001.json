@@ -1,0 +1,9 @@
+﻿{
+	"url": "https://qa-api.bentley.com/schedules/3497df55-60e9-44fd-91ec-3c86473884f5/animation-3d-transforms?$top=2",
+	"verb": "GET",
+	"connectedSuccessfully": true,
+	"responseCode": 200
+,
+	"reply": 
+{"nextPageToken":"eyJQcmltYXJ5U2tpcFRva2VuIjoiMjcyNzc0NjctZWVlYS00ODFlLTliMWQtYTg3MDVkMDFiY2IyIiwiU2Vjb25kYXJ5U2tpcFRva2VuIjpudWxsLCJUeXBlIjowfQ==","animation3dTransforms":[{"id":"06aa9c3b-efe8-4efc-9d1a-5e1956725c0c","transform":[1.0,0.0,0.0,2.576052793301642E-08,0.0,1.0,0.0,44.472625732421875,0.0,0.0,1.0,5.29657597780897E-07,0.0,0.0,0.0,1.0]},{"id":"27277467-eeea-481e-9b1d-a8705d01bcb2","transform":[0.8017144799232483,-0.3085581362247467,0.5118951201438904,16117.5634765625,0.5975719690322876,0.43138447403907776,-0.6758723258972168,-1265.9549560546875,-0.012275973334908485,0.8477559685707092,0.5302343964576721,-26368.501953125,0.0,0.0,0.0,1.0]}],"_links":{"self":{"href":"https://qa-api.bentley.com/schedules/3497df55-60e9-44fd-91ec-3c86473884f5/animation-3d-transforms?$top=2"},"next":{"href":"https://qa-api.bentley.com/schedules/3497df55-60e9-44fd-91ec-3c86473884f5/animation-3d-transforms?$top=2&$continuationToken=eyJQcmltYXJ5U2tpcFRva2VuIjoiMjcyNzc0NjctZWVlYS00ODFlLTliMWQtYTg3MDVkMDFiY2IyIiwiU2Vjb25kYXJ5U2tpcFRva2VuIjpudWxsLCJUeXBlIjowfQ%3d%3d"}}}
+}

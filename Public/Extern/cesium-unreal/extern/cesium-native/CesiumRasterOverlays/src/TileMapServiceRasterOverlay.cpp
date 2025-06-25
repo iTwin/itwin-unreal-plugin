@@ -1,18 +1,40 @@
+#include <CesiumAsync/Future.h>
 #include <CesiumAsync/IAssetAccessor.h>
 #include <CesiumAsync/IAssetResponse.h>
+#include <CesiumGeometry/QuadtreeTileID.h>
+#include <CesiumGeometry/QuadtreeTilingScheme.h>
+#include <CesiumGeometry/Rectangle.h>
+#include <CesiumGeospatial/Ellipsoid.h>
+#include <CesiumGeospatial/GeographicProjection.h>
 #include <CesiumGeospatial/GlobeRectangle.h>
+#include <CesiumGeospatial/Projection.h>
 #include <CesiumGeospatial/WebMercatorProjection.h>
+#include <CesiumRasterOverlays/IPrepareRasterOverlayRendererResources.h>
 #include <CesiumRasterOverlays/QuadtreeRasterOverlayTileProvider.h>
+#include <CesiumRasterOverlays/RasterOverlay.h>
 #include <CesiumRasterOverlays/RasterOverlayLoadFailureDetails.h>
 #include <CesiumRasterOverlays/RasterOverlayTile.h>
+#include <CesiumRasterOverlays/RasterOverlayTileProvider.h>
 #include <CesiumRasterOverlays/TileMapServiceRasterOverlay.h>
 #include <CesiumUtility/CreditSystem.h>
+#include <CesiumUtility/ErrorList.h>
+#include <CesiumUtility/IntrusivePointer.h>
 #include <CesiumUtility/Uri.h>
 
+#include <glm/common.hpp>
+#include <nonstd/expected.hpp>
 #include <spdlog/fwd.h>
 #include <tinyxml2.h>
 
 #include <cstddef>
+#include <cstdint>
+#include <limits>
+#include <memory>
+#include <optional>
+#include <span>
+#include <string>
+#include <utility>
+#include <vector>
 
 using namespace CesiumAsync;
 using namespace CesiumUtility;
@@ -24,6 +46,41 @@ struct TileMapServiceTileset {
   std::string url;
   uint32_t level;
 };
+
+std::optional<std::string> getAttributeString(
+    const tinyxml2::XMLElement* pElement,
+    const char* attributeName) {
+  if (!pElement) {
+    return std::nullopt;
+  }
+
+  const char* pAttrValue = pElement->Attribute(attributeName);
+  if (!pAttrValue) {
+    return std::nullopt;
+  }
+
+  return std::string(pAttrValue);
+}
+
+std::optional<uint32_t> getAttributeUint32(
+    const tinyxml2::XMLElement* pElement,
+    const char* attributeName) {
+  std::optional<std::string> s = getAttributeString(pElement, attributeName);
+  if (s) {
+    return std::stoul(s.value());
+  }
+  return std::nullopt;
+}
+
+std::optional<double> getAttributeDouble(
+    const tinyxml2::XMLElement* pElement,
+    const char* attributeName) {
+  std::optional<std::string> s = getAttributeString(pElement, attributeName);
+  if (s) {
+    return std::stod(s.value());
+  }
+  return std::nullopt;
+}
 } // namespace
 
 class TileMapServiceTileProvider final
@@ -67,7 +124,7 @@ public:
         _fileExtension(fileExtension),
         _tileSets(tileSets) {}
 
-  virtual ~TileMapServiceTileProvider() {}
+  virtual ~TileMapServiceTileProvider() = default;
 
 protected:
   virtual CesiumAsync::Future<LoadedRasterOverlayImage> loadQuadtreeTileImage(
@@ -91,13 +148,14 @@ protected:
           this->_headers,
           std::move(options));
     } else {
+      ErrorList errors;
+      errors.emplaceError("Failed to load image from TMS.");
       return this->getAsyncSystem()
           .createResolvedFuture<LoadedRasterOverlayImage>(
-              {std::nullopt,
+              {nullptr,
                options.rectangle,
                {},
-               {"Failed to load image from TMS."},
-               {},
+               std::move(errors),
                options.moreDetailAvailable});
     }
   }
@@ -120,42 +178,7 @@ TileMapServiceRasterOverlay::TileMapServiceRasterOverlay(
       _headers(headers),
       _options(tmsOptions) {}
 
-TileMapServiceRasterOverlay::~TileMapServiceRasterOverlay() {}
-
-static std::optional<std::string> getAttributeString(
-    const tinyxml2::XMLElement* pElement,
-    const char* attributeName) {
-  if (!pElement) {
-    return std::nullopt;
-  }
-
-  const char* pAttrValue = pElement->Attribute(attributeName);
-  if (!pAttrValue) {
-    return std::nullopt;
-  }
-
-  return std::string(pAttrValue);
-}
-
-static std::optional<uint32_t> getAttributeUint32(
-    const tinyxml2::XMLElement* pElement,
-    const char* attributeName) {
-  std::optional<std::string> s = getAttributeString(pElement, attributeName);
-  if (s) {
-    return std::stoul(s.value());
-  }
-  return std::nullopt;
-}
-
-static std::optional<double> getAttributeDouble(
-    const tinyxml2::XMLElement* pElement,
-    const char* attributeName) {
-  std::optional<std::string> s = getAttributeString(pElement, attributeName);
-  if (s) {
-    return std::stod(s.value());
-  }
-  return std::nullopt;
-}
+TileMapServiceRasterOverlay::~TileMapServiceRasterOverlay() = default;
 
 namespace {
 
@@ -182,7 +205,7 @@ Future<GetXmlDocumentResult> getXmlDocument(
                       "No response received from Tile Map Service."}));
             }
 
-            const gsl::span<const std::byte> data = pResponse->data();
+            const std::span<const std::byte> data = pResponse->data();
 
             std::unique_ptr<tinyxml2::XMLDocument> pDoc =
                 std::make_unique<tinyxml2::XMLDocument>(
@@ -231,14 +254,24 @@ Future<GetXmlDocumentResult> getXmlDocument(
             }
             if (hasError) {
               if (url.find("tilemapresource.xml") == std::string::npos) {
-                std::string baseUrl = url;
-                if (baseUrl.size() > 0 && baseUrl[baseUrl.size() - 1] != '/') {
-                  baseUrl += '/';
+                std::string updatedUrl = url;
+
+                std::string urlPath = Uri::getPath(url);
+                if (!(urlPath.size() < 4)) {
+                  if (urlPath.substr(urlPath.size() - 4, 4) != ".xml") {
+                    if (urlPath[urlPath.size() - 1] != '/') {
+                      urlPath += "/";
+                      updatedUrl = Uri::setPath(url, urlPath);
+                    }
+                  }
                 }
+
                 return getXmlDocument(
                     asyncSystem,
                     pAssetAccessor,
-                    CesiumUtility::Uri::resolve(baseUrl, "tilemapresource.xml"),
+                    CesiumUtility::Uri::resolve(
+                        updatedUrl,
+                        "tilemapresource.xml"),
                     headers);
               } else {
                 return asyncSystem.createResolvedFuture<GetXmlDocumentResult>(
@@ -269,11 +302,12 @@ TileMapServiceRasterOverlay::createTileProvider(
 
   pOwner = pOwner ? pOwner : this;
 
-  const std::optional<Credit> credit =
-      this->_options.credit ? std::make_optional(pCreditSystem->createCredit(
-                                  this->_options.credit.value(),
-                                  pOwner->getOptions().showCreditsOnScreen))
-                            : std::nullopt;
+  std::optional<Credit> credit = std::nullopt;
+  if (pCreditSystem && this->_options.credit) {
+    credit = pCreditSystem->createCredit(
+        *this->_options.credit,
+        pOwner->getOptions().showCreditsOnScreen);
+  }
 
   return getXmlDocument(asyncSystem, pAssetAccessor, xmlUrl, this->_headers)
       .thenInMainThread(
@@ -331,9 +365,13 @@ TileMapServiceRasterOverlay::createTileProvider(
               maximumLevel = 25;
             }
 
+            const CesiumGeospatial::Ellipsoid& ellipsoid =
+                pOwner->getOptions().ellipsoid;
+
             CesiumGeospatial::GlobeRectangle tilingSchemeRectangle =
                 CesiumGeospatial::GeographicProjection::MAXIMUM_GLOBE_RECTANGLE;
-            CesiumGeospatial::Projection projection;
+            CesiumGeospatial::Projection projection =
+                CesiumGeospatial::WebMercatorProjection(ellipsoid);
             uint32_t rootTilesX = 1;
             bool isRectangleInDegrees = false;
 
@@ -345,7 +383,7 @@ TileMapServiceRasterOverlay::createTileProvider(
 
               if (projectionName == "mercator" ||
                   projectionName == "global-mercator") {
-                projection = CesiumGeospatial::WebMercatorProjection();
+                projection = CesiumGeospatial::WebMercatorProjection(ellipsoid);
                 tilingSchemeRectangle = CesiumGeospatial::
                     WebMercatorProjection::MAXIMUM_GLOBE_RECTANGLE;
 
@@ -355,11 +393,11 @@ TileMapServiceRasterOverlay::createTileProvider(
                 // standard, which is 'global-mercator' and 'global-geodetic'
                 // profiles. In the gdal2Tiles case, X and Y are always in
                 // geodetic degrees.
-                isRectangleInDegrees = projectionName.find("global-") != 0;
+                isRectangleInDegrees = !projectionName.starts_with("global-");
               } else if (
                   projectionName == "geodetic" ||
                   projectionName == "global-geodetic") {
-                projection = CesiumGeospatial::GeographicProjection();
+                projection = CesiumGeospatial::GeographicProjection(ellipsoid);
                 tilingSchemeRectangle = CesiumGeospatial::GeographicProjection::
                     MAXIMUM_GLOBE_RECTANGLE;
                 rootTilesX = 2;
@@ -371,7 +409,8 @@ TileMapServiceRasterOverlay::createTileProvider(
                 if (srs) {
                   std::string srsText = srs->GetText();
                   if (srsText.find("4326") != std::string::npos) {
-                    projection = CesiumGeospatial::GeographicProjection();
+                    projection =
+                        CesiumGeospatial::GeographicProjection(ellipsoid);
                     tilingSchemeRectangle = CesiumGeospatial::
                         GeographicProjection::MAXIMUM_GLOBE_RECTANGLE;
                     rootTilesX = 2;
@@ -379,7 +418,8 @@ TileMapServiceRasterOverlay::createTileProvider(
                   } else if (
                       srsText.find("3857") != std::string::npos ||
                       srsText.find("900913") != std::string::npos) {
-                    projection = CesiumGeospatial::WebMercatorProjection();
+                    projection =
+                        CesiumGeospatial::WebMercatorProjection(ellipsoid);
                     tilingSchemeRectangle = CesiumGeospatial::
                         WebMercatorProjection::MAXIMUM_GLOBE_RECTANGLE;
                     isRectangleInDegrees = true;
@@ -435,12 +475,14 @@ TileMapServiceRasterOverlay::createTileProvider(
                 rootTilesX,
                 1);
 
-            std::string baseUrl = url;
+            std::string updatedUrl = url;
 
-            if (!(baseUrl.size() < 4)) {
-              if (baseUrl.substr(baseUrl.size() - 4, 4) != ".xml") {
-                if (baseUrl[baseUrl.size() - 1] != '/') {
-                  baseUrl += "/";
+            std::string urlPath = Uri::getPath(url);
+            if (!(urlPath.size() < 4)) {
+              if (urlPath.substr(urlPath.size() - 4, 4) != ".xml") {
+                if (urlPath[urlPath.size() - 1] != '/') {
+                  urlPath += "/";
+                  updatedUrl = Uri::setPath(url, urlPath);
                 }
               }
             }
@@ -455,7 +497,7 @@ TileMapServiceRasterOverlay::createTileProvider(
                 projection,
                 tilingScheme,
                 coverageRectangle,
-                baseUrl,
+                updatedUrl,
                 headers,
                 !fileExtension.empty() ? "." + fileExtension : fileExtension,
                 tileWidth,

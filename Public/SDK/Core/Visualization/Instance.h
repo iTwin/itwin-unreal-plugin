@@ -21,15 +21,9 @@
 #include <Core/Tools/Types.h>
 #include <Core/Visualization/InstancesGroup.h>
 
-MODULE_EXPORT namespace SDK::Core
+MODULE_EXPORT namespace AdvViz::SDK
 {
-	enum EUpdateTarget : int
-	{
-		Database = 0,
-		Display = 1
-	};
-
-	class IInstance : public Tools::Factory<IInstance>
+	class IInstance : public Tools::Factory<IInstance>, public Tools::ExtensionSupport
 	{
 	public:
 		virtual const std::string& GetId() const = 0;
@@ -44,17 +38,21 @@ MODULE_EXPORT namespace SDK::Core
 		virtual const std::string& GetObjectRef() const = 0;
 		virtual void SetObjectRef(const std::string& objectRef) = 0;
 
-		virtual const dmat3x4& GetMatrix() const = 0;
-		virtual void SetMatrix(const dmat3x4& mat) = 0;
+		virtual const dmat3x4& GetTransform() const = 0;
+		virtual void SetTransform(const dmat3x4& mat) = 0;
 
-		virtual const std::string& GetColorShift() const = 0;
-		virtual void SetColorShift(const std::string& color) = 0;
+		virtual std::optional<float3> GetColorShift() const = 0;
+		virtual void SetColorShift(const float3& color) = 0;
 
-		virtual bool IsMarkedForUpdate(const EUpdateTarget& target) const = 0;
-		virtual void MarkForUpdate(const EUpdateTarget& target, bool flag = true) = 0;
+		virtual bool ShouldSave() const = 0;
+		virtual void SetShouldSave(bool value) = 0;
+		virtual void SetAnimId(const std::string& id) = 0;
+		virtual const std::string& GetAnimId() const = 0;
+
+		virtual expected<void, std::string> Update() = 0;
 	};
 
-	class Instance : public Tools::ExtensionSupport, public IInstance
+	class ADVVIZ_LINK Instance : public IInstance, Tools::TypeId<Instance>
 	{
 	public:
 		const std::string& GetId() const override;
@@ -63,20 +61,29 @@ MODULE_EXPORT namespace SDK::Core
 		const std::shared_ptr<IInstancesGroup>& GetGroup() const override;
 		void SetGroup(const std::shared_ptr<IInstancesGroup>& group) override;
 
+		const std::string& GetAnimId() const override;
+		void SetAnimId(const std::string& id) override;
+
 		const std::string& GetName() const override;
 		void SetName(const std::string& name) override;
 
 		const std::string& GetObjectRef() const override;
 		void SetObjectRef(const std::string& objectRef) override;
 
-		const dmat3x4& GetMatrix() const override;
-		void SetMatrix(const dmat3x4& mat) override;
+		const dmat3x4& GetTransform() const override;
+		void SetTransform(const dmat3x4& mat) override;
 
-		const std::string& GetColorShift() const override;
-		void SetColorShift(const std::string& color) override;
+		std::optional<float3> GetColorShift() const override;
+		void SetColorShift(const float3& color) override;
 
-		bool IsMarkedForUpdate(const EUpdateTarget& target) const override;
-		void MarkForUpdate(const EUpdateTarget& target, bool flag = true) override;
+		bool ShouldSave() const override;
+		void SetShouldSave(bool value) override;
+
+		virtual expected<void, std::string> Update() override;
+
+		using Tools::TypeId<Instance>::GetTypeId;
+		std::uint64_t GetDynTypeId() const override { return GetTypeId(); }
+		bool IsTypeOf(std::uint64_t i) const override { return (i == GetTypeId()) || IInstance::IsTypeOf(i); }
 
 		Instance();
 		virtual ~Instance();
@@ -88,4 +95,6 @@ MODULE_EXPORT namespace SDK::Core
 	};
 
 	typedef std::vector<std::shared_ptr<IInstance>> SharedInstVect;
+	typedef std::shared_ptr<IInstance> IInstancePtr;
+	typedef std::weak_ptr<IInstance> IInstanceWPtr;
 }

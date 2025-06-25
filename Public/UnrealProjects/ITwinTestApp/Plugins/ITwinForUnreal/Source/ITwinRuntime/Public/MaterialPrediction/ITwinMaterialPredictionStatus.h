@@ -17,7 +17,7 @@
 
 #include "ITwinMaterialPredictionStatus.generated.h"
 
-/// Describes the status of the ML-base material prediction process.
+/// Describes the status of the ML-based material prediction process.
 UENUM()
 enum class EITwinMaterialPredictionStatus : uint8
 {
@@ -26,8 +26,9 @@ enum class EITwinMaterialPredictionStatus : uint8
 	InProgress,
 	Failed,
 	Complete,
+	Validated, /* validated by a human person */
 };
 
-// Should be synchronized with SDK::Core::EITwinMatMLPredictionStatus
-static_assert(static_cast<EITwinMaterialPredictionStatus>(SDK::Core::EITwinMatMLPredictionStatus::Complete) == EITwinMaterialPredictionStatus::Complete,
+// Should be synchronized with AdvViz::SDK::EITwinMatMLPredictionStatus
+static_assert(static_cast<EITwinMaterialPredictionStatus>(AdvViz::SDK::EITwinMatMLPredictionStatus::Complete) == EITwinMaterialPredictionStatus::Complete,
 	"EITwinMaterialPredictionStatus enum definition mismatch");

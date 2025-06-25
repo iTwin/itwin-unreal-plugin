@@ -1,0 +1,9 @@
+﻿{
+	"url": "https://qa-api.bentley.com/schedules/3497df55-60e9-44fd-91ec-3c86473884f5/animation-3d-paths/keyframes?$top=2&$continuationToken=eyJQcmltYXJ5U2tpcFRva2VuIjoiNGM0NjQ4MjItMTA4Ni00ZGY2LWFlODMtNGE2NDQ1YTFhNmFmIiwiU2Vjb25kYXJ5U2tpcFRva2VuIjpudWxsLCJUeXBlIjowfQ==",
+	"verb": "GET",
+	"connectedSuccessfully": true,
+	"responseCode": 200
+,
+	"reply": 
+{"nextPageToken":"eyJQcmltYXJ5U2tpcFRva2VuIjoiNGYzZjU3YzAtMGM3Yy00ZjNiLTg2MTAtYjc2NDZlMmNlMDBjIiwiU2Vjb25kYXJ5U2tpcFRva2VuIjpudWxsLCJUeXBlIjowfQ==","keyframes":[{"pathId":"3f3c6a38-7a7b-4d7a-8550-1585c96cc130","position":{"x":32483.419921875,"y":31869.609375,"z":4.939210414886475},"rotation":{"angle":90.0,"x":0.0,"y":0.0,"z":1.0},"time":0.5400000214576721},{"pathId":"cb00fae1-b23b-4dc8-abb2-5c476e7cba81","position":{"x":32795.40234375,"y":31972.001953125,"z":99.6951904296875},"rotation":{"angle":0.0,"x":1.0,"y":0.0,"z":0.0},"time":1.0}],"_links":{"self":{"href":"https://qa-api.bentley.com/schedules/3497df55-60e9-44fd-91ec-3c86473884f5/animation-3d-paths/keyframes?$top=2&$continuationToken=eyJQcmltYXJ5U2tpcFRva2VuIjoiNGM0NjQ4MjItMTA4Ni00ZGY2LWFlODMtNGE2NDQ1YTFhNmFmIiwiU2Vjb25kYXJ5U2tpcFRva2VuIjpudWxsLCJUeXBlIjowfQ=="},"next":{"href":"https://qa-api.bentley.com/schedules/3497df55-60e9-44fd-91ec-3c86473884f5/animation-3d-paths/keyframes?$top=2&$continuationToken=eyJQcmltYXJ5U2tpcFRva2VuIjoiNGYzZjU3YzAtMGM3Yy00ZjNiLTg2MTAtYjc2NDZlMmNlMDBjIiwiU2Vjb25kYXJ5U2tpcFRva2VuIjpudWxsLCJUeXBlIjowfQ%3d%3d"}}}
+}

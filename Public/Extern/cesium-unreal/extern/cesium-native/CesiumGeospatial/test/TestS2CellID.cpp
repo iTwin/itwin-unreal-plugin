@@ -1,44 +1,49 @@
 #include <CesiumGeometry/QuadtreeTileID.h>
-#include <CesiumGeospatial/Ellipsoid.h>
+#include <CesiumGeospatial/Cartographic.h>
+#include <CesiumGeospatial/GlobeRectangle.h>
 #include <CesiumGeospatial/S2CellID.h>
 #include <CesiumUtility/Math.h>
 
-#include <catch2/catch.hpp>
+#include <doctest/doctest.h>
+#include <glm/common.hpp>
+
+#include <array>
+#include <cstdint>
 
 using namespace CesiumGeometry;
 using namespace CesiumGeospatial;
 using namespace CesiumUtility;
 
 TEST_CASE("S2CellID") {
-  SECTION("constructor") {
+  SUBCASE("constructor") {
     S2CellID id(3458764513820540928U);
     CHECK(id.isValid());
     CHECK(id.getID() == 3458764513820540928U);
   }
 
-  SECTION("creates an invalid token for an invalid ID") {
+  SUBCASE("creates an invalid token for an invalid ID") {
     S2CellID id(uint64_t(-1));
     CHECK(!id.isValid());
   }
 
-  SECTION("creates cell from valid token") {
+  SUBCASE("creates cell from valid token") {
     S2CellID id = S2CellID::fromToken("3");
     CHECK(id.isValid());
     CHECK(id.getID() == 3458764513820540928U);
   }
 
-  SECTION("creates invalid from invalid token") {
+  SUBCASE("creates invalid from invalid token") {
     S2CellID id = S2CellID::fromToken("XX");
     CHECK(!id.isValid());
   }
 
-  SECTION("accepts valid token") {
+  SUBCASE("accepts valid token") {
     CHECK(S2CellID::fromToken("1").isValid());
     CHECK(S2CellID::fromToken("2ef59bd34").isValid());
     CHECK(S2CellID::fromToken("2ef59bd352b93ac3").isValid());
   }
 
-  SECTION("rejects token of invalid value") {
+  SUBCASE("rejects token of invalid value") {
     CHECK(!S2CellID::fromToken("LOL").isValid());
     CHECK(!S2CellID::fromToken("----").isValid());
     CHECK(!S2CellID::fromToken(std::string(17, '9')).isValid());
@@ -46,12 +51,12 @@ TEST_CASE("S2CellID") {
     CHECK(!S2CellID::fromToken("🤡").isValid());
   }
 
-  SECTION("accepts valid cell ID") {
+  SUBCASE("accepts valid cell ID") {
     CHECK(S2CellID(3383782026967071428U).isValid());
     CHECK(S2CellID(3458764513820540928).isValid());
   }
 
-  SECTION("rejects invalid cell ID") {
+  SUBCASE("rejects invalid cell ID") {
     CHECK(!S2CellID(0U).isValid());
     CHECK(!S2CellID(uint64_t(-1)).isValid());
     CHECK(
@@ -60,7 +65,7 @@ TEST_CASE("S2CellID") {
              .isValid());
   }
 
-  SECTION("correctly converts token to cell ID") {
+  SUBCASE("correctly converts token to cell ID") {
     CHECK(S2CellID::fromToken("04").getID() == 288230376151711744U);
     CHECK(S2CellID::fromToken("3").getID() == 3458764513820540928U);
     CHECK(
@@ -68,13 +73,13 @@ TEST_CASE("S2CellID") {
         3383782026967071427U);
   }
 
-  SECTION("gets correct level of cell") {
+  SUBCASE("gets correct level of cell") {
     CHECK(S2CellID(3170534137668829184U).getLevel() == 1);
     CHECK(S2CellID(3383782026921377792U).getLevel() == 16);
     CHECK(S2CellID(3383782026967071427U).getLevel() == 30);
   }
 
-  SECTION("gets correct center of cell") {
+  SUBCASE("gets correct center of cell") {
     Cartographic center = S2CellID::fromToken("1").getCenter();
     CHECK(Math::equalsEpsilon(center.longitude, 0.0, 0.0, Math::Epsilon10));
     CHECK(Math::equalsEpsilon(center.latitude, 0.0, 0.0, Math::Epsilon10));
@@ -90,11 +95,14 @@ TEST_CASE("S2CellID") {
     CHECK(Math::equalsEpsilon(center.height, 0.0, 0.0, Math::Epsilon10));
 
     center = S2CellID::fromToken("5").getCenter();
-    CHECK(Math::equalsEpsilon(
-        center.longitude,
-        Math::degreesToRadians(-180.0),
-        0.0,
-        Math::Epsilon10));
+    // The "longitude" of the south pole is a meaningless question, so the value
+    // the implementation returns is arbitrary, and in fact has changed between
+    // the prior version and 0.11.0 (the current version).
+    // CHECK(Math::equalsEpsilon(
+    //     center.longitude,
+    //     Math::degreesToRadians(0),
+    //     0.0,
+    //     Math::Epsilon10));
     CHECK(Math::equalsEpsilon(
         center.latitude,
         Math::degreesToRadians(90.0),
@@ -103,9 +111,11 @@ TEST_CASE("S2CellID") {
     CHECK(Math::equalsEpsilon(center.height, 0.0, 0.0, Math::Epsilon10));
 
     center = S2CellID::fromToken("7").getCenter();
+    // The "longitude" of the international dateline can either be -180 or 180,
+    // depending on the implementation, so we need to take the absolute value.
     CHECK(Math::equalsEpsilon(
-        center.longitude,
-        Math::degreesToRadians(-180.0),
+        glm::abs(center.longitude),
+        Math::degreesToRadians(180.0),
         0.0,
         Math::Epsilon10));
     CHECK(Math::equalsEpsilon(
@@ -129,11 +139,12 @@ TEST_CASE("S2CellID") {
     CHECK(Math::equalsEpsilon(center.height, 0.0, 0.0, Math::Epsilon10));
 
     center = S2CellID::fromToken("b").getCenter();
-    CHECK(Math::equalsEpsilon(
-        center.longitude,
-        Math::degreesToRadians(0.0),
-        0.0,
-        Math::Epsilon10));
+    // Don't validate the "longitude" of the south pole, as it's meaningless.
+    // CHECK(Math::equalsEpsilon(
+    //     center.longitude,
+    //     Math::degreesToRadians(0.0),
+    //     0.0,
+    //     Math::Epsilon10));
     CHECK(Math::equalsEpsilon(
         center.latitude,
         Math::degreesToRadians(-90.0),
@@ -168,7 +179,7 @@ TEST_CASE("S2CellID") {
     CHECK(Math::equalsEpsilon(center.height, 0.0, 0.0, Math::Epsilon10));
   }
 
-  SECTION("gets correct vertices of cell") {
+  SUBCASE("gets correct vertices of cell") {
     std::array<Cartographic, 4> vertices =
         S2CellID::fromToken("2ef59bd352b93ac3").getVertices();
 
@@ -217,7 +228,7 @@ TEST_CASE("S2CellID") {
         Math::Epsilon10));
   }
 
-  SECTION("fromQuadtreeTileID") {
+  SUBCASE("fromQuadtreeTileID") {
     S2CellID a = S2CellID::fromQuadtreeTileID(
         S2CellID::fromToken("1").getFace(),
         QuadtreeTileID(0, 0, 0));
@@ -240,7 +251,7 @@ TEST_CASE("S2CellID") {
     CHECK(e.getID() == S2CellID::fromToken("14").getID());
   }
 
-  SECTION("computeBoundingRectangle") {
+  SUBCASE("computeBoundingRectangle") {
     S2CellID root0 = S2CellID::fromFaceLevelPosition(0, 0, 0);
     GlobeRectangle root0Rect = root0.computeBoundingRectangle();
     CHECK(Math::equalsEpsilon(

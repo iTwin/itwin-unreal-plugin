@@ -1,5 +1,6 @@
 #pragma once
 
+#include <CesiumGeometry/BoundingCylinderRegion.h>
 #include <CesiumGeometry/BoundingSphere.h>
 #include <CesiumGeometry/OrientedBoundingBox.h>
 #include <CesiumGeospatial/BoundingRegion.h>
@@ -31,15 +32,43 @@ public:
   getOrientedBoundingBox(const Cesium3DTiles::BoundingVolume& boundingVolume);
 
   /**
+   * @brief Sets the `box` property in a {@link Cesium3DTiles::BoundingVolume}
+   * based on an {@link CesiumGeometry::OrientedBoundingBox}.
+   *
+   * Other bounding volume types, if any, are not modified.
+   *
+   * @param boundingVolume The bounding volume to set.
+   * @param boundingBox The bounding box with which to set the property.
+   */
+  static void setOrientedBoundingBox(
+      Cesium3DTiles::BoundingVolume& boundingVolume,
+      const CesiumGeometry::OrientedBoundingBox& boundingBox);
+
+  /**
    * @brief Gets the bounding region defined in a
    * {@link Cesium3DTiles::BoundingVolume}, if any.
    *
    * @param boundingVolume The bounding volume from which to get the region.
+   * @param ellipsoid The ellipsoid on which the region should be defined.
    * @return The region, or `std::nullopt` if the bounding volume does not
    * define a region. The region is defined in geographic coordinates.
    */
-  static std::optional<CesiumGeospatial::BoundingRegion>
-  getBoundingRegion(const Cesium3DTiles::BoundingVolume& boundingVolume);
+  static std::optional<CesiumGeospatial::BoundingRegion> getBoundingRegion(
+      const Cesium3DTiles::BoundingVolume& boundingVolume,
+      const CesiumGeospatial::Ellipsoid& ellipsoid CESIUM_DEFAULT_ELLIPSOID);
+
+  /**
+   * @brief Sets the `region` property in a {@link Cesium3DTiles::BoundingVolume}
+   * based on a {@link CesiumGeospatial::BoundingRegion}.
+   *
+   * Other bounding volume types, if any, are not modified.
+   *
+   * @param boundingVolume The bounding volume to set.
+   * @param boundingRegion The bounding region with which to set the property.
+   */
+  static void setBoundingRegion(
+      Cesium3DTiles::BoundingVolume& boundingVolume,
+      const CesiumGeospatial::BoundingRegion& boundingRegion);
 
   /**
    * @brief Gets the bounding sphere defined in a
@@ -53,18 +82,79 @@ public:
   getBoundingSphere(const Cesium3DTiles::BoundingVolume& boundingVolume);
 
   /**
+   * @brief Sets the `sphere` property in a {@link Cesium3DTiles::BoundingVolume}
+   * based on a {@link CesiumGeometry::BoundingSphere}.
+   *
+   * Other bounding volume types, if any, are not modified.
+   *
+   * @param boundingVolume The bounding volume to set.
+   * @param boundingSphere The bounding sphere with which to set the property.
+   */
+  static void setBoundingSphere(
+      Cesium3DTiles::BoundingVolume& boundingVolume,
+      const CesiumGeometry::BoundingSphere& boundingSphere);
+
+  /**
    * @brief Gets the S2 cell bounding volume defined in the
    * `3DTILES_bounding_volume_S2` extension of a
    * {@link Cesium3DTiles::BoundingVolume}, if any.
    *
    * @param boundingVolume The bounding volume from which to get the S2 cell
    * bounding volume.
+   * @param ellipsoid The ellipsoid on which the S2 cell should be defined.
    * @return The S2 cell bounding volume, or `std::nullopt` if the bounding
    * volume does not define an S2 cell bounding volume. The S2 cell bounding
    * volume is defined in geographic coordinates.
    */
   static std::optional<CesiumGeospatial::S2CellBoundingVolume>
-  getS2CellBoundingVolume(const Cesium3DTiles::BoundingVolume& boundingVolume);
+  getS2CellBoundingVolume(
+      const Cesium3DTiles::BoundingVolume& boundingVolume,
+      const CesiumGeospatial::Ellipsoid& ellipsoid CESIUM_DEFAULT_ELLIPSOID);
+
+  /**
+   * @brief Adds the `3DTILES_bounding_volume_S2` extension to a
+   * {@link Cesium3DTiles::BoundingVolume} based on a
+   * {@link CesiumGeospatial::S2CellBoundingVolume}.
+   *
+   * Other bounding volume types, if any, are not modified.
+   *
+   * @param boundingVolume The bounding volume to set.
+   * @param s2BoundingVolume The S2 bounding volume with which to set the
+   * property.
+   */
+  static void setS2CellBoundingVolume(
+      Cesium3DTiles::BoundingVolume& boundingVolume,
+      const CesiumGeospatial::S2CellBoundingVolume& s2BoundingVolume);
+
+  /**
+   * @brief Gets the bounding cylinder region defined in the
+   * `3DTILES_bounding_volume_cylinder` extension of a \ref
+   * Cesium3DTiles::BoundingVolume, if any.
+   *
+   * @param boundingVolume The bounding volume from which to get the bounding
+   * cylinder.
+   * @return The cylinder region, or `std::nullopt` if the bounding volume does
+   * not define such a region. The cylinder is defined in the tile's coordinate
+   * system.
+   */
+  static std::optional<CesiumGeometry::BoundingCylinderRegion>
+  getBoundingCylinderRegion(
+      const Cesium3DTiles::BoundingVolume& boundingVolume);
+
+  /**
+   * @brief Adds the `3DTILES_bounding_volume_cylinder` extension to a
+   * \ref Cesium3DTiles::BoundingVolume based on a \ref
+   * CesiumGeometry::BoundingCylinderRegion.
+   *
+   * Other bounding volume types, if any, are not modified.
+   *
+   * @param boundingVolume The bounding volume to set.
+   * @param boundingCylinderRegion The bounding cylinder region with which to
+   * set the property.
+   */
+  static void setBoundingCylinderRegion(
+      Cesium3DTiles::BoundingVolume& boundingVolume,
+      const CesiumGeometry::BoundingCylinderRegion& boundingCylinderRegion);
 };
 
 } // namespace Cesium3DTilesContent

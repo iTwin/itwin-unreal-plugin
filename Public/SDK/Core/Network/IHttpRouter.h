@@ -10,25 +10,21 @@
 
 #pragma once
 
-#ifndef SDK_CPPMODULES
 #	include <functional>
 #	include <map>
 #	include <memory>
 #	include <string>
 #	include <vector>
-#	ifndef MODULE_EXPORT
-#		define MODULE_EXPORT
-#	endif // !MODULE_EXPORT
-#endif
+#include "Network_api.h"
 
 #include <Core/Tools/Tools.h>
 
-MODULE_EXPORT namespace SDK::Core
+namespace AdvViz::SDK
 {
-	enum class EVerb : uint8_t;
+	enum class ADVVIZ_LINK EVerb : uint8_t;
 
 	/// Abstraction for Unreal's IHttpRouter
-	class IHttpRouter : public Tools::Factory<IHttpRouter>
+	class ADVVIZ_LINK IHttpRouter : public Tools::Factory<IHttpRouter>
 	{
 	public:
 		IHttpRouter() = default;
@@ -36,7 +32,7 @@ MODULE_EXPORT namespace SDK::Core
 
 		using RequestHandlerCallback = std::function<void(std::map<std::string, std::string> const& queryParams, std::string& outHtmlText)>;
 
-		struct RouteHandle
+		struct ADVVIZ_LINK RouteHandle
 		{
 			virtual ~RouteHandle();
 			virtual bool IsValid() const = 0;
@@ -57,5 +53,8 @@ MODULE_EXPORT namespace SDK::Core
 			int port, std::string const& redirectUriEndpoint, EVerb eVerb,
 			RequestHandlerCallback const& requestHandlerCB) const = 0;
 	};
+
+	template<>
+	ADVVIZ_LINK Tools::Factory<IHttpRouter>::Globals::Globals();
 
 }

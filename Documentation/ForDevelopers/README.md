@@ -13,7 +13,7 @@ To run Unreal Engine, make sure you are using a dedicated GPU. The performance l
 
 ## Prerequisites
 
-- [CMake 3.28 or newer](https://cmake.org/download/)
+- [CMake 3.28 or newer 3.xx version (_not_ CMake 4.x)](https://cmake.org/download/)
 - [Python 3.9 or newer](https://www.python.org/downloads/)
 - [Visual Studio 2022](https://dev.epicgames.com/documentation/en-us/unreal-engine/setting-up-visual-studio-development-environment-for-cplusplus-projects-in-unreal-engine?application_version=5.3)
 
@@ -87,3 +87,75 @@ Developer Mode for Windows must be enabled, as explained [here](https://learn.mi
 2. call `git clean -dfX` in your source folder
 
 
+## Troubleshooting the build
+
+### The namespace (...) already contains a definition for 'CesiumRuntime'
+
+It probably means you have the official _CesiumForUnreal_ plugin installed but, since the _ITwinForUnreal_ plugin itself supplies the _CesiumRuntime_ module, both cannot be present at build time.
+
+A workaround is to rename the _CesiumForUnreal_'s `uplugin` file, for example appending a `.disabled` suffix to the file, while you are building a project based on the iTwin plugin source code.
+
+### Numerous syntax errors, sometimes referring to C++20
+
+When you have many errors like those:
+```
+UATHelper: Packaging (Windows): C:\Users\(...)\ITwinRuntime\Private\Tests\WebServicesTest.cpp(1111): error C3791: 'this' cannot be explicitly captured when the default capture mode is by copy (=)
+UATHelper: Packaging (Windows): C:\Users\(...)\ITwinRuntime\Private\Timeline\SchedulesStructs.h(55): error C7582: 'bUseOriginalColor': default member initializers for bit-fields requires at least '/std:c++20'
+```
+It means you need to enable C++20 support, which may be needed explicitly typically when porting older projects.
+This can be done by adding/updating this line in your `*.Target.cs` files:<br>
+     `DefaultBuildSettings = BuildSettingsVersion.V4;`
+
+### Visual Studio 17.12+ and "__has_feature"
+
+Unreal Engine 5.3 (and 5.4) no longer work by default since Visual Studio version 17.12, with these errors:
+
+`C4668 ‘__has_feature’ is not defined as a preprocessor macro, replacing ‘0’ with ‘#if/#elif’`
+`C4067 Unexpected tokens following preprocessor directive - expected a newline`
+
+A header file must be modified inside your Unreal Engine's installation folder, by default `C:\Program Files\Epic Games\UE_5.3\Engine\Source\Runtime\Core\Public\Experimental\ConcurrentLinearAllocator.h`.
+Make the file writable as it is installed read-only, and add these lines near the top of the file, above the line with `#if PLATFORM_HAS_ASAN_INCLUDE` (patch should start at line 27):
+
+```
+#ifndef __has_feature
+#define __has_feature(x) 0
+#endif
+```
+
+### Link errors and multiple Visual Studio versions
+
+With this kind of errors, note the mismatch in toolchain versions mentioned (14.36.32546, then later 14.40.33807)
+```
+79>Using Visual Studio 2022 14.36.32546 toolchain (C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC\14.36.32532) and Windows 10.0.22621.0 SDK (C:\Program Files (x86)\Windows Kits\10).
+79>Determining max actions to execute in parallel (6 physical cores, 12 logical cores)
+(...)
+79>[1/38] Compile [x64] PCH.CesiumRuntime.cpp
+79>C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC\14.40.33807\include\yvals_core.h(902): error C2338: static_assert failed: 'error STL1001: Unexpected compiler version, expected MSVC 19.40 or newer.'
+```
+This happens because Unreal Engine has a list of preferred versions and compilation can fail with newer compiler versions, especially if several versions of the toolchain are installed.
+Solutions:
+* Uninstall all but the latest toolchain version using Microsoft Visual Studio Installer application (or delete older toolchain folders directly inside `C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC`)
+   - Then check that the remaining versions is correctly selected in all files named like this: `Microsoft.VCToolsVersion.v143.default.***`, inside the folder `C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Auxiliary\Build`
+* Alternately, you can modify the `BuildConfiguration.xml` file located in `%APPDATA%\Unreal Engine\UnrealBuildTool` (or `My Documents\Unreal Engine\UnrealBuildTool`) so that it always points to the latest version (or to a fixed version number that you might want to use):
+```
+<WindowsPlatform>
+<Compiler>VisualStudio2022</Compiler>
+<CompilerVersion>Latest</CompilerVersion>
+</WindowsPlatform>
+```
+
+### Image size (OBJ) exceeds maximum allowable size
+
+Symptom:
+```
+..\Plugins\Marketplace\ITwinForUnreal\Intermediate\Build\Win64\x64\UnrealGame\Development\CesiumRuntime\Module.CesiumRuntime.2.cpp.obj : fatal error LNK1248: image size (11E2FF130) exceeds maximum allowable size (FFFFFFFF)
+```
+Solution: modify (or create) the `BuildConfiguration.xml` file located in `%APPDATA%\Unreal Engine\UnrealBuildTool` (or `My Documents\Unreal Engine\UnrealBuildTool`), using the `NumIncludedBytesPerUnityCPP` as shown below to  reduce the amount of code UnrealBuildTool will collate together to speed up the builds. A value of a few tens of thousands of bytes does not slow down the build very much, and will avoid excessively large OBJ files:
+```
+<?xml version="1.0" encoding="utf-8" ?>
+<Configuration xmlns="https://www.unrealengine.com/BuildConfiguration">
+<BuildConfiguration>
+<NumIncludedBytesPerUnityCPP>30000</NumIncludedBytesPerUnityCPP>
+</BuildConfiguration>
+</Configuration>
+```

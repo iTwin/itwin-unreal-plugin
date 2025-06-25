@@ -6,12 +6,12 @@
 |
 +--------------------------------------------------------------------------------------*/
 
-#include <catch2/catch.hpp>
+#include <catch2/catch_all.hpp>
+#include <BeUtils/Gltf/ExtensionITwinMaterialID.h>
 #include <BeUtils/Gltf/GltfTuner.h>
 #include <BeUtils/Gltf/GltfBuilder.h>
 #include <CesiumGltf/ExtensionModelExtStructuralMetadata.h>
 #include <CesiumGltf/ExtensionExtMeshFeatures.h>
-#include <CesiumGltf/ExtensionITwinMaterialID.h>
 #include <CesiumGltfWriter/GltfWriter.h>
 #include <iostream>
 #include <filesystem>
@@ -211,7 +211,7 @@ void AddMeshPrimitive(const AddMeshPrimitiveArgs& args)
 										else if constexpr (std::is_same_v<float, typename CompleteType::value_type>)
 										{
 											CompleteType color2;
-											const auto f = [](const auto x){return (float(x)+0.5)/256.f;};
+											const auto f = [](const auto x){return (float(x)+0.5f)/256.f;};
 											for (int c = 0; c < (int)color.size(); ++c)
 												color2[c] = f(color[c]);
 											return color2;
@@ -295,23 +295,23 @@ void SortJson(rapidjson::Value& value)
 
 namespace
 {
-	// CesiumGltf::ExtensionITwinMaterialID is just used internally by ITwin plugin,
+	// BeUtils::ExtensionITwinMaterialID is just used internally by ITwin plugin,
 	// and is missing an official writer in cesium-native...
 	// Add support for writing here
 	struct ExtensionITwinMaterialIDJsonWriter
 	{
-		using ValueType = CesiumGltf::ExtensionITwinMaterialID;
+		using ValueType = BeUtils::ExtensionITwinMaterialID;
 
 		static inline constexpr const char* ExtensionName = "ITWIN_material_identifier";
 
 		static void write(
-			const CesiumGltf::ExtensionITwinMaterialID& obj,
+			const BeUtils::ExtensionITwinMaterialID& obj,
 			CesiumJsonWriter::JsonWriter& jsonWriter,
 			const CesiumJsonWriter::ExtensionWriterContext& context);
 	};
 
 	/*static*/ void ExtensionITwinMaterialIDJsonWriter::write(
-		const CesiumGltf::ExtensionITwinMaterialID& obj,
+		const BeUtils::ExtensionITwinMaterialID& obj,
 		CesiumJsonWriter::JsonWriter& jsonWriter,
 		const CesiumJsonWriter::ExtensionWriterContext& /*context*/)
 	{
@@ -376,6 +376,13 @@ void CheckGltf(const CesiumGltf::Model& expected, const CesiumGltf::Model& actua
 		REQUIRE([&]{return expected.buffers[bufferIndex].cesium.data == actual.buffers[bufferIndex].cesium.data;}());
 }
 
+CesiumGltf::Model TestTune(BeUtils::GltfBuilder& gltfBuilder)
+{
+	CesiumGltf::Model out;
+	BeUtils::GltfTuner(true).Tune(gltfBuilder.GetModel(), glm::dmat4x4(1.), glm::dvec4(0.), out);
+	return out;
+}
+
 TEST_CASE("TestNoFeatureId")
 {
 	BeUtils::GltfBuilder gltfBuilder;
@@ -384,7 +391,7 @@ TEST_CASE("TestNoFeatureId")
 	AddMeshPrimitive({.gltfBuilder = gltfBuilder,
 		.patches = {{{v++},{v++},{v++}}, {{v++},{v++},{v++}}},
 		.featureIdFormat = {g_ComponentTypeNoData}});
-	CheckGltf(gltfBuilder.GetModel(), BeUtils::GltfTuner().Tune(gltfBuilder.GetModel(), glm::dmat4x4(1.), glm::dvec4(0.)));
+	CheckGltf(gltfBuilder.GetModel(), TestTune(gltfBuilder));
 }
 
 TEST_CASE("TestSinglePrimitive")
@@ -399,7 +406,7 @@ TEST_CASE("TestSinglePrimitive")
 	int v = 0;
 	AddMeshPrimitive({.gltfBuilder = gltfBuilder,
 		.patches = {{{v++,0},{v++,0},{v++,0}}, {{v++,1},{v++,1},{v++,1}}}});
-	CheckGltf(gltfBuilder.GetModel(), BeUtils::GltfTuner().Tune(gltfBuilder.GetModel(), glm::dmat4x4(1.0), glm::dvec4(0.)));
+	CheckGltf(gltfBuilder.GetModel(), TestTune(gltfBuilder));
 }
 
 TEST_CASE("TestConversionLineLoop")
@@ -418,7 +425,7 @@ TEST_CASE("TestConversionLineLoop")
 		.patches = {{{0,0},{1,1},{2,0}}},
 		.indices = {{{0},{1},{1},{2},{2},{0}}},
 		.mode = CesiumGltf::MeshPrimitive::Mode::LINES});
-	CheckGltf(expectedBuilder.GetModel(), BeUtils::GltfTuner().Tune(gltfBuilder.GetModel(), glm::dmat4x4(1.0), glm::dvec4(0.)));
+	CheckGltf(expectedBuilder.GetModel(), TestTune(gltfBuilder));
 }
 
 TEST_CASE("TestConversionLineStrip")
@@ -437,7 +444,7 @@ TEST_CASE("TestConversionLineStrip")
 		.patches = {{{0,0},{1,1},{2,0}}},
 		.indices = {{{0},{1},{1},{2}}},
 		.mode = CesiumGltf::MeshPrimitive::Mode::LINES});
-	CheckGltf(expectedBuilder.GetModel(), BeUtils::GltfTuner().Tune(gltfBuilder.GetModel(), glm::dmat4x4(1.0), glm::dvec4(0.)));
+	CheckGltf(expectedBuilder.GetModel(), TestTune(gltfBuilder));
 }
 
 TEST_CASE("TestConversionTriangleStrip")
@@ -456,7 +463,7 @@ TEST_CASE("TestConversionTriangleStrip")
 		.patches = {{{0,0},{1,1},{2,0},{3,1}}},
 		.indices = {{{0},{1},{2},{1},{3},{2}}},
 		.mode = CesiumGltf::MeshPrimitive::Mode::TRIANGLES});
-	CheckGltf(expectedBuilder.GetModel(), BeUtils::GltfTuner().Tune(gltfBuilder.GetModel(), glm::dmat4x4(1.0), glm::dvec4(0.)));
+	CheckGltf(expectedBuilder.GetModel(), TestTune(gltfBuilder));
 }
 
 TEST_CASE("TestConversionTriangleFan")
@@ -475,7 +482,7 @@ TEST_CASE("TestConversionTriangleFan")
 		.patches = {{{1,1},{2,0},{0,0},{3,1}}},
 		.indices = {{{0},{1},{2},{1},{3},{2}}},
 		.mode = CesiumGltf::MeshPrimitive::Mode::TRIANGLES});
-	CheckGltf(expectedBuilder.GetModel(), BeUtils::GltfTuner().Tune(gltfBuilder.GetModel(), glm::dmat4x4(1.0), glm::dvec4(0.)));
+	CheckGltf(expectedBuilder.GetModel(), TestTune(gltfBuilder));
 }
 
 TEST_CASE("TestMerge")
@@ -493,7 +500,7 @@ TEST_CASE("TestMerge")
 	expectedBuilder.GetModel().meshes.emplace_back();
 	AddMeshPrimitive({.gltfBuilder = expectedBuilder,
 		.patches = {{{0,0},{1,0},{2,0}}, {{3,1},{4,1},{5,1}}, {{6,0},{7,0},{8,0}}, {{9,2},{10,2},{11,2}}}});
-	CheckGltf(expectedBuilder.GetModel(), BeUtils::GltfTuner().Tune(gltfBuilder.GetModel(), glm::dmat4x4(1.0), glm::dvec4(0.)));
+	CheckGltf(expectedBuilder.GetModel(), TestTune(gltfBuilder));
 }
 
 TEST_CASE("TestNoMergeDifferentMaterial")
@@ -508,7 +515,7 @@ TEST_CASE("TestNoMergeDifferentMaterial")
 	AddMeshPrimitive({.gltfBuilder = gltfBuilder,
 		.patches = {{{v++,0},{v++,0},{v++,0}}, {{v++,2},{v++,2},{v++,2}}},
 		.material = 1});
-	CheckGltf(gltfBuilder.GetModel(), BeUtils::GltfTuner().Tune(gltfBuilder.GetModel(), glm::dmat4x4(1.0), glm::dvec4(0.)));
+	CheckGltf(gltfBuilder.GetModel(), TestTune(gltfBuilder));
 }
 
 TEST_CASE("TestNoMergeIncompatibleMode")
@@ -522,7 +529,7 @@ TEST_CASE("TestNoMergeIncompatibleMode")
 		.mode = CesiumGltf::MeshPrimitive::Mode::LINES});
 	AddMeshPrimitive({.gltfBuilder = gltfBuilder,
 		.patches = {{{v++,0},{v++,0},{v++,0}}, {{v++,2},{v++,2},{v++,2}}}});
-	CheckGltf(gltfBuilder.GetModel(), BeUtils::GltfTuner().Tune(gltfBuilder.GetModel(), glm::dmat4x4(1.0), glm::dvec4(0.)));
+	CheckGltf(gltfBuilder.GetModel(), TestTune(gltfBuilder));
 }
 
 TEST_CASE("TestNoMergeDifferentHasNormal")
@@ -536,7 +543,7 @@ TEST_CASE("TestNoMergeDifferentHasNormal")
 		.normalFormat = {g_ComponentTypeNoData}});
 	AddMeshPrimitive({.gltfBuilder = gltfBuilder,
 		.patches = {{{v++,0},{v++,0},{v++,0}}, {{v++,1},{v++,1},{v++,1}}}});
-	CheckGltf(gltfBuilder.GetModel(), BeUtils::GltfTuner().Tune(gltfBuilder.GetModel(), glm::dmat4x4(1.0), glm::dvec4(0.)));
+	CheckGltf(gltfBuilder.GetModel(), TestTune(gltfBuilder));
 }
 
 TEST_CASE("TestNoMergeDifferentHasUV")
@@ -550,7 +557,7 @@ TEST_CASE("TestNoMergeDifferentHasUV")
 		.uvFormat = {g_ComponentTypeNoData}});
 	AddMeshPrimitive({.gltfBuilder = gltfBuilder,
 		.patches = {{{v++,0},{v++,0},{v++,0}}, {{v++,1},{v++,1},{v++,1}}}});
-	CheckGltf(gltfBuilder.GetModel(), BeUtils::GltfTuner().Tune(gltfBuilder.GetModel(), glm::dmat4x4(1.0), glm::dvec4(0.)));
+	CheckGltf(gltfBuilder.GetModel(), TestTune(gltfBuilder));
 }
 
 TEST_CASE("TestNoMergeDifferentHasColor")
@@ -564,7 +571,7 @@ TEST_CASE("TestNoMergeDifferentHasColor")
 		.colorFormat = {g_ComponentTypeNoData}});
 	AddMeshPrimitive({.gltfBuilder = gltfBuilder,
 		.patches = {{{v++,0},{v++,0},{v++,0}}, {{v++,1},{v++,1},{v++,1}}}});
-	CheckGltf(gltfBuilder.GetModel(), BeUtils::GltfTuner().Tune(gltfBuilder.GetModel(), glm::dmat4x4(1.0), glm::dvec4(0.)));
+	CheckGltf(gltfBuilder.GetModel(), TestTune(gltfBuilder));
 }
 
 TEST_CASE("TestNoMergeDifferentHasFeatureId")
@@ -578,7 +585,7 @@ TEST_CASE("TestNoMergeDifferentHasFeatureId")
 		.featureIdFormat = {g_ComponentTypeNoData}});
 	AddMeshPrimitive({.gltfBuilder = gltfBuilder,
 		.patches = {{{v++,0},{v++,0},{v++,0}}, {{v++,1},{v++,1},{v++,1}}}});
-	CheckGltf(gltfBuilder.GetModel(), BeUtils::GltfTuner().Tune(gltfBuilder.GetModel(), glm::dmat4x4(1.0), glm::dvec4(0.)));
+	CheckGltf(gltfBuilder.GetModel(), TestTune(gltfBuilder));
 }
 
 TEST_CASE("TestSplitAndMerge")
@@ -593,8 +600,8 @@ TEST_CASE("TestSplitAndMerge")
 	AddMeshPrimitive({.gltfBuilder = gltfBuilder,
 		.patches = {{{v++,0},{v++,0},{v++,0}}, {{v++,2},{v++,2},{v++,2}}},
 		.material = 1});
-	BeUtils::GltfTuner tuner;
-	tuner.SetRules({{{{101,102}, 2}}});
+	BeUtils::GltfTuner tuner(true);
+	tuner.SetMaterialRules({{{{101,102}, 2}}});
 	BeUtils::GltfBuilder expectedBuilder;
 	expectedBuilder.AddMetadataProperty(FEATURE_TABLE_NAME, "element", std::vector<uint64_t>{100,101,102});
 	expectedBuilder.GetModel().meshes.emplace_back();
@@ -607,7 +614,9 @@ TEST_CASE("TestSplitAndMerge")
 	AddMeshPrimitive({.gltfBuilder = expectedBuilder,
 		.patches = {{{3,1},{4,1},{5,1}}, {{9,2},{10,2},{11,2}}},
 		.material = 2});
-	CheckGltf(expectedBuilder.GetModel(), tuner.Tune(gltfBuilder.GetModel(), glm::dmat4x4(1.0), glm::dvec4(0.)));
+	CesiumGltf::Model out_tuned;
+	tuner.Tune(gltfBuilder.GetModel(), glm::dmat4x4(1.0), glm::dvec4(0.), out_tuned);
+	CheckGltf(expectedBuilder.GetModel(), out_tuned);
 }
 
 TEST_CASE("TestPropertyTableValuesIndex")
@@ -626,7 +635,7 @@ TEST_CASE("TestPropertyTableValuesIndex")
 	expectedBuilder.GetModel().meshes.emplace_back();
 	AddMeshPrimitive({.gltfBuilder = expectedBuilder,
 		.patches = {{{0,0},{1,0},{2,0}}}});
-	CheckGltf(expectedBuilder.GetModel(), BeUtils::GltfTuner().Tune(gltfBuilder.GetModel(), glm::dmat4x4(1.0), glm::dvec4(0.)));
+	CheckGltf(expectedBuilder.GetModel(), TestTune(gltfBuilder));
 }
 
 TEST_CASE("TestMergeWithMaterialFeatureId")
@@ -654,7 +663,7 @@ TEST_CASE("TestMergeWithMaterialFeatureId")
 	AddMeshPrimitive({ .gltfBuilder = expectedBuilder,
 		.patches = {{{0,0},{1,0},{2,0}}, {{3,3},{4,3},{5,3}}, {{6,0},{7,0},{8,0}}, {{9,2},{10,2},{11,2}}},
 		.materialFeatureIdFormat = {g_ComponentTypeAuto} });
-	CheckGltf(expectedBuilder.GetModel(), BeUtils::GltfTuner().Tune(gltfBuilder.GetModel(), glm::dmat4x4(1.0), glm::dvec4(0.)));
+	CheckGltf(expectedBuilder.GetModel(), TestTune(gltfBuilder));
 }
 
 TEST_CASE("TestNoMergeDifferentHasMaterialFeatureId")
@@ -671,7 +680,7 @@ TEST_CASE("TestNoMergeDifferentHasMaterialFeatureId")
 	AddMeshPrimitive({ .gltfBuilder = gltfBuilder,
 		.patches = {{{v++,0},{v++,0},{v++,0}}, {{v++,2},{v++,2},{v++,2}}},
 		.materialFeatureIdFormat = {g_ComponentTypeAuto} });
-	CheckGltf(gltfBuilder.GetModel(), BeUtils::GltfTuner().Tune(gltfBuilder.GetModel(), glm::dmat4x4(1.0), glm::dvec4(0.)));
+	CheckGltf(gltfBuilder.GetModel(), TestTune(gltfBuilder));
 }
 
 TEST_CASE("TestSplitMaterialFeatureId")
@@ -703,9 +712,11 @@ TEST_CASE("TestSplitMaterialFeatureId")
 		.patches = {{{3,3},{4,3},{5,3}}, {{15,3},{16,3},{17,3}}},
 		.materialFeatureIdFormat = {g_ComponentTypeAuto},
 		.iTwinMaterialId = {0x1984} });
-	BeUtils::GltfTuner tuner;
-	tuner.SetRules({ .itwinMatIDsToSplit_ = {{0x1981, 0x1982, 0x1983, 0x1984}} });
-	CheckGltf(expectedBuilder.GetModel(), tuner.Tune(gltfBuilder.GetModel(), glm::dmat4x4(1.0), glm::dvec4(0.)));
+	BeUtils::GltfTuner tuner(true);
+	tuner.SetMaterialRules({ .itwinMatIDsToSplit_ = {{0x1981, 0x1982, 0x1983, 0x1984}} });
+	CesiumGltf::Model out_tuned;
+	tuner.Tune(gltfBuilder.GetModel(), glm::dmat4x4(1.0), glm::dvec4(0.), out_tuned);
+	CheckGltf(expectedBuilder.GetModel(), out_tuned);
 }
 
 TEST_CASE("TestSplitMaterialFeatureId_OneMaterial")
@@ -732,7 +743,9 @@ TEST_CASE("TestSplitMaterialFeatureId_OneMaterial")
 		.patches = {{{3,3},{4,3},{5,3}}, {{15,3},{16,3},{17,3}}},
 		.materialFeatureIdFormat = {g_ComponentTypeAuto},
 		.iTwinMaterialId = {0x1984} });
-	BeUtils::GltfTuner tuner;
-	tuner.SetRules({ .itwinMatIDsToSplit_ = {{0x1984}} }); // correspond to material ID #3
-	CheckGltf(expectedBuilder.GetModel(), tuner.Tune(gltfBuilder.GetModel(), glm::dmat4x4(1.0), glm::dvec4(0.)));
+	BeUtils::GltfTuner tuner(true);
+	tuner.SetMaterialRules({ .itwinMatIDsToSplit_ = {{0x1984}} }); // correspond to material ID #3
+	CesiumGltf::Model out_tuned;
+	tuner.Tune(gltfBuilder.GetModel(), glm::dmat4x4(1.0), glm::dvec4(0.), out_tuned);
+	CheckGltf(expectedBuilder.GetModel(), out_tuned);
 }

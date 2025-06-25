@@ -8,8 +8,12 @@
 
 #if WITH_TESTS
 
-#include <Compil/SanitizedPlatformHeaders.h>
-#include <ITwinCesium3DTileset.h>
+// Note: these tests are all disabled because they require an iModel and an auth token,
+// so that they only ran in the PIE in their current state.
+// See Synchro4DImportTest.cpp for the actual testing of 4D api streaming + conversion to timelines.
+
+#include <Tests/GenericHelpers.h>
+#include <IncludeITwin3DTileset.h>
 #include <ITwinIModel.h>
 #include <ITwinServerConnection.h>
 #include <ITwinSynchro4DSchedules.h>
@@ -18,6 +22,7 @@
 #include <Timeline/SchedulesConstants.h>
 #include <Timeline/SchedulesStructs.h>
 #include <Timeline/TimeInSeconds.h>
+
 #include <Containers/Map.h>
 #include <EngineUtils.h>
 #include <Engine/Engine.h>
@@ -27,9 +32,7 @@
 #include <HAL/PlatformProcess.h>
 #include <Misc/FileHelper.h>
 #include <Misc/Paths.h>
-#include <Misc/AutomationTest.h>
 #include <Misc/LowLevelTestAdapter.h>
-#include <TimerManager.h>
 
 #include <array>
 #include <atomic>
@@ -37,55 +40,6 @@
 #include <mutex>
 #include <optional>
 #include <vector>
-
-// Copied from ITwinCesiumRuntime/Private/Tests/ITwinCesiumTestHelpers.h
-template <typename T>
-void WaitForImpl(
-    const FDoneDelegate& done,
-    UWorld* pWorld,
-    T&& condition,
-    FTimerHandle& timerHandle) {
-  if (condition()) {
-    pWorld->GetTimerManager().ClearTimer(timerHandle);
-    done.Execute();
-  } else if (pWorld->GetTimerManager().GetTimerRemaining(timerHandle) <= 0.0f) {
-    // Timeout
-    pWorld->GetTimerManager().ClearTimer(timerHandle);
-    done.Execute();
-  } else {
-    pWorld->GetTimerManager().SetTimerForNextTick(
-        [done, pWorld, condition, timerHandle]() mutable {
-          WaitForImpl<T>(done, pWorld, std::move(condition), timerHandle);
-        });
-  }
-}
-
-// Copied from ITwinCesiumRuntime/Private/Tests/ITwinCesiumTestHelpers.h
-/// <summary>
-/// Waits for a provided lambda function to become true, ticking through render
-/// frames in the meantime. If the timeout elapses before the condition becomes
-/// true, an error is logged (which will cause a test failure) and the done
-/// delegate is invoked anyway.
-/// </summary>
-/// <typeparam name="T"></typeparam>
-/// <param name="done">The done delegate provided by a LatentIt or
-/// LatentBeforeEach. It will be invoked when the condition is true or when the
-/// timeout elapses.</param>
-/// <param name="pWorld">The world in which to check the condition.</param>
-/// <param name="timeoutSeconds">The maximum time to wait for the condition to
-/// become true.</param>
-/// <param name="condition">A lambda that is invoked each
-/// frame. If this function returns false, waiting continues.</param>
-template <typename T>
-void WaitFor(
-    const FDoneDelegate& done,
-    UWorld* pWorld,
-    float timeoutSeconds,
-    T&& condition) {
-  FTimerHandle timerHandle;
-  pWorld->GetTimerManager().SetTimer(timerHandle, timeoutSeconds, false);
-  WaitForImpl<T>(done, pWorld, std::forward<T>(condition), timerHandle);
-}
 
 /// Written before realizing Describes were run sequentially, not as individual tests.
 /// Could still be useful if changing the test framework and tests are run in parallel, but in that case
@@ -157,8 +111,8 @@ public:
 		if (!IModel)
 		{
 			UWorld* World = GetWorldInPIE();
-			if (!World) throw std::runtime_error("No running in PIE");
-			for (TActorIterator<AITwinCesium3DTileset> Iter(World); Iter; ++Iter)
+			if (!World) throw std::runtime_error("Not running in PIE!");
+			for (TActorIterator<ACesium3DTileset> Iter(World); Iter; ++Iter)
 			{
 				if ((IModel = (Cast<AITwinIModel>(Iter->GetOwner()))))
 				{
@@ -263,11 +217,13 @@ private:
 				continue;
 			}
 			if (optOnlyElements
-				&& optOnlyElements->find(std::get<0>(AnimBinding.AnimatedEntities)) == optOnlyElements->end())
+				&& optOnlyElements->find(std::get<ITwinElementID>(AnimBinding.AnimatedEntities))
+					== optOnlyElements->end())
 			{
 				continue; // OK.
 			}
-			if (optAllButElement && (*optAllButElement) == std::get<0>(AnimBinding.AnimatedEntities))
+			if (optAllButElement
+				&& (*optAllButElement) == std::get<ITwinElementID>(AnimBinding.AnimatedEntities))
 			{
 				continue; // OK.
 			}
@@ -333,26 +289,26 @@ private:
 		}
 	}
 
-	static bool FillWithRandomElementsToCapacity(FAutomationTestBase& Test, FITwinSchedule const& FromSched,
-		size_t const MaxNeeded, std::unordered_set<ITwinElementID>& Elems, size_t const Pruning)
-	{
-		// Ensure we should at least be close to capacity() after the "random" pick
-		if (FromSched.AnimBindingsFullyKnownForElem.size() < 2 * MaxNeeded)
-		{
-			return true; // try next schedule
-		}
-		size_t Seed = 4321;
-		auto It = FromSched.AnimBindingsFullyKnownForElem.begin();
-		auto const ItE = FromSched.AnimBindingsFullyKnownForElem.end();
-		while (Elems.size() < MaxNeeded && It != ItE)
-		{
-			boost::hash_combine(Seed, It->first.getValue());
-			Test.TestTrue("All Elements should be 'fully known'", It->second);
-			if (Pruning <= 1 || (Seed % Pruning) == 0) Elems.insert(It->first);
-			++It;
-		}
-		return false;
-	}
+	//static bool FillWithRandomElementsToCapacity(FAutomationTestBase& Test, FITwinSchedule const& FromSched,
+	//	size_t const MaxNeeded, std::unordered_set<ITwinElementID>& Elems, size_t const Pruning)
+	//{
+	//	// Ensure we should at least be close to capacity() after the "random" pick
+	//	if (FromSched.AnimBindingsFullyKnownForElem.size() < 2 * MaxNeeded)
+	//	{
+	//		return true; // try next schedule
+	//	}
+	//	size_t Seed = 4321;
+	//	auto It = FromSched.AnimBindingsFullyKnownForElem.begin();
+	//	auto const ItE = FromSched.AnimBindingsFullyKnownForElem.end();
+	//	while (Elems.size() < MaxNeeded && It != ItE)
+	//	{
+	//		boost::hash_combine(Seed, It->first.getValue());
+	//		Test.TestTrue("All Elements should be 'fully known'", It->second);
+	//		if (Pruning <= 1 || (Seed % Pruning) == 0) Elems.insert(It->first);
+	//		++It;
+	//	}
+	//	return false;
+	//}
 
 public:
 	void CheckExpectations(FDateTime const& TestRangeStart, FDateTime const& TestRangeEnd,
@@ -374,13 +330,13 @@ public:
 			});
 	}
 
-	static void FillWithRandomElementsToCapacity(FAutomationTestBase& Test,
-		size_t const MaxNeeded, std::unordered_set<ITwinElementID>& Elems, size_t const Pruning)
-	{
-		GetFullScheduleInternals().VisitSchedules(
-			[&Test, &Elems, MaxNeeded, Pruning](FITwinSchedule const& FullSched)
-			{ return FillWithRandomElementsToCapacity(Test, FullSched, MaxNeeded, Elems, Pruning); });
-	}
+	//static void FillWithRandomElementsToCapacity(FAutomationTestBase& Test,
+	//	size_t const MaxNeeded, std::unordered_set<ITwinElementID>& Elems, size_t const Pruning)
+	//{
+	//	GetFullScheduleInternals().VisitSchedules(
+	//		[&Test, &Elems, MaxNeeded, Pruning](FITwinSchedule const& FullSched)
+	//		{ return FillWithRandomElementsToCapacity(Test, FullSched, MaxNeeded, Elems, Pruning); });
+	//}
 }; // class FSynchro4DQueriesTestHelper
 
 /*static*/
@@ -403,7 +359,6 @@ namespace TestSynchro4DQueries
 				FITwinSchedule& Sched = Schedules.back();
 				Sched.Id = TEXT("<SchedId>");
 				Sched.Name = TEXT("<SchedName>");
-				Sched.AnimatedEntityUserFieldId = TEXT("<SchedAnimatedEntityUserFieldId>");
 				FAnimationBinding Binding;
 				Binding.AnimatedEntities = ITwinElementID(42);
 				Binding.TaskId = TEXT("<TaskId>");
@@ -416,7 +371,8 @@ namespace TestSynchro4DQueries
 				check(Sched.AppearanceProfiles.empty());
 				Sched.AppearanceProfiles.resize(1);
 				Sched.KnownAppearanceProfiles[Binding.AppearanceProfileId] = 0;
-				Sched.AnimBindingsFullyKnownForElem[std::get<0>(Binding.AnimatedEntities)] = true;
+				//Sched.AnimBindingsFullyKnownForElem[std::get<ITwinElementID>(Binding.AnimatedEntities)]
+				//	= true;
 				//Binding.TransfoAssignmentId = TEXT("<TransformListId>");
 				//Binding.TransfoAssignmentInVec = 0;
 				//Sched.TransfoAssignments.push_back(FTransformAssignment{...});
@@ -447,16 +403,16 @@ namespace TestSynchro4DQueries
  There are 354 unique ElementIDs in the full schedule, a sparse collection ranging from 0x20000000146 to
  0x3000000017d.
 */
-BEGIN_DEFINE_SPEC(Synchro4DImportSpec, "Bentley.ITwinForUnreal.ITwinRuntime.Schedules", \
+BEGIN_DEFINE_SPEC(Synchro4DQueriesSpec, "Bentley.ITwinForUnreal.ITwinRuntime.Schedules", \
 				  EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 	std::shared_ptr<FSynchro4DQueriesTestHelper> Helper;
 	void WaitFullSchedule(const FDoneDelegate& Done);
 	void WaitTestSchedule(const FDoneDelegate& Done);
-	void TestQueryElementsTasks(double const MultiRatio, FName const SchedName,
-								std::optional<int64_t> MaxElementIDsFilterSizeOverride);
+	//void TestQueryElementsTasks(double const MultiRatio, FName const SchedName,
+	//							std::optional<int64_t> MaxElementIDsFilterSizeOverride);
 	void CheckEntireScheduleMatchesJson();
-END_DEFINE_SPEC(Synchro4DImportSpec)
-void Synchro4DImportSpec::WaitFullSchedule(const FDoneDelegate& Done)
+END_DEFINE_SPEC(Synchro4DQueriesSpec)
+void Synchro4DQueriesSpec::WaitFullSchedule(const FDoneDelegate& Done)
 {
 	UWorld* World = FSynchro4DQueriesTestHelper::GetWorldInPIE();
 	if (!World) throw std::runtime_error("No running in PIE");
@@ -474,7 +430,7 @@ void Synchro4DImportSpec::WaitFullSchedule(const FDoneDelegate& Done)
 			else return false;
 		});
 }
-void Synchro4DImportSpec::WaitTestSchedule(const FDoneDelegate& Done)
+void Synchro4DQueriesSpec::WaitTestSchedule(const FDoneDelegate& Done)
 {
 	UWorld* World = FSynchro4DQueriesTestHelper::GetWorldInPIE();
 	if (!World) throw std::runtime_error("No running in PIE");
@@ -484,42 +440,42 @@ void Synchro4DImportSpec::WaitTestSchedule(const FDoneDelegate& Done)
 				.HandlePendingQueries() == std::make_pair(0, 0);
 		});
 }
-void Synchro4DImportSpec::TestQueryElementsTasks(double const MultiRatio, FName const SchedName,
-	std::optional<int64_t> MaxElementIDsFilterSizeOverride)
-{
-	auto ElemsSetKeptForCheck = std::make_shared<std::unordered_set<ITwinElementID>>();
-	LatentBeforeEach(
-		[this, SchedName, ElemsSetKeptForCheck, MultiRatio, MaxElementIDsFilterSizeOverride]
-		(const FDoneDelegate& Done)
-		{
-			size_t const MaxElemsNeeded = static_cast<size_t>(
-				(MaxElementIDsFilterSizeOverride ? *MaxElementIDsFilterSizeOverride
-												 : ITwin_TestOverrides::MaxElementIDsFilterSize)
-					* MultiRatio);
-			FSynchro4DQueriesTestHelper::FillWithRandomElementsToCapacity(*this, MaxElemsNeeded,
-																		  *ElemsSetKeptForCheck, 2);
-			if (ElemsSetKeptForCheck->empty())
-			{
-				TestTrue("FillWithRandomElementsToCapacity failed", false);
-				Done.Execute();
-			}
-			else
-			{
-				std::set<ITwinElementID> ElemSetWillBeEmptied;
-				for (auto&& Elem : (*ElemsSetKeptForCheck))
-					ElemSetWillBeEmptied.insert(Elem);
-				GetInternals(Helper->GetTestSchedule(SchedName, MaxElementIDsFilterSizeOverride))
-					.GetSchedulesApiReadyForUnitTesting().QueryElementsTasks(ElemSetWillBeEmptied);
-				WaitTestSchedule(Done);
-			}
-		});
-	It("should match expectations", [this, ElemsSetKeptForCheck]()
-		{
-			if (!ElemsSetKeptForCheck->empty()) // otherwise test already failed above
-				Helper->CheckExpectations({}, {}, *ElemsSetKeptForCheck);
-		});
-}
-void Synchro4DImportSpec::CheckEntireScheduleMatchesJson()
+//void Synchro4DQueriesSpec::TestQueryElementsTasks(double const MultiRatio, FName const SchedName,
+//	std::optional<int64_t> MaxElementIDsFilterSizeOverride)
+//{
+//	auto ElemsSetKeptForCheck = std::make_shared<std::unordered_set<ITwinElementID>>();
+//	LatentBeforeEach(
+//		[this, SchedName, ElemsSetKeptForCheck, MultiRatio, MaxElementIDsFilterSizeOverride]
+//		(const FDoneDelegate& Done)
+//		{
+//			size_t const MaxElemsNeeded = static_cast<size_t>(
+//				(MaxElementIDsFilterSizeOverride ? *MaxElementIDsFilterSizeOverride
+//												 : ITwin_TestOverrides::MaxElementIDsFilterSize)
+//					* MultiRatio);
+//			FSynchro4DQueriesTestHelper::FillWithRandomElementsToCapacity(*this, MaxElemsNeeded,
+//																		  *ElemsSetKeptForCheck, 2);
+//			if (ElemsSetKeptForCheck->empty())
+//			{
+//				TestTrue("FillWithRandomElementsToCapacity failed", false);
+//				Done.Execute();
+//			}
+//			else
+//			{
+//				std::set<ITwinElementID> ElemSetWillBeEmptied;
+//				for (auto&& Elem : (*ElemsSetKeptForCheck))
+//					ElemSetWillBeEmptied.insert(Elem);
+//				GetInternals(Helper->GetTestSchedule(SchedName, MaxElementIDsFilterSizeOverride))
+//					.GetSchedulesApiReadyForUnitTesting().QueryElementsTasks(ElemSetWillBeEmptied);
+//				WaitTestSchedule(Done);
+//			}
+//		});
+//	It("should match expectations", [this, ElemsSetKeptForCheck]()
+//		{
+//			if (!ElemsSetKeptForCheck->empty()) // otherwise test already failed above
+//				Helper->CheckExpectations({}, {}, *ElemsSetKeptForCheck);
+//		});
+//}
+void Synchro4DQueriesSpec::CheckEntireScheduleMatchesJson()
 {
 	FITwinSynchro4DSchedulesInternals const& FullSched = Helper->GetFullScheduleInternals();
 	FString const TimelineAsJson = FullSched.GetTimeline().ToPrettyJsonString();
@@ -541,7 +497,7 @@ void Synchro4DImportSpec::CheckEntireScheduleMatchesJson()
 		FFileHelper::SaveStringToFile(TimelineAsJson, *Path, FFileHelper::EEncodingOptions::ForceUTF8);
 	}
 }
-void Synchro4DImportSpec::Define()
+void Synchro4DQueriesSpec::Define()
 {
 	BeforeEach([this]()
 		{
@@ -574,9 +530,10 @@ void Synchro4DImportSpec::Define()
 				});
 		});
 
-	/*  All the rest cannot run in the Check pipeline: replace Describe by Describe to enable a test
-		Later I may implement a mock server to enable it in the Check pipeline without having to get an
-		authorization token nor also depend on remote server's availability and responsiveness. */
+	/*  All the rest cannot run in the Check pipeline: replace xDescribe by Describe to enable a test.
+		Later I may implement a mock server (or use the cache like in Synchro4DImportTest.cpp) to enable
+		it in the Check pipeline without having to get an authorization token nor also depend on remote
+		server's availability and responsiveness. */
 
 	/*  IMPORTANT: Currently the tests can only run in the PIE and AFTER loading the iModel mentioned above
 		the BEGIN_DEFINE_SPEC declaration!! */
@@ -585,11 +542,11 @@ void Synchro4DImportSpec::Define()
 	// the full schedule as a pre-requisite, and all queries need to be waited on for completion
 	xDescribe("Querying the entire schedule", [this]()
 		{
-			LatentBeforeEach(std::bind(&Synchro4DImportSpec::WaitFullSchedule, this, std::placeholders::_1));
+			LatentBeforeEach(std::bind(&Synchro4DQueriesSpec::WaitFullSchedule, this, std::placeholders::_1));
 
 			// Just compare the FullSchedule against the reference file
 			It("should match the stored json",
-				std::bind(&Synchro4DImportSpec::CheckEntireScheduleMatchesJson, this));
+				std::bind(&Synchro4DQueriesSpec::CheckEntireScheduleMatchesJson, this));
 
 			Describe("with different pagination setting", [this]()
 				{
@@ -607,7 +564,7 @@ void Synchro4DImportSpec::Define()
 
 	xDescribe("Querying with time filtering", [this]()
 		{
-			LatentBeforeEach(std::bind(&Synchro4DImportSpec::WaitFullSchedule, this, std::placeholders::_1));
+			LatentBeforeEach(std::bind(&Synchro4DQueriesSpec::WaitFullSchedule, this, std::placeholders::_1));
 
 			auto TestRangeStart = std::make_shared<FDateTime>();
 			auto TestRangeEnd = std::make_shared<FDateTime>();
@@ -643,25 +600,25 @@ void Synchro4DImportSpec::Define()
 				});
 		});
 
-	xDescribe("Querying for the given Elements", [this]()
-		{
-			LatentBeforeEach(std::bind(&Synchro4DImportSpec::WaitFullSchedule, this, std::placeholders::_1));
+	//xDescribe("Querying for the given Elements", [this]()
+	//	{
+	//		LatentBeforeEach(std::bind(&Synchro4DQueriesSpec::WaitFullSchedule, this, std::placeholders::_1));
 
-			// take a random number of elements < ITwin_TestOverrides::MaxElementIDsFilterSize, to ensure a
-			// single top-level query is launched
-			Describe("using a single request",
-				std::bind(&Synchro4DImportSpec::TestQueryElementsTasks, this, 0.5, "ElementsTasksSingle",
-						  std::nullopt));
-			// take a random number of elements > ITwin_TestOverrides::MaxElementIDsFilterSize, to ensure
-			// multiple top-level queries are launched
-			Describe("using multiple requests",
-				std::bind(&Synchro4DImportSpec::TestQueryElementsTasks, this, 2.25, "ElementsTasksMulti",
-						  25));
-		});
+	//		// take a random number of elements < ITwin_TestOverrides::MaxElementIDsFilterSize, to ensure a
+	//		// single top-level query is launched
+	//		Describe("using a single request",
+	//			std::bind(&Synchro4DQueriesSpec::TestQueryElementsTasks, this, 0.5, "ElementsTasksSingle",
+	//					  std::nullopt));
+	//		// take a random number of elements > ITwin_TestOverrides::MaxElementIDsFilterSize, to ensure
+	//		// multiple top-level queries are launched
+	//		Describe("using multiple requests",
+	//			std::bind(&Synchro4DQueriesSpec::TestQueryElementsTasks, this, 2.25, "ElementsTasksMulti",
+	//					  25));
+	//	});
 
 	xDescribe("Querying around an Element", [this]()
 		{
-			LatentBeforeEach(std::bind(&Synchro4DImportSpec::WaitFullSchedule, this, std::placeholders::_1));
+			LatentBeforeEach(std::bind(&Synchro4DQueriesSpec::WaitFullSchedule, this, std::placeholders::_1));
 
 			auto ElementID = std::make_shared<ITwinElementID>(ITwin::ParseElementID(TEXT("0x2000000054f")));
 			auto MarginFromStart = std::make_shared<FTimespan>(FTimespan::FromDays(-2));

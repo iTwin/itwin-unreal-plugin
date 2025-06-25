@@ -1,6 +1,6 @@
 #pragma once
 
-#include "CesiumGltf/AccessorView.h"
+#include <CesiumGltf/AccessorView.h>
 
 namespace CesiumGltf {
 
@@ -12,11 +12,22 @@ private:
   AccessorView<T> _accessor;
 
 public:
+  /**
+   * @brief The type of the elements in the accessor.
+   */
+  typedef T value_type;
+
   AccessorWriter() : _accessor() {}
 
-  /** @copydoc AccessorView::AccessorView(const
-   * uint8_t*,int64_t,int64_t,int64_t) */
-  AccessorWriter(uint8_t* pData, int64_t stride, int64_t offset, int64_t size)
+  /**
+   * @brief Constructs a new instance from an {@link AccessorView}.
+   */
+  AccessorWriter(const AccessorView<T>& accessorView)
+      : _accessor(accessorView) {}
+
+  /** @copydoc AccessorView::AccessorView(const std::byte*, int64_t, int64_t,
+   * int64_t) */
+  AccessorWriter(std::byte* pData, int64_t stride, int64_t offset, int64_t size)
       : _accessor(pData, stride, offset, size) {}
 
   /** @copydoc AccessorView::AccessorView(const Model&,const Accessor&) */
@@ -44,6 +55,17 @@ public:
    */
   AccessorViewStatus status() const noexcept {
     return this->_accessor.status();
+  }
+
+  /** @copydoc AccessorView::stride */
+  int64_t stride() const noexcept { return this->_accessor.stride(); }
+
+  /** @copydoc AccessorView::offset */
+  int64_t offset() const noexcept { return this->_accessor.offset(); }
+
+  /** @copydoc AccessorView::data */
+  std::byte* data() noexcept {
+    return const_cast<std::byte*>(this->_accessor.data());
   }
 };
 

@@ -19,13 +19,14 @@
 
 using FOnElementsTimelineModified =
 	std::function<void(FITwinElementTimeline&,  std::vector<ITwinElementID> const*)>;
-class FITwinCoordConversions;
+struct FITwinCoordConversions;
 class FITwinSchedule;
 using FSchedLock = std::lock_guard<std::recursive_mutex>;
 
 class FITwinScheduleTimelineBuilder
 {
 	friend class FITwinSynchro4DSchedulesInternals;
+	friend class FSynchro4DImportTestHelper;
 
 	UITwinSynchro4DSchedules const* Owner;
 	FITwinCoordConversions const* CoordConversions;
@@ -38,6 +39,8 @@ class FITwinScheduleTimelineBuilder
 									   FSchedLock& Lock);
 	void UpdateAnimationGroupInTimeline(size_t const GroupIdx, FElementsGroup const& GroupElements,
 										FSchedLock&);
+	FITwinScheduleTimelineBuilder();
+	bool IsUnitTesting() const;
 
 public:
 	FITwinScheduleTimelineBuilder(UITwinSynchro4DSchedules const& InOwner,
@@ -45,6 +48,7 @@ public:
 	FITwinScheduleTimelineBuilder(FITwinScheduleTimelineBuilder&& Other) { *this = std::move(Other); }
 	FITwinScheduleTimelineBuilder& operator=(FITwinScheduleTimelineBuilder&& Other);
 	~FITwinScheduleTimelineBuilder();
+	static FITwinScheduleTimelineBuilder CreateForUnitTesting(FITwinCoordConversions const&);
 	void Initialize(FOnElementsTimelineModified&& InOnElementsTimelineModified);
 	/// We need to uninitialize manually before the destructor is called: this is because the data we access
 	/// belongs to the iModel SceneMapping and, counter-intuitively, the iModel is destroyed _before_ its
@@ -53,4 +57,6 @@ public:
 
 	FITwinScheduleTimeline& Timeline() { return MainTimeline; }
 	FITwinScheduleTimeline const& GetTimeline() const { return MainTimeline; }
+
+	void DebugDumpFullTimelinesAsJson(FString const& RelPath) const;
 };

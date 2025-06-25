@@ -23,9 +23,11 @@
 #	endif // !MODULE_EXPORT
 #endif
 
+#include "../AdvVizLinkType.h"
 #include "TextureKey.h"
+#include "TextureUsage.h"
 
-MODULE_EXPORT namespace SDK::Core 
+MODULE_EXPORT namespace AdvViz::SDK 
 {
 	class Http;
 	struct ITwinMaterial;
@@ -34,7 +36,7 @@ MODULE_EXPORT namespace SDK::Core
 
 	/// Short-term solution to load/save material settings in the decoration service.
 	/// In the future, materials will be part of the Scene API, this is just a temporary solution.
-	class MaterialPersistenceManager
+	class ADVVIZ_LINK MaterialPersistenceManager
 	{
 	public:
 		MaterialPersistenceManager();
@@ -43,16 +45,31 @@ MODULE_EXPORT namespace SDK::Core
 		bool NeedUpdateDB() const;
 
 		/// Load the data from the server
-		void LoadDataFromServer(const std::string& decorationId, const std::string& accessToken);
+		void LoadDataFromServer(std::string const& decorationId,
+			std::set<std::string> const& specificModels = {});
 
 		/// Save the data on the server
-		void SaveDataOnServer(const std::string& decorationId, const std::string& accessToken);
+		void SaveDataOnServer(const std::string& decorationId);
 
 		/// Fills the list of iModel IDs for which some material customizations are known.
 		size_t ListIModelsWithMaterialSettings(std::vector<std::string>& iModelIds) const;
 
 		/// Get map iModelID -> TextureSet.
-		void GetDecorationTexturesByIModel(PerIModelTextureSet& outPerIModelTextures) const;
+		PerIModelTextureSet const& GetDecorationTexturesByIModel() const;
+
+		TextureUsageMap const& GetTextureUsageMap() const;
+		TextureUsage GetTextureUsage(TextureKey const& textureKey) const;
+		void AddTextureUsage(TextureKey const& textureKey, EChannelType channel);
+
+		/// Returns whether the given iModel was totally loaded from the decoration service (including
+		/// textures), and thus can be used to customize the model.
+		bool HasLoadedModel(std::string const& iModelId) const;
+
+		/// Mark the given iModel as fully loaded or not.
+		void SetLoadedModel(std::string const& iModelId, bool bLoaded = true);
+
+		/// Returns whether a material definition exists for given iModel and material ID.
+		bool HasMaterialDefinition(std::string const& iModelId, uint64_t materialId) const;
 
 		/// Get material settings for a given iModel and material.
 		bool GetMaterialSettings(std::string const& iModelId, uint64_t materialId, ITwinMaterial& material) const;
@@ -66,6 +83,14 @@ MODULE_EXPORT namespace SDK::Core
 		/// Set path to Material Library. Beware this may not be a physical file path in the context of a
 		/// packaged application: it should be used withing UE's file system API only.
 		void SetMaterialLibraryDirectory(std::string const& materialLibraryDirectory);
+
+		/// Return the base url to access a texture stored in the decoration service or in the material
+		/// library.
+		std::string GetBaseURL(ETextureSource texSource) const;
+
+		/// Return the relative url to access a texture stored in the decoration service or in the material
+		/// library.
+		std::string GetRelativeURL(TextureKey const& textureKey) const;
 
 		/// Return the url to access a texture stored in the decoration service or in the material library.
 		std::string GetTextureURL(TextureKey const& textureKey) const;
@@ -95,12 +120,16 @@ MODULE_EXPORT namespace SDK::Core
 		bool SetMaterialFromKeyValueMap(std::string const& iModelId, uint64_t materialId, KeyValueStringMap const& inMap);
 
 		bool GetMaterialSettingsFromKeyValueMap(KeyValueStringMap const& inMap,
-			ITwinMaterial& outMaterial, TextureKeySet& outTextures) const;
+			ITwinMaterial& outMaterial,
+			TextureKeySet& outTextures,
+			TextureUsageMap& outTextureUsageMap,
+			std::optional<ETextureSource> const& customTexSource = std::nullopt) const;
 
 		/// Export the given material definition to json format.
 		std::string ExportAsJson(ITwinMaterial const& material, std::string const& iModelID, uint64_t materialId) const;
 
-		bool ConvertJsonFileToKeyValueMap(std::filesystem::path const& jsonPath, KeyValueStringMap& outMap) const;
+		bool ConvertJsonFileToKeyValueMap(std::filesystem::path const& jsonPath,
+			std::filesystem::path const& textureDir, KeyValueStringMap& outMap) const;
 
 	private:
 		class Impl;
@@ -108,4 +137,5 @@ MODULE_EXPORT namespace SDK::Core
 		Impl& GetImpl();
 		Impl const& GetImpl() const;
 	};
+
 }

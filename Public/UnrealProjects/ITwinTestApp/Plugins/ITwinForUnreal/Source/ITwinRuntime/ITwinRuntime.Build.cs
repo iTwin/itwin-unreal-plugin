@@ -8,18 +8,26 @@
 
 using System.IO;
 using UnrealBuildTool;
+using EpicGames.Core;
+using Microsoft.Extensions.Logging;
 
 public class ITwinRuntime : ModuleRules
 {
+	[CommandLine("-beNoUnity", Value = "false")]
+	public bool bBeUseUnity = true;
+
 	public ITwinRuntime(ReadOnlyTargetRules Target) : base(Target)
 	{
+		new CommandLineArguments(System.Environment.GetCommandLineArgs()).ApplyTo(this);
+		Logger.LogInformation($"bBeUseUnity {GetType().Name} = {bBeUseUnity}");
+		bUseUnity = bBeUseUnity;
 		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
 		CppStandard = CppStandardVersion.Cpp20;
 		PublicDependencyModuleNames.AddRange(new string[]{
-			"Core",
+			"Core"
 		});
 		PrivateDependencyModuleNames.AddRange(new string[]{
-			"ITwinCesiumRuntime",
+			"CesiumRuntime",
 			"CoreUObject",
 			"DeveloperSettings",
 			"Engine",
@@ -38,7 +46,7 @@ public class ITwinRuntime : ModuleRules
 			"LevelSequence",
 			"CinematicCamera",
 			"MovieScene",
-			"MovieSceneTracks",
+			"MovieSceneTracks"
 		});
 		if (Target.bBuildEditor)
 		{
@@ -59,20 +67,31 @@ public class ITwinRuntime : ModuleRules
 			libPrefix = "lib";
 		}
 
+        if (Target.Configuration == UnrealTargetConfiguration.Development)
+        {
+            PublicDependencyModuleNames.AddRange(new string[]{
+                "CQTest"
+            });
+		}
 		if (Target.Configuration == UnrealTargetConfiguration.Development ||
 			Target.Configuration == UnrealTargetConfiguration.Shipping)
 		{
 			libFolder = "Release";
 			libSuffix = "";
 		}
-
 		PublicAdditionalLibraries.AddRange(new string[]{
 			Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, libPrefix + "BeUtils" + libSuffix + libExtension),
-			Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, libPrefix + "httpmockserver" + libSuffix + libExtension),
 			Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, libPrefix + "cpr" + libExtension),
 			Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, "libcurl" + libExtension),
-			Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, "libmicrohttpd" + libExtension),
+			Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, libPrefix + "yyjson" + libExtension),
 		});
+		if (Target.Configuration != UnrealTargetConfiguration.Shipping)
+		{
+			PublicAdditionalLibraries.AddRange(new string[]{
+				Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, libPrefix + "httpmockserver" + libSuffix + libExtension),
+				Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, "libmicrohttpd" + libExtension),
+			});
+		}
 		if (Target.Platform == UnrealTargetPlatform.Win64)
 		{
 			PublicSystemLibraries.Add("crypt32.lib"); // for curl

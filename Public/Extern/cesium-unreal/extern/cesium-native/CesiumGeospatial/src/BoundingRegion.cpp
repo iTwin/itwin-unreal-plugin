@@ -1,12 +1,20 @@
-#include "CesiumGeospatial/BoundingRegion.h"
-
-#include "CesiumGeospatial/EllipsoidTangentPlane.h"
-
+#include <CesiumGeometry/CullingResult.h>
 #include <CesiumGeometry/IntersectionTests.h>
 #include <CesiumGeometry/Plane.h>
 #include <CesiumGeometry/Ray.h>
+#include <CesiumGeospatial/BoundingRegion.h>
+#include <CesiumGeospatial/Ellipsoid.h>
+#include <CesiumGeospatial/EllipsoidTangentPlane.h>
+#include <CesiumGeospatial/GlobeRectangle.h>
 #include <CesiumUtility/Math.h>
 
+#include <glm/common.hpp>
+#include <glm/ext/matrix_double3x3.hpp>
+#include <glm/ext/vector_double2.hpp>
+#include <glm/ext/vector_double3.hpp>
+#include <glm/geometric.hpp>
+
+#include <optional>
 #include <stdexcept>
 
 using namespace CesiumUtility;
@@ -218,15 +226,18 @@ double BoundingRegion::computeDistanceSquaredToPosition(
   return glm::max(bboxDistanceSquared, result);
 }
 
-BoundingRegion
-BoundingRegion::computeUnion(const BoundingRegion& other) const noexcept {
+BoundingRegion BoundingRegion::computeUnion(
+    const BoundingRegion& other,
+    const CesiumGeospatial::Ellipsoid& ellipsoid) const noexcept {
   return BoundingRegion(
       this->_rectangle.computeUnion(other._rectangle),
       glm::min(this->_minimumHeight, other._minimumHeight),
-      glm::max(this->_maximumHeight, other._maximumHeight));
+      glm::max(this->_maximumHeight, other._maximumHeight),
+      ellipsoid);
 }
 
-static OrientedBoundingBox fromPlaneExtents(
+namespace {
+OrientedBoundingBox fromPlaneExtents(
     const glm::dvec3& planeOrigin,
     const glm::dvec3& planeXAxis,
     const glm::dvec3& planeYAxis,
@@ -258,6 +269,7 @@ static OrientedBoundingBox fromPlaneExtents(
       planeOrigin + (halfAxes * centerOffset),
       scaledHalfAxes);
 }
+} // namespace
 
 /*static*/ OrientedBoundingBox BoundingRegion::_computeBoundingBox(
     const GlobeRectangle& rectangle,

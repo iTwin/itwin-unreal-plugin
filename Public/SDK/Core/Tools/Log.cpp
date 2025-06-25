@@ -22,11 +22,12 @@
 
 #include "LockableObject.h"
 #include "Assert.h"
+#include "CrashInfo.h"
 #include "../Singleton/singleton.h"
 
 #ifdef _WIN32
 #include "plog/Appenders/DebugOutputAppender.h"
-namespace SDK::Core::Tools::Internal
+namespace AdvViz::SDK::Tools::Internal
 {
 	template<int id>
 	void AddVSDebugOutput(plog::Logger<id> &logger)
@@ -36,20 +37,20 @@ namespace SDK::Core::Tools::Internal
 	}
 }
 #else
-namespace SDK::Core::Tools::Internal
+namespace AdvViz::SDK::Tools::Internal
 {
 	template<int id>
 	void AddVSDebugOutput(plog::Logger<id>&){}
 }
 #endif 
 
-namespace SDK::Core::Tools::Internal
+namespace AdvViz::SDK::Tools::Internal
 { 
 	struct LogGlobals
 	{
 		plog::Logger<PLOG_DEFAULT_INSTANCE_ID>* plog_;
 		RWLockableObject<std::unordered_map<std::uint64_t, ILogPtr>, std::shared_mutex> logMap;
-		bool logInitialised = false;
+		std::atomic<bool> logInitialized = false;
 		LogGlobals()
 		{
 			static plog::Logger<PLOG_DEFAULT_INSTANCE_ID> logger(plog::verbose); // should be ok because LogGlobals() is called only once
@@ -63,7 +64,7 @@ namespace SDK::Core::Tools::Internal
 	}
 }
 
-namespace SDK::Core::Tools
+namespace AdvViz::SDK::Tools
 {
 	static std::array<plog::Severity, int(Level::verbose) + 1> g_LevelToSeverity = {
 		plog::Severity::none,
@@ -118,17 +119,18 @@ namespace SDK::Core::Tools
 
 	void InitLog(std::string const& logBasename)
 	{
-		if (!Internal::GetLogGlobals().logInitialised)
+		if (!Internal::GetLogGlobals().logInitialized)
 		{
-			Internal::GetLogGlobals().logInitialised = true;
 			std::filesystem::path tmpPath = std::filesystem::temp_directory_path();
-			tmpPath /= "ITwinAdvViz/Logs";
+			tmpPath = tmpPath / "ITwinAdvViz" / "Logs";
 			std::error_code ec;
 			if (!std::filesystem::is_directory(tmpPath, ec))
 			{
 				std::filesystem::create_directories(tmpPath, ec);
 			}
 			tmpPath /= logBasename;
+			if (GetCrashInfo())
+				GetCrashInfo()->AddInfo("AdvVizSdkLogPath", (const char*)tmpPath.u8string().c_str());
 			static plog::RollingFileAppender<plog::TxtFormatter> fileAppender((const char*)tmpPath.u8string().c_str(),
 				512 * 1024 /* max_fileSize*/,
 				5 /* max_files*/);
@@ -136,10 +138,15 @@ namespace SDK::Core::Tools
 
 			auto& appender = Internal::GetLogGlobals().plog_->addAppender(&consoleAppender).addAppender(&fileAppender);
 			Internal::AddVSDebugOutput(appender);
+			Internal::GetLogGlobals().logInitialized = true;
+			CreateLogChannel("AdvVizSDK", Level::info);
 		}
 	}
 
-
+	bool IsLogInitialized()
+	{
+		return Internal::GetLogGlobals().logInitialized;
+	}
 
 	ILogPtr GetLog(const std::uint64_t channel, const char* name)
 	{
@@ -151,7 +158,7 @@ namespace SDK::Core::Tools
 			if (it != logMap.end())
 				return it->second;
 		}
-		BE_ISSUE("Channel not created:", name);
+		BE_ISSUE("Channel not created:", name); UNUSED(name);
 		return {};
 	}
 
@@ -175,6 +182,9 @@ namespace SDK::Core::Tools
 		CreateLogChannel("App", Level::info);
 		CreateLogChannel("AppUI", Level::info);
 		CreateLogChannel("Timeline", Level::info);
+		CreateLogChannel("http", Level::info);
+		CreateLogChannel("json", Level::info);
+		CreateLogChannel("keyframeAnim", Level::info);
 	}
 }
 

@@ -8,21 +8,34 @@
 #endif
 
 // #include <s2/s2cell.h>
+#include <s2/r2rect.h>
 #include <s2/s1interval.h>
 #include <s2/s2cell_id.h>
+#include <s2/s2coords.h>
 #include <s2/s2latlng.h>
+#include <s2/s2point.h>
 // #include <s2/s2latlng_rect.h>
 
 #ifdef _MSC_VER
 #pragma warning(pop)
 #endif
 
-#include "CesiumGeospatial/S2CellID.h"
 #include "HilbertOrder.h"
 
 #include <CesiumGeometry/QuadtreeTileID.h>
+#include <CesiumGeospatial/Cartographic.h>
+#include <CesiumGeospatial/GlobeRectangle.h>
+#include <CesiumGeospatial/S2CellID.h>
+#include <CesiumUtility/Assert.h>
+#include <CesiumUtility/Math.h>
 
+#include <array>
 #include <cfloat>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <string_view>
 
 using namespace CesiumGeometry;
 using namespace CesiumGeospatial;
@@ -30,7 +43,9 @@ using namespace CesiumGeospatial;
 using GoogleS2CellID = S2CellId;
 
 /*static*/ S2CellID S2CellID::fromToken(const std::string_view& token) {
-  return S2CellID(GoogleS2CellID::FromToken(token.data(), token.size()).id());
+  return S2CellID(
+      GoogleS2CellID::FromToken(absl::string_view(token.data(), token.size()))
+          .id());
 }
 
 /*static*/ S2CellID S2CellID::fromFaceLevelPosition(
@@ -102,7 +117,7 @@ S2CellID S2CellID::getParent() const {
 }
 
 S2CellID S2CellID::getChild(size_t index) const {
-  assert(index <= 3);
+  CESIUM_ASSERT(index <= 3);
   return S2CellID(GoogleS2CellID(this->_id).child(int(index)).id());
 }
 
@@ -124,7 +139,11 @@ GlobeRectangleFromLatLng(const R1Interval& lat_, const S1Interval& lng_) {
   return GlobeRectangle(lng_.lo(), lat_.lo(), lng_.hi(), lat_.hi());
 }
 
-R1Interval FullLat() { return R1Interval(-M_PI_2, M_PI_2); }
+R1Interval FullLat() {
+  return R1Interval(
+      -CesiumUtility::Math::PiOverTwo,
+      CesiumUtility::Math::PiOverTwo);
+}
 
 GlobeRectangle Expanded(
     const R1Interval& lat_,
@@ -211,33 +230,49 @@ GlobeRectangle S2CellID::computeBoundingRectangle() const {
   static const double kPoleMinLat = asin(sqrt(1. / 3)) - 0.5 * DBL_EPSILON;
 
   // The face centers are the +X, +Y, +Z, -X, -Y, -Z axes in that order.
-  assert(((face_ < 3) ? 1 : -1) == S2::GetNorm(face_)[face_ % 3]);
+  CESIUM_ASSERT(((face_ < 3) ? 1 : -1) == S2::GetNorm(face_)[face_ % 3]);
 
   R1Interval lat;
   S1Interval lng;
   switch (face_) {
   case 0:
-    lat = R1Interval(-M_PI_4, M_PI_4);
-    lng = S1Interval(-M_PI_4, M_PI_4);
+    lat = R1Interval(
+        -CesiumUtility::Math::PiOverFour,
+        CesiumUtility::Math::PiOverFour);
+    lng = S1Interval(
+        -CesiumUtility::Math::PiOverFour,
+        CesiumUtility::Math::PiOverFour);
     break;
   case 1:
-    lat = R1Interval(-M_PI_4, M_PI_4);
-    lng = S1Interval(M_PI_4, 3 * M_PI_4);
+    lat = R1Interval(
+        -CesiumUtility::Math::PiOverFour,
+        CesiumUtility::Math::PiOverFour);
+    lng = S1Interval(
+        CesiumUtility::Math::PiOverFour,
+        3 * CesiumUtility::Math::PiOverFour);
     break;
   case 2:
-    lat = R1Interval(kPoleMinLat, M_PI_2);
+    lat = R1Interval(kPoleMinLat, CesiumUtility::Math::PiOverTwo);
     lng = S1Interval::Full();
     break;
   case 3:
-    lat = R1Interval(-M_PI_4, M_PI_4);
-    lng = S1Interval(3 * M_PI_4, -3 * M_PI_4);
+    lat = R1Interval(
+        -CesiumUtility::Math::PiOverFour,
+        CesiumUtility::Math::PiOverFour);
+    lng = S1Interval(
+        3 * CesiumUtility::Math::PiOverFour,
+        -3 * CesiumUtility::Math::PiOverFour);
     break;
   case 4:
-    lat = R1Interval(-M_PI_4, M_PI_4);
-    lng = S1Interval(-3 * M_PI_4, -M_PI_4);
+    lat = R1Interval(
+        -CesiumUtility::Math::PiOverFour,
+        CesiumUtility::Math::PiOverFour);
+    lng = S1Interval(
+        -3 * CesiumUtility::Math::PiOverFour,
+        -CesiumUtility::Math::PiOverFour);
     break;
   default:
-    lat = R1Interval(-M_PI_2, -kPoleMinLat);
+    lat = R1Interval(-CesiumUtility::Math::PiOverTwo, -kPoleMinLat);
     lng = S1Interval::Full();
     break;
   }

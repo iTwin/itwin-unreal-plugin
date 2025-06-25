@@ -1,8 +1,8 @@
 #pragma once
 
-#include "Ellipsoid.h"
-#include "GlobeRectangle.h"
-#include "Library.h"
+#include <CesiumGeospatial/Ellipsoid.h>
+#include <CesiumGeospatial/GlobeRectangle.h>
+#include <CesiumGeospatial/Library.h>
 
 #include <glm/vec2.hpp>
 #include <glm/vec3.hpp>
@@ -55,7 +55,7 @@ public:
    * @return The rectangle
    */
   static constexpr CesiumGeometry::Rectangle computeMaximumProjectedRectangle(
-      const Ellipsoid& ellipsoid = Ellipsoid::WGS84) noexcept {
+      const Ellipsoid& ellipsoid CESIUM_DEFAULT_ELLIPSOID) noexcept {
     const double value =
         ellipsoid.getMaximumRadius() * CesiumUtility::Math::OnePi;
     return CesiumGeometry::Rectangle(-value, -value, value, value);
@@ -66,7 +66,8 @@ public:
    *
    * @param ellipsoid The {@link Ellipsoid}.
    */
-  WebMercatorProjection(const Ellipsoid& ellipsoid = Ellipsoid::WGS84) noexcept;
+  WebMercatorProjection(
+      const Ellipsoid& ellipsoid CESIUM_DEFAULT_ELLIPSOID) noexcept;
 
   /**
    * @brief Gets the {@link Ellipsoid}.

@@ -11,6 +11,7 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include <ITwinFwd.h>
+#include <ITwinIModelSettings.h> // for EITwin4DGlTFTranslucencyRule enum (temp?)
 
 #include <functional>
 #include <memory>
@@ -42,6 +43,11 @@ public:
 
 	UPROPERTY(EditAnywhere, Category = "iTwin")
 	UMaterialInterface* BaseMaterialGlass = nullptr;
+
+	/// Not used for tilesets, as we need to set opacity mask for Synchro animations. Introduced to generate
+	/// the material previews.
+	UPROPERTY(EditAnywhere, Category = "iTwin")
+	UMaterialInterface* BaseMaterialOpaque = nullptr;
 
 	UPROPERTY(Category = "Schedules Querying",
 		VisibleAnywhere)
@@ -95,19 +101,33 @@ public:
 		BlueprintCallable)
 	void QueryElementsTasks(TArray<FString> const& Elements);
 
-	/// Tells whether the whole 4D Schedule is available locally. Until then, the 4D animation cannot be
-	/// replayed. Note that the total time range of the project can be known before the whole Schedule is
+	/// Tells whether the whole 4D Schedule is available locally (possibly with errors:
+	/// @see IsAvailableWithErrors()). Until then, the 4D animation cannot be replayed.
+	/// Note that the total time range of the project can be known before the whole Schedule is
 	/// ready (see OnScheduleTimeRangeKnown)
 	UFUNCTION(Category = "Schedules Querying",
 		BlueprintCallable)
 	bool IsAvailable() const;
 
+	/// When IsAvailable() returns true, tells whether there has been an error to any request, ie.
+	/// a request that remained unsuccessful, even after the allocated amount of retries. Errors during
+	/// schedule streaming means the schedule can be replayed but may be incomplete. A manual action on
+	/// ResetSchedules() will try streaming again from the server, in case errors come from temporary
+	/// downtime (successful requests have been cached and will not be retried from scratch, unless the
+	/// cache is manually cleared with ClearCacheOnlyThis() or ClearCacheAllSchedules()).
+	UFUNCTION(Category = "Schedules Querying",
+		BlueprintCallable)
+	bool IsAvailableWithErrors() const;
+
+	/// When IsAvailableWithErrors() returns true, returns the description message for the first encountered
+	/// error.
+	UFUNCTION(Category = "Schedules Querying",
+		BlueprintCallable)
+	FString FirstFetchingErrorString() const;
+
 	/// Called when the time range of the whole Schedule is known, with the StartTime and EndTime passed as
 	/// arguments. FDateTime::MinValue() is passed twice when there is on schedule, or no tasks were found
 	/// in the schedule.
-	/// Never called when bPrefetchAllTasksAndAppearanceProfiles is false.
-	/// Known limitation: in case of connection or server failures preventing schedule information from being
-	/// retrieved (despite retries), the delegate is never called.
 	UPROPERTY(BlueprintAssignable)
 	FScheduleTimeRangeDelegate OnScheduleTimeRangeKnown;
 
@@ -118,6 +138,22 @@ public:
 	/// range is known.
 	//UFUNCTION() <== FDateRange not UFUNCTION-able...
 	[[nodiscard]] FDateRange GetDateRange() const;
+	/// Returns the planned start time of the Schedule, if any and already currently known. Will return
+	/// FDateTime() when either there is no schedule, the schedule has zero task, or the task data has not
+	/// yet been received.
+	/// Use OnScheduleTimeRangeKnown if you'd rather wait and be notified when the final value of the time
+	/// range is known.
+	UFUNCTION(Category = "iTwin",
+		BlueprintCallable)
+	FDateTime GetPlannedStartDate() const;
+	/// Returns the planned end time of the Schedule, if any and already currently known. Will return
+	/// FDateTime() when either there is no schedule, the schedule has zero task, or the task data has not
+	/// yet been received.
+	/// Use OnScheduleTimeRangeKnown if you'd rather wait and be notified when the final value of the time
+	/// range is known.
+	UFUNCTION(Category = "iTwin",
+		BlueprintCallable)
+	FDateTime GetPlannedEndDate() const;
 
 	/// Called when the status of the Schedule data request process changes: the parameter passed is 'true'
 	/// when some more data needs to be requested, or 'false' when all requests have been processed.
@@ -138,21 +174,24 @@ public:
 	UPROPERTY(Category = "Schedules Querying|Advanced", EditAnywhere)
 	int ScheduleQueriesServerPagination = 10000;
 
-	/// Query all 4D Schedules tasks and appearance profiles at once as soon as the Schedule Id is known for
-	/// an iModel. This will vastly speed up querying animation bindings (half the time is typically spared)
-	UPROPERTY(Category = "Schedules Querying|Advanced",
-		EditAnywhere)
-	bool bPrefetchAllTasksAndAppearanceProfiles = true;
-
 	UPROPERTY(Category = "Schedules Querying|Advanced", EditAnywhere)
 	uint64 ScheduleQueriesMaxElementIDsFilterSize = 500;
 
-	/// Query all 4D Schedules animated Element bindings profiles at once as soon as the Schedule task list
-	/// is known for an iModel. This will speed up querying animation bindings, and also avoid unpleasant
-	/// transient display states when receiving new Cesium tiles (typically those of finer LOD).
-	/// Only relevant when bPrefetchAllTasksAndAppearanceProfiles is true, and also ignored when
-	/// bDebugWithDummyTimelines is true.
+	/// Use official api.bentley.com 4D endpoints rather than the legacy internal ES-API endpoints.
 	UPROPERTY(Category = "Schedules Querying|Advanced",
+		EditAnywhere)
+	bool bStream4DFromAPIM = true;
+
+	/// Query all of the 4D Schedule's data at once as soon as the Schedule task list is known for an iModel.
+	/// This will avoid unpleasant transient display states when receiving new Cesium tiles (typically those
+	/// of finer LOD). Ignored when bDebugWithDummyTimelines is true.
+	/// DISCLAIMER: setting false here has not been tested for a very long time, because of the much better
+	/// performance of defaulting to 'true'. It is mostly kept in case incremental schedules updates in
+	/// the future requires us to revert back to false here (or more likely, switch to an hybrid mode with
+	/// initial pre-fetching + incremental refresh queries which may benefit a lot from the codepaths used
+	/// by the 'false' mode of this flag. Note that a preferred alternative for efficient schedules streaming
+	/// would be to integrate the 4D data directly into the "3D" Tiles to make them "4D Tiles".
+	UPROPERTY(Category = "Schedules Querying|Advanced", meta = (DisplayName = "Prefetch Whole Schedule"),
 		EditAnywhere)
 	bool bPrefetchAllElementAnimationBindings = true;
 
@@ -160,7 +199,7 @@ public:
 	uint64 ScheduleQueriesMaxTaskIDsFilterSize = 100;
 
 	UPROPERTY(Category = "Schedules Querying|Advanced", EditAnywhere)
-	uint64 ScheduleQueriesBindingsPagination = 30000;
+	uint64 ScheduleQueriesBindingsPagination = 50000;
 
 	/// Use the correct schedules' task but use random appearance profiles (color, opacity and growth
 	/// simulations) for visual debugging.
@@ -173,6 +212,12 @@ public:
 	UPROPERTY(Category = "Schedules Querying|Debug",
 		EditAnywhere)
 	bool bDebugWithDummyTimelines = false;
+
+	/// Log information about the currently selected Element's 4D animation properties as applied by the
+	/// '4D animator' class.
+	UPROPERTY(Category = "Schedules Querying|Debug",
+		EditAnywhere)
+	bool bDebugSelectedElemAnim = false;
 
 	/// When not empty, dump the full timelines as a json named like this to the project's Saved folder
 	UPROPERTY(Category = "Schedules Querying|Debug",
@@ -236,6 +281,16 @@ public:
 		EditAnywhere)
 	FDateTime QueryAllUntilTime = FDateTime::UtcNow();//see ScheduleTime about UtcNow()
 
+	/// Test flag telling which method to use to handle mesh parts needing partial visibility or
+	/// transformations: "mesh extraction" = legacy method (MVP/EAP1), gltf tuner = new method.
+	UPROPERTY(Category = "Schedules Replay",
+		EditAnywhere)
+	bool bUseGltfTunerInsteadOfMeshExtraction = true;
+
+	UPROPERTY(Category = "Schedules Replay", meta = (DisplayName = "Translucent Mesh Grouping"),
+		EditAnywhere)
+	EITwin4DGlTFTranslucencyRule GlTFTranslucencyRule = EITwin4DGlTFTranslucencyRule::Unlimited;
+
 	// Note: local time (Now() insead of UtcNow()) is just not possible because in that case the TZ offset
 	// (+0200 for GMT+2) is added in the Outliner field! The variable needs to be UTC it seems, and the
 	// Outliner field correctly converts it to local timezone. Which was not obvious from the doc...
@@ -291,6 +346,10 @@ public:
 		BlueprintCallable)
 	void Play();
 
+	UFUNCTION(Category = "Schedules Replay",
+		BlueprintCallable)
+	bool IsPlaying() const;
+
 	/// Pause replay of the schedule animation, freezing the display at the current script time, whereas
 	/// "Stop" would reset the display to disable all scheduling effects.
 	UFUNCTION(Category = "Schedules Replay",
@@ -316,9 +375,20 @@ public:
 	UPROPERTY(Category = "Schedules Replay|Settings", EditAnywhere)
 	bool bDisableColoring = false;
 
-	/// Disable application of partial visibility on animated Elements
+	/// Disable application of visibilities on animated Elements: this includes partial visibilities,
+	/// but also:
+	///  - all automatic hiding of Elements depending on their task action and current time, like Neutral
+	///		task Elements (hidden during the whole schedule), Install task Elements before task begins,
+	///		Remove task Elements after task has ended, Temporary tasks Elements before and after the task's
+	///		time range.
+	///  - all de-facto hiding of Elements subject to Growth Simulation when the current position of the
+	///		clipping plane would hide them entirely.
 	UPROPERTY(Category = "Schedules Replay|Settings", EditAnywhere)
 	bool bDisableVisibilities = false;
+
+	/// Disable application of partial visibility (only) on animated Elements
+	UPROPERTY(Category = "Schedules Replay|Settings", EditAnywhere)
+	bool bDisablePartialVisibilities = false;
 
 	/// Disable the cutting planes used to simulate the Elements' "growth" (construction/removal/...)
 	UPROPERTY(Category = "Schedules Replay|Settings", EditAnywhere)
@@ -346,9 +416,12 @@ public:
 
 	// Must be marked UFUNCTION to be bound to a delegate...
 	UFUNCTION()
-	void LogStatisticsUponQueryLoopStatusChange(bool bQueryLoopIsRunning);
+	void OnQueryLoopStatusChange(bool bQueryLoopIsRunning);
 	UFUNCTION()
 	void LogStatisticsUponFullScheduleReceived(FDateTime StartTime, FDateTime EndTime);
+
+	// For debugging, passing opaque FITwinSceneTile pointer.
+	void DisableAnimationInTile(void* SceneTile);
 
 private:
 	class FImpl;

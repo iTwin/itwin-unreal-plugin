@@ -9,7 +9,7 @@
 #include "Extension.h"
 #include <memory>
 
-namespace SDK::Core::Tools
+namespace AdvViz::SDK::Tools
 {
 
 }

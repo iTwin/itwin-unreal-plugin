@@ -9,8 +9,11 @@
 
 #pragma once
 #include <array>
+#include <limits>
 
-namespace SDK::Core
+#include "../Tools/Assert.h"
+
+namespace AdvViz::SDK
 {
 	typedef std::array<float, 4> float4;
 	typedef std::array<float, 3> float3;
@@ -65,5 +68,48 @@ namespace SDK::Core
 		BE_ASSERT(row < (unsigned)4);
 		return m[col * 4 + row];
 	}
-	
+
+	struct GCS
+	{
+		std::string wkt;
+		double3 center;
+	};
+
+	struct BoundingBox {
+		double3 min = { std::numeric_limits<double>::max(), std::numeric_limits<double>::max(), std::numeric_limits<double>::max() };
+		double3 max = { -std::numeric_limits<double>::max(), -std::numeric_limits<double>::max(), -std::numeric_limits<double>::max() };
+		template<typename T>
+		bool Contains(const std::array<T, 3>& v) const
+		{
+			return min[0] <= v[0] && v[0] <= max[0]
+				&& min[1] <= v[1] && v[1] <= max[1]
+				&& min[2] <= v[2] && v[2] <= max[2];
+		}
+	};
+
+	struct TimeRange
+	{
+		float begin = 0.f, end = 0.f;
+
+		bool operator<(const TimeRange& t) const
+		{
+			if (t.begin == begin)
+				return t.end < end;
+			return t.begin < begin;
+		}
+	};
+
+	template<typename T, unsigned N, typename T2 >
+	inline void Copy(const T2& src, std::array<T, N>& dest)
+	{
+		for (unsigned i = 0; i < N; ++i)
+			dest[i] = src[i];
+	}
+
+	template<typename T, unsigned N, typename T2 >
+	inline void Copy(const std::array<T, N>& src, T2& dest)
+	{
+		for (unsigned i = 0; i < N; ++i)
+			dest[i] = src[i];
+	}
 }

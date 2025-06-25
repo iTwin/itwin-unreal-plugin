@@ -1,0 +1,9 @@
+﻿{
+	"url": "https://qa-api.bentley.com/schedules/3497df55-60e9-44fd-91ec-3c86473884f5/animation-3d-path-assignments?$top=2",
+	"verb": "GET",
+	"connectedSuccessfully": true,
+	"responseCode": 200
+,
+	"reply": 
+{"nextPageToken":"eyJQcmltYXJ5U2tpcFRva2VuIjoiMTg5MTA5NGQtMDBkZC00YzM3LTgzYzEtNTMxZGNjYmUyMmFjIiwiU2Vjb25kYXJ5U2tpcFRva2VuIjpudWxsLCJUeXBlIjowfQ==","animation3dPathAssignments":[{"adjustForTaskPercentComplete":false,"alignment":"MaxZ","center":{"x":0.0,"y":0.0,"z":0.0},"id":"05cf5c76-2c96-43de-95a8-d95d032b0ff8","motionEnd":1.0,"motionStart":0.0,"pathId":"3f3c6a38-7a7b-4d7a-8550-1585c96cc130","pauseDuringNonWorkingTime":false,"reverseDirection":false},{"adjustForTaskPercentComplete":false,"alignment":"MinX","center":{"x":0.0,"y":0.0,"z":0.0},"id":"1891094d-00dd-4c37-83c1-531dccbe22ac","motionEnd":1.0,"motionStart":0.0,"pathId":"a16f8cf5-a3a0-4640-ac15-075c509022e5","pauseDuringNonWorkingTime":false,"reverseDirection":false}],"_links":{"self":{"href":"https://qa-api.bentley.com/schedules/3497df55-60e9-44fd-91ec-3c86473884f5/animation-3d-path-assignments?$top=2"},"next":{"href":"https://qa-api.bentley.com/schedules/3497df55-60e9-44fd-91ec-3c86473884f5/animation-3d-path-assignments?$top=2&$continuationToken=eyJQcmltYXJ5U2tpcFRva2VuIjoiMTg5MTA5NGQtMDBkZC00YzM3LTgzYzEtNTMxZGNjYmUyMmFjIiwiU2Vjb25kYXJ5U2tpcFRva2VuIjpudWxsLCJUeXBlIjowfQ%3d%3d"}}}
+}

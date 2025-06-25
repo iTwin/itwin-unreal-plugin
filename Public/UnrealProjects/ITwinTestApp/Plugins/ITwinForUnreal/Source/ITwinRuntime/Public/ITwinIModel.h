@@ -20,9 +20,13 @@
 struct FITwinIModel3DInfo;
 struct FChangesetInfos;
 struct FITwinExportInfos;
-struct FITwinCesium3DTilesetLoadFailureDetails;
+struct FCesium3DTilesetLoadFailureDetails;
+class FITwinTilesetAccess;
 struct FSavedViewInfos;
-namespace SDK::Core
+struct FSavedViewGroupInfos;
+class UITwinMaterialDefaultTexturesHolder;
+class ULightComponent;
+namespace AdvViz::SDK
 {
 	enum class EChannelType : uint8_t;
 	enum class ETextureSource : uint8_t;
@@ -34,18 +38,6 @@ namespace SDK::Core
 namespace BeUtils
 {
 	class GltfMaterialHelper;
-}
-namespace ITwin
-{
-	//! Get a max-screenspace-error value from a percentage (value in range [0;1])
-	ITWINRUNTIME_API double ToScreenSpaceError(float QualityValue);
-
-	//! Adjust the tileset quality, given a percentage (value in range [0;1])
-	ITWINRUNTIME_API void SetTilesetQuality(AITwinCesium3DTileset& Tileset, float Value);
-
-	//! Returns the tileset quality as a percentage (value in range [0;1])
-	ITWINRUNTIME_API float GetTilesetQuality(AITwinCesium3DTileset const& Tileset);
-
 }
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnIModelLoaded, bool, bSuccess, FString, IModelId);
@@ -67,12 +59,35 @@ enum class ELoadingMethod : uint8
 	LM_Manual UMETA(DisplayName = "Manual")
 };
 
+USTRUCT()
+struct FGetAllSavedViewsProgress
+{
+	GENERATED_USTRUCT_BODY()
+	int GroupsProcessed = 0;
+	int GroupsCount = 0;
+};
 
 UCLASS()
 class ITWINRUNTIME_API AITwinIModel : public AITwinServiceActor
 {
 	GENERATED_BODY()
 public:
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnFinishedLoadingSavedViewsEvent, const FString&, ID);
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnSavedViewsRetrievedEvent, bool, bSuccess, FSavedViewInfos, SavedViews);
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnSavedViewGroupsRetrievedEvent, bool, bSuccess, FSavedViewGroupInfos, SavedViewGroups);
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnSavedViewGroupAddedEvent, bool, bSuccess, const FSavedViewGroupInfo&, SavedViewGroup);
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnSavedViewAddedEvent, bool, bSuccess, const FSavedViewInfo&, SavedView);
+	UPROPERTY()
+	FOnFinishedLoadingSavedViewsEvent FinishedLoadingSavedViews;
+	UPROPERTY()
+	FOnSavedViewsRetrievedEvent SavedViewsRetrieved;
+	UPROPERTY()
+	FOnSavedViewGroupsRetrievedEvent SavedViewGroupsRetrieved;
+	UPROPERTY()
+	FOnSavedViewGroupAddedEvent SavedViewGroupAdded;
+	UPROPERTY()
+	FOnSavedViewAddedEvent SavedViewAdded;
+
 	UPROPERTY(Category = "iTwin|Loading",
 		EditAnywhere)
 	ELoadingMethod LoadingMethod = ELoadingMethod::LM_Manual;
@@ -118,8 +133,20 @@ public:
 
 	//! Synchro4D schedules found on this iModel.
 	UPROPERTY(Category = "iTwin",
-		VisibleAnywhere)
+		VisibleAnywhere,
+		BlueprintGetter = GetSynchro4DSchedules)
 	UITwinSynchro4DSchedules* Synchro4DSchedules = nullptr;
+	UFUNCTION(BlueprintGetter)
+	UITwinSynchro4DSchedules* GetSynchro4DSchedules();
+
+	//! When false, Synchro4D schedule queries and loading will not happen. If some queries have been already
+	//! started, setting to false will not prevent their replies from being handled, but no new query will be
+	//! emitted: they will be stacked and should restart correctly when the flag is set to true again
+	//! (UNTESTED though). It is recommended to set to false before the actor starts ticking, or at least
+	//! before the iModel Elements metadata have finished querying/loading.
+	UPROPERTY(Category = "iTwin", meta = (DisplayName = "Auto-Load Synchro4D Schedule"),
+		EditAnywhere)
+	bool bSynchro4DAutoLoadSchedule = true;
 
 public:
 	AITwinIModel();
@@ -130,7 +157,6 @@ public:
 	/// re-run, for example after editing property fields!! (witnessed when changing schedule component's 
 	/// time...)
 	virtual void PostActorCreated() override;
-	virtual void BeginDestroy() override;
 	virtual void Destroyed() override;
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
@@ -197,13 +223,17 @@ public:
 	void StartExport();
 
 	UFUNCTION(Category = "iTwin",
+		BlueprintCallable)
+	AITwinSavedView* GetITwinSavedViewActor(const FString& SavedViewId);
+
+	UFUNCTION(Category = "iTwin",
 		CallInEditor,
 		BlueprintCallable)
 	void UpdateSavedViews();
 
 	UFUNCTION(Category = "iTwin",
 		BlueprintCallable)
-	void ShowConstructionData(bool bShow, ULightComponent* SunLight = nullptr);
+	void ShowConstructionData(bool bShow);
 
 	UPROPERTY(Category = "iTwin", EditAnywhere)
 	bool bShowConstructionData = true;
@@ -213,9 +243,24 @@ public:
 		BlueprintCallable)
 	void DeSelectElements();
 
+	//! Deselect any material previously selected. This will disable the selection highlight, if any.
 	UFUNCTION(Category = "iTwin",
 		BlueprintCallable)
-	void AddSavedView(const FString& displayName);
+	void DeSelectMaterials();
+
+	//! Deselect any element or material previously selected. This will disable the selection highlight, if
+	//! any.
+	UFUNCTION(Category = "iTwin",
+		BlueprintCallable)
+	void DeSelectAll();
+
+	UFUNCTION(Category = "iTwin",
+		BlueprintCallable)
+	void AddSavedView(const FString& displayName, const FString& groupId = "");
+
+	UFUNCTION(Category = "iTwin",
+		BlueprintCallable)
+	void AddSavedViewGroup(const FString& groupName);
 
 	UFUNCTION(Category = "iTwin|Load",
 		BlueprintCallable)
@@ -232,27 +277,31 @@ public:
 	void Retune();
 
 
+	//! Highlight the parts of the model using the given iTwin Material ID.
+	void HighlightMaterial(uint64 MaterialID);
+
 	//! Returns the map of ITwin material info - the key being the iTwin Material ID, and the value, the
 	//! display name of the material.
 	TMap<uint64, FString> GetITwinMaterialMap() const;
-	FString GetMaterialName(uint64_t MaterialId) const;
+	FString GetMaterialName(uint64_t MaterialId, bool bForMaterialEditor = false) const;
 
 	//! Minimal API for material tuning in Carrot MVP
-	double GetMaterialChannelIntensity(uint64_t MaterialId, SDK::Core::EChannelType Channel) const;
-	void SetMaterialChannelIntensity(uint64_t MaterialId, SDK::Core::EChannelType Channel, double Intensity);
+	double GetMaterialChannelIntensity(uint64_t MaterialId, AdvViz::SDK::EChannelType Channel) const;
+	void SetMaterialChannelIntensity(uint64_t MaterialId, AdvViz::SDK::EChannelType Channel, double Intensity);
 
-	FLinearColor GetMaterialChannelColor(uint64_t MaterialId, SDK::Core::EChannelType Channel) const;
-	void SetMaterialChannelColor(uint64_t MaterialId, SDK::Core::EChannelType Channel, FLinearColor const& Color);
+	FLinearColor GetMaterialChannelColor(uint64_t MaterialId, AdvViz::SDK::EChannelType Channel) const;
+	void SetMaterialChannelColor(uint64_t MaterialId, AdvViz::SDK::EChannelType Channel, FLinearColor const& Color);
 
-	FString GetMaterialChannelTextureID(uint64_t MaterialId, SDK::Core::EChannelType Channel, SDK::Core::ETextureSource& OutSource) const;
-	void SetMaterialChannelTextureID(uint64_t MaterialId, SDK::Core::EChannelType Channel,
-		FString const& TextureId, SDK::Core::ETextureSource eSource);
+	UITwinMaterialDefaultTexturesHolder const& GetDefaultTexturesHolder();
+	FString GetMaterialChannelTextureID(uint64_t MaterialId, AdvViz::SDK::EChannelType Channel, AdvViz::SDK::ETextureSource& OutSource) const;
+	void SetMaterialChannelTextureID(uint64_t MaterialId, AdvViz::SDK::EChannelType Channel,
+		FString const& TextureId, AdvViz::SDK::ETextureSource eSource);
 
-	SDK::Core::ITwinUVTransform GetMaterialUVTransform(uint64_t MaterialId) const;
-	void SetMaterialUVTransform(uint64_t MaterialId, SDK::Core::ITwinUVTransform const& UVTransform);
+	AdvViz::SDK::ITwinUVTransform GetMaterialUVTransform(uint64_t MaterialId) const;
+	void SetMaterialUVTransform(uint64_t MaterialId, AdvViz::SDK::ITwinUVTransform const& UVTransform);
 
-	SDK::Core::EMaterialKind GetMaterialKind(uint64_t MaterialId) const;
-	void SetMaterialKind(uint64_t MaterialId, SDK::Core::EMaterialKind NewKind);
+	AdvViz::SDK::EMaterialKind GetMaterialKind(uint64_t MaterialId) const;
+	void SetMaterialKind(uint64_t MaterialId, AdvViz::SDK::EMaterialKind NewKind);
 
 	//! Rename a material.
 	bool SetMaterialName(uint64_t MaterialId, FString const& NewName);
@@ -260,13 +309,10 @@ public:
 	//! Load a material from an asset file (expecting an asset of class #UITwinMaterialDataAsset).
 	bool LoadMaterialFromAssetFile(uint64_t MaterialId, FString const& AssetFilePath);
 
-	//! Return a texture that nullifies the given channel (and thus can be used as default texture for it).
-	UTexture2D* GetDefaultTextureForChannel(SDK::Core::EChannelType Channel) const;
-
 	using GltfMaterialHelperPtr = std::shared_ptr<BeUtils::GltfMaterialHelper>;
 	std::shared_ptr<BeUtils::GltfMaterialHelper> const& GetGltfMaterialHelper() const;
 
-	using MaterialPersistencePtr = std::shared_ptr<SDK::Core::MaterialPersistenceManager>;
+	using MaterialPersistencePtr = std::shared_ptr<AdvViz::SDK::MaterialPersistenceManager>;
 	static void SetMaterialPersistenceManager(MaterialPersistencePtr const& Mngr);
 	static MaterialPersistencePtr const& GetMaterialPersistenceManager();
 
@@ -293,23 +339,32 @@ public:
 	bool IsMaterialMLPredictionActivated() const {
 		return bActivateMLMaterialPrediction;
 	}
+	UFUNCTION(Category = "iTwin|Materials",
+		BlueprintCallable)
+	void ActivateMLMaterialPrediction(bool bActivate);
 
 	UFUNCTION(Category = "iTwin|Materials",
 		BlueprintCallable)
 	EITwinMaterialPredictionStatus GetMaterialMLPredictionStatus() const {
 		return MLMaterialPredictionStatus;
 	}
+	UFUNCTION(Category = "iTwin|Materials",
+		BlueprintCallable)
+	void SetMaterialMLPredictionStatus(EITwinMaterialPredictionStatus InStatus);
 
 	UFUNCTION(Category = "iTwin|Materials",
 		BlueprintCallable)
-	bool VisualizeMaterialMLPrediction() const {
-		return bActivateMLMaterialPrediction && MLMaterialPredictionStatus == EITwinMaterialPredictionStatus::Complete;
-	}
+	bool VisualizeMaterialMLPrediction() const;
+
+	//! Called when the user validates the results of material prediction.
+	void ValidateMLPrediction();
+
 	void SetMaterialMLPredictionObserver(IITwinWebServicesObserver* observer);
 	IITwinWebServicesObserver* GetMaterialMLPredictionObserver() const;
 
-	/// Reset iModel manual "offset" (= scene placement customization), and persist it to Cloud
-	void SetModelOffset(FVector Pos, FVector Rot);
+	//! Creates a helper to perform some requests/modifications on the tileset.
+	TUniquePtr<FITwinTilesetAccess> MakeTilesetAccess();
+
 	void OnIModelOffsetChanged();
 
 	//! Start loading the decoration attached to this model, if any.
@@ -329,6 +384,10 @@ public:
 	void OnSavedViewInfoAdded(bool bSuccess, FSavedViewInfo SavedViewInfo);
 	UFUNCTION()
 	void OnSceneLoaded(bool success);
+	UFUNCTION()
+	bool AreSavedViewsLoaded() {return bAreSavedViewsLoaded;}
+	UFUNCTION()
+	bool IsUpdatingSavedViews() {return bIsUpdatingSavedViews;}
 
 
 	//! Returns null if the iModel does not have extents, or if it is not known yet.
@@ -336,18 +395,14 @@ public:
 	//! Returns null if the iModel is not geolocated, or if it is not known yet.
 	const FEcefLocation* GetEcefLocation() const;
 	//! Returns null if the tileset has not been constructed yet.
-	const AITwinCesium3DTileset* GetTileset() const;
+	const ACesium3DTileset* GetTileset() const;
+	ACesium3DTileset* GetTileset();
 
-	void HideTileset(bool bHide);
-	bool IsTilesetHidden();
-	void SetMaximumScreenSpaceError(double InMaximumScreenSpaceError);
-	//Helper of SetMaximumScreenSpaceError :  Adjust the tileset quality, given a percentage (value in range [0;1])
-	void SetTilesetQuality(float Value);
-	float GetTilesetQuality() const;
 	FString GetExportID() const { return ExportId; }
 	void LoadModelFromInfos(FITwinExportInfo const& ExportInfo);
 	//! Returns the list of IDs of the supported (ie. having Cesium format) reality data attached to the iModel.
 	TFuture<TArray<FString>> GetAttachedRealityDataIds();
+	void SetLightForForcedShadowUpdate(ULightComponent* SkyLight);
 
 private:
 	void SetResolvedChangesetId(FString const& InChangesetId);
@@ -362,16 +417,20 @@ private:
 	virtual void OnExportStarted(bool bSuccess, FString const& InExportId) override;
 	virtual void OnIModelPropertiesRetrieved(bool bSuccess, bool bHasExtents, FProjectExtents const& Extents,
 		bool bHasEcefLocation, FEcefLocation const& EcefLocation) override;
+	virtual void OnConvertedIModelCoordsToGeoCoords(bool bSuccess,
+		AdvViz::SDK::GeoCoordsReply const& GeoCoords, HttpRequestID const& RequestID) override;
+	virtual void OnSavedViewGroupInfosRetrieved(bool bSuccess, FSavedViewGroupInfos const& SVGroups) override;
+	virtual void OnSavedViewGroupAdded(bool bSuccess, FSavedViewGroupInfo const& GroupInfo) override;
 	virtual void OnSavedViewInfosRetrieved(bool bSuccess, FSavedViewInfos const& Infos) override;
 	virtual void OnSavedViewRetrieved(bool bSuccess, FSavedView const& SavedView, FSavedViewInfo const& SavedViewInfo) override;
 	virtual void OnSavedViewAdded(bool bSuccess, FSavedViewInfo const& SavedViewInfo) override;
 	virtual void OnSavedViewDeleted(bool bSuccess, FString const& SavedViewId, FString const& Response) override;
 	virtual void OnSavedViewEdited(bool bSuccess, FSavedView const& SavedView, FSavedViewInfo const& SavedViewInfo) override;
 	virtual void OnElementPropertiesRetrieved(bool bSuccess, FElementProperties const& ElementProps, FString const& ElementId) override;
-	virtual void OnMaterialPropertiesRetrieved(bool bSuccess, SDK::Core::ITwinMaterialPropertiesMap const& props) override;
-	virtual void OnTextureDataRetrieved(bool bSuccess, std::string const& textureId, SDK::Core::ITwinTextureData const& textureData) override;
+	virtual void OnMaterialPropertiesRetrieved(bool bSuccess, AdvViz::SDK::ITwinMaterialPropertiesMap const& props) override;
+	virtual void OnTextureDataRetrieved(bool bSuccess, std::string const& textureId, AdvViz::SDK::ITwinTextureData const& textureData) override;
 	virtual void OnIModelQueried(bool bSuccess, FString const& QueryResult, HttpRequestID const&) override;
-	virtual void OnMatMLPredictionRetrieved(bool bSuccess, SDK::Core::ITwinMaterialPrediction const& prediction) override;
+	virtual void OnMatMLPredictionRetrieved(bool bSuccess, AdvViz::SDK::ITwinMaterialPrediction const& prediction, std::string const& error = {}) override;
 	virtual void OnMatMLPredictionProgress(float fProgressRatio) override;
 
 	/// overridden from FITwinDefaultWebServicesObserver:
@@ -381,8 +440,9 @@ private:
 	void OnTilesetLoaded();
 
 	UFUNCTION()
-	void OnTilesetLoadFailure(FITwinCesium3DTilesetLoadFailureDetails const& Details);
+	void OnTilesetLoadFailure(FCesium3DTilesetLoadFailureDetails const& Details);
 
+	void CreateDefaultTexturesComponent();
 
 public:
 	class FImpl;
@@ -394,36 +454,35 @@ private:
 		EditAnywhere)
 	FString ExportId;
 
-
-	//! Default textures to nullify some material effects
-	UPROPERTY()
-	UTexture2D* NoColorTexture = nullptr;
-	UPROPERTY()
-	UTexture2D* NoNormalTexture = nullptr;
-	UPROPERTY()
-	UTexture2D* NoMetallicRoughnessTexture = nullptr;
-
-	//! ML - Material Prediction
-	UPROPERTY()
-	TObjectPtr<UITwinWebServices> MaterialMLPredictionWS;
+	//! Default textures to nullify some glTF material effects.
+	UPROPERTY(Category = "iTwin",
+		VisibleAnywhere)
+	UITwinMaterialDefaultTexturesHolder* DefaultTexturesHolder = nullptr;
 
 	UPROPERTY()
 	bool bEnableMLMaterialPrediction = false;
 
+	UPROPERTY()
+	FGetAllSavedViewsProgress groupsProgress;
+
+	UPROPERTY()
+	bool bAreSavedViewsLoaded = false;
+	UPROPERTY()
+	bool bIsUpdatingSavedViews = false;
+
 	//! Activate material prediction based on machine learning API.
 	UPROPERTY(Category = "iTwin|Materials",
 		EditAnywhere,
+		BlueprintSetter = ActivateMLMaterialPrediction,
 		Meta = (EditCondition = "bEnableMLMaterialPrediction", EditConditionHides))
 	bool bActivateMLMaterialPrediction = false;
 
 	//! Current status of ML-based material prediction for the iModel.
 	UPROPERTY(Category = "iTwin|Materials",
 		VisibleAnywhere,
+		BlueprintSetter = SetMaterialMLPredictionStatus,
 		Meta = (EditCondition = "bEnableMLMaterialPrediction", EditConditionHides))
 	EITwinMaterialPredictionStatus MLMaterialPredictionStatus = EITwinMaterialPredictionStatus::Unknown;
-
-	//! Persistence manager for material settings.
-	static MaterialPersistencePtr MaterialPersistenceMngr;
 
 	//! FITwinIModelImplAccess is defined in ITwinImodel.cpp, so it is only usable here.
 	//! It is needed for some free functions (console commands) to access the impl.
@@ -433,4 +492,6 @@ private:
 	//! but since FITwinIModelInternals is defined in the Private folder,
 	//! client code cannot do anything with it (because it cannot even include its declaration header).
 	friend FITwinIModelInternals& GetInternals(AITwinIModel& IModel);
+
+	class FTilesetAccess;
 };

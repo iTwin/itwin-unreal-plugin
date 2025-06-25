@@ -1,9 +1,11 @@
-#include "CesiumGeometry/BoundingSphere.h"
+#include <CesiumGeometry/BoundingSphere.h>
+#include <CesiumGeometry/CullingResult.h>
+#include <CesiumGeometry/Plane.h>
 
-#include "CesiumGeometry/Plane.h"
-
+#include <glm/common.hpp>
+#include <glm/ext/matrix_double4x4.hpp>
+#include <glm/ext/vector_double3.hpp>
 #include <glm/geometric.hpp>
-#include <glm/mat4x4.hpp>
 
 namespace CesiumGeometry {
 
@@ -33,6 +35,10 @@ double BoundingSphere::computeDistanceSquaredToPosition(
     return 0;
   }
   return distance * distance;
+}
+
+bool BoundingSphere::contains(const glm::dvec3& position) const noexcept {
+  return glm::distance(this->_center, position) <= this->_radius;
 }
 
 BoundingSphere

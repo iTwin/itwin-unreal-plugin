@@ -10,6 +10,7 @@
 
 #include "Error.h"
 #include "Assert.h"
+#include "CrashInfo.h"
 #include "TypeId.h"
 #include "Extension.h"
 #include "FactoryClass.h"
@@ -17,3 +18,7 @@
 #include "Log.h"
 #include "Types.h"
 #include "StrongTypeId.h"
+#include "CommonInterfaceClass.h"
+#include "LockableObject.h"
+#include "TaskManager.h"
+#include "GCSTransform.h"

@@ -1,11 +1,37 @@
-#include "CesiumRasterOverlays/QuadtreeRasterOverlayTileProvider.h"
-#include "CesiumRasterOverlays/RasterOverlay.h"
-#include "CesiumRasterOverlays/RasterOverlayTile.h"
-
+#include <CesiumAsync/AsyncSystem.h>
+#include <CesiumAsync/Future.h>
+#include <CesiumAsync/IAssetAccessor.h>
+#include <CesiumAsync/ITaskProcessor.h>
+#include <CesiumGeometry/QuadtreeTileID.h>
+#include <CesiumGeometry/QuadtreeTilingScheme.h>
+#include <CesiumGeometry/Rectangle.h>
+#include <CesiumGeospatial/Ellipsoid.h>
+#include <CesiumGeospatial/GeographicProjection.h>
+#include <CesiumGeospatial/Projection.h>
 #include <CesiumGeospatial/WebMercatorProjection.h>
 #include <CesiumNativeTests/SimpleAssetAccessor.h>
+#include <CesiumNativeTests/SimpleAssetRequest.h>
+#include <CesiumRasterOverlays/QuadtreeRasterOverlayTileProvider.h>
+#include <CesiumRasterOverlays/RasterOverlay.h>
+#include <CesiumRasterOverlays/RasterOverlayTile.h>
+#include <CesiumRasterOverlays/RasterOverlayTileProvider.h>
+#include <CesiumUtility/IntrusivePointer.h>
 
-#include <catch2/catch.hpp>
+#include <doctest/doctest.h>
+#include <glm/ext/vector_double2.hpp>
+#include <spdlog/logger.h>
+#include <spdlog/spdlog.h>
+
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <map>
+#include <memory>
+#include <optional>
+#include <string>
+#include <utility>
+#include <vector>
 
 using namespace CesiumAsync;
 using namespace CesiumGeometry;
@@ -59,17 +85,17 @@ public:
 
     if (std::find(errorTiles.begin(), errorTiles.end(), tileID) !=
         errorTiles.end()) {
-      result.errors.emplace_back("Tile errored.");
+      result.errorList.emplaceError("Tile errored.");
     } else {
       // Return an image where every component of every pixel is equal to the
       // tile level.
-      result.image.emplace();
-      result.image->width = int32_t(this->getWidth());
-      result.image->height = int32_t(this->getHeight());
-      result.image->bytesPerChannel = 1;
-      result.image->channels = 4;
-      result.image->pixelData.resize(
-          this->getWidth() * this->getHeight() * 4,
+      result.pImage.emplace();
+      result.pImage->width = int32_t(this->getWidth());
+      result.pImage->height = int32_t(this->getHeight());
+      result.pImage->bytesPerChannel = 1;
+      result.pImage->channels = 4;
+      result.pImage->pixelData.resize(
+          static_cast<size_t>(this->getWidth() * this->getHeight() * 4),
           std::byte(tileID.level));
     }
 
@@ -105,12 +131,14 @@ public:
             std::nullopt,
             pPrepareRendererResources,
             pLogger,
-            WebMercatorProjection(),
+            WebMercatorProjection(Ellipsoid::WGS84),
             QuadtreeTilingScheme(
-                WebMercatorProjection::computeMaximumProjectedRectangle(),
+                WebMercatorProjection::computeMaximumProjectedRectangle(
+                    Ellipsoid::WGS84),
                 1,
                 1),
-            WebMercatorProjection::computeMaximumProjectedRectangle(),
+            WebMercatorProjection::computeMaximumProjectedRectangle(
+                Ellipsoid::WGS84),
             0,
             10,
             256,
@@ -154,9 +182,10 @@ TEST_CASE("QuadtreeRasterOverlayTileProvider getTile") {
   REQUIRE(pProvider);
   REQUIRE(!pProvider->isPlaceholder());
 
-  SECTION("uses root tile for a large area") {
+  SUBCASE("uses root tile for a large area") {
     Rectangle rectangle =
-        GeographicProjection::computeMaximumProjectedRectangle();
+        GeographicProjection::computeMaximumProjectedRectangle(
+            Ellipsoid::WGS84);
     IntrusivePointer<RasterOverlayTile> pTile =
         pProvider->getTile(rectangle, glm::dvec2(256));
     pProvider->loadTile(*pTile);
@@ -167,7 +196,9 @@ TEST_CASE("QuadtreeRasterOverlayTileProvider getTile") {
 
     CHECK(pTile->getState() == RasterOverlayTile::LoadState::Loaded);
 
-    const ImageCesium& image = pTile->getImage();
+    REQUIRE(pTile->getImage());
+
+    const ImageAsset& image = *pTile->getImage();
     CHECK(image.width > 0);
     CHECK(image.height > 0);
     CHECK(image.pixelData.size() > 0);
@@ -177,7 +208,7 @@ TEST_CASE("QuadtreeRasterOverlayTileProvider getTile") {
         [](std::byte b) { return b == std::byte(0); }));
   }
 
-  SECTION("uses a mix of levels when a tile returns an error") {
+  SUBCASE("uses a mix of levels when a tile returns an error") {
     glm::dvec2 center(0.1, 0.2);
 
     TestTileProvider* pTestProvider =
@@ -221,7 +252,9 @@ TEST_CASE("QuadtreeRasterOverlayTileProvider getTile") {
 
     CHECK(pTile->getState() == RasterOverlayTile::LoadState::Loaded);
 
-    const ImageCesium& image = pTile->getImage();
+    REQUIRE(pTile->getImage());
+
+    const ImageAsset& image = *pTile->getImage();
     CHECK(image.width > 0);
     CHECK(image.height > 0);
     CHECK(image.pixelData.size() > 0);

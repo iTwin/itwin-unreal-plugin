@@ -1,13 +1,16 @@
-#include <CesiumGltf/ImageCesium.h>
+#include <CesiumGltf/ImageAsset.h>
 #include <CesiumGltfContent/ImageManipulation.h>
+#include <CesiumGltfReader/ImageDecoder.h>
 
-#include <cassert>
+#include <cstddef>
 #include <cstring>
+#include <vector>
 
-#define STB_IMAGE_RESIZE_IMPLEMENTATION
-#include <stb_image_resize2.h>
+#define STB_IMAGE_WRITE_STATIC
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image_write.h>
+
+using namespace CesiumGltfReader;
 
 namespace CesiumGltfContent {
 
@@ -36,9 +39,9 @@ void ImageManipulation::unsafeBlitImage(
 }
 
 bool ImageManipulation::blitImage(
-    CesiumGltf::ImageCesium& target,
+    CesiumGltf::ImageAsset& target,
     const PixelRectangle& targetPixels,
-    const CesiumGltf::ImageCesium& source,
+    const CesiumGltf::ImageAsset& source,
     const PixelRectangle& sourcePixels) {
 
   if (sourcePixels.x < 0 || sourcePixels.y < 0 || sourcePixels.width < 0 ||
@@ -101,16 +104,16 @@ bool ImageManipulation::blitImage(
     }
 
     // Use STB to do the copy / scale
-    stbir_resize_uint8_linear(
-        reinterpret_cast<const unsigned char*>(pSource),
+    ImageDecoder::unsafeResize(
+        pSource,
         sourcePixels.width,
         sourcePixels.height,
         int(bytesPerSourceRow),
-        reinterpret_cast<unsigned char*>(pTarget),
+        pTarget,
         targetPixels.width,
         targetPixels.height,
         int(bytesPerTargetRow),
-        static_cast<stbir_pixel_layout>(target.channels));
+        target.channels);
   }
 
   return true;
@@ -127,7 +130,7 @@ void writePngToVector(void* context, void* data, int size) {
 } // namespace
 
 /*static*/ void ImageManipulation::savePng(
-    const CesiumGltf::ImageCesium& image,
+    const CesiumGltf::ImageAsset& image,
     std::vector<std::byte>& output) {
   if (image.bytesPerChannel != 1) {
     // Only 8-bit images can be written.
@@ -145,7 +148,7 @@ void writePngToVector(void* context, void* data, int size) {
 }
 
 /*static*/ std::vector<std::byte>
-ImageManipulation::savePng(const CesiumGltf::ImageCesium& image) {
+ImageManipulation::savePng(const CesiumGltf::ImageAsset& image) {
   std::vector<std::byte> result;
   savePng(image, result);
   return result;

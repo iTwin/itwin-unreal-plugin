@@ -13,6 +13,18 @@
 #include "Engine/DeveloperSettings.h"
 #include "ITwinIModelSettings.generated.h"
 
+UENUM(BlueprintType)
+enum class EITwin4DGlTFTranslucencyRule : uint8
+{
+	/// Emit a separate glTF tuner rule per translucent Element (no grouping)
+	PerElement,
+	/// Emit separate glTF tuner rules so that Elements are grouped when they are animated by the same set
+	/// of translucency-needing timelines
+	PerTimeline,
+	/// All non-transformed translucency-needing Elements can be grouped together by the glTF tuner
+	Unlimited,
+};
+
 /// Stores runtime settings for iModels, including 4D scheduling
 UCLASS(Config = Engine, GlobalUserConfig, meta = (DisplayName = "iTwin iModel and 4D"))
 class ITWINRUNTIME_API UITwinIModelSettings : public UDeveloperSettings
@@ -28,6 +40,30 @@ public:
 		BlueprintReadOnly,
 		Category = "iTwin")
 	int CesiumMaximumCachedMegaBytes = 1024;
+
+	/// Used to initialize Cesium tilesets' ForbidHoles setting
+	UPROPERTY(
+		Config,
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "iTwin")
+	bool CesiumForbidHoles = false;
+
+	/// Used to initialize Cesium tilesets' MaximumSimultaneousTileLoads setting
+	UPROPERTY(
+		Config,
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "iTwin")
+	int CesiumMaximumSimultaneousTileLoads = 20;
+
+	/// Used to initialize Cesium tilesets' LoadingDescendantLimit setting
+	UPROPERTY(
+		Config,
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "iTwin")
+	int CesiumLoadingDescendantLimit = 20;
 
 	/// Maximum iModel Elements metadata & schedule data filesystem cache size in megabytes, used to cache
 	/// on the local disk the data queried from the web apis
@@ -48,8 +84,38 @@ public:
 		Category = "iTwin")
 	bool IModelCreatePhysicsMeshes = true;
 
+	/// When replaying a 4D animation, shadows need to be updated regularly to keep in sync with Elements
+	/// visibility. This is the minimum delay between two such updates, to control the trade-off between
+	/// graphics performance and shadows consistency.
+	UPROPERTY(
+		Config,
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "iTwin")
+	int IModelForceShadowUpdatesMillisec = 1000;
+
+	//! When false, Synchro4D schedule queries and loading will not happen. If some queries have been already
+	//! started, setting to false will not prevent their replies from being handled, but no new query will be
+	//! emitted: they will be stacked and should restart correctly when the flag is set to true again
+	//! (UNTESTED though). It is recommended to set to false before the actor starts ticking, or at least
+	//! before the iModel Elements metadata have finished querying/loading.
+	UPROPERTY(
+		Config,
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "iTwin")
+	bool bIModelAutoLoadSynchro4DSchedules = true;
+
+	/// Use official api.bentley.com 4D endpoints rather than the legacy internal ES-API endpoints.
+	UPROPERTY(
+		Config,
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "iTwin")
+	bool bSynchro4DUseAPIM = true;
+
 	/**
-	 * From AITwinCesium3DTileset::MaximumScreenSpaceError:
+	 * From ACesium3DTileset::MaximumScreenSpaceError:
 	 *
 	 * The maximum number of pixels of error when rendering this tileset.
 	 *
@@ -88,8 +154,25 @@ public:
 		EditAnywhere,
 		BlueprintReadOnly,
 		Category = "iTwin")
-	int Synchro4DQueriesBindingsPagination = 30000;
+	int Synchro4DQueriesBindingsPagination = 50000;
 	
+	/// Use glTF tuning for animation of translucent or transformed Elements
+	UPROPERTY(
+		Config,
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "iTwin")
+	bool bSynchro4DUseGltfTunerInsteadOfMeshExtraction = true;
+
+	/// Defines grouping of translucency-needing Elements when using
+	/// bSynchro4DUseGltfTunerInsteadOfMeshExtraction
+	UPROPERTY(
+		Config,
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "iTwin")
+	EITwin4DGlTFTranslucencyRule Synchro4DGlTFTranslucencyRule = EITwin4DGlTFTranslucencyRule::Unlimited;
+
 	/// Disable application of color highlights on animated Elements
 	UPROPERTY(
 		Config,
@@ -98,13 +181,22 @@ public:
 		Category = "iTwin")
 	bool bSynchro4DDisableColoring = false;
 
-	/// Disable application of partial visibility on animated Elements
+	/// Disable application of all visibility effects on animated Elements: see details
+	/// on UITwinSynchro4DSchedules::bDisableVisibilities
 	UPROPERTY(
 		Config,
 		EditAnywhere,
 		BlueprintReadOnly,
 		Category = "iTwin")
 	bool bSynchro4DDisableVisibilities = false;
+
+	/// Disable application of partial visibility (translucency) effects on animated Elements
+	UPROPERTY(
+		Config,
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "iTwin")
+	bool bSynchro4DDisablePartialVisibilities = false;
 
 	/// Disable the cutting planes used to simulate the Elements' "growth" (construction/removal/...)
 	UPROPERTY(
@@ -132,12 +224,12 @@ public:
 		meta = (ConfigRestartRequired = true))
 	bool bEnableML_MaterialPrediction = false;
 
-	/// Whether materials can be exported locally (internal tool).
+	/// Work-in-progress features.
 	UPROPERTY(
 		Config,
 		EditAnywhere,
 		BlueprintReadOnly,
 		Category = "iTwin",
 		meta = (ConfigRestartRequired = true))
-	bool bEnableMaterialExport = false;
+	bool bEnableWIPFeatures = false;
 };

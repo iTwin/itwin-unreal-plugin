@@ -7,12 +7,14 @@
 +--------------------------------------------------------------------------------------*/
 
 #include "InstancesManager.h"
-#include "Core/Network/Network.h"
+
+#include "Core/Network/HttpGetWithLink.h"
 #include "Config.h"
 #include "InstancesGroup.h"
+#include "SplinesManager.h"
 #include "../Singleton/singleton.h"
 
-namespace SDK::Core
+namespace AdvViz::SDK
 {
 	class InstancesManager::Impl
 	{
@@ -20,11 +22,19 @@ namespace SDK::Core
 		std::shared_ptr<Http> http_;
 		SharedInstGroupVect instancesGroups_;
 		SharedInstGroupMap mapIdToInstGroups_;
-		std::map<std::string, SharedInstVect> mapObjectRefToInstances_;
-		std::map<std::string, SharedInstVect> mapObjectRefToDeletedInstances_;
+		RefID::DBToIDMap groupIDMap_;
+		std::map<std::pair<std::string /*objRef*/, RefID/*group*/>, SharedInstVect> mapObjectRefToInstances_;
+		std::map<std::pair<std::string /*objRef*/, RefID/*group*/>, SharedInstVect> mapObjectRefToDeletedInstances_;
+		std::vector<IInstancesGroupPtr> instancesGroupsToDelete_;
+		std::shared_ptr<ISplinesManager> splineManager_;
 
 		std::shared_ptr<Http>& GetHttp() { return http_; }
 		void SetHttp(const std::shared_ptr<Http>& http) { http_ = http; }
+
+		void SetSplineManager(std::shared_ptr<ISplinesManager> const& splineManager)
+		{
+			splineManager_ = splineManager;
+		}
 
 		void Clear()
 		{
@@ -32,21 +42,17 @@ namespace SDK::Core
 			mapIdToInstGroups_.clear();
 			mapObjectRefToInstances_.clear();
 			mapObjectRefToDeletedInstances_.clear();
+			groupIDMap_.clear();
 		}
 
 		// Some structures used in I/O functions
-		struct SJsonLink
-		{
-			std::optional<std::string> prev;
-			std::optional<std::string> self;
-			std::optional<std::string> next;
-		};
 
 #define INSTANCE_STRUCT_MEMBERS \
 			std::string name;\
 			std::array<double, 12> matrix;\
 			std::optional<std::string> colorshift;\
 			std::optional<std::string> groupid;\
+			std::optional<std::string> animationid;\
 			std::string objref;
 
 		struct SJsonInst
@@ -60,144 +66,182 @@ namespace SDK::Core
 			std::string id;
 		};
 
-		struct SJsonInEmpty	{};
-
-		void LoadInstancesGroups(const std::string& decorationId, const std::string& accessToken)
+		void LoadInstancesGroups(const std::string& decorationId, const IInstancesGroupPtr& defaultGroup = {})
 		{
-			SJsonInEmpty jIn;
-
 			struct SJsonInstGroupWithId
 			{
 				std::string name;
 				std::optional<std::string> userData;
+				std::optional<std::string> type;
 				std::string id;
 			};
 
-			struct SJsonOut
-			{ 
-				int total_rows;
-				std::vector<SJsonInstGroupWithId> rows;
-				SJsonLink _links;
-			};
-
-			SJsonOut jOut;
-
-			Http::Headers headers;
-			headers.emplace_back("Authorization", std::string("Bearer ") + accessToken);
-
-			long status = GetHttp()->GetJsonJBody(
-				jOut, "decorations/" + decorationId + "/instancesgroups", jIn, headers);
-
-			if (status == 200 || status == 201)
+			if (defaultGroup)
 			{
-				for (auto& row : jOut.rows)
-				{
-					InstancesGroup* group = new InstancesGroup();
-					group->SetId(row.id);
-					group->SetName(row.name);
-
-					std::shared_ptr<InstancesGroup> sharedGroup(group);
-					instancesGroups_.push_back(sharedGroup);
-					mapIdToInstGroups_[row.id] = sharedGroup;
-				}
+				// For compatibility with older version, always associate the empty DB id with the default
+				// group.
+				groupIDMap_[""] = defaultGroup->GetId().ID();
 			}
-			else
+
+			bool hasAddedDefaultGroup = false;
+
+			auto ret = HttpGetWithLink<SJsonInstGroupWithId>(GetHttp(),
+				"decorations/" + decorationId + "/instancesgroups",
+				{} /* extra headers*/,
+				[this, &hasAddedDefaultGroup, &defaultGroup](SJsonInstGroupWithId const& row) -> expected<void, std::string>
 			{
-				BE_LOGW("ITwinDecoration", "Load instances groups failed. Http status: " << status);
-			}
-		}
-
-		void LoadInstances(const std::string& decorationId, const std::string& accessToken)
-		{
-			SJsonInEmpty jIn;
-			struct SJsonOut { int total_rows; std::vector<SJsonInstWithId> rows; SJsonLink _links; };
-			SJsonOut jOut;
-
-			Http::Headers headers;
-			headers.emplace_back("Authorization", std::string("Bearer ") + accessToken);
-
-			long status = GetHttp()->GetJsonJBody(
-				jOut, "decorations/" + decorationId + + "/instances", jIn, headers);
-			bool continueLoading = true;
-
-			while (continueLoading)
-			{
-				if (status != 200 && status != 201)
+				IInstancesGroupPtr group;
+				bool const isDefaultGroup = defaultGroup && defaultGroup->GetName() == row.name;
+				if (isDefaultGroup)
 				{
-					continueLoading = false;
-					BE_LOGW("ITwinDecoration", "Load instances failed. Http status: " << status);
-				}
-
-				dmat3x4 mat;
-				for (auto& row : jOut.rows)
-				{
-					Instance* inst = new Instance();
-					inst->SetId(row.id);
-					inst->SetName(row.name);
-					inst->SetObjectRef(row.objref);
-					if (row.colorshift.has_value())
-					{
-						inst->SetColorShift(row.colorshift.value());
-					}
-					std::memcpy(&mat[0], row.matrix.data(), 12*sizeof(double));
-					inst->SetMatrix(mat);
-
-					if (row.groupid.has_value())
-					{
-						SharedInstGroupMap::const_iterator itGroup = mapIdToInstGroups_.find(row.groupid.value());
-						if (itGroup != mapIdToInstGroups_.end())
-						{
-							inst->SetGroup(itGroup->second);
-						}
-					}
-
-					std::shared_ptr<Instance> sharedInst(inst);
-					mapObjectRefToInstances_[row.objref].push_back(sharedInst);
-				}
-
-				jOut.rows.clear();
-
-				if (jOut._links.next.has_value() && !jOut._links.next.value().empty())
-				{
-					status = GetHttp()->GetJsonJBody(jOut, jOut._links.next.value(), jIn, headers, true);
+					group = defaultGroup;
+					// Do not change the internal ID of the default group, only update its DB identifier
+					RefID groupId = group->GetId();
+					groupId.SetDBIdentifier(row.id);
+					group->SetId(groupId);
+					groupIDMap_.emplace(row.id, groupId.ID());
 				}
 				else
 				{
-					continueLoading = false;
+					group.reset(IInstancesGroup::New());
+					group->SetId(RefID::FromDBIdentifier(row.id, groupIDMap_));
 				}
+				group->SetName(row.name);
+				if (row.type.has_value())
+					group->SetType(row.type.value());
+
+				// We may have saved linked spline as userData. Spline should be loaded *before* populations
+				// to make it work.
+				if (row.userData
+					&& group->GetType() == "spline"
+					&& splineManager_)
+				{
+					RefID const splineId = splineManager_->GetLoadedSplineId(*row.userData);
+					if (splineId.IsValid())
+					{
+						group->SetLinkedSplineId(splineId);
+					}
+				}
+
+				AddInstancesGroup(group);
+				if (isDefaultGroup)
+					hasAddedDefaultGroup = true;
+				return {};
+			});
+
+			// If we have provided a default group, and did not parse anything here, make sure the instances,
+			// if any, will all be assigned this default group.
+			if (defaultGroup && !hasAddedDefaultGroup)
+			{
+				AddInstancesGroup(defaultGroup);
+			}
+
+			if (!ret)
+			{
+				BE_LOGW("ITwinDecoration", "Load instances groups failed. " << ret.error());
 			}
 		}
 
-		void LoadDataFromServer(const std::string& decorationId, const std::string& accessToken)
+		void LoadInstances(const std::string& decorationId)
+		{
+			dmat3x4 mat;
+			auto ret = HttpGetWithLink<SJsonInstWithId>(GetHttp(),
+				"decorations/" + decorationId + "/instances",
+				{} /* extra headers*/,
+				[this, &mat](SJsonInstWithId const& row) -> expected<void, std::string>
+				{
+					IInstance* inst = IInstance::New();
+					std::shared_ptr<IInstance> sharedInst(inst);
+
+					inst->SetId(row.id);
+					inst->SetName(row.name);
+					if (row.animationid.has_value())
+						inst->SetAnimId(row.animationid.value());
+
+					inst->SetObjectRef(row.objref);
+					if (row.colorshift.has_value() && row.colorshift.value() != "")
+					{
+						int r, g, b;
+						const char* str = row.colorshift.value().data();
+						if (str[0] == '#') 
+							str++;
+						if (sscanf_s(str, "%02x%02x%02x", &r, &g, &b) == 3)
+						{
+							float3 color = { r / 255.f, g / 255.f, b / 255.f };
+							inst->SetColorShift(color);
+						}
+					}
+					std::memcpy(&mat[0], row.matrix.data(), 12*sizeof(double));
+					inst->SetTransform(mat);
+
+					std::string const groupid = row.groupid.value_or("");
+					RefID const gpId = RefID::FromDBIdentifier(groupid, groupIDMap_);
+					auto itGroup = mapIdToInstGroups_.find(gpId);
+					if (itGroup != mapIdToInstGroups_.end())
+					{
+						inst->SetGroup(itGroup->second);
+						itGroup->second->AddInstance(sharedInst);
+					}
+
+					mapObjectRefToInstances_[std::make_pair(row.objref, gpId)].push_back(sharedInst);
+					return {};
+				}
+			);
+			if (!ret)
+			{
+				BE_LOGW("ITwinDecoration", "Load instances failed. " << ret.error());
+			}
+		}
+
+		void LoadDataFromServer(const std::string& decorationId, const IInstancesGroupPtr& defaultGroup = {})
 		{
 			Clear();
-			LoadInstancesGroups(decorationId, accessToken);
-			LoadInstances(decorationId, accessToken);
+			LoadInstancesGroups(decorationId, defaultGroup);
+			LoadInstances(decorationId);
 		}
 
 		void SaveInstancesGroup(
-			const std::string& decorationId, const std::string& accessToken,
-			std::shared_ptr<IInstancesGroup>& instGroup)
+			const std::string& decorationId,
+			IInstancesGroupPtr& instGroup)
 		{
-			if (!instGroup->GetId().empty())
+			if (instGroup->GetId().HasDBIdentifier())
 			{
 				return; // skip groups already present on the server
 			}
 
-			struct SJsonInstGroup {	std::string name; std::optional<std::string> userData; };
+			struct SJsonInstGroup {	
+				std::string name;
+				std::optional<std::string> type;
+				std::optional<std::string> userData; };
 			SJsonInstGroup jIn{ .name = instGroup->GetName() };
+			if (instGroup->GetType() != "")
+				jIn.type = instGroup->GetType();
+
+			// Save linked spline as userData. Spline should be saved *before* populations to guarantee that
+			// we have retrieved the spline identifier on the server.
+			if (instGroup->GetLinkedSplineId() && splineManager_)
+			{
+				auto const linkedSpline = splineManager_->GetSplineById(*instGroup->GetLinkedSplineId());
+				if (linkedSpline && linkedSpline->GetId().HasDBIdentifier())
+				{
+					jIn.userData = linkedSpline->GetId().GetDBIdentifier();
+				}
+			}
+
 			struct SJsonOut { std::string id; };
 			SJsonOut jOut;
 
-			Http::Headers headers;
-			headers.emplace_back("Authorization", std::string("Bearer ") + accessToken);
-
 			long status = GetHttp()->PostJsonJBody(
-				jOut, "decorations/" + decorationId + "/instancesgroups", jIn, headers);
+				jOut, "decorations/" + decorationId + "/instancesgroups", jIn);
 
 			if (status == 200 || status == 201)
 			{
-				instGroup->SetId(jOut.id);
+				// A new group has been created on the server. Update the identifier internally (but keep
+				// the 'session' ID unchanged)
+				RefID groupId = instGroup->GetId();
+				groupId.SetDBIdentifier(jOut.id);
+				instGroup->SetId(groupId);
+				mapIdToInstGroups_.insert(std::make_pair(groupId, instGroup));
 			}
 			else
 			{
@@ -209,17 +253,32 @@ namespace SDK::Core
 		void CopyInstance(T& dst, const IInstance& src)
 		{
 			dst.name = src.GetName();
-			std::memcpy(dst.matrix.data(), &src.GetMatrix()[0], 12*sizeof(double));
-			dst.colorshift = src.GetColorShift();
+			std::memcpy(dst.matrix.data(), &src.GetTransform()[0], 12*sizeof(double));
+			if (src.GetColorShift().has_value())
+			{
+				float3 color = src.GetColorShift().value();
+				int r = int(color[0] * 255.f);
+				int g = int(color[1] * 255.f);
+				int b = int(color[2] * 255.f);
+				char str[16];
+				snprintf(str, sizeof(str), "#%02x%02x%02x", r, g, b);
+				dst.colorshift = str;
+			}
 			dst.objref = src.GetObjectRef();
 			if (src.GetGroup())
 			{
-				dst.groupid = src.GetGroup()->GetId();
+				BE_ASSERT(src.GetGroup()->GetId().HasDBIdentifier(), "groups should be saved before instances");
+				dst.groupid = src.GetGroup()->GetId().GetDBIdentifier();
+			}
+			auto& animId = src.GetAnimId();
+			if (animId != "")
+			{
+				dst.animationid = animId;
 			}
 		}
 
 		void SaveInstances(
-			const std::string& decorationId, const std::string& accessToken,
+			const std::string& decorationId,
 			SharedInstVect& instances)
 		{
 			struct SJsonInstVect { std::vector<SJsonInst> instances; };
@@ -242,7 +301,7 @@ namespace SDK::Core
 					newInstIndices.push_back(instCount);
 
 				}
-				else if (inst->IsMarkedForUpdate(Database))
+				else if (inst->ShouldSave())
 				{
 					SJsonInstWithId jInstwId;
 					CopyInstance<SJsonInstWithId>(jInstwId, *inst);
@@ -253,8 +312,6 @@ namespace SDK::Core
 				++instCount;
 			}
 
-			Http::Headers headers;
-			headers.emplace_back("Authorization", std::string("Bearer ") + accessToken);
 
 			// Post (new instances)
 			if (!jInPost.instances.empty())
@@ -263,7 +320,7 @@ namespace SDK::Core
 				struct SJsonInstOutVect	{ std::vector<SJsonInstOut> instances; };
 				SJsonInstOutVect jOutPost;
 				long status = GetHttp()->PostJsonJBody(
-					jOutPost, "decorations/" + decorationId + "/instances", jInPost, headers);
+					jOutPost, "decorations/" + decorationId + "/instances", jInPost);
 
 				if (status == 200 || status == 201)
 				{
@@ -273,7 +330,7 @@ namespace SDK::Core
 						{
 							IInstance& inst = *instances[newInstIndices[i]];
 							inst.SetId(jOutPost.instances[i].id);
-							inst.MarkForUpdate(Database, false);
+							inst.SetShouldSave(false);
 						}
 					}
 				}
@@ -289,7 +346,7 @@ namespace SDK::Core
 				struct SJsonInstOutUpd { int64_t numUpdated; };
 				SJsonInstOutUpd jOutPut;
 				long status = GetHttp()->PutJsonJBody(
-					jOutPut, "decorations/" + decorationId  + "/instances", jInPut, headers);
+					jOutPut, "decorations/" + decorationId  + "/instances", jInPut);
 
 				if (status == 200 || status == 201)
 				{
@@ -297,7 +354,7 @@ namespace SDK::Core
 					{
 						for(size_t i = 0; i < updatedInstIndices.size(); ++i)
 						{
-							instances[updatedInstIndices[i]]->MarkForUpdate(Database, false);
+							instances[updatedInstIndices[i]]->SetShouldSave(false);
 						}
 					}
 				}
@@ -308,7 +365,7 @@ namespace SDK::Core
 			}
 		}
 
-		void DeleteInstances(const std::string& decorationId, const std::string& accessToken, SharedInstVect& instances)
+		void DeleteInstances(const std::string& decorationId, SharedInstVect& instances)
 		{
 			if (!instances.empty())
 			{
@@ -321,11 +378,8 @@ namespace SDK::Core
 					jIn.ids[i] = instances[i]->GetId();
 				}
 
-				Http::Headers headers;
-				headers.emplace_back("Authorization", std::string("Bearer ") + accessToken);
-
 				long status = GetHttp()->DeleteJsonJBody(
-					jOut, "decorations/" + decorationId + "/instances", jIn, headers);
+					jOut, "decorations/" + decorationId + "/instances", jIn);
 
 				if (status != 200 && status != 201)
 				{
@@ -336,40 +390,72 @@ namespace SDK::Core
 			}
 		}
 
-		void SaveDataOnServer(const std::string& decorationId, const std::string& accessToken)
+		void DeleteInstancesGroup(const std::string& decorationId, const IInstancesGroupPtr& instancesGroup)
+		{
+			if (instancesGroup->GetId().HasDBIdentifier())
+			{
+				struct JSonIn { std::array<std::string, 1> ids; } jIn;
+				struct JSonOut {} jOut;
+				jIn.ids[0] = instancesGroup->GetId().GetDBIdentifier();
+				long status = GetHttp()->DeleteJsonJBody(jOut, "decorations/" + decorationId + "/instancesgroups", jIn);
+				if (status != 200 && status != 201)
+					BE_LOGW("ITwinDecoration", "Deleting instancesgroups failed. Http status: " << status);
+			}
+		}
+
+		void SaveDataOnServer(const std::string& decorationId)
 		{
 			// Save groups
 			for (auto& instGroup : instancesGroups_)
 			{
-				SaveInstancesGroup(decorationId, accessToken, instGroup);
+				SaveInstancesGroup(decorationId, instGroup);
 			}
 
 			// Save instances
 			for (auto& instVec : mapObjectRefToInstances_)
 			{
-				SaveInstances(decorationId, accessToken, instVec.second);
+				SaveInstances(decorationId, instVec.second);
+			}
+
+			for (auto& instGroup : instancesGroupsToDelete_)
+			{
+				DeleteInstancesGroup(decorationId, instGroup);
 			}
 
 			// Delete instances
 			for (auto& instVec : mapObjectRefToDeletedInstances_)
 			{
-				DeleteInstances(decorationId, accessToken, instVec.second);
+				DeleteInstances(decorationId, instVec.second);
 			}
 		}
 
-		uint64_t GetInstanceCountByObjectRef(const std::string& objectRef) const
+		uint64_t GetInstanceCountByObjectRef(const std::string& objectRef, const RefID& gpId) const
 		{
-			const auto it = mapObjectRefToInstances_.find(objectRef);
-			if (it != mapObjectRefToInstances_.cend())
+			if (!gpId.IsValid())
 			{
-				return static_cast<uint64_t>(it->second.size());
+				// Count instances matching given object in *all* groups.
+				uint64_t ret = 0;
+				for (auto it : mapObjectRefToInstances_)
+				{
+					if (it.first.first == objectRef)
+						ret += it.second.size();
+				}
+				return ret;
+			}
+			else
+			{
+				const auto it = mapObjectRefToInstances_.find(std::make_pair(objectRef, gpId));
+				if (it != mapObjectRefToInstances_.cend())
+				{
+					return static_cast<uint64_t>(it->second.size());
+				}
 			}
 			return 0;
 		}
 		
-		void SetInstanceCountByObjectRef(const std::string& objectRef, uint64_t count)
+		void SetInstanceCountByObjectRef(const std::string& objectRef, const RefID& gpId, uint64_t count)
 		{
-			SharedInstVect& currentInstances = mapObjectRefToInstances_[objectRef];
+			SharedInstVect& currentInstances = mapObjectRefToInstances_[std::make_pair(objectRef, gpId)];
 			uint64_t oldSize = currentInstances.size();
 			currentInstances.resize(static_cast<size_t>(count));
 			for (uint64_t i = oldSize; i < count; ++i)
@@ -378,21 +464,37 @@ namespace SDK::Core
 			}
 		}
 
-		void GetInstancesByObjectRef(
-			const std::string& objectRef, SharedInstVect& instances) const
+		std::shared_ptr<IInstance> AddInstance(const std::string& objectRef, const RefID& gpId)
 		{
-			const auto it = mapObjectRefToInstances_.find(objectRef);
+			SharedInstVect& currentInstances = mapObjectRefToInstances_[std::make_pair(objectRef, gpId)];
+			auto inst = std::shared_ptr<IInstance>(IInstance::New());
+			currentInstances.push_back(inst);
+			SharedInstGroupMap::const_iterator itGroup = mapIdToInstGroups_.find(gpId);
+			if (itGroup != mapIdToInstGroups_.end())
+			{
+				itGroup->second->AddInstance(inst);
+				inst->SetGroup(itGroup->second);
+			}
+			return inst;
+		}
+
+		const SharedInstVect& GetInstancesByObjectRef(const std::string& objectRef, const RefID& gpId) const
+		{
+			const auto it = mapObjectRefToInstances_.find(std::make_pair(objectRef, gpId));
 			if (it != mapObjectRefToInstances_.cend())
 			{
-				instances = it->second;
+				return it->second;
 			}
+			static SharedInstVect empty;
+			return empty;
 		}
 
 		void RemoveInstancesByObjectRef(
-			const std::string& objectRef, const std::vector<int32_t> indicesInDescendingOrder)
+			const std::string& objectRef, const RefID& gpId, const std::vector<int32_t> indicesInDescendingOrder)
 		{
-			SharedInstVect& currentInstances = mapObjectRefToInstances_[objectRef];
-			SharedInstVect& deletedInstances =  mapObjectRefToDeletedInstances_[objectRef];
+			auto pair = std::make_pair(objectRef, gpId);
+			SharedInstVect& currentInstances = mapObjectRefToInstances_[pair];
+			SharedInstVect& deletedInstances =  mapObjectRefToDeletedInstances_[pair];
 
 			for (auto const& index : indicesInDescendingOrder)
 			{
@@ -400,6 +502,22 @@ namespace SDK::Core
 				{
 					deletedInstances.push_back(currentInstances[index]);
 					currentInstances.erase(currentInstances.begin() + index);
+				}
+			}
+		}
+
+		void RemoveGroupInstances(const RefID& gpId)
+		{
+			for (auto it = mapObjectRefToInstances_.begin(); it != mapObjectRefToInstances_.end(); ++it)
+			{
+				if (it->first.second == gpId)
+				{
+					SharedInstVect& currentInstances = mapObjectRefToInstances_[it->first];
+					SharedInstVect& deletedInstances = mapObjectRefToDeletedInstances_[it->first];
+					for (auto& inst : currentInstances)
+						deletedInstances.push_back(inst);
+					currentInstances.clear();
+					it = mapObjectRefToInstances_.erase(it);
 				}
 			}
 		}
@@ -423,7 +541,7 @@ namespace SDK::Core
 				for (const auto& inst : it.second)
 				{
 					if (inst->GetId().empty() ||
-						inst->IsMarkedForUpdate(Database))
+						inst->ShouldSave())
 					{
 						return true;
 					}
@@ -439,9 +557,10 @@ namespace SDK::Core
 			return false;
 		}
 
-		std::vector<std::string> GetObjectReferences() const
+		std::vector<std::pair<std::string, RefID>> GetObjectReferences() const
 		{
-			std::vector<std::string> refs;
+			std::vector<std::pair<std::string, RefID>> refs;
+			refs.reserve(mapObjectRefToInstances_.size());
 			for (const auto& it : mapObjectRefToInstances_)
 			{
 				refs.push_back(it.first);
@@ -449,45 +568,102 @@ namespace SDK::Core
 			return refs;
 		}
 
-		void AddInstancesGroup(const std::shared_ptr<IInstancesGroup>& instancesGroup)
+		void AddInstancesGroup(const IInstancesGroupPtr& group)
 		{
-			instancesGroups_.push_back(instancesGroup);
+			if (group)
+			{
+				instancesGroups_.push_back(group);
+				mapIdToInstGroups_[group->GetId()] = group;
+			}
+		}
+
+		void RemoveInstancesGroup(const IInstancesGroupPtr& group)
+		{
+			if (group)
+			{
+				instancesGroupsToDelete_.push_back(group);
+				std::erase(instancesGroups_, group);
+				mapIdToInstGroups_.erase(group->GetId());
+			}
 		}
 
 		const SharedInstGroupVect& GetInstancesGroups() const
 		{
 			return instancesGroups_;
 		}
+
+		IInstancesGroupPtr GetInstancesGroup(const RefID& gpId) const
+		{
+			auto it = mapIdToInstGroups_.find(gpId);
+			if (it != mapIdToInstGroups_.end())
+				return it->second;
+			return {};
+		}
+
+
+		IInstancesGroupPtr GetInstancesGroupByName(const std::string& name) const
+		{
+			//TODO: optimize with map
+			auto it = std::find_if(instancesGroups_.begin(), instancesGroups_.end(),
+				[name](const IInstancesGroupPtr& p) {
+				return p->GetName() == name;
+			});
+			if (it != instancesGroups_.end())
+				return *it;
+			return {};
+		}
+
+		IInstancesGroupPtr GetInstancesGroupBySplineID(const RefID& splineId) const
+		{
+			RefID const nullRef = RefID::Invalid();
+			auto it = std::find_if(instancesGroups_.begin(), instancesGroups_.end(),
+				[splineId, &nullRef](const IInstancesGroupPtr& p) {
+				return p->GetLinkedSplineId().value_or(nullRef) == splineId;
+			});
+			if (it != instancesGroups_.end())
+				return *it;
+			return {};
+		}
 	};
 
-	void InstancesManager::LoadDataFromServer(const std::string& decorationId, const std::string& accessToken)
+	void InstancesManager::LoadDataFromServer(const std::string& decorationId, const IInstancesGroupPtr& defaultGroup /*= {}*/)
 	{
-		GetImpl().LoadDataFromServer(decorationId, accessToken);
+		GetImpl().LoadDataFromServer(decorationId, defaultGroup);
 	}
 
-	void InstancesManager::SaveDataOnServer(const std::string& decorationId, const std::string& accessToken)
+	void InstancesManager::SaveDataOnServer(const std::string& decorationId)
 	{
-		GetImpl().SaveDataOnServer(decorationId, accessToken);
+		GetImpl().SaveDataOnServer(decorationId);
 	}
 
-	uint64_t InstancesManager::GetInstanceCountByObjectRef(const std::string& objectRef) const
+	uint64_t InstancesManager::GetInstanceCountByObjectRef(const std::string& objectRef, const RefID& gpId) const
 	{
-		return GetImpl().GetInstanceCountByObjectRef(objectRef);
+		return GetImpl().GetInstanceCountByObjectRef(objectRef, gpId);
 	}
 
-	void InstancesManager::SetInstanceCountByObjectRef(const std::string& objectRef, uint64_t count)
+	void InstancesManager::SetInstanceCountByObjectRef(const std::string& objectRef, const RefID& gpId, uint64_t count)
 	{
-		GetImpl().SetInstanceCountByObjectRef(objectRef, count);
+		GetImpl().SetInstanceCountByObjectRef(objectRef, gpId, count);
 	}
 
-	void InstancesManager::GetInstancesByObjectRef(const std::string& objectRef, SharedInstVect& instances) const
+	std::shared_ptr<IInstance> InstancesManager::AddInstance(const std::string& objectRef, const RefID& gpId)
 	{
-		GetImpl().GetInstancesByObjectRef(objectRef, instances);
+		return GetImpl().AddInstance(objectRef, gpId);
 	}
 
-	void InstancesManager::RemoveInstancesByObjectRef(const std::string& objectRef, const std::vector<int32_t> indicesInDescendingOrder)
+	const SharedInstVect& InstancesManager::GetInstancesByObjectRef(const std::string& objectRef, const RefID& gpId) const
 	{
-		GetImpl().RemoveInstancesByObjectRef(objectRef, indicesInDescendingOrder);
+		return GetImpl().GetInstancesByObjectRef(objectRef, gpId);
+	}
+
+	void InstancesManager::RemoveInstancesByObjectRef(const std::string& objectRef, const RefID& gpId, const std::vector<int32_t> indicesInDescendingOrder)
+	{
+		GetImpl().RemoveInstancesByObjectRef(objectRef, gpId, indicesInDescendingOrder);
+	}
+
+	void InstancesManager::RemoveGroupInstances(const RefID& gpId)
+	{
+		GetImpl().RemoveGroupInstances(gpId);
 	}
 
 	bool InstancesManager::HasInstances() const
@@ -500,19 +676,44 @@ namespace SDK::Core
 		return GetImpl().HasInstancesToSave();
 	}
 
-	std::vector<std::string> InstancesManager::GetObjectReferences() const
+	std::vector<std::pair<std::string/*objRef*/, RefID /*gpId*/>> InstancesManager::GetObjectReferences() const
 	{
 		return GetImpl().GetObjectReferences();
 	}
 
-	void InstancesManager::AddInstancesGroup(const std::shared_ptr<IInstancesGroup>& instancesGroup)
+	void InstancesManager::AddInstancesGroup(const IInstancesGroupPtr& group)
 	{
-		GetImpl().AddInstancesGroup(instancesGroup);
+		GetImpl().AddInstancesGroup(group);
+	}
+
+	void InstancesManager::RemoveInstancesGroup(const IInstancesGroupPtr& group)
+	{
+		GetImpl().RemoveInstancesGroup(group);
 	}
 
 	const SharedInstGroupVect& InstancesManager::GetInstancesGroups() const
 	{
 		return GetImpl().GetInstancesGroups();
+	}
+
+	IInstancesGroupPtr InstancesManager::GetInstancesGroup(const RefID& gpId) const
+	{
+		return GetImpl().GetInstancesGroup(gpId);
+	}
+
+	IInstancesGroupPtr InstancesManager::GetInstancesGroupByName(const std::string& name) const
+	{
+		return GetImpl().GetInstancesGroupByName(name);
+	}
+
+	IInstancesGroupPtr InstancesManager::GetInstancesGroupBySplineID(const RefID& splineId) const
+	{
+		return GetImpl().GetInstancesGroupBySplineID(splineId);
+	}
+
+	void InstancesManager::SetSplineManager(std::shared_ptr<ISplinesManager> const& splineManager)
+	{
+		GetImpl().SetSplineManager(splineManager);
 	}
 
 	void InstancesManager::SetHttp(std::shared_ptr<Http> http)

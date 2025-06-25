@@ -10,17 +10,11 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include <ITwinModelType.h>
 #include "UObject/NoExportTypes.h"
 
 #include "ITwinLoadInfo.generated.h"
 
-//! A "model" designates any dataset that can be loaded by the plugin.
-UENUM(BlueprintType)
-enum class EITwinModelType : uint8
-{
-	IModel,
-	RealityData,
-};
 
 /// Gathers all identifiers and information identifying a unique loading.
 USTRUCT(BlueprintType)

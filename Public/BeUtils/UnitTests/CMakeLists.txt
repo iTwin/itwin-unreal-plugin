@@ -5,7 +5,7 @@ add_executable (BeUtils_UnitTests
 )
 target_compile_definitions (BeUtils_UnitTests PRIVATE -DBEUTILS_WORK_DIR="${CMAKE_CURRENT_BINARY_DIR}/$(Configuration)/Work")
 target_link_libraries (BeUtils_UnitTests
-	Catch2
+	Catch2::Catch2
 	BeUtils
 	CesiumGltfWriter
 )

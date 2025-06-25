@@ -2,6 +2,7 @@
 
 #include <Cesium3DTilesContent/SubtreeAvailability.h>
 #include <Cesium3DTilesSelection/TilesetContentLoader.h>
+#include <CesiumGeometry/BoundingCylinderRegion.h>
 #include <CesiumGeometry/OrientedBoundingBox.h>
 #include <CesiumGeometry/QuadtreeTileID.h>
 #include <CesiumGeospatial/BoundingRegion.h>
@@ -17,7 +18,8 @@ namespace Cesium3DTilesSelection {
 using ImplicitQuadtreeBoundingVolume = std::variant<
     CesiumGeospatial::BoundingRegion,
     CesiumGeospatial::S2CellBoundingVolume,
-    CesiumGeometry::OrientedBoundingBox>;
+    CesiumGeometry::OrientedBoundingBox,
+    CesiumGeometry::BoundingCylinderRegion>;
 
 class ImplicitQuadtreeLoader : public TilesetContentLoader {
 public:
@@ -42,7 +44,10 @@ public:
   CesiumAsync::Future<TileLoadResult>
   loadTileContent(const TileLoadInput& loadInput) override;
 
-  TileChildrenResult createTileChildren(const Tile& tile) override;
+  TileChildrenResult createTileChildren(
+      const Tile& tile,
+      const CesiumGeospatial::Ellipsoid& ellipsoid
+          CESIUM_DEFAULT_ELLIPSOID) override;
 
   uint32_t getSubtreeLevels() const noexcept;
 

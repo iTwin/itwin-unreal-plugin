@@ -11,7 +11,7 @@
 
 #include <Core/Tools/Assert.h>
 
-namespace SDK::Core
+namespace AdvViz::SDK
 {
 	std::string GetChannelName(EChannelType chan)
 	{

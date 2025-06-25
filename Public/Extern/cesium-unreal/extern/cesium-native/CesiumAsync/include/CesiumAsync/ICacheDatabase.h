@@ -1,8 +1,8 @@
 #pragma once
 
-#include "CacheItem.h"
-#include "IAssetRequest.h"
-#include "Library.h"
+#include <CesiumAsync/CacheItem.h>
+#include <CesiumAsync/IAssetRequest.h>
+#include <CesiumAsync/Library.h>
 
 #include <cstddef>
 #include <optional>
@@ -51,7 +51,7 @@ public:
       const HttpHeaders& requestHeaders,
       uint16_t statusCode,
       const HttpHeaders& responseHeaders,
-      const gsl::span<const std::byte>& responseData) = 0;
+      const std::span<const std::byte>& responseData) = 0;
 
   /**
    * @brief Remove cache entries from the database to satisfy the database

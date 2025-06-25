@@ -1,8 +1,7 @@
 #pragma once
 
-#include "ITileExcluder.h"
-#include "Library.h"
-
+#include <Cesium3DTilesSelection/ITileExcluder.h>
+#include <Cesium3DTilesSelection/Library.h>
 #include <CesiumUtility/IntrusivePointer.h>
 
 namespace CesiumRasterOverlays {
@@ -13,7 +12,7 @@ namespace Cesium3DTilesSelection {
 
 /**
  * @brief When provided to {@link TilesetOptions::excluders}, uses the polygons
- * owned by a {@link RasterizedPolygonsOverlay} to exclude tiles that are
+ * owned by a {@link CesiumRasterOverlays::RasterizedPolygonsOverlay} to exclude tiles that are
  * entirely inside any of the polygon from loading. This is useful when the
  * polygons will be used for clipping.
  */
@@ -23,7 +22,7 @@ public:
   /**
    * @brief Constructs a new instance.
    *
-   * @param overlay The overlay definining the polygons.
+   * @param pOverlay The overlay definining the polygons.
    */
   RasterizedPolygonsTileExcluder(
       const CesiumUtility::IntrusivePointer<

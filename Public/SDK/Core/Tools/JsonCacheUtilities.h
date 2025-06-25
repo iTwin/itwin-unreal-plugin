@@ -10,8 +10,9 @@
 #pragma once
 
 #include <filesystem>
+#include "../AdvVizLinkType.h"
 
-namespace SDK::Core::Tools
+namespace AdvViz::SDK::Tools
 {
 	enum class EFileBOM
 	{
@@ -24,10 +25,10 @@ namespace SDK::Core::Tools
 		Unknown
 	};
 
-	EFileBOM HasBOM(std::filesystem::path const& filepath, uint64_t& fileSize);
+	ADVVIZ_LINK EFileBOM HasBOM(std::filesystem::path const& filepath, uint64_t& fileSize);
 
 	/// Load the full content of a file in a string, dealing with different encoding formats, while
 	/// discarding the `"reply":` prefix the file may start with.
 	/// (Very specific to the way we cache Json replies in the iTwin schedule cache mechanism...)
-	std::string LoadCacheFileToStringWithoutReply(std::filesystem::path const& Filepath);
+	ADVVIZ_LINK std::string LoadCacheFileToStringWithoutReply(std::filesystem::path const& Filepath);
 }

@@ -1,7 +1,6 @@
 #pragma once
 
-#include "Cesium3DTilesWriter/Library.h"
-
+#include <Cesium3DTilesWriter/Library.h>
 #include <CesiumJsonWriter/ExtensionWriterContext.h>
 
 // forward declarations
@@ -13,7 +12,7 @@ namespace Cesium3DTilesWriter {
 
 /**
  * @brief The result of writing a schema with
- * {@link SchemaWriterWriter::writeSchema}.
+ * {@link SchemaWriter::writeSchema}.
  */
 struct CESIUM3DTILESWRITER_API SchemaWriterResult {
   /**

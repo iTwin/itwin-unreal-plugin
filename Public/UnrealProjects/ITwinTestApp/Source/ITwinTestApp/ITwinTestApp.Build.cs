@@ -23,7 +23,7 @@ public class ITwinTestApp : ModuleRules
 			"HTTP",
 			"HTTPServer",
 			"InputCore",
-			"ITwinCesiumRuntime",
+			"CesiumRuntime",
 			"ITwinRuntime",
 			"Json",
 			"PlatformCryptoOpenSSL",

@@ -1,15 +1,15 @@
 #pragma once
 
-#include "Library.h"
-#include "TileOcclusionRendererProxy.h"
-#include "spdlog-cesium.h"
+#include <Cesium3DTilesSelection/Library.h>
+#include <Cesium3DTilesSelection/TileOcclusionRendererProxy.h>
+#include <Cesium3DTilesSelection/TilesetSharedAssetSystem.h>
+#include <Cesium3DTilesSelection/spdlog-cesium.h>
 #include <rapidjson/fwd.h>
-
 #include <CesiumAsync/AsyncSystem.h>
-#include <CesiumAsync/HttpHeaders.h>
 
 #include <glm/fwd.hpp>
 
+#include <atomic>
 #include <memory>
 
 namespace CesiumAsync {
@@ -24,29 +24,35 @@ class CreditSystem;
 namespace Cesium3DTilesSelection {
 class IPrepareRendererResources;
 
-//! Abstract class that allows tuning a glTF model.
-//! "Tuning" means reorganizing the primitives, eg. merging or splitting them.
-//! Merging primitives can lead to improved rendering performance.
-//! Splitting primitives allows to assign different materials to parts that were initially in the same primitive.
-//! Tuning is done in 2 phases: first phase in worker thread, then second phase in main thread.
-//! Tuning can occur several times during the lifetime of the model, depending on current needs.
-//! For example, if the user wants to assign a specific material on some part of the model,
-//! we can trigger a new tuning process.
-//! Hence the use of a "tune version" which allows to know if the mesh is up-to-date, or must be re-processed.
+
+/** Abstract class that allows tuning a glTF model.
+ * "Tuning" means reorganizing the primitives, eg. merging or splitting them.
+ * Merging primitives can lead to improved rendering performance.
+ * Splitting primitives allows to assign different materials to parts that were
+ * initially in the same primitive. Tuning is done in 2 phases: first phase in
+ * worker thread, then second phase in main thread. Tuning can occur several
+ * times during the lifetime of the model, depending on current needs. Hence
+ * the use of a "tune version" which allows to know if the mesh is up-to-date,
+ * or must be re-processed.
+ * A just constructed tuner is considered nilpotent, ie. tuning
+ * will not happen until retune() has been called at least once
+ */
 class GltfTuner
 {
-public:
 	//! The current version of the tuner, which should be incremented by client code whenever
 	//! models needs to be re-tuned.
-	int currentVersion = 0;
+  //! @see initialVersion
+  std::atomic_int currentVersion = initialVersion;
+
+public:
+  static constexpr int initialVersion = -1;
+  int getCurrentVersion() const { return currentVersion; }
+  int retune() { return ++currentVersion; }
+
 	virtual ~GltfTuner() = default;
-  virtual CesiumGltf::Model Tune(const CesiumGltf::Model& model,
-    const glm::dmat4& tileTransform, const glm::dvec4& rootTranslation) = 0;
+  virtual bool Tune(const CesiumGltf::Model& model, const glm::dmat4& tileTransform,
+    const glm::dvec4& rootTranslation, CesiumGltf::Model& tunedModel) = 0;
 	virtual void ParseTilesetJson(const rapidjson::Document& tilesetJson) = 0;
-  //! The tuning may require some additional external data such as textures, typically in case of material
-  //! customizations. In such case, we may need to use custom headers (holding an iTwin access token for
-  //! example...)
-  virtual CesiumAsync::HttpHeaders GetHeadersForExternalData() const { return {}; }
 };
 
 /**
@@ -76,7 +82,7 @@ public:
   CesiumAsync::AsyncSystem asyncSystem;
 
   /**
-   * @brief An external {@link CreditSystem} that can be used to manage credit
+   * @brief An external {@link CesiumUtility::CreditSystem} that can be used to manage credit
    * strings and track which which credits to show and remove from the screen
    * each frame.
    */
@@ -98,6 +104,13 @@ public:
    */
   std::shared_ptr<TileOcclusionRendererProxyPool> pTileOcclusionProxyPool =
       nullptr;
+
+  /**
+   * @brief The shared asset system used to facilitate sharing of common assets,
+   * such as images, between and within tilesets.
+   */
+  CesiumUtility::IntrusivePointer<TilesetSharedAssetSystem> pSharedAssetSystem =
+      TilesetSharedAssetSystem::getDefault();
 
   std::shared_ptr<GltfTuner> gltfTuner = nullptr;
 };

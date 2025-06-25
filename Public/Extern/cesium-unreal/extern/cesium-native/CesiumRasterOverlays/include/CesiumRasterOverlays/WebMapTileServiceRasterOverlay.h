@@ -1,13 +1,12 @@
 #pragma once
 
-#include "Library.h"
-#include "RasterOverlay.h"
-
 #include <CesiumAsync/IAssetRequest.h>
 #include <CesiumGeometry/QuadtreeTilingScheme.h>
 #include <CesiumGeospatial/Ellipsoid.h>
 #include <CesiumGeospatial/GlobeRectangle.h>
 #include <CesiumGeospatial/Projection.h>
+#include <CesiumRasterOverlays/Library.h>
+#include <CesiumRasterOverlays/RasterOverlay.h>
 
 #include <functional>
 #include <memory>
@@ -94,15 +93,6 @@ struct WebMapTileServiceRasterOverlayOptions {
    * the ellipsoidal surface is broken into tiles.
    */
   std::optional<CesiumGeometry::QuadtreeTilingScheme> tilingScheme;
-
-  /**
-   * @brief The {@link CesiumGeospatial::Ellipsoid}.
-   *
-   * If the `tilingScheme` is specified, this parameter is ignored and
-   * the tiling scheme's ellipsoid is used instead. If neither parameter
-   * is specified, the {@link CesiumGeospatial::Ellipsoid::WGS84} is used.
-   */
-  std::optional<CesiumGeospatial::Ellipsoid> ellipsoid;
 
   /**
    * @brief A object containing static dimensions and their values.

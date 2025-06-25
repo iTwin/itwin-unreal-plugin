@@ -1,19 +1,29 @@
 #include "decodeDataUrls.h"
 
-#include "CesiumGltfReader/GltfReader.h"
-
+#include <CesiumGltf/Buffer.h>
+#include <CesiumGltf/Image.h>
 #include <CesiumGltf/Model.h>
+#include <CesiumGltfReader/GltfReader.h>
+#include <CesiumGltfReader/ImageDecoder.h>
 #include <CesiumUtility/Tracing.h>
 
+#include <fmt/format.h>
 #include <modp_b64.h>
 
 #include <cstddef>
+#include <cstdint>
+#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 namespace CesiumGltfReader {
 
 namespace {
 
-std::vector<std::byte> decodeBase64(gsl::span<const std::byte> data) {
+std::vector<std::byte> decodeBase64(std::span<const std::byte> data) {
   CESIUM_TRACE("CesiumGltfReader::decodeBase64");
   std::vector<std::byte> result(modp_b64_decode_len(data.size()));
 
@@ -68,7 +78,7 @@ std::optional<DecodeResult> tryDecode(const std::string& uri) {
         result.mimeType.size() - base64IndicatorLength);
   }
 
-  const gsl::span<const std::byte> data(
+  const std::span<const std::byte> data(
       reinterpret_cast<const std::byte*>(uri.data()) + dataDelimeter + 1,
       uri.size() - dataDelimeter - 1);
 
@@ -87,7 +97,6 @@ std::optional<DecodeResult> tryDecode(const std::string& uri) {
 } // namespace
 
 void decodeDataUrls(
-    const GltfReader& reader,
     GltfReaderResult& readGltf,
     const GltfReaderOptions& options) {
   CESIUM_TRACE("CesiumGltfReader::decodeDataUrls");
@@ -112,6 +121,16 @@ void decodeDataUrls(
     if (options.clearDecodedDataUrls) {
       buffer.uri.reset();
     }
+
+    if (buffer.byteLength != int64_t(buffer.cesium.data.size())) {
+      readGltf.warnings.emplace_back(fmt::format(
+          "The size of the data decoded from a `data:` URL ({} bytes) "
+          "does not match the declared byteLength of the buffer "
+          "({} bytes). The byteLength has been updated to match.",
+          buffer.cesium.data.size(),
+          buffer.byteLength));
+      buffer.byteLength = int64_t(buffer.cesium.data.size());
+    }
   }
 
   for (CesiumGltf::Image& image : model.images) {
@@ -124,14 +143,15 @@ void decodeDataUrls(
       continue;
     }
 
-    ImageReaderResult imageResult =
-        reader.readImage(decoded.value().data, options.ktx2TranscodeTargets);
+    ImageReaderResult imageResult = ImageDecoder::readImage(
+        decoded.value().data,
+        options.ktx2TranscodeTargets);
 
-    if (!imageResult.image) {
+    if (!imageResult.pImage) {
       continue;
     }
 
-    image.cesium = std::move(imageResult.image.value());
+    image.pAsset = imageResult.pImage;
 
     if (options.clearDecodedDataUrls) {
       image.uri.reset();

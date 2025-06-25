@@ -21,7 +21,7 @@
 #include <Interfaces/IPluginManager.h>
 #endif // WITH_EDITOR
 
-#if WITH_EDITOR
+#if WITH_TESTS && WITH_EDITOR
 
 namespace ITwin::Tests::Detail
 {
@@ -251,4 +251,4 @@ bool FITwinFunctionalTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-#endif // WITH_EDITOR
+#endif // WITH_TESTS && WITH_EDITOR

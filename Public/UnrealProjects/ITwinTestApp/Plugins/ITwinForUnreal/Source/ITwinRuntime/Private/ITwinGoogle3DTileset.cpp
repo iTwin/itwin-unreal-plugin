@@ -7,15 +7,11 @@
 +--------------------------------------------------------------------------------------*/
 
 
-
 #include <ITwinGoogle3DTileset.h>
 
-#include <ITwinCesiumCartographicPolygon.h>
-#include <ITwinCesiumPolygonRasterOverlay.h>
-
 #include <ITwinGeolocation.h>
-#include <ITwinIModel.h>
 #include <ITwinSetupMaterials.h>
+#include <ITwinTilesetAccess.h>
 
 #include <Decoration/ITwinDecorationHelper.h>
 
@@ -39,21 +35,25 @@ namespace
 
 namespace ITwin
 {
-	bool IsGoogle3DTileset(AITwinCesium3DTileset const* tileset)
+	/// Works with both legacy tilesets (saved in presentations for Carrot MVP) and new ones.
+	bool IsGoogle3DTileset(ACesium3DTileset const* Tileset)
 	{
-		return tileset->GetUrl().StartsWith(GOOGLE_3D_TILESET_URL);
+		return (Tileset != nullptr)
+			&&
+			(	(Cast<AITwinGoogle3DTileset>(Tileset) != nullptr)
+			||	Tileset->GetUrl().StartsWith(GOOGLE_3D_TILESET_URL));
 	}
 
 	/// Get current list of Google Maps 3D tilesets.
 	void GatherGoogle3DTilesets(const UObject* WorldContextObject,
-		TArray<AITwinCesium3DTileset*>& Out3DMapTilesets)
+		TArray<ACesium3DTileset*>& Out3DMapTilesets)
 	{
 		Out3DMapTilesets.Empty();
 		TArray<AActor*> TilesetActors;
-		UGameplayStatics::GetAllActorsOfClass(WorldContextObject, AITwinCesium3DTileset::StaticClass(), TilesetActors);
+		UGameplayStatics::GetAllActorsOfClass(WorldContextObject, ACesium3DTileset::StaticClass(), TilesetActors);
 		for (auto Actor : TilesetActors)
 		{
-			AITwinCesium3DTileset* TilesetActor = Cast<AITwinCesium3DTileset>(Actor);
+			ACesium3DTileset* TilesetActor = Cast<ACesium3DTileset>(Actor);
 			if (TilesetActor && IsGoogle3DTileset(TilesetActor))
 			{
 				Out3DMapTilesets.Push(TilesetActor);
@@ -81,9 +81,6 @@ public:
 	void OnSceneLoaded(bool bSuccess);
 	bool LoadGeoLocationFromDeco(std::array<double, 3> const& latLongHeight);
 	void SetGeoLocation(std::array<double, 3> const& latLongHeight);
-
-	// Cutout
-	void InitPolygonRasterOverlay();
 };
 
 void AITwinGoogle3DTileset::FImpl::FindPersistenceMgr()
@@ -93,10 +90,10 @@ void AITwinGoogle3DTileset::FImpl::FindPersistenceMgr()
 	{
 		PersistenceMgr = *DecoIter;
 	}
-	if (PersistenceMgr)
-	{
-		PersistenceMgr->OnSceneLoaded.AddDynamic(&Owner, &AITwinGoogle3DTileset::OnSceneLoaded);
-	}
+	//if (PersistenceMgr)
+	//{
+	//	PersistenceMgr->OnSceneLoaded.AddDynamic(&Owner, &AITwinGoogle3DTileset::OnSceneLoaded);
+	//}
 }
 
 void AITwinGoogle3DTileset::FImpl::OnSceneLoaded(bool bSuccess)
@@ -132,10 +129,10 @@ bool AITwinGoogle3DTileset::FImpl::LoadGeoLocationFromDeco(std::array<double, 3>
 void AITwinGoogle3DTileset::FImpl::SetGeoLocation(std::array<double, 3> const& latLongHeight)
 {
 	auto&& Geoloc = FITwinGeolocation::Get(*Owner.GetWorld());
-	if (Geoloc->GeoReference->GetOriginPlacement() == EITwinOriginPlacement::TrueOrigin)
+	if (Geoloc->GeoReference->GetOriginPlacement() == EOriginPlacement::TrueOrigin)
 	{
 		// First time we initialize the common geo-reference
-		Geoloc->GeoReference->SetOriginPlacement(EITwinOriginPlacement::CartographicOrigin);
+		Geoloc->GeoReference->SetOriginPlacement(EOriginPlacement::CartographicOrigin);
 	}
 
 	Geoloc->GeoReference->SetOriginLatitude(latLongHeight[0]);
@@ -156,38 +153,30 @@ void AITwinGoogle3DTileset::FImpl::SetGeoLocation(std::array<double, 3> const& l
 	}
 }
 
-void AITwinGoogle3DTileset::FImpl::InitPolygonRasterOverlay()
-{
-	if (Owner.FindComponentByClass<UITwinCesiumPolygonRasterOverlay>())
-		return;
-
-	// Instantiate a UITwinCesiumPolygonRasterOverlay component, which can then be populated with polygons to
-	// enable cutout (AITwinCesiumCartographicPolygon)
-	auto RasterOverlay = NewObject<UITwinCesiumPolygonRasterOverlay>(&Owner,
-		UITwinCesiumPolygonRasterOverlay::StaticClass(),
-		FName(*(Owner.GetActorNameOrLabel() + "_RasterOverlay")),
-		RF_Transactional);
-	RasterOverlay->OnComponentCreated();
-	Owner.AddInstanceComponent(RasterOverlay);
-	RasterOverlay->RegisterComponent();
-}
-
 
 /*static*/
-void AITwinGoogle3DTileset::SetDefaultKey(FString const& DefaultGoogleKey)
+void AITwinGoogle3DTileset::SetDefaultKey(FString const& DefaultGoogleKey, UWorld* World /*= nullptr*/)
 {
 	DefaultGoogle3DTilesetKey = DefaultGoogleKey;
+
+	if (World && !DefaultGoogleKey.IsEmpty())
+	{
+		// Update all Google tilesets already instantiated
+		for (TActorIterator<AITwinGoogle3DTileset> GooIter(World); GooIter; ++GooIter)
+		{
+			AITwinGoogle3DTileset* Tileset = *GooIter;
+			if (Tileset->GetUrl().IsEmpty())
+			{
+				Tileset->GoogleKey = DefaultGoogleKey;
+				Tileset->SetUrl(FString(GOOGLE_3D_TILESET_URL) + DefaultGoogleKey);
+			}
+		}
+	}
 }
 
 /*static*/
-AITwinGoogle3DTileset* AITwinGoogle3DTileset::MakeInstance(UWorld& World)
+AITwinGoogle3DTileset* AITwinGoogle3DTileset::MakeInstance(UWorld& World, bool bGeneratePhysicsMeshes /*= false*/)
 {
-	if (DefaultGoogle3DTilesetKey.IsEmpty())
-	{
-		ensureMsgf(false, TEXT("No Google Key to create tileset"));
-		return nullptr;
-	}
-
 	// Instantiate a Google 3D Tileset
 
 	// *before* SpawnActor otherwise Cesium will create its own default georef
@@ -196,21 +185,13 @@ AITwinGoogle3DTileset* AITwinGoogle3DTileset::MakeInstance(UWorld& World)
 #if WITH_EDITOR
 	Tileset->SetActorLabel(TEXT("Google 3D tileset"));
 #endif
-	Tileset->SetCreatePhysicsMeshes(false);
-	Tileset->SetTilesetSource(EITwinTilesetSource::FromUrl);
+	Tileset->SetCreatePhysicsMeshes(bGeneratePhysicsMeshes);
 
 	// Decrease the default quality to avoid consuming too much (AzDev #1533278)
 	ITwin::SetTilesetQuality(*Tileset, 0.30f);
 
-	// The key below should not be published, it is specific to Carrot application
-	// see https://developers.google.com/maps/documentation/tile/3d-tiles for details
-	Tileset->SetUrl(FString(GOOGLE_3D_TILESET_URL) + DefaultGoogle3DTilesetKey);
-
-	Tileset->ShowCreditsOnScreen = true;
 	// Always use the *true* geo-reference for Google 3D Maps.
 	Tileset->SetGeoreference(Geoloc->GeoReference.Get());
-	// Make use of our own materials (important for packaged version!)
-	ITwin::SetupMaterials(*Tileset);
 
 	auto GeoRef = Tileset->GetGeoreference();
 	if (ensure(GeoRef))
@@ -223,7 +204,7 @@ AITwinGoogle3DTileset* AITwinGoogle3DTileset::MakeInstance(UWorld& World)
 		// This test remains correct when we load a different model from Carrot's startup panel,
 		// because in such case, the singleton itself is recreated (see FITwinGeolocation::CheckInit
 		// for details).
-		if (GeoRef->GetOriginPlacement() == EITwinOriginPlacement::CartographicOrigin)
+		if (GeoRef->GetOriginPlacement() == EOriginPlacement::CartographicOrigin)
 		{
 			// The scene already contains a truly geo-located item
 			// => fill the edit fields with the latter, and forbid their edition.
@@ -231,7 +212,8 @@ AITwinGoogle3DTileset* AITwinGoogle3DTileset::MakeInstance(UWorld& World)
 		}
 		else
 		{
-			GeoRef->SetOriginPlacement(EITwinOriginPlacement::CartographicOrigin);
+			Geoloc->bCanBypassCurrentLocation = true;
+			GeoRef->SetOriginPlacement(EOriginPlacement::CartographicOrigin);
 
 			// We now have the possibility to reload user customizations from the decoration service
 			// (temporary solution for the YII, again...)
@@ -249,9 +231,9 @@ AITwinGoogle3DTileset* AITwinGoogle3DTileset::MakeInstance(UWorld& World)
 		}
 	}
 
-	// Instantiate a UITwinCesiumPolygonRasterOverlay component, which can then be populated with polygons to
-	// enable cutout (AITwinCesiumCartographicPolygon)
-	Tileset->Impl->InitPolygonRasterOverlay();
+	// Instantiate a UCesiumPolygonRasterOverlay component, which can then be populated with polygons to
+	// enable cutout (ACesiumCartographicPolygon)
+	ITwin::InitCutoutOverlay(*Tileset);
 
 	return Tileset;
 }
@@ -262,6 +244,25 @@ AITwinGoogle3DTileset::AITwinGoogle3DTileset()
 	, Impl(MakePimpl<FImpl>(*this))
 {
 	GoogleKey = DefaultGoogle3DTilesetKey;
+
+	if (!HasAnyFlags(RF_ClassDefaultObject))
+	{
+		SetTilesetSource(ETilesetSource::FromUrl);
+
+		if (!GoogleKey.IsEmpty())
+		{
+			SetUrl(FString(GOOGLE_3D_TILESET_URL) + GoogleKey);
+		}
+
+		ShowCreditsOnScreen = true;
+
+		// Quick fix for EAP: add Google logo to the left
+		UserCredit = TEXT("<img alt=\"Google\" src=\"https://assets.ion.cesium.com/google-credit.png\" style=\"vertical-align:-5px\">");
+		bHighPriorityUserCredit = true;
+
+		// Make use of our own materials (important for packaged version!)
+		ITwin::SetupMaterials(*this);
+	}
 }
 
 void AITwinGoogle3DTileset::SetActorHiddenInGame(bool bNewHidden)
@@ -321,7 +322,7 @@ void AITwinGoogle3DTileset::PostEditChangeProperty(FPropertyChangedEvent& Event)
 	if (PropertyName == GET_MEMBER_NAME_CHECKED(AITwinGoogle3DTileset, GoogleKey)
 		&& !GoogleKey.IsEmpty())
 	{
-		DefaultGoogle3DTilesetKey = GoogleKey;
+		AITwinGoogle3DTileset::SetDefaultKey(GoogleKey, GetWorld());
 	}
 }
 #endif // WITH_EDITOR
@@ -332,12 +333,3 @@ void AITwinGoogle3DTileset::OnSceneLoaded(bool bSuccess)
 	Impl->OnSceneLoaded(bSuccess);
 }
 
-void AITwinGoogle3DTileset::InitPolygonRasterOverlay()
-{
-	Impl->InitPolygonRasterOverlay();
-}
-
-UITwinCesiumPolygonRasterOverlay* AITwinGoogle3DTileset::GetPolygonRasterOverlay() const
-{
-	return FindComponentByClass<UITwinCesiumPolygonRasterOverlay>();
-}

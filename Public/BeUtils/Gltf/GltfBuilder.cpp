@@ -7,9 +7,9 @@
 +--------------------------------------------------------------------------------------*/
 
 #include <BeUtils/Gltf/GltfBuilder.h>
+#include <BeUtils/Gltf/ExtensionITwinMaterialID.h>
 #include <CesiumGltf/Model.h>
 #include <CesiumGltf/ExtensionModelExtStructuralMetadata.h>
-#include <CesiumGltf/ExtensionITwinMaterialID.h>
 #include <CesiumGltfContent/GltfUtilities.h>
 #include <SDK/Core/Tools/Assert.h>
 
@@ -56,7 +56,7 @@ void GltfBuilder::MeshPrimitive::SetUVs(const std::vector<std::array<float, 2>>&
 
 void GltfBuilder::MeshPrimitive::SetITwinMaterialID(uint64_t materialId)
 {
-	auto& matIdExt = primitive_.addExtension<CesiumGltf::ExtensionITwinMaterialID>();
+	auto& matIdExt = primitive_.addExtension<BeUtils::ExtensionITwinMaterialID>();
 	matIdExt.materialId = materialId;
 }
 
@@ -198,7 +198,7 @@ bool GltfBuilder::ComputeFastUVs(MeshPrimitive& primitive,
 	rootTransform = GltfUtilities::applyGltfUpAxisTransform(impl_->model_, rootTransform);
 	glm::dmat4 fullTransform;
 	if (gltfNode)
-		fullTransform = rootTransform * CesiumGltf::getNodeTransform(*gltfNode, glm::dmat4x4(1.0));
+		fullTransform = rootTransform * GltfUtilities::getNodeTransform(*gltfNode).value_or(glm::dmat4x4(1.0));
 	else
 		fullTransform = rootTransform;
 	const glm::dmat3 normalTsf = glm::inverseTranspose(glm::dmat3(fullTransform));
@@ -258,7 +258,7 @@ int32_t GltfBuilder::AddBufferView(const void* data,
 	bufferView.byteLength = (byteLength+7)/8*8;
 	bufferView.byteStride = byteStride;
 	bufferView.target = target;
-	const auto oldBufferSize = impl_->model_.buffers[0].cesium.data.size();
+	[[maybe_unused]] const auto oldBufferSize = impl_->model_.buffers[0].cesium.data.size();
 	impl_->model_.buffers[0].cesium.data.resize(impl_->model_.buffers[0].cesium.data.size()+bufferView.byteLength);
 	memcpy(impl_->model_.buffers[0].cesium.data.data()+bufferView.byteOffset, data, byteLength);
 	return int32_t(impl_->model_.bufferViews.size()-1);

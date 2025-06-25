@@ -9,6 +9,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include <Async/Async.h>
 #include <Dom/JsonObject.h>
 #include <HttpFwd.h>
 #include <Templates/PimplPtr.h>
@@ -31,15 +32,20 @@
 
 enum class EITwinEnvironment : uint8;
 
-struct FPoolRequest
+class FPoolRequest
 {
+public:
 	FHttpRequestPtr Request;
 	bool bIsAvailable{ true };
 	bool bSuccess{ true };
 	bool bTryFromCache{ true };
+	bool bShouldCancel{ false };
+	TSharedPtr<TPromise<void>> AsyncRoutine;
+
+	void Cancel();
 };
 
-// CANNOT use string views: I though they would all be either static strings or references to stable strings
+// CANNOT use string views: I thought they would all be either static strings or references to stable strings
 // stored in the import structures (IDs for iTwin, iModel, Schedule, Task, etc.)
 // BUT Schedules, AnimationBindings etc. are all vectors that could be resized when querying using
 // pagination :/ So use strings for the time being, maybe use accessors to arrays later, so that only the
@@ -48,9 +54,8 @@ using FUrlArgList = std::vector<std::pair<FString, FString>>;
 using FUrlSubpath = std::vector<FString>;
 using FProcessJsonObject = std::function<void(TSharedPtr<FJsonObject> const&)>;
 using FAllocateRequest = std::function<FHttpRequestPtr()>;
-using FCheckRequest = std::function<bool(
-	FHttpRequestPtr const& /*CompletedRequest*/, FHttpResponsePtr const& /*Response*/,
-	bool /*connectedSuccessfully*/, FString* /*pStrError*/, bool const/*bWillRetry*/)>;
+using FCheckRequest = std::function<bool(FHttpRequestPtr const& /*CompletedRequest*/,
+	FHttpResponsePtr const& /*Response*/, bool /*connectedSuccessfully*/, bool const/*bWillRetry*/)>;
 
 struct FRequestArgs
 {
@@ -112,7 +117,8 @@ public:
 	/// folder ie a single schedule for the moment, see comment over ensure(Schedules.empty()) in
 	/// SchedulesImport.cpp
 	/// \param DisplayName Informative name, for debugging
-	void InitializeCache(FString const& CacheFolder, EITwinEnvironment const Env, FString const& DisplayName);
+	void InitializeCache(FString const& CacheFolder, EITwinEnvironment const Env, FString const& DisplayName,
+						 bool bUnitTesting = false);
 	void UninitializeCache();
 	/// Reset data structures into which were parsed data from the local cache used to map requests to their
 	/// possible cache entries (reply payloads are never kept in memory). Also resets all internal variables

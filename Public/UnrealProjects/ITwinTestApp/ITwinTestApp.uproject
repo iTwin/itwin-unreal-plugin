@@ -33,5 +33,10 @@
 			"Name": "PlatformCrypto",
 			"Enabled": true
 		}
+	],
+	"TargetPlatforms": [
+		"Linux",
+		"Mac",
+		"Windows"
 	]
 }

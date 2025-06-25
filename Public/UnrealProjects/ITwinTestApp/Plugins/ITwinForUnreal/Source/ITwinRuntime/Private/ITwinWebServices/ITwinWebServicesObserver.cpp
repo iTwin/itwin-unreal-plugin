@@ -69,7 +69,7 @@ void FITwinDefaultWebServicesObserver::OnSavedViewExtensionRetrieved(bool bSucce
 {
 	ensureMsgf(false, TEXT("%s does not handle SavedViews"), GetObserverName());
 }
-void FITwinDefaultWebServicesObserver::OnSavedViewThumbnailRetrieved(bool bSuccess, FString const& SavedViewThumbnail, FString const& SavedViewId)
+void FITwinDefaultWebServicesObserver::OnSavedViewThumbnailRetrieved(bool bSuccess, FString const& SavedViewId, TArray<uint8> const& Buffer)
 {
 	checkf(false, TEXT("%s does not handle SavedViews"), GetObserverName());
 }
@@ -97,19 +97,24 @@ void FITwinDefaultWebServicesObserver::OnIModelPropertiesRetrieved(bool bSuccess
 {
 	ensureMsgf(false, TEXT("%s does not handle querying IModel properties"), GetObserverName());
 }
+void FITwinDefaultWebServicesObserver::OnConvertedIModelCoordsToGeoCoords(bool bSuccess,
+	AdvViz::SDK::GeoCoordsReply const& GeoCoords, HttpRequestID const& RequestID)
+{
+	ensureMsgf(false, TEXT("%s does not handle converting IModel coords"), GetObserverName());
+}
 void FITwinDefaultWebServicesObserver::OnIModelQueried(bool bSuccess, FString const& QueryResult, HttpRequestID const&)
 {
 	ensureMsgf(false, TEXT("%s does not handle querying iModels"), GetObserverName());
 }
-void FITwinDefaultWebServicesObserver::OnMaterialPropertiesRetrieved(bool bSuccess, SDK::Core::ITwinMaterialPropertiesMap const& )
+void FITwinDefaultWebServicesObserver::OnMaterialPropertiesRetrieved(bool bSuccess, AdvViz::SDK::ITwinMaterialPropertiesMap const& )
 {
 	ensureMsgf(false, TEXT("%s does not handle querying material properties"), GetObserverName());
 }
-void FITwinDefaultWebServicesObserver::OnTextureDataRetrieved(bool bSuccess, std::string const& , SDK::Core::ITwinTextureData const& )
+void FITwinDefaultWebServicesObserver::OnTextureDataRetrieved(bool bSuccess, std::string const& , AdvViz::SDK::ITwinTextureData const& )
 {
 	ensureMsgf(false, TEXT("%s does not handle querying texture data"), GetObserverName());
 }
-void FITwinDefaultWebServicesObserver::OnMatMLPredictionRetrieved(bool bSuccess, SDK::Core::ITwinMaterialPrediction const&)
+void FITwinDefaultWebServicesObserver::OnMatMLPredictionRetrieved(bool bSuccess, AdvViz::SDK::ITwinMaterialPrediction const&, std::string const& )
 {
 	ensureMsgf(false, TEXT("%s does not handle material predictions"), GetObserverName());
 }

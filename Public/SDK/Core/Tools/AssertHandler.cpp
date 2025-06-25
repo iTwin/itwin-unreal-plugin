@@ -12,7 +12,7 @@
 #include <iostream>
 #include "../Singleton/singleton.h"
 
-namespace SDK::Core::Tools
+namespace AdvViz::SDK::Tools
 {
 	std::shared_ptr<IAssertHandler> g_assert;
 

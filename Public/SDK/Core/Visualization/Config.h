@@ -21,7 +21,7 @@
 // in the Visualization SDK
 #define VIZ_SDK_WARN(FORMAT, ...)
 
-MODULE_EXPORT namespace SDK::Core
+MODULE_EXPORT namespace AdvViz::SDK
 {
 	namespace Config {
 		struct SServer
@@ -35,11 +35,11 @@ MODULE_EXPORT namespace SDK::Core
 		{
 			SServer server;
 		};
-		void Init(const SConfig& config);
+		ADVVIZ_LINK void Init(const SConfig& config);
 
-		SConfig LoadFromFile(std::filesystem::path& path);
+		ADVVIZ_LINK SConfig LoadFromFile(std::filesystem::path& path);
 	}
 
 
-	std::shared_ptr<Http>& GetDefaultHttp();
+	ADVVIZ_LINK std::shared_ptr<Http>& GetDefaultHttp();
 }

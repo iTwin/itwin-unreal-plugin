@@ -16,7 +16,7 @@
 #endif
 
 
-MODULE_EXPORT namespace SDK::Core
+MODULE_EXPORT namespace AdvViz::SDK
 {
 	enum class EITwinAuthStatus : uint8_t
 	{

@@ -25,23 +25,25 @@
 DEFINE_LOG_CATEGORY(LogITwinHttp);
 
 
-bool AITwinServerConnection::GetAccessTokenStdString(std::string& AccessToken) const
+std::shared_ptr<std::string> AITwinServerConnection::GetAccessTokenPtr() const
 {
 	auto const& AuthMngr = FITwinAuthorizationManager::GetInstance(
-		static_cast<SDK::Core::EITwinEnvironment>(Environment));
+		static_cast<AdvViz::SDK::EITwinEnvironment>(Environment));
 	if (!ensure(AuthMngr))
 	{
-		return false;
+		return std::shared_ptr <std::string>();
 	}
-	AuthMngr->GetAccessToken(AccessToken);
-	return !AccessToken.empty();
+	return AuthMngr->GetAccessToken();
 }
 
 FString AITwinServerConnection::GetAccessToken() const
 {
-	std::string AccessToken;
-	GetAccessTokenStdString(AccessToken);
-	return AccessToken.c_str();
+	auto token = GetAccessTokenPtr();
+	if (token)
+		return token->c_str();
+	else
+		return{};
+
 }
 
 /// Checks the request status, response code, and logs any failure (does not assert)
@@ -97,7 +99,7 @@ bool AITwinServerConnection::CheckRequest(FHttpRequestPtr const& CompletedReques
 		//									*CompletedRequest->GetHeader(TEXT("Authorization")));
 
 		// see if we can get more information in the response
-		std::string detailedError = SDK::Core::ITwinWebServices::GetErrorDescriptionFromJson(
+		std::string detailedError = AdvViz::SDK::ITwinWebServices::GetErrorDescriptionFromJson(
 			TCHAR_TO_ANSI(*Response->GetContentAsString()), "\t");
 		if (!detailedError.empty())
 		{

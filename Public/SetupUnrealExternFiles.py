@@ -96,12 +96,20 @@ def CreateSymlink(target: str, link: str):
 		CreateSymlink2(pathlib.Path(Resolve(target)), pathlib.Path(Resolve(link)))
 	
 
-def SetupCesium(src: str, dst:str):
+def SetupCesium(src: str, dst:str, overrideSrc: str):
 	#print(f'SetupCesium "{src}" -> "{dst}".')
-	for subDir in ['Include', 'Lib']:
-		for itemPathSrc in pathlib.Path(src, subDir).glob('*'):
+	for subDir, globPattern in [('Include', '*'), ('Lib', '*/*')]:
+		for itemPathSrc in pathlib.Path(src, subDir).glob(globPattern):
 			itemPathRel = itemPathSrc.relative_to(src)
 			itemPathDst = pathlib.Path(dst, itemPathRel)
+			# For libs coming from vcpkg, we have to use carrot's libs, not cesium's libs.
+			# See Public/CesiumDependencies/CMakeLists.txt for explanation.
+			# "src" arg points to cesium lib folder, so here we look in overrideSrc folder
+			# (which points to carrot lib folder) if a lib with the same name exists here.
+			# If so, we take the "override" (ie. carrot) lib.
+			overrideItemPathSrc = pathlib.Path(overrideSrc)/"lib"/itemPathSrc.name
+			if overrideItemPathSrc.exists():
+				itemPathSrc = overrideItemPathSrc
 			CreateSymlink2(itemPathSrc, itemPathDst)
 
 if os.path.exists(sys.argv[1]):

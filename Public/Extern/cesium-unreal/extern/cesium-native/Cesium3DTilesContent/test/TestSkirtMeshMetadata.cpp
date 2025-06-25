@@ -1,7 +1,10 @@
 #include <CesiumGltfContent/SkirtMeshMetadata.h>
+#include <CesiumUtility/JsonValue.h>
 #include <CesiumUtility/Math.h>
 
-#include <catch2/catch.hpp>
+#include <doctest/doctest.h>
+
+#include <optional>
 
 using namespace CesiumGltfContent;
 using namespace CesiumUtility;
@@ -42,31 +45,35 @@ TEST_CASE("Test converting skirt mesh metadata to gltf extras") {
       skirtMeshMetadata.meshCenter.z,
       Math::Epsilon7));
 
-  const auto pSkirtWestHeight =
+  const std::optional<double> maybeSkirtWestHeight =
       gltfSkirt.getSafeNumericalValueForKey<double>("skirtWestHeight");
+  REQUIRE(maybeSkirtWestHeight);
   REQUIRE(Math::equalsEpsilon(
-      pSkirtWestHeight,
+      *maybeSkirtWestHeight,
       skirtMeshMetadata.skirtWestHeight,
       Math::Epsilon7));
 
-  const auto pSkirtSouthHeight =
+  const std::optional<double> maybeSkirtSouthHeight =
       gltfSkirt.getSafeNumericalValueForKey<double>("skirtSouthHeight");
+  REQUIRE(maybeSkirtSouthHeight);
   REQUIRE(Math::equalsEpsilon(
-      pSkirtSouthHeight,
+      *maybeSkirtSouthHeight,
       skirtMeshMetadata.skirtSouthHeight,
       Math::Epsilon7));
 
-  const auto pSkirtEastHeight =
+  const std::optional<double> maybeSkirtEastHeight =
       gltfSkirt.getSafeNumericalValueForKey<double>("skirtEastHeight");
+  REQUIRE(maybeSkirtEastHeight);
   REQUIRE(Math::equalsEpsilon(
-      pSkirtEastHeight,
+      *maybeSkirtEastHeight,
       skirtMeshMetadata.skirtEastHeight,
       Math::Epsilon7));
 
-  const auto pSkirtNorthHeight =
+  const std::optional<double> maybeSkirtNorthHeight =
       gltfSkirt.getSafeNumericalValueForKey<double>("skirtNorthHeight");
+  REQUIRE(maybeSkirtNorthHeight);
   REQUIRE(Math::equalsEpsilon(
-      pSkirtNorthHeight,
+      *maybeSkirtNorthHeight,
       skirtMeshMetadata.skirtNorthHeight,
       Math::Epsilon7));
 }
@@ -81,7 +88,7 @@ TEST_CASE("Test converting gltf extras to skirt mesh metadata") {
       {"skirtEastHeight", 2.4},
       {"skirtNorthHeight", 1.4}};
 
-  SECTION("Gltf Extras has correct format") {
+  SUBCASE("Gltf Extras has correct format") {
     JsonValue::Object extras = {{"skirtMeshMetadata", gltfSkirtMeshMetadata}};
 
     SkirtMeshMetadata skirtMeshMetadata =
@@ -121,8 +128,8 @@ TEST_CASE("Test converting gltf extras to skirt mesh metadata") {
         Math::Epsilon7));
   }
 
-  SECTION("Gltf Extras has incorrect noSkirtRange field") {
-    SECTION("missing noSkirtRange field") {
+  SUBCASE("Gltf Extras has incorrect noSkirtRange field") {
+    SUBCASE("missing noSkirtRange field") {
       gltfSkirtMeshMetadata.erase("noSkirtRange");
 
       JsonValue::Object extras = {{"skirtMeshMetadata", gltfSkirtMeshMetadata}};
@@ -130,7 +137,7 @@ TEST_CASE("Test converting gltf extras to skirt mesh metadata") {
       REQUIRE(SkirtMeshMetadata::parseFromGltfExtras(extras) == std::nullopt);
     }
 
-    SECTION("noSkirtRange field has wrong type") {
+    SUBCASE("noSkirtRange field has wrong type") {
       gltfSkirtMeshMetadata["noSkirtRange"] = 12;
 
       JsonValue::Object extras = {{"skirtMeshMetadata", gltfSkirtMeshMetadata}};
@@ -138,7 +145,7 @@ TEST_CASE("Test converting gltf extras to skirt mesh metadata") {
       REQUIRE(SkirtMeshMetadata::parseFromGltfExtras(extras) == std::nullopt);
     }
 
-    SECTION("noSkirtRange field has only one element array") {
+    SUBCASE("noSkirtRange field has only one element array") {
       gltfSkirtMeshMetadata["noSkirtRange"] = JsonValue::Array{0};
 
       JsonValue::Object extras = {{"skirtMeshMetadata", gltfSkirtMeshMetadata}};
@@ -146,7 +153,7 @@ TEST_CASE("Test converting gltf extras to skirt mesh metadata") {
       REQUIRE(SkirtMeshMetadata::parseFromGltfExtras(extras) == std::nullopt);
     }
 
-    SECTION("noSkirtRange field has two elements array but not integer") {
+    SUBCASE("noSkirtRange field has two elements array but not integer") {
       gltfSkirtMeshMetadata["noSkirtRange"] =
           JsonValue::Array{"first", "second"};
 
@@ -156,8 +163,8 @@ TEST_CASE("Test converting gltf extras to skirt mesh metadata") {
     }
   }
 
-  SECTION("Gltf Extras has incorrect meshCenter field") {
-    SECTION("missing meshCenter field") {
+  SUBCASE("Gltf Extras has incorrect meshCenter field") {
+    SUBCASE("missing meshCenter field") {
       gltfSkirtMeshMetadata.erase("meshCenter");
 
       JsonValue::Object extras = {{"skirtMeshMetadata", gltfSkirtMeshMetadata}};
@@ -165,7 +172,7 @@ TEST_CASE("Test converting gltf extras to skirt mesh metadata") {
       REQUIRE(SkirtMeshMetadata::parseFromGltfExtras(extras) == std::nullopt);
     }
 
-    SECTION("meshCenter field has wrong type") {
+    SUBCASE("meshCenter field has wrong type") {
       gltfSkirtMeshMetadata["meshCenter"] = 12;
 
       JsonValue::Object extras = {{"skirtMeshMetadata", gltfSkirtMeshMetadata}};
@@ -173,7 +180,7 @@ TEST_CASE("Test converting gltf extras to skirt mesh metadata") {
       REQUIRE(SkirtMeshMetadata::parseFromGltfExtras(extras) == std::nullopt);
     }
 
-    SECTION("meshCenter field is 2 elements array") {
+    SUBCASE("meshCenter field is 2 elements array") {
       gltfSkirtMeshMetadata["meshCenter"] = JsonValue::Array{1.0, 2.0};
 
       JsonValue::Object extras = {{"skirtMeshMetadata", gltfSkirtMeshMetadata}};
@@ -181,7 +188,7 @@ TEST_CASE("Test converting gltf extras to skirt mesh metadata") {
       REQUIRE(SkirtMeshMetadata::parseFromGltfExtras(extras) == std::nullopt);
     }
 
-    SECTION("meshCenter field is 3 elements array but wrong type") {
+    SUBCASE("meshCenter field is 3 elements array but wrong type") {
       gltfSkirtMeshMetadata["meshCenter"] = JsonValue::Array{1.0, 2.0, "third"};
 
       JsonValue::Object extras = {{"skirtMeshMetadata", gltfSkirtMeshMetadata}};
@@ -190,8 +197,8 @@ TEST_CASE("Test converting gltf extras to skirt mesh metadata") {
     }
   }
 
-  SECTION("Gltf Extras has incorrect skirtWestHeight field") {
-    SECTION("missing skirtWestHeight field") {
+  SUBCASE("Gltf Extras has incorrect skirtWestHeight field") {
+    SUBCASE("missing skirtWestHeight field") {
       gltfSkirtMeshMetadata.erase("skirtWestHeight");
 
       JsonValue::Object extras = {{"skirtMeshMetadata", gltfSkirtMeshMetadata}};
@@ -199,7 +206,7 @@ TEST_CASE("Test converting gltf extras to skirt mesh metadata") {
       REQUIRE(SkirtMeshMetadata::parseFromGltfExtras(extras) == std::nullopt);
     }
 
-    SECTION("skirtWestHeight field has wrong type") {
+    SUBCASE("skirtWestHeight field has wrong type") {
       gltfSkirtMeshMetadata["skirtWestHeight"] = "string";
 
       JsonValue::Object extras = {{"skirtMeshMetadata", gltfSkirtMeshMetadata}};
@@ -208,8 +215,8 @@ TEST_CASE("Test converting gltf extras to skirt mesh metadata") {
     }
   }
 
-  SECTION("Gltf Extras has incorrect skirtSouthHeight field") {
-    SECTION("missing skirtSouthHeight field") {
+  SUBCASE("Gltf Extras has incorrect skirtSouthHeight field") {
+    SUBCASE("missing skirtSouthHeight field") {
       gltfSkirtMeshMetadata.erase("skirtSouthHeight");
 
       JsonValue::Object extras = {{"skirtMeshMetadata", gltfSkirtMeshMetadata}};
@@ -217,7 +224,7 @@ TEST_CASE("Test converting gltf extras to skirt mesh metadata") {
       REQUIRE(SkirtMeshMetadata::parseFromGltfExtras(extras) == std::nullopt);
     }
 
-    SECTION("skirtSouthHeight field has wrong type") {
+    SUBCASE("skirtSouthHeight field has wrong type") {
       gltfSkirtMeshMetadata["skirtSouthHeight"] = "string";
 
       JsonValue::Object extras = {{"skirtMeshMetadata", gltfSkirtMeshMetadata}};
@@ -226,8 +233,8 @@ TEST_CASE("Test converting gltf extras to skirt mesh metadata") {
     }
   }
 
-  SECTION("Gltf Extras has incorrect skirtEastHeight field") {
-    SECTION("missing skirtEastHeight field") {
+  SUBCASE("Gltf Extras has incorrect skirtEastHeight field") {
+    SUBCASE("missing skirtEastHeight field") {
       gltfSkirtMeshMetadata.erase("skirtEastHeight");
 
       JsonValue::Object extras = {{"skirtMeshMetadata", gltfSkirtMeshMetadata}};
@@ -235,7 +242,7 @@ TEST_CASE("Test converting gltf extras to skirt mesh metadata") {
       REQUIRE(SkirtMeshMetadata::parseFromGltfExtras(extras) == std::nullopt);
     }
 
-    SECTION("skirtEastHeight field has wrong type") {
+    SUBCASE("skirtEastHeight field has wrong type") {
       gltfSkirtMeshMetadata["skirtEastHeight"] = "string";
 
       JsonValue::Object extras = {{"skirtMeshMetadata", gltfSkirtMeshMetadata}};
@@ -244,8 +251,8 @@ TEST_CASE("Test converting gltf extras to skirt mesh metadata") {
     }
   }
 
-  SECTION("Gltf Extras has incorrect skirtNorthHeight field") {
-    SECTION("missing skirtNorthHeight field") {
+  SUBCASE("Gltf Extras has incorrect skirtNorthHeight field") {
+    SUBCASE("missing skirtNorthHeight field") {
       gltfSkirtMeshMetadata.erase("skirtNorthHeight");
 
       JsonValue::Object extras = {{"skirtMeshMetadata", gltfSkirtMeshMetadata}};
@@ -253,7 +260,7 @@ TEST_CASE("Test converting gltf extras to skirt mesh metadata") {
       REQUIRE(SkirtMeshMetadata::parseFromGltfExtras(extras) == std::nullopt);
     }
 
-    SECTION("skirtNorthHeight field has wrong type") {
+    SUBCASE("skirtNorthHeight field has wrong type") {
       gltfSkirtMeshMetadata["skirtNorthHeight"] = "string";
 
       JsonValue::Object extras = {{"skirtMeshMetadata", gltfSkirtMeshMetadata}};

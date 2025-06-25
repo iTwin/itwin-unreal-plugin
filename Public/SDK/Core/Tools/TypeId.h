@@ -8,8 +8,8 @@
 
 #pragma once
 #include "Hash.h"
-
-namespace SDK::Core::Tools
+#include <memory>
+namespace AdvViz::SDK::Tools
 {
 	namespace Internal {
 		// return string that depend on template Type
@@ -43,10 +43,18 @@ namespace SDK::Core::Tools
 	class IDynType {
 	public:
 		// for type check
-		virtual std::uint64_t GetDynTypeId() = 0;
-		virtual bool IsTypeOf(std::uint64_t i) = 0;
+		virtual std::uint64_t GetDynTypeId() const = 0;
+		virtual bool IsTypeOf(std::uint64_t i) const = 0;
 	};
 
+	template<typename T, typename Parent>
+	class DynType : public TypeId<T>, public IDynType {
+	public:
+		// for type check
+		using TypeId<T>::GetTypeId;
+		std::uint64_t GetDynTypeId() const override { return GetTypeId(); }
+		bool IsTypeOf(std::uint64_t i) const override { return (i == GetTypeId()) || Parent::IsTypeOf(i); }
+	};
 
 	template<typename T1, typename T2>
 	std::shared_ptr<T1> DynamicCast(std::shared_ptr<T2> pObj)

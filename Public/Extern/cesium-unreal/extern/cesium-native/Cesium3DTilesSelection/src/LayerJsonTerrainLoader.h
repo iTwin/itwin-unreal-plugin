@@ -9,6 +9,7 @@
 #include <CesiumGeometry/QuadtreeRectangleAvailability.h>
 #include <CesiumGeometry/QuadtreeTilingScheme.h>
 #include <CesiumGeospatial/Projection.h>
+#include <CesiumUtility/Assert.h>
 
 #include <rapidjson/fwd.h>
 
@@ -33,7 +34,8 @@ public:
       const TilesetExternals& externals,
       const TilesetContentOptions& contentOptions,
       const std::string& layerJsonUrl,
-      const std::vector<CesiumAsync::IAssetAccessor::THeader>& requestHeaders);
+      const std::vector<CesiumAsync::IAssetAccessor::THeader>& requestHeaders,
+      const CesiumGeospatial::Ellipsoid& ellipsoid CESIUM_DEFAULT_ELLIPSOID);
 
   static CesiumAsync::Future<TilesetContentLoaderResult<LayerJsonTerrainLoader>>
   createLoader(
@@ -42,13 +44,15 @@ public:
       const TilesetContentOptions& contentOptions,
       const std::string& layerJsonUrl,
       const std::vector<CesiumAsync::IAssetAccessor::THeader>& requestHeaders,
-      const rapidjson::Document& layerJson);
+      const rapidjson::Document& layerJson,
+      const CesiumGeospatial::Ellipsoid& ellipsoid CESIUM_DEFAULT_ELLIPSOID);
 
   struct Layer {
     Layer(
         const std::string& baseUrl,
         std::string&& version,
         std::vector<std::string>&& tileTemplateUrls,
+        std::string&& extensionsToRequest,
         CesiumGeometry::QuadtreeRectangleAvailability&& contentAvailability,
         uint32_t maxZooms,
         int32_t availabilityLevels);
@@ -56,6 +60,7 @@ public:
     std::string baseUrl;
     std::string version;
     std::vector<std::string> tileTemplateUrls;
+    std::string extensionsToRequest;
     CesiumGeometry::QuadtreeRectangleAvailability contentAvailability;
     std::vector<std::unordered_set<uint64_t>> loadedSubtrees;
     int32_t availabilityLevels;
@@ -69,7 +74,10 @@ public:
   CesiumAsync::Future<TileLoadResult>
   loadTileContent(const TileLoadInput& loadInput) override;
 
-  TileChildrenResult createTileChildren(const Tile& tile) override;
+  TileChildrenResult createTileChildren(
+      const Tile& tile,
+      const CesiumGeospatial::Ellipsoid& ellipsoid
+          CESIUM_DEFAULT_ELLIPSOID) override;
 
   const CesiumGeometry::QuadtreeTilingScheme& getTilingScheme() const noexcept;
 

@@ -1,7 +1,7 @@
 #pragma once
 
-#include "IAssetAccessor.h"
-#include "IAssetRequest.h"
+#include <CesiumAsync/IAssetAccessor.h>
+#include <CesiumAsync/IAssetRequest.h>
 
 namespace CesiumAsync {
 class AsyncSystem;
@@ -33,7 +33,7 @@ public:
       const std::string& verb,
       const std::string& url,
       const std::vector<THeader>& headers,
-      const gsl::span<const std::byte>& contentPayload) override;
+      const std::span<const std::byte>& contentPayload) override;
 
   /** @copydoc IAssetAccessor::tick */
   virtual void tick() noexcept override;

@@ -1,16 +1,8 @@
 
 include(FetchContent)
 
-### =========== reflect-cpp =========== 
-FetchContent_Declare(reflect-cpp
-    GIT_REPOSITORY https://github.com/getml/reflect-cpp.git
-	GIT_TAG v0.14.1
-	GIT_SHALLOW ON
-)
-
-FetchContent_MakeAvailable(reflect-cpp)
-set_target_properties(reflectcpp PROPERTIES FOLDER "SDK/External")
-include_directories(${reflect-cpp_SOURCE_DIR}/include)
+### =========== reflect-cpp: now retrieved from vcpkg =========== 
+find_package(reflectcpp REQUIRED)
 
 ### =============== glm =============== 
 if ( NOT DEFINED glm_INCLUDE_DIR )
@@ -31,15 +23,20 @@ endif ()
 include_directories(${glm_INCLUDE_DIR})
 
 ### =========== fmt =========== 
-FetchContent_Declare(fmt
-    GIT_REPOSITORY https://github.com/fmtlib/fmt
-	GIT_TAG 11.0.2
-	EXCLUDE_FROM_ALL
-)
-FetchContent_MakeAvailable(fmt)
-set_target_properties(fmt PROPERTIES FOLDER "SDK/External")
-#message( " >>> fmt directory: ${fmt_SOURCE_DIR}")
-include_directories(${fmt_SOURCE_DIR}/include)
+set (ADVVIZ_FMT_DEP "")
+if ( NOT DEFINED fmt_INCLUDE_DIR )
+	FetchContent_Declare(fmt
+		GIT_REPOSITORY https://github.com/fmtlib/fmt
+		GIT_TAG 11.0.2
+		EXCLUDE_FROM_ALL
+	)
+	FetchContent_MakeAvailable(fmt)
+	set_target_properties(fmt PROPERTIES FOLDER "SDK/External")
+	#message( " >>> fmt directory: ${fmt_SOURCE_DIR}")
+	set ( fmt_INCLUDE_DIR ${fmt_SOURCE_DIR}/include )
+	set (ADVVIZ_FMT_DEP fmt::fmt-header-only)
+endif ()
+include_directories(${fmt_INCLUDE_DIR})
 
 ### =========== cpr =========== 
 find_package(cpr REQUIRED)
@@ -84,7 +81,10 @@ if(SDK_ADDUNITTEST)
 
 	### =========== httpmockserver =========== 
 	include_directories(${CMAKE_SOURCE_DIR}/../)
-	add_subdirectory(../httpmockserver ${CMAKE_BINARY_DIR}/extern/httpmockserver) # for some unit tests only
+	include_directories(${CMAKE_SOURCE_DIR}/Public/)
+	if ( NOT TARGET httpmockserver)
+		add_subdirectory(../httpmockserver ${CMAKE_BINARY_DIR}/extern/httpmockserver) # for some unit tests
+	endif ()
 	set_target_properties(httpmockserver PROPERTIES FOLDER "SDK/External")
 endif()
 

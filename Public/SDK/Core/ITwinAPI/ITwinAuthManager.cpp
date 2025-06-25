@@ -20,13 +20,13 @@
 #include <Core/Json/Json.h>
 #include <Core/Network/HttpRequest.h>
 #include <Core/Network/IHttpRouter.h>
+#include <Core/Tools/DelayedCall.h>
 
-#include <curl/curl.h>
 #include "../Singleton/singleton.h"
 #include <random>
 
 
-namespace SDK::Core
+namespace AdvViz::SDK
 {
 	template<>
 	Tools::Factory<ITwinAuthManager, EITwinEnvironment>::Globals::Globals()
@@ -92,10 +92,6 @@ namespace SDK::Core
 				return false;
 			if (GetScope().find(scopeToAdd) != std::string::npos)
 				return false; // already there
-			if (!extraScopes_.empty())
-			{
-				extraScopes_ += " ";
-			}
 			extraScopes_ += scopeToAdd + " ";
 			return true;
 		}
@@ -110,11 +106,18 @@ namespace SDK::Core
 			return AppIDs[(size_t)env];
 		}
 
-		static std::string GetITwinIMSRootUrl(EITwinEnvironment env)
+		static inline std::string GetEnvPrefix(EITwinEnvironment env)
 		{
 			// Dev env must use QA ims.
-			const std::string imsUrlPrefix = ((env == EITwinEnvironment::Prod) ? "" : "qa-");
-			return std::string("https://") + imsUrlPrefix + "ims.bentley.com";
+			return ((env == EITwinEnvironment::Prod) ? "" : "qa-");
+		}
+		static inline std::string GetBeIMSUrl(std::string const& imsName, EITwinEnvironment env)
+		{
+			return std::string("https://") + GetEnvPrefix(env) + imsName + ".bentley.com";
+		}
+		static std::string GetITwinIMSRootUrl(EITwinEnvironment env)
+		{
+			return GetBeIMSUrl("ims", env);
 		}
 	};
 
@@ -202,7 +205,8 @@ namespace SDK::Core
 		stillValid_ = std::make_shared<std::atomic_bool>(true);
 
 		http_.reset(Http::New());
-		http_->SetBaseUrl(Credentials::GetITwinIMSRootUrl(env_));
+		http_->SetBaseUrl(Credentials::GetITwinIMSRootUrl(env_).c_str());
+		currentToken_.reset(new std::string);
 	}
 
 	ITwinAuthManager::~ITwinAuthManager()
@@ -224,25 +228,29 @@ namespace SDK::Core
 	bool ITwinAuthManager::HasAccessToken() const
 	{
 		Lock lock(mutex_);
-		return !GetCurrentAccessToken().empty();
+		return !currentToken_->empty();
 	}
 
-	void ITwinAuthManager::GetAccessToken(std::string& outAccessToken) const
+	std::shared_ptr<std::string> ITwinAuthManager::GetAccessToken() const
 	{
 		Lock lock(mutex_);
-		outAccessToken = GetCurrentAccessToken();
+		return currentToken_;
 	}
 
 	void ITwinAuthManager::SetAccessToken(std::string const& accessToken)
 	{
 		Lock lock(mutex_);
 		accessToken_ = accessToken;
+		*currentToken_ = GetCurrentAccessToken();
+		
 	}
 
 	void ITwinAuthManager::SetOverrideAccessToken(std::string const& accessToken)
 	{
 		Lock lock(mutex_);
 		overrideAccessToken_ = accessToken;
+		*currentToken_ = GetCurrentAccessToken();
+
 	}
 
 	std::string const& ITwinAuthManager::GetCurrentAccessToken() const
@@ -345,14 +353,14 @@ namespace SDK::Core
 				? 0.90f * authInfo_.ExpiresIn
 				: 60.f * 30;
 			UniqueDelayedCall("refreshAuth",
-				[this, IsValidLambda = this->stillValid_]() -> bool
+				[this, IsValidLambda = this->stillValid_]() -> DelayedCall::EReturnedValue
 			{
 				if (*IsValidLambda)
 				{
 					this->ProcessTokenRequest(authInfo_.CodeVerifier, authInfo_.AuthorizationCode,
 						ETokenMode::Refresh, true /*automatic_refresh*/);
 				}
-				return false; // One tick
+				return DelayedCall::EReturnedValue::Done;
 			}, fDelay);
 		}
 #endif //USE_REFRESH_TOKEN
@@ -368,9 +376,14 @@ namespace SDK::Core
 		return {};
 	}
 
+	std::string ITwinAuthManager::GetClientID() const
+	{
+		return customClientId_.value_or(GetAppID());
+	}
+
 	std::string ITwinAuthManager::GetScope() const
 	{
-		return Credentials::GetScope();
+		return customScope_.value_or(Credentials::GetScope());
 	}
 	std::string ITwinAuthManager::GetIMSBaseUrl() const
 	{
@@ -424,14 +437,6 @@ namespace SDK::Core
 			}
 			return result;
 		}
-
-		std::string UrlEncode(const std::string& decoded)
-		{
-			const auto encoded_value = curl_easy_escape(nullptr, decoded.c_str(), static_cast<int>(decoded.length()));
-			std::string result(encoded_value);
-			curl_free(encoded_value);
-			return result;
-		}
 	}
 
 
@@ -440,14 +445,18 @@ namespace SDK::Core
 		std::string const& authorizationCode,
 		ETokenMode tokenMode, bool bIsAutomaticRefresh /*= false*/)
 	{
-		const std::string clientId = GetAppID();
+		const std::string clientId = GetClientID();
 		if (clientId.empty())
 		{
 			BE_LOGE("ITwinAPI", "The iTwin App ID is missing. Please refer to the plugin documentation.");
 			return HttpRequest::NO_REQUEST;
 		}
-
-		const auto request = std::shared_ptr<HttpRequest>(HttpRequest::New());
+		if (grantType_ == EITwinAuthGrantType::ClientCredentials && clientSecret_.empty())
+		{
+			BE_LOGE("ITwinAPI", "Missing data for client_credentials mode.");
+			return HttpRequest::NO_REQUEST;
+		}
+		const auto request = std::shared_ptr<HttpRequest>(HttpRequest::New(), [](HttpRequest* p) {delete p; });
 		if (!request)
 		{
 			return HttpRequest::NO_REQUEST;
@@ -460,6 +469,8 @@ namespace SDK::Core
 
 		std::string grantType = "authorization_code";
 		std::string refreshParams;
+		std::string codeParams;
+		std::string clientSecretParams;
 
 		if (tokenMode == ETokenMode::Refresh)
 		{
@@ -470,14 +481,25 @@ namespace SDK::Core
 				refreshParams = std::string("&refresh_token=") + authInfo_.RefreshToken;
 			}
 		}
+		if (grantType_ == EITwinAuthGrantType::ClientCredentials)
+		{
+			grantType = "client_credentials";
+			refreshParams = "";
+			clientSecretParams = std::string("&client_secret=") + AdvViz::SDK::EncodeForUrl(clientSecret_);
+		}
+		else
+		{
+			codeParams = std::string("&code=") + authorizationCode + "&code_verifier=" + verifier;
+		}
+
 		const std::string redirectUri = Credentials::GetRedirectUri();
 		std::string const requestBody = std::string("grant_type=") + grantType
 			+ "&client_id=" + clientId
-			+ "&redirect_uri=" + UrlEncode(redirectUri)
+			+ "&redirect_uri=" + AdvViz::SDK::EncodeForUrl(redirectUri)
 			+ refreshParams
-			+ "&code=" + authorizationCode
-			+ "&code_verifier=" + verifier
-			+ "&scope=" + UrlEncode(Credentials::GetScope());
+			+ codeParams
+			+ clientSecretParams
+			+ "&scope=" + AdvViz::SDK::EncodeForUrl(this->GetScope());
 
 
 		using RequestPtr = HttpRequest::RequestPtr;
@@ -600,12 +622,17 @@ namespace SDK::Core
 			// Do not accumulate authorization requests! (see itwin-unreal-plugin/issues/7)
 			return EITwinAuthStatus::InProgress;
 		}
-		const std::string clientId = GetAppID();
-		if (clientId.empty())
+		if (GetClientID().empty())
 		{
 			std::string const Error = "The iTwin App ID is missing. Please refer to the plugin documentation.";
 			this->NotifyResult(false, Error);
 			return EITwinAuthStatus::Failed;
+		}
+
+		if (grantType_ == EITwinAuthGrantType::ClientCredentials)
+		{
+			ProcessTokenRequest("", "", ETokenMode::Standard);
+			return EITwinAuthStatus::InProgress;
 		}
 
 		BE_ASSERT(!hasBoundAuthPort_, "Authorization process already in progress...");
@@ -697,20 +724,20 @@ namespace SDK::Core
 		// Therefore the use of a ticker here
 		ResetRestartTicker();
 		UniqueDelayedCall("restartAuth",
-			[this, IsValidLambda = this->stillValid_]() -> bool
+			[this, IsValidLambda = this->stillValid_]() -> DelayedCall::EReturnedValue
 		{
 			if (*IsValidLambda)
 			{
 				if (!hasBoundAuthPort_)
 				{
 					CheckAuthorization();
-					return false; // stop ticking
+					return DelayedCall::EReturnedValue::Done; // stop ticking
 				}
-				return true;
+				return DelayedCall::EReturnedValue::Repeat;
 			}
 			else
 			{
-				return false; // stop ticking
+				return DelayedCall::EReturnedValue::Done; // stop ticking
 			}
 		}, 0.200f /*TickerDelay: 200 ms*/);
 	}
@@ -802,4 +829,28 @@ namespace SDK::Core
 		return bStillValidToken && !readAccessToken.empty();
 	}
 
+	bool ITwinAuthManager::SetClientCredentialGrantType(std::string const& clientID, std::string const& clientSecret,
+		std::optional<std::string> const& imsName /*= std::nullopt*/,
+		std::optional<std::string> const& customScope /*= std::nullopt*/)
+	{
+		if (clientSecret.empty())
+		{
+			BE_ISSUE("client secret is required for client_credentials mode");
+			return false;
+		}
+		if (!clientID.empty())
+		{
+			// Override client (=App) ID
+			customClientId_ = clientID;
+		}
+		if (imsName)
+		{
+			http_.reset(Http::New());
+			http_->SetBaseUrl(Credentials::GetBeIMSUrl(*imsName, env_).c_str());
+		}
+		clientSecret_ = clientSecret;
+		grantType_ = EITwinAuthGrantType::ClientCredentials;
+		customScope_ = customScope;
+		return true;
+	}
 }

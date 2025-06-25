@@ -1,0 +1,9 @@
+﻿{
+	"url": "https://qa-api.bentley.com/schedules/3497df55-60e9-44fd-91ec-3c86473884f5/animation-3d-path-assignments?$top=2&$continuationToken=eyJQcmltYXJ5U2tpcFRva2VuIjoiOWMyMWMxNGQtZGNiYi00ODlkLTkyNDktNWYxNzYwNGY2ZmExIiwiU2Vjb25kYXJ5U2tpcFRva2VuIjpudWxsLCJUeXBlIjowfQ==",
+	"verb": "GET",
+	"connectedSuccessfully": true,
+	"responseCode": 200
+,
+	"reply": 
+{"nextPageToken":"eyJQcmltYXJ5U2tpcFRva2VuIjoiZGFiMWM0ZjMtM2Q5ZC00ODZmLTg1YjAtODdmMTViM2Y1Y2FhIiwiU2Vjb25kYXJ5U2tpcFRva2VuIjpudWxsLCJUeXBlIjowfQ==","animation3dPathAssignments":[{"adjustForTaskPercentComplete":false,"alignment":"Original","center":{"x":0.0,"y":0.0,"z":0.0},"id":"b6a1916e-d3c9-409e-9d3a-611a04cf4d86","motionEnd":1.0,"motionStart":0.0,"pathId":"a16f8cf5-a3a0-4640-ac15-075c509022e5","pauseDuringNonWorkingTime":false,"reverseDirection":true},{"adjustForTaskPercentComplete":false,"alignment":"Center","center":{"x":0.0,"y":0.0,"z":0.0},"id":"dab1c4f3-3d9d-486f-85b0-87f15b3f5caa","motionEnd":1.0,"motionStart":0.0,"pathId":"a16f8cf5-a3a0-4640-ac15-075c509022e5","pauseDuringNonWorkingTime":false,"reverseDirection":false}],"_links":{"self":{"href":"https://qa-api.bentley.com/schedules/3497df55-60e9-44fd-91ec-3c86473884f5/animation-3d-path-assignments?$top=2&$continuationToken=eyJQcmltYXJ5U2tpcFRva2VuIjoiOWMyMWMxNGQtZGNiYi00ODlkLTkyNDktNWYxNzYwNGY2ZmExIiwiU2Vjb25kYXJ5U2tpcFRva2VuIjpudWxsLCJUeXBlIjowfQ=="},"next":{"href":"https://qa-api.bentley.com/schedules/3497df55-60e9-44fd-91ec-3c86473884f5/animation-3d-path-assignments?$top=2&$continuationToken=eyJQcmltYXJ5U2tpcFRva2VuIjoiZGFiMWM0ZjMtM2Q5ZC00ODZmLTg1YjAtODdmMTViM2Y1Y2FhIiwiU2Vjb25kYXJ5U2tpcFRva2VuIjpudWxsLCJUeXBlIjowfQ%3d%3d"}}}
+}

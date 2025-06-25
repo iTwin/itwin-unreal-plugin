@@ -28,17 +28,13 @@ target_sources(
         ${CESIUM_GEOMETRY_PUBLIC_HEADERS}
 )
 
-target_include_directories(
-    CesiumGeometry
-    SYSTEM PUBLIC
+cesium_target_include_directories(
+    TARGET
+        CesiumGeometry
+    PUBLIC
         ${CMAKE_CURRENT_LIST_DIR}/include
 )
 
 target_link_libraries(CesiumGeometry PUBLIC
     CesiumUtility
-)
-
-install(TARGETS CesiumGeometry
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/CesiumGeometry
 )

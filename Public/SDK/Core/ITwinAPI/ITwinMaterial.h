@@ -9,16 +9,12 @@
 
 #pragma once
 
-#ifndef SDK_CPPMODULES
-	#include <array>
-	#include <optional>
-	#include <string>
-	#ifndef MODULE_EXPORT
-		#define MODULE_EXPORT
-	#endif // !MODULE_EXPORT
-#endif
+#include <array>
+#include <optional>
+#include <string>
+#include "../AdvVizLinkType.h"
 
-MODULE_EXPORT namespace SDK::Core
+namespace AdvViz::SDK
 {
 
 #define ITWIN_MAT_LIBRARY_TAG "<MatLibrary>"
@@ -161,7 +157,7 @@ MODULE_EXPORT namespace SDK::Core
 	};
 
 
-	struct ITwinMaterial
+	struct ADVVIZ_LINK ITwinMaterial
 	{
 		EMaterialKind kind = EMaterialKind::PBR;
 		std::array< std::optional<ITwinChannel>, (size_t)EChannelType::ENUM_END > channels;

@@ -10,7 +10,7 @@
 
 #include "nonstd/expected.hpp"
 
-namespace SDK
+namespace AdvViz
 {
     // we will switch to std::expected when c++23 compiler will be used.
 	using nonstd::expected; 

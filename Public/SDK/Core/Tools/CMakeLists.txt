@@ -5,6 +5,8 @@ add_library(Tools OBJECT
 		Types.h
 		Extension.h
 		Assert.h
+		DelayedCall.h
+		DelayedCallEnums.h
 		Error.h
 		Log.h
 		Log.cpp
@@ -13,11 +15,23 @@ add_library(Tools OBJECT
 		AssertHandler.cpp
 		Extension.cpp
 		FactoryClass.h
+		FactoryClassInternalHelper.h
 		FactoryClass.cpp
 		fnv1ahash.h
+		IDelayedCallHandler.h
+		IDelayedCallHandler.cpp
 		JsonCacheUtilities.h
 		JsonCacheUtilities.cpp
 		StrongTypeId.h
+		LockableObject.h
+		CommonInterfaceClass.h
+		TaskManager.h
+		TaskManager.cpp
+		../AdvVizLinkType.h
+		GCSTransform.h
+		GCSTransform.cpp
+		CrashInfo.h
+		CrashInfo.cpp
 )
 target_compile_features(Tools PRIVATE ${DefaultCXXSTD})
 set_target_properties(Tools PROPERTIES FOLDER "SDK/Core") 
@@ -37,11 +51,18 @@ if(SDK_ADDUNITTEST)
 							Tools
 							Catch2::Catch2
 						)
-	add_custom_command(TARGET ToolsTest POST_BUILD
-		COMMAND ${CMAKE_COMMAND} -E copy
-			$<TARGET_FILE:Singleton>
-			$<TARGET_FILE_DIR:ToolsTest>)
-
+	if (SINGLETONDLL)
+		add_custom_command(TARGET ToolsTest POST_BUILD
+			COMMAND ${CMAKE_COMMAND} -E copy
+				$<TARGET_FILE:Singleton>
+				$<TARGET_FILE_DIR:ToolsTest>)
+	endif()
+	if (ADVVIZDLL)
+		add_custom_command(TARGET ToolsTest POST_BUILD
+			COMMAND ${CMAKE_COMMAND} -E copy
+				$<TARGET_FILE:Visualization>
+				$<TARGET_FILE_DIR:ToolsTest>)
+	endif()
 	if (MSVC)
 		target_compile_options(ToolsTest PRIVATE "/Zc:preprocessor")
 	endif()

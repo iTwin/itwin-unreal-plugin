@@ -17,8 +17,8 @@
 
 namespace CesiumGltf
 {
-class MeshPrimitive;
-class Model;
+struct MeshPrimitive;
+struct Model;
 struct Node;
 }
 

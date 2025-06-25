@@ -12,10 +12,3 @@
 //#include <ITwinRuntime/Private/Compil/BeforeNonUnrealIncludes.h>
 #include <Core/Tools/Tools.h>
 //#include <ITwinRuntime/Private/Compil/AfterNonUnrealIncludes.h>
-
-//#ifndef BE_ASSERT
-//#define BE_ASSERT(x, msg)
-//#define BE_ASSERT_PERF(x)
-//#define BE_ASSERT_MSG(x, msg)
-//#define BE_ISSUE(msg) BE_ASSERT_MSG(false, msg)
-//#endif

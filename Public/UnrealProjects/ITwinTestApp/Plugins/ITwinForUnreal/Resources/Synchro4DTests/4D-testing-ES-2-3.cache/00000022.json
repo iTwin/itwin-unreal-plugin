@@ -1,0 +1,9 @@
+﻿{
+	"url": "https://qa-es-api.bentley.com/4dschedule/v1/schedules/3497df55-60e9-44fd-91ec-3c86473884f5/animation3dPaths/keyframes?pageSize=2&pageToken=eyJTa2lwIjo2LCJUb3AiOjJ9",
+	"verb": "GET",
+	"connectedSuccessfully": true,
+	"responseCode": 200
+,
+	"reply": 
+{"items":[{"pathId":"3f3c6a38-7a7b-4d7a-8550-1585c96cc130","time":1,"position":{"x":32739.682,"y":31852.955,"z":4.9392104},"rotation":{"angle":45,"x":0,"y":0,"z":-1}},{"pathId":"a16f8cf5-a3a0-4640-ac15-075c509022e5","time":0.25,"position":{"x":32427.768,"y":31440.361,"z":100.5862},"rotation":{"angle":0,"x":1,"y":0,"z":0}}],"nextPageToken":"eyJTa2lwIjo4LCJUb3AiOjJ9"}
+}

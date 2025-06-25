@@ -11,6 +11,18 @@ if(WIN32)
 	set (CMAKE_EXE_LINKER_FLAGS_RELEASE " ${CMAKE_EXE_LINKER_FLAGS_RELEASE} /DEBUG")
 	set (CMAKE_SHARED_LINKER_FLAGS_RELEASE " ${CMAKE_SHARED_LINKER_FLAGS_RELEASE} /DEBUG")
 endif()
+# Adjust warning levels globally
+if(MSVC)
+    add_compile_options(/W4)
+else ()
+    add_compile_options(-Wall -Wextra -Wpedantic)
+endif()
+set (CMAKE_COMPILE_WARNING_AS_ERROR ON)
+set (LINK_WARNING_AS_ERROR ON)
+# add configuration macros
+add_compile_definitions($<$<CONFIG:UnrealDebug>:UNREALDEBUG_CONFIG>
+	$<$<CONFIG:Release>:RELEASE_CONFIG>
+)
 # Mute all useless "Up-to-date ..." messages produced by "cmake install".
 set (CMAKE_INSTALL_MESSAGE LAZY)
 find_package (Python3 REQUIRED COMPONENTS Interpreter)
@@ -25,8 +37,32 @@ define_property (GLOBAL PROPERTY beExtraFoldersToSymlink
 	FULL_DOCS "Contains the absolute paths of extra folders to symlink")
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}")
 include (be_get_vcpkg_infos)
-set ( glm_INCLUDE_DIR      "${CMAKE_SOURCE_DIR}/Public/Extern/cesium-unreal/extern/cesium-native/extern/glm" )
-set ( expected_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/Public/Extern/cesium-unreal/extern/cesium-native/extern/expected-lite/include" )
+# See Public/Extern/cesium-unreal/extern/cesium-native/CMakeLists.txt for use of ezvcpkg.
+# Reproducing logic from ezvcpkg.cmake otherwise need to reorder includes below which doesn't seem to work easily...
+if (NOT EZVCPKG_BASEDIR)
+	if (DEFINED ENV{EZVCPKG_BASEDIR})
+		set(EZVCPKG_BASEDIR $ENV{EZVCPKG_BASEDIR})
+	else()
+		# HOME is probably defined on Windows only when running from git-bash or similar environments,
+		# hence on some machines this "/." will translate to the root folder of the current drive
+		# (which is actually better than $HOME/.ezvcpkg when using a devdrive...)
+		set(EZVCPKG_BASEDIR "$ENV{HOME}/.ezvcpkg")
+	endif()
+endif()
+# We are going to use some third-party include folders coming from cesium-native.
+# These folders are located in the ezvcpkg work dir, using a custom triplet evaluated by cesium.
+# So here we ask cesium to evaluate this triplet for us.
+# This is done in a function, to prevent unwanted variables defined in the included .cmake from leaking in the global scope.
+function (getCesiumVcpkgTriplet result)
+	include (${CMAKE_SOURCE_DIR}/Public/Extern/cesium-unreal/extern/cesium-native/cmake/detect-vcpkg-triplet.cmake)
+	# See "Public/Extern/cesium-unreal/extern/CMakeLists.txt" for the "-unreal" suffix.
+	set (${result} "${DETECTED_VCPKG_TRIPLET}-unreal" PARENT_SCOPE)
+endfunction ()
+getCesiumVcpkgTriplet (cesiumVcpkgTriplet)
+set ( glm_INCLUDE_DIR      "${EZVCPKG_BASEDIR}/2024.11.16/installed/${cesiumVcpkgTriplet}/include/" )
+set ( expected_INCLUDE_DIR "${EZVCPKG_BASEDIR}/2024.11.16/installed/${cesiumVcpkgTriplet}/include/" )
+set ( fmt_INCLUDE_DIR      "${EZVCPKG_BASEDIR}/2024.11.16/installed/${cesiumVcpkgTriplet}/include/" )
+set ( fmt_LIB_DIR          "${EZVCPKG_BASEDIR}/2024.11.16/installed/${cesiumVcpkgTriplet}/lib/" )
 add_subdirectory(Public/SDK)
 include (advanced_option)
 include (be_add_feature_option)
@@ -38,6 +74,10 @@ include (jsonUtils)
 include (be_utils)
 # Add all the targets for the cesium dependencies before changing the global include directories & co.
 add_subdirectory (Public/CesiumDependencies)
+# Mute warnings in tidy-static
+if (MSVC AND TARGET tidy-static)
+	target_compile_options(tidy-static PRIVATE /wd4389 /wd4456 /wd4702)
+endif ()
 set (CMAKE_CXX_STANDARD 20)
 # Binaries used by Unreal apps/plugins are stored in the same folder "Binaries",
 # independently of the config (UnrealDebug, Release...).
@@ -49,6 +89,7 @@ include_directories (
 	"${CMAKE_SOURCE_DIR}/Public"
 	"${CMAKE_SOURCE_DIR}/Public/Extern" # for boost
 )
+find_package (Catch2 3 REQUIRED)
 add_subdirectory (Public/BeHeaders)
 add_subdirectory (Public/Extern/boost) # Actually a small subset, see CMakeLists to expand it
 add_subdirectory (Public/BeUtils)

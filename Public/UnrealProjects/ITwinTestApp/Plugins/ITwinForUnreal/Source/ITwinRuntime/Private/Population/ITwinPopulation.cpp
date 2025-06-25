@@ -6,8 +6,9 @@
 |
 +--------------------------------------------------------------------------------------*/
 
-
 #include "Population/ITwinPopulation.h"
+#include "Population/ITwinPopulationWithPathExt.h"
+#include "Math/UEMathConversion.h"
 
 #include "Materials/MaterialInstanceConstant.h"
 #include "Engine/StaticMesh.h"
@@ -37,24 +38,24 @@
 
 struct AITwinPopulation::FImpl
 {
-	std::shared_ptr<SDK::Core::IInstancesManager> instancesManager;
-	std::shared_ptr<SDK::Core::IInstancesGroup> instancesGroup; // the group to which this population belongs
+	std::shared_ptr<AdvViz::SDK::IInstancesManager> instancesManager_;
+	std::shared_ptr<AdvViz::SDK::IInstancesGroup> instancesGroup_; // the group to which this population belongs
 };
 
 AITwinPopulation::AITwinPopulation()
 	: Impl(MakePimpl<FImpl>())
 {
-	PrimaryActorTick.bCanEverTick = false;
+	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bStartWithTickEnabled = false;
+	PrimaryActorTick.bTickEvenWhenPaused = true;
+	PrimaryActorTick.TickGroup = TG_PostUpdateWork;
 
-	mesh = nullptr;
-	meshComp = nullptr;
-
-	squareSideLength = 100000;
+	SquareSideLength = 100000;
 }
 
 void AITwinPopulation::InitFoliageMeshComponent()
 {
-	if (!meshComp.IsValid())
+	if (!meshComp)
 	{
 		meshComp = NewObject<UFoliageInstancedStaticMeshComponent>(this, UFoliageInstancedStaticMeshComponent::StaticClass());
 		meshComp->SetupAttachment(RootComponent);
@@ -73,45 +74,24 @@ namespace
 
 	const float convRGBToDouble = 0.003921568627450980; // 1/255
 
-	void UpdateSDKCoreInstanceTransform(
-		SDK::Core::IInstance& dstInstance, const FTransform& srcInstanceTransform)
+	void UpdateAVizInstanceTransform(
+		AdvViz::SDK::IInstance& dstInstance, const FTransform& srcInstanceTransform)
 	{
-		using namespace SDK::Core;
-		FMatrix srcMat = srcInstanceTransform.ToMatrixWithScale();
-		FVector srcPos = srcInstanceTransform.GetTranslation();
-
-		dmat3x4 dstTransform;
-		for (int32 i = 0; i < 3; ++i)
-		{
-			for (int32 j = 0; j < 3; ++j)
-			{
-				ColRow3x4(dstTransform,j,i) = srcMat.M[i][j];
-			}
-		}
-		ColRow3x4(dstTransform,0,3) = srcPos.X;
-		ColRow3x4(dstTransform,1,3) = srcPos.Y;
-		ColRow3x4(dstTransform,2,3) = srcPos.Z;
-
-		dstInstance.SetMatrix(dstTransform);
+		dstInstance.SetTransform(FITwinMathConversion::UEtoSDK(srcInstanceTransform));
 	}
 
-	void UpdateSDKCoreInstanceColorShift(
-		SDK::Core::IInstance& dstInstance, const FVector& srcColorShift)
+	void UpdateAVizInstanceColorShift(
+		AdvViz::SDK::IInstance& dstInstance, const FVector& srcColorShift)
 	{
-		FColor dstColorShift(
-			static_cast<uint8>((srcColorShift.X + 0.5)*255.f),
-			static_cast<uint8>((srcColorShift.Y + 0.5)*255.f),
-			static_cast<uint8>((srcColorShift.Z + 0.5)*255.f));
-
-		FString hexColor = dstColorShift.ToHex();
-		dstInstance.SetColorShift(TCHAR_TO_UTF8(*hexColor));
+		AdvViz::SDK::float3 color = { (srcColorShift.X + 0.5), (srcColorShift.Y + 0.5), (srcColorShift.Z + 0.5) };
+		dstInstance.SetColorShift(color);
 	}
 
-	void UpdateSDKCoreInstance(
-		SDK::Core::IInstance& dstInstance, const UnrealInstanceInfo& srcInstance)
+	void UpdateAVizInstance(
+		AdvViz::SDK::IInstance& dstInstance, const UnrealInstanceInfo& srcInstance)
 	{
-		UpdateSDKCoreInstanceTransform(dstInstance, srcInstance.transform);
-		UpdateSDKCoreInstanceColorShift(dstInstance, srcInstance.colorShift);
+		UpdateAVizInstanceTransform(dstInstance, srcInstance.transform);
+		UpdateAVizInstanceColorShift(dstInstance, srcInstance.colorShift);
 		dstInstance.SetName(TCHAR_TO_UTF8(*srcInstance.name));
 	}
 
@@ -119,12 +99,9 @@ namespace
 	bool isOldVersion = false;
 
 	void UpdateUnrealInstance(
-		UnrealInstanceInfo& dstInstance, /*const*/ SDK::Core::IInstance& srcInstance)
+		UnrealInstanceInfo& dstInstance, /*const*/ AdvViz::SDK::IInstance& srcInstance)
 	{
-		FMatrix dstMat(FMatrix::Identity);
-		FVector dstPos;
-
-		using namespace SDK::Core;
+		using namespace AdvViz::SDK;
 		// Temporary code for beta users:
 		//   In earlier versions of the SDK and ITwinForUnreal, the transformation of instances
 		//   used 4x3 matrices, which didn't follow the convention specified in the decoration
@@ -133,7 +110,7 @@ namespace
 		//   the scale shouldn't vary much around 1. Then the matrix is fixed and the instance is
 		//   marked to be resaved (when the user will close the scene). When removing this code
 		//   later, the const attribute for srcInstance in the declaration should be restored.
-		const dmat3x4& srcMat = srcInstance.GetMatrix();
+		const dmat3x4& srcMat = srcInstance.GetTransform();
 		if (checkVersion)
 		{
 			isOldVersion = fabs(ColRow3x4(srcMat, 2, 1)) > 100. || fabs(ColRow3x4(srcMat, 2, 2)) > 100.;
@@ -141,7 +118,7 @@ namespace
 		}
 
 		if (isOldVersion)
-			{
+		{
 			dmat3x4 newSrcMat;
 			ColRow3x4(newSrcMat,0, 0) = ColRow3x4(srcMat,0, 0);
 			ColRow3x4(newSrcMat,1, 0) = ColRow3x4(srcMat,0, 1);
@@ -156,29 +133,19 @@ namespace
 			ColRow3x4(newSrcMat,1, 3) = ColRow3x4(srcMat,2, 2);
 			ColRow3x4(newSrcMat,2, 3) = ColRow3x4(srcMat,2, 3);
 
-			srcInstance.SetMatrix(newSrcMat);
-			srcInstance.MarkForUpdate(SDK::Core::Database);
-			}
+			srcInstance.SetTransform(newSrcMat);
+			srcInstance.SetShouldSave(true);
+		}
 
-		for (unsigned i = 0; i < 3; ++i)
+		dstInstance.transform =	FITwinMathConversion::SDKtoUE(srcMat);
+		
+		if (srcInstance.GetColorShift().has_value())
 		{
-			for (unsigned j = 0; j < 3; ++j)
-			{
-				dstMat.M[j][i] = ColRow3x4(srcMat,i, j);
+			AdvViz::SDK::float3 color = srcInstance.GetColorShift().value();
+			dstInstance.colorShift.X = color[0] - 0.5;
+			dstInstance.colorShift.Y = color[1] - 0.5;
+			dstInstance.colorShift.Z = color[2] - 0.5;
 		}
-		}
-		dstPos.X = ColRow3x4(srcMat,0, 3);
-		dstPos.Y = ColRow3x4(srcMat,1, 3);
-		dstPos.Z = ColRow3x4(srcMat,2, 3);
-
-		dstInstance.transform.SetFromMatrix(dstMat);
-		dstInstance.transform.SetTranslation(dstPos);
-
-		FString srcColorShift(srcInstance.GetColorShift().c_str());
-		FColor rgbColor = FColor::FromHex(srcColorShift);
-		dstInstance.colorShift.X = static_cast<double>(rgbColor.R)*convRGBToDouble - 0.5;
-		dstInstance.colorShift.Y = static_cast<double>(rgbColor.G)*convRGBToDouble - 0.5;
-		dstInstance.colorShift.Z = static_cast<double>(rgbColor.B)*convRGBToDouble - 0.5;
 
 		dstInstance.name = FString(srcInstance.GetName().c_str());
 	}
@@ -196,19 +163,23 @@ FTransform AITwinPopulation::GetInstanceTransform(int32 instanceIndex) const
 	return instTM;
 }
 
+void AITwinPopulation::SetInstanceTransformUEOnly(int32 instanceIndex, const FTransform& tm)
+{
+	meshComp->UpdateInstanceTransform(instanceIndex, tm, true);
+}
+
 void AITwinPopulation::SetInstanceTransform(int32 instanceIndex, const FTransform& tm)
 {
 	if (instanceIndex >= 0 && instanceIndex < meshComp->GetInstanceCount())
 	{
-		meshComp->UpdateInstanceTransform(instanceIndex, tm, true);
+		SetInstanceTransformUEOnly(instanceIndex, tm);
 		
-		SDK::Core::SharedInstVect instances;
-		Impl->instancesManager->GetInstancesByObjectRef(objectRef, instances);
+		const AdvViz::SDK::SharedInstVect& instances = Impl->instancesManager_->GetInstancesByObjectRef(objectRef, Impl->instancesGroup_->GetId());
 		if (instanceIndex < instances.size())
 		{
-			SDK::Core::IInstance& inst = *instances[instanceIndex]; 
-			UpdateSDKCoreInstanceTransform(inst, tm);
-			inst.MarkForUpdate(SDK::Core::Database);
+			AdvViz::SDK::IInstance& inst = *instances[instanceIndex]; 
+			UpdateAVizInstanceTransform(inst, tm);
+			inst.SetShouldSave(true);
 		}
 	}
 }
@@ -245,13 +216,12 @@ void AITwinPopulation::SetInstanceColorVariation(int32 instanceIndex, const FVec
 		meshComp->SetCustomDataValue(instanceIndex, 1, v.Y, true);
 		meshComp->SetCustomDataValue(instanceIndex, 2, v.Z, true);
 
-		SDK::Core::SharedInstVect instances;
-		Impl->instancesManager->GetInstancesByObjectRef(objectRef, instances);
+		const AdvViz::SDK::SharedInstVect& instances = Impl->instancesManager_->GetInstancesByObjectRef(objectRef, Impl->instancesGroup_->GetId());
 		if (instanceIndex < instances.size())
 		{
-			SDK::Core::IInstance& inst = *instances[instanceIndex]; 
-			UpdateSDKCoreInstanceColorShift(inst, v);
-			inst.MarkForUpdate(SDK::Core::Database);
+			AdvViz::SDK::IInstance& inst = *instances[instanceIndex]; 
+			UpdateAVizInstanceColorShift(inst, v);
+			inst.SetShouldSave(true);
 		}
 	}
 }
@@ -289,30 +259,29 @@ namespace
 		{6, 47, 105,0.0}, {7, 10, 33,0.0}, {9, 9, 15,0.0}, {40, 102, 102,0.0}, {126, 160, 177,0.0}, {127, 0, 1,0.0},
 		{28, 20, 12,0.0}, {28, 20, 12,0.0}, {51, 106, 56,0.0}, {15, 50, 31,0.0}, {102, 0, 0,0.0}
 	}};
+}
 
-
-	FVector GetRandomColorShift(const EITwinInstantiatedObjectType& type)
+/*static*/ FVector AITwinPopulation::GetRandomColorShift(const EITwinInstantiatedObjectType& type)
+{
+	FVector colorShift(0.0, 0.0, 0.0);
+	if (type == EITwinInstantiatedObjectType::Vehicle)
 	{
-		FVector colorShift(0.0, 0.0, 0.0);
-		if (type == EITwinInstantiatedObjectType::Vehicle)
-		{
-			int32 index = FMath::RandRange((int32)0, (int32)(carColors.size() - 1));
-			const RgbColor& color = carColors[index];
-			colorShift.X = color.r * convRGBToDouble - 0.5;
-			colorShift.Y = color.g * convRGBToDouble - 0.5;
-			colorShift.Z = color.b * convRGBToDouble - 0.5;
-		}
-		else if (type == EITwinInstantiatedObjectType::Vegetation)
-		{
-		}
-		else
-		{
-			colorShift.X = FMath::RandRange(-0.5, 0.5);
-			colorShift.Y = FMath::RandRange(-0.5, 0.5);
-			colorShift.Z = FMath::RandRange(-0.5, 0.5);
-		}
-		return colorShift;
+		int32 index = FMath::RandRange((int32)0, (int32)(carColors.size() - 1));
+		const RgbColor& color = carColors[index];
+		colorShift.X = color.r * convRGBToDouble - 0.5;
+		colorShift.Y = color.g * convRGBToDouble - 0.5;
+		colorShift.Z = color.b * convRGBToDouble - 0.5;
 	}
+	else if (type == EITwinInstantiatedObjectType::Vegetation)
+	{
+	}
+	else
+	{
+		colorShift.X = FMath::RandRange(-0.5, 0.5);
+		colorShift.Y = FMath::RandRange(-0.5, 0.5);
+		colorShift.Z = FMath::RandRange(-0.5, 0.5);
+	}
+	return colorShift;
 }
 
 void AITwinPopulation::AddInstance(const FTransform& transform)
@@ -321,11 +290,11 @@ void AITwinPopulation::AddInstance(const FTransform& transform)
 	// The current position will be used later for the automatic filling of
 	// a square with instances if the user changes their number. This is 
 	// temporary for testing, before we have a better manner to do this...
-	squareCenter = transform.GetLocation();
+	SquareCenter = transform.GetLocation();
 
 	// Create a local UnrealInstanceInfo
 	UnrealInstanceInfo ueInstanceInfo;
-	ueInstanceInfo.transform = baseTransform * transform;
+	ueInstanceInfo.transform = BaseTransform * transform;
 	ueInstanceInfo.colorShift = GetRandomColorShift(objectType);
 
 	// Add an UE instance and apply the transform and color shift
@@ -340,15 +309,14 @@ void AITwinPopulation::AddInstance(const FTransform& transform)
 	meshComp->SetCustomDataValue(instIndex, 2, ueInstanceInfo.colorShift.Z);
 
 	// Add the same instance in the manager of the SDK core
-	uint64_t instCount = Impl->instancesManager->GetInstanceCountByObjectRef(objectRef);
-	Impl->instancesManager->SetInstanceCountByObjectRef(objectRef, instCount + 1);
-	SDK::Core::SharedInstVect instances;
-	Impl->instancesManager->GetInstancesByObjectRef(objectRef, instances);
-	SDK::Core::IInstance& instance = *instances[instCount];
-	UpdateSDKCoreInstance(instance, ueInstanceInfo);
+	uint64_t instCount = Impl->instancesManager_->GetInstanceCountByObjectRef(objectRef, Impl->instancesGroup_->GetId());
+	Impl->instancesManager_->SetInstanceCountByObjectRef(objectRef, Impl->instancesGroup_->GetId(), instCount + 1);
+	const AdvViz::SDK::SharedInstVect& instances = Impl->instancesManager_->GetInstancesByObjectRef(objectRef, Impl->instancesGroup_->GetId());
+	AdvViz::SDK::IInstance& instance = *instances[instCount];
+	UpdateAVizInstance(instance, ueInstanceInfo);
 	instance.SetName(std::string("inst"));
 	instance.SetObjectRef(objectRef);
-	instance.SetGroup(Impl->instancesGroup);
+	instance.SetGroup(Impl->instancesGroup_);
 }
 
 void AITwinPopulation::RemoveInstance(int32 instIndex)
@@ -360,25 +328,50 @@ void AITwinPopulation::RemoveInstance(int32 instIndex)
 
 	std::vector<int32_t> indices;
 	indices.push_back(instIndex);
-	Impl->instancesManager->RemoveInstancesByObjectRef(objectRef, indices);
+	Impl->instancesManager_->RemoveInstancesByObjectRef(objectRef, Impl->instancesGroup_->GetId(), indices);
+
+	const AdvViz::SDK::SharedInstVect& instances = Impl->instancesManager_->GetInstancesByObjectRef(objectRef, Impl->instancesGroup_->GetId());
+	for (size_t i = instIndex; i < instances.size(); ++i)
+	{
+		AdvViz::SDK::IInstance* inst = instances[i].get();
+		if (FITwinInstance* ueInst = AdvViz::SDK::Tools::DynamicCast<FITwinInstance>(inst))
+		{
+			ueInst->population_ = this;
+			ueInst->instanceIndex_ = i;
+		}
+	}
 }
 
 void AITwinPopulation::RemoveInstances(const TArray<int32>& instanceIndices)
 {
+	if (instanceIndices.IsEmpty())
+		return;
+
 	meshComp->RemoveInstances(instanceIndices, true);
 
 	std::vector<int32_t> indices;
+	indices.reserve((size_t)instanceIndices.Num());
 	for(auto const& ind : instanceIndices)
 	{
 		indices.push_back(ind);
 	}
-	Impl->instancesManager->RemoveInstancesByObjectRef(objectRef, indices);
+	Impl->instancesManager_->RemoveInstancesByObjectRef(objectRef, Impl->instancesGroup_->GetId(), indices);
+
+	const AdvViz::SDK::SharedInstVect& instances = Impl->instancesManager_->GetInstancesByObjectRef(objectRef, Impl->instancesGroup_->GetId());
+	for (size_t i = instanceIndices[0]; i < instances.size(); ++i)
+	{
+		AdvViz::SDK::IInstance *inst = instances[i].get();
+		if (FITwinInstance* ueInst = AdvViz::SDK::Tools::DynamicCast<FITwinInstance>(inst))
+		{
+			ueInst->population_ = this;
+			ueInst->instanceIndex_ = i;
+		}
+	}
 }
 
-void AITwinPopulation::UpdateInstancesFromSDKCoreToUE()
+void AITwinPopulation::UpdateInstancesFromAVizToUE()
 {
-	SDK::Core::SharedInstVect instances;
-	Impl->instancesManager->GetInstancesByObjectRef(objectRef, instances);
+	const AdvViz::SDK::SharedInstVect& instances = Impl->instancesManager_->GetInstancesByObjectRef(objectRef, Impl->instancesGroup_->GetId());
 
 	size_t numInst = instances.size(); 
 	TArray<FTransform> instancesTM;
@@ -390,11 +383,17 @@ void AITwinPopulation::UpdateInstancesFromSDKCoreToUE()
 
 	for(size_t i = 0; i < numInst; ++i)
 	{
-		SDK::Core::IInstance& inst = *instances[i];
+		AdvViz::SDK::IInstance* inst = instances[i].get();
+		
+		if (FITwinInstance* ueInst = AdvViz::SDK::Tools::DynamicCast<FITwinInstance>(inst))
+		{
+			ueInst->population_ = this;
+			ueInst->instanceIndex_ = i;
+		}
 
 		UnrealInstanceInfo ueInstInfo;
 
-		UpdateUnrealInstance(ueInstInfo, inst);
+		UpdateUnrealInstance(ueInstInfo, *inst);
 		instancesTM[i] = ueInstInfo.transform;
 
 		instancesColorVar[i*3] = ueInstInfo.colorShift.X;
@@ -416,16 +415,36 @@ void AITwinPopulation::UpdateInstancesFromSDKCoreToUE()
 
 	// Clear the selection to avoid an UE cash when removing instances
 	meshComp->ClearInstanceSelection();
+
+	if (GetExtension<FITwinPopulationWithPathExt>())
+	{
+		SetActorTickEnabled(true);
+	}
+	else
+	{
+		SetActorTickEnabled(false);
+	}
+
 }
 
-void AITwinPopulation::SetInstancesManager(std::shared_ptr<SDK::Core::IInstancesManager>& instManager)
+std::shared_ptr<AdvViz::SDK::IInstancesManager>& AITwinPopulation::GetInstanceManager()
 {
-	Impl->instancesManager = instManager;
+	return Impl->instancesManager_;
 }
 
-void AITwinPopulation::SetInstancesGroup(std::shared_ptr<SDK::Core::IInstancesGroup>& instGroup)
+void AITwinPopulation::SetInstancesManager(std::shared_ptr<AdvViz::SDK::IInstancesManager>& instManager)
 {
-	Impl->instancesGroup = instGroup;
+	Impl->instancesManager_ = instManager;
+}
+
+std::shared_ptr<AdvViz::SDK::IInstancesGroup>& AITwinPopulation::GetInstancesGroup()
+{
+	return Impl->instancesGroup_;
+}
+
+void AITwinPopulation::SetInstancesGroup(std::shared_ptr<AdvViz::SDK::IInstancesGroup>& instGroup)
+{
+	Impl->instancesGroup_ = instGroup;
 }
 
 void AITwinPopulation::SetObjectRef(const std::string& objRef)
@@ -479,6 +498,11 @@ void AITwinPopulation::SetObjectRef(const std::string& objRef)
 const std::string& AITwinPopulation::GetObjectRef() const
 {
 	return objectRef;
+}
+
+const AdvViz::SDK::RefID& AITwinPopulation::GetInstanceGroupId() const
+{
+	return Impl->instancesGroup_->GetId();
 }
 
 bool AITwinPopulation::IsRotationVariationEnabled() const
@@ -544,27 +568,29 @@ int32 AITwinPopulation::GetNumberOfInstances() const
 	return meshComp->GetInstanceCount();
 }
 
-void AITwinPopulation::SetNumberOfInstances(const int32& n)
+void AITwinPopulation::SetNumberOfInstances(const int32& NewInstanceCount)
 {
-	int32 diffInstances = n - meshComp->GetInstanceCount();
-	if (diffInstances > 0)
+	if (!ensure(meshComp))
+		return;
+	const int32 DiffInstances = NewInstanceCount - meshComp->GetInstanceCount();
+	if (DiffInstances > 0)
 	{
-		AddInstances(diffInstances);
+		AddInstances(DiffInstances);
 	}
-	else if (diffInstances < 0)
+	else if (DiffInstances < 0)
 	{
-		RemoveInstances(-diffInstances);
+		RemoveInstances(-DiffInstances);
 	}
 }
 
 int32 AITwinPopulation::GetSquareSideLength() const
 {
-	return squareSideLength;
+	return SquareSideLength;
 }
 
 void AITwinPopulation::SetSquareSideLength(const int32& n)
 {
-	squareSideLength = n;
+	SquareSideLength = n;
 }
 
 void AITwinPopulation::SetInstancesZCoordinate(const float& maxDistToSquareCenter, const float& z)
@@ -578,8 +604,8 @@ void AITwinPopulation::SetInstancesZCoordinate(const float& maxDistToSquareCente
 		FMatrix mat = tm.ToMatrixWithScale();
 		FVector pos = tm.GetTranslation();
 
-		pos.Z = squareCenter.Z;
-		FVector instToCenter = squareCenter - pos;
+		pos.Z = SquareCenter.Z;
+		FVector instToCenter = SquareCenter - pos;
 		if (instToCenter.Length() < maxDistToSquareCenter)
 		{
 			pos.Z = z;
@@ -592,10 +618,10 @@ void AITwinPopulation::SetInstancesZCoordinate(const float& maxDistToSquareCente
 void AITwinPopulation::BeginPlay()
 {
 	Super::BeginPlay();
-
-	InitFoliageMeshComponent();
 	
-	if (meshComp.IsValid() && mesh.IsValid())
+	InitFoliageMeshComponent();
+
+	if (meshComp && mesh)
 	{
 		meshComp->RegisterComponent();
 
@@ -612,7 +638,7 @@ void AITwinPopulation::BeginPlay()
 		// when instantiating a mesh with foliage)
 		meshComp->bAffectDistanceFieldLighting = false;
 
-		AddInstances(initialNumberOfInstances);
+		AddInstances(InitialNumberOfInstances);
 	}
 }
 
@@ -620,17 +646,19 @@ void AITwinPopulation::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	Super::EndPlay(EndPlayReason);
 
-	Impl->instancesManager.reset();
-	Impl->instancesGroup.reset();
+	Impl->instancesManager_.reset();
+	Impl->instancesGroup_.reset();
 }
 
 void AITwinPopulation::AddInstances(int32 numInst)
 {
-	if (numInst == 0)
+	if (numInst <= 0)
+		return;
+	if (!ensure(meshComp))
 		return;
 
-	double halfLength = static_cast<double>(squareSideLength)*0.5;
-	FVector initialPos = squareCenter - FVector(halfLength, halfLength, 0.);
+	double halfLength = static_cast<double>(SquareSideLength)*0.5;
+	FVector initialPos = SquareCenter - FVector(halfLength, halfLength, 0.);
 
 	TArray<FTransform> instancesTM;
 	instancesTM.SetNum(numInst);
@@ -639,18 +667,24 @@ void AITwinPopulation::AddInstances(int32 numInst)
 	int32 oldNumInst = meshComp->GetInstanceCount();
 	static bool intersectWorld = true;
 
-	Impl->instancesManager->SetInstanceCountByObjectRef(objectRef, oldNumInst + numInst);
-	SDK::Core::SharedInstVect instances;
-	Impl->instancesManager->GetInstancesByObjectRef(objectRef, instances);
+	const bool bSyncWithAdvVizSDK = (bool)Impl->instancesManager_;
+	static const AdvViz::SDK::SharedInstVect NoSDKInstances;
+	if (bSyncWithAdvVizSDK)
+	{
+		Impl->instancesManager_->SetInstanceCountByObjectRef(objectRef, Impl->instancesGroup_->GetId(), oldNumInst + numInst);
+	}
+	const AdvViz::SDK::SharedInstVect& instances = bSyncWithAdvVizSDK
+		? Impl->instancesManager_->GetInstancesByObjectRef(objectRef, Impl->instancesGroup_->GetId())
+		: NoSDKInstances;
 
 	// Place instances randomly in a square area
-	for(int32 i = 0; i < numInst; ++i)
+	for (int32 i = 0; i < numInst; ++i)
 	{
 		float ri = FMath::FRandRange(0.f, 1.f);
 		float rj = FMath::FRandRange(0.f, 1.f);
 		float rs = FMath::FRandRange(0.f, 1.f);
 
-		FVector instPos = initialPos + FVector(ri*squareSideLength, rj*squareSideLength, 0.f);
+		FVector instPos = initialPos + FVector(ri* SquareSideLength, rj* SquareSideLength, 0.f);
 
 		if (intersectWorld)
 		{
@@ -673,7 +707,7 @@ void AITwinPopulation::AddInstances(int32 numInst)
 		UnrealInstanceInfo ueInstInfo;
 		ueInstInfo.transform.SetTranslation(instPos);
 		ueInstInfo.transform.SetScale3D(FVector(0.5f+rs));
-		ueInstInfo.transform = baseTransform * ueInstInfo.transform;
+		ueInstInfo.transform = BaseTransform * ueInstInfo.transform;
 		ueInstInfo.colorShift.X = FMath::FRandRange(-0.5f, 0.5f);
 		ueInstInfo.colorShift.Y = FMath::FRandRange(-0.5f, 0.5f);
 		ueInstInfo.colorShift.Z = FMath::FRandRange(-0.5f, 0.5f);
@@ -683,13 +717,16 @@ void AITwinPopulation::AddInstances(int32 numInst)
 		instancesColorVar[i*3 + 1] = ueInstInfo.colorShift.Y;
 		instancesColorVar[i*3 + 2] = ueInstInfo.colorShift.Z;
 
-		// Update the instance in the SDK::Core manager
-		SDK::Core::IInstance& inst = *instances[oldNumInst + i];
-		UpdateSDKCoreInstance(inst, ueInstInfo);
-		inst.MarkForUpdate(SDK::Core::Database);
-		inst.SetName(std::string("inst"));
-		inst.SetObjectRef(objectRef);
-		inst.SetGroup(Impl->instancesGroup);
+		if (bSyncWithAdvVizSDK)
+		{
+			// Update the instance in the AdvViz::SDK manager
+			AdvViz::SDK::IInstance& inst = *instances[oldNumInst + i];
+			UpdateAVizInstance(inst, ueInstInfo);
+			inst.SetShouldSave(true);
+			inst.SetName(std::string("inst"));
+			inst.SetObjectRef(objectRef);
+			inst.SetGroup(Impl->instancesGroup_);
+		}
 	}
 
 	meshComp->AddInstances(instancesTM, false);
@@ -699,7 +736,7 @@ void AITwinPopulation::AddInstances(int32 numInst)
 	{
 		meshComp->SetNumCustomDataFloats(3);
 	}
-	for(int32 i = 0; i < numInst; ++i)
+	for (int32 i = 0; i < numInst; ++i)
 	{
 		meshComp->SetCustomData(oldNumInst + i, MakeArrayView(&instancesColorVar[i*3], 3));
 	}
@@ -708,26 +745,85 @@ void AITwinPopulation::AddInstances(int32 numInst)
 	meshComp->ClearInstanceSelection();
 }
 
-void AITwinPopulation::RemoveInstances(int32 numInst)
+void AITwinPopulation::RemoveInstances(int32 NumInst)
 {
-	int32 totalNumInstances = meshComp->GetInstanceCount();
+	if (!ensure(meshComp))
+		return;
+	const int32 TotalNumInstances = meshComp->GetInstanceCount();
 
-	if (numInst == 1)
+	if (NumInst == 1)
 	{
 		RemoveInstance(0);
 	}
-	else if (numInst > 0 && numInst <= totalNumInstances)
+	else if (NumInst > 0 && NumInst <= TotalNumInstances)
 	{
-		double step = static_cast<double>(totalNumInstances) / static_cast<double>(numInst);
-		double dNumInst = static_cast<double>(numInst);
-		TArray<int32> removedInst;
-		for(double i = 0; i < totalNumInstances && removedInst.Num() < numInst; i += step)
+		TArray<int32> RemovedInst;
+		RemovedInst.Reserve(NumInst);
+		// Indices must be added in reverse order.
+		double dIndex = static_cast<double>(TotalNumInstances - 1);
+		const double dStep = static_cast<double>(TotalNumInstances) / static_cast<double>(NumInst);
+		// By construction, this increment is >= 1, so we are sure not to add the same index twice in the
+		// loop below...
+		ensure(dStep >= 1.0);
+		for ( ; dIndex >= 0.0 && RemovedInst.Num() < NumInst; dIndex -= dStep)
 		{
-			removedInst.Add(static_cast<int32>(i));
+			RemovedInst.Add(static_cast<int32>(dIndex));
 		}
-		removedInst.Sort([](const int32& a, const int32& b) {return a > b;});
-
-		RemoveInstances(removedInst);
+		RemoveInstances(RemovedInst);
 	}
+}
+
+void AITwinPopulation::RemoveAllInstances()
+{
+	SetNumberOfInstances(0);
+}
+
+void AITwinPopulation::Tick(float DeltaTime)
+{
+	Super::Tick(DeltaTime);
+	if (auto ext = GetExtension<FITwinPopulationWithPathExt>())
+		ext->UpdatePopulationInstances();
+
+	if (bDisplayInfo)
+	{
+		const int32 TotalNumInstances = meshComp->GetInstanceCount();
+		for (int32 i = 0; i < TotalNumInstances; ++i)
+		{
+			FTransform tm = GetInstanceTransform(i);
+			FVector loc = tm.GetLocation();
+			DrawDebugString(GetWorld(), loc, *FString::Printf(TEXT("%d: %0.1f, %0.1f, %0.1f"), i, loc.X, loc.Y, loc.Z), nullptr, FColor::White, 0.016f, false);
+		}
+	}
+}
+
+FITwinInstance::FITwinInstance()
+{
+}
+
+AdvViz::expected<void, std::string> FITwinInstance::Update()
+{
+	using namespace AdvViz::SDK;
+	if (population_.IsValid() && instanceIndex_ != NotSet)
+	{
+		if (auto animExt = population_->GetExtension<FITwinPopulationWithPathExt>())
+		{
+			//Only transformation for now
+			dmat3x4 mat = GetTransform();
+			FTransform transform = FITwinMathConversion::SDKtoUE(mat);
+			animExt->InstanceToUpdateTransForm(instanceIndex_, transform);
+
+			if (GetColorShift().has_value())
+			{
+				float3 color1 = GetColorShift().value();
+				FVector color(color1[0] - 0.5f, color1[1] - 0.5f, color1[2] - 0.5f);
+				if (!previousColor_.has_value() || previousColor_.value() != color)
+				{
+					animExt->InstanceToUpdateColor(instanceIndex_, color);
+					previousColor_ = color;
+				}
+			}
+		}
+	}
+	return AdvViz::expected<void, std::string>();
 }
 

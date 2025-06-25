@@ -388,18 +388,18 @@ function (be_add_unreal_project projectDir)
 				else()
 					# Here we are going to handle different types of targets:
 					# - Our "own" regular targets, eg. BeUtils.
-					# - External targets added by FetchContent(), eg. reflect-cpp.
+					# - External targets added by FetchContent()
 					# In all cases, the goal is to retrieve the list of headers and lib files of the target,
 					# and decide where to put the symlinks inside the "Source/ThirdParty" folder.
 					# Examples:
-					# - For BeUtils, when retrieving the list of source files, CMake will likey return relative paths
+					# - For BeUtils, when retrieving the list of source files, CMake will likely return relative paths
 					#   as this is how they are "declared" in add_library(), eg. "Gltf/GltfBuilder.h".
 					#   This file will be symlinked as "Source/ThirdParty/Include/BeUtils/Gltf/GltfBuilder.h".
-					# - For reflect-cpp, when retrieving the list of source files, CMake will likey return absolute paths,
-					#   eg. "<binaryDir>/_deps/reflect-cpp-src/include/rfl/json.hpp".
-					#   This file will be symlinked as "Source/ThirdParty/Include/rfl/json.hpp".
+					# - For FetchContent() deps, when retrieving the list of source files, CMake will likely return absolute paths,
+					#   eg. "<binaryDir>/_deps/foo-src/include/foo.h".
+					#   This file will be symlinked as "Source/ThirdParty/Include/foo/foo.h".
 					# For external libraries, we need to retrieve the list of "interface include directories",
-					# eg. "<binaryDir>/_deps/reflect-cpp-src/include", so that we can compute the relative path of each header.
+					# eg. "<binaryDir>/_deps/foo-src/include", so that we can compute the relative path of each header.
 					set (depInterfaceIncludeDirs "")
 					get_property (depInterfaceIncludeDirsRaw TARGET ${dependency} PROPERTY INTERFACE_INCLUDE_DIRECTORIES)
 					foreach (dir ${depInterfaceIncludeDirsRaw})
@@ -412,7 +412,7 @@ function (be_add_unreal_project projectDir)
 						list (APPEND depInterfaceIncludeDirs "${dir}")
 					endforeach ()
 					# Retrieve the list of all sources for this target.
-					# We also need to query the "header sets" are some libs (eg. reflect-cpp) add their headers here.
+					# We also need to query the "header sets" are some libs (initially reflect-cpp, although not anymore) add their headers here.
 					get_property (depSources TARGET ${dependency} PROPERTY SOURCES)
 					get_property (depHeaderSets TARGET ${dependency} PROPERTY HEADER_SETS)
 					foreach (headerSet ${depHeaderSets})
@@ -512,12 +512,12 @@ function (be_add_unreal_project projectDir)
 				createSymlinksForDirectoryContent ("${CMAKE_SOURCE_DIR}/Public/Extern/cesium-unreal/${item}" "${projectAbsDir}${srcDirRel}/${item}" addedFiles_local)
 			endforeach ()
 			# Source code of the (modified) CesiumRuntime are symlinked as well:
-			foreach (item Source/ITwinCesiumRuntime)
+			foreach (item Source/CesiumRuntime)
 				createSymlink ("${CMAKE_SOURCE_DIR}/Public/Extern/cesium-unreal/${item}" "${projectAbsDir}${srcDirRel}/${item}" addedFiles_local)
 			endforeach ()
 			# Add a command that will (at build time) create symlinks pointing to the header & lib files "installed"
 			# during the build of the external dependencies of cesium-unreal.
-			string (APPEND setupExternFilesCommands "SetupCesium('${cesiumDependenciesBinDir}/extern/../Source/ThirdParty', '${projectAbsDir}${srcDirRel}/Source/ThirdParty')\n")
+			string (APPEND setupExternFilesCommands "SetupCesium('${cesiumDependenciesBinDir}/extern/../Source/ThirdParty', '${projectAbsDir}${srcDirRel}/Source/ThirdParty', '${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}')\n")
 			list (APPEND setupExternFilesDependencies InstallCesiumDependencies)
 			list (APPEND extraTests_local "+Cesium.Unit")
 		endif ()
@@ -714,6 +714,12 @@ function (be_add_unreal_project projectDir)
 			MAP_IMPORTED_CONFIG_UNREALDEBUG DebugGame_Editor
 			MAP_IMPORTED_CONFIG_RELEASE Development_Editor
 		)
+		# Add a target that will build the non-unity Editor version of the app.
+		add_custom_target (${projectName}_Editor_NoUnity ALL
+			COMMAND "${BE_UNREAL_ENGINE_DIR}/Build/BatchFiles/Build.bat" ${projectName}Editor Win64 $<$<CONFIG:UnrealDebug>:DebugGame>$<$<CONFIG:Release>:Development> -Project="${projectAbsDir}/${projectName}.uproject" -WaitMutex -FromMsBuild -beNoUnity
+		)
+		set_property (TARGET ${projectName}_Editor_NoUnity PROPERTY VS_DEBUGGER_COMMAND "${UnrealLaunchPath}")
+		set_property (TARGET ${projectName}_Editor_NoUnity PROPERTY VS_DEBUGGER_COMMAND_ARGUMENTS -Project="${projectAbsDir}/${projectName}.uproject"  -skipcompile)
 		# Add a target that will build the Game (non-editor) version of the app.
 		add_custom_target (${projectName}_Game ALL
 			COMMAND "${BE_UNREAL_ENGINE_DIR}/Build/BatchFiles/Build.bat" ${projectName} Win64 $<$<CONFIG:UnrealDebug>:DebugGame>$<$<CONFIG:Release>:Development> -Project="${projectAbsDir}/${projectName}.uproject" -WaitMutex -FromMsBuild
@@ -801,6 +807,9 @@ function (be_add_unreal_project projectDir)
 	# Add dependencies to all external libs used by the project.
 	if (projectDependencies)
 		add_dependencies (${projectName}_Editor ${projectDependencies})
+		if (TARGET ${projectName}_Editor_NoUnity)
+			add_dependencies (${projectName}_Editor_NoUnity ${projectDependencies})
+		endif()
 		add_dependencies (${projectName}_Game ${projectDependencies})
 		if (NOT FOR_VERACODE)
 			add_dependencies (${projectName}_Shipping ${projectDependencies})
@@ -813,6 +822,9 @@ function (be_add_unreal_project projectDir)
 	endif ()
 	
 	set_target_properties (${projectName}_Editor PROPERTIES FOLDER "UnrealProjects")
+	if (TARGET ${projectName}_Editor_NoUnity)
+		set_target_properties (${projectName}_Editor_NoUnity PROPERTIES FOLDER "UnrealProjects/NoUnity")
+	endif()
 	set_target_properties (${projectName}_Game PROPERTIES FOLDER "UnrealProjects/Game")
 	if (NOT FOR_VERACODE)
 		set_target_properties (${projectName}_Game_Packaged PROPERTIES FOLDER "UnrealProjects/Game")
@@ -829,25 +841,68 @@ function (be_add_unreal_project projectDir)
 	# "Shipping" config is very long to build so for now it is disabled in Check builds.
 	#add_dependencies (BuildUnrealProjects ${projectName}_Shipping)
 	set_target_properties (BuildUnrealProjects PROPERTIES FOLDER "UnrealProjects/Detail")
+	# Update the target that will build all XXX_NoUnity targets.
+	# We create a separate target here (BuildUnrealProjects_NoUnity) so that we can ensure the ADO agent
+	# builds the targets in this order:
+	# - XXX_NoUnity
+	# - XXX (this will overwrite the binaries built by XXX_NoUnity)
+	# - RunTests_XXX, which depends on XXX, which is up-to-date.
+	if (NOT TARGET BuildUnrealProjects_NoUnity)
+		add_custom_target (BuildUnrealProjects_NoUnity ALL)
+	endif ()
+	if (TARGET ${projectName}_Editor_NoUnity)
+		add_dependencies (BuildUnrealProjects_NoUnity ${projectName}_Editor_NoUnity)
+	endif ()
+	set_target_properties (BuildUnrealProjects_NoUnity PROPERTIES FOLDER "UnrealProjects/Detail")
 	
 	if (NOT funcArgs_NO_TEST AND NOT FOR_VERACODE)
 		# Add a target to run the tests.
-		add_custom_target (RunTests_${projectName} ALL # "ALL" so that target is enabled and MSBuild can build it.
-			# UnrealEditor.exe loads the Development binaries (this config is mapped to CMake Release config).
-			# UnrealEditor-Win64-DebugGame.exe loads the DebugGame binaries (this config is mapped to CMake Debug config).
-			# Other CMake configs (if any) are not supported, so we add a dummy command that will try to run an unexisting command with an explicit name.
-			COMMAND "$<$<NOT:$<CONFIG:UnrealDebug,Release>>:TARGET_NOT_COMPATIBLE_WITH_THIS_CONFIG>"
-			# Add -nosound option to avoid weird errors in FAudioDevice::Teardown() at end of tests on some machines,
-			# which causes the target to fail even if all tests succeed.
-			COMMAND "${UnrealLaunchPath}" "${projectAbsDir}/${projectName}.uproject" "-ExecCmds=\"Automation RunTests Bentley${extraTests};Quit\"" -unattended -nopause -editor -stdout -nosound
-		)
+		# We are actually adding 2 targets:
+		# - Target RunTests_XXX that runs the tests for project XXX as you would expect.
+		# - Target RunTestsChained_XXX that runs tests for project XXX, but also depends on previously added RunTestsChained_YYY target.
+		#   This creates a linear dependency chain betwenn all RunTestsChained_XXX targets, allowing the ADO agent to run the tests sequentially.
+		#   This is required to avoid random errors due to several Unreal test processes running in parallel
+		#   (eg. simultaneous access to cesium sqlite database used for web request caching).
+		foreach (chainedFlag "" "Chained")
+			add_custom_target (RunTests${chainedFlag}_${projectName} ALL # "ALL" so that target is enabled and MSBuild can build it.
+				# UnrealEditor.exe loads the Development binaries (this config is mapped to CMake Release config).
+				# UnrealEditor-Win64-DebugGame.exe loads the DebugGame binaries (this config is mapped to CMake Debug config).
+				# Other CMake configs (if any) are not supported, so we add a dummy command that will try to run an unexisting command with an explicit name.
+				COMMAND "$<$<NOT:$<CONFIG:UnrealDebug,Release>>:TARGET_NOT_COMPATIBLE_WITH_THIS_CONFIG>"
+				# Add -nosound option to avoid weird errors in FAudioDevice::Teardown() at end of tests on some machines,
+				# which causes the target to fail even if all tests succeed.
+				COMMAND "${UnrealLaunchPath}" "${projectAbsDir}/${projectName}.uproject" "-ExecCmds=\"Automation RunTests Bentley${extraTests};Quit\"" -unattended -nopause -editor -stdout -nosound
+			)
+			add_dependencies (RunTests${chainedFlag}_${projectName} ${projectName}_Editor)
+		endforeach ()
 		set_target_properties (RunTests_${projectName} PROPERTIES FOLDER "UnrealProjects/Tests")
-		add_dependencies (RunTests_${projectName} ${projectName}_Editor)
+		set_target_properties (RunTestsChained_${projectName} PROPERTIES FOLDER "UnrealProjects/Detail/TestsChained")
+		# Add a target that will make sure all required build targets are complete before running the first chained test.
+		# This ensures that all XXX_Editor targets are built before running the first chained test.
+		# This avoids having a (potentially cpu intensive) XXX_Editor being built while running RunTestsChained_YYY.
+		if (NOT TARGET PrepareUnrealTests)
+			add_custom_target (PrepareUnrealTests ALL)
+			set_target_properties (PrepareUnrealTests PROPERTIES FOLDER "UnrealProjects/Detail")
+		endif ()
+		add_dependencies (RunTestsChained_${projectName} PrepareUnrealTests)
+		# Gather all dependencies of RunTests_XXX (eg. XXX_Editor) and add them to PrepareUnrealTests.
+		# Thus, building PrepareUnrealTests will make sure required build targets are complete.
+		get_property (testDeps TARGET RunTests_${projectName} PROPERTY MANUALLY_ADDED_DEPENDENCIES)
+		foreach (testDep ${testDeps})
+			add_dependencies (PrepareUnrealTests ${testDep})
+		endforeach ()
+		# Update dependency chain between tests.
+		get_property (RunUnrealTests_CurrentDependency GLOBAL PROPERTY "RunUnrealTests_CurrentDependency")
+		if (RunUnrealTests_CurrentDependency)
+			add_dependencies (RunTestsChained_${projectName} ${RunUnrealTests_CurrentDependency})
+		endif ()
+		set_property (GLOBAL PROPERTY "RunUnrealTests_CurrentDependency" RunTestsChained_${projectName})
+		# Add the target that will run all chained tests.
 		if (NOT TARGET RunUnrealTests)
 			add_custom_target (RunUnrealTests ALL)
+			set_target_properties (RunUnrealTests PROPERTIES FOLDER "UnrealProjects/Detail")
 		endif ()
-		add_dependencies (RunUnrealTests RunTests_${projectName})
-		set_target_properties (RunUnrealTests PROPERTIES FOLDER "UnrealProjects/Detail")
+		add_dependencies (RunUnrealTests RunTestsChained_${projectName})
 	endif ()
 
 	if(WIN32)

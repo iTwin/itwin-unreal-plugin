@@ -1,0 +1,9 @@
+﻿{
+	"url": "https://qa-api.bentley.com/schedules/3497df55-60e9-44fd-91ec-3c86473884f5/animation-3d-transforms?$top=2&$continuationToken=eyJQcmltYXJ5U2tpcFRva2VuIjoiNTg1ZDhmYTQtNDgzMC00M2ZiLWEzNTQtZWI4NTNkNzQ4OTg4IiwiU2Vjb25kYXJ5U2tpcFRva2VuIjpudWxsLCJUeXBlIjowfQ==",
+	"verb": "GET",
+	"connectedSuccessfully": true,
+	"responseCode": 200
+,
+	"reply": 
+{"nextPageToken":"eyJQcmltYXJ5U2tpcFRva2VuIjoiNmZkMzlmOWItY2ZkZi00ZjQxLTkzOGEtYWFmMTZhNzU0MjIwIiwiU2Vjb25kYXJ5U2tpcFRva2VuIjpudWxsLCJUeXBlIjowfQ==","animation3dTransforms":[{"id":"6b93f26c-a1e5-46e9-9a38-721d752d75d9","transform":[0.9669756293296814,-0.254865437746048,0.0,9184.537109375,0.254865437746048,0.9669756293296814,0.0,-7241.5810546875,0.0,0.0,1.0,0.0,0.0,0.0,0.0,1.0]},{"id":"6fd39f9b-cfdf-4f41-938a-aaf16a754220","transform":[1.0,0.0,0.0,1.2882082955911756E-08,0.0,1.0,0.0,-168.62924194335938,0.0,0.0,1.0,2.648287988904485E-07,0.0,0.0,0.0,1.0]}],"_links":{"self":{"href":"https://qa-api.bentley.com/schedules/3497df55-60e9-44fd-91ec-3c86473884f5/animation-3d-transforms?$top=2&$continuationToken=eyJQcmltYXJ5U2tpcFRva2VuIjoiNTg1ZDhmYTQtNDgzMC00M2ZiLWEzNTQtZWI4NTNkNzQ4OTg4IiwiU2Vjb25kYXJ5U2tpcFRva2VuIjpudWxsLCJUeXBlIjowfQ=="},"next":{"href":"https://qa-api.bentley.com/schedules/3497df55-60e9-44fd-91ec-3c86473884f5/animation-3d-transforms?$top=2&$continuationToken=eyJQcmltYXJ5U2tpcFRva2VuIjoiNmZkMzlmOWItY2ZkZi00ZjQxLTkzOGEtYWFmMTZhNzU0MjIwIiwiU2Vjb25kYXJ5U2tpcFRva2VuIjpudWxsLCJUeXBlIjowfQ%3d%3d"}}}
+}

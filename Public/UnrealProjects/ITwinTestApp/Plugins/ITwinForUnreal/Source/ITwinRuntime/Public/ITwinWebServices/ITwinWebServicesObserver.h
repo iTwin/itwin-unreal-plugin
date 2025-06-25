@@ -31,15 +31,16 @@ struct FElementProperties;
 struct FProjectExtents;
 struct FEcefLocation;
 
-namespace SDK::Core {
+namespace AdvViz::SDK {
 	struct ITwinMaterialPropertiesMap;
 	struct ITwinMaterialPrediction;
 	struct ITwinTextureData;
+	struct GeoCoordsReply;
 }
 
 using HttpRequestID = FString;
 
-class ITWINRUNTIME_API IITwinWebServicesObserver : public SDK::Core::ITwinAuthObserver
+class ITWINRUNTIME_API IITwinWebServicesObserver : public AdvViz::SDK::ITwinAuthObserver
 {
 public:
 	virtual ~IITwinWebServicesObserver() = default;
@@ -62,7 +63,7 @@ public:
 	virtual void OnSavedViewInfosRetrieved(bool bSuccess, FSavedViewInfos const& Infos) = 0;
 	virtual void OnSavedViewRetrieved(bool bSuccess, FSavedView const& SavedView, FSavedViewInfo const& SavedViewInfo) = 0;
 	virtual void OnSavedViewExtensionRetrieved(bool bSuccess, FString const& SavedViewId, FString const& Data) = 0;
-	virtual void OnSavedViewThumbnailRetrieved(bool bSuccess, FString const& SavedViewThumbnail, FString const& SavedViewId) = 0;
+	virtual void OnSavedViewThumbnailRetrieved(bool bSuccess, FString const& SavedViewId, TArray<uint8> const& Buffer) = 0;
 	virtual void OnSavedViewThumbnailUpdated(bool bSuccess, FString const& SavedViewId, FString const& Response) = 0;
 	virtual void OnSavedViewGroupInfosRetrieved(bool bSuccess, FSavedViewGroupInfos const& Infos) = 0;
 	virtual void OnSavedViewGroupAdded(bool bSuccess, FSavedViewGroupInfo const& SavedViewGroupInfo) = 0;
@@ -71,11 +72,13 @@ public:
 	virtual void OnSavedViewEdited(bool bSuccess, FSavedView const& SavedView, FSavedViewInfo const& SavedViewInfo) = 0;
 	virtual void OnElementPropertiesRetrieved(bool bSuccess, FElementProperties const& ElementProps, FString const& ElementId) = 0;
 	virtual void OnIModelPropertiesRetrieved(bool bSuccess, bool bHasExtents, FProjectExtents const& Extents, bool bHasEcefLocation, FEcefLocation const& EcefLocation) = 0;
+	virtual void OnConvertedIModelCoordsToGeoCoords(bool bSuccess,
+		AdvViz::SDK::GeoCoordsReply const& GeoCoords, HttpRequestID const& RequestID) = 0;
 	virtual void OnIModelQueried(bool bSuccess, FString const& QueryResult, HttpRequestID const& RequestID) = 0;
 
-	virtual void OnMaterialPropertiesRetrieved(bool bSuccess, SDK::Core::ITwinMaterialPropertiesMap const& props) = 0;
-	virtual void OnTextureDataRetrieved(bool bSuccess, std::string const& textureId, SDK::Core::ITwinTextureData const& textureData) = 0;
-	virtual void OnMatMLPredictionRetrieved(bool bSuccess, SDK::Core::ITwinMaterialPrediction const& prediction) = 0;
+	virtual void OnMaterialPropertiesRetrieved(bool bSuccess, AdvViz::SDK::ITwinMaterialPropertiesMap const& props) = 0;
+	virtual void OnTextureDataRetrieved(bool bSuccess, std::string const& textureId, AdvViz::SDK::ITwinTextureData const& textureData) = 0;
+	virtual void OnMatMLPredictionRetrieved(bool bSuccess, AdvViz::SDK::ITwinMaterialPrediction const& prediction, std::string const& error = {}) = 0;
 	virtual void OnMatMLPredictionProgress(float fProgressRatio) = 0;
 };
 
@@ -100,7 +103,7 @@ public:
 	virtual void OnSavedViewInfosRetrieved(bool bSuccess, FSavedViewInfos const& Infos) override;
 	virtual void OnSavedViewRetrieved(bool bSuccess, FSavedView const& SavedView, FSavedViewInfo const& SavedViewInfo) override;
 	virtual void OnSavedViewExtensionRetrieved(bool bSuccess, FString const& SavedViewId, FString const& Data) override;
-	virtual void OnSavedViewThumbnailRetrieved(bool bSuccess, FString const& SavedViewThumbnail, FString const& SavedViewId) override;
+	virtual void OnSavedViewThumbnailRetrieved(bool bSuccess, FString const& SavedViewId, TArray<uint8> const& Buffer) override;
 	virtual void OnSavedViewThumbnailUpdated(bool bSuccess, FString const& SavedViewId, FString const& Response) override;
 	virtual void OnSavedViewGroupInfosRetrieved(bool bSuccess, FSavedViewGroupInfos const& Infos) override;
 	virtual void OnSavedViewGroupAdded(bool bSuccess, FSavedViewGroupInfo const& SavedViewGroupInfo) override;
@@ -109,11 +112,13 @@ public:
 	virtual void OnSavedViewEdited(bool bSuccess, FSavedView const& SavedView, FSavedViewInfo const& SavedViewInfo) override;
 	virtual void OnElementPropertiesRetrieved(bool bSuccess, FElementProperties const& ElementProps, FString const& ElementId) override;
 	virtual void OnIModelPropertiesRetrieved(bool bSuccess, bool bHasExtents, FProjectExtents const& Extents, bool bHasEcefLocation, FEcefLocation const& EcefLocation) override;
+	virtual void OnConvertedIModelCoordsToGeoCoords(bool bSuccess,
+		AdvViz::SDK::GeoCoordsReply const& GeoCoords, HttpRequestID const& RequestID) override;
 	virtual void OnIModelQueried(bool bSuccess, FString const& QueryResult, HttpRequestID const& RequestID) override;
 
-	virtual void OnMaterialPropertiesRetrieved(bool bSuccess, SDK::Core::ITwinMaterialPropertiesMap const& props) override;
-	virtual void OnTextureDataRetrieved(bool bSuccess, std::string const& textureId, SDK::Core::ITwinTextureData const& textureData) override;
-	virtual void OnMatMLPredictionRetrieved(bool bSuccess, SDK::Core::ITwinMaterialPrediction const& prediction) override;
+	virtual void OnMaterialPropertiesRetrieved(bool bSuccess, AdvViz::SDK::ITwinMaterialPropertiesMap const& props) override;
+	virtual void OnTextureDataRetrieved(bool bSuccess, std::string const& textureId, AdvViz::SDK::ITwinTextureData const& textureData) override;
+	virtual void OnMatMLPredictionRetrieved(bool bSuccess, AdvViz::SDK::ITwinMaterialPrediction const& prediction, std::string const& error = {}) override;
 	virtual void OnMatMLPredictionProgress(float fProgressRatio) override;
 
 protected:

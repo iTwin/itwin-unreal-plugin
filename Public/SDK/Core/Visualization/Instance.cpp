@@ -10,7 +10,7 @@
 #include "Instance.h"
 #include "../Singleton/singleton.h"
 
-namespace SDK::Core
+namespace AdvViz::SDK
 {
 	class Instance::Impl
 	{
@@ -22,57 +22,40 @@ namespace SDK::Core
 		// other data
 		std::string name_;
 		std::string objectRef_;
-		std::string colorShift_;
-		dmat3x4 matrix_;
-
-		// update flags
-		bool updateFlags_[2];
-		bool deletionFlag_;
-
-		const std::string& GetId() const { return id_; }
-		void SetId(const std::string& id) { id_ = id; }
-
-		const std::shared_ptr<IInstancesGroup>& GetGroup() const { return group_; }
-		void SetGroup(const std::shared_ptr<IInstancesGroup>& group) { group_ = group; }
-
-		const std::string& GetName() const { return name_; }
-		void SetName(const std::string& name) { name_ = name; }
-
-		const std::string& GetObjectRef() const { return objectRef_; }
-		void SetObjectRef(const std::string& objectRef) { objectRef_ = objectRef; }
-
-		const std::string& GetColorShift() const { return colorShift_; }
-		void SetColorShift(const std::string& color) { colorShift_ = color; }
-
-		const dmat3x4& GetMatrix() const { return matrix_; }
-		void SetMatrix(const dmat3x4& mat) { matrix_ = mat; }
-
-		bool IsMarkedForUpdate(const EUpdateTarget& target) const { return updateFlags_[target]; }
-		void MarkForUpdate(const EUpdateTarget& target, bool flag) { updateFlags_[target] = flag; }
-
-		Impl() { updateFlags_[Database] = updateFlags_[Display] = false; deletionFlag_ = false; }
+		std::optional<float3> colorShift_;
+		dmat3x4 transform_;
+		std::string animationid_;
+		bool shouldSave_ = false;
 	};
 
-	const std::string& Instance::GetId() const { return impl_->GetId(); }
-	void Instance::SetId(const std::string& id) { impl_->SetId(id); }
+	const std::string& Instance::GetId() const { return impl_->id_; }
+	void Instance::SetId(const std::string& id) { impl_->id_ = id; }
 
-	const std::shared_ptr<IInstancesGroup>& Instance::GetGroup() const { return impl_->GetGroup(); }
-	void Instance::SetGroup(const std::shared_ptr<IInstancesGroup>& group) { impl_->SetGroup(group); }
+	const std::shared_ptr<IInstancesGroup>& Instance::GetGroup() const { return impl_->group_; }
+	void Instance::SetGroup(const std::shared_ptr<IInstancesGroup>& group) { impl_->group_ = group; }
 
-	const std::string& Instance::GetName() const { return impl_->GetName(); }
-	void Instance::SetName(const std::string& name) { impl_->SetName(name); }
+	const std::string& Instance::GetAnimId() const { return impl_->animationid_; }
+	void Instance::SetAnimId(const std::string &id) { impl_->animationid_ = id; }
+	
+	const std::string& Instance::GetName() const { return impl_->name_; }
+	void Instance::SetName(const std::string& name) { impl_->name_ = name; }
 
-	const std::string& Instance::GetObjectRef() const { return impl_->GetObjectRef(); }
-	void Instance::SetObjectRef(const std::string& objectRef) { impl_->SetObjectRef(objectRef); }
+	const std::string& Instance::GetObjectRef() const { return impl_->objectRef_; }
+	void Instance::SetObjectRef(const std::string& objectRef) { impl_->objectRef_ = objectRef; }
 
-	const std::string& Instance::GetColorShift() const { return impl_->GetColorShift(); }
-	void Instance::SetColorShift(const std::string& color) { impl_->SetColorShift(color); }
+	std::optional<float3> Instance::GetColorShift() const { return impl_->colorShift_; }
+	void Instance::SetColorShift(const float3& color) { impl_->colorShift_ = color; }
 
-	const dmat3x4& Instance::GetMatrix() const { return impl_->GetMatrix(); }
-	void Instance::SetMatrix(const dmat3x4& mat) { impl_->SetMatrix(mat); }
+	const dmat3x4& Instance::GetTransform() const { return impl_->transform_; }
+	void Instance::SetTransform(const dmat3x4& mat) { impl_->transform_ = mat; }
 
-	bool Instance::IsMarkedForUpdate(const EUpdateTarget& target) const { return impl_->IsMarkedForUpdate(target); }
-	void Instance::MarkForUpdate(const EUpdateTarget& target, bool flag /*= true*/) { impl_->MarkForUpdate(target, flag); }
+	bool Instance::ShouldSave() const { return impl_->shouldSave_; }
+	void Instance::SetShouldSave(bool value) { impl_->shouldSave_ = value; }
+
+	expected<void, std::string> Instance::Update()
+	{
+		return expected<void, std::string>();
+	}
 
 	Instance::Instance():impl_(new Impl())
 	{}

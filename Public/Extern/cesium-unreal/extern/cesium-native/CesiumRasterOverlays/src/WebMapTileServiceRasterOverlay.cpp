@@ -1,16 +1,35 @@
+#include <CesiumAsync/Future.h>
 #include <CesiumAsync/IAssetAccessor.h>
-#include <CesiumAsync/IAssetResponse.h>
+#include <CesiumGeometry/QuadtreeTileID.h>
+#include <CesiumGeometry/QuadtreeTilingScheme.h>
+#include <CesiumGeometry/Rectangle.h>
+#include <CesiumGeospatial/GeographicProjection.h>
 #include <CesiumGeospatial/GlobeRectangle.h>
 #include <CesiumGeospatial/Projection.h>
+#include <CesiumGeospatial/WebMercatorProjection.h>
+#include <CesiumRasterOverlays/IPrepareRasterOverlayRendererResources.h>
 #include <CesiumRasterOverlays/QuadtreeRasterOverlayTileProvider.h>
+#include <CesiumRasterOverlays/RasterOverlay.h>
 #include <CesiumRasterOverlays/RasterOverlayLoadFailureDetails.h>
 #include <CesiumRasterOverlays/RasterOverlayTile.h>
+#include <CesiumRasterOverlays/RasterOverlayTileProvider.h>
 #include <CesiumRasterOverlays/WebMapTileServiceRasterOverlay.h>
 #include <CesiumUtility/CreditSystem.h>
+#include <CesiumUtility/IntrusivePointer.h>
 #include <CesiumUtility/Uri.h>
 
-#include <cstddef>
+#include <nonstd/expected.hpp>
+#include <spdlog/logger.h>
+
+#include <algorithm>
+#include <cstdint>
+#include <map>
+#include <memory>
+#include <optional>
+#include <string>
+#include <utility>
 #include <variant>
+#include <vector>
 
 using namespace CesiumAsync;
 using namespace CesiumUtility;
@@ -42,8 +61,8 @@ public:
       std::string layer,
       std::string style,
       std::string _tileMatrixSetID,
-      const std::optional<std::vector<std::string>> tileMatrixLabels,
-      const std::optional<std::map<std::string, std::string>> dimensions,
+      const std::optional<std::vector<std::string>>& tileMatrixLabels,
+      const std::optional<std::map<std::string, std::string>>& dimensions,
       const std::vector<std::string>& subdomains)
       : QuadtreeRasterOverlayTileProvider(
             pOwner,
@@ -63,14 +82,14 @@ public:
         _headers(headers),
         _useKVP(useKVP),
         _format(format),
-        _layer(layer),
-        _style(style),
-        _tileMatrixSetID(_tileMatrixSetID),
+        _layer(std::move(layer)),
+        _style(std::move(style)),
+        _tileMatrixSetID(std::move(_tileMatrixSetID)),
         _labels(tileMatrixLabels),
         _staticDimensions(dimensions),
         _subdomains(subdomains) {}
 
-  virtual ~WebMapTileServiceTileProvider() {}
+  virtual ~WebMapTileServiceTileProvider() = default;
 
 protected:
   virtual CesiumAsync::Future<LoadedRasterOverlayImage> loadQuadtreeTileImage(
@@ -82,7 +101,7 @@ protected:
 
     uint32_t level = tileID.level;
     uint32_t col = tileID.x;
-    uint32_t row = (1u << level) - tileID.y - 1u;
+    uint32_t row = tileID.computeInvertedY(this->getTilingScheme());
 
     std::map<std::string, std::string> urlTemplateMap;
     std::string tileMatrix;
@@ -179,7 +198,7 @@ WebMapTileServiceRasterOverlay::WebMapTileServiceRasterOverlay(
       _headers(headers),
       _options(wmtsOptions) {}
 
-WebMapTileServiceRasterOverlay::~WebMapTileServiceRasterOverlay() {}
+WebMapTileServiceRasterOverlay::~WebMapTileServiceRasterOverlay() = default;
 
 Future<RasterOverlay::CreateTileProviderResult>
 WebMapTileServiceRasterOverlay::createTileProvider(
@@ -193,11 +212,12 @@ WebMapTileServiceRasterOverlay::createTileProvider(
 
   pOwner = pOwner ? pOwner : this;
 
-  const std::optional<Credit> credit =
-      this->_options.credit ? std::make_optional(pCreditSystem->createCredit(
-                                  this->_options.credit.value(),
-                                  pOwner->getOptions().showCreditsOnScreen))
-                            : std::nullopt;
+  std::optional<Credit> credit = std::nullopt;
+  if (pCreditSystem && this->_options.credit) {
+    credit = pCreditSystem->createCredit(
+        *this->_options.credit,
+        pOwner->getOptions().showCreditsOnScreen);
+  }
 
   bool hasError = false;
   std::string errorMessage;
@@ -222,24 +242,15 @@ WebMapTileServiceRasterOverlay::createTileProvider(
     useKVP = false;
   }
 
-  CesiumGeospatial::Projection projection;
+  CesiumGeospatial::Projection projection = _options.projection.value_or(
+      CesiumGeospatial::WebMercatorProjection(pOwner->getOptions().ellipsoid));
   CesiumGeospatial::GlobeRectangle tilingSchemeRectangle =
       CesiumGeospatial::WebMercatorProjection::MAXIMUM_GLOBE_RECTANGLE;
   uint32_t rootTilesX = 1;
-  if (_options.projection) {
-    projection = _options.projection.value();
-    if (std::get_if<CesiumGeospatial::GeographicProjection>(&projection)) {
-      tilingSchemeRectangle =
-          CesiumGeospatial::GeographicProjection::MAXIMUM_GLOBE_RECTANGLE;
-      rootTilesX = 2;
-    }
-  } else {
-    if (_options.ellipsoid) {
-      projection =
-          CesiumGeospatial::WebMercatorProjection(_options.ellipsoid.value());
-    } else {
-      projection = CesiumGeospatial::WebMercatorProjection();
-    }
+  if (std::get_if<CesiumGeospatial::GeographicProjection>(&projection)) {
+    tilingSchemeRectangle =
+        CesiumGeospatial::GeographicProjection::MAXIMUM_GLOBE_RECTANGLE;
+    rootTilesX = 2;
   }
   CesiumGeometry::Rectangle coverageRectangle =
       _options.coverageRectangle.value_or(

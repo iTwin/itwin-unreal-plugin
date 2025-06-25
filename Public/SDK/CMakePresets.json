@@ -10,10 +10,19 @@
 		,"binaryDir": "${sourceDir}/../build/${presetName}"
 		,"architecture": "x64"
 		,"cacheVariables": {
-			"CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
-			,"VCPKG_TARGET_TRIPLET": "x64-windows-static"
-			,"CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+			"CMAKE_TOOLCHAIN_FILE": "${dollar}<VCPKG_ROOT>/scripts/buildsystems/vcpkg.cmake"
+			,"VCPKG_TARGET_TRIPLET": "x64-windows-static-md"
+			,"CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL"
 			,"SELECTED_PRESET": "${presetName}"
+		}
+	}
+	,{
+		"name": "dll_win64static"
+		,"inherits": "win64static"
+		,"cacheVariables": {
+			"ADVVIZDLL":"ON"
+			,"CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL"
+			,"VCPKG_TARGET_TRIPLET": "x64-windows-static-md"
 		}
 	}
 	,{

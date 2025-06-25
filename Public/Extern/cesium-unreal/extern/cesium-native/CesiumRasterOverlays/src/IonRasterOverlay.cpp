@@ -1,16 +1,29 @@
+#include <CesiumAsync/Future.h>
 #include <CesiumAsync/IAssetAccessor.h>
 #include <CesiumAsync/IAssetResponse.h>
 #include <CesiumRasterOverlays/BingMapsRasterOverlay.h>
 #include <CesiumRasterOverlays/IonRasterOverlay.h>
+#include <CesiumRasterOverlays/RasterOverlay.h>
 #include <CesiumRasterOverlays/RasterOverlayLoadFailureDetails.h>
 #include <CesiumRasterOverlays/RasterOverlayTile.h>
 #include <CesiumRasterOverlays/RasterOverlayTileProvider.h>
 #include <CesiumRasterOverlays/TileMapServiceRasterOverlay.h>
+#include <CesiumUtility/CreditSystem.h>
+#include <CesiumUtility/IntrusivePointer.h>
 #include <CesiumUtility/JsonHelpers.h>
 #include <CesiumUtility/Uri.h>
 
+#include <fmt/format.h>
+#include <nonstd/expected.hpp>
 #include <rapidjson/document.h>
-#include <spdlog/fwd.h>
+#include <spdlog/logger.h>
+
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 using namespace CesiumAsync;
 using namespace CesiumUtility;
@@ -28,7 +41,7 @@ IonRasterOverlay::IonRasterOverlay(
       _ionAccessToken(ionAccessToken),
       _ionAssetEndpointUrl(ionAssetEndpointUrl) {}
 
-IonRasterOverlay::~IonRasterOverlay() {}
+IonRasterOverlay::~IonRasterOverlay() = default;
 
 std::unordered_map<std::string, IonRasterOverlay::ExternalAssetEndpoint>
     IonRasterOverlay::endpointCache;
@@ -50,13 +63,16 @@ IonRasterOverlay::createTileProvider(
         endpoint.url,
         endpoint.key,
         endpoint.mapStyle,
-        endpoint.culture);
+        endpoint.culture,
+        this->getOptions());
   } else {
     pOverlay = new TileMapServiceRasterOverlay(
         this->getName(),
         endpoint.url,
         std::vector<CesiumAsync::IAssetAccessor::THeader>{
-            std::make_pair("Authorization", "Bearer " + endpoint.accessToken)});
+            std::make_pair("Authorization", "Bearer " + endpoint.accessToken)},
+        TileMapServiceRasterOverlayOptions(),
+        this->getOptions());
   }
 
   if (pCreditSystem) {
@@ -74,7 +90,7 @@ IonRasterOverlay::createTileProvider(
       pCreditSystem,
       pPrepareRendererResources,
       pLogger,
-      pOwner);
+      std::move(pOwner));
 }
 
 Future<RasterOverlay::CreateTileProviderResult>

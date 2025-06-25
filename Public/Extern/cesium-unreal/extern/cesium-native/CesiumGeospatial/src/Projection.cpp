@@ -1,7 +1,19 @@
-#include "CesiumGeospatial/Projection.h"
+#include <CesiumGeometry/AxisAlignedBox.h>
+#include <CesiumGeometry/Rectangle.h>
+#include <CesiumGeospatial/BoundingRegion.h>
+#include <CesiumGeospatial/Cartographic.h>
+#include <CesiumGeospatial/Ellipsoid.h>
+#include <CesiumGeospatial/GeographicProjection.h>
+#include <CesiumGeospatial/GlobeRectangle.h>
+#include <CesiumGeospatial/Projection.h>
+#include <CesiumGeospatial/WebMercatorProjection.h>
 
+#include <glm/common.hpp>
+#include <glm/ext/vector_double2.hpp>
+#include <glm/ext/vector_double3.hpp>
 #include <glm/geometric.hpp>
-#include <glm/trigonometric.hpp>
+
+#include <variant>
 
 namespace CesiumGeospatial {
 
@@ -94,7 +106,8 @@ CesiumGeometry::AxisAlignedBox projectRegionSimple(
 
 BoundingRegion unprojectRegionSimple(
     const Projection& projection,
-    const CesiumGeometry::AxisAlignedBox& box) {
+    const CesiumGeometry::AxisAlignedBox& box,
+    const CesiumGeospatial::Ellipsoid& ellipsoid) {
   GlobeRectangle rectangle = unprojectRectangleSimple(
       projection,
       CesiumGeometry::Rectangle(
@@ -102,7 +115,7 @@ BoundingRegion unprojectRegionSimple(
           box.minimumY,
           box.maximumX,
           box.maximumY));
-  return BoundingRegion(rectangle, box.minimumZ, box.maximumZ);
+  return BoundingRegion(rectangle, box.minimumZ, box.maximumZ, ellipsoid);
 }
 
 glm::dvec2 computeProjectedRectangleSize(
@@ -196,22 +209,19 @@ glm::dvec2 computeProjectedRectangleSize(
   return glm::dvec2(x, y);
 }
 
-double computeApproximateConversionFactorToMetersNearPosition(
-    const Projection& projection,
-    const glm::dvec2& position) {
+const Ellipsoid& getProjectionEllipsoid(const Projection& projection) {
   struct Operation {
-    const glm::dvec2& position;
-
-    double operator()(const GeographicProjection& /*geographic*/) noexcept {
-      return 1.0;
+    const Ellipsoid&
+    operator()(const GeographicProjection& geographic) noexcept {
+      return geographic.getEllipsoid();
     }
 
-    double operator()(const WebMercatorProjection& webMercator) noexcept {
-      // TODO: is there a better estimate?
-      return glm::cos(webMercator.unproject(position).latitude);
+    const Ellipsoid&
+    operator()(const WebMercatorProjection& webMercator) noexcept {
+      return webMercator.getEllipsoid();
     }
   };
 
-  return std::visit(Operation{position}, projection);
+  return std::visit(Operation{}, projection);
 }
 } // namespace CesiumGeospatial

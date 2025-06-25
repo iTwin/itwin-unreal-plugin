@@ -12,9 +12,9 @@
 #include "http.h"
 #include <Core/ITwinAPI/ITwinRequestTypes.h>
 
-MODULE_EXPORT namespace SDK::Core
+namespace AdvViz::SDK
 {
-	class HttpRequest : public Tools::Factory<HttpRequest>
+	class ADVVIZ_LINK HttpRequest : public Tools::Factory<HttpRequest>
 		, public Tools::ExtensionSupport
 		, public std::enable_shared_from_this<HttpRequest>
 	{
@@ -26,16 +26,22 @@ MODULE_EXPORT namespace SDK::Core
 
 		void SetVerb(EVerb verb);
 
-		virtual void Process(
-			Http& http,
-			std::string const& url,
-			std::string const& body,
-			Http::Headers const& headers);
+		inline virtual void Process(Http& http, std::string const& url, std::string const& body, Http::Headers const& headers, bool isFullUrl = false)
+		{
+			Response r = DoProcess(http, url, body, headers, isFullUrl);
+			if (responseCallback_)
+			{
+				responseCallback_(shared_from_this(), r);
+			}
+		}
+
+		Http::Response DoProcess(Http& http, std::string const& url, std::string const& body, Http::Headers const& headers, bool isFullUrl = false);
 
 		EVerb GetVerb() const { return verb_; }
-		RequestID GetRequestID() const { return id_; }
+		const char* GetRequestID() const;
 
 		using Response = Http::Response;
+		using ResponseRaw = Http::Response;
 		using RequestPtr = std::shared_ptr<HttpRequest>;
 		using ResponseCallback = std::function<void(RequestPtr const& request, Response const& response)>;
 
@@ -62,5 +68,6 @@ MODULE_EXPORT namespace SDK::Core
 		// to a string (which can be truncated...)
 		bool needRawData_ = false;
 	};
-
+	template<>
+	ADVVIZ_LINK Tools::Factory<HttpRequest>::Globals::Globals();
 }

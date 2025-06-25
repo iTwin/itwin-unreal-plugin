@@ -8,9 +8,10 @@
 
 #pragma once
 
-#include <ITwinCesiumMeshBuildCallbacks.h>
+#include <CesiumMeshBuildCallbacks.h>
 
 class AITwinIModel;
+class FITwinSceneMapping;
 
 class FITwinSceneMappingBuilder : public ICesiumMeshBuildCallbacks
 {
@@ -18,11 +19,9 @@ class FITwinSceneMappingBuilder : public ICesiumMeshBuildCallbacks
 public:
 	FITwinSceneMappingBuilder(AITwinIModel& IModel);
 
-	virtual void OnMeshConstructed(
-		Cesium3DTilesSelection::Tile& Tile,
-		const TWeakObjectPtr<UStaticMeshComponent>& MeshComponent,
-		const TWeakObjectPtr<UMaterialInstanceDynamic>& pMaterial,
-		const FITwinCesiumMeshData& CesiumData) override;
+	virtual void OnMeshConstructed(Cesium3DTilesSelection::Tile& Tile,
+		UStaticMeshComponent& MeshComponent, UMaterialInstanceDynamic& Material,
+		FCesiumMeshData const& CesiumData) override;
 
 	virtual void OnTileConstructed(const Cesium3DTilesSelection::Tile& Tile) override;
 
@@ -32,25 +31,19 @@ public:
 		const Cesium3DTilesSelection::Tile& Tile,
 		USceneComponent* TileGltfComponent) override;
 
-	virtual std::optional<uint32> BakeFeatureIDsInVertexUVs(std::optional<uint32> featuresAccessorIndex,
-		FITwinCesiumMeshData const& CesiumMeshData,
-		bool duplicateVertices,
-		TArray<FStaticMeshBuildVertex>& vertices,
-		TArray<uint32> const& indices) const override;
-
 	enum class EPropertyType : uint8
 	{
 		Element,
 		Category,
 		Model,
-		Geometry
+		Geometry,
+		Material
 	};
 
-	virtual UMaterialInstanceDynamic* CreateMaterial_GameThread(
-		CesiumGltf::MeshPrimitive const* pMeshPrimitive,
-		UMaterialInterface*& pBaseMaterial,
-		UObject* InOuter,
-		FName const& Name) override;
+	virtual UMaterialInstanceDynamic* CreateMaterial_GameThread(Cesium3DTilesSelection::Tile const& Tile,
+		UStaticMeshComponent const& MeshComponent, CesiumGltf::MeshPrimitive const* pMeshPrimitive,
+		UMaterialInterface*& pBaseMaterial, FCesiumModelMetadata const& Metadata,
+		FCesiumPrimitiveFeatures const& Features, UObject* InOuter, FName const& Name) override;
 
 	virtual void TuneMaterial(
 		CesiumGltf::Material const& glTFmaterial,
@@ -59,6 +52,16 @@ public:
 		EMaterialParameterAssociation association,
 		int32 index) const override;
 
+	/// Create a dummy mapping composed of just one tile using one material. Introduced to apply materials
+	/// from the Material Library to arbitrary meshes.
+	static void BuildFromNonCesiumMesh(FITwinSceneMapping& SceneMapping,
+		const TWeakObjectPtr<UStaticMeshComponent>& MeshComponent,
+		uint64_t ITwinMaterialID);
+
 private:
+	void SelectSchedulesBaseMaterial(UStaticMeshComponent const& MeshComponent,
+		UMaterialInterface*& pBaseMaterial, FCesiumModelMetadata const& Metadata,
+		FCesiumPrimitiveFeatures const& Features) const;
+
 	AITwinIModel& IModel;
 };

@@ -5,6 +5,30 @@ const makeIdentifier = require("./makeIdentifier");
 const NameFormatters = require("./NameFormatters");
 const unindent = require("./unindent");
 
+function resolveSizeOfForProperty(
+  property,
+  propertyName,
+  accumName
+) {
+  if (property.sizeOfFormatter) {
+    return property.sizeOfFormatter(propertyName, accumName);
+  }
+
+  // If the property has schemas, a definition for its getSizeBytes method is already
+  // being generated.
+  if (property.schemas && property.schemas.length > 0) {
+    if (property.isOptional) {
+      return `if(${propertyName}) {
+        ${accumName} += ${propertyName}->getSizeBytes() - int64_t(sizeof(${property.originalType}));
+      }`;
+    }
+
+    return `${accumName} += ${propertyName}.getSizeBytes() - int64_t(sizeof(${property.type}));`;
+  }
+
+  return null;
+}
+
 function resolveProperty(
   schemaCache,
   config,
@@ -28,7 +52,7 @@ function resolveProperty(
   // If we don't know what's required, act as if everything is.
   // Specifically this means we _don't_ make it optional.
   const isRequired = required === undefined || required.includes(propertyName);
-  const makeOptional = !isRequired && propertyDetails.default === undefined;
+  let makeOptional = !isRequired && propertyDetails.default === undefined;
 
   if (isEnum(propertyDetails)) {
     return resolveEnum(
@@ -66,6 +90,8 @@ function resolveProperty(
       readerHeaders: [`<CesiumJsonReader/IntegerJsonHandler.h>`],
       readerType: "CesiumJsonReader::IntegerJsonHandler<int64_t>",
       needsInitialization: !makeOptional,
+      isOptional: makeOptional,
+      originalType: "int64_t"
     };
   } else if (propertyDetails.type == "number") {
     return {
@@ -75,6 +101,8 @@ function resolveProperty(
       readerHeaders: [`<CesiumJsonReader/DoubleJsonHandler.h>`],
       readerType: "CesiumJsonReader::DoubleJsonHandler",
       needsInitialization: !makeOptional,
+      isOptional: makeOptional,
+      originalType: "double"
     };
   } else if (propertyDetails.type == "boolean") {
     return {
@@ -84,6 +112,8 @@ function resolveProperty(
       readerHeaders: `<CesiumJsonReader/BoolJsonHandler.h>`,
       readerType: "CesiumJsonReader::BoolJsonHandler",
       needsInitialization: ~makeOptional,
+      isOptional: makeOptional,
+      originalType: "bool"
     };
   } else if (propertyDetails.type == "string") {
     return {
@@ -92,10 +122,20 @@ function resolveProperty(
       headers: ["<string>", ...(makeOptional ? ["<optional>"] : [])],
       readerHeaders: [`<CesiumJsonReader/StringJsonHandler.h>`],
       readerType: "CesiumJsonReader::StringJsonHandler",
+      isOptional: makeOptional,
+      originalType: "std::string",
       defaultValue:
         propertyDetails.default !== undefined
           ? `"${propertyDetails.default.toString()}"`
           : undefined,
+      sizeOfFormatter: (propertyName, accumName) => {
+        if (makeOptional) {
+          return `if(${propertyName}) {
+            ${accumName} += int64_t(${propertyName}->capacity() * sizeof(char));
+          }`;
+        }
+        return `${accumName} += int64_t(${propertyName}.capacity() * sizeof(char));`;
+      },
     };
   } else if (propertyDetails.type === "object" && propertyDetails.properties) {
     // This is an anonymous, inline object definition
@@ -106,11 +146,12 @@ function resolveProperty(
       sourcePath: parentSchema.sourcePath,
     };
     const type = getNameFromTitle(config, schema.title);
+    const typeName = NameFormatters.getName(type, namespace);
     return {
       ...propertyDefaults(propertyName, cppSafeName, propertyDetails),
       type: makeOptional
-        ? `std::optional<${NameFormatters.getName(type, namespace)}>`
-        : `${NameFormatters.getName(type, namespace)}`,
+        ? `std::optional<${typeName}>`
+        : `${typeName}`,
       headers: [
         NameFormatters.getIncludeFromName(type, namespace),
         ...(makeOptional ? ["<optional>"] : []),
@@ -120,6 +161,8 @@ function resolveProperty(
         NameFormatters.getJsonHandlerIncludeFromName(type, readerNamespace),
       ],
       schemas: [schema],
+      isOptional: makeOptional,
+      originalType: typeName
     };
   } else if (
     propertyDetails.type === "object" &&
@@ -189,20 +232,37 @@ function resolveProperty(
           makeOptional
         );
       } else {
+        let propertyType = NameFormatters.getName(type, namespace);
+        let sizeOfFormatter = undefined;
+        let headers = [NameFormatters.getIncludeFromName(type, namespace)];
+        let originalType = propertyType;
+        if (config.classes[itemSchema.title] && config.classes[itemSchema.title].isAsset) {
+          propertyType = `CesiumUtility::IntrusivePointer<${propertyType}>`;
+          // An optional IntrusivePointer will just be a nullptr.
+          makeOptional = false;
+          // Because every asset needs to inherit from ExtensibleObject, we can rely on it
+          // having a getSizeBytes method.
+          sizeOfFormatter = (propertyName, accumName) => {
+            return `${accumName} += ${propertyName}->getSizeBytes();`;
+          };
+          headers.push(NameFormatters.getIncludeFromName("IntrusivePointer", "CesiumUtility"));
+        } else if (makeOptional) {
+          propertyType = `std::optional<${propertyType}>`;
+          headers.push("<optional>");
+        }
+
         return {
           ...propertyDefaults(propertyName, cppSafeName, propertyDetails),
-          type: makeOptional
-            ? `std::optional<${NameFormatters.getName(type, namespace)}>`
-            : `${NameFormatters.getName(type, namespace)}`,
-          headers: [
-            NameFormatters.getIncludeFromName(type, namespace),
-            ...(makeOptional ? ["<optional>"] : []),
-          ],
+          type: propertyType,
+          headers,
           readerType: NameFormatters.getJsonHandlerName(type, readerNamespace),
           readerHeaders: [
             NameFormatters.getJsonHandlerIncludeFromName(type, readerNamespace),
           ],
           schemas: [itemSchema],
+          isOptional: makeOptional,
+          sizeOfFormatter,
+          originalType
         };
       }
     }
@@ -255,6 +315,8 @@ function makeJsonValueProperty(
     ],
     readerType: `CesiumJsonReader::JsonObjectJsonHandler`,
     readerHeaders: [`<CesiumJsonReader/JsonObjectJsonHandler.h>`],
+    isOptional: makeOptional,
+    originalType: "CesiumUtility::JsonValue"
   };
 }
 
@@ -267,15 +329,25 @@ function toPascalCase(name) {
 }
 
 function propertyDefaults(propertyName, cppSafeName, propertyDetails) {
-  const fullDoc =
+  let fullDoc =
     propertyDetails.gltf_detailedDescription &&
-    propertyDetails.gltf_detailedDescription.indexOf(
-      propertyDetails.description
-    ) === 0
+      propertyDetails.gltf_detailedDescription.indexOf(
+        propertyDetails.description
+      ) === 0
       ? propertyDetails.gltf_detailedDescription
-          .substr(propertyDetails.description.length)
-          .trim()
+        .substr(propertyDetails.description.length)
+        .trim()
       : propertyDetails.gltf_detailedDescription;
+  let briefDoc = propertyDetails.description;
+  // Removing the description from the detailed description can have some
+  // unintended consequences, like if the difference between the two lines
+  // is as small as a single period. If it's that small, just append it to
+  // the brief.
+  if (fullDoc && fullDoc.length < 10) {
+    briefDoc += fullDoc;
+    fullDoc = null;
+  }
+
   return {
     name: propertyName,
     cppSafeName: cppSafeName,
@@ -292,7 +364,7 @@ function propertyDefaults(propertyName, cppSafeName, propertyDetails) {
     localTypes: [],
     readerLocalTypes: [],
     readerLocalTypesImpl: [],
-    briefDoc: propertyDetails.description,
+    briefDoc: briefDoc,
     fullDoc: fullDoc,
   };
 }
@@ -346,6 +418,24 @@ function resolveArray(
       ...itemProperty.readerHeaders,
     ],
     readerType: `CesiumJsonReader::ArrayJsonHandler<${itemProperty.type}, ${itemProperty.readerType}>`,
+    sizeOfFormatter: (propertyName, accumName) => {
+      if (!itemProperty.schemas || itemProperty.schemas.length == 0) {
+        return `${accumName} += int64_t(sizeof(${itemProperty.type}) * ${propertyName}.capacity());`;
+      }
+
+      // We need to change the name of the variable we're iterating with if the contents are also a vector,
+      // as it will otherwise also generate code with `value` and cause a "hides previous local declaration" error.
+      // TODO: support more than two nested loops
+      let iterName = "value";
+      if (itemProperty.type.indexOf("std::vector") == 0) {
+        iterName = "valueOuter";
+      }
+
+      return `${accumName} += int64_t(sizeof(${itemProperty.type}) * ${propertyName}.capacity());
+      for(const ${itemProperty.type}& ${iterName} : ${propertyName}) {
+        ${resolveSizeOfForProperty(itemProperty, iterName, accumName)}
+      }`;
+    }
   };
 }
 
@@ -383,7 +473,7 @@ function resolveDictionary(
   return {
     ...propertyDefaults(propertyName, cppSafeName, propertyDetails),
     name: propertyName,
-    headers: ["<unordered_map>", ...additional.headers],
+    headers: ["<unordered_map>", "<string>", ...additional.headers],
     schemas: additional.schemas,
     localTypes: additional.localTypes,
     type: `std::unordered_map<std::string, ${additional.type}>`,
@@ -392,6 +482,13 @@ function resolveDictionary(
       ...additional.readerHeaders,
     ],
     readerType: `CesiumJsonReader::DictionaryJsonHandler<${additional.type}, ${additional.readerType}>`,
+    sizeOfFormatter: (propertyName, accumName) => {
+      return `${accumName} += int64_t(${propertyName}.bucket_count() * (sizeof(std::string) + sizeof(${additional.type})));
+      for(const auto& [k, v] : ${propertyName}) {
+        ${accumName} += int64_t(k.capacity() * sizeof(char) - sizeof(std::string));
+        ${resolveSizeOfForProperty(additional, "v", accumName) || `${accumName} += int64_t(sizeof(${additional.type}));`}
+      }`;
+    }
   };
 }
 
@@ -403,9 +500,8 @@ function resolveDictionary(
  * @return {String} The comment block
  */
 function createEnumPropertyDoc(propertyValues) {
-  let propertyDoc = `/**\n * @brief Known values for ${
-    propertyValues.briefDoc || propertyValues.name
-  }\n`;
+  let propertyDoc = `/**\n * @brief Known values for ${propertyValues.briefDoc || propertyValues.name
+    }\n`;
   propertyDoc += ` */`;
   return propertyDoc;
 }
@@ -429,11 +525,11 @@ function findCommonEnumType(propertyName, enums) {
         if (element.type !== firstType) {
           console.warn(
             "Expected equal types for enum values in " +
-              propertyName +
-              ", but found " +
-              firstType +
-              " and " +
-              element.type
+            propertyName +
+            ", but found " +
+            firstType +
+            " and " +
+            element.type
           );
           return undefined;
         }
@@ -527,16 +623,17 @@ function resolveEnum(
         ${createEnumPropertyDoc(propertyDefaultValues)}
         struct ${enumName} {
             ${indent(
-              enums
-                .map((e) => createEnum(e))
-                .filter((e) => e !== undefined)
-                .join(";\n\n") + ";",
-              12
-            )}
+        enums
+          .map((e) => createEnum(e))
+          .filter((e) => e !== undefined)
+          .join(";\n\n") + ";",
+        12
+      )}
         };
       `),
     ],
     type: makeOptional ? `std::optional<${enumRuntimeType}>` : enumRuntimeType,
+    originalType: enumRuntimeType,
     headers: makeOptional ? ["<optional>"] : [],
     defaultValue: makeOptional ? undefined : enumDefaultValue,
     defaultValueWriter: makeOptional ? undefined : enumDefaultValueWriter,
@@ -551,6 +648,7 @@ function resolveEnum(
     needsInitialization: !makeOptional,
     briefDoc: enumBriefDoc,
     requiredEnum: isRequired,
+    isOptional: makeOptional,
   };
 
   if (enumType === "string") {
@@ -635,14 +733,26 @@ function createEnum(enumDetails) {
     return undefined;
   }
 
-  if (enumDetails.type === "integer") {
-    return `static constexpr int32_t ${createEnumIdentifier(
-      enumDetails
-    )} = ${enumValue}`;
+  const identifier = createEnumIdentifier(enumDetails);
+
+  const valueMatchesIdentifier = enumValue === identifier;
+  const valueMatchesDescription = !enumDetails.description || enumValue === enumDetails.description;
+
+  let description;
+  if (valueMatchesDescription) {
+    description = `\`${enumValue}\``;
+  } else if (valueMatchesIdentifier) {
+    description = enumDetails.description ?? `\`${identifier}\``;
   } else {
-    return `inline static const std::string ${createEnumIdentifier(
-      enumDetails
-    )} = \"${enumValue}\"`;
+    description = `${enumDetails.description ?? identifier} (\`${enumValue}\`)`;
+  }
+
+  const comment = `/** @brief ${description} */`;
+
+  if (enumDetails.type === "integer") {
+    return `${comment}\nstatic constexpr int32_t ${identifier} = ${enumValue}`;
+  } else {
+    return `${comment}\ninline static const std::string ${identifier} = \"${enumValue}\"`;
   }
 }
 
@@ -676,7 +786,7 @@ function createEnumReaderType(parentName, enumName, propertyName, enums) {
     public:
       ${enumName}JsonHandler() noexcept : CesiumJsonReader::JsonHandler() {}
       void reset(CesiumJsonReader::IJsonHandler* pParent, ${parentName}::${enumName}* pEnum);
-      virtual CesiumJsonReader::IJsonHandler* readString(const std::string_view& str) override;
+      CesiumJsonReader::IJsonHandler* readString(const std::string_view& str) override;
 
     private:
       ${parentName}::${enumName}* _pEnum = nullptr;
@@ -701,24 +811,25 @@ function createEnumReaderTypeImpl(parentName, enumName, propertyName, enums) {
     }
 
     CesiumJsonReader::IJsonHandler* ${parentName}JsonHandler::${enumName}JsonHandler::readString(const std::string_view& str) {
-      using namespace std::string_literals;
+      // NOLINTNEXTLINE(misc-include-cleaner)
+      using std::string_literals::operator""s;
 
       assert(this->_pEnum);
 
       ${indent(
-        enums
-          .map((e) => {
-            const enumValue = getEnumValue(e);
-            return enumValue !== undefined
-              ? `if ("${enumValue}"s == str) *this->_pEnum = ${parentName}::${enumName}::${makeIdentifier(
-                  enumValue
-                )};`
-              : undefined;
-          })
-          .filter((s) => s !== undefined)
-          .join("\nelse "),
-        6
-      )}
+    enums
+      .map((e) => {
+        const enumValue = getEnumValue(e);
+        return enumValue !== undefined
+          ? `if ("${enumValue}"s == str) *this->_pEnum = ${parentName}::${enumName}::${makeIdentifier(
+            enumValue
+          )};`
+          : undefined;
+      })
+      .filter((s) => s !== undefined)
+      .join("\nelse "),
+    6
+  )}
       else return nullptr;
 
       return this->parent();
@@ -727,7 +838,11 @@ function createEnumReaderTypeImpl(parentName, enumName, propertyName, enums) {
 }
 
 function makeNameIntoValidIdentifier(name) {
-  if (cppReservedWords.indexOf(name) >= 0) {
+  const generatorReservedWords = ["extensions", "extras", "unknownProperties"];
+  if (
+    cppReservedWords.indexOf(name) >= 0 ||
+    generatorReservedWords.indexOf(name) >= 0
+  ) {
     name += "Property";
   }
   return name;
@@ -749,4 +864,7 @@ function createAnonymousPropertyTypeTitle(parentName, propertyName) {
   return result;
 }
 
-module.exports = resolveProperty;
+module.exports = {
+  resolveProperty,
+  resolveSizeOfForProperty
+};

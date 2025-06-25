@@ -7,19 +7,19 @@
 #include <CesiumJsonReader/JsonReader.h>
 #include <CesiumJsonReader/JsonReaderOptions.h>
 
-#include <gsl/span>
 #include <rapidjson/fwd.h>
 
+#include <span>
 #include <vector>
 
 namespace CesiumGltf {
 struct Asset;
-}
+} // namespace CesiumGltf
 
 namespace CesiumGltfReader {
 
 /**
- * @brief Reads {@link Asset} instances from JSON.
+ * @brief Reads \ref CesiumGltf::Asset "Asset" instances from JSON.
  */
 class CESIUMGLTFREADER_API AssetReader {
 public:
@@ -45,12 +45,12 @@ public:
    * @return The result of reading the instance.
    */
   CesiumJsonReader::ReadJsonResult<CesiumGltf::Asset>
-  readFromJson(const gsl::span<const std::byte>& data) const;
+  readFromJson(const std::span<const std::byte>& data) const;
 
   /**
    * @brief Reads an instance of Asset from a rapidJson::Value.
    *
-   * @param data The buffer from which to read the instance.
+   * @param value The value from which to read the instance.
    * @return The result of reading the instance.
    */
   CesiumJsonReader::ReadJsonResult<CesiumGltf::Asset>
@@ -59,7 +59,7 @@ public:
   /**
    * @brief Reads an array of instances of Asset from a rapidJson::Value.
    *
-   * @param data The buffer from which to read the array of instances.
+   * @param value The value from which to read the array of instances.
    * @return The result of reading the array of instances.
    */
   CesiumJsonReader::ReadJsonResult<std::vector<CesiumGltf::Asset>>

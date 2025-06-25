@@ -11,6 +11,12 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "Components/HierarchicalInstancedStaticMeshComponent.h"
+#include <UObject/StrongObjectPtr.h>
+
+#include <ITwinRuntime/Private/Compil/BeforeNonUnrealIncludes.h>
+#	include <SDK/Core/Tools/Tools.h>
+#	include <SDK/Core/Visualization/Instance.h>
+#include <ITwinRuntime/Private/Compil/AfterNonUnrealIncludes.h>
 
 #include <memory>
 #include <string>
@@ -26,14 +32,15 @@ enum class EITwinInstantiatedObjectType : uint8
 	Other = 4
 };
 
-namespace SDK::Core
+namespace AdvViz::SDK
 {
 	class IInstancesManager;
 	class IInstancesGroup;
+	class RefID;
 }
 
 UCLASS()
-class ITWINRUNTIME_API AITwinPopulation : public AActor
+class ITWINRUNTIME_API AITwinPopulation : public AActor, public AdvViz::SDK::Tools::ExtensionSupport
 {
 	GENERATED_BODY()
 	
@@ -42,7 +49,9 @@ public:
 
 	void InitFoliageMeshComponent();
 
-	FTransform GetInstanceTransform(int32 instanceIndex) const; 
+	FTransform GetInstanceTransform(int32 instanceIndex) const;
+	void SetInstanceTransformUEOnly(int32 instanceIndex, const FTransform& tm);
+
 	void SetInstanceTransform(int32 instanceIndex, const FTransform& tm);
 
 	FVector GetInstanceColorVariation(int32 instanceIndex) const;
@@ -63,48 +72,78 @@ public:
 	void RemoveInstance(int32 instanceIndex);
 	void RemoveInstances(const TArray<int32>& instanceIndices);
 
-	void UpdateInstancesFromSDKCoreToUE();
+	//! Remove all instances belonging to this population, and invalidates the decoration for saving.
+	UFUNCTION(Category = "iTwin",
+		CallInEditor,
+		BlueprintCallable)
+	void RemoveAllInstances();
 
-	void SetInstancesManager(std::shared_ptr<SDK::Core::IInstancesManager>& instManager);
-	void SetInstancesGroup(std::shared_ptr<SDK::Core::IInstancesGroup>& instGroup);
+	void UpdateInstancesFromAVizToUE();
+
+	std::shared_ptr<AdvViz::SDK::IInstancesManager>& GetInstanceManager();
+	void SetInstancesManager(std::shared_ptr<AdvViz::SDK::IInstancesManager>& instManager);
+	std::shared_ptr<AdvViz::SDK::IInstancesGroup>& GetInstancesGroup();
+	void SetInstancesGroup(std::shared_ptr<AdvViz::SDK::IInstancesGroup>& instGroup);
 	void SetObjectRef(const std::string& objRef);
 	const std::string& GetObjectRef() const;
+	const AdvViz::SDK::RefID& GetInstanceGroupId() const;
 	
 	bool IsRotationVariationEnabled() const;
 	bool IsScaleVariationEnabled() const;
 	bool IsPerpendicularToSurface() const;
 
-	TWeakObjectPtr<UStaticMesh> mesh;
-	TWeakObjectPtr<UHierarchicalInstancedStaticMeshComponent> meshComp;
+	static FVector GetRandomColorShift(const EITwinInstantiatedObjectType& type);
 
 	UPROPERTY(Category = "iTwin", EditAnywhere)
-	int32 initialNumberOfInstances = 0;
+	TObjectPtr<UStaticMesh> mesh;
 
 	UPROPERTY(Category = "iTwin", EditAnywhere)
-	int32 squareSideLength = 1;
+	TObjectPtr<UHierarchicalInstancedStaticMeshComponent> meshComp;
 
-	FVector squareCenter = FVector::Zero();
+	UPROPERTY(Category = "iTwin", EditAnywhere)
+	int32 InitialNumberOfInstances = 0;
 
-	FTransform baseTransform = FTransform::Identity;
+	UPROPERTY(Category = "iTwin", EditAnywhere)
+	int32 SquareSideLength = 1;
 
+	UPROPERTY(EditAnywhere, Transient, Category = "Debug")
+	bool bDisplayInfo = false;
 
+	UPROPERTY(Category = "iTwin", EditAnywhere)
+	FVector SquareCenter = FVector::Zero();
 
+	UPROPERTY(Category = "iTwin", EditAnywhere)
+	FTransform BaseTransform = FTransform::Identity;
 
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
-
+	void Tick(float DeltaTime) override;
 	void AddInstances(int32 numInst);
 	void RemoveInstances(int32 numInst);
 
-
-
-
-private:
+protected:
 	struct FImpl;
 	TPimplPtr<FImpl> Impl;
 
 	std::string objectRef; // reference (url, id...) of the instantiated object
 
 	EITwinInstantiatedObjectType objectType = EITwinInstantiatedObjectType::Other;
+};
+
+class FITwinInstance : public AdvViz::SDK::Instance, AdvViz::SDK::Tools::TypeId<FITwinInstance>
+{
+public:
+	FITwinInstance();
+
+	AdvViz::expected<void, std::string> Update() override;
+
+	using AdvViz::SDK::Tools::TypeId<FITwinInstance>::GetTypeId;
+	std::uint64_t GetDynTypeId() const override { return GetTypeId(); }
+	bool IsTypeOf(std::uint64_t i) const override { return (i == GetTypeId()) || AdvViz::SDK::Instance::IsTypeOf(i); }
+
+	TWeakObjectPtr<AITwinPopulation> population_;
+	static const std::uint32_t NotSet = std::numeric_limits<std::uint32_t>::max();
+	std::uint32_t instanceIndex_ = NotSet;
+	std::optional<FVector> previousColor_;
 };

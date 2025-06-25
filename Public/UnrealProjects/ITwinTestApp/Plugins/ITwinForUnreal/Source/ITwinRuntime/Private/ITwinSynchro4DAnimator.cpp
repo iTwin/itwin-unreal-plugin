@@ -7,6 +7,8 @@
 +--------------------------------------------------------------------------------------*/
 
 #include <ITwinSynchro4DAnimator.h>
+#include <ITwinDynamicShadingProperty.h>
+#include <ITwinDynamicShadingProperty.inl>
 #include <ITwinSynchro4DSchedules.h>
 #include <ITwinSynchro4DSchedulesInternals.h>
 #include <ITwinIModel.h>
@@ -37,6 +39,7 @@ public:
 	FITwinIModelInternals& Internals;
 	std::function<FBox(FElementsGroup const&)> const GroupBBoxGetter;
 	std::function<FBox const& (ITwinElementID const&)> const BBoxGetter;
+	bool const bUseGltfTunerInsteadOfMeshExtr;
 
 	FIModelInvariants(AITwinIModel& IModel)
 		: Internals(GetInternals(IModel))
@@ -44,6 +47,7 @@ public:
 																			std::placeholders::_1))
 		, BBoxGetter(std::bind(&FITwinSceneMapping::GetBoundingBox, &Internals.SceneMapping,
 																	std::placeholders::_1))
+		, bUseGltfTunerInsteadOfMeshExtr(IModel.Synchro4DSchedules->bUseGltfTunerInsteadOfMeshExtraction)
 	{
 	}
 };
@@ -98,7 +102,7 @@ FITwinSynchro4DAnimator::FITwinSynchro4DAnimator(UITwinSynchro4DSchedules& InOwn
 void FITwinSynchro4DAnimator::TickAnimation(float DeltaTime, bool const bForceUpdateAll)
 {
 	auto&& SchedInternals = GetInternals(Owner);
-	if (SchedInternals.PrefetchAllElementAnimationBindings()
+	if (SchedInternals.PrefetchWholeSchedule()
 		&& !SchedInternals.IsPrefetchedAvailableAndApplied())
 	{
 		ensure(false); return;
@@ -135,6 +139,11 @@ void FITwinSynchro4DAnimator::Play()
 	}
 }
 
+bool FITwinSynchro4DAnimator::IsPlaying() const
+{
+	return Impl->bIsPlaying;
+}
+
 void FITwinSynchro4DAnimator::Pause()
 {
 	if (Impl->bIsPlaying)
@@ -149,7 +158,7 @@ void FITwinSynchro4DAnimator::Pause()
 void FITwinSynchro4DAnimator::Stop()
 {
 	auto&& SchedInternals = GetInternals(Owner);
-	if (SchedInternals.PrefetchAllElementAnimationBindings()
+	if (SchedInternals.PrefetchWholeSchedule()
 		&& !SchedInternals.IsPrefetchedAvailableAndApplied())
 	{
 		return;
@@ -166,6 +175,11 @@ void FITwinSynchro4DAnimator::Stop()
 	}
 }
 
+void FITwinSynchro4DAnimator::DisableAnimationInTile(FITwinSceneTile& SceneTile)
+{
+	Impl->StopAnimationInTiles(&SceneTile);
+}
+
 void FITwinSynchro4DAnimator::FImpl::StopAnimationInTiles(FITwinSceneTile* OnlyThisTile/*= nullptr*/)
 {
 	auto* IModel = Cast<AITwinIModel>(Owner.Owner.GetOwner());
@@ -173,15 +187,18 @@ void FITwinSynchro4DAnimator::FImpl::StopAnimationInTiles(FITwinSceneTile* OnlyT
 		return;
 	auto&& SchedInternals = GetInternals(Owner.Owner);
 	auto const& NonAnimatedDuplicates = SchedInternals.GetTimeline().GetNonAnimatedDuplicates();
-	auto const& StopAnimForTile = [&SchedInternals, &NonAnimatedDuplicates](FITwinSceneTile& SceneTile)
+	bool const bResetForcedOpa = !Owner.Owner.bUseGltfTunerInsteadOfMeshExtraction;
+	auto const& StopAnimForTile = [&SchedInternals, &NonAnimatedDuplicates, bResetForcedOpa]
+		(FITwinSceneTile& SceneTile)
 		{
 			if (SceneTile.HighlightsAndOpacities)
 				SceneTile.HighlightsAndOpacities->FillWith(S4D_MAT_BGRA_DISABLED(255));
 			if (SceneTile.CuttingPlanes)
 				SceneTile.CuttingPlanes->FillWith(S4D_CLIPPING_DISABLED);
-			SceneTile.ForEachExtractedEntity([](FITwinExtractedEntity& Extracted)
+			SceneTile.ForEachExtractedEntity([bResetForcedOpa](FITwinExtractedEntity& Extracted)
 				{
-					Extracted.SetForcedOpacity(1.f);
+					if (bResetForcedOpa)
+						Extracted.SetForcedOpacity(1.f);
 					if (Extracted.MeshComponent.IsValid())
 						Extracted.MeshComponent->SetWorldTransform(Extracted.OriginalTransform, false,
 							nullptr, ETeleportType::TeleportPhysics);
@@ -196,17 +213,6 @@ void FITwinSynchro4DAnimator::FImpl::StopAnimationInTiles(FITwinSceneTile* OnlyT
 	IModelInternals.SceneMapping.Update4DAnimTextures();
 }
 
-void FITwinSynchro4DAnimator::OnChangedScheduleTime(bool const bForceUpdateAll)
-{
-	auto&& SchedInternals = GetInternals(Owner);
-	if (SchedInternals.PrefetchAllElementAnimationBindings()
-		&& !SchedInternals.IsPrefetchedAvailableAndApplied())
-	{
-		return;
-	}
-	TickAnimation(0.f, bForceUpdateAll);
-}
-
 void FITwinSynchro4DAnimator::OnChangedAnimationSpeed()
 {
 	/*no-op*/
@@ -215,7 +221,7 @@ void FITwinSynchro4DAnimator::OnChangedAnimationSpeed()
 void FITwinSynchro4DAnimator::OnChangedScheduleRenderSetting()
 {
 	auto&& SchedInternals = GetInternals(Owner);
-	if (SchedInternals.PrefetchAllElementAnimationBindings()
+	if (SchedInternals.PrefetchWholeSchedule()
 		&& !SchedInternals.IsPrefetchedAvailableAndApplied())
 	{
 		return;
@@ -232,7 +238,7 @@ void FITwinSynchro4DAnimator::OnMaskOutNonAnimatedElements()
 void FITwinSynchro4DAnimator::OnFadeOutNonAnimatedElements()
 {
 	auto&& SchedInternals = GetInternals(Owner);
-	if (SchedInternals.PrefetchAllElementAnimationBindings()
+	if (SchedInternals.PrefetchWholeSchedule()
 		&& !SchedInternals.IsPrefetchedAvailableAndApplied())
 	{
 		return;
@@ -252,7 +258,8 @@ void FITwinSynchro4DAnimator::OnFadeOutNonAnimatedElements()
 	auto const& NonAnimatedDuplicates = Timeline.GetNonAnimatedDuplicates();
 	IModelInternals.SceneMapping.ForEachKnownTile(
 		[&IModelInternals, &FillColor, &SchedInternals, &NonAnimatedDuplicates,
-			bNeedHideNonAnimDupl = (!Owner.bMaskOutNonAnimatedElements)]
+			bNeedHideNonAnimDupl = (!Owner.bMaskOutNonAnimatedElements),
+			bUseGltfTunerInsteadOfMeshExtraction = Owner.bUseGltfTunerInsteadOfMeshExtraction]
 		(FITwinSceneTile& SceneTile)
 	{
 		bool bJustCreatedOpaTex = false;
@@ -277,15 +284,18 @@ void FITwinSynchro4DAnimator::OnFadeOutNonAnimatedElements()
 		// SceneTile.ExtractedElements share the textures: just set opacity (ExtractedElements may soon
 		// originate from material mapping, and not just scheduling? Hence not even testing
 		// HighlightsAndOpacities here)
-		SceneTile.ForEachExtractedEntity(
-			[&IModelInternals, &FillColor, &SceneTile](FITwinExtractedEntity& ExtractedElement)
-			{
-				if (IModelInternals.SceneMapping.ElementForSLOW(ExtractedElement.ElementID)
-					.AnimationKeys.empty())
+		if (!bUseGltfTunerInsteadOfMeshExtraction)
+		{
+			SceneTile.ForEachExtractedEntity(
+				[&IModelInternals, &FillColor, &SceneTile](FITwinExtractedEntity& ExtractedElement)
 				{
-					ExtractedElement.SetForcedOpacity(FillColor[3] / 255.f);
-				}
-			});
+					if (IModelInternals.SceneMapping.ElementForSLOW(ExtractedElement.ElementID)
+						.AnimationKeys.empty())
+					{
+						ExtractedElement.SetForcedOpacity(FillColor[3] / 255.f);
+					}
+				});
+		}
 		if (bNeedHideNonAnimDupl)
 			SchedInternals.HideNonAnimatedDuplicates(SceneTile, NonAnimatedDuplicates);
 	});
@@ -403,15 +413,22 @@ namespace Detail
 	{
 		if (!ExtractedEntity.IsValid()) // checks both Material and MeshComponent
 			return;
-		ExtractedEntity.SetHidden(State.bFullyHidden);
+		// Tuned meshes can contain both visible and hidden Elements!
+		if (!State.IModelInvariants.bUseGltfTunerInsteadOfMeshExtr)
+			ExtractedEntity.SetHidden(State.bFullyHidden);
 		if (State.bFullyHidden)
 			return;
 
-		// Note: color and cutting plane need no processing here, as long as the extracted elements
-		// use the same material and textures as the batched meshes. Alpha must be set on the material
-		// parameter that is used to override the texture look-up for extracted elements, though:
-		//State.EnsureBGRA(); NOT needed, the single float value is exactly what we need!
-		ExtractedEntity.SetForcedOpacity(State.Props.Visibility.value_or(1.f).Value);
+		// Tuned meshes can contain Elements of varied translucencies, in fact all translucent,
+		// non-3D-transformed meshes may be merged together
+		if (!State.IModelInvariants.bUseGltfTunerInsteadOfMeshExtr)
+		{
+			// Note: color and cutting plane need no processing here, as long as the extracted elements
+			// use the same material and textures as the batched meshes. Alpha must be set on the material
+			// parameter that is used to override the texture look-up for extracted elements, though:
+			//State.EnsureBGRA(); NOT needed, the single float value is exactly what we need!
+			ExtractedEntity.SetForcedOpacity(State.Props.Visibility.value_or(1.f).Value);
+		}
 	#if SYNCHRO4D_ENABLE_TRANSFORMATIONS()
 		if (State.Props.Transform)
 		{
@@ -429,8 +446,11 @@ namespace Detail
 															 false, nullptr, ETeleportType::TeleportPhysics);
 		}
 	#endif // SYNCHRO4D_ENABLE_TRANSFORMATIONS()
-		FITwinSceneMapping::SetupHighlightsOpacities(SceneTile, ExtractedEntity);
-		FITwinSceneMapping::SetupCuttingPlanes(SceneTile, ExtractedEntity);
+		if (!State.IModelInvariants.bUseGltfTunerInsteadOfMeshExtr)
+		{
+			FITwinSceneMapping::SetupHighlightsOpacities(SceneTile, ExtractedEntity);
+			FITwinSceneMapping::SetupCuttingPlanes(SceneTile, ExtractedEntity);
+		}
 	}
 
 	static void UpdateBatchedElement(FStateToApply& State, FITwinSceneTile& SceneTile,
@@ -489,7 +509,7 @@ void FITwinSynchro4DAnimator::FImpl::ApplyAnimation(bool const bForceUpdateAll)
 {
 	auto const& Schedules = Owner.Owner;
 	auto&& SchedInternals = GetInternals(Schedules);
-	if (SchedInternals.PrefetchAllElementAnimationBindings()
+	if (SchedInternals.PrefetchWholeSchedule()
 		&& !SchedInternals.IsPrefetchedAvailableAndApplied())
 	{
 		ensure(false); return;
@@ -550,9 +570,13 @@ void FITwinSynchro4DAnimator::FImpl::ApplyAnimation(bool const bForceUpdateAll)
 		bNeedUpdateAll = true;
 	if (!bNeedUpdateAll)
 		TimeIncrement.emplace(std::minmax(*LastAnimationTime, AnimationTime));
-	//if (!DebugElem) DebugElem.emplace(94557999988851ULL);
-	//if (!DebugElem) DebugElem.emplace();
-	//*DebugElem = IModelInvariants->Internals.SceneMapping.GetSelectedElement();
+	if (Owner.Owner.bDebugSelectedElemAnim)
+	{
+		if (!DebugElem) DebugElem.emplace();
+		*DebugElem = IModelInvariants->Internals.SceneMapping.GetSelectedElement();
+		if (ITwin::NOT_ELEMENT == (*DebugElem))
+			DebugElem.reset();
+	}
 	auto&& AllTimelines = Timeline.GetContainer();
 	size_t const FirstTimelineUpdated = NextTimelineToUpdate;
 	size_t const NumberOfTimelines = AllTimelines.size();
@@ -666,7 +690,10 @@ void FITwinSynchro4DAnimator::FImpl::ApplyTimeline(FITwinElementTimeline& Timeli
 				StateToApply.bFullyHidden = true;
 			else if (State.Visibility->Value < ::Detail::OpaqueAboveAlpha)
 			{
-				bNeedTranslucentMat = true;
+				if (Schedules.bDisablePartialVisibilities) [[unlikely]]
+					State.Visibility.reset();
+				else
+					bNeedTranslucentMat = true;
 			}
 		}
 	}
@@ -686,7 +713,7 @@ void FITwinSynchro4DAnimator::FImpl::ApplyTimeline(FITwinElementTimeline& Timeli
 	}
 	FTimelineToScene* TimelineOptim = static_cast<FTimelineToScene*>(Timeline.ExtraData);
 	bool const bStateToApplyNeedsExtraction = (bNeedTranslucentMat || bNeedTransformable);
-	if (bStateToApplyNeedsExtraction)
+	if (bStateToApplyNeedsExtraction && !Schedules.bUseGltfTunerInsteadOfMeshExtraction)
 	{
 		IModelInvariants->Internals.SceneMapping.CheckAndExtractElements(*TimelineOptim, bOnlyVisibleTiles,
 																		 OnlySceneTile);
@@ -711,17 +738,21 @@ void FITwinSynchro4DAnimator::FImpl::ApplyTimeline(FITwinElementTimeline& Timeli
 		}
 		else if (EGrowthStatus::FullyRemoved == State.ClippingPlane->DefrdPlaneEq.GrowthStatus)
 		{
-			StateToApply.bFullyHidden = true;
+			if (Schedules.bDisableVisibilities) [[unlikely]]
+				State.ClippingPlane.reset();
+			else
+				StateToApply.bFullyHidden = true;
 		}
 	}
-	//auto const& TimelineElems = Timeline.GetIModelElements();
-	//if (DebugElem && TimelineElems.find(*DebugElem) != TimelineElems.end())
-	//{
-	//	UE_LOG(LogITwin, Display, TEXT("ANIM %s CLR %d VIZ %.2f CUT %d TRSF %d"),
-	//		*ITwin::ToString(*DebugElem), State.Color ? 1 : 0,
-	//		State.Visibility ? State.Visibility->Value : 1.f,
-	//		State.ClippingPlane ? 1 : 0, State.Transform ? 1 : 0);
-	//}
+	auto const& TimelineElems = Timeline.GetIModelElements();
+	if (Owner.Owner.bDebugSelectedElemAnim && DebugElem
+		&& TimelineElems.find(*DebugElem) != TimelineElems.end())
+	{
+		UE_LOG(LogITwin, Display, TEXT("ANIM %s CLR %d VIZ %.2f CUT %d TRSF %d"),
+			*ITwin::ToString(*DebugElem), State.Color ? 1 : 0,
+			State.Visibility ? State.Visibility->Value : 1.f,
+			State.ClippingPlane ? 1 : 0, State.Transform ? 1 : 0);
+	}
 	for (auto&& TileOptim : TimelineOptim->Tiles)
 	{
 		if (OnlySceneTile && (*OnlySceneTile) != TileOptim.Rank)
@@ -735,25 +766,23 @@ void FITwinSynchro4DAnimator::FImpl::ApplyTimeline(FITwinElementTimeline& Timeli
 		//if (SceneTile.Need4DAnimTexturesSetupInMaterials()) continue;
 		auto const Start = TimelineOptim->TileElems.begin() + TileOptim.FirstElement;
 		auto const End = Start + TileOptim.NbOfElements;
-		bool const bHasExtractions =
-			/*bStateToApplyNeedsExtraction <== no, update already extracted entities!!
-			&&*/ (NO_EXTRACTION != TileOptim.FirstExtract);
-		auto const ExtrStart = bHasExtractions
-			? (TimelineOptim->Extracts.begin() + TileOptim.FirstExtract)
-			: TimelineOptim->Extracts.end();
-		auto const ExtrEnd = bHasExtractions ? (ExtrStart + TileOptim.NbOfElements)
-												: TimelineOptim->Extracts.end();
-		auto ExtrIt = ExtrStart;
 		for (auto It = Start; It != End; ++It)
 		{
 			FITwinElementFeaturesInTile& ElementInTile = SceneTile.ElementFeatures(*It);
 			::Detail::UpdateBatchedElement(StateToApply, SceneTile, ElementInTile);
-			if (bHasExtractions)
+		}
+		bool const bHasExtractions =
+			/*bStateToApplyNeedsExtraction <== no, update already extracted entities!!
+			&&*/ (NO_EXTRACTION != TileOptim.FirstExtract);
+		if (bHasExtractions)
+		{
+			auto const ExtrStart = TimelineOptim->Extracts.begin() + TileOptim.FirstExtract;
+			auto const ExtrEnd = ExtrStart + TileOptim.NbOfExtracts;
+			for (auto ExtrIt = ExtrStart; ExtrIt != ExtrEnd; ++ExtrIt)
 			{
 				FITwinExtractedElement& ExtractedElem = SceneTile.ExtractedElement(*ExtrIt);
 				for (auto&& ExtractedEntity : ExtractedElem.Entities)
 					::Detail::UpdateExtractedElement(StateToApply, SceneTile, ExtractedEntity);
-				++ExtrIt;
 			}
 		}
 	}
@@ -774,7 +803,7 @@ void FITwinSynchro4DAnimator::ApplyAnimationOnTile(FITwinSceneTile& SceneTile)
 		Impl->StopAnimationInTiles(&SceneTile);
 		return;
 	}
-	if (SchedInternals.PrefetchAllElementAnimationBindings()
+	if (SchedInternals.PrefetchWholeSchedule()
 		&& !SchedInternals.IsPrefetchedAvailableAndApplied())
 	{
 		return;

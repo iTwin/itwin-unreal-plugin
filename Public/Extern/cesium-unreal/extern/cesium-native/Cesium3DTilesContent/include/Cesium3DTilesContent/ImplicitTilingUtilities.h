@@ -2,6 +2,7 @@
 
 #include <CesiumGeometry/OctreeTileID.h>
 #include <CesiumGeometry/QuadtreeTileID.h>
+#include <CesiumGeospatial/Ellipsoid.h>
 
 #include <array>
 #include <iterator>
@@ -14,6 +15,11 @@ class S2CellBoundingVolume;
 
 namespace CesiumGeometry {
 class OrientedBoundingBox;
+class BoundingCylinderRegion;
+} // namespace CesiumGeometry
+
+namespace Cesium3DTiles {
+struct BoundingVolume;
 }
 
 namespace Cesium3DTilesContent {
@@ -24,40 +30,97 @@ namespace Cesium3DTilesContent {
  */
 class QuadtreeChildren {
 public:
+  /**
+   * @brief An STL-compatible iterator over the children of a quadtree tile.
+   */
   class iterator {
   public:
+    /**
+     * @brief The iterator category tag denoting this is a forward iterator.
+     */
     using iterator_category = std::forward_iterator_tag;
+    /**
+     * @brief The type of value that is being iterated over.
+     */
     using value_type = CesiumGeometry::QuadtreeTileID;
+    /**
+     * @brief The type used to identify distance between iterators.
+     *
+     * This is `void` as the distance between two QuadtreeTileIDs isn't
+     * particularly useful.
+     */
     using difference_type = void;
+    /**
+     * @brief A pointer to the type being iterated over.
+     */
     using pointer = CesiumGeometry::QuadtreeTileID*;
+    /**
+     * @brief A reference to the type being iterated over.
+     */
     using reference = CesiumGeometry::QuadtreeTileID&;
 
+    /**
+     * @brief Creates a new iterator over the children of a quadtree tile.
+     *
+     * @param parentTileID The \ref CesiumGeometry::QuadtreeTileID of the parent
+     * tile whose children will be iterated over.
+     * @param isEnd If true, this iterator will start at the end of the data
+     * it's iterating over.
+     */
     explicit iterator(
         const CesiumGeometry::QuadtreeTileID& parentTileID,
-        bool isFirst) noexcept;
+        bool isEnd) noexcept;
 
+    /**
+     * @brief Returns a reference to the current \ref
+     * CesiumGeometry::QuadtreeTileID being iterated.
+     */
     const CesiumGeometry::QuadtreeTileID& operator*() const {
       return this->_current;
     }
+    /**
+     * @brief Returns a pointer to the current \ref
+     * CesiumGeometry::QuadtreeTileID being iterated.
+     */
     const CesiumGeometry::QuadtreeTileID* operator->() const {
       return &this->_current;
     }
+    /**
+     * @brief Advances the iterator to the next child.
+     */
     iterator& operator++();
+    /**
+     * @brief Advances the iterator to the next child.
+     */
     iterator operator++(int);
 
+    /** @brief Checks if two iterators are at the same child. */
     bool operator==(const iterator& rhs) const noexcept;
+    /** @brief Checks if two iterators are NOT at the same child. */
     bool operator!=(const iterator& rhs) const noexcept;
 
   private:
     CesiumGeometry::QuadtreeTileID _current;
   };
 
+  /** @brief A const equivalent to `iterator`. */
   using const_iterator = iterator;
 
+  /**
+   * @brief Creates a \ref QuadtreeChildren instance from the provided parent
+   * tile.
+   */
   QuadtreeChildren(const CesiumGeometry::QuadtreeTileID& tileID) noexcept
       : _tileID(tileID) {}
+
+  /** @brief Returns an iterator starting at the first child. */
   iterator begin() const noexcept;
+  /** @brief Returns an iterator starting at the last child. */
   iterator end() const noexcept;
+  /**
+   * @brief Returns the total number of \ref CesiumGeometry::QuadtreeTileID
+   * children for this tile, which will always be four.
+   */
   constexpr int64_t size() const noexcept { return 4; }
 
 private:
@@ -70,40 +133,96 @@ private:
  */
 class OctreeChildren {
 public:
+  /**
+   * @brief An STL-compatible iterator over the children of an octree tile.
+   */
   class iterator {
   public:
+    /**
+     * @brief The iterator category tag denoting this is a forward iterator.
+     */
     using iterator_category = std::forward_iterator_tag;
+    /**
+     * @brief The type of value that is being iterated over.
+     */
     using value_type = CesiumGeometry::OctreeTileID;
+    /**
+     * @brief The type used to identify distance between iterators.
+     *
+     * This is `void` as the distance between two OctreeTileIDs isn't
+     * particularly useful.
+     */
     using difference_type = void;
+    /**
+     * @brief A pointer to the type being iterated over.
+     */
     using pointer = CesiumGeometry::OctreeTileID*;
+    /**
+     * @brief A reference to the type being iterated over.
+     */
     using reference = CesiumGeometry::OctreeTileID&;
 
+    /**
+     * @brief Creates a new iterator over the children of a octree tile.
+     *
+     * @param parentTileID The \ref CesiumGeometry::OctreeTileID of the parent
+     * tile whose children will be iterated over.
+     * @param isEnd If true, this iterator will start at the end of the data
+     * it's iterating over.
+     */
     explicit iterator(
         const CesiumGeometry::OctreeTileID& parentTileID,
-        bool isFirst) noexcept;
+        bool isEnd) noexcept;
 
+    /**
+     * @brief Returns a reference to the current \ref
+     * CesiumGeometry::OctreeTileID being iterated.
+     */
     const CesiumGeometry::OctreeTileID& operator*() const {
       return this->_current;
     }
+    /**
+     * @brief Returns a pointer to the current \ref
+     * CesiumGeometry::OctreeTileID being iterated.
+     */
     const CesiumGeometry::OctreeTileID* operator->() const {
       return &this->_current;
     }
+    /**
+     * @brief Advances the iterator to the next child.
+     */
     iterator& operator++();
+    /**
+     * @brief Advances the iterator to the next child.
+     */
     iterator operator++(int);
 
+    /** @brief Checks if two iterators are at the same child. */
     bool operator==(const iterator& rhs) const noexcept;
+    /** @brief Checks if two iterators are NOT at the same child. */
     bool operator!=(const iterator& rhs) const noexcept;
 
   private:
     CesiumGeometry::OctreeTileID _current;
   };
 
+  /** @brief A const equivalent to `iterator`. */
   using const_iterator = iterator;
 
+  /**
+   * @brief Creates a \ref OctreeChildren instance from the provided parent
+   * tile.
+   */
   OctreeChildren(const CesiumGeometry::OctreeTileID& tileID) noexcept
       : _tileID(tileID) {}
+  /** @brief Returns an iterator starting at the first child. */
   iterator begin() const noexcept;
+  /** @brief Returns an iterator starting at the last child. */
   iterator end() const noexcept;
+  /**
+   * @brief Returns the total number of \ref CesiumGeometry::OctreeTileID
+   * children for this tile, which will always be eight.
+   */
   constexpr int64_t size() const noexcept { return 8; }
 
 private:
@@ -193,7 +312,7 @@ public:
    * @brief Computes the relative Morton index for a given octree tile within
    * its level of a subtree rooted at the tile with the given octree ID.
    *
-   * @param subtreeID The ID of the subtree the contains the tile.
+   * @param subtreeRootID The ID of the subtree the contains the tile.
    * @param tileID The ID of the tile.
    * @return The relative Morton index.
    */
@@ -289,15 +408,48 @@ public:
 
   /**
    * @brief Computes the bounding volume for an implicit quadtree tile with the
+   * given ID as a {@link Cesium3DTiles::BoundingVolume}.
+   *
+   * @param rootBoundingVolume The bounding volume of the root tile.
+   * @param tileID The tile ID for which to compute the bounding volume.
+   * @param ellipsoid The ellipsoid to use for this calculation.
+   * @return The bounding volume for the given implicit tile.
+   */
+  static Cesium3DTiles::BoundingVolume computeBoundingVolume(
+      const Cesium3DTiles::BoundingVolume& rootBoundingVolume,
+      const CesiumGeometry::QuadtreeTileID& tileID,
+      const CesiumGeospatial::Ellipsoid& ellipsoid
+          CESIUM_DEFAULT_ELLIPSOID) noexcept;
+
+  /**
+   * @brief Computes the bounding volume for an implicit octree tile with the
+   * given ID as a {@link Cesium3DTiles::BoundingVolume}.
+   *
+   * @param rootBoundingVolume The bounding volume of the root tile.
+   * @param tileID The tile ID for which to compute the bounding volume.
+   * @param ellipsoid The ellipsoid to use for this calculation.
+   * @return The bounding volume for the given implicit tile.
+   */
+  static Cesium3DTiles::BoundingVolume computeBoundingVolume(
+      const Cesium3DTiles::BoundingVolume& rootBoundingVolume,
+      const CesiumGeometry::OctreeTileID& tileID,
+      const CesiumGeospatial::Ellipsoid& ellipsoid
+          CESIUM_DEFAULT_ELLIPSOID) noexcept;
+
+  /**
+   * @brief Computes the bounding volume for an implicit quadtree tile with the
    * given ID as a bounding region.
    *
    * @param rootBoundingVolume The bounding region of the root tile.
    * @param tileID The tile ID for which to compute the bounding region.
+   * @param ellipsoid The ellipsoid to use for this calculation.
    * @return The bounding region for the given implicit tile.
    */
   static CesiumGeospatial::BoundingRegion computeBoundingVolume(
       const CesiumGeospatial::BoundingRegion& rootBoundingVolume,
-      const CesiumGeometry::QuadtreeTileID& tileID) noexcept;
+      const CesiumGeometry::QuadtreeTileID& tileID,
+      const CesiumGeospatial::Ellipsoid& ellipsoid
+          CESIUM_DEFAULT_ELLIPSOID) noexcept;
 
   /**
    * @brief Computes the bounding volume for an implicit octree tile with the
@@ -305,11 +457,14 @@ public:
    *
    * @param rootBoundingVolume The bounding region of the root tile.
    * @param tileID The tile ID for which to compute the bounding region.
+   * @param ellipsoid The ellipsoid to use for this calculation.
    * @return The bounding region for the given implicit tile.
    */
   static CesiumGeospatial::BoundingRegion computeBoundingVolume(
       const CesiumGeospatial::BoundingRegion& rootBoundingVolume,
-      const CesiumGeometry::OctreeTileID& tileID) noexcept;
+      const CesiumGeometry::OctreeTileID& tileID,
+      const CesiumGeospatial::Ellipsoid& ellipsoid
+          CESIUM_DEFAULT_ELLIPSOID) noexcept;
 
   /**
    * @brief Computes the bounding volume for an implicit quadtree tile
@@ -341,11 +496,53 @@ public:
    *
    * @param rootBoundingVolume The S2 cell bounding volume of the root tile.
    * @param tileID The tile ID for which to compute the S2 cell bounding volume.
+   * @param ellipsoid The ellipsoid to use for this calculation.
    * @return The S2 cell bounding volume for the given implicit tile.
    */
   static CesiumGeospatial::S2CellBoundingVolume computeBoundingVolume(
       const CesiumGeospatial::S2CellBoundingVolume& rootBoundingVolume,
+      const CesiumGeometry::QuadtreeTileID& tileID,
+      const CesiumGeospatial::Ellipsoid& ellipsoid
+          CESIUM_DEFAULT_ELLIPSOID) noexcept;
+
+  /**
+   * @brief Computes the bounding volume for an implicit octree tile
+   * with the given ID as an S2 cell bounding volume.
+   *
+   * @param rootBoundingVolume The S2 cell bounding volume of the root tile.
+   * @param tileID The tile ID for which to compute the S2 cell bounding volume.
+   * @param ellipsoid The ellipsoid to use for this calculation.
+   * @return The S2 cell bounding volume for the given implicit tile.
+   */
+  static CesiumGeospatial::S2CellBoundingVolume computeBoundingVolume(
+      const CesiumGeospatial::S2CellBoundingVolume& rootBoundingVolume,
+      const CesiumGeometry::OctreeTileID& tileID,
+      const CesiumGeospatial::Ellipsoid& ellipsoid
+          CESIUM_DEFAULT_ELLIPSOID) noexcept;
+
+  /**
+   * @brief Computes the bounding volume for an implicit quadtree tile
+   * with the given ID as a bounding cylinder.
+   *
+   * @param rootBoundingVolume The oriented bounding box of the root tile.
+   * @param tileID The tile ID for which to compute the oriented bounding box.
+   * @return The oriented bounding box for the given implicit tile.
+   */
+  static CesiumGeometry::BoundingCylinderRegion computeBoundingVolume(
+      const CesiumGeometry::BoundingCylinderRegion& rootBoundingVolume,
       const CesiumGeometry::QuadtreeTileID& tileID) noexcept;
+
+  /**
+   * @brief Computes the bounding volume for an implicit octree tile with
+   * the given ID as a bounding cylinder.
+   *
+   * @param rootBoundingVolume The bounding cylinder of the root tile.
+   * @param tileID The tile ID for which to compute the bounding cylinder.
+   * @return The bounding cylinder for the given implicit tile.
+   */
+  static CesiumGeometry::BoundingCylinderRegion computeBoundingVolume(
+      const CesiumGeometry::BoundingCylinderRegion& rootBoundingVolume,
+      const CesiumGeometry::OctreeTileID& tileID) noexcept;
 };
 
 } // namespace Cesium3DTilesContent

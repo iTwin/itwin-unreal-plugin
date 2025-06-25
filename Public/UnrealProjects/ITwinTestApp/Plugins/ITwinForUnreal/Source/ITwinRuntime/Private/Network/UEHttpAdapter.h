@@ -16,23 +16,24 @@
 #	include <Core/Network/HttpRequest.h>
 #include <Compil/AfterNonUnrealIncludes.h>
 
-class FUEHttpRequest : public SDK::Core::HttpRequest
+class FUEHttpRequest : public AdvViz::SDK::HttpRequest
 {
 public:
 	FUEHttpRequest();
 
 	virtual void Process(
-		SDK::Core::Http& http,
+		AdvViz::SDK::Http& http,
 		std::string const& url,
 		std::string const& body,
-		SDK::Core::Http::Headers const& headers) override;
+		AdvViz::SDK::Http::Headers const& headers,
+		bool isFullUrl = false) override;
 
 	virtual bool CheckResponse(
-		SDK::Core::Http::Response const& response,
+		AdvViz::SDK::Http::Response const& response,
 		std::string& requestError) const override;
 
 protected:
-	virtual void DoSetVerb(SDK::Core::EVerb verb) override;
+	virtual void DoSetVerb(AdvViz::SDK::EVerb verb) override;
 	virtual void DoSetResponseCallback(ResponseCallback const& callback) override;
 
 private:

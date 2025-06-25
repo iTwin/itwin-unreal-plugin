@@ -30,6 +30,23 @@ DEFINE_LOG_CATEGORY(ITwinQuery);
 
 using namespace ReusableJsonQueries;
 
+void FPoolRequest::Cancel()
+{
+	bShouldCancel = true;
+	if (!bIsAvailable)
+	{
+		if (!EHttpRequestStatus::IsFinished(Request->GetStatus()))
+		{
+			// With the current code, we have an AsyncRoutine only when we have a cache hit, ie. the Request
+			// will never be started. If we had both a Request and an AsyncRoutine, we would d need to make
+			// sure it is fulfilled somehow even though the Request's completion functor will not be called
+			// (unless it is? with bConnectedSuccessfully set to false?).
+			ensure(!AsyncRoutine || EHttpRequestStatus::Type::NotStarted == Request->GetStatus());
+			Request->CancelRequest();
+		}
+	}
+}
+
 class ReusableJsonQueries::FStackingToken
 {
 //public:
@@ -94,25 +111,39 @@ FReusableJsonQueries::FImpl::FImpl(UObject const& Owner,
 
 FReusableJsonQueries::FImpl::~FImpl()
 {
-	ITwinHttp::FLock Lock(Mutex);
-	RequestsInBatch = 0;
-	NextBatches.clear();
-	RequestsInQueue.clear();
-	for (auto&& FromPool : RequestsPool)
-	{
-		if (!FromPool.bIsAvailable
-			&& !EHttpRequestStatus::IsFinished(FromPool.Request->GetStatus()))
+	{	ITwinHttp::FLock Lock(Mutex);
+		RequestsInBatch = 0;
+		NextBatches.clear();
+		RequestsInQueue.clear();
+		for (auto&& FromPool : RequestsPool) // first: cancel (non-blocking)
+			FromPool.Cancel();
+	} // end of Mutex lock scope: otherwise Future.Wait() below would deadlock
+
+	// We need to wait forever when this is called when exiting the PIE. This is why UE5Coro usage had to
+	// be replaced by UE's Async system: Coro's Wait() method would deadlock because my coroutines
+	// themselves use the game thread: I thought the game thread part would be executed immediately when
+	// creating the coroutine, preventing any possible deadlock, but this is clearly not the case because
+	// it happened (while working on azdev#1609251).
+	// Simple "ResetSchedules" calls could have an Interrupt() method that cancels requests and Coro's and
+	// then wait for a future game tick when all have been indeed interrupted to actually reset the
+	// SchedulesApi - but when leaving PIE we don't have any future tick, we need to delete now!!
+	for (auto&& FromPool : RequestsPool) // then: wait
+		// Not testing "!FromPool.bIsAvailable" as it cannot be made thread-safe (see above): it is changed in
+		// CleanUp(..), which can be called from an Async thread. On the other hand, AsyncRoutine is only set
+		// (or reset, when FromPool is reused) in the game thread:
+		if (FromPool.AsyncRoutine)
 		{
-			FromPool.Request->CancelRequest();
+			auto Future = FromPool.AsyncRoutine->GetFuture();
+			if (!Future.IsReady()) Future.Wait(); // blocking
 		}
-	}
+
 	// CancelRequest is not blocking, and FromPool.Request's are SharedPtr hence still held by the
 	// FHttpManager after FromPool's deletion, so 'Completed' delegates can still be called and we need to
 	// signal to them that they should no longer access any reference to destroyed data:
 	*IsThisValid = false;
 }
 
-UE5Coro::TCoroutine<void> FReusableJsonQueries::FImpl::FRequestHandler::Run(
+TSharedPtr<TPromise<void>> FReusableJsonQueries::FImpl::FRequestHandler::Run(
 	std::shared_ptr<FReusableJsonQueries::FImpl::FRequestHandler> This,
 	FHttpRequestPtr CompletedRequest, FHttpResponsePtr Response, bool bConnectedSuccessfully)
 {
@@ -122,46 +153,15 @@ UE5Coro::TCoroutine<void> FReusableJsonQueries::FImpl::FRequestHandler::Run(
 	if ((*IsJsonQueriesValid) == false)
 	{
 		// FHttpRequestPtr was cancelled and both FPoolRequest and owning FReusableJsonQueries deleted
-		// so other captures are invalid
-		co_return;
+		// so other captures are invalid.
+		// We can't Wait() forever on UE Http requests in FReusableJsonQueries's dtor!
+		return {};
 	}
 	check(FromPool.bIsAvailable == false);
 	bool bRetry = !FromPool.bTryFromCache && (RequestArgs.RetriesLeft > 0);
 	// Could probably be in the destructor now (but we'd have to store Response & bConnectedSuccessfully)
-	Be::CleanUpGuard CleanUp([this, Response, bConnectedSuccessfully, &bRetry
-							  /*, ReplayModeBeforeHandling = JsonQueries.ReplayMode*/] () mutable
-		{
-			ITwinHttp::FLock Lock(JsonQueries.Mutex);
-			JsonQueries.LastCompletionTime = FPlatformTime::Seconds();
-			if (bRetry)
-			{
-				ensure(!FromPool.bTryFromCache);
-				JsonQueries.StackRequest(&Lock, RequestArgs.Verb, std::move(RequestArgs.UrlSubpath),
-					std::move(RequestArgs.Params), std::move(RequestArgs.ProcessJsonResponseFunc),
-					std::move(RequestArgs.PostDataString), RequestArgs.RetriesLeft - 1,
-					// wait a short time before first retry, a longer time before 2nd (in seconds)
-					FPlatformTime::Seconds() + (RequestArgs.RetriesLeft == 2 ? 2. : 8.));
-			}
-			if (!FromPool.bTryFromCache || FromPool.bSuccess)
-			{
-				FromPool.bIsAvailable = true;
-				++JsonQueries.AvailableRequestSlots; // next Tick will call HandlePendingRequests
-				--JsonQueries.RequestsInBatch;
-			}
-			if (-1 != QueryTimestamp && !FromPool.bTryFromCache && FromPool.bSuccess)
-				// Do not write to cache the result of the initial "RequestSchedules" query which
-				// ProcessJsonResponseFunc actually initializes the cache: this would write duplicates of the
-				// same over and over (since this initial query can never by definition be read from the cache)
-				// which raises a sanity check error in FRecordDirIterator::Visit.
-				// QueryTimestamp's test against -1 skips the Write call: semantically it would seem cleaner
-				// to have this additional test, but it would not work when resetting a corrupted cache because
-				// in that case Initialize has returned false and TryLocalCache is not set...
-				//&& ReusableJsonQueries::EReplayMode::TryLocalCache == ReplayModeBeforeHandling)
-			{
-				JsonQueries.Cache.Write(FromPool.Request, Response, bConnectedSuccessfully,
-										JsonQueries.Mutex, QueryTimestamp);
-			}
-		});
+	Be::CleanUpGuard CleanUpOnExc([this, Response, bConnectedSuccessfully, &bRetry]
+								  { CleanUp(Response, bConnectedSuccessfully, bRetry); });
 	TSharedPtr<FJsonObject> ResponseJson;
 	if (FromPool.bTryFromCache)
 	{
@@ -171,12 +171,21 @@ UE5Coro::TCoroutine<void> FReusableJsonQueries::FImpl::FRequestHandler::Run(
 		if (Hit)
 		{
 			FromPool.bSuccess = true; // needed before yield, used by caller
-			co_await UE5Coro::Async::MoveToTask();
-			ResponseJson = JsonQueries.Cache.Read(*Hit);
+			TSharedRef<TPromise<void>> Promise = MakeShared<TPromise<void>>();
+			AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask,
+				[This, CacheHit=(*Hit), Promise, Response, bConnectedSuccessfully, bRetry]
+				{
+					if (!This->FromPool.bShouldCancel) // otw deadlock with ~FImpl
+						This->ProcessResponse(This->JsonQueries.Cache.Read(CacheHit), Response,
+											  bConnectedSuccessfully, bRetry);
+					Promise->SetValue();
+				});
+			CleanUpOnExc.release();
+			return Promise;
 		}
 	}
 	else if (
-		JsonQueries.CheckRequest(CompletedRequest, Response, bConnectedSuccessfully, nullptr, bRetry)
+		JsonQueries.CheckRequest(CompletedRequest, Response, bConnectedSuccessfully, bRetry)
 		//synonym to 20X response?
 		&& ensure(EHttpRequestStatus::Succeeded == CompletedRequest->GetStatus()))
 	{
@@ -184,19 +193,69 @@ UE5Coro::TCoroutine<void> FReusableJsonQueries::FImpl::FRequestHandler::Run(
 		FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Response->GetContentAsString()),
 									 ResponseJson);
 	}
+	CleanUpOnExc.release();
+	ProcessResponse(ResponseJson, Response, bConnectedSuccessfully, bRetry);
+	return {};
+}
+
+void FReusableJsonQueries::FImpl::FRequestHandler::ProcessResponse(TSharedPtr<FJsonObject> ResponseJson,
+	FHttpResponsePtr Response, bool const bConnectedSuccessfully, bool const bRetry)
+{
 	if (ResponseJson)
 	{
+		if (!FromPool.bTryFromCache && ensure(Response))
+		{
+			FString const ContinuationToken = Response->GetHeader(TEXT("Continuation-Token"));
+			// this way no need to change ProcessJsonResponseFunc's code, but note that it is written in the
+			// cache with custom code, too: see FJsonQueriesCache::Write variant taking a FHttpResponsePtr
+			if (!ContinuationToken.IsEmpty())
+				ResponseJson->SetStringField(TEXT("nextPageToken"), ContinuationToken);
+		}
 		RequestArgs.ProcessJsonResponseFunc(ResponseJson);
 		FromPool.bSuccess = true;
 	}
 	else
 	{
 		FromPool.bSuccess = false;
-		// final error, clean cache being written into!
-		if (!FromPool.bTryFromCache && !bRetry && JsonQueries.bIsRecordingForSimulation)
-		{
-			JsonQueries.Cache.ClearFromDisk();
-		}
+		// final error, clean cache being written into?(!)
+		//if (!FromPool.bTryFromCache && !bRetry)
+		//	JsonQueries.Cache.ClearFromDisk();
+	}
+	CleanUp(Response, bConnectedSuccessfully, bRetry);
+}
+
+void FReusableJsonQueries::FImpl::FRequestHandler::CleanUp(
+	FHttpResponsePtr Response, bool const bConnectedSuccessfully, bool const bRetry)
+{
+	ITwinHttp::FLock Lock(JsonQueries.Mutex);
+	JsonQueries.LastCompletionTime = FPlatformTime::Seconds();
+	if (bRetry)
+	{
+		ensure(!FromPool.bTryFromCache);
+		JsonQueries.StackRequest(&Lock, RequestArgs.Verb, std::move(RequestArgs.UrlSubpath),
+			std::move(RequestArgs.Params), std::move(RequestArgs.ProcessJsonResponseFunc),
+			std::move(RequestArgs.PostDataString), RequestArgs.RetriesLeft - 1,
+			// wait a short time before first retry, a longer time before 2nd (in seconds)
+			FPlatformTime::Seconds() + (RequestArgs.RetriesLeft == 2 ? 2. : 8.));
+	}
+	if (!FromPool.bTryFromCache || FromPool.bSuccess)
+	{
+		FromPool.bIsAvailable = true;
+		++JsonQueries.AvailableRequestSlots; // next Tick will call HandlePendingRequests
+		--JsonQueries.RequestsInBatch;
+	}
+	if (-1 != QueryTimestamp && !FromPool.bTryFromCache && FromPool.bSuccess)
+		// Do not write to cache the result of the initial "RequestSchedules" query which
+		// ProcessJsonResponseFunc actually initializes the cache: this would write duplicates of the
+		// same over and over (since this initial query can never by definition be read from the cache)
+		// which raises a sanity check error in FRecordDirIterator::Visit.
+		// QueryTimestamp's test against -1 skips the Write call: semantically it would seem cleaner
+		// to have this additional test, but it would not work when resetting a corrupted cache because
+		// in that case Initialize has returned false and TryLocalCache is not set...
+		//&& ReusableJsonQueries::EReplayMode::TryLocalCache == ReplayModeBeforeHandling)
+	{
+		JsonQueries.Cache.Write(FromPool.Request, Response, bConnectedSuccessfully,
+								JsonQueries.Mutex, QueryTimestamp);
 	}
 }
 
@@ -237,7 +296,8 @@ void FReusableJsonQueries::FImpl::DoEmitRequest(FPoolRequest& FromPool, FRequest
 	FromPool.Request->SetHeader(TEXT("Content-Length"), TEXT(""));
 	FromPool.Request->SetHeader(TEXT("Authorization"), TEXT("Bearer ") + GetBearerToken());
 	FromPool.Request->SetHeader(TEXT("X-Correlation-ID"), *FGuid::NewGuid().ToString());
-	FromPool.Request->SetContentAsString(RequestArgs.PostDataString);
+	FromPool.Request->SetContentAsString(
+		(ITwinHttp::EVerb::Get != RequestArgs.Verb) ? RequestArgs.PostDataString : FString{});
 	FromPool.bTryFromCache = (ReusableJsonQueries::EReplayMode::None != ReplayMode);
 	// Note: a unique_ptr was almost right except that it cannot be passed to BindLambda, which copies its
 	// arguments, whereas Callback would have had to be moved again.
@@ -249,7 +309,7 @@ void FReusableJsonQueries::FImpl::DoEmitRequest(FPoolRequest& FromPool, FRequest
 	switch (ReplayMode)
 	{
 	case ReusableJsonQueries::EReplayMode::OnDemandSimulation:
-		Handler->Run(Handler, {}, {}, true);
+		FromPool.AsyncRoutine = Handler->Run(Handler, {}, {}, true);
 		if (FromPool.bSuccess)
 			++CacheHits;
 		else
@@ -259,8 +319,8 @@ void FReusableJsonQueries::FImpl::DoEmitRequest(FPoolRequest& FromPool, FRequest
 		}
 		break;
 	case ReusableJsonQueries::EReplayMode::TryLocalCache:
-		Handler->Run(Handler, {}, {}, true);
-		if (FromPool.bSuccess) // was set before co_await
+		FromPool.AsyncRoutine = Handler->Run(Handler, {}, {}, true);
+		if (FromPool.bSuccess) // was set before creating the AsyncTask
 		{
 			++CacheHits;
 			break;
@@ -274,10 +334,14 @@ void FReusableJsonQueries::FImpl::DoEmitRequest(FPoolRequest& FromPool, FRequest
 		}
 		// "Single" delegate, no need to Unbind to reuse:
 		FromPool.Request->OnProcessRequestComplete().BindLambda(
-			[Callback=std::move(Handler)](FHttpRequestPtr CompletedRequest, FHttpResponsePtr Response,
-										  bool bConnectedSuccessfully) mutable
+			[&FromPool, Callback=std::move(Handler)]
+			(FHttpRequestPtr CompletedRequest, FHttpResponsePtr Response, bool bConnectedSuccessfully) mutable
 			{
-				Callback->Run(Callback, CompletedRequest, Response, bConnectedSuccessfully);
+				if (!Callback->IsValid()) // otherwise FromPool.bShouldCancel itself is unsafe of course...
+					return;
+				if (!FromPool.bShouldCancel)
+					FromPool.AsyncRoutine =
+						Callback->Run(Callback, CompletedRequest, Response, bConnectedSuccessfully);
 			});
 		FromPool.Request->ProcessRequest();
 		break;
@@ -365,6 +429,8 @@ bool FReusableJsonQueries::FImpl::HandlePendingQueries()
 				if (bHasFoundRequestToProcess)
 				{
 					Slot->bIsAvailable = false;
+					Slot->bShouldCancel = false;
+					Slot->AsyncRoutine.Reset();
 					--AvailableRequestSlots;
 				}
 				else
@@ -480,11 +546,11 @@ void FReusableJsonQueries::NewBatch(FStackingFunc&& StackingFunc, bool const bPs
 }
 
 void FReusableJsonQueries::InitializeCache(FString const& CacheFolder, EITwinEnvironment const Env,
-										   FString const& DisplayName)
+										   FString const& DisplayName, bool bUnitTesting/*= false*/)
 {
 	ITwinHttp::FLock Lock(Impl->Mutex);
 	ensure(ReusableJsonQueries::EReplayMode::None == Impl->ReplayMode);
-	if (Impl->Cache.Initialize(CacheFolder, Env, DisplayName))
+	if (Impl->Cache.Initialize(CacheFolder, Env, DisplayName, false, bUnitTesting))
 		Impl->ReplayMode = ReusableJsonQueries::EReplayMode::TryLocalCache;
 }
 

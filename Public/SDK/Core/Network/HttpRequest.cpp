@@ -13,7 +13,7 @@
 #include <stduuid/uuid.h>
 #include "../Singleton/singleton.h"
 
-namespace SDK::Core
+namespace AdvViz::SDK
 {
 	template<>
 	Tools::Factory<HttpRequest>::Globals::Globals()
@@ -22,7 +22,7 @@ namespace SDK::Core
 	}
 
 	template<>
-	Tools::Factory<HttpRequest>::Globals& Tools::Factory<HttpRequest>::GetGlobals()
+	 Tools::Factory<HttpRequest>::Globals& Tools::Factory<HttpRequest>::GetGlobals()
 	{
 		return singleton<Tools::Factory<HttpRequest>::Globals>();
 	}
@@ -87,29 +87,29 @@ namespace SDK::Core
 
 	}
 
-	bool HttpRequest::CheckResponse(Response const& response, std::string& requestError) const
+	bool HttpRequest::CheckResponse(Response const& response, std::string& /*requestError*/) const
 	{
-		return response.first >= 200 && response.first < 300;
+		return Http::IsSuccessful(response);
 	}
 
-	void HttpRequest::Process(
-		Http& http,
-		std::string const& url,
-		std::string const& body,
-		Http::Headers const& headers)
+
+	Http::Response HttpRequest::DoProcess(Http& http, std::string const& url, std::string const& body,
+										  Http::Headers const& headers, bool isFullUrl /*= false*/)
 	{
-		Response r;
 		switch (verb_)
 		{
-		case EVerb::Delete: r = http.Delete(url, body, headers); break;
-		case EVerb::Get:	r = http.Get(url, body, headers); break;
-		case EVerb::Patch:	r = http.Patch(url, body, headers); break;
-		case EVerb::Post:	r = http.Post(url, body, headers); break;
-		case EVerb::Put:	r = http.Put(url, body, headers); break;
-		}
-		if (responseCallback_)
-		{
-			responseCallback_(shared_from_this(), r);
+		case EVerb::Delete: return http.Delete(url, body, headers); break;
+		case EVerb::Get:	return http.Get(url, headers, isFullUrl); break;
+		case EVerb::Patch:	return http.Patch(url, body, headers); break;
+		case EVerb::Post:	return http.Post(url, body, headers); break;
+		default:
+		case EVerb::Put:	return http.Put(url, body, headers); break;
 		}
 	}
+
+	const char* HttpRequest::GetRequestID() const
+	{
+		return id_.c_str(); 
+	}
+
 }

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "CesiumAsync/IAssetResponse.h"
+#include <CesiumAsync/IAssetResponse.h>
 
 #include <cstddef>
 #include <vector>
@@ -27,8 +27,8 @@ public:
     return this->_headers;
   }
 
-  virtual gsl::span<const std::byte> data() const override {
-    return gsl::span<const std::byte>(_data.data(), _data.size());
+  virtual std::span<const std::byte> data() const override {
+    return std::span<const std::byte>(_data.data(), _data.size());
   }
 
 private:

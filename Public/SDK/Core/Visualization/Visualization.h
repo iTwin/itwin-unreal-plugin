@@ -9,3 +9,4 @@
 #pragma once
 #include "Decoration.h"
 #include "Config.h"
+#include "KeyframeAnimation.h"

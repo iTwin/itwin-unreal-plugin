@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Library.h"
+#include <CesiumGeometry/Library.h>
 
 #include <cstdint>
 #include <functional>
@@ -43,6 +43,19 @@ struct CESIUMGEOMETRY_API QuadtreeTileID final {
   constexpr bool operator!=(const QuadtreeTileID& other) const noexcept {
     return !(*this == other);
   }
+
+  /**
+   * @brief Computes the inverse x-coordinate of this tile ID.
+   *
+   * This will compute the inverse x-coordinate of this tile ID, based
+   * on the given tiling scheme, which provides the number of tiles
+   * in x-direction for the level of this tile ID.
+   *
+   * @param tilingScheme The {@link QuadtreeTilingScheme}.
+   * @return The inverted x-coordinate.
+   */
+  uint32_t
+  computeInvertedX(const QuadtreeTilingScheme& tilingScheme) const noexcept;
 
   /**
    * @brief Computes the inverse y-coordinate of this tile ID.
@@ -111,10 +124,6 @@ template <> struct hash<CesiumGeometry::QuadtreeTileID> {
    * @brief A specialization of the `std::hash` template for
    * {@link CesiumGeometry::QuadtreeTileID} objects.
    */
-  size_t operator()(const CesiumGeometry::QuadtreeTileID& key) const noexcept {
-    // TODO: is this hash function any good? Probably not.
-    std::hash<uint32_t> h;
-    return h(key.level) ^ (h(key.x) << 1) ^ (h(key.y) << 2);
-  }
+  size_t operator()(const CesiumGeometry::QuadtreeTileID& key) const noexcept;
 };
 } // namespace std

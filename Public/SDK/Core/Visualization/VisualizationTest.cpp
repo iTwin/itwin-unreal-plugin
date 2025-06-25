@@ -17,53 +17,9 @@
 #include <httpmockserver/mock_server.h>
 #include <httpmockserver/port_searcher.h>
 
-using namespace SDK::Core;
+using namespace AdvViz::SDK;
 
-class HTTPMock : public httpmock::MockServer {
-public:
-	static std::unique_ptr<httpmock::MockServer> MakeServer()
-	{
-		return httpmock::getFirstRunningMockServer<HTTPMock>();
-	}
 
-	explicit HTTPMock(int port = 9200) : MockServer(port) {}
-
-	std::string GetUrl()
-	{
-		return "http://localhost:" + std::to_string(getPort());
-	}
-
-private:
-
-	/// Handler called by MockServer on HTTP request.
-	Response responseHandler(
-		const std::string& url,
-		const std::string& method,
-		const std::string& data,
-		const std::vector<UrlArg>& urlArguments,
-		const std::vector<Header>& headers)
-	{
-		if (method == "POST" && matchesURL(url, "/advviz/v1/decorations")) {
-			std::string s = "{\"data\":{\"gcs\":{\"center\":[0,0,0], \"wkt\":\"WGS84\"}, \"itwinid\":\"904a89f7-b63c-4ae1-a223-88517bd4bb08\", \"name\":\"test auto\"}, \"id\":\"66c476ed1129763cf5485826\"}";
-			return Response(200, s);
-		}
-		if (method == "GET" && matchesURL(url, "/advviz/v1/decorations")) {
-			std::string s = "{\"name\":\"test auto\",\"itwinid\":\"904a89f7-b63c-4ae1-a223-88517bd4bb08\",\"gcs\":{\"wkt\":\"WGS84\",\"center\":[0,0,0]},\"id\":\"66c476ed1129763cf5485826\"}";
-			return Response(200, s);
-		}
-		if (method == "DELETE" && matchesURL(url, "/advviz/v1/decorations")) {
-			return Response(200, "{\"id\":\"66c476ed1129763cf5485826\"");
-		}
-		// Return "URI not found" for the undefined methods
-		return Response(404, "Not Found");
-	}
-
-	/// Return true if \p url starts with \p str.
-	bool matchesURL(const std::string& url, const std::string& str) const {
-		return url.substr(0, str.size()) == str;
-	}
-
-};
 
 const HTTPMock* const GetHttpMock()
 {
@@ -74,7 +30,7 @@ const HTTPMock* const GetHttpMock()
 
 TEST_CASE("Visualization:Config")
 {
-	using namespace SDK::Core;
+	using namespace AdvViz::SDK;
 	std::filesystem::path filePath("test.conf");
 	std::filesystem::remove(filePath);
 
@@ -83,7 +39,7 @@ TEST_CASE("Visualization:Config")
 		f << "{\"server\":{\"server\":\"plop\", \"port\":2345, \"urlapiprefix\":\"api/v1\"}}";
 	}
 
-	auto config = SDK::Core::Config::LoadFromFile(filePath);
+	auto config = AdvViz::SDK::Config::LoadFromFile(filePath);
 	REQUIRE(config.server.server== "plop");
 	REQUIRE(config.server.port == 2345);
 	REQUIRE(config.server.urlapiprefix == "api/v1");

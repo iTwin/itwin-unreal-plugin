@@ -26,10 +26,13 @@ set(boostHeaders
 	./algorithm/string/constants.hpp
 	./algorithm/string/detail/finder.hpp
 	./algorithm/string/detail/find_iterator.hpp
+	./algorithm/string/detail/predicate.hpp
 	./algorithm/string/detail/util.hpp
+	./algorithm/string/find.hpp
 	./algorithm/string/finder.hpp
 	./algorithm/string/find_iterator.hpp
 	./algorithm/string/iter_find.hpp
+	./algorithm/string/predicate.hpp
 	./algorithm/string/split.hpp
 	./assert/source_location.hpp
 	./assert.hpp

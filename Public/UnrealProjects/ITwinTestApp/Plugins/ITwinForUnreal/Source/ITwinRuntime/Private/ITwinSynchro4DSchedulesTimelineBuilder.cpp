@@ -21,6 +21,13 @@
 #include <Timeline/SchedulesConstants.h>
 #include <Timeline/SchedulesStructs.h>
 
+#include <JsonObjectConverter.h>
+#include <HAL/PlatformFileManager.h>
+#include <Misc/FileHelper.h>
+#include <Misc/Paths.h>
+
+#include <algorithm>
+
 void AddColorToTimeline(FITwinElementTimeline& ElementTimeline,
 						FAppearanceProfile const& Profile, FTimeRangeInSeconds const& Time)
 {
@@ -184,7 +191,7 @@ void AddVisibilityToTimeline(FITwinElementTimeline& ElementTimeline,
 	if (Profile.ProfileType == EProfileAction::Neutral)
 	{
 		// "Neutral" means "neutralize", ie. the Element is hidden the whole time!
-		ElementTimeline.SetVisibilityAt(Time.first, 0, EInterpolation::Step);
+		ElementTimeline.SetVisibilityAt(Time.first, 0.f, EInterpolation::Step);
 	}
 	else
 	{
@@ -260,12 +267,12 @@ ITwin::Timeline::PTransform const& AddStaticTransformToTimeline(FITwinElementTim
 		EInterpolation::Step);
 }
 
-template<typename KeyframeIt>
 void Add3DPathTransformToTimeline(FITwinElementTimeline& ElementTimeline, FTimeRangeInSeconds const& TaskTimes,
 	std::variant<ITwin::Timeline::EAnchorPoint, FVector> const& TransformAnchor,
-	KeyframeIt const KeyframeBegin, KeyframeIt const KeyframeEnd, FITwinCoordConversions const& CoordConv)
+	std::vector<FTransformKey> const& Keyframes, FITwinCoordConversions const& CoordConv,
+	bool const b3DPathReverseDirection)
 {
-	if (KeyframeBegin == KeyframeEnd)
+	if (Keyframes.empty())
 		return;
 	using namespace ITwin::Timeline;
 	// Let's keep the possible anterior transformation set:
@@ -292,19 +299,45 @@ void Add3DPathTransformToTimeline(FITwinElementTimeline& ElementTimeline, FTimeR
 			else static_assert(always_false_v<T>, "non-exhaustive visitor!");
 		},
 		TransformAnchor);
-	FVector const FirstPos = KeyframeBegin->Transform.GetLocation();
-	for (KeyframeIt Key = KeyframeBegin; Key != KeyframeEnd; ++Key)
+	bool const bRelativeKFPositions = (ITwin::Timeline::EAnchorPoint::Original == BaseAnchor.AnchorPoint);
+	FVector FirstPos = FVector::Zero();
+	if (bRelativeKFPositions)
+	{
+		// No: the Element's position in the iModel is apparently the position at the start of the path,
+		// (as witnessed in azdev#1625066's project when the animation is Stop'd) even if it is to be
+		// applied in reverse, so offsets must always be computed from this position.
+		//if (b3DPathReverseDirection)
+		//	FirstPos = std::max_element(Keyframes.begin(), Keyframes.end())->Transform.GetLocation();
+		//else
+		FirstPos = std::min_element(Keyframes.begin(), Keyframes.end())->Transform.GetLocation();
+	}
+	// TODO_GCO: there are other cases of nilpotent paths, but harder to detect since alignments other than
+	// 'Original' need to compare the Translation component of the Transform to the right bounding box value
+	// (center for Center alignment, etc.)
+	if (ITwin::Timeline::EAnchorPoint::Original == BaseAnchor.AnchorPoint
+		&& Keyframes.end() == std::find_if(Keyframes.begin(), Keyframes.end(),
+			[&First=Keyframes.begin()->Transform](FTransformKey const& K) {
+				return !FITwinMathExts::StrictlyEqualTransforms(K.Transform, First); }))
+	{
+		// Corner case of a nilpotent 3D path (azdev#1608204)
+		return;
+	}
+	for (auto&& Key : Keyframes)
 	{
 		FVector RotAxis; double Angle;
-		FQuat KeyRot = Key->Transform.GetRotation();
+		FQuat KeyRot = Key.Transform.GetRotation();
 		KeyRot.Normalize();
 		KeyRot.ToAxisAndAngle(RotAxis, Angle);
 		RotAxis = CoordConv.IModelToUnreal.TransformVector(RotAxis);
 		RotAxis.Normalize();
-		ElementTimeline.SetTransformationAt(TaskTimes.first + Key->RelativeTime * TaskDuration,
-			(ITwin::Timeline::EAnchorPoint::Original == BaseAnchor.AnchorPoint)
-				? CoordConv.IModelToUnreal.TransformVector(Key->Transform.GetTranslation() - FirstPos)
-				: CoordConv.IModelToUnreal.TransformPosition(Key->Transform.GetTranslation()),
+		// Note: SetTransformationAt will order keyframes by their time point, whatever their ordering in
+		// the input vector
+		double const ActualRelativeTime =
+			b3DPathReverseDirection ? (1. - Key.RelativeTime) : Key.RelativeTime;
+		ElementTimeline.SetTransformationAt(TaskTimes.first + ActualRelativeTime * TaskDuration,
+			bRelativeKFPositions
+				? CoordConv.IModelToUnreal.TransformVector(Key.Transform.GetTranslation() - FirstPos)
+				: CoordConv.IModelToUnreal.TransformPosition(Key.Transform.GetTranslation()),
 			FQuat(RotAxis, Angle), BaseAnchor, EInterpolation::Linear);
 	}
 }
@@ -506,26 +539,40 @@ void HideNonAnimatedDuplicates(FITwinSceneMapping const& Scene, ContainerToHandl
 
 } // ns Detail
 
+bool FITwinScheduleTimelineBuilder::IsUnitTesting() const
+{
+	return nullptr == Owner;
+}
+
 void FITwinScheduleTimelineBuilder::UpdateAnimationGroupInTimeline(size_t const GroupIndex,
 	FElementsGroup const& GroupElements, FSchedLock&)
 {
-	if (!ensure(OnElementsTimelineModified))
-		return;
 	FITwinElementTimeline* Timeline = MainTimeline.GetElementTimelineFor(FIModelElementsKey(GroupIndex));
 	if (Timeline) // group may be used by bindings not yet notified, so the case !Timeline is perfectly fine
 	{
-		AITwinIModel* IModel = Cast<AITwinIModel>(Owner->GetOwner());
-		if (!ensure(IModel))
-			return;
-		FITwinSceneMapping& Scene = GetInternals(*IModel).SceneMapping;
-		std::vector<ITwinElementID> ElementsSetDiff;
-		Detail::InsertAnimatedMeshSubElemsRecursively(FIModelElementsKey(GroupIndex), Scene, GroupElements,
-			MainTimeline, Timeline->IModelElementsRef(),
-			GetInternals(*Owner).PrefetchAllElementAnimationBindings(),
-			&ElementsSetDiff);
-		::Detail::HideNonAnimatedDuplicates(Scene, ElementsSetDiff, MainTimeline);
-		Timeline->OnIModelElementsAdded(); // just invalidates group's BBox
-		OnElementsTimelineModified(*Timeline, &ElementsSetDiff);
+		// until we load iModel metadata for it, Unit Testing can only support "flat" iModels
+		// and no SourceID-duplicates!
+		if (IsUnitTesting())
+		{
+			Timeline->IModelElementsRef() = GroupElements; // the whole updated group is passed
+			Timeline->OnIModelElementsAdded(); // just invalidates group's BBox
+		}
+		else
+		{
+			AITwinIModel* IModel = Cast<AITwinIModel>(Owner->GetOwner());
+			if (!ensure(IModel))
+				return;
+			FITwinSceneMapping& Scene = GetInternals(*IModel).SceneMapping;
+			std::vector<ITwinElementID> ElementsSetDiff;
+			Detail::InsertAnimatedMeshSubElemsRecursively(FIModelElementsKey(GroupIndex), Scene, GroupElements,
+				MainTimeline, Timeline->IModelElementsRef(),
+				GetInternals(*Owner).PrefetchWholeSchedule(),
+				&ElementsSetDiff);
+			::Detail::HideNonAnimatedDuplicates(Scene, ElementsSetDiff, MainTimeline);
+			Timeline->OnIModelElementsAdded(); // just invalidates group's BBox
+			if (OnElementsTimelineModified)
+				OnElementsTimelineModified(*Timeline, &ElementsSetDiff);
+		}
 	}
 }
 
@@ -535,26 +582,66 @@ void FITwinScheduleTimelineBuilder::AddAnimationBindingToTimeline(FITwinSchedule
 	auto&& Binding = Schedule.AnimationBindings[AnimationBindingIndex];
 	if (!ensure(Binding.NotifiedVersion == VersionToken::None))
 		return;
-	bool const bSingleElement = std::holds_alternative<ITwinElementID>(Binding.AnimatedEntities);
-	ITwinElementID const SingleElementID =
-		bSingleElement ? std::get<0>(Binding.AnimatedEntities) : ITwin::NOT_ELEMENT;
-	FElementsGroup const& BoundElements =
-		bSingleElement ? FElementsGroup{ SingleElementID } : Schedule.Groups[Binding.GroupInVec];
-	FIModelElementsKey const AnimationKey =
-		bSingleElement ? FIModelElementsKey(SingleElementID) : FIModelElementsKey(Binding.GroupInVec);
-	AITwinIModel* IModel = Cast<AITwinIModel>(Owner->GetOwner());
-	if (!ensure(IModel))
+	AITwinIModel* IModel = Owner ? Cast<AITwinIModel>(Owner->GetOwner()) : nullptr;
+	if (!ensure(IModel || IsUnitTesting()))
 		return;
-	FITwinSceneMapping& Scene = GetInternals(*IModel).SceneMapping;
+	FITwinSceneMapping* pScene = nullptr;
+	if (!IsUnitTesting()) // TODO_GCO: Source ID mapping not loaded yet for unit testing :/
+	{
+		pScene = &GetInternals(*IModel).SceneMapping;
+	}
+	bool bSingleElement = true;
+	ITwinElementID SingleElementID;
+	FElementsGroup BoundElements;
+	std::optional<FIModelElementsKey> AnimationKey;
+	std::visit([&](auto&& Ident)
+		{
+			using T = std::decay_t<decltype(Ident)>;
+			if constexpr (std::is_same_v<T, ITwinElementID>)
+			{
+				SingleElementID = Ident;
+				BoundElements.insert(SingleElementID);
+				AnimationKey.emplace(SingleElementID);
+			}
+			else if constexpr (std::is_same_v<T, FGuid>)
+			{
+				if (pScene && pScene->FindElementIDForGUID(Ident, SingleElementID))
+				{
+					BoundElements.insert(SingleElementID);
+					AnimationKey.emplace(SingleElementID);
+				}
+				else
+					SingleElementID = ITwin::NOT_ELEMENT;
+			}
+			else if constexpr (std::is_same_v<T, FString>)
+			{
+				SingleElementID = ITwin::NOT_ELEMENT;
+				BoundElements = Schedule.Groups[Binding.GroupInVec];
+				AnimationKey.emplace(Binding.GroupInVec);
+			}
+			else static_assert(always_false_v<T>, "non-exhaustive visitor!");
+		},
+		Binding.AnimatedEntities);
 	FElementsGroup AnimatedMeshElements;
-	Detail::InsertAnimatedMeshSubElemsRecursively(AnimationKey, Scene, BoundElements, MainTimeline,
-		AnimatedMeshElements, GetInternals(*Owner).PrefetchAllElementAnimationBindings());
-	if (AnimatedMeshElements.empty()) // no 'ensure', it seems to happen in rare cases
-		return;
-	FITwinElementTimeline& ElementTimeline = MainTimeline.ElementTimelineFor(AnimationKey,
+	// until we load iModel metadata for it, Unit Testing can only support "flat" iModels
+	// and no SourceID-duplicates!
+	if (IsUnitTesting())
+	{
+		AnimatedMeshElements = BoundElements;
+	}
+	else
+	{
+		if (!AnimationKey || !ensure(!BoundElements.empty()))
+			return;
+		Detail::InsertAnimatedMeshSubElemsRecursively(*AnimationKey, *pScene, BoundElements, MainTimeline,
+			AnimatedMeshElements, GetInternals(*Owner).PrefetchWholeSchedule());
+		if (AnimatedMeshElements.empty()) // no 'ensure', it seems to happen in rare cases
+			return;
+		::Detail::HideNonAnimatedDuplicates(*pScene, AnimatedMeshElements, MainTimeline);
+	}
+	FITwinElementTimeline& ElementTimeline = MainTimeline.ElementTimelineFor(*AnimationKey,
 																			 AnimatedMeshElements);
-	::Detail::HideNonAnimatedDuplicates(Scene, AnimatedMeshElements, MainTimeline);
-	if (Owner->bDebugWithDummyTimelines)
+	if (Owner && Owner->bDebugWithDummyTimelines)
 	{
 		CreateTestingTimeline(ElementTimeline, *CoordConversions);
 	}
@@ -568,31 +655,33 @@ void FITwinScheduleTimelineBuilder::AddAnimationBindingToTimeline(FITwinSchedule
 	#if SYNCHRO4D_ENABLE_TRANSFORMATIONS()
 		if (ITwin::INVALID_IDX != Binding.TransfoAssignmentInVec) // optional
 		{
+			// Animation binding can have both static transfo and 3D path (with same Id, see azdev#1689132),
+			// In that case, we store both assignments separately (see KnownTransfoAssignments's bool subkey),
+			// to avoid having to worry about concurrent writes to the TransfoAssignment variant.
+			// But the static transform is ignored like in Synchro Pro (TransfoAssignment.bStaticTransform is
+			// set to false in FITwinSchedulesImport::FImpl::RequestAnimationBindings).
 			auto&& TransfoAssignment = Schedule.TransfoAssignments[Binding.TransfoAssignmentInVec];
-			if (Binding.bStaticTransform)
+			if (Binding.bStaticTransform
+				&& std::holds_alternative<FTransform>(TransfoAssignment.Transformation))
 			{
 				TransformKeyframe = &AddStaticTransformToTimeline(ElementTimeline, Task.TimeRange,
 					std::get<0>(TransfoAssignment.Transformation), *CoordConversions);
 			}
-			else
+			else if (!Binding.bStaticTransform
+				&& std::holds_alternative<FPathAssignment>(TransfoAssignment.Transformation))
 			{
 				auto&& PathAssignment = std::get<1>(TransfoAssignment.Transformation);
 				if (ensure(ITwin::INVALID_IDX != PathAssignment.Animation3DPathInVec))
 				{
 					auto&& Path3D = Schedule.Animation3DPaths[PathAssignment.Animation3DPathInVec].Keyframes;
-					if (PathAssignment.b3DPathReverseDirection)
-					{
-						Add3DPathTransformToTimeline(ElementTimeline, Task.TimeRange,
-							PathAssignment.TransformAnchor, Path3D.rbegin(), Path3D.rend(), //<== reversed
-							*CoordConversions);
-					}
-					else
-					{
-						Add3DPathTransformToTimeline(ElementTimeline, Task.TimeRange,
-							PathAssignment.TransformAnchor, Path3D.begin(), Path3D.end(),
-							*CoordConversions);
-					}
+					Add3DPathTransformToTimeline(ElementTimeline, Task.TimeRange,
+						PathAssignment.TransformAnchor, Path3D, *CoordConversions,
+						PathAssignment.b3DPathReverseDirection);
 				}
+			}
+			else
+			{
+				ensureMsgf(false, TEXT("Inconsistent transformation assignment interpretation"));
 			}
 		}
 	#endif // SYNCHRO4D_ENABLE_TRANSFORMATIONS
@@ -600,6 +689,21 @@ void FITwinScheduleTimelineBuilder::AddAnimationBindingToTimeline(FITwinSchedule
 								  *CoordConversions, TransformKeyframe);
 	}
 	if (OnElementsTimelineModified) OnElementsTimelineModified(ElementTimeline, nullptr);
+}
+
+/*static*/
+FITwinScheduleTimelineBuilder FITwinScheduleTimelineBuilder::CreateForUnitTesting(
+	FITwinCoordConversions const& InCoordConv)
+{
+	FITwinScheduleTimelineBuilder Builder;
+	Builder.Owner = nullptr;
+	Builder.CoordConversions = &InCoordConv;
+	return Builder;
+}
+
+// private, for CreateForUnitTesting
+FITwinScheduleTimelineBuilder::FITwinScheduleTimelineBuilder()
+{
 }
 
 FITwinScheduleTimelineBuilder::FITwinScheduleTimelineBuilder(UITwinSynchro4DSchedules const& InOwner,
@@ -653,4 +757,34 @@ void FITwinScheduleTimelineBuilder::Uninitialize()
 		}
 	}
 	InitState = EInit::Disposable;
+}
+
+void FITwinScheduleTimelineBuilder::DebugDumpFullTimelinesAsJson(FString const& RelPath) const
+{
+	FString TimelineAsJson = GetTimeline().ToPrettyJsonString();
+	IPlatformFile& FileManager = FPlatformFileManager::Get().GetPlatformFile();
+	FString Path = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir());
+	Path.Append(RelPath);
+	FString CoordConvPath;
+	if (RelPath.EndsWith(".json"))
+	{
+		CoordConvPath = Path.LeftChop(4);
+	}
+	else
+	{
+		CoordConvPath = Path;
+		Path.Append(".json");
+	}
+	CoordConvPath += TEXT(".CoordConv.json");
+	if (FileManager.FileExists(*Path))
+		FileManager.DeleteFile(*Path);
+	FFileHelper::SaveStringToFile(TimelineAsJson, *Path, FFileHelper::EEncodingOptions::ForceUTF8);
+	if (!IsUnitTesting() && CoordConversions)
+	{
+		if (FileManager.FileExists(*CoordConvPath))
+			FileManager.DeleteFile(*CoordConvPath);
+		FString CCString;
+		FJsonObjectConverter::UStructToJsonObjectString(*CoordConversions, CCString, 0, 0);
+		FFileHelper::SaveStringToFile(CCString, *CoordConvPath, FFileHelper::EEncodingOptions::ForceUTF8);
+	}
 }

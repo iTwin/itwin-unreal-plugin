@@ -1,12 +1,18 @@
-#include "CesiumGeometry/BoundingSphere.h"
-#include "CesiumGeometry/Plane.h"
-#include "CesiumUtility/Math.h"
+#include <CesiumGeometry/BoundingSphere.h>
+#include <CesiumGeometry/CullingResult.h>
+#include <CesiumGeometry/Plane.h>
+#include <CesiumUtility/Math.h>
 
-#include <catch2/catch.hpp>
-#include <glm/gtc/matrix_transform.hpp>
+#include <doctest/doctest.h>
+#include <glm/ext/matrix_transform.hpp>
+#include <glm/ext/vector_double3.hpp>
+#include <glm/fwd.hpp>
 #include <glm/gtx/euler_angles.hpp>
-#include <glm/mat3x3.hpp>
 
+#include <algorithm>
+#include <vector>
+
+using namespace doctest;
 using namespace CesiumGeometry;
 using namespace CesiumUtility;
 
@@ -17,7 +23,7 @@ TEST_CASE("BoundingSphere::intersectPlane") {
     CullingResult expectedResult;
   };
 
-  auto testCase = GENERATE(
+  std::vector<TestCase> testCases{
       // sphere on the positive side of a plane
       TestCase{
           BoundingSphere(glm::dvec3(0.0), 0.5),
@@ -32,11 +38,13 @@ TEST_CASE("BoundingSphere::intersectPlane") {
       TestCase{
           BoundingSphere(glm::dvec3(1.0, 0.0, 0.0), 0.5),
           Plane(glm::dvec3(1.0, 0.0, 0.0), -1.0),
-          CullingResult::Intersecting});
+          CullingResult::Intersecting}};
 
-  CHECK(
-      testCase.sphere.intersectPlane(testCase.plane) ==
-      testCase.expectedResult);
+  for (auto& testCase : testCases) {
+    CHECK(
+        testCase.sphere.intersectPlane(testCase.plane) ==
+        testCase.expectedResult);
+  }
 }
 
 TEST_CASE(
@@ -57,10 +65,21 @@ TEST_CASE(
   CHECK(bs.computeDistanceSquaredToPosition(position) == 0);
 }
 
+TEST_CASE("BoundingSphere::contains") {
+  glm::dvec3 center(1.0, 2.0, 3.0);
+  double radius = 45.0;
+  BoundingSphere sphere(center, radius);
+  double epsilon = CesiumUtility::Math::Epsilon14;
+
+  CHECK(sphere.contains(center));
+  CHECK(sphere.contains(center + glm::dvec3(radius, 0.0, 0.0)));
+  CHECK(!sphere.contains(center + glm::dvec3(radius + epsilon, 0.0, 0.0)));
+}
+
 TEST_CASE("BoundingSphere::transform") {
   BoundingSphere sphere(glm::dvec3(1.0, 2.0, 3.0), 45.0);
 
-  SECTION("translating moves the center only") {
+  SUBCASE("translating moves the center only") {
     glm::dmat4 transformation = glm::translate(
         glm::identity<glm::dmat4>(),
         glm::dvec3(10.0, 20.0, 30.0));
@@ -71,7 +90,7 @@ TEST_CASE("BoundingSphere::transform") {
     CHECK(transformed.getCenter().z == Approx(sphere.getCenter().z + 30.0));
   }
 
-  SECTION("rotating moves the center only") {
+  SUBCASE("rotating moves the center only") {
     double fortyFiveDegrees = Math::OnePi / 4.0;
     glm::dmat4 transformation = glm::eulerAngleY(fortyFiveDegrees);
     BoundingSphere transformed = sphere.transform(transformation);
@@ -83,7 +102,7 @@ TEST_CASE("BoundingSphere::transform") {
     CHECK(transformed.getCenter().z == Approx(rotatedCenter.z));
   }
 
-  SECTION(
+  SUBCASE(
       "scaling moves the center, and scales the radius by the max component") {
     glm::dmat4 transformation =
         glm::scale(glm::identity<glm::dmat4>(), glm::dvec3(2.0, 3.0, 4.0));

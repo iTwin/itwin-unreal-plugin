@@ -4,6 +4,7 @@
 
 #include <Cesium3DTilesSelection/TilesetContentLoader.h>
 #include <Cesium3DTilesSelection/TilesetExternals.h>
+#include <Cesium3DTilesSelection/TilesetSharedAssetSystem.h>
 #include <CesiumAsync/Future.h>
 #include <CesiumAsync/IAssetAccessor.h>
 
@@ -16,12 +17,18 @@
 namespace Cesium3DTilesSelection {
 class TilesetJsonLoader : public TilesetContentLoader {
 public:
-  TilesetJsonLoader(const std::string& baseUrl, CesiumGeometry::Axis upAxis);
+  TilesetJsonLoader(
+      const std::string& baseUrl,
+      CesiumGeometry::Axis upAxis,
+      const CesiumGeospatial::Ellipsoid& ellipsoid CESIUM_DEFAULT_ELLIPSOID);
 
   CesiumAsync::Future<TileLoadResult>
   loadTileContent(const TileLoadInput& loadInput) override;
 
-  TileChildrenResult createTileChildren(const Tile& tile) override;
+  TileChildrenResult createTileChildren(
+      const Tile& tile,
+      const CesiumGeospatial::Ellipsoid& ellipsoid
+          CESIUM_DEFAULT_ELLIPSOID) override;
 
   const std::string& getBaseUrl() const noexcept;
 
@@ -33,15 +40,23 @@ public:
   createLoader(
       const TilesetExternals& externals,
       const std::string& tilesetJsonUrl,
-      const std::vector<CesiumAsync::IAssetAccessor::THeader>& requestHeaders);
+      const std::vector<CesiumAsync::IAssetAccessor::THeader>& requestHeaders,
+      const CesiumGeospatial::Ellipsoid& ellipsoid CESIUM_DEFAULT_ELLIPSOID);
 
-  static TilesetContentLoaderResult<TilesetJsonLoader> createLoader(
+  static CesiumAsync::Future<TilesetContentLoaderResult<TilesetJsonLoader>>
+  createLoader(
+      const CesiumAsync::AsyncSystem& asyncSystem,
+      const std::shared_ptr<CesiumAsync::IAssetAccessor>& pAssetAccessor,
       const std::shared_ptr<spdlog::logger>& pLogger,
       const std::string& tilesetJsonUrl,
-      const rapidjson::Document& tilesetJson);
+      const CesiumAsync::HttpHeaders& requestHeaders,
+      const rapidjson::Document& tilesetJson,
+      const CesiumGeospatial::Ellipsoid& ellipsoid CESIUM_DEFAULT_ELLIPSOID);
 
 private:
   std::string _baseUrl;
+  CesiumGeospatial::Ellipsoid _ellipsoid;
+  CesiumUtility::IntrusivePointer<TilesetSharedAssetSystem> _pSharedAssetSystem;
 
   /**
    * @brief The axis that was declared as the "up-axis" for glTF content.

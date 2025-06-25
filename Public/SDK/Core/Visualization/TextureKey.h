@@ -19,7 +19,7 @@
 #	endif // !MODULE_EXPORT
 #endif
 
-MODULE_EXPORT namespace SDK::Core 
+MODULE_EXPORT namespace AdvViz::SDK
 {
 	enum class ETextureSource : uint8_t;
 
@@ -35,7 +35,7 @@ MODULE_EXPORT namespace SDK::Core
 	};
 
 	using TextureKeySet = std::set<TextureKey>;
-	using PerIModelTextureSet = std::unordered_map<std::string, SDK::Core::TextureKeySet>; // iModelID -> TextureSet
+	using PerIModelTextureSet = std::unordered_map<std::string, AdvViz::SDK::TextureKeySet>; // iModelID -> TextureSet
 
 
 	//-------------------------------------------------------------------------------------------------------

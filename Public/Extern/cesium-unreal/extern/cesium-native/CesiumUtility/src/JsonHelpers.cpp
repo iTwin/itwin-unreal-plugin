@@ -1,6 +1,13 @@
-#include "CesiumUtility/JsonHelpers.h"
+#include <CesiumUtility/JsonHelpers.h>
 
+#include <glm/ext/matrix_double4x4.hpp>
 #include <rapidjson/document.h>
+#include <rapidjson/rapidjson.h>
+
+#include <cstdint>
+#include <optional>
+#include <string>
+#include <vector>
 
 namespace CesiumUtility {
 

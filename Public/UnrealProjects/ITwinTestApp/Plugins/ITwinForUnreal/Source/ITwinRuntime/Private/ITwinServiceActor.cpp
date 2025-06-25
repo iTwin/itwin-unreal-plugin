@@ -13,10 +13,12 @@
 #include <ITwinWebServices/ITwinWebServices.h>
 #include <Engine/World.h>
 
-#include <SDK/Core/Tools/Log.h>
+#include <Compil/BeforeNonUnrealIncludes.h>
+#	include <SDK/Core/Tools/Log.h>
+#include <Compil/AfterNonUnrealIncludes.h>
 
 
-DEFINE_LOG_CATEGORY(LogITwin);
+ITWINRUNTIME_API DEFINE_LOG_CATEGORY(LogITwin);
 
 AITwinServiceActor::AITwinServiceActor()
 {
@@ -59,7 +61,7 @@ void AITwinServiceActor::UpdateWebServices()
 void AITwinServiceActor::SetTestMode(FString const& ServerUrl)
 {
 	// Set a fake access token, to prevent the AuthorizationManager from trying to retrieve a real token
-	FITwinAuthorizationManager::GetInstance(SDK::Core::EITwinEnvironment::Prod)->SetOverrideAccessToken("TestToken");
+	FITwinAuthorizationManager::GetInstance(AdvViz::SDK::EITwinEnvironment::Prod)->SetOverrideAccessToken("TestToken");
 	// Create ServerConnection & WebServices pointing to the mock server.
 	ServerConnection = NewObject<AITwinServerConnection>(this);
 	ServerConnection->Environment = EITwinEnvironment::Prod;
@@ -88,27 +90,27 @@ const TCHAR* AITwinServiceActor::GetObserverName() const
 	return TEXT("<unknown>");
 }
 
-SDK::Core::EITwinAuthStatus AITwinServiceActor::CheckServerConnection(bool bRequestAuthorisationIfNeeded /*= true*/)
+AdvViz::SDK::EITwinAuthStatus AITwinServiceActor::CheckServerConnection(bool bRequestAuthorisationIfNeeded /*= true*/)
 {
 	UpdateWebServices();
 	if (ServerConnection && ServerConnection->HasAccessToken())
 	{
 		// Assume the access token is valid (this is the case if the authorization is performed internally,
 		// but not if the user types random character in the ServerConnection instance, of course...)
-		return SDK::Core::EITwinAuthStatus::Success;
+		return AdvViz::SDK::EITwinAuthStatus::Success;
 	}
 	if (ensureMsgf(WebServices, TEXT("WebServices was not yet created")))
 	{
 		if (WebServices->IsAuthorizationInProgress())
 		{
-			return SDK::Core::EITwinAuthStatus::InProgress;
+			return AdvViz::SDK::EITwinAuthStatus::InProgress;
 		}
 		else if (bRequestAuthorisationIfNeeded)
 		{
 			return WebServices->CheckAuthorizationStatus();
 		}
 	}
-	return SDK::Core::EITwinAuthStatus::None;
+	return AdvViz::SDK::EITwinAuthStatus::None;
 }
 
 void AITwinServiceActor::UpdateOnSuccessfulAuthorization()
@@ -138,18 +140,9 @@ FString AITwinServiceActor::GetAccessToken() const
 {
 	if (ServerConnection)
 	{
-		return ServerConnection->GetAccessToken();
-	}
-	BE_LOGE("ITwinAPI", "[" << TCHAR_TO_UTF8(GetObserverName()) << "] No access token");
-	return {};
-}
-
-std::string AITwinServiceActor::GetAccessTokenStdString() const
-{
-	std::string AccessToken;
-	if (ServerConnection && ServerConnection->GetAccessTokenStdString(AccessToken))
-	{
-		return AccessToken;
+		auto token = ServerConnection->GetAccessTokenPtr();
+		if (token)
+			return token->c_str();
 	}
 	BE_LOGE("ITwinAPI", "[" << TCHAR_TO_UTF8(GetObserverName()) << "] No access token");
 	return {};

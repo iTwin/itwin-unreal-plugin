@@ -1,0 +1,9 @@
+﻿{
+	"url": "https://qa-es-api.bentley.com/4dschedule/v1/schedules/3497df55-60e9-44fd-91ec-3c86473884f5/animation3dPathAssignments?pageSize=2&pageToken=eyJTa2lwIjo4LCJUb3AiOjJ9",
+	"verb": "GET",
+	"connectedSuccessfully": true,
+	"responseCode": 200
+,
+	"reply": 
+{"items":[{"id":"fee271a4-9fd3-4eeb-abf2-02c53f2054bf","pathId":"cb00fae1-b23b-4dc8-abb2-5c476e7cba81","alignment":"Custom","center":{"x":-67.9704,"y":1.2192,"z":-50.000004},"reverseDirection":false,"adjustForTaskPercentComplete":false,"pauseDuringNonWorkingTime":false,"motionStart":0,"motionEnd":1}],"nextPageToken":null}
+}

@@ -7,19 +7,19 @@
 #include <CesiumJsonReader/JsonReader.h>
 #include <CesiumJsonReader/JsonReaderOptions.h>
 
-#include <gsl/span>
 #include <rapidjson/fwd.h>
 
+#include <span>
 #include <vector>
 
 namespace CesiumGltf {
 struct Schema;
-}
+} // namespace CesiumGltf
 
 namespace CesiumGltfReader {
 
 /**
- * @brief Reads {@link Schema} instances from JSON.
+ * @brief Reads \ref CesiumGltf::Schema "Schema" instances from JSON.
  */
 class CESIUMGLTFREADER_API SchemaReader {
 public:
@@ -45,12 +45,12 @@ public:
    * @return The result of reading the instance.
    */
   CesiumJsonReader::ReadJsonResult<CesiumGltf::Schema>
-  readFromJson(const gsl::span<const std::byte>& data) const;
+  readFromJson(const std::span<const std::byte>& data) const;
 
   /**
    * @brief Reads an instance of Schema from a rapidJson::Value.
    *
-   * @param data The buffer from which to read the instance.
+   * @param value The value from which to read the instance.
    * @return The result of reading the instance.
    */
   CesiumJsonReader::ReadJsonResult<CesiumGltf::Schema>
@@ -59,7 +59,7 @@ public:
   /**
    * @brief Reads an array of instances of Schema from a rapidJson::Value.
    *
-   * @param data The buffer from which to read the array of instances.
+   * @param value The value from which to read the array of instances.
    * @return The result of reading the array of instances.
    */
   CesiumJsonReader::ReadJsonResult<std::vector<CesiumGltf::Schema>>

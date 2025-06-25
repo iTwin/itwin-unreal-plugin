@@ -9,8 +9,8 @@
 #include <ITwinUtilityLibrary.h>
 #include <ITwinRuntime/Private/Compil/SanitizedPlatformHeaders.h>
 #include <CesiumGeospatial/LocalHorizontalCoordinateSystem.h>
-#include <ITwinCesium3DTileset.h>
-#include <ITwinCesiumGeoreference.h>
+#include <IncludeITwin3DTileset.h>
+#include <CesiumGeoreference.h>
 #include <ITwinGeolocation.h>
 #include <ITwinIModel.h>
 #include <ITwinWebServices/ITwinWebServices_Info.h>
@@ -21,14 +21,6 @@
 #include <Kismet/GameplayStatics.h>
 #include <Kismet/KismetMathLibrary.h>
 #include <UObject/UObjectIterator.h>
-
-FITwinCoordConversions::FITwinCoordConversions()
-	: IModelToUnreal(FTransform::Identity)
-	, UnrealToIModel(FTransform::Identity)
-	, IModelToUntransformedIModelInUE(FTransform::Identity)
-	, IModelTilesetTransform(FTransform::Identity)
-{
-}
 
 FTransform UITwinUtilityLibrary::Inverse(FTransform const& Transform)
 {
@@ -64,6 +56,15 @@ FMatrix UITwinUtilityLibrary::ConvertMatrix_GlmToUnreal(const glm::dmat4& m)
 /// otherwise use Origin & Orientation.
 /// Here we use Origin & Orientation since they seem to be always valid.
 /// TODO: follow order of precedence above.
+///
+/// TODO: we are not yet handling neither globalOrigin nor geographicCoordinateSystem.
+/// In https://www.itwinjs.org/learning/geolocation/, we do the "2. Linear" case but not the "3. Projected" case.
+/// It says the Ecef Location is "the position of the iModel's Global Origin in ECEF coordinates", and just
+/// above it says "The Global Origin is added to spatial coordinates before converting them to Cartographic
+/// coordinates" (I find it confusing that they use "global origin" for both the true *point* of origin of the
+/// iModel, and for the offset to apply to internal iModel spatial coordinates to get their true coords based on
+/// the global origin point...).
+/// Alas I have yet to find an iModel with a non-zero global origin...
 FTransform UITwinUtilityLibrary::GetIModelToEcefTransform(const AITwinIModel* IModel)
 {
 	namespace CesiumGS = CesiumGeospatial;
@@ -131,11 +132,10 @@ FTransform UITwinUtilityLibrary::GetEcefToUnrealTransform(const AITwinIModel* IM
 {
 	// [ECEF space]->[Unreal space].
 	TObjectIterator<APlayerController> Itr;
-	const AITwinCesium3DTileset* Tileset = IModel ? IModel->GetTileset() : nullptr;
+	const ACesium3DTileset* Tileset = IModel ? IModel->GetTileset() : nullptr;
 	const auto Georeference = Tileset ? Tileset->GetGeoreference() :
-		Cast<AITwinCesiumGeoreference>(UGameplayStatics::GetActorOfClass(
-			Itr->GetWorld(), AITwinCesiumGeoreference::StaticClass()));
-	FITwinCoordConversions Result;
+		Cast<ACesiumGeoreference>(UGameplayStatics::GetActorOfClass(
+			Itr->GetWorld(), ACesiumGeoreference::StaticClass()));
 	EcefToUntransformedIModelInUE = UKismetMathLibrary::Conv_MatrixToTransform(
 		Georeference->ComputeEarthCenteredEarthFixedToUnrealTransformation());
 	return EcefToUntransformedIModelInUE * IModelTilesetToUnreal(IModel);
@@ -144,10 +144,10 @@ FTransform UITwinUtilityLibrary::GetEcefToUnrealTransform(const AITwinIModel* IM
 FTransform UITwinUtilityLibrary::GetUnrealToEcefTransform(const AITwinIModel* IModel)
 {
 	TObjectIterator<APlayerController> Itr;
-	const AITwinCesium3DTileset* Tileset = IModel ? IModel->GetTileset() : nullptr;
+	const ACesium3DTileset* Tileset = IModel ? IModel->GetTileset() : nullptr;
 	const auto Georeference = Tileset ? Tileset->GetGeoreference() :
-		Cast<AITwinCesiumGeoreference>(UGameplayStatics::GetActorOfClass(
-			Itr->GetWorld(), AITwinCesiumGeoreference::StaticClass()));
+		Cast<ACesiumGeoreference>(UGameplayStatics::GetActorOfClass(
+			Itr->GetWorld(), ACesiumGeoreference::StaticClass()));
 	return UITwinUtilityLibrary::Inverse(IModelTilesetToUnreal(IModel))
 		* UKismetMathLibrary::Conv_MatrixToTransform(
 			Georeference->ComputeUnrealToEarthCenteredEarthFixedTransformation());
@@ -184,7 +184,8 @@ FTransform UITwinUtilityLibrary::StandardizeAndFixAngles(FTransform Transform)
 	// If this assert is triggered, this means the saved view has a non-null roll but is not looking
 	// perfectly up or down. This case is not handled.
 	// RQ: replaced check by ensure here to avoid crash
-	ensure(std::abs(Rotator.Roll) < 1e-5);
+	// JDE: discard it completely as we are aware of the problem and do not plan to resolve it...
+	//ensure(std::abs(Rotator.Roll) < 1e-5);
 	return Transform;
 }
 
@@ -313,7 +314,7 @@ void UITwinUtilityLibrary::GetSavedViewFrustumFromUnrealTransform(const AITwinIM
 		(2.0 * FocusDist_ITwin) / AspectRatio, FocusDist_ITwin };
 	FRotator DummyRotator = FRotator::ZeroRotator;
 	FVector FarBottomLeft;
-	const AITwinCesium3DTileset* Tileset = IModel ? IModel->GetTileset() : nullptr;
+	const ACesium3DTileset* Tileset = IModel ? IModel->GetTileset() : nullptr;
 	UITwinUtilityLibrary::GetIModelBaseFromUnrealTransform(
 		IModel, FTransform(Inter), FarBottomLeft, DummyRotator);
 	SavedView.FrustumOrigin = FarBottomLeft;

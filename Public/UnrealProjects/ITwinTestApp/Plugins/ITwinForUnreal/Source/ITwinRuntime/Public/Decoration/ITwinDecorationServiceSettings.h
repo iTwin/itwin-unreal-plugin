@@ -87,4 +87,17 @@ public:
 		Category = "Access",
 		meta = (ConfigRestartRequired = true))
 	bool bLoadDecorationsInPlugin = false;
+
+	/// Can be used to customize the environments where the Decoration Service is used for scene persistence.
+	/// Note that scene persistence is being migrated to a different service, so this option is just here for
+	/// transitioning.
+	/// Example of valid value: "DEV+QA" to enable the legacy scene persistence on both DEV and QA
+	/// environments.
+	UPROPERTY(
+		Config,
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "Access",
+		meta = (ConfigRestartRequired = true))
+	FString CustomEnvsWithScenePersistenceDS = {};
 };

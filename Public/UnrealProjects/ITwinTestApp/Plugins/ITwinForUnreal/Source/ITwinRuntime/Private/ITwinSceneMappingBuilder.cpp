@@ -8,24 +8,23 @@
 
 #include "ITwinSceneMappingBuilder.h"
 
+#include <IncludeITwin3DTileset.h>
 #include <ITwinGeolocation.h>
 #include <ITwinIModel.h>
 #include <ITwinIModelInternals.h>
 #include <ITwinMetadataConstants.h>
+#include "ITwinMetadataPropertyAccess.h"
 #include <ITwinSceneMapping.h>
 #include <ITwinSynchro4DSchedules.h>
 #include <ITwinSynchro4DSchedulesInternals.h>
 #include <Material/ITwinMaterialParameters.inl>
 #include <Math/UEMathExts.h>
 
-#include <ITwinCesium3DTileset.h>
-#include <ITwinCesiumFeatureIdSet.h>
-#include <ITwinCesiumMetadataPickingBlueprintLibrary.h>
-#include <ITwinCesiumModelMetadata.h>
-#include <ITwinCesiumPrimitiveFeatures.h>
+#include <CesiumFeatureIdSet.h>
+#include <CesiumModelMetadata.h>
+#include <CesiumPrimitiveFeatures.h>
 
-#include <CesiumGltf/ExtensionITwinMaterial.h>
-#include <CesiumGltf/ExtensionITwinMaterialID.h>
+#include <Cesium3DTilesSelection/TileContent.h>
 #include <CesiumGltf/ExtensionKhrTextureTransform.h>
 #include <CesiumGltf/MeshPrimitive.h>
 
@@ -37,6 +36,8 @@
 #include <set>
 
 #include <Compil/BeforeNonUnrealIncludes.h>
+#	include <BeUtils/Gltf/ExtensionITwinMaterial.h>
+#	include <BeUtils/Gltf/ExtensionITwinMaterialID.h>
 #	include <Core/ITwinAPI/ITwinMaterial.h>
 #include <Compil/AfterNonUnrealIncludes.h>
 
@@ -66,11 +67,11 @@ static FMatrix CreateMatrixFromGlm(const glm::dmat4& m) noexcept
 namespace
 {
 	template <typename T>
-	T FeatureIDToITwinID(const FITwinCesiumPropertyTableProperty* pProperty, const int64 FeatureID)
+	T FeatureIDToITwinID(const FCesiumPropertyTableProperty* pProperty, const int64 FeatureID)
 	{
 		return T(
-			UITwinCesiumMetadataValueBlueprintLibrary::GetUnsignedInteger64(
-				UITwinCesiumPropertyTablePropertyBlueprintLibrary::GetValue(
+			FCesiumMetadataValueAccess::GetUnsignedInteger64(
+				UCesiumPropertyTablePropertyBlueprintLibrary::GetValue(
 					*pProperty,
 					FeatureID),
 				ITwin::NOT_ELEMENT.value()));
@@ -86,17 +87,9 @@ namespace
 // class FITwinSceneMappingBuilder
 //=======================================================================================
 
-void FITwinSceneMappingBuilder::OnMeshConstructed(
-	Cesium3DTilesSelection::Tile& Tile,
-	const TWeakObjectPtr<UStaticMeshComponent>& MeshComponent,
-	const TWeakObjectPtr<UMaterialInstanceDynamic>& pMaterial,
-	const FITwinCesiumMeshData& CesiumData)
+TObjectPtr<UStaticMesh> CheckedGetStaticMesh(UStaticMeshComponent const& MeshComponent)
 {
-	ITwinScene::TileIdx TileRank;
-	auto& SceneMapping = GetInternals(IModel).SceneMapping;
-	FITwinSceneTile& SceneTile = SceneMapping.KnownTileSLOW(Tile, &TileRank);
-
-	const TObjectPtr<UStaticMesh> StaticMesh = MeshComponent->GetStaticMesh();
+	const TObjectPtr<UStaticMesh> StaticMesh = MeshComponent.GetStaticMesh();
 	if (!StaticMesh
 		|| !StaticMesh->GetRenderData()
 		|| !StaticMesh->GetRenderData()->LODResources.IsValidIndex(0))
@@ -106,20 +99,32 @@ void FITwinSceneMappingBuilder::OnMeshConstructed(
 		// used - if you get there, it's probably that we upgraded the module
 		// cesium-unreal, and that there are some substantial changes in the
 		// way meshes are created for Unreal!
-		return;
+		return nullptr;
 	}
+	return StaticMesh;
+}
+
+void FITwinSceneMappingBuilder::OnMeshConstructed(Cesium3DTilesSelection::Tile& Tile,
+	UStaticMeshComponent& MeshComponent, UMaterialInstanceDynamic& Material,
+	FCesiumMeshData const& CesiumData)
+{
+	ITwinScene::TileIdx TileRank;
+	auto& SceneMapping = GetInternals(IModel).SceneMapping;
+	FITwinSceneTile& SceneTile = SceneMapping.KnownTileSLOW(Tile, &TileRank);
+
+	const TObjectPtr<UStaticMesh> StaticMesh = CheckedGetStaticMesh(MeshComponent);
 
 #if DEBUG_ITWIN_MATERIAL_IDS()
-	auto const itBaseColorOverride = materialColorOverrides.find(pMaterial.Get());
+	auto const itBaseColorOverride = materialColorOverrides.find(&Material);
 	if (itBaseColorOverride != materialColorOverrides.end())
 	{
-		pMaterial->SetVectorParameterValueByInfo(
+		Material.SetVectorParameterValueByInfo(
 			FMaterialParameterInfo(
 				"baseColorFactor",
 				EMaterialParameterAssociation::GlobalParameter,
 				INDEX_NONE),
 			itBaseColorOverride->second);
-		pMaterial->SetVectorParameterValueByInfo(
+		Material.SetVectorParameterValueByInfo(
 			FMaterialParameterInfo(
 				"baseColorFactor",
 				EMaterialParameterAssociation::LayerParameter,
@@ -128,35 +133,38 @@ void FITwinSceneMappingBuilder::OnMeshConstructed(
 	}
 #endif // DEBUG_ITWIN_MATERIAL_IDS
 
-	AITwinCesium3DTileset* Tileset = nullptr;
-	// MeshComponent is a UITwinCesiumGltfPrimitiveComponent, a USceneComponent which 'AttachParent' is
-	// a UITwinCesiumGltfComponent, which Owner is the cesium tileset, thus:
-	if (ensure(MeshComponent->GetAttachParent()))
+	ACesium3DTileset* Tileset = nullptr;
+	// MeshComponent is a UCesiumGltfPrimitiveComponent, a USceneComponent which 'AttachParent' is
+	// a UCesiumGltfComponent, which Owner is the cesium tileset, thus:
+	if (ensure(MeshComponent.GetAttachParent()))
 	{
-		Tileset = Cast<AITwinCesium3DTileset>(MeshComponent->GetAttachParent()->GetOwner());
-		//ensure(Tileset == Cast<UITwinCesiumGltfPrimitiveComponent PRIVATE!>(MeshComponent)->pTilesetActor);
+		Tileset = Cast<ACesium3DTileset>(MeshComponent.GetAttachParent()->GetOwner());
+		//ensure(Tileset == Cast<UCesiumGltfPrimitiveComponent PRIVATE!>(MeshComponent)->pTilesetActor);
 	}
 	if (!ensure(Tileset))
 		return;
-	// Note: geoloc must have been set before, MeshComponent->GetComponentTransform depends on it!
-	// Note 2: despite GetComponentTransform's doc, tileset and iModel transforms are not accounted!!
-	auto const Transform = MeshComponent->GetComponentTransform();
+	// Note: geoloc must have been set before, MeshComponent.GetComponentTransform depends on it!
+	// Note 2: despite GetComponentTransform's doc, tileset and iModel transforms are not accounted,
+	// I think this is because the component is not attached yet: when it happens (see
+	// "if (pGltf->GetAttachParent() == nullptr)" in ACesium3DTileset::showTilesToRender), the transform
+	// of the pGltf and all its children primitive components are updated with the right value...
+	auto const Transform = MeshComponent.GetComponentTransform();
 
 	// always look in 1st set (_FEATURE_ID_0)
 	const int64 FeatureIDSetIndex = ITwinCesium::Metada::ELEMENT_FEATURE_ID_SLOT;
-	const FITwinCesiumPrimitiveFeatures& Features(CesiumData.Features);
+	const FCesiumPrimitiveFeatures& Features(CesiumData.Features);
 	constexpr int MetaDataNamesCount = 4;
-	std::array<FString, MetaDataNamesCount> MetaDataNames = {
+	static const std::array<FString, MetaDataNamesCount> MetaDataNames = {
 		ITwinCesium::Metada::ELEMENT_NAME,
 		ITwinCesium::Metada::SUBCATEGORY_NAME,
 		ITwinCesium::Metada::MODEL_NAME,
 		ITwinCesium::Metada::GEOMETRYCLASS_NAME
 	};
-	std::array<const FITwinCesiumPropertyTableProperty*, MetaDataNamesCount> pProperties;
+	std::array<const FCesiumPropertyTableProperty*, MetaDataNamesCount> pProperties;
 	for (int i = 0; i < MetaDataNamesCount; i++)
 	{
 		pProperties[i] =
-			UITwinCesiumMetadataPickingBlueprintLibrary::FindValidProperty(
+			FITwinMetadataPropertyAccess::FindValidProperty(
 				Features,
 				CesiumData.Metadata,
 				MetaDataNames[i],
@@ -166,18 +174,26 @@ void FITwinSceneMappingBuilder::OnMeshConstructed(
 	{
 		return;
 	}
+	// Material IDs are stored in a separate table.
+	const FCesiumPropertyTableProperty* pMaterialProp = FITwinMetadataPropertyAccess::FindValidProperty(
+		Features, CesiumData.Metadata,
+		ITwinCesium::Metada::MATERIAL_NAME,
+		ITwinCesium::Metada::MATERIAL_FEATURE_ID_SLOT);
 
 	// Add a wrapper for this GLTF mesh: used in case we need to extract sub-parts
 	// matching a given ElementID (for Synchro4D animation), or if we need to bake
 	// feature IDs in its vertex UVs.
-	auto& Wrapper = SceneTile.GltfMeshes.emplace_back(MeshComponent, CesiumData);
-	// Actual baking was already done in a background thread when we made cesium's loadPrimitive call
-	// FITwinSceneMappingBuilder::BakeFeatureIDsInVertexUVs, this here only updates the scene tile's map:
+	int32_t const GltfMeshWrapIdx = (int32_t)SceneTile.GltfMeshes.size();
+	auto& Wrapper =
+		SceneTile.GltfMeshes.emplace_back(FITwinGltfMeshComponentWrapper(MeshComponent, CesiumData));
+	// Actual baking was already done in a background thread during cesium's loadPrimitive, thanks to the
+	// UCesiumFeaturesMetadataComponent component we attach to the tileset - this here only updates the
+	// scene tile's map:
 	SceneMapping.SetupFeatureIDsInVertexUVs(SceneTile, Wrapper);
 	// note that this has already been checked:
 	// if no featureIDSet exists in features, pElementProperty would be null...
-	const FITwinCesiumFeatureIdSet& FeatureIdSet =
-		UITwinCesiumPrimitiveFeaturesBlueprintLibrary::GetFeatureIDSets(Features)[FeatureIDSetIndex];
+	const FCesiumFeatureIdSet& FeatureIdSet =
+		UCesiumPrimitiveFeaturesBlueprintLibrary::GetFeatureIDSets(Features)[FeatureIDSetIndex];
 
 	const FStaticMeshLODResources& LODResources = StaticMesh->GetRenderData()->LODResources[0];
 	const FPositionVertexBuffer& PositionBuffer = LODResources.VertexBuffers.PositionVertexBuffer;
@@ -193,7 +209,7 @@ void FITwinSceneMappingBuilder::OnMeshConstructed(
 	for (uint32 vtxIndex(0); vtxIndex < NumVertices; vtxIndex++)
 	{
 		const int64 FeatureID =
-			UITwinCesiumFeatureIdSetBlueprintLibrary::GetFeatureIDForVertex(
+			UCesiumFeatureIdSetBlueprintLibrary::GetFeatureIDForVertex(
 				FeatureIdSet,
 				static_cast<int64>(vtxIndex));
 		if (FeatureID < 0)
@@ -217,7 +233,7 @@ void FITwinSceneMappingBuilder::OnMeshConstructed(
 				ElementID = FeatureIDToITwinID<ITwinElementID>(pProperties[to_underlying(EPropertyType::Element)], FeatureID);
 				if (ElementID != ITwin::NOT_ELEMENT)
 				{
-					if (ElementID != LastElem) // actually the case 99% of the time
+					if (ElementID != LastElem) // thus skipping below code 99% of the time
 					{
 						// fetch the CategoryID and ModelID corresponding to this feature
 						ITwinElementID CategoryID =
@@ -245,13 +261,31 @@ void FITwinSceneMappingBuilder::OnMeshConstructed(
 					{
 						pElemInTile->Features.push_back(ITwinFeatID);
 					}
-					// The material is always different (each primitive uses its own material instance).
-					pElemInTile->Materials.push_back(pMaterial);
-
+					// Each primitive is notified only once and has its own specific material instance,
+					// BUT an ElementID can be found associated to different FeatureIDs (witnessed in
+					// LumenRT_Synchro_002's GSW Stadium), which led to duplicate meshes and materials:
+					if (std::find(pElemInTile->Meshes.begin(), pElemInTile->Meshes.end(), GltfMeshWrapIdx)
+						== pElemInTile->Meshes.end())
+					{
+						pElemInTile->Meshes.push_back(GltfMeshWrapIdx);
+						pElemInTile->Materials.push_back(&Material);
+					}
 					if (!bHasAddedMaterialToSceneTile)
 					{
-						SceneTile.Materials.push_back(pMaterial);
+						SceneTile.Materials.push_back(&Material);
 						bHasAddedMaterialToSceneTile = true;
+					}
+				}
+				// Also fetch the (iTwin) Material ID related to this feature.
+				ITwinMaterialID const MaterialID = pMaterialProp ? FeatureIDToITwinID<ITwinMaterialID>(
+					pMaterialProp, FeatureID) : ITwin::NOT_MATERIAL;
+				if (MaterialID != ITwin::NOT_MATERIAL)
+				{
+					FITwinMaterialFeaturesInTile& MatFeaturesInTile = SceneTile.MaterialFeaturesSLOW(MaterialID);
+					if (std::find(MatFeaturesInTile.Features.begin(), MatFeaturesInTile.Features.end(), ITwinFeatID)
+						== MatFeaturesInTile.Features.end())
+					{
+						MatFeaturesInTile.Features.push_back(ITwinFeatID);
 					}
 				}
 			}
@@ -275,8 +309,7 @@ void FITwinSceneMappingBuilder::OnMeshConstructed(
 		}
 	}
 	if (IModel.Synchro4DSchedules)
-		GetInternals(*IModel.Synchro4DSchedules).OnNewTileMeshBuilt(
-			TileRank, std::move(MeshElemSceneRanks), pMaterial, SceneTile);
+		GetInternals(*IModel.Synchro4DSchedules).OnNewTileMeshBuilt(TileRank, std::move(MeshElemSceneRanks));
 }
 
 void FITwinSceneMappingBuilder::OnTileConstructed(const Cesium3DTilesSelection::Tile& Tile)
@@ -289,51 +322,85 @@ void FITwinSceneMappingBuilder::OnVisibilityChanged(const Cesium3DTilesSelection
 	GetInternals(IModel).OnVisibilityChanged(TileID, visible);
 }
 
-std::optional<uint32> FITwinSceneMappingBuilder::BakeFeatureIDsInVertexUVs(
-	std::optional<uint32> featuresAccessorIndex,
-	ICesiumMeshBuildCallbacks::FITwinCesiumMeshData const& CesiumMeshData,
-	bool duplicateVertices,
-	TArray<FStaticMeshBuildVertex>& vertices,
-	TArray<uint32> const& indices) const
-{
-	return FITwinGltfMeshComponentWrapper::BakeFeatureIDsInVertexUVs(
-		featuresAccessorIndex, CesiumMeshData, duplicateVertices, vertices, indices);
-}
-
 FITwinSceneMappingBuilder::FITwinSceneMappingBuilder(AITwinIModel& InIModel)
 	: IModel(InIModel)
 {
 }
 
+void FITwinSceneMappingBuilder::SelectSchedulesBaseMaterial(
+	UStaticMeshComponent const& MeshComponent, UMaterialInterface*& pBaseMaterial,
+	FCesiumModelMetadata const& Metadata, FCesiumPrimitiveFeatures const& Features) const
+{
+	const int64 FeatureIDSetIndex = ITwinCesium::Metada::ELEMENT_FEATURE_ID_SLOT;
+	const FCesiumPropertyTableProperty* PropTable = FITwinMetadataPropertyAccess::
+		FindValidProperty(Features, Metadata, ITwinCesium::Metada::ELEMENT_NAME, FeatureIDSetIndex);
+	if (!PropTable)
+		return;
+	// note that this has already been checked:
+	// if no featureIDSet exists in features, pElementProperty would be null...
+	const FCesiumFeatureIdSet& FeatureIdSet =
+		UCesiumPrimitiveFeaturesBlueprintLibrary::GetFeatureIDSets(Features)[FeatureIDSetIndex];
+	const TObjectPtr<UStaticMesh> StaticMesh = CheckedGetStaticMesh(MeshComponent);
+	if (0 >= StaticMesh->GetRenderData()->LODResources[0].VertexBuffers.PositionVertexBuffer.GetNumVertices())
+		return;
+	const int64 FeatureID = UCesiumFeatureIdSetBlueprintLibrary::GetFeatureIDForVertex(FeatureIdSet, 0);
+	if (FeatureID < 0)
+		return;
+	// fetch the ElementID corresponding to this feature
+	ITwinElementID const ElementID = FeatureIDToITwinID<ITwinElementID>(PropTable, FeatureID);
+	if (ElementID == ITwin::NOT_ELEMENT)
+		return;
+	auto& SceneMapping = GetInternals(IModel).SceneMapping;
+	auto const& Elem = SceneMapping.ElementForSLOW(ElementID);
+	if (Elem.Requirements.bNeedTranslucentMat)
+		pBaseMaterial = IModel.Synchro4DSchedules->BaseMaterialTranslucent;
+}
+
 UMaterialInstanceDynamic* FITwinSceneMappingBuilder::CreateMaterial_GameThread(
-	CesiumGltf::MeshPrimitive const* pMeshPrimitive,
-	UMaterialInterface*& pBaseMaterial,
-	UObject* InOuter,
-	FName const& Name) {
+	Cesium3DTilesSelection::Tile const& Tile, UStaticMeshComponent const& MeshComponent,
+	CesiumGltf::MeshPrimitive const* pMeshPrimitive, UMaterialInterface*& pBaseMaterial,
+	FCesiumModelMetadata const& Metadata, FCesiumPrimitiveFeatures const& Features,
+	UObject* InOuter, FName const& Name)
+{
+	auto const* Sched = IModel.Synchro4DSchedules;
+	if (IsValid(Sched) && IsValid(Sched->BaseMaterialTranslucent)
+		&& Sched->bUseGltfTunerInsteadOfMeshExtraction
+		&& !(Sched->bDisableVisibilities || Sched->bDisablePartialVisibilities))
+	{
+		auto const MinTuneVer = GetInternals(*Sched).GetMinGltfTunerVersionForAnimation();
+		if (auto* RenderContent = Tile.getContent().getRenderContent())
+		{
+			if (RenderContent->getModel()._tuneVersion >= MinTuneVer)
+				SelectSchedulesBaseMaterial(MeshComponent, pBaseMaterial, Metadata, Features);
+		}
+	}
 	std::optional<uint64_t> iTwinMaterialID;
 	if (pMeshPrimitive)
 	{
-		auto const* matIdExt = pMeshPrimitive->getExtension<CesiumGltf::ExtensionITwinMaterialID>();
+		auto const* matIdExt = pMeshPrimitive->getExtension<BeUtils::ExtensionITwinMaterialID>();
 		if (matIdExt)
 			iTwinMaterialID = matIdExt->materialId;
 	}
 	UMaterialInterface* CustomBaseMaterial = nullptr;
+	// TODO_GCO: 4D animation can force to use BaseMaterialTranslucent: I guess BaseMaterialGlass is
+	// compatible with translucency, but this is just luck. We may have to formalize the base material
+	// process better in the future if we need to accomodate more varied use cases.
 	if (iTwinMaterialID)
 	{
-        // Test whether we should use the Glass base material
-        if (IModel.GetMaterialKind(*iTwinMaterialID) == SDK::Core::EMaterialKind::Glass
-            && IsValid(IModel.Synchro4DSchedules)
-            && IsValid(IModel.Synchro4DSchedules->BaseMaterialGlass))
-        {
-            CustomBaseMaterial = IModel.Synchro4DSchedules->BaseMaterialGlass;
-        }
-
+		// Test whether we should use the Glass base material
+		if (IModel.GetMaterialKind(*iTwinMaterialID) == AdvViz::SDK::EMaterialKind::Glass
+			&& IsValid(Sched) && IsValid(Sched->BaseMaterialGlass))
+		{
+			CustomBaseMaterial = Sched->BaseMaterialGlass;
+		}
 		if (CustomBaseMaterial)
 		{
 			pBaseMaterial = CustomBaseMaterial;
 		}
 	}
-	UMaterialInstanceDynamic* pMat = Super::CreateMaterial_GameThread(pMeshPrimitive, pBaseMaterial, InOuter, Name);
+	UMaterialInstanceDynamic* pMat =
+		Super::CreateMaterial_GameThread(Tile, MeshComponent, pMeshPrimitive, pBaseMaterial,
+										 Metadata, Features, InOuter, Name);
 
 #if DEBUG_ITWIN_MATERIAL_IDS()
 	if (iTwinMaterialID && !CustomBaseMaterial)
@@ -387,7 +454,7 @@ void FITwinSceneMappingBuilder::TuneMaterial(
 				index),
 			static_cast<float>(glTFmaterial.occlusionTexture->strength));
 	}
-	auto const* iTwinMaterialExt = glTFmaterial.getExtension<CesiumGltf::ExtensionITwinMaterial>();
+	auto const* iTwinMaterialExt = glTFmaterial.getExtension<BeUtils::ExtensionITwinMaterial>();
 	if (iTwinMaterialExt)
 	{
 		pMaterial->SetScalarParameterValueByInfo(
@@ -396,6 +463,13 @@ void FITwinSceneMappingBuilder::TuneMaterial(
 				association,
 				index),
 			static_cast<float>(iTwinMaterialExt->specularFactor));
+		// Color texture intensity slider (added lately).
+		pMaterial->SetScalarParameterValueByInfo(
+			FMaterialParameterInfo(
+				TEXT("baseColorTextureFactor"),
+				association,
+				index),
+			static_cast<float>(iTwinMaterialExt->baseColorTextureFactor));
 	}
 	auto const* uvTsfExt = glTFmaterial.getExtension<CesiumGltf::ExtensionKhrTextureTransform>();
 	if (uvTsfExt)
@@ -408,5 +482,32 @@ void FITwinSceneMappingBuilder::BeforeTileDestruction(
 	const Cesium3DTilesSelection::Tile& Tile,
 	USceneComponent* TileGltfComponent)
 {
-	GetInternals(IModel).SceneMapping.UnloadKnownTile(Tile.getTileID());
+	GetInternals(IModel).UnloadKnownTile(Tile.getTileID());
+}
+
+// static
+void FITwinSceneMappingBuilder::BuildFromNonCesiumMesh(FITwinSceneMapping& SceneMapping,
+	const TWeakObjectPtr<UStaticMeshComponent>& MeshComponent,
+	uint64_t ITwinMaterialID)
+{
+	ensure(SceneMapping.KnownTiles.empty());
+
+	ITwinScene::TileIdx const TileRank(0);
+	auto& ByRank = SceneMapping.KnownTiles.get<IndexByRank>();
+	auto const It = ByRank.emplace_back(Cesium3DTilesSelection::TileID("tileId0")).first;
+	auto& SceneTile = const_cast<FITwinSceneTile&>(*It);
+
+	const FCesiumModelMetadata NoMetadata;
+	const FCesiumPrimitiveFeatures NoFeatures;
+	FCesiumToUnrealTexCoordMap DummyGltfToUnrealTexCoordMap;
+
+	auto& Wrapper = SceneTile.GltfMeshes.emplace_back(*MeshComponent.Get(),
+		ICesiumMeshBuildCallbacks::FCesiumMeshData
+		{
+			nullptr,
+			NoMetadata,
+			NoFeatures,
+			DummyGltfToUnrealTexCoordMap
+		});
+	Wrapper.EnforceITwinMaterialID(ITwinMaterialID);
 }

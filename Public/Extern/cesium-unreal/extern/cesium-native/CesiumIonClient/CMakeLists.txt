@@ -29,9 +29,10 @@ target_sources(
         ${CESIUM_ION_CLIENT_PUBLIC_HEADERS}
 )
 
-target_include_directories(
-    CesiumIonClient
-    SYSTEM PUBLIC
+cesium_target_include_directories(
+    TARGET
+        CesiumIonClient
+    PUBLIC
         ${CMAKE_CURRENT_LIST_DIR}/include
 )
 
@@ -39,24 +40,10 @@ target_link_libraries(CesiumIonClient
     PUBLIC
         CesiumAsync
         CesiumUtility
+        CesiumGeospatial
     PRIVATE
-        modp_b64
-        PicoSHA2
-)
-
-if (NOT ${CMAKE_SYSTEM_NAME} MATCHES "WindowsStore")
-  target_link_libraries(CesiumIonClient PRIVATE csprng)
-endif()
-
-# httplib erroneously does not declare its include a `SYSTEM` include, so
-# we must extract its include_directories using this function and manually
-# reinclude it as 'SYSTEM'.
-target_link_libraries_system(CesiumIonClient
-    PRIVATE
+        picosha2::picosha2
+        modp_b64::modp_b64
         httplib::httplib
-)
-
-install(TARGETS CesiumIonClient
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/CesiumIonClient
+        OpenSSL::Crypto
 )

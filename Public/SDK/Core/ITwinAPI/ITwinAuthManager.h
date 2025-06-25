@@ -17,6 +17,7 @@
 #	include <functional>
 #	include <memory>
 #	include <mutex>
+#	include <optional>
 #	ifndef MODULE_EXPORT
 #		define MODULE_EXPORT
 #	endif // !MODULE_EXPORT
@@ -29,11 +30,17 @@
 #include "ITwinEnvironment.h"
 #include "ITwinTypes.h"
 
-MODULE_EXPORT namespace SDK::Core
+MODULE_EXPORT namespace AdvViz::SDK
 {
 	class ITwinAuthObserver;
 	class Http;
 	class IHttpRouter;
+
+	enum class EITwinAuthGrantType : uint8_t
+	{
+		AuthCode,
+		ClientCredentials
+	};
 
 	/// In the future, the whole authorization process will be moved here.
 	/// For now, we only centralize the access token.
@@ -52,6 +59,7 @@ MODULE_EXPORT namespace SDK::Core
 		static void SetAppIDArray(AppIDArray const& ITwinAppIDs);
 		static bool HasAppID(EITwinEnvironment env);
 		static std::string GetAppID(EITwinEnvironment env);
+
 		static void AddScope(std::string const& extraScope);
 		static bool HasScope(std::string const& scope);
 
@@ -61,6 +69,8 @@ MODULE_EXPORT namespace SDK::Core
 
 		//! Returns the iTwin AppID for this environment.
 		std::string GetAppID() const;
+		//! Returns the client ID for authorization process (generally the AppID).
+		std::string GetClientID() const;
 
 		void AddObserver(ITwinAuthObserver* observer);
 		void RemoveObserver(ITwinAuthObserver* observer);
@@ -72,7 +82,7 @@ MODULE_EXPORT namespace SDK::Core
 		EITwinAuthStatus CheckAuthorization();
 
 		bool HasAccessToken() const;
-		void GetAccessToken(std::string& outAccessToken) const;
+		std::shared_ptr<std::string> GetAccessToken() const;
 
 		//! Sets the regular access token for this environment.
 		void SetAccessToken(std::string const& accessToken);
@@ -85,9 +95,10 @@ MODULE_EXPORT namespace SDK::Core
 
 		bool IsAuthorizationInProgress() const;
 
-		//! Delay a function call to a certain delay
-		//! (could be moved to an independent class in the future TODO_JDE...)
-		virtual void UniqueDelayedCall(std::string const& uniqueId, std::function<bool()> const& func, float delayInSeconds) = 0;
+		//! Switch to client credentials grant type (for internal usage only).
+		bool SetClientCredentialGrantType(std::string const& clientID, std::string const& clientSecret,
+			std::optional<std::string> const& imsName = std::nullopt,
+			std::optional<std::string> const& customScope = std::nullopt);
 
 
 	protected:
@@ -96,7 +107,6 @@ MODULE_EXPORT namespace SDK::Core
 
 		std::string GetScope() const;
 		std::string GetIMSBaseUrl() const;
-
 
 		bool HasRefreshToken() const;
 		void GetRefreshToken(std::string& refreshToken) const;
@@ -155,12 +165,18 @@ MODULE_EXPORT namespace SDK::Core
 		mutable Mutex mutex_;
 		std::string accessToken_;
 		std::string overrideAccessToken_;
+		std::shared_ptr<std::string> currentToken_;
 		ITwinAuthInfo authInfo_;
 
 		std::shared_ptr<Http> http_;
 		std::shared_ptr<IHttpRouter> httpRouter_;
 		std::atomic_bool hasBoundAuthPort_ = false;
 		int loadRefreshTokenAttempts_ = 0;
+
+		EITwinAuthGrantType grantType_ = EITwinAuthGrantType::AuthCode;
+		std::string clientSecret_; // only used in ClientCredentials mode
+		std::optional<std::string> customClientId_;
+		std::optional<std::string> customScope_;
 
 		std::shared_ptr< std::atomic_bool > stillValid_; // to check lambda validity
 

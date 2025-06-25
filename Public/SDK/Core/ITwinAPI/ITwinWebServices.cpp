@@ -18,9 +18,10 @@
 
 #include <Core/Json/Json.h>
 #include <Core/Network/HttpRequest.h>
+#include <Core/Tools/DelayedCall.h>
 
 
-namespace SDK::Core
+namespace AdvViz::SDK
 {
 	inline std::string GetITwinAPIRootUrl(EITwinEnvironment Env)
 	{
@@ -94,11 +95,12 @@ namespace SDK::Core
 	/*static*/
 	std::string ITwinWebServices::GetErrorDescriptionFromJson(
 		std::string const& jsonContent,
-		std::string const& indent)
+		std::string const& indent /* = {}*/)
 	{
 		// Try to parse iTwin error
 		ITwinError iTwinError;
-		if (Json::FromString(iTwinError, jsonContent))
+		std::string parseError;
+		if (Json::FromString(iTwinError, jsonContent, parseError, false /*bLogParseError*/))
 		{
 			return GetErrorDescription(iTwinError, indent);
 		}
@@ -139,24 +141,15 @@ namespace SDK::Core
 
 		std::string customServerURL_;
 
-		enum class ESpecificServer : uint8_t
-		{
-			None = 0,
-			MaterialPrediction
-		};
-
-		ESpecificServer specificServer_ = ESpecificServer::None;
+		bool hasSetupMLMaterialAssignment_ = false;
 
 		enum class EMatMLPredictionStep : uint8_t
 		{
 			Init = 0,
 
-			GetPipeline,
-			CreatePipelineRun,
-			StartPipelineRun,
-			GetPipelineRunStatus,
-			ListResults,
-			GetResult,
+			RunJob,
+			GetJobStatus,
+			GetJobResults,
 
 			Done
 		};
@@ -168,16 +161,14 @@ namespace SDK::Core
 			std::string changesetId_;
 
 			// Variables filled from the ML service responses
-			std::string pipeline_id_;
-			std::string pipeline_version_ = "1.0";
-			std::string run_id_;
-			int completedSteps_ = 0;
-			std::string result_file_id_;
+			std::string jobId_;
+			std::optional<std::string> jobResultURL_;
 			ITwinMaterialPrediction result_;
 		};
 		std::optional<MaterialMLPredictionInfo> matMLPredictionInfo_ = std::nullopt;
 		std::filesystem::path matMLPredictionCacheFolder_;
 		bool isResumingMatMLPrediction_ = false;
+
 
 	public:
 		Impl(ITwinWebServices& Owner)
@@ -202,30 +193,27 @@ namespace SDK::Core
 				return customServerURL_;
 			}
 			// Adapt prefix to current iTwin environment.
-			return std::string("https://") + ITwinServerEnvironment::GetUrlPrefix(env)
-				+ (specificServer_ == ESpecificServer::MaterialPrediction
-					? "connect-ml-service-eus.bentley.com/api/v1.3"
-					: "api.bentley.com");
+			return std::string("https://") + ITwinServerEnvironment::GetUrlPrefix(env) + "api.bentley.com";
 		}
 
-		static std::pair<double, int> defaultShouldRetryFunc(int attempt, int httpCode)
+		static std::pair<float, int> defaultShouldRetryFunc(int attempt, int httpCode)
 		{
 			if (202 == httpCode)
 			{
 				// Allow more attempts, DB is probably running lengthy background processes to reply our
 				// query (happens the first time a specific changeset is queried after creation).
 				// Here, retry every 20s for 5 minutes:
-				return std::make_pair((attempt >= 0 && attempt < 15) ? 20. : 0., std::max(0, 15 - attempt));
+				return std::make_pair((attempt >= 0 && attempt < 15) ? 20.f : 0.f, std::max(0, 15 - attempt));
 			}
 			BE_ASSERT(attempt <= 3, "Too many http request attempts?!");
 			switch (attempt)
 			{
-			case 0: return std::make_pair(5., 3); // 1st attempt
-			case 1: return std::make_pair(12., 2);
-			case 2: return std::make_pair(30., 1);
-			case 3: return std::make_pair(30., 0);
+			case 0: return std::make_pair( 5.f, 3); // 1st attempt
+			case 1: return std::make_pair(12.f, 2);
+			case 2: return std::make_pair(30.f, 1);
+			case 3: return std::make_pair(30.f, 0);
 			default:
-				return std::make_pair(0., 0);
+				return std::make_pair(0.f, 0);
 			}
 		}
 
@@ -244,7 +232,8 @@ namespace SDK::Core
 		///		changeset has been created, while the DB is being initialized I guess.
 		void ProcessHttpRequest(ITwinAPIRequestInfo const& requestInfo, ResultCallback&& resultCallback,
 			std::function<void(RequestID const&)> && notifyRequestID = {},
-			std::function<std::pair<double, int>(int attempt, int httpCode)> && shouldRetry =
+			FilterErrorFunc&& filterError = {},
+			std::function<std::pair<float, int>(int attempt, int httpCode)> && shouldRetry =
 				std::bind(&ITwinWebServices::Impl::defaultShouldRetryFunc,
 						  std::placeholders::_1, std::placeholders::_2),
 			int const attempt = 0);
@@ -252,13 +241,14 @@ namespace SDK::Core
 		EITwinMatMLPredictionStatus ProcessMatMLPrediction(std::string const& iTwinId,
 			std::string const& iModelId, std::string const& changesetId);
 
-		void SetLastError(std::string const& strError, RequestID const& requestID, int retriesLeft);
+		void SetLastError(std::string const& strError, RequestID const& requestID,
+			int retriesLeft, bool bLogError = true);
 
 	private:
 		ITwinAPIRequestInfo BuildMatMLPredictionRequestInfo(EMatMLPredictionStep eStep);
 		void ProcessMatMLPredictionStep(EMatMLPredictionStep eStep);
 		bool ProcessMatMLPredictionStepWithDelay(EMatMLPredictionStep eStep);
-		std::pair<double, int> ShouldRetryMaterialMLStep(EMatMLPredictionStep eStep, int attempt, int httpCode) const;
+		std::pair<float, int> ShouldRetryMaterialMLStep(EMatMLPredictionStep eStep, int attempt, int httpCode) const;
 
 		struct MatMLPredictionParseResult
 		{
@@ -269,16 +259,17 @@ namespace SDK::Core
 			std::string parsingError;
 			/// Will be set to false when the response indicates a failed or finished job.
 			bool continueJob = false;
-			/// Only used at step GetPipelineRunStatus, which should be retried as long as the pipeline run
-			/// is not finished.
+			/// Only used at step GetJobStatus, which should be retried as long as the job is not finished.
 			bool retryWithDelay = false;
 		};
 		void ParseMatMLPredictionResponse(EMatMLPredictionStep eStep,
 			Http::Response const& response, RequestID const&,
 			MatMLPredictionParseResult& parseResult);
 
-		/// Reset all data retrieved from the ML material prediction server (pipeline ID, run ID...)
+		/// Reset all data retrieved from the ML material prediction server (job ID...)
 		void ResetMatMLJobData();
+
+		std::filesystem::path GetMatMLInfoPath() const;
 		void RemoveMatMLInfoFile();
 
 	}; // class ITwinWebServices::Impl
@@ -289,7 +280,7 @@ namespace SDK::Core
 		impl_ = std::make_unique<Impl>(*this);
 
 		http_.reset(Http::New());
-		http_->SetBaseUrl(GetAPIRootURL());
+		http_->SetBaseUrl(GetAPIRootURL().c_str());
 	}
 
 	ITwinWebServices::~ITwinWebServices()
@@ -308,7 +299,7 @@ namespace SDK::Core
 		// Update base URL if needed
 		if (baseUrl_new != baseUrl_old)
 		{
-			http_->SetBaseUrl(baseUrl_new);
+			http_->SetBaseUrl(baseUrl_new.c_str());
 		}
 	}
 
@@ -323,7 +314,9 @@ namespace SDK::Core
 		auto const& authMngr = ITwinAuthManager::GetInstance(env_);
 		if (authMngr)
 		{
-			authMngr->GetAccessToken(authToken);
+			auto token =  authMngr->GetAccessToken();
+			if (token)
+				return *token;
 		}
 		return authToken;
 	}
@@ -339,14 +332,14 @@ namespace SDK::Core
 	}
 
 	void ITwinWebServices::Impl::SetLastError(std::string const& strError, RequestID const& requestID,
-		int retriesLeft)
+		int retriesLeft, bool bLogError /*= true*/)
 	{
 		Lock Lock(mutex_);
 		lastError_.msg_ = strError;
 		lastError_.requestId_ = requestID;
 		if (!strError.empty() && observer_)
 		{
-			observer_->OnRequestError(strError, retriesLeft);
+			observer_->OnRequestError(strError, retriesLeft, bLogError);
 		}
 	}
 
@@ -394,7 +387,8 @@ namespace SDK::Core
 	void ITwinWebServices::Impl::ProcessHttpRequest(ITwinAPIRequestInfo const& requestInfo,
 		ResultCallback&& InResultCallback,
 		std::function<void(RequestID const&)> && notifyRequestID/*= {}*/,
-		std::function<std::pair<double, int>(int attempt, int httpCode)> && shouldRetry/*= {}*/,
+		FilterErrorFunc&& filterError /*= {}*/,
+		std::function<std::pair<float, int>(int attempt, int httpCode)> && shouldRetry/*= {}*/,
 		int const attempt/*= 0*/)
 	{
 		if (requestInfo.badlyFormed)
@@ -408,8 +402,8 @@ namespace SDK::Core
 			InResultCallback({}, HttpRequest::NO_REQUEST, dummyErr);
 			return;
 		}
-		std::pair<double, int> retryInfo = // in case of failure
-			shouldRetry ? shouldRetry(attempt, 0/*Unset*/) : std::make_pair(0., 0/*no retry on failure!*/);
+		std::pair<float, int> retryInfo = // in case of failure
+			shouldRetry ? shouldRetry(attempt, 0/*Unset*/) : std::make_pair(0.f, 0/*no retry on failure!*/);
 
 		std::string const authToken = owner_.GetAuthToken();
 		if (authToken.empty())
@@ -454,6 +448,12 @@ namespace SDK::Core
 			headers.emplace_back(key, value);
 		}
 
+		if (requestInfo.discardAllHeaders)
+		{
+			// Some very specific requests require no header (download of texture from blob storage...)
+			headers.clear();
+		}
+
 		std::filesystem::path requestDumpPath;
 		if (g_ShouldDumpRequests)
 		{
@@ -473,6 +473,7 @@ namespace SDK::Core
 			requestInfoCopy = requestInfo,
 			resultCallback = std::move(InResultCallback),
 			notifyRequestID = std::move(notifyRequestID),
+			filterError = std::move(filterError),
 			shouldRetry = std::move(shouldRetry),
 			requestDumpPath, attempt, retryInfo/*needs to be mutable*/]
 			(RequestPtr const& request, Response const& response) mutable
@@ -482,9 +483,9 @@ namespace SDK::Core
 				// Dump response to temp folder.
 				std::ofstream(requestDumpPath/"response.json") << rfl::json::write(
 					RequestDump::Response{response.first, response.second}, YYJSON_WRITE_PRETTY);
-				if (response.rawdata_)
+				if (!response.second.empty())
 					std::ofstream(requestDumpPath/"response.bin").write(
-						(const char*)response.rawdata_->data(), response.rawdata_->size());
+						(const char*)response.second.data(), response.second.size());
 			}
 			if (!(*isValidLambda))
 			{
@@ -496,45 +497,53 @@ namespace SDK::Core
 			Be::CleanUpGuard setErrorGuard([&, this] () mutable
 			{
 				// In case of early exit, ensure we store the error and notify the caller
+
+				// Some errors are not really relevant, ie. they can happen in a normal cases, typically for
+				// generic queries, which may trigger errors in case the data we are looking for is missing.
+				// In such case, we would certainly prefer not to retry, and to skip the error completely
+				// from logs.
+				bool bAllowRetry(retryInfo.second > 0);
+				bool bLogError(true);
+				if (!bValidResponse && filterError)
+				{
+					filterError(requestError, bAllowRetry, bLogError);
+				}
+
 				this->SetLastError(
 					fmt::format("[{}] {}", requestInfoCopy.ShortName, requestError),
-					request->GetRequestID(), retryInfo.second);
+					request->GetRequestID(),
+					bAllowRetry ? retryInfo.second : 0,
+					bLogError);
 				if (!bValidResponse)
 				{
-					if (retryInfo.second > 0)
+					if (bAllowRetry)
 					{
 						// Retry after a delay.
-						double const delayInSeconds = std::max(0.1, retryInfo.first);
+						float const delayInSeconds = std::max(0.1f, retryInfo.first);
 						std::string const delayedCallUniqueID = uniqueName_ + requestInfoCopy.ShortName;
 
-						// TODO_JDE extract delayed call system from ITwinAuthManager and add a doc
-						auto const& authMngr = ITwinAuthManager::GetInstance(owner_.env_);
-						if (authMngr)
+						UniqueDelayedCall(delayedCallUniqueID,
+							[this, isValidRetryLambda = isValidLambda,
+							retry_requestInfo = std::move(requestInfoCopy),
+							retry_resultCallback = std::move(resultCallback),
+							retry_notifyRequestID = std::move(notifyRequestID),
+							retry_filterError = std::move(filterError),
+							retry_shouldRetry = std::move(shouldRetry),
+							attempt]() mutable
 						{
-							authMngr->UniqueDelayedCall(delayedCallUniqueID,
-								[this, isValidRetryLambda = isValidLambda,
-								retry_requestInfo = std::move(requestInfoCopy),
-								retry_resultCallback = std::move(resultCallback),
-								retry_notifyRequestID = std::move(notifyRequestID),
-								retry_shouldRetry = std::move(shouldRetry),
-								attempt]() mutable
+							if (*isValidRetryLambda)
 							{
-								if (*isValidRetryLambda)
-								{
-									this->ProcessHttpRequest(
-										retry_requestInfo,
-										std::move(retry_resultCallback),
-										std::move(retry_notifyRequestID),
-										std::move(retry_shouldRetry),
-										attempt + 1);
-								}
-								return false; // only tick once
-							}, delayInSeconds /* in seconds*/);
-						}
-						else
-						{
-							BE_LOGE("ITwinAPI", "No delayed call support => no retry for " << requestInfoCopy.ShortName);
-						}
+								this->ProcessHttpRequest(
+									retry_requestInfo,
+									std::move(retry_resultCallback),
+									std::move(retry_notifyRequestID),
+									std::move(retry_filterError),
+									std::move(retry_shouldRetry),
+									attempt + 1);
+							}
+							return DelayedCall::EReturnedValue::Done;
+						}, delayInSeconds /* in seconds*/);
+
 					}
 					else
 					{
@@ -556,13 +565,13 @@ namespace SDK::Core
 				return;
 			}
 			// 202 = "Accepted but not immediately processed"! ie response is empty... This seems to happen
-			// when querying an iModel (changeset)'s rows for the first time, maybe because of some posibly
+			// when querying an iModel (changeset)'s rows for the first time, maybe because of some possibly
 			// lengthy init process? Should we then retry "indefinitely" or have some specific user feedback,
 			// in case it's really long for BIG iModels?
 			if (response.first == 202)
 			{
 				BE_ASSERT((bool)shouldRetry, "HTTP 202 received: you should handle this case by supplying a non-empty 'shouldRetry' functor!");
-				retryInfo =	shouldRetry ? shouldRetry(attempt, 202) : std::make_pair(0., 0/*no retry on 202!*/);
+				retryInfo =	shouldRetry ? shouldRetry(attempt, 202) : std::make_pair(0.f, 0/*no retry on 202!*/);
 				if (retryInfo.second > 0) // caller wants us to retry
 				{
 					requestError += "Received HTTP code 202: request accepted but answer delayed";
@@ -583,7 +592,8 @@ namespace SDK::Core
 				return;
 			setErrorGuard.release();
 		});
-		request->Process(*owner_.http_, requestInfo.UrlSuffix, requestInfo.ContentString, headers);
+		request->Process(*owner_.http_, requestInfo.UrlSuffix, requestInfo.ContentString, headers,
+			requestInfo.isFullUrl);
 	}
 
 	void ITwinWebServices::GetITwinInfo(std::string const& iTwinId)
@@ -605,7 +615,7 @@ namespace SDK::Core
 			{
 				ITwinInfo iTwin;
 			} infoHolder;
-			bool const bResult = response.first >= 0
+			bool const bResult = Http::IsSuccessful(response)
 				&& Json::FromString(infoHolder, response.second, strError);
 			if (impl_->observer_)
 			{
@@ -629,7 +639,7 @@ namespace SDK::Core
 			[this](Http::Response const& response, RequestID const&, std::string& strError) -> bool
 		{
 			ITwinInfos iTwinInfos;
-			bool const bResult = response.first >= 0
+			bool const bResult = Http::IsSuccessful(response)
 				&& Json::FromString(iTwinInfos, response.second, strError);
 			if (impl_->observer_)
 			{
@@ -655,7 +665,7 @@ namespace SDK::Core
 			[this](Http::Response const& response, RequestID const&, std::string& strError) -> bool
 		{
 			IModelInfos iModelInfos;
-			bool const bResult = response.first >= 0
+			bool const bResult = Http::IsSuccessful(response)
 				&& Json::FromString(iModelInfos, response.second, strError);
 			if (impl_->observer_)
 			{
@@ -683,7 +693,7 @@ namespace SDK::Core
 			[this](Http::Response const& response, RequestID const&, std::string& strError) -> bool
 		{
 			ChangesetInfos changesets;
-			bool const bResult = response.first >= 0
+			bool const bResult = Http::IsSuccessful(response)
 				&& Json::FromString(changesets, response.second, strError);
 			if (impl_->observer_)
 			{
@@ -797,7 +807,7 @@ namespace SDK::Core
 				std::vector<ExportFullInfo> exports;
 			} exportsHolder;
 
-			bool const bValidResponse = response.first >= 0
+			bool const bValidResponse = Http::IsSuccessful(response)
 				&& Json::FromString(exportsHolder, response.second, strError);
 
 			// There should be only one now (see $top=1 parameter in URL)
@@ -859,7 +869,7 @@ namespace SDK::Core
 				rfl::Rename<"export", ExportFullInfo> export_; // "export" is a c++ keyword...
 			} exportHolder;
 
-			bool bResult = response.first >= 0
+			bool bResult = Http::IsSuccessful(response)
 				&& Json::FromString(exportHolder, response.second, strError);
 
 			if (bResult) // validate returned export information
@@ -930,7 +940,7 @@ namespace SDK::Core
 				rfl::Rename<"export", ExportBasicInfo> export_; // "export" is a c++ keyword...
 			} exportHolder;
 
-			bool const bResult = response.first >= 0
+			bool const bResult = Http::IsSuccessful(response)
 				&& Json::FromString(exportHolder, response.second, strError);
 
 			std::string exportId;
@@ -946,13 +956,14 @@ namespace SDK::Core
 			return bResult;
 		},
 		{}, // notifyRequestID
+		{}, // filterError
 		[](int attempt, int httpCode)
 		{
 			if (202 == httpCode)
 			{
 				// Don't retry, this would start a new export! (or not?)
 				// (no retry for a 202 means "handle as success").
-				return std::make_pair(0., 0);
+				return std::make_pair(0.f, 0);
 			}
 			else return ITwinWebServices::Impl::defaultShouldRetryFunc(attempt, httpCode);
 		});
@@ -1104,12 +1115,14 @@ namespace SDK::Core
 
 		impl_->ProcessHttpRequest(
 			requestInfo,
-			[this, groupId](Http::Response const& response, RequestID const&, std::string& strError) -> bool
+			[this, groupId, iTwinId, iModelId](Http::Response const& response, RequestID const&, std::string& strError) -> bool
 		{
 			SavedViewInfos infos;
-			bool const bResult = response.first >= 0
+			bool const bResult = Http::IsSuccessful(response)
 				&& Json::FromString(infos, response.second, strError);
 			infos.groupId = groupId;
+			infos.iTwinId = iTwinId;
+			infos.iModelId = iModelId;
 			if (impl_->observer_)
 			{
 				impl_->observer_->OnSavedViewInfosRetrieved(bResult, infos);
@@ -1135,7 +1148,7 @@ namespace SDK::Core
 			[this, iModelId](Http::Response const& response, RequestID const&, std::string& strError) -> bool
 		{
 			SavedViewGroupInfos svGroupInfos;
-			bool const bResult = response.first >= 0
+			bool const bResult = Http::IsSuccessful(response)
 				&& Json::FromString(svGroupInfos, response.second, strError);
 			if (bResult)
 				svGroupInfos.iModelId = iModelId;
@@ -1163,17 +1176,77 @@ namespace SDK::Core
 
 		impl_->ProcessHttpRequest(
 			requestInfo,
-			[this](Http::Response const& response, RequestID const&, std::string& strError) -> bool
+			[this, savedViewId](Http::Response const& response, RequestID const&, std::string& strError) -> bool
 		{
 			SavedViewData svData;
 			Detail::SavedViewFullInfoHolder svInfoHolder;
-			bool const bResult = response.first >= 0
+			bool const bResult = Http::IsSuccessful(response)
 				&& Json::FromString(svInfoHolder, response.second, strError);
 			if (bResult)
 			{
 				svInfoHolder.MoveToSavedViewData(svData);
+				bool bGetExtension = false;
+				std::vector<SavedViewExtensionsInfo> svExtensions = svInfoHolder.savedView.extensions;
+				std::string extensionName = "EmphasizeElements";
+				auto it = std::find_if(svExtensions.begin(), svExtensions.end(), [&](const SavedViewExtensionsInfo& ext) {
+					return ext.extensionName == extensionName;
+					});
+				bGetExtension = it != svExtensions.end();
+				if (bGetExtension)
+				{
+					//fire 2nd request to get potential hidden elements from EmphasizeElements extension
+					ITwinAPIRequestInfo extensionRequestInfo =
+					{
+						__func__,
+						EVerb::Get,
+						std::string("/savedviews/") + savedViewId + std::string("/extensions/") + extensionName,
+						"application/vnd.bentley.itwin-platform.v1+json",
+						"application/json",
+					};
+
+					impl_->ProcessHttpRequest(
+						extensionRequestInfo,
+						[this, savedViewId, svData](Http::Response const& response2, RequestID const&, std::string& strError2) -> bool
+						{
+							struct ExtensionData
+							{
+								std::string data;
+							};
+							struct SavedViewExtension
+							{
+								ExtensionData extension;
+							} extInfoHolder;
+
+							Detail::LegacyView emphasizeElementsPropsHolder;
+							bool const bResult2 = Http::IsSuccessful(response2)
+								&& Json::FromString(extInfoHolder, response2.second, strError2)
+								&& Json::FromString(emphasizeElementsPropsHolder, extInfoHolder.extension.data, strError2);
+							//parse the data in extInfoHolder.extension.data and put it in svData.savedView directly
+							SavedView savedView = svData.savedView;
+							if (bResult2)
+							{
+								if (emphasizeElementsPropsHolder.emphasizeElementsProps)
+								{
+									savedView.hiddenElements = emphasizeElementsPropsHolder.emphasizeElementsProps->neverDrawn;
+								}
+							}
+							if (impl_->observer_)
+							{
+								impl_->observer_->OnSavedViewRetrieved(bResult2, savedView, svData.savedViewInfo);
+							}
+							return bResult2;
+						});
+				}
+				else
+				{
+					if (impl_->observer_)
+					{
+						impl_->observer_->OnSavedViewRetrieved(bResult, svData.savedView, svData.savedViewInfo);
+					}
+					return bResult;
+				}
 			}
-			if (impl_->observer_)
+			if (!bResult && impl_->observer_)
 			{
 				impl_->observer_->OnSavedViewRetrieved(bResult, svData.savedView, svData.savedViewInfo);
 			}
@@ -1199,17 +1272,71 @@ namespace SDK::Core
 			{
 				std::string href;
 			} thumbnailInfoHolder;
-			bool const bResult = response.first >= 0
-				&& Json::FromString(thumbnailInfoHolder, response.second, strError);
 
-			std::string thumbnailURL;
+			bool bResult = Http::IsSuccessful(response)
+				&& Json::FromString(thumbnailInfoHolder, response.second, strError)
+				&& !thumbnailInfoHolder.href.empty();
 			if (bResult)
 			{
-				thumbnailURL = thumbnailInfoHolder.href;
+				std::string const& thumbnailURL = thumbnailInfoHolder.href;
+
+				// We retrieve a Blob URL in case the thumbnail has been updated using the saved views api
+				// (typically if the saved view has been created inside AdvViz application or plugin)
+				if (thumbnailURL.starts_with("https"))
+				{
+					// Make a second request to download the thumbnail
+					const ITwinAPIRequestInfo thumbnailRequestInfo =
+					{
+						.ShortName			= "DownloadThumbnail",
+						.Verb				= EVerb::Get,
+						.UrlSuffix			= thumbnailURL,
+						.AcceptHeader		= "application/vnd.bentley.itwin-platform.v1+json",
+						.needRawData		= true,
+						.discardAllHeaders	= true,
+						.isFullUrl			= true
+					};
+
+					impl_->ProcessHttpRequest(
+						thumbnailRequestInfo,
+						[this, savedViewId]
+						(Http::Response const& response2, RequestID const&, std::string& /*strError2*/) -> bool
+					{
+						bool const bResult2 = Http::IsSuccessful(response2)
+							&& response2.rawdata_
+							&& response2.rawdata_->size() > 0;
+						if (impl_->observer_)
+						{
+							Http::RawData const emptyData;
+							impl_->observer_->OnSavedViewThumbnailRetrieved(bResult2, savedViewId,
+								response2.rawdata_ ? *response2.rawdata_ : emptyData);
+						}
+						return bResult2;
+					});
+				}
+				// Otherwise, we retrieve a base64 encoded string in this format:
+				//		("data:image/jpeg;base64,/9j/4AA...")
+				// (this means the saved view has been created inside Pineapple/Design Review)
+				else
+				{
+					Http::RawData buffer;
+					const std::string_view base64Chunk = "base64,";
+					auto const startPos = thumbnailURL.find(base64Chunk);
+					bResult = (startPos != std::string::npos)
+						&& http_->DecodeBase64(thumbnailURL.substr(startPos + base64Chunk.size()), buffer);
+					if (!bResult)
+					{
+						BE_LOGE("ITwinAPI", "[SavedView] Failed decoding thumbnail from " << thumbnailURL);
+					}
+					if (bResult && impl_->observer_)
+					{
+						impl_->observer_->OnSavedViewThumbnailRetrieved(true, savedViewId, buffer);
+					}
+				}
 			}
-			if (impl_->observer_)
+			// If the 1st request fails, directly notify the caller.
+			if (!bResult && impl_->observer_)
 			{
-				impl_->observer_->OnSavedViewThumbnailRetrieved(bResult, thumbnailURL, savedViewId);
+				impl_->observer_->OnSavedViewThumbnailRetrieved(false, savedViewId, {});
 			}
 			return bResult;
 		});
@@ -1233,14 +1360,11 @@ namespace SDK::Core
 			[this, savedViewId](Http::Response const& response, RequestID const& requestId, std::string& strError) -> bool
 		{
 			std::string outError;
-			bool bResult = (response.first >= 0);
-
-			ITwinError iTwinError;
-			if (bResult
-				&& Json::FromString(iTwinError, response.second))
+			bool bResult = Http::IsDefined(response);
+			if (bResult)
 			{
-				outError = GetErrorDescription(iTwinError);
-				bResult = false;
+				outError = GetErrorDescriptionFromJson(response.second);
+				bResult = outError.empty();
 			}
 
 			// Here, the callbacks expects an error message (in case of failure)
@@ -1284,7 +1408,7 @@ namespace SDK::Core
 				ExtensionData extension;
 			} extInfoHolder;
 
-			bool const bResult = response.first >= 0
+			bool const bResult = Http::IsSuccessful(response)
 				&& Json::FromString(extInfoHolder, response.second, strError);
 			if (impl_->observer_)
 			{
@@ -1390,7 +1514,7 @@ namespace SDK::Core
 				SavedViewInfo savedView;
 			} svHolder;
 
-			bool const bResult = response.first >= 0
+			bool const bResult = Http::IsSuccessful(response)
 				&& Json::FromString(svHolder, response.second, strError);
 			this->OnSavedViewAdded(bResult, svHolder.savedView);
 			return bResult;
@@ -1413,6 +1537,7 @@ namespace SDK::Core
 		if (!iModelId.empty())
 			addInfo.iModelId = iModelId;
 		addInfo.displayName = savedViewGroupInfo.displayName;
+		addInfo.shared = savedViewGroupInfo.shared;
 
 		ITwinAPIRequestInfo const requestInfo =
 		{
@@ -1436,7 +1561,7 @@ namespace SDK::Core
 			{
 				SavedViewGroupInfo group;
 			} groupHolder;
-			bool const bResult = response.first >= 0
+			bool const bResult = Http::IsSuccessful(response)
 				&& Json::FromString(groupHolder, response.second, strError);
 			if (impl_->observer_)
 			{
@@ -1461,13 +1586,11 @@ namespace SDK::Core
 			[this, savedViewId](Http::Response const& response, RequestID const& requestId, std::string& strError) -> bool
 		{
 			std::string outError;
-			bool bResult = (response.first >= 0);
-
-			ITwinError iTwinError;
-			if (bResult && Json::FromString(iTwinError, response.second))
+			bool bResult = Http::IsDefined(response);
+			if (bResult)
 			{
-				outError = GetErrorDescription(iTwinError);
-				bResult = false;
+				outError = GetErrorDescriptionFromJson(response.second);
+				bResult = outError.empty();
 			}
 			// Here the callback expects an error message (in case of failure)
 			// => if none if provided, and if the last error recorded corresponds to our request, use the
@@ -1515,7 +1638,7 @@ namespace SDK::Core
 		{
 			Detail::SavedViewData editSVData;
 			Detail::SavedViewFullInfoHolder svInfoHolder;
-			bool const bResult = response.first >= 0
+			bool const bResult = Http::IsSuccessful(response)
 				&& Json::FromString(svInfoHolder, response.second, strError);
 			if (bResult)
 			{
@@ -1553,7 +1676,7 @@ namespace SDK::Core
 			[this](Http::Response const& response, RequestID const&, std::string& strError) -> bool
 		{
 			ITwinRealityDataInfos realityData;
-			bool const bResult = response.first >= 0
+			bool const bResult = Http::IsSuccessful(response)
 				&& Json::FromString(realityData, response.second, strError);
 			if (impl_->observer_)
 			{
@@ -1700,11 +1823,11 @@ namespace SDK::Core
 
 		struct ElementPropertiesVisitor
 		{
-			SDK::Core::ITwinElementProperties& outProps_;
+			AdvViz::SDK::ITwinElementProperties& outProps_;
 			mutable PropParserData helper_;
 			mutable std::stringstream error_;
 
-			ElementPropertiesVisitor(SDK::Core::ITwinElementProperties& elementProps)
+			ElementPropertiesVisitor(AdvViz::SDK::ITwinElementProperties& elementProps)
 				: outProps_(elementProps)
 			{
 
@@ -1714,7 +1837,7 @@ namespace SDK::Core
 			// bool, int, double, std::string, Object, Array
 			// some are not used at all, since we the response only deals with strings primitives
 
-			void operator()(const bool& boolValue) const
+			void operator()(const bool& /*boolValue*/) const
 			{
 				error_ << "unhandled boolean" << std::endl;
 			}
@@ -1726,13 +1849,17 @@ namespace SDK::Core
 			{
 				error_ << "unhandled double: " << dValue << std::endl;
 			}
+			void operator()(const std::nullopt_t&) const
+			{
+				error_ << "unhandled std::nullopt_t" << std::endl;
+			}
 
 			void operator()(const std::string& strValue) const
 			{
 				if (helper_.currentType_ == "primitive" ||
 					helper_.arrayType_ == "primitive")
 				{
-					SDK::Core::ITwinElementAttribute& attr = outProps_.properties.back().attributes.emplace_back();
+					AdvViz::SDK::ITwinElementAttribute& attr = outProps_.properties.back().attributes.emplace_back();
 					attr.name = helper_.currentKey_;
 					attr.value = strValue;
 				}
@@ -1755,7 +1882,7 @@ namespace SDK::Core
 						if (helper_.currentType_ == "category")
 						{
 							// starting a new property
-							SDK::Core::ITwinElementProperty& newProp = outProps_.properties.emplace_back();
+							AdvViz::SDK::ITwinElementProperty& newProp = outProps_.properties.emplace_back();
 							newProp.name = helper_.currentKey_;
 						}
 					}
@@ -1862,7 +1989,7 @@ namespace SDK::Core
 			struct ItemsHolder { rfl::Generic items; };
 			struct ResultHolder { ItemsHolder result; };
 			ResultHolder res;
-			bool bResult = response.first >= 0
+			bool bResult = Http::IsSuccessful(response)
 				&& Json::FromString(res, response.second, strError);
 			if (bResult)
 			{
@@ -1912,7 +2039,7 @@ namespace SDK::Core
 			[this](Http::Response const& response, RequestID const&, std::string& strError) -> bool
 		{
 			IModelProperties iModelProps;
-			bool const bResult = response.first >= 0
+			bool const bResult = Http::IsSuccessful(response)
 				&& Json::FromString(iModelProps, response.second, strError);
 			if (impl_->observer_)
 			{
@@ -1920,6 +2047,47 @@ namespace SDK::Core
 			}
 			return bResult;
 		});
+	}
+
+	void ITwinWebServices::ConvertIModelCoordsToGeoCoords(std::string const& iTwinId,
+		std::string const& iModelId, std::string const& changesetId, double const x, double const y,
+		double const z, std::function<void(RequestID const&)>&& notifyRequestID)
+	{
+		ITwinAPIRequestInfo const requestInfo =
+		{
+			.ShortName		= __func__,
+			.Verb			= EVerb::Post,
+			.UrlSuffix		= std::string("/imodel/rpc/v4/mode/1/context/") + iTwinId
+								+ "/imodel/" + iModelId
+								+ "/changeset/" + GetIModelRpcUrlChangeset(changesetId)
+								+ "/IModelReadRpcInterface-3.6.0-getGeoCoordinatesFromIModelCoordinates",
+			.AcceptHeader	= "application/vnd.bentley.itwin-platform.v1+json",
+
+			/*** additional settings for POST ***/
+			.ContentType	= "text/plain",
+			.ContentString	= "[{\"iTwinId\":\"" + iTwinId
+								+ "\",\"iModelId\":\"" + iModelId
+								+ "\",\"changeset\":{\"id\":\"" + changesetId
+								+ "\"}}, {\"target\": \"WGS84\", \"iModelCoords\": [{"
+								+ fmt::format("\"x\": {}, \"y\": {}, \"z\": {}", x, y, z)
+								+ "}]}]",
+			.badlyFormed	= iTwinId.empty() || iModelId.empty()
+		};
+
+		impl_->ProcessHttpRequest(
+			requestInfo,
+			[this](Http::Response const& response, RequestID const& requestId, std::string& strError) -> bool
+			{
+				GeoCoordsReply geoCoords;
+				bool const bResult = Http::IsSuccessful(response)
+					&& Json::FromString(geoCoords, response.second, strError);
+				if (impl_->observer_)
+				{
+					impl_->observer_->OnConvertedIModelCoordsToGeoCoords(bResult, geoCoords, requestId);
+				}
+				return bResult;
+			},
+			std::move(notifyRequestID));
 	}
 
 	ITwinAPIRequestInfo ITwinWebServices::InfosToQueryIModel(
@@ -1953,7 +2121,9 @@ namespace SDK::Core
 	void ITwinWebServices::QueryIModel(
 		std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId,
 		std::string const& ECSQLQuery, int offset, int count,
-		std::function<void(RequestID const&)>&& notifyRequestID, ITwinAPIRequestInfo const* requestInfo)
+		std::function<void(RequestID const&)>&& notifyRequestID,
+		ITwinAPIRequestInfo const* requestInfo,
+		FilterErrorFunc&& filterError /*= {}*/)
 	{
 		std::optional<ITwinAPIRequestInfo> optRequestInfo;
 		if (!requestInfo)
@@ -1969,15 +2139,44 @@ namespace SDK::Core
 			{
 				struct DataHolder { rfl::Generic data; };
 				DataHolder res;
-				bool const bResult = response.first >= 0
-					&& Json::FromString(res, response.second, strError);
+				bool bResult = Http::IsSuccessful(response)
+					&& Json::FromString(res, response.second, strError, false /*bLogParseError*/);
+
+				// Following a recent update, rfl::Generic has become more permissive, and manages to
+				// parse a text not even containing 'data'... Check that the result is really relevant
+				// here (it should not be a basic type).
+				bResult = bResult && (res.data.to_array()
+								|| res.data.to_object()
+								|| res.data.to_string());
+
+				// Sometimes, we receive 200 but the response contains an error => instead of logging the
+				// error, try to parse the specific error in such case:
+				if (!bResult && Http::IsSuccessful(response)
+					&& !response.second.empty())
+				{
+					struct IModelQueryError {
+						int kind = -1;
+						std::string error;
+						int status = -1;
+					};
+					IModelQueryError queryError;
+					std::string parseError2;
+					if (Json::FromString(queryError, response.second, parseError2))
+					{
+						// This could give a more detailed error.
+						// (even though it's not really useful to us - for example, we can get
+						//	"ECClass 'bis.ExternalSourceAspect' does not exist or could not be loaded.")
+						strError = queryError.error;
+					}
+				}
 				if (impl_->observer_)
 				{
 					impl_->observer_->OnIModelQueried(bResult, response.second, requestId);
 				}
 				return bResult;
 			},
-			std::move(notifyRequestID)
+			std::move(notifyRequestID),
+			std::move(filterError)
 		);
 	}
 
@@ -2055,12 +2254,12 @@ namespace SDK::Core
 
 		struct AttributesVisitor
 		{
-			SDK::Core::AttributeMap& outAttributes_;
+			AdvViz::SDK::AttributeMap& outAttributes_;
 			mutable MaterialPropParserData helper_;
 			mutable std::stringstream error_;
 
 
-			AttributesVisitor(SDK::Core::AttributeMap& outAttrs)
+			AttributesVisitor(AdvViz::SDK::AttributeMap& outAttrs)
 				: outAttributes_(outAttrs)
 			{
 
@@ -2107,6 +2306,10 @@ namespace SDK::Core
 			{
 				OnFloatingValue(dValue);
 			}
+			void operator()(const std::nullopt_t&) const
+			{
+				error_ << "unhandled std::nullopt_t" << std::endl;
+			}
 
 			void operator()(const std::string& strValue) const
 			{
@@ -2150,10 +2353,10 @@ namespace SDK::Core
 		{
 			using Super = AttributesVisitor;
 
-			SDK::Core::ITwinMaterialProperties& outProps_;
+			AdvViz::SDK::ITwinMaterialProperties& outProps_;
 			mutable bool bIsParsingMap_ = false;
 
-			MaterialPropertiesVisitor(SDK::Core::ITwinMaterialProperties& elementProps)
+			MaterialPropertiesVisitor(AdvViz::SDK::ITwinMaterialProperties& elementProps)
 				: AttributesVisitor(elementProps.attributes)
 				, outProps_(elementProps)
 			{
@@ -2165,6 +2368,7 @@ namespace SDK::Core
 			void operator()(const double& dValue) const { Super::operator()(dValue); }
 			void operator()(const std::string& strValue) const { Super::operator()(strValue); }
 			void operator()(const rfl::Generic::Array& rflArray) const { Super::operator()(rflArray); }
+			void operator()(const std::nullopt_t& rflNullopt) const { Super::operator()(rflNullopt); }
 
 			void operator()(const rfl::Generic::Object& rflObject) const
 			{
@@ -2254,7 +2458,7 @@ namespace SDK::Core
 				MaterialJsonProperties jsonProperties;
 			};
 			std::vector<MaterialInfo> infos;
-			bool bResult = response.first >= 0
+			bool bResult = Http::IsSuccessful(response)
 				&& Json::FromString(infos, response.second, strError);
 			for (MaterialInfo const& info : infos)
 			{
@@ -2299,9 +2503,9 @@ namespace SDK::Core
 	static bool ParseTextureResponse(ITwinTextureData& itwinTexture, Http::Response const& response,
 									 std::string& strError)
 	{
-		if (response.first < 0)
+		if (!Http::IsSuccessful(response))
 		{
-			// Early failure in request.
+			// Failed request.
 			return false;
 		}
 		if (!response.rawdata_)
@@ -2457,17 +2661,16 @@ Content-Type: application/octet-stream
 
 	bool ITwinWebServices::IsSetupForForMaterialMLPrediction() const
 	{
-		return impl_->specificServer_ == Impl::ESpecificServer::MaterialPrediction;
+		return impl_->hasSetupMLMaterialAssignment_;
 	}
 
 	void ITwinWebServices::SetupForMaterialMLPrediction()
 	{
-		ModifyServerSetting([this] { impl_->specificServer_ = Impl::ESpecificServer::MaterialPrediction; });
+		impl_->hasSetupMLMaterialAssignment_ = true;
 	}
 
 	void ITwinWebServices::SetMaterialMLPredictionCacheFolder(std::filesystem::path const& cacheFolder)
 	{
-		std::error_code ec;
 		std::filesystem::path actualCacheFolder(cacheFolder);
 		if (!cacheFolder.empty())
 		{
@@ -2489,29 +2692,18 @@ Content-Type: application/octet-stream
 			&& !matMLPredictionInfo_->iModelId_.empty());
 
 		// Post or Get
-		bool const usePost = (eStep == EMatMLPredictionStep::CreatePipelineRun
-			|| eStep == EMatMLPredictionStep::StartPipelineRun);
+		bool const usePost = (eStep == EMatMLPredictionStep::RunJob);
 		ITwinAPIRequestInfo requestInfo = {
 			fmt::format("MatMLPrediction_{}", static_cast<uint8_t>(eStep)),
 			usePost ? EVerb::Post : EVerb::Get,
-			"/InferencePipelines",
+			"/material-assignment/jobs",
 			"application/vnd.bentley.itwin-platform.v1+json"
 		};
 
-		if (eStep == EMatMLPredictionStep::GetPipeline)
+		if (eStep >= EMatMLPredictionStep::GetJobStatus)
 		{
-			// Initial request is used to retrieve the pipeline ID needed for all other steps
-			requestInfo.UrlSuffix += "?name=MaterialAssignment";
-		}
-		else
-		{
-			requestInfo.UrlSuffix += fmt::format("/{}/Runs", matMLPredictionInfo_->pipeline_id_);
-			requestInfo.badlyFormed = matMLPredictionInfo_->pipeline_id_.empty();
-		}
-		if (eStep >= EMatMLPredictionStep::StartPipelineRun)
-		{
-			requestInfo.UrlSuffix += fmt::format("/{}", matMLPredictionInfo_->run_id_);
-			requestInfo.badlyFormed = matMLPredictionInfo_->run_id_.empty();
+			requestInfo.UrlSuffix += fmt::format("/{}", matMLPredictionInfo_->jobId_);
+			requestInfo.badlyFormed = matMLPredictionInfo_->jobId_.empty();
 		}
 
 		switch (eStep)
@@ -2523,37 +2715,28 @@ Content-Type: application/octet-stream
 			requestInfo.badlyFormed = true;
 			break;
 
-		case EMatMLPredictionStep::GetPipeline:
-			break;
-
-		case EMatMLPredictionStep::CreatePipelineRun:
+		case EMatMLPredictionStep::RunJob:
 		{
 			requestInfo.ContentType = "application/json";
 			requestInfo.ContentString = std::string("{"
-				"\"pipelineVersion\": \"") + matMLPredictionInfo_->pipeline_version_ + "\","
-				"\"iTwinId\": \"" + matMLPredictionInfo_->iTwinId_ + "\","
-				"\"parameters\": { \"iTwinId\": \"" + matMLPredictionInfo_->iTwinId_
-				+ "\", \"iModelId\": \"" + matMLPredictionInfo_->iModelId_
-				+ "\", \"changeSetId\": \"" + matMLPredictionInfo_->changesetId_ + "\" }}";
-			requestInfo.badlyFormed |= matMLPredictionInfo_->iTwinId_.empty()
-				|| matMLPredictionInfo_->iModelId_.empty();
+				"\"iModelId\": \"") + matMLPredictionInfo_->iModelId_ + "\","
+				"\"changesetId\": \"" + matMLPredictionInfo_->changesetId_ + "\" }";
+			requestInfo.badlyFormed |= matMLPredictionInfo_->iModelId_.empty();
 			break;
 		}
 
-		case EMatMLPredictionStep::StartPipelineRun:
-			requestInfo.UrlSuffix += "/Start";
+		case EMatMLPredictionStep::GetJobStatus:
 			break;
 
-		case EMatMLPredictionStep::GetPipelineRunStatus:
-			break;
+		case EMatMLPredictionStep::GetJobResults:
+			requestInfo.UrlSuffix += "/materials";
 
-		case EMatMLPredictionStep::ListResults:
-			requestInfo.UrlSuffix += "/Results";
-			break;
-
-		case EMatMLPredictionStep::GetResult:
-			requestInfo.UrlSuffix += fmt::format("/Results/{}/Content", matMLPredictionInfo_->result_file_id_);
-			requestInfo.badlyFormed = matMLPredictionInfo_->result_file_id_.empty();
+			if (matMLPredictionInfo_->jobResultURL_)
+			{
+				BE_ASSERT(matMLPredictionInfo_->jobResultURL_->starts_with("https://"));
+				requestInfo.UrlSuffix = *matMLPredictionInfo_->jobResultURL_;
+				requestInfo.isFullUrl = true;
+			}
 			break;
 		}
 		BE_ASSERT(!requestInfo.badlyFormed);
@@ -2574,6 +2757,28 @@ Content-Type: application/octet-stream
 			InferenceInfo inference;
 		};
 
+		struct JobLink
+		{
+			std::string href;
+		};
+		struct JobStatusLinks
+		{
+			JobLink materials;
+			JobLink iTwin;
+			JobLink iModel;
+		};
+
+		struct JobInfo
+		{
+			std::string jobId;
+			std::string status;
+			JobStatusLinks _links;
+		};
+		struct JobInfoHolder
+		{
+			JobInfo job;
+		};
+
 		struct Result
 		{
 			std::string id;
@@ -2588,12 +2793,16 @@ Content-Type: application/octet-stream
 		struct InferenceElementInfo
 		{
 			std::string id;
-			std::string confidence; // why not a double?
+			float confidence = 0.f;
 		};
 		struct InferenceMaterialEntry
 		{
 			std::string material; // name of the material - eg. "Wood"
 			std::vector<InferenceElementInfo> elements;
+		};
+		struct JobResultsHolder
+		{
+			std::vector<InferenceMaterialEntry> materials;
 		};
 
 		void TranslateTo(std::vector<InferenceMaterialEntry> const& MLOutput, ITwinMaterialPrediction& predictions)
@@ -2623,102 +2832,61 @@ Content-Type: application/octet-stream
 		MatMLPredictionParseResult& parseResult)
 	{
 		std::string& parsingError(parseResult.parsingError);
-		// Distinguish 2 kinds of errors: parsing vs failed pipeline creation/run
+		// Distinguish 2 kinds of errors: parsing vs failed job
 		bool& responseOK(parseResult.parsingOK);
 		bool& continueJob(parseResult.continueJob);
 
 		responseOK = continueJob = false;
-		parseResult.retryWithDelay = false; // specific to GetPipelineRunStatus
+		parseResult.retryWithDelay = false; // specific to GetJobStatus
 
-		if (!(response.first >= 200 && response.first < 300))
+		if (!Http::IsSuccessful(response))
 		{
 			parsingError = fmt::format("Error response code: {}", response.first);
 			return;
 		}
 
 		// Most of responses will consist in a description of current run.
-		Detail::InferenceInfoHolder body;
-
+		Detail::JobInfoHolder body;
 		switch (eStep)
 		{
-		case EMatMLPredictionStep::GetPipeline:
-		{
-			if (observer_)
-			{
-				observer_->OnMatMLPredictionProgress(0.f);
-			}
-			struct PipelineInfo
-			{
-				std::string id;
-				std::optional<std::string> latestVersion;
-				std::optional<std::string> name;
-				std::optional<int> productId;
-			};
-			struct PipelineInfoVec
-			{
-				std::vector<PipelineInfo> pipelines;
-			};
-			PipelineInfoVec vec;
-			responseOK = Json::FromString(vec, response.second, parsingError);
-			continueJob = responseOK && !vec.pipelines.empty();
-			if (continueJob)
-			{
-				// Fill pipeline_id for next requests
-				matMLPredictionInfo_->pipeline_id_ = vec.pipelines[0].id;
-
-				// Also store latest version
-				if (vec.pipelines[0].latestVersion)
-				{
-					matMLPredictionInfo_->pipeline_version_ = *vec.pipelines[0].latestVersion;
-				}
-			}
-			break;
-		}
-
-		case EMatMLPredictionStep::CreatePipelineRun:
+		case EMatMLPredictionStep::RunJob:
 		{
 			responseOK = Json::FromString(body, response.second, parsingError);
-			continueJob = responseOK && !body.inference.id.empty();
-			matMLPredictionInfo_->run_id_ = body.inference.id;
-			break;
-		}
 
-		case EMatMLPredictionStep::StartPipelineRun:
-		{
-			responseOK = Json::FromString(body, response.second, parsingError);
-			continueJob = responseOK && (body.inference.id == matMLPredictionInfo_->run_id_);
+			continueJob = responseOK && !body.job.jobId.empty();
+			matMLPredictionInfo_->jobId_ = body.job.jobId;
 			if (continueJob && !matMLPredictionCacheFolder_.empty())
 			{
-				// Save current pipeline info, in order to be able to resume in a future session, in case the
-				// user quits Carrot before the material prediction job terminates.
-				std::ofstream(matMLPredictionCacheFolder_ / "info.json") << rfl::json::write(
+				// Save current job info, in order to be able to resume in a future session, in case the
+				// user quits Carrot before the job terminates.
+				std::ofstream(GetMatMLInfoPath()) << rfl::json::write(
 					*matMLPredictionInfo_, YYJSON_WRITE_PRETTY);
 			}
 			break;
 		}
 
-		case EMatMLPredictionStep::GetPipelineRunStatus:
+		case EMatMLPredictionStep::GetJobStatus:
 		{
 			responseOK = Json::FromString(body, response.second, parsingError);
 			if (responseOK)
 			{
 				continueJob = true;
-
-				// Progression feedback - very coarse for now, based on step indications
-				if (body.inference.completedSteps
-					&& body.inference.totalSteps
-					&& matMLPredictionInfo_->completedSteps_ < *body.inference.completedSteps)
+				std::string const& status = body.job.status;
+				if (status == "Succeeded"
+					|| status == "Finished"
+					|| status == "Completed")
 				{
-					matMLPredictionInfo_->completedSteps_ = *body.inference.completedSteps;
-					float const fTotalSteps = static_cast<float>(*body.inference.totalSteps);
-					if (observer_ && fTotalSteps >= 1.f)
+					// Successful job. Store the result url, if any (note that this url is easy to
+					// reconstruct from the job ID, but make sure our code works if a custom url is given.
+					auto const& resultURL = body.job._links.materials.href;
+					matMLPredictionInfo_->jobResultURL_.reset();
+					if (!resultURL.empty())
 					{
-						observer_->OnMatMLPredictionProgress(
-							static_cast<float>(matMLPredictionInfo_->completedSteps_) / fTotalSteps);
+						BE_ASSERT(resultURL.starts_with("https://"));
+						matMLPredictionInfo_->jobResultURL_ = resultURL;
 					}
 				}
-
-				if (body.inference.status == "Failed")
+				else if (status == "Failed")
 				{
 					// The inference has failed => abort
 					BE_LOGE("ITwinAPI", "[ML Material Prediction] A problem has occurred during the inference - abort job");
@@ -2728,37 +2896,25 @@ Content-Type: application/octet-stream
 
 					continueJob = false;
 				}
-				else if (body.inference.status != "Succeeded"
-					  && body.inference.status != "Finished")
+				else
 				{
-					// Can be "InProgress", "Queued"...
+					// Status can be "InProgress", "Queued"... => repeat request after a delay.
 					parseResult.retryWithDelay = true;
 				}
 			}
 			break;
 		}
 
-		case EMatMLPredictionStep::ListResults:
+		case EMatMLPredictionStep::GetJobResults:
 		{
-			Detail::ResultVec resVec;
-			responseOK = Json::FromString(resVec, response.second, parsingError);
-			continueJob = responseOK && resVec.results.size() > 0;
-			if (continueJob)
-			{
-				matMLPredictionInfo_->result_file_id_ = resVec.results[0].id;
-			}
-			break;
-		}
-
-		case EMatMLPredictionStep::GetResult:
-		{
-			std::vector<Detail::InferenceMaterialEntry> result;
+			Detail::JobResultsHolder result;
+			auto& resultMaterials(result.materials);
 			responseOK = Json::FromString(result, response.second, parsingError);
 			continueJob = responseOK;
 			if (continueJob)
 			{
 				// Translate it in a format that is easier to handle by glTF Tuner
-				Detail::TranslateTo(result, matMLPredictionInfo_->result_);
+				Detail::TranslateTo(resultMaterials, matMLPredictionInfo_->result_);
 
 				// Cache this result
 				if (!matMLPredictionCacheFolder_.empty())
@@ -2787,49 +2943,37 @@ Content-Type: application/octet-stream
 		}
 
 		// Repeat the same step after a delay
-		auto const& authMngr = ITwinAuthManager::GetInstance(owner_.env_);
-		if (authMngr)
-		{
-			authMngr->UniqueDelayedCall(uniqueName_ + "MatMLPredictionPipeline",
-				[this, eStep, isValidLambda = isThisValid_]()
+		return UniqueDelayedCall(uniqueName_ + "MatMLPredictionPipeline",
+			[this, eStep, isValidLambda = isThisValid_]()
 			{
 				if (*isValidLambda)
 				{
 					ProcessMatMLPredictionStep(eStep);
 				}
-				return false; // only tick once
+				return DelayedCall::EReturnedValue::Done;
 			}, 10.0 /* in seconds*/);
-			return true;
-		}
-		else
-		{
-			BE_LOGE("ITwinAPI", "[ML Material Prediction] No delayed call support - abort job");
-			return false;
-		}
 	}
 
-	std::pair<double, int> ITwinWebServices::Impl::ShouldRetryMaterialMLStep(
+	std::pair<float, int> ITwinWebServices::Impl::ShouldRetryMaterialMLStep(
 		EMatMLPredictionStep eStep, int attempt, int httpCode) const
 	{
 		if (!observer_)
 		{
 			// Do not retry if we are orphan (UE exiting...)
-			return std::make_pair(0., 0);
+			return std::make_pair(0.f, 0);
 		}
 		if (isResumingMatMLPrediction_)
 		{
-			// ...nor if we have resumed a previous job: in such case, the pipeline run may we are requesting
+			// ...nor if we have resumed a previous job: in such case, the job we are requesting
 			// may have been destroyed on the server, typically if it was started a long time ago...
 			// In such case, we will restart from scratch.
-			return std::make_pair(0., 0);
+			return std::make_pair(0.f, 0);
 		}
 
 		// Some Material Prediction steps should *not* be retried
 		switch (eStep)
 		{
-		case EMatMLPredictionStep::GetPipeline:
-		case EMatMLPredictionStep::ListResults:
-		case EMatMLPredictionStep::GetResult:
+		case EMatMLPredictionStep::GetJobResults:
 			return defaultShouldRetryFunc(attempt, httpCode);
 
 		default:
@@ -2837,20 +2981,21 @@ Content-Type: application/octet-stream
 		case EMatMLPredictionStep::Done:
 			BE_ISSUE("invalid ML step");
 			[[fallthrough]];
-		case EMatMLPredictionStep::CreatePipelineRun:
-		case EMatMLPredictionStep::StartPipelineRun:
-		case EMatMLPredictionStep::GetPipelineRunStatus:
-			return std::make_pair(0., 0);
+		case EMatMLPredictionStep::RunJob:
+		case EMatMLPredictionStep::GetJobStatus:
+			return std::make_pair(0.f, 0);
 		}
 	}
 
 	void ITwinWebServices::Impl::ResetMatMLJobData()
 	{
-		matMLPredictionInfo_->pipeline_id_ = {};
-		matMLPredictionInfo_->pipeline_version_ = {};
-		matMLPredictionInfo_->run_id_ = {};
-		matMLPredictionInfo_->result_file_id_ = {};
+		matMLPredictionInfo_->jobId_ = {};
 		matMLPredictionInfo_->result_ = {};
+	}
+
+	std::filesystem::path ITwinWebServices::Impl::GetMatMLInfoPath() const
+	{
+		return matMLPredictionCacheFolder_ / "info_v1.json";
 	}
 
 	void ITwinWebServices::Impl::RemoveMatMLInfoFile()
@@ -2859,7 +3004,7 @@ Content-Type: application/octet-stream
 		if (!matMLPredictionCacheFolder_.empty())
 		{
 			std::error_code ec;
-			auto const matMLInfoFile = matMLPredictionCacheFolder_ / "info.json";
+			auto const matMLInfoFile = GetMatMLInfoPath();
 			if (std::filesystem::exists(matMLInfoFile, ec))
 			{
 				std::filesystem::remove(matMLInfoFile, ec);
@@ -2869,7 +3014,7 @@ Content-Type: application/octet-stream
 
 	void ITwinWebServices::Impl::ProcessMatMLPredictionStep(EMatMLPredictionStep eStep)
 	{
-		if (specificServer_ != ESpecificServer::MaterialPrediction)
+		if (!hasSetupMLMaterialAssignment_)
 		{
 			BE_ISSUE("SetupForMaterialMLPrediction not called!");
 			return;
@@ -2928,7 +3073,7 @@ Content-Type: application/octet-stream
 				isResumingMatMLPrediction_ = false;
 				ResetMatMLJobData();
 				RemoveMatMLInfoFile();
-				ProcessMatMLPredictionStep(EMatMLPredictionStep::GetPipeline);
+				ProcessMatMLPredictionStep(EMatMLPredictionStep::RunJob);
 			}
 			else
 			{
@@ -2936,12 +3081,13 @@ Content-Type: application/octet-stream
 				matMLPredictionInfo_->step_ = EMatMLPredictionStep::Done;
 				if (observer_)
 				{
-					observer_->OnMatMLPredictionRetrieved(false, {});
+					observer_->OnMatMLPredictionRetrieved(false, {}, owner_.GetRequestError(requestId));
 				}
 			}
 			return parseResult.parsingOK;
 		},
 			{} /*notifyRequestID*/,
+			{} /*filterError*/,
 
 			std::bind(&ITwinWebServices::Impl::ShouldRetryMaterialMLStep,
 				this, eStep, std::placeholders::_1, std::placeholders::_2));
@@ -2951,7 +3097,7 @@ Content-Type: application/octet-stream
 	EITwinMatMLPredictionStatus ITwinWebServices::Impl::ProcessMatMLPrediction(
 		std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId)
 	{
-		if (specificServer_ != ESpecificServer::MaterialPrediction)
+		if (!hasSetupMLMaterialAssignment_)
 		{
 			BE_ISSUE("SetupForMaterialMLPrediction not called!");
 			return EITwinMatMLPredictionStatus::Failed;
@@ -2968,7 +3114,7 @@ Content-Type: application/octet-stream
 			return EITwinMatMLPredictionStatus::InProgress;
 		}
 
-		EMatMLPredictionStep initialStep = EMatMLPredictionStep::GetPipeline;
+		EMatMLPredictionStep initialStep = EMatMLPredictionStep::RunJob;
 		isResumingMatMLPrediction_ = false;
 
 		// Before starting a new run (which is heavy in resources), see if we have already cached some
@@ -2998,18 +3144,18 @@ Content-Type: application/octet-stream
 				}
 			}
 
-			// See if a pipeline run was already created
-			auto const matMLInfoFile = matMLPredictionCacheFolder_ / "info.json";
+			// See if a job was already created
+			auto const matMLInfoFile = GetMatMLInfoPath();
 			if (std::filesystem::exists(matMLInfoFile, ec))
 			{
 				MaterialMLPredictionInfo reloadedInfo;
 				std::ifstream ifs(matMLInfoFile);
 				std::string parseError;
 				if (Json::FromStream(reloadedInfo, ifs, parseError)
-					&& !reloadedInfo.run_id_.empty())
+					&& !reloadedInfo.jobId_.empty())
 				{
 					matMLPredictionInfo_ = reloadedInfo;
-					initialStep = EMatMLPredictionStep::GetPipelineRunStatus;
+					initialStep = EMatMLPredictionStep::GetJobStatus;
 					isResumingMatMLPrediction_ = true;
 				}
 				else
@@ -3023,19 +3169,9 @@ Content-Type: application/octet-stream
 			matMLPredictionInfo_.emplace();
 		matMLPredictionInfo_->iTwinId_ = iTwinId;
 		matMLPredictionInfo_->iModelId_ = iModelId;
-		matMLPredictionInfo_->changesetId_ = GetIModelRpcUrlChangeset(changesetId); // use "0" if empty
+		matMLPredictionInfo_->changesetId_ = changesetId;
 
 		// Start the process by first step...
-		/*
-			(5. Execute the get-task endpoint.)
-			 6. Execute the get-pipeline endpoint.
-			 7. Execute the create-pipeline-run endpoint.
-			 8. Execute the start-pipeline-run endpoint. This will kick off the run.
-			 9. Execute the get-pipeline-run-status endpoint to poll for the status of the run.
-				Proceed to the next step once you receive the status: Succeeded. If a problem occurs, you will receive a status: Failed.
-			10. Execute the list-results endpoint.
-			11. Execute the get-result endpoint.
-		*/
 		ProcessMatMLPredictionStep(initialStep);
 
 		return EITwinMatMLPredictionStatus::InProgress;
@@ -3047,4 +3183,20 @@ Content-Type: application/octet-stream
 		return impl_->ProcessMatMLPrediction(iTwinId, iModelId, changesetId);
 	}
 
+	void ITwinWebServices::RunCustomRequest(
+		ITwinAPIRequestInfo const& requestInfo,
+		CustomRequestCallback&& responseCallback,
+		FilterErrorFunc&& filterError /*= {}*/)
+	{
+		impl_->ProcessHttpRequest(
+			requestInfo,
+			[this, responseCallback = std::move(responseCallback)](Http::Response const& response, RequestID const& reqID, std::string& strError) -> bool
+		{
+			bool const bResult = Http::IsSuccessful(response)
+				&& responseCallback(response.first, response.second, reqID, strError);
+			return bResult;
+		},
+			{} /*notifyRequestID*/,
+			std::move(filterError));
+	}
 }

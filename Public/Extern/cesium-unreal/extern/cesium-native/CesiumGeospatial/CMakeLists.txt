@@ -12,6 +12,7 @@ set_target_properties(CesiumGeospatial
     PROPERTIES
         TEST_SOURCES "${CESIUM_GEOSPATIAL_TEST_SOURCES}"
         TEST_HEADERS "${CESIUM_GEOSPATIAL_TEST_HEADERS}"
+        TEST_DATA_DIR ${CMAKE_CURRENT_LIST_DIR}/test/data
 )
 
 set_target_properties(CesiumGeospatial
@@ -28,21 +29,22 @@ target_sources(
         ${CESIUM_GEOSPATIAL_PUBLIC_HEADERS}
 )
 
-target_include_directories(
-    CesiumGeospatial
-    SYSTEM PUBLIC
+cesium_target_include_directories(
+    TARGET
+        CesiumGeospatial
+    PUBLIC
         ${CMAKE_CURRENT_LIST_DIR}/include
 )
 
-target_link_libraries(CesiumGeospatial PUBLIC
+target_link_libraries(CesiumGeospatial
+PUBLIC
     CesiumGeometry
     CesiumUtility
     earcut
-    PRIVATE
-      s2geometry
+PRIVATE
+    s2::s2
 )
 
-install(TARGETS CesiumGeospatial
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/CesiumGeospatial
-)
+if(CESIUM_DISABLE_DEFAULT_ELLIPSOID)
+  target_compile_definitions(CesiumGeospatial PUBLIC CESIUM_DISABLE_DEFAULT_ELLIPSOID=1)
+endif()

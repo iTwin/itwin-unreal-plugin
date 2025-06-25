@@ -1,13 +1,35 @@
+#include <CesiumAsync/AsyncSystem.h>
+#include <CesiumAsync/Future.h>
+#include <CesiumAsync/IAssetAccessor.h>
+#include <CesiumAsync/IAssetRequest.h>
 #include <CesiumAsync/IAssetResponse.h>
-#include <CesiumGltfReader/GltfReader.h>
+#include <CesiumGeometry/Rectangle.h>
+#include <CesiumGeospatial/Ellipsoid.h>
+#include <CesiumGeospatial/GeographicProjection.h>
+#include <CesiumGltfReader/ImageDecoder.h>
 #include <CesiumRasterOverlays/IPrepareRasterOverlayRendererResources.h>
 #include <CesiumRasterOverlays/RasterOverlay.h>
 #include <CesiumRasterOverlays/RasterOverlayTile.h>
 #include <CesiumRasterOverlays/RasterOverlayTileProvider.h>
+#include <CesiumUtility/Assert.h>
+#include <CesiumUtility/ErrorList.h>
+#include <CesiumUtility/IntrusivePointer.h>
 #include <CesiumUtility/Tracing.h>
-#include <CesiumUtility/joinToString.h>
 
+#include <fmt/format.h>
+#include <glm/ext/vector_double2.hpp>
 #include <spdlog/fwd.h>
+
+#include <any>
+#include <cstddef>
+#include <cstdint>
+#include <exception>
+#include <memory>
+#include <optional>
+#include <span>
+#include <string>
+#include <utility>
+#include <vector>
 
 using namespace CesiumAsync;
 using namespace CesiumGeometry;
@@ -18,28 +40,24 @@ using namespace CesiumUtility;
 
 namespace CesiumRasterOverlays {
 
-/*static*/ CesiumGltfReader::GltfReader
-    RasterOverlayTileProvider::_gltfReader{};
-
 RasterOverlayTileProvider::RasterOverlayTileProvider(
     const CesiumUtility::IntrusivePointer<const RasterOverlay>& pOwner,
     const CesiumAsync::AsyncSystem& asyncSystem,
-    const std::shared_ptr<IAssetAccessor>& pAssetAccessor) noexcept
+    const std::shared_ptr<IAssetAccessor>& pAssetAccessor,
+    const CesiumGeospatial::Ellipsoid& ellipsoid) noexcept
     : _pOwner(const_intrusive_cast<RasterOverlay>(pOwner)),
       _asyncSystem(asyncSystem),
       _pAssetAccessor(pAssetAccessor),
       _credit(std::nullopt),
       _pPrepareRendererResources(nullptr),
       _pLogger(nullptr),
-      _projection(CesiumGeospatial::GeographicProjection()),
+      _projection(CesiumGeospatial::GeographicProjection(ellipsoid)),
       _coverageRectangle(CesiumGeospatial::GeographicProjection::
-                             computeMaximumProjectedRectangle()),
-      _pPlaceholder(),
+                             computeMaximumProjectedRectangle(ellipsoid)),
+      _pPlaceholder(new RasterOverlayTile(*this)),
       _tileDataBytes(0),
       _totalTilesCurrentlyLoading(0),
-      _throttledTilesCurrentlyLoading(0) {
-  this->_pPlaceholder = new RasterOverlayTile(*this);
-}
+      _throttledTilesCurrentlyLoading(0) {}
 
 RasterOverlayTileProvider::RasterOverlayTileProvider(
     const CesiumUtility::IntrusivePointer<const RasterOverlay>& pOwner,
@@ -68,7 +86,7 @@ RasterOverlayTileProvider::~RasterOverlayTileProvider() noexcept {
   // Explicitly release the placeholder first, because RasterOverlayTiles must
   // be destroyed before the tile provider that created them.
   if (this->_pPlaceholder) {
-    assert(this->_pPlaceholder->getReferenceCount() == 1);
+    CESIUM_ASSERT(this->_pPlaceholder->getReferenceCount() == 1);
     this->_pPlaceholder = nullptr;
   }
 }
@@ -89,9 +107,10 @@ RasterOverlayTileProvider::getTile(
 }
 
 void RasterOverlayTileProvider::removeTile(RasterOverlayTile* pTile) noexcept {
-  assert(pTile->getReferenceCount() == 0);
-
-  this->_tileDataBytes -= int64_t(pTile->getImage().pixelData.size());
+  CESIUM_ASSERT(pTile->getReferenceCount() == 0);
+  if (pTile->getImage()) {
+    this->_tileDataBytes -= pTile->getImage()->sizeBytes;
+  }
 }
 
 CesiumAsync::Future<TileProviderAndTile>
@@ -135,55 +154,59 @@ RasterOverlayTileProvider::loadTileImageFromUrl(
             CESIUM_TRACE("load image");
             const IAssetResponse* pResponse = pRequest->response();
             if (pResponse == nullptr) {
+              ErrorList errors;
+              errors.emplaceError(
+                  fmt::format("Image request for {} failed.", pRequest->url()));
               return LoadedRasterOverlayImage{
-                  std::nullopt,
+                  nullptr,
                   options.rectangle,
                   std::move(options.credits),
-                  {"Image request for " + pRequest->url() + " failed."},
-                  {},
+                  std::move(errors),
                   options.moreDetailAvailable};
             }
 
             if (pResponse->statusCode() != 0 &&
                 (pResponse->statusCode() < 200 ||
                  pResponse->statusCode() >= 300)) {
-              std::string message = "Image response code " +
-                                    std::to_string(pResponse->statusCode()) +
-                                    " for " + pRequest->url();
+              ErrorList errors;
+              errors.emplaceError(fmt::format(
+                  "Received response code {} for image {}.",
+                  pResponse->statusCode(),
+                  pRequest->url()));
               return LoadedRasterOverlayImage{
-                  std::nullopt,
+                  nullptr,
                   options.rectangle,
                   std::move(options.credits),
-                  {message},
-                  {},
+                  std::move(errors),
                   options.moreDetailAvailable};
             }
 
             if (pResponse->data().empty()) {
               if (options.allowEmptyImages) {
                 return LoadedRasterOverlayImage{
-                    CesiumGltf::ImageCesium(),
+                    new CesiumGltf::ImageAsset(),
                     options.rectangle,
                     std::move(options.credits),
                     {},
-                    {},
                     options.moreDetailAvailable};
               }
+
+              ErrorList errors;
+              errors.emplaceError(fmt::format(
+                  "Image response for {} is empty.",
+                  pRequest->url()));
               return LoadedRasterOverlayImage{
-                  std::nullopt,
+                  nullptr,
                   options.rectangle,
                   std::move(options.credits),
-                  {"Image response for " + pRequest->url() + " is empty."},
-                  {},
+                  std::move(errors),
                   options.moreDetailAvailable};
             }
 
-            const gsl::span<const std::byte> data = pResponse->data();
+            const std::span<const std::byte> data = pResponse->data();
 
             CesiumGltfReader::ImageReaderResult loadedImage =
-                RasterOverlayTileProvider::_gltfReader.readImage(
-                    data,
-                    Ktx2TranscodeTargets);
+                ImageDecoder::readImage(data, Ktx2TranscodeTargets);
 
             if (!loadedImage.errors.empty()) {
               loadedImage.errors.push_back("Image url: " + pRequest->url());
@@ -193,11 +216,12 @@ RasterOverlayTileProvider::loadTileImageFromUrl(
             }
 
             return LoadedRasterOverlayImage{
-                loadedImage.image,
+                loadedImage.pImage,
                 options.rectangle,
                 std::move(options.credits),
-                std::move(loadedImage.errors),
-                std::move(loadedImage.warnings),
+                ErrorList{
+                    std::move(loadedImage.errors),
+                    std::move(loadedImage.warnings)},
                 options.moreDetailAvailable};
           });
 }
@@ -205,7 +229,7 @@ RasterOverlayTileProvider::loadTileImageFromUrl(
 namespace {
 struct LoadResult {
   RasterOverlayTile::LoadState state = RasterOverlayTile::LoadState::Unloaded;
-  CesiumGltf::ImageCesium image = {};
+  CesiumUtility::IntrusivePointer<CesiumGltf::ImageAsset> pImage = nullptr;
   CesiumGeometry::Rectangle rectangle = {};
   std::vector<Credit> credits = {};
   void* pRendererResources = nullptr;
@@ -240,28 +264,26 @@ static LoadResult createLoadResultFromLoadedImage(
     const std::shared_ptr<spdlog::logger>& pLogger,
     LoadedRasterOverlayImage&& loadedImage,
     const std::any& rendererOptions) {
-  if (!loadedImage.image.has_value()) {
-    SPDLOG_LOGGER_ERROR(
-        pLogger,
-        "Failed to load image for tile {}:\n- {}",
-        "TODO",
-        // Cesium3DTilesSelection::TileIdUtilities::createTileIdString(tileId),
-        CesiumUtility::joinToString(loadedImage.errors, "\n- "));
+  if (!loadedImage.pImage) {
+    loadedImage.errorList.logError(pLogger, "Failed to load image for tile");
     LoadResult result;
     result.state = RasterOverlayTile::LoadState::Failed;
     return result;
   }
 
-  if (!loadedImage.warnings.empty()) {
-    SPDLOG_LOGGER_WARN(
+  if (loadedImage.errorList.hasErrors()) {
+    loadedImage.errorList.logError(
         pLogger,
-        "Warnings while loading image for tile {}:\n- {}",
-        "TODO",
-        // Cesium3DTilesSelection::TileIdUtilities::createTileIdString(tileId),
-        CesiumUtility::joinToString(loadedImage.warnings, "\n- "));
+        "Errors while loading image for tile");
   }
 
-  CesiumGltf::ImageCesium& image = loadedImage.image.value();
+  if (!loadedImage.errorList.warnings.empty()) {
+    loadedImage.errorList.logWarning(
+        pLogger,
+        "Warnings while loading image for tile");
+  }
+
+  CesiumGltf::ImageAsset& image = *loadedImage.pImage;
 
   const int32_t bytesPerPixel = image.channels * image.bytesPerChannel;
   const int64_t requiredBytes =
@@ -282,7 +304,7 @@ static LoadResult createLoadResultFromLoadedImage(
 
     LoadResult result;
     result.state = RasterOverlayTile::LoadState::Loaded;
-    result.image = std::move(image);
+    result.pImage = loadedImage.pImage;
     result.rectangle = loadedImage.rectangle;
     result.credits = std::move(loadedImage.credits);
     result.pRendererResources = pRendererResources;
@@ -335,7 +357,7 @@ CesiumAsync::Future<TileProviderAndTile> RasterOverlayTileProvider::doLoad(
           [thiz, pTile, isThrottledLoad](LoadResult&& result) noexcept {
             pTile->_rectangle = result.rectangle;
             pTile->_pRendererResources = result.pRendererResources;
-            pTile->_image = std::move(result.image);
+            pTile->_pImage = std::move(result.pImage);
             pTile->_tileCredits = std::move(result.credits);
             pTile->_moreDetailAvailable =
                 result.moreDetailAvailable
@@ -343,7 +365,19 @@ CesiumAsync::Future<TileProviderAndTile> RasterOverlayTileProvider::doLoad(
                     : RasterOverlayTile::MoreDetailAvailable::No;
             pTile->setState(result.state);
 
-            thiz->_tileDataBytes += int64_t(pTile->getImage().pixelData.size());
+            if (pTile->getImage() != nullptr) {
+              ImageAsset& imageCesium = *pTile->getImage();
+
+              // If the image size hasn't been overridden, store the pixelData
+              // size now. We'll add this number to our total memory usage now,
+              // and remove it when the tile is later unloaded, and we must use
+              // the same size in each case.
+              if (imageCesium.sizeBytes < 0) {
+                imageCesium.sizeBytes = int64_t(imageCesium.pixelData.size());
+              }
+
+              thiz->_tileDataBytes += imageCesium.sizeBytes;
+            }
 
             thiz->finalizeTileLoad(isThrottledLoad);
 
@@ -352,7 +386,7 @@ CesiumAsync::Future<TileProviderAndTile> RasterOverlayTileProvider::doLoad(
       .catchInMainThread(
           [thiz, pTile, isThrottledLoad](const std::exception& /*e*/) {
             pTile->_pRendererResources = nullptr;
-            pTile->_image = {};
+            pTile->_pImage = nullptr;
             pTile->_tileCredits = {};
             pTile->_moreDetailAvailable =
                 RasterOverlayTile::MoreDetailAvailable::No;

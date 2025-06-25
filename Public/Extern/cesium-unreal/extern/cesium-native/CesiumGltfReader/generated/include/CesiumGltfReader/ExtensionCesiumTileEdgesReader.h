@@ -7,19 +7,20 @@
 #include <CesiumJsonReader/JsonReader.h>
 #include <CesiumJsonReader/JsonReaderOptions.h>
 
-#include <gsl/span>
 #include <rapidjson/fwd.h>
 
+#include <span>
 #include <vector>
 
 namespace CesiumGltf {
 struct ExtensionCesiumTileEdges;
-}
+} // namespace CesiumGltf
 
 namespace CesiumGltfReader {
 
 /**
- * @brief Reads {@link ExtensionCesiumTileEdges} instances from JSON.
+ * @brief Reads \ref CesiumGltf::ExtensionCesiumTileEdges
+ * "ExtensionCesiumTileEdges" instances from JSON.
  */
 class CESIUMGLTFREADER_API ExtensionCesiumTileEdgesReader {
 public:
@@ -45,13 +46,13 @@ public:
    * @return The result of reading the instance.
    */
   CesiumJsonReader::ReadJsonResult<CesiumGltf::ExtensionCesiumTileEdges>
-  readFromJson(const gsl::span<const std::byte>& data) const;
+  readFromJson(const std::span<const std::byte>& data) const;
 
   /**
    * @brief Reads an instance of ExtensionCesiumTileEdges from a
    * rapidJson::Value.
    *
-   * @param data The buffer from which to read the instance.
+   * @param value The value from which to read the instance.
    * @return The result of reading the instance.
    */
   CesiumJsonReader::ReadJsonResult<CesiumGltf::ExtensionCesiumTileEdges>
@@ -61,7 +62,7 @@ public:
    * @brief Reads an array of instances of ExtensionCesiumTileEdges from a
    * rapidJson::Value.
    *
-   * @param data The buffer from which to read the array of instances.
+   * @param value The value from which to read the array of instances.
    * @return The result of reading the array of instances.
    */
   CesiumJsonReader::ReadJsonResult<

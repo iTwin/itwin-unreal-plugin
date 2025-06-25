@@ -10,7 +10,7 @@
 
 // Cesium
 class ACesiumGeoreference;
-class AITwinCesium3DTileset;
+class ACesium3DTileset;
 // ITwin
 class AITwinDigitalTwin;
 class AITwinIModel;

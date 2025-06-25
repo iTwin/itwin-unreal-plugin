@@ -17,6 +17,7 @@
 
 #include <Misc/App.h>
 #include <Misc/Base64.h>
+#include <Misc/EngineVersionComparison.h>
 
 #include <Serialization/ArchiveProxy.h>
 #include <Serialization/MemoryReader.h>
@@ -40,7 +41,7 @@ namespace
 
 
 	/// Return an AES256 (symmetric) key
-	TArray<uint8> GetKey(SDK::Core::EITwinEnvironment Env, int KeyIndex = 0)
+	TArray<uint8> GetKey(AdvViz::SDK::EITwinEnvironment Env, int KeyIndex = 0)
 	{
 		// This handler uses AES256, which has 32-byte keys.
 		static const int32 KeySizeInBytes = 32;
@@ -57,7 +58,7 @@ namespace
 		KeyRoot += SepChar;
 		KeyRoot += FString(FPlatformProcess::UserName()).Replace(TEXT(" "), TEXT("")).Left(10);
 		KeyRoot += SepChar;
-		KeyRoot += FString(SDK::Core::ITwinAuthManager::GetAppID(Env).c_str()).Reverse().Replace(TEXT("-"), TEXT("A"));
+		KeyRoot += FString(AdvViz::SDK::ITwinAuthManager::GetAppID(Env).c_str()).Reverse().Replace(TEXT("-"), TEXT("A"));
 		while (KeyRoot.Len() < KeySizeInBytes)
 		{
 			KeyRoot.Append(*KeyRoot.Reverse());
@@ -69,7 +70,7 @@ namespace
 		return Key;
 	}
 
-	FString GetTokenFilename(SDK::Core::EITwinEnvironment Env, FString const& FileSuffix, bool bCreateDir)
+	FString GetTokenFilename(AdvViz::SDK::EITwinEnvironment Env, FString const& FileSuffix, bool bCreateDir)
 	{
 		FString OutDir = FPlatformProcess::UserSettingsDir();
 		if (OutDir.IsEmpty())
@@ -87,10 +88,10 @@ namespace
 	}
 
 	/// Connect UE HttpRouter implementation to ITwin SDK.
-	class FUEHttpRouter : public SDK::Core::IHttpRouter
+	class FUEHttpRouter : public AdvViz::SDK::IHttpRouter, public AdvViz::SDK::Tools::TypeId<FUEHttpRouter>
 	{
 	public:
-		struct FUERouteHandle : public SDK::Core::IHttpRouter::RouteHandle
+		struct FUERouteHandle : public AdvViz::SDK::IHttpRouter::RouteHandle
 		{
 			// Beware we have a shared pointer of a shared pointer here...
 			TSharedPtr<FHttpRouteHandle> Ptr = MakeShared<FHttpRouteHandle>();
@@ -110,7 +111,7 @@ namespace
 
 		virtual bool BindRoute(
 			RouteHandlePtr& routeHandlePtr,
-			int Port, std::string const& redirectUriEndpoint, SDK::Core::EVerb eVerb,
+			int Port, std::string const& redirectUriEndpoint, AdvViz::SDK::EVerb eVerb,
 			RequestHandlerCallback const& requestHandlerCB) const override
 		{
 			auto routeHandle = std::static_pointer_cast<FUERouteHandle>(routeHandlePtr);
@@ -119,19 +120,22 @@ namespace
 			EHttpServerRequestVerbs requestsVerb = EHttpServerRequestVerbs::VERB_NONE;
 			switch (eVerb)
 			{
-			case SDK::Core::EVerb::Delete:	requestsVerb = EHttpServerRequestVerbs::VERB_DELETE; break;
-			case SDK::Core::EVerb::Get:		requestsVerb = EHttpServerRequestVerbs::VERB_GET; break;
-			case SDK::Core::EVerb::Patch:	requestsVerb = EHttpServerRequestVerbs::VERB_PATCH; break;
-			case SDK::Core::EVerb::Post:	requestsVerb = EHttpServerRequestVerbs::VERB_POST; break;
-			case SDK::Core::EVerb::Put:		requestsVerb = EHttpServerRequestVerbs::VERB_PUT; break;
+			case AdvViz::SDK::EVerb::Delete:	requestsVerb = EHttpServerRequestVerbs::VERB_DELETE; break;
+			case AdvViz::SDK::EVerb::Get:		requestsVerb = EHttpServerRequestVerbs::VERB_GET; break;
+			case AdvViz::SDK::EVerb::Patch:	requestsVerb = EHttpServerRequestVerbs::VERB_PATCH; break;
+			case AdvViz::SDK::EVerb::Post:	requestsVerb = EHttpServerRequestVerbs::VERB_POST; break;
+			case AdvViz::SDK::EVerb::Put:		requestsVerb = EHttpServerRequestVerbs::VERB_PUT; break;
 			default:
 				BE_ISSUE("unknown verb", eVerb);
 				break;
 			}
 			routeHandle->Get() = FHttpServerModule::Get().GetHttpRouter(Port)
 				->BindRoute(FHttpPath(redirectUriEndpoint.c_str()), requestsVerb,
-					[routeHandlePtr, Port, coreRequestHandler = requestHandlerCB]
-					(const FHttpServerRequest& request, const FHttpResultCallback& onComplete)
+#if UE_VERSION_NEWER_THAN(5, 4, 0)
+					FHttpRequestHandler::CreateLambda(
+#endif
+						[routeHandlePtr, Port, coreRequestHandler = requestHandlerCB]
+						(const FHttpServerRequest& request, const FHttpResultCallback& onComplete)
 			{
 				std::map<std::string, std::string> queryParams;
 				for (auto const& [Key, Value] : request.QueryParams)
@@ -154,10 +158,18 @@ namespace
 					FHttpServerModule::Get().GetHttpRouter(Port)->UnbindRoute(routeHandle->Get());
 				}
 				return true;
-			});
+			}
+#if UE_VERSION_NEWER_THAN(5, 4, 0)
+			)
+#endif
+			);
 			FHttpServerModule::Get().StartAllListeners();
 			return true;
 		}
+
+		using AdvViz::SDK::Tools::TypeId<FUEHttpRouter>::GetTypeId;
+		std::uint64_t GetDynTypeId() const override { return GetTypeId(); }
+		bool IsTypeOf(std::uint64_t i) const override { return (i == GetTypeId()) || AdvViz::SDK::IHttpRouter::IsTypeOf(i); }
 	};
 }
 
@@ -166,37 +178,28 @@ void FITwinAuthorizationManager::OnStartup()
 {
 	// Adapt Unreal to SDK Core's authentication management
 
-	using namespace SDK::Core;
+	using namespace AdvViz::SDK;
 
-	ITwinAuthManager::SetNewFct([](SDK::Core::EITwinEnvironment Env) {
+	ITwinAuthManager::SetNewFct([](AdvViz::SDK::EITwinEnvironment Env) {
 		ITwinAuthManager* p(static_cast<ITwinAuthManager*>(new FITwinAuthorizationManager(Env)));
 		return p;
 	});
 
-	SDK::Core::IHttpRouter::SetNewFct([]() {
-		SDK::Core::IHttpRouter* p(static_cast<SDK::Core::IHttpRouter*>(new FUEHttpRouter()));
+	AdvViz::SDK::IHttpRouter::SetNewFct([]() {
+		AdvViz::SDK::IHttpRouter* p(static_cast<AdvViz::SDK::IHttpRouter*>(new FUEHttpRouter()));
 		return p;
 	});
 }
 
-FITwinAuthorizationManager::FITwinAuthorizationManager(SDK::Core::EITwinEnvironment Env)
-	: SDK::Core::ITwinAuthManager(Env)
+FITwinAuthorizationManager::FITwinAuthorizationManager(AdvViz::SDK::EITwinEnvironment Env)
+	: AdvViz::SDK::ITwinAuthManager(Env)
 {
 
 }
 
 FITwinAuthorizationManager::~FITwinAuthorizationManager()
 {
-	// Stop remaining timers
-	for (auto& [timerId, tickerHandle] : tickerHandlesMap_)
-	{
-		if (tickerHandle.IsValid())
-		{
-			FTSTicker::GetCoreTicker().RemoveTicker(tickerHandle);
-			tickerHandle.Reset();
-		}
-	}
-	tickerHandlesMap_.clear();
+
 }
 
 bool FITwinAuthorizationManager::SavePrivateData(std::string const& data, int keyIndex /*= 0*/) const
@@ -234,7 +237,7 @@ bool FITwinAuthorizationManager::LaunchWebBrowser(std::string const& state, std:
 
 	auto CodeChallenge = FBase64::Encode(verifierSha, EBase64Mode::UrlSafe).Replace(TEXT("="), TEXT(""));
 
-	FString const RedirectUri = FString(SDK::Core::ITwinAuthManager::GetRedirectUri().c_str());
+	FString const RedirectUri = FString(AdvViz::SDK::ITwinAuthManager::GetRedirectUri().c_str());
 
 	FString const PromptParam = HasRefreshToken() ? TEXT("&prompt=none") : TEXT("");
 
@@ -257,31 +260,11 @@ bool FITwinAuthorizationManager::LaunchWebBrowser(std::string const& state, std:
 	return true;
 }
 
-void FITwinAuthorizationManager::UniqueDelayedCall(std::string const& uniqueId, std::function<bool()> const& func, float delayInSeconds)
-{
-	FTSTicker::FDelegateHandle& tickerHandle = tickerHandlesMap_[uniqueId];
-	if (tickerHandle.IsValid())
-	{
-		FTSTicker::GetCoreTicker().RemoveTicker(tickerHandle);
-		tickerHandle.Reset();
-	}
-	if (func)
-	{
-		tickerHandle = FTSTicker::GetCoreTicker().AddTicker(
-			FTickerDelegate::CreateLambda([func](float Delta) -> bool
-		{
-			return func();
-		}), delayInSeconds);
-	}
-}
-
-
-
 
 #if WITH_TESTS
 
 /*static*/
-void FITwinAuthorizationManager::SetupTestMode(SDK::Core::EITwinEnvironment Env, FString const& InTokenFileSuffix)
+void FITwinAuthorizationManager::SetupTestMode(AdvViz::SDK::EITwinEnvironment Env, FString const& InTokenFileSuffix)
 {
 	// for unit tests, allow running without iTwin App ID, and use a special suffix for filenames to avoid
 	// any conflict with the normal run.
@@ -296,7 +279,7 @@ void FITwinAuthorizationManager::SetupTestMode(SDK::Core::EITwinEnvironment Env,
 #endif //WITH_TESTS
 
 /*static*/
-bool FITwinAuthorizationManager::SavePrivateData(FString const& Token, SDK::Core::EITwinEnvironment Env, int KeyIndex,
+bool FITwinAuthorizationManager::SavePrivateData(FString const& Token, AdvViz::SDK::EITwinEnvironment Env, int KeyIndex,
 	FString const& FileSuffix)
 {
 	const bool bIsDeletingToken = Token.IsEmpty();
@@ -351,13 +334,13 @@ bool FITwinAuthorizationManager::SavePrivateData(FString const& Token, SDK::Core
 }
 
 /*static*/
-bool FITwinAuthorizationManager::SaveToken(FString const& Token, SDK::Core::EITwinEnvironment Env)
+bool FITwinAuthorizationManager::SaveToken(FString const& Token, AdvViz::SDK::EITwinEnvironment Env)
 {
 	return SavePrivateData(Token, Env, 0, {});
 }
 
 /*static*/
-bool FITwinAuthorizationManager::LoadPrivateData(FString& OutToken, SDK::Core::EITwinEnvironment Env, int KeyIndex,
+bool FITwinAuthorizationManager::LoadPrivateData(FString& OutToken, AdvViz::SDK::EITwinEnvironment Env, int KeyIndex,
 	FString const& FileSuffix)
 {
 	auto const Key = GetKey(Env, KeyIndex);
@@ -412,13 +395,13 @@ bool FITwinAuthorizationManager::LoadPrivateData(FString& OutToken, SDK::Core::E
 }
 
 /*static*/
-bool FITwinAuthorizationManager::LoadToken(FString& OutToken, SDK::Core::EITwinEnvironment Env)
+bool FITwinAuthorizationManager::LoadToken(FString& OutToken, AdvViz::SDK::EITwinEnvironment Env)
 {
 	return LoadPrivateData(OutToken, Env, 0, {});
 }
 
 /*static*/
-void FITwinAuthorizationManager::DeleteTokenFile(SDK::Core::EITwinEnvironment Env)
+void FITwinAuthorizationManager::DeleteTokenFile(AdvViz::SDK::EITwinEnvironment Env)
 {
 	SaveToken({}, Env);
 }

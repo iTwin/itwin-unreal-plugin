@@ -19,6 +19,7 @@
 #include <Network/JsonQueriesCache.h>
 #include <Network/UEHttpAdapter.h>
 
+
 #include <Kismet/GameplayStatics.h>
 
 #include <Engine/World.h>
@@ -48,7 +49,6 @@ namespace
 
 		ScopedWorkingWebServices(UITwinWebServices* CurrentInstance)
 		{
-			check(!WorkingInstance);
 			WorkingInstance = CurrentInstance;
 		}
 
@@ -92,8 +92,8 @@ void UITwinWebServices::SetPreferredEnvironment(EITwinEnvironment Env)
 }
 
 class UITwinWebServices::FImpl
-	: public SDK::Core::ITwinWebServices
-	, public SDK::Core::IITwinWebServicesObserver
+	: public AdvViz::SDK::ITwinWebServices
+	, public AdvViz::SDK::IITwinWebServicesObserver
 {
 	friend class UITwinWebServices;
 
@@ -105,7 +105,7 @@ class UITwinWebServices::FImpl
 
 	// Avoid confusion between SDKCore's and iTwinForUnreal's observer
 	using Observer_ITwinRuntime = ::IITwinWebServicesObserver;
-	using Observer_ITwinSDKCore = SDK::Core::IITwinWebServicesObserver;
+	using Observer_ITwinSDKCore = AdvViz::SDK::IITwinWebServicesObserver;
 
 	Observer_ITwinRuntime* observer_ = nullptr;
 
@@ -133,36 +133,38 @@ public:
 
 	void SetObserver(Observer_ITwinRuntime* InObserver);
 
-	virtual void OnRequestError(std::string const& strError, int retriesLeft) override;
+	virtual void OnRequestError(std::string const& strError, int retriesLeft, bool bLogError = true) override;
 
-	/// Overridden from SDK::Core::IITwinWebServicesObserver
+	/// Overridden from AdvViz::SDK::IITwinWebServicesObserver
 	/// This will just perform a conversion from SDKCore types to Unreal ones, and call the appropriate
 	/// callback on the latter.
-	virtual void OnITwinsRetrieved(bool bSuccess, SDK::Core::ITwinInfos const& infos) override;
-	virtual void OnITwinInfoRetrieved(bool bSuccess, SDK::Core::ITwinInfo const& info) override;
-	virtual void OnIModelsRetrieved(bool bSuccess, SDK::Core::IModelInfos const& infos) override;
-	virtual void OnChangesetsRetrieved(bool bSuccess, SDK::Core::ChangesetInfos const& infos) override;
-	virtual void OnExportInfosRetrieved(bool bSuccess, SDK::Core::ITwinExportInfos const& infos) override;
-	virtual void OnExportInfoRetrieved(bool bSuccess, SDK::Core::ITwinExportInfo const& info) override;
+	virtual void OnITwinsRetrieved(bool bSuccess, AdvViz::SDK::ITwinInfos const& infos) override;
+	virtual void OnITwinInfoRetrieved(bool bSuccess, AdvViz::SDK::ITwinInfo const& info) override;
+	virtual void OnIModelsRetrieved(bool bSuccess, AdvViz::SDK::IModelInfos const& infos) override;
+	virtual void OnChangesetsRetrieved(bool bSuccess, AdvViz::SDK::ChangesetInfos const& infos) override;
+	virtual void OnExportInfosRetrieved(bool bSuccess, AdvViz::SDK::ITwinExportInfos const& infos) override;
+	virtual void OnExportInfoRetrieved(bool bSuccess, AdvViz::SDK::ITwinExportInfo const& info) override;
 	virtual void OnExportStarted(bool bSuccess, std::string const& InExportId) override;
-	virtual void OnSavedViewInfosRetrieved(bool bSuccess, SDK::Core::SavedViewInfos const& infos) override;
-	virtual void OnSavedViewRetrieved(bool bSuccess, SDK::Core::SavedView const& savedView, SDK::Core::SavedViewInfo const& info) override;
+	virtual void OnSavedViewInfosRetrieved(bool bSuccess, AdvViz::SDK::SavedViewInfos const& infos) override;
+	virtual void OnSavedViewRetrieved(bool bSuccess, AdvViz::SDK::SavedView const& savedView, AdvViz::SDK::SavedViewInfo const& info) override;
 	virtual void OnSavedViewExtensionRetrieved(bool bSuccess, std::string const& SavedViewId, std::string const& data) override;
-	virtual void OnSavedViewThumbnailRetrieved(bool bSuccess, std::string const& SavedViewThumbnail, std::string const& SavedViewId) override;
+	virtual void OnSavedViewThumbnailRetrieved(bool bSuccess,  std::string const& SavedViewId, std::vector<uint8_t> const& RawData) override;
 	virtual void OnSavedViewThumbnailUpdated(bool bSuccess, std::string const& SavedViewId, std::string const& Response) override;
-	virtual void OnSavedViewGroupInfosRetrieved(bool bSuccess, SDK::Core::SavedViewGroupInfos const& coreInfos) override;
-	virtual void OnSavedViewGroupAdded(bool bSuccess, SDK::Core::SavedViewGroupInfo const& coreGroupInfo) override;
-	virtual void OnSavedViewAdded(bool bSuccess, SDK::Core::SavedViewInfo const& info) override;
+	virtual void OnSavedViewGroupInfosRetrieved(bool bSuccess, AdvViz::SDK::SavedViewGroupInfos const& coreInfos) override;
+	virtual void OnSavedViewGroupAdded(bool bSuccess, AdvViz::SDK::SavedViewGroupInfo const& coreGroupInfo) override;
+	virtual void OnSavedViewAdded(bool bSuccess, AdvViz::SDK::SavedViewInfo const& info) override;
 	virtual void OnSavedViewDeleted(bool bSuccess, std::string const& savedViewId, std::string const& response) override;
-	virtual void OnSavedViewEdited(bool bSuccess, SDK::Core::SavedView const& savedView, SDK::Core::SavedViewInfo const& info) override;
-	virtual void OnRealityDataRetrieved(bool bSuccess, SDK::Core::ITwinRealityDataInfos const& infos) override;
-	virtual void OnRealityData3DInfoRetrieved(bool bSuccess, SDK::Core::ITwinRealityData3DInfo const& info) override;
-	virtual void OnElementPropertiesRetrieved(bool bSuccess, SDK::Core::ITwinElementProperties const& props, std::string const& ElementId) override;
-	virtual void OnIModelPropertiesRetrieved(bool bSuccess, SDK::Core::IModelProperties const& props) override;
-	virtual void OnIModelQueried(bool bSuccess, std::string const& QueryResult, SDK::Core::RequestID const&) override;
-	virtual void OnMaterialPropertiesRetrieved(bool bSuccess, SDK::Core::ITwinMaterialPropertiesMap const& props) override;
-	virtual void OnTextureDataRetrieved(bool bSuccess, std::string const& textureId, SDK::Core::ITwinTextureData const& textureData) override;
-	virtual void OnMatMLPredictionRetrieved(bool bSuccess, SDK::Core::ITwinMaterialPrediction const& prediction) override;
+	virtual void OnSavedViewEdited(bool bSuccess, AdvViz::SDK::SavedView const& savedView, AdvViz::SDK::SavedViewInfo const& info) override;
+	virtual void OnRealityDataRetrieved(bool bSuccess, AdvViz::SDK::ITwinRealityDataInfos const& infos) override;
+	virtual void OnRealityData3DInfoRetrieved(bool bSuccess, AdvViz::SDK::ITwinRealityData3DInfo const& info) override;
+	virtual void OnElementPropertiesRetrieved(bool bSuccess, AdvViz::SDK::ITwinElementProperties const& props, std::string const& ElementId) override;
+	virtual void OnIModelPropertiesRetrieved(bool bSuccess, AdvViz::SDK::IModelProperties const& props) override;
+	virtual void OnConvertedIModelCoordsToGeoCoords(bool bSuccess,
+		AdvViz::SDK::GeoCoordsReply const& GeoCoords, AdvViz::SDK::RequestID const& FromRequestId) override;
+	virtual void OnIModelQueried(bool bSuccess, std::string const& QueryResult, AdvViz::SDK::RequestID const&) override;
+	virtual void OnMaterialPropertiesRetrieved(bool bSuccess, AdvViz::SDK::ITwinMaterialPropertiesMap const& props) override;
+	virtual void OnTextureDataRetrieved(bool bSuccess, std::string const& textureId, AdvViz::SDK::ITwinTextureData const& textureData) override;
+	virtual void OnMatMLPredictionRetrieved(bool bSuccess, AdvViz::SDK::ITwinMaterialPrediction const& prediction, std::string const& error = {}) override;
 	virtual void OnMatMLPredictionProgress(float fProgressRatio) override;
 };
 
@@ -183,7 +185,7 @@ namespace
 	{
 		return FPlane(InVec[0], InVec[1], InVec[2], InVec[3]);
 	}
-	inline FMatrix FromCoreMatrix3x4(SDK::Core::Matrix3x4 const& InMat)
+	inline FMatrix FromCoreMatrix3x4(AdvViz::SDK::Matrix3x4 const& InMat)
 	{
 		return FMatrix(
 			FromCoreVec4(InMat[0]),
@@ -192,13 +194,13 @@ namespace
 			FPlane(0, 0, 0, 1)
 		);
 	}
-	inline void ToCoreRotator(FRotator const& InAngles, SDK::Core::Rotator& OutAngles)
+	inline void ToCoreRotator(FRotator const& InAngles, AdvViz::SDK::Rotator& OutAngles)
 	{
 		OutAngles.yaw = InAngles.Yaw;
 		OutAngles.pitch = InAngles.Pitch;
 		OutAngles.roll = InAngles.Roll;
 	}
-	inline FRotator FromCoreRotator(SDK::Core::Rotator const& InRotator)
+	inline FRotator FromCoreRotator(AdvViz::SDK::Rotator const& InRotator)
 	{
 		return FRotator(
 			InRotator.pitch.value_or(0.),
@@ -213,7 +215,7 @@ namespace
 			Array.Add(hiddenModel.c_str());
 		return Array;
 	}
-	inline void ToCoreSavedView(FSavedView const& SavedView, SDK::Core::SavedView& coreSV)
+	inline void ToCoreSavedView(FSavedView const& SavedView, AdvViz::SDK::SavedView& coreSV)
 	{
 		ToCoreVec3(SavedView.Origin, coreSV.origin);
 		ToCoreVec3(SavedView.Extents, coreSV.extents);
@@ -227,13 +229,13 @@ namespace
 			coreSV.displayStyle->timePoint = SavedView.DisplayStyle.TimePoint;
 		}
 	}
-	inline void ToCoreSavedViewInfo(FSavedViewInfo const& SavedViewInfo, SDK::Core::SavedViewInfo& coreSV)
+	inline void ToCoreSavedViewInfo(FSavedViewInfo const& SavedViewInfo, AdvViz::SDK::SavedViewInfo& coreSV)
 	{
 		coreSV.id = TCHAR_TO_ANSI(*SavedViewInfo.Id);
 		coreSV.displayName = TCHAR_TO_UTF8(*SavedViewInfo.DisplayName);
 		coreSV.shared = SavedViewInfo.bShared;
 	}
-	inline void ToCoreSavedViewGroupInfo(FSavedViewGroupInfo const& SavedViewGroupInfo, SDK::Core::SavedViewGroupInfo& coreSVGroup)
+	inline void ToCoreSavedViewGroupInfo(FSavedViewGroupInfo const& SavedViewGroupInfo, AdvViz::SDK::SavedViewGroupInfo& coreSVGroup)
 	{
 		coreSVGroup.id = TCHAR_TO_ANSI(*SavedViewGroupInfo.Id);
 		coreSVGroup.displayName = TCHAR_TO_UTF8(*SavedViewGroupInfo.DisplayName);
@@ -250,7 +252,7 @@ UITwinWebServices* UITwinWebServices::GetWorkingInstance()
 	{
 		return WorkingInstance;
 	}
-	auto* CoreWorkingInstance = SDK::Core::ITwinWebServices::GetWorkingInstance();
+	auto* CoreWorkingInstance = AdvViz::SDK::ITwinWebServices::GetWorkingInstance();
 	if (CoreWorkingInstance)
 	{
 		UITwinWebServices::FImpl* pImpl = static_cast<UITwinWebServices::FImpl*>(CoreWorkingInstance);
@@ -310,13 +312,13 @@ bool UITwinWebServices::GetActiveConnection(TObjectPtr<AITwinServerConnection>& 
 UITwinWebServices::FImpl::FImpl(UITwinWebServices& Owner)
 	: owner_(Owner)
 {
-	SDK::Core::ITwinWebServices::SetObserver(this);
+	AdvViz::SDK::ITwinWebServices::SetObserver(this);
 }
 
 
 UITwinWebServices::FImpl::~FImpl()
 {
-	SDK::Core::ITwinWebServices::SetObserver(nullptr);
+	AdvViz::SDK::ITwinWebServices::SetObserver(nullptr);
 	ResetAuthManager();
 }
 
@@ -329,7 +331,7 @@ void UITwinWebServices::FImpl::InitAuthManager(EITwinEnvironment InEnvironment)
 
 	// Initiate the manager handling tokens for current Environment
 	authManager_ = FITwinAuthorizationManager::GetInstance(
-		static_cast<SDK::Core::EITwinEnvironment>(InEnvironment));
+		static_cast<AdvViz::SDK::EITwinEnvironment>(InEnvironment));
 	authManager_->AddObserver(&owner_);
 }
 
@@ -347,14 +349,14 @@ void UITwinWebServices::FImpl::SetEnvironment(EITwinEnvironment InEnvironment)
 	// The enum should be exactly identical in SDK Core and here...
 	// We could investigate on ways to expose existing enumeration in blueprints without having to duplicate
 	// it...
-	static_assert(static_cast<EITwinEnvironment>(SDK::Core::EITwinEnvironment::Prod) == EITwinEnvironment::Prod
-		&& static_cast<EITwinEnvironment>(SDK::Core::EITwinEnvironment::Invalid) == EITwinEnvironment::Invalid,
+	static_assert(static_cast<EITwinEnvironment>(AdvViz::SDK::EITwinEnvironment::Prod) == EITwinEnvironment::Prod
+		&& static_cast<EITwinEnvironment>(AdvViz::SDK::EITwinEnvironment::Invalid) == EITwinEnvironment::Invalid,
 		"EITwinEnvironment enum definition mismatch");
 
-	SDK::Core::EITwinEnvironment const coreEnv =
-		static_cast<SDK::Core::EITwinEnvironment>(InEnvironment);
-	SDK::Core::EITwinEnvironment const oldCoreEnv = GetEnvironment();
-	SDK::Core::ITwinWebServices::SetEnvironment(coreEnv);
+	AdvViz::SDK::EITwinEnvironment const coreEnv =
+		static_cast<AdvViz::SDK::EITwinEnvironment>(InEnvironment);
+	AdvViz::SDK::EITwinEnvironment const oldCoreEnv = GetEnvironment();
+	AdvViz::SDK::ITwinWebServices::SetEnvironment(coreEnv);
 	if (coreEnv != oldCoreEnv && authManager_)
 	{
 		// Make sure we point at the right manager
@@ -371,13 +373,13 @@ void UITwinWebServices::FImpl::SetObserver(Observer_ITwinRuntime* InObserver)
 	{
 		// Material ML prediction may retry the same request regularly (with a timer), and we should ensure
 		// we stop repeating this when the IModel is destroyed.
-		SDK::Core::ITwinWebServices::SetObserver(nullptr);
+		AdvViz::SDK::ITwinWebServices::SetObserver(nullptr);
 	}
 }
 
-void UITwinWebServices::FImpl::OnRequestError(std::string const& strError, int retriesLeft)
+void UITwinWebServices::FImpl::OnRequestError(std::string const& strError, int retriesLeft, bool bLogError /*= true*/)
 {
-	if (UITwinWebServices::ShouldLogErrors())
+	if (UITwinWebServices::ShouldLogErrors() && bLogError)
 	{
 		if (retriesLeft == 0)
 		{
@@ -391,12 +393,12 @@ void UITwinWebServices::FImpl::OnRequestError(std::string const& strError, int r
 	}
 }
 
-void UITwinWebServices::FImpl::OnITwinsRetrieved(bool bSuccess, SDK::Core::ITwinInfos const& coreInfos)
+void UITwinWebServices::FImpl::OnITwinsRetrieved(bool bSuccess, AdvViz::SDK::ITwinInfos const& coreInfos)
 {
 	FITwinInfos infos;
 	infos.iTwins.Reserve(coreInfos.iTwins.size());
 	Algo::Transform(coreInfos.iTwins, infos.iTwins,
-		[](SDK::Core::ITwinInfo const& V) -> FITwinInfo { return {
+		[](AdvViz::SDK::ITwinInfo const& V) -> FITwinInfo { return {
 			V.id.c_str(),
 			UTF8_TO_TCHAR(V.displayName.c_str()),
 			V.status.c_str(),
@@ -410,7 +412,7 @@ void UITwinWebServices::FImpl::OnITwinsRetrieved(bool bSuccess, SDK::Core::ITwin
 	}
 }
 
-void UITwinWebServices::FImpl::OnITwinInfoRetrieved(bool bSuccess, SDK::Core::ITwinInfo const& coreInfo)
+void UITwinWebServices::FImpl::OnITwinInfoRetrieved(bool bSuccess, AdvViz::SDK::ITwinInfo const& coreInfo)
 {
 	FITwinInfo const info =
 	{
@@ -426,12 +428,12 @@ void UITwinWebServices::FImpl::OnITwinInfoRetrieved(bool bSuccess, SDK::Core::IT
 	}
 }
 
-void UITwinWebServices::FImpl::OnIModelsRetrieved(bool bSuccess, SDK::Core::IModelInfos const& coreInfos)
+void UITwinWebServices::FImpl::OnIModelsRetrieved(bool bSuccess, AdvViz::SDK::IModelInfos const& coreInfos)
 {
 	FIModelInfos infos;
 	infos.iModels.Reserve(coreInfos.iModels.size());
 	Algo::Transform(coreInfos.iModels, infos.iModels,
-		[](SDK::Core::IModelInfo const& V) -> FIModelInfo { return {
+		[](AdvViz::SDK::IModelInfo const& V) -> FIModelInfo { return {
 			V.id.c_str(),
 			UTF8_TO_TCHAR(V.displayName.c_str())
 		};
@@ -443,12 +445,12 @@ void UITwinWebServices::FImpl::OnIModelsRetrieved(bool bSuccess, SDK::Core::IMod
 	}
 }
 
-void UITwinWebServices::FImpl::OnChangesetsRetrieved(bool bSuccess, SDK::Core::ChangesetInfos const& coreInfos)
+void UITwinWebServices::FImpl::OnChangesetsRetrieved(bool bSuccess, AdvViz::SDK::ChangesetInfos const& coreInfos)
 {
 	FChangesetInfos infos;
 	infos.Changesets.Reserve(coreInfos.changesets.size());
 	Algo::Transform(coreInfos.changesets, infos.Changesets,
-		[](SDK::Core::ChangesetInfo const& V) -> FChangesetInfo { return {
+		[](AdvViz::SDK::ChangesetInfo const& V) -> FChangesetInfo { return {
 			V.id.c_str(),
 			UTF8_TO_TCHAR(V.displayName.c_str()),
 			UTF8_TO_TCHAR(V.description.value_or("").c_str()),
@@ -462,12 +464,12 @@ void UITwinWebServices::FImpl::OnChangesetsRetrieved(bool bSuccess, SDK::Core::C
 	}
 }
 
-void UITwinWebServices::FImpl::OnExportInfosRetrieved(bool bSuccess, SDK::Core::ITwinExportInfos const& coreInfos)
+void UITwinWebServices::FImpl::OnExportInfosRetrieved(bool bSuccess, AdvViz::SDK::ITwinExportInfos const& coreInfos)
 {
 	FITwinExportInfos infos;
 	infos.ExportInfos.Reserve(coreInfos.exports.size());
 	Algo::Transform(coreInfos.exports, infos.ExportInfos,
-		[](SDK::Core::ITwinExportInfo const& V) -> FITwinExportInfo { return {
+		[](AdvViz::SDK::ITwinExportInfo const& V) -> FITwinExportInfo { return {
 			V.id.c_str(),
 			UTF8_TO_TCHAR(V.displayName.c_str()),
 			V.status.c_str(),
@@ -484,7 +486,7 @@ void UITwinWebServices::FImpl::OnExportInfosRetrieved(bool bSuccess, SDK::Core::
 	}
 }
 
-void UITwinWebServices::FImpl::OnExportInfoRetrieved(bool bSuccess, SDK::Core::ITwinExportInfo const& coreInfo)
+void UITwinWebServices::FImpl::OnExportInfoRetrieved(bool bSuccess, AdvViz::SDK::ITwinExportInfo const& coreInfo)
 {
 	FITwinExportInfo const info =
 	{
@@ -524,12 +526,12 @@ void UITwinWebServices::FImpl::OnSavedViewExtensionRetrieved(bool bSuccess, std:
 	}
 }
 
-void UITwinWebServices::FImpl::OnSavedViewInfosRetrieved(bool bSuccess, SDK::Core::SavedViewInfos const& coreInfos)
+void UITwinWebServices::FImpl::OnSavedViewInfosRetrieved(bool bSuccess, AdvViz::SDK::SavedViewInfos const& coreInfos)
 {
 	FSavedViewInfos infos;
 	infos.SavedViews.Reserve(coreInfos.savedViews.size());
 	Algo::Transform(coreInfos.savedViews, infos.SavedViews,
-		[](SDK::Core::SavedViewInfo const& V) -> FSavedViewInfo { 
+		[](AdvViz::SDK::SavedViewInfo const& V) -> FSavedViewInfo { 
 			FSavedViewInfo info = {
 				V.id.c_str(),
 				UTF8_TO_TCHAR(V.displayName.c_str()),
@@ -542,6 +544,8 @@ void UITwinWebServices::FImpl::OnSavedViewInfosRetrieved(bool bSuccess, SDK::Cor
 			return info;
 	});
 	infos.GroupId = coreInfos.groupId.value_or("").c_str();
+	infos.IModelId = coreInfos.iModelId.value_or("").c_str();
+	infos.ITwinId = coreInfos.iTwinId.value_or("").c_str();
 	owner_.OnGetSavedViewsComplete.Broadcast(bSuccess, infos);
 	if (observer_)
 	{
@@ -549,12 +553,12 @@ void UITwinWebServices::FImpl::OnSavedViewInfosRetrieved(bool bSuccess, SDK::Cor
 	}
 }
 
-void UITwinWebServices::FImpl::OnSavedViewGroupInfosRetrieved(bool bSuccess, SDK::Core::SavedViewGroupInfos const& coreInfos)
+void UITwinWebServices::FImpl::OnSavedViewGroupInfosRetrieved(bool bSuccess, AdvViz::SDK::SavedViewGroupInfos const& coreInfos)
 {
 	FSavedViewGroupInfos infos;
 	infos.SavedViewGroups.Reserve(coreInfos.groups.size());
 	Algo::Transform(coreInfos.groups, infos.SavedViewGroups,
-		[](SDK::Core::SavedViewGroupInfo const& V) -> FSavedViewGroupInfo { return {
+		[](AdvViz::SDK::SavedViewGroupInfo const& V) -> FSavedViewGroupInfo { return {
 			V.id.c_str(),
 			UTF8_TO_TCHAR(V.displayName.c_str()),
 			V.shared,
@@ -569,7 +573,7 @@ void UITwinWebServices::FImpl::OnSavedViewGroupInfosRetrieved(bool bSuccess, SDK
 	}
 }
 
-void UITwinWebServices::FImpl::OnSavedViewRetrieved(bool bSuccess, SDK::Core::SavedView const& coreSV, SDK::Core::SavedViewInfo const& coreSVInfo)
+void UITwinWebServices::FImpl::OnSavedViewRetrieved(bool bSuccess, AdvViz::SDK::SavedView const& coreSV, AdvViz::SDK::SavedViewInfo const& coreSVInfo)
 {
 	FSavedView SavedView = {
 		FromCoreVec3(coreSV.origin),
@@ -606,12 +610,14 @@ void UITwinWebServices::FImpl::OnSavedViewRetrieved(bool bSuccess, SDK::Core::Sa
 	}
 }
 
-void UITwinWebServices::FImpl::OnSavedViewThumbnailRetrieved(bool bSuccess, std::string const& SavedViewThumbnail, std::string const& SavedViewId)
+void UITwinWebServices::FImpl::OnSavedViewThumbnailRetrieved(bool bSuccess, std::string const& SavedViewId,
+	std::vector<uint8_t> const& RawData)
 {
-	owner_.OnGetSavedViewThumbnailComplete.Broadcast(bSuccess, SavedViewThumbnail.c_str(), SavedViewId.c_str());
 	if (observer_)
 	{
-		observer_->OnSavedViewThumbnailRetrieved(bSuccess, SavedViewThumbnail.c_str(), SavedViewId.c_str());
+		TArray<uint8> UEBuffer;
+		UEBuffer.Append(reinterpret_cast<uint8 const*>(RawData.data()), RawData.size());
+		observer_->OnSavedViewThumbnailRetrieved(bSuccess, SavedViewId.c_str(), UEBuffer);
 	}
 }
 
@@ -624,7 +630,7 @@ void UITwinWebServices::FImpl::OnSavedViewThumbnailUpdated(bool bSuccess, std::s
 	}
 }
 
-void UITwinWebServices::FImpl::OnSavedViewAdded(bool bSuccess, SDK::Core::SavedViewInfo const& coreSVInfo)
+void UITwinWebServices::FImpl::OnSavedViewAdded(bool bSuccess, AdvViz::SDK::SavedViewInfo const& coreSVInfo)
 {
 	const FSavedViewInfo SavedViewInfo = {
 		coreSVInfo.id.c_str(),
@@ -635,7 +641,7 @@ void UITwinWebServices::FImpl::OnSavedViewAdded(bool bSuccess, SDK::Core::SavedV
 	owner_.OnSavedViewAdded(bSuccess, SavedViewInfo);
 }
 
-void UITwinWebServices::FImpl::OnSavedViewGroupAdded(bool bSuccess, SDK::Core::SavedViewGroupInfo const& coreGroupInfo)
+void UITwinWebServices::FImpl::OnSavedViewGroupAdded(bool bSuccess, AdvViz::SDK::SavedViewGroupInfo const& coreGroupInfo)
 {
 	const FSavedViewGroupInfo SavedViewGroupInfo = {
 		coreGroupInfo.id.c_str(),
@@ -655,7 +661,7 @@ void UITwinWebServices::FImpl::OnSavedViewDeleted(bool bSuccess, std::string con
 	owner_.OnSavedViewDeleted(bSuccess, FString(savedViewId.c_str()), FString(strError.c_str()));
 }
 
-void UITwinWebServices::FImpl::OnSavedViewEdited(bool bSuccess, SDK::Core::SavedView const& coreSV, SDK::Core::SavedViewInfo const& coreSVInfo)
+void UITwinWebServices::FImpl::OnSavedViewEdited(bool bSuccess, AdvViz::SDK::SavedView const& coreSV, AdvViz::SDK::SavedViewInfo const& coreSVInfo)
 {
 	const FSavedView SavedView = {
 		FromCoreVec3(coreSV.origin),
@@ -674,12 +680,12 @@ void UITwinWebServices::FImpl::OnSavedViewEdited(bool bSuccess, SDK::Core::Saved
 	}
 }
 
-void UITwinWebServices::FImpl::OnRealityDataRetrieved(bool bSuccess, SDK::Core::ITwinRealityDataInfos const& coreInfos)
+void UITwinWebServices::FImpl::OnRealityDataRetrieved(bool bSuccess, AdvViz::SDK::ITwinRealityDataInfos const& coreInfos)
 {
 	FITwinRealityDataInfos infos;
 	infos.Infos.Reserve(coreInfos.realityData.size());
 	Algo::Transform(coreInfos.realityData, infos.Infos,
-		[](SDK::Core::ITwinRealityDataInfo const& V) -> FITwinRealityDataInfo { return {
+		[](AdvViz::SDK::ITwinRealityDataInfo const& V) -> FITwinRealityDataInfo { return {
 			V.id.c_str(),
 			UTF8_TO_TCHAR(V.displayName.c_str())
 		};
@@ -691,7 +697,7 @@ void UITwinWebServices::FImpl::OnRealityDataRetrieved(bool bSuccess, SDK::Core::
 	}
 }
 
-void UITwinWebServices::FImpl::OnRealityData3DInfoRetrieved(bool bSuccess, SDK::Core::ITwinRealityData3DInfo const& coreInfo)
+void UITwinWebServices::FImpl::OnRealityData3DInfoRetrieved(bool bSuccess, AdvViz::SDK::ITwinRealityData3DInfo const& coreInfo)
 {
 	FITwinRealityData3DInfo info;
 	info.Id = coreInfo.id.c_str();
@@ -709,17 +715,17 @@ void UITwinWebServices::FImpl::OnRealityData3DInfoRetrieved(bool bSuccess, SDK::
 	}
 }
 
-void UITwinWebServices::FImpl::OnElementPropertiesRetrieved(bool bSuccess, SDK::Core::ITwinElementProperties const& coreProps, std::string const& ElementId)
+void UITwinWebServices::FImpl::OnElementPropertiesRetrieved(bool bSuccess, AdvViz::SDK::ITwinElementProperties const& coreProps, std::string const& ElementId)
 {
 	FElementProperties props;
 	props.Properties.Reserve(coreProps.properties.size());
 	Algo::Transform(coreProps.properties, props.Properties,
-		[](SDK::Core::ITwinElementProperty const& coreProp) -> FElementProperty {
+		[](AdvViz::SDK::ITwinElementProperty const& coreProp) -> FElementProperty {
 		FElementProperty p;
 		p.Name = coreProp.name.c_str();
 		p.Attributes.Reserve(coreProp.attributes.size());
 		Algo::Transform(coreProp.attributes, p.Attributes,
-			[](SDK::Core::ITwinElementAttribute const& coreAttr) -> FElementAttribute {
+			[](AdvViz::SDK::ITwinElementAttribute const& coreAttr) -> FElementAttribute {
 			return {
 				coreAttr.name.c_str(),
 				coreAttr.value.c_str()
@@ -735,7 +741,8 @@ void UITwinWebServices::FImpl::OnElementPropertiesRetrieved(bool bSuccess, SDK::
 	}
 }
 
-void UITwinWebServices::FImpl::OnIModelPropertiesRetrieved(bool bSuccess, SDK::Core::IModelProperties const& coreProps)
+void UITwinWebServices::FImpl::OnIModelPropertiesRetrieved(bool bSuccess,
+														   AdvViz::SDK::IModelProperties const& coreProps)
 {
 	FProjectExtents ProjectExtents;
 	FEcefLocation EcefLocation;
@@ -748,12 +755,15 @@ void UITwinWebServices::FImpl::OnIModelPropertiesRetrieved(bool bSuccess, SDK::C
 	}
 	if (bHasEcefLocation)
 	{
-		SDK::Core::EcefLocation const& coreEcef = *coreProps.ecefLocation;
+		AdvViz::SDK::EcefLocation const& coreEcef = *coreProps.ecefLocation;
 		EcefLocation.bHasCartographicOrigin = coreEcef.cartographicOrigin.has_value();
 		if (EcefLocation.bHasCartographicOrigin)
 		{
-			EcefLocation.CartographicOrigin.Latitude = coreEcef.cartographicOrigin->latitude;
-			EcefLocation.CartographicOrigin.Longitude = coreEcef.cartographicOrigin->longitude;
+			// See doc for FCartographicProps about this conversion
+			EcefLocation.CartographicOrigin.Latitude =
+				FMath::RadiansToDegrees(coreEcef.cartographicOrigin->latitude);
+			EcefLocation.CartographicOrigin.Longitude =
+				FMath::RadiansToDegrees(coreEcef.cartographicOrigin->longitude);
 			EcefLocation.CartographicOrigin.Height = coreEcef.cartographicOrigin->height;
 		}
 		EcefLocation.Orientation = FromCoreRotator(coreEcef.orientation);
@@ -769,10 +779,19 @@ void UITwinWebServices::FImpl::OnIModelPropertiesRetrieved(bool bSuccess, SDK::C
 			EcefLocation.xVector = FromCoreVec3(*coreEcef.xVector);
 			EcefLocation.yVector = FromCoreVec3(*coreEcef.yVector);
 		}
+		if (coreProps.geographicCoordinateSystem)
+		{
+			EcefLocation.bHasGeographicCoordinateSystem = true;
+			if (coreProps.geographicCoordinateSystem->horizontalCRS
+				&& coreProps.geographicCoordinateSystem->horizontalCRS->epsg)
+			{
+				EcefLocation.GeographicCoordinateSystemEPSG =
+					*coreProps.geographicCoordinateSystem->horizontalCRS->epsg;
+			}
+		}
 	}
 	if (coreProps.globalOrigin)
 		ProjectExtents.GlobalOrigin = FromCoreVec3(*coreProps.globalOrigin);
-	
 	owner_.OnGetIModelPropertiesComplete.Broadcast(bSuccess, bHasExtents, ProjectExtents, bHasEcefLocation, EcefLocation);
 	if (observer_)
 	{
@@ -780,8 +799,18 @@ void UITwinWebServices::FImpl::OnIModelPropertiesRetrieved(bool bSuccess, SDK::C
 	}
 }
 
+void UITwinWebServices::FImpl::OnConvertedIModelCoordsToGeoCoords(bool bSuccess,
+	AdvViz::SDK::GeoCoordsReply const& GeoCoords, AdvViz::SDK::RequestID const& FromRequestID)
+{
+	if (observer_)
+	{
+		observer_->OnConvertedIModelCoordsToGeoCoords(bSuccess, GeoCoords,
+													  HttpRequestID(FromRequestID.c_str()));
+	}
+}
+
 void UITwinWebServices::FImpl::OnIModelQueried(bool bSuccess, std::string const& QueryResult,
-											   SDK::Core::RequestID const& FromRequestID)
+											   AdvViz::SDK::RequestID const& FromRequestID)
 {
 	owner_.OnQueryIModelComplete.Broadcast(bSuccess, FString(QueryResult.c_str()));
 	if (observer_)
@@ -791,7 +820,7 @@ void UITwinWebServices::FImpl::OnIModelQueried(bool bSuccess, std::string const&
 	}
 }
 
-void UITwinWebServices::FImpl::OnMaterialPropertiesRetrieved(bool bSuccess, SDK::Core::ITwinMaterialPropertiesMap const& coreProps)
+void UITwinWebServices::FImpl::OnMaterialPropertiesRetrieved(bool bSuccess, AdvViz::SDK::ITwinMaterialPropertiesMap const& coreProps)
 {
 	if (observer_)
 	{
@@ -799,7 +828,7 @@ void UITwinWebServices::FImpl::OnMaterialPropertiesRetrieved(bool bSuccess, SDK:
 	}
 }
 
-void UITwinWebServices::FImpl::OnTextureDataRetrieved(bool bSuccess, std::string const& textureId, SDK::Core::ITwinTextureData const& textureData)
+void UITwinWebServices::FImpl::OnTextureDataRetrieved(bool bSuccess, std::string const& textureId, AdvViz::SDK::ITwinTextureData const& textureData)
 {
 	if (observer_)
 	{
@@ -819,11 +848,12 @@ void UITwinWebServices::FImpl::InitMaterialMLCache(FString const& CacheFolder)
 	}
 }
 
-void UITwinWebServices::FImpl::OnMatMLPredictionRetrieved(bool bSuccess, SDK::Core::ITwinMaterialPrediction const& prediction)
+void UITwinWebServices::FImpl::OnMatMLPredictionRetrieved(bool bSuccess,
+	AdvViz::SDK::ITwinMaterialPrediction const& prediction, std::string const& error /*= {}*/)
 {
 	if (observer_)
 	{
-		observer_->OnMatMLPredictionRetrieved(bSuccess, prediction);
+		observer_->OnMatMLPredictionRetrieved(bSuccess, prediction, error);
 	}
 }
 
@@ -846,7 +876,7 @@ UITwinWebServices::UITwinWebServices()
 	{
 		bHasInitSDKCore = true;
 
-		using namespace SDK::Core;
+		using namespace AdvViz::SDK;
 
 		HttpRequest::SetNewFct([]() {
 			HttpRequest* p(static_cast<HttpRequest*>(new FUEHttpRequest));
@@ -871,10 +901,6 @@ UITwinWebServices::UITwinWebServices()
 		if (DecoSettings && DecoSettings->bLoadDecorationsInPlugin)
 		{
 			UITwinWebServices::AddScope(TEXT(ITWIN_DECORATIONS_SCOPE));
-		}
-		if (ITwin::IsMLMaterialPredictionEnabled())
-		{
-			UITwinWebServices::AddScope(TEXT("aiml:run-admin aiml:read-backend"));
 		}
 		if (DecoSettings
 			&& !DecoSettings->CustomEnv.IsEmpty()
@@ -924,7 +950,7 @@ bool UITwinWebServices::IsAuthorizationInProgress() const
 UITwinWebServices::AuthManagerPtr& UITwinWebServices::GetAuthManager() const
 {
 	return FITwinAuthorizationManager::GetInstance(
-		static_cast<SDK::Core::EITwinEnvironment>(Environment));
+		static_cast<AdvViz::SDK::EITwinEnvironment>(Environment));
 }
 
 void UITwinWebServices::SetServerConnection(TObjectPtr<AITwinServerConnection> const& InConnection)
@@ -1017,20 +1043,20 @@ bool UITwinWebServices::InitServerConnectionFromWorld()
 	}
 }
 
-SDK::Core::EITwinAuthStatus UITwinWebServices::CheckAuthorizationStatus()
+AdvViz::SDK::EITwinAuthStatus UITwinWebServices::CheckAuthorizationStatus()
 {
 	if (TryGetServerConnection(true))
 	{
 		// We could get a valid server connection. No need to do anything more (note that the token
 		// will be automatically refreshed when approaching its expiration: no need to check that).
-		return SDK::Core::EITwinAuthStatus::Success;
+		return AdvViz::SDK::EITwinAuthStatus::Success;
 	}
 	return Impl->authManager_->CheckAuthorization();
 }
 
 bool UITwinWebServices::CheckAuthorization()
 {
-	return CheckAuthorizationStatus() == SDK::Core::EITwinAuthStatus::Success;
+	return CheckAuthorizationStatus() == AdvViz::SDK::EITwinAuthStatus::Success;
 }
 
 void UITwinWebServices::OnAuthDoneImpl(bool bSuccess, std::string const& Error, bool bBroadcastResult /*= true*/)
@@ -1241,8 +1267,8 @@ void UITwinWebServices::UpdateSavedViewThumbnail(FString SavedViewId, FString Th
 
 void UITwinWebServices::AddSavedView(FString ITwinId, FSavedView SavedView, FSavedViewInfo SavedViewInfo, FString IModelId /*= ""*/, FString GroupId /*= ""*/)
 {
-	SDK::Core::SavedView coreSV;
-	SDK::Core::SavedViewInfo coreSVInfo;
+	AdvViz::SDK::SavedView coreSV;
+	AdvViz::SDK::SavedViewInfo coreSVInfo;
 	ToCoreSavedView(SavedView, coreSV);
 	ToCoreSavedViewInfo(SavedViewInfo, coreSVInfo);
 
@@ -1263,7 +1289,7 @@ void UITwinWebServices::OnSavedViewAdded(bool bSuccess, FSavedViewInfo const& Sa
 
 void UITwinWebServices::AddSavedViewGroup(FString ITwinId, FString IModelId, FSavedViewGroupInfo SavedViewGroupInfo)
 {
-	SDK::Core::SavedViewGroupInfo coreSVGroupInfo;
+	AdvViz::SDK::SavedViewGroupInfo coreSVGroupInfo;
 	ToCoreSavedViewGroupInfo(SavedViewGroupInfo, coreSVGroupInfo);
 
 	DoRequest([this, ITwinId, IModelId, &coreSVGroupInfo]() {
@@ -1288,8 +1314,8 @@ void UITwinWebServices::OnSavedViewDeleted(bool bSuccess, FString const& SavedVi
 
 void UITwinWebServices::EditSavedView(FSavedView SavedView, FSavedViewInfo SavedViewInfo)
 {
-	SDK::Core::SavedView coreSV;
-	SDK::Core::SavedViewInfo coreSVInfo;
+	AdvViz::SDK::SavedView coreSV;
+	AdvViz::SDK::SavedViewInfo coreSVInfo;
 	ToCoreSavedView(SavedView, coreSV);
 	ToCoreSavedViewInfo(SavedViewInfo, coreSVInfo);
 
@@ -1324,13 +1350,27 @@ void UITwinWebServices::GetIModelProperties(FString iTwinId, FString iModelId, F
 	});
 }
 
+void UITwinWebServices::ConvertIModelCoordsToGeoCoords(FString iTwinId, FString iModelId, FString ChangesetId,
+	FVector const& IModelSpatialCoords, std::function<void(HttpRequestID)>&& NotifRequestID)
+{
+	DoRequest([this, iTwinId, iModelId, ChangesetId, IModelSpatialCoords,
+				NotifRequestID=std::move(NotifRequestID)] () mutable
+		{
+			Impl->ConvertIModelCoordsToGeoCoords(
+				TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId), TCHAR_TO_ANSI(*ChangesetId),
+				IModelSpatialCoords.X, IModelSpatialCoords.Y, IModelSpatialCoords.Z,
+				[NotifRequestID = std::move(NotifRequestID)](AdvViz::SDK::RequestID const& RequestID)
+					{ if (NotifRequestID) NotifRequestID(HttpRequestID(RequestID.c_str())); });
+		});
+}
+
 void UITwinWebServices::QueryIModel(FString iTwinId, FString iModelId, FString ChangesetId,
 									FString ECSQLQuery, int Offset, int Count)
 {
 	QueryIModelRows(iTwinId, iModelId, ChangesetId, ECSQLQuery, Offset, Count, {});
 }
 
-SDK::Core::ITwinAPIRequestInfo UITwinWebServices::InfosToQueryIModel(FString iTwinId, FString iModelId,
+AdvViz::SDK::ITwinAPIRequestInfo UITwinWebServices::InfosToQueryIModel(FString iTwinId, FString iModelId,
 	FString ChangesetId, FString ECSQLQuery, int Offset, int Count)
 {
 	return Impl->InfosToQueryIModel(TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId),
@@ -1339,17 +1379,27 @@ SDK::Core::ITwinAPIRequestInfo UITwinWebServices::InfosToQueryIModel(FString iTw
 
 void UITwinWebServices::QueryIModelRows(FString iTwinId, FString iModelId, FString ChangesetId,
 	FString ECSQLQuery, int Offset, int Count, std::function<void(HttpRequestID)>&& NotifRequestID,
-	SDK::Core::ITwinAPIRequestInfo const* RequestInfo/*=nullptr*/)
+	AdvViz::SDK::ITwinAPIRequestInfo const* RequestInfo/*=nullptr*/,
+	AdvViz::SDK::FilterErrorFunc&& FilterError /*= {}*/)
 {
 	DoRequest(
 		[this, iTwinId, iModelId, ChangesetId, ECSQLQuery, Offset, Count, RequestInfo,
-		 NotifRequestID=std::move(NotifRequestID)] () mutable
+		 NotifRequestID=std::move(NotifRequestID),
+		 FilterError=std::move(FilterError)] () mutable
 		{
-			Impl->QueryIModel(TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId),
-				TCHAR_TO_ANSI(*ChangesetId), TCHAR_TO_ANSI(*ECSQLQuery), Offset, Count,
-				[NotifRequestID = std::move(NotifRequestID)](SDK::Core::RequestID const& RequestID)
+			Impl->QueryIModel(
+				TCHAR_TO_ANSI(*iTwinId),
+				TCHAR_TO_ANSI(*iModelId),
+				TCHAR_TO_ANSI(*ChangesetId),
+				TCHAR_TO_ANSI(*ECSQLQuery),
+				Offset,
+				Count,
+				[NotifRequestID = std::move(NotifRequestID)](AdvViz::SDK::RequestID const& RequestID)
 					{ if (NotifRequestID) NotifRequestID(HttpRequestID(RequestID.c_str())); },
-				RequestInfo);
+				RequestInfo,
+				[FilterError = std::move(FilterError)](std::string const& StrError, bool& bAllowRetry, bool& bLogError)
+					{ if (FilterError) FilterError(std::string(StrError.c_str()), bAllowRetry, bLogError);  }
+				);
 		});
 }
 
@@ -1390,6 +1440,11 @@ void UITwinWebServices::GetTextureData(
 	});
 }
 
+bool UITwinWebServices::IsSetupForForMaterialMLPrediction() const
+{
+	return Impl->IsSetupForForMaterialMLPrediction();
+}
+
 void UITwinWebServices::SetupForMaterialMLPrediction()
 {
 	Impl->SetupForMaterialMLPrediction();
@@ -1413,4 +1468,21 @@ EITwinMaterialPredictionStatus UITwinWebServices::GetMaterialMLPrediction(
 			TCHAR_TO_ANSI(*iTwinId),
 			TCHAR_TO_ANSI(*iModelId),
 			TCHAR_TO_ANSI(*ChangesetId)));
+}
+
+void UITwinWebServices::SetCustomServerURL(std::string const& ServerUrl)
+{
+	Impl->SetCustomServerURL(ServerUrl);
+}
+
+void UITwinWebServices::RunCustomRequest(
+	AdvViz::SDK::ITwinAPIRequestInfo const& RequestInfo,
+	AdvViz::SDK::CustomRequestCallback&& ResponseCallback,
+	AdvViz::SDK::FilterErrorFunc&& FilterError /*= {}*/)
+{
+	DoRequest([this, &RequestInfo,
+			   ResponseCallback = std::move(ResponseCallback),
+			   FilterError = std::move(FilterError)]() mutable {
+		Impl->RunCustomRequest(RequestInfo, std::move(ResponseCallback), std::move(FilterError));
+	});
 }

@@ -1,16 +1,29 @@
 #include <Cesium3DTiles/BoundingVolume.h>
+#include <Cesium3DTiles/Extension3dTilesBoundingVolumeCylinder.h>
 #include <Cesium3DTiles/Extension3dTilesBoundingVolumeS2.h>
 #include <Cesium3DTilesContent/TileBoundingVolumes.h>
+#include <CesiumGeometry/BoundingCylinderRegion.h>
+#include <CesiumGeometry/BoundingSphere.h>
+#include <CesiumGeometry/OrientedBoundingBox.h>
+#include <CesiumGeospatial/BoundingRegion.h>
+#include <CesiumGeospatial/Ellipsoid.h>
+#include <CesiumGeospatial/S2CellBoundingVolume.h>
+#include <CesiumUtility/Math.h>
 
-#include <catch2/catch.hpp>
+#include <doctest/doctest.h>
+#include <glm/geometric.hpp>
 
+#include <optional>
+
+using namespace doctest;
 using namespace Cesium3DTiles;
 using namespace Cesium3DTilesContent;
 using namespace CesiumGeometry;
 using namespace CesiumGeospatial;
+using namespace CesiumUtility;
 
 TEST_CASE("TileBoundingVolumes") {
-  SECTION("box") {
+  SUBCASE("box") {
     BoundingVolume bv{};
 
     // Example bounding box from the 3D Tiles spec
@@ -32,9 +45,13 @@ TEST_CASE("TileBoundingVolumes") {
     CHECK(glm::length(box->getHalfAxes()[0]) == Approx(100.0));
     CHECK(glm::length(box->getHalfAxes()[1]) == Approx(100.0));
     CHECK(glm::length(box->getHalfAxes()[2]) == Approx(10.0));
+
+    BoundingVolume next{};
+    TileBoundingVolumes::setOrientedBoundingBox(next, *box);
+    CHECK(next.box == bv.box);
   }
 
-  SECTION("sphere") {
+  SUBCASE("sphere") {
     BoundingVolume bv{};
 
     // Example bounding sphere from the 3D Tiles spec
@@ -48,9 +65,13 @@ TEST_CASE("TileBoundingVolumes") {
     CHECK(sphere->getCenter().y == Approx(0.0));
     CHECK(sphere->getCenter().z == Approx(10.0));
     CHECK(sphere->getRadius() == Approx(141.4214));
+
+    BoundingVolume next{};
+    TileBoundingVolumes::setBoundingSphere(next, *sphere);
+    CHECK(next.sphere == bv.sphere);
   }
 
-  SECTION("region") {
+  SUBCASE("region") {
     BoundingVolume bv{};
 
     // Example bounding region from the 3D Tiles spec
@@ -63,7 +84,7 @@ TEST_CASE("TileBoundingVolumes") {
         20.0};
 
     std::optional<BoundingRegion> region =
-        TileBoundingVolumes::getBoundingRegion(bv);
+        TileBoundingVolumes::getBoundingRegion(bv, Ellipsoid::WGS84);
     REQUIRE(region);
 
     CHECK(region->getRectangle().getWest() == Approx(-1.3197004795898053));
@@ -72,9 +93,13 @@ TEST_CASE("TileBoundingVolumes") {
     CHECK(region->getRectangle().getNorth() == Approx(0.6988897891));
     CHECK(region->getMinimumHeight() == Approx(0.0));
     CHECK(region->getMaximumHeight() == Approx(20.0));
+
+    BoundingVolume next{};
+    TileBoundingVolumes::setBoundingRegion(next, *region);
+    CHECK(next.region == bv.region);
   }
 
-  SECTION("S2") {
+  SUBCASE("S2") {
     BoundingVolume bv{};
 
     // Example from 3DTILES_bounding_volume_S2 spec
@@ -85,19 +110,69 @@ TEST_CASE("TileBoundingVolumes") {
     extension.maximumHeight = 1000.0;
 
     std::optional<S2CellBoundingVolume> s2 =
-        TileBoundingVolumes::getS2CellBoundingVolume(bv);
+        TileBoundingVolumes::getS2CellBoundingVolume(bv, Ellipsoid::WGS84);
     REQUIRE(s2);
 
     CHECK(s2->getCellID().getID() == S2CellID::fromToken("89c6c7").getID());
     CHECK(s2->getMinimumHeight() == Approx(0.0));
     CHECK(s2->getMaximumHeight() == Approx(1000.0));
+
+    BoundingVolume next{};
+    TileBoundingVolumes::setS2CellBoundingVolume(next, *s2);
+    Extension3dTilesBoundingVolumeS2* pNextExtension =
+        bv.getExtension<Extension3dTilesBoundingVolumeS2>();
+    REQUIRE(pNextExtension);
+    CHECK(pNextExtension->token == extension.token);
+    CHECK(pNextExtension->minimumHeight == extension.minimumHeight);
+    CHECK(pNextExtension->maximumHeight == extension.maximumHeight);
   }
 
-  SECTION("invalid") {
+  SUBCASE("cylinder region") {
+    BoundingVolume bv{};
+
+    Extension3dTilesBoundingVolumeCylinder& extension =
+        bv.addExtension<Extension3dTilesBoundingVolumeCylinder>();
+    extension.translation = {1.0, 2.0, 3.0};
+    extension.rotation = {0.0, 0.0, 0.0, 1.0};
+    extension.height = 2.0;
+    extension.minRadius = 1.0;
+    extension.maxRadius = 2.0;
+    extension.minAngle = -Math::PiOverTwo;
+    extension.maxAngle = Math::PiOverTwo;
+
+    std::optional<BoundingCylinderRegion> cylinder =
+        TileBoundingVolumes::getBoundingCylinderRegion(bv);
+    REQUIRE(cylinder);
+
+    CHECK(cylinder->getTranslation() == glm::dvec3(1.0, 2.0, 3.0));
+    CHECK(cylinder->getRotation() == glm::dquat(1.0, 0.0, 0.0, 0.0));
+    CHECK(cylinder->getHeight() == 2.0);
+    CHECK(cylinder->getRadialBounds() == glm::dvec2(1.0, 2.0));
+    CHECK(
+        cylinder->getAngularBounds() ==
+        glm::dvec2(-Math::PiOverTwo, Math::PiOverTwo));
+
+    BoundingVolume next{};
+    TileBoundingVolumes::setBoundingCylinderRegion(next, *cylinder);
+    Extension3dTilesBoundingVolumeCylinder* pNextExtension =
+        bv.getExtension<Extension3dTilesBoundingVolumeCylinder>();
+    REQUIRE(pNextExtension);
+    CHECK(pNextExtension->translation == extension.translation);
+    CHECK(pNextExtension->rotation == extension.rotation);
+    CHECK(pNextExtension->height == extension.height);
+    CHECK(pNextExtension->minRadius == extension.minRadius);
+    CHECK(pNextExtension->maxRadius == extension.maxRadius);
+    CHECK(pNextExtension->minAngle == extension.minAngle);
+    CHECK(pNextExtension->maxAngle == extension.maxAngle);
+  }
+
+  SUBCASE("invalid") {
     BoundingVolume bv{};
     CHECK(!TileBoundingVolumes::getOrientedBoundingBox(bv).has_value());
     CHECK(!TileBoundingVolumes::getBoundingSphere(bv).has_value());
-    CHECK(!TileBoundingVolumes::getBoundingRegion(bv).has_value());
-    CHECK(!TileBoundingVolumes::getS2CellBoundingVolume(bv).has_value());
+    CHECK(!TileBoundingVolumes::getBoundingRegion(bv, Ellipsoid::WGS84)
+               .has_value());
+    CHECK(!TileBoundingVolumes::getS2CellBoundingVolume(bv, Ellipsoid::WGS84)
+               .has_value());
   }
 }

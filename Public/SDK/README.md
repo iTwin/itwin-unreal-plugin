@@ -1,3 +1,4 @@
+# Advance Visualization Software Development Kit
 
 # Common prerequisites
 
@@ -21,5 +22,6 @@ mkdir build
 cd build
 cmake --preset win64static -B. <repopath>/UnrealSandbox\Public\SDK
 ```
-open CarrotSDK.sln in visual studio
+build with ```cmake --build .```
+or open AdvVizSDK.sln in visual studio
 

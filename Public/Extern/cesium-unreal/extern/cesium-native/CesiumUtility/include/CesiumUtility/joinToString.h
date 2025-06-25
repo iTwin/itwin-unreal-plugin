@@ -17,16 +17,17 @@ namespace CesiumUtility {
 template <class TIterator>
 std::string
 joinToString(TIterator begin, TIterator end, const std::string& separator) {
+  if (begin == end)
+    return std::string();
+
+  std::string first = *begin;
+
   return std::accumulate(
-      begin,
+      ++begin,
       end,
-      std::string(),
+      std::move(first),
       [&separator](const std::string& acc, const std::string& element) {
-        if (!acc.empty()) {
-          return acc + separator + element;
-        } else {
-          return element;
-        }
+        return acc + separator + element;
       });
 }
 
@@ -40,17 +41,8 @@ joinToString(TIterator begin, TIterator end, const std::string& separator) {
  * @return The joined string.
  */
 template <class TCollection>
-std::string joinToString(TCollection collection, const std::string& separator) {
-  return std::accumulate(
-      collection.cbegin(),
-      collection.cend(),
-      std::string(),
-      [&separator](const std::string& acc, const std::string& element) {
-        if (!acc.empty()) {
-          return acc + separator + element;
-        } else {
-          return element;
-        }
-      });
+std::string
+joinToString(const TCollection& collection, const std::string& separator) {
+  return joinToString(collection.cbegin(), collection.cend(), separator);
 }
 } // namespace CesiumUtility

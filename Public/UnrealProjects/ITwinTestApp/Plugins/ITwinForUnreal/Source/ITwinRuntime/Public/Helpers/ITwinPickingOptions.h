@@ -24,4 +24,20 @@ public:
 	//! Indicates whether the picked iTwin MaterialID, if any, should be selected.
 	UPROPERTY()
 	bool bSelectMaterial = true;
+
+	//! Whether the selection of the iTwin MaterialID, if any, should be broadcast.
+	UPROPERTY()
+	bool bBroadcastMaterialSelection = true;
+
+	//! Indicates whether the picked iTwin MaterialID, if any, should be highlighted.
+	//! In such case, the picked iTwin ElementID will not be highlighted.
+	UPROPERTY()
+	bool bHighlightSelectedMaterial = false;
+
+	//! Custom trace extent, in meters. Only positive values will be considered.
+	UPROPERTY()
+	float CustomTraceExtentInMeters = -1.f;
+
+	//! Custom mouse position to use for picking.
+	const FVector2D* CustomMousePosition = nullptr;
 };

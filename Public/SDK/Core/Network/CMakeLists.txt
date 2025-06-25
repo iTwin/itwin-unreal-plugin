@@ -1,6 +1,8 @@
 
+
 add_library(Network OBJECT
 		Network.h
+		Network_api.h
 		http.h
 		http.cpp
 		httpCprImpl.h
@@ -14,11 +16,13 @@ add_library(Network OBJECT
 target_compile_features(Network PRIVATE ${DefaultCXXSTD})
 target_link_libraries(Network PRIVATE 
 						cpr::cpr
-						reflectcpp
+					 ) 
+target_link_libraries(Network PUBLIC 
+						reflectcpp::reflectcpp
 						Json
 						Singleton
+						Tools
 					 ) 
-
 set_target_properties(Network PROPERTIES FOLDER "SDK/Core") 
 target_link_libraries(Network PUBLIC libassert::assert)
 
@@ -30,14 +34,20 @@ if(SDK_ADDUNITTEST)
 							Network 
 							Catch2::Catch2WithMain
 							httpmockserver
+							Tools
 						)
-
-	add_custom_command(TARGET NetworkTest POST_BUILD
-		COMMAND ${CMAKE_COMMAND} -E copy
-			$<TARGET_FILE:Singleton>
-			$<TARGET_FILE_DIR:NetworkTest>)
-
-
+	if (SINGLETONDLL)
+		add_custom_command(TARGET NetworkTest POST_BUILD
+			COMMAND ${CMAKE_COMMAND} -E copy
+				$<TARGET_FILE:Singleton>
+				$<TARGET_FILE_DIR:NetworkTest>)
+	endif()
+	if (ADVVIZDLL)
+		add_custom_command(TARGET NetworkTest POST_BUILD
+			COMMAND ${CMAKE_COMMAND} -E copy
+				$<TARGET_FILE:Visualization>
+				$<TARGET_FILE_DIR:NetworkTest>)
+	endif()
 	if (MSVC)
 		target_compile_options(NetworkTest PRIVATE "/Zc:preprocessor")
 	endif()

@@ -9,21 +9,16 @@
 
 #include "Timeline.h"
 #include "Core/Network/HttpGetWithLink.h"
-#include "../Singleton/singleton.h"
+#include "Core/Singleton/singleton.h"
 #include "Config.h"
 
-namespace SDK::Core
+namespace AdvViz::SDK
 {
-
-	inline double RoundTime(double d)// round to ms
-	{
-		return std::round(d * 1000.0) / 1000.0;
-	}
-
 	////////////////////////////////////////////////////////////////////// TimelineKeyframe /////////////////////////////////////
 	struct TimelineKeyframe::Impl
 	{
 		KeyframeData keyframeData;
+		std::optional<std::string> snapshotId;
 		bool changed = false;
 	};
 
@@ -87,7 +82,7 @@ namespace SDK::Core
 	}
 
 	const ITimelineKeyframe::Id& TimelineKeyframe::GetId() const {
-		static ITimelineKeyframe::Id id;
+		thread_local static ITimelineKeyframe::Id id;
 
 		if (GetImpl().keyframeData.id)
 			id = ITimelineKeyframe::Id(*GetImpl().keyframeData.id);
@@ -95,6 +90,16 @@ namespace SDK::Core
 		return id;
 	}
 
+
+	void TimelineKeyframe::SetSnapshotId(const std::string& Id)
+	{
+		GetImpl().snapshotId = Id;
+	}
+
+	std::string TimelineKeyframe::GetSnapshotId() const
+	{
+		return GetImpl().snapshotId ? *(GetImpl().snapshotId) : std::string();
+	}
 
 	template<>
 	Tools::Factory<ITimelineKeyframe>::Globals::Globals()
@@ -131,55 +136,48 @@ namespace SDK::Core
 		std::shared_ptr<Http> http_;
 		bool shouldSave_ = false;
 		std::vector<std::shared_ptr<ITimelineKeyframe>> toDeleteKeyframes_;
+		std::optional<std::string> snapshotId;
 
-		expected<void, std::string> Load(std::shared_ptr<Http>& http, const std::string& sceneId, const std::string& accessToken, const ITimelineClip::Id& timelineClipId)
+		expected<void, std::string> Load(std::shared_ptr<Http>& http, const std::string& sceneId, const ITimelineClip::Id& timelineClipId)
 		{
-			struct SJin {
-				std::array<std::string, 1> ids;
-			};
-			SJin jin;
-			jin.ids[0] = static_cast<const std::string>(timelineClipId);
 			sceneId_ = sceneId;
 			serverSideData_.id = static_cast<const std::string>(timelineClipId);
 			http_ = http;
-			std::string url = "scenes/" + sceneId_ + "/timelineClips";
-			Http::Headers headers;
-			headers.emplace_back("Authorization", std::string("Bearer ") + accessToken);
+			std::string url = "scenes/" + sceneId_ + "/timelineClips/" + static_cast<const std::string>(timelineClipId);
 
-			auto ret = HttpGetWithLink<ServerSideData>(http, url, headers, jin,
-				[sceneId, accessToken, this, &http, headers](ServerSideData& data) -> expected<void, std::string> {
-
-					struct SJin {
-						std::vector<std::string> ids;
-					};
-					SJin jin;
-					jin.ids = data.keyFrameIds;
-					keyframes_.clear();
-					std::string urlkeys = "scenes/" + sceneId_ + "/timelineKeyFrames";
-					auto ret = HttpGetWithLink<ITimelineKeyframe::KeyframeData>(http, urlkeys, headers, jin,
-						[sceneId, accessToken, this](ITimelineKeyframe::KeyframeData& data) -> expected<void, std::string> {
-							auto p = std::shared_ptr<ITimelineKeyframe>(ITimelineKeyframe::New());
-							p->InternalCreate(data, false);
-							keyframes_.insert(p);
-							return {};
-						});
-					return ret;
-				});
-
-			if (ret)
+			if (http->GetJson(serverSideData_, url) == 200)
+			{
+				for (auto& i : serverSideData_.keyFrameIds)
+				{
+					std::string urlkeys = "scenes/" + sceneId_ + "/timelineKeyFrames/" + i;
+					ITimelineKeyframe::KeyframeData data;
+					if (http->GetJson(data, urlkeys) == 200)
+					{
+						auto p = std::shared_ptr<ITimelineKeyframe>(ITimelineKeyframe::New());
+						p->InternalCreate(data, false);
+						keyframes_.insert(p);
+					}
+					else
+					{
+						return make_unexpected(std::string("http failed: ") + urlkeys);
+					}
+				}
 				shouldSave_ = false;
-			
-			return ret;
+			}
+			else
+			{
+				return make_unexpected(std::string("http failed: ") + url);
+			}
+
+			return {};
 		}
 
-		expected<void, std::string> Save(std::shared_ptr<Http>& http, const std::string& sceneId, const std::string& accessToken)
+		expected<void, std::string> Save(std::shared_ptr<Http>& http, const std::string& sceneId)
 		{
 			sceneId_ = sceneId;
-			Http::Headers headers;
-			headers.emplace_back("Authorization", std::string("Bearer ") + accessToken);
 
 			// save framekeys in batch
-			auto ret = [this, &headers, &http]() -> expected<void, std::string>
+			auto ret = [this, &http]() -> expected<void, std::string>
 			{
 				struct SJin {
 					std::vector<ITimelineKeyframe::KeyframeData> timelineKeyFrames;
@@ -209,7 +207,12 @@ namespace SDK::Core
 
 				if (!keyframesToPut.timelineKeyFrames.empty())
 				{
-					if (http->PutJsonJBody(keyframesOut, url, keyframesToPut, headers) != 200)
+					struct Sout
+					{
+						int numUpdated = 0;
+					};
+					SJout jout;
+					if (http->PutJsonJBody(jout, url, keyframesToPut) != 200)
 					{
 						return make_unexpected(std::string("http failed: ") + url);
 					}
@@ -218,7 +221,7 @@ namespace SDK::Core
 				keyframesOut.timelineKeyFrames.clear();
 				if (!keyframesToPost.timelineKeyFrames.empty())
 				{
-					if (http->PostJsonJBody(keyframesOut, url, keyframesToPost, headers) == 201)
+					if (http->PostJsonJBody(keyframesOut, url, keyframesToPost) == 201)
 					{
 						BE_ASSERT(keyframesOut.timelineKeyFrames.size() == keyframesToPost.timelineKeyFrames.size());
 						size_t loopCount = std::min(keyframesOut.timelineKeyFrames.size(), keyframesToPost.timelineKeyFrames.size());
@@ -239,7 +242,7 @@ namespace SDK::Core
 				return ret;
 
 			// delete keys
-			ret = [this, &headers, &http]() -> expected<void, std::string>
+			ret = [this, &http]() -> expected<void, std::string>
 				{
 					struct SJin {
 						std::vector<std::string> ids;
@@ -256,7 +259,7 @@ namespace SDK::Core
 
 					std::string url = "scenes/" + sceneId_ + "/timelineKeyFrames";
 					if (!keyframesToDelete.ids.empty())
-						if (http->DeleteJsonJBody(keyframesOut, url, keyframesToDelete, headers) != 200)
+						if (http->DeleteJsonJBody(keyframesOut, url, keyframesToDelete) != 200)
 							return make_unexpected(std::string("http failed: ") + url);
 
 					toDeleteKeyframes_.clear();
@@ -279,11 +282,11 @@ namespace SDK::Core
 				};
 				SJin jin;
 				jin.timelineClips[0] = serverSideData_;
-				SJin jout;
 
 				if (!serverSideData_.id.has_value())
 				{
-					if (http->PostJsonJBody(jout, url, jin, headers) == 201)
+					SJin jout;
+					if (http->PostJsonJBody(jout, url, jin) == 201)
 					{
 						BE_ASSERT(jout.timelineClips[0].id.has_value());
 						serverSideData_.id = jout.timelineClips[0].id;
@@ -295,7 +298,12 @@ namespace SDK::Core
 				}
 				else
 				{
-					if (http->PutJsonJBody(jout, url, jin, headers) != 200)
+					struct SJout
+					{
+						int numUpdated = 0;
+					};
+					SJout jout;
+					if (http->PutJsonJBody(jout, url, jin) != 200)
 					{
 						return make_unexpected(std::string("http failed: ") + url);
 					}
@@ -315,25 +323,25 @@ namespace SDK::Core
 					return true;
 			return false;
 		}
+
 		void SetShouldSave(bool value)
 		{
 			shouldSave_ = value;
 			for (auto& kf : keyframes_)
 				kf->SetShouldSave(value);
 		}
-
 	};
 
-	expected<void, std::string> TimelineClip::Load(const std::string& sceneId, const std::string& accessToken, const ITimelineClip::Id& timelineClipId)
+	expected<void, std::string> TimelineClip::Load(const std::string& sceneId, const ITimelineClip::Id& timelineClipId)
 	{
 		std::shared_ptr<Http>& http = GetDefaultHttp();
-		return GetImpl().Load(http, sceneId, accessToken, timelineClipId);
+		return GetImpl().Load(http, sceneId, timelineClipId);
 	}
 
-	expected<void, std::string> TimelineClip::Save(const std::string& sceneId, const std::string& accessToken)
+	expected<void, std::string> TimelineClip::Save(const std::string& sceneId)
 	{
 		std::shared_ptr<Http>& http = GetDefaultHttp();
-		return GetImpl().Save(http, sceneId, accessToken);
+		return GetImpl().Save(http, sceneId);
 	}
 
 
@@ -401,12 +409,16 @@ namespace SDK::Core
 	{}
 
 	const TimelineClip::Id& TimelineClip::GetId() const {
-		static TimelineClip::Id id;
-
+		thread_local static TimelineClip::Id id;
 		if (GetImpl().serverSideData_.id)
 			id = TimelineClip::Id(*GetImpl().serverSideData_.id);
-
+		else
+			id.Reset();
 		return id;
+	}
+	void TimelineClip::SetId(const ITimelineClip::Id& id)
+	{
+		GetImpl().serverSideData_.id = static_cast<const std::string>(id);
 	}
 
 	const std::string& TimelineClip::GetName() const
@@ -428,6 +440,22 @@ namespace SDK::Core
 	void TimelineClip::SetEnable(bool e)
 	{
 		GetImpl().serverSideData_.enable = e;
+	}
+
+	void TimelineClip::SetSnapshotId(const std::string& Id)
+	{
+		GetImpl().snapshotId = Id;
+	}
+
+	std::string TimelineClip::GetSnapshotId() const
+	{
+		return GetImpl().snapshotId ? *(GetImpl().snapshotId) : std::string();
+	}
+
+	void TimelineClip::GetKeyFrameSnapshotIds(std::vector<std::string> &Ids) const
+	{
+		for (auto& kf : GetImpl().keyframes_)
+			Ids.push_back(kf->GetSnapshotId());
 	}
 
 	expected<std::shared_ptr<ITimelineKeyframe>, std::string> TimelineClip::AddKeyframe(const ITimelineKeyframe::KeyframeData& data)
@@ -462,6 +490,7 @@ namespace SDK::Core
 
 	}
 
+
 	////////////////////////////////////////////////////////////////////// Timeline /////////////////////////////////////
 
 	struct Timeline::Impl
@@ -472,7 +501,7 @@ namespace SDK::Core
 			std::optional<std::string> id;
 		};
 		ServerSideData serverSideData_;
-		std::vector<std::shared_ptr<ITimelineClip>> clips_;
+		std::list<std::shared_ptr<ITimelineClip>> clips_;
 		std::string sceneId_;
 		std::shared_ptr<Http> http_;
 		bool shouldSave_ = false;
@@ -487,50 +516,53 @@ namespace SDK::Core
 			return p;
 		}
 
-		expected<void, std::string> Load(std::shared_ptr<Http>& http, const std::string& sceneId, const std::string& accessToken, const ITimeline::Id& timelineId)
+		expected<void, std::string> Load(std::shared_ptr<Http>& http, const std::string& sceneId, const ITimeline::Id& timelineId)
 		{
-			struct SJin {
-				std::array<std::string, 1> ids;
-			};
-			SJin jin;
-			jin.ids[0] = static_cast<const std::string>(timelineId);
 			sceneId_ = sceneId;
 			serverSideData_.id = static_cast<const std::string>(timelineId);
 			http_ = http;
-			std::string url = "scenes/" + sceneId_ + "/timelines";
-			Http::Headers headers;
-			headers.emplace_back("Authorization", std::string("Bearer ") + accessToken);
-
-			auto ret = HttpGetWithLink<ServerSideData>(http, url, headers, jin,
-				[sceneId, accessToken, this](ServerSideData& data) -> expected<void, std::string>{
-					for (const auto& clipId : data.clipIds)
-					{
-						auto p = std::shared_ptr<ITimelineClip>(ITimelineClip::New());
-						p->Load(sceneId, accessToken, ITimelineClip::Id(clipId));
-						clips_.push_back(p);
-					}
-					return {};
-				});
-			if (ret)
+			std::string url = "scenes/" + sceneId_ + "/timelines/" + static_cast<const std::string>(timelineId);
+			ServerSideData data;
+			if (http->GetJson(data, url) == 200)
+			{
+				for (const auto& clipId : data.clipIds)
+				{
+					auto p = std::shared_ptr<ITimelineClip>(ITimelineClip::New());
+					p->Load(sceneId, ITimelineClip::Id(clipId));
+					clips_.push_back(p);
+				}
 				shouldSave_ = false;
-			return ret;
+			}
+			else
+			{
+				return make_unexpected(std::string("http failed: ") + url);
+			}
+				
+			return {};
 		}
 
-		expected<void, std::string> Save(std::shared_ptr<Http>& http, const std::string& sceneId, const std::string& accessToken)
+		expected<void, std::string> Save(std::shared_ptr<Http>& http, const std::string& sceneId)
 		{
+			sceneId_ = sceneId;
+
 			std::string url = "scenes/" + sceneId_ + "/timelines";
-			Http::Headers headers;
-			headers.emplace_back("Authorization", std::string("Bearer ") + accessToken);
 
 			serverSideData_.clipIds.clear();
 			for (auto& clip : clips_)
 			{
-				clip->Save(sceneId, accessToken);
-				serverSideData_.clipIds.push_back(static_cast<const std::string>(clip->GetId()));
+				if (clip->GetKeyframeCount() > 0)
+				{
+					clip->Save(sceneId);
+					serverSideData_.clipIds.push_back(static_cast<const std::string>(clip->GetId()));
+				}
+				else
+				{
+					toDeleteClips_.push_back(clip);
+				}
 			}
 
 			// delete clips
-			auto ret = [this, &headers, &http]() -> expected<void, std::string>
+			auto ret = [this, &http]() -> expected<void, std::string>
 			{
 				struct SJin {
 					std::vector<std::string> ids;
@@ -546,7 +578,7 @@ namespace SDK::Core
 
 				std::string url = "scenes/" + sceneId_ + "/timelineClips";
 				if (!clipsToDelete.ids.empty())
-					if (http->DeleteJsonJBody(clipsOut, url, clipsToDelete, headers) != 200)
+					if (http->DeleteJsonJBody(clipsOut, url, clipsToDelete) != 200)
 						return make_unexpected(std::string("http failed: ") + url);
 
 				toDeleteClips_.clear();
@@ -563,30 +595,38 @@ namespace SDK::Core
 				};
 				SJin jin;
 				jin.timelines[0] = serverSideData_;
-				SJin jout;
 
 				long status = 0;
 				if (!serverSideData_.id.has_value())
 				{
-					if (http->PostJsonJBody(jout, url, jin, headers) == 201)
+					SJin jout;
+					status = http->PostJsonJBody(jout, url, jin);
+					if (status == 201)
 					{
 						BE_ASSERT(jout.timelines[0].id.has_value());
 						if (jout.timelines[0].id)
 							serverSideData_.id = jout.timelines[0].id;
 						else
-							return make_unexpected(std::string("Server returned no id value."));
+							return make_unexpected(std::string("Server returned no id value for saved timeline."));
 					}
 					else
 					{
-						return make_unexpected(std::string("http failed: ") + url);
+						return make_unexpected(fmt::format("http failed: {} with status {}", url, status));
 					}
 				}
 				else
 				{
-					if (http->PutJsonJBody(jout, url, jin, headers) != 200)
+					struct Sout
 					{
-						return make_unexpected(std::string("http failed: ") + url);
+						int numUpdated = 0;
+					};
+					Sout jout;
+					status = http->PutJsonJBody(jout, url, jin);
+					if (status != 200)
+					{
+						return make_unexpected(fmt::format("http failed: {} with status {}", url, status));
 					}
+					BE_ASSERT(jout.numUpdated == 1);
 				}
 			}
 			shouldSave_ = false;
@@ -610,16 +650,16 @@ namespace SDK::Core
 		}
 	};
 
-	expected<void, std::string> Timeline::Load(const std::string& sceneId, const std::string& accessToken, const ITimeline::Id& timelineId)
+	expected<void, std::string> Timeline::Load(const std::string& sceneId, const ITimeline::Id& timelineId)
 	{
 		std::shared_ptr<Http>& http = GetDefaultHttp();
-		return GetImpl().Load(http, sceneId, accessToken, timelineId);
+		return GetImpl().Load(http, sceneId, timelineId);
 	}
 
-	expected<void, std::string> Timeline::Save(const std::string& sceneId, const std::string& accessToken)
+	expected<void, std::string> Timeline::Save(const std::string& sceneId)
 	{
 		std::shared_ptr<Http>& http = GetDefaultHttp();
-		return GetImpl().Save(http, sceneId, accessToken);
+		return GetImpl().Save(http, sceneId);
 	}
 
 	bool Timeline::ShouldSave() const
@@ -660,6 +700,25 @@ namespace SDK::Core
 		return GetImpl().clips_.size();
 	}
 
+	void Timeline::MoveClip(size_t indexSrc, size_t indexDst)
+	{
+		if (indexSrc < 0 || indexSrc >= GetImpl().clips_.size() || indexDst < 0 || indexDst >= GetImpl().clips_.size())
+			return;
+
+		auto it = std::next(GetImpl().clips_.begin(), indexSrc);
+		auto clipPtr = *it;
+		GetImpl().clips_.erase(it);
+
+		if (indexDst == GetImpl().clips_.size())
+			GetImpl().clips_.push_back(clipPtr);
+		else
+		{
+			indexDst = std::min(indexDst, GetImpl().clips_.size()-1);
+			it = std::next(GetImpl().clips_.begin(), indexDst);
+			GetImpl().clips_.insert(it, clipPtr);
+		}
+	}
+
 	template<>
 	Tools::Factory<ITimelineClip>::Globals::Globals()
 	{
@@ -690,12 +749,17 @@ namespace SDK::Core
 	{}
 
 	const Timeline::Id& Timeline::GetId() const {
-		static Timeline::Id id;
+		thread_local static Timeline::Id id;
 
 		if (GetImpl().serverSideData_.id)
 			id = Timeline::Id(*GetImpl().serverSideData_.id);
-
+		else
+			id.Reset();
 		return id;
+	}
+	void Timeline::SetId(const ITimeline::Id& id)
+	{
+		GetImpl().serverSideData_.id = static_cast<const std::string>(id);
 	}
 
 	void Timeline::SetShouldSave(bool value)
@@ -703,7 +767,19 @@ namespace SDK::Core
 		return GetImpl().SetShouldSave(value);
 	}
 
-	expected<std::vector<SSceneTimelineInfo>, std::string> GetSceneTimelines(const std::string& sceneId, const std::string& accessToken)
+	std::vector<std::shared_ptr<AdvViz::SDK::ITimelineClip>> Timeline::GetObsoleteClips() const
+	{
+		return GetImpl().toDeleteClips_;
+	}
+
+	void Timeline::RemoveObsoleteClip(const std::shared_ptr<ITimelineClip>& clipp)
+	{
+		GetImpl().toDeleteClips_.erase(
+			std::remove_if(GetImpl().toDeleteClips_.begin(), GetImpl().toDeleteClips_.end(), [clipp](auto& vclip) {return clipp == vclip; }),
+			GetImpl().toDeleteClips_.end());
+	}
+
+	expected<std::vector<SSceneTimelineInfo>, std::string> GetSceneTimelines(const std::string& sceneId)
 	{
 		std::shared_ptr<Http>& http = GetDefaultHttp();
 
@@ -713,15 +789,11 @@ namespace SDK::Core
 			std::optional<std::string> id;
 		};
 		SJout jout;
-		struct SJin {};
-		SJin jin;
 
 		std::string url = "scenes/" + sceneId + "/timelines";
-		Http::Headers headers;
-		headers.emplace_back("Authorization", std::string("Bearer ") + accessToken);
 		std::vector<SSceneTimelineInfo> timelineIds;
 
-		auto ret = HttpGetWithLink<SJout>(http, url, headers, jin,
+		auto ret = HttpGetWithLink<SJout>(http, url, {},
 			[&timelineIds](SJout& data) -> expected<void, std::string> {
 				if (!data.id)
 					return make_unexpected(std::string("Server returned no id value."));
@@ -735,7 +807,7 @@ namespace SDK::Core
 		return timelineIds;
 	}
 
-	expected<ITimeline::Id, std::string> AddSceneTimeline(const std::string& sceneId, const std::string& accessToken, const std::string& sceneName)
+	expected<ITimeline::Id, std::string> AddSceneTimeline(const std::string& sceneId, const std::string& sceneName)
 	{
 		std::shared_ptr<Http>& http = GetDefaultHttp();
 		struct ServerSideData {
@@ -752,10 +824,8 @@ namespace SDK::Core
 		ITimeline::Id id;
 		jin.timelines[0].name = sceneName;
 		std::string url = "scenes/" + sceneId + "/timelines";
-		Http::Headers headers;
-		headers.emplace_back("Authorization", std::string("Bearer ") + accessToken);
 
-		if (http->PostJsonJBody(jout, url, jin, headers) == 201)
+		if (http->PostJsonJBody(jout, url, jin) == 201)
 		{
 			if (jout.timelines[0].id)
 				id = ITimeline::Id(*jout.timelines[0].id);

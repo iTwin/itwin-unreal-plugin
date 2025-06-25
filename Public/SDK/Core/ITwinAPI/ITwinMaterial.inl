@@ -14,7 +14,7 @@
 
 #include <algorithm>
 
-namespace SDK::Core
+namespace AdvViz::SDK
 {
 	inline bool HasDefinedChannels(ITwinMaterial const& mat)
 	{

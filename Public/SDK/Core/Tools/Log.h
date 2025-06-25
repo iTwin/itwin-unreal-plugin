@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "../AdvVizLinkType.h"
 #include "FactoryClass.h"
 #include "Extension.h"
 #include "Hash.h"
@@ -15,7 +16,7 @@
 #include <memory>
 #include <sstream>
 
-namespace SDK::Core::Tools
+namespace AdvViz::SDK::Tools
 {
 	enum class Level
 	{
@@ -41,7 +42,7 @@ namespace SDK::Core::Tools
 
 	typedef std::shared_ptr<ILog> ILogPtr;
 
-	class Log : public Tools::ExtensionSupport, public ILog
+	class Log : public ILog, public Tools::ExtensionSupport, Tools::TypeId<Log>
 	{
 	public:
 		Log(std::string name, Level sev);
@@ -51,20 +52,25 @@ namespace SDK::Core::Tools
 		Level SetLevel(Level) override;
 		Level GetLevel() const override;
 
+		using Tools::TypeId<Log>::GetTypeId;
+		std::uint64_t GetDynTypeId() const override { return GetTypeId(); }
+		bool IsTypeOf(std::uint64_t i) const override { return (i == GetTypeId()) || ILog::IsTypeOf(i); }
+
 	private:
 		std::string name_;
 		Level level_;
 	};
 
-	void InitLog(std::string const& logBasename);
-	void CreateLogChannel(const char* name, Level level = Level::info);
+	ADVVIZ_LINK void InitLog(std::string const& logBasename);
+	ADVVIZ_LINK bool IsLogInitialized();
+	ADVVIZ_LINK void CreateLogChannel(const char* name, Level level = Level::info);
 	// Initialize the channels used inside the Visualization library.
-	void CreateAdvVizLogChannels();
+	ADVVIZ_LINK void CreateAdvVizLogChannels();
 
-	ILogPtr GetLog(const std::uint64_t channel, const char* name);
+	ADVVIZ_LINK ILogPtr GetLog(const std::uint64_t channel, const char* name);
 }
 
-#define BE_GETLOG(channel) (SDK::Core::Tools::GetLog(GenHashCT(channel), channel))
+#define BE_GETLOG(channel) (AdvViz::SDK::Tools::GetLog(GenHashCT(channel), channel))
 
 #define BE_LOG(lev, channel, message) { \
 	static auto l_log = BE_GETLOG(channel); \
@@ -74,9 +80,20 @@ namespace SDK::Core::Tools
 		l_log->DoLog(log_stream.str(), lev, __FILE__, __FUNCTION__, __LINE__); } \
 	}
 
-#define BE_LOGV(channel, message) BE_LOG(SDK::Core::Tools::Level::verbose, channel, message)
-#define BE_LOGD(channel, message) BE_LOG(SDK::Core::Tools::Level::debug, channel, message)
-#define BE_LOGI(channel, message) BE_LOG(SDK::Core::Tools::Level::info, channel, message)
-#define BE_LOGW(channel, message) BE_LOG(SDK::Core::Tools::Level::warning, channel, message)
-#define BE_LOGE(channel, message) BE_LOG(SDK::Core::Tools::Level::error, channel, message)
+#ifdef RELEASE_CONFIG
+#define BE_LOGV(channel, message) (void)0
+#define BE_LOGD(channel, message) (void)0
+#else
+#define BE_LOGV(channel, message) BE_LOG(AdvViz::SDK::Tools::Level::verbose, channel, message)
+#define BE_LOGD(channel, message) BE_LOG(AdvViz::SDK::Tools::Level::debug, channel, message)
+#endif
 
+#define BE_LOGI(channel, message) BE_LOG(AdvViz::SDK::Tools::Level::info, channel, message)
+#define BE_LOGW(channel, message) BE_LOG(AdvViz::SDK::Tools::Level::warning, channel, message)
+#define BE_LOGE(channel, message) BE_LOG(AdvViz::SDK::Tools::Level::error, channel, message)
+
+#ifdef UNUSED
+#undef UNUSED
+#endif
+
+#define UNUSED(x) (void)(x)

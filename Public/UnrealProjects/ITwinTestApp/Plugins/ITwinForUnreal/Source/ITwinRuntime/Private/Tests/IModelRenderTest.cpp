@@ -6,9 +6,9 @@
 |
 +--------------------------------------------------------------------------------------*/
 
-#if WITH_EDITOR
+#if WITH_TESTS && WITH_EDITOR
 
-#include <ITwinCesiumRuntime.h>
+#include <CesiumRuntime.h>
 #include <ITwinIModel.h>
 #include <ITwinWebServices/ITwinAuthorizationManager.h>
 #include <ITwinWebServices/ITwinWebServices.h>
@@ -40,7 +40,7 @@
 
 namespace ITwin
 {
-	AITwinDecorationHelper* GetDecorationHelper(FITwinLoadInfo const& Info, UWorld const* World);
+	AITwinDecorationHelper* GetDecorationHelper(FString const& Info, UWorld const* World);
 }
 
 namespace
@@ -77,7 +77,7 @@ public:
 	{
 		// Look for the folder corresponding to this request, containing the pre-recorded response.
 		const auto ResponseJsonPath = std::filesystem::path(*IPluginManager::Get().FindPlugin(TEXT("ITwinForUnreal"))->GetBaseDir())/
-			"Resources/FunctionalTests"/(*TestName)/SDK::Core::RequestDump::GetRequestHash(url, data)/"response.json";
+			"Resources/FunctionalTests"/(*TestName)/AdvViz::SDK::RequestDump::GetRequestHash(url, data)/"response.json";
 		if (!std::filesystem::exists(ResponseJsonPath))
 		{
 			const auto msg = (std::wstringstream() << "Could not find file \"" << ResponseJsonPath.wstring() <<
@@ -86,11 +86,11 @@ public:
 			return Response{404, ConvertWideToUtf8(msg)};
 		}
 		// Parse the pre-recorded response.
-		SDK::Core::RequestDump::Response ResponseInfo;
+		AdvViz::SDK::RequestDump::Response ResponseInfo;
 		{
 			std::string ParseError;
 			std::ifstream Ifs(ResponseJsonPath);
-			if (!SDK::Core::Json::FromStream(ResponseInfo, Ifs, ParseError))
+			if (!AdvViz::SDK::Json::FromStream(ResponseInfo, Ifs, ParseError))
 			{
 				const auto msg = (std::wstringstream() << "Could not parse file \"" << ResponseJsonPath.wstring() <<
 					"\", error=" << ConvertUtf8ToWide(ParseError)).str();
@@ -132,7 +132,7 @@ ITWIN_FUNCTIONAL_TEST_EX(IModelRender, false)
 	{
 		// Upon test exit, also clear the "override token", which is useful when running tests manually in the editor.
 		// It allows to then launch the app without having to restart UE.
-		FITwinAuthorizationManager::GetInstance(SDK::Core::EITwinEnvironment::Prod)->SetOverrideAccessToken("");
+		FITwinAuthorizationManager::GetInstance(AdvViz::SDK::EITwinEnvironment::Prod)->SetOverrideAccessToken("");
 		UITwinWebServices::SetLogErrors(bLogErrorsBackup);
 	};
 	auto MockServer = GetMockServer(TestName);
@@ -160,7 +160,7 @@ ITWIN_FUNCTIONAL_TEST_EX(IModelRender, false)
 	// Make sure we will wait for the decoration to be fully loaded (even though there is no decoration
 	// attached to the tested model, we must ensure the dummy access token is available for the whole
 	// asynchronous decoration loading (see #GetDecorationAccessToken...)
-	AITwinDecorationHelper* DecoHelper = ITwin::GetDecorationHelper(IModel->GetModelLoadInfo(), World);
+	AITwinDecorationHelper* DecoHelper = ITwin::GetDecorationHelper(IModel->GetModelLoadInfo().ITwinId, World);
 	if (DecoHelper && DecoHelper->IsLoadingDecoration())
 	{
 		TPromise<void> DecoPromise;
@@ -181,4 +181,4 @@ ITWIN_FUNCTIONAL_TEST_EX(IModelRender, false)
 	co_await TakeScreenshot(TEXT("Screenshot2"));
 }
 
-#endif // WITH_EDITOR
+#endif // WITH_TESTS && WITH_EDITOR

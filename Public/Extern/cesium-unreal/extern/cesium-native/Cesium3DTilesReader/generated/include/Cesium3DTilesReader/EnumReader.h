@@ -7,19 +7,19 @@
 #include <CesiumJsonReader/JsonReader.h>
 #include <CesiumJsonReader/JsonReaderOptions.h>
 
-#include <gsl/span>
 #include <rapidjson/fwd.h>
 
+#include <span>
 #include <vector>
 
 namespace Cesium3DTiles {
 struct Enum;
-}
+} // namespace Cesium3DTiles
 
 namespace Cesium3DTilesReader {
 
 /**
- * @brief Reads {@link Enum} instances from JSON.
+ * @brief Reads \ref Cesium3DTiles::Enum "Enum" instances from JSON.
  */
 class CESIUM3DTILESREADER_API EnumReader {
 public:
@@ -45,12 +45,12 @@ public:
    * @return The result of reading the instance.
    */
   CesiumJsonReader::ReadJsonResult<Cesium3DTiles::Enum>
-  readFromJson(const gsl::span<const std::byte>& data) const;
+  readFromJson(const std::span<const std::byte>& data) const;
 
   /**
    * @brief Reads an instance of Enum from a rapidJson::Value.
    *
-   * @param data The buffer from which to read the instance.
+   * @param value The value from which to read the instance.
    * @return The result of reading the instance.
    */
   CesiumJsonReader::ReadJsonResult<Cesium3DTiles::Enum>
@@ -59,7 +59,7 @@ public:
   /**
    * @brief Reads an array of instances of Enum from a rapidJson::Value.
    *
-   * @param data The buffer from which to read the array of instances.
+   * @param value The value from which to read the array of instances.
    * @return The result of reading the array of instances.
    */
   CesiumJsonReader::ReadJsonResult<std::vector<Cesium3DTiles::Enum>>

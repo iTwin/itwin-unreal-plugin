@@ -23,7 +23,7 @@
 #	include <SDK/Core/ITwinAPI/ITwinRequestTypes.h>
 #include <ITwinRuntime/Private/Compil/AfterNonUnrealIncludes.h>
 
-namespace SDK::Core
+namespace AdvViz::SDK
 {
 	class ITwinAuthManager;
 }
@@ -60,7 +60,7 @@ class IITwinWebServicesObserver;
 using HttpRequestID = FString;
 
 UCLASS(BlueprintType)
-class ITWINRUNTIME_API UITwinWebServices : public UObject, public SDK::Core::ITwinAuthObserver
+class ITWINRUNTIME_API UITwinWebServices : public UObject, public AdvViz::SDK::ITwinAuthObserver
 {
 	GENERATED_BODY()
 public:
@@ -69,7 +69,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
 	bool CheckAuthorization();
 
-	SDK::Core::EITwinAuthStatus CheckAuthorizationStatus();
+	AdvViz::SDK::EITwinAuthStatus CheckAuthorizationStatus();
 
 	//! Returns the last error encountered, if any.
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
@@ -152,11 +152,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
 	void QueryIModel(FString iTwinId, FString iModelId, FString ChangesetId, FString ECSQLQuery, int Offset,
 					 int Count);
-	SDK::Core::ITwinAPIRequestInfo InfosToQueryIModel(FString iTwinId, FString iModelId,
+	AdvViz::SDK::ITwinAPIRequestInfo InfosToQueryIModel(FString iTwinId, FString iModelId,
 		FString ChangesetId, FString ECSQLQuery, int Offset, int Count);
 	void QueryIModelRows(FString iTwinId, FString iModelId, FString ChangesetId,
 		FString ECSQLQuery, int Offset, int Count, std::function<void(HttpRequestID)>&& NotifyRequestID,
-		SDK::Core::ITwinAPIRequestInfo const* RequestInfo = nullptr);
+		AdvViz::SDK::ITwinAPIRequestInfo const* RequestInfo = nullptr,
+		AdvViz::SDK::FilterErrorFunc&& FilterError = {});
 
 	void GetMaterialProperties(
 		FString iTwinId, FString iModelId, FString ChangesetId,
@@ -167,16 +168,26 @@ public:
 	void GetTextureData(
 		FString iTwinId, FString iModelId, FString ChangesetId,
 		FString TextureId);
+	void ConvertIModelCoordsToGeoCoords(FString iTwinId, FString iModelId, FString ChangesetId,
+		FVector const& IModelSpatialCoords, std::function<void(HttpRequestID)>&& NotifRequestID);
 
 	//!------------------------------------------------------------------------------------------------------
 	//! WORK IN PROGRESS - UNRELEASED - material predictions using machine learning.
 	//!
+	bool IsSetupForForMaterialMLPrediction() const;
 	//! Change the server to be compatible with ML Material Assignment. Beware it will make all other iTwin
 	//! services unavailable from this actor, since the base URL is different...
 	void SetupForMaterialMLPrediction();
 	EITwinMaterialPredictionStatus GetMaterialMLPrediction(FString iTwinId, FString iModelId,
 														   FString ChangesetId);
 	//-------------------------------------------------------------------------------------------------------
+
+	void SetCustomServerURL(std::string const& ServerUrl);
+
+	void RunCustomRequest(
+		AdvViz::SDK::ITwinAPIRequestInfo const& RequestInfo,
+		AdvViz::SDK::CustomRequestCallback&& ResponseCallback,
+		AdvViz::SDK::FilterErrorFunc&& FilterError = {});
 
 
 	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
@@ -228,9 +239,6 @@ public:
 	FOnAddSavedViewGroupComplete OnAddSavedViewGroupComplete;
 
 	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
-	FOnGetSavedViewThumbnailComplete OnGetSavedViewThumbnailComplete;
-
-	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
 	FOnUpdateSavedViewThumbnailComplete OnUpdateSavedViewThumbnailComplete;
 
 	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
@@ -255,7 +263,7 @@ public:
 	void SetEnvironment(EITwinEnvironment InEnvironment);
 
 	bool IsAuthorizationInProgress() const;
-	using AuthManagerPtr = std::shared_ptr<SDK::Core::ITwinAuthManager>;
+	using AuthManagerPtr = std::shared_ptr<AdvViz::SDK::ITwinAuthManager>;
 	AuthManagerPtr& GetAuthManager() const;
 	void SetServerConnection(TObjectPtr<AITwinServerConnection> const& InConnection);
 

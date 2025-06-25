@@ -1,0 +1,10 @@
+﻿{
+	"url": "https://qa-es-api.bentley.com/4dschedule/v1/schedules/3497df55-60e9-44fd-91ec-3c86473884f5/animationBindings/query?pageSize=3&pageToken=eyJQcmltYXJ5U2tpcFRva2VuIjoiZmQ5Y2FlYTYtODU3NC00MjM4LTliNmEtYzUxYmRjYTU5ZTAxIiwiU2Vjb25kYXJ5U2tpcFRva2VuIjoiMGNkYzYzZWQtMmI1YS00MTc3LWJmNWQtOTA0OWYzNDVhMjg0IiwiVHlwZSI6MH0=",
+	"verb": "POST",
+	"payload": "{}",
+	"connectedSuccessfully": true,
+	"responseCode": 200
+,
+	"reply": 
+{"items":[{"taskId":"e16465cc-73c8-4de8-b316-4efbbefede86","animatedEntityId":"0x13000000003c","appearanceProfileId":"2847411f-bd6a-41ee-b8cc-023274e3b07a","transformId":null,"resourceId":"8b02de7d-45f4-4b2e-8a6c-a4fc6e2ed520","resourceGroupId":null,"pathAssignmentId":"fee271a4-9fd3-4eeb-abf2-02c53f2054bf"},{"taskId":"e16465cc-73c8-4de8-b316-4efbbefede86","animatedEntityId":"0x130000000022","appearanceProfileId":"2847411f-bd6a-41ee-b8cc-023274e3b07a","transformId":null,"resourceId":"8b02de7d-45f4-4b2e-8a6c-a4fc6e2ed520","resourceGroupId":null,"pathAssignmentId":"fee271a4-9fd3-4eeb-abf2-02c53f2054bf"}],"nextPageToken":null}
+}

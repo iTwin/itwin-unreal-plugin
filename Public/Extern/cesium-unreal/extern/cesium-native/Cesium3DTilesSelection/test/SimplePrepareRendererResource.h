@@ -1,10 +1,10 @@
 #pragma once
 
-#include "Cesium3DTilesSelection/IPrepareRendererResources.h"
-#include "Cesium3DTilesSelection/Tile.h"
-#include "CesiumRasterOverlays/RasterOverlayTile.h"
+#include <Cesium3DTilesSelection/IPrepareRendererResources.h>
+#include <Cesium3DTilesSelection/Tile.h>
+#include <CesiumRasterOverlays/RasterOverlayTile.h>
 
-#include <catch2/catch.hpp>
+#include <doctest/doctest.h>
 
 #include <atomic>
 
@@ -68,7 +68,7 @@ public:
   }
 
   virtual void* prepareRasterInLoadThread(
-      CesiumGltf::ImageCesium& /*image*/,
+      CesiumGltf::ImageAsset& /*image*/,
       const std::any& /*rendererOptions*/) override {
     return new AllocationResult{totalAllocation};
   }

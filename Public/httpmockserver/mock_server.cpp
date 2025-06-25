@@ -42,9 +42,11 @@ class MockServer::Server {
         if (daemon) {
             throw std::runtime_error("MockServer has been already started!");
         }
-
+        if (port < 0) {
+            throw std::runtime_error("Invalid port for MockServer!");
+        }
         daemon.reset(MHD_start_daemon(
-                MHD_USE_SELECT_INTERNALLY, port, NULL, NULL,
+                MHD_USE_SELECT_INTERNALLY, (uint16_t)port, NULL, NULL,
                 &static_handlerCallback, this, MHD_OPTION_END));
 
         if (!daemon) {
@@ -123,7 +125,7 @@ bool MockServer::tryStart() noexcept
     }
     catch (const std::runtime_error&) {
         // error occurred
-        return false;
+        //return false;
     }
     return false;
 }

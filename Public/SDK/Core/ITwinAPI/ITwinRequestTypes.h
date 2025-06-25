@@ -10,14 +10,15 @@
 #pragma once
 
 #ifndef SDK_CPPMODULES
-	#include <map>
-	#include <string>
-	#ifndef MODULE_EXPORT
-		#define MODULE_EXPORT
-	#endif // !MODULE_EXPORT
+#	include <functional>
+#	include <map>
+#	include <string>
+#	ifndef MODULE_EXPORT
+#		define MODULE_EXPORT
+#	endif // !MODULE_EXPORT
 #endif
 
-MODULE_EXPORT namespace SDK::Core
+MODULE_EXPORT namespace AdvViz::SDK
 {
 	using RequestID = std::string;
 
@@ -50,9 +51,19 @@ MODULE_EXPORT namespace SDK::Core
 		// Specific to requests fetching binary data (such as GetTextureData)
 		bool needRawData = false;
 
+		bool discardAllHeaders = false;
+		bool isFullUrl = false; // If true, UrlSuffix should contain a full URL, including the protocol
+
 		bool HasCustomHeader(std::string const& headerKey) const
 		{
 			return CustomHeaders.find(headerKey) != CustomHeaders.end();
 		}
 	};
+
+	// Some errors can be filtered to avoid retrying the corresponding requests, and/or discard them from the
+	// logs.
+	using FilterErrorFunc =	std::function<void(std::string const&, bool& bAllowRetry, bool& bLogError)>;
+
+	using CustomRequestCallback =
+		std::function<bool(long status, std::string const& response, RequestID const&, std::string& strError)>;
 }

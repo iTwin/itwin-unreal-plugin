@@ -1,4 +1,4 @@
-// Copyright 2020-2023 CesiumGS, Inc. and Contributors
+// Copyright 2020-2024 CesiumGS, Inc. and Contributors
 
 #pragma once
 
@@ -41,6 +41,8 @@ private:
   TArray<TWeakObjectPtr<UObject>> SelectedObjects;
   TArray<TObjectPtr<UCesiumGlobeAnchorDerivedProperties>> DerivedObjects;
   TArray<UObject*> DerivedPointers;
+
+  static FName RegisteredLayoutName;
 };
 
 UCLASS()
@@ -135,6 +137,7 @@ public:
 
   virtual void PostEditChangeProperty(
       struct FPropertyChangedEvent& PropertyChangedEvent) override;
+  virtual bool CanEditChange(const FProperty* InProperty) const override;
 
   void Initialize(UCesiumGlobeAnchorComponent* GlobeAnchor);
 

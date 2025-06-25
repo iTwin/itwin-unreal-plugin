@@ -34,7 +34,7 @@ public:
     static T &getInstance() {
         static void *instance = NULL;
         if (instance == NULL)
-            getSharedInstance(SDK::Core::Tools::TypeId<T>().GetTypeId(), &getStaticInstance, instance);
+            getSharedInstance(AdvViz::SDK::Tools::TypeId<T>().GetTypeId(), &getStaticInstance, instance);
         return *reinterpret_cast<T *>(instance);
     }
 

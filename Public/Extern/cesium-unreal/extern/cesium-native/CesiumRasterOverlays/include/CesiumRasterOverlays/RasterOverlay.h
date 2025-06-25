@@ -1,17 +1,19 @@
 #pragma once
 
-#include "Library.h"
-#include "RasterOverlayLoadFailureDetails.h"
-
+#include <CesiumAsync/AsyncSystem.h>
 #include <CesiumAsync/IAssetAccessor.h>
+#include <CesiumGeospatial/Ellipsoid.h>
 #include <CesiumGltf/Ktx2TranscodeTargets.h>
+#include <CesiumRasterOverlays/Library.h>
+#include <CesiumRasterOverlays/RasterOverlayLoadFailureDetails.h>
 #include <CesiumUtility/IntrusivePointer.h>
-#include <CesiumUtility/ReferenceCountedNonThreadSafe.h>
+#include <CesiumUtility/ReferenceCounted.h>
 
 #include <nonstd/expected.hpp>
 #include <spdlog/fwd.h>
 
 #include <any>
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -48,7 +50,7 @@ struct CESIUMRASTEROVERLAYS_API RasterOverlayOptions {
    * in memory in case they're needed again soon. This property controls the
    * maximum size of that cache.
    */
-  int64_t subTileCacheBytes = 16 * 1024 * 1024;
+  int64_t subTileCacheBytes = static_cast<int64_t>(16 * 1024 * 1024);
 
   /**
    * @brief The maximum pixel size of raster overlay textures, in either
@@ -86,7 +88,7 @@ struct CESIUMRASTEROVERLAYS_API RasterOverlayOptions {
    * Raster overlay resources include a Cesium ion asset endpoint or any
    * resources required for raster overlay metadata.
    *
-   * This callback is invoked by the {@link RasterOverlayCollection} when an
+   * This callback is invoked by the {@link Cesium3DTilesSelection::RasterOverlayCollection} when an
    * error occurs while it is creating a tile provider for this RasterOverlay.
    * It is always invoked in the main thread.
    */
@@ -98,7 +100,7 @@ struct CESIUMRASTEROVERLAYS_API RasterOverlayOptions {
   bool showCreditsOnScreen = false;
 
   /**
-   * @brief Arbitrary data that will be passed to {@link prepareRasterInLoadThread},
+   * @brief Arbitrary data that will be passed to {@link Cesium3DTilesSelection::IPrepareRendererResources::prepareRasterInLoadThread},
    * for example, data to control the per-raster overlay client-specific texture
    * properties.
    *
@@ -106,15 +108,20 @@ struct CESIUMRASTEROVERLAYS_API RasterOverlayOptions {
    * so it must be inexpensive to copy.
    */
   std::any rendererOptions;
+
+  /**
+   * @brief The ellipsoid used for this raster overlay.
+   */
+  CesiumGeospatial::Ellipsoid ellipsoid = CesiumGeospatial::Ellipsoid::WGS84;
 };
 
 /**
  * @brief The base class for a rasterized image that can be draped
- * over a {@link Tileset}. The image may be very, very high resolution, so only
+ * over a {@link Cesium3DTilesSelection::Tileset}. The image may be very, very high resolution, so only
  * small pieces of it are mapped to the Tileset at a time.
  *
- * Instances of this class can be added to the {@link RasterOverlayCollection}
- * that is returned by {@link Tileset::getOverlays}.
+ * Instances of this class can be added to the {@link Cesium3DTilesSelection::RasterOverlayCollection}
+ * that is returned by {@link Cesium3DTilesSelection::Tileset::getOverlays}.
  *
  * Instances of this class must be allocated on the heap, and their lifetimes
  * must be managed with {@link CesiumUtility::IntrusivePointer}.
@@ -145,7 +152,7 @@ public:
    *
    * @param asyncSystem The AsyncSystem to use for the returned SharedFuture,
    * if required. If this method is called multiple times, all invocations
-   * must pass {@link AsyncSystem} instances that compare equal to each other.
+   * must pass {@link CesiumAsync::AsyncSystem} instances that compare equal to each other.
    */
   CesiumAsync::SharedFuture<void>&
   getAsyncDestructionCompleteEvent(const CesiumAsync::AsyncSystem& asyncSystem);
@@ -186,12 +193,22 @@ public:
    * @param asyncSystem The async system used to do work in threads.
    * @param pAssetAccessor The interface used to download assets like overlay
    * metadata and tiles.
+   * @param ellipsoid The {@link CesiumGeospatial::Ellipsoid}.
    * @return The placeholder.
    */
   CesiumUtility::IntrusivePointer<RasterOverlayTileProvider> createPlaceholder(
       const CesiumAsync::AsyncSystem& asyncSystem,
-      const std::shared_ptr<CesiumAsync::IAssetAccessor>& pAssetAccessor) const;
+      const std::shared_ptr<CesiumAsync::IAssetAccessor>& pAssetAccessor,
+      const CesiumGeospatial::Ellipsoid& ellipsoid
+          CESIUM_DEFAULT_ELLIPSOID) const;
 
+  /**
+   * @brief A result from a call to \ref createTileProvider. This is expected to
+   * be an \ref CesiumUtility::IntrusivePointer "IntrusivePointer" to a \ref
+   * RasterOverlayTileProvider, but may be a \ref
+   * RasterOverlayLoadFailureDetails if creating the tile provider wasn't
+   * successful.
+   */
   using CreateTileProviderResult = nonstd::expected<
       CesiumUtility::IntrusivePointer<RasterOverlayTileProvider>,
       RasterOverlayLoadFailureDetails>;
@@ -203,8 +220,8 @@ public:
    * @param asyncSystem The async system used to do work in threads.
    * @param pAssetAccessor The interface used to download assets like overlay
    * metadata and tiles.
-   * @param pCreditSystem The {@link CreditSystem} to use when creating a
-   * per-TileProvider {@link Credit}.
+   * @param pCreditSystem The {@link CesiumUtility::CreditSystem} to use when creating a
+   * per-TileProvider {@link CesiumUtility::Credit}.
    * @param pPrepareRendererResources The interface used to prepare raster
    * images for rendering.
    * @param pLogger The logger to which to send messages about the tile provider

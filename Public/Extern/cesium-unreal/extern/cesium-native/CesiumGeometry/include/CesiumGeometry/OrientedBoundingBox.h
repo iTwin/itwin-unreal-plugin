@@ -1,9 +1,9 @@
 #pragma once
 
-#include "AxisAlignedBox.h"
-#include "BoundingSphere.h"
-#include "CullingResult.h"
-#include "Library.h"
+#include <CesiumGeometry/AxisAlignedBox.h>
+#include <CesiumGeometry/BoundingSphere.h>
+#include <CesiumGeometry/CullingResult.h>
+#include <CesiumGeometry/Library.h>
 
 #include <glm/mat3x3.hpp>
 #include <glm/vec3.hpp>
@@ -100,7 +100,7 @@ public:
   computeDistanceSquaredToPosition(const glm::dvec3& position) const noexcept;
 
   /**
-   * @brief Computes whether the given position is contained within bounding
+   * @brief Computes whether the given position is contained within the bounding
    * box.
    *
    * @param position The position.

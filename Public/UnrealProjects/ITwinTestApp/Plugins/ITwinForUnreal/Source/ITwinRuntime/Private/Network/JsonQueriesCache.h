@@ -21,7 +21,7 @@
 	#include <boost/container_hash/hash.hpp>
 #include <Compil/AfterNonUnrealIncludes.h>
 
-namespace SDK::Core { struct ITwinAPIRequestInfo; }
+namespace AdvViz::SDK { struct ITwinAPIRequestInfo; }
 
 enum class EITwinEnvironment : uint8;
 
@@ -30,13 +30,15 @@ namespace QueriesCache
 	enum class ESubtype : uint8_t
 	{
 		Schedules,
-		ElementsHierarchies,
-		ElementsSourceIDs,
+		DEPRECATED_ElementsHierarchies,
+		DEPRECATED_ElementsSourceIDs,
 		MaterialMLPrediction,
+		ElementsMetadataCombined,
 	};
 
 	/// \param ITwinId If empty, the base folder for all caches of the passed Type is returned. IModelId,
 	///		ChangesetId and ExtraStr are thus ignored.
+	/// \param ChangesetId May be empty in the special case of an iModel without a changeset
 	/// \param ExtraStr For schedules, you must pass a non-empty schedule Id to get the cache folder for this
 	///		specific schedule
 	[[nodiscard]] FString GetCacheFolder(ESubtype const Type, EITwinEnvironment const Environment,
@@ -65,19 +67,21 @@ class FJsonQueriesCache
 	TPimplPtr<FImpl> Impl;
 
 	void ToJson(FHttpRequestPtr const& Req, TSharedRef<FJsonObject>& JsonObj) const;
-	void ToJson(SDK::Core::ITwinAPIRequestInfo const& Req, TSharedRef<FJsonObject>& JsonObj) const;
+	void ToJson(AdvViz::SDK::ITwinAPIRequestInfo const& Req, TSharedRef<FJsonObject>& JsonObj) const;
 	void Write(TSharedRef<FJsonObject>& JsonObj, int const ResponseCode,
-		FString const& ContentAsString, bool const bConnectedSuccessfully, ITwinHttp::FMutex& Mutex,
-		int const QueryTimestamp);
+		FString const& ContentAsString, bool const bConnectedSuccessfully, bool const bRequestSucceeded,
+		ITwinHttp::FMutex& Mutex, int const QueryTimestamp);
 
 public:
 	explicit FJsonQueriesCache(UObject const& Owner);
 	~FJsonQueriesCache();
 
 	bool IsValid() const;
+	bool IsUnitTesting() const;
 	/// Actually initializes the cache for your "session"
 	[[nodiscard]] bool Initialize(FString CacheFolder, EITwinEnvironment const Environment,
-		FString const& DisplayName, bool const bIsRecordingForSimulation = false);
+		FString const& DisplayName, bool const bIsRecordingForSimulation = false,
+		bool const bUnitTesting = false);
 	/// Reset to uninitialized state (as if just default-constructed), clearing memory in the process
 	/// (but not the disk folder! see ClearFromDisk). Must be called by an owner UObject when it is about to
 	/// become garbage-collectable, for example in AActor::EndPlay, because when the owner's destructor will
@@ -97,12 +101,12 @@ public:
 	[[nodiscard]] std::optional<QueriesCache::FSessionMap::const_iterator> LookUp(
 		FHttpRequestPtr const& Request, ITwinHttp::EVerb const Verb, ITwinHttp::FMutex& Mutex) const;
 
-	/// Look up the response to an SDK::Core request in the cache. Note: AcceptHeader, ContentType and
+	/// Look up the response to an AdvViz::SDK request in the cache. Note: AcceptHeader, ContentType and
 	/// custom headers are not taken into account for indexing. When non-empty, pass the resulting
 	/// iterator to Read to actually load and parse the response Json
 	/// \return Empty object on cache miss
 	[[nodiscard]] std::optional<QueriesCache::FSessionMap::const_iterator> LookUp(
-		SDK::Core::ITwinAPIRequestInfo const& RequestInfo, ITwinHttp::FMutex& Mutex) const;
+		AdvViz::SDK::ITwinAPIRequestInfo const& RequestInfo, ITwinHttp::FMutex& Mutex) const;
 
 	/// Save the response to an Unreal Http query in the cache
 	/// \parameter CompletedRequest Request for which we just obtained a response
@@ -111,7 +115,7 @@ public:
 	///		integers like "00000004_res_00000002.json" instead of using GUIDs
 	void Write(FHttpRequestPtr const& CompletedRequest, FHttpResponsePtr const Response,
 		bool const bConnectedSuccessfully, ITwinHttp::FMutex& Mutex, int const QueryTimestamp = -1);
-	void Write(SDK::Core::ITwinAPIRequestInfo const& CompletedRequest,
+	void Write(AdvViz::SDK::ITwinAPIRequestInfo const& CompletedRequest,
 		FString const& QueryResult, bool const bConnectedSuccessfully, ITwinHttp::FMutex& Mutex,
 		int const QueryTimestamp = -1);
 

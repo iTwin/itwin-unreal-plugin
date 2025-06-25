@@ -1,11 +1,52 @@
 #include "BatchTableToGltfStructuralMetadata.h"
+#include "MetadataProperty.h"
 
+#include <Cesium3DTilesContent/GltfConverterResult.h>
+#include <Cesium3DTilesContent/GltfConverters.h>
 #include <Cesium3DTilesContent/PntsToGltfConverter.h>
+#include <CesiumAsync/Future.h>
 #include <CesiumGeometry/Transforms.h>
+#include <CesiumGltf/Accessor.h>
+#include <CesiumGltf/Buffer.h>
+#include <CesiumGltf/BufferView.h>
 #include <CesiumGltf/ExtensionCesiumRTC.h>
 #include <CesiumGltf/ExtensionKhrMaterialsUnlit.h>
+#include <CesiumGltf/Material.h>
+#include <CesiumGltf/MaterialPBRMetallicRoughness.h>
+#include <CesiumGltf/Mesh.h>
+#include <CesiumGltf/MeshPrimitive.h>
+#include <CesiumGltf/Model.h>
+#include <CesiumGltf/Node.h>
+#include <CesiumGltf/Scene.h>
+#include <CesiumGltfReader/GltfReader.h>
+#include <CesiumUtility/Assert.h>
 #include <CesiumUtility/AttributeCompression.h>
-#include <CesiumUtility/Math.h>
+
+#include <draco/core/data_buffer.h>
+#include <draco/core/draco_types.h>
+#include <draco/core/status_or.h>
+#include <fmt/format.h>
+#include <glm/common.hpp>
+#include <glm/exponential.hpp>
+#include <glm/ext/matrix_double4x4.hpp>
+#include <glm/ext/vector_double3.hpp>
+#include <glm/ext/vector_float3.hpp>
+#include <glm/ext/vector_float4.hpp>
+#include <glm/ext/vector_uint2_sized.hpp>
+#include <glm/ext/vector_uint3_sized.hpp>
+#include <glm/ext/vector_uint4_sized.hpp>
+#include <rapidjson/rapidjson.h>
+
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <map>
+#include <memory>
+#include <optional>
+#include <span>
+#include <string>
+#include <utility>
+#include <vector>
 
 #ifdef _MSC_VER
 #pragma warning(push)
@@ -22,7 +63,6 @@
 #endif
 
 #include <rapidjson/document.h>
-#include <spdlog/fmt/fmt.h>
 
 #include <limits>
 
@@ -32,17 +72,17 @@ using namespace CesiumUtility;
 namespace Cesium3DTilesContent {
 namespace {
 struct PntsHeader {
-  unsigned char magic[4];
-  uint32_t version;
-  uint32_t byteLength;
-  uint32_t featureTableJsonByteLength;
-  uint32_t featureTableBinaryByteLength;
-  uint32_t batchTableJsonByteLength;
-  uint32_t batchTableBinaryByteLength;
+  unsigned char magic[4] = {0, 0, 0, 0};
+  uint32_t version = 0;
+  uint32_t byteLength = 0;
+  uint32_t featureTableJsonByteLength = 0;
+  uint32_t featureTableBinaryByteLength = 0;
+  uint32_t batchTableJsonByteLength = 0;
+  uint32_t batchTableBinaryByteLength = 0;
 };
 
 void parsePntsHeader(
-    const gsl::span<const std::byte>& pntsBinary,
+    const std::span<const std::byte>& pntsBinary,
     PntsHeader& header,
     uint32_t& headerLength,
     GltfConverterResult& result) {
@@ -72,100 +112,6 @@ void parsePntsHeader(
     return;
   }
 }
-
-struct MetadataProperty {
-public:
-  enum ComponentType {
-    BYTE,
-    UNSIGNED_BYTE,
-    SHORT,
-    UNSIGNED_SHORT,
-    INT,
-    UNSIGNED_INT,
-    FLOAT,
-    DOUBLE
-  };
-
-  enum Type { SCALAR, VEC2, VEC3, VEC4 };
-
-  static std::optional<ComponentType>
-  getComponentTypeFromDracoDataType(const draco::DataType dataType) {
-    switch (dataType) {
-    case draco::DT_INT8:
-      return ComponentType::BYTE;
-    case draco::DT_UINT8:
-      return ComponentType::UNSIGNED_BYTE;
-    case draco::DT_INT16:
-      return ComponentType::SHORT;
-    case draco::DT_UINT16:
-      return ComponentType::UNSIGNED_SHORT;
-    case draco::DT_INT32:
-      return ComponentType::INT;
-    case draco::DT_UINT32:
-      return ComponentType::UNSIGNED_INT;
-    case draco::DT_FLOAT32:
-      return ComponentType::FLOAT;
-    case draco::DT_FLOAT64:
-      return ComponentType::DOUBLE;
-    default:
-      return std::nullopt;
-    }
-  }
-
-  static size_t getSizeOfComponentType(ComponentType componentType) {
-    switch (componentType) {
-    case ComponentType::BYTE:
-    case ComponentType::UNSIGNED_BYTE:
-      return sizeof(uint8_t);
-    case ComponentType::SHORT:
-    case ComponentType::UNSIGNED_SHORT:
-      return sizeof(uint16_t);
-    case ComponentType::INT:
-    case ComponentType::UNSIGNED_INT:
-      return sizeof(uint32_t);
-    case ComponentType::FLOAT:
-      return sizeof(float);
-    case ComponentType::DOUBLE:
-      return sizeof(double);
-    default:
-      return 0;
-    }
-  };
-
-  static std::optional<Type>
-  getTypeFromNumberOfComponents(uint8_t numComponents) {
-    switch (numComponents) {
-    case 1:
-      return Type::SCALAR;
-    case 2:
-      return Type::VEC2;
-    case 3:
-      return Type::VEC3;
-    case 4:
-      return Type::VEC4;
-    default:
-      return std::nullopt;
-    }
-  }
-};
-
-const std::map<std::string, MetadataProperty::ComponentType>
-    stringToMetadataComponentType{
-        {"BYTE", MetadataProperty::ComponentType::BYTE},
-        {"UNSIGNED_BYTE", MetadataProperty::ComponentType::UNSIGNED_BYTE},
-        {"SHORT", MetadataProperty::ComponentType::SHORT},
-        {"UNSIGNED_SHORT", MetadataProperty::ComponentType::UNSIGNED_SHORT},
-        {"INT", MetadataProperty::ComponentType::INT},
-        {"UNSIGNED_INT", MetadataProperty::ComponentType::UNSIGNED_INT},
-        {"FLOAT", MetadataProperty::ComponentType::FLOAT},
-        {"DOUBLE", MetadataProperty::ComponentType::DOUBLE},
-    };
-
-const std::map<std::string, MetadataProperty::Type> stringToMetadataType{
-    {"SCALAR", MetadataProperty::Type::SCALAR},
-    {"VEC2", MetadataProperty::Type::VEC2},
-    {"VEC3", MetadataProperty::Type::VEC3},
-    {"VEC4", MetadataProperty::Type::VEC4}};
 
 struct PntsSemantic {
   uint32_t byteOffset = 0;
@@ -463,8 +409,9 @@ void parseBatchIdsFromFeatureTableJson(
   if (componentTypeIt != featureTableJson.MemberEnd() &&
       componentTypeIt->value.IsString()) {
     const std::string& componentTypeString = componentTypeIt->value.GetString();
-    if (stringToMetadataComponentType.find(componentTypeString) ==
-        stringToMetadataComponentType.end()) {
+    if (MetadataProperty::stringToMetadataComponentType.find(
+            componentTypeString) ==
+        MetadataProperty::stringToMetadataComponentType.end()) {
       parsedContent.errors.emplaceWarning(
           "Error parsing PNTS feature table, BATCH_ID does not have "
           "valid componentType. Skip parsing batch IDs.");
@@ -472,7 +419,7 @@ void parseBatchIdsFromFeatureTableJson(
     }
 
     MetadataProperty::ComponentType componentType =
-        stringToMetadataComponentType.at(componentTypeString);
+        MetadataProperty::stringToMetadataComponentType.at(componentTypeString);
     if (componentType != MetadataProperty::ComponentType::UNSIGNED_BYTE &&
         componentType != MetadataProperty::ComponentType::UNSIGNED_SHORT &&
         componentType != MetadataProperty::ComponentType::UNSIGNED_INT) {
@@ -607,7 +554,7 @@ void parseDracoExtensionFromFeatureTableJson(
 }
 
 rapidjson::Document parseFeatureTableJson(
-    const gsl::span<const std::byte>& featureTableJsonData,
+    const std::span<const std::byte>& featureTableJsonData,
     PntsContent& parsedContent) {
   rapidjson::Document document;
   document.Parse(
@@ -740,8 +687,8 @@ void parseDracoExtensionFromBatchTableJson(
         componentTypeIt->value.IsString()) {
       componentType = componentTypeIt->value.GetString();
     }
-    if (stringToMetadataComponentType.find(componentType) ==
-        stringToMetadataComponentType.end()) {
+    if (MetadataProperty::stringToMetadataComponentType.find(componentType) ==
+        MetadataProperty::stringToMetadataComponentType.end()) {
       parsedContent.errors.emplaceWarning(fmt::format(
           "Skip decoding Draco-compressed property {}. The binary property "
           "doesn't have a valid componentType.",
@@ -754,7 +701,8 @@ void parseDracoExtensionFromBatchTableJson(
     if (typeIt != batchTableProperty.MemberEnd() && typeIt->value.IsString()) {
       type = typeIt->value.GetString();
     }
-    if (stringToMetadataType.find(type) == stringToMetadataType.end()) {
+    if (MetadataProperty::stringToMetadataType.find(type) ==
+        MetadataProperty::stringToMetadataType.end()) {
       parsedContent.errors.emplaceWarning(fmt::format(
           "Skip decoding Draco-compressed property {}. The binary property "
           "doesn't have a valid type.",
@@ -764,15 +712,16 @@ void parseDracoExtensionFromBatchTableJson(
 
     DracoMetadataSemantic semantic;
     semantic.dracoId = dracoPropertyIt->value.GetInt();
-    semantic.componentType = stringToMetadataComponentType.at(componentType);
-    semantic.type = stringToMetadataType.at(type);
+    semantic.componentType =
+        MetadataProperty::stringToMetadataComponentType.at(componentType);
+    semantic.type = MetadataProperty::stringToMetadataType.at(type);
 
     parsedContent.dracoMetadataSemantics.insert({name, semantic});
   }
 }
 
 rapidjson::Document parseBatchTableJson(
-    const gsl::span<const std::byte>& batchTableJsonData,
+    const std::span<const std::byte>& batchTableJsonData,
     PntsContent& parsedContent) {
   rapidjson::Document document;
   document.Parse(
@@ -801,6 +750,30 @@ bool validateDracoAttribute(
          pAttribute->num_components() == expectedNumComponents;
 }
 
+std::optional<MetadataProperty::ComponentType>
+getComponentTypeFromDracoDataType(const draco::DataType dataType) {
+  switch (dataType) {
+  case draco::DT_INT8:
+    return MetadataProperty::ComponentType::BYTE;
+  case draco::DT_UINT8:
+    return MetadataProperty::ComponentType::UNSIGNED_BYTE;
+  case draco::DT_INT16:
+    return MetadataProperty::ComponentType::SHORT;
+  case draco::DT_UINT16:
+    return MetadataProperty::ComponentType::UNSIGNED_SHORT;
+  case draco::DT_INT32:
+    return MetadataProperty::ComponentType::INT;
+  case draco::DT_UINT32:
+    return MetadataProperty::ComponentType::UNSIGNED_INT;
+  case draco::DT_FLOAT32:
+    return MetadataProperty::ComponentType::FLOAT;
+  case draco::DT_FLOAT64:
+    return MetadataProperty::ComponentType::DOUBLE;
+  default:
+    return std::nullopt;
+  }
+}
+
 bool validateDracoMetadataAttribute(
     const draco::PointAttribute* const pAttribute,
     const DracoMetadataSemantic semantic) {
@@ -808,14 +781,14 @@ bool validateDracoMetadataAttribute(
     return false;
   }
 
-  auto componentType = MetadataProperty::getComponentTypeFromDracoDataType(
-      pAttribute->data_type());
+  auto componentType =
+      getComponentTypeFromDracoDataType(pAttribute->data_type());
   if (!componentType || componentType.value() != semantic.componentType) {
     return false;
   }
 
   auto type = MetadataProperty::getTypeFromNumberOfComponents(
-      pAttribute->num_components());
+      static_cast<int8_t>(pAttribute->num_components()));
   return type && type.value() == semantic.type;
 }
 
@@ -834,7 +807,7 @@ void getDracoData(
 
   const uint8_t* pSource = decodedBuffer->data() + decodedByteOffset;
   if (dataElementSize != static_cast<size_t>(decodedByteStride)) {
-    gsl::span<T> outData(reinterpret_cast<T*>(data.data()), pointsLength);
+    std::span<T> outData(reinterpret_cast<T*>(data.data()), pointsLength);
     for (uint32_t i = 0; i < pointsLength; ++i) {
       outData[i] = *reinterpret_cast<const T*>(pSource + decodedByteStride * i);
     }
@@ -854,17 +827,15 @@ void decodeDracoMetadata(
   std::vector<std::byte>& data = parsedContent.dracoBatchTableBinary;
 
   const auto& dracoMetadataSemantics = parsedContent.dracoMetadataSemantics;
-  for (auto dracoSemanticIt = dracoMetadataSemantics.begin();
-       dracoSemanticIt != dracoMetadataSemantics.end();
-       dracoSemanticIt++) {
-    DracoMetadataSemantic dracoSemantic = dracoSemanticIt->second;
+  for (const auto& dracoMetadataSemantic : dracoMetadataSemantics) {
+    const DracoMetadataSemantic& dracoSemantic = dracoMetadataSemantic.second;
     draco::PointAttribute* pAttribute =
         pPointCloud->attribute(dracoSemantic.dracoId);
     if (!validateDracoMetadataAttribute(pAttribute, dracoSemantic)) {
       parsedContent.errors.emplaceWarning(fmt::format(
           "Error decoding {} property in the 3DTILES_draco_compression "
           "extension. Skip parsing metadata.",
-          dracoSemanticIt->first));
+          dracoMetadataSemantic.first));
       parsedContent.dracoMetadataHasErrors = true;
       return;
     }
@@ -874,7 +845,7 @@ void decodeDracoMetadata(
     // These do not test for validity since the batch table and extension
     // were validated in parseDracoExtensionFromBatchTableJson.
     auto batchTableSemanticIt =
-        batchTableJson.FindMember(dracoSemanticIt->first.c_str());
+        batchTableJson.FindMember(dracoMetadataSemantic.first.c_str());
     rapidjson::Value& batchTableSemantic =
         batchTableSemanticIt->value.GetObject();
     auto byteOffsetIt = batchTableSemantic.FindMember("byteOffset");
@@ -906,9 +877,9 @@ void decodeDracoMetadata(
 }
 
 void decodeDraco(
-    const gsl::span<const std::byte>& featureTableBinaryData,
+    const std::span<const std::byte>& featureTableBinaryData,
     rapidjson::Document& batchTableJson,
-    const gsl::span<const std::byte>& batchTableBinaryData,
+    const std::span<const std::byte>& batchTableBinaryData,
     PntsContent& parsedContent) {
   if (!parsedContent.dracoByteOffset || !parsedContent.dracoByteLength) {
     return;
@@ -917,7 +888,7 @@ void decodeDraco(
   draco::Decoder decoder;
   draco::DecoderBuffer buffer;
   buffer.Init(
-      (char*)featureTableBinaryData.data() +
+      reinterpret_cast<const char*>(featureTableBinaryData.data()) +
           parsedContent.dracoByteOffset.value(),
       parsedContent.dracoByteLength.value());
 
@@ -945,7 +916,7 @@ void decodeDraco(
     std::vector<std::byte>& positionData = parsedContent.position.data;
     positionData.resize(pointsLength * sizeof(glm::vec3));
 
-    gsl::span<glm::vec3> outPositions(
+    std::span<glm::vec3> outPositions(
         reinterpret_cast<glm::vec3*>(positionData.data()),
         pointsLength);
 
@@ -973,7 +944,7 @@ void decodeDraco(
           validateDracoAttribute(pColorAttribute, draco::DT_UINT8, 4)) {
         colorData.resize(pointsLength * sizeof(glm::vec4));
 
-        gsl::span<glm::vec4> outColors(
+        std::span<glm::vec4> outColors(
             reinterpret_cast<glm::vec4*>(colorData.data()),
             pointsLength);
 
@@ -992,7 +963,7 @@ void decodeDraco(
           validateDracoAttribute(pColorAttribute, draco::DT_UINT8, 3)) {
         colorData.resize(pointsLength * sizeof(glm::vec3));
 
-        gsl::span<glm::vec3> outColors(
+        std::span<glm::vec3> outColors(
             reinterpret_cast<glm::vec3*>(colorData.data()),
             pointsLength);
 
@@ -1084,7 +1055,7 @@ void decodeDraco(
 }
 
 void parsePositionsFromFeatureTableBinary(
-    const gsl::span<const std::byte>& featureTableBinaryData,
+    const std::span<const std::byte>& featureTableBinaryData,
     PntsContent& parsedContent) {
   std::vector<std::byte>& positionData = parsedContent.position.data;
   if (positionData.size() > 0) {
@@ -1097,15 +1068,16 @@ void parsePositionsFromFeatureTableBinary(
   const size_t positionsByteLength = pointsLength * positionsByteStride;
   positionData.resize(positionsByteLength);
 
-  gsl::span<glm::vec3> outPositions(
+  std::span<glm::vec3> outPositions(
       reinterpret_cast<glm::vec3*>(positionData.data()),
       pointsLength);
 
-  if (parsedContent.positionQuantized) {
+  if (parsedContent.positionQuantized && parsedContent.quantizedVolumeScale &&
+      parsedContent.quantizedVolumeOffset) {
     // PERFORMANCE_IDEA: In the future, it might be more performant to detect
     // if the recipient engine can handle dequantization itself, and if so, use
     // the KHR_mesh_quantization extension to avoid dequantizing here.
-    const gsl::span<const glm::u16vec3> quantizedPositions(
+    const std::span<const glm::u16vec3> quantizedPositions(
         reinterpret_cast<const glm::u16vec3*>(
             featureTableBinaryData.data() + parsedContent.position.byteOffset),
         pointsLength);
@@ -1131,10 +1103,14 @@ void parsePositionsFromFeatureTableBinary(
       parsedContent.positionMax =
           glm::max(parsedContent.positionMax, dequantizedPosition);
     }
+  } else if (parsedContent.positionQuantized) {
+    parsedContent.errors.emplaceError(
+        "Missing quantizedVolumeScale or quantizedVolumeOffset in parsed "
+        "content");
   } else {
     // The position accessor min / max is required by the glTF spec, so
     // use a for loop instead of std::memcpy.
-    const gsl::span<const glm::vec3> positions(
+    const std::span<const glm::vec3> positions(
         reinterpret_cast<const glm::vec3*>(
             featureTableBinaryData.data() + parsedContent.position.byteOffset),
         pointsLength);
@@ -1148,8 +1124,9 @@ void parsePositionsFromFeatureTableBinary(
 }
 
 void parseColorsFromFeatureTableBinary(
-    const gsl::span<const std::byte>& featureTableBinaryData,
+    const std::span<const std::byte>& featureTableBinaryData,
     PntsContent& parsedContent) {
+  CESIUM_ASSERT(parsedContent.color.has_value());
   PntsSemantic& color = parsedContent.color.value();
   std::vector<std::byte>& colorData = color.data;
   if (colorData.size() > 0) {
@@ -1165,11 +1142,11 @@ void parseColorsFromFeatureTableBinary(
   colorData.resize(colorsByteLength);
 
   if (parsedContent.colorType == PntsColorType::RGBA) {
-    const gsl::span<const glm::u8vec4> rgbaColors(
+    const std::span<const glm::u8vec4> rgbaColors(
         reinterpret_cast<const glm::u8vec4*>(
             featureTableBinaryData.data() + color.byteOffset),
         pointsLength);
-    gsl::span<glm::vec4> outColors(
+    std::span<glm::vec4> outColors(
         reinterpret_cast<glm::vec4*>(colorData.data()),
         pointsLength);
 
@@ -1178,11 +1155,11 @@ void parseColorsFromFeatureTableBinary(
       outColors[i] = srgbToLinear(normalizedColor);
     }
   } else if (parsedContent.colorType == PntsColorType::RGB) {
-    const gsl::span<const glm::u8vec3> rgbColors(
+    const std::span<const glm::u8vec3> rgbColors(
         reinterpret_cast<const glm::u8vec3*>(
             featureTableBinaryData.data() + color.byteOffset),
         pointsLength);
-    gsl::span<glm::vec3> outColors(
+    std::span<glm::vec3> outColors(
         reinterpret_cast<glm::vec3*>(colorData.data()),
         pointsLength);
 
@@ -1192,11 +1169,11 @@ void parseColorsFromFeatureTableBinary(
     }
   } else if (parsedContent.colorType == PntsColorType::RGB565) {
 
-    const gsl::span<const uint16_t> compressedColors(
+    const std::span<const uint16_t> compressedColors(
         reinterpret_cast<const uint16_t*>(
             featureTableBinaryData.data() + color.byteOffset),
         pointsLength);
-    gsl::span<glm::vec3> outColors(
+    std::span<glm::vec3> outColors(
         reinterpret_cast<glm::vec3*>(colorData.data()),
         pointsLength);
 
@@ -1210,8 +1187,9 @@ void parseColorsFromFeatureTableBinary(
 }
 
 void parseNormalsFromFeatureTableBinary(
-    const gsl::span<const std::byte>& featureTableBinaryData,
+    const std::span<const std::byte>& featureTableBinaryData,
     PntsContent& parsedContent) {
+  CESIUM_ASSERT(parsedContent.normal.has_value());
   PntsSemantic& normal = parsedContent.normal.value();
   std::vector<std::byte>& normalData = normal.data;
   if (normalData.size() > 0) {
@@ -1225,12 +1203,12 @@ void parseNormalsFromFeatureTableBinary(
   normalData.resize(normalsByteLength);
 
   if (parsedContent.normalOctEncoded) {
-    const gsl::span<const glm::u8vec2> encodedNormals(
+    const std::span<const glm::u8vec2> encodedNormals(
         reinterpret_cast<const glm::u8vec2*>(
             featureTableBinaryData.data() + normal.byteOffset),
         pointsLength);
 
-    gsl::span<glm::vec3> outNormals(
+    std::span<glm::vec3> outNormals(
         reinterpret_cast<glm::vec3*>(normalData.data()),
         pointsLength);
 
@@ -1249,8 +1227,9 @@ void parseNormalsFromFeatureTableBinary(
 }
 
 void parseBatchIdsFromFeatureTableBinary(
-    const gsl::span<const std::byte>& featureTableBinaryData,
+    const std::span<const std::byte>& featureTableBinaryData,
     PntsContent& parsedContent) {
+  CESIUM_ASSERT(parsedContent.batchId.has_value());
   PntsSemantic& batchId = parsedContent.batchId.value();
   std::vector<std::byte>& batchIdData = batchId.data;
   if (batchIdData.size() > 0) {
@@ -1274,9 +1253,9 @@ void parseBatchIdsFromFeatureTableBinary(
 }
 
 void parseFeatureTableBinary(
-    const gsl::span<const std::byte>& featureTableBinaryData,
+    const std::span<const std::byte>& featureTableBinaryData,
     rapidjson::Document& batchTableJson,
-    const gsl::span<const std::byte>& batchTableBinaryData,
+    const std::span<const std::byte>& batchTableBinaryData,
     PntsContent& parsedContent) {
   decodeDraco(
       featureTableBinaryData,
@@ -1330,7 +1309,7 @@ int32_t createAccessorInGltf(
     const int32_t bufferViewId,
     const int32_t componentType,
     const int64_t count,
-    const std::string type) {
+    const std::string& type) {
   size_t accessorId = gltf.accessors.size();
   Accessor& accessor = gltf.accessors.emplace_back();
   accessor.bufferView = bufferViewId;
@@ -1374,6 +1353,7 @@ void addPositionsToGltf(PntsContent& parsedContent, Model& gltf) {
 }
 
 void addColorsToGltf(PntsContent& parsedContent, Model& gltf) {
+  CESIUM_ASSERT(parsedContent.color.has_value());
   PntsSemantic& color = parsedContent.color.value();
 
   const int64_t count = static_cast<int64_t>(parsedContent.pointsLength);
@@ -1409,6 +1389,7 @@ void addColorsToGltf(PntsContent& parsedContent, Model& gltf) {
 }
 
 void addNormalsToGltf(PntsContent& parsedContent, Model& gltf) {
+  CESIUM_ASSERT(parsedContent.normal.has_value());
   PntsSemantic& normal = parsedContent.normal.value();
 
   const int64_t count = static_cast<int64_t>(parsedContent.pointsLength);
@@ -1430,6 +1411,7 @@ void addNormalsToGltf(PntsContent& parsedContent, Model& gltf) {
 }
 
 void addBatchIdsToGltf(PntsContent& parsedContent, CesiumGltf::Model& gltf) {
+  CESIUM_ASSERT(parsedContent.batchId.has_value());
   PntsSemantic& batchId = parsedContent.batchId.value();
 
   const int64_t count = static_cast<int64_t>(parsedContent.pointsLength);
@@ -1470,8 +1452,10 @@ void addBatchIdsToGltf(PntsContent& parsedContent, CesiumGltf::Model& gltf) {
 void createGltfFromParsedContent(
     PntsContent& parsedContent,
     GltfConverterResult& result) {
-  result.model = std::make_optional<CesiumGltf::Model>();
-  Model& gltf = result.model.value();
+  result.model.reset();
+  Model& gltf = result.model.emplace();
+
+  gltf.asset.version = "2.0";
 
   // Create a single node with a single mesh, with a single primitive.
   Node& node = gltf.nodes.emplace_back();
@@ -1479,6 +1463,11 @@ void createGltfFromParsedContent(
       node.matrix.data(),
       &CesiumGeometry::Transforms::Z_UP_TO_Y_UP,
       sizeof(glm::dmat4));
+
+  // Create a scene containing the node, and make it the default scene.
+  Scene& scene = gltf.scenes.emplace_back();
+  scene.nodes = {0};
+  gltf.scene = 0;
 
   size_t meshId = gltf.meshes.size();
   Mesh& mesh = gltf.meshes.emplace_back();
@@ -1516,6 +1505,8 @@ void createGltfFromParsedContent(
     // Points without normals should be rendered without lighting, which we
     // can indicate with the KHR_materials_unlit extension.
     material.addExtension<CesiumGltf::ExtensionKhrMaterialsUnlit>();
+    gltf.addExtensionUsed(
+        CesiumGltf::ExtensionKhrMaterialsUnlit::ExtensionName);
   }
 
   if (parsedContent.batchId) {
@@ -1529,13 +1520,16 @@ void createGltfFromParsedContent(
     // the root node, as suggested in the 3D Tiles migration guide.
     auto& cesiumRTC =
         result.model->addExtension<CesiumGltf::ExtensionCesiumRTC>();
+    result.model->addExtensionRequired(
+        CesiumGltf::ExtensionCesiumRTC::ExtensionName);
+
     glm::dvec3 rtcCenter = parsedContent.rtcCenter.value();
     cesiumRTC.center = {rtcCenter.x, rtcCenter.y, rtcCenter.z};
   }
 }
 
 void convertPntsContentToGltf(
-    const gsl::span<const std::byte>& pntsBinary,
+    const std::span<const std::byte>& pntsBinary,
     const PntsHeader& header,
     uint32_t headerLength,
     GltfConverterResult& result) {
@@ -1543,7 +1537,7 @@ void convertPntsContentToGltf(
       header.featureTableBinaryByteLength > 0) {
     PntsContent parsedContent;
 
-    const gsl::span<const std::byte> featureTableJsonData =
+    const std::span<const std::byte> featureTableJsonData =
         pntsBinary.subspan(headerLength, header.featureTableJsonByteLength);
     rapidjson::Document featureTableJson =
         parseFeatureTableJson(featureTableJsonData, parsedContent);
@@ -1561,19 +1555,19 @@ void convertPntsContentToGltf(
                                     header.featureTableBinaryByteLength;
     rapidjson::Document batchTableJson;
     if (header.batchTableJsonByteLength > 0) {
-      const gsl::span<const std::byte> batchTableJsonData = pntsBinary.subspan(
+      const std::span<const std::byte> batchTableJsonData = pntsBinary.subspan(
           static_cast<size_t>(batchTableStart),
           header.batchTableJsonByteLength);
       batchTableJson = parseBatchTableJson(batchTableJsonData, parsedContent);
     }
 
-    const gsl::span<const std::byte> featureTableBinaryData =
+    const std::span<const std::byte> featureTableBinaryData =
         pntsBinary.subspan(
             static_cast<size_t>(
                 headerLength + header.featureTableJsonByteLength),
             header.featureTableBinaryByteLength);
 
-    gsl::span<const std::byte> batchTableBinaryData;
+    std::span<const std::byte> batchTableBinaryData;
     if (header.batchTableBinaryByteLength > 0) {
       batchTableBinaryData = pntsBinary.subspan(
           static_cast<size_t>(
@@ -1605,30 +1599,32 @@ void convertPntsContentToGltf(
       // values, then dracoBatchTableBinary will contain both the original
       // batch table binary and the Draco decoded values.
       batchTableBinaryData =
-          gsl::span<const std::byte>(parsedContent.dracoBatchTableBinary);
+          std::span<const std::byte>(parsedContent.dracoBatchTableBinary);
     }
 
-    result.errors.merge(BatchTableToGltfStructuralMetadata::convertFromPnts(
-        featureTableJson,
-        batchTableJson,
-        batchTableBinaryData,
-        result.model.value()));
+    if (result.model) {
+      result.errors.merge(BatchTableToGltfStructuralMetadata::convertFromPnts(
+          featureTableJson,
+          batchTableJson,
+          batchTableBinaryData,
+          result.model.value()));
+    }
   }
 }
 } // namespace
 
-GltfConverterResult PntsToGltfConverter::convert(
-    const gsl::span<const std::byte>& pntsBinary,
-    const CesiumGltfReader::GltfReaderOptions& /*options*/) {
+CesiumAsync::Future<GltfConverterResult> PntsToGltfConverter::convert(
+    const std::span<const std::byte>& pntsBinary,
+    const CesiumGltfReader::GltfReaderOptions& /*options*/,
+    const AssetFetcher& assetFetcher) {
   GltfConverterResult result;
   PntsHeader header;
   uint32_t headerLength = 0;
   parsePntsHeader(pntsBinary, header, headerLength, result);
-  if (result.errors) {
-    return result;
+  if (!result.errors) {
+    convertPntsContentToGltf(pntsBinary, header, headerLength, result);
   }
 
-  convertPntsContentToGltf(pntsBinary, header, headerLength, result);
-  return result;
+  return assetFetcher.asyncSystem.createResolvedFuture(std::move(result));
 }
 } // namespace Cesium3DTilesContent

@@ -9,14 +9,21 @@
 #include "InstancesGroup.h"
 #include "Config.h"
 #include "../Singleton/singleton.h"
+#include "../Tools/LockableObject.h"
+#include <mutex>
 
-namespace SDK::Core
+namespace AdvViz::SDK
 {
 	class InstancesGroup::Impl
 	{
 	public:
-		std::string id_;
+		RefID id_;
 		std::string name_;
+		std::optional<std::string> type_;
+		std::optional<RefID> splineId_;
+		Tools::LockableObject<
+			IInstancesGroup::InstanceList
+			, std::mutex > intances_;
 		Impl() {}
 	};
 
@@ -31,17 +38,22 @@ namespace SDK::Core
 		return *impl_;
 	}
 
-	const std::string& InstancesGroup::GetId()
+	const InstancesGroup::Impl& InstancesGroup::GetImpl() const
+	{
+		return *impl_;
+	}
+
+	const RefID& InstancesGroup::GetId() const
 	{
 		return GetImpl().id_;
 	}
 
-	void InstancesGroup::SetId(const std::string& id)
+	void InstancesGroup::SetId(const RefID& id)
 	{
 		GetImpl().id_ = id;
 	}
 
-	const std::string& InstancesGroup::GetName()
+	const std::string& InstancesGroup::GetName() const
 	{
 		return GetImpl().name_;
 	}
@@ -49,6 +61,47 @@ namespace SDK::Core
 	void InstancesGroup::SetName(const std::string& name)
 	{
 		GetImpl().name_ = name;
+	}
+
+	void InstancesGroup::SetType(const std::string& type)
+	{
+		GetImpl().type_ = type;
+	}
+
+	const std::string& InstancesGroup::GetType() const
+	{
+		if (GetImpl().type_.has_value())
+			return GetImpl().type_.value();
+		static std::string empty;
+		return empty;
+	}
+
+	void InstancesGroup::SetLinkedSplineId(const RefID& splineId)
+	{
+		GetImpl().splineId_ = splineId;
+	}
+
+	const std::optional<RefID>& InstancesGroup::GetLinkedSplineId() const
+	{
+		return GetImpl().splineId_;
+	}
+
+	IInstancesGroup::InstanceList InstancesGroup::GetInstances()
+	{
+		Tools::AutoLockObject<decltype(GetImpl().intances_)> lockedInstanceList(GetImpl().intances_);
+		return lockedInstanceList.Get();
+	}
+
+	void InstancesGroup::AddInstance(const std::weak_ptr<IInstance>& inst)
+	{
+		Tools::AutoLockObject<decltype(GetImpl().intances_)> lockedInstanceList(GetImpl().intances_);
+		lockedInstanceList.Get().insert(inst);
+	}
+
+	void InstancesGroup::RemoveInstance(const std::weak_ptr<IInstance>& inst)
+	{
+		Tools::AutoLockObject<decltype(GetImpl().intances_)> lockedInstanceList(GetImpl().intances_);
+		lockedInstanceList.Get().erase(inst);
 	}
 
 	template<>

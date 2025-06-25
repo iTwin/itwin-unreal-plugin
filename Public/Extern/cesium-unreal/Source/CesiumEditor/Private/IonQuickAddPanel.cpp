@@ -1,4 +1,4 @@
-// Copyright 2020-2021 CesiumGS, Inc. and Contributors
+// Copyright 2020-2024 CesiumGS, Inc. and Contributors
 
 #include "IonQuickAddPanel.h"
 #include "Cesium3DTileset.h"
@@ -8,7 +8,9 @@
 #include "CesiumIonRasterOverlay.h"
 #include "CesiumIonServer.h"
 #include "CesiumRuntimeSettings.h"
+THIRD_PARTY_INCLUDES_START
 #include "CesiumUtility/Uri.h"
+THIRD_PARTY_INCLUDES_END
 #include "Editor.h"
 #include "PropertyCustomizationHelpers.h"
 #include "SelectCesiumIonToken.h"

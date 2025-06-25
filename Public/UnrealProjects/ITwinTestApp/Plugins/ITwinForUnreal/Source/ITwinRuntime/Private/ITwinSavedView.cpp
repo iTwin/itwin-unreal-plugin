@@ -13,19 +13,34 @@
 #include <ITwinWebServices/ITwinWebServices.h>
 #include <HttpModule.h>
 #include <Kismet/KismetMathLibrary.h>
-#include <Components/TimelineComponent.h>
-#include <Curves/CurveFloat.h>
 #include <Engine/World.h>
 #include <GameFramework/Pawn.h>
 #include <GameFramework/PlayerController.h>
+#include "Camera/CameraComponent.h"
 #include <Kismet/GameplayStatics.h>
 #include <ITwinIModel.h>
 #include <ITwinIModelInternals.h>
+#include <Camera/CameraActor.h>
+#include <ImageUtils.h>
+#include <Misc/Base64.h>
+#include <Misc/FileHelper.h>
+#include <UObject/UObjectIterator.h>
+#include <TimerManager.h>
+#include <UObject/StrongObjectPtr.h>
 
 #if WITH_EDITOR
 	#include "Editor.h"
 	#include "LevelEditorViewport.h"
 #endif // WITH_EDITOR
+
+#include <Compil/BeforeNonUnrealIncludes.h>
+#	include <Core/Tools/Log.h>
+#include <Compil/AfterNonUnrealIncludes.h>
+
+namespace ITwinSavedView
+{
+	FTimerHandle TimerHandle;
+}
 
 class AITwinSavedView::FImpl
 {
@@ -42,33 +57,10 @@ public:
 	FSavedView SavedViewData;
 	bool bSavedViewTransformIsSet = false;
 	EPendingOperation PendingOperation = EPendingOperation::None;
-	UTimelineComponent* TimelineComponent = nullptr;
-	UCurveFloat* CurveFloat = nullptr;
-	FVector StartPos;
-	FRotator StartRot;
-	std::function<void(FVector const&, FRotator const&)> OnMoveToSavedViewTick;
 
 	FImpl(AITwinSavedView& InOwner)
 		: Owner(InOwner)
 	{
-		TimelineComponent = Owner.CreateDefaultSubobject<UTimelineComponent>(TEXT("TimelineComponent"));
-		TimelineComponent->SetLooping(false);
-		TimelineComponent->PrimaryComponentTick.bCanEverTick = true;
-		TimelineComponent->bTickInEditor = true;
-		FOnTimelineFloat TimelineTickDelegate;
-		TimelineTickDelegate.BindUFunction(&Owner, "OnTimelineTick");
-		CurveFloat = NewObject<UCurveFloat>();
-		CurveFloat->FloatCurve.UpdateOrAddKey(0.f, 0.f);
-		CurveFloat->FloatCurve.UpdateOrAddKey(1.f, 1.f);
-		TimelineComponent->AddInterpFloat(CurveFloat, TimelineTickDelegate);
-		TimelineComponent->SetTimelineLengthMode(ETimelineLengthMode::TL_TimelineLength);
-	}
-	void WillMoveToSavedViewFrom(FVector const& InStartPos, FRotator const& InStartRot,
-		std::function<void(FVector const&, FRotator const&)> const& InOnMoveToSavedViewTick)
-	{
-		StartPos = InStartPos;
-		StartRot = InStartRot;
-		OnMoveToSavedViewTick = InOnMoveToSavedViewTick;
 	}
 	void DestroyChildren()
 	{
@@ -92,38 +84,39 @@ public:
 			OwnerIModel->Synchro4DSchedules->Pause();
 		}
 	}
+	void StartCameraMovementToSavedView(float& OutBlendTime, ACameraActor*& Actor, const FTransform& Transform, float BlendTime)
+	{
+		AITwinIModel* IModel = Cast<AITwinIModel>(Owner.GetOwner());
+		if (!ensure(IModel != nullptr))
+			return;
+		OutBlendTime = BlendTime;
+		TObjectIterator<APlayerController> Itr;
+		ensure(*Itr != nullptr);
+		APlayerController* PlayerController = *Itr;
+		Actor = Itr->GetWorld()->SpawnActor<ACameraActor>(ACameraActor::StaticClass(), Transform);
+		Actor->GetCameraComponent()->SetConstraintAspectRatio(false);
+		PlayerController->SetViewTargetWithBlend(Actor, BlendTime, VTBlend_Linear, 0, true);
+	}
+
+	void EndCameraMovement(ACameraActor* Actor, const FTransform& Transform)
+	{
+		Actor->Destroy();
+		TObjectIterator<APlayerController> Itr;
+		ensure(*Itr != nullptr);
+		APlayerController* PlayerController = *Itr;
+		PlayerController->GetPawnOrSpectator()->SetActorLocation(Transform.GetLocation(),
+			false, nullptr, ETeleportType::TeleportPhysics);
+		FRotator Rot = Transform.Rotator();
+		PlayerController->SetControlRotation(Rot);
+		PlayerController->GetPawnOrSpectator()->SetActorRotation(Rot);
+		PlayerController->SetViewTargetWithBlend(PlayerController->GetPawnOrSpectator());
+	}
 };
 
 AITwinSavedView::AITwinSavedView()
 	: Impl(MakePimpl<FImpl>(*this))
 {
 	SetRootComponent(CreateDefaultSubobject<USceneComponent>(TEXT("root")));
-}
-
-#if WITH_EDITOR
-bool AITwinSavedView::IsMovingToSavedView() const
-{
-	return Impl->TimelineComponent->IsPlaying();
-}
-#endif // WITH_EDITOR
-
-void AITwinSavedView::OnTimelineTick(const float& Output)
-{
-	auto const TickPos = UKismetMathLibrary::VLerp(Impl->StartPos, GetActorLocation(), Output);
-	auto const TickRot = UKismetMathLibrary::RLerp(Impl->StartRot, GetActorRotation(), Output, true);
-	if (Impl->OnMoveToSavedViewTick)
-	{
-		Impl->OnMoveToSavedViewTick(TickPos, TickRot);
-	}
-	else if (GetWorld() && GetWorld()->GetFirstPlayerController()
-		&& GetWorld()->GetFirstPlayerController()->GetPawn())
-	{
-		GetWorld()->GetFirstPlayerController()->GetPawn()->SetActorLocation(
-			TickPos, false, nullptr, ETeleportType::TeleportPhysics);
-		GetWorld()->GetFirstPlayerController()->SetControlRotation(TickRot);
-	}
-	if (1.f == Output)
-		Impl->ApplyScheduleTime();
 }
 
 void AITwinSavedView::OnSavedViewDeleted(bool bSuccess, FString const& InSavedViewId, FString const& Response)
@@ -145,12 +138,9 @@ void AITwinSavedView::OnSavedViewDeleted(bool bSuccess, FString const& InSavedVi
 	}
 }
 
-/*static*/ void AITwinSavedView::HideElements(const UObject* WorldContextObject, FSavedView const& SavedView)
+/*static*/ void AITwinSavedView::HideElements(AITwinIModel* iModel, FSavedView const& SavedView)
 {
-	if (!IsValid(WorldContextObject))
-		return;
-	AITwinIModel* const iModel = Cast<AITwinIModel>(UGameplayStatics::GetActorOfClass(WorldContextObject->GetWorld(), AITwinIModel::StaticClass()));
-	if (!iModel)
+	if (!IsValid(iModel))
 		return;
 	TArray<FString> allHiddenIds;
 	allHiddenIds.Append(SavedView.HiddenElements);
@@ -225,7 +215,7 @@ void AITwinSavedView::UpdateSavedView()
 		BE_LOGE("ITwinAPI", "ITwinSavedView has no SavedViewId");
 		return;
 	}
-	if (CheckServerConnection() != SDK::Core::EITwinAuthStatus::Success)
+	if (CheckServerConnection() != AdvViz::SDK::EITwinAuthStatus::Success)
 	{
 		// No authorization yet: postpone the actual update (see UpdateOnSuccessfulAuthorization)
 		return;
@@ -234,6 +224,42 @@ void AITwinSavedView::UpdateSavedView()
 	{
 		WebServices->GetSavedView(SavedViewId);
 	}
+}
+
+void AITwinSavedView::UpdateThumbnail(const FString& FullFilePath)
+{
+	FString prefixURL = TEXT("data:image/png;base64,");
+	TArray<uint8> RawBuffer;
+	if (!FFileHelper::LoadFileToArray(RawBuffer, *FullFilePath))
+	{
+		return;
+	}
+	FString ThumbnailURL = FBase64::Encode(RawBuffer);
+	UpdateWebServices();
+	if (WebServices)
+		WebServices->UpdateSavedViewThumbnail(SavedViewId, prefixURL + ThumbnailURL);
+}
+
+void AITwinSavedView::GetThumbnail()
+{
+	UpdateWebServices();
+	if (WebServices)
+		WebServices->GetSavedViewThumbnail(SavedViewId);
+}
+
+void AITwinSavedView::OnSavedViewThumbnailRetrieved(bool bSuccess, FString const& InSavedViewId,
+	TArray<uint8> const& Buffer)
+{
+	if (!bSuccess)
+		return;
+
+	UTexture2D* Tex2D = FImageUtils::ImportBufferAsTexture2D(Buffer);
+	RetrievedThumbnail.Broadcast(SavedViewId, Tex2D);
+}
+
+void AITwinSavedView::OnSavedViewThumbnailUpdated(bool bSuccess, FString const& InSavedViewId, FString const& Response)
+{
+
 }
 
 void AITwinSavedView::MoveToSavedView()
@@ -254,8 +280,18 @@ void AITwinSavedView::MoveToSavedView()
 		{
 			checkSlow(GetWorld()->GetFirstPlayerController() == Controller && Controller->GetPawn() == Pawn);
 			auto StartRot = Pawn->GetActorRotation();
-			Impl->WillMoveToSavedViewFrom(Pawn->GetActorLocation(), Pawn->GetActorRotation(), {});
-			Impl->TimelineComponent->PlayFromStart();
+			float BlendTime;
+			ACameraActor* Actor;
+			FTransform Transform(GetActorRotation(), GetActorLocation());
+			Impl->StartCameraMovementToSavedView(BlendTime, Actor, Transform, 3);
+			GetWorldTimerManager().SetTimer(ITwinSavedView::TimerHandle, FTimerDelegate::CreateLambda([=, this, _ = TStrongObjectPtr<AITwinSavedView>(this)]
+				{
+					if (!Impl || !IsValid(this))
+						return;
+					Impl->EndCameraMovement(Actor, Transform);
+					Impl->ApplyScheduleTime();
+					FinishedMovingToSavedView.Broadcast();
+				}), BlendTime, false);
 		}
 		else // no Pawn (nor Controller): we're probably in the Editor
 		{
@@ -291,7 +327,8 @@ void AITwinSavedView::MoveToSavedView()
 			}
 		#endif // WITH_EDITOR
 		}
-		HideElements(GetWorld(), Impl->SavedViewData);
+		AITwinIModel* const iModel = Cast<AITwinIModel>(GetAttachParentActor());
+		HideElements(iModel, Impl->SavedViewData);
 	}
 	else // fetch the saved view data before we can move to it
 	{
@@ -333,10 +370,17 @@ void AITwinSavedView::RenameSavedView()
 	AITwinIModel* OwnerIModel = Cast<AITwinIModel>(GetOwner());
 	if (!OwnerIModel)
 		return;
-	FSavedView const CurrentSV = UITwinUtilityLibrary::GetSavedViewFromUnrealTransform(OwnerIModel,
+	FSavedView CurrentSV = UITwinUtilityLibrary::GetSavedViewFromUnrealTransform(OwnerIModel,
 		// Not GetActorTransform? To skip scaling?
 		FTransform(GetActorRotation(), GetActorLocation()));
-
+	UITwinSynchro4DSchedules* Synchro4DSchedules = OwnerIModel->Synchro4DSchedules;
+	if (ensure(Synchro4DSchedules != nullptr) && !(Synchro4DSchedules->ScheduleId.IsEmpty() || Synchro4DSchedules->ScheduleId.StartsWith(TEXT("Unknown"))))
+	{
+		//get current time of animation if any
+		const auto& currentTime = Synchro4DSchedules->GetScheduleTime();
+		CurrentSV.DisplayStyle.RenderTimeline = "0x20000003cda"; //fake Id for now
+		CurrentSV.DisplayStyle.TimePoint = currentTime.ToUnixTimestamp();
+	}
 	UpdateWebServices();
 	if (WebServices && !DisplayName.IsEmpty())
 	{

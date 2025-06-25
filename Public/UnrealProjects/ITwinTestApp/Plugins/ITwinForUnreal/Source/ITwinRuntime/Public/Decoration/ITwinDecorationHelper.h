@@ -23,11 +23,17 @@
 
 class FDecorationAsyncIOHelper;
 class FViewport;
+class AITwinIModel;
 class AITwinPopulation;
+class AITwinPopulationWithPath;
+class AITwinKeyframePath;
+class AITwinSplineTool;
+class AITwinSplineHelper;
 
-namespace SDK::Core {
+namespace AdvViz::SDK {
 	struct ITwinAtmosphereSettings;
 	struct ITwinSceneSettings;
+	class RefID;
 }
 
 struct ITwinSceneInfo
@@ -50,6 +56,7 @@ enum class EITwinDecorationClientMode : uint8
 	AdvVizApp,
 };
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnDecorationIOStartStop, bool, bStart);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnDecorationIODone, bool, bSuccess);
 
 UCLASS()
@@ -59,7 +66,7 @@ class ITWINRUNTIME_API AITwinDecorationHelper : public AActor
 
 public:
 
-	class SaveLocker
+	class [[nodiscard]] SaveLocker
 	{
 	protected:
 		SaveLocker();
@@ -84,6 +91,12 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FOnDecorationIODone OnSceneLoaded;
 
+	UPROPERTY(BlueprintAssignable)
+	FOnDecorationIOStartStop OnSceneLoadingStartStop;
+
+	UPROPERTY(BlueprintAssignable)
+	FOnDecorationIODone OnSplinesLoaded;
+
 	/** Delegate when decoration is fully loaded. */
 	FSimpleMulticastDelegate OnDecorationLoaded;
 
@@ -102,10 +115,10 @@ public:
 
 	//! Set information about the associated iTwin/iModel
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
-	void SetLoadedITwinInfo(FITwinLoadInfo InLoadedSceneInfo);
+	void SetLoadedITwinId(FString InLoadedSceneId);
 
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
-	FITwinLoadInfo GetLoadedITwinInfo() const;
+	FString GetLoadedITwinId() const;
 
 
 	//! Start loading the decoration attached to current model, if any (asynchronous).
@@ -114,8 +127,13 @@ public:
 		BlueprintCallable)
 	void LoadDecoration();
 
+	void LoadIModelMaterials(AITwinIModel& IModel);
+
 	//! Returns true if the loading of a decoration is in progress.
 	bool IsLoadingDecoration() const;
+
+	//! Returns true if the loading of a scene is in progress.
+	bool IsLoadingScene() const;
 
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
 	bool IsPopulationEnabled() const;
@@ -134,45 +152,70 @@ public:
 	bool ShouldSaveDecoration(bool bPromptUser = true) const;
 
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
-	void SaveDecorationOnExit();
-
-	UFUNCTION(Category = "iTwin", BlueprintCallable)
-	void BeforeCloseLevel();
+	void SaveDecorationOnExit(bool bPromptUser = true);
 
 	//! Permanently deletes all material customizations for current model (cannot be undone!)
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
 	void DeleteAllCustomMaterials();
 
-	AITwinPopulation* GetPopulation(FString assetPath) const;
-	AITwinPopulation* GetOrCreatePopulation(FString assetPath) const;
-	int32 GetPopulationInstanceCount(FString assetPath) const;
+	AITwinPopulation* GetPopulation(FString assetPath, const AdvViz::SDK::RefID& groupId) const;
+	AITwinKeyframePath* CreateKeyframePath() const;
+	AITwinPopulation* CreatePopulation(FString assetPath, const AdvViz::SDK::RefID& groupId) const;
+	AITwinPopulation* GetOrCreatePopulation(FString assetPath, const AdvViz::SDK::RefID& groupId) const;
+	int32 GetPopulationInstanceCount(FString assetPath, const AdvViz::SDK::RefID& groupId) const;
+	AdvViz::SDK::RefID GetStaticInstancesGroupId() const;
+	AdvViz::SDK::RefID GetInstancesGroupIdForSpline(const AITwinSplineHelper& Spline) const;
 
-	SDK::Core::ITwinAtmosphereSettings GetAtmosphereSettings() const;
-	void SetAtmosphereSettings(const SDK::Core::ITwinAtmosphereSettings&) const;
+	AdvViz::SDK::ITwinAtmosphereSettings GetAtmosphereSettings() const;
+	void SetAtmosphereSettings(const AdvViz::SDK::ITwinAtmosphereSettings&) const;
 
-	SDK::Core::ITwinSceneSettings GetSceneSettings() const;
-	void SetSceneSettings(const SDK::Core::ITwinSceneSettings& as) const;
+	AdvViz::SDK::ITwinSceneSettings GetSceneSettings() const;
+	void SetSceneSettings(const AdvViz::SDK::ITwinSceneSettings& as) const;
 
-	ITwinSceneInfo GetSceneInfo(EITwinModelType ct, const FString& id) const;
-	void SetSceneInfo(EITwinModelType ct, const FString& id,const  ITwinSceneInfo&) const;
-	void DeleteLoadedScene();
+	using ModelIdentifier = ITwin::ModelDecorationIdentifier;
+
+	ITwinSceneInfo GetSceneInfo(const ModelIdentifier& Key) const;
+
+	inline ITwinSceneInfo GetSceneInfo(EITwinModelType ct, const FString& id) const {
+		return GetSceneInfo(std::make_pair(ct, id));
+	}
+	void SetSceneInfo(const ModelIdentifier& Key, const ITwinSceneInfo&) const;
+
+	inline void SetSceneInfo(EITwinModelType ct, const FString& id, const ITwinSceneInfo& InInfo) const {
+		SetSceneInfo(std::make_pair(ct, id), InInfo);
+	}
+	void CreateLinkIfNeeded(EITwinModelType ct, const FString& id) const;
+	bool DeleteLoadedScene(); //if false, abort 
+	void RemoveComponent(EITwinModelType ct, const FString& id) const;
+
+	void ConnectSplineToolToSplinesManager(AITwinSplineTool* splineTool);
 
 	// return link identifiers found in scene
-	std::vector<std::pair<EITwinModelType, FString>> GetLinkedElements() const;
+	std::vector<ITwin::ModelLink> GetLinkedElements() const;
 
 	[[nodiscard]] std::shared_ptr<SaveLocker> LockSave();
+	bool IsSaveLocked();
+
+	void OverrideOnSceneClose(bool bOverride) { bOverrideOnSceneClose_ = bOverride; }
+
+	void SetHomeCamera(const FTransform&);
+	FTransform GetHomeCamera() const;
+
+	FString GetSceneID() const;
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
-
 
 private:
 	UFUNCTION()
 	void OnIModelLoaded(bool bSuccess, FString StringId);
 	UFUNCTION()
-	void OnRealityDatalLoaded(bool bSuccess, FString StringId);
+	void OnRealityDataLoaded(bool bSuccess, FString StringId);
 	void OnCloseRequested(FViewport* Viewport);
 
+	// Enabled/disables windows system FMessageDialog so that it can be replaced with an Unreal widget
+	bool bOverrideOnSceneClose_ = false;
 
 	class FImpl;
 	TPimplPtr<FImpl> Impl;
@@ -182,4 +225,6 @@ private:
 
 	void Lock(SaveLockerImpl*);
 	void Unlock(SaveLockerImpl*);
+	
+
 };

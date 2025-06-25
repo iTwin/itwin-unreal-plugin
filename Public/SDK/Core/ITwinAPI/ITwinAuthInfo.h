@@ -19,7 +19,7 @@
 #endif
 
 
-MODULE_EXPORT namespace SDK::Core
+MODULE_EXPORT namespace AdvViz::SDK
 {
 	struct ITwinAuthInfo
 	{

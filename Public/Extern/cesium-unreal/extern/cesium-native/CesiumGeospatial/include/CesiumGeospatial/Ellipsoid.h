@@ -1,13 +1,28 @@
 #pragma once
 
-#include "Cartographic.h"
-#include "Library.h"
-
+#include <CesiumGeospatial/Cartographic.h>
+#include <CesiumGeospatial/Library.h>
 #include <CesiumUtility/Math.h>
 
 #include <glm/vec3.hpp>
 
 #include <optional>
+
+// The comments are copied here so that the doc comment always shows up in
+// Intellisense whether the default is toggled or not.
+#ifndef CESIUM_DISABLE_DEFAULT_ELLIPSOID
+// To keep from breaking our API, a lot of things now need default Ellipsoid
+// parameters. However, we shouldn't rely on these defaults internally, so
+// disabling them is a good way to get a compile-time check that they're not
+// being used. This macro allows us to toggle this check.
+#define CESIUM_DEFAULT_ELLIPSOID = CesiumGeospatial::Ellipsoid::WGS84
+#else
+// To keep from breaking our API, a lot of things now need default Ellipsoid
+// parameters. However, we shouldn't rely on these defaults internally, so
+// disabling them is a good way to get a compile-time check that they're not
+// being used. This macro allows us to toggle this check.
+#define CESIUM_DEFAULT_ELLIPSOID
+#endif
 
 namespace CesiumGeospatial {
 
@@ -18,6 +33,8 @@ namespace CesiumGeospatial {
  * 1`. This is primarily used by Cesium to represent the shape of planetary
  * bodies. Rather than constructing this object directly, one of the provided
  * constants is normally used.
+ *
+ * @see \ref what-is-an-ellipsoid
  */
 class CESIUMGEOSPATIAL_API Ellipsoid final {
 public:
@@ -29,6 +46,11 @@ public:
    * https://earth-info.nga.mil/GandG/publications/tr8350.2/wgs84fin.pdf.
    */
   static /*constexpr*/ const Ellipsoid WGS84;
+
+  /**
+   * @brief An Ellipsoid with all three radii set to one meter.
+   */
+  static const Ellipsoid UNIT_SPHERE;
 
   /**
    * @brief Creates a new instance.
@@ -118,6 +140,17 @@ public:
    */
   std::optional<glm::dvec3>
   scaleToGeodeticSurface(const glm::dvec3& cartesian) const noexcept;
+
+  /**
+   * @brief Scales the provided cartesian position along the geocentric
+   * surface normal so that it is on the surface of this ellipsoid.
+   *
+   * @param cartesian The cartesian position to scale.
+   * @returns The scaled position, or the empty optional if the cartesian is at
+   * the center of this ellipsoid.
+   */
+  std::optional<glm::dvec3>
+  scaleToGeocentricSurface(const glm::dvec3& cartesian) const noexcept;
 
   /**
    * @brief The maximum radius in any dimension.

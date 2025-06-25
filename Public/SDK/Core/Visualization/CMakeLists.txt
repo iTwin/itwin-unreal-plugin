@@ -1,5 +1,10 @@
 
-add_library(Visualization STATIC
+set(libtype STATIC)
+if (ADVVIZDLL)
+    set(libtype SHARED)
+endif()
+
+add_library(Visualization ${libtype} 
 		Visualization.h
 		Decoration.h
 		Decoration.cpp
@@ -13,26 +18,50 @@ add_library(Visualization STATIC
 		InstancesManager.cpp
 		MaterialPersistence.cpp
 		MaterialPersistence.h
-		ScenePersistence.cpp
+		ScenePersistenceDS.cpp
+		ScenePersistenceDS.h
 		ScenePersistence.h
+		ScenePersistenceAPI.cpp
+		ScenePersistenceAPI.h
 		TextureKey.h
+		TextureUsage.h
+		Spline.h
+		Spline.cpp
+		SplinesManager.h
+		SplinesManager.cpp
 		Timeline.cpp
 		Timeline.h
+		KeyframeAnimation.h
+		KeyframeAnimation.cpp 
+		KeyframeAnimator.h
+		KeyframeAnimator.cpp 
+		RefID.h
+		RefID.cpp
 )
 target_compile_features(Visualization PRIVATE ${DefaultCXXSTD})
 target_link_libraries(Visualization PUBLIC
 						ITwinAPI
 						Network
 						Tools
-					 )
-target_link_libraries(Visualization PRIVATE
-						fmt::fmt-header-only
 						Singleton
 					 )
+target_link_libraries(Visualization PRIVATE
+						${ADVVIZ_FMT_DEP}
+						reflectcpp::reflectcpp
+					 )
+if (MSVC)
+	target_compile_options(Visualization PRIVATE /utf-8) # Needed for "fmt" lib when ADVVIZ_FMT_DEP is empty.
+endif ()
 set_target_properties(Visualization PROPERTIES FOLDER "SDK/Core") 
 
 if(SDK_ADDUNITTEST)
-	add_executable(VisualizationTest VisualizationTest.cpp)
+	add_executable(VisualizationTest 
+		Tests/VisualizationTest.cpp 
+		Tests/VizKeyframeTests.cpp
+		Tests/SceneAPITest.cpp
+		Tests/Mock.h
+		Tests/RefIDTest.cpp
+	)
 	target_compile_features(VisualizationTest PRIVATE ${DefaultCXXSTD})
 	target_compile_definitions(VisualizationTest PRIVATE "CMAKE_SOURCE_DIR=\"${CMAKE_SOURCE_DIR}\"")
 
@@ -40,16 +69,30 @@ if(SDK_ADDUNITTEST)
 
 	#add_test(NAME VisualizationTest COMMAND VisualizationTest)
 
+	if (MSVC AND DEFINED fmt_LIB_DIR ) # quick fix for link error when embedded in Unreal
+		set ( fmt_lib "${fmt_LIB_DIR}fmt.lib" )
+	else ()
+		set ( fmt_lib "${ADVVIZ_FMT_DEP}" )
+	endif()
 	target_link_libraries(VisualizationTest PRIVATE 
 							Visualization
+							${fmt_lib}
 							httpmockserver
 							Catch2::Catch2WithMain
 						)
+	if (SINGLETONDLL)
+		add_custom_command(TARGET VisualizationTest POST_BUILD
+			COMMAND ${CMAKE_COMMAND} -E copy
+				$<TARGET_FILE:Singleton>
+				$<TARGET_FILE_DIR:VisualizationTest>)
+	endif()
 
-	add_custom_command(TARGET VisualizationTest POST_BUILD
-		COMMAND ${CMAKE_COMMAND} -E copy
-			$<TARGET_FILE:Singleton>
-			$<TARGET_FILE_DIR:VisualizationTest>)
+	if (ADVVIZDLL)
+		add_custom_command(TARGET VisualizationTest POST_BUILD
+			COMMAND ${CMAKE_COMMAND} -E copy
+				$<TARGET_FILE:Visualization>
+				$<TARGET_FILE_DIR:VisualizationTest>)
+	endif()
 
 	if (MSVC)
 		target_compile_options(VisualizationTest PRIVATE "/Zc:preprocessor")

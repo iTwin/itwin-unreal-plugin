@@ -16,6 +16,7 @@
 #include <boost/mpl/set.hpp>
 #include <boost/mpl/front.hpp>
 #include <BeUtils/Gltf/GltfBuilder.h>
+#include <BeUtils/Misc/RWLock.h>
 #include <rapidjson/document.h>
 #include <SDK/Core/Tools/Assert.h>
 
@@ -119,12 +120,24 @@ inline bool MaterialUsingTextures(CesiumGltf::Material const& material)
 	return false;
 }
 
-//! Rules with additional precomputed derived data.
-struct GltfTunerRulesEx: GltfTuner::Rules
+/// These versions are only compared to other GltfTunerVersions (or the derived GltfTunerRulesEx) versions,
+/// not to actual tuner versions, so they don't really need to be initialized to GltfTuner::initialVersion
+/// like the tuner's version. But to avoid confusion, I think it's better to have the same initial value.
+struct GltfTunerVersions
 {
-	int version_ = 0; //! Used to detect if we should recompute derived data.
+	//! Used to detect if we should recompute material-related derived data.
+	int materialRulesVersion_ = GltfTuner::initialVersion;
+	//! Used to detect if we should recompute 4D animation related derived data.
+	int anim4DRulesVersion_ = GltfTuner::initialVersion;
+};
+
+//! Rules with additional precomputed derived data.
+struct GltfTunerRulesEx : public GltfTunerVersions
+{
+	int version_ = GltfTuner::initialVersion; //< Comparable to Cesium3DTilesSelection::GltfTuner::currentVersion
+	GltfTuner::Rules tuningRules_;
 	//! Maps each element ID to the index of its containing group.
-	std::unordered_map<uint64_t, size_t> elementToGroup_;
+	std::unordered_map<uint64_t, std::pair<size_t, size_t>> elementToGroups_;
 };
 
 class GltfTunerHelper : public GltfMaterialTuner
@@ -134,8 +147,14 @@ public:
 	//! ClusterId is used as a key to identify in which cluster a piece (triangle etc.) should be added.
 	struct ClusterId
 	{
-		int32_t material_ = -1; // gltf material ID (refers to the material exported by the MeshExp service)
-		std::optional<uint64_t> itwinMaterialID_; // iTwin material ID (if provided as meta-data by the MeshExp service)
+		/// gltf material ID (refers to the material exported by the Mesh Export service)
+		int32_t material_ = -1;
+		/// iTwin material ID (if provided as meta-data by the Mesh Export service)
+		std::optional<uint64_t> itwinMaterialID_;
+		/// identifier for Synchro4D-related groups (see anim4DGroups_): when set but empty, by convention,
+		/// it means the "translucent non-transformed Elements group", otherwise it's a list of possibly
+		/// negated timeline indices (again, see doc on anim4DGroups_ for details and rationale).
+		std::optional<Anim4DId> anim4DIds_;
 		int32_t mode_ = CesiumGltf::MeshPrimitive::Mode::TRIANGLES;
 		bool hasNormal_ = false;
 		bool hasUV_ = false;
@@ -164,7 +183,7 @@ public:
 		decltype([](const auto& x){return boost::pfr::hash_fields(x);}),
 		boost::pfr::equal_to<>>;
 	const CesiumGltf::Model& model_; //!< The input model.
-	const GltfTunerRulesEx& rules_;
+	const GltfTunerRulesEx& rulesEx_;
 	const glm::dmat4& tileTransform_; //!< The tile transformation
 	using UInt64AccessorView = CesiumGltf::AccessorView<uint64_t>;
 	std::optional<UInt64AccessorView> elementPropertyTableView_;
@@ -172,12 +191,12 @@ public:
 
 
 	GltfTunerHelper(const CesiumGltf::Model& model,
-		const GltfTunerRulesEx& rules,
+		const GltfTunerRulesEx& rulesEx,
 		const std::shared_ptr<GltfMaterialHelper>& materialHelper,
 		const glm::dmat4& tileTransform)
 		: GltfMaterialTuner(materialHelper)
 		, model_(model)
-		, rules_(rules)
+		, rulesEx_(rulesEx)
 		, tileTransform_(tileTransform)
 	{
 	}
@@ -195,7 +214,7 @@ public:
 			for (size_t propertyTableIndex = startOffset; propertyTableIndex < structuralMetadataExtension->propertyTables.size(); ++propertyTableIndex)
 			{
 				const auto& propertyTable = structuralMetadataExtension->propertyTables[propertyTableIndex];
-				// Note the the table can be renamed at any time by the Mesh-Export Service team, so we
+				// Note that the table can be renamed at any time by the Mesh-Export Service team, so we
 				// no longer test it here (typically, it was "MeshPart" then "features" for iTwin features...
 				//	if (propertyTable.classProperty != classProperty)
 				//		continue;
@@ -483,11 +502,12 @@ private:
 		}
 	}
 	template<class _AccessorViews>
-	void ProcessPrimitive2(const CesiumGltf::MeshPrimitive& primitive, const PrimitiveExtraProperties& primProps,
-		ClusterList& clusters, const _AccessorViews& accessorViews)
+	void ProcessPrimitive2(const CesiumGltf::MeshPrimitive& primitive, 
+		const PrimitiveExtraProperties& primProps, ClusterList& clusters, const _AccessorViews& accessorViews)
 	{
 		// Retrieve the accessor views for attributes having fixed data type.
-		const CesiumGltf::AccessorView<std::array<float, 3>> positions(model_, primitive.attributes.find("POSITION")->second);
+		const CesiumGltf::AccessorView<std::array<float, 3>> positions(
+			model_, primitive.attributes.find("POSITION")->second);
 		const auto getView = [&](const std::string& attributeName, auto* unusedType)
 			{
 				const auto it = primitive.attributes.find(attributeName);
@@ -503,56 +523,67 @@ private:
 		// This function processes one "piece" (triangle, line...)
 		const auto processPiece = [&](const auto& indexIndices)
 			{
-				const bool hasFeatureId = accessorViews.featureIds_.status() == CesiumGltf::AccessorViewStatus::Valid;
+				constexpr size_t none = (size_t)-1;
+				const bool hasFeatureId =
+					accessorViews.featureIds_.status() == CesiumGltf::AccessorViewStatus::Valid;
 				// Get the element ID from the first vertex.
 				// We assume all the vertices of this piece have the same element ID.
-				const auto elementId = hasFeatureId ?
-					(*elementPropertyTableView_)[accessorViews.featureIds_[accessorViews.indices_[indexIndices[0]][0]][0]] :
-					0;
+				int64_t const firstFeatureId = hasFeatureId
+					? static_cast<int64_t>(accessorViews.featureIds_[accessorViews.indices_[indexIndices[0]][0]][0])
+					: 0;
+				const auto elementId = hasFeatureId ? (*elementPropertyTableView_)[firstFeatureId] : 0;
 				// Find the group (in the rules) that contains this element ID, if any.
-				const auto groupIt = rules_.elementToGroup_.find(elementId);
+				const auto groupIt = rulesEx_.elementToGroups_.find(elementId);
 
 				// Material IDs can now be combined with features
 				const bool hasMaterialFeatureId = primProps.hasMaterialFeatureId_;
 				BE_ASSERT(!hasMaterialFeatureId || (hasFeatureId && materialPropertyTableView_));
 
 				// Get the original material identifier in the iModel, if it was exported by the Mesh-Export
-				// Service (should be the case in 08/2024)
+				// Service (should be the case since 08/2024)
 				std::optional<uint64_t> itwinMatID;
-				if (groupIt == rules_.elementToGroup_.end())
+				int32_t material = -1;
+				if (groupIt == rulesEx_.elementToGroups_.end() || none == groupIt->second.first)
 				{
+					// For the material:
+					// - if the element ID is in a group, use this group's material,
+					// - otherwise, use the material of the primitive.
+					material = primitive.material;
 					if (hasMaterialFeatureId)
 					{
-						itwinMatID = (*materialPropertyTableView_)[accessorViews.featureIds_[accessorViews.indices_[indexIndices[0]][0]][0]];
+						itwinMatID = (*materialPropertyTableView_)[firstFeatureId];
 					}
 				}
 				else
 				{
-					itwinMatID = rules_.elementGroups_[groupIt->second].itwinMaterialID_;
+					auto& matGroup = rulesEx_.tuningRules_.materialGroups_[groupIt->second.first];
+					material = matGroup.material_;
+					itwinMatID = matGroup.itwinMaterialID_;
 				}
 				// We should only take the iTwin material into account for the final splitting if the rules
 				// say so:
 				std::optional<uint64_t> itwinMatIDForCluster;
-				if (itwinMatID
-					&& rules_.itwinMatIDsToSplit_.find(*itwinMatID) != rules_.itwinMatIDsToSplit_.cend())
+				if (itwinMatID && rulesEx_.tuningRules_.itwinMatIDsToSplit_.find(*itwinMatID)
+								!= rulesEx_.tuningRules_.itwinMatIDsToSplit_.cend())
 				{
 					itwinMatIDForCluster = itwinMatID;
 				}
 				// Find the cluster where this piece will be added.
 				auto& cluster = clusters[ClusterId{
-					// For the material:
-					// - if the element ID is in a group, use this group's material,
-					// - otherwise, use the material of the primitive.
-					groupIt == rules_.elementToGroup_.end() ? primitive.material :
-						rules_.elementGroups_[groupIt->second].material_,
-					itwinMatIDForCluster,
-					GetConvertedPrimitiveMode(primitive.mode),
-					normals.status() == CesiumGltf::AccessorViewStatus::Valid,
-					uvs.status() == CesiumGltf::AccessorViewStatus::Valid,
-					accessorViews.colors_.status() == CesiumGltf::AccessorViewStatus::Valid,
-					hasFeatureId,
-					hasMaterialFeatureId,
-					groupIt == rules_.elementToGroup_.end() ? -1 : (int)groupIt->second}];
+					.material_ = material,
+					.itwinMaterialID_ = itwinMatIDForCluster,
+					.anim4DIds_ = (groupIt == rulesEx_.elementToGroups_.end() || none == groupIt->second.second)
+						? std::optional<Anim4DId>{}
+						: rulesEx_.tuningRules_.anim4DGroups_[groupIt->second.second].ids_,
+					.mode_ = GetConvertedPrimitiveMode(primitive.mode),
+					.hasNormal_ = normals.status() == CesiumGltf::AccessorViewStatus::Valid,
+					.hasUV_ = uvs.status() == CesiumGltf::AccessorViewStatus::Valid,
+					.hasColor_ = (accessorViews.colors_.status() == CesiumGltf::AccessorViewStatus::Valid),
+					.hasFeatureId_ = hasFeatureId,
+					.hasMaterialFeatureId_ = hasMaterialFeatureId,
+					.elementGroupIndex_ =
+						(groupIt == rulesEx_.elementToGroups_.end()) ? -1 : (int)groupIt->second.first
+				}];
 				for (const auto indexIndex: indexIndices)
 				{
 					const auto index = accessorViews.indices_[indexIndex][0];
@@ -653,53 +684,102 @@ private:
 } // unnamed namespace
 
 
-
-class GltfTuner::Impl
+struct GltfTuner::Impl : public GltfTunerVersions
 {
-public:
-	Rules rules_;
-	int rulesVersion_ = 0; //! Used to detect if we should recompute rules derived data.
+	//! std::move'd to rulesEx_ when actually tuning and rulesVersion_ has changed, so don't reuse after that
+	Rules nextTuningRules_;
 	GltfTunerRulesEx rulesEx_;
-	// Tune() and SetRules() can be called by different threads
-	// (typically Tune() is called on a background thread),
-	// so we have to protect access to data used by both methods.
-	std::mutex mutex_;
+	//! Tune() and SetRules() can be called by different threads (typically Tune() is called on a background
+	//! thread), so we have to protect access to data used by both methods.
+	std::shared_mutex mutex_;
 
 	std::vector<ITwinMaterialInfo> itwinMaterials_;
 	std::shared_ptr<GltfMaterialHelper> materialHelper_;
+
+	void UpdateRulesIfNeeded(Cesium3DTilesSelection::GltfTuner const& tuner);
 };
 
-GltfTuner::GltfTuner()
-	:impl_(new Impl())
+GltfTuner::GltfTuner(bool const bTuneWithoutRules) : impl_(new Impl())
 {
+	if (bTuneWithoutRules && -1 == getCurrentVersion())
+		retune();
 }
 
+// Needed explicitly here so that impl_'s destruction occurs in the CPP where Impl is defined
 GltfTuner::~GltfTuner()
 {
 }
 
-CesiumGltf::Model GltfTuner::Tune(const CesiumGltf::Model& model,
-	const glm::dmat4& tileTransform, const glm::dvec4& rootTranslation)
+void GltfTuner::Impl::UpdateRulesIfNeeded(Cesium3DTilesSelection::GltfTuner const& tuner)
 {
+	BeUtils::WLock wlock(mutex_);
 	// Test if we should recompute rules derived data.
-	bool isRulesExOutdated = false;
+	bool newMatRules = false, newAnim4DRules = false;
+	if (tuner.getCurrentVersion() > rulesEx_.version_)
 	{
-		std::scoped_lock lock(impl_->mutex_);
-		if (impl_->rulesVersion_ > impl_->rulesEx_.version_)
+		if (materialRulesVersion_ > rulesEx_.materialRulesVersion_)
 		{
-			isRulesExOutdated = true;
-			impl_->rulesEx_.version_ = impl_->rulesVersion_;
-			(Rules&)impl_->rulesEx_ = impl_->rules_;
+			newMatRules = true;
+			rulesEx_.materialRulesVersion_ = materialRulesVersion_;
+			rulesEx_.tuningRules_.materialGroups_ = std::move(nextTuningRules_.materialGroups_);
+			rulesEx_.tuningRules_.itwinMatIDsToSplit_ =
+				std::move(nextTuningRules_.itwinMatIDsToSplit_);
 		}
-
-		if (isRulesExOutdated)
+		if (anim4DRulesVersion_ > rulesEx_.anim4DRulesVersion_)
 		{
-			impl_->rulesEx_.elementToGroup_.clear();
-			for (auto groupIndex = 0; groupIndex < impl_->rulesEx_.elementGroups_.size(); ++groupIndex)
-				for (const auto elementId : impl_->rulesEx_.elementGroups_[groupIndex].elements_)
-					impl_->rulesEx_.elementToGroup_[elementId] = groupIndex;
+			newAnim4DRules = true;
+			rulesEx_.anim4DRulesVersion_ = anim4DRulesVersion_;
+			rulesEx_.tuningRules_.anim4DGroups_ = std::move(nextTuningRules_.anim4DGroups_);
+		}
+		rulesEx_.version_ = tuner.getCurrentVersion();
+		constexpr size_t none = (size_t)-1;
+		auto& elemToGroups = rulesEx_.elementToGroups_;
+		if (newMatRules && newAnim4DRules) // clear all
+			elemToGroups.clear();
+		else if (newMatRules) // clear material group indices
+			std::for_each(elemToGroups.begin(), elemToGroups.end(),
+						  [](auto& groupIndices) { groupIndices.second.first = none; });
+		else if (newAnim4DRules) // clear anim4D group indices
+			std::for_each(elemToGroups.begin(), elemToGroups.end(),
+						  [](auto& groupIndices) { groupIndices.second.second = none; });
+		// remove useless (none;none) entries from the map
+		for (auto it = elemToGroups.begin(); it != elemToGroups.end();)
+			if (it->second == std::make_pair(none, none))
+				it = elemToGroups.erase(it);
+			else
+				++it;
+		// add/update mappings to material and/or anim4D groups
+		if (newMatRules)
+		{
+			auto const& matGrps = rulesEx_.tuningRules_.materialGroups_;
+			for (auto groupIndex = 0; groupIndex < matGrps.size(); ++groupIndex)
+				for (const auto elementId : matGrps[groupIndex].elements_)
+				{
+					auto known = rulesEx_.elementToGroups_
+						.try_emplace(elementId, std::make_pair(groupIndex, none));
+					if (!known.second) // was already in map
+						known.first->second.first = groupIndex;
+				}
+		}
+		if (newAnim4DRules)
+		{
+			auto const& anim4DGrps = rulesEx_.tuningRules_.anim4DGroups_;
+			for (auto groupIndex = 0; groupIndex < anim4DGrps.size(); ++groupIndex)
+				for (const auto elementId : anim4DGrps[groupIndex].elements_)
+				{
+					auto known = rulesEx_.elementToGroups_
+						.try_emplace(elementId, std::make_pair(none, groupIndex));
+					if (!known.second) // was already in map
+						known.first->second.second = groupIndex;
+				}
 		}
 	}
+}
+
+bool GltfTuner::Tune(const CesiumGltf::Model& model, const glm::dmat4& tileTransform,
+	const glm::dvec4& rootTranslation, CesiumGltf::Model& tunedModel)
+{
+	impl_->UpdateRulesIfNeeded(*this);
 	// Avoid numeric issues when computing fast UVs from positions, by compensating the (usually huge)
 	// translation of the model.
 	glm::dmat4x4 const tileTransform_shifted = tileTransform - glm::dmat4x4(
@@ -707,16 +787,54 @@ CesiumGltf::Model GltfTuner::Tune(const CesiumGltf::Model& model,
 		glm::dvec4(0.),
 		glm::dvec4(0.),
 		rootTranslation);
-	return GltfTunerHelper(model, impl_->rulesEx_, impl_->materialHelper_, tileTransform_shifted).Tune();
+	// Need to lock also during GltfTunerHelper::Tune(..), because several background cesium threads can call
+	// GltfTuner::Tune(..) at the same time! But here we only need a shared_lock, whereas UpdateRulesIfNeeded
+	// of course requires a unique_lock.
+	BeUtils::RLock rlock(impl_->mutex_);
+	int const curVer = getCurrentVersion();
+	if (-1 != curVer && model._tuneVersion < curVer)
+	{
+		tunedModel = std::move(
+			GltfTunerHelper(model, impl_->rulesEx_, impl_->materialHelper_, tileTransform_shifted).Tune());
+		tunedModel._tuneVersion = curVer;
+		return true;
+	}
+	return false;
 }
 
-void GltfTuner::SetRules(Rules&& rules)
+int GltfTuner::SetMaterialRules(Rules&& tuningRules)
 {
 	// Here we do not test if the new rules actually differ from the current ones.
 	// For now we assume it is the responsibility of the caller to call this only when needed.
-	std::scoped_lock lock(impl_->mutex_);
-	impl_->rules_ = std::move(rules);
-	++impl_->rulesVersion_;
+	BeUtils::WLock wlock(impl_->mutex_);
+	// Optimize when resetting this type of rules several times
+	if (tuningRules.materialGroups_.empty() && tuningRules.itwinMatIDsToSplit_.empty()
+		&& impl_->rulesEx_.tuningRules_.materialGroups_.empty()
+		&& impl_->rulesEx_.tuningRules_.itwinMatIDsToSplit_.empty())
+	{
+		return getCurrentVersion();
+	}
+	impl_->nextTuningRules_.materialGroups_ = std::move(tuningRules.materialGroups_);
+	impl_->nextTuningRules_.itwinMatIDsToSplit_ = std::move(tuningRules.itwinMatIDsToSplit_);
+	++impl_->materialRulesVersion_;
+	retune();
+	return getCurrentVersion();
+}
+
+int GltfTuner::SetAnim4DRules(Rules&& tuningRules)
+{
+	// Here we do not test if the new rules actually differ from the current ones.
+	// For now we assume it is the responsibility of the caller to call this only when needed.
+	BeUtils::WLock wlock(impl_->mutex_);
+	// Optimize when resetting this type of rules several times
+	if (tuningRules.anim4DGroups_.empty() && impl_->rulesEx_.tuningRules_.anim4DGroups_.empty())
+	{
+		return getCurrentVersion();
+	}
+	impl_->nextTuningRules_.anim4DGroups_ = std::move(tuningRules.anim4DGroups_);
+	++impl_->anim4DRulesVersion_;
+	retune();
+	return getCurrentVersion();
 }
 
 
@@ -787,7 +905,7 @@ void GltfTuner::ParseTilesetJson(const rapidjson::Document& tilesetJson)
 		matInfo.name = nameIt->value.GetString(); // UTF-8 encoded
 	}
 	{
-		std::scoped_lock lock(impl_->mutex_);
+		BeUtils::WLock wlock(impl_->mutex_);
 		impl_->itwinMaterials_ = itwinMaterials;
 	}
 	if (onMaterialInfoParsed_)
@@ -799,13 +917,13 @@ void GltfTuner::ParseTilesetJson(const rapidjson::Document& tilesetJson)
 
 bool GltfTuner::HasITwinMaterialInfo() const
 {
-	std::scoped_lock lock(impl_->mutex_);
+	BeUtils::RLock lock(impl_->mutex_);
 	return !impl_->itwinMaterials_.empty();
 }
 
 std::vector<ITwinMaterialInfo> GltfTuner::GetITwinMaterialInfo() const
 {
-	std::scoped_lock lock(impl_->mutex_);
+	BeUtils::RLock lock(impl_->mutex_);
 	return impl_->itwinMaterials_;
 }
 

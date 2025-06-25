@@ -1,6 +1,24 @@
+#include <Cesium3DTiles/Buffer.h>
+#include <Cesium3DTiles/Subtree.h>
 #include <Cesium3DTilesReader/SubtreeFileReader.h>
+#include <CesiumAsync/AsyncSystem.h>
+#include <CesiumAsync/Future.h>
+#include <CesiumAsync/IAssetAccessor.h>
+#include <CesiumAsync/IAssetRequest.h>
 #include <CesiumAsync/IAssetResponse.h>
+#include <CesiumJsonReader/JsonReader.h>
+#include <CesiumJsonReader/JsonReaderOptions.h>
 #include <CesiumUtility/Uri.h>
+
+#include <fmt/format.h>
+
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <span>
+#include <string>
+#include <utility>
+#include <vector>
 
 using namespace Cesium3DTiles;
 using namespace CesiumAsync;
@@ -19,6 +37,7 @@ SubtreeFileReader::getOptions() const {
   return this->_reader.getOptions();
 }
 
+//! [async-system-store-in-lambda]
 Future<ReadJsonResult<Cesium3DTiles::Subtree>> SubtreeFileReader::load(
     const AsyncSystem& asyncSystem,
     const std::shared_ptr<IAssetAccessor>& pAssetAccessor,
@@ -30,6 +49,7 @@ Future<ReadJsonResult<Cesium3DTiles::Subtree>> SubtreeFileReader::load(
         return this->load(asyncSystem, pAssetAccessor, pRequest);
       });
 }
+//! [async-system-store-in-lambda]
 
 Future<ReadJsonResult<Subtree>> SubtreeFileReader::load(
     const AsyncSystem& asyncSystem,
@@ -70,7 +90,7 @@ Future<ReadJsonResult<Subtree>> SubtreeFileReader::load(
     const std::shared_ptr<IAssetAccessor>& pAssetAccessor,
     const std::string& url,
     const std::vector<CesiumAsync::IAssetAccessor::THeader>& requestHeaders,
-    const gsl::span<const std::byte>& data) const noexcept {
+    const std::span<const std::byte>& data) const noexcept {
   if (data.size() < 4) {
     CesiumJsonReader::ReadJsonResult<Subtree> result;
     result.errors.emplace_back(fmt::format(
@@ -113,7 +133,7 @@ Future<ReadJsonResult<Subtree>> SubtreeFileReader::loadBinary(
     const std::shared_ptr<IAssetAccessor>& pAssetAccessor,
     const std::string& url,
     const std::vector<CesiumAsync::IAssetAccessor::THeader>& requestHeaders,
-    const gsl::span<const std::byte>& data) const noexcept {
+    const std::span<const std::byte>& data) const noexcept {
   if (data.size() < sizeof(SubtreeHeader)) {
     CesiumJsonReader::ReadJsonResult<Subtree> result;
     result.errors.emplace_back(fmt::format(
@@ -148,43 +168,47 @@ Future<ReadJsonResult<Subtree>> SubtreeFileReader::loadBinary(
       data.subspan(sizeof(SubtreeHeader), header->jsonByteLength));
 
   if (result.value) {
-    gsl::span<const std::byte> binaryChunk = data.subspan(
+    std::span<const std::byte> binaryChunk = data.subspan(
         sizeof(SubtreeHeader) + header->jsonByteLength,
         header->binaryByteLength);
 
-    if (result.value->buffers.empty()) {
-      result.errors.emplace_back("Subtree has a binary chunk but the JSON does "
-                                 "not define any buffers.");
-      return asyncSystem.createResolvedFuture(std::move(result));
+    if (binaryChunk.size() > 0) {
+      if (result.value->buffers.empty()) {
+        result.errors.emplace_back(
+            "Subtree has a binary chunk but the JSON does "
+            "not define any buffers.");
+        return asyncSystem.createResolvedFuture(std::move(result));
+      }
+
+      Buffer& buffer = result.value->buffers[0];
+      if (buffer.uri) {
+        result.errors.emplace_back(
+            "Subtree has a binary chunk but the first buffer "
+            "in the JSON chunk also has a 'uri'.");
+        return asyncSystem.createResolvedFuture(std::move(result));
+      }
+
+      const int64_t binaryChunkSize = static_cast<int64_t>(binaryChunk.size());
+
+      // We allow - but don't require - 8-byte padding.
+      int64_t maxPaddingBytes = 0;
+      int64_t paddingRemainder = buffer.byteLength % 8;
+      if (paddingRemainder > 0) {
+        maxPaddingBytes = 8 - paddingRemainder;
+      }
+
+      if (buffer.byteLength > binaryChunkSize ||
+          buffer.byteLength + maxPaddingBytes < binaryChunkSize) {
+        result.errors.emplace_back(
+            "Subtree binary chunk size does not match the "
+            "size of the first buffer in the JSON chunk.");
+        return asyncSystem.createResolvedFuture(std::move(result));
+      }
+
+      buffer.cesium.data = std::vector<std::byte>(
+          binaryChunk.begin(),
+          binaryChunk.begin() + buffer.byteLength);
     }
-
-    Buffer& buffer = result.value->buffers[0];
-    if (buffer.uri) {
-      result.errors.emplace_back(
-          "Subtree has a binary chunk but the first buffer "
-          "in the JSON chunk also has a 'uri'.");
-      return asyncSystem.createResolvedFuture(std::move(result));
-    }
-
-    const int64_t binaryChunkSize = static_cast<int64_t>(binaryChunk.size());
-
-    // We allow - but don't require - 8-byte padding.
-    int64_t maxPaddingBytes = 0;
-    int64_t paddingRemainder = buffer.byteLength % 8;
-    if (paddingRemainder > 0) {
-      maxPaddingBytes = 8 - paddingRemainder;
-    }
-
-    if (buffer.byteLength > binaryChunkSize ||
-        buffer.byteLength + maxPaddingBytes < binaryChunkSize) {
-      result.errors.emplace_back("Subtree binary chunk size does not match the "
-                                 "size of the first buffer in the JSON chunk.");
-      return asyncSystem.createResolvedFuture(std::move(result));
-    }
-
-    buffer.cesium.data = std::vector<std::byte>(
-        binaryChunk.begin(),
-        binaryChunk.begin() + buffer.byteLength);
   }
 
   return postprocess(
@@ -200,7 +224,7 @@ CesiumAsync::Future<ReadJsonResult<Subtree>> SubtreeFileReader::loadJson(
     const std::shared_ptr<IAssetAccessor>& pAssetAccessor,
     const std::string& url,
     const std::vector<CesiumAsync::IAssetAccessor::THeader>& requestHeaders,
-    const gsl::span<const std::byte>& data) const noexcept {
+    const std::span<const std::byte>& data) const noexcept {
   ReadJsonResult<Subtree> result = this->_reader.readFromJson(data);
   return postprocess(
       asyncSystem,
@@ -238,7 +262,7 @@ CesiumAsync::Future<RequestedSubtreeBuffer> requestBuffer(
               return RequestedSubtreeBuffer{bufferIdx, {}};
             }
 
-            const gsl::span<const std::byte>& data = pResponse->data();
+            const std::span<const std::byte>& data = pResponse->data();
             return RequestedSubtreeBuffer{
                 bufferIdx,
                 std::vector<std::byte>(data.begin(), data.end())};

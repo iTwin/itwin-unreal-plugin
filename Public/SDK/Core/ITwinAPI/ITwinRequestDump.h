@@ -11,7 +11,7 @@
 #include <sstream>
 #include <Core/Tools/Hash.h>
 
-namespace SDK::Core::RequestDump
+namespace AdvViz::SDK::RequestDump
 {
 
 struct Request
@@ -33,4 +33,4 @@ inline std::string GetRequestHash(const std::string& urlSuffix, const std::strin
 	return (std::stringstream() << std::hex << Tools::GenHash((urlSuffix+";"+body).c_str())).str();
 }
 
-} // namespace SDK::Core::RequestDump
+} // namespace AdvViz::SDK::RequestDump

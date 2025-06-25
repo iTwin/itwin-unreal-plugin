@@ -1,17 +1,107 @@
 #pragma once
 
-#include "Library.h"
-
 #include <Cesium3DTilesContent/GltfConverterResult.h>
+#include <Cesium3DTilesContent/Library.h>
+#include <CesiumAsync/Future.h>
+#include <CesiumAsync/IAssetAccessor.h>
+#include <CesiumGeometry/Axis.h>
 #include <CesiumGltfReader/GltfReader.h>
 
-#include <gsl/span>
-
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 
 namespace Cesium3DTilesContent {
+
+/**
+ * @brief The result of an \ref AssetFetcher::get call.
+ */
+struct AssetFetcherResult {
+  /**
+   * @brief The byte buffer obtained from a URL. This will be empty if fetching
+   * the asset failed.
+   */
+  std::vector<std::byte> bytes;
+  /**
+   * @brief The errors and warnings reported while fetching the asset.
+   */
+  CesiumUtility::ErrorList errorList;
+};
+
+/**
+ * Object that makes a recursive request to fetch an asset, mostly for the
+ * benefit of i3dm files.
+ */
+struct CESIUM3DTILESCONTENT_API AssetFetcher {
+  /**
+   * @brief Creates an \ref AssetFetcher with the given base URL and settings.
+   *
+   * @param asyncSystem_ The \ref CesiumAsync::AsyncSystem used for fetching
+   * assets asynchronously.
+   * @param pAssetAccessor_ The \ref CesiumAsync::IAssetAccessor providing the
+   * implementation for fetching assets from a remote server.
+   * @param baseUrl_ The base URL that relative URLs passed to \ref get will be
+   * relative to.
+   * @param tileTransform_ A transformation matrix applied to this tile.
+   * @param requestHeaders_ The headers to be used for a request made with the
+   * \ref AssetFetcher.
+   * @param upAxis_ The `gltfUpAxis` property to be set on loaded glTFs.
+   */
+  AssetFetcher(
+      const CesiumAsync::AsyncSystem& asyncSystem_,
+      const std::shared_ptr<CesiumAsync::IAssetAccessor>& pAssetAccessor_,
+      const std::string& baseUrl_,
+      const glm::dmat4 tileTransform_,
+      const std::vector<CesiumAsync::IAssetAccessor::THeader>& requestHeaders_,
+      CesiumGeometry::Axis upAxis_)
+      : asyncSystem(asyncSystem_),
+        pAssetAccessor(pAssetAccessor_),
+        baseUrl(baseUrl_),
+        tileTransform(tileTransform_),
+        requestHeaders(requestHeaders_),
+        upAxis(upAxis_) {}
+
+  /**
+   * @brief Gets a buffer of bytes from the given relative URL.
+   *
+   * @param relativeUrl The URL of the asset to fetch, relative to the \ref
+   * baseUrl property.
+   * @returns A future that resolves into an \ref AssetFetcherResult.
+   */
+  CesiumAsync::Future<AssetFetcherResult>
+  get(const std::string& relativeUrl) const;
+
+  /**
+   * @brief The \ref CesiumAsync::AsyncSystem used for this \ref AssetFetcher.
+   */
+  CesiumAsync::AsyncSystem asyncSystem;
+  /**
+   * @brief The \ref CesiumAsync::IAssetAccessor used for this \ref
+   * AssetFetcher.
+   */
+  std::shared_ptr<CesiumAsync::IAssetAccessor> pAssetAccessor;
+  /**
+   * @brief The base URL that this \ref AssetFetcher's requests will be relative
+   * to.
+   */
+  std::string baseUrl;
+  /**
+   * @brief The transformation matrix applied to this tile. Used for
+   * East-North-Up transforms in i3dm.
+   */
+  glm::dmat4 tileTransform;
+  /**
+   * @brief Headers that will be attached to each request made with this \ref
+   * AssetFetcher.
+   */
+  std::vector<CesiumAsync::IAssetAccessor::THeader> requestHeaders;
+  /**
+   * @brief The `gltfUpAxis` property that will be specified for loaded assets.
+   */
+  CesiumGeometry::Axis upAxis;
+};
+
 /**
  * @brief Creates {@link GltfConverterResult} objects from a
  * a binary content.
@@ -32,9 +122,10 @@ public:
    * @brief A function pointer that can create a {@link GltfConverterResult} from a
    * tile binary content.
    */
-  using ConverterFunction = GltfConverterResult (*)(
-      const gsl::span<const std::byte>& content,
-      const CesiumGltfReader::GltfReaderOptions& options);
+  using ConverterFunction = CesiumAsync::Future<GltfConverterResult> (*)(
+      const std::span<const std::byte>& content,
+      const CesiumGltfReader::GltfReaderOptions& options,
+      const AssetFetcher& subprocessor);
 
   /**
    * @brief Register the given function for the given magic header.
@@ -92,7 +183,7 @@ public:
    * @return The {@link ConverterFunction} that is registered with the magic header.
    */
   static ConverterFunction
-  getConverterByMagic(const gsl::span<const std::byte>& content);
+  getConverterByMagic(const std::span<const std::byte>& content);
 
   /**
    * @brief Creates the {@link GltfConverterResult} from the given
@@ -117,13 +208,16 @@ public:
    * the converter.
    * @param content The tile binary content that may contains the magic header
    * to look up the converter and is used to convert to gltf model.
-   * @param options The {@link CesiumGltfReader::GltfReaderOptions} for how to read a glTF.
+   * @param options The {@link CesiumGltfReader::GltfReaderOptions} for how to
+   * read a glTF.
+   * @param assetFetcher An object that can perform recursive asset requests.
    * @return The {@link GltfConverterResult} that stores the gltf model converted from the binary data.
    */
-  static GltfConverterResult convert(
+  static CesiumAsync::Future<GltfConverterResult> convert(
       const std::string& filePath,
-      const gsl::span<const std::byte>& content,
-      const CesiumGltfReader::GltfReaderOptions& options);
+      const std::span<const std::byte>& content,
+      const CesiumGltfReader::GltfReaderOptions& options,
+      const AssetFetcher& assetFetcher);
 
   /**
    * @brief Creates the {@link GltfConverterResult} from the given
@@ -142,12 +236,15 @@ public:
    *
    * @param content The tile binary content that may contains the magic header
    * to look up the converter and is used to convert to gltf model.
-   * @param options The {@link CesiumGltfReader::GltfReaderOptions} for how to read a glTF.
+   * @param options The {@link CesiumGltfReader::GltfReaderOptions} for how to
+   * read a glTF.
+   * @param assetFetcher An object that can perform recursive asset requests.
    * @return The {@link GltfConverterResult} that stores the gltf model converted from the binary data.
    */
-  static GltfConverterResult convert(
-      const gsl::span<const std::byte>& content,
-      const CesiumGltfReader::GltfReaderOptions& options);
+  static CesiumAsync::Future<GltfConverterResult> convert(
+      const std::span<const std::byte>& content,
+      const CesiumGltfReader::GltfReaderOptions& options,
+      const AssetFetcher& assetFetcher);
 
 private:
   static std::string toLowerCase(const std::string_view& str);
@@ -159,7 +256,7 @@ private:
       std::string& fileExtension);
 
   static ConverterFunction getConverterByMagic(
-      const gsl::span<const std::byte>& content,
+      const std::span<const std::byte>& content,
       std::string& magic);
 
   static std::unordered_map<std::string, ConverterFunction> _loadersByMagic;

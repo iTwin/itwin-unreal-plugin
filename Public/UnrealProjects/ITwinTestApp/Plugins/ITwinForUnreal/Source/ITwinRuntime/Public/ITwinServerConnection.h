@@ -15,6 +15,7 @@
 #include <UObject/Object.h>
 #include <array>
 #include <string>
+#include <memory>
 #include <ITwinServerConnection.generated.h>
 
 UENUM()
@@ -56,7 +57,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "iTwin")
 	FString GetAccessToken() const;
 
-	bool GetAccessTokenStdString(std::string& AccessToken) const;
+	std::shared_ptr<std::string> GetAccessTokenPtr() const;
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin")
 	bool HasAccessToken() const { return !GetAccessToken().IsEmpty(); }

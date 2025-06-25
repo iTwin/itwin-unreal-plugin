@@ -7,8 +7,11 @@
 +--------------------------------------------------------------------------------------*/
 
 #pragma once
+#include <memory>
+#include <mutex>
+#include <shared_mutex>
 
-namespace SDK::Core::Tools
+namespace AdvViz::SDK::Tools
 {
 	/** Scoped lock of a LockableObject:
 	 * @code
@@ -37,10 +40,15 @@ namespace SDK::Core::Tools
 
 		~AutoLockObject() { lockable_.Unlock(); }
 
-		typename TLockableObject::subtype &Get() { return *obj_; }
-		const typename TLockableObject::subtype &Get() const { return *obj_; }
+		typename TLockableObject::subtype& Get() { return *obj_; }
+		typename TLockableObject::subtype* GetPtr() { return obj_; }
+		const typename TLockableObject::subtype& Get() const { return *obj_; }
+		const typename TLockableObject::subtype* GetPtr() const { return obj_; }
 
 		operator typename TLockableObject::subtype &() { return *obj_; }
+
+		typename TLockableObject::subtype& operator*() { return *obj_; }
+		typename TLockableObject::subtype* operator->() { return obj_; }
 
 		//non-copyable
 		AutoLockObject(const AutoLockObject&) = delete;
@@ -68,14 +76,17 @@ namespace SDK::Core::Tools
 		LockableObject()
 		{}
 
+		LockableObject(Type& obj):obj_(obj)
+		{}
+
 		template<typename... Args>
 		LockableObject(Args&&... args)
 		: obj_(std::forward<Args>(args)...)
 		{}
 
 		LockableObject(LockableObject&&) = default;
-		LockableObject(const LockableObject&) = delete;
-		LockableObject& operator=(const LockableObject&) = default;
+		LockableObject(const LockableObject&) = delete; //mutex is not copyable
+		LockableObject& operator=(const LockableObject&) = delete; //mutex is not copyable
 
 		const Type &Lock() const
 		{
@@ -150,7 +161,10 @@ namespace SDK::Core::Tools
 		const typename TLockableObject::subtype& Get() const { return *obj_; }
 		operator const typename TLockableObject::subtype& () { return *obj_; }
 
-		//non-copyable
+		const typename TLockableObject::subtype& operator*() const { return *obj_; }
+		const typename TLockableObject::subtype* operator->() const { return obj_; }
+
+		//non-copyables
 		RAutoLockObject(const RAutoLockObject&) = delete;
 		RAutoLockObject& operator=(const RAutoLockObject&) = delete;
 
@@ -162,7 +176,7 @@ namespace SDK::Core::Tools
 	/** Can be used with RW lock access,
 	 * requires a mutex that has lock_shared method.
 	 */
-	template<typename Type, typename SharedMutex>
+	template<typename Type, typename SharedMutex = std::shared_mutex>
 	class RWLockableObject : public LockableObject<Type, SharedMutex>
 	{
 	public:
@@ -177,8 +191,8 @@ namespace SDK::Core::Tools
 		{}
 
 		RWLockableObject(RWLockableObject&&) = default;
-		RWLockableObject(const RWLockableObject&) = delete;
-		RWLockableObject& operator=(const RWLockableObject&) = default;
+		RWLockableObject(const RWLockableObject&) = default;
+		RWLockableObject& operator=(const RWLockableObject&) = delete;
 
 		Type& LockShared()
 		{
@@ -217,6 +231,56 @@ namespace SDK::Core::Tools
 			return RAutoLock(*(const_cast<thisType*>(this)));
 		}
 	};
+
+	// specialized version to hold pointer instead of object (usefull when you need to safely store interfaces)
+	template<typename Type, typename Mutex = std::shared_mutex>
+	class RWLockablePtrObject : public RWLockableObject<std::unique_ptr<Type>, Mutex>
+	{
+	public:
+		typedef RWLockableObject<std::unique_ptr<Type>, Mutex> ParentType;
+		typedef RWLockablePtrObject<Type, Mutex> thisType;
+		typedef RAutoLockObject<thisType> RAutoLock;
+		typedef AutoLockObject<thisType> AutoLock;
+		typedef Type subtype;
+
+		RWLockablePtrObject(Type* p):ParentType(std::unique_ptr<Type>(p))
+		{}
+
+		template<typename... Args>
+		RWLockablePtrObject(Args&&... args)
+			: ParentType(std::make_unique<Type>(std::forward<Args>(args)...))
+		{}
+
+		const Type& Lock() const {return *ParentType::Lock().get();}
+		Type& Lock() {return *ParentType::Lock().get();}
+		Type& LockShared() {return *ParentType::LockShared().get();}
+		RAutoLock GetRAutoLock() {return RAutoLock(*this);}
+		const RAutoLock GetRAutoLock() const { return RAutoLock(*(const_cast<thisType*>(this))); }
+		AutoLock GetAutoLock() {return AutoLock(*this);}
+	};
+
+	template<typename Type, typename Mutex = std::shared_mutex>
+	using TSharedLockableDataWPtr = std::weak_ptr<RWLockablePtrObject<Type, Mutex>>;
+	template<typename Type, typename Mutex = std::shared_mutex>
+	using TSharedLockableDataPtr = std::shared_ptr<RWLockablePtrObject<Type, Mutex>>;
+
+	template<typename Type>
+	inline TSharedLockableDataPtr<Type> MakeSharedLockableDataPtr(Type* p)
+	{
+		return std::make_shared<RWLockablePtrObject<Type>>(p);
+	}
+
+	template<typename Type, typename Mutex = std::shared_mutex>
+	using TSharedLockableDataWeak = std::weak_ptr<RWLockableObject<Type, Mutex>>;
+	template<typename Type, typename Mutex = std::shared_mutex>
+	using TSharedLockableData = std::shared_ptr<RWLockableObject<Type, Mutex>>;
+
+	template<typename Type, typename... Args>
+	inline TSharedLockableData<Type> MakeSharedLockableData(Args&&... args)
+	{
+		return std::make_shared<RWLockableObject<Type>>(std::forward<Args>(args)...);
+	}
+
 }
 
 

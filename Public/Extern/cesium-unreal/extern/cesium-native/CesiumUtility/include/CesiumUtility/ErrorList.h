@@ -1,7 +1,8 @@
 #pragma once
 
-#include "Library.h"
-#include "joinToString.h"
+#include <CesiumUtility/Library.h>
+#include <CesiumUtility/Log.h> // NOLINT
+#include <CesiumUtility/joinToString.h>
 
 #include <spdlog/spdlog.h>
 
@@ -15,6 +16,22 @@ namespace CesiumUtility {
  * or glTF content
  */
 struct CESIUMUTILITY_API ErrorList {
+  /**
+   * @brief Creates an {@link ErrorList} containing a single error.
+   *
+   * @param errorMessage The error message.
+   * @return The new list containing the single error.
+   */
+  static ErrorList error(std::string errorMessage);
+
+  /**
+   * @brief Creates an {@link ErrorList} containing a single warning.
+   *
+   * @param warningMessage The warning message.
+   * @return The new list containing the single warning.
+   */
+  static ErrorList warning(std::string warningMessage);
+
   /**
    * @brief Merge the errors and warnings from other ErrorList together
    *
@@ -43,7 +60,7 @@ struct CESIUMUTILITY_API ErrorList {
   /**
    * @brief Add a warning message
    *
-   * @param error The warning message to be added.
+   * @param warning The warning message to be added.
    */
   template <typename WarningStr> void emplaceWarning(WarningStr&& warning) {
     warnings.emplace_back(std::forward<WarningStr>(warning));

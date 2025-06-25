@@ -1,6 +1,7 @@
 #pragma once
 
-#include "CesiumGltf/Model.h"
+#include <CesiumGltf/Accessor.h>
+#include <CesiumGltf/Model.h>
 
 #include <cstddef>
 #include <stdexcept>
@@ -55,14 +56,20 @@ enum class AccessorViewStatus {
   WrongSizeT,
 
   /**
-   * @brief The {@link Accessor:type} is invalid.
+   * @brief The `AccessorSpec:type` is invalid.
    */
   InvalidType,
 
   /**
-   * @brief The {@link Accessor::componentType} is invalid.
+   * @brief The {@link AccessorSpec::componentType} is invalid.
    */
   InvalidComponentType,
+
+  /**
+   * @brief The {@link BufferView::byteStride} is negative, which is invalid.
+   *
+   */
+  InvalidByteStride,
 };
 
 /**
@@ -208,6 +215,14 @@ public:
   int64_t stride() const noexcept { return this->_stride; }
 
   /**
+   * @brief Returns the offset of this accessor, which is the number of bytes
+   * from the start of the buffer to the first element.
+   *
+   * @returns The offset.
+   */
+  int64_t offset() const noexcept { return this->_offset; }
+
+  /**
    * @brief Returns a pointer to the first byte of this accessor view's data.
    * The elements are stored contiguously, so the next one starts {@link stride} bytes later.
    *
@@ -241,6 +256,11 @@ private:
     }
 
     const int64_t accessorByteStride = accessor.computeByteStride(model);
+    if (accessorByteStride < 0) {
+      this->_status = AccessorViewStatus::InvalidByteStride;
+      return;
+    }
+
     const int64_t accessorComponentElements =
         accessor.computeNumberOfComponents();
     const int64_t accessorComponentBytes =
@@ -449,13 +469,33 @@ createAccessorView(
         model,
         accessor,
         std::forward<TCallback>(callback));
+  case Accessor::ComponentType::INT:
+    return ::CesiumGltf::CesiumImpl::createAccessorView<TCallback, int32_t>(
+        model,
+        accessor,
+        std::forward<TCallback>(callback));
   case Accessor::ComponentType::UNSIGNED_INT:
     return ::CesiumGltf::CesiumImpl::createAccessorView<TCallback, uint32_t>(
         model,
         accessor,
         std::forward<TCallback>(callback));
+  case Accessor::ComponentType::INT64:
+    return ::CesiumGltf::CesiumImpl::createAccessorView<TCallback, int64_t>(
+        model,
+        accessor,
+        std::forward<TCallback>(callback));
+  case Accessor::ComponentType::UNSIGNED_INT64:
+    return ::CesiumGltf::CesiumImpl::createAccessorView<TCallback, uint64_t>(
+        model,
+        accessor,
+        std::forward<TCallback>(callback));
   case Accessor::ComponentType::FLOAT:
     return ::CesiumGltf::CesiumImpl::createAccessorView<TCallback, float>(
+        model,
+        accessor,
+        std::forward<TCallback>(callback));
+  case Accessor::ComponentType::DOUBLE:
+    return ::CesiumGltf::CesiumImpl::createAccessorView<TCallback, double>(
         model,
         accessor,
         std::forward<TCallback>(callback));

@@ -172,6 +172,12 @@ struct FSavedViewInfos
 		TArray<FSavedViewInfo> SavedViews;
 
 	UPROPERTY(BlueprintReadOnly, Category = "SavedView")
+		FString ITwinId;
+
+	UPROPERTY(BlueprintReadOnly, Category = "SavedView")
+		FString IModelId;
+
+	UPROPERTY(BlueprintReadOnly, Category = "SavedView")
 		FString GroupId;
 };
 
@@ -342,17 +348,27 @@ struct FProjectExtents
 		FVector GlobalOrigin = FVector(0, 0, 0);
 };
 
+/// Note that, in contradition with iTwin.js common policy enforcing SI Base Units and SI Derived Units
+/// (https://www.itwinjs.org/bis/guide/other-topics/units/#angle-units - Note the exception for
+/// YawPitchRoll! ;^_^), longitude and latitude are actually stored in degrees in this structure.
+/// Despite corporate policy, my arguments for storing degrees are: 1/ Reality data still use degrees for
+/// their extents, same of course for Cesium in their API, 2/ I've never heard of geographical coordinates
+/// being expressed in radians and 3/ if we are to expose values to external users, it seems better to
+/// comply to such a reasonable common expectation.
+/// Height is expressed in meters above the WGS84 ellipsoid (ie. _not_ Mean Sea Level), as specified in
+/// https://www.itwinjs.org/reference/core-common/geometry/cartographicprops/.
 USTRUCT(BlueprintType)
 struct FCartographicProps
 {
 	GENERATED_USTRUCT_BODY()
 
+	/// Height in meters above the WGS84 ellipsoid (ie. _not_ Mean Sea Level)
 	UPROPERTY(BlueprintReadOnly, Category = "IModelProps")
 		double Height = 0.0;
-
+	/// Signed northward latitude, in degrees
 	UPROPERTY(BlueprintReadOnly, Category = "IModelProps")
 		double Latitude = 0.0;
-
+	/// Signed eastward longitude, in degrees
 	UPROPERTY(BlueprintReadOnly, Category = "IModelProps")
 		double Longitude = 0.0;
 };
@@ -384,6 +400,14 @@ struct FEcefLocation
 		FVector xVector = FVector(0, 0, 0);
 	UPROPERTY(BlueprintReadOnly, Category = "IModelProps")
 		FVector yVector = FVector(0, 0, 0);
+	UPROPERTY(BlueprintReadOnly, Category = "IModelProps")
+		bool bHasGeographicCoordinateSystem = false;
+	UPROPERTY(BlueprintReadOnly, Category = "IModelProps")
+		int GeographicCoordinateSystemEPSG = -1;
+	UPROPERTY(BlueprintReadOnly, Category = "IModelProps")
+		bool bHasProjectExtentsCenterGeoCoords = false;
+	UPROPERTY(BlueprintReadOnly, Category = "IModelProps")
+		FCartographicProps ProjectExtentsCenterGeoCoords;
 };
 
 

@@ -23,7 +23,7 @@
 #endif
 
 //TEST_CASE(HttpTest, Put) {
-//	auto http = SDK::Core::Http::New();
+//	auto http = AdvViz::SDK::Http::New();
 //	http->SetBaseUrl("http://127.0.0.1:5984");
 //	http->SetBasicAuth("loloDb", "ydbOi589");
 //	auto r = http->Put("my_database", "");
@@ -54,9 +54,9 @@ private:
 	Response responseHandler(
 		const std::string& url,
 		const std::string& method,
-		const std::string& data,
-		const std::vector<UrlArg>& urlArguments,
-		const std::vector<Header>& headers)
+		const std::string& /*data*/,
+		const std::vector<UrlArg>& /*urlArguments*/,
+		const std::vector<Header>& /*headers*/)
 	{
 		if (method == "GET" && matchesPrefix(url, "/json")) {
 			// Do something and return response
@@ -76,9 +76,9 @@ private:
 TEST_CASE("HttpTest:GetJsonStr") {
 	std::unique_ptr<httpmock::MockServer> httpMockM = HTTPMock::MakeServer();
 	HTTPMock* httpMock = static_cast<HTTPMock*>(httpMockM.get());
-	auto http = SDK::Core::Http::New();
-	http->SetBaseUrl(httpMock->GetUrl());
-	auto r = http->GetJson("json", "");
+	auto http = AdvViz::SDK::Http::New();
+	http->SetBaseUrl(httpMock->GetUrl().c_str());
+	AdvViz::SDK::Http::Response r = http->GetJsonStr("json");
 	REQUIRE(r.first == 200);
 	REQUIRE(r.second == "{\n  \"slideshow\": {\n    \"author\": \"Yours Truly\", \n    \"date\": \"date of publication\", \n    \"slides\": [\n      {\n        \"title\": \"Wake up to WonderWidgets!\", \n        \"type\": \"all\"\n      }, \n      {\n        \"items\": [\n          \"Why <em>WonderWidgets</em> are great\", \n          \"Who <em>buys</em> WonderWidgets\"\n        ], \n        \"title\": \"Overview\", \n        \"type\": \"all\"\n      }\n    ], \n    \"title\": \"Sample Slide Show\"\n  }\n}\n");
 }
@@ -103,10 +103,10 @@ TEST_CASE("HttpTest:GetJsonOBJ") {
 	std::unique_ptr<httpmock::MockServer> httpMockM = HTTPMock::MakeServer();
 	HTTPMock* httpMock = static_cast<HTTPMock*>(httpMockM.get());
 
-	auto http = SDK::Core::Http::New();
-	http->SetBaseUrl(httpMock->GetUrl());
+	auto http = AdvViz::SDK::Http::New();
+	http->SetBaseUrl(httpMock->GetUrl().c_str());
 	S s;
-	auto r = http->GetJson(s, "json", "");
+	auto r = http->GetJson(s, "json");
 	REQUIRE(r== 200);
 	REQUIRE(s.slideshow.title == "Sample Slide Show");
 	REQUIRE(s.slideshow.author== "Yours Truly");
@@ -142,10 +142,10 @@ struct SPartial {
 TEST_CASE("HttpTest:GetJsonPartialOBJ") {
 	std::unique_ptr<httpmock::MockServer> httpMockM = HTTPMock::MakeServer();
 	HTTPMock* httpMock = static_cast<HTTPMock*>(httpMockM.get());
-	auto http = SDK::Core::Http::New();
-	http->SetBaseUrl(httpMock->GetUrl());
+	auto http = AdvViz::SDK::Http::New();
+	http->SetBaseUrl(httpMock->GetUrl().c_str());
 	SPartial s;
-	auto r = http->GetJson(s, "json", "");
+	auto r = http->GetJson(s, "json");
 	REQUIRE(r == 200);
 	REQUIRE(s.slideshow.title == "Sample Slide Show");
 	REQUIRE(s.slideshow.author == "Yours Truly");
@@ -166,16 +166,16 @@ TEST_CASE("HttpTest:GetJsonPartialOBJ") {
 
 struct ITwinInfoHolder
 {
-	SDK::Core::ITwinInfo iTwin;
+	AdvViz::SDK::ITwinInfo iTwin;
 };
 
 #define ITWIN_ACCESS_TOKEN "abcdefg"
 
 TEST_CASE("HttpTest:GetITwinInfo")
 {
-	struct TestITwinInfoObserver : public SDK::Core::ITwinDefaultWebServicesObserver
+	struct TestITwinInfoObserver : public AdvViz::SDK::ITwinDefaultWebServicesObserver
 	{
-		void OnITwinInfoRetrieved(bool bSuccess, SDK::Core::ITwinInfo const& info) override
+		void OnITwinInfoRetrieved(bool bSuccess, AdvViz::SDK::ITwinInfo const& info) override
 		{
 			REQUIRE(bSuccess);
 			CHECK(info.id == "e72496bd-03a5-4ad8-8a51-b14e827603b1");
@@ -187,7 +187,7 @@ TEST_CASE("HttpTest:GetITwinInfo")
 		}
 	};
 	TestITwinInfoObserver obs;
-	SDK::Core::ITwinWebServices webServices;
+	AdvViz::SDK::ITwinWebServices webServices;
 	webServices.SetObserver(&obs);
 	webServices.SetAuthToken(ITWIN_ACCESS_TOKEN);
 	webServices.GetITwinInfo("e72496bd-03a5-4ad8-8a51-b14e827603b1");
@@ -195,9 +195,9 @@ TEST_CASE("HttpTest:GetITwinInfo")
 
 TEST_CASE("HttpTest:GetITwins")
 {
-	struct TestITwinObserver : public SDK::Core::ITwinDefaultWebServicesObserver
+	struct TestITwinObserver : public AdvViz::SDK::ITwinDefaultWebServicesObserver
 	{
-		void OnITwinsRetrieved(bool bSuccess, SDK::Core::ITwinInfos const& infos) override
+		void OnITwinsRetrieved(bool bSuccess, AdvViz::SDK::ITwinInfos const& infos) override
 		{
 			REQUIRE(bSuccess);
 			REQUIRE(infos.iTwins.size() == 4);
@@ -224,7 +224,7 @@ TEST_CASE("HttpTest:GetITwins")
 		}
 	};
 	TestITwinObserver obs;
-	SDK::Core::ITwinWebServices webServices;
+	AdvViz::SDK::ITwinWebServices webServices;
 	webServices.SetObserver(&obs);
 	webServices.SetAuthToken(ITWIN_ACCESS_TOKEN);
 	webServices.GetITwins();
@@ -232,9 +232,9 @@ TEST_CASE("HttpTest:GetITwins")
 
 TEST_CASE("HttpTest:GetIModelChangesets")
 {
-	auto http = SDK::Core::Http::New();
+	auto http = AdvViz::SDK::Http::New();
 	http->SetBaseUrl("https://api.bentley.com");
-	SDK::Core::ChangesetInfos infos;
+	AdvViz::SDK::ChangesetInfos infos;
 	auto r = http->GetJson(infos,
 		"imodels/d66fcd8c-604a-41d6-964a-b9767d446c53/changesets?$orderBy=index+desc",
 		"",

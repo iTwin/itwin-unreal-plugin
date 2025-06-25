@@ -10,6 +10,7 @@
 
 #include "CoreMinimal.h"
 #include <Hashing/CesiumTileID.h>
+#include <Hashing/UnrealGuid.h>
 #include <Hashing/UnrealString.h>
 
 #include <Cesium3DTilesSelection/Tile.h> // see CesiumTileID later on
@@ -25,6 +26,7 @@
 #include <DrawDebugHelpers.h>
 #include <MaterialTypes.h>
 #include <Math/Matrix.h>
+#include <Misc/Guid.h>
 #include <Templates/SharedPointer.h>
 #include <Timeline/Timeline.h>
 #include <UObject/WeakObjectPtr.h>
@@ -44,16 +46,17 @@
 	#include <boost/multi_index/random_access_index.hpp>
 #include <Compil/AfterNonUnrealIncludes.h>
 
+
 class AActor;
+class UCesiumCustomVisibilitiesMeshComponent;
 class UMaterialInstanceDynamic;
 class UMaterialInterface;
 class UPrimitiveComponent;
 class UStaticMeshComponent;
 class FITwinSceneMappingBuilder;
-class UITwinExtractedMeshComponent;
 class UTexture;
 
-namespace SDK::Core
+namespace AdvViz::SDK
 {
 	enum class EChannelType : uint8_t;
 	struct ITwinUVTransform;
@@ -67,9 +70,7 @@ template <class T, std::size_t N> using FSmallVec = boost::container::small_vect
  * pieces of metadata: "category" and "subcategory". But not the ElementID, which are too fine-grained and
  * would prevent useful "batching" of the primitives and thus an inefficient number of draw calls.
  *
- * For material editing, we will first assume we can limit our capability to assigning a material per
- * category and/or subcategory, and per original iModel material, once we get some kind of materialID
- * metadata added to the generated Cesium tiles.
+ * For material assignment per Element, the gltf meshes are retuned to isolate the specified Elements.
  *
  * For Synchro "animations", we need to assign material effects per ElementID, so we /cannot/ assume to
  * have one (or more) UE material instance(s) used only for a specific ElementID. The effects will thus be
@@ -141,10 +142,12 @@ struct FITwinElementFeaturesInTile
 	/// We'll need for each tile a mapping from an ElementID to all FeatureIDs which it is made of,
 	/// to repeat the "animation" data at all corresponding slots in the HighlightsAndOpacities and
 	/// CuttingPlane textures.
-	std::vector<ITwinFeatureID> Features;
-
+	FSmallVec<ITwinFeatureID, 2> Features;
 	/// All material instances for this tile which are applied on Features of this ElementID.
-	std::vector<TWeakObjectPtr<UMaterialInstanceDynamic>> Materials;
+	FSmallVec<TWeakObjectPtr<UMaterialInstanceDynamic>, 2> Materials;
+	/// All mesh components of this tile which contain Features of this ElementID, known by their rank
+	/// in the SceneTile's GltfMeshes vector.
+	FSmallVec<int32_t, 2> Meshes;
 
 	FITwinShadingTextureFlags TextureFlags = {};
 	/// Invalidate the Selection flag for both this Element and all its Extracted entities
@@ -167,6 +170,18 @@ struct FITwinElementFeaturesInTile
 	void Unload();
 };
 
+/// Same as FITwinElementFeaturesInTile, but with Material ID as key (and simplified a bit, as we only use
+/// this mapping to perform per-material selection highlights.
+struct FITwinMaterialFeaturesInTile
+{
+	/// same comment about constancy as for FITwinElementFeaturesInTile
+	ITwinMaterialID MaterialID;
+	FITwinPropertyTextureFlag SelectingAndHidingTexFlag = {};
+	FSmallVec<ITwinFeatureID, 2> Features;
+
+	void InvalidateSelectingAndHidingTexFlags(FITwinSceneTile& SceneTile);
+};
+
 /// Mesh extracted from the Cesium tile as an independent UE entity, for one of the following reasons:
 ///	1. Either it should be transparent whereas it was part of an opaque entity (or the other way round).
 ///    In that case, it may even be possible that in a single tile, only a part of an iModel Element could
@@ -185,13 +200,11 @@ struct FITwinExtractedEntity
 	/// be transformed
 	bool bIsCurrentlyTransformed = false;
 	/// Something than can be used to transform the entity in the UE world.
-	TWeakObjectPtr<UITwinExtractedMeshComponent> MeshComponent;
+	TWeakObjectPtr<UCesiumCustomVisibilitiesMeshComponent> MeshComponent;
 	/// UV index where feature IDs were baked
 	std::optional<uint32> FeatureIDsUVIndex;
 	/// Material used to render the entity in the UE world
 	TWeakObjectPtr<UMaterialInstanceDynamic> Material;
-	/// The original GLTF mesh component this entity was extracted from.
-	TWeakObjectPtr<UStaticMeshComponent> SourceMeshComponent;
 
 	FITwinShadingTextureFlags TextureFlags = {};
 
@@ -211,7 +224,7 @@ struct FITwinExtractedEntity
 struct FITwinExtractedElement
 {
 	ITwinElementID const ElementID;
-	FSmallVec<FITwinExtractedEntity, 4> Entities;
+	FSmallVec<FITwinExtractedEntity, 2> Entities;
 	/// Clear data related to this Element used after loading a given tile: we want to keep the ordering (and
 	/// the allocations (*) !!) in the FITwinSceneTile even if the tile is unloaded/reloaded.
 	/// (*) because we never erase from TimelineOptim->Tiles so the calls to ExtractedElementSLOW are skipped
@@ -231,6 +244,12 @@ struct IndexByElemID {};
 struct IndexByTileID {};
 /// For containers indexing ITwinScene::TileIdx
 struct IndexByTileRank {};
+/// Use eg. MaterialsFeatures.get<IndexByMaterialID>() to get the interface for this type of indexing
+struct IndexByMaterialID {};
+/// For FederatedElementGUIDs
+struct IndexByGUID {};
+/// For SourceElementIDs
+struct IndexBySourceID {};
 
 class FITwinSceneTile
 {
@@ -256,6 +275,14 @@ class FITwinSceneTile
 			boost::multi_index::hashed_unique<boost::multi_index::tag<IndexByElemID>,
 				boost::multi_index::member<FITwinExtractedElement, const ITwinElementID,
 											&FITwinExtractedElement::ElementID>>>>;
+
+	/// Same as for Elements, but for iTwin Material ID
+	using FMaterialFeaturesCont = boost::multi_index_container<FITwinMaterialFeaturesInTile,
+		boost::multi_index::indexed_by<
+			boost::multi_index::random_access<boost::multi_index::tag<IndexByRank>>,
+			boost::multi_index::hashed_unique<boost::multi_index::tag<IndexByMaterialID>,
+				boost::multi_index::member<FITwinMaterialFeaturesInTile, const ITwinMaterialID,
+											&FITwinMaterialFeaturesInTile::MaterialID>>>>;
 
 public:
 	/// Without this the class is not EmplaceConstructible, maybe std::variant isn't?
@@ -306,15 +333,13 @@ private:
 	//void EraseExtractedElement(FExtractedElementCont::const_iterator const Where);
 
 	/// Last Element ID, if any, which the tile's SelectingAndHiding texture was actually used to highlight
-	/// (ie the Element indeed has Features in this tile - see SelectedElementNotInTile below)
+	/// (ie the Element indeed has Features in this tile - see SelectedElemNotInTile below)
 	ITwinElementID SelectedElement = ITwin::NOT_ELEMENT;
-	/// When != ITwin::NOT_ELEMENT, Element ID was notified for selection, but not found in this tile.
-	/// This way we can skip a lot of code from SelectElement that's executed every tick by the global
-	/// iModel ticker!
-	ITwinElementID SelectedElementNotInTile = ITwin::NOT_ELEMENT;
+	/// Same principle, but for Material selection.
+	ITwinMaterialID SelectedMaterial = ITwin::NOT_MATERIAL;
 	
-	std::vector<ITwinElementID> CurrentSavedViewHiddenElements;
-	std::vector<ITwinElementID> CurrentConstructionHiddenElements;
+	std::unordered_set<ITwinElementID> CurrentSavedViewHiddenElements;
+	std::unordered_set<ITwinElementID> CurrentConstructionHiddenElements;
 
 	/// Store materials in which we have set our own custom textures, as the initial textures should be
 	/// restored before #destroyGltfParameterValues is called (our textures are either static textures which
@@ -323,28 +348,51 @@ private:
 	struct FMatTextureRestoreInfo
 	{
 		TWeakObjectPtr<UMaterialInstanceDynamic> Mat = nullptr;
-		std::array<UTexture*, 2> OrigTextures = { nullptr, nullptr };
+		std::array<TWeakObjectPtr<UTexture>, 2> OrigTextures = { nullptr, nullptr };
 	};
 	std::unordered_map<UMaterialInstanceDynamic*,
-		std::unordered_map<SDK::Core::EChannelType, FMatTextureRestoreInfo> > MatsWithTexturesToRestore;
+		std::unordered_map<AdvViz::SDK::EChannelType, FMatTextureRestoreInfo> > MatsWithTexturesToRestore;
+
+	/// Maintain the correspondence between iTwin Material IDs and the features they are used in.
+	/// Used for material selection.
+	FMaterialFeaturesCont MaterialsFeatures;
+
+	class ElementSelectionHelper;
+	class MaterialSelectionHelper;
 
 	struct FTextureNeeds
 	{
 		bool bWasCreated = false; ///< Created textures need to be set up in materials
 		bool bWasChanged = false; ///< Changed textures need to be sent to the renderer for update on GPU
 	};
-	void CreateAndSetSelectingAndHiding(FITwinElementFeaturesInTile& FeaturesToSelectOrHide,
-		FTextureNeeds& TextureNeeds, const std::array<uint8, 4>& Color_BGRA, bool const ColorOrAlpha);
+	template <typename FeaturesInTile>
+	void CreateAndSetSelectingAndHiding(FeaturesInTile& FeaturesToSelectOrHide,
+		FTextureNeeds& TextureNeeds, const std::array<uint8, 4>& Color_BGRA, bool const bColorOrAlpha);
+
 	/// \param bTestElementVisibility Pass true when this method is called to interactively select an Element,
 	///		which is only allowed when it is visible (because the call is initiated by geometry intersection
 	///		algorithms that have no knowledge of the possible masking of Elements by the 4D effects or custom
 	///		hiding requests from the user (eg. construction data or applying Saved View properties)
 	/// \return Whether the Element could indeed be selected in any of the currently known tiles. Failure to
-	///		select can indeed happen when the Element is hidden through the material shader, or simply when
-	///		it is already selected.
-	bool SelectElement(ITwinElementID const& InElemID, bool const bOnlyVisibleTiles,
-					   FTextureNeeds& TextureNeeds, bool const bTestElementVisibility = false);
-	void ResetSelection(ITwinElementID& SelectedElementID, FTextureNeeds& TextureNeeds);
+	///		select can indeed happen when the Element is hidden through the material shader (but NO LONGER
+	///		when it is already selected!)
+	bool PickElement(ITwinElementID const& InElemID, bool const bOnlyVisibleTiles, FTextureNeeds& TextureNeeds,
+		bool const bTestElementVisibility = false, bool const bSelectElement = true);
+	/// Same as PickElement, but for a Material ID.
+	bool PickMaterial(ITwinMaterialID const& InMaterialID, bool const bOnlyVisibleTiles, FTextureNeeds& TextureNeeds,
+		bool const bTestElementVisibility = false, bool const bSelectMaterial = true);
+
+	template<typename SelectableHelper, typename SelectableID>
+	bool TPickSelectable(SelectableHelper const& PickHelper, SelectableID const& InElemID,
+		bool const bOnlyVisibleTiles,
+		FTextureNeeds& TextureNeeds,
+		bool const bTestElemVisibility = false,
+		bool const bSelectElem = true);
+
+	template<typename SelectableHelper>
+	void TResetSelection(SelectableHelper const& Helper, FTextureNeeds& TextureNeeds);
+	void ResetSelection(FTextureNeeds& TextureNeeds);
+
 	void HideElements(std::unordered_set<ITwinElementID> const& InElemIDs, bool const bOnlyVisibleTiles,
 		FTextureNeeds& TextureNeeds, bool const IsConstruction);
 
@@ -354,11 +402,13 @@ private:
 	template<typename ElementsCont>
 	void ForEachExtractedElementSLOW(ElementsCont const& ForElementIDs,
 									 std::function<void(FITwinExtractedEntity&)> const& Func);
+	void UseTunedMeshAsExtract(FITwinExtractedElement& DummyExtr, int32_t const GltfMeshWrapperIndex,
+							   FTransform const& IModelTilesetTransform);
 
 	/// Edit all material instances created from a primitive configured to match a given ITwin material ID.
 	void ForEachMaterialInstanceMatchingID(uint64_t ITwinMaterialID,
 										   std::function<void(UMaterialInstanceDynamic&)> const& Func);
-	void SetITwinMaterialChannelTexture(uint64_t ITwinMaterialID, SDK::Core::EChannelType Channel,
+	void SetITwinMaterialChannelTexture(uint64_t ITwinMaterialID, AdvViz::SDK::EChannelType Channel,
 										UTexture* pTexture);
 	void ResetCustomTexturesInMaterials();
 
@@ -371,11 +421,15 @@ public:
 	void AddMaterial(UMaterialInstanceDynamic* MaterialInUse);
 	[[nodiscard]] std::vector<TWeakObjectPtr<UMaterialInstanceDynamic>> const& GetMaterials() const
 		{ return Materials; }
+	[[nodiscard]] std::vector<FITwinGltfMeshComponentWrapper> const& GetGltfMeshWrappers() const
+		{ return GltfMeshes; }
+	[[nodiscard]] std::vector<FITwinGltfMeshComponentWrapper>& GltfMeshWrappers()
+		{ return GltfMeshes; }
 	[[nodiscard]] bool Need4DAnimTexturesSetupInMaterials() const;
 	[[nodiscard]] bool NeedSelectingAndHidingTexturesSetupInMaterials() const;
 	[[nodiscard]] size_t NumElementsFeatures() const { return ElementsFeatures.size(); }
-	[[nodiscard]] bool HasInitialTexturesForChannel(UMaterialInstanceDynamic*, SDK::Core::EChannelType) const;
-	void StoreInitialTexturesForChannel(UMaterialInstanceDynamic*, SDK::Core::EChannelType,
+	[[nodiscard]] bool HasInitialTexturesForChannel(UMaterialInstanceDynamic*, AdvViz::SDK::EChannelType) const;
+	void StoreInitialTexturesForChannel(UMaterialInstanceDynamic*, AdvViz::SDK::EChannelType,
 		UTexture* pTexture_GlobalParam, UTexture* pTexture_LayerParam);
 
 	/// Finds the FITwinElementFeaturesInTile for the passed Element ID or return nullptr
@@ -413,7 +467,17 @@ public:
 	[[nodiscard]] std::pair<std::reference_wrapper<FITwinExtractedElement>, bool> ExtractedElementSLOW(
 		FITwinElementFeaturesInTile& ElementInTile);
 
-	[[nodiscard]] bool IsElementHiddenInSavedView(ITwinElementID const& InElemID) const;
+
+	/// Finds the FITwinMaterialFeaturesInTile for the passed Material ID or return nullptr
+	/// \return A short-lived, const pointer on the existing FITwinMaterialFeaturesInTile, or nullptr
+	[[nodiscard]] FITwinMaterialFeaturesInTile const* FindMaterialFeaturesConstSLOW(
+		ITwinMaterialID const& MatID) const;
+	/// @copydoc FindMaterialFeaturesConstSLOW
+	[[nodiscard]] FITwinMaterialFeaturesInTile* FindMaterialFeaturesSLOW(ITwinMaterialID const& MatID);
+
+	/// Finds or inserts a FITwinMaterialFeaturesInTile for the passed Material ID
+	/// \return A short-lived, non-const reference on the existing or inserted FITwinMaterialFeaturesInTile
+	[[nodiscard]] FITwinMaterialFeaturesInTile& MaterialFeaturesSLOW(ITwinMaterialID const& MatID);
 
 }; // class FITwinSceneTile
 
@@ -428,17 +492,22 @@ struct FTimelineToSceneTile
 	/// First index of ITwinTile::ElemIdx related to this tile in FTimelineToScene::TileElems, same for
 	/// ITwinScene::ElemIdx in FTimelineToScene::SceneElems
 	size_t FirstElement = 0;
+	/// Total successive number of entries relevant to this tile in FTimelineToScene's members TileElems and
+	/// SceneElems.
+	uint32_t NbOfElements = 0;
 	/// When not "(size_t)-1", first index of ITwinTile::ExtrIdx related to this tile in
 	/// FTimelineToScene::Extracts. When left to the default value, it means there should be no extraction
-	/// needed for this Timeline (whatever the tile)
+	/// needed (or separately gltf-tuned mesh) for this Timeline (whatever the tile)
 	size_t FirstExtract = NO_EXTRACTION;
-	/// Total successive number of entries relevant to this tile in FTimelineToScene's members, both in
-	/// Elements and Extracts, because when extracting, we also need direct access to FITwinElementFeatures,
-	/// which means looping on both in sync.
+	/// When extracting and not using glTF tuner, NbOfElements==NbOfExtracts, because we also need
+	/// direct access to ITwinElementFeatures, which means looping on both in sync.
 	/// Note that ExtractedElements will thus contain entries of all Elements of a timeline that has partial
 	/// visibility, even if the Element already has a translucent material and does not actually requires
 	/// extraction (not the most common case anyway).
-	uint32_t NbOfElements = 0;
+	/// Also used when separating meshes using glTF tuner, because in that case we need a list of meshes and
+	/// materials on which to apply translucencies and transformations. But in that case we will usually have
+	/// (far) fewer meshes than Elements (whereas extraction produced on mesh per Element).
+	uint32_t NbOfExtracts = 0;
 };
 
 /// Structure optimizing access to FITwinElementFeaturesInTile and FITwinExtractedElement for a given
@@ -460,7 +529,7 @@ struct FTimelineToScene
 	/// Same size as TileElems.
 	std::vector<ITwinScene::ElemIdx> SceneElems;
 	/// Stores indices of FITwinExtractedElement in _different_ tiles, only meaningful in conjunction with
-	/// the 'Tiles' member
+	/// the 'Tiles' member. Also used when separating meshes using glTF tuner!
 	std::vector<ITwinTile::ExtrIdx> Extracts;
 };
 
@@ -469,8 +538,9 @@ struct FTimelineToScene
 /// \see FITwinElement::Requirements
 struct FElemAnimRequirements
 {
-	/// In practice, it means the Element is animated at least by one timeline, since any kind of animation
-	/// will require at least the alpha channel.
+	/// In practice, it means the Element is animated at least by one timeline, since almost any kind of 
+	/// animation will require at least the alpha channel (see comment over tex creation in
+	/// FITwinSceneMapping::OnElementsTimelineModified)
 	bool bNeedHiliteAndOpaTex = false;
 	/// Whether at least one timeline with growth simulation animates the Element
 	bool bNeedCuttingPlaneTex = false;
@@ -503,13 +573,24 @@ public:
 	/// Stores the Element's "animation requirements" like the need for property textures or whether or not
 	/// it is extracted at least in one tile. Useful to set up each tile in which they'll be found, even when
 	/// we don't want to check its timelines one by one. This is filled even for Element nodes in the
-	/// hierarchy tree for which bhasMesh is false, because we need the info when calling
+	/// hierarchy tree for which bHasMesh is false, because we need the info when calling
 	/// OnElementsTimelineModified on child Elements of animated tasks that may be only received later,
 	/// typically in tiles of finer LOD.
 	FElemAnimRequirements Requirements;
 	using FSubElemsVec = FSmallVec<ITwinScene::ElemIdx, 4>;
 	FSubElemsVec SubElemsInVec;
 };
+
+/// Helper used to postpone texture updates at the end of its scope.
+struct [[nodiscard]] FITwinTextureUpdateDisabler
+{
+	FITwinTextureUpdateDisabler(FITwinSceneMapping& InOwner);
+	~FITwinTextureUpdateDisabler();
+
+	FITwinSceneMapping& Owner;
+	const bool bPreviouslyDisabled;
+};
+
 
 class FITwinSceneMapping
 {
@@ -527,11 +608,38 @@ private:
 	/// To process only Elements that were visible in the UE scene at some point, you now need to check
 	/// FITwinElement::bHasMesh.
 	FSceneElemsCont AllElements;
-	/// *All* Source Element IDs retrieved from the iModel metadata query.
-	std::unordered_map<FString, ITwinScene::ElemIdx/*first seen for this Source*/> SourceElementIDs;
-	/// Only contains entries for Elements with a common Source Element IDs: should be much fewer of those
-	/// than SourceElementIDs.
+	struct FElemGuid
+	{
+		ITwinScene::ElemIdx Rank; ///< first seen for this GUID, in case of duplicates
+		FGuid FederatedGuid;
+	};
+	// Note: bidirectional map, without drawing in boost::bimap dependency...
+	using FElemGuidsCont = boost::multi_index_container<FElemGuid,
+		boost::multi_index::indexed_by<
+			boost::multi_index::hashed_unique<boost::multi_index::tag<IndexByRank>,
+				boost::multi_index::member<FElemGuid, ITwinScene::ElemIdx, &FElemGuid::Rank>>,
+			boost::multi_index::hashed_unique<boost::multi_index::tag<IndexByGUID>,
+				boost::multi_index::member<FElemGuid, FGuid, &FElemGuid::FederatedGuid>>>>;
+	FElemGuidsCont FederatedElementGUIDs;
+	struct FSourceElem
+	{
+		ITwinScene::ElemIdx Rank; ///< first seen for this GUID, in case of duplicates
+		FString SourceId;
+	};
+	// Note: bidirectional map, without drawing in boost::bimap dependency...
+	using FSourceElemenIDsCont = boost::multi_index_container<FSourceElem,
+		boost::multi_index::indexed_by<
+			boost::multi_index::hashed_unique<boost::multi_index::tag<IndexByRank>,
+				boost::multi_index::member<FSourceElem, ITwinScene::ElemIdx, &FSourceElem::Rank>>,
+			boost::multi_index::hashed_unique<boost::multi_index::tag<IndexBySourceID>,
+				boost::multi_index::member<FSourceElem, FString, &FSourceElem::SourceId>>>>;
+	/// *All* Source Element IDs retrieved from the iModel metadata query. Cleared once DuplicateElements is
+	/// finished calculating, ie. as soon as the iModel metadata query batch completes.
+	FSourceElemenIDsCont SourceElementIDs;
+	/// Only contains entries for Elements with either a common Source Element IDs, or a common Federated
+	/// Element GUID: should be much fewer of those than SourceElementIDs.
 	std::vector<FDuplicateElementsVec> DuplicateElements;
+
 	std::function<FITwinScheduleTimeline const& ()> TimelineGetter;
 	std::function<UMaterialInterface* (ECesiumMaterialType)> MaterialGetter;
 	bool bTilesHaveNew4DAnimTextures = false;
@@ -544,6 +652,8 @@ private:
 	bool bNewSelectingAndHidingTexturesNeedSetupInMaterials = false;
 	/// ID of the currently selected Element, if any
 	ITwinElementID SelectedElement = ITwin::NOT_ELEMENT;
+	/// ID of the currently selected Material, if any
+	ITwinMaterialID SelectedMaterial = ITwin::NOT_MATERIAL;
 	//enum class EHiddenByFlag : uint8_t
 	//{
 	//	ConstructionData, ///< Hidden because Element is construction data and user asked to hide them
@@ -561,6 +671,13 @@ private:
 	/// into and from Unreal coordinates (with the current Georeference and iModel transform: needs to be
 	/// updated if it changes)
 	FITwinCoordConversions CoordConversions;
+	/// Helper used to avoid stacking several texture updates for a same tile, in a limited sequence of
+	/// operations (typically when we highlight a material, which implies to first deselect all).
+	struct FTextureUpdateDisabler
+	{
+		bool bNeedUpdateSelectingAndHidingTextures = false;
+	};
+	std::optional<FTextureUpdateDisabler> TextureUpdateDisabler;
 
 public:
 	using FSceneTilesCont = boost::multi_index_container<FITwinSceneTile,
@@ -579,7 +696,7 @@ public:
 	[[nodiscard]] FITwinSceneTile* FindKnownTileSLOW(CesiumTileID const& TileId);
 	/// Do not actually erase the tile from the KnownTiles container, as it would shift all
 	/// ITwinScene::TileIdx ;^^ Keep the (light-weight) structure forever, just clear its content.
-	void UnloadKnownTile(CesiumTileID const& TileId);
+	void UnloadKnownTile(FITwinSceneTile& SceneTile);
 	[[nodiscard]] ITwinScene::TileIdx KnownTileRank(FITwinSceneTile const& SceneTile) const;
 
 	// map to retrieve all elementsIDs for a given categoryID
@@ -589,10 +706,13 @@ public:
 	// map to retrieve all elementsIDs for a given geometryID
 	std::unordered_map<uint8_t, std::unordered_set<ITwinElementID>> GeometryIDToElementIDs;
 	
-	FITwinSceneMapping();
+	FITwinSceneMapping(bool const forCDO);
 
 	/// Get all known Element structures in the storage array
 	[[nodiscard]] FSceneElemsCont const& GetElements() const { return AllElements; }
+	[[nodiscard]] size_t NumElements() const { return AllElements.size(); }
+	/// Helper function to modify Elements (except their ElementID!)
+	void MutateElements(std::function<void(FITwinElement&)>&& Functor);
 
 	/// ElemDesignation can be by ElementID (ITwinElementID) or by index in AllElements (ITwinScene::ElemIdx)
 	template<typename ElemDesignation>
@@ -612,28 +732,36 @@ public:
 		else
 			return Empty;
 	}
+	[[nodiscard]] FITwinElement const& ElementFor(ITwinScene::ElemIdx const ByElemIdx) const;
 	[[nodiscard]] FITwinElement& ElementFor(ITwinScene::ElemIdx const ByElemIdx);
-	[[nodiscard]] FITwinElement& ElementForSLOW(ITwinElementID const ById, ITwinScene::ElemIdx* Rank = nullptr);
-	int ParseHierarchyTree(TArray<TSharedPtr<FJsonValue>> const& JsonRows);
-	int ParseSourceElementIDs(TArray<TSharedPtr<FJsonValue>> const& JsonRows);
+	[[nodiscard]] FITwinElement& ElementForSLOW(ITwinElementID const ById,
+												ITwinScene::ElemIdx* Rank = nullptr);
+	[[nodiscard]] bool FindElementIDForGUID(FGuid const& ElementGuid, ITwinElementID& Found) const;
+	[[nodiscard]] bool FindGUIDForElement(ITwinScene::ElemIdx const Rank, FGuid& Found) const;
+	[[nodiscard]] bool FindGUIDForElement(ITwinElementID const Elem, FGuid& Found) const;
+	void ReserveIModelMetadata(int TotalElements);
+	void FinishedParsingIModelMetadata();
+	int ParseIModelMetadata(TArray<TSharedPtr<FJsonValue>> const& JsonRows);
 	FDuplicateElementsVec const& GetDuplicateElements(ITwinElementID const ElemID) const;
 	FString ToString() const;
 	void CreateHighlightsAndOpacitiesTexture(FITwinSceneTile& SceneTile);
 	void CreateCuttingPlanesTexture(FITwinSceneTile& SceneTile);
 	/// Makes sure feature IDs are available in per-vertex UVs. They should have been baked
-	/// already (with FITwinSceneMappingBuilder::BakeFeatureIDsInVertexUVs), because baking
-	/// on-demand, which worked in Editor mode, was shown to be problematic in Shipping-packaged apps...
+	/// already (through the instantiation of UCesiumFeaturesMetadataComponent upon tileset creation...)
 	/// So here we should only have to configure the tile's materials to access the right UV layer.
 	void SetupFeatureIDsInVertexUVs(FITwinSceneTile& SceneTile,
 		FITwinGltfMeshComponentWrapper& GltfMeshData, bool bUpdatingTile = false);
 	/// Same as the other SetupFeatureIDsInVertexUVs, but for all meshes of the tile (used for dev only)
 	void SetupFeatureIDsInVertexUVs(FITwinSceneTile& SceneTile, bool bUpdatingTile = false);
 	void OnNewTileBuilt(FITwinSceneTile& SceneTile);
-	void OnVisibilityChanged(FITwinSceneTile& SceneTile, bool bVisible);
+	void OnVisibilityChanged(FITwinSceneTile& SceneTile, bool bVisible,
+							 bool const bUseGltfTunerInsteadOfMeshExtraction);
 	/// Prepares a tile's internal properties and structures to allow animation for a timeline
 	void OnElementsTimelineModified(
 		std::variant<ITwinScene::TileIdx, std::reference_wrapper<FITwinSceneTile>> const KnownTile,
-		FITwinElementTimeline& ModifiedTimeline, std::vector<ITwinElementID> const* OnlyForElements = nullptr);
+		FITwinElementTimeline& ModifiedTimeline, std::vector<ITwinElementID> const* OnlyForElements,
+		bool const bUseGltfTunerInsteadOfMeshExtraction, bool const bTileIsTunedFor4D,
+		int const TimelineIndex);
 	/// See long comment before call, in FITwinSynchro4DSchedulesInternals::HandleReceivedElements.
 	/// Does not (need to) handle selection highlight (see UpdateSelectingAndHidingTextures).
 	/// \return Whether new tiles received have textures set up for Synchro animation
@@ -652,6 +780,10 @@ public:
 	size_t UpdateSelectingAndHidingTextures();
 	void UpdateSelectingAndHidingTileTextures(FITwinSceneTile& SceneTile, size_t& DirtyTexCount,
 											  size_t& TexToWait);
+	/// Disables (or re-enable) the update of dirty textures.
+	void DisableUpdateSelectingAndHidingTextures(bool b);
+	[[nodiscard]] bool AreSelectingAndHidingTexturesUpdatesDisabled() const;
+
 	[[nodiscard]] bool TilesHaveNew4DAnimTextures(bool& bWaitingForTextures);
 	// Note: we don't need a separate TilesHaveNewSelectingAndHidingTextures here, as opposed to 4D anim
 	// textures (even for those we'll probably merge the two as well in the future)
@@ -705,52 +837,62 @@ public:
 	/// able to see only the animated parts of a Synchro4D animation...)
 	void HidePrimitivesWithExtractedEntities(bool bHide = true);
 
-	/// Bake features in per-vertex UVs, for all known meshes
-	/// This was added for debugging purpose only.
-	void BakeFeaturesInUVs_AllMeshes();
-
-	/// Set the current selected ElementID - can be NOT_ELEMENT to discard any selection.
+	/// Checks whether the Element can be picked, ie if it is visible. Optionally 
+	/// \param InElemID Element to check. Pass NOT_ELEMENT to just discard any existing selection.
+	/// \param bSelectElement If check succeeds, select the Element.
 	/// \return Whether the Element could indeed be selected in any of the currently known tiles. Failure to
 	///		select can indeed happen when the Element is hidden through the material shader, or simply when
 	///		it is already selected.
-	bool SelectVisibleElement(ITwinElementID const& InElemID);
+	bool PickVisibleElement(ITwinElementID const& InElemID, bool const bSelectElement = true);
 
 	void HideElements(std::unordered_set<ITwinElementID> const& InElemIDs, bool IsConstruction);
 	/// Not const because empty set may be added to GeometryIDToElementIDs before being returned
-	std::unordered_set<ITwinElementID> const& ConstructionDataElements();
+	[[nodiscard]] std::unordered_set<ITwinElementID> const& ConstructionDataElements();
+	[[nodiscard]] bool IsElementHiddenInSavedView(ITwinElementID const& InElemID) const;
 
 	//! Returns the selected Element's ID, if an Element is selected, or ITwin::NOT_ELEMENT.
 	[[nodiscard]] ITwinElementID GetSelectedElement() const { return SelectedElement; }
 
-	/// Given a hit component, find its owner tile.
-	FITwinSceneTile const* FindOwningTile(UPrimitiveComponent const* Component) const;
+	using ITwinColor = std::array<double, 4>;
 
-	/// Given a hit component, find its owner glTF mesh wrapper.
-	FITwinGltfMeshComponentWrapper const* FindGlTFMeshWrapper(UPrimitiveComponent const* Component) const;
+	/// Same as PickVisibleElement, but applying to a Material.
+	bool PickVisibleMaterial(ITwinMaterialID const& InMaterialID, bool bIsMaterialPrediction,
+		std::optional<ITwinColor> const& ColorToRestore = std::nullopt);
+	//! Returns the selected Material's ID, if a Material is selected, or ITwin::NOT_MATERIAL.
+	[[nodiscard]] ITwinMaterialID GetSelectedMaterial() const { return SelectedMaterial; }
+
+	/// Given a component (typically obtained by a line trace hit), find its owner tile and glTF mesh wrapper
+	std::pair<FITwinSceneTile const*, FITwinGltfMeshComponentWrapper const*> FindOwningTileSLOW(
+		UPrimitiveComponent const* Component) const;
 
 	/// Reset everything - should only be called before the tileset is reloaded.
 	void Reset();
 
 	/// Edit a scalar parameter in all Unreal materials created for the given ITwin material.
 	void SetITwinMaterialChannelIntensity(uint64_t ITwinMaterialID,
-		SDK::Core::EChannelType Channel, double Intensity);
+		AdvViz::SDK::EChannelType Channel, double Intensity);
 
-	using ITwinColor = std::array<double, 4>;
 	/// Edit a color parameter in all Unreal materials created for the given ITwin material.
 	void SetITwinMaterialChannelColor(uint64_t ITwinMaterialID,
-		SDK::Core::EChannelType Channel, ITwinColor const& Color);
+		AdvViz::SDK::EChannelType Channel, ITwinColor const& Color);
 
 	/// Edit a texture parameter in all Unreal materials created for the given ITwin material.
 	void SetITwinMaterialChannelTexture(uint64_t ITwinMaterialID,
-		SDK::Core::EChannelType Channel, UTexture* pTexture);
+		AdvViz::SDK::EChannelType Channel, UTexture* pTexture);
 
 	/// Edit UV transformation parameters in all Unreal materials created for the given ITwin material.
-	using ITwinUVTransform = SDK::Core::ITwinUVTransform;
+	using ITwinUVTransform = AdvViz::SDK::ITwinUVTransform;
 	void SetITwinMaterialUVTransform(uint64_t ITwinMaterialID, ITwinUVTransform const& UVTransform);
 
+	/// Create a dummy mapping composed of just one tile using one material. Introduced to apply materials
+	/// from the Material Library to arbitrary meshes.
+	void BuildFromNonCesiumMesh(const TWeakObjectPtr<UStaticMeshComponent>& MeshComponent,
+		uint64_t ITwinMaterialID);
+
 private:
-	bool ParseSourceElementID(ITwinElementID const ElemId, TSharedPtr<FJsonValue> const& Entry,
-		int& GoodEntry, int& EmptyEntry);
+	template<typename TSomeID, typename TMapByRank>
+	bool ParseSomeElementIdentifier(TMapByRank& OutIDMap, ITwinElementID const ElemId,
+		TSharedPtr<FJsonValue> const& Entry, int& GoodEntry, int& EmptyEntry);
 	void ApplySelectingAndHiding(FITwinSceneTile& SceneTile);
 	/// Extracts the given element in the given tile. New Unreal entities may be created.
 	/// \return the number of created entities in Unreal.

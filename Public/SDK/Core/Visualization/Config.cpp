@@ -12,7 +12,7 @@
 
 #include "Core/Network/Network.h"
 #include "Config.h"
-namespace SDK::Core
+namespace AdvViz::SDK
 {
 	namespace Config {
 
@@ -33,7 +33,7 @@ namespace SDK::Core
 				baseUrl += ":" + std::to_string(config.server.port);
 			}
 			baseUrl += config.server.urlapiprefix;
-			g_config.defaultHttp_->SetBaseUrl(baseUrl);
+			g_config.defaultHttp_->SetBaseUrl(baseUrl.c_str());
 		}
 
 		SConfig LoadFromFile(std::filesystem::path& path)

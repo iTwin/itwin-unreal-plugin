@@ -1,15 +1,16 @@
-#include "Cesium3DTilesWriter/SubtreeWriter.h"
-
 #include "TilesetJsonWriter.h"
-#include "registerExtensions.h"
+#include "registerWriterExtensions.h"
 
+#include <Cesium3DTilesWriter/SubtreeWriter.h>
 #include <CesiumJsonWriter/JsonWriter.h>
 #include <CesiumJsonWriter/PrettyJsonWriter.h>
 #include <CesiumUtility/Tracing.h>
 
+#include <memory>
+
 namespace Cesium3DTilesWriter {
 
-SubtreeWriter::SubtreeWriter() { registerExtensions(this->_context); }
+SubtreeWriter::SubtreeWriter() { registerWriterExtensions(this->_context); }
 
 CesiumJsonWriter::ExtensionWriterContext& SubtreeWriter::getExtensions() {
   return this->_context;
@@ -39,6 +40,8 @@ SubtreeWriterResult SubtreeWriter::writeSubtree(
 
   SubtreeJsonWriter::write(subtree, *writer, context);
   result.subtreeBytes = writer->toBytes();
+  result.errors = writer->getErrors();
+  result.warnings = writer->getWarnings();
 
   return result;
 }

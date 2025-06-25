@@ -25,7 +25,7 @@ namespace ITwinHttp
 	using FMutex = std::recursive_mutex;
 	using FLock = std::lock_guard<FMutex>;
 
-	using EVerb = SDK::Core::EVerb;
+	using EVerb = AdvViz::SDK::EVerb;
 
 	inline FString GetVerbString(EVerb eVerb)
 	{

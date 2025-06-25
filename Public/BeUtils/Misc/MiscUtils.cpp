@@ -28,4 +28,9 @@ std::string GetRealityDataIdFromUrl(const std::string& url)
 	return {};
 }
 
+bool ContainsUUIDLikeSubstring(const std::string& name)
+{
+	return std::regex_match(name, std::regex(".*[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-.*"));
+}
+
 } // namespace BeUtils

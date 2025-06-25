@@ -1,13 +1,13 @@
 #pragma once
 
-#include "HttpHeaders.h"
-#include "Library.h"
-
-#include <gsl/span>
+#include <CesiumAsync/HttpHeaders.h>
+#include <CesiumAsync/Library.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <ctime>
 #include <map>
+#include <span>
 #include <vector>
 
 namespace CesiumAsync {

@@ -1,10 +1,16 @@
 #include "ImplicitOctreeLoader.h"
 
+#include <Cesium3DTilesContent/SubtreeAvailability.h>
 #include <Cesium3DTilesContent/registerAllTileContentTypes.h>
 #include <Cesium3DTilesSelection/Tile.h>
+#include <Cesium3DTilesSelection/TileContent.h>
+#include <Cesium3DTilesSelection/TileLoadResult.h>
+#include <Cesium3DTilesSelection/TilesetContentLoader.h>
+#include <CesiumAsync/AsyncSystem.h>
 #include <CesiumGeometry/OrientedBoundingBox.h>
 #include <CesiumGeospatial/BoundingRegion.h>
-#include <CesiumGeospatial/S2CellBoundingVolume.h>
+#include <CesiumGeospatial/Ellipsoid.h>
+#include <CesiumGltf/Model.h>
 #include <CesiumNativeTests/SimpleAssetAccessor.h>
 #include <CesiumNativeTests/SimpleAssetRequest.h>
 #include <CesiumNativeTests/SimpleAssetResponse.h>
@@ -12,10 +18,24 @@
 #include <CesiumNativeTests/readFile.h>
 #include <CesiumUtility/Math.h>
 
-#include <catch2/catch.hpp>
+#include <doctest/doctest.h>
+#include <glm/ext/matrix_double3x3.hpp>
+#include <glm/ext/vector_double3.hpp>
+#include <spdlog/spdlog.h>
 
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
 #include <filesystem>
+#include <map>
+#include <memory>
+#include <span>
+#include <string>
+#include <utility>
+#include <variant>
+#include <vector>
 
+using namespace doctest;
 using namespace Cesium3DTilesContent;
 using namespace Cesium3DTilesSelection;
 using namespace CesiumGeometry;
@@ -43,7 +63,7 @@ TEST_CASE("Test implicit octree loader") {
       5,
       OrientedBoundingBox(glm::dvec3(0.0), glm::dmat3(20.0))};
 
-  SECTION("Load tile that does not have quadtree ID") {
+  SUBCASE("Load tile that does not have quadtree ID") {
     Tile tile(&loader);
     tile.setTileID("This is a test tile");
 
@@ -63,7 +83,7 @@ TEST_CASE("Test implicit octree loader") {
     CHECK(tileLoadResult.state == TileLoadResultState::Failed);
   }
 
-  SECTION("Load empty tile") {
+  SUBCASE("Load empty tile") {
     // add subtree with all empty tiles
     loader.addSubtreeAvailability(
         OctreeTileID{0, 0, 0, 0},
@@ -99,7 +119,7 @@ TEST_CASE("Test implicit octree loader") {
     CHECK(tileLoadResult.state == TileLoadResultState::Success);
   }
 
-  SECTION("Load tile with render content") {
+  SUBCASE("Load tile with render content") {
     // add subtree with all available tiles
     loader.addSubtreeAvailability(
         OctreeTileID{0, 0, 0, 0},
@@ -152,7 +172,7 @@ TEST_CASE("Test implicit octree loader") {
     CHECK(tileLoadResult.state == TileLoadResultState::Success);
   }
 
-  SECTION("Load unknown tile content") {
+  SUBCASE("Load unknown tile content") {
     // add subtree with all available tiles
     loader.addSubtreeAvailability(
         OctreeTileID{0, 0, 0, 0},
@@ -204,7 +224,7 @@ TEST_CASE("Test implicit octree loader") {
 namespace {
 
 const Tile&
-findTile(const gsl::span<const Tile>& children, const OctreeTileID& tileID) {
+findTile(const std::span<const Tile>& children, const OctreeTileID& tileID) {
   auto it = std::find_if(
       children.begin(),
       children.end(),
@@ -220,7 +240,7 @@ findTile(const gsl::span<const Tile>& children, const OctreeTileID& tileID) {
 
 const Tile&
 findTile(const std::vector<Tile>& children, const OctreeTileID& tileID) {
-  return findTile(gsl::span<const Tile>(children), tileID);
+  return findTile(std::span<const Tile>(children), tileID);
 }
 
 } // namespace
@@ -233,7 +253,7 @@ TEST_CASE("Test tile subdivision for implicit octree loader") {
 
   CesiumAsync::AsyncSystem asyncSystem{std::make_shared<SimpleTaskProcessor>()};
 
-  SECTION("Subdivide oriented bounding box") {
+  SUBCASE("Subdivide oriented bounding box") {
     OrientedBoundingBox loaderBoundingVolume{glm::dvec3(0.0), glm::dmat3(20.0)};
     ImplicitOctreeLoader loader{
         "tileset.json",
@@ -426,7 +446,7 @@ TEST_CASE("Test tile subdivision for implicit octree loader") {
     }
   }
 
-  SECTION("Subdivide bounding region") {
+  SUBCASE("Subdivide bounding region") {
     BoundingRegion loaderBoundingVolume{
         GlobeRectangle{
             -Math::OnePi,
@@ -434,7 +454,8 @@ TEST_CASE("Test tile subdivision for implicit octree loader") {
             Math::OnePi,
             Math::PiOverTwo},
         0.0,
-        100.0};
+        100.0,
+        Ellipsoid::WGS84};
 
     ImplicitOctreeLoader loader{
         "tileset.json",

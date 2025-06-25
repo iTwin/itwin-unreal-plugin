@@ -7,7 +7,8 @@
 +--------------------------------------------------------------------------------------*/
 
 #pragma once
-namespace SDK::Core::Tools::Internal
+#include <cinttypes>
+namespace AdvViz::SDK::Tools::Internal
 {
 	// FNV1a c++11 constexpr compile time hash functions, 64 bit
 	// str should be a null terminated string literal, value should be left out

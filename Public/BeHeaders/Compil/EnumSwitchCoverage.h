@@ -13,7 +13,10 @@
 #pragma once
 
 #include "Attributes.h"
+
+#ifndef BE_ISSUE // Quick fix when including this header from BeUtils...
 #include "Break.h"
+#endif
 
 // used to be activated due to warnings, but was abandoned because it induces
 // a very dangerous behavior when we cast an integer into an enum: not having

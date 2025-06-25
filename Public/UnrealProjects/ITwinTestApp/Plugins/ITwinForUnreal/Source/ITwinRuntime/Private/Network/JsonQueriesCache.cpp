@@ -43,10 +43,11 @@ namespace QueriesCache
 		FString SubtypeFolder;
 		switch (Type)
 		{
-		case ESubtype::Schedules:				SubtypeFolder = TEXT("Schedules"); break;
-		case ESubtype::ElementsHierarchies:		SubtypeFolder = TEXT("ElemTrees"); break;
-		case ESubtype::ElementsSourceIDs:		SubtypeFolder = TEXT("ElemSrcID"); break;
-		case ESubtype::MaterialMLPrediction:	SubtypeFolder = TEXT("MaterialMLPrediction"); break;
+		case ESubtype::Schedules:						SubtypeFolder = TEXT("Schedules"); break;
+		case ESubtype::DEPRECATED_ElementsHierarchies:	SubtypeFolder = TEXT("ElemTrees"); break;
+		case ESubtype::DEPRECATED_ElementsSourceIDs:	SubtypeFolder = TEXT("ElemSrcID"); break;
+		case ESubtype::MaterialMLPrediction:			SubtypeFolder = TEXT("MaterialMLPrediction"); break;
+		case ESubtype::ElementsMetadataCombined:		SubtypeFolder = TEXT("ElemMetadata"); break;
 		default: ensure(false); return {};
 		}
 		FString const CacheFolder = FPaths::Combine(FPlatformProcess::UserSettingsDir(),
@@ -56,8 +57,8 @@ namespace QueriesCache
 			return CacheFolder;
 		if (ESubtype::Schedules == Type)
 		{
-			if (ITwinId == ExtraStr) // often the case at the moment for schedule Ids...
-				return FPaths::Combine(CacheFolder, ITwinId + TEXT("_") + ChangesetId);
+			if (ExtraStr.Contains(ITwinId)) // often the case at the moment for schedule Ids...
+				return FPaths::Combine(CacheFolder, ExtraStr + TEXT("_") + ChangesetId);
 			else
 				return FPaths::Combine(CacheFolder, ITwinId + TEXT("_") + ExtraStr + TEXT("_") + ChangesetId);
 		}
@@ -110,10 +111,11 @@ public:
 	{
 		MaxSize = GetDefault<UITwinIModelSettings>()->IModelMaximumCachedMegaBytes * (1024 * 1024ULL);
 		std::vector<FString> const SubcacheFolders = {
-			QueriesCache::GetCacheFolder(QueriesCache::ESubtype::ElementsHierarchies, Env, {}, {}, {}),
-			QueriesCache::GetCacheFolder(QueriesCache::ESubtype::ElementsSourceIDs, Env, {}, {}, {}),
+			QueriesCache::GetCacheFolder(QueriesCache::ESubtype::DEPRECATED_ElementsHierarchies, Env, {}, {}, {}),
+			QueriesCache::GetCacheFolder(QueriesCache::ESubtype::DEPRECATED_ElementsSourceIDs, Env, {}, {}, {}),
 			QueriesCache::GetCacheFolder(QueriesCache::ESubtype::Schedules, Env, {}, {}, {}),
 			//QueriesCache::GetCacheFolder(QueriesCache::ESubtype::MaterialMLPrediction, Env, {}, {}, {}),
+			QueriesCache::GetCacheFolder(QueriesCache::ESubtype::ElementsMetadataCombined, Env, {}, {}, {}),
 		};
 		for (FString const& Dir : SubcacheFolders)
 		{
@@ -236,11 +238,14 @@ public:
 		MRU.splice(MRU.begin(), MRU, Entry); // move Entry to front
 		Entry->LastUse = FDateTime::UtcNow();
 		Entry->InUse = (EUseFlag::Loading == UseFlag) ? (&Owner) : nullptr;
-		FFileHelper::SaveStringToFile(
-			FString::Printf(TEXT("%llu|%llu|%s"),
-							Entry->LastUse.GetTicks(), Entry->SizeOnDisk, *Entry->DisplayName),
-			*FPaths::Combine(Entry->PathBase, QueriesCache::MRU_TIMESTAMP),
-			FFileHelper::EEncodingOptions::ForceUTF8);
+		if (!Owner.IsUnitTesting())
+		{
+			FFileHelper::SaveStringToFile(
+				FString::Printf(TEXT("%llu|%llu|%s"),
+								Entry->LastUse.GetTicks(), Entry->SizeOnDisk, *Entry->DisplayName),
+				*FPaths::Combine(Entry->PathBase, QueriesCache::MRU_TIMESTAMP),
+				FFileHelper::EEncodingOptions::ForceUTF8);
+		}
 		CleanLeastRecentlyUsed();
 	}
 
@@ -285,6 +290,7 @@ public:
 	FCacheMRU::iterator Entry;
 	std::shared_ptr<FJsonQueriesCacheManager> Manager;
 	bool bIsRecordingForSimulation = false;
+	bool bIsUnitTesting = false;
 	int RecorderTimestamp = 0;
 	QueriesCache::FSessionMap SessionMap;
 };
@@ -298,6 +304,11 @@ FJsonQueriesCache::FJsonQueriesCache(UObject const& Owner) : Impl(MakePimpl<FImp
 bool FJsonQueriesCache::IsValid() const
 {
 	return !Impl->PathBase.IsEmpty();
+}
+
+bool FJsonQueriesCache::IsUnitTesting() const
+{
+	return Impl->bIsUnitTesting;
 }
 
 int FJsonQueriesCache::CurrentTimestamp() const
@@ -326,8 +337,10 @@ void FJsonQueriesCache::ClearFromDisk()
 }
 
 bool FJsonQueriesCache::Initialize(FString CacheFolder, EITwinEnvironment const Environment,
-	FString const& DisplayName, bool const InbIsRecordingForSimulation /*= false*/)
+	FString const& DisplayName, bool const InbIsRecordingForSimulation/*= false*/,
+	bool const bUnitTesting/*= false*/)
 {
+	Impl->bIsUnitTesting = bUnitTesting;
 	FPaths::NormalizeDirectoryName(CacheFolder);
 	FPaths::RemoveDuplicateSlashes(CacheFolder);
 	if (!FPaths::CollapseRelativeDirectories(CacheFolder))
@@ -394,14 +407,15 @@ bool FJsonQueriesCache::LoadSessionSimulation(FString const& SimulateFromFolder)
 	return false;
 }
 
-void FJsonQueriesCache::Write(SDK::Core::ITwinAPIRequestInfo const& CompletedRequest,
+void FJsonQueriesCache::Write(AdvViz::SDK::ITwinAPIRequestInfo const& CompletedRequest,
 	FString const& QueryResult, bool const bConnectedSuccessfully, ITwinHttp::FMutex& Mutex,
 	int const QueryTimestamp/*= -1*/)
 {
 	auto JsonObj = MakeShared<FJsonObject>();
 	ToJson(CompletedRequest, JsonObj);
 	Write(JsonObj, bConnectedSuccessfully ? 200 : 500/*we don't get the actual code from SDK...*/,
-		bConnectedSuccessfully ? QueryResult : FString{}, bConnectedSuccessfully, Mutex, QueryTimestamp);
+		bConnectedSuccessfully ? QueryResult : FString{}, bConnectedSuccessfully, bConnectedSuccessfully,
+		Mutex, QueryTimestamp);
 }
 
 void FJsonQueriesCache::Write(FHttpRequestPtr const& CompletedRequest, FHttpResponsePtr const Response,
@@ -409,13 +423,36 @@ void FJsonQueriesCache::Write(FHttpRequestPtr const& CompletedRequest, FHttpResp
 {
 	auto JsonObj = MakeShared<FJsonObject>();
 	ToJson(CompletedRequest, JsonObj);
-	Write(JsonObj, Response ? Response->GetResponseCode() : 418/*https://en.wikipedia.org/wiki/HTTP_418*/,
-		Response ? Response->GetContentAsString() : FString{}, bConnectedSuccessfully, Mutex, QueryTimestamp);
+	if (Response)
+	{
+		FString Reply = Response->GetContentAsString();
+		bool const bRequestSucceeded = EHttpRequestStatus::Succeeded == CompletedRequest->GetStatus();
+		// See comment in FReusableJsonQueries::FImpl::FRequestHandler::ProcessResponse
+		FString const ContinuationToken = // check request success, otherwise reply may be html...
+			(bConnectedSuccessfully && bRequestSucceeded)
+				? Response->GetHeader(TEXT("Continuation-Token")) : FString{};
+		if (!ContinuationToken.IsEmpty())
+		{
+			int32 Index;
+			if (ensure(Reply.FindChar(TCHAR('{'), Index)))
+			{
+				Reply = FString("{\"nextPageToken\":\"") + ContinuationToken + FString("\",")
+					+ Reply.RightChop(Index + 1);
+			}
+		}
+		Write(JsonObj, Response->GetResponseCode(), Reply, bConnectedSuccessfully, bRequestSucceeded,
+			  Mutex, QueryTimestamp);
+	}
+	else
+	{
+		Write(JsonObj, 418/* https://en.wikipedia.org/wiki/HTTP_418 */, {}, bConnectedSuccessfully, false,
+			  Mutex, QueryTimestamp);
+	}
 }
 
 void FJsonQueriesCache::Write(TSharedRef<FJsonObject>& JsonObj, int const ResponseCode,
-	FString const& ContentAsString, bool const bConnectedSuccessfully, ITwinHttp::FMutex& Mutex,
-	int const QueryTimestamp)
+	FString const& ContentAsString, bool const bConnectedSuccessfully, bool const bRequestSucceeded,
+	ITwinHttp::FMutex& Mutex, int const QueryTimestamp)
 {
 	if (!ensure(IsValid()))
 		return;
@@ -424,12 +461,14 @@ void FJsonQueriesCache::Write(TSharedRef<FJsonObject>& JsonObj, int const Respon
 		ensure(QueryTimestamp != -1);
 		JsonObj->SetNumberField(TEXT("toQuery"), QueryTimestamp);
 	}
+	else 
+		ensure(bRequestSucceeded); // we shouldn't write unsuccessful replies in the cache...
 	JsonObj->SetBoolField(TEXT("connectedSuccessfully"), bConnectedSuccessfully);
 	JsonObj->SetNumberField(TEXT("responseCode"), ResponseCode);
 	FString JsonString;
 	auto JsonWriter = TJsonWriterFactory<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>::Create(&JsonString);
 	FJsonSerializer::Serialize(JsonObj, JsonWriter);
-	if (bConnectedSuccessfully) // otherwise Response->GetContentAsString is html, not json...
+	if (bRequestSucceeded) // otherwise Response->GetContentAsString may be html, not json...
 	{
 		int32 FinalClosingBrace;
 		if (JsonString.FindLastChar(TEXT('}'), FinalClosingBrace))
@@ -460,12 +499,12 @@ void FJsonQueriesCache::Write(TSharedRef<FJsonObject>& JsonObj, int const Respon
 	}
 }
 
-void FJsonQueriesCache::ToJson(SDK::Core::ITwinAPIRequestInfo const& Req, TSharedRef<FJsonObject>& JsonObj) 
+void FJsonQueriesCache::ToJson(AdvViz::SDK::ITwinAPIRequestInfo const& Req, TSharedRef<FJsonObject>& JsonObj) 
 	const
 {
 	JsonObj->SetStringField(TEXT("url"), Req.UrlSuffix.c_str());
 	JsonObj->SetStringField(TEXT("verb"), ITwinHttp::GetVerbString(Req.Verb));
-	if (SDK::Core::EVerb::Post == Req.Verb)
+	if (AdvViz::SDK::EVerb::Post == Req.Verb)
 	{
 		if (Req.ContentString.empty())
 			JsonObj->SetStringField(TEXT("payload"), TEXT("{}"));//otherwise won't work in Get(..)
@@ -544,7 +583,7 @@ void FJsonQueriesCache::RecordQuery(FHttpRequestPtr const& Request, ITwinHttp::F
 }
 
 std::optional<QueriesCache::FSessionMap::const_iterator> FJsonQueriesCache::LookUp(
-	SDK::Core::ITwinAPIRequestInfo const& Request, ITwinHttp::FMutex& Mutex) const
+	AdvViz::SDK::ITwinAPIRequestInfo const& Request, ITwinHttp::FMutex& Mutex) const
 {
 	ITwinHttp::FLock Lock(Mutex);
 	QueriesCache::FSessionMap::const_iterator It;

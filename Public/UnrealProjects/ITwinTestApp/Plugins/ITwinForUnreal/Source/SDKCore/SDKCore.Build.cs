@@ -23,6 +23,7 @@ public class SDKCore : ModuleRules
 		string libSuffix = "lib";
         string dllExtension = ".dll";
 		string libFolder = "UnrealDebug";
+		string configDefine = "UNREALDEBUG_CONFIG";
         string libPostfixDynamic = ".lib";
 		string dllExePath = Path.Combine(PluginDirectory, "Binaries/Win64/");
 
@@ -30,7 +31,11 @@ public class SDKCore : ModuleRules
 			Target.Configuration == UnrealTargetConfiguration.Shipping)
 		{
 			libFolder = "Release";
+			configDefine = "RELEASE_CONFIG";
 		}
+
+		PublicDefinitions.Add(configDefine);
+
 		if (Target.Platform == UnrealTargetPlatform.Mac)
 		{
 			libExtension = ".a";
@@ -43,9 +48,9 @@ public class SDKCore : ModuleRules
 		PublicAdditionalLibraries.AddRange(new string[]{
 			Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, libPrefix + "Visualization" + libExtension),
 			Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, libPrefix + "reflectcpp" + libExtension),
-			Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, libPrefix + "cpr" + libExtension),
+			//Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, libPrefix + "cpr" + libExtension),
 			Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, libPrefix + "z" + libSuffix + libExtension),
-			Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, "libcurl" + libExtension),
+			//Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, "libcurl" + libExtension),
             Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, libPrefix + "assert" + libExtension),
             Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, libPrefix + "cpptrace" + libExtension),
             Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, libPrefix + "Singleton" + libPostfixDynamic),

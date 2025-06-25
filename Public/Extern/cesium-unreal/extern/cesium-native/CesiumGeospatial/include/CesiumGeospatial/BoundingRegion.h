@@ -1,11 +1,10 @@
 #pragma once
 
-#include "Ellipsoid.h"
-#include "GlobeRectangle.h"
-#include "Library.h"
-
 #include <CesiumGeometry/CullingResult.h>
 #include <CesiumGeometry/OrientedBoundingBox.h>
+#include <CesiumGeospatial/Ellipsoid.h>
+#include <CesiumGeospatial/GlobeRectangle.h>
+#include <CesiumGeospatial/Library.h>
 
 namespace CesiumGeometry {
 class Plane;
@@ -32,7 +31,7 @@ public:
       const GlobeRectangle& rectangle,
       double minimumHeight,
       double maximumHeight,
-      const Ellipsoid& ellipsoid = Ellipsoid::WGS84);
+      const Ellipsoid& ellipsoid CESIUM_DEFAULT_ELLIPSOID);
 
   /**
    * @brief Gets the bounding rectangle of the region.
@@ -88,7 +87,7 @@ public:
    */
   double computeDistanceSquaredToPosition(
       const glm::dvec3& position,
-      const Ellipsoid& ellipsoid = Ellipsoid::WGS84) const noexcept;
+      const Ellipsoid& ellipsoid CESIUM_DEFAULT_ELLIPSOID) const noexcept;
 
   /**
    * @brief Computes the distance-squared from a longitude-latitude-height
@@ -101,7 +100,7 @@ public:
    */
   double computeDistanceSquaredToPosition(
       const Cartographic& position,
-      const Ellipsoid& ellipsoid = Ellipsoid::WGS84) const noexcept;
+      const Ellipsoid& ellipsoid CESIUM_DEFAULT_ELLIPSOID) const noexcept;
 
   /**
    * @brief Computes the distance-squared from a position to the closest point
@@ -123,9 +122,13 @@ public:
    * @brief Computes the union of this bounding region with another.
    *
    * @param other The other bounding region.
+   * @param ellipsoid The {@link CesiumGeospatial::Ellipsoid}.
    * @return The union.
    */
-  BoundingRegion computeUnion(const BoundingRegion& other) const noexcept;
+  BoundingRegion computeUnion(
+      const BoundingRegion& other,
+      const CesiumGeospatial::Ellipsoid& ellipsoid
+          CESIUM_DEFAULT_ELLIPSOID) const noexcept;
 
 private:
   static CesiumGeometry::OrientedBoundingBox _computeBoundingBox(

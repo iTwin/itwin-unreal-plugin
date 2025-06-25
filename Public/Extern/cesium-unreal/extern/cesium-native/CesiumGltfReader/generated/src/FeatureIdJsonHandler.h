@@ -11,7 +11,7 @@
 
 namespace CesiumJsonReader {
 class JsonReaderOptions;
-}
+} // namespace CesiumJsonReader
 
 namespace CesiumGltfReader {
 class FeatureIdJsonHandler
@@ -19,11 +19,11 @@ class FeatureIdJsonHandler
 public:
   using ValueType = CesiumGltf::FeatureId;
 
-  FeatureIdJsonHandler(
+  explicit FeatureIdJsonHandler(
       const CesiumJsonReader::JsonReaderOptions& options) noexcept;
   void reset(IJsonHandler* pParentHandler, CesiumGltf::FeatureId* pObject);
 
-  virtual IJsonHandler* readObjectKey(const std::string_view& str) override;
+  IJsonHandler* readObjectKey(const std::string_view& str) override;
 
 protected:
   IJsonHandler* readObjectKeyFeatureId(
@@ -38,6 +38,6 @@ private:
   CesiumJsonReader::StringJsonHandler _label;
   CesiumJsonReader::IntegerJsonHandler<int64_t> _attribute;
   FeatureIdTextureJsonHandler _texture;
-  CesiumJsonReader::IntegerJsonHandler<int64_t> _propertyTable;
+  CesiumJsonReader::IntegerJsonHandler<int32_t> _propertyTable;
 };
 } // namespace CesiumGltfReader

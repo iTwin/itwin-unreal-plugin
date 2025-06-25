@@ -12,8 +12,6 @@
 #include "JsonQueriesCache.h"
 #include "ReusableJsonQueries.h"
 
-#include <UE5Coro.h>
-
 #include "CoreMinimal.h"
 
 #include <memory>
@@ -44,8 +42,12 @@ class FReusableJsonQueries::FImpl
 		{
 		}
 
-		UE5Coro::TCoroutine<void> Run(std::shared_ptr<FRequestHandler> This, FHttpRequestPtr CompletedRequest,
-									  FHttpResponsePtr Response, bool bConnectedSuccessfully);
+		bool IsValid() const { return (*IsJsonQueriesValid) == true; }
+		[[nodiscard]] TSharedPtr<TPromise<void>> Run(std::shared_ptr<FRequestHandler> This,
+			FHttpRequestPtr CompletedRequest, FHttpResponsePtr Response, bool bConnectedSuccessfully);
+		void ProcessResponse(TSharedPtr<FJsonObject> ResponseJson, FHttpResponsePtr Response,
+							 bool const bConnectedSuccessfully, bool const bRetry);
+		void CleanUp(FHttpResponsePtr Response, bool const bConnectedSuccessfully, bool const bRetry);
 	};
 
 	FString BaseUrlNoSlash;

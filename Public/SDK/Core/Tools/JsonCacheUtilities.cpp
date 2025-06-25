@@ -22,7 +22,7 @@
 #include <locale>
 #include <fstream>
 
-namespace SDK::Core::Tools
+namespace AdvViz::SDK::Tools
 {
 
 	/// Logic from FPlaylistReaderDASH::GetXMLResponseString
@@ -36,10 +36,10 @@ namespace SDK::Core::Tools
 		std::fstream Ifs(Filepath);
 		if (!Ifs.good())
 			return EFileBOM::Unknown;
-		unsigned char const Byte0 = (FileSize > 0) ? Ifs.get() : 0;
-		unsigned char const Byte1 = (FileSize > 1) ? Ifs.get() : 0;
-		unsigned char const Byte2 = (FileSize > 2) ? Ifs.get() : 0;
-		unsigned char const Byte3 = (FileSize > 3) ? Ifs.get() : 0;
+		uint8_t const Byte0 = static_cast<uint8_t>( (FileSize > 0) ? Ifs.get() : 0 );
+		uint8_t const Byte1 = static_cast<uint8_t>( (FileSize > 1) ? Ifs.get() : 0 );
+		uint8_t const Byte2 = static_cast<uint8_t>( (FileSize > 2) ? Ifs.get() : 0 );
+		uint8_t const Byte3 = static_cast<uint8_t>( (FileSize > 3) ? Ifs.get() : 0 );
 		if (FileSize > 3 && Byte0 == 0xEF && Byte1 == 0xBB && Byte2 == 0xBF)
 		{
 			return EFileBOM::UTF8;
@@ -150,4 +150,4 @@ namespace SDK::Core::Tools
 		return {};
 	}
 
-} // ns. SDK::Core::Tools
+} // ns. AdvViz::SDK::Tools

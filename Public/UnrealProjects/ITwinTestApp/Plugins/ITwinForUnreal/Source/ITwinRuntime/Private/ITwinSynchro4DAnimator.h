@@ -23,14 +23,15 @@ class FITwinSynchro4DAnimator
 public:
 	FITwinSynchro4DAnimator(UITwinSynchro4DSchedules& Owner);
 
-	void OnChangedScheduleTime(bool const bForceUpdateAll);
 	void OnChangedAnimationSpeed();
 	void OnChangedScheduleRenderSetting();
 	void OnMaskOutNonAnimatedElements();
 	void OnFadeOutNonAnimatedElements();
 	void ApplyAnimationOnTile(FITwinSceneTile& SceneTile);
+	void DisableAnimationInTile(FITwinSceneTile& SceneTile);
 
 	void Play();
+	bool IsPlaying() const;
 	void Pause();
 	void Stop();
 

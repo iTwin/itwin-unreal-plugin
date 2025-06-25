@@ -7,19 +7,20 @@
 #include <CesiumJsonReader/JsonReader.h>
 #include <CesiumJsonReader/JsonReaderOptions.h>
 
-#include <gsl/span>
 #include <rapidjson/fwd.h>
 
+#include <span>
 #include <vector>
 
 namespace Cesium3DTiles {
 struct ClassProperty;
-}
+} // namespace Cesium3DTiles
 
 namespace Cesium3DTilesReader {
 
 /**
- * @brief Reads {@link ClassProperty} instances from JSON.
+ * @brief Reads \ref Cesium3DTiles::ClassProperty "ClassProperty" instances from
+ * JSON.
  */
 class CESIUM3DTILESREADER_API ClassPropertyReader {
 public:
@@ -45,12 +46,12 @@ public:
    * @return The result of reading the instance.
    */
   CesiumJsonReader::ReadJsonResult<Cesium3DTiles::ClassProperty>
-  readFromJson(const gsl::span<const std::byte>& data) const;
+  readFromJson(const std::span<const std::byte>& data) const;
 
   /**
    * @brief Reads an instance of ClassProperty from a rapidJson::Value.
    *
-   * @param data The buffer from which to read the instance.
+   * @param value The value from which to read the instance.
    * @return The result of reading the instance.
    */
   CesiumJsonReader::ReadJsonResult<Cesium3DTiles::ClassProperty>
@@ -60,7 +61,7 @@ public:
    * @brief Reads an array of instances of ClassProperty from a
    * rapidJson::Value.
    *
-   * @param data The buffer from which to read the array of instances.
+   * @param value The value from which to read the array of instances.
    * @return The result of reading the array of instances.
    */
   CesiumJsonReader::ReadJsonResult<std::vector<Cesium3DTiles::ClassProperty>>

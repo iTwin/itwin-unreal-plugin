@@ -7,6 +7,15 @@
 # Instead, we want to have these files copied somewhere in our build dir.
 # So we create a symlink, inside the build dir, that points to the source dir containing the root CMakeLists.txt.
 file (CREATE_LINK "${CMAKE_SOURCE_DIR}/Public/Extern/cesium-unreal/extern" "${CMAKE_CURRENT_BINARY_DIR}/extern" SYMBOLIC)
+# We need to disable vcpkg manifest mode, otherwise ezvcpkg is not executed.
+set (VCPKG_MANIFEST_MODE OFF)
+# For libs that are downloaded by both carrot's vcpkg and cesium's ezvcpkg,
+# We have to make sure headers and libs match (eg. do not include carrot's header and link with cesium's lib).
+# We do not have much control over the linked libs: since carrot's vcpkg is executed first, carrot's libs will be used
+# (vcpkg/ezvcpkg first checks if target xxx already exists before calling add_library(xxx)).
+# So here we set the carrot's include path first, so that cesium source files will include from there.
+include_directories ("${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/include")
+cmake_path(GET BE_UNREAL_ENGINE_DIR PARENT_PATH UNREAL_ENGINE_ROOT) # Needed on non-Windows platforms.
 add_subdirectory ("${CMAKE_CURRENT_BINARY_DIR}/extern" "${CMAKE_CURRENT_BINARY_DIR}/build")
 # Retrieve all the targets added by add_subdirectory() above.
 be_get_targets (cesiumUnrealExternTargets "${CMAKE_CURRENT_BINARY_DIR}/extern")

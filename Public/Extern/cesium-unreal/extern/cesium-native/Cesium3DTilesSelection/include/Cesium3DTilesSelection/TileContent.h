@@ -1,8 +1,7 @@
 #pragma once
 
-#include "Library.h"
-#include "TilesetMetadata.h"
-
+#include <Cesium3DTilesSelection/Library.h>
+#include <Cesium3DTilesSelection/TilesetMetadata.h>
 #include <CesiumGeospatial/Projection.h>
 #include <CesiumGltf/Model.h>
 #include <CesiumRasterOverlays/RasterOverlayDetails.h>
@@ -98,62 +97,64 @@ public:
   void setModel(CesiumGltf::Model&& model);
 
   /**
-   * @brief Get the {@link RasterOverlayDetails} which is the result of generating raster overlay UVs for the glTF model
+   * @brief Get the {@link CesiumRasterOverlays::RasterOverlayDetails} which is the result of generating raster overlay UVs for the glTF model
    *
-   * @return The {@link RasterOverlayDetails} that is owned by this content
+   * @return The {@link CesiumRasterOverlays::RasterOverlayDetails} that is owned by this content
    */
   const CesiumRasterOverlays::RasterOverlayDetails&
   getRasterOverlayDetails() const noexcept;
 
   /**
-   * @brief Get the {@link RasterOverlayDetails} which is the result of generating raster overlay UVs for the glTF model
+   * @brief Get the {@link CesiumRasterOverlays::RasterOverlayDetails} which is the result of generating raster overlay UVs for the glTF model
    *
-   * @return The {@link RasterOverlayDetails} that is owned by this content
+   * @return The {@link CesiumRasterOverlays::RasterOverlayDetails} that is owned by this content
    */
   CesiumRasterOverlays::RasterOverlayDetails&
   getRasterOverlayDetails() noexcept;
 
   /**
-   * @brief Set the {@link RasterOverlayDetails} which is the result of generating raster overlay UVs for the glTF model
+   * @brief Set the {@link CesiumRasterOverlays::RasterOverlayDetails} which is the result of generating raster overlay UVs for the glTF model
    *
-   * @param rasterOverlayDetails The {@link RasterOverlayDetails} that will be owned by this content
+   * @param rasterOverlayDetails The {@link CesiumRasterOverlays::RasterOverlayDetails} that will be owned by this content
    */
   void setRasterOverlayDetails(
       const CesiumRasterOverlays::RasterOverlayDetails& rasterOverlayDetails);
 
   /**
-   * @brief Set the {@link RasterOverlayDetails} which is the result of generating raster overlay UVs for the glTF model
+   * @brief Set the {@link CesiumRasterOverlays::RasterOverlayDetails} which is the result of generating raster overlay UVs for the glTF model
    *
-   * @param rasterOverlayDetails The {@link RasterOverlayDetails} that will be owned by this content
+   * @param rasterOverlayDetails The {@link CesiumRasterOverlays::RasterOverlayDetails} that will be owned by this content
    */
   void setRasterOverlayDetails(
       CesiumRasterOverlays::RasterOverlayDetails&& rasterOverlayDetails);
 
   /**
-   * @brief Get the list of {@link Credit} of the content
+   * @brief Get the list of \ref CesiumUtility::Credit "Credit" of the content
    *
-   * @return The list of {@link Credit} of the content
+   * @return The list of \ref CesiumUtility::Credit "Credit" of the content
    */
   const std::vector<CesiumUtility::Credit>& getCredits() const noexcept;
 
   /**
-   * @brief Get the list of {@link Credit} of the content
+   * @brief Get the list of \ref CesiumUtility::Credit "Credit" of the content
    *
-   * @return The list of {@link Credit} of the content
+   * @return The list of \ref CesiumUtility::Credit "Credit" of the content
    */
   std::vector<CesiumUtility::Credit>& getCredits() noexcept;
 
   /**
-   * @brief Set the list of {@link Credit} for the content
+   * @brief Set the list of \ref CesiumUtility::Credit "Credit" for the content
    *
-   * @param credits The list of {@link Credit} to be owned by the content
+   * @param credits The list of \ref CesiumUtility::Credit "Credit" to be owned
+   * by the content
    */
   void setCredits(std::vector<CesiumUtility::Credit>&& credits);
 
   /**
-   * @brief Set the list of {@link Credit} for the content
+   * @brief Set the list of \ref CesiumUtility::Credit "Credit" for the content
    *
-   * @param credits The list of {@link Credit} to be owned by the content
+   * @param credits The list of \ref CesiumUtility::Credit "Credit" to be owned
+   * by the content
    */
   void setCredits(const std::vector<CesiumUtility::Credit>& credits);
 
@@ -206,8 +207,6 @@ public:
   };
   //! Current state of the glTF model tuning.
   TuneState tuneState = TuneState::Idle;
-  //! The version at which the model has been tuned last.
-  int tuneVersion = -1;
   //! Temporary model used during tuning.
   //! When tuning is done, it will be used as the actual model.
   CesiumGltf::Model tuneModel;

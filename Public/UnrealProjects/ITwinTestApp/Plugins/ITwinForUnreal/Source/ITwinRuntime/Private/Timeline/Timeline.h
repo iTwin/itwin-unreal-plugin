@@ -263,9 +263,13 @@ public:
 														FElementsGroup const& Elements);
 	/// Get an existing timeline for the Element or group of Elements.
 	/// \return An existing timeline, or nullptr if none was found.
-	[[nodiscard]] ElementTimelineEx* GetElementTimelineFor(FIModelElementsKey const IModelElementsKey,
+	[[nodiscard]] ElementTimelineEx* GetElementTimelineFor(FIModelElementsKey const& IModelElementsKey,
 														   int* Index = nullptr) const;
 
+	/// Dumps the timelines as an array of individual FElementsGroup timelines: since this is used for
+	/// unit testing, the array is ordered with respect to FElementsGroup's Elements, not to any
+	/// possibly non-deterministic internal index (timeline index, Elements group index...), which can
+	/// make this function much slower than would be necessary for other use cases.
 	template<typename JsonPrintPolicy> [[nodiscard]] FString ToJsonString() const;
 	[[nodiscard]] FString ToPrettyJsonString() const;
 	[[nodiscard]] FString ToCondensedJsonString() const;

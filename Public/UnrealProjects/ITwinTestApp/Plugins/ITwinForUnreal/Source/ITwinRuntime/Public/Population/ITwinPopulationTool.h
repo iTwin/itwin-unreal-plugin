@@ -11,8 +11,7 @@
 
 #include <Population/ITwinPopulationToolEnum.h>
 #include <Templates/PimplPtr.h>
-#include <GameFramework/Actor.h>
-#include <Containers/UnrealString.h>
+#include <ITwinInteractiveTool.h>
 #include <Math/MathFwd.h>
 #include <Engine/HitResult.h>
 #include <Containers/Array.h>
@@ -23,13 +22,18 @@ class UObject;
 class AStaticMeshActor;
 class AITwinPopulation;
 class AITwinDecorationHelper;
+class AITwinSplineHelper;
 
 UCLASS()
-class ITWINRUNTIME_API AITwinPopulationTool : public AActor
+class ITWINRUNTIME_API AITwinPopulationTool : public AITwinInteractiveTool
 {
 	GENERATED_BODY()
 
 public:
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE(FSingleInstanceAddedEvent);
+	UPROPERTY()
+	FSingleInstanceAddedEvent SingleInstanceAddedEvent;
+
 	AITwinPopulationTool();
 
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
@@ -91,30 +95,12 @@ public:
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
 	void SetBrushSize(float size);
 
-	// Functions accessing the transformation of the selected actor
-	UFUNCTION(Category = "iTwin", BlueprintCallable)
-	FTransform GetSelectionTransform() const;
-
-	UFUNCTION(Category = "iTwin", BlueprintCallable)
-	void SetSelectionTransform(const FTransform& transform);
-
 	// Functions accessing the color variation of the selected instance
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
 	FLinearColor GetSelectionColorVariation() const;
 
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
 	void SetSelectionColorVariation(const FLinearColor& color);
-
-	// Enable/Disable the population tool
-	UFUNCTION(Category = "iTwin", BlueprintCallable)
-	void SetEnabled(bool value);
-
-	UFUNCTION(Category = "iTwin", BlueprintCallable)
-	bool IsEnabled() const;
-
-	// Reset the tool to its default state.
-	UFUNCTION(Category = "iTwin", BlueprintCallable)
-	void ResetToDefault();
 
 	void SetDecorationHelper(AITwinDecorationHelper* decoHelper);
 
@@ -136,22 +122,42 @@ public:
 	bool GetIsEditingBrushSize() const;
 	void SetIsEditingBrushSize(bool b);
 
-	void DoMouseClickAction();
+	/// Sets the spline controlling the population.
+	UFUNCTION(Category = "iTwin", BlueprintCallable)
+	void SetSelectedSpline(AITwinSplineHelper* Spline);
+
+	/// Populates the given spline.
+	uint32 PopulateSpline(AITwinSplineHelper const& TargetSpline);
 
 protected:
+	/// Overridden from AActor
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaTime) override;
+
+	/// Overridden from AITwinInteractiveTool
+	virtual bool IsPopulationToolImpl() const override { return true; }
+	virtual void SetEnabledImpl(bool bValue) override;
+	virtual bool IsEnabledImpl() const override;
+	virtual bool DoMouseClickActionImpl() override;
+	virtual bool HasSelectionImpl() const override;
+	virtual FTransform GetSelectionTransformImpl() const override;
+	virtual void SetSelectionTransformImpl(const FTransform& Transform) override;
+	virtual void DeleteSelectionImpl() override;
+	virtual void ResetToDefaultImpl() override;
 
 private:
 	class FImpl;
 	TPimplPtr<FImpl> Impl;
+
+	UPROPERTY()
+	TWeakObjectPtr<AITwinSplineHelper> SelectedSpline;
 };
 
 // ------------------------------------------
 
-class AITwinCesium3DTileset;
+class ACesium3DTileset;
 
 namespace ITwin
 {
-	ITWINRUNTIME_API void Gather3DMapTilesets(const UWorld* World, TArray<AITwinCesium3DTileset*>& Out3DMapTilesets);
+	ITWINRUNTIME_API void Gather3DMapTilesets(const UWorld* World, TArray<ACesium3DTileset*>& Out3DMapTilesets);
 }

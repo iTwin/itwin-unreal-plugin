@@ -1,7 +1,8 @@
-#include "CesiumGeometry/Ray.h"
-
+#include <CesiumGeometry/Ray.h>
 #include <CesiumUtility/Math.h>
 
+#include <glm/ext/matrix_double4x4.hpp>
+#include <glm/ext/vector_double3.hpp>
 #include <glm/geometric.hpp>
 
 #include <stdexcept>
@@ -17,6 +18,17 @@ Ray::Ray(const glm::dvec3& origin, const glm::dvec3& direction)
     throw std::invalid_argument("direction must be normalized.");
   }
   //>>includeEnd('debug');
+}
+
+glm::dvec3 Ray::pointFromDistance(double distance) const noexcept {
+  return this->_origin + distance * this->_direction;
+}
+
+Ray Ray::transform(const glm::dmat4x4& transformation) const noexcept {
+  return Ray(
+      glm::dvec3(transformation * glm::dvec4(this->_origin, 1.0)),
+      glm::normalize(
+          glm::dvec3(transformation * glm::dvec4(this->_direction, 0.0))));
 }
 
 Ray Ray::operator-() const noexcept {

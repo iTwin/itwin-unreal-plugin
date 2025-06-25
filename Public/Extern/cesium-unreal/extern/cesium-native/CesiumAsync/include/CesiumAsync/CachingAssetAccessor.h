@@ -1,9 +1,9 @@
 #pragma once
 
-#include "IAssetAccessor.h"
-#include "IAssetRequest.h"
-#include "ICacheDatabase.h"
-#include "ThreadPool.h"
+#include <CesiumAsync/IAssetAccessor.h>
+#include <CesiumAsync/IAssetRequest.h>
+#include <CesiumAsync/ICacheDatabase.h>
+#include <CesiumAsync/ThreadPool.h>
 
 #include <spdlog/fwd.h>
 
@@ -55,7 +55,7 @@ public:
       const std::string& verb,
       const std::string& url,
       const std::vector<THeader>& headers,
-      const gsl::span<const std::byte>& contentPayload) override;
+      const std::span<const std::byte>& contentPayload) override;
 
   /** @copydoc IAssetAccessor::tick */
   virtual void tick() noexcept override;
@@ -67,6 +67,6 @@ private:
   std::shared_ptr<IAssetAccessor> _pAssetAccessor;
   std::shared_ptr<ICacheDatabase> _pCacheDatabase;
   ThreadPool _cacheThreadPool;
-  CESIUM_TRACE_DECLARE_TRACK_SET(_pruneSlots, "Prune cache database");
+  CESIUM_TRACE_DECLARE_TRACK_SET(_pruneSlots, "Prune cache database")
 };
 } // namespace CesiumAsync

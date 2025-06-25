@@ -1,0 +1,9 @@
+﻿{
+	"url": "https://qa-es-api.bentley.com/4dschedule/v1/schedules/3497df55-60e9-44fd-91ec-3c86473884f5/animation3dTransforms?pageSize=2&pageToken=eyJTa2lwIjo0LCJUb3AiOjJ9",
+	"verb": "GET",
+	"connectedSuccessfully": true,
+	"responseCode": 200
+,
+	"reply": 
+{"items":[{"id":"6b93f26c-a1e5-46e9-9a38-721d752d75d9","transform":[0.9669756,-0.25486544,0,9184.537,0.25486544,0.9669756,0,-7241.581,0,0,1,0,0,0,0,1]},{"id":"6fd39f9b-cfdf-4f41-938a-aaf16a754220","transform":[1,0,0,1.2882083E-08,0,1,0,-168.62924,0,0,1,2.648288E-07,0,0,0,1]}],"nextPageToken":"eyJTa2lwIjo2LCJUb3AiOjJ9"}
+}

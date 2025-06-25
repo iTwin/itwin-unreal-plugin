@@ -18,10 +18,10 @@
 #include <ITwinRuntime/Private/Compil/AfterNonUnrealIncludes.h>
 
 /// Helper to redirect ITwin SDKCore logs to Unreal in Editor mode.
-class ITWINRUNTIME_API FITwinUELogAdapter : public SDK::Core::Tools::Log
+class ITWINRUNTIME_API FITwinUELogAdapter : public AdvViz::SDK::Tools::Log
 {
-	using Super = SDK::Core::Tools::Log;
-	using Level = SDK::Core::Tools::Level;
+	using Super = AdvViz::SDK::Tools::Log;
+	using Level = AdvViz::SDK::Tools::Level;
 
 public:
 	FITwinUELogAdapter(std::string name, Level sev);

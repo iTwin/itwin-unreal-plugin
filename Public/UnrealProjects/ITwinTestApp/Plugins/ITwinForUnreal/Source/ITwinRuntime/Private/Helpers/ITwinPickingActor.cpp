@@ -8,48 +8,22 @@
 
 #include "Helpers/ITwinPickingActor.h"
 
-#include <Engine/HitResult.h>
+#include "Helpers/ITwinTracingHelper.h"
 #include <ITwinIModel.h>
 #include <ITwinIModelInternals.h>
-#include <ITwinCesiumMetadataPickingBlueprintLibrary.h>
-#include <ITwinCesiumMetadataValue.h>
+#include <CesiumMetadataPickingBlueprintLibrary.h>
+#include <CesiumMetadataValue.h>
 #include <ITwinMetadataConstants.h>
 
 #include <Containers/Ticker.h>
 #include <DrawDebugHelpers.h>
+#include <EngineUtils.h>
 
 #include <optional>
 #include <unordered_set>
 
-// Sets default values
-AITwinPickingActor::AITwinPickingActor()
-{
-
-}
-
-// Called when the game starts or when spawned
-void AITwinPickingActor::BeginPlay()
-{
-	Super::BeginPlay();
-}
-
-// Called every frame
-void AITwinPickingActor::Tick(float DeltaTime)
-{
-	Super::Tick(DeltaTime);
-}
-
-
-/// Picking
-
-
 namespace ITwin
 {
-	ITwinElementID VisitElementsUnderCursor(UWorld const* World,
-		FVector2D& MousePosition,
-		std::function<void(FHitResult const&, std::unordered_set<ITwinElementID>&)> const& HitResultHandler,
-		uint32 const* pMaxUniqueElementsHit);
-
 	std::optional<uint64_t> GetMaterialIDFromHit(FHitResult const& HitResult, AITwinIModel& IModel)
 	{
 		// When visualizing ML-based material predictions, we ignore the material IDs present in source
@@ -58,127 +32,172 @@ namespace ITwin
 		if (IModel.VisualizeMaterialMLPrediction() && HitResult.Component.IsValid())
 		{
 			FITwinIModelInternals const& IModelInternals = GetInternals(IModel);
-			auto const* pMeshWrapper = IModelInternals.SceneMapping.FindGlTFMeshWrapper(HitResult.Component.Get());
-			if (pMeshWrapper)
+			auto const Found = IModelInternals.SceneMapping.FindOwningTileSLOW(HitResult.Component.Get());
+			if (auto* pMeshWrapper = Found.second)
 			{
 				return pMeshWrapper->GetITwinMaterialIDOpt();
 			}
 		}
 		// General case: test meta-data produced by the Mesh Export Service.
-		TMap<FString, FITwinCesiumMetadataValue> const Table1 =
-			UITwinCesiumMetadataPickingBlueprintLibrary::GetPropertyTableValuesFromHit(
+		TMap<FString, FCesiumMetadataValue> const Table1 =
+			UCesiumMetadataPickingBlueprintLibrary::GetPropertyTableValuesFromHit(
 				HitResult, ITwinCesium::Metada::MATERIAL_FEATURE_ID_SLOT);
-		FITwinCesiumMetadataValue const* const MaterialIdFound = Table1.Find(ITwinCesium::Metada::MATERIAL_NAME);
+		FCesiumMetadataValue const* const MaterialIdFound = Table1.Find(ITwinCesium::Metada::MATERIAL_NAME);
 		if (MaterialIdFound != nullptr)
 		{
-			return UITwinCesiumMetadataValueBlueprintLibrary::GetUnsignedInteger64(
+			return FCesiumMetadataValueAccess::GetUnsignedInteger64(
 				*MaterialIdFound, ITwin::NOT_ELEMENT.value());
 		}
 		return std::nullopt;
 	}
 }
 
-void AITwinPickingActor::PickUnderCursorWithOptions(FString& ElementId, FVector2D& MousePosition,
-	AITwinIModel* iModel, FITwinPickingOptions const& Options)
+void AITwinPickingActor::PickUnderCursorWithOptions(FPickingResult& OutPickingResult,
+	AITwinIModel* PickedIModel, FITwinPickingOptions const& Options)
 {
-	if (!iModel)
-	{
-		return;
-	}
-	uint32 const MaxUniqueElementsHit = 1;
+	FString& ElementId(OutPickingResult.ElementId);
+	FHitResult& VisibleHit(OutPickingResult.HitResult);
+	OutPickingResult.MaterialId.Reset();
 
+	std::optional<uint32> const MaxUniqueElementsHit = 1;// if changing this, see DejaVu.insert(ITwin::NOT_ELEMENT) below
+	VisibleHit.Reset();
 	ITwinElementID PickedEltID = ITwin::NOT_ELEMENT;
 	std::optional<uint64_t> PickedMaterial;
+	AITwinIModel* PickedMaterialIModel = nullptr;
+	std::optional<float> CustomTraceExtentInMeters;
+	std::optional<FVector2D> CustomMousePosition;
+	if (Options.CustomTraceExtentInMeters > 0.f)
+	{
+		CustomTraceExtentInMeters = Options.CustomTraceExtentInMeters;
+	}
+	if (Options.CustomMousePosition)
+	{
+		CustomMousePosition.emplace(*Options.CustomMousePosition);
+	}
 
-	ITwin::VisitElementsUnderCursor(GetWorld(), MousePosition,
-		[this, iModel, &Options, &PickedEltID, &PickedMaterial]
+	FITwinTracingHelper TracingHelper;
+	TracingHelper.VisitElementsUnderCursor(GetWorld(), OutPickingResult.MousePosition,
+		[this, PickedIModel, &Options, &PickedEltID, &PickedMaterial, &PickedMaterialIModel, &VisibleHit, &TracingHelper]
 		(FHitResult const& HitResult, std::unordered_set<ITwinElementID>& DejaVu)
 	{
-		TMap<FString, FITwinCesiumMetadataValue> const Table =
-			UITwinCesiumMetadataPickingBlueprintLibrary::GetPropertyTableValuesFromHit(
-				HitResult, ITwinCesium::Metada::ELEMENT_FEATURE_ID_SLOT);
-		FITwinCesiumMetadataValue const* const ElementIdFound = Table.Find(ITwinCesium::Metada::ELEMENT_NAME);
-		ITwinElementID const EltID = (ElementIdFound != nullptr)
-			? ITwinElementID(UITwinCesiumMetadataValueBlueprintLibrary::GetUnsignedInteger64(
-				*ElementIdFound, ITwin::NOT_ELEMENT.value()))
-			: ITwin::NOT_ELEMENT;
+		AITwinIModel* iModel = PickedIModel;
+		// If passed, use it as a filter, otherwise, set it.
+		// Using GetOwner() because the hit actor is actually the cesium tileset
+		AActor* HitTilesetOwner = nullptr;
+		if (HitResult.HasValidHitObjectHandle())
+			if (AActor* HitTileset = HitResult.GetActor())
+				HitTilesetOwner = HitTileset->GetOwner(); // may be null or sth else than an iModel of course
+		if (iModel && iModel != HitTilesetOwner)
+			return;
+		if (!iModel)
+			iModel = Cast<AITwinIModel>(HitTilesetOwner);
 
-		bool bHasTestedMaterial = false;
-
-		if (EltID != ITwin::NOT_ELEMENT)
+		if (iModel)
 		{
-			FITwinIModelInternals& IModelInternals = GetInternals(*iModel);
-			if (IModelInternals.HasElementWithID(EltID))
+			ITwinElementID EltID = ITwin::NOT_ELEMENT;
+			if (TracingHelper.PickVisibleElement(HitResult, *iModel, EltID, Options.bSelectElement))
 			{
-				bool doPickElement = true;
-				if (Options.bSelectElement)
-				{
-					// TODO_JDE clarify this (currently, OnClickedElement does select the element, with some
-					// visual feedback and element information in the logs...)
-					// This is disabled in Carrot MVP, where only the selection of material matters.
-					doPickElement = IModelInternals.OnClickedElement(EltID, HitResult);
-				}
-				if (doPickElement && !IModelInternals.IsElementHiddenInSavedView(EltID))
-				{
-					DejaVu.insert(EltID);
-					PickedEltID = EltID;
-					ElementPickedEvent.Broadcast({});
+				DejaVu.insert(EltID);
+				PickedEltID = EltID;
+				if (!VisibleHit.HasValidHitObjectHandle())
+					VisibleHit = HitResult;
+				ElementPickedEvent.Broadcast({});//why not pass PickedEltID?! TODO_GCO: 3DFT oldy, remove
 
-					if (Options.bSelectMaterial)
-					{
-						PickedMaterial = ITwin::GetMaterialIDFromHit(HitResult, *iModel);
-						bHasTestedMaterial = true;
-					}
+				if (Options.bSelectMaterial)
+				{
+					PickedMaterial = ITwin::GetMaterialIDFromHit(HitResult, *iModel);
+					PickedMaterialIModel = iModel;
 				}
 			}
 		}
-		if (Options.bSelectMaterial && !bHasTestedMaterial)
+		else if (!VisibleHit.HasValidHitObjectHandle())
+		{
+			VisibleHit = HitResult;
+			// This is to avoid looping for more hits uselessly - ok as long as MaxUniqueElementsHit is 1...
+			DejaVu.insert(ITwin::NOT_ELEMENT);
+		}
+		if (Options.bSelectMaterial && !PickedMaterialIModel && iModel)
 		{
 			// Some primitive parts may not be assigned any ElementID but still have a valid ITwin material.
 			auto MatOpt = ITwin::GetMaterialIDFromHit(HitResult, *iModel);
 			if (MatOpt && !PickedMaterial)
 			{
 				PickedMaterial = MatOpt;
+				PickedMaterialIModel = iModel;
 			}
 		}
 
-	}, &MaxUniqueElementsHit);
+	}, MaxUniqueElementsHit, CustomTraceExtentInMeters, CustomMousePosition);
 
-	if (PickedEltID != ITwin::NOT_ELEMENT)
+	if (!PickedIModel && VisibleHit.HasValidHitObjectHandle())
+		PickedIModel = Cast<AITwinIModel>(VisibleHit.GetActor()->GetOwner());
+	if (Options.bSelectElement)
 	{
-		// convert picked element ID to string.
-		ElementId = ITwin::ToString(PickedEltID);
-		OnElemPicked.Broadcast(ElementId);
-#if ENABLE_DRAW_DEBUG
-		if (PickedMaterial)
+		// remove highlights from all iModels except the one (possibly) selected
+		for (TActorIterator<AITwinIModel> Iter(GetWorld()); Iter; ++Iter)
 		{
-			ElementId += FString::Printf(TEXT(" [MatID: %llu (%s)]"),
-				*PickedMaterial, *iModel->GetMaterialName(*PickedMaterial));
+			if ((*Iter) != PickedIModel)
+				DeSelect(*Iter);
 		}
+		if (PickedEltID != ITwin::NOT_ELEMENT)
+		{
+			// convert picked element ID to string.
+			ElementId = ITwin::ToString(PickedEltID);
+			OnElemPicked.Broadcast(ElementId);
+		}
+		else
+		{
+			if (PickedIModel)
+				DeSelect(PickedIModel);
+			OnElemPicked.Broadcast("");
+		}
+	}
+
+	OutPickingResult.PickedMaterialIModel = nullptr;
+	if (PickedMaterial && ensure(PickedMaterialIModel))
+	{
+
+#if ENABLE_DRAW_DEBUG
+		ElementId += FString::Printf(TEXT(" [MatID: %llu (%s)]"),
+			*PickedMaterial, *PickedMaterialIModel->GetMaterialName(*PickedMaterial));
 #endif
-	}
-	//remove highlight if we don't click on the imodel
-	else
-	{
-		DeSelect(iModel);
-		OnElemPicked.Broadcast("");
-	}
-	if (PickedMaterial)
-	{
-		OnMaterialPicked.Broadcast(*PickedMaterial, iModel->IModelId);
+
+		if (Options.bHighlightSelectedMaterial)
+		{
+			// Highlight the selected material (in all tiles of the iModel).
+			PickedMaterialIModel->HighlightMaterial(*PickedMaterial);
+		}
+		if (Options.bBroadcastMaterialSelection)
+		{
+			OnMaterialPicked.Broadcast(*PickedMaterial, PickedMaterialIModel->IModelId);
+		}
+		OutPickingResult.MaterialId = *PickedMaterial;
+		OutPickingResult.PickedMaterialIModel = PickedMaterialIModel;
 	}
 }
 
-void AITwinPickingActor::PickObjectAtMousePosition(FString& ElementId, FVector2D& MousePosition,
-	AITwinIModel* iModel)
+void AITwinPickingActor::PickUnderCursorWithOptions(FString& ElementId, FVector2D& MousePosition,
+	AITwinIModel* PickedIModel, FHitResult& VisibleHit, FITwinPickingOptions const& Options)
 {
-	PickUnderCursorWithOptions(ElementId, MousePosition, iModel, {});
+	FPickingResult PickingResult;
+	PickUnderCursorWithOptions(PickingResult, PickedIModel, Options);
+
+	ElementId = MoveTemp(PickingResult.ElementId);
+	MousePosition = MoveTemp(PickingResult.MousePosition);
+	VisibleHit = MoveTemp(PickingResult.HitResult);
+}
+
+void AITwinPickingActor::PickObjectAtMousePosition(FString& ElementId, FVector2D& MousePosition,
+	AITwinIModel* iModel, FHitResult& VisibleHit)
+{
+	PickUnderCursorWithOptions(ElementId, MousePosition, iModel, VisibleHit,
+		FITwinPickingOptions{ .bSelectElement = false, .bSelectMaterial = false });
 }
 
 void AITwinPickingActor::DeSelect(AITwinIModel* iModel)
 {
 	if (ensure(iModel))
 	{
-		iModel->DeSelectElements();
+		iModel->DeSelectAll();
 	}
 }

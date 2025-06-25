@@ -61,7 +61,7 @@ void AIModelSelectionMenuScript::OnLoadIModel(FString InIModelId, FString InExpo
 	if (ensure(DecoSettings) && DecoSettings->bLoadDecorationsInPlugin)
 	{
 		DecoHelper = GetWorld()->SpawnActor<AITwinDecorationHelper>();
-		DecoHelper->SetLoadedITwinInfo(Info);
+		DecoHelper->SetLoadedITwinId(Info.ITwinId);
 		DecoHelper->LoadDecoration();
 	}
 

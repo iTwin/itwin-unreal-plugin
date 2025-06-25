@@ -1,8 +1,7 @@
 #pragma once
 
-#include "Library.h"
-
 #include <CesiumGeospatial/Ellipsoid.h>
+#include <CesiumGeospatial/Library.h>
 
 #include <glm/mat4x4.hpp>
 
@@ -15,7 +14,7 @@ class LocalHorizontalCoordinateSystem;
 /**
  * @brief Anchors an object to the globe by defining a transformation from the
  * object's coordinate to the globe-fixed coordinate system (usually
- * Earth-Centered, Earth-Fixed or ECEF).
+ * \ref what-are-ecef-coordinates).
  *
  * This class allows the anchored coordinate system to be realized in any
  * {@link LocalHorizontalCoordinateSystem}. When the object is moved, either by
@@ -84,11 +83,12 @@ public:
    * the globe changes. This parameter should usually be true, but it may be
    * useful to set it to false it when the caller already accounts for globe
    * curvature itself, because in that case anchor would be over-rotated.
+   * @param ellipsoid The {@link CesiumGeospatial::Ellipsoid}.
    */
   void setAnchorToFixedTransform(
       const glm::dmat4& newAnchorToFixed,
-      bool adjustOrientation = true,
-      const Ellipsoid& ellipsoid = Ellipsoid::WGS84);
+      bool adjustOrientation,
+      const Ellipsoid& ellipsoid CESIUM_DEFAULT_ELLIPSOID);
 
   /**
    * @brief Gets the transformation from the anchor's coordinate system to the
@@ -121,12 +121,13 @@ public:
    * the globe changes. This parameter should usually be true, but it may be
    * useful to set it to false it when the caller already accounts for globe
    * curvature itself, because in that case anchor would be over-rotated.
+   * @param ellipsoid The {@link CesiumGeospatial::Ellipsoid}.
    */
   void setAnchorToLocalTransform(
       const LocalHorizontalCoordinateSystem& localCoordinateSystem,
       const glm::dmat4& newAnchorToLocal,
-      bool adjustOrientation = true,
-      const Ellipsoid& ellipsoid = Ellipsoid::WGS84);
+      bool adjustOrientation,
+      const Ellipsoid& ellipsoid CESIUM_DEFAULT_ELLIPSOID);
 
 private:
   glm::dmat4 _anchorToFixed;

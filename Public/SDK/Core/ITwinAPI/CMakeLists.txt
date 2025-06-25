@@ -23,10 +23,11 @@ add_library ( ITwinAPI OBJECT
 target_compile_features ( ITwinAPI PRIVATE ${DefaultCXXSTD} )
 if ( MSVC )
 	set_source_files_properties ( ITwinWebServices.cpp PROPERTIES COMPILE_FLAGS " /bigobj" )
+	target_compile_options(ITwinAPI PRIVATE /utf-8) # Needed for "fmt" lib.
 endif ()
 target_link_libraries( ITwinAPI PRIVATE 
 					   Network
 					   Tools
-					   fmt::fmt-header-only
+					   Json
 					  )
 set_target_properties ( ITwinAPI PROPERTIES FOLDER "SDK/Core" ) 

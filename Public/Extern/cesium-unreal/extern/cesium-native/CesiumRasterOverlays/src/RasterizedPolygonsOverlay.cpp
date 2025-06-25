@@ -1,15 +1,29 @@
 #include <CesiumAsync/AsyncSystem.h>
 #include <CesiumAsync/IAssetAccessor.h>
+#include <CesiumGeospatial/CartographicPolygon.h>
+#include <CesiumGeospatial/Ellipsoid.h>
 #include <CesiumGeospatial/GlobeRectangle.h>
+#include <CesiumGeospatial/Projection.h>
+#include <CesiumGltf/ImageAsset.h>
+#include <CesiumRasterOverlays/Library.h>
+#include <CesiumRasterOverlays/RasterOverlay.h>
 #include <CesiumRasterOverlays/RasterOverlayTile.h>
 #include <CesiumRasterOverlays/RasterOverlayTileProvider.h>
 #include <CesiumRasterOverlays/RasterizedPolygonsOverlay.h>
+#include <CesiumUtility/CreditSystem.h>
 #include <CesiumUtility/IntrusivePointer.h>
 
+#include <glm/common.hpp>
+#include <glm/ext/vector_double2.hpp>
+#include <glm/geometric.hpp>
 #include <spdlog/fwd.h>
 
+#include <cstddef>
+#include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
+#include <vector>
 
 using namespace CesiumGeometry;
 using namespace CesiumGeospatial;
@@ -24,7 +38,7 @@ void rasterizePolygons(
     const std::vector<CartographicPolygon>& cartographicPolygons,
     bool invertSelection) {
 
-  CesiumGltf::ImageCesium& image = loaded.image.emplace();
+  CesiumGltf::ImageAsset& image = loaded.pImage.emplace();
 
   std::byte insideColor;
   std::byte outsideColor;
@@ -183,11 +197,7 @@ public:
             // computeCoverageRectangle(projection, polygons)),
             projectRectangleSimple(
                 projection,
-                CesiumGeospatial::GlobeRectangle(
-                    -CesiumUtility::Math::OnePi,
-                    -CesiumUtility::Math::PiOverTwo,
-                    CesiumUtility::Math::OnePi,
-                    CesiumUtility::Math::PiOverTwo))),
+                CesiumGeospatial::GlobeRectangle::MAXIMUM)),
         _polygons(polygons),
         _invertSelection(invertSelection) {}
 
@@ -237,7 +247,7 @@ RasterizedPolygonsOverlay::RasterizedPolygonsOverlay(
       _ellipsoid(ellipsoid),
       _projection(projection) {}
 
-RasterizedPolygonsOverlay::~RasterizedPolygonsOverlay() {}
+RasterizedPolygonsOverlay::~RasterizedPolygonsOverlay() = default;
 
 CesiumAsync::Future<RasterOverlay::CreateTileProviderResult>
 RasterizedPolygonsOverlay::createTileProvider(

@@ -1,12 +1,12 @@
 #pragma once
 
-#include "CesiumGltf/AccessorView.h"
-#include "CesiumGltf/PropertyAttributeProperty.h"
-#include "CesiumGltf/PropertyTransformations.h"
-#include "CesiumGltf/PropertyTypeTraits.h"
-#include "CesiumGltf/PropertyView.h"
+#include <CesiumGltf/AccessorView.h>
+#include <CesiumGltf/PropertyAttributeProperty.h>
+#include <CesiumGltf/PropertyTransformations.h>
+#include <CesiumGltf/PropertyTypeTraits.h>
+#include <CesiumGltf/PropertyView.h>
+#include <CesiumUtility/Assert.h>
 
-#include <cassert>
 #include <cmath>
 #include <cstdint>
 
@@ -25,66 +25,66 @@ public:
    * @brief This property view was initialized from an invalid
    * {@link PropertyAttribute}.
    */
-  static const int ErrorInvalidPropertyAttribute = 14;
+  static const int ErrorInvalidPropertyAttribute = 15;
 
   /**
    * @brief This property view is associated with a {@link ClassProperty} of an
    * unsupported type.
    */
-  static const int ErrorUnsupportedProperty = 15;
+  static const int ErrorUnsupportedProperty = 16;
 
   /**
    * @brief This property view was initialized with a primitive that does not
    * contain the specified attribute.
    */
-  static const int ErrorMissingAttribute = 16;
+  static const int ErrorMissingAttribute = 17;
 
   /**
    * @brief This property view's attribute does not have a valid accessor index.
    */
-  static const int ErrorInvalidAccessor = 17;
+  static const int ErrorInvalidAccessor = 18;
 
   /**
    * @brief This property view's type does not match the type of the accessor it
    * uses.
    */
-  static const int ErrorAccessorTypeMismatch = 18;
+  static const int ErrorAccessorTypeMismatch = 19;
 
   /**
    * @brief This property view's component type does not match the type of the
    * accessor it uses.
    */
-  static const int ErrorAccessorComponentTypeMismatch = 19;
+  static const int ErrorAccessorComponentTypeMismatch = 20;
 
   /**
    * @brief This property view's normalization does not match the normalization
    * of the accessor it uses.
    */
-  static const int ErrorAccessorNormalizationMismatch = 20;
+  static const int ErrorAccessorNormalizationMismatch = 21;
 
   /**
    * @brief This property view uses an accessor that does not have a valid
    * buffer view index.
    */
-  static const int ErrorInvalidBufferView = 21;
+  static const int ErrorInvalidBufferView = 22;
 
   /**
    * @brief This property view uses a buffer view that does not have a valid
    * buffer index.
    */
-  static const int ErrorInvalidBuffer = 22;
+  static const int ErrorInvalidBuffer = 23;
 
   /**
    * @brief This property view uses an accessor that points outside the bounds
    * of its target buffer view.
    */
-  static const PropertyViewStatusType ErrorAccessorOutOfBounds = 23;
+  static const PropertyViewStatusType ErrorAccessorOutOfBounds = 24;
 
   /**
    * @brief This property view uses a buffer view that points outside the bounds
    * of its target buffer.
    */
-  static const PropertyViewStatusType ErrorBufferViewOutOfBounds = 24;
+  static const PropertyViewStatusType ErrorBufferViewOutOfBounds = 25;
 };
 
 /**
@@ -131,7 +131,7 @@ public:
    */
   PropertyAttributePropertyView(PropertyViewStatusType status) noexcept
       : PropertyView<ElementType, false>(status), _accessor{}, _size{0} {
-    assert(
+    CESIUM_ASSERT(
         this->_status != PropertyAttributePropertyViewStatus::Valid &&
         "An empty property view should not be constructed with a valid status");
   }
@@ -139,8 +139,8 @@ public:
   /**
    * @brief Constructs an instance of an empty property that specifies a default
    * value. Although this property has no data, it can return the default value
-   * when {@link PropertyAttributePropertyView::get} is called. However,
-   * {@link PropertyAttributePropertyView::getRaw} cannot be used.
+   * when {@link PropertyAttributePropertyView<ElementType, false>::get} is called. However,
+   * {@link PropertyAttributePropertyView<ElementType, false>::getRaw} cannot be used.
    *
    * @param classProperty The {@link ClassProperty} this property conforms to.
    * @param size The number of elements in the primitive's POSITION accessor.
@@ -230,14 +230,14 @@ public:
    * @return The value of the property for the given vertex.
    */
   ElementType getRaw(int64_t index) const noexcept {
-    assert(
+    CESIUM_ASSERT(
         this->_status == PropertyAttributePropertyViewStatus::Valid &&
         "Check the status() first to make sure view is valid");
-    assert(
+    CESIUM_ASSERT(
         size() > 0 &&
         "Check the size() of the view to make sure it's not empty");
-    assert(index >= 0 && "index must be non-negative");
-    assert(index < size() && "index must be less than size");
+    CESIUM_ASSERT(index >= 0 && "index must be non-negative");
+    CESIUM_ASSERT(index < size() && "index must be less than size");
 
     return _accessor[index];
   }
@@ -287,7 +287,7 @@ public:
    */
   PropertyAttributePropertyView(PropertyViewStatusType status) noexcept
       : PropertyView<ElementType, true>(status), _accessor{}, _size{0} {
-    assert(
+    CESIUM_ASSERT(
         this->_status != PropertyAttributePropertyViewStatus::Valid &&
         "An empty property view should not be constructed with a valid status");
   }
@@ -295,8 +295,7 @@ public:
   /**
    * @brief Constructs an instance of an empty property that specifies a default
    * value. Although this property has no data, it can return the default value
-   * when {@link PropertyAttributePropertyView::get} is called. However,
-   * {@link PropertyAttributePropertyView::getRaw} cannot be used.
+   * when \ref get is called. However, \ref getRaw cannot be used.
    *
    * @param classProperty The {@link ClassProperty} this property conforms to.
    * @param size The number of elements in the primitive's POSITION accessor.
@@ -411,14 +410,14 @@ public:
    * @return The value of the property for the given vertex.
    */
   ElementType getRaw(int64_t index) const noexcept {
-    assert(
+    CESIUM_ASSERT(
         this->_status == PropertyAttributePropertyViewStatus::Valid &&
         "Check the status() first to make sure view is valid");
-    assert(
+    CESIUM_ASSERT(
         size() > 0 &&
         "Check the size() of the view to make sure it's not empty");
-    assert(index >= 0 && "index must be non-negative");
-    assert(index < size() && "index must be less than size");
+    CESIUM_ASSERT(index >= 0 && "index must be non-negative");
+    CESIUM_ASSERT(index < size() && "index must be less than size");
 
     return _accessor[index];
   }

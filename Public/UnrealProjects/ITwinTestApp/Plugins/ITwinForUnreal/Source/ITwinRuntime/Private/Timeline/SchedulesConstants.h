@@ -57,10 +57,14 @@ namespace ITwin::Synchro4D
 
 namespace ITwin_TestOverrides
 {
-	/// Global override for pageSize for paginated requests. Defaults to -1 (= disabled), to be set to a
-	/// positive value when needed for use during unit testing.
+	/// Global override for the size of paginated requests (except animation bindings).
+	/// Defaults to -1 (= disabled), to be set to a positive value when needed for use during unit testing.
 	/// See SchedulesImport.cpp and FITwinSchedulesImport::FImpl::RequestPagination
 	extern int RequestPagination;
+	/// Global override for the size of paginated _animation bindings_ requests.
+	/// Defaults to -1 (= disabled), to be set to a positive value when needed for use during unit testing.
+	/// See SchedulesImport.cpp and FITwinSchedulesImport::FImpl::BindingsRequestPagination
+	extern int BindingsRequestPagination;
 	/// Global override for the hard cap on the size of filter ElementID arrays. Defaults to -1 (= disabled),
 	/// to be set to a positive value when needed for use during unit testing.
 	/// See SchedulesImport.cpp and FITwinSchedulesImport::FImpl::MaxElementIDsFilterSize

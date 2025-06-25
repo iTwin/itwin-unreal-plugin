@@ -16,7 +16,7 @@
 #endif
 
 
-MODULE_EXPORT namespace SDK::Core
+MODULE_EXPORT namespace AdvViz::SDK
 {
 
 	/// Should be synchronized with EITwinMaterialPredictionStatus! (in the future, we may find a way to do
@@ -28,6 +28,7 @@ MODULE_EXPORT namespace SDK::Core
 		InProgress,
 		Failed,
 		Complete,
+		Validated, /* ie. validated by a human person */
 	};
 
 }

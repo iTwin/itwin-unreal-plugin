@@ -1,18 +1,18 @@
 #pragma once
 
-#include "Library.h"
-
 #include <CesiumAsync/IAssetAccessor.h>
 #include <CesiumGeospatial/Projection.h>
 #include <CesiumGltfReader/GltfReader.h>
+#include <CesiumRasterOverlays/Library.h>
+#include <CesiumUtility/Assert.h>
 #include <CesiumUtility/CreditSystem.h>
+#include <CesiumUtility/ErrorList.h>
 #include <CesiumUtility/IntrusivePointer.h>
-#include <CesiumUtility/ReferenceCountedNonThreadSafe.h>
+#include <CesiumUtility/ReferenceCounted.h>
 #include <CesiumUtility/Tracing.h>
 
 #include <spdlog/fwd.h>
 
-#include <cassert>
 #include <optional>
 
 namespace CesiumRasterOverlays {
@@ -28,10 +28,10 @@ struct CESIUMRASTEROVERLAYS_API LoadedRasterOverlayImage {
   /**
    * @brief The loaded image.
    *
-   * This will be an empty optional if the loading failed. In this case,
-   * the `errors` vector will contain the corresponding error messages.
+   * This will be nullptr if the loading failed. In this case, the `errors`
+   * vector will contain the corresponding error messages.
    */
-  std::optional<CesiumGltf::ImageCesium> image{};
+  CesiumUtility::IntrusivePointer<CesiumGltf::ImageAsset> pImage{nullptr};
 
   /**
    * @brief The projected rectangle defining the bounds of this image.
@@ -42,31 +42,37 @@ struct CESIUMRASTEROVERLAYS_API LoadedRasterOverlayImage {
   CesiumGeometry::Rectangle rectangle{};
 
   /**
-   * @brief The {@link Credit} objects that decribe the attributions that
+   * @brief The {@link CesiumUtility::Credit} objects that decribe the attributions that
    * are required when using the image.
    */
   std::vector<CesiumUtility::Credit> credits{};
 
   /**
-   * @brief Error messages from loading the image.
+   * @brief Errors and warnings from loading the image.
    *
-   * If the image was loaded successfully, this should be empty.
+   * If the image was loaded successfully, there should not be any errors (but
+   * there may be warnings).
    */
-  std::vector<std::string> errors{};
-
-  /**
-   * @brief Warnings from loading the image.
-   */
-  // Implementation note: In the current implementation, this will
-  // always be empty, but it might contain warnings in the future,
-  // when other image types or loaders are used.
-  std::vector<std::string> warnings{};
+  CesiumUtility::ErrorList errorList{};
 
   /**
    * @brief Whether more detailed data, beyond this image, is available within
    * the bounds of this image.
    */
   bool moreDetailAvailable = false;
+
+  /**
+   * @brief Returns the size of this `LoadedRasterOverlayImage` in bytes.
+   */
+  int64_t getSizeBytes() const {
+    int64_t accum = 0;
+    accum += int64_t(sizeof(LoadedRasterOverlayImage));
+    accum += int64_t(this->credits.capacity() * sizeof(CesiumUtility::Credit));
+    if (this->pImage) {
+      accum += this->pImage->getSizeBytes();
+    }
+    return accum;
+  }
 };
 
 /**
@@ -120,7 +126,11 @@ class RasterOverlayTileProvider;
  * value of {@link RasterOverlayTileProvider::loadTile}.
  */
 struct TileProviderAndTile {
+  /** @brief A \ref CesiumUtility::IntrusivePointer to the \ref
+   * RasterOverlayTileProvider used for this tile. */
   CesiumUtility::IntrusivePointer<RasterOverlayTileProvider> pTileProvider;
+  /** @brief A \ref CesiumUtility::IntrusivePointer to the \ref
+   * RasterOverlayTile used for this tile. */
   CesiumUtility::IntrusivePointer<RasterOverlayTile> pTile;
 
   ~TileProviderAndTile() noexcept;
@@ -145,12 +155,14 @@ public:
    * @param asyncSystem The async system used to do work in threads.
    * @param pAssetAccessor The interface used to obtain assets (tiles, etc.) for
    * this raster overlay.
+   * @param ellipsoid The {@link CesiumGeospatial::Ellipsoid}.
    */
   RasterOverlayTileProvider(
       const CesiumUtility::IntrusivePointer<const RasterOverlay>& pOwner,
       const CesiumAsync::AsyncSystem& asyncSystem,
-      const std::shared_ptr<CesiumAsync::IAssetAccessor>&
-          pAssetAccessor) noexcept;
+      const std::shared_ptr<CesiumAsync::IAssetAccessor>& pAssetAccessor,
+      const CesiumGeospatial::Ellipsoid& ellipsoid
+          CESIUM_DEFAULT_ELLIPSOID) noexcept;
 
   /**
    * @brief Creates a new instance.
@@ -159,7 +171,7 @@ public:
    * @param asyncSystem The async system used to do work in threads.
    * @param pAssetAccessor The interface used to obtain assets (tiles, etc.) for
    * this raster overlay.
-   * @param credit The {@link Credit} for this tile provider, if it exists.
+   * @param credit The {@link CesiumUtility::Credit} for this tile provider, if it exists.
    * @param pPrepareRendererResources The interface used to prepare raster
    * images for rendering.
    * @param pLogger The logger to which to send messages about the tile provider
@@ -193,8 +205,8 @@ public:
    * So until that real `RasterOverlayTileProvider` becomes available, we use
    * a placeholder. When {@link RasterOverlayTileProvider::getTile} is invoked
    * on a placeholder, it returns a {@link RasterOverlayTile} that is also
-   * a placeholder. And whenever we see a placeholder `RasterOverTile` in
-   * {@link Tile::update}, we check if the corresponding `RasterOverlay` is
+   * a placeholder. And whenever we see a placeholder `RasterOverlayTile` in
+   * {@link Cesium3DTilesSelection::RasterMappedTo3DTile::update}, we check if the corresponding `RasterOverlay` is
    * ready yet. Once it's ready, we remove the placeholder tile and replace
    * it with the real tiles.
    *
@@ -290,8 +302,8 @@ public:
    * @brief Returns the number of tiles that are currently loading.
    */
   uint32_t getNumberOfTilesLoading() const noexcept {
-    assert(this->_totalTilesCurrentlyLoading > -1);
-    return this->_totalTilesCurrentlyLoading;
+    CESIUM_ASSERT(this->_totalTilesCurrentlyLoading > -1);
+    return static_cast<uint32_t>(this->_totalTilesCurrentlyLoading);
   }
 
   /**
@@ -307,7 +319,7 @@ public:
   void removeTile(RasterOverlayTile* pTile) noexcept;
 
   /**
-   * @brief Get the per-TileProvider {@link Credit} if one exists.
+   * @brief Get the per-TileProvider {@link CesiumUtility::Credit} if one exists.
    */
   const std::optional<CesiumUtility::Credit>& getCredit() const noexcept {
     return _credit;
@@ -418,8 +430,6 @@ private:
   int32_t _throttledTilesCurrentlyLoading;
   CESIUM_TRACE_DECLARE_TRACK_SET(
       _loadingSlots,
-      "Raster Overlay Tile Loading Slot");
-
-  static CesiumGltfReader::GltfReader _gltfReader;
+      "Raster Overlay Tile Loading Slot")
 };
 } // namespace CesiumRasterOverlays

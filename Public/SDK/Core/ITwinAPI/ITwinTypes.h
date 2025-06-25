@@ -24,7 +24,7 @@
 
 #include "ITwinRequestTypes.h"
 
-MODULE_EXPORT namespace SDK::Core
+MODULE_EXPORT namespace AdvViz::SDK
 {
 	/// =====================================================================================================
 	/// Important remark: those types respect the schema defined for iTwin APIs: do not rename any member
@@ -131,6 +131,8 @@ MODULE_EXPORT namespace SDK::Core
 	{
 		std::vector<SavedViewInfo> savedViews;
 		std::optional<std::string> groupId;
+		std::optional<std::string> iModelId;
+		std::optional<std::string> iTwinId;
 	};
 
 	struct SavedViewGroupInfo
@@ -281,10 +283,45 @@ MODULE_EXPORT namespace SDK::Core
 		OptionalVec3D xVector;
 		OptionalVec3D yVector;
 	};
+	struct HorizontalCRS
+	{
+		std::optional<int> epsg;
+	};
+	struct GeographicCoordinateSystem
+	{
+		std::optional<HorizontalCRS> horizontalCRS;
+	};
 	struct IModelProperties
 	{
 		std::optional<ProjectExtents> projectExtents;
 		std::optional<EcefLocation> ecefLocation;
+		std::optional<GeographicCoordinateSystem> geographicCoordinateSystem;
 		OptionalVec3D globalOrigin;
+	};
+
+	// From https://github.com/iTwin/itwinjs-core/blob/afa2402c40767573c38afab26c7a0020d3395101/core/bentley/src/BentleyError.ts
+	enum class GeoServiceStatus
+	{
+		Success = 0,
+		IMODEL_ERROR_BASE = 0x10000,
+		GEOSERVICESTATUS_BASE = 0x24000,
+		NoGeoLocation = IMODEL_ERROR_BASE + 66,
+		// Following errors are mapped from 'GeoCoordStatus'
+		OutOfUsefulRange = GEOSERVICESTATUS_BASE + 1,
+		OutOfMathematicalDomain = GEOSERVICESTATUS_BASE + 2,
+		NoDatumConverter = GEOSERVICESTATUS_BASE + 3,
+		VerticalDatumConvertError = GEOSERVICESTATUS_BASE + 4,
+		CSMapError = GEOSERVICESTATUS_BASE + 5,
+		Pending = GEOSERVICESTATUS_BASE + 6,
+	};
+	struct GeoCoordsConverted
+	{
+		std::array<double, 3> p = { 0, 0, 0 };
+		// Enums are parsed as strings if I understand correctly (got a parse error with an enum)
+		int s = (int)GeoServiceStatus::Success;
+	};
+	struct GeoCoordsReply
+	{
+		std::optional<std::vector<GeoCoordsConverted>> geoCoords;
 	};
 }

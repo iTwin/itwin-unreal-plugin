@@ -1,28 +1,51 @@
 #pragma once
 
-#include "BoundingVolume.h"
-#include "Library.h"
-#include "RasterMappedTo3DTile.h"
-#include "TileContent.h"
-#include "TileID.h"
-#include "TileRefine.h"
-#include "TileSelectionState.h"
-
+#include <Cesium3DTilesSelection/BoundingVolume.h>
+#include <Cesium3DTilesSelection/Library.h>
+#include <Cesium3DTilesSelection/RasterMappedTo3DTile.h>
+#include <Cesium3DTilesSelection/TileContent.h>
+#include <Cesium3DTilesSelection/TileID.h>
+#include <Cesium3DTilesSelection/TileRefine.h>
+#include <Cesium3DTilesSelection/TileSelectionState.h>
 #include <CesiumUtility/DoublyLinkedList.h>
 
 #include <glm/common.hpp>
-#include <glm/mat4x4.hpp>
-#include <gsl/span>
 
 #include <atomic>
 #include <limits>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
+#ifdef CESIUM_DEBUG_TILE_UNLOADING
+#include <unordered_map>
+#endif
+
 namespace Cesium3DTilesSelection {
 class TilesetContentLoader;
+
+#ifdef CESIUM_DEBUG_TILE_UNLOADING
+class TileDoNotUnloadSubtreeCountTracker {
+private:
+  struct Entry {
+    std::string reason;
+    bool increment;
+    int32_t newCount;
+  };
+
+public:
+  static void addEntry(
+      const uint64_t id,
+      bool increment,
+      const std::string& reason,
+      int32_t newCount);
+
+private:
+  static std::unordered_map<std::string, std::vector<Entry>> _entries;
+};
+#endif
 
 /**
  * The current state of this tile in the loading process.
@@ -81,7 +104,7 @@ enum class TileLoadState {
  * The actual hierarchy is represented with the {@link Tile::getParent}
  * and {@link Tile::getChildren} functions.
  *
- * The renderable content is provided as a {@link TileContentLoadResult}
+ * The renderable content is provided as a {@link TileContent}
  * from the {@link Tile::getContent} function.
  * The {@link Tile::getGeometricError} function returns the geometric
  * error of the representation of the renderable content of a tile.
@@ -112,6 +135,7 @@ public:
    * with this constructor.
    *
    * @param pLoader The {@link TilesetContentLoader} that is assiocated with this tile.
+   * @param externalContent External content that is associated with this tile.
    */
   Tile(
       TilesetContentLoader* pLoader,
@@ -123,6 +147,7 @@ public:
    * with this constructor.
    *
    * @param pLoader The {@link TilesetContentLoader} that is assiocated with this tile.
+   * @param emptyContent A content tag indicating that the tile has no content.
    */
   Tile(TilesetContentLoader* pLoader, TileEmptyContent emptyContent) noexcept;
 
@@ -179,14 +204,21 @@ public:
    *
    * @return The children of this tile.
    */
-  gsl::span<Tile> getChildren() noexcept {
-    return gsl::span<Tile>(this->_children);
+  std::span<Tile> getChildren() noexcept {
+    return std::span<Tile>(this->_children);
   }
 
   /** @copydoc Tile::getChildren() */
-  gsl::span<const Tile> getChildren() const noexcept {
-    return gsl::span<const Tile>(this->_children);
+  std::span<const Tile> getChildren() const noexcept {
+    return std::span<const Tile>(this->_children);
   }
+
+  /**
+   * @brief Clears the children of this tile.
+   *
+   * This function is not supposed to be called by clients.
+   */
+  void clearChildren() noexcept;
 
   /**
    * @brief Assigns the given child tiles to this tile.
@@ -275,14 +307,14 @@ public:
   /**
    * @brief Gets the tile's geometric error as if by calling
    * {@link getGeometricError}, except that if the error is smaller than
-   * {@link Math::Epsilon5} the returned geometric error is instead computed as
+   * {@link CesiumUtility::Math::Epsilon5} the returned geometric error is instead computed as
    * half of the parent tile's (non-zero) geometric error.
    *
    * This is useful for determining when to refine what would ordinarily be a
    * leaf tile, for example to attach more detailed raster overlays to it.
    *
    * If this tile and all of its ancestors have a geometric error less than
-   * {@link Math::Epsilon5}, returns {@link Math::Epsilon5}.
+   * {@link CesiumUtility::Math::Epsilon5}, returns {@link CesiumUtility::Math::Epsilon5}.
    *
    * @return The non-zero geometric error.
    */
@@ -448,17 +480,20 @@ public:
   }
 
   /**
-   * @brief get the content of the tile.
+   * @brief Get the content of the tile.
    */
   const TileContent& getContent() const noexcept { return _content; }
 
-  /** @copydoc Tile::getContent() */
+  /** @copydoc Tile::getContent() const */
   TileContent& getContent() noexcept { return _content; }
 
   /**
    * @brief Determines if this tile is currently renderable.
+   * @param minTuneVersionNeeded Minimum tuning version needed to allow this tile to render.
+   *    See TileLoadResult::tuneVersion, TileRenderContent::tuneVersion.
+   *    Pass -1 to ignore the Gltf tuning version of the tile.
    */
-  bool isRenderable() const noexcept;
+  bool isRenderable(int minTuneVersionNeeded) const noexcept;
 
   /**
    * @brief Set by the render engine to notify when a tile needs post-load
@@ -496,7 +531,53 @@ public:
    */
   TileLoadState getState() const noexcept;
 
+  /**
+   * @brief Returns the internal count denoting that the tile and its ancestors
+   * should not be unloaded.
+   *
+   * This function is not supposed to be called by clients.
+   */
+  int32_t getDoNotUnloadSubtreeCount() const noexcept {
+    return this->_doNotUnloadSubtreeCount;
+  }
+
+  /**
+   * @brief Increments the internal count denoting that the tile and its
+   * ancestors should not be unloaded.
+   *
+   * This function is not supposed to be called by clients.
+   */
+  void incrementDoNotUnloadSubtreeCount(const char* reason) noexcept;
+
+  /**
+   * @brief Decrements the internal count denoting that the tile and its
+   * ancestors should not be unloaded.
+   *
+   * This function is not supposed to be called by clients.
+   */
+  void decrementDoNotUnloadSubtreeCount(const char* reason) noexcept;
+
+  /**
+   * @brief Increments the internal count denoting that the tile and its
+   * ancestors should not be unloaded starting with this tile's parent.
+   *
+   * This function is not supposed to be called by clients.
+   */
+  void incrementDoNotUnloadSubtreeCountOnParent(const char* reason) noexcept;
+
+  /**
+   * @brief Decrements the internal count denoting that the tile and its
+   * ancestors should not be unloaded starting with this tile's parent.
+   *
+   * This function is not supposed to be called by clients.
+   */
+  void decrementDoNotUnloadSubtreeCountOnParent(const char* reason) noexcept;
+
 private:
+  void incrementDoNotUnloadSubtreeCount(const std::string& reason) noexcept;
+
+  void decrementDoNotUnloadSubtreeCount(const std::string& reason) noexcept;
+
   struct TileConstructorImpl {};
   template <
       typename... TileContentArgs,
@@ -513,10 +594,24 @@ private:
 
   void setState(TileLoadState state) noexcept;
 
-  bool shouldContentContinueUpdating() const noexcept;
+  /**
+   * @brief Gets a flag indicating whether this tile might have latent children.
+   * Latent children don't exist in the `_children` property, but can be created
+   * by the {@link TilesetContentLoader}.
+   *
+   * When true, this tile might have children that can be created by the
+   * TilesetContentLoader but aren't yet reflected in the `_children` property.
+   * For example, in implicit tiling, we save memory by only creating explicit
+   * Tile instances from implicit availability as those instances are needed.
+   * When this flag is true, the creation of those explicit instances hasn't
+   * happened yet for this tile.
+   *
+   * If this flag is false, the children have already been created, if they
+   * exist. The tile may still have no children because it is a leaf node.
+   */
+  bool getMightHaveLatentChildren() const noexcept;
 
-  void
-  setContentShouldContinueUpdating(bool shouldContentContinueUpdating) noexcept;
+  void setMightHaveLatentChildren(bool mightHaveLatentChildren) noexcept;
 
   // Position in bounding-volume hierarchy.
   Tile* _pParent;
@@ -540,11 +635,15 @@ private:
   TileContent _content;
   TilesetContentLoader* _pLoader;
   TileLoadState _loadState;
-  bool _shouldContentContinueUpdating;
+  bool _mightHaveLatentChildren;
   bool _renderEngineReadiness = true; ///< Relevant only when _loadState is Done
 
   // mapped raster overlay
   std::vector<RasterMappedTo3DTile> _rasterTiles;
+
+  // Number of existing claims on this tile preventing it and its parent
+  // external tileset (if any) from being unloaded from the tree.
+  int32_t _doNotUnloadSubtreeCount = 0;
 
   friend class TilesetContentManager;
   friend class MockTilesetContentManagerTestFixture;

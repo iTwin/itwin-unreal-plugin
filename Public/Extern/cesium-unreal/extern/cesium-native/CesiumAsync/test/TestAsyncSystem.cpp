@@ -1,10 +1,20 @@
-#include "CesiumAsync/AsyncSystem.h"
+#include <CesiumAsync/AsyncSystem.h>
+#include <CesiumAsync/Promise.h>
+#include <CesiumAsync/SharedFuture.h>
+#include <CesiumAsync/ThreadPool.h>
 
-#include <catch2/catch.hpp>
+#include <doctest/doctest.h>
 
-#include <chrono>
+#include <atomic>
+#include <cstdint>
+#include <exception>
+#include <functional>
 #include <memory>
+#include <stdexcept>
 #include <thread>
+#include <tuple>
+#include <utility>
+#include <vector>
 
 using namespace CesiumAsync;
 
@@ -27,7 +37,7 @@ TEST_CASE("AsyncSystem") {
       std::make_shared<MockTaskProcessor>();
   AsyncSystem asyncSystem(pTaskProcessor);
 
-  SECTION("runs worker tasks with the task processor") {
+  SUBCASE("runs worker tasks with the task processor") {
     bool executed = false;
 
     asyncSystem.runInWorkerThread([&executed]() { executed = true; }).wait();
@@ -36,7 +46,7 @@ TEST_CASE("AsyncSystem") {
     CHECK(executed);
   }
 
-  SECTION("worker continuations are run via the task processor") {
+  SUBCASE("worker continuations are run via the task processor") {
     bool executed = false;
 
     asyncSystem.createResolvedFuture()
@@ -47,7 +57,7 @@ TEST_CASE("AsyncSystem") {
     CHECK(executed);
   }
 
-  SECTION("runs main thread tasks when instructed") {
+  SUBCASE("runs main thread tasks when instructed") {
     bool executed = false;
 
     auto future =
@@ -60,7 +70,7 @@ TEST_CASE("AsyncSystem") {
     CHECK(pTaskProcessor->tasksStarted == 0);
   }
 
-  SECTION("main thread continuations are run when instructed") {
+  SUBCASE("main thread continuations are run when instructed") {
     bool executed = false;
 
     auto future = asyncSystem.createResolvedFuture().thenInMainThread(
@@ -73,7 +83,7 @@ TEST_CASE("AsyncSystem") {
     CHECK(pTaskProcessor->tasksStarted == 0);
   }
 
-  SECTION("worker continuations following a worker run immediately") {
+  SUBCASE("worker continuations following a worker run immediately") {
     bool executed1 = false;
     bool executed2 = false;
 
@@ -93,7 +103,7 @@ TEST_CASE("AsyncSystem") {
     CHECK(executed2);
   }
 
-  SECTION("main thread continuations following a main thread task run "
+  SUBCASE("main thread continuations following a main thread task run "
           "immediately") {
     bool executed1 = false;
     bool executed2 = false;
@@ -111,7 +121,7 @@ TEST_CASE("AsyncSystem") {
     CHECK(pTaskProcessor->tasksStarted == 0);
   }
 
-  SECTION("worker continuations following a thread pool thread run as a "
+  SUBCASE("worker continuations following a thread pool thread run as a "
           "separate task") {
     ThreadPool pool(1);
 
@@ -130,7 +140,7 @@ TEST_CASE("AsyncSystem") {
     CHECK(executed3);
   }
 
-  SECTION("a worker continuation that returns an already resolved future "
+  SUBCASE("a worker continuation that returns an already resolved future "
           "immediately invokes an attached worker continuation") {
     bool executed = false;
 
@@ -151,7 +161,7 @@ TEST_CASE("AsyncSystem") {
     CHECK(executed);
   }
 
-  SECTION("can pass move-only objects between continuations") {
+  SUBCASE("can pass move-only objects between continuations") {
     auto future =
         asyncSystem
             .runInWorkerThread([]() { return std::make_unique<int>(42); })
@@ -160,25 +170,25 @@ TEST_CASE("AsyncSystem") {
     CHECK(future.wait() == 42);
   }
 
-  SECTION("an exception thrown in a continuation rejects the future") {
+  SUBCASE("an exception thrown in a continuation rejects the future") {
     auto future = asyncSystem.runInWorkerThread(
         []() { throw std::runtime_error("test"); });
     CHECK_THROWS_WITH(future.wait(), "test");
   }
 
-  SECTION("an exception thrown in createFuture rejects the future") {
+  SUBCASE("an exception thrown in createFuture rejects the future") {
     auto future = asyncSystem.createFuture<int>(
         [](const auto& /*promise*/) { throw std::runtime_error("test"); });
     CHECK_THROWS_WITH(future.wait(), "test");
   }
 
-  SECTION("createFuture promise may resolve immediately") {
+  SUBCASE("createFuture promise may resolve immediately") {
     auto future = asyncSystem.createFuture<int>(
         [](const auto& promise) { promise.resolve(42); });
     CHECK(future.wait() == 42);
   }
 
-  SECTION("createFuture promise may resolve later") {
+  SUBCASE("createFuture promise may resolve later") {
     auto future = asyncSystem.createFuture<int>([](const auto& promise) {
       std::thread([promise]() {
         using namespace std::chrono_literals;
@@ -189,7 +199,7 @@ TEST_CASE("AsyncSystem") {
     CHECK(future.wait() == 42);
   }
 
-  SECTION("rejected promise invokes catch instead of then") {
+  SUBCASE("rejected promise invokes catch instead of then") {
     auto future = asyncSystem
                       .createFuture<int>([](const auto& promise) {
                         promise.reject(std::runtime_error("test"));
@@ -208,7 +218,7 @@ TEST_CASE("AsyncSystem") {
     CHECK(future.wait() == 2);
   }
 
-  SECTION("catch may chain to another futre") {
+  SUBCASE("catch may chain to another futre") {
     auto future = asyncSystem
                       .createFuture<int>([](const auto& promise) {
                         promise.reject(std::runtime_error("test"));
@@ -223,7 +233,7 @@ TEST_CASE("AsyncSystem") {
     CHECK(future.wait() == 2);
   }
 
-  SECTION("then after returning catch is invoked") {
+  SUBCASE("then after returning catch is invoked") {
     auto future = asyncSystem
                       .createFuture<int>([](const auto& promise) {
                         promise.reject(std::runtime_error("test"));
@@ -241,7 +251,7 @@ TEST_CASE("AsyncSystem") {
     CHECK(future.wait() == 3);
   }
 
-  SECTION("then after throwing catch is not invoked") {
+  SUBCASE("then after throwing catch is not invoked") {
     auto future = asyncSystem
                       .createFuture<int>([](const auto& promise) {
                         promise.reject(std::runtime_error("test"));
@@ -260,7 +270,7 @@ TEST_CASE("AsyncSystem") {
     CHECK_THROWS_WITH(future.wait(), "second");
   }
 
-  SECTION("Future returned by all resolves when all given Futures resolve") {
+  SUBCASE("Future returned by all resolves when all given Futures resolve") {
     auto one = asyncSystem.createPromise<int>();
     auto two = asyncSystem.createPromise<int>();
     auto three = asyncSystem.createPromise<int>();
@@ -290,7 +300,31 @@ TEST_CASE("AsyncSystem") {
     CHECK(resolved);
   }
 
-  SECTION("Future returned by 'all' rejects when any Future rejects") {
+  SUBCASE("Can use `all` with void-returning Futures") {
+    auto one = asyncSystem.createPromise<void>();
+    auto two = asyncSystem.createPromise<void>();
+    auto three = asyncSystem.createPromise<void>();
+
+    std::vector<Future<void>> futures;
+    futures.emplace_back(one.getFuture());
+    futures.emplace_back(two.getFuture());
+    futures.emplace_back(three.getFuture());
+
+    Future<void> all = asyncSystem.all(std::move(futures));
+
+    bool resolved = false;
+    Future<void> last =
+        std::move(all).thenImmediately([&resolved]() { resolved = true; });
+
+    three.resolve();
+    one.resolve();
+    two.resolve();
+
+    last.wait();
+    CHECK(resolved);
+  }
+
+  SUBCASE("Future returned by 'all' rejects when any Future rejects") {
     auto one = asyncSystem.createPromise<int>();
     auto two = asyncSystem.createPromise<int>();
     auto three = asyncSystem.createPromise<int>();
@@ -322,7 +356,7 @@ TEST_CASE("AsyncSystem") {
     CHECK(rejected);
   }
 
-  SECTION("When multiple futures in an 'all' reject, the data from the first "
+  SUBCASE("When multiple futures in an 'all' reject, the data from the first "
           "rejection in the list is used") {
     auto one = asyncSystem.createPromise<int>();
     auto two = asyncSystem.createPromise<int>();
@@ -356,7 +390,7 @@ TEST_CASE("AsyncSystem") {
     CHECK(rejected);
   }
 
-  SECTION("conversion to SharedFuture") {
+  SUBCASE("conversion to SharedFuture") {
     auto promise = asyncSystem.createPromise<int>();
     auto sharedFuture = promise.getFuture().share();
 
@@ -399,7 +433,7 @@ TEST_CASE("AsyncSystem") {
     CHECK(value2 == 11);
   }
 
-  SECTION("can join two chains originating with a shared future") {
+  SUBCASE("can join two chains originating with a shared future") {
     auto promise = asyncSystem.createPromise<int>();
     auto sharedFuture = promise.getFuture().share();
 
@@ -446,7 +480,7 @@ TEST_CASE("AsyncSystem") {
     CHECK(result[1] == 11);
   }
 
-  SECTION("can join two shared futures") {
+  SUBCASE("can join two shared futures") {
     auto promise = asyncSystem.createPromise<int>();
     auto sharedFuture = promise.getFuture().share();
 
@@ -493,7 +527,39 @@ TEST_CASE("AsyncSystem") {
     CHECK(result[1] == 11);
   }
 
-  SECTION("can catch from shared future") {
+  SUBCASE("can join two shared futures returning void") {
+    auto promise = asyncSystem.createPromise<void>();
+    auto sharedFuture = promise.getFuture().share();
+
+    bool executed1 = false;
+    Future<void> one =
+        sharedFuture.thenInWorkerThread([&executed1]() { CHECK(!executed1); })
+            .thenInWorkerThread([&executed1]() {
+              CHECK(!executed1);
+              executed1 = true;
+            });
+
+    bool executed2 = false;
+    Future<void> two =
+        sharedFuture.thenInWorkerThread([&executed2]() { CHECK(!executed2); })
+            .thenInWorkerThread([&executed2]() {
+              CHECK(!executed2);
+              executed2 = true;
+            });
+
+    std::vector<SharedFuture<void>> futures;
+    futures.emplace_back(std::move(one).share());
+    futures.emplace_back(std::move(two).share());
+    Future<void> joined = asyncSystem.all(std::move(futures));
+
+    promise.resolve();
+
+    joined.wait();
+    CHECK(executed1);
+    CHECK(executed2);
+  }
+
+  SUBCASE("can catch from shared future") {
     auto promise = asyncSystem.createPromise<int>();
     auto sharedFuture = promise.getFuture().share();
 
@@ -512,7 +578,7 @@ TEST_CASE("AsyncSystem") {
     CHECK(value1 == 2);
   }
 
-  SECTION("Future reports when it is ready") {
+  SUBCASE("Future reports when it is ready") {
     auto promise = asyncSystem.createPromise<int>();
     auto future = promise.getFuture();
 
@@ -521,7 +587,7 @@ TEST_CASE("AsyncSystem") {
     CHECK(future.isReady());
   }
 
-  SECTION("SharedFuture reports when it is ready") {
+  SUBCASE("SharedFuture reports when it is ready") {
     auto promise = asyncSystem.createPromise<int>();
     auto future = promise.getFuture().share();
 
@@ -530,7 +596,7 @@ TEST_CASE("AsyncSystem") {
     CHECK(future.isReady());
   }
 
-  SECTION("SharedFuture may resolve to void") {
+  SUBCASE("SharedFuture may resolve to void") {
     auto promise = asyncSystem.createPromise<void>();
     auto future = promise.getFuture().share();
 
@@ -540,7 +606,7 @@ TEST_CASE("AsyncSystem") {
     future.wait();
   }
 
-  SECTION("thenPassThrough") {
+  SUBCASE("thenPassThrough") {
     bool checksCompleted = false;
 
     asyncSystem.createResolvedFuture(3.1)
@@ -556,7 +622,7 @@ TEST_CASE("AsyncSystem") {
     CHECK(checksCompleted);
   }
 
-  SECTION("thenPassThrough on a SharedFuture") {
+  SUBCASE("thenPassThrough on a SharedFuture") {
     bool checksCompleted = false;
 
     asyncSystem.createResolvedFuture(3.1)
@@ -571,5 +637,153 @@ TEST_CASE("AsyncSystem") {
         });
 
     CHECK(checksCompleted);
+  }
+
+  SUBCASE("waitInMainThread") {
+    SUBCASE("Future returning a value") {
+      bool called = false;
+      Future<int> future =
+          asyncSystem.createResolvedFuture().thenInMainThread([&called]() {
+            called = true;
+            return 4;
+          });
+      int value = std::move(future).waitInMainThread();
+      CHECK(called);
+      CHECK(value == 4);
+    }
+
+    SUBCASE("Future returning void") {
+      bool called = false;
+      Future<void> future = asyncSystem.createResolvedFuture().thenInMainThread(
+          [&called]() { called = true; });
+      std::move(future).waitInMainThread();
+      CHECK(called);
+    }
+
+    SUBCASE("SharedFuture returning a value") {
+      bool called = false;
+      SharedFuture<int> future = asyncSystem.createResolvedFuture()
+                                     .thenInMainThread([&called]() {
+                                       called = true;
+                                       return 4;
+                                     })
+                                     .share();
+      int value = future.waitInMainThread();
+      CHECK(called);
+      CHECK(value == 4);
+    }
+
+    SUBCASE("SharedFuture returning void") {
+      bool called = false;
+      SharedFuture<void> future =
+          asyncSystem.createResolvedFuture()
+              .thenInMainThread([&called]() { called = true; })
+              .share();
+      future.waitInMainThread();
+      CHECK(called);
+    }
+
+    SUBCASE("Future resolving while main thread is waiting") {
+      bool called1 = false;
+      bool called2 = false;
+      Future<void> future =
+          asyncSystem.createResolvedFuture()
+              .thenInWorkerThread([&called1]() {
+                using namespace std::chrono_literals;
+                // should be long enough for the main thread to start waiting on
+                // the conditional, without slowing the test down too much.
+                std::this_thread::sleep_for(20ms);
+                called1 = true;
+              })
+              .thenInMainThread([&called2]() { called2 = true; });
+      future.waitInMainThread();
+      CHECK(called1);
+      CHECK(called2);
+    }
+
+    SUBCASE("Future resolving from a worker while main thread is waiting") {
+      bool called1 = false;
+      bool called2 = false;
+      bool called3 = false;
+      Future<void> future =
+          asyncSystem.createResolvedFuture()
+              .thenInWorkerThread([&called1]() {
+                using namespace std::chrono_literals;
+                // should be long enough for the main thread to start waiting on
+                // the conditional, without slowing the test down too much.
+                std::this_thread::sleep_for(20ms);
+                called1 = true;
+              })
+              .thenInMainThread([&called2]() { called2 = true; })
+              .thenInWorkerThread([&called3]() {
+                using namespace std::chrono_literals;
+                // Sufficient time for the main thread to drop back into waiting
+                // on the conditional again after it was awakened by the
+                // scheduling of the main thread continuation above. It should
+                // awaken again when this continuation completes.
+                std::this_thread::sleep_for(20ms);
+                called3 = true;
+              });
+      future.waitInMainThread();
+      CHECK(called1);
+      CHECK(called2);
+      CHECK(called3);
+    }
+
+    SUBCASE("Future rejecting with throw") {
+      bool called = false;
+      auto future =
+          asyncSystem.runInWorkerThread([]() { throw std::runtime_error(""); })
+              .thenInMainThread([&called]() {
+                called = true;
+                return 4;
+              });
+      CHECK_THROWS(std::move(future).waitInMainThread());
+      CHECK(!called);
+    }
+
+    SUBCASE("Future rejecting with Promise::reject") {
+      bool called = false;
+      auto promise = asyncSystem.createPromise<void>();
+      promise.reject(std::runtime_error("Some exception"));
+      Future<int> future = promise.getFuture().thenInMainThread([&called]() {
+        called = true;
+        return 4;
+      });
+      CHECK_THROWS(std::move(future).waitInMainThread());
+      CHECK(!called);
+    }
+
+    SUBCASE("SharedFuture rejecting") {
+      bool called = false;
+      auto promise = asyncSystem.createPromise<void>();
+      promise.reject(std::runtime_error("Some exception"));
+      SharedFuture<int> future = promise.getFuture()
+                                     .thenInMainThread([&called]() {
+                                       called = true;
+                                       return 4;
+                                     })
+                                     .share();
+      CHECK_THROWS(future.waitInMainThread());
+      CHECK(!called);
+    }
+
+    SUBCASE(
+        "catchImmediately can return a value from a mutable lambda capture") {
+      auto promise = asyncSystem.createPromise<std::string>();
+      promise.reject(std::runtime_error("Some exception"));
+      std::string myValue = "value from catch";
+      Future<std::string> future =
+          promise.getFuture()
+              .catchImmediately([myValue = std::move(myValue)](
+                                    std::exception&& exception) mutable {
+                CHECK(std::string(exception.what()) == "Some exception");
+                return myValue;
+              })
+              .thenImmediately(
+                  [](std::string&& result) { return std::move(result); });
+      std::string result = future.waitInMainThread();
+      CHECK(result == "value from catch");
+    }
   }
 }

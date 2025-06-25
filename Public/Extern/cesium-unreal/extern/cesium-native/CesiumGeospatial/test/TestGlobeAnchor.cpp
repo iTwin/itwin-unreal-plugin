@@ -1,8 +1,15 @@
 #include <CesiumGeometry/Transforms.h>
+#include <CesiumGeospatial/Ellipsoid.h>
 #include <CesiumGeospatial/GlobeAnchor.h>
 #include <CesiumGeospatial/LocalHorizontalCoordinateSystem.h>
+#include <CesiumUtility/Math.h>
 
-#include <catch2/catch.hpp>
+#include <doctest/doctest.h>
+#include <glm/ext/matrix_double3x3.hpp>
+#include <glm/ext/matrix_double4x4.hpp>
+#include <glm/ext/quaternion_trigonometric.hpp>
+#include <glm/ext/vector_double3.hpp>
+#include <glm/fwd.hpp>
 #include <glm/gtx/quaternion.hpp>
 
 using namespace CesiumGeometry;
@@ -16,15 +23,19 @@ TEST_CASE("GlobeAnchor") {
       nullIsland,
       LocalDirection::East,
       LocalDirection::Up,
-      LocalDirection::North);
+      LocalDirection::North,
+      1.0,
+      Ellipsoid::WGS84);
 
   LocalHorizontalCoordinateSystem leftHandedEastUpNorth90(
       Cartographic::fromDegrees(90.0, 0.0, 0.0),
       LocalDirection::East,
       LocalDirection::Up,
-      LocalDirection::North);
+      LocalDirection::North,
+      1.0,
+      Ellipsoid::WGS84);
 
-  SECTION("Identity transform in local is equivalent to the local") {
+  SUBCASE("Identity transform in local is equivalent to the local") {
     GlobeAnchor anchor = GlobeAnchor::fromAnchorToLocalTransform(
         leftHandedEastUpNorth,
         glm::dmat4(1.0));
@@ -33,7 +44,7 @@ TEST_CASE("GlobeAnchor") {
         leftHandedEastUpNorth.getLocalToEcefTransformation());
   }
 
-  SECTION("Translation in local is represented correctly in ECEF") {
+  SUBCASE("Translation in local is represented correctly in ECEF") {
     GlobeAnchor anchor = GlobeAnchor::fromAnchorToLocalTransform(
         leftHandedEastUpNorth,
         glm::dmat4(
@@ -59,7 +70,7 @@ TEST_CASE("GlobeAnchor") {
         Math::Epsilon10));
   }
 
-  SECTION(
+  SUBCASE(
       "Translation-rotation-scale in local is represented correctly in ECEF") {
     glm::dquat ninetyDegreesAboutX =
         glm::angleAxis(Math::degreesToRadians(90.0), glm::dvec3(1.0, 0.0, 0.0));
@@ -86,7 +97,7 @@ TEST_CASE("GlobeAnchor") {
         Math::Epsilon10));
   }
 
-  SECTION("Can transform between different local coordinate systems") {
+  SUBCASE("Can transform between different local coordinate systems") {
     glm::dmat4 toLocal = glm::dmat4(
         glm::dvec4(1.0, 0.0, 0.0, 0.0),
         glm::dvec4(0.0, 1.0, 0.0, 0.0),
@@ -122,7 +133,7 @@ TEST_CASE("GlobeAnchor") {
         Math::Epsilon10));
   }
 
-  SECTION("Moving in ECEF adjusts orientation if requested") {
+  SUBCASE("Moving in ECEF adjusts orientation if requested") {
     glm::dmat4 toLocal = glm::dmat4(
         glm::dvec4(1.0, 0.0, 0.0, 0.0),
         glm::dvec4(0.0, 1.0, 0.0, 0.0),
@@ -134,7 +145,11 @@ TEST_CASE("GlobeAnchor") {
     // Moving without adjusting orientation should leave the orientation
     // unchanged.
     GlobeAnchor first = anchor;
-    first.setAnchorToLocalTransform(leftHandedEastUpNorth90, toLocal, false);
+    first.setAnchorToLocalTransform(
+        leftHandedEastUpNorth90,
+        toLocal,
+        false,
+        Ellipsoid::WGS84);
     glm::dmat3 rotationScaleAfter =
         glm::dmat3(first.getAnchorToLocalTransform(leftHandedEastUpNorth90));
     CHECK(Math::equalsEpsilon(
@@ -155,7 +170,11 @@ TEST_CASE("GlobeAnchor") {
 
     // But if we allow adjusting orientation, the object should stay upright.
     GlobeAnchor second = anchor;
-    second.setAnchorToLocalTransform(leftHandedEastUpNorth90, toLocal, true);
+    second.setAnchorToLocalTransform(
+        leftHandedEastUpNorth90,
+        toLocal,
+        true,
+        Ellipsoid::WGS84);
     rotationScaleAfter =
         glm::dmat3(second.getAnchorToLocalTransform(leftHandedEastUpNorth90));
     glm::dmat3 expected = glm::dmat3(

@@ -1,10 +1,9 @@
 #pragma once
 
-#include "CesiumGltfWriter/Library.h"
-
+#include <CesiumGltfWriter/Library.h>
 #include <CesiumJsonWriter/ExtensionWriterContext.h>
 
-#include <gsl/span>
+#include <span>
 
 // forward declarations
 namespace CesiumGltf {
@@ -46,7 +45,7 @@ struct CESIUMGLTFWRITER_API GltfWriterOptions {
 
   /**
    * @brief Byte alignment of the GLB binary chunk. When using 64-bit types in
-   * EXT_mesh_features or EXT_feature_metadata this value should be set to 8.
+   * EXT_mesh_features this value should be set to 8.
    */
   size_t binaryChunkByteAlignment = 4;
 };
@@ -75,7 +74,7 @@ public:
    * @brief Serializes the provided model into a glTF JSON byte vector.
    *
    * @details Ignores internal data such as {@link CesiumGltf::BufferCesium}
-   * and {@link CesiumGltf::ImageCesium} when serializing the glTF. Internal
+   * and {@link CesiumGltf::ImageAsset} when serializing the glTF. Internal
    * data must either be converted to data uris or saved as external files. The
    * buffer.uri and image.uri fields must be set accordingly prior to calling
    * this function.
@@ -93,7 +92,7 @@ public:
    *
    * @details The first buffer object implicitly refers to the GLB binary chunk
    * and should not have a uri. Ignores internal data such as
-   * {@link CesiumGltf::BufferCesium} and {@link CesiumGltf::ImageCesium}.
+   * {@link CesiumGltf::BufferCesium} and {@link CesiumGltf::ImageAsset}.
    *
    * @param model The model.
    * @param bufferData The buffer data to store in the GLB binary chunk.
@@ -102,7 +101,7 @@ public:
    */
   GltfWriterResult writeGlb(
       const CesiumGltf::Model& model,
-      const gsl::span<const std::byte>& bufferData,
+      const std::span<const std::byte>& bufferData,
       const GltfWriterOptions& options = GltfWriterOptions()) const;
 
 private:

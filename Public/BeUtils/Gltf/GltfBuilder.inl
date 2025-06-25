@@ -71,7 +71,7 @@ void GltfBuilder::MeshPrimitive::SetFeatureIds(const std::vector<std::array<_T, 
 	primitive_.attributes.emplace("_FEATURE_ID_0", accessorIndex);
 	auto& extension = primitive_.addExtension<CesiumGltf::ExtensionExtMeshFeatures>();
 	auto& featureId = extension.featureIds.emplace_back();
-	featureId.featureCount = (*std::max_element(featureIds.begin(), featureIds.end()))[0];
+	featureId.featureCount = static_cast<int64_t>((*std::max_element(featureIds.begin(), featureIds.end()))[0]);
 	featureId.attribute = 0;
 	featureId.propertyTable = 0;
 

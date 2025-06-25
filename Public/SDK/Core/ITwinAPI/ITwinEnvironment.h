@@ -10,12 +10,13 @@
 #pragma once
 
 #ifndef SDK_CPPMODULES
-	#ifndef MODULE_EXPORT
-		#define MODULE_EXPORT
-	#endif // !MODULE_EXPORT
+#	include <string>
+#	ifndef MODULE_EXPORT
+#		define MODULE_EXPORT
+#	endif // !MODULE_EXPORT
 #endif
 
-MODULE_EXPORT namespace SDK::Core
+MODULE_EXPORT namespace AdvViz::SDK
 {
 	enum class EITwinEnvironment : uint8_t
 	{
