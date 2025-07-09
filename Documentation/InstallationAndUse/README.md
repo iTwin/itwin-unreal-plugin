@@ -56,10 +56,15 @@ For example: `C:\MyUnrealApp\Plugins\ITwinForUnreal`.
 5. To manually add an iModel into your level inside the Unreal Editor, drag and drop an `ITwinIModel` actor from the Content Browser into your level.<br>
    This actor can be found in the content browser inside folder `Plugins/iTwin for Unreal C++ Classes/ITwinRuntime/Public`.<br>
    Then, in the actor's Details panel, go to the `Loading` section and fill in these fields:
-   - `Loading Method`: `Automatic`
-   - `iModel Id`: the ID of your iModel
-   - `Changeset Id`: the ID of the changeset you want to import
-   Then the iModel should appear in the viewport.
+   - `Loading Method`: `Automatic`,
+   - `iModel Id`: the ID of your iModel,
+   - `Changeset Id`: the ID of the specific changeset you want to import, or `latest` to let the plugin decide which.
+Then the iModel should appear in the viewport.
+
+Note: to determine the iModel ID or changeset ID, you can find them in the URL when you choose to visualize an iModel in the online viewer:
+
+![Finding the iModel and changeset IDs](docs/Finding-the-IDs.png)
+
    If the selected iModel/changeset has never been imported yet, the iTwin server needs to convert (ie. export) it into the Cesium format.<br>
    In such case the export will be automatically started, and the "Export Status" label will say "In progress" until the export is complete.<br>
    This can take quite some time, depending on the complexity of your iModel. Once the export is complete, the iModel will appear in the viewport.

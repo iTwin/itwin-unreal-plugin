@@ -138,10 +138,15 @@ Solutions:
    - Then check that the remaining versions is correctly selected in all files named like this: `Microsoft.VCToolsVersion.v143.default.***`, inside the folder `C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Auxiliary\Build`
 * Alternately, you can modify the `BuildConfiguration.xml` file located in `%APPDATA%\Unreal Engine\UnrealBuildTool` (or `My Documents\Unreal Engine\UnrealBuildTool`) so that it always points to the latest version (or to a fixed version number that you might want to use):
 ```
+<?xml version="1.0" encoding="utf-8" ?>
+<Configuration xmlns="https://www.unrealengine.com/BuildConfiguration">
+(...)
 <WindowsPlatform>
 <Compiler>VisualStudio2022</Compiler>
 <CompilerVersion>Latest</CompilerVersion>
 </WindowsPlatform>
+(...)
+</Configuration>
 ```
 
 ### Image size (OBJ) exceeds maximum allowable size
@@ -154,8 +159,10 @@ Solution: modify (or create) the `BuildConfiguration.xml` file located in `%APPD
 ```
 <?xml version="1.0" encoding="utf-8" ?>
 <Configuration xmlns="https://www.unrealengine.com/BuildConfiguration">
+(...)
 <BuildConfiguration>
 <NumIncludedBytesPerUnityCPP>30000</NumIncludedBytesPerUnityCPP>
 </BuildConfiguration>
+(...)
 </Configuration>
 ```
