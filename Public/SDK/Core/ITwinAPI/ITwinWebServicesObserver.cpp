@@ -105,6 +105,22 @@ namespace AdvViz::SDK
 	{
 		ITWIN_SDK_WARN(GetObserverName() + " does not handle IModel properties");
 	}
+	void ITwinDefaultWebServicesObserver::OnIModelPagedNodesRetrieved(bool /*bSuccess*/, IModelPagedNodesRes const&)
+	{
+		ITWIN_SDK_WARN(GetObserverName() + " does not handle models tree");
+	}
+	void ITwinDefaultWebServicesObserver::OnModelFilteredNodesRetrieved(bool /*bSuccess*/, FilteredNodesRes const&, std::string const&)
+	{
+		ITWIN_SDK_WARN(GetObserverName() + " does not handle models search tree");
+	}
+	void ITwinDefaultWebServicesObserver::OnCategoryFilteredNodesRetrieved(bool /*bSuccess*/, FilteredNodesRes const&, std::string const&)
+	{
+		ITWIN_SDK_WARN(GetObserverName() + " does not handle categories search tree");
+	}
+	void ITwinDefaultWebServicesObserver::OnIModelCategoryNodesRetrieved(bool /*bSuccess*/, IModelPagedNodesRes const&)
+	{
+		ITWIN_SDK_WARN(GetObserverName() + " does not handle categories tree");
+	}
 	void ITwinDefaultWebServicesObserver::OnConvertedIModelCoordsToGeoCoords(bool /*bSuccess*/, GeoCoordsReply const&, RequestID const&)
 	{
 		ITWIN_SDK_WARN(GetObserverName() + " does not handle IModel coordinates conversion");

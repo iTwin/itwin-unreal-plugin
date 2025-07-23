@@ -1290,6 +1290,8 @@ public:
   //! Returns whether some Gltf tuning is to be achieved.
   bool NeedGltfTuning(const Cesium3DTilesSelection::Tile& tile) const;
 
+  // AdvViz: Quick hack to avoid using updateViewOffline during movie clip previewing
+  static bool AllowCaptureMovieMode;
 
 private:
   /**

@@ -127,9 +127,73 @@ namespace AdvViz::SDK
 	/*static*/
 	std::string ITwinAuthManager::Credentials::extraScopes_;
 
-	/*static*/
-	void ITwinAuthManager::SetAppIDArray(AppIDArray const& ITwinAppIDs)
+	namespace
 	{
+		static std::string HideString(std::string const& strId)
+		{
+			std::string hiddenID;
+			size_t const maxVisibleChars = strId.length() / 4;
+			size_t displayedChars = 0;
+			for (auto const& c : strId)
+			{
+				if (c == '-' || c == '_')
+				{
+					hiddenID += c;
+				}
+				else if (displayedChars < maxVisibleChars)
+				{
+					hiddenID += c;
+					displayedChars++;
+				}
+				else
+				{
+					hiddenID += '?';
+				}
+			}
+			return hiddenID;
+		}
+
+		static std::string HideAppID(std::string const& strId)
+		{
+			if (strId.length() <= 4)
+			{
+				return HideString(strId);
+			}
+			std::string strLeft = HideString(strId.substr(0, strId.length() / 2));
+			std::string strRight = strId.substr(strId.length() / 2);
+			std::reverse(strRight.begin(), strRight.end());
+			strRight = HideString(strRight);
+			std::reverse(strRight.begin(), strRight.end());
+			return strLeft + strRight;
+		}
+	}
+
+	/*static*/
+	void ITwinAuthManager::SetAppIDArray(AppIDArray const& ITwinAppIDs, bool bLogIDs /*= true*/)
+	{
+		std::ostringstream oss;
+		oss << "Setting AppID -";
+
+		// Do not write clear AppID in logs.
+		size_t nbValidIDs(0);
+		for (size_t envId(0); envId < ITwinAppIDs.size(); envId++)
+		{
+			if (!ITwinAppIDs[envId].empty())
+			{
+				if (nbValidIDs > 0)
+				{
+					oss << ",";
+				}
+				oss << " " << ITwinServerEnvironment::ToString(
+					static_cast<EITwinEnvironment>(envId))
+					<< ": " << HideAppID(ITwinAppIDs[envId]);
+				nbValidIDs++;
+			}
+		}
+		if (bLogIDs && AdvViz::SDK::Tools::IsLogInitialized())
+		{
+			BE_LOGI("ITwinAPI", oss.str());
+		}
 		Credentials::AppIDs = ITwinAppIDs;
 	}
 

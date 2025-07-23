@@ -1506,7 +1506,7 @@ void USequencerHelper::SaveLevelSequenceAsAsset(FString levelSequencePath, const
 	ULevelSequence* pLevelSeq = Cast<ULevelSequence>(StaticLoadObject(ULevelSequence::StaticClass(), nullptr, *levelSequencePath));
 	if (!pLevelSeq)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("Level sequence not found"));
+		BE_LOGW("Timeline", "Level sequence not found");
 		return;
 	}
 
@@ -1514,7 +1514,7 @@ void USequencerHelper::SaveLevelSequenceAsAsset(FString levelSequencePath, const
 	UPackage* Package = CreatePackage(*PackagePath);
 	if (!Package)
 	{
-		UE_LOG(LogTemp, Error, TEXT("Failed to create package."));
+		BE_LOGE("Timeline", "Failed to create package.");
 		return;
 	}
 
@@ -1536,11 +1536,11 @@ void USequencerHelper::SaveLevelSequenceAsAsset(FString levelSequencePath, const
 	bool bSaved = UPackage::SavePackage(Package, pLevelSeq, *FilePath, SaveArgs);
 	if (bSaved)
 	{
-		UE_LOG(LogTemp, Log, TEXT("LevelSequence saved to: %s"), *FilePath);
+		BE_LOGI("Timeline", "LevelSequence saved to: " << TCHAR_TO_UTF8(*FilePath));
 	}
 	else
 	{
-		UE_LOG(LogTemp, Error, TEXT("Failed to save LevelSequence"));
+		BE_LOGE("Timeline", "Failed to save LevelSequence");
 	}
 
 	pLevelSeq->Rename(*OldName, OldOuter);

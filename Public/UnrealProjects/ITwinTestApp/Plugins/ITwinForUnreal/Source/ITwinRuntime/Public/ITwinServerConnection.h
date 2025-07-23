@@ -47,6 +47,7 @@ public:
 		EditAnywhere)
 	EITwinEnvironment Environment = EITwinEnvironment::Invalid;
 
+	virtual void PostLoad() override;
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 #endif
@@ -66,7 +67,7 @@ public:
 		bool connectedSuccessfully, FString* pstrError = nullptr, bool const bWillRetry = false);
 	//! Sets the app ID for all environments.
 	//! This function is useful only for Bentley apps, which may use non-Prod envs.
-	static void SetITwinAppIDArray(ITwin::AppIDArray const& ITwinAppIDs);
+	static void SetITwinAppIDArray(ITwin::AppIDArray const& ITwinAppIDs, bool bLogIDs = true);
 	//! Sets the app ID for the Prod environment.
 	//! This function is a convenience for non-Bentley apps, since such apps only use this env.
 	UFUNCTION(BlueprintCallable, Category = "iTwin")

@@ -38,6 +38,13 @@ namespace BeUtils
 	class GltfMaterialTuner
 	{
 	public:
+		struct GltfMaterialInfo
+		{
+			int32_t gltfMaterialIndex_ = 0; // index in the array of glTF materials
+			bool hasCustomDefinition_ = false;
+			bool overrideColor_ = false; // whether we should override the colors baked in mesh vertices
+		};
+
 		GltfMaterialTuner(std::shared_ptr<GltfMaterialHelper> const& materialHelper);
 
 		bool CanConvertITwinMaterials() const { return (bool)materialHelper_; }
@@ -46,12 +53,12 @@ namespace BeUtils
 		//! if it holds some customizations compared to the original model exported by the Mesh Export
 		//! Service. In such case, a new glTF material may be created and appended to the array of glTF
 		//! materials. New glTF textures and images may be created during this process.
-		int32_t ConvertITwinMaterial(uint64_t itwinMatId,
+		void ConvertITwinMaterial(uint64_t itwinMatId,
 			int32_t gltfMatId,
 			std::vector<CesiumGltf::Material>& materials,
 			std::vector<CesiumGltf::Texture>& textures,
 			std::vector<CesiumGltf::Image>& images,
-			bool& bOverrideColor,
+			GltfMaterialInfo& matInfo,
 			std::vector<std::array<uint8_t, 4>> const& meshColors);
 
 
@@ -117,6 +124,12 @@ namespace BeUtils
 		std::string GetMaterialContextInfo(RWLockBase const& lock) const;
 
 	private:
+		inline int32_t CreateGltfTextureFromTextureAccess(
+			GltfMaterialHelper::TextureAccess const& texAccess,
+			std::vector<CesiumGltf::Texture>& textures,
+			std::vector<CesiumGltf::Image>& images,
+			RLock const& lock) const;
+
 		int32_t ConvertTexture(AdvViz::SDK::ITwinChannelMap const& textureMap,
 			std::vector<CesiumGltf::Texture>& textures,
 			std::vector<CesiumGltf::Image>& images,
@@ -185,11 +198,6 @@ namespace BeUtils
 		std::shared_ptr<GltfMaterialHelper> const& materialHelper_;
 
 	private:
-		struct GltfMaterialInfo
-		{
-			int32_t gltfMaterialIndex_ = 0; // index in the array of glTF materials
-			bool overrideColor_ = false; // whether we should override the colors baked in mesh vertices
-		};
 		std::unordered_map<uint64_t, GltfMaterialInfo> itwinToGltfMaterial_; // iTwin MaterialId -> glTF Material index
 
 		struct GltfTextureInfo

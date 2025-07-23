@@ -9,7 +9,7 @@
 #include <ITwinUtilityLibrary.h>
 #include <ITwinRuntime/Private/Compil/SanitizedPlatformHeaders.h>
 #include <CesiumGeospatial/LocalHorizontalCoordinateSystem.h>
-#include <IncludeITwin3DTileset.h>
+#include <IncludeCesium3DTileset.h>
 #include <CesiumGeoreference.h>
 #include <ITwinGeolocation.h>
 #include <ITwinIModel.h>

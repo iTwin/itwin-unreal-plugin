@@ -33,5 +33,6 @@ enum class EITwinSplineUsage : uint8
 	MapCutout = 1 UMETA(DisplayName = "Cutout Polygon"),
 	TrafficPath = 2,
 	PopulationZone = 3,
-	PopulationPath = 4
+	PopulationPath = 4,
+	AnimPath = 5
 };

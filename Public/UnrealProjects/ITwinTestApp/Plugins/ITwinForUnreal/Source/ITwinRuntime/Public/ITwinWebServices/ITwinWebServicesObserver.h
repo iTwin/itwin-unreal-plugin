@@ -72,6 +72,10 @@ public:
 	virtual void OnSavedViewEdited(bool bSuccess, FSavedView const& SavedView, FSavedViewInfo const& SavedViewInfo) = 0;
 	virtual void OnElementPropertiesRetrieved(bool bSuccess, FElementProperties const& ElementProps, FString const& ElementId) = 0;
 	virtual void OnIModelPropertiesRetrieved(bool bSuccess, bool bHasExtents, FProjectExtents const& Extents, bool bHasEcefLocation, FEcefLocation const& EcefLocation) = 0;
+	virtual void OnIModelPagedNodesRetrieved(bool bSuccess, FIModelPagedNodesRes const& IModelNodes) = 0;
+	virtual void OnIModelCategoryNodesRetrieved(bool bSuccess, FIModelPagedNodesRes const& IModelNodes) = 0;
+	virtual void OnModelFilteredNodesRetrieved(bool bSuccess, FFilteredNodesRes const& IModelNodes, FString const& Filter) = 0;
+	virtual void OnCategoryFilteredNodesRetrieved(bool bSuccess, FFilteredNodesRes const& IModelNodes, FString const& Filter) = 0;
 	virtual void OnConvertedIModelCoordsToGeoCoords(bool bSuccess,
 		AdvViz::SDK::GeoCoordsReply const& GeoCoords, HttpRequestID const& RequestID) = 0;
 	virtual void OnIModelQueried(bool bSuccess, FString const& QueryResult, HttpRequestID const& RequestID) = 0;
@@ -112,6 +116,10 @@ public:
 	virtual void OnSavedViewEdited(bool bSuccess, FSavedView const& SavedView, FSavedViewInfo const& SavedViewInfo) override;
 	virtual void OnElementPropertiesRetrieved(bool bSuccess, FElementProperties const& ElementProps, FString const& ElementId) override;
 	virtual void OnIModelPropertiesRetrieved(bool bSuccess, bool bHasExtents, FProjectExtents const& Extents, bool bHasEcefLocation, FEcefLocation const& EcefLocation) override;
+	virtual void OnIModelPagedNodesRetrieved(bool bSuccess, FIModelPagedNodesRes const& IModelNodes) override;
+	virtual void OnIModelCategoryNodesRetrieved(bool bSuccess, FIModelPagedNodesRes const& IModelNodes) override;
+	virtual void OnModelFilteredNodesRetrieved(bool bSuccess, FFilteredNodesRes const& IModelNodes, FString const& Filter) override;
+	virtual void OnCategoryFilteredNodesRetrieved(bool bSuccess, FFilteredNodesRes const& IModelNodes, FString const& Filter) override;
 	virtual void OnConvertedIModelCoordsToGeoCoords(bool bSuccess,
 		AdvViz::SDK::GeoCoordsReply const& GeoCoords, HttpRequestID const& RequestID) override;
 	virtual void OnIModelQueried(bool bSuccess, FString const& QueryResult, HttpRequestID const& RequestID) override;

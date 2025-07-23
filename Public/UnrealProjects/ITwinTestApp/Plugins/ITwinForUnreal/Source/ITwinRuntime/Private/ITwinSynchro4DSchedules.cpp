@@ -22,7 +22,7 @@
 #include <Timeline/SchedulesConstants.h>
 #include <Timeline/SchedulesImport.h>
 #include <Timeline/SchedulesStructs.h>
-#include <IncludeITwin3DTileset.h>
+#include <IncludeCesium3DTileset.h>
 
 #include <HAL/PlatformFileManager.h>
 #include <Logging/LogMacros.h>
@@ -42,8 +42,6 @@
 
 DECLARE_LOG_CATEGORY_EXTERN(LogITwinSched, Log, All);
 DEFINE_LOG_CATEGORY(LogITwinSched);
-
-constexpr double AUTO_SCRIPT_DURATION = 30.;
 
 namespace ITwin
 {
@@ -957,11 +955,13 @@ UITwinSynchro4DSchedules::UITwinSynchro4DSchedules(bool bDoNotBuildTimelines)
 	struct FConstructorStatics {
 		ConstructorHelpers::FObjectFinder<UMaterialInstance> BaseMaterialMasked;
 		ConstructorHelpers::FObjectFinder<UMaterialInstance> BaseMaterialTranslucent;
+		ConstructorHelpers::FObjectFinder<UMaterialInstance> BaseMaterialTranslucent_TwoSided;
 		ConstructorHelpers::FObjectFinder<UMaterialInstance> BaseMaterialGlass;
 		ConstructorHelpers::FObjectFinder<UMaterialInstance> BaseMaterialOpaque;
 		FConstructorStatics()
 			: BaseMaterialMasked(TEXT("/ITwinForUnreal/ITwin/Materials/MI_ITwinInstance"))
 			, BaseMaterialTranslucent(TEXT("/ITwinForUnreal/ITwin/Materials/MI_ITwinInstanceTranslucent"))
+			, BaseMaterialTranslucent_TwoSided(TEXT("/ITwinForUnreal/ITwin/Materials/MI_ITwinInstanceTranslucent_TwoSided"))
 			, BaseMaterialGlass(TEXT("/ITwinForUnreal/ITwin/Materials/MI_ITwinGlass"))
 			, BaseMaterialOpaque(TEXT("/ITwinForUnreal/ITwin/Materials/MI_ITwinOpaque"))
 		{}
@@ -969,6 +969,7 @@ UITwinSynchro4DSchedules::UITwinSynchro4DSchedules(bool bDoNotBuildTimelines)
 	static FConstructorStatics ConstructorStatics;
 	this->BaseMaterialMasked = ConstructorStatics.BaseMaterialMasked.Object;
 	this->BaseMaterialTranslucent = ConstructorStatics.BaseMaterialTranslucent.Object;
+	this->BaseMaterialTranslucent_TwoSided = ConstructorStatics.BaseMaterialTranslucent_TwoSided.Object;
 	this->BaseMaterialGlass = ConstructorStatics.BaseMaterialGlass.Object;
 	this->BaseMaterialOpaque = ConstructorStatics.BaseMaterialOpaque.Object;
 }
@@ -1242,13 +1243,13 @@ void UITwinSynchro4DSchedules::JumpToEnd()
 	}
 }
 
-void UITwinSynchro4DSchedules::AutoReplaySpeed()
+void UITwinSynchro4DSchedules::AutoReplaySpeed(int ReplayPlayTime)
 {
 	auto const& TimeRange = Impl->Internals.GetTimeline().GetTimeRange();
 	if (TimeRange.first < TimeRange.second)
 	{
 		SetReplaySpeed(FTimespan::FromHours( // round the number of hours per second
-			std::ceil((TimeRange.second - TimeRange.first) / (3600. * AUTO_SCRIPT_DURATION))));
+			std::ceil((TimeRange.second - TimeRange.first) / (3600 * ReplayPlayTime))));
 	}
 }
 
@@ -1289,7 +1290,8 @@ void UITwinSynchro4DSchedules::ClearCacheOnlyThis()
 			ensure(false); return;
 		}
 		FString const CacheFolder = QueriesCache::GetCacheFolder(QueriesCache::ESubtype::Schedules,
-			IModel->ServerConnection->Environment, IModel->ITwinId, IModel->IModelId, IModel->ChangesetId,
+			IModel->ServerConnection->Environment, IModel->ITwinId, IModel->IModelId,
+			IModel->ResolvedChangesetId,
 			bStream4DFromAPIM ? (FString("APIM_") + ScheduleId) : ScheduleId);
 		if (ensure(!CacheFolder.IsEmpty()))
 			IFileManager::Get().DeleteDirectory(*CacheFolder, /*requireExists*/false, /*recurse*/true);

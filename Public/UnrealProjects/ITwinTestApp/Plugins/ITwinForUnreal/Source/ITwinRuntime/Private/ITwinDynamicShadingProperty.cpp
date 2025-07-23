@@ -7,7 +7,6 @@
 +--------------------------------------------------------------------------------------*/
 
 #include "ITwinDynamicShadingProperty.h"
-#include "ITwinServiceActor.h" // for LogITwin
 
 #include "Engine/Texture2D.h"
 #include "Materials/MaterialInstanceDynamic.h"
@@ -15,6 +14,10 @@
 #include "Rendering/Texture2DResource.h"
 #include "RenderingThread.h"
 #include "RHICommandList.h"
+
+#include <Compil/BeforeNonUnrealIncludes.h>
+#	include <Core/Tools/Log.h>
+#include <Compil/AfterNonUnrealIncludes.h>
 
 // For debugging...
 #define ITWIN_SAVE_DYNTEX_TO_FILE() 0
@@ -208,8 +211,7 @@ bool FITwinDynamicShadingProperty<DataType, NumChannels>::UpdateTexture()
 {
 	if (!IsValid(Texture))
 	{
-		UE_LOG(LogITwin, Warning,
-			TEXT("Dynamic Texture's update attempt while Texture isn't init'd or already GC'd!"));
+		BE_LOGW("ITwinRender", "Dynamic Texture's update attempt while Texture isn't init'd or already GC'd!");
 		return true;
 	}
 	if (!bNeedUpdate)

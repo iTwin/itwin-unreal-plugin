@@ -48,6 +48,7 @@ MODULE_EXPORT namespace AdvViz::SDK
 		virtual bool ShouldSave()const = 0;
 		virtual void SetShouldSave(bool shouldSave) = 0;
 
+
 		std::uint64_t GetDynTypeId() const override { return GetTypeId(); }
 		bool IsTypeOf(std::uint64_t i) const override { return (i == GetTypeId()); }
 	};
@@ -69,6 +70,7 @@ MODULE_EXPORT namespace AdvViz::SDK
 		virtual const std::string& GetId() const = 0;
 		virtual const std::string& GetITwinId() const = 0;
 		virtual const std::string& GetName()  const = 0;
+		virtual std::string GetLastModified() const { return {}; }
 
 		//setter/getter for scene members
 		virtual void SetAtmosphere(const ITwinAtmosphereSettings&) = 0;

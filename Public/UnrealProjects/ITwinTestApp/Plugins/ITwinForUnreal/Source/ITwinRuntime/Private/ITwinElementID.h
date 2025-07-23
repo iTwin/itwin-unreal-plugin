@@ -37,4 +37,5 @@ namespace ITwin
 	// ITwinIModel.cpp
 	[[nodiscard]] ITwinElementID ParseElementID(FString FromStr);
 	[[nodiscard]] FString ToString(ITwinElementID const& Elem);
+	ITWINRUNTIME_API void IncrementElementID(FString& ElemStr);
 }

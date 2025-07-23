@@ -447,11 +447,29 @@ FITwinElement& FITwinSceneMapping::ElementFor(ITwinScene::ElemIdx const Rank)
 	return const_cast<FITwinElement&>(AllElements[Rank.value()]);
 }
 
-FITwinElement& FITwinSceneMapping::ElementForSLOW(ITwinElementID const ElementID,
-												  ITwinScene::ElemIdx* Rank/*= nullptr*/)
+FITwinElement* FITwinSceneMapping::GetElementForSLOW(ITwinElementID const KnownElementID,
+	ITwinScene::ElemIdx* Rank/*= nullptr*/)
 {
+	auto& ByID = AllElements.get<IndexByElemID>();
+	auto It = ByID.find(KnownElementID);
+	if (It == ByID.end())
+		return nullptr;
+	if (Rank)
+	{
+		auto& ByRank = AllElements.get<IndexByRank>();
+		*Rank = ITwinScene::ElemIdx(static_cast<uint32_t>(ByRank.iterator_to(*It) - ByRank.begin()));
+	}
+	// Same comment about const_cast as on FITwinSceneTile::FindElementFeaturesSLOW
+	return &const_cast<FITwinElement&>(*It);
+}
+
+FITwinElement& FITwinSceneMapping::ElementForSLOW(ITwinElementID const ElementID,
+												  ITwinScene::ElemIdx* Rank)
+{
+	ensure(IsInGameThread());// see comment on GetElementForSLOW in header
 	auto& ByRank = AllElements.get<IndexByRank>();
-	auto const It = ByRank.emplace_back(FITwinElement{ false, ElementID }).first;
+	auto const Known = ByRank.emplace_back(FITwinElement{ false, ElementID });
+	auto const It = Known.first;
 	if (Rank)
 	{
 		*Rank = ITwinScene::ElemIdx(static_cast<uint32_t>(It - ByRank.begin()));
@@ -515,6 +533,21 @@ std::unordered_set<ITwinElementID> const& FITwinSceneMapping::ConstructionDataEl
 	return GeometryIDToElementIDs[1];
 }
 
+std::unordered_set<ITwinElementID> const& FITwinSceneMapping::GetSavedViewHiddenElements()
+{
+	return HiddenElementsFromSavedView;
+}
+
+std::unordered_set<ITwinElementID> const& FITwinSceneMapping::GetSavedViewHiddenModels()
+{
+	return HiddenModelsFromSavedView;
+}
+
+std::unordered_set<ITwinElementID> const& FITwinSceneMapping::GetSavedViewHiddenCategories()
+{
+	return HiddenCategoriesFromSavedView;
+}
+
 bool FITwinSceneMapping::IsElementHiddenInSavedView(ITwinElementID const& InElemID) const
 {
 	return std::find(HiddenElementsFromSavedView.begin(), HiddenElementsFromSavedView.end(), InElemID)
@@ -530,12 +563,15 @@ void FITwinSceneMapping::ApplySelectingAndHiding(FITwinSceneTile& SceneTile)
 		//if (ITwin::NOT_ELEMENT != SelectedElement) <== No, may need to deselect!
 		SceneTile.PickElement(SelectedElement, bOnlyVisibleTiles, TextureNeeds);
 		SceneTile.PickMaterial(SelectedMaterial, bOnlyVisibleTiles, TextureNeeds);
+		SceneTile.HideCategoriesPerModel(HiddenCategoriesPerModelFromSavedView, bOnlyVisibleTiles, TextureNeeds, true);
+		SceneTile.HideCategories(HiddenCategoriesFromSavedView, bOnlyVisibleTiles, TextureNeeds, true);
+		SceneTile.HideModels(HiddenModelsFromSavedView, bOnlyVisibleTiles, TextureNeeds, true);
 		//if (bHiddenConstructionData) <== No, may need to un-hide!
 		SceneTile.HideElements(
 			bHiddenConstructionData ? ConstructionDataElements() : std::unordered_set<ITwinElementID>(),
 			bOnlyVisibleTiles, TextureNeeds, true);
 		//if (!HiddenElementsFromSavedView.empty()) <== same
-		SceneTile.HideElements(HiddenElementsFromSavedView, bOnlyVisibleTiles, TextureNeeds, false);
+		SceneTile.HideElements(HiddenElementsFromSavedView, bOnlyVisibleTiles, TextureNeeds, false, true);
 		this->bNewSelectingAndHidingTexturesNeedSetupInMaterials |= TextureNeeds.bWasCreated;
 		if (TextureNeeds.bWasChanged)
 			UpdateSelectingAndHidingTextures();
@@ -614,11 +650,11 @@ int FITwinSceneMapping::ParseIModelMetadata(TArray<TSharedPtr<FJsonValue>> const
 			ParentElem.SubElemsInVec.push_back(InVec);
 		}
 		if (Entries.Num() >= 3)
-			ParseSomeElementIdentifier<FGuid>(GuidMap, ElemId, Entries[2], GoodFedGUIDs, EmptyFedGUIDs);
+			ParseSomeElementIdentifier<FGuid>(GuidMap, InVec, Entries[2], GoodFedGUIDs, EmptyFedGUIDs);
 		else
 			++EmptyFedGUIDs;
 		if (Entries.Num() >= 4)
-			ParseSomeElementIdentifier<FString>(SourceIdMap, ElemId, Entries[3], GoodSrcIDs, EmptySrcIDs);
+			ParseSomeElementIdentifier<FString>(SourceIdMap, InVec, Entries[3], GoodSrcIDs, EmptySrcIDs);
 		else
 			++EmptySrcIDs;
 	}
@@ -671,7 +707,7 @@ int FITwinSceneMapping::ParseIModelMetadata(TArray<TSharedPtr<FJsonValue>> const
 }
 
 template<typename TSomeID, typename TMapByRank>
-bool FITwinSceneMapping::ParseSomeElementIdentifier(TMapByRank& OutIDMap, ITwinElementID const ElemId,
+bool FITwinSceneMapping::ParseSomeElementIdentifier(TMapByRank& OutIDMap, ITwinScene::ElemIdx const ElemIdx,
 	TSharedPtr<FJsonValue> const& Entry, int& GoodEntry, int& EmptyEntry)
 {
 	FString SomeIdStr;
@@ -695,9 +731,7 @@ bool FITwinSceneMapping::ParseSomeElementIdentifier(TMapByRank& OutIDMap, ITwinE
 	{
 		std::swap(SomeID, SomeIdStr);
 	}
-	ITwinScene::ElemIdx ThisElemIdx = ITwinScene::NOT_ELEM;
-	auto& ThisElem = ElementForSLOW(ElemId, &ThisElemIdx);
-	auto SourceEntry = OutIDMap.emplace(typename TMapByRank::value_type{ ThisElemIdx, SomeID });
+	auto SourceEntry = OutIDMap.emplace(typename TMapByRank::value_type{ ElemIdx, SomeID });
 	if (SourceEntry.second)
 	{
 		// was inserted => first time the Source Element ID is encountered, but don't create a duplicates
@@ -712,13 +746,13 @@ bool FITwinSceneMapping::ParseSomeElementIdentifier(TMapByRank& OutIDMap, ITwinE
 		{
 			FirstSourceElem.DuplicatesList = ITwinScene::DuplIdx(DuplicateElements.size());
 			DuplicateElements.emplace_back(
-				FDuplicateElementsVec{ SourceEntry.first->Rank, ThisElemIdx });
+				FDuplicateElementsVec{ SourceEntry.first->Rank, ElemIdx });
 		}
 		else
 		{
-			DuplicateElements[FirstSourceElem.DuplicatesList.value()].push_back(ThisElemIdx);
+			DuplicateElements[FirstSourceElem.DuplicatesList.value()].push_back(ElemIdx);
 		}
-		ThisElem.DuplicatesList = FirstSourceElem.DuplicatesList;
+		ElementFor(ElemIdx).DuplicatesList = FirstSourceElem.DuplicatesList;
 	}
 	++GoodEntry;
 	return true;
@@ -1520,10 +1554,10 @@ bool FITwinSceneMapping::PickVisibleElement(ITwinElementID const& InElemID,
 	}
 	bool bPickedInATile = false;
 	FITwinSceneTile::FTextureNeeds TextureNeeds;
-	ForEachKnownTile([&InElemID, &bPickedInATile, &TextureNeeds](FITwinSceneTile& SceneTile)
+	ForEachKnownTile([&InElemID, &bPickedInATile, &TextureNeeds, bSelectElement](FITwinSceneTile& SceneTile)
 	{
 		bPickedInATile |= SceneTile.PickElement(InElemID, /*bOnlyVisibleTiles*/true, TextureNeeds,
-												/*bTestElementVisibility*/true);
+												/*bTestElementVisibility*/true, bSelectElement);
 	});
 	this->bNewSelectingAndHidingTexturesNeedSetupInMaterials |= TextureNeeds.bWasCreated;
 	if (bSelectElement)
@@ -1538,18 +1572,60 @@ bool FITwinSceneMapping::PickVisibleElement(ITwinElementID const& InElemID,
 	return bPickedInATile;
 }
 
-void FITwinSceneMapping::HideElements(std::unordered_set<ITwinElementID> const& InElemIDs, bool IsConstruction)
+void FITwinSceneMapping::HideElements(std::unordered_set<ITwinElementID> const& InElemIDs, bool IsConstruction, bool Force/* = false*/)
 {
 	// Note: SelectionAndHiding texture affects both "batched" and Extracted Element meshes
 	FITwinSceneTile::FTextureNeeds TextureNeeds;
-	ForEachKnownTile([&InElemIDs, &TextureNeeds, IsConstruction](FITwinSceneTile& SceneTile)
+	ForEachKnownTile([&InElemIDs, &TextureNeeds, IsConstruction, Force](FITwinSceneTile& SceneTile)
 	{
-		SceneTile.HideElements(InElemIDs, /*bOnlyVisibleTiles*/true, TextureNeeds, IsConstruction);
+		SceneTile.HideElements(InElemIDs, /*bOnlyVisibleTiles*/true, TextureNeeds, IsConstruction, Force);
 	});
 	if (IsConstruction)
 		bHiddenConstructionData = !InElemIDs.empty();
 	else
 		HiddenElementsFromSavedView = InElemIDs;
+	this->bNewSelectingAndHidingTexturesNeedSetupInMaterials |= TextureNeeds.bWasCreated;
+	if (TextureNeeds.bWasChanged)
+		UpdateSelectingAndHidingTextures();
+}
+
+void FITwinSceneMapping::HideModels(std::unordered_set<ITwinElementID> const& InModelIDs, bool Force/* = false*/)
+{
+	// Note: SelectionAndHiding texture affects both "batched" and Extracted Element meshes
+	FITwinSceneTile::FTextureNeeds TextureNeeds;
+	ForEachKnownTile([&InModelIDs, &TextureNeeds, Force](FITwinSceneTile& SceneTile)
+		{
+			SceneTile.HideModels(InModelIDs, /*bOnlyVisibleTiles*/true, TextureNeeds, Force);
+		});
+	HiddenModelsFromSavedView = InModelIDs;
+	this->bNewSelectingAndHidingTexturesNeedSetupInMaterials |= TextureNeeds.bWasCreated;
+	if (TextureNeeds.bWasChanged)
+		UpdateSelectingAndHidingTextures();
+}
+
+void FITwinSceneMapping::HideCategories(std::unordered_set<ITwinElementID> const& InCategoryIDs, bool Force/* = false*/)
+{
+	// Note: SelectionAndHiding texture affects both "batched" and Extracted Element meshes
+	FITwinSceneTile::FTextureNeeds TextureNeeds;
+	ForEachKnownTile([&InCategoryIDs, &TextureNeeds, Force](FITwinSceneTile& SceneTile)
+		{
+			SceneTile.HideCategories(InCategoryIDs, /*bOnlyVisibleTiles*/true, TextureNeeds, Force);
+		});
+	HiddenCategoriesFromSavedView = InCategoryIDs;
+	this->bNewSelectingAndHidingTexturesNeedSetupInMaterials |= TextureNeeds.bWasCreated;
+	if (TextureNeeds.bWasChanged)
+		UpdateSelectingAndHidingTextures();
+}
+
+void FITwinSceneMapping::HideCategoriesPerModel(std::unordered_set<std::pair<ITwinElementID,ITwinElementID>,FITwinSceneTile::pair_hash> const& InCategoryPerModelIDs, bool Force/* = false*/)
+{
+	// Note: SelectionAndHiding texture affects both "batched" and Extracted Element meshes
+	FITwinSceneTile::FTextureNeeds TextureNeeds;
+	ForEachKnownTile([&InCategoryPerModelIDs, &TextureNeeds, Force](FITwinSceneTile& SceneTile)
+		{
+			SceneTile.HideCategoriesPerModel(InCategoryPerModelIDs, /*bOnlyVisibleTiles*/true, TextureNeeds, Force);
+		});
+	HiddenCategoriesPerModelFromSavedView = InCategoryPerModelIDs;
 	this->bNewSelectingAndHidingTexturesNeedSetupInMaterials |= TextureNeeds.bWasCreated;
 	if (TextureNeeds.bWasChanged)
 		UpdateSelectingAndHidingTextures();
@@ -1643,9 +1719,20 @@ FITwinSceneMapping::FindOwningTileSLOW(UPrimitiveComponent const* Component) con
 	return { nullptr, nullptr };
 }
 
-void FITwinSceneMapping::Reset()
+void FITwinSceneMapping::Reset(bool bKeepVisibilityState /*= false*/)
 {
+	bool bHiddenConstruction = bHiddenConstructionData;
+	auto HiddenModels = HiddenModelsFromSavedView;
+	auto HiddenCategories = HiddenCategoriesFromSavedView;
+	auto HiddenElements = HiddenElementsFromSavedView;
 	*this = FITwinSceneMapping(false);
+	if (bKeepVisibilityState)
+	{
+		this->bHiddenConstructionData = bHiddenConstruction;
+		this->HiddenModelsFromSavedView = HiddenModels;
+		this->HiddenCategoriesFromSavedView = HiddenCategories;
+		this->HiddenElementsFromSavedView = HiddenElements;
+	}
 }
 
 FString FITwinSceneMapping::ToString() const

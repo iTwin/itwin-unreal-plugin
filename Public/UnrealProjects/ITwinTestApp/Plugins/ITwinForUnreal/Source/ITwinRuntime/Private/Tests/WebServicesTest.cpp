@@ -606,7 +606,11 @@ private:
 		{
 			// GetSavedView with only 'roll' angle
 			return Response(cpr::status::HTTP_OK, "{\"savedView\":" \
-				"{\"id\":\"SVIdBuildingView_Nm02\",\"shared\":true,\"creationTime\":\"2024-08-21T08:31:17.000Z\",\"lastModified\":\"2024-08-21T08:31:17.000Z\"," \
+				"{\"id\":\"SVIdBuildingView_Nm02\",\"shared\":true,\"extensions\": [{\"extensionName\": \"EmphasizeElements\"," \
+				"\"href\" : \"https://api.bentley.com/savedviews/SVIdBuildingView_Nm02/extensions/EmphasizeElements\"" \
+				"}, {\"extensionName\": \"PerModelCategoryVisibility\"," \
+				"\"href\" : \"https://api.bentley.com/savedviews/SVIdBuildingView_Nm02/extensions/PerModelCategoryVisibility\"}]," \
+				"\"creationTime\":\"2024-08-21T08:31:17.000Z\",\"lastModified\":\"2024-08-21T08:31:17.000Z\"," \
 				"\"savedViewData\":{\"itwin3dView\":{\"origin\":[61.18413816135583,-5.737108595657904,6.9723644948156185],\"extents\":[2.5791900968344437,1.8184076521127042,1.2895950484174423]," \
 				"\"angles\":{\"roll\":-90},\"camera\":{\"lens\":90.00000000000115,\"focusDist\":1.2895950484171959,\"eye\":[62.47373320977305,-7.5267036440751,7.8815683208719705]}," \
 				"\"categories\":{\"enabled\":[\"0x20000000057\",\"0x200000000d5\",\"0x200000000d7\",\"0x200000000d9\",\"0x200000000df\",\"0x200000000e1\",\"0x200000000e3\",\"0x200000000e5\"],\"disabled\":[]}," \
@@ -1673,15 +1677,18 @@ bool FITwinWebServicesRequestTest::RunTest(const FString& /*Parameters*/)
 					&& FMath::IsNearlyEqual(SavedView.Angles.Roll, -44.99999999999979, UE_SMALL_NUMBER));
 				UTEST_EQUAL("ExtensionName[0]", SavedViewInfo.Extensions[0], TEXT("EmphasizeElements"));
 				UTEST_EQUAL("ExtensionName[1]", SavedViewInfo.Extensions[1], TEXT("PerModelCategoryVisibility"));
-				UTEST_EQUAL("HiddenElements[0]", SavedView.HiddenElements[0], TEXT("0x2000000028c"));
-				UTEST_EQUAL("HiddenElements[1]", SavedView.HiddenElements[1], TEXT("0x2000000028b"));
+				TSet<FString> HiddenElements = {TEXT("0x2000000028c"), TEXT("0x2000000028b")};
+				UTEST_TRUE("HiddenElements", SavedView.HiddenElements.Difference(HiddenElements).IsEmpty() 
+											 && HiddenElements.Difference(SavedView.HiddenElements).IsEmpty());
 				UTEST_EQUAL("Synchro - RenderTimeline", SavedView.DisplayStyle.RenderTimeline, TEXT("0x20000003cda"));
 				UTEST_EQUAL("Synchro - TimePoint", SavedView.DisplayStyle.TimePoint, 1758013200.0);
-				UTEST_EQUAL("HiddenModels[0]", SavedView.HiddenModels[0], TEXT("0x20000000134"));
-				UTEST_EQUAL("HiddenModels[1]", SavedView.HiddenModels[1], TEXT("0x20000000186"));
-				UTEST_EQUAL("HiddenModels[2]", SavedView.HiddenModels[2], TEXT("0x2000000018c"));
-				UTEST_EQUAL("HiddenModels[3]", SavedView.HiddenModels[3], TEXT("0x20000000192"));
-				UTEST_EQUAL("HiddenCategories[3]", SavedView.HiddenCategories[0], TEXT("0x200000000e3"));
+				TSet<FString> HiddenModels = { TEXT("0x20000000134"), TEXT("0x20000000186"), 
+											   TEXT("0x2000000018c"), TEXT("0x20000000192") };
+				UTEST_TRUE("HiddenModels", SavedView.HiddenModels.Difference(HiddenModels).IsEmpty()
+					&& HiddenModels.Difference(SavedView.HiddenModels).IsEmpty());
+				TSet<FString> HiddenCategories = { TEXT("0x200000000e3") };
+				UTEST_TRUE("HiddenCategories", SavedView.HiddenCategories.Difference(HiddenCategories).IsEmpty()
+					&& HiddenCategories.Difference(SavedView.HiddenCategories).IsEmpty());
 			}
 			return true;
 		};

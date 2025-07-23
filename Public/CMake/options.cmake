@@ -1,3 +1,4 @@
+option(BE_PROJECT_NAME "" "")
 
 if (APPLE)
 	if(EXISTS "/Users/Shared/Epic Games/UE_5.3/Engine" AND NOT EXISTS "/Applications/Epic Games/UE_5.3/Engine")
@@ -26,3 +27,4 @@ if (NOT EXISTS "${BE_UNREAL_ENGINE_DIR}/Build/BatchFiles")
 endif()
 
 be_add_feature_option( Material_Tuning "Allow editing the iModel's materials" "ITwin" ON )
+advanced_option_path(BE_VCPKG_BINARY_CACHE "Full path to the shared binary cache, currently EONNAS' Exchange/vcpkg_cache, if you don't want to use the default mount point for some reason" "")

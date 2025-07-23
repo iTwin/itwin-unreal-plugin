@@ -79,8 +79,10 @@ public:
       : _pRequest(pRequest),
         _pResponse(std::make_unique<UnrealAssetResponse>(pResponse)) {
     this->_headers = parseHeaders(this->_pRequest->GetAllHeaders());
-    this->_url = TCHAR_TO_UTF8(*this->_pRequest->GetURL());
-    this->_method = TCHAR_TO_UTF8(*this->_pRequest->GetVerb());
+    this->_url = std::string(reinterpret_cast<const char*>(
+        StringCast<UTF8CHAR>(*this->_pRequest->GetURL()).Get()));
+    this->_method = std::string(reinterpret_cast<const char*>(
+        StringCast<UTF8CHAR>(*this->_pRequest->GetVerb()).Get()));
   }
 
   virtual const std::string& method() const { return this->_method; }

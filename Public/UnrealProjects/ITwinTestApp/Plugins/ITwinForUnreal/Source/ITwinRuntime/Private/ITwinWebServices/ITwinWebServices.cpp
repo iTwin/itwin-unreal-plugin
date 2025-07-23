@@ -60,9 +60,9 @@ namespace
 }
 
 /*static*/
-void UITwinWebServices::SetITwinAppIDArray(ITwin::AppIDArray const& ITwinAppIDs)
+void UITwinWebServices::SetITwinAppIDArray(ITwin::AppIDArray const& ITwinAppIDs, bool bLogIDs /*= true*/)
 {
-	FITwinAuthorizationManager::SetAppIDArray(ITwinAppIDs);
+	FITwinAuthorizationManager::SetAppIDArray(ITwinAppIDs, bLogIDs);
 }
 
 /*static*/
@@ -88,7 +88,39 @@ void UITwinWebServices::SetPreferredEnvironment(EITwinEnvironment Env)
 	if (ensure(Env != EITwinEnvironment::Invalid))
 	{
 		ITwin::PreferredEnvironment = Env;
+
+		const FString EnvName = ITwinServerEnvironment::ToName(Env).ToString();
+		BE_LOGI("ITwinAPI", "Default environment: " << TCHAR_TO_UTF8(*EnvName));
 	}
+}
+
+/*static*/
+void UITwinWebServices::InitDefaultEnvironmentFromDecoSettings(UITwinDecorationServiceSettings const* DecoSettings)
+{
+	if (DecoSettings && !DecoSettings->CustomEnv.IsEmpty())
+	{
+		if (DecoSettings->CustomEnv == TEXT("DEV"))
+		{
+			SetPreferredEnvironment(EITwinEnvironment::Dev);
+		}
+		else if (DecoSettings->CustomEnv == TEXT("QA"))
+		{
+			SetPreferredEnvironment(EITwinEnvironment::QA);
+		}
+	}
+}
+
+/*static*/
+EITwinEnvironment UITwinWebServices::GetDefaultEnvironment()
+{
+	static bool bHasTestedDecoSettings = false;
+	if (!ITwin::PreferredEnvironment)
+	{
+		// Test Decoration Service settings (loaded from a file).
+		InitDefaultEnvironmentFromDecoSettings(GetDefault<UITwinDecorationServiceSettings>());
+		bHasTestedDecoSettings = true;
+	}
+	return ITwin::PreferredEnvironment.value_or(EITwinEnvironment::Prod);
 }
 
 class UITwinWebServices::FImpl
@@ -159,6 +191,10 @@ public:
 	virtual void OnRealityData3DInfoRetrieved(bool bSuccess, AdvViz::SDK::ITwinRealityData3DInfo const& info) override;
 	virtual void OnElementPropertiesRetrieved(bool bSuccess, AdvViz::SDK::ITwinElementProperties const& props, std::string const& ElementId) override;
 	virtual void OnIModelPropertiesRetrieved(bool bSuccess, AdvViz::SDK::IModelProperties const& props) override;
+	virtual void OnIModelPagedNodesRetrieved(bool bSuccess, AdvViz::SDK::IModelPagedNodesRes const& nodes) override;
+	virtual void OnModelFilteredNodesRetrieved(bool bSuccess, AdvViz::SDK::FilteredNodesRes const& nodes, std::string const& Filter) override;
+	virtual void OnCategoryFilteredNodesRetrieved(bool bSuccess, AdvViz::SDK::FilteredNodesRes const& nodes, std::string const& Filter) override;
+	virtual void OnIModelCategoryNodesRetrieved(bool bSuccess, AdvViz::SDK::IModelPagedNodesRes const& nodes) override;
 	virtual void OnConvertedIModelCoordsToGeoCoords(bool bSuccess,
 		AdvViz::SDK::GeoCoordsReply const& GeoCoords, AdvViz::SDK::RequestID const& FromRequestId) override;
 	virtual void OnIModelQueried(bool bSuccess, std::string const& QueryResult, AdvViz::SDK::RequestID const&) override;
@@ -209,11 +245,22 @@ namespace
 	}
 	inline TArray<FString> FromCoreStringVector(std::vector<std::string> const& InVec)
 	{
-		TArray<FString> Array;
-		Array.Reserve(InVec.size());
-		for (const auto& hiddenModel : InVec)
-			Array.Add(hiddenModel.c_str());
-		return Array;
+		TArray<FString> Result;
+		Result.Reserve(InVec.size());
+		for (const auto& Str : InVec)
+		{
+			Result.Emplace(Str.c_str());
+		}
+		return Result;
+	}
+	inline TSet<FString> FromCoreStringVectorToSet(std::vector<std::string> const& InVec)
+	{
+		TSet<FString> Res;
+		for (const auto& Str : InVec)
+		{
+			Res.Emplace(Str.c_str());
+		}
+		return Res;
 	}
 	inline void ToCoreSavedView(FSavedView const& SavedView, AdvViz::SDK::SavedView& coreSV)
 	{
@@ -328,11 +375,16 @@ void UITwinWebServices::FImpl::InitAuthManager(EITwinEnvironment InEnvironment)
 	{
 		ResetAuthManager();
 	}
+	if (ensure(InEnvironment != EITwinEnvironment::Invalid))
+	{
+		const FString EnvName = ITwinServerEnvironment::ToName(InEnvironment).ToString();
+		BE_LOGI("ITwinAPI", "Initiating authorization for " << TCHAR_TO_UTF8(*EnvName) << " environment");
 
-	// Initiate the manager handling tokens for current Environment
-	authManager_ = FITwinAuthorizationManager::GetInstance(
-		static_cast<AdvViz::SDK::EITwinEnvironment>(InEnvironment));
-	authManager_->AddObserver(&owner_);
+		// Initiate the manager handling tokens for current Environment
+		authManager_ = FITwinAuthorizationManager::GetInstance(
+			static_cast<AdvViz::SDK::EITwinEnvironment>(InEnvironment));
+		authManager_->AddObserver(&owner_);
+	}
 }
 
 void UITwinWebServices::FImpl::ResetAuthManager()
@@ -579,17 +631,19 @@ void UITwinWebServices::FImpl::OnSavedViewRetrieved(bool bSuccess, AdvViz::SDK::
 		FromCoreVec3(coreSV.origin),
 		FromCoreVec3(coreSV.extents),
 		FromCoreRotator(coreSV.angles),
-		TArray<FString>(),
-		TArray<FString>(),
-		TArray<FString>(),
+		TSet<FString>(),
+		TSet<FString>(),
+		TSet<FString>(),
+		TSet<FPerModelCategoryVisibilityProps>(),
+		TSet<FString>(),
 		FDisplayStyle()
 	};
 	if (coreSV.hiddenCategories)
-		SavedView.HiddenCategories = FromCoreStringVector(coreSV.hiddenCategories.value());
+		SavedView.HiddenCategories = FromCoreStringVectorToSet(coreSV.hiddenCategories.value());
 	if (coreSV.hiddenModels)
-		SavedView.HiddenModels = FromCoreStringVector(coreSV.hiddenModels.value());
+		SavedView.HiddenModels = FromCoreStringVectorToSet(coreSV.hiddenModels.value());
 	if (coreSV.hiddenElements)
-		SavedView.HiddenElements = FromCoreStringVector(coreSV.hiddenElements.value());
+		SavedView.HiddenElements = FromCoreStringVectorToSet(coreSV.hiddenElements.value());
 	if (coreSV.displayStyle)
 	{
 		SavedView.DisplayStyle.RenderTimeline = coreSV.displayStyle->renderTimeline.value_or("").c_str();
@@ -738,6 +792,128 @@ void UITwinWebServices::FImpl::OnElementPropertiesRetrieved(bool bSuccess, AdvVi
 	if (observer_)
 	{
 		observer_->OnElementPropertiesRetrieved(bSuccess, props, Id);
+	}
+}
+
+namespace
+{
+	FIModelNodeItem FromCoreIModelNodeItem(AdvViz::SDK::IModelNodeItem const& coreItem)
+	{
+		FIModelNodeItem item;
+		item.hasChildren = coreItem.hasChildren.has_value() ? coreItem.hasChildren.value() : false;
+		item.supportsFiltering = coreItem.supportsFiltering.value_or(false);
+		item.description = coreItem.description.value_or("").c_str();
+		item.labelDefinition = {
+			coreItem.labelDefinition.displayValue.c_str(),
+			coreItem.labelDefinition.rawValue.c_str(),
+			coreItem.labelDefinition.typeName.c_str()
+		};
+		if (coreItem.extendedData.has_value())
+		{
+			item.extendedData = {
+				coreItem.extendedData->icon.c_str(),
+				coreItem.extendedData->isSubject.value_or(false),
+				coreItem.extendedData->isCategory.value_or(false),
+				coreItem.extendedData->modelId.value_or("").c_str(),
+				coreItem.extendedData->categoryId.value_or("").c_str()
+			};
+		}
+		item.key.type = coreItem.key.type.c_str();
+		item.key.version = coreItem.key.version;
+		item.key.instanceKeysSelectQuery.query = coreItem.key.instanceKeysSelectQuery.query.c_str();
+		item.key.instanceKeysSelectQuery.bindings.Reserve(coreItem.key.instanceKeysSelectQuery.bindings.size());
+		Algo::Transform(coreItem.key.instanceKeysSelectQuery.bindings, item.key.instanceKeysSelectQuery.bindings,
+			[](AdvViz::SDK::Binding const& coreBinding) -> FBinding {
+				return {
+					coreBinding.type.c_str(),
+					coreBinding.value.c_str()
+				};
+			});
+		item.key.pathFromRoot = FromCoreStringVector(coreItem.key.pathFromRoot);
+		item.key.instanceKeys.Reserve(coreItem.key.instanceKeys.size());
+		Algo::Transform(coreItem.key.instanceKeys, item.key.instanceKeys,
+			[](AdvViz::SDK::InstanceKey const& instKey) -> FInstanceKey {
+				return {
+					instKey.className.c_str(),
+					instKey.id.c_str()
+				};
+			});
+		return item;
+	}
+
+	FFilteredNodesRes OnFilteredNodesRetrieved(AdvViz::SDK::FilteredNodesRes const& coreNodes)
+	{
+		FFilteredNodesRes res;
+		res.result.Reserve(coreNodes.result.size());
+		std::function<FFilteredResItem(AdvViz::SDK::FilteredResItem const&)> FromSDKToCore;
+		FromSDKToCore = [&](AdvViz::SDK::FilteredResItem const& coreItem) -> FFilteredResItem {
+			FFilteredResItem resItem;
+			resItem.children.Reserve(coreItem.children.size());
+			Algo::Transform(coreItem.children, resItem.children, FromSDKToCore);
+			resItem.node = FromCoreIModelNodeItem(coreItem.node);
+			//coreItem.node.hasChildren is not reliable for search trees, better to check if children is empty
+			resItem.node.hasChildren = coreItem.children.empty() ? false : true;
+			return resItem;
+
+			};
+		Algo::Transform(coreNodes.result, res.result, FromSDKToCore);
+		return res;
+	}
+
+	FIModelPagedNodesRes OnNodesRetrieved(AdvViz::SDK::IModelPagedNodesRes const& coreNodes)
+	{
+		FIModelPagedNodesRes res;
+		res.result.total = coreNodes.result.total;
+		res.result.items.Reserve(coreNodes.result.items.size());
+		Algo::Transform(coreNodes.result.items, res.result.items,
+			&FromCoreIModelNodeItem);
+		return res;
+	}
+}
+
+void UITwinWebServices::FImpl::OnIModelPagedNodesRetrieved(bool bSuccess,
+														   AdvViz::SDK::IModelPagedNodesRes const& coreNodes)
+{
+	FIModelPagedNodesRes res = OnNodesRetrieved(coreNodes);
+	owner_.OnGetPagedNodesComplete.Broadcast(bSuccess, res);
+	if (observer_)
+	{
+		observer_->OnIModelPagedNodesRetrieved(bSuccess, res);
+	}
+}
+
+void UITwinWebServices::FImpl::OnModelFilteredNodesRetrieved(bool bSuccess,
+	AdvViz::SDK::FilteredNodesRes const& coreNodes, std::string const& Filter)
+{
+	FFilteredNodesRes res = OnFilteredNodesRetrieved(coreNodes);
+	FString FilterStr(Filter.c_str());
+	owner_.OnGetModelFilteredNodesComplete.Broadcast(bSuccess, res, FilterStr);
+	if (observer_)
+	{
+		observer_->OnModelFilteredNodesRetrieved(bSuccess, res, FilterStr);
+	}
+}
+
+void UITwinWebServices::FImpl::OnCategoryFilteredNodesRetrieved(bool bSuccess,
+	AdvViz::SDK::FilteredNodesRes const& coreNodes, std::string const& Filter)
+{
+	FFilteredNodesRes res = OnFilteredNodesRetrieved(coreNodes);
+	FString FilterStr(Filter.c_str());
+	owner_.OnGetCategoryFilteredNodesComplete.Broadcast(bSuccess, res, FilterStr);
+	if (observer_)
+	{
+		observer_->OnCategoryFilteredNodesRetrieved(bSuccess, res, FilterStr);
+	}
+}
+
+void UITwinWebServices::FImpl::OnIModelCategoryNodesRetrieved(bool bSuccess,
+	AdvViz::SDK::IModelPagedNodesRes const& coreNodes)
+{
+	FIModelPagedNodesRes res = OnNodesRetrieved(coreNodes);
+	owner_.OnGetCategoryNodesComplete.Broadcast(bSuccess, res);
+	if (observer_)
+	{
+		observer_->OnIModelCategoryNodesRetrieved(bSuccess, res);
 	}
 }
 
@@ -902,18 +1078,9 @@ UITwinWebServices::UITwinWebServices()
 		{
 			UITwinWebServices::AddScope(TEXT(ITWIN_DECORATIONS_SCOPE));
 		}
-		if (DecoSettings
-			&& !DecoSettings->CustomEnv.IsEmpty()
-			&& !ITwin::PreferredEnvironment)
+		if (!ITwin::PreferredEnvironment)
 		{
-			if (DecoSettings->CustomEnv == "DEV")
-			{
-				ITwin::PreferredEnvironment = EITwinEnvironment::Dev;
-			}
-			else if (DecoSettings->CustomEnv == "QA")
-			{
-				ITwin::PreferredEnvironment = EITwinEnvironment::QA;
-			}
+			InitDefaultEnvironmentFromDecoSettings(DecoSettings);
 		}
 		bHasTestedDecoScope = true;
 	}
@@ -990,7 +1157,8 @@ bool UITwinWebServices::TryGetServerConnection(bool bAllowBroadcastAuthResult)
 	}
 
 	// First try to use existing access token for current Environment, if any.
-	if (Impl->authManager_->HasAccessToken())
+	if (ensure(Impl->authManager_)
+		&& Impl->authManager_->HasAccessToken())
 	{
 		OnAuthDoneImpl(true, {}, bAllowBroadcastAuthResult);
 		return true;
@@ -1034,7 +1202,7 @@ bool UITwinWebServices::InitServerConnectionFromWorld()
 	{
 		SetServerConnection(firstValidConnection);
 		// Register this environment as the preferred one.
-		ITwin::PreferredEnvironment = commonEnv;
+		UITwinWebServices::SetPreferredEnvironment(commonEnv);
 		return true;
 	}
 	else
@@ -1051,7 +1219,14 @@ AdvViz::SDK::EITwinAuthStatus UITwinWebServices::CheckAuthorizationStatus()
 		// will be automatically refreshed when approaching its expiration: no need to check that).
 		return AdvViz::SDK::EITwinAuthStatus::Success;
 	}
-	return Impl->authManager_->CheckAuthorization();
+	if (ensure(Impl->authManager_))
+	{
+		return Impl->authManager_->CheckAuthorization();
+	}
+	else
+	{
+		return AdvViz::SDK::EITwinAuthStatus::None;
+	}
 }
 
 bool UITwinWebServices::CheckAuthorization()
@@ -1066,9 +1241,10 @@ void UITwinWebServices::OnAuthDoneImpl(bool bSuccess, std::string const& Error, 
 	if (bSuccess)
 	{
 		FImpl::FLock Lock(Impl->mutex_);
+
 		if (!ServerConnection)
 		{
-			// First see if an existing connection actor for this environment can be reused
+			// First see if an existing connection actor for this environment can be reused.
 			TArray<AActor*> itwinServerActors;
 			UGameplayStatics::GetAllActorsOfClass(
 				GetWorld(), AITwinServerConnection::StaticClass(), itwinServerActors);
@@ -1104,6 +1280,15 @@ void UITwinWebServices::OnAuthDoneImpl(bool bSuccess, std::string const& Error, 
 
 void UITwinWebServices::OnAuthorizationDone(bool bSuccess, std::string const& Error)
 {
+	const FString EnvName = ITwinServerEnvironment::ToName(this->Environment).ToString();
+	if (bSuccess)
+	{
+		BE_LOGI("ITwinAPI", "Retrieved authorization for " << TCHAR_TO_UTF8(*EnvName) << " environment");
+	}
+	else
+	{
+		BE_LOGE("ITwinAPI", "No authorization for " << TCHAR_TO_UTF8(*EnvName) << " environment");
+	}
 	OnAuthDoneImpl(bSuccess, Error, true);
 }
 
@@ -1341,6 +1526,38 @@ void UITwinWebServices::GetElementProperties(FString iTwinId, FString iModelId, 
 	DoRequest([this, iTwinId, iModelId, ChangesetId, ElementId]() {
 		Impl->GetElementProperties(TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId), TCHAR_TO_ANSI(*ChangesetId), TCHAR_TO_ANSI(*ElementId));
 	});
+}
+
+void UITwinWebServices::GetPagedNodes(FString const& iTwinId, FString const& iModelId,
+	FString const& ChangesetId, FString const& parentKey /*= ""*/, int offset /*= 0*/, int count /*= 1000*/)
+{
+	DoRequest([this, iTwinId, iModelId, ChangesetId, parentKey, offset, count]() {
+		Impl->GetPagedNodes(TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId), TCHAR_TO_ANSI(*ChangesetId), TCHAR_TO_ANSI(*parentKey), offset, count);
+		});
+}
+
+void UITwinWebServices::GetModelFilteredNodes(FString const& iTwinId, FString const& iModelId,
+	FString const& ChangesetId, FString const& Filter)
+{
+	DoRequest([this, iTwinId, iModelId, ChangesetId, Filter]() {
+		Impl->GetModelFilteredNodePaths(TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId), TCHAR_TO_ANSI(*ChangesetId), TCHAR_TO_ANSI(*Filter));
+		});
+}
+
+void UITwinWebServices::GetCategoryFilteredNodes(FString const& iTwinId, FString const& iModelId,
+	FString const& ChangesetId, FString const& Filter)
+{
+	DoRequest([this, iTwinId, iModelId, ChangesetId, Filter]() {
+		Impl->GetCategoryFilteredNodePaths(TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId), TCHAR_TO_ANSI(*ChangesetId), TCHAR_TO_ANSI(*Filter));
+		});
+}
+
+void UITwinWebServices::GetCategoryNodes(FString const& iTwinId, FString const& iModelId,
+	FString const& ChangesetId, FString const& parentKey /*= ""*/, int offset /*= 0*/, int count /*= 1000*/)
+{
+	DoRequest([this, iTwinId, iModelId, ChangesetId, parentKey, offset, count]() {
+		Impl->GetCategoryNodes(TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId), TCHAR_TO_ANSI(*ChangesetId), TCHAR_TO_ANSI(*parentKey), offset, count);
+		});
 }
 
 void UITwinWebServices::GetIModelProperties(FString iTwinId, FString iModelId, FString ChangesetId)

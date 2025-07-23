@@ -1,11 +1,10 @@
 /*--------------------------------------------------------------------------------------+
 |
-|     $Source: IncludeITwin3DTileset.h $
+|     $Source: IncludeCesium3DTileset.h $
 |
 |  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
-
 
 #pragma once
 

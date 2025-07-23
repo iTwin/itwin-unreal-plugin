@@ -66,4 +66,12 @@ public:
       Category = "Cache",
       meta = (ConfigRestartRequired = true))
   int MaxCacheItems = 4096;
+
+  /** Whether to display the point geometries (aka. point clouds) found in the 3D tiles. */
+  UPROPERTY(Config, EditAnywhere, Category = "Rendering")
+  bool bShowPointGeometries = true;
+
+  /** Whether to display line geometries found in the 3D tiles. */
+  UPROPERTY(Config, EditAnywhere, Category = "Rendering")
+  bool bShowLineGeometries = true;
 };

@@ -29,6 +29,10 @@
 #include <Serialization/JsonReader.h>
 #include <Serialization/JsonSerializer.h>
 
+#include <Compil/BeforeNonUnrealIncludes.h>
+#	include <Core/Tools/Log.h>
+#include <Compil/AfterNonUnrealIncludes.h>
+
 #include <algorithm>
 #include <deque>
 #include <mutex>
@@ -37,12 +41,11 @@
 #include <unordered_map>
 #include <unordered_set>
 
-DECLARE_LOG_CATEGORY_EXTERN(ITwinS4DImport, Log, All);
-DEFINE_LOG_CATEGORY(ITwinS4DImport);
-#define S4D_VERBOSE(FORMAT, ...) UE_LOG(ITwinS4DImport, Verbose, FORMAT, ##__VA_ARGS__)
-#define S4D_LOG(FORMAT, ...) UE_LOG(ITwinS4DImport, Display, FORMAT, ##__VA_ARGS__)
-#define S4D_WARN(FORMAT, ...) UE_LOG(ITwinS4DImport, Warning, FORMAT, ##__VA_ARGS__)
-#define S4D_ERROR(FORMAT, ...) UE_LOG(ITwinS4DImport, Error, FORMAT, ##__VA_ARGS__)
+DECLARE_LOG_CATEGORY_EXTERN(ITwin4DImp, Log, All);
+DEFINE_LOG_CATEGORY(ITwin4DImp);
+#define S4D_VERBOSE(FORMAT, ...) UE_LOG(ITwin4DImp, Verbose, FORMAT, ##__VA_ARGS__)
+#define S4D_LOG(FORMAT, ...) UE_LOG(ITwin4DImp, Display, FORMAT, ##__VA_ARGS__)
+// Note: use BE_LOGE/BE_LOGW for errors/warnings!
 
 namespace ITwin_TestOverrides
 {
@@ -116,8 +119,8 @@ private:
 		int const MaxPagination = 50'000;
 		if (Pagination > MaxPagination)
 		{
-			S4D_WARN(TEXT("Capping %s to %d iof. %d because of 4D API internal limit"),
-					 *PaginationSetting, MaxPagination, Pagination);
+			BE_LOGW("ITwin4DImp", "Capping " << TCHAR_TO_UTF8(*PaginationSetting) << " to "
+				<< MaxPagination << " iof. " << Pagination << " because of 4D API internal limit");
 			Pagination = MaxPagination;
 		}
 		return Pagination;
@@ -377,26 +380,26 @@ int FITwinSchedulesImport::FImpl::s_NextSchedApiSession = 0;
 /// or return)
 #define JSON_GETSTR_OR(JsonObj, Field, Dest, WhatToDo) \
 	{ if (!(JsonObj)->TryGetStringField(TEXT(Field), Dest) || Dest.IsEmpty()) { \
-		S4D_ERROR(TEXT("Parsing error or empty string field %s in Json response"), TEXT(Field)); \
+		BE_LOGE("ITwin4DImp", "Parsing error or empty string field in Json response: " << Field); \
 		WhatToDo; \
 	}}
 /// Get a number from the Json object passed, or log an error and do something (typically continue or return)
 #define JSON_GETNUMBER_OR(JsonObj, Field, Dest, WhatToDo) \
 	{ if (!(JsonObj)->TryGetNumberField(TEXT(Field), Dest)) { \
-		S4D_ERROR(TEXT("Parsing error for number field %s in Json response"), TEXT(Field)); \
+		BE_LOGE("ITwin4DImp", "Parsing error for number field in Json response: " << Field); \
 		WhatToDo; \
 	}}
 /// Get a boolean from the Json object passed, or log an error and do something (typically continue or return)
 #define JSON_GETBOOL_OR(JsonObj, Field, Dest, WhatToDo) \
 	{ if (!(JsonObj)->TryGetBoolField(TEXT(Field), Dest)) { \
-		S4D_ERROR(TEXT("Parsing error for boolean field %s in Json response"), TEXT(Field)); \
+		BE_LOGE("ITwin4DImp", "Parsing error for boolean field in Json response: " << Field); \
 		WhatToDo; \
 	}}
 /// Get an Object from the Json object passed, or log an error and do something (typically continue or return)
 #define JSON_GETOBJ_OR(JsonObj, Field, Dest, WhatToDo) \
 	{ Dest = nullptr; \
 		if (!(JsonObj)->TryGetObjectField(TEXT(Field), Dest) || !Dest) { \
-		S4D_ERROR(TEXT("Parsing error for object field %s in Json response"), TEXT(Field)); \
+		BE_LOGE("ITwin4DImp", "Parsing error for object field in Json response: " << Field); \
 		WhatToDo; \
 	}}
 
@@ -579,7 +582,8 @@ void FITwinSchedulesImport::FImpl::RequestAllTasks(ReusableJsonQueries::FStackin
 				auto const& Items = Reply->GetArrayField(bUseAPIM ? TEXT("tasks") : TEXT("items"));
 				if (Items.IsEmpty())
 				{
-					S4D_WARN(TEXT("Did not receive any task for schedule '%s'!"), *Schedules[SchedIdx].Name);
+					BE_LOGW("ITwin4DImp", "Did not receive any task for schedule '"
+						<< TCHAR_TO_UTF8(*Schedules[SchedIdx].Name) << "'!");
 				}
 				else
 				{
@@ -641,8 +645,8 @@ void FITwinSchedulesImport::FImpl::RequestAllAppearanceProfiles(
 					Reply->GetArrayField(bUseAPIM ? TEXT("appearanceProfiles") : TEXT("items"));
 				if (Items.IsEmpty())
 				{
-					S4D_WARN(TEXT("Did not receive any appearance profile for schedule '%s'!"),
-							 *Schedules[SchedIdx].Name);
+					BE_LOGW("ITwin4DImp", "Did not receive any appearance profile for schedule '"
+						<< TCHAR_TO_UTF8(*Schedules[SchedIdx].Name) << "'!");
 				}
 				else
 				{
@@ -1138,8 +1142,8 @@ void FITwinSchedulesImport::FImpl::ParseTaskDetails(TSharedPtr<FJsonObject> cons
 	else
 	{
 		Task.TimeRange = ITwin::Time::Undefined();
-		S4D_ERROR(TEXT("Task %s named '%s' for schedule Id %s has invalid date(s)!"),
-				  *Task.Id, *Task.Name, *Sched.Id);
+		BE_LOGE("ITwin4DImp", "Task " << TCHAR_TO_UTF8(*Task.Id) << " named '" << TCHAR_TO_UTF8(*Task.Name)
+			<< "' for schedule Id " << TCHAR_TO_UTF8(*Sched.Id) << " has invalid date(s)!");
 	}
 }
 
@@ -1414,7 +1418,7 @@ void FITwinSchedulesImport::FImpl::ParseAppearanceProfileDetails(TSharedPtr<FJso
 		|| !ParseActiveAppearance(Parsed.ActiveAppearance, *ActiveObj)
 		|| (bNeedFinishAppearance && !ParseSimpleAppearance(Parsed.FinishAppearance, false, *EndObj)))
 	{
-		S4D_ERROR(TEXT("Error reading appearance profile %s"), *AppearanceProfileId);
+		BE_LOGE("ITwin4DImp", "Error reading appearance profile " << TCHAR_TO_UTF8(*AppearanceProfileId));
 		return;
 	}
 	// swap with the empty Parsed.Bindings so that we can move the whole thing
@@ -1616,7 +1620,8 @@ void FITwinSchedulesImport::FImpl::Parse3DPathTransfoAssignment(TSharedPtr<FJson
 	JSON_GETSTR_OR(JsonObj, "alignment", Alignment, return);
 	if (!Parse3DPathAlignment(Alignment, PathAssignment.TransformAnchor))
 	{
-		S4D_ERROR(TEXT("Parsing error for 3D path 'alignment', with value: %s"), *Alignment);
+		BE_LOGE("ITwin4DImp", "Parsing error for 3D path 'alignment', with value: "
+			<< TCHAR_TO_UTF8(*Alignment));
 		return;
 	}
 	if (std::holds_alternative<FVector>(PathAssignment.TransformAnchor))
@@ -1625,7 +1630,8 @@ void FITwinSchedulesImport::FImpl::Parse3DPathTransfoAssignment(TSharedPtr<FJson
 		JSON_GETOBJ_OR(JsonObj, "center", CenterObj, return);
 		if (!ParseVector(*CenterObj, std::get<1>(PathAssignment.TransformAnchor)))
 		{
-			S4D_ERROR(TEXT("Parsing error for 3D path custom alignment, from: '%s'"), *ToString(*CenterObj));
+			BE_LOGE("ITwin4DImp", "Parsing error for 3D path custom alignment, from: "
+				<< TCHAR_TO_UTF8(*ToString(*CenterObj)));
 			return;
 		}
 	}
@@ -1644,7 +1650,7 @@ void FITwinSchedulesImport::FImpl::Parse3DPathTransfoAssignment(TSharedPtr<FJson
 	}
 	else
 	{
-		Detail::FInsertionFlag TransfoPropCreated;
+		::Detail::FInsertionFlag TransfoPropCreated;
 		auto TransfoAssignmentIncomplete = EmplaceProperty(ITwin::INVALID_IDX,
 			std::make_pair(JsonObj->GetStringField(TEXT("id")), /*bStaticTransform*/false),
 			TransfoAssignmentIndex, Sched.TransfoAssignments, Sched.KnownTransfoAssignments,
@@ -1653,7 +1659,7 @@ void FITwinSchedulesImport::FImpl::Parse3DPathTransfoAssignment(TSharedPtr<FJson
 	}
 	pTransformAssignment->Transformation = std::move(PathAssignment);
 	auto& TransfoAsPath = std::get<1>(pTransformAssignment->Transformation);
-	Detail::FInsertionFlag KeyframesPropCreated;
+	::Detail::FInsertionFlag KeyframesPropCreated;
 	auto&& KeyframeListIncomplete = EmplaceProperty(AnimIdx ? (*AnimIdx) : ITwin::INVALID_IDX,
 		TransfoAsPath.Animation3DPathId, TransfoAsPath.Animation3DPathInVec, Sched.Animation3DPaths,
 		Sched.KnownAnimation3DPaths, KeyframesPropCreated, Lock);
@@ -1996,7 +2002,7 @@ void FITwinSchedulesImport::FImpl::ResetConnection(FString const& ITwinAkaProjec
 				// => disable NextGen in ES-API, we won't need it. It will used only through APIM, and
 				// Legacy/NextGen is entirely transparent there (requests are proxied internally by APIM to
 				// the backends).
-				//S4D_WARN(TEXT("No Legacy schedule found, trying NextGen..."));
+				//BE_LOGW("ITwin4DImp", "No Legacy schedule found, trying NextGen..."));
 				//SchedulesGeneration = EITwinSchedulesGeneration::NextGen;
 				//Queries->ChangeRemoteUrl(GetSchedulesAPIBaseUrl());
 				//RequestSchedules(Token);

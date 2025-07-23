@@ -18,7 +18,8 @@ UCesiumWebMapServiceRasterOverlay::CreateOverlay(
     wmsOptions.minimumLevel = MinimumLevel;
     wmsOptions.maximumLevel = MaximumLevel;
   }
-  wmsOptions.layers = TCHAR_TO_UTF8(*Layers);
+  wmsOptions.layers = std::string(
+      reinterpret_cast<const char*>(StringCast<UTF8CHAR>(*Layers).Get()));
   wmsOptions.tileWidth = TileWidth;
   wmsOptions.tileHeight = TileHeight;
 

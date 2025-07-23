@@ -138,29 +138,72 @@ void AITwinSavedView::OnSavedViewDeleted(bool bSuccess, FString const& InSavedVi
 	}
 }
 
+namespace
+{
+	std::unordered_set<ITwinElementID> IntersectSets(const std::unordered_set<ITwinElementID>& SetA, const std::unordered_set<ITwinElementID>& SetB)
+	{
+		std::unordered_set<ITwinElementID> Result;
+
+		const std::unordered_set<ITwinElementID>& Smaller = (SetA.size() < SetB.size()) ? SetA : SetB;
+		const std::unordered_set<ITwinElementID>& Larger = (SetA.size() < SetB.size()) ? SetB : SetA;
+
+		for (const ITwinElementID& Element : Smaller)
+		{
+			if (Larger.find(Element) != Larger.end())
+			{
+				Result.insert(Element);
+			}
+		}
+
+		return Result;
+	}
+}
+
 /*static*/ void AITwinSavedView::HideElements(AITwinIModel* iModel, FSavedView const& SavedView)
 {
 	if (!IsValid(iModel))
 		return;
-	TArray<FString> allHiddenIds;
+	TSet<FString> allHiddenIds;
 	allHiddenIds.Append(SavedView.HiddenElements);
-	allHiddenIds.Append(SavedView.HiddenCategories);
-	allHiddenIds.Append(SavedView.HiddenModels);
 	std::unordered_set<ITwinElementID> mergedIds;
 	FITwinIModelInternals& IModelInternals = GetInternals(*iModel);
 	for (auto& elId : allHiddenIds)
 	{
 		// Update selection highlight
 		ITwinElementID PickedEltID = ITwin::ParseElementID(elId);// ex: "0x20000001241"
-		auto const& CategoryIDToElementIDs = IModelInternals.SceneMapping.CategoryIDToElementIDs[PickedEltID];
-		auto const& ModelIDToElementIDs = IModelInternals.SceneMapping.ModelIDToElementIDs[PickedEltID];
-		bool isElementID = CategoryIDToElementIDs.empty() && ModelIDToElementIDs.empty();
-		mergedIds.insert(CategoryIDToElementIDs.begin(), CategoryIDToElementIDs.end());
-		mergedIds.insert(ModelIDToElementIDs.begin(), ModelIDToElementIDs.end());
-		if (isElementID)
-			mergedIds.insert(PickedEltID);
+		mergedIds.insert(PickedEltID);
 	}
-	IModelInternals.HideElements(mergedIds, false);
+	for (const auto& elem : SavedView.AlwaysDrawnElements)
+	{
+		ITwinElementID PickedEltID = ITwin::ParseElementID(elem);
+		mergedIds.erase(PickedEltID);
+	}
+	auto InsertParsedIDs = [](const auto& inputIds){
+		std::unordered_set<ITwinElementID> res;
+		res.reserve(inputIds.Num());
+		for (const auto& Id : inputIds)
+		{
+			ITwinElementID PickedID = ITwin::ParseElementID(Id);
+			res.insert(PickedID);
+		}
+		return res;
+	};
+	std::unordered_set<ITwinElementID> HiddenModels = InsertParsedIDs(SavedView.HiddenModels);
+	std::unordered_set<ITwinElementID> HiddenCategories = InsertParsedIDs(SavedView.HiddenCategories);
+	std::unordered_set<std::pair<ITwinElementID, ITwinElementID>, FITwinSceneTile::pair_hash> HiddenCategoriesPerModel;
+	for (auto& CategoryPerModel : SavedView.HiddenCategoriesPerModel)
+	{
+		HiddenCategoriesPerModel.insert({ ITwin::ParseElementID(CategoryPerModel.CategoryId), 
+										  ITwin::ParseElementID(CategoryPerModel.ModelId) });
+	}
+	IModelInternals.HideCategoriesPerModel(HiddenCategoriesPerModel, true);
+	IModelInternals.HideCategories(HiddenCategories, true);
+	IModelInternals.HideModels(HiddenModels, true);
+	IModelInternals.HideElements(mergedIds, false, true);
+	IModelInternals.HideElements(
+		iModel->bShowConstructionData ? std::unordered_set<ITwinElementID>()
+		: IModelInternals.SceneMapping.ConstructionDataElements(),
+		true, true);
 }
 
 void AITwinSavedView::OnSavedViewRetrieved(bool bSuccess, FSavedView const& SavedView, 

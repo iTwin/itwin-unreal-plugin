@@ -355,6 +355,7 @@ namespace AdvViz::SDK {
 			bool res = GetImpl().Save();
 			SaveLinks();
 			GetImpl().shoudSave_ = false;
+			BE_LOGI("ITwinScene", "Save Scene end");
 			return res;
 		}
 		return true;

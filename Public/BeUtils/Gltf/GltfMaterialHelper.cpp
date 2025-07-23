@@ -23,6 +23,8 @@
 
 #include <boost/algorithm/string/predicate.hpp>
 
+#include <spdlog/fmt/fmt.h>
+
 namespace BeUtils
 {
 
@@ -93,13 +95,8 @@ GltfMaterialHelper::GltfMaterialHelper()
 {
 }
 
-void GltfMaterialHelper::SetITwinMaterialProperties(uint64_t matID, AdvViz::SDK::ITwinMaterialProperties const& props)
-{
-	WLock lock(mutex_);
-	SetITwinMaterialProperties(matID, props, lock);
-}
-
-void GltfMaterialHelper::SetITwinMaterialProperties(uint64_t matID, AdvViz::SDK::ITwinMaterialProperties const& props, WLock const&)
+void GltfMaterialHelper::SetITwinMaterialProperties(uint64_t matID, AdvViz::SDK::ITwinMaterialProperties const& props,
+	std::string const& nameInIModel, WLock const&)
 {
 	auto ret = materialMap_.try_emplace(matID, props);
 
@@ -117,6 +114,7 @@ void GltfMaterialHelper::SetITwinMaterialProperties(uint64_t matID, AdvViz::SDK:
 		// The slot already existed => just edit its iTwin properties.
 		ret.first->second.iTwinProps_ = props;
 	}
+	ret.first->second.nameInIModel_ = nameInIModel;
 
 	static const std::unordered_map<std::string, AdvViz::SDK::EChannelType> supportedTypes =
 	{
@@ -145,7 +143,9 @@ void GltfMaterialHelper::SetITwinMaterialProperties(uint64_t matID, AdvViz::SDK:
 	}
 }
 
-GltfMaterialHelper::MaterialInfo GltfMaterialHelper::CreateITwinMaterialSlot(uint64_t matID, WLock const&,
+GltfMaterialHelper::MaterialInfo GltfMaterialHelper::CreateITwinMaterialSlot(uint64_t matID,
+	std::string const& nameInIModel,
+	WLock const&,
 	bool bOnlyIfCustomDefinitionExists /*= false*/)
 {
 	if (bOnlyIfCustomDefinitionExists
@@ -160,6 +160,10 @@ GltfMaterialHelper::MaterialInfo GltfMaterialHelper::CreateITwinMaterialSlot(uin
 	if (persistenceMngr_)
 	{
 		persistenceMngr_->GetMaterialSettings(iModelID_, matID, ret.first->second.iTwinMaterialDefinition_);
+	}
+	if (!nameInIModel.empty())
+	{
+		ret.first->second.nameInIModel_ = nameInIModel;
 	}
 	return std::make_pair(&ret.first->second.iTwinProps_, &ret.first->second.iTwinMaterialDefinition_);;
 }
@@ -1412,13 +1416,38 @@ void GltfMaterialHelper::SetMaterialKind(uint64_t matID, AdvViz::SDK::EMaterialK
 	TSetChannelParam(nameHelper, matID, bValueModified);
 }
 
-std::string GltfMaterialHelper::GetMaterialName(uint64_t matID, RWLockBase const&) const
+bool GltfMaterialHelper::GetCustomRequirements(uint64_t matID, AdvViz::SDK::EMaterialKind& outKind, bool& bOutRequiresTranslucency) const
+{
+	RLock lock(mutex_);
+	auto itMat = materialMap_.find(matID);
+	if (itMat != materialMap_.end())
+	{
+		auto const& matDefinition = itMat->second.iTwinMaterialDefinition_;
+		outKind = matDefinition.kind;
+
+		std::string alphaMode;
+		if (GetCurrentAlphaMode(matID, alphaMode, lock))
+		{
+			bOutRequiresTranslucency = (alphaMode == CesiumGltf::Material::AlphaMode::BLEND);
+		}
+		return true;
+	}
+	return false;
+}
+
+std::string GltfMaterialHelper::GetMaterialName(uint64_t matID, RWLockBase const&,
+	bool bAppendLogInfo /*= false*/) const
 {
 	auto itMat = materialMap_.find(matID);
 	if (itMat != materialMap_.end())
 	{
 		auto const& matDefinition = itMat->second.iTwinMaterialDefinition_;
-		return matDefinition.displayName;
+		std::string matName = matDefinition.displayName;
+		if (bAppendLogInfo)
+		{
+			matName += fmt::format(" (#{} | {})", matID, itMat->second.nameInIModel_);
+		}
+		return matName;
 	}
 	else
 	{
@@ -1426,10 +1455,10 @@ std::string GltfMaterialHelper::GetMaterialName(uint64_t matID, RWLockBase const
 	}
 }
 
-std::string GltfMaterialHelper::GetMaterialName(uint64_t matID) const
+std::string GltfMaterialHelper::GetMaterialName(uint64_t matID, bool bAppendLogInfo /*= false*/) const
 {
 	RLock lock(mutex_);
-	return GetMaterialName(matID, lock);
+	return GetMaterialName(matID, lock, bAppendLogInfo);
 }
 
 bool GltfMaterialHelper::SetMaterialName(uint64_t matID, std::string const& newName)

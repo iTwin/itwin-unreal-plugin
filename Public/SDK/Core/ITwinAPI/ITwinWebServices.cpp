@@ -1835,7 +1835,7 @@ namespace AdvViz::SDK
 
 			// implement the 6 possible cases of the variant
 			// bool, int, double, std::string, Object, Array
-			// some are not used at all, since we the response only deals with strings primitives
+			// some are not used at all, since the response only deals with string primitives
 
 			void operator()(const bool& /*boolValue*/) const
 			{
@@ -2013,6 +2013,340 @@ namespace AdvViz::SDK
 		});
 	}
 
+	void ITwinWebServices::GetPagedNodes(std::string const& iTwinId, std::string const& iModelId,
+		std::string const& changesetId, std::string const& parentKey /*= ""*/, int offset /*= 0*/, int count /*= 1000*/)
+	{
+		std::string const key = fmt::format("{}:{}", iModelId, changesetId);
+
+		ITwinAPIRequestInfo const requestInfo =
+		{
+			.ShortName = __func__,
+			.Verb = EVerb::Post,
+			.UrlSuffix = std::string("/imodel/rpc/v4/mode/1/context/") + iTwinId
+								+ "/imodel/" + iModelId
+								+ "/changeset/" + GetIModelRpcUrlChangeset(changesetId)
+								+ "/PresentationRpcInterface-4.1.0-getPagedNodes",
+			.AcceptHeader = "application/vnd.bentley.itwin-platform.v1+json",
+
+			/*** additional settings for POST ***/
+			.ContentType = "text/plain",
+			.ContentString = "[{\"key\":\"" + key
+								+ "\",\"iTwinId\":\"" + iTwinId
+								+ "\",\"iModelId\":\"" + iModelId
+								+ "\",\"changeset\":{\"id\":\"" + changesetId
+								+ "\"}},{" + (!parentKey.empty()? "\"parentKey\":" + parentKey + "," : "")
+								+ "\"clientId\":\"" + ITwinAuthManager::GetAppID(EITwinEnvironment::Prod)
+								+ "\",\"locale\":\"en\",\"unitSystem\":\"metric\",\"rulesetOrId\":{\"id\":\"tree-widget-react/ModelsTree\","
+								+ "\"requiredSchemas\":[{\"name\":\"BisCore\"}],\"rules\":[{\"ruleType\":\"RootNodes\",\"autoExpand\":true,"
+								+ "\"specifications\":[{\"specType\":\"InstanceNodesOfSpecificClasses\",\"classes\":[{\"schemaName\":\"BisCore\","
+								+ "\"classNames\":[\"Subject\"]}],\"instanceFilter\":\"this.Parent = NULL\",\"groupByClass\":false,\"groupByLabel\":false}],"
+								+ "\"customizationRules\":[{\"ruleType\":\"ExtendedData\",\"items\":{\"isSubject\":\"true\",\"icon\":\"\\\"icon-imodel-hollow-2\\\"\"}}]},"
+								+ "{\"ruleType\":\"ChildNodes\",\"condition\":\"ParentNode.IsOfClass(\\\"Subject\\\", \\\"BisCore\\\")\",\"specifications\":"
+								+ "[{\"specType\":\"RelatedInstanceNodes\",\"relationshipPaths\":[{\"relationship\":{\"schemaName\":\"BisCore\",\"className\":"
+								+ "\"SubjectOwnsSubjects\"},\"direction\":\"Forward\",\"targetClass\":{\"schemaName\":\"BisCore\",\"className\":\"Subject\"}}],"
+								+ "\"instanceFilter\":\"json_extract(this.JsonProperties, \\\"$.Subject.Job.Bridge\\\") <> NULL OR ifnull(json_extract(this.JsonProperties,"
+								+ " \\\"$.Subject.Model.Type\\\"), \\\"\\\") = \\\"Hierarchy\\\"\",\"hideNodesInHierarchy\":true,\"groupByClass\":false,\"groupByLabel\":false},"
+								+ "{\"specType\":\"RelatedInstanceNodes\",\"relationshipPaths\":[{\"relationship\":{\"schemaName\":\"BisCore\",\"className\":"
+								+ "\"SubjectOwnsSubjects\"},\"direction\":\"Forward\",\"targetClass\":{\"schemaName\":\"BisCore\",\"className\":\"Subject\"}}],"
+								+ "\"instanceFilter\":\"json_extract(this.JsonProperties, \\\"$.Subject.Job.Bridge\\\") = NULL AND ifnull(json_extract(this.JsonProperties,"
+								+ " \\\"$.Subject.Model.Type\\\"), \\\"\\\") <> \\\"Hierarchy\\\"\",\"hideIfNoChildren\":true,\"groupByClass\":false,\"groupByLabel\":false}],"
+								+ "\"customizationRules\":[{\"ruleType\":\"ExtendedData\",\"items\":{\"isSubject\":\"true\",\"icon\":\"\\\"icon-folder\\\"\"}}]},"
+								+ "{\"ruleType\":\"ChildNodes\",\"condition\":\"ParentNode.IsOfClass(\\\"Subject\\\", \\\"BisCore\\\")\",\"specifications\":"
+								+ "[{\"specType\":\"InstanceNodesOfSpecificClasses\",\"classes\":{\"schemaName\":\"BisCore\",\"classNames\":[\"GeometricModel3d\"],"
+								+ "\"arePolymorphic\":true},\"relatedInstances\":[{\"relationshipPath\":{\"relationship\":{\"schemaName\":\"BisCore\",\"className\":"
+								+ "\"ModelModelsElement\"},\"direction\":\"Forward\",\"targetClass\":{\"schemaName\":\"BisCore\",\"className\":\"InformationPartitionElement\"}},"
+								+ "\"alias\":\"partition\",\"isRequired\":true}],\"instanceFilter\":\"(parent.ECInstanceId = partition.Parent.Id OR "
+								+ "json_extract(parent.JsonProperties, \\\"$.Subject.Model.TargetPartition\\\") = printf(\\\"0x%x\\\", partition.ECInstanceId)) "
+								+ "AND NOT this.IsPrivate AND json_extract(partition.JsonProperties, \\\"$.PhysicalPartition.Model.Content\\\") = NULL AND "
+								+ "json_extract(partition.JsonProperties, \\\"$.GraphicalPartition3d.Model.Content\\\") = NULL AND "
+								+ "this.HasRelatedInstance(\\\"BisCore:ModelContainsElements\\\", \\\"Forward\\\", \\\"BisCore:GeometricElement3d\\\")\","
+								+ "\"hasChildren\":\"Always\",\"groupByClass\":false,\"groupByLabel\":false},{\"specType\":\"InstanceNodesOfSpecificClasses\","
+								+ "\"classes\":{\"schemaName\":\"BisCore\",\"classNames\":[\"GeometricModel3d\"],\"arePolymorphic\":true},\"relatedInstances\":"
+								+ "[{\"relationshipPath\":{\"relationship\":{\"schemaName\":\"BisCore\",\"className\":\"ModelModelsElement\"},\"direction\":\"Forward\","
+								+ "\"targetClass\":{\"schemaName\":\"BisCore\",\"className\":\"InformationPartitionElement\"}},\"alias\":\"partition\",\"isRequired\":true}],"
+								+ "\"instanceFilter\":\"(parent.ECInstanceId = partition.Parent.Id OR json_extract(parent.JsonProperties, \\\"$.Subject.Model.TargetPartition\\\")"
+								+ " = printf(\\\"0x%x\\\", partition.ECInstanceId)) AND NOT this.IsPrivate AND (json_extract(partition.JsonProperties,"
+								+ " \\\"$.PhysicalPartition.Model.Content\\\") <> NULL OR json_extract(partition.JsonProperties, \\\"$.GraphicalPartition3d.Model.Content\\\")"
+								+ " <> NULL) AND this.HasRelatedInstance(\\\"BisCore:ModelContainsElements\\\", \\\"Forward\\\", \\\"BisCore:GeometricElement3d\\\")\","
+								+ "\"hasChildren\":\"Always\",\"hideNodesInHierarchy\":true,\"groupByClass\":false,\"groupByLabel\":false}],\"customizationRules\":"
+								+ "[{\"ruleType\":\"ExtendedData\",\"items\":{\"isModel\":\"true\",\"icon\":\"\\\"icon-model\\\"\"}}]},{\"ruleType\":\"ChildNodes\","
+								+ "\"condition\":\"ParentNode.IsOfClass(\\\"ISubModeledElement\\\", \\\"BisCore\\\")\",\"specifications\":[{\"specType\":\"RelatedInstanceNodes\","
+								+ "\"relationshipPaths\":[{\"relationship\":{\"schemaName\":\"BisCore\",\"className\":\"ModelModelsElement\"},\"direction\":\"Backward\"}],"
+								+ "\"instanceFilter\":\"NOT this.IsPrivate AND this.HasRelatedInstance(\\\"BisCore:ModelContainsElements\\\", \\\"Forward\\\", "
+								+ "\\\"BisCore:GeometricElement3d\\\")\",\"hideNodesInHierarchy\":true,\"groupByClass\":false,\"groupByLabel\":false}],\"customizationRules\":"
+								+ "[{\"ruleType\":\"ExtendedData\",\"items\":{\"isModel\":\"true\",\"icon\":\"\\\"icon-model\\\"\"}}]},{\"ruleType\":\"ChildNodes\",\"condition\":"
+								+ "\"ParentNode.IsOfClass(\\\"GeometricModel3d\\\", \\\"BisCore\\\")\",\"specifications\":[{\"specType\":\"RelatedInstanceNodes\","
+								+ "\"relationshipPaths\":[[{\"relationship\":{\"schemaName\":\"BisCore\",\"className\":\"ModelContainsElements\"},\"direction\":\"Forward\","
+								+ "\"targetClass\":{\"schemaName\":\"BisCore\",\"className\":\"GeometricElement3d\"}},{\"relationship\":{\"schemaName\":\"BisCore\",\"className\":"
+								+ "\"GeometricElement3dIsInCategory\"},\"direction\":\"Forward\"}]],\"instanceFilter\":\"NOT this.IsPrivate\",\"suppressSimilarAncestorsCheck\":"
+								+ "true,\"hideIfNoChildren\":true,\"groupByClass\":false,\"groupByLabel\":false}],\"customizationRules\":[{\"ruleType\":\"ExtendedData\",\"items\""
+								+ ":{\"isCategory\":\"true\",\"modelId\":\"ParentNode.InstanceId\",\"icon\":\"\\\"icon-layers\\\"\"}}]},{\"ruleType\":\"ChildNodes\",\"condition\":"
+								+ "\"ParentNode.IsOfClass(\\\"SpatialCategory\\\", \\\"BisCore\\\")\",\"specifications\":[{\"specType\":\"RelatedInstanceNodes\","
+								+ "\"relationshipPaths\":[{\"relationship\":{\"schemaName\":\"BisCore\",\"className\":\"GeometricElement3dIsInCategory\"},\"direction\":"
+								+ "\"Backward\",\"targetClass\":{\"schemaName\":\"BisCore\",\"className\":\"GeometricElement3d\"}}],\"instanceFilter\":\"this.Model.Id = "
+								+ "parent.parent.ECInstanceId ANDALSO this.Parent = NULL\",\"groupByClass\":false,\"groupByLabel\":false}],\"customizationRules\":[{\"ruleType\":"
+								+ "\"ExtendedData\",\"items\":{\"modelId\":\"this.Model.Id\",\"categoryId\":\"this.Category.Id\",\"icon\":\"\\\"icon-item\\\"\",\"groupIcon\":"
+								+ "\"\\\"icon-ec-class\\\"\"}}]},{\"ruleType\":\"ChildNodes\",\"condition\":\"ParentNode.IsOfClass(\\\"GeometricElement3d\\\", \\\"BisCore\\\")\","
+								+ "\"specifications\":[{\"specType\":\"RelatedInstanceNodes\",\"relationshipPaths\":[{\"relationship\":{\"schemaName\":\"BisCore\",\"className\":"
+								+ "\"ElementOwnsChildElements\"},\"direction\":\"Forward\",\"targetClass\":{\"schemaName\":\"BisCore\",\"className\":\"GeometricElement3d\"}}],"
+								+ "\"groupByClass\":false,\"groupByLabel\":false}],\"customizationRules\":[{\"ruleType\":\"ExtendedData\",\"items\":{\"modelId\":\"this.Model.Id\","
+								+ "\"categoryId\":\"this.Category.Id\",\"icon\":\"\\\"icon-item\\\"\",\"groupIcon\":\"\\\"icon-ec-class\\\"\"}}]},{\"ruleType\":\"Grouping\","
+								+ "\"class\":{\"schemaName\":\"BisCore\",\"className\":\"Subject\"},\"groups\":[{\"specType\":\"SameLabelInstance\",\"applicationStage\":"
+								+ "\"PostProcess\"}]},{\"ruleType\":\"Grouping\",\"class\":{\"schemaName\":\"BisCore\",\"className\":\"SpatialCategory\"},\"groups\":[{\"specType\":"
+								+ "\"SameLabelInstance\",\"applicationStage\":\"PostProcess\"}]}]},\"paging\":{\"start\":" + std::to_string(offset) + ",\"size\":" 
+								+ std::to_string(count) + "},\"rulesetVariables\":[]}]",
+			.badlyFormed = iTwinId.empty() || iModelId.empty()
+		};
+
+		impl_->ProcessHttpRequest(
+			requestInfo,
+			[this](Http::Response const& response, RequestID const&, std::string& strError) -> bool
+			{
+				IModelPagedNodesRes iModelProps;
+				bool const bResult = Http::IsSuccessful(response)
+					&& Json::FromString(iModelProps, response.second, strError);
+				if (impl_->observer_)
+				{
+					impl_->observer_->OnIModelPagedNodesRetrieved(bResult, iModelProps);
+				}
+				return bResult;
+			});
+	}
+
+	void ITwinWebServices::GetModelFilteredNodePaths(std::string const& iTwinId, std::string const& iModelId,
+		std::string const& changesetId, std::string const& filter)
+	{
+		std::string const key = fmt::format("{}:{}", iModelId, changesetId);
+
+		ITwinAPIRequestInfo const requestInfo =
+		{
+			.ShortName = __func__,
+			.Verb = EVerb::Post,
+			.UrlSuffix = std::string("/imodel/rpc/v4/mode/1/context/") + iTwinId
+								+ "/imodel/" + iModelId
+								+ "/changeset/" + GetIModelRpcUrlChangeset(changesetId)
+								+ "/PresentationRpcInterface-4.1.0-getFilteredNodePaths",
+			.AcceptHeader = "application/vnd.bentley.itwin-platform.v1+json",
+
+			/*** additional settings for POST ***/
+			.ContentType = "text/plain",
+			.ContentString = "[{\"key\":\"" + key
+								+ "\",\"iTwinId\":\"" + iTwinId
+								+ "\",\"iModelId\":\"" + iModelId
+								+ "\",\"changeset\":{\"id\":\"" + changesetId
+								+ "\"}},{"
+								+ "\"clientId\":\"" + ITwinAuthManager::GetAppID(EITwinEnvironment::Prod)
+								+ "\",\"locale\":\"en\",\"unitSystem\":\"metric\",\"rulesetOrId\":{\"id\":\"tree-widget-react/ModelsTreeSearch\",\"rules\":[{\"ruleType\":"
+								+ "\"RootNodes\",\"specifications\":[{\"specType\":\"InstanceNodesOfSpecificClasses\",\"classes\":[{\"schemaName\":\"BisCore\",\"classNames\":"
+								+ "[\"Subject\"]}],\"instanceFilter\":\"this.Parent = NULL\",\"groupByClass\":false,\"groupByLabel\":false}],\"customizationRules\":[{\"ruleType\":"
+								+ "\"ExtendedData\",\"items\":{\"isSubject\":\"true\",\"icon\":\"\\\"icon-imodel-hollow-2\\\"\"}}]},{\"ruleType\":\"ChildNodes\",\"condition\":"
+								+ "\"ParentNode.IsOfClass(\\\"Subject\\\", \\\"BisCore\\\")\",\"specifications\":[{\"specType\":\"RelatedInstanceNodes\",\"relationshipPaths\":"
+								+ "[{\"relationship\":{\"schemaName\":\"BisCore\",\"className\":\"SubjectOwnsSubjects\"},\"direction\":\"Forward\",\"targetClass\":{\"schemaName\":"
+								+ "\"BisCore\",\"className\":\"Subject\"}}],\"instanceFilter\":\"json_extract(this.JsonProperties, \\\"$.Subject.Job.Bridge\\\") <> NULL OR ifnull("
+								+ "json_extract(this.JsonProperties, \\\"$.Subject.Model.Type\\\"), \\\"\\\") = \\\"Hierarchy\\\"\",\"hideNodesInHierarchy\":true,\"groupByClass\":"
+								+ "false,\"groupByLabel\":false},{\"specType\":\"RelatedInstanceNodes\",\"relationshipPaths\":[{\"relationship\":{\"schemaName\":\"BisCore\","
+								+ "\"className\":\"SubjectOwnsSubjects\"},\"direction\":\"Forward\",\"targetClass\":{\"schemaName\":\"BisCore\",\"className\":\"Subject\"}}],"
+								+ "\"instanceFilter\":\"json_extract(this.JsonProperties, \\\"$.Subject.Job.Bridge\\\") = NULL AND ifnull(json_extract(this.JsonProperties, "
+								+ "\\\"$.Subject.Model.Type\\\"), \\\"\\\") <> \\\"Hierarchy\\\"\",\"groupByClass\":false,\"groupByLabel\":false,\"hideExpression\":"
+								+ "\"NOT ThisNode.HasChildren ANDALSO NOT ThisNode.ChildrenArtifacts.AnyMatches(x => x.isContentModel)\"}],\"customizationRules\":[{\"ruleType\":"
+								+ "\"ExtendedData\",\"items\":{\"isSubject\":\"true\",\"icon\":\"\\\"icon-folder\\\"\"}},{\"ruleType\":\"Grouping\",\"class\":{\"schemaName\":"
+								+ "\"BisCore\",\"className\":\"Subject\"},\"groups\":[{\"specType\":\"SameLabelInstance\",\"applicationStage\":\"PostProcess\"}]}]},{\"ruleType\":"
+								+ "\"ChildNodes\",\"condition\":\"ParentNode.IsOfClass(\\\"Subject\\\", \\\"BisCore\\\")\",\"specifications\":[{\"specType\":"
+								+ "\"InstanceNodesOfSpecificClasses\",\"classes\":{\"schemaName\":\"BisCore\",\"classNames\":[\"GeometricModel3d\"],\"arePolymorphic\":true},"
+								+ "\"relatedInstances\":[{\"relationshipPath\":{\"relationship\":{\"schemaName\":\"BisCore\",\"className\":\"ModelModelsElement\"},\"direction\":"
+								+ "\"Forward\",\"targetClass\":{\"schemaName\":\"BisCore\",\"className\":\"InformationPartitionElement\"}},\"alias\":\"partition\",\"isRequired\":"
+								+ "true}],\"instanceFilter\":\"(parent.ECInstanceId = partition.Parent.Id OR json_extract(parent.JsonProperties, "
+								+ "\\\"$.Subject.Model.TargetPartition\\\") = printf(\\\"0x%x\\\", partition.ECInstanceId)) AND NOT this.IsPrivate AND "
+								+ "json_extract(partition.JsonProperties, \\\"$.PhysicalPartition.Model.Content\\\") = NULL AND json_extract(partition.JsonProperties, "
+								+ "\\\"$.GraphicalPartition3d.Model.Content\\\") = NULL AND this.HasRelatedInstance(\\\"BisCore:ModelContainsElements\\\", \\\"Forward\\\", "
+								+ "\\\"BisCore:GeometricElement3d\\\")\",\"hasChildren\":\"Unknown\",\"groupByClass\":false,\"groupByLabel\":false}],\"customizationRules\":"
+								+ "[{\"ruleType\":\"ExtendedData\",\"items\":{\"isModel\":\"true\",\"icon\":\"\\\"icon-model\\\"\"}}]},{\"ruleType\":\"ChildNodes\",\"condition\":"
+								+ "\"ParentNode.IsOfClass(\\\"Subject\\\", \\\"BisCore\\\")\",\"specifications\":[{\"specType\":\"InstanceNodesOfSpecificClasses\",\"classes\":"
+								+ "{\"schemaName\":\"BisCore\",\"classNames\":[\"GeometricModel3d\"],\"arePolymorphic\":true},\"relatedInstances\":[{\"relationshipPath\":"
+								+ "{\"relationship\":{\"schemaName\":\"BisCore\",\"className\":\"ModelModelsElement\"},\"direction\":\"Forward\",\"targetClass\":{\"schemaName\":"
+								+ "\"BisCore\",\"className\":\"InformationPartitionElement\"}},\"alias\":\"partition\",\"isRequired\":true}],\"instanceFilter\":"
+								+ "\"(parent.ECInstanceId = partition.Parent.Id OR json_extract(parent.JsonProperties, \\\"$.Subject.Model.TargetPartition\\\") = "
+								+ "printf(\\\"0x%x\\\", partition.ECInstanceId)) AND NOT this.IsPrivate AND (json_extract(partition.JsonProperties, "
+								+ "\\\"$.PhysicalPartition.Model.Content\\\") <> NULL OR json_extract(partition.JsonProperties, \\\"$.GraphicalPartition3d.Model.Content\\\") "
+								+ "<> NULL) AND this.HasRelatedInstance(\\\"BisCore:ModelContainsElements\\\", \\\"Forward\\\", \\\"BisCore:GeometricElement3d\\\")\","
+								+ "\"hasChildren\":\"Unknown\",\"hideNodesInHierarchy\":true,\"groupByClass\":false,\"groupByLabel\":false}],\"customizationRules\":[{\"ruleType\":"
+								+ "\"NodeArtifacts\",\"items\":{\"isContentModel\":\"true\"}},{\"ruleType\":\"ExtendedData\",\"items\":{\"isModel\":\"true\",\"icon\":"
+								+ "\"\\\"icon-model\\\"\"}}]},{\"ruleType\":\"ChildNodes\",\"condition\":\"ParentNode.IsOfClass(\\\"GeometricModel3d\\\", \\\"BisCore\\\")\","
+								+ "\"specifications\":[{\"specType\":\"RelatedInstanceNodes\",\"relationshipPaths\":[{\"relationship\":{\"schemaName\":\"BisCore\",\"className\":"
+								+ "\"ModelOwnsSubModel\"},\"direction\":\"Forward\",\"targetClass\":{\"schemaName\":\"BisCore\",\"className\":\"GeometricModel3d\"}}],"
+								+ "\"instanceFilter\":\"NOT this.IsPrivate AND this.HasRelatedInstance(\\\"BisCore:ModelContainsElements\\\", \\\"Forward\\\", "
+								+ "\\\"BisCore:GeometricElement3d\\\")\",\"groupByClass\":false,\"groupByLabel\":false}],\"customizationRules\":[{\"ruleType\":\"ExtendedData\","
+								+ "\"items\":{\"isModel\":\"true\",\"icon\":\"\\\"icon-model\\\"\"}}]}]},\"filterText\":\"" + filter + "\",\"rulesetVariables\":[]}]",
+			.badlyFormed = iTwinId.empty() || iModelId.empty()
+		};
+
+		impl_->ProcessHttpRequest(
+			requestInfo,
+			[this, filter](Http::Response const& response, RequestID const&, std::string& strError) -> bool
+			{
+				FilteredNodesRes Nodes;
+				bool const bResult = Http::IsSuccessful(response)
+					&& Json::FromString(Nodes, response.second, strError);
+				if (impl_->observer_)
+				{
+					impl_->observer_->OnModelFilteredNodesRetrieved(bResult, Nodes, filter);
+				}
+				return bResult;
+			});
+	}
+
+	void ITwinWebServices::GetCategoryFilteredNodePaths(std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId, std::string const& filter)
+	{
+		std::string const key = fmt::format("{}:{}", iModelId, changesetId);
+
+		ITwinAPIRequestInfo const requestInfo =
+		{
+			.ShortName = __func__,
+			.Verb = EVerb::Post,
+			.UrlSuffix = std::string("/imodel/rpc/v4/mode/1/context/") + iTwinId
+								+ "/imodel/" + iModelId
+								+ "/changeset/" + GetIModelRpcUrlChangeset(changesetId)
+								+ "/PresentationRpcInterface-4.1.0-getFilteredNodePaths",
+			.AcceptHeader = "application/vnd.bentley.itwin-platform.v1+json",
+
+			/*** additional settings for POST ***/
+			.ContentType = "text/plain",
+			.ContentString = "[{\"key\":\"" + key
+								+ "\",\"iTwinId\":\"" + iTwinId
+								+ "\",\"iModelId\":\"" + iModelId
+								+ "\",\"changeset\":{\"id\":\"" + changesetId
+								+ "\"}},{"
+								+ "\"clientId\":\"" + ITwinAuthManager::GetAppID(EITwinEnvironment::Prod)
+								+ "\",\"locale\":\"en\",\"unitSystem\":\"metric\",\"rulesetOrId\":{\"id\":\"tree-widget-react/CategoriesTree\",\"rules\":[{\"ruleType\":"
+								+ "\"RootNodes\",\"subConditions\":[{\"condition\":\"GetVariableStringValue(\\\"ViewType\\\") = \\\"3d\\\"\",\"specifications\":[{\"specType\":"
+								+ "\"InstanceNodesOfSpecificClasses\",\"classes\":[{\"schemaName\":\"BisCore\",\"classNames\":[\"SpatialCategory\"],\"arePolymorphic\":true}],"
+								+ "\"relatedInstances\":[{\"relationshipPath\":{\"relationship\":{\"schemaName\":\"BisCore\",\"className\":\"ModelContainsElements\"},"
+								+ "\"direction\":\"Backward\"},\"isRequired\":true,\"alias\":\"model\"}],\"instanceFilter\":\"NOT this.IsPrivate AND (NOT model.IsPrivate OR "
+								+ "model.IsOfClass(\\\"DictionaryModel\\\", \\\"BisCore\\\")) AND this.HasRelatedInstance(\\\"BisCore:GeometricElement3dIsInCategory\\\", "
+								+ "\\\"Backward\\\", \\\"BisCore:Element\\\")\",\"groupByClass\":false,\"groupByLabel\":false}]},{\"condition\":\"GetVariableStringValue"
+								+ "(\\\"ViewType\\\") = \\\"2d\\\"\",\"specifications\":[{\"specType\":\"InstanceNodesOfSpecificClasses\",\"classes\":[{\"schemaName\":\"BisCore\","
+								+ "\"classNames\":[\"DrawingCategory\"],\"arePolymorphic\":true}],\"relatedInstances\":[{\"relationshipPath\":{\"relationship\":{\"schemaName\":"
+								+ "\"BisCore\",\"className\":\"ModelContainsElements\"},\"direction\":\"Backward\"},\"isRequired\":true,\"alias\":\"model\"}],\"instanceFilter\":"
+								+ "\"NOT this.IsPrivate AND (NOT model.IsPrivate OR model.IsOfClass(\\\"DictionaryModel\\\", \\\"BisCore\\\")) AND this.HasRelatedInstance"
+								+ "(\\\"BisCore:GeometricElement2dIsInCategory\\\", \\\"Backward\\\", \\\"BisCore:Element\\\")\",\"groupByClass\":false,\"groupByLabel\":false}]}]},"
+								+ "{\"ruleType\":\"ChildNodes\",\"condition\":\"ParentNode.IsOfClass(\\\"Category\\\", \\\"BisCore\\\") ANDALSO ParentNode.ECInstance."
+								+ "GetRelatedInstancesCount(\\\"BisCore:CategoryOwnsSubCategories\\\", \\\"Forward\\\", \\\"BisCore:SubCategory\\\") > 1\",\"specifications\":"
+								+ "[{\"specType\":\"RelatedInstanceNodes\",\"relationshipPaths\":[{\"relationship\":{\"schemaName\":\"BisCore\",\"className\":"
+								+ "\"CategoryOwnsSubCategories\"},\"direction\":\"Forward\"}],\"instanceFilter\":\"NOT this.IsPrivate\",\"groupByClass\":false,\"groupByLabel\":"
+								+ "false}]},{\"ruleType\":\"LabelOverride\",\"condition\":\"this.IsOfClass(\\\"Category\\\", \\\"BisCore\\\")\",\"description\":"
+								+ "\"this.Description\"}],\"default\":{\"$schema\":\"../../../../node_modules/@itwin/presentation-common/Ruleset.schema.json\",\"id\":"
+								+ "\"tree-widget-react/CategoriesTree\",\"rules\":[{\"ruleType\":\"RootNodes\",\"subConditions\":[{\"condition\":\"GetVariableStringValue"
+								+ "(\\\"ViewType\\\") = \\\"3d\\\"\",\"specifications\":[{\"specType\":\"InstanceNodesOfSpecificClasses\",\"classes\":[{\"schemaName\":\"BisCore\","
+								+ "\"classNames\":[\"SpatialCategory\"],\"arePolymorphic\":true}],\"relatedInstances\":[{\"relationshipPath\":{\"relationship\":{\"schemaName\":"
+								+ "\"BisCore\",\"className\":\"ModelContainsElements\"},\"direction\":\"Backward\"},\"isRequired\":true,\"alias\":\"model\"}],\"instanceFilter\":"
+								+ "\"NOT this.IsPrivate AND (NOT model.IsPrivate OR model.IsOfClass(\\\"DictionaryModel\\\", \\\"BisCore\\\")) AND this.HasRelatedInstance"
+								+ "(\\\"BisCore:GeometricElement3dIsInCategory\\\", \\\"Backward\\\", \\\"BisCore:Element\\\")\",\"groupByClass\":false,\"groupByLabel\":false}]},"
+								+ "{\"condition\":\"GetVariableStringValue(\\\"ViewType\\\") = \\\"2d\\\"\",\"specifications\":[{\"specType\":\"InstanceNodesOfSpecificClasses\","
+								+ "\"classes\":[{\"schemaName\":\"BisCore\",\"classNames\":[\"DrawingCategory\"],\"arePolymorphic\":true}],\"relatedInstances\":"
+								+ "[{\"relationshipPath\":{\"relationship\":{\"schemaName\":\"BisCore\",\"className\":\"ModelContainsElements\"},\"direction\":\"Backward\"},"
+								+ "\"isRequired\":true,\"alias\":\"model\"}],\"instanceFilter\":\"NOT this.IsPrivate AND (NOT model.IsPrivate OR model.IsOfClass"
+								+ "(\\\"DictionaryModel\\\", \\\"BisCore\\\")) AND this.HasRelatedInstance(\\\"BisCore:GeometricElement2dIsInCategory\\\", \\\"Backward\\\", "
+								+ "\\\"BisCore:Element\\\")\",\"groupByClass\":false,\"groupByLabel\":false}]}]},{\"ruleType\":\"ChildNodes\",\"condition\":\"ParentNode.IsOfClass"
+								+ "(\\\"Category\\\", \\\"BisCore\\\") ANDALSO ParentNode.ECInstance.GetRelatedInstancesCount(\\\"BisCore:CategoryOwnsSubCategories\\\", "
+								+ "\\\"Forward\\\", \\\"BisCore:SubCategory\\\") > 1\",\"specifications\":[{\"specType\":\"RelatedInstanceNodes\",\"relationshipPaths\":"
+								+ "[{\"relationship\":{\"schemaName\":\"BisCore\",\"className\":\"CategoryOwnsSubCategories\"},\"direction\":\"Forward\"}],\"instanceFilter\":"
+								+ "\"NOT this.IsPrivate\",\"groupByClass\":false,\"groupByLabel\":false}]},{\"ruleType\":\"LabelOverride\",\"condition\":\"this.IsOfClass"
+								+ "(\\\"Category\\\", \\\"BisCore\\\")\",\"description\":\"this.Description\"}]}},\"filterText\":\"" + filter 
+								+ "\",\"rulesetVariables\":[{\"id\":\"ViewType\",\"type\":\"string\",\"value\":\"3d\"}]}]",
+			.badlyFormed = iTwinId.empty() || iModelId.empty()
+		};
+
+		impl_->ProcessHttpRequest(
+			requestInfo,
+			[this, filter](Http::Response const& response, RequestID const&, std::string& strError) -> bool
+			{
+				FilteredNodesRes Nodes;
+				bool const bResult = Http::IsSuccessful(response)
+					&& Json::FromString(Nodes, response.second, strError);
+				if (impl_->observer_)
+				{
+					impl_->observer_->OnCategoryFilteredNodesRetrieved(bResult, Nodes, filter);
+				}
+				return bResult;
+			});
+	}
+
+	void ITwinWebServices::GetCategoryNodes(std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId, std::string const& parentKey /*= ""*/, int offset /*= 0*/, int count /*= 1000*/)
+	{
+		std::string const key = fmt::format("{}:{}", iModelId, changesetId);
+
+		ITwinAPIRequestInfo const requestInfo =
+		{
+			.ShortName = __func__,
+			.Verb = EVerb::Post,
+			.UrlSuffix = std::string("/imodel/rpc/v4/mode/1/context/") + iTwinId
+								+ "/imodel/" + iModelId
+								+ "/changeset/" + GetIModelRpcUrlChangeset(changesetId)
+								+ "/PresentationRpcInterface-4.1.0-getPagedNodes",
+			.AcceptHeader = "application/vnd.bentley.itwin-platform.v1+json",
+
+			/*** additional settings for POST ***/
+			.ContentType = "text/plain",
+			.ContentString = "[{\"key\":\"" + key
+								+ "\",\"iTwinId\":\"" + iTwinId
+								+ "\",\"iModelId\":\"" + iModelId
+								+ "\",\"changeset\":{\"id\":\"" + changesetId
+								+ "\"}},{" + (!parentKey.empty() ? "\"parentKey\":" + parentKey + "," : "")
+								+ "\"clientId\":\"" + ITwinAuthManager::GetAppID(EITwinEnvironment::Prod)
+								+ "\",\"locale\":\"en\",\"unitSystem\":\"metric\",\"rulesetOrId\":{\"id\":\"tree-widget-react/CategoriesTree\",\"rules\":[{\"ruleType\":"
+								+ "\"RootNodes\",\"subConditions\":[{\"condition\":\"GetVariableStringValue(\\\"ViewType\\\") = \\\"3d\\\"\",\"specifications\":[{\"specType\":"
+								+ "\"InstanceNodesOfSpecificClasses\",\"classes\":[{\"schemaName\":\"BisCore\",\"classNames\":[\"SpatialCategory\"],\"arePolymorphic\":true}],"
+								+ "\"relatedInstances\":[{\"relationshipPath\":{\"relationship\":{\"schemaName\":\"BisCore\",\"className\":\"ModelContainsElements\"},"
+								+ "\"direction\":\"Backward\"},\"isRequired\":true,\"alias\":\"model\"}],\"instanceFilter\":\"NOT this.IsPrivate AND (NOT model.IsPrivate OR "
+								+ "model.IsOfClass(\\\"DictionaryModel\\\", \\\"BisCore\\\")) AND this.HasRelatedInstance(\\\"BisCore:GeometricElement3dIsInCategory\\\", "
+								+ "\\\"Backward\\\", \\\"BisCore:Element\\\")\",\"groupByClass\":false,\"groupByLabel\":false}]},{\"condition\":\"GetVariableStringValue"
+								+ "(\\\"ViewType\\\") = \\\"2d\\\"\",\"specifications\":[{\"specType\":\"InstanceNodesOfSpecificClasses\",\"classes\":[{\"schemaName\":\"BisCore\","
+								+ "\"classNames\":[\"DrawingCategory\"],\"arePolymorphic\":true}],\"relatedInstances\":[{\"relationshipPath\":{\"relationship\":{\"schemaName\":"
+								+ "\"BisCore\",\"className\":\"ModelContainsElements\"},\"direction\":\"Backward\"},\"isRequired\":true,\"alias\":\"model\"}],\"instanceFilter\":"
+								+ "\"NOT this.IsPrivate AND (NOT model.IsPrivate OR model.IsOfClass(\\\"DictionaryModel\\\", \\\"BisCore\\\")) AND this.HasRelatedInstance"
+								+ "(\\\"BisCore:GeometricElement2dIsInCategory\\\", \\\"Backward\\\", \\\"BisCore:Element\\\")\",\"groupByClass\":false,\"groupByLabel\":false}]}]},"
+								+ "{\"ruleType\":\"ChildNodes\",\"condition\":\"ParentNode.IsOfClass(\\\"Category\\\", \\\"BisCore\\\") ANDALSO ParentNode.ECInstance."
+								+ "GetRelatedInstancesCount(\\\"BisCore:CategoryOwnsSubCategories\\\", \\\"Forward\\\", \\\"BisCore:SubCategory\\\") > 1\",\"specifications\":"
+								+ "[{\"specType\":\"RelatedInstanceNodes\",\"relationshipPaths\":[{\"relationship\":{\"schemaName\":\"BisCore\",\"className\":"
+								+ "\"CategoryOwnsSubCategories\"},\"direction\":\"Forward\"}],\"instanceFilter\":\"NOT this.IsPrivate\",\"groupByClass\":false,\"groupByLabel\":"
+								+ "false}]},{\"ruleType\":\"LabelOverride\",\"condition\":\"this.IsOfClass(\\\"Category\\\", \\\"BisCore\\\")\",\"description\":"
+								+ "\"this.Description\"}],\"default\":{\"$schema\":\"../../../../node_modules/@itwin/presentation-common/Ruleset.schema.json\",\"id\":"
+								+ "\"tree-widget-react/CategoriesTree\",\"rules\":[{\"ruleType\":\"RootNodes\",\"subConditions\":[{\"condition\":\"GetVariableStringValue"
+								+ "(\\\"ViewType\\\") = \\\"3d\\\"\",\"specifications\":[{\"specType\":\"InstanceNodesOfSpecificClasses\",\"classes\":[{\"schemaName\":\"BisCore\","
+								+ "\"classNames\":[\"SpatialCategory\"],\"arePolymorphic\":true}],\"relatedInstances\":[{\"relationshipPath\":{\"relationship\":{\"schemaName\":"
+								+ "\"BisCore\",\"className\":\"ModelContainsElements\"},\"direction\":\"Backward\"},\"isRequired\":true,\"alias\":\"model\"}],\"instanceFilter\":"
+								+ "\"NOT this.IsPrivate AND (NOT model.IsPrivate OR model.IsOfClass(\\\"DictionaryModel\\\", \\\"BisCore\\\")) AND this.HasRelatedInstance"
+								+ "(\\\"BisCore:GeometricElement3dIsInCategory\\\", \\\"Backward\\\", \\\"BisCore:Element\\\")\",\"groupByClass\":false,\"groupByLabel\":false}]},"
+								+ "{\"condition\":\"GetVariableStringValue(\\\"ViewType\\\") = \\\"2d\\\"\",\"specifications\":[{\"specType\":\"InstanceNodesOfSpecificClasses\","
+								+ "\"classes\":[{\"schemaName\":\"BisCore\",\"classNames\":[\"DrawingCategory\"],\"arePolymorphic\":true}],\"relatedInstances\":"
+								+ "[{\"relationshipPath\":{\"relationship\":{\"schemaName\":\"BisCore\",\"className\":\"ModelContainsElements\"},\"direction\":\"Backward\"},"
+								+ "\"isRequired\":true,\"alias\":\"model\"}],\"instanceFilter\":\"NOT this.IsPrivate AND (NOT model.IsPrivate OR model.IsOfClass"
+								+ "(\\\"DictionaryModel\\\", \\\"BisCore\\\")) AND this.HasRelatedInstance(\\\"BisCore:GeometricElement2dIsInCategory\\\", \\\"Backward\\\", "
+								+ "\\\"BisCore:Element\\\")\",\"groupByClass\":false,\"groupByLabel\":false}]}]},{\"ruleType\":\"ChildNodes\",\"condition\":\"ParentNode.IsOfClass"
+								+ "(\\\"Category\\\", \\\"BisCore\\\") ANDALSO ParentNode.ECInstance.GetRelatedInstancesCount(\\\"BisCore:CategoryOwnsSubCategories\\\", "
+								+ "\\\"Forward\\\", \\\"BisCore:SubCategory\\\") > 1\",\"specifications\":[{\"specType\":\"RelatedInstanceNodes\",\"relationshipPaths\":"
+								+ "[{\"relationship\":{\"schemaName\":\"BisCore\",\"className\":\"CategoryOwnsSubCategories\"},\"direction\":\"Forward\"}],\"instanceFilter\":"
+								+ "\"NOT this.IsPrivate\",\"groupByClass\":false,\"groupByLabel\":false}]},{\"ruleType\":\"LabelOverride\",\"condition\":\"this.IsOfClass"
+								+ "(\\\"Category\\\", \\\"BisCore\\\")\",\"description\":\"this.Description\"}]}},\"paging\":{\"start\":" + std::to_string(offset) + ",\"size\":" 
+								+ std::to_string(count) + "},\"rulesetVariables\":[{\"id\":\"ViewType\",\"type\":\"string\",\"value\":\"3d\"}]}]",
+			.badlyFormed = iTwinId.empty() || iModelId.empty()
+		};
+
+		impl_->ProcessHttpRequest(
+			requestInfo,
+			[this](Http::Response const& response, RequestID const&, std::string& strError) -> bool
+			{
+				IModelPagedNodesRes iModelProps;
+				bool const bResult = Http::IsSuccessful(response)
+					&& Json::FromString(iModelProps, response.second, strError);
+				if (impl_->observer_)
+				{
+					impl_->observer_->OnIModelCategoryNodesRetrieved(bResult, iModelProps);
+				}
+				return bResult;
+			});
+	}
+
 	void ITwinWebServices::GetIModelProperties(std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId)
 	{
 		ITwinAPIRequestInfo const requestInfo =
@@ -2100,11 +2434,11 @@ namespace AdvViz::SDK
 			.UrlSuffix		= std::string("/imodel/rpc/v4/mode/1/context/") + iTwinId
 								+ "/imodel/" + iModelId
 								+ "/changeset/" + GetIModelRpcUrlChangeset(changesetId)
-								+ "/IModelReadRpcInterface-3.6.0-queryRows",
+								+ "/IModelReadRpcInterface-3.7.0-queryRows",
 			.AcceptHeader	= "application/vnd.bentley.itwin-platform.v1+json",
 
 			/*** additional settings for POST ***/
-			.ContentType	= "text/plain",
+			.ContentType	= "text/plain; charset=utf-8",
 			.ContentString	= "[{\"iTwinId\":\"" + iTwinId
 								+ "\",\"iModelId\":\"" + iModelId
 								+ "\",\"changeset\":{\"id\":\"" + changesetId
@@ -2279,7 +2613,7 @@ namespace AdvViz::SDK
 
 			// implement the 6 possible cases of the variant
 			// bool, int, double, std::string, Object, Array
-			// some are not used at all, since we the response only deals with strings primitives
+			// some are not used at all, since the response only deals with string primitives
 
 			void operator()(const bool& boolValue) const
 			{

@@ -8,7 +8,7 @@
 
 #include "ITwinSceneMappingBuilder.h"
 
-#include <IncludeITwin3DTileset.h>
+#include <IncludeCesium3DTileset.h>
 #include <ITwinGeolocation.h>
 #include <ITwinIModel.h>
 #include <ITwinIModelInternals.h>
@@ -80,6 +80,16 @@ namespace
 	template <typename E>
 	constexpr typename std::underlying_type<E>::type to_underlying(E e) {
 		return static_cast<typename std::underlying_type<E>::type>(e);
+	}
+
+	template<typename IDType, typename FeatureContainerFunc>
+	void AddFeatureIfValid(IDType id, FeatureContainerFunc&& getContainer, const ITwinFeatureID& featID)
+	{
+		auto& features = getContainer(id).Features;
+		if (std::find(features.begin(), features.end(), featID) == features.end())
+		{
+			features.push_back(featID);
+		}
 	}
 }
 
@@ -281,11 +291,33 @@ void FITwinSceneMappingBuilder::OnMeshConstructed(Cesium3DTilesSelection::Tile& 
 					pMaterialProp, FeatureID) : ITwin::NOT_MATERIAL;
 				if (MaterialID != ITwin::NOT_MATERIAL)
 				{
-					FITwinMaterialFeaturesInTile& MatFeaturesInTile = SceneTile.MaterialFeaturesSLOW(MaterialID);
-					if (std::find(MatFeaturesInTile.Features.begin(), MatFeaturesInTile.Features.end(), ITwinFeatID)
-						== MatFeaturesInTile.Features.end())
+					AddFeatureIfValid(MaterialID, [&SceneTile](const ITwinMaterialID& Id) -> FITwinMaterialFeaturesInTile& {
+						return SceneTile.MaterialFeaturesSLOW(Id);
+						}, ITwinFeatID);
+				}
+				// Fetch the Model ID related to this feature.
+				ITwinElementID const modelID = FeatureIDToITwinID<ITwinElementID>(pProperties[to_underlying(EPropertyType::Model)], FeatureID);
+				if (modelID != ITwin::NOT_ELEMENT)
+				{
+					AddFeatureIfValid(modelID, [&SceneTile](const ITwinElementID& Id) -> FITwinModelFeaturesInTile& {
+						return SceneTile.ModelFeaturesSLOW(Id);
+						}, ITwinFeatID);
+				}
+				// Fetch the Category ID and CategoryPerModel ID related to this feature.
+				ITwinElementID categoryID = FeatureIDToITwinID<ITwinElementID>(pProperties[to_underlying(EPropertyType::Category)], FeatureID);
+				categoryID--;
+				if (categoryID != ITwin::NOT_ELEMENT)
+				{
+					AddFeatureIfValid(categoryID, [&SceneTile](const ITwinElementID& Id) -> FITwinCategoryFeaturesInTile& {
+						return SceneTile.CategoryFeaturesSLOW(Id);
+						}, ITwinFeatID);
+					if (modelID != ITwin::NOT_ELEMENT)
 					{
-						MatFeaturesInTile.Features.push_back(ITwinFeatID);
+						auto& features = SceneTile.CategoryPerModelFeaturesSLOW(categoryID, modelID).Features;
+						if (std::find(features.begin(), features.end(), ITwinFeatID) == features.end())
+						{
+							features.push_back(ITwinFeatID);
+						}
 					}
 				}
 			}
@@ -298,6 +330,7 @@ void FITwinSceneMappingBuilder::OnMeshConstructed(Cesium3DTilesSelection::Tile& 
 			if (LastElem != pElemStruct->ElementID)
 			{
 				ITwinScene::ElemIdx ElemRank;
+				// Safe to use ElementForSLOW here: we are in game thread
 				pElemStruct = &SceneMapping.ElementForSLOW(LastElem, &ElemRank);
 				MeshElemSceneRanks.insert(ElemRank);
 				if (pElemInTile)
@@ -351,6 +384,7 @@ void FITwinSceneMappingBuilder::SelectSchedulesBaseMaterial(
 	if (ElementID == ITwin::NOT_ELEMENT)
 		return;
 	auto& SceneMapping = GetInternals(IModel).SceneMapping;
+	// Safe to use ElementForSLOW here: we are in game thread
 	auto const& Elem = SceneMapping.ElementForSLOW(ElementID);
 	if (Elem.Requirements.bNeedTranslucentMat)
 		pBaseMaterial = IModel.Synchro4DSchedules->BaseMaterialTranslucent;
@@ -384,14 +418,28 @@ UMaterialInstanceDynamic* FITwinSceneMappingBuilder::CreateMaterial_GameThread(
 	UMaterialInterface* CustomBaseMaterial = nullptr;
 	// TODO_GCO: 4D animation can force to use BaseMaterialTranslucent: I guess BaseMaterialGlass is
 	// compatible with translucency, but this is just luck. We may have to formalize the base material
-	// process better in the future if we need to accomodate more varied use cases.
-	if (iTwinMaterialID)
+	// process better in the future if we need to accommodate more varied use cases.
+	if (iTwinMaterialID && IsValid(Sched))
 	{
-		// Test whether we should use the Glass base material
-		if (IModel.GetMaterialKind(*iTwinMaterialID) == AdvViz::SDK::EMaterialKind::Glass
-			&& IsValid(Sched) && IsValid(Sched->BaseMaterialGlass))
+		// Test whether we should use the Glass base material.
+		// Also, when the user turns an opaque material to half-transparent from the Material Editor, we will
+		// use the 2-sided version of the translucent material, to make sure some parts of the mesh will not
+		// turn instantly invisible (even with 99% opacity ;-))
+		// See https://dev.azure.com/bentleycs/e-onsoftware/_workitems/edit/1539818 for the full history...
+		AdvViz::SDK::EMaterialKind matKind = AdvViz::SDK::EMaterialKind::PBR;
+		bool bCustomDefinitionRequiresTranslucency = false;
+		if (IModel.GetMaterialCustomRequirements(*iTwinMaterialID, matKind, bCustomDefinitionRequiresTranslucency))
 		{
-			CustomBaseMaterial = Sched->BaseMaterialGlass;
+			if (matKind == AdvViz::SDK::EMaterialKind::Glass)
+			{
+				if (IsValid(Sched->BaseMaterialGlass))
+					CustomBaseMaterial = Sched->BaseMaterialGlass;
+			}
+			else if (bCustomDefinitionRequiresTranslucency)
+			{
+				if (IsValid(Sched->BaseMaterialTranslucent_TwoSided))
+					CustomBaseMaterial = Sched->BaseMaterialTranslucent_TwoSided;
+			}
 		}
 		if (CustomBaseMaterial)
 		{

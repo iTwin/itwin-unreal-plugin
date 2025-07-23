@@ -107,6 +107,23 @@ namespace
 }
 
 /*static*/
+bool FITwinMaterialLibrary::MaterialExistsInDir(FString const& DestinationFolder, FString& OutExistingFilePath)
+{
+	std::error_code ec;
+	std::filesystem::path const OutputFolder = TCHAR_TO_UTF8(*DestinationFolder);
+	std::filesystem::path const jsonMaterialPath = OutputFolder / MATERIAL_JSON_BASENAME;
+	if (std::filesystem::exists(jsonMaterialPath, ec))
+	{
+		OutExistingFilePath = UTF8_TO_TCHAR(jsonMaterialPath.generic_string().c_str());
+		return true;
+	}
+	else
+	{
+		return false;
+	}
+}
+
+/*static*/
 FITwinMaterialLibrary::ExportResult FITwinMaterialLibrary::ExportMaterialToDisk(
 	AITwinIModel const& IModel, uint64_t MaterialId, FString const& MaterialName,
 	FString const& DestinationFolder, bool bPromptBeforeOverwrite /*= true*/)
@@ -277,11 +294,11 @@ FITwinMaterialLibrary::ExportResult FITwinMaterialLibrary::ExportMaterialToDisk(
 /*static*/
 bool FITwinMaterialLibrary::LoadMaterialFromAssetPath(FString const& AssetPath, ITwinMaterial& OutMaterial,
 	TextureKeySet& OutTexKeys, TextureUsageMap& OutTextureUsageMap,
-	AdvViz::SDK::ETextureSource& OutTexSource)
+	AdvViz::SDK::ETextureSource& OutTexSource,
+	MaterialPersistencePtr const& MatIOMngr)
 {
 	using namespace AdvViz::SDK;
 
-	auto const& MatIOMngr = AITwinIModel::GetMaterialPersistenceManager();
 	if (!ensure(MatIOMngr))
 	{
 		return false;
@@ -411,6 +428,87 @@ int32 FITwinMaterialLibrary::ParseJsonMaterialsInDirectory(FString const& Direct
 		IFileManager::Get().IterateDirectory(*DirectoryPath, DirIter);
 	}
 	return OutAssetDataArray.Num();
+}
+
+/*static*/
+AdvViz::expected<void, std::string> FITwinMaterialLibrary::RemoveCustomMaterial(const FString& AssetPath)
+{
+	// Recover the material's directory.
+	FStringView DirectoryPathView, BaseNameNoExt, Ext;
+	FPathViews::Split(AssetPath, DirectoryPathView, BaseNameNoExt, Ext);;
+
+	// Check it's a custom material (the official Bentley library is read-only, loaded from pak file).
+	FStringView RelativeDirView;
+	FString RootCustomLibraryPath = GetCustomLibraryPath();
+	if (!FPathViews::TryMakeChildPathRelativeTo(DirectoryPathView,
+												RootCustomLibraryPath,
+												RelativeDirView))
+	{
+		return AdvViz::make_unexpected(
+			fmt::format("'{}' does not belong to custom material library directory ({})",
+				TCHAR_TO_UTF8(*AssetPath), TCHAR_TO_UTF8(*RootCustomLibraryPath)));
+	}
+	const FString DirectoryPath(DirectoryPathView);
+	if (!FPaths::DirectoryExists(DirectoryPath))
+	{
+		return AdvViz::make_unexpected(
+			fmt::format("Directory '{}' does not exist", TCHAR_TO_UTF8(*DirectoryPath)));
+	}
+	if (!IFileManager::Get().DeleteDirectory(*DirectoryPath, /*requireExists*/false, /*recurse*/true))
+	{
+		return AdvViz::make_unexpected(
+			fmt::format("[IFileManager] Failed to delete Directory '{}'", TCHAR_TO_UTF8(*DirectoryPath)));
+	}
+	return {};
+}
+
+/*static*/
+AdvViz::expected<void, std::string> FITwinMaterialLibrary::RenameCustomMaterial(const FString& OldAssetPath,
+	const FString& NewDisplayName, const FString& NewDirectory, bool bOverwrite)
+{
+	auto const& MatIOMngr = AITwinIModel::GetMaterialPersistenceManager();
+	if (!MatIOMngr)
+	{
+		return AdvViz::make_unexpected("Cannot rename material - no persistence manager");
+	}
+	const bool bNewDirExists = FPaths::DirectoryExists(NewDirectory);
+	if (bOverwrite && ensure(bNewDirExists))
+	{
+		if (!IFileManager::Get().DeleteDirectory(*NewDirectory, /*requireExists*/false, /*recurse*/true))
+		{
+			return AdvViz::make_unexpected(
+				fmt::format("Could not delete directory '{}'", TCHAR_TO_UTF8(*NewDirectory)));
+		}
+	}
+	std::filesystem::path NewFSDir = TCHAR_TO_UTF8(*NewDirectory);
+	std::filesystem::path OldFSAssetPath = TCHAR_TO_UTF8(*OldAssetPath);
+	if (!OldFSAssetPath.has_parent_path())
+	{
+		return AdvViz::make_unexpected(
+			fmt::format("Could not recover old directory from {}", OldFSAssetPath.generic_string()));
+	}
+	const std::filesystem::path OldFSDir = OldFSAssetPath.parent_path();
+	if (NewFSDir != OldFSDir)
+	{
+		std::error_code ec;
+		std::filesystem::rename(OldFSDir, NewFSDir, ec);
+		if (ec)
+		{
+			return AdvViz::make_unexpected(
+				fmt::format("Could not rename directory {} to {}: {}",
+					OldFSDir.generic_string(), NewFSDir.generic_string(), ec.message()));
+		}
+	}
+	// Modify the material name in the material.json file
+	std::string renameInJsonError;
+	if (!MatIOMngr->RenameMaterialInJsonFile(NewFSDir / MATERIAL_JSON_BASENAME,
+											 TCHAR_TO_UTF8(*NewDisplayName),
+											 renameInJsonError))
+	{
+		return AdvViz::make_unexpected(
+			fmt::format("Could not rename material in json file: {}", renameInJsonError));
+	}
+	return {};
 }
 
 #if WITH_EDITOR

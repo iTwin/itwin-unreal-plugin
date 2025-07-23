@@ -1,92 +1,3 @@
-# Wrapper around "file (READ_SYMLINK)" that handles NT path prefixes.
-function (readSymlink link result)
-	file(READ_SYMLINK "${link}" result_local)
-	# Convert "\??\C:\foo\bar" into "C:\foo\bar".
-	string (REPLACE "\\??\\" "" result_local "${result_local}")
-	set (${result} ${result_local} PARENT_SCOPE)
-endfunction ()
-
-# Wrapper around "file (CREATE_LINK)" that does nothing if the link already exists
-# and points to the corect target.
-function (createSymlink target link addedFilesRef)
-	message( "createSymlink ${target} ${link}")
-	set (addedFiles_local ${${addedFilesRef}})
-	list (APPEND addedFiles_local "${link}")
-	set (${addedFilesRef} ${addedFiles_local} PARENT_SCOPE)
-	if (IS_SYMLINK "${link}")
-		readSymlink ("${link}" oldTarget)
-		if ("${oldTarget}" PATH_EQUAL "${target}")
-			set (isUpToDate TRUE)
-			# For a file, we also need to check that the target was not modified after the link is created.
-			# If the target has been modified after the link was created, we must re-create the link
-			# so that tools that check the modification date (eg. UBT) will correctly see that the file
-			# (ie. the link) has changed and thus properly rebuild what depends on it.
-			# CMake provided at least 2 methods to get or compare modification date:
-			# 1: if(<file1> IS_NEWER_THAN <file2>)
-			# 2: file(TIMESTAMP ...)
-			# Problem: we want to make sure that symlinks are not "resolved" when querying the modification date,
-			# but the doc does not mention if symlinks are resolved or not.
-			# It appears that, with CMake 3.28 on Windows, method #1 does not follow symlinks,
-			# but method #2 does. It may change with other version or platform.
-			# So to ensure reliable behavior, we use a python script.
-			if (EXISTS "${target}" AND NOT IS_DIRECTORY "${target}")
-				execute_process (
-					COMMAND "${Python3_EXECUTABLE}" -c "import os,sys; sys.stdout.write(str(os.lstat('${link}').st_mtime >= os.lstat('${target}').st_mtime))"
-					OUTPUT_VARIABLE isUpToDate
-					COMMAND_ERROR_IS_FATAL ANY
-				)
-			endif ()
-			if (isUpToDate)
-				return ()
-			endif ()
-		endif ()
-	elseif (EXISTS "${link}")
-		message (SEND_ERROR "Cannot create symlink \"${link}\", because there is already a real file/directory at this path. Overwriting it could result in data loss.")
-	endif ()
-	get_filename_component (linkParent "${link}" DIRECTORY)
-	# Fixup case when the parent folder of the link already exists as a symlink itself.
-	# This may happen eg. if the previous version of the script would symlink the parent folder directly,
-	# For example for unreal "Config" folder which used to be a symlink,
-	# but is now a regular folder (into which we may add symlinks).
-	# In this case, we need to remove the parent before creating the directory.
-	if (IS_SYMLINK "${linkParent}")
-		file (REMOVE "${linkParent}")
-	endif ()
-	file (MAKE_DIRECTORY "${linkParent}")
-	file (CREATE_LINK "${target}" "${link}" SYMBOLIC)
-endfunction ()
-
-# Wrapper around "file (WRITE)" that does nothing if the file is already up to date.
-function (writeFile filePath content)
-	if (EXISTS "${filePath}")
-		file (READ "${filePath}" oldContent)
-		if ("${oldContent}" STREQUAL "${content}")
-			return ()
-		endif ()
-	endif ()
-	file (WRITE "${filePath}" "${content}")
-endfunction ()
-
-# Creates symlinks for every item contained in target dir.
-# This is non-recursive.
-# So if we have this structure:
-# <target>
-# |- foo
-# |  |- bar
-# |- qux
-# Then the function will create this:
-# <link>
-# |- foo -> points to <target>/foo
-# |- qux -> points to <target>/qux
-function (createSymlinksForDirectoryContent target link addedFilesRef)
-	set (addedFiles_local ${${addedFilesRef}})
-	file (GLOB items RELATIVE "${target}" "${target}/*")
-	foreach (item ${items})
-		createSymlink ("${target}/${item}" "${link}/${item}" addedFiles_local)
-	endforeach ()
-	set (${addedFilesRef} ${addedFiles_local} PARENT_SCOPE)
-endfunction ()
-
 # Returns the name of the vcpkg package coresponding to the given dependency,
 # or the empty string if this is not a vcpkg package.
 # Recognizes regular package name (eg. "catch2") as well as CMake targets
@@ -104,18 +15,6 @@ function (getVcpkgPackageName dependency result)
 			set (result_local ${package})
 		endif ()
 	endif()
-	set (${result} ${result_local} PARENT_SCOPE)
-endfunction ()
-
-# Same as built-in "file (RELATIVE_PATH)" but verifies the relative path is actually
-# "inside" the given directory (eg. it does not start with "..").
-# Returns the empty string if the relative path is not inside the directory.
-function (getRelativePathChecked directory item result)
-	set (result_local "")
-	file (RELATIVE_PATH relPath ${directory} ${item})
-	if (NOT "${relPath}" MATCHES "^\\.\\..*")
-		set (result_local ${relPath})
-	endif ()
 	set (${result} ${result_local} PARENT_SCOPE)
 endfunction ()
 
@@ -138,13 +37,13 @@ function (be_create_plugin_packager_target pluginName projectDir)
 	set ( pluginPackageDstDir "${CMAKE_BINARY_DIR}/Packaging_Output/${pluginName}" )
 	if (APPLE)
 		set ( RunUATBasename "RunUAT.sh" )
-		set ( TargetPlatforms "Mac" ) ## TODO_JDE
+		set ( TargetPlatform "Mac" ) ## TODO_JDE
 	elseif (CMAKE_HOST_UNIX)
 		set ( RunUATBasename "RunUAT.sh" )
-		set ( TargetPlatforms "Linux" ) ## TODO_JDE
+		set ( TargetPlatform "Linux" ) ## TODO_JDE
 	else ()
 		set ( RunUATBasename "RunUAT.bat" )
-		set ( TargetPlatforms "Win64" )
+		set ( TargetPlatform "Win64" )
 	endif ()
 	add_custom_target ( ${packagerTargetName} ALL )
 	# First duplicate the plugin folder completely: this is done to eliminate any
@@ -156,6 +55,7 @@ function (be_create_plugin_packager_target pluginName projectDir)
 	if (APPLE)
 		if(CMAKE_OSX_ARCHITECTURES)
 			add_custom_command ( TARGET ${packagerTargetName}
+				POST_BUILD
 				WORKING_DIRECTORY "${BE_UNREAL_ENGINE_DIR}/Build/BatchFiles"
 				COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/Packaging_Input"
 				COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/Packaging_Output"
@@ -164,10 +64,11 @@ function (be_create_plugin_packager_target pluginName projectDir)
 				COMMAND cp -RL "${projectAbsDir}/Plugins/${pluginName}" "${pluginPackageSrcDir}"
 				COMMAND ${CMAKE_COMMAND} -E rm -rf "${pluginPackageSrcDir}/Binaries"
 				COMMAND cp -RL "${CMAKE_BINARY_DIR}/UnrealProjects/ExternBnaries_${projectName}_${pluginName}" "${pluginPackageSrcDir}/Binaries"
-				COMMAND ./${RunUATBasename} BuildPlugin -Plugin=${pluginPackageSrcDir}/${pluginName}.uplugin -Package="${pluginPackageDstDir}" -CreateSubFolder -TargetPlatforms=${TargetPlatforms} -Architecture_Mac=${CMAKE_OSX_ARCHITECTURES}
+				COMMAND ./${RunUATBasename} BuildPlugin -Plugin=${pluginPackageSrcDir}/${pluginName}.uplugin -Package="${pluginPackageDstDir}" -CreateSubFolder -TargetPlatforms=${TargetPlatform} -Architecture_Mac=${CMAKE_OSX_ARCHITECTURES}
 			)
 		else()
 			add_custom_command ( TARGET ${packagerTargetName}
+				POST_BUILD
 				WORKING_DIRECTORY "${BE_UNREAL_ENGINE_DIR}/Build/BatchFiles"
 				COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/Packaging_Input"
 				COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/Packaging_Output"
@@ -176,11 +77,12 @@ function (be_create_plugin_packager_target pluginName projectDir)
 				COMMAND cp -RL "${projectAbsDir}/Plugins/${pluginName}" "${pluginPackageSrcDir}"
 				COMMAND ${CMAKE_COMMAND} -E rm -rf "${pluginPackageSrcDir}/Binaries"
 				COMMAND cp -RL "${CMAKE_BINARY_DIR}/UnrealProjects/ExternBnaries_${projectName}_${pluginName}" "${pluginPackageSrcDir}/Binaries"
-				COMMAND ./${RunUATBasename} BuildPlugin -Plugin=${pluginPackageSrcDir}/${pluginName}.uplugin -Package="${pluginPackageDstDir}" -CreateSubFolder -TargetPlatforms=${TargetPlatforms}
+				COMMAND ./${RunUATBasename} BuildPlugin -Plugin=${pluginPackageSrcDir}/${pluginName}.uplugin -Package="${pluginPackageDstDir}" -CreateSubFolder -TargetPlatforms=${TargetPlatform}
 			)
 		endif()
 	else()
 		add_custom_command ( TARGET ${packagerTargetName}
+			POST_BUILD
 			WORKING_DIRECTORY "${BE_UNREAL_ENGINE_DIR}/Build/BatchFiles"
 			COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/Packaging_Input"
 			COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/Packaging_Output"
@@ -189,7 +91,7 @@ function (be_create_plugin_packager_target pluginName projectDir)
 			COMMAND ${CMAKE_COMMAND} -E copy_directory "${projectAbsDir}/Plugins/${pluginName}" "${pluginPackageSrcDir}"
 			COMMAND ${CMAKE_COMMAND} -E rm -rf "${pluginPackageSrcDir}/Binaries"
 			COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/UnrealProjects/ExternBnaries_${projectName}_${pluginName}" "${pluginPackageSrcDir}/Binaries"
-			COMMAND ./${RunUATBasename} BuildPlugin -Plugin=${pluginPackageSrcDir}/${pluginName}.uplugin -Package="${pluginPackageDstDir}" -CreateSubFolder -TargetPlatforms=${TargetPlatforms}
+			COMMAND ./${RunUATBasename} BuildPlugin -Plugin=${pluginPackageSrcDir}/${pluginName}.uplugin -Package="${pluginPackageDstDir}" -CreateSubFolder -TargetPlatforms=${TargetPlatform}
 		)
 	endif()
 	set_target_properties (${packagerTargetName} PROPERTIES FOLDER "UnrealProjects/Packaging")
@@ -242,6 +144,13 @@ function (be_add_unreal_project projectDir)
 			# Create a folder that will contain backup copies of the extern binaries.
 			# See comment in be_create_plugin_packager_target().
 			file (MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/UnrealProjects/ExternBnaries_${uniqueName}")
+		endif ()
+		if (APPLE)
+			set ( TargetPlatform "Mac" )
+		elseif (CMAKE_HOST_UNIX)
+			set ( TargetPlatform "Linux" )
+		else ()
+			set ( TargetPlatform "Win64" )
 		endif ()
 		# For each dependency, we have to create, inside the Unreal app/plugin folder,
 		# symlinks to the header and lib files of the dependency.
@@ -463,16 +372,9 @@ function (be_add_unreal_project projectDir)
 					string (APPEND setupExternFilesCommands "CreateSymlink('LinkerFile:${dependency}', '${projectAbsDir}${srcDirRel}/Source/ThirdParty/Lib/Config:/LinkerFileName:${dependency}')\n")
 					if (depType STREQUAL SHARED_LIBRARY)
 						list (APPEND setupExternFilesDefines "File:${dependency}=$<TARGET_FILE:${dependency}>")
-						if (WIN32)
-							set (platformName "Win64")
-						elseif (APPLE)
-							set (platformName "Mac")
-						else ()
-							set (platformName "Linux")
-						endif ()
-						string (APPEND setupExternFilesCommands "CreateSymlink('File:${dependency}', '${projectAbsDir}${srcDirRel}/Binaries/${platformName}/FileName:${dependency}')\n")
+						string (APPEND setupExternFilesCommands "CreateSymlink('File:${dependency}', '${projectAbsDir}${srcDirRel}/Binaries/${TargetPlatform}/FileName:${dependency}')\n")
 						# Also make a backup copy that will be used in be_create_plugin_packager_target(), see comment in this function.
-						string (APPEND setupExternFilesCommands "CreateSymlink('File:${dependency}', '${CMAKE_BINARY_DIR}/UnrealProjects/ExternBnaries_${uniqueName}/${platformName}/FileName:${dependency}')\n")
+						string (APPEND setupExternFilesCommands "CreateSymlink('File:${dependency}', '${CMAKE_BINARY_DIR}/UnrealProjects/ExternBnaries_${uniqueName}/${TargetPlatform}/FileName:${dependency}')\n")
 					endif ()
 				endif ()
 				list (APPEND setupExternFilesDependencies ${dependency})
@@ -534,17 +436,36 @@ function (be_add_unreal_project projectDir)
 
 			add_custom_target (SetupExternFiles_${uniqueName}
 				COMMAND ${CMAKE_COMMAND} -E make_directory "${projectAbsDir}${srcDirRel}/Source/ThirdParty/Lib/$<CONFIG>"
-				COMMAND ${CMAKE_COMMAND} -E make_directory "${projectAbsDir}${srcDirRel}/Binaries/${TargetPlatforms}"
-					COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/Public/SetupUnrealExternFiles.py" '${JsonContent}'
+				COMMAND ${CMAKE_COMMAND} -E make_directory "${projectAbsDir}${srcDirRel}/Binaries/${TargetPlatform}"
+				COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/Public/SetupUnrealExternFiles.py" '${JsonContent}'
 				VERBATIM
 			)
-
 			set_target_properties (SetupExternFiles_${uniqueName} PROPERTIES FOLDER "UnrealProjects/Detail")
 			if (setupExternFilesDependencies)
 				add_dependencies (SetupExternFiles_${uniqueName} ${setupExternFilesDependencies})
 			endif ()
 			list (APPEND projectDependencies_local SetupExternFiles_${uniqueName})
 		endif ()
+		# TODO: extract this part too from be_add_unreal_project so that it remains as generic as possible.
+		if ("${uniqueName}" STREQUAL Carrot)
+			# Note 1: See Carrot.Build.cs for the addition of ffmpeg exe and license to the RuntimeDependencies
+			# Note 2: Using a symlink got UBT to fail copying the dep (on windows) because it compares the link's size
+			# (zero byte) and date when making a copy, but the actual file is copied (not the link).
+			set(_targetDir "${projectAbsDir}${srcDirRel}/Binaries/${TargetPlatform}")
+			set(_ffmpegExe "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/tools/ffmpeg/ffmpeg${CMAKE_EXECUTABLE_SUFFIX}")
+			set(_ffmpegLic "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/ffmpeg/copyright")
+			add_custom_target (SetupExternFiles_${uniqueName}_ffmpeg
+				COMMAND echo 				make_directory \"${_targetDir}\"
+				COMMAND ${CMAKE_COMMAND} -E make_directory  "${_targetDir}"
+				COMMAND echo 				copy -t \"${_targetDir}\" \"${_ffmpegExe}\"
+				COMMAND ${CMAKE_COMMAND} -E copy -t  "${_targetDir}"   "${_ffmpegExe}"
+				COMMAND echo 				copy \"${_ffmpegLic}\" \"${_targetDir}/ffmpeg-copyright.txt\"
+				COMMAND ${CMAKE_COMMAND} -E copy  "${_ffmpegLic}"   "${_targetDir}/ffmpeg-copyright.txt"
+				VERBATIM
+			)
+			set_target_properties (SetupExternFiles_${uniqueName}_ffmpeg PROPERTIES FOLDER "UnrealProjects/Detail")
+			list (APPEND projectDependencies_local SetupExternFiles_${uniqueName}_ffmpeg)
+		endif()
 		# Make sure CMake is re-run whenever source files are added/removed in the app/plugin dir.
 		# This ensures the VS Solution Explorer will be updated.
 		# We want to re-run CMake whenever the content of the "Source" dir changes,
@@ -727,9 +648,17 @@ function (be_add_unreal_project projectDir)
 		set_property (TARGET ${projectName}_Game PROPERTY VS_DEBUGGER_COMMAND "${projectAbsDir}/Binaries/Win64/${projectName}$<$<CONFIG:UnrealDebug>:-Win64-DebugGame>.exe")
 
 		if (NOT FOR_VERACODE)
+			set (packagingOutputDir_Game "${CMAKE_BINARY_DIR}/Packaging_Output/${projectName}/$<$<CONFIG:UnrealDebug>:DebugGame>$<$<CONFIG:Release>:Development>")
 			# Add a target that will build & package the Game version of the app.
 			add_custom_target (${projectName}_Game_Packaged ALL
-				COMMAND "${BE_UNREAL_ENGINE_DIR}/Build/BatchFiles/RunUAT.bat" -ScriptsForProject="${projectAbsDir}/${projectName}.uproject" Turnkey -command=VerifySdk -platform=Win64 -UpdateIfNeeded -project="${projectAbsDir}/${projectName}.uproject" BuildCookRun -nop4 -utf8output -nocompileeditor -skipbuildeditor -cook -project="${projectAbsDir}/${projectName}.uproject" -target=${projectName} -unrealexe="${UnrealLaunchPath}" -platform=Win64 -installed -stage -archive -package -build -pak -iostore -compressed -prereqs -archivedirectory="${CMAKE_BINARY_DIR}/Packaging_Output/${projectName}/$<$<CONFIG:UnrealDebug>:DebugGame>$<$<CONFIG:Release>:Development>" -clientconfig=$<$<CONFIG:UnrealDebug>:DebugGame>$<$<CONFIG:Release>:Development> -nocompile -nocompileuat | "${Python3_EXECUTABLE_NATIVE}" "${CMAKE_SOURCE_DIR}/Public/CMake/FixStdoutForVS.py"
+				# Delete the output folder, as it may contain temporary files generated while debugging the iTwinStudio app
+				# (since the output folder is symlinked inside the iTwinStudio Carrot app folder).
+				# Due to these (potentially large) files, the "studio-cli apps package" command may fail to create the zip file.
+				# Notes:
+				# - UAT command does not delete the output folder.
+				# - Deleting the output folder before running UAT has not effect on build time.
+				COMMAND ${CMAKE_COMMAND} -E rm -rf "${packagingOutputDir_Game}"
+				COMMAND "${BE_UNREAL_ENGINE_DIR}/Build/BatchFiles/RunUAT.bat" -ScriptsForProject="${projectAbsDir}/${projectName}.uproject" Turnkey -command=VerifySdk -platform=Win64 -UpdateIfNeeded -project="${projectAbsDir}/${projectName}.uproject" BuildCookRun -nop4 -utf8output -nocompileeditor -skipbuildeditor -cook -project="${projectAbsDir}/${projectName}.uproject" -target=${projectName} -unrealexe="${UnrealLaunchPath}" -platform=Win64 -installed -stage -archive -package -build -pak -iostore -compressed -prereqs -archivedirectory="${packagingOutputDir_Game}" -clientconfig=$<$<CONFIG:UnrealDebug>:DebugGame>$<$<CONFIG:Release>:Development> -nocompile -nocompileuat | "${Python3_EXECUTABLE_NATIVE}" "${CMAKE_SOURCE_DIR}/Public/CMake/FixStdoutForVS.py"
 			)
 			# Add a target that will build the Shipping version of the app.
 			add_custom_target (${projectName}_Shipping ALL
@@ -740,9 +669,12 @@ function (be_add_unreal_project projectDir)
 			)
 			# Add a target that will build & package the Shipping version of the app.
 			set_property (TARGET ${projectName}_Shipping PROPERTY VS_DEBUGGER_COMMAND "${projectAbsDir}/Binaries/Win64/${projectName}-Win64-Shipping.exe")
+			set (packagingOutputDir_Shipping "${CMAKE_BINARY_DIR}/Packaging_Output/${projectName}/Shipping")
 			add_custom_target (${projectName}_Shipping_Packaged ALL
 				COMMAND "$<$<NOT:$<CONFIG:Release>>:TARGET_NOT_COMPATIBLE_WITH_THIS_CONFIG>"
-				COMMAND "${BE_UNREAL_ENGINE_DIR}/Build/BatchFiles/RunUAT.bat" -ScriptsForProject="${projectAbsDir}/${projectName}.uproject" Turnkey -command=VerifySdk -platform=Win64 -UpdateIfNeeded -project="${projectAbsDir}/${projectName}.uproject" BuildCookRun -nop4 -utf8output -nocompileeditor -skipbuildeditor -cook -project="${projectAbsDir}/${projectName}.uproject" -target=${projectName} -unrealexe="${UnrealLaunchPath}" -platform=Win64 -installed -stage -archive -package -build -pak -iostore -compressed -prereqs -archivedirectory="${CMAKE_BINARY_DIR}/Packaging_Output/${projectName}/Shipping" -clientconfig=Shipping -nocompile -nocompileuat | "${Python3_EXECUTABLE_NATIVE}" "${CMAKE_SOURCE_DIR}/Public/CMake/FixStdoutForVS.py"
+				# Delete the output folder, see comment above for the XXX_Game_Packaged target.
+				COMMAND ${CMAKE_COMMAND} -E rm -rf "${packagingOutputDir_Shipping}"
+				COMMAND "${BE_UNREAL_ENGINE_DIR}/Build/BatchFiles/RunUAT.bat" -ScriptsForProject="${projectAbsDir}/${projectName}.uproject" Turnkey -command=VerifySdk -platform=Win64 -UpdateIfNeeded -project="${projectAbsDir}/${projectName}.uproject" BuildCookRun -nop4 -utf8output -nocompileeditor -skipbuildeditor -cook -project="${projectAbsDir}/${projectName}.uproject" -target=${projectName} -unrealexe="${UnrealLaunchPath}" -platform=Win64 -installed -stage -archive -package -build -pak -iostore -compressed -prereqs -archivedirectory="${packagingOutputDir_Shipping}" -clientconfig=Shipping -nocompile -nocompileuat | "${Python3_EXECUTABLE_NATIVE}" "${CMAKE_SOURCE_DIR}/Public/CMake/FixStdoutForVS.py"
 			)
 		endif()
 	elseif (APPLE)

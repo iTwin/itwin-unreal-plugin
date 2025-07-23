@@ -70,12 +70,12 @@ public:
 
 	using MaterialInfo = std::pair<AdvViz::SDK::ITwinMaterialProperties const*, AdvViz::SDK::ITwinMaterial const*>;
 
-	GltfMaterialHelper::MaterialInfo CreateITwinMaterialSlot(uint64_t matID, WLock const&,
-		bool bOnlyIfCustomDefinitionExists = false);
+	GltfMaterialHelper::MaterialInfo CreateITwinMaterialSlot(uint64_t matID, std::string const& nameInIModel,
+		WLock const&, bool bOnlyIfCustomDefinitionExists = false);
 
 	//! Store the iTwin material properties for the given ID.
-	void SetITwinMaterialProperties(uint64_t matID, AdvViz::SDK::ITwinMaterialProperties const& props);
-	void SetITwinMaterialProperties(uint64_t matID, AdvViz::SDK::ITwinMaterialProperties const& props, WLock const&);
+	void SetITwinMaterialProperties(uint64_t matID, AdvViz::SDK::ITwinMaterialProperties const& props,
+		std::string const& nameInIModel, WLock const&);
 
 	MaterialInfo GetITwinMaterialInfo(uint64_t matID, RWLockBase const&) const;
 
@@ -133,9 +133,12 @@ public:
 	AdvViz::SDK::EMaterialKind GetMaterialKind(uint64_t matID) const;
 	void SetMaterialKind(uint64_t matID, AdvViz::SDK::EMaterialKind newKind, bool& bValueModified);
 
+	//! Returns whether the given material has a custom definition. In such case, outKind and
+	//! bOutRequiresTranslucencya are filled accordingly.
+	bool GetCustomRequirements(uint64_t matID, AdvViz::SDK::EMaterialKind& outKind, bool& bOutRequiresTranslucency) const;
 
-	std::string GetMaterialName(uint64_t matID, RWLockBase const&) const;
-	std::string GetMaterialName(uint64_t matID) const;
+	std::string GetMaterialName(uint64_t matID, RWLockBase const&, bool bAppendLogInfo = false) const;
+	std::string GetMaterialName(uint64_t matID, bool bAppendLogInfo = false) const;
 	bool SetMaterialName(uint64_t matID, std::string const& newName);
 
 
@@ -265,6 +268,7 @@ private:
 		AdvViz::SDK::ITwinMaterialProperties iTwinProps_;
 		AdvViz::SDK::ITwinMaterial iTwinMaterialDefinition_;
 		std::string currentAlphaMode_;
+		std::string nameInIModel_; // used mostly for debugging/logging
 
 		PerMaterialData() = default;
 		PerMaterialData(AdvViz::SDK::ITwinMaterialProperties const& props);

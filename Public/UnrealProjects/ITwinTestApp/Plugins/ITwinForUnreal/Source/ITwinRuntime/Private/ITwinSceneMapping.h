@@ -44,6 +44,7 @@
 	#include <boost/multi_index/hashed_index.hpp>
 	#include <boost/multi_index/member.hpp>
 	#include <boost/multi_index/random_access_index.hpp>
+	#include <boost/multi_index/composite_key.hpp>
 #include <Compil/AfterNonUnrealIncludes.h>
 
 
@@ -182,6 +183,37 @@ struct FITwinMaterialFeaturesInTile
 	void InvalidateSelectingAndHidingTexFlags(FITwinSceneTile& SceneTile);
 };
 
+struct FITwinModelFeaturesInTile
+{
+	/// same comment about constancy as for FITwinElementFeaturesInTile
+	ITwinElementID ModelID;
+	FITwinPropertyTextureFlag SelectingAndHidingTexFlag = {};
+	FSmallVec<ITwinFeatureID, 2> Features;
+
+	void InvalidateSelectingAndHidingTexFlags(FITwinSceneTile& SceneTile);
+};
+
+struct FITwinCategoryFeaturesInTile
+{
+	/// same comment about constancy as for FITwinElementFeaturesInTile
+	ITwinElementID CategoryID;
+	FITwinPropertyTextureFlag SelectingAndHidingTexFlag = {};
+	FSmallVec<ITwinFeatureID, 2> Features;
+
+	void InvalidateSelectingAndHidingTexFlags(FITwinSceneTile& SceneTile);
+};
+
+struct FITwinCategoryPerModelFeaturesInTile
+{
+	/// same comment about constancy as for FITwinElementFeaturesInTile
+	ITwinElementID CategoryID;
+	ITwinElementID ModelID;
+	FITwinPropertyTextureFlag SelectingAndHidingTexFlag = {};
+	FSmallVec<ITwinFeatureID, 2> Features;
+
+	void InvalidateSelectingAndHidingTexFlags(FITwinSceneTile& SceneTile);
+};
+
 /// Mesh extracted from the Cesium tile as an independent UE entity, for one of the following reasons:
 ///	1. Either it should be transparent whereas it was part of an opaque entity (or the other way round).
 ///    In that case, it may even be possible that in a single tile, only a part of an iModel Element could
@@ -246,6 +278,12 @@ struct IndexByTileID {};
 struct IndexByTileRank {};
 /// Use eg. MaterialsFeatures.get<IndexByMaterialID>() to get the interface for this type of indexing
 struct IndexByMaterialID {};
+/// Use eg. ModelsFeatures.get<IndexByModelID>() to get the interface for this type of indexing
+struct IndexByModelID {};
+/// Use eg. CategoriesFeatures.get<IndexByCategoryID>() to get the interface for this type of indexing
+struct IndexByCategoryID {};
+/// Use eg. CategoriesFeatures.get<IndexByCategoryAndModelID>() to get the interface for this type of indexing
+struct IndexByCategoryAndModelID {};
 /// For FederatedElementGUIDs
 struct IndexByGUID {};
 /// For SourceElementIDs
@@ -284,6 +322,34 @@ class FITwinSceneTile
 				boost::multi_index::member<FITwinMaterialFeaturesInTile, const ITwinMaterialID,
 											&FITwinMaterialFeaturesInTile::MaterialID>>>>;
 
+	/// Same as for Elements, but for iTwin Model ID
+	using FModelFeaturesCont = boost::multi_index_container<FITwinModelFeaturesInTile,
+		boost::multi_index::indexed_by<
+		boost::multi_index::random_access<boost::multi_index::tag<IndexByRank>>,
+		boost::multi_index::hashed_unique<boost::multi_index::tag<IndexByModelID>,
+		boost::multi_index::member<FITwinModelFeaturesInTile, const ITwinElementID,
+		&FITwinModelFeaturesInTile::ModelID>>>>;
+
+	/// Same as for Elements, but for iTwin Category ID
+	using FCategoryFeaturesCont = boost::multi_index_container<FITwinCategoryFeaturesInTile,
+		boost::multi_index::indexed_by<
+		boost::multi_index::random_access<boost::multi_index::tag<IndexByRank>>,
+		boost::multi_index::hashed_unique<boost::multi_index::tag<IndexByCategoryID>,
+		boost::multi_index::member<FITwinCategoryFeaturesInTile, const ITwinElementID,
+		&FITwinCategoryFeaturesInTile::CategoryID>>>>;
+	
+	/// Same as for Elements, but for iTwin CategoryPerModel ID
+	using FCategoryPerModelFeaturesCont = boost::multi_index_container<FITwinCategoryPerModelFeaturesInTile,
+		boost::multi_index::indexed_by<
+		boost::multi_index::random_access<boost::multi_index::tag<IndexByRank>>,
+		boost::multi_index::hashed_unique<boost::multi_index::tag<IndexByCategoryAndModelID>,
+		boost::multi_index::composite_key<
+		FITwinCategoryPerModelFeaturesInTile,
+		boost::multi_index::member<FITwinCategoryPerModelFeaturesInTile, const ITwinElementID,
+		&FITwinCategoryPerModelFeaturesInTile::CategoryID>,
+		boost::multi_index::member<FITwinCategoryPerModelFeaturesInTile, const ITwinElementID,
+		&FITwinCategoryPerModelFeaturesInTile::ModelID>>>>>;
+
 public:
 	/// Without this the class is not EmplaceConstructible, maybe std::variant isn't?
 	/// (CesiumTileID is a variant)
@@ -309,6 +375,11 @@ public:
 	/// algorithms. Value cached to detect changes in visibility and trigger 4D anim updates.
 	/// NOTE: defaults to false so that unloaded tiles are rightfully considered invisible!
 	bool bVisible = false;
+	struct pair_hash {
+		std::size_t operator()(const std::pair<ITwinElementID, ITwinElementID>& p) const {
+			return std::hash<ITwinElementID>()(p.first) ^ (std::hash<ITwinElementID>()(p.second) << 1);
+		}
+	};
 
 private:
 	/// List of all material instances in this tile, including those created for extracted Elements
@@ -339,7 +410,10 @@ private:
 	ITwinMaterialID SelectedMaterial = ITwin::NOT_MATERIAL;
 	
 	std::unordered_set<ITwinElementID> CurrentSavedViewHiddenElements;
+	std::unordered_set<ITwinElementID> CurrentSavedViewHiddenModels;
+	std::unordered_set<ITwinElementID> CurrentSavedViewHiddenCategories;
 	std::unordered_set<ITwinElementID> CurrentConstructionHiddenElements;
+	std::unordered_set<std::pair<ITwinElementID, ITwinElementID>, pair_hash> CurrentSavedViewHiddenCategoriesPerModel;
 
 	/// Store materials in which we have set our own custom textures, as the initial textures should be
 	/// restored before #destroyGltfParameterValues is called (our textures are either static textures which
@@ -356,6 +430,15 @@ private:
 	/// Maintain the correspondence between iTwin Material IDs and the features they are used in.
 	/// Used for material selection.
 	FMaterialFeaturesCont MaterialsFeatures;
+	/// Maintain the correspondence between iTwin Model IDs and the features they are used in.
+	/// Used for toggling visibility of models.
+	FModelFeaturesCont ModelsFeatures;
+	/// Maintain the correspondence between iTwin Category IDs and the features they are used in.
+	/// Used for toggling visibility of categories.
+	FCategoryFeaturesCont CategoriesFeatures;
+	/// Maintain the correspondence between iTwin CategoryPerModel IDs and the features they are used in.
+	/// Used for HiddenCategoriesPerModel.
+	FCategoryPerModelFeaturesCont CategoriesPerModelsFeatures;
 
 	class ElementSelectionHelper;
 	class MaterialSelectionHelper;
@@ -393,8 +476,23 @@ private:
 	void TResetSelection(SelectableHelper const& Helper, FTextureNeeds& TextureNeeds);
 	void ResetSelection(FTextureNeeds& TextureNeeds);
 
+	template<typename IDType, typename FeatureType>
+	void THideIDs(std::unordered_set<IDType>& CurrentHiddenItems,
+		std::unordered_set<IDType> const& NewIDs,
+		std::function<FeatureType* (IDType)> FindFeatures,
+		std::function<void(FeatureType*)> UnhideFeatures,
+		std::function<void(FeatureType*)> HideFeatures,
+		FITwinSceneTile::FTextureNeeds& TextureNeeds,
+		std::optional<IDType> SelectedID = std::nullopt,
+		bool const Force = false);
 	void HideElements(std::unordered_set<ITwinElementID> const& InElemIDs, bool const bOnlyVisibleTiles,
-		FTextureNeeds& TextureNeeds, bool const IsConstruction);
+		FTextureNeeds& TextureNeeds, bool const IsConstruction, bool const Force = false);
+	void HideModels(std::unordered_set<ITwinElementID> const& InModelIDs,
+		bool const bOnlyVisibleTiles, FTextureNeeds& TextureNeeds, bool const Force = false);
+	void HideCategories(std::unordered_set<ITwinElementID> const& InCategoryIDs,
+		bool const bOnlyVisibleTiles, FTextureNeeds& TextureNeeds, bool const Force = false);
+	void HideCategoriesPerModel(std::unordered_set<std::pair<ITwinElementID, ITwinElementID>, FITwinSceneTile::pair_hash> const& InCategoryPerModelIDs,
+		bool const bOnlyVisibleTiles, FTextureNeeds& TextureNeeds, bool const Force = false);
 
 	template<typename ElementsCont>
 	void ForEachElementFeaturesSLOW(ElementsCont const& ForElementIDs,
@@ -478,6 +576,40 @@ public:
 	/// Finds or inserts a FITwinMaterialFeaturesInTile for the passed Material ID
 	/// \return A short-lived, non-const reference on the existing or inserted FITwinMaterialFeaturesInTile
 	[[nodiscard]] FITwinMaterialFeaturesInTile& MaterialFeaturesSLOW(ITwinMaterialID const& MatID);
+
+	/// Finds the FITwinModelFeaturesInTile for the passed Model ID or return nullptr
+	/// \return A short-lived, const pointer on the existing FITwinModelFeaturesInTile, or nullptr
+	[[nodiscard]] FITwinModelFeaturesInTile const* FindModelFeaturesConstSLOW(
+		ITwinElementID const& ModelID) const;
+	/// @copydoc FindMaterialFeaturesConstSLOW
+	[[nodiscard]] FITwinModelFeaturesInTile* FindModelFeaturesSLOW(ITwinElementID const& ModelID);
+
+	/// Finds or inserts a FITwinModelFeaturesInTile for the passed Model ID
+	/// \return A short-lived, non-const reference on the existing or inserted FITwinModelFeaturesInTile
+	[[nodiscard]] FITwinModelFeaturesInTile& ModelFeaturesSLOW(ITwinElementID const& ModelID);
+
+	/// Finds the FITwinCategoryFeaturesInTile for the passed Category ID or return nullptr
+	/// \return A short-lived, const pointer on the existing FITwinCategoryFeaturesInTile, or nullptr
+	[[nodiscard]] FITwinCategoryFeaturesInTile const* FindCategoryFeaturesConstSLOW(
+		ITwinElementID const& CategoryID) const;
+	/// @copydoc FindCategoryFeaturesConstSLOW
+	[[nodiscard]] FITwinCategoryFeaturesInTile* FindCategoryFeaturesSLOW(ITwinElementID const& CategoryID);
+
+	/// Finds or inserts a FITwinCategoryFeaturesInTile for the passed Category ID
+	/// \return A short-lived, non-const reference on the existing or inserted FITwinCategoryFeaturesInTile
+	[[nodiscard]] FITwinCategoryFeaturesInTile& CategoryFeaturesSLOW(ITwinElementID const& CategoryID);
+
+	/// Finds the FITwinCategoryPerModelFeaturesInTile for the passed (Category ID, Model ID) or return nullptr
+	/// \return A short-lived, const pointer on the existing FITwinCategoryPerModelFeaturesInTile, or nullptr
+	[[nodiscard]] FITwinCategoryPerModelFeaturesInTile const* FindCategoryPerModelFeaturesConstSLOW(
+		ITwinElementID const& CategoryID, ITwinElementID const& ModelID) const;
+
+	/// @copydoc FindCategoryPerModelFeaturesConstSLOW
+	[[nodiscard]] FITwinCategoryPerModelFeaturesInTile* FindCategoryPerModelFeaturesSLOW(std::pair<ITwinElementID const&, ITwinElementID const&> CategoryPerModelID);
+
+	/// Finds or inserts a FITwinCategoryPerModelFeaturesInTile for the passed (Category ID, Model ID)
+	/// \return A short-lived, non-const reference on the existing or inserted FITwinCategoryPerModelsFeaturesInTile
+	[[nodiscard]] FITwinCategoryPerModelFeaturesInTile& CategoryPerModelFeaturesSLOW(ITwinElementID const& CategoryID, ITwinElementID const& ModelID);
 
 }; // class FITwinSceneTile
 
@@ -667,6 +799,9 @@ private:
 	//std::unordered_set<ITwinElementID> HiddenConstructionData; == empty or GeometryIDToElementIDs[1]!!
 	bool bHiddenConstructionData = false;
 	std::unordered_set<ITwinElementID> HiddenElementsFromSavedView;
+	std::unordered_set<ITwinElementID> HiddenModelsFromSavedView;
+	std::unordered_set<ITwinElementID> HiddenCategoriesFromSavedView;
+	std::unordered_set<std::pair<ITwinElementID,ITwinElementID>, FITwinSceneTile::pair_hash> HiddenCategoriesPerModelFromSavedView;
 	/// Transform for conversion of this iModel's internal coordinates (saved views, synchro transforms...)
 	/// into and from Unreal coordinates (with the current Georeference and iModel transform: needs to be
 	/// updated if it changes)
@@ -734,8 +869,14 @@ public:
 	}
 	[[nodiscard]] FITwinElement const& ElementFor(ITwinScene::ElemIdx const ByElemIdx) const;
 	[[nodiscard]] FITwinElement& ElementFor(ITwinScene::ElemIdx const ByElemIdx);
+	/// ONLY for use in the game thread! See comment on thread safety on GetElementForSLOW
 	[[nodiscard]] FITwinElement& ElementForSLOW(ITwinElementID const ById,
 												ITwinScene::ElemIdx* Rank = nullptr);
+	/// Does NOT create the Element if it is not already known! This is the only way to be thread-safe
+	/// when 3D Tiles are received (for example) at the same time that the 4D schedule is loaded using
+	/// tasks running on worker threads (azdev#1704016).
+	[[nodiscard]] FITwinElement* GetElementForSLOW(ITwinElementID const KnownElementId,
+												   ITwinScene::ElemIdx* Rank = nullptr);
 	[[nodiscard]] bool FindElementIDForGUID(FGuid const& ElementGuid, ITwinElementID& Found) const;
 	[[nodiscard]] bool FindGUIDForElement(ITwinScene::ElemIdx const Rank, FGuid& Found) const;
 	[[nodiscard]] bool FindGUIDForElement(ITwinElementID const Elem, FGuid& Found) const;
@@ -845,9 +986,15 @@ public:
 	///		it is already selected.
 	bool PickVisibleElement(ITwinElementID const& InElemID, bool const bSelectElement = true);
 
-	void HideElements(std::unordered_set<ITwinElementID> const& InElemIDs, bool IsConstruction);
+	void HideElements(std::unordered_set<ITwinElementID> const& InElemIDs, bool IsConstruction, bool Force = false);
+	void HideModels(std::unordered_set<ITwinElementID> const& InModelIDs, bool Force = false);
+	void HideCategories(std::unordered_set<ITwinElementID> const& InCategoryIDs, bool Force = false);
+	void HideCategoriesPerModel(std::unordered_set<std::pair<ITwinElementID, ITwinElementID>,FITwinSceneTile::pair_hash> const& InCategoryPerModelIDs, bool Force = false);
 	/// Not const because empty set may be added to GeometryIDToElementIDs before being returned
 	[[nodiscard]] std::unordered_set<ITwinElementID> const& ConstructionDataElements();
+	[[nodiscard]] std::unordered_set<ITwinElementID> const& GetSavedViewHiddenElements();
+	[[nodiscard]] std::unordered_set<ITwinElementID> const& GetSavedViewHiddenModels();
+	[[nodiscard]] std::unordered_set<ITwinElementID> const& GetSavedViewHiddenCategories();
 	[[nodiscard]] bool IsElementHiddenInSavedView(ITwinElementID const& InElemID) const;
 
 	//! Returns the selected Element's ID, if an Element is selected, or ITwin::NOT_ELEMENT.
@@ -865,8 +1012,8 @@ public:
 	std::pair<FITwinSceneTile const*, FITwinGltfMeshComponentWrapper const*> FindOwningTileSLOW(
 		UPrimitiveComponent const* Component) const;
 
-	/// Reset everything - should only be called before the tileset is reloaded.
-	void Reset();
+	/// Reset everything (unless we need to keep the visibility state) - should only be called before the tileset is reloaded.
+	void Reset(bool bKeepVisibilityState = false);
 
 	/// Edit a scalar parameter in all Unreal materials created for the given ITwin material.
 	void SetITwinMaterialChannelIntensity(uint64_t ITwinMaterialID,
@@ -891,7 +1038,7 @@ public:
 
 private:
 	template<typename TSomeID, typename TMapByRank>
-	bool ParseSomeElementIdentifier(TMapByRank& OutIDMap, ITwinElementID const ElemId,
+	bool ParseSomeElementIdentifier(TMapByRank& OutIDMap, ITwinScene::ElemIdx const ElemIdx,
 		TSharedPtr<FJsonValue> const& Entry, int& GoodEntry, int& EmptyEntry);
 	void ApplySelectingAndHiding(FITwinSceneTile& SceneTile);
 	/// Extracts the given element in the given tile. New Unreal entities may be created.

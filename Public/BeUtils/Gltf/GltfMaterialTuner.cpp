@@ -39,15 +39,16 @@ namespace BeUtils
 		//	return std::count_if(mat.channels.begin(), mat.channels.end(),
 		//		[](auto&& chan) { return chan.has_value(); });
 		//}
+	}
 
-
-		/// Append a new glTF texture pointing at the given texture (which can come from the decoration
-		/// service or a local file).
-		inline int32_t CreateGltfTextureFromTextureAccess(
-			GltfMaterialHelper::TextureAccess const& texAccess,
-			std::vector<CesiumGltf::Texture>& textures,
-			std::vector<CesiumGltf::Image>& images)
-		{
+	/// Append a new glTF texture pointing at the given texture (which can come from the decoration
+	/// service or a local file).
+	inline int32_t GltfMaterialTuner::CreateGltfTextureFromTextureAccess(
+		GltfMaterialHelper::TextureAccess const& texAccess,
+		std::vector<CesiumGltf::Texture>& textures,
+		std::vector<CesiumGltf::Image>& images,
+		[[maybe_unused]] RLock const& lock) const
+	{
 			int32_t gltfTexId = -1;
 			if (texAccess.IsValid())
 			{
@@ -59,7 +60,7 @@ namespace BeUtils
 				if (texAccess.cesiumImage)
 				{
 					// Reuse already loaded image (much faster).
-					BE_ASSERT(texAccess.HasValidCesiumImage(false));
+					BE_ASSERT(texAccess.HasValidCesiumImage(false), GetMaterialContextInfo(lock));
 					gltfImage = *texAccess.cesiumImage;
 				}
 				else
@@ -67,7 +68,7 @@ namespace BeUtils
 					// This texture is using a local path *and* was not converted to Cesium. This should no
 					// longer happen: since cesium-unreal 2.14.1, GltfReader::#resolveExternalData expects a
 					// valid base URL (we used to provide an empty one to make this case work...)
-					BE_ISSUE("using unresolved cesium texture ", texAccess.filePath);
+					BE_ISSUE("using unresolved cesium texture ", texAccess.filePath, GetMaterialContextInfo(lock));
 
 					// since c++20, this uses now char8_t...
 					auto const tex_u8string = texAccess.filePath.generic_u8string();
@@ -75,8 +76,10 @@ namespace BeUtils
 				}
 			}
 			return gltfTexId;
-		}
+	}
 
+	namespace
+	{
 		static inline void SetBaseColorOpacity(CesiumGltf::MaterialPBRMetallicRoughness& pbr, double opacityValue)
 		{
 			auto& baseColorFactor = pbr.baseColorFactor;
@@ -625,7 +628,7 @@ namespace BeUtils
 		}
 		int32_t const gltfTexId = CreateGltfTextureFromTextureAccess(
 			materialHelper_->GetTextureAccess(textureMap, lock),
-			textures, images);
+			textures, images, lock);
 		itwinToGltTextures_.emplace(textureKey, GltfTextureInfo{ .gltfTextureIndex_ = gltfTexId });
 		return gltfTexId;
 	}
@@ -656,7 +659,7 @@ namespace BeUtils
 			return -1;
 		}
 
-		int32_t const gltfTexId = CreateGltfTextureFromTextureAccess(texAccess, textures, images);
+		int32_t const gltfTexId = CreateGltfTextureFromTextureAccess(texAccess, textures, images, lock);
 		itwinToGltTextures_.emplace(mergedTexKey,
 			GltfTextureInfo{
 				.gltfTextureIndex_ = gltfTexId,
@@ -851,32 +854,44 @@ namespace BeUtils
 	}
 
 
-	int32_t GltfMaterialTuner::ConvertITwinMaterial(uint64_t itwinMatId,
+	void GltfMaterialTuner::ConvertITwinMaterial(uint64_t itwinMatId,
 		int32_t gltfMatId,
 		std::vector<CesiumGltf::Material>& materials,
 		std::vector<CesiumGltf::Texture>& textures,
 		std::vector<CesiumGltf::Image>& images,
-		bool& bOverrideColor,
+		GltfMaterialInfo& matInfo,
 		std::vector<std::array<uint8_t, 4>> const& meshColors)
 	{
 		auto it = itwinToGltfMaterial_.find(itwinMatId);
 		if (it != itwinToGltfMaterial_.end())
 		{
 			// This iTwin material has already been converted.
-			bOverrideColor = it->second.overrideColor_;
-			return it->second.gltfMaterialIndex_;
+			matInfo = it->second;
+			return;
 		}
 		BE_ASSERT(materialHelper_.get() != nullptr);
 		RLock lock(materialHelper_->GetMutex());
 		auto const itwinMatInfo = materialHelper_->GetITwinMaterialInfo(itwinMatId, lock);
 		auto const* pItwinMatDef = itwinMatInfo.second;
 
-		if (pItwinMatDef && AdvViz::SDK::HasCustomSettings(*pItwinMatDef))
+		matInfo.gltfMaterialIndex_ = gltfMatId;
+		matInfo.hasCustomDefinition_ = pItwinMatDef && AdvViz::SDK::HasCustomSettings(*pItwinMatDef);
+		bool& bOverrideColor = matInfo.overrideColor_;
+		bOverrideColor = false;
+
+		if (matInfo.hasCustomDefinition_)
 		{
 			ScopedMaterialId currentMatIdSetter(*this, itwinMatId); // to improve logs
 
-			// Initial glTF material produced by the Mesh Export Service
-			CesiumGltf::Material const& orgMaterial(materials[gltfMatId]);
+			// Fetch the initial glTF material produced by the Mesh Export Service, if any.
+			// (note that if the material mapping is totally independent from the iModel's materials,
+			// typically if it comes from the material ML prediction service, there may be no material at
+			// all here!)
+			CesiumGltf::Material orgMaterial;
+			if (gltfMatId >= 0 && gltfMatId < (int32_t)materials.size())
+			{
+				orgMaterial = materials[gltfMatId];
+			}
 
 			// Material customized from our custom definition, initialized with the initial glTF material
 			// produced by the Mesh Export Service.
@@ -1091,19 +1106,17 @@ namespace BeUtils
 				cesiumUVTsf.rotation = iTwinUVTsf.rotation;
 			}
 
-			gltfMatId = static_cast<int32_t>(materials.size());
-			// Append the new material - beware it may invalidate orgMaterial!
+			matInfo.gltfMaterialIndex_ = static_cast<int32_t>(materials.size());
 			materials.emplace_back(std::move(customMaterial));
 		}
 
-		itwinToGltfMaterial_.emplace(itwinMatId, GltfMaterialInfo{ gltfMatId, bOverrideColor });
-		return gltfMatId;
+		itwinToGltfMaterial_.emplace(itwinMatId, matInfo);
 	}
 
 	inline std::string GetMaterialLogContextInfo(GltfMaterialHelper const& matHelper, uint64_t matId,
 		RWLockBase const& lock)
 	{
-		auto const matName = matHelper.GetMaterialName(matId, lock);
+		auto const matName = matHelper.GetMaterialName(matId, lock, true);
 		if (matName.empty())
 		{
 			return fmt::format("[material #{}] ", matId);
@@ -1308,6 +1321,9 @@ namespace BeUtils
 		{
 			ConvertChannelTextureToGltf(itwinMatId, AdvViz::SDK::EChannelType::AmbientOcclusion, needTranslucency, lock);
 		}
+		// Detect translucency requirement.
+		std::string glTFAlphaMode;
+		materialHelper_->StoreInitialAlphaModeIfNeeded(itwinMatId, glTFAlphaMode, lock);
 	}
 
 	namespace Detail

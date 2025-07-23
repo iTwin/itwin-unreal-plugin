@@ -15,6 +15,7 @@
 
 #include <ITwinRuntime/Private/Compil/BeforeNonUnrealIncludes.h>
 #	include <BeHeaders/Compil/CleanUpGuard.h>
+#	include <Core/Tools/Log.h>
 #include <ITwinRuntime/Private/Compil/AfterNonUnrealIncludes.h>
 
 #include <Interfaces/IHttpResponse.h>
@@ -198,7 +199,7 @@ public:
 				Caches.erase(It->PathBase);
 				if (!IFileManager::Get().DeleteDirectory(*It->PathBase, /*requiresExists*/true, /*tree*/true))
 				{
-					UE_LOG(ITwinQuery, Error, TEXT("Error deleting cache folder %s"), *It->PathBase);
+					BE_LOGE("ITwinQuery", "Error deleting cache folder " << TCHAR_TO_UTF8(*It->PathBase));
 				}
 				It = MRU.erase(It);
 			}
@@ -223,7 +224,7 @@ public:
 				Entry.SizeOnDisk, *Entry.DisplayName, *Entry.PathBase.RightChop(CacheRoot.Len()));
 		}
 		Msg += TEXT("\n}");
-		UE_LOG(ITwinQuery, Display, TEXT("%s"), *Msg);
+		BE_LOG("ITwinQuery", TCHAR_TO_UTF8(*Msg));
 #endif // DEBUG_DUMP_MRU()
 		do { /*no-op*/ } while (CleanLeastRecentlyUsedOnePass());
 	}
@@ -269,7 +270,7 @@ public:
 		{
 			if (Entry->InUse != nullptr)
 			{
-				UE_LOG(ITwinQuery, Warning, TEXT("Cache folder %s already in use!"), *CacheFolder);
+				BE_LOGW("ITwinQuery", "Cache folder " << TCHAR_TO_UTF8(*CacheFolder) << " already in use!");
 				return std::nullopt;
 			}
 			//Entry->InUse = this; will be set in MarkAsUsed below
@@ -345,7 +346,7 @@ bool FJsonQueriesCache::Initialize(FString CacheFolder, EITwinEnvironment const 
 	FPaths::RemoveDuplicateSlashes(CacheFolder);
 	if (!FPaths::CollapseRelativeDirectories(CacheFolder))
 	{
-		UE_LOG(ITwinQuery, Error, TEXT("Cache folder %s should be absolute!"), *CacheFolder);
+		BE_LOGE("ITwinQuery", "Cache folder path should be absolute: " << TCHAR_TO_UTF8(*CacheFolder));
 		return false;
 	}
 
@@ -374,7 +375,9 @@ bool FJsonQueriesCache::Initialize(FString CacheFolder, EITwinEnvironment const 
 	}
 	else
 	{
-		UE_LOG(ITwinQuery, Error, TEXT("Error loading cache: %s\nClearing cache folder %s to avoid mixing corrupt and new data"), *ParseError, *CacheFolder);
+		BE_LOGE("ITwinQuery", "Error loading cache: " << TCHAR_TO_UTF8(*ParseError)
+			<< " --> Clearing cache folder " << TCHAR_TO_UTF8(*CacheFolder)
+			<< " to avoid mixing corrupt and new data");
 		IFileManager::Get().DeleteDirectory(*CacheFolder, /*requireExists*/false, /*recurse*/true);
 		Uninitialize();
 		// was reset and folder deleted, but set them up again to use for recording what we will (re-)download
@@ -401,8 +404,8 @@ bool FJsonQueriesCache::LoadSessionSimulation(FString const& SimulateFromFolder)
 		QueriesCache::FRecordDirIterator DirIter(Impl->SessionMap, &ReplayMap, ParseError);
 		if (IFileManager::Get().IterateDirectory(*Impl->PathBase, DirIter))
 			return true;
-		UE_LOG(ITwinQuery, Error, TEXT("Error parsing simulation data from %s: %s"),
-								  *SimulateFromFolder, *ParseError);
+		BE_LOGE("ITwinQuery", "Error parsing simulation data from " << TCHAR_TO_UTF8(*SimulateFromFolder)
+			<< ": " << TCHAR_TO_UTF8(*ParseError));
 	}
 	return false;
 }
@@ -495,7 +498,7 @@ void FJsonQueriesCache::Write(TSharedRef<FJsonObject>& JsonObj, int const Respon
 	}
 	else
 	{
-		UE_LOG(ITwinQuery, Error, TEXT("Could not write cache file %s!"), *Path);
+		BE_LOGE("ITwinQuery", "Could not write cache file: " << TCHAR_TO_UTF8(*Path));
 	}
 }
 

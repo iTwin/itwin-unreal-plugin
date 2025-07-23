@@ -4,20 +4,19 @@ uint _czm_pixelX;
 uint _czm_pixelY;
 bool _czm_knownXY = false;
 uint _czm_featureIndex = round(FeatureID);
-uint _czm_alpha = 1;
 Synchro4D_RGBA_DATA.GetDimensions(_czm_width, _czm_height);
 _czm_pixelY = _czm_featureIndex / _czm_width;
 // Second clause added for robustness, in case one wants to test manually with dummy textures,
 // BUT ALSO to handle error cases where FeatureID is invalid in the Cesium tile
 if (_czm_width == 1 || _czm_pixelY >= _czm_height)
 {
-	Synchro4D_RGBA = uint4(0, 0, 0, 255);
+	Combined_RGBA = float4(0, 0, 0, 1);
 }
 else
 {
 	_czm_knownXY = true;
 	_czm_pixelX = _czm_featureIndex % _czm_width;
-	Synchro4D_RGBA = Synchro4D_RGBA_DATA.Load(int3(_czm_pixelX, _czm_pixelY, 0));
+	Combined_RGBA = Synchro4D_RGBA_DATA.Load(int3(_czm_pixelX, _czm_pixelY, 0));
 }
 Synchro4D_CutPlanes_DATA.GetDimensions(_czm_width, _czm_height);
 if (_czm_width != 1 && !_czm_knownXY)
@@ -25,6 +24,15 @@ if (_czm_width != 1 && !_czm_knownXY)
 	_czm_pixelX = _czm_featureIndex % _czm_width;
 	_czm_pixelY = _czm_featureIndex / _czm_width;
 }
+
+// // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // //
+//                                 !!! IMPORTANT !!!
+// When you edit this file, change also the shader script inside the MLB_ITwinBlend
+// node named "Get Synchro4D and selection Values per Feature" (see comment there), otherwise
+// Unreal (5.3) may reuse a precompiled shader cache...
+// // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // //
+
+
 // Last two clauses added for robustness, in case one wants to test manually with dummy textures
 // (even _czm_pixelX might be >= _czm_width if for some reason the CutPlane texture does not have
 //  the same size as the RGBA one)
@@ -37,29 +45,28 @@ else
 {
 	Synchro4D_CutPlane = Synchro4D_CutPlanes_DATA.Load(int3(_czm_pixelX, _czm_pixelY, 0));
 }
-// Only test selection highlight if no Synchro4D highlight exists
-if (Synchro4D_RGBA.x + Synchro4D_RGBA.y + Synchro4D_RGBA.z == 0)
+
+// Now handle the Selection_RGBA_DATA input (aka "SelectingAndHiding" in the C++ code):
+// Synchro4D color and partial or zero opacity have priority, unless Selection_RGBA_DATA's
+// opacity is set to zero (Element is hidden)
+Selection_RGBA_DATA.GetDimensions(_czm_width, _czm_height);
+if (_czm_width != 1 && !_czm_knownXY)
 {
-	_czm_alpha = Synchro4D_RGBA.w;
-	Selection_RGBA_DATA.GetDimensions(_czm_width, _czm_height);
-	if (_czm_width != 1 && !_czm_knownXY)
+	_czm_pixelX = _czm_featureIndex % _czm_width;
+	_czm_pixelY = _czm_featureIndex / _czm_width;
+}
+if (_czm_width != 1 && _czm_pixelY < _czm_height)
+{
+	// No 4D color nor custom opacity => use both color and opacity from Selection_RGBA_DATA
+	if ((Combined_RGBA.x + Combined_RGBA.y + Combined_RGBA.z) == 0
+		&& Combined_RGBA.w >= 0.98)
 	{
-		_czm_pixelX = _czm_featureIndex % _czm_width;
-		_czm_pixelY = _czm_featureIndex / _czm_width;
+		Combined_RGBA = Selection_RGBA_DATA.Load(int3(_czm_pixelX, _czm_pixelY, 0));
 	}
-	// Second clause added for robustness, in case one wants to test manually with dummy textures,
-	// BUT ALSO to handle error cases where FeatureID is invalid in the Cesium tile
-	if (_czm_width == 1 || _czm_pixelY >= _czm_height)
+	// else: still need to account for hiding of Elements through Selection_RGBA_DATA:
+	else if (Selection_RGBA_DATA.Load(int3(_czm_pixelX, _czm_pixelY, 0)).w == 0)
 	{
-		Synchro4D_RGBA = uint4(0, 0, 0, _czm_alpha);
-	}
-	else
-	{
-		Synchro4D_RGBA = Selection_RGBA_DATA.Load(int3(_czm_pixelX, _czm_pixelY, 0));
-		if (_czm_alpha == 0)
-		{
-			Synchro4D_RGBA.w = 0;
-		}
+		Combined_RGBA.w = 0;
 	}
 }
 return FeatureID;

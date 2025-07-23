@@ -1628,6 +1628,7 @@ set(boostHeaders
 	./multi_index/detail/base_type.hpp
 	./multi_index/detail/bidir_node_iterator.hpp
 	./multi_index/detail/bucket_array.hpp
+	./multi_index/detail/cons_stdtuple.hpp
 	./multi_index/detail/converter.hpp
 	./multi_index/detail/copy_map.hpp
 	./multi_index/detail/define_if_constexpr_macro.hpp
@@ -1676,6 +1677,7 @@ set(boostHeaders
 	./multi_index/detail/undef_if_constexpr_macro.hpp
 	./multi_index/detail/value_compare.hpp
 	./multi_index/detail/vartempl_support.hpp
+	./multi_index/composite_key.hpp
 	./multi_index/global_fun.hpp
 	./multi_index/hashed_index.hpp
 	./multi_index/hashed_index_fwd.hpp
@@ -1885,6 +1887,8 @@ set(boostHeaders
 	./preprocessor/iteration/local.hpp
 	./preprocessor/iteration/self.hpp
 	./preprocessor/list/adt.hpp
+	./preprocessor/list/at.hpp
+	./preprocessor/list/rest_n.hpp
 	./preprocessor/list/detail/dmc/fold_left.hpp
 	./preprocessor/list/detail/edg/fold_left.hpp
 	./preprocessor/list/detail/edg/fold_right.hpp

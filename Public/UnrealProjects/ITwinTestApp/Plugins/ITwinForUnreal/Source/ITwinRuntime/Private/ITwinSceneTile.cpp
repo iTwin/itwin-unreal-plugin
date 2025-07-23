@@ -97,6 +97,20 @@ void FITwinMaterialFeaturesInTile::InvalidateSelectingAndHidingTexFlags(FITwinSc
 	SelectingAndHidingTexFlag.Invalidate();
 }
 
+void FITwinModelFeaturesInTile::InvalidateSelectingAndHidingTexFlags(FITwinSceneTile& /*SceneTile*/)
+{
+	SelectingAndHidingTexFlag.Invalidate();
+}
+
+void FITwinCategoryFeaturesInTile::InvalidateSelectingAndHidingTexFlags(FITwinSceneTile& /*SceneTile*/)
+{
+	SelectingAndHidingTexFlag.Invalidate();
+}
+
+void FITwinCategoryPerModelFeaturesInTile::InvalidateSelectingAndHidingTexFlags(FITwinSceneTile& /*SceneTile*/)
+{
+	SelectingAndHidingTexFlag.Invalidate();
+}
 
 //---------------------------------------------------------------------------------------
 // struct FITwinExtractedElement
@@ -348,6 +362,102 @@ FITwinMaterialFeaturesInTile& FITwinSceneTile::MaterialFeaturesSLOW(ITwinMateria
 	// See comment about const_cast above
 	return const_cast<FITwinMaterialFeaturesInTile&>(
 		*MaterialsFeatures.get<IndexByRank>().emplace_back(FITwinMaterialFeaturesInTile{ MatID }).first);
+}
+
+FITwinModelFeaturesInTile const* FITwinSceneTile::FindModelFeaturesConstSLOW(
+	ITwinElementID const& ModelID) const
+{
+	auto& ByID = ModelsFeatures.get<IndexByModelID>();
+	auto const Found = ByID.find(ModelID);
+	if (Found != ByID.end())
+	{
+		return &(*Found);
+	}
+	else return nullptr;
+}
+
+FITwinModelFeaturesInTile* FITwinSceneTile::FindModelFeaturesSLOW(ITwinElementID const& ModelID)
+{
+	auto const* Found = FindModelFeaturesConstSLOW(ModelID);
+	if (Found)
+	{
+		// same remark as in FindElementFeaturesSLOW (yes, that's the same code, but I did not want to
+		// templatize everything...
+		return const_cast<FITwinModelFeaturesInTile*>(Found);
+	}
+	else
+		return nullptr;
+}
+
+FITwinModelFeaturesInTile& FITwinSceneTile::ModelFeaturesSLOW(ITwinElementID const& ModelID)
+{
+	// See comment about const_cast above
+	return const_cast<FITwinModelFeaturesInTile&>(
+		*ModelsFeatures.get<IndexByRank>().emplace_back(FITwinModelFeaturesInTile{ ModelID }).first);
+}
+
+FITwinCategoryFeaturesInTile const* FITwinSceneTile::FindCategoryFeaturesConstSLOW(
+	ITwinElementID const& CategoryID) const
+{
+	auto& ByID = CategoriesFeatures.get<IndexByCategoryID>();
+	auto const Found = ByID.find(CategoryID);
+	if (Found != ByID.end())
+	{
+		return &(*Found);
+	}
+	else return nullptr;
+}
+
+FITwinCategoryFeaturesInTile* FITwinSceneTile::FindCategoryFeaturesSLOW(ITwinElementID const& CategoryID)
+{
+	auto const* Found = FindCategoryFeaturesConstSLOW(CategoryID);
+	if (Found)
+	{
+		// same remark as in FindElementFeaturesSLOW (yes, that's the same code, but I did not want to
+		// templatize everything...
+		return const_cast<FITwinCategoryFeaturesInTile*>(Found);
+	}
+	else
+		return nullptr;
+}
+
+FITwinCategoryFeaturesInTile& FITwinSceneTile::CategoryFeaturesSLOW(ITwinElementID const& CategoryID)
+{
+	// See comment about const_cast above
+	return const_cast<FITwinCategoryFeaturesInTile&>(
+		*CategoriesFeatures.get<IndexByRank>().emplace_back(FITwinCategoryFeaturesInTile{ CategoryID }).first);
+}
+
+FITwinCategoryPerModelFeaturesInTile const* FITwinSceneTile::FindCategoryPerModelFeaturesConstSLOW(
+	ITwinElementID const& CategoryID, ITwinElementID const& ModelID) const
+{
+	auto& ByID = CategoriesPerModelsFeatures.get<IndexByCategoryAndModelID>();
+	auto const Found = ByID.find(boost::make_tuple(CategoryID, ModelID));
+	if (Found != ByID.end())
+	{
+		return &(*Found);
+	}
+	else return nullptr;
+}
+
+FITwinCategoryPerModelFeaturesInTile* FITwinSceneTile::FindCategoryPerModelFeaturesSLOW(std::pair<ITwinElementID const&, ITwinElementID const&> CategoryPerModelID)
+{
+	auto const* Found = FindCategoryPerModelFeaturesConstSLOW(CategoryPerModelID.first, CategoryPerModelID.second);
+	if (Found)
+	{
+		// same remark as in FindElementFeaturesSLOW (yes, that's the same code, but I did not want to
+		// templatize everything...
+		return const_cast<FITwinCategoryPerModelFeaturesInTile*>(Found);
+	}
+	else
+		return nullptr;
+}
+
+FITwinCategoryPerModelFeaturesInTile& FITwinSceneTile::CategoryPerModelFeaturesSLOW(ITwinElementID const& CategoryID, ITwinElementID const& ModelID)
+{
+	// See comment about const_cast above
+	return const_cast<FITwinCategoryPerModelFeaturesInTile&>(
+		*CategoriesPerModelsFeatures.get<IndexByRank>().emplace_back(FITwinCategoryPerModelFeaturesInTile{ CategoryID, ModelID }).first);
 }
 
 FITwinExtractedElement const* FITwinSceneTile::FindExtractedElementSLOW(ITwinElementID const& ElemID) const
@@ -805,8 +915,88 @@ bool FITwinSceneTile::PickMaterial(ITwinMaterialID const& InMaterialID, bool con
 		bTestElemVisibility, bSelectMaterial);
 }
 
+template<typename IDType, typename FeatureType>
+void FITwinSceneTile::THideIDs(std::unordered_set<IDType>& CurrentHiddenItems,
+		std::unordered_set<IDType> const& NewIDs,
+		std::function<FeatureType* (IDType)> FindFeatures,
+		std::function<void(FeatureType*)> UnhideFeatures,
+		std::function<void(FeatureType*)> HideFeatures,
+		FITwinSceneTile::FTextureNeeds& TextureNeeds,
+		std::optional<IDType> SelectedID /*= std::nullopt*/,
+		bool const Force /*= false*/)
+{
+	// Update hidden elements in current saved view
+	for (auto it = CurrentHiddenItems.begin(); it != CurrentHiddenItems.end();)
+	{
+		if (NewIDs.find(*it) == NewIDs.end())
+		{
+			FeatureType* FeaturesToUnHide = FindFeatures(*it);
+			if (FeaturesToUnHide != nullptr)
+			{
+				UnhideFeatures(FeaturesToUnHide);
+				TextureNeeds.bWasChanged = true;
+			}
+			it = CurrentHiddenItems.erase(it);
+		}
+		else
+			++it;
+	}
+
+	for (const auto& InID : NewIDs)
+	{
+		// Element already hidden in previous saved view
+		// Nothing to do.
+		if (CurrentHiddenItems.find(InID) != CurrentHiddenItems.end() && !Force)
+			continue;
+
+		CurrentHiddenItems.insert(InID);
+
+		// 1. Deselect element to be hidden if any.
+		if (SelectedID && *SelectedID == InID)
+		{
+			ResetSelection(TextureNeeds);
+		}
+		// 2. Hide new Element, only if it exists in the tile.
+		FeatureType* FeaturesToHide = nullptr;
+		if (InID != ITwin::NOT_ELEMENT)
+		{
+			FeaturesToHide = FindFeatures(InID);
+		}
+		if (FeaturesToHide && !FeaturesToHide->Features.empty())
+		{
+			HideFeatures(FeaturesToHide);
+		}
+	}
+}
+
 void FITwinSceneTile::HideElements(std::unordered_set<ITwinElementID> const& InElemIDs,
-	bool const bOnlyVisibleTiles, FTextureNeeds& TextureNeeds, bool const IsConstruction)
+	bool const bOnlyVisibleTiles, FTextureNeeds& TextureNeeds, bool const IsConstruction, bool const Force/* = false*/)
+{
+	if (MaxFeatureID == ITwin::NOT_FEATURE
+		 || (bOnlyVisibleTiles && !bVisible)) // filter out hidden tiles too (other LODs, culled out...)
+	{
+		// No Feature at all.
+		return;
+	}
+	auto& CurrentHiddenElements =
+		IsConstruction ? CurrentConstructionHiddenElements : CurrentSavedViewHiddenElements;
+
+	THideIDs<ITwinElementID, FITwinElementFeaturesInTile>(
+		CurrentHiddenElements,
+		InElemIDs,
+		[this](ITwinElementID id) { return FindElementFeaturesSLOW(id); },
+		[this](FITwinElementFeaturesInTile* f) { SelectingAndHiding->SetPixelsAlpha(f->Features, 255); },
+		[this, &TextureNeeds](FITwinElementFeaturesInTile* f) {
+			CreateAndSetSelectingAndHiding(*f, TextureNeeds, ITwin::COLOR_HIDDEN_ELEMENT_BGRA, false);
+		},
+		TextureNeeds,
+		SelectedElement,
+		Force
+	);
+}
+
+void FITwinSceneTile::HideModels(std::unordered_set<ITwinElementID> const& InModelIDs,
+	bool const bOnlyVisibleTiles, FTextureNeeds& TextureNeeds, bool const Force/* = false*/)
 {
 	if (MaxFeatureID == ITwin::NOT_FEATURE
 		|| (bOnlyVisibleTiles && !bVisible)) // filter out hidden tiles too (other LODs, culled out...)
@@ -814,55 +1004,93 @@ void FITwinSceneTile::HideElements(std::unordered_set<ITwinElementID> const& InE
 		// No Feature at all.
 		return;
 	}
-	auto& CurrentHiddenElements =
-		IsConstruction ? CurrentConstructionHiddenElements : CurrentSavedViewHiddenElements;
-	// Update hidden elements in current saved view
-	for (auto it = CurrentHiddenElements.begin(), it2 = CurrentHiddenElements.end();
-		 it != it2;)
+	auto& CurrentHiddenModels = CurrentSavedViewHiddenModels;
+	
+	THideIDs<ITwinElementID, FITwinModelFeaturesInTile>(
+		CurrentHiddenModels,
+		InModelIDs,
+		[this](ITwinElementID id) { return FindModelFeaturesSLOW(id); },
+		[this](FITwinModelFeaturesInTile* f) { SelectingAndHiding->SetPixelsAlpha(f->Features, 255); },
+		[this, &TextureNeeds](FITwinModelFeaturesInTile* f) {
+			CreateAndSetSelectingAndHiding(*f, TextureNeeds, ITwin::COLOR_HIDDEN_ELEMENT_BGRA, false);
+		},
+		TextureNeeds,
+		std::nullopt,
+		Force
+	);
+}
+
+void FITwinSceneTile::HideCategories(std::unordered_set<ITwinElementID> const& InCategoryIDs,
+	bool const bOnlyVisibleTiles, FTextureNeeds& TextureNeeds, bool const Force/* = false*/)
+{
+	if (MaxFeatureID == ITwin::NOT_FEATURE
+		|| (bOnlyVisibleTiles && !bVisible)) // filter out hidden tiles too (other LODs, culled out...)
 	{
-		if (InElemIDs.find(*it) == InElemIDs.end())
+		// No Feature at all.
+		return;
+	}
+	auto& CurrentHiddenCategories = CurrentSavedViewHiddenCategories;
+
+	THideIDs<ITwinElementID, FITwinCategoryFeaturesInTile>(
+		CurrentHiddenCategories,
+		InCategoryIDs,
+		[this](ITwinElementID id) { return FindCategoryFeaturesSLOW(id); },
+		[this](FITwinCategoryFeaturesInTile* f) { SelectingAndHiding->SetPixelsAlpha(f->Features, 255); },
+		[this, &TextureNeeds](FITwinCategoryFeaturesInTile* f) {
+			CreateAndSetSelectingAndHiding(*f, TextureNeeds, ITwin::COLOR_HIDDEN_ELEMENT_BGRA, false);
+		},
+		TextureNeeds,
+		std::nullopt,
+		Force
+	);
+}
+
+void FITwinSceneTile::HideCategoriesPerModel(std::unordered_set<std::pair<ITwinElementID,ITwinElementID>, FITwinSceneTile::pair_hash> const& InCategoryPerModelIDs,
+	bool const bOnlyVisibleTiles, FTextureNeeds& TextureNeeds, bool const Force/* = false*/)
+{
+	if (MaxFeatureID == ITwin::NOT_FEATURE
+		|| (bOnlyVisibleTiles && !bVisible)) // filter out hidden tiles too (other LODs, culled out...)
+	{
+		// No Feature at all.
+		return;
+	}
+
+	auto& CurrentHiddenItems = CurrentSavedViewHiddenCategoriesPerModel;
+
+	for (auto it = CurrentHiddenItems.begin(); it != CurrentHiddenItems.end();)
+	{
+		if (InCategoryPerModelIDs.find(*it) == InCategoryPerModelIDs.end())
 		{
-			FITwinElementFeaturesInTile* FeaturesToUnHide = FindElementFeaturesSLOW(*it);
+			FITwinCategoryPerModelFeaturesInTile* FeaturesToUnHide = FindCategoryPerModelFeaturesSLOW(*it);
 			if (FeaturesToUnHide != nullptr)
 			{
-				//UE_LOG(LogTemp, Display, TEXT("ElementID to be SHOWN is 0x % I64x"), (*it).value());
 				SelectingAndHiding->SetPixelsAlpha(FeaturesToUnHide->Features, 255);
 				TextureNeeds.bWasChanged = true;
 			}
-			it = CurrentHiddenElements.erase(it);
+			it = CurrentHiddenItems.erase(it);
 		}
 		else
 			++it;
 	}
-	
-	for (const auto& InElemID : InElemIDs)
+
+	for (const auto& InID : InCategoryPerModelIDs)
 	{
-		if (CurrentHiddenElements.find(InElemID) != CurrentHiddenElements.end())
-		{
-			// Element already hidden in previous saved view
-			// Nothing to do.
+		// Element already hidden in previous saved view
+		// Nothing to do.
+		if (CurrentHiddenItems.find(InID) != CurrentHiddenItems.end() && !Force)
 			continue;
-		}
-		else
-		{
-			CurrentHiddenElements.insert(InElemID);
-		}
-		// 1. Deselect element to be hidden.
-		if (SelectedElement == InElemID)
-		{
-			ResetSelection(TextureNeeds);
-		}
+
+		CurrentHiddenItems.insert(InID);
+
 		// 2. Hide new Element, only if it exists in the tile.
-		FITwinElementFeaturesInTile* FeaturesToHide = nullptr;
-		if (InElemID != ITwin::NOT_ELEMENT)
+		FITwinCategoryPerModelFeaturesInTile* FeaturesToHide = nullptr;
+		if (InID.first != ITwin::NOT_ELEMENT && InID.second != ITwin::NOT_ELEMENT)
 		{
-			FeaturesToHide = FindElementFeaturesSLOW(InElemID);
+			FeaturesToHide = FindCategoryPerModelFeaturesSLOW(InID);
 		}
-		if (FeaturesToHide != nullptr && !FeaturesToHide->Features.empty())
+		if (FeaturesToHide && !FeaturesToHide->Features.empty())
 		{
-			//UE_LOG(LogTemp, Display, TEXT("ElementID to be hidden is 0x % I64x"), InElemID.value());
-			CreateAndSetSelectingAndHiding(*FeaturesToHide, TextureNeeds, ITwin::COLOR_HIDDEN_ELEMENT_BGRA,
-										  /*bColorOrAlpha: alpha only*/false);
+			CreateAndSetSelectingAndHiding(*FeaturesToHide, TextureNeeds, ITwin::COLOR_HIDDEN_ELEMENT_BGRA, false);
 		}
 	}
 }

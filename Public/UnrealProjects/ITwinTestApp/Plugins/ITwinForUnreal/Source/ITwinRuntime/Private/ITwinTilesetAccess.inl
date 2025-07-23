@@ -10,7 +10,7 @@
 #pragma once
 
 #include <ITwinTilesetAccess.h>
-#include <IncludeITwin3DTileset.h>
+#include <IncludeCesium3DTileset.h>
 
 namespace ITwin
 {

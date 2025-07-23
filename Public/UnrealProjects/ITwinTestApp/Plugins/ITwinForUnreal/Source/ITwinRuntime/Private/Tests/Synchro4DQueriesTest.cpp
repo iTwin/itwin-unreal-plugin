@@ -13,7 +13,7 @@
 // See Synchro4DImportTest.cpp for the actual testing of 4D api streaming + conversion to timelines.
 
 #include <Tests/GenericHelpers.h>
-#include <IncludeITwin3DTileset.h>
+#include <IncludeCesium3DTileset.h>
 #include <ITwinIModel.h>
 #include <ITwinServerConnection.h>
 #include <ITwinSynchro4DSchedules.h>

@@ -116,6 +116,7 @@ MODULE_EXPORT namespace AdvViz::SDK
 	struct SavedViewExtensionsInfo
 	{
 		std::string extensionName;
+		std::optional<std::string> data;
 	};
 
 	struct SavedViewInfo
@@ -297,6 +298,71 @@ MODULE_EXPORT namespace AdvViz::SDK
 		std::optional<EcefLocation> ecefLocation;
 		std::optional<GeographicCoordinateSystem> geographicCoordinateSystem;
 		OptionalVec3D globalOrigin;
+	};
+	struct ExtendedData
+	{
+		std::string icon;
+		std::optional<bool> isSubject;
+		std::optional<bool> isCategory;
+		std::optional<std::string> modelId;
+		std::optional<std::string> categoryId;
+	};
+	struct InstanceKey
+	{
+		std::string className;
+		std::string id;
+	};
+	struct Binding
+	{
+		std::string type;
+		std::string value;
+	};
+	struct InstanceKeySelectQuery
+	{
+		//std::array<Binding, 2> bindings;
+		std::vector<Binding> bindings;
+		std::string query;
+	};
+	struct Key
+	{
+		std::vector<InstanceKey> instanceKeys;
+		InstanceKeySelectQuery instanceKeysSelectQuery;
+		std::vector<std::string> pathFromRoot;
+		std::string type;
+		int version;
+	};
+	struct LabelDefinition
+	{
+		std::string displayValue;
+		std::string rawValue;
+		std::string typeName;
+	};
+	struct IModelNodeItem
+	{
+		std::optional<ExtendedData> extendedData;
+		std::optional<bool> hasChildren;
+		std::optional<std::string> description;
+		Key key;
+		LabelDefinition labelDefinition;
+		std::optional<bool> supportsFiltering;
+	};
+	struct Result
+	{
+		std::vector<IModelNodeItem> items;
+		int total;
+	};
+	struct IModelPagedNodesRes
+	{
+		Result result;
+	};
+	struct FilteredResItem
+	{
+		std::vector<FilteredResItem> children;
+		IModelNodeItem node;
+	};
+	struct FilteredNodesRes
+	{
+		std::vector<FilteredResItem> result;
 	};
 
 	// From https://github.com/iTwin/itwinjs-core/blob/afa2402c40767573c38afab26c7a0020d3395101/core/bentley/src/BentleyError.ts

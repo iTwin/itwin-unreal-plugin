@@ -56,7 +56,7 @@ MODULE_EXPORT namespace AdvViz::SDK
 		static constexpr size_t ENV_COUNT = static_cast<size_t>(EITwinEnvironment::Invalid) + 1;
 		using AppIDArray = std::array<std::string, ENV_COUNT>;
 
-		static void SetAppIDArray(AppIDArray const& ITwinAppIDs);
+		static void SetAppIDArray(AppIDArray const& ITwinAppIDs, bool bLogIDs = true);
 		static bool HasAppID(EITwinEnvironment env);
 		static std::string GetAppID(EITwinEnvironment env);
 

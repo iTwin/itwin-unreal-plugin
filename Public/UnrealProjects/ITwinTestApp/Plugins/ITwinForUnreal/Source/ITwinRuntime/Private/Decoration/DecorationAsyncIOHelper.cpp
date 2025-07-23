@@ -41,7 +41,7 @@
 #include <ITwinRuntime/Private/Compil/AfterNonUnrealIncludes.h>
 
 static bool bDefaultUseOfDecorationService = true;
-
+static std::string defaultSceneName = "default scene";
 namespace ITwin
 {
 	void ConnectLoadTexture();
@@ -121,7 +121,8 @@ namespace ITwin
 			{
 				GetDefaultHttp()->SetAccessToken(ServerConnection->GetAccessTokenPtr());
 			}
-			bDefaultUseOfDecorationService =  Env == EITwinEnvironment::Prod;
+			ScenePersistenceAPI::SetDefaulttHttp(GetDefaultHttp());
+			bDefaultUseOfDecorationService = Env == EITwinEnvironment::Prod;
 
 			// We may customize the activation of the Decoration Service for scene persistence from the
 			// configuration file:
@@ -258,6 +259,12 @@ FString FDecorationAsyncIOHelper::GetLoadedITwinId() const
 	return LoadedITwinId;
 }
 
+void FDecorationAsyncIOHelper::SetLoadedSceneId(FString InLoadedSceneId, bool inNewsScene /*= false*/)
+{
+	LoadedSceneID = InLoadedSceneId;
+	bSceneIdIsForNewScene = inNewsScene;
+}
+
 void FDecorationAsyncIOHelper::RequestStop()
 {
 	*shouldStop = true;
@@ -265,12 +272,12 @@ void FDecorationAsyncIOHelper::RequestStop()
 
 bool FDecorationAsyncIOHelper::IsInitialized() const
 {
-	return (decoration && instancesManager_ && materialPersistenceMngr && splinesManager);
+	return (decoration && instancesManager_ && materialPersistenceMngr && splinesManager && annotationsManager);
 }
 
 void FDecorationAsyncIOHelper::InitDecorationService(const UObject* WorldContextObject)
 {
-	if (decoration && instancesManager_ && materialPersistenceMngr && splinesManager)
+	if (decoration && instancesManager_ && materialPersistenceMngr && splinesManager && annotationsManager)
 	{
 		// Already done.
 		return;
@@ -302,6 +309,7 @@ void FDecorationAsyncIOHelper::InitDecorationService(const UObject* WorldContext
 		scene.reset(AdvViz::SDK::ScenePersistenceAPI::New());
 	}
 	splinesManager.reset(AdvViz::SDK::ISplinesManager::New());
+	annotationsManager.reset(AdvViz::SDK::IAnnotationsManager::New());
 
 	// Connect the instance manager to the spline manager, in order to be able to reload instances groups
 	// linked to splines correctly.
@@ -911,7 +919,8 @@ bool FDecorationAsyncIOHelper::SaveDecorationToServer()
 	bool const saveInstances = instancesManager_	&& instancesManager_->HasInstancesToSave();
 	bool const saveMaterials = materialPersistenceMngr && materialPersistenceMngr->NeedUpdateDB();
 	bool const saveSplines = splinesManager && splinesManager->HasSplinesToSave();
-	if (!saveInstances && !saveMaterials && !saveSplines)
+	bool const saveAnnotations = annotationsManager && annotationsManager->HasAnnotationToSave();
+	if (!saveInstances && !saveMaterials && !saveSplines && !saveAnnotations)
 	{
 		return false;
 	}
@@ -946,7 +955,8 @@ bool FDecorationAsyncIOHelper::SaveDecorationToServer()
 			instancesManager_->SaveDataOnServer(decoration->GetId());
 		if (saveMaterials)
 			materialPersistenceMngr->SaveDataOnServer(decoration->GetId());
-
+		if (saveAnnotations)
+			annotationsManager->SaveDataOnServerDS(decoration->GetId());
 		return true;
 	}
 	return false;
@@ -983,7 +993,7 @@ bool FDecorationAsyncIOHelper::LoadSceneFromServer()
 				FMessageDialog::Open(EAppMsgCategory::Error, EAppMsgType::Ok,
 					FText::FromString("You don't seem to have access to scene API for this ITwin. You will not be able to save the scene."),
 					FText::FromString(""));
-				scene->PrepareCreation("default scene", itwinid);
+				scene->PrepareCreation(defaultSceneName, itwinid);
 				scene->SetTimeline(std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New()));
 				return false;
 			}
@@ -993,100 +1003,165 @@ bool FDecorationAsyncIOHelper::LoadSceneFromServer()
 			std::vector<std::shared_ptr<IScenePersistence>> scenes2 = *scenes2res;
 			if (scenes2.empty())
 			{
-				std::vector<std::shared_ptr<IScenePersistence>> scenes = GetITwinScenesDS(itwinid);
-				if (!scenes.empty())
+				if (!LoadedSceneID.IsEmpty())
 				{
-					bool sceneInited = false;
-					for (auto s : scenes)
+					std::string const sceneid = TCHAR_TO_UTF8(*(LoadedSceneID));
+					if (bSceneIdIsForNewScene)
 					{
-						if (s->GetName() != "sub scene")
-						{
-							if (FMessageDialog::Open(EAppMsgCategory::Error, EAppMsgType::YesNo,
-								FText::FromString("You have a scene in Decoration Service and no scene in SceneAPI , would you like to transfer it to Scene API service? "),
-								FText::FromString("")) != EAppReturnType::Yes)
-							{
-								scene->PrepareCreation("default scene", itwinid);
-								scene->SetTimeline(std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New()));
-							}
-							else
-							{
-								scene->PrepareCreation("default scene", itwinid);
-								scene->SetAtmosphere(s->GetAtmosphere());
-								scene->SetSceneSettings(s->GetSceneSettings());
-								for (auto link : s->GetLinks())
-								{
-									auto nulink = scene->MakeLink();
-									nulink->SetType(link->GetType());
-									nulink->SetRef(link->GetRef());
-									if (link->HasVisibility())
-										nulink->SetVisibility(link->GetVisibility());
-									if (link->HasGCS())
-									{
-										auto gcs = link->GetGCS();
-										nulink->SetGCS(gcs.first, gcs.second);
-									}
-									if (link->HasQuality())
-										nulink->SetQuality(link->GetQuality());
-									if (link->HasTransform())
-										nulink->SetTransform(link->GetTransform());
-									if (link->HasName())
-										nulink->SetName(link->GetName());
-									scene->AddLink(nulink);
-								}
-								auto tmInfo = GetSceneTimelines(s->GetId());
-								if (tmInfo && !(*tmInfo).empty())
-								{
-									auto timeline = std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New());
-									auto timelineId = (*tmInfo)[0].id;
-									auto ret = timeline->Load(s->GetId(), timelineId);
-									if (!ret)
-									{
-										BE_LOGE("Timeline", "Load failed, id:" << (std::string&)timelineId << " error:" << ret.error());
-										timeline = std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New());
-									}
-									//remove ids 
-									for (size_t i(0); i < timeline->GetClipCount(); i++)
-									{
-										auto clipp = timeline->GetClipByIndex(i);
-										if (!clipp)
-											continue;
-										(*clipp)->SetId(ITimelineClip::Id(std::string()));
-									}
-									scene->SetTimeline(timeline);
-								}
-								else
-								{
-									scene->SetTimeline(std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New()));
-								}
-
-								PostLoadSceneFromServer();
-							}
-							sceneInited = true;
-							break;
-
-						}
-					}
-					if (!sceneInited)
-					{
-						scene->PrepareCreation("default scene", itwinid);
-						scene->SetTimeline(std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New()));
+						scene->PrepareCreation(sceneid, itwinid);
 					}
 					else
 					{
-						return true;
+						FMessageDialog::Open(EAppMsgCategory::Error, EAppMsgType::Ok,
+							FText::FromString("Cannot find scene with ID " + LoadedSceneID + ", Create empty scene"),
+							FText::FromString(""));
+						scene->PrepareCreation(defaultSceneName, itwinid);
 					}
-
+					scene->SetTimeline(std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New()));
 				}
 				else
 				{
-					scene->PrepareCreation("default scene", itwinid);
-					scene->SetTimeline(std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New()));
+					std::vector<std::shared_ptr<IScenePersistence>> scenes = GetITwinScenesDS(itwinid);
+					if (!scenes.empty())
+					{
+						bool sceneInited = false;
+						for (auto s : scenes)
+						{
+							if (s->GetName() != "sub scene")
+							{
+								if (FMessageDialog::Open(EAppMsgCategory::Error, EAppMsgType::YesNo,
+									FText::FromString("You have a scene in Decoration Service and no scene in SceneAPI , would you like to transfer it to Scene API service? "),
+									FText::FromString("")) != EAppReturnType::Yes)
+								{
+									scene->PrepareCreation(defaultSceneName, itwinid);
+									scene->SetTimeline(std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New()));
+								}
+								else
+								{
+									scene->PrepareCreation(defaultSceneName, itwinid);
+									scene->SetAtmosphere(s->GetAtmosphere());
+									scene->SetSceneSettings(s->GetSceneSettings());
+									for (auto link : s->GetLinks())
+									{
+										auto nulink = scene->MakeLink();
+										nulink->SetType(link->GetType());
+										nulink->SetRef(link->GetRef());
+										if (link->HasVisibility())
+											nulink->SetVisibility(link->GetVisibility());
+										if (link->HasGCS())
+										{
+											auto gcs = link->GetGCS();
+											nulink->SetGCS(gcs.first, gcs.second);
+										}
+										if (link->HasQuality())
+											nulink->SetQuality(link->GetQuality());
+										if (link->HasTransform())
+											nulink->SetTransform(link->GetTransform());
+										if (link->HasName())
+											nulink->SetName(link->GetName());
+										scene->AddLink(nulink);
+									}
+									auto tmInfo = GetSceneTimelines(s->GetId());
+									if (tmInfo && !(*tmInfo).empty())
+									{
+										auto timeline = std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New());
+										auto timelineId = (*tmInfo)[0].id;
+										auto ret = timeline->Load(s->GetId(), timelineId);
+										if (!ret)
+										{
+											BE_LOGE("Timeline", "Load failed, id:" << (std::string&)timelineId << " error:" << ret.error());
+											timeline = std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New());
+										}
+										//remove ids 
+										for (size_t i(0); i < timeline->GetClipCount(); i++)
+										{
+											auto clipp = timeline->GetClipByIndex(i);
+											if (!clipp)
+												continue;
+											(*clipp)->SetId(ITimelineClip::Id(std::string()));
+										}
+										scene->SetTimeline(timeline);
+									}
+									else
+									{
+										scene->SetTimeline(std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New()));
+									}
+
+									PostLoadSceneFromServer();
+								}
+								sceneInited = true;
+								break;
+
+							}
+						}
+						if (!sceneInited)
+						{
+							scene->PrepareCreation(defaultSceneName, itwinid);
+							scene->SetTimeline(std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New()));
+						}
+						else
+						{
+							return true;
+						}
+
+					}
+					else
+					{
+						scene->PrepareCreation(defaultSceneName, itwinid);
+						scene->SetTimeline(std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New()));
+					}
 				}
 				return false;
 			}
 			else
 			{
-				scene = scenes2[0];
+				if (!LoadedSceneID.IsEmpty())
+				{
+					std::string const sceneid = TCHAR_TO_UTF8(*(LoadedSceneID));
+					if (bSceneIdIsForNewScene)
+					{
+						scene->PrepareCreation(sceneid, itwinid);
+						scene->SetTimeline(std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New()));
+						return false;
+					}
+					else
+					{
+						bool found = false;
+						for (auto scen : scenes2)
+						{
+							if (scen->GetId() == sceneid)
+							{
+								scene = scen;
+								found = true; 
+								break;
+							}
+						}
+						if (!found)
+						{
+							FMessageDialog::Open(EAppMsgCategory::Error, EAppMsgType::Ok,
+								FText::FromString("Cannot find scene with ID " + LoadedSceneID + ", first scene found loaded"),
+								FText::FromString(""));
+							scene = scenes2[0];
+						}
+
+					}
+
+				}
+				else
+				{
+					bool found = false;
+					//take default scene and not a dev scene by default
+					for (auto sc : scenes2)
+					{
+						if (sc->GetName() == defaultSceneName)
+						{
+							scene =sc;
+							found = true;
+						}
+					}
+					if(!found)
+						scene = scenes2[0];
+				}
 				PostLoadSceneFromServer();
 			}
 		}
@@ -1096,14 +1171,79 @@ bool FDecorationAsyncIOHelper::LoadSceneFromServer()
 		std::vector<std::shared_ptr<IScenePersistence>> scenes = GetITwinScenesDS(itwinid);
 		if (scenes.empty())
 		{
-			scene->PrepareCreation("default scene", itwinid);
-			scene->SetTimeline(std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New()));
+			if (!LoadedSceneID.IsEmpty())
+			{
+				std::string const sceneid = TCHAR_TO_UTF8(*(LoadedSceneID));
+				if (bSceneIdIsForNewScene)
+				{
+					scene->PrepareCreation(sceneid, itwinid);
+				}
+				else
+				{
+					FMessageDialog::Open(EAppMsgCategory::Error, EAppMsgType::Ok,
+						FText::FromString("Cannot find scene with ID " + LoadedSceneID + ", XCreate empty scene"),
+						FText::FromString(""));
+					scene->PrepareCreation(defaultSceneName, itwinid);
+				}
+				scene->SetTimeline(std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New()));
+			}
+			else
+			{
+
+				scene->PrepareCreation(defaultSceneName, itwinid);
+				scene->SetTimeline(std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New()));
+			}
 			return false;
 		}
 		else
 		{
-			std::string sceneId = scenes[0]->GetId();
-			scene = scenes[0];
+			if (!LoadedSceneID.IsEmpty())
+			{
+				std::string const sceneid = TCHAR_TO_UTF8(*(LoadedSceneID));
+				if (bSceneIdIsForNewScene)
+				{
+					scene->PrepareCreation(sceneid, itwinid);
+					scene->SetTimeline(std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New()));
+					return false;
+				}
+				else
+				{
+					bool found = false;
+					for (auto scen : scenes)
+					{
+						if (scen->GetId() == sceneid)
+						{
+							scene = scen;
+							found = true;
+							break;
+						}
+					}
+					if (!found)
+					{
+						FMessageDialog::Open(EAppMsgCategory::Error, EAppMsgType::Ok,
+							FText::FromString("Cannot find scene with ID " + LoadedSceneID + ", first scene found loaded"),
+							FText::FromString(""));
+						scene = scenes[0];
+					}
+				}
+			}
+			else
+			{
+				bool found = false;
+				//take default scene and not a dev scene by default
+				for (auto sc : scenes)
+				{
+					if (sc->GetName() == defaultSceneName)
+					{
+						scene = sc;
+						found = true;
+					}
+				}
+				if (!found)
+					scene = scenes[0];
+			}
+				
+			std::string sceneId = scene->GetId();
 			PostLoadSceneFromServer();
 			// Load or create timeline
 			auto tmInfo = GetSceneTimelines(sceneId);
@@ -1208,6 +1348,22 @@ bool FDecorationAsyncIOHelper::SaveSceneToServer()
 	return true;
 }
 
+bool FDecorationAsyncIOHelper::LoadAnnotationsFromServer()
+{
+	if (!annotationsManager)
+	{
+		ensureMsgf(false, TEXT("InitDecorationService must be called before, in game thread"));
+		return false;
+	}
+	if (!LoadITwinDecoration())
+	{
+		return false;
+	}
+	annotationsManager->LoadDataFromServerDS(decoration->GetId());
+	return true;
+
+}
+
 bool FDecorationAsyncIOHelper::LoadSplinesFromServer()
 {
 	if (!splinesManager)
@@ -1244,4 +1400,18 @@ FDecorationAsyncIOHelper::LinkSharedPtr FDecorationAsyncIOHelper::CreateLink(Mod
 std::shared_ptr<AdvViz::SDK::ISplinesManager> const& FDecorationAsyncIOHelper::GetSplinesManager()
 {
 	return splinesManager;
+}
+
+AdvViz::expected<std::vector<std::shared_ptr<AdvViz::SDK::IScenePersistence>>, int> FDecorationAsyncIOHelper::GetITwinScenes(const FString& iTwinid)
+{
+
+	std::string itwinid = TCHAR_TO_UTF8(*(iTwinid));
+	if (bUseDecorationService)
+	{
+		return AdvViz::SDK::GetITwinScenesDS(itwinid);
+	}
+	else
+	{
+		return AdvViz::SDK::GetITwinScenesAPI(itwinid);
+	}
 }

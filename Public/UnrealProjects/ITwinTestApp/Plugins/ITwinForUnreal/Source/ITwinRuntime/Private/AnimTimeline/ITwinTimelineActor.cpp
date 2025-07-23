@@ -46,7 +46,7 @@ namespace ITwin
 		FString RelativePath = FPaths::ProjectContentDir();
 		FString FullPath = IFileManager::Get().ConvertToAbsolutePathForExternalAppForRead(*RelativePath);
 		FString FinalPath = FPaths::Combine(*FullPath, TEXT("Timeline_export.json"));
-		UE_LOG(LogTemp, Display, TEXT("Using path %s to save timeline data"), *FinalPath);
+		BE_LOGI("Timeline", "Using path "	<< TCHAR_TO_UTF8(*FinalPath) << " to save timeline data");
 		return FinalPath;
 	}
 
@@ -386,6 +386,7 @@ public:
 
 	std::shared_ptr<AdvViz::SDK::ITimeline> timeline_; // timeline data stored on the server
 
+	int nextFreeClipID_ = 0;
 	int curClip_ = -1.f; ///< index of the current clip in the clip array
 	float curTime_ = 0.f; ///< current clip time in seconds (don't confuse with schedule time/date)
 	bool isLooping_ = false;
@@ -507,7 +508,7 @@ public:
 					continue;
 				const auto& KF = (*kf)->GetData();
 				BE_ASSERT(KF.camera.has_value());
-				//BE_ASSERT(KF.synchro.has_value());//todo
+				BE_ASSERT(KF.synchro.has_value());
 				TArray<std::optional<USequencerHelper::KFValueType> > ParamValues;
 				ConvertToSequencer(KF, ParamValues);
 				USequencerHelper::AddKeyFrame(clip->GetTracks(), levelSequencePath_, KF.time, ParamValues);
@@ -614,11 +615,10 @@ public:
 
 	std::shared_ptr<AdvViz::SDK::ITimelineClip> AppendClip(FString sName = FString())
 	{
-		static int nextFreeClipID = 0;
 		if (sName.IsEmpty())
 		{
 			do {
-				sName = FString::Printf(TEXT("Clip_%d"), ++nextFreeClipID);
+				sName = FString::Printf(TEXT("Clip_%d"), ++nextFreeClipID_);
 			} while (GetClipIndex(sName) >= 0);
 		}
 		auto clip = timeline_->AddClip(TCHAR_TO_UTF8(*sName));
@@ -647,7 +647,12 @@ public:
 			//clip->GetCamera()->Destroy();
 
 			timeline_->RemoveClip(curClip_);
-			curClip_ = (timeline_->GetClipCount() > 0) ? 0 : -1;
+			auto const count = (int)timeline_->GetClipCount();
+			curClip_ = (count > 0) ? 0 : -1;
+			if (count >= 0 && clipIdx == count)
+			{
+				--nextFreeClipID_;
+			}
 		}
 	}
 
@@ -913,12 +918,14 @@ public:
 		bool bSuccess = USequencerHelper::GetTransformAtTime(pCamera, levelSequencePath_, fTime, pos, rot);
 		if (bSuccess)
 		{
-			UE_LOG(LogTemp, Verbose, TEXT("Time set to %f, setting current view to: Rotation (%f, %f, %f), Position (%f, %f, %f)"), fTime, rot.Yaw, rot.Pitch, rot.Roll, pos.X, pos.Y, pos.Z);
+			BE_LOGV("Timeline", "Time set to " << fTime << ", setting current view to: "
+				<< "Rotation (" << rot.Yaw << ", " << rot.Pitch << ", " << rot.Roll
+				<< "), Position (" << pos.X << ", " << pos.Y << ", " << pos.Z << ")");
 			ScreenUtils::SetCurrentView(Owner.GetWorld(), pos, rot);
 		}
 		else
 		{
-			UE_LOG(LogTemp, Warning, TEXT("Failed to compute transform when setting time to %f"), fTime);
+			BE_LOGW("Timeline", "Failed to compute transform when setting time to " << fTime);
 		}
 	}
 
@@ -958,12 +965,13 @@ public:
 		FDateTime curDate;
 		if (GetSynchroDateFromTime(clip, fTime, curDate))
 		{
-			UE_LOG(LogTemp, Verbose, TEXT("Time set to %f, setting current date to %s"), fTime, *(curDate.ToFormattedString(TEXT("%d %b %Y"))));
+			BE_LOGV("Timeline", "Time set to " << fTime << ", setting current date to "
+				<< TCHAR_TO_UTF8(*(curDate.ToFormattedString(TEXT("%d %b %Y")))));
 			ITwin::SetSynchroDateToSchedules(GetSchedules(), curDate);
 		}
 		else
 		{
-			UE_LOG(LogTemp, Warning, TEXT("Failed to compute date when setting time to %f"), fTime);
+			BE_LOGW("Timeline", "Failed to compute date when setting time to to " << fTime);
 		}
 	}
 
@@ -980,7 +988,8 @@ public:
 		{
 			double dateDelta;
 			USequencerHelper::GetDoubleValueAtTime(clip->GetTracks()[idx].Get(), levelSequencePath_, fTime, dateDelta);
-			data.heliodonDate = ITwin::TimelineToSynchro(dateDelta);
+			if(fabs(dateDelta) > 1e-6)
+				data.heliodonDate = ITwin::TimelineToSynchro(dateDelta);
 		}
 		idx = AnimTracksInfo_.IndexOfByKey(TEXT("clouds"));
 		if (idx != INDEX_NONE && idx < clip->GetTracks().Num())
@@ -1697,7 +1706,7 @@ bool AITwinTimelineActor::LinkClipsToCutTrack(int clipIdx/* = -1*/)
 		USequencerHelper::LinkCameraToCameraCutTrack(clip->GetCamera(), Impl->levelSequencePath_, fTotalDuration, fTotalDurationNew, bRes, outMsg);
 		if (!bRes)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("Failed to link clip %d to Camera Cuts: %s"), i, *outMsg);
+			BE_LOGW("Timeline", "Failed to link clip " << i << " to Camera Cuts: " << TCHAR_TO_UTF8(*outMsg));
 			continue;
 		}
 		fTotalDuration = fTotalDurationNew;
@@ -1802,7 +1811,9 @@ FTransform ScreenUtils::GetCurrentViewTransform(UWorld* pWorld)
 	FVector pos;
 	FRotator rot;
 	ScreenUtils::GetCurrentView(pWorld, pos, rot);
-	UE_LOG(LogTemp, Warning, TEXT("Current view transform: Rotation (%f, %f, %f), Position (%f, %f, %f)"), rot.Yaw, rot.Pitch, rot.Roll, pos.X, pos.Y, pos.Z);
+	BE_LOGV("Timeline", "Current view transform: "
+		<< "Rotation (" << rot.Yaw << ", " << rot.Pitch << ", " << rot.Roll
+		<< "), Position (" << pos.X << ", " << pos.Y << ", " << pos.Z << ")");
 	return FTransform(rot, pos, FVector(1, 1, 1));
 }
 

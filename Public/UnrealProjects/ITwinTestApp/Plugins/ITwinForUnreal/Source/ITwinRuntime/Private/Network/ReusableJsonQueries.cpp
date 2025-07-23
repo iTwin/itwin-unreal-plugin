@@ -11,7 +11,8 @@
 #include "ITwinServerEnvironment.h"
 
 #include <Compil/BeforeNonUnrealIncludes.h>
-	#include <BeHeaders/Compil/CleanUpGuard.h>
+#	include <BeHeaders/Compil/CleanUpGuard.h>
+#	include <Core/Tools/Log.h>
 #include <Compil/AfterNonUnrealIncludes.h>
 
 #include <GenericPlatform/GenericPlatformTime.h>
@@ -25,8 +26,6 @@
 
 #include <algorithm>
 #include <optional>
-
-DEFINE_LOG_CATEGORY(ITwinQuery);
 
 using namespace ReusableJsonQueries;
 
@@ -314,8 +313,9 @@ void FReusableJsonQueries::FImpl::DoEmitRequest(FPoolRequest& FromPool, FRequest
 			++CacheHits;
 		else
 		{
-			UE_LOG(ITwinQuery, Warning, TEXT("SimulationMode: no reply found for '%s %s'!"),
-				   *FromPool.Request->GetVerb(), *FromPool.Request->GetURL());
+			BE_LOGW("ITwinQuery", "SimulationMode: no reply found for '"
+				<< TCHAR_TO_UTF8(*FromPool.Request->GetVerb()) << " "
+				<< TCHAR_TO_UTF8(*FromPool.Request->GetURL()) << "'!");
 		}
 		break;
 	case ReusableJsonQueries::EReplayMode::TryLocalCache:

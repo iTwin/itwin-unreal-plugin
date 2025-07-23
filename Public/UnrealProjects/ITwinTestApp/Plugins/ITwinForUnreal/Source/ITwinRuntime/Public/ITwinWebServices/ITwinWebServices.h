@@ -51,6 +51,10 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnUpdateSavedViewThumbnailComple
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGetRealityDataComplete, bool, bSuccess, FITwinRealityDataInfos, RealityDataInfos);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGetRealityData3DInfoComplete, bool, bSuccess, FITwinRealityData3DInfo, RealityDataInfo);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnGetElementPropertiesComplete, bool, bSuccess, FElementProperties, ElementProps, FString, ElementId);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGetPagedNodesComplete, bool, bSuccess, FIModelPagedNodesRes, IModelNodes);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnGetModelFilteredNodesComplete, bool, bSuccess, FFilteredNodesRes, FilteredNodes, FString, Filter);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnGetCategoryFilteredNodesComplete, bool, bSuccess, FFilteredNodesRes, FilteredNodes, FString, Filter);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGetCategoryNodesComplete, bool, bSuccess, FIModelPagedNodesRes, IModelNodes);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_FiveParams(FOnGetIModelPropertiesComplete, bool, bSuccess, bool, bHasExtents, FProjectExtents, Extents, bool, bHasEcefLocation, FEcefLocation, EcefLocation);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnQueryIModelComplete, bool, bSuccess, FString, QueryResult);
 
@@ -145,6 +149,22 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
 	void GetElementProperties(FString iTwinId, FString iModelId, FString ChangesetId, FString ElementId);
+
+	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
+	void GetPagedNodes(FString const& iTwinId, FString const& iModelId,
+		FString const& changesetId, FString const& parentKey = "", int offset = 0, int count = 1000);
+
+	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
+	void GetModelFilteredNodes(FString const& iTwinId, FString const& iModelId,
+		FString const& ChangesetId, FString const& Filter);
+
+	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
+	void GetCategoryFilteredNodes(FString const& iTwinId, FString const& iModelId,
+		FString const& ChangesetId, FString const& Filter);
+
+	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
+	void GetCategoryNodes(FString const& iTwinId, FString const& iModelId,
+		FString const& changesetId, FString const& parentKey = "", int offset = 0, int count = 1000);
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
 	void GetIModelProperties(FString iTwinId, FString iModelId, FString ChangesetId);
@@ -251,6 +271,18 @@ public:
 	FOnGetElementPropertiesComplete OnGetElementPropertiesComplete;
 
 	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
+	FOnGetPagedNodesComplete OnGetPagedNodesComplete;
+
+	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
+	FOnGetModelFilteredNodesComplete OnGetModelFilteredNodesComplete;
+
+	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
+	FOnGetCategoryFilteredNodesComplete OnGetCategoryFilteredNodesComplete;
+
+	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
+	FOnGetCategoryNodesComplete OnGetCategoryNodesComplete;
+
+	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
 	FOnGetIModelPropertiesComplete OnGetIModelPropertiesComplete;
 
 	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
@@ -279,12 +311,13 @@ public:
 	void SetObserver(IITwinWebServicesObserver* InObserver);
 	bool HasObserver(IITwinWebServicesObserver const* Observer) const;
 
-	static void SetITwinAppIDArray(ITwin::AppIDArray const& iTwinAppIDs);
+	static void SetITwinAppIDArray(ITwin::AppIDArray const& iTwinAppIDs, bool bLogIDs = true);
 
 	//! Can be called to customize the scopes used to request the authorization.
 	static void AddScope(FString const& ExtraScope);
 
 	static void SetPreferredEnvironment(EITwinEnvironment Env);
+	static EITwinEnvironment GetDefaultEnvironment();
 
 
 	static bool GetActiveConnection(TObjectPtr<AITwinServerConnection>& OutConnection,
@@ -321,6 +354,8 @@ private:
 	void DoRequest(FunctorType&& InFunctor);
 	template <typename FunctorType>
 	HttpRequestID DoRequestRetID(FunctorType&& InFunctor);
+
+	static void InitDefaultEnvironmentFromDecoSettings(class UITwinDecorationServiceSettings const* DecoSettings);
 
 private:
 	UPROPERTY()

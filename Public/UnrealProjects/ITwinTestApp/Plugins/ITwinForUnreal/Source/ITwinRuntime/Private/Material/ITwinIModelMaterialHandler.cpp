@@ -100,6 +100,7 @@ void FITwinIModelMaterialHandler::Initialize(std::shared_ptr<BeUtils::GltfTuner>
 			FillMaterialInfoFromTuner(bAttachedToImodel ? IModelPtr.Get() : nullptr);
 
 			// Initialize persistence at low level, if any.
+			auto const& MaterialPersistenceMngr = GetPersistenceManager();
 			if (MaterialPersistenceMngr
 				&& bAttachedToImodel
 				&& ensure(!IModelPtr->IModelId.IsEmpty()))
@@ -114,7 +115,7 @@ void FITwinIModelMaterialHandler::Initialize(std::shared_ptr<BeUtils::GltfTuner>
 				BeUtils::WLock Lock(GltfMatHelper->GetMutex());
 				for (BeUtils::ITwinMaterialInfo const& MatInfo : MaterialInfos)
 				{
-					GltfMatHelper->CreateITwinMaterialSlot(MatInfo.id, Lock);
+					GltfMatHelper->CreateITwinMaterialSlot(MatInfo.id, MatInfo.name, Lock);
 				}
 			}
 			// If material customizations were already loaded from the decoration server (this is done
@@ -222,7 +223,9 @@ void FITwinIModelMaterialHandler::OnMaterialPropertiesRetrieved(AdvViz::SDK::ITw
 			ensureMsgf(CustomMat != nullptr, TEXT("Material mismatch: ID %s not found in tileset.json (%s)"),
 				*MaterialID, *FString(matProperties.name.c_str()));
 
-			GltfMatHelper->SetITwinMaterialProperties(id64.value(), matProperties, lock);
+			GltfMatHelper->SetITwinMaterialProperties(id64.value(), matProperties,
+				TCHAR_TO_UTF8(*CustomMat->Name),
+				lock);
 		}
 	}
 
@@ -265,6 +268,7 @@ void FITwinIModelMaterialHandler::OnTextureDataRetrieved(std::string const& text
 		texturesToResolve.emplace(texKey, texturePath.filename().generic_string());
 
 		AdvViz::SDK::TextureUsageMap usageMap;
+		auto const& MaterialPersistenceMngr = GetPersistenceManager();
 		if (ensure(MaterialPersistenceMngr))
 		{
 			usageMap.emplace(texKey, MaterialPersistenceMngr->GetTextureUsage(texKey));
@@ -303,7 +307,7 @@ void FITwinIModelMaterialHandler::SaveMLPredictionState()
 		: AdvViz::SDK::EMaterialKind::PBR;
 
 	BeUtils::WLock Lock(GltfMatHelper->GetMutex());
-	GltfMatHelper->CreateITwinMaterialSlot(ITwin::NOT_MATERIAL.value(), Lock);
+	GltfMatHelper->CreateITwinMaterialSlot(ITwin::NOT_MATERIAL.value(), "", Lock);
 	GltfMatHelper->SetMaterialFullDefinition(ITwin::NOT_MATERIAL.value(), MLSwitcherMat, Lock);
 }
 
@@ -318,8 +322,8 @@ void FITwinIModelMaterialHandler::LoadMLPredictionState(bool& bActivateML, BeUti
 		return;
 
 	// Only create the special slot if it exists in loaded decoration.
-	auto const MLSwitcherMatInfo = GltfMatHelper->CreateITwinMaterialSlot(ITwin::NOT_MATERIAL.value(), Lock,
-		/*bOnlyIfCustomDefinitionExists*/true);
+	auto const MLSwitcherMatInfo = GltfMatHelper->CreateITwinMaterialSlot(ITwin::NOT_MATERIAL.value(),
+		"", Lock, /*bOnlyIfCustomDefinitionExists*/true);
 	auto const* MLSwitcherMat = MLSwitcherMatInfo.second;
 	bActivateML = (MLSwitcherMat
 		&& MLSwitcherMat->kind == AdvViz::SDK::EMaterialKind::Glass);
@@ -335,7 +339,7 @@ void FITwinIModelMaterialHandler::SetMaterialMLPredictionObserver(IITwinWebServi
 	MLPredictionMaterialObserver = observer;
 }
 
-void FITwinIModelMaterialHandler::OnMatMLPredictionRetrieved(bool bSuccess,
+void FITwinIModelMaterialHandler::UpdateModelFromMatMLPrediction(bool bSuccess,
 	AdvViz::SDK::ITwinMaterialPrediction const& Prediction, std::string const& error,
 	AITwinIModel& IModel)
 {
@@ -354,6 +358,11 @@ void FITwinIModelMaterialHandler::OnMatMLPredictionRetrieved(bool bSuccess,
 		return;
 	}
 
+	if (IModel.VisualizeMaterialMLPrediction())
+	{
+		// Already done by another thread.
+		return;
+	}
 	IModel.SetMaterialMLPredictionStatus(EITwinMaterialPredictionStatus::Complete);
 
 	const std::string IModelId = TCHAR_TO_UTF8(*IModel.IModelId);
@@ -372,7 +381,7 @@ void FITwinIModelMaterialHandler::OnMatMLPredictionRetrieved(bool bSuccess,
 
 	// Reload/Save material customizations from/to a file in order to create a collection of materials for
 	// the predefined material categories (Wood, Steel, Aluminum etc.)
-	auto const& MatIOMngr = GetMaterialPersistenceManager();
+	auto const& MatIOMngr = GetPersistenceManager();
 	if (MatIOMngr)
 	{
 		// This path will be independent from the current iModel, so that it is easier to locate
@@ -523,7 +532,9 @@ void FITwinIModelMaterialHandler::OnMatMLPredictionRetrieved(bool bSuccess,
 		{
 			// Also create the corresponding entries in the material helper (important for edition), and enable
 			// material tuning if we do have a custom definition.
-			auto const MatInfo = GltfMatHelper->CreateITwinMaterialSlot(MatID, Lock);
+			auto const MatInfo = GltfMatHelper->CreateITwinMaterialSlot(MatID,
+																		TCHAR_TO_UTF8(*CustomMat.Name),
+																		Lock);
 			if (MatInfo.second && AdvViz::SDK::HasCustomSettings(*MatInfo.second))
 			{
 				CustomMat.bAdvancedConversion = true;
@@ -538,12 +549,22 @@ void FITwinIModelMaterialHandler::OnMatMLPredictionRetrieved(bool bSuccess,
 	{
 		MatIOMngr->AppendMaterialCollectionNames(MatIDToName);
 	}
+}
+
+
+void FITwinIModelMaterialHandler::OnMatMLPredictionRetrieved(bool bSuccess,
+	AdvViz::SDK::ITwinMaterialPrediction const& Prediction, std::string const& error,
+	AITwinIModel& IModel)
+{
+	// Update the material mapping based on material ML predictions. Only one thread should do it!
+	UpdateModelFromMatMLPrediction(bSuccess, Prediction, error, IModel);
 
 	if (MLPredictionMaterialObserver)
 	{
 		MLPredictionMaterialObserver->OnMatMLPredictionRetrieved(bSuccess, Prediction);
 	}
 
+	// Re-tune the glTF model accordingly.
 	SplitGltfModelForCustomMaterials();
 }
 
@@ -626,6 +647,7 @@ void FITwinIModelMaterialHandler::DetectCustomizedMaterials(AITwinIModel* OwnerI
 
 	// Initialize persistence at low level, if it has not yet been done (eg. when creating the iModel
 	// manually in Editor, and clicking LoadDecoration...).
+	auto const& MaterialPersistenceMngr = GetPersistenceManager();
 	if (MaterialPersistenceMngr
 		&& !GltfMatHelper->HasPersistenceInfo()
 		&& ensure(OwnerIModel && !OwnerIModel->IModelId.IsEmpty()))
@@ -645,7 +667,6 @@ void FITwinIModelMaterialHandler::DetectCustomizedMaterials(AITwinIModel* OwnerI
 	{
 		if (bActivateMLMatPrediction && OwnerIModel)
 		{
-			Lock.unlock(); // ToggleMLMaterialPrediction itself will w-lock...
 			OwnerIModel->ToggleMLMaterialPrediction(true);
 			// If the material prediction can be reloaded from cache (which will be the case if we reload
 			// a scene on the same machine as earlier), directly set the status to validated, so that the
@@ -686,24 +707,31 @@ void FITwinIModelMaterialHandler::DetectCustomizedMaterials(AITwinIModel* OwnerI
 			TexConverter.ConvertTexturesToGltf(MatID, Lock);
 		}
 	}
-	if (NumCustomMaterials > 0)
+	Lock.unlock(); // we are done editing GltfMatHelper
+
+	// Toggle material prediction at the end if needed. This may trigger a custom glTF tuning.
+	ToggleMLGuard.cleanup();
+
+	const bool bHasTriggeredTuning = (bActivateMLMatPrediction && OwnerIModel
+		&& OwnerIModel->VisualizeMaterialMLPrediction());
+
+	// Request a glTF tuning if needed (and if it has not just been done for the visualization of the
+	// material prediction).
+	if (NumCustomMaterials > 0 && !bHasTriggeredTuning)
 	{
-		// Request a different glTF tuning.
 		SplitGltfModelForCustomMaterials();
 	}
-
-	// Toggle material prediction at the end if needed.
-	ToggleMLGuard.cleanup();
 }
 
 void FITwinIModelMaterialHandler::ReloadCustomizedMaterials()
 {
-	int NumCustomMaterials = 0;
-	BeUtils::WLock Lock(GltfMatHelper->GetMutex());
-	size_t LoadedSettings = GltfMatHelper->LoadMaterialCustomizations(Lock, true);
-	for (auto& [MatID, CustomMat] : ITwinMaterials)
 	{
-		CustomMat.bAdvancedConversion = GltfMatHelper->HasCustomDefinition(MatID, Lock);
+		BeUtils::WLock Lock(GltfMatHelper->GetMutex());
+		size_t LoadedSettings = GltfMatHelper->LoadMaterialCustomizations(Lock, true);
+		for (auto& [MatID, CustomMat] : ITwinMaterials)
+		{
+			CustomMat.bAdvancedConversion = GltfMatHelper->HasCustomDefinition(MatID, Lock);
+		}
 	}
 	SplitGltfModelForCustomMaterials();
 }
@@ -1221,6 +1249,7 @@ namespace
 	struct IntensityUpdateInfo
 	{
 		double Value = -1.;
+		bool bHasNonDefaultValue = false;
 		bool bHasChanged = false;
 	};
 	using ChannelIntensityInfos = std::array<IntensityUpdateInfo, (size_t)EITwinChannelType::ENUM_END>;
@@ -1413,18 +1442,24 @@ void FITwinIModelMaterialHandler::SetMaterialKind(uint64_t MaterialId, AdvViz::S
 	TSetMaterialChannelParam(Helper, MaterialId, SceneMapping);
 }
 
+bool FITwinIModelMaterialHandler::GetMaterialCustomRequirements(uint64_t MaterialId, AdvViz::SDK::EMaterialKind& OutMaterialKind,
+	bool& bOutRequiresTranslucency) const
+{
+	return GltfMatHelper->GetCustomRequirements(MaterialId, OutMaterialKind, bOutRequiresTranslucency);
+}
+
 bool FITwinIModelMaterialHandler::LoadMaterialWithoutRetuning(
 	AdvViz::SDK::ITwinMaterial& OutNewMaterial,
 	uint64_t MaterialId,
 	FString const& AssetFilePath,
 	FString const& IModelId,
 	BeUtils::WLock const& Lock,
-	bool bForceResetUnusedtextures /*= false*/)
+	bool bForceRefreshAllParameters /*= false*/)
 {
 	using namespace AdvViz::SDK;
 	using EITwinChannelType = AdvViz::SDK::EChannelType;
 
-	auto const& MatIOMngr = GetMaterialPersistenceManager();
+	auto const& MatIOMngr = GetPersistenceManager();
 	if (!ensureMsgf(MatIOMngr, TEXT("no material persistence manager")))
 	{
 		return false;
@@ -1435,7 +1470,7 @@ bool FITwinIModelMaterialHandler::LoadMaterialWithoutRetuning(
 	TextureUsageMap NewTextureUsageMap;
 	ETextureSource TexSource = ETextureSource::Library;
 	if (!FITwinMaterialLibrary::LoadMaterialFromAssetPath(AssetFilePath, NewMaterial,
-		NewTextures, NewTextureUsageMap, TexSource))
+		NewTextures, NewTextureUsageMap, TexSource, MatIOMngr))
 	{
 		return false;
 	}
@@ -1449,7 +1484,7 @@ bool FITwinIModelMaterialHandler::LoadMaterialWithoutRetuning(
 				.eSource = ETextureSource::Library
 			});
 	}
-	if (bForceResetUnusedtextures)
+	if (bForceRefreshAllParameters)
 	{
 		// Set NONE_TEXTURE in all unused slot, to enforce material update in UE (typically for the material
 		// preview...)
@@ -1507,7 +1542,8 @@ bool FITwinIModelMaterialHandler::LoadMaterialFromAssetFile(uint64_t MaterialId,
 	FString const& IModelId,
 	FITwinSceneMapping& SceneMapping,
 	UITwinMaterialDefaultTexturesHolder const& DefaultTexturesHolder,
-	bool bForceResetUnusedtextures /*= false*/)
+	bool bForceRefreshAllParameters /*= false*/,
+	std::function<void(AdvViz::SDK::ITwinMaterial&)> const& CustomizeMaterialFunc /*= {}*/)
 {
 	using namespace AdvViz::SDK;
 	using EITwinChannelType = AdvViz::SDK::EChannelType;
@@ -1535,10 +1571,16 @@ bool FITwinIModelMaterialHandler::LoadMaterialFromAssetFile(uint64_t MaterialId,
 
 		// Actually load the material.
 		if (!LoadMaterialWithoutRetuning(NewMaterial, MaterialId, AssetFilePath, IModelId,
-										 Lock, bForceResetUnusedtextures))
+										 Lock, bForceRefreshAllParameters))
 		{
 			return false;
 		}
+	}
+
+	if (CustomizeMaterialFunc)
+	{
+		// Introduced to adjust the material previews...
+		CustomizeMaterialFunc(NewMaterial);
 	}
 
 	if (CurMaterial == NewMaterial)
@@ -1568,6 +1610,7 @@ bool FITwinIModelMaterialHandler::LoadMaterialFromAssetFile(uint64_t MaterialId,
 			: GltfMatHelper->GetChannelDefaultIntensity(Channel, {});
 		newIntensities[i] = {
 			.Value = Intens_New,
+			.bHasNonDefaultValue = IntensOpt_New.has_value(),
 			.bHasChanged = std::fabs(Intens_New - Intens_Cur) > 1e-5
 		};
 
@@ -1655,7 +1698,8 @@ bool FITwinIModelMaterialHandler::LoadMaterialFromAssetFile(uint64_t MaterialId,
 		for (size_t i(0); i < newIntensities.size(); ++i)
 		{
 			EITwinChannelType const Channel = static_cast<EITwinChannelType>(i);
-			if (newIntensities[i].bHasChanged)
+			if (newIntensities[i].bHasChanged ||
+				(bForceRefreshAllParameters && newIntensities[i].bHasNonDefaultValue))
 			{
 				SceneMapping.SetITwinMaterialChannelIntensity(MaterialId, Channel, newIntensities[i].Value);
 			}
@@ -1691,18 +1735,31 @@ bool FITwinIModelMaterialHandler::LoadMaterialFromAssetFile(uint64_t MaterialId,
 /*** Material persistence ***/
 
 /*static*/
-FITwinIModelMaterialHandler::MaterialPersistencePtr FITwinIModelMaterialHandler::MaterialPersistenceMngr;
+FITwinIModelMaterialHandler::MaterialPersistencePtr FITwinIModelMaterialHandler::GlobalPersistenceMngr;
 
 /*static*/
-void FITwinIModelMaterialHandler::SetMaterialPersistenceManager(MaterialPersistencePtr const& Mngr)
+void FITwinIModelMaterialHandler::SetGlobalPersistenceManager(MaterialPersistencePtr const& Mngr)
 {
-	MaterialPersistenceMngr = Mngr;
+	GlobalPersistenceMngr = Mngr;
 }
 
 /*static*/
-FITwinIModelMaterialHandler::MaterialPersistencePtr const& FITwinIModelMaterialHandler::GetMaterialPersistenceManager()
+FITwinIModelMaterialHandler::MaterialPersistencePtr const& FITwinIModelMaterialHandler::GetGlobalPersistenceManager()
 {
-	return MaterialPersistenceMngr;
+	return GlobalPersistenceMngr;
+}
+
+void FITwinIModelMaterialHandler::SetSpecificPersistenceManager(MaterialPersistencePtr const& Mngr)
+{
+	SpecificPersistenceMngr = Mngr;
+}
+
+FITwinIModelMaterialHandler::MaterialPersistencePtr const& FITwinIModelMaterialHandler::GetPersistenceManager() const
+{
+	if (SpecificPersistenceMngr)
+		return SpecificPersistenceMngr;
+	else
+		return GetGlobalPersistenceManager();
 }
 
 void FITwinIModelMaterialHandler::InitForSingleMaterial(FString const& IModelId, uint64_t const MaterialId)
@@ -1711,12 +1768,12 @@ void FITwinIModelMaterialHandler::InitForSingleMaterial(FString const& IModelId,
 	// the material instance through the SceneMapping updates.
 	// Just create one slot:
 	GetMutableCustomMaterials().Emplace(MaterialId, { TEXT("DUMMY_MAT") });
-	GltfMatHelper->SetPersistenceInfo(TCHAR_TO_ANSI(*IModelId), MaterialPersistenceMngr);
+	GltfMatHelper->SetPersistenceInfo(TCHAR_TO_ANSI(*IModelId), GetPersistenceManager());
 	// Also create one entry in the glTF material helper (or else it will refuse to perform any edition
 	// of the material).
 	{
 		BeUtils::WLock Lock(GltfMatHelper->GetMutex());
-		GltfMatHelper->CreateITwinMaterialSlot(MaterialId, Lock);
+		GltfMatHelper->CreateITwinMaterialSlot(MaterialId, "DUMMY_MAT", Lock);
 	}
 }
 
@@ -1726,32 +1783,47 @@ namespace ITwin
 	{
 		using namespace AdvViz::SDK;
 
-		auto const PersistenceMngr_Backup = FITwinIModelMaterialHandler::GetMaterialPersistenceManager();
-		Be::CleanUpGuard restorePersistenceMngrGuard([&PersistenceMngr_Backup]
-		{
-			FITwinIModelMaterialHandler::SetMaterialPersistenceManager(PersistenceMngr_Backup);
-		});
+		// Use default values for iModel and material ID (it has to be constant so that the mechanism of
+		// incremental updates works correctly when generating a batch of previews.
+		FString const IModelId = TEXT("DUMMY_IMODEL_ID");
+		uint64_t const MaterialId = 0;
 
-		// Use a temporary persistence manager, to avoid messing real materials.
-		std::shared_ptr<AdvViz::SDK::MaterialPersistenceManager> PersistenceMngr_Temp;
-		PersistenceMngr_Temp = std::make_shared<AdvViz::SDK::MaterialPersistenceManager>();
-		FString const MaterialLibraryPath = FPaths::ProjectContentDir() / ITwin::MAT_LIBRARY;
-		PersistenceMngr_Temp->SetMaterialLibraryDirectory(TCHAR_TO_UTF8(*MaterialLibraryPath));
-		FITwinIModelMaterialHandler::SetMaterialPersistenceManager(PersistenceMngr_Temp);
+		// Use a distinct material handler for each preview mesh.
+		using MaterialHandlerPtr = std::shared_ptr<FITwinIModelMaterialHandler>;
+		static std::unordered_map<UStaticMeshComponent*, MaterialHandlerPtr> PerMeshMaterialHandlers;
+
+		MaterialHandlerPtr MaterialHandler;
+		UStaticMeshComponent* MeshComponent = MeshActor.GetStaticMeshComponent();
+		auto itMaterialHandler = PerMeshMaterialHandlers.find(MeshComponent);
+		if (itMaterialHandler != PerMeshMaterialHandlers.end())
+		{
+			MaterialHandler = itMaterialHandler->second;
+		}
+		else
+		{
+			MaterialHandler = std::make_shared<FITwinIModelMaterialHandler>();
+
+			// Use a temporary persistence manager, to avoid messing real materials.
+			std::shared_ptr<AdvViz::SDK::MaterialPersistenceManager> SpecificPersistenceMngr;
+			SpecificPersistenceMngr = std::make_shared<AdvViz::SDK::MaterialPersistenceManager>();
+			FString const MaterialLibraryPath = FPaths::ProjectContentDir() / ITwin::MAT_LIBRARY;
+			SpecificPersistenceMngr->SetMaterialLibraryDirectory(TCHAR_TO_UTF8(*MaterialLibraryPath));
+
+			MaterialHandler->SetSpecificPersistenceManager(SpecificPersistenceMngr);
+			MaterialHandler->InitForSingleMaterial(IModelId, MaterialId);
+			PerMeshMaterialHandlers[MeshComponent] = MaterialHandler;
+		}
 
 		ITwinMaterial NewMaterial;
 		TextureKeySet NewTextures;
 		TextureUsageMap NewTextureUsageMap;
 		ETextureSource TexSource = ETextureSource::Library;
 		if (!FITwinMaterialLibrary::LoadMaterialFromAssetPath(AssetFilePath, NewMaterial,
-			NewTextures, NewTextureUsageMap, TexSource))
+			NewTextures, NewTextureUsageMap, TexSource,
+			MaterialHandler->GetPersistenceManager()))
 		{
 			return false;
 		}
-
-		UStaticMeshComponent* MeshComponent = MeshActor.GetStaticMeshComponent();
-
-		static uint32_t NextMaterialId = 0;
 
 		UITwinSynchro4DSchedules* SchedulesComp = Cast<UITwinSynchro4DSchedules>(
 			UITwinSynchro4DSchedules::StaticClass()->GetDefaultObject());
@@ -1793,18 +1865,22 @@ namespace ITwin
 			FName(*(MeshActor.GetActorNameOrLabel() + "_DftTexHolder")));
 		DefaultTexturesHolder->RegisterComponent();
 
-		FString const IModelId = TEXT("DUMMY_IMODEL_ID");
-		uint64_t const MaterialId = 0;
-
 		FITwinSceneMapping SceneMapping(false);
 		FITwinSceneMappingBuilder::BuildFromNonCesiumMesh(SceneMapping, MeshComponent, MaterialId);
 
-		FITwinIModelMaterialHandler MaterialHandler;
-		MaterialHandler.InitForSingleMaterial(IModelId, MaterialId);
-		return MaterialHandler.LoadMaterialFromAssetFile(MaterialId, AssetFilePath,
+		return MaterialHandler->LoadMaterialFromAssetFile(MaterialId, AssetFilePath,
 			IModelId, SceneMapping,
 			*DefaultTexturesHolder,
-			true /*bForceResetUnusedtextures*/);
+			true /*bForceRefreshAllParameters*/,
+			[](ITwinMaterial& NewMat) {
+				// Reduce normal mapping effect.
+				if (NewMat.DefinesChannel(AdvViz::SDK::EChannelType::Normal))
+				{
+					NewMat.SetChannelIntensity(AdvViz::SDK::EChannelType::Normal,
+						std::min(0.5, NewMat.GetChannelIntensityOpt(AdvViz::SDK::EChannelType::Normal).value_or(0.0)));
+				}
+			}
+		);
 	}
 }
 

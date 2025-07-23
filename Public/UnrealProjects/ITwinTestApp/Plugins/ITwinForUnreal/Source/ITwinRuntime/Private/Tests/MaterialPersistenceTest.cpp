@@ -372,7 +372,7 @@ bool FITwinMaterialPersistenceTest::RunTest(const FString& /*Parameters*/)
 
 		{
 			BeUtils::WLock Lock(MatHelper.GetMutex());
-			auto const MatInfo = MatHelper.CreateITwinMaterialSlot(328, Lock);
+			auto const MatInfo = MatHelper.CreateITwinMaterialSlot(328, "", Lock);
 			UTEST_TRUE(TEXT("existing material"),
 				MatInfo.second && MatInfo.second->kind == AdvViz::SDK::EMaterialKind::Glass);
 		}

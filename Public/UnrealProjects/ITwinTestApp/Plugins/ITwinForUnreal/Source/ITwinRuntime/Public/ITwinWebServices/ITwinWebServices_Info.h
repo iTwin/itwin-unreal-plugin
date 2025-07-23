@@ -194,6 +194,28 @@ struct FDisplayStyle
 };
 
 USTRUCT(BlueprintType)
+struct FPerModelCategoryVisibilityProps
+{
+	GENERATED_USTRUCT_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "SavedView")
+		FString ModelId;
+
+	UPROPERTY(BlueprintReadWrite, Category = "SavedView")
+		FString CategoryId;
+
+	bool operator==(const FPerModelCategoryVisibilityProps& Other) const
+	{
+		return ModelId == Other.ModelId && CategoryId == Other.CategoryId;
+	}
+};
+
+FORCEINLINE uint32 GetTypeHash(const FPerModelCategoryVisibilityProps& Props)
+{
+	return HashCombine(GetTypeHash(Props.ModelId), GetTypeHash(Props.CategoryId));
+}
+
+USTRUCT(BlueprintType)
 struct FSavedView
 {
 	GENERATED_USTRUCT_BODY()
@@ -208,13 +230,19 @@ struct FSavedView
 		FRotator Angles = FRotator::ZeroRotator;
 
 	UPROPERTY(BlueprintReadOnly, Category = "SavedView")
-		TArray<FString> HiddenCategories;
+		TSet<FString> HiddenCategories;
 
 	UPROPERTY(BlueprintReadOnly, Category = "SavedView")
-		TArray<FString> HiddenModels;
+		TSet<FString> HiddenModels;
 
 	UPROPERTY(BlueprintReadOnly, Category = "SavedView")
-		TArray<FString> HiddenElements;
+		TSet<FString> HiddenElements;
+
+	UPROPERTY(BlueprintReadOnly, Category = "SavedView")
+		TSet<FPerModelCategoryVisibilityProps> HiddenCategoriesPerModel;
+
+	UPROPERTY(BlueprintReadOnly, Category = "SavedView")
+		TSet<FString> AlwaysDrawnElements;
 
 	UPROPERTY(BlueprintReadWrite, Category = "SavedView")
 		FDisplayStyle DisplayStyle;
@@ -328,6 +356,139 @@ struct FElementProperties
 
 	UPROPERTY(BlueprintReadOnly, Category = "BIMInfo")
 		TArray<FElementProperty> Properties;
+};
+
+USTRUCT(BlueprintType)
+struct FExtendedData
+{
+	GENERATED_USTRUCT_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "IModelTree")
+		FString icon;
+	UPROPERTY(BlueprintReadOnly, Category = "IModelTree")
+		bool isSubject = false;
+	UPROPERTY(BlueprintReadOnly, Category = "IModelTree")
+		bool isCategory = false;
+	UPROPERTY(BlueprintReadOnly, Category = "IModelTree")
+		FString modelId;
+	UPROPERTY(BlueprintReadOnly, Category = "IModelTree")
+		FString categoryId;
+};
+USTRUCT(BlueprintType)
+struct FInstanceKey
+{
+	GENERATED_USTRUCT_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "IModelTree")
+		FString className;
+	UPROPERTY(BlueprintReadOnly, Category = "IModelTree")
+		FString id;
+};
+USTRUCT(BlueprintType)
+struct FBinding
+{
+	GENERATED_USTRUCT_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "IModelTree")
+		FString type;
+	UPROPERTY(BlueprintReadOnly, Category = "IModelTree")
+		FString value;
+};
+USTRUCT(BlueprintType)
+struct FInstanceKeySelectQuery
+{
+	GENERATED_USTRUCT_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "IModelTree")
+		TArray<FBinding> bindings;
+	UPROPERTY(BlueprintReadOnly, Category = "IModelTree")
+		FString query;
+};
+USTRUCT(BlueprintType)
+struct FNodeKey
+{
+	GENERATED_USTRUCT_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "IModelTree")
+		TArray<FInstanceKey> instanceKeys;
+	UPROPERTY(BlueprintReadOnly, Category = "IModelTree")
+		FInstanceKeySelectQuery instanceKeysSelectQuery;
+	UPROPERTY(BlueprintReadOnly, Category = "IModelTree")
+		TArray<FString> pathFromRoot;
+	UPROPERTY(BlueprintReadOnly, Category = "IModelTree")
+		FString type;
+	UPROPERTY(BlueprintReadOnly, Category = "IModelTree")
+		int version = -1;
+};
+USTRUCT(BlueprintType)
+struct FLabelDefinition
+{
+	GENERATED_USTRUCT_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "IModelTree")
+		FString displayValue;
+	UPROPERTY(BlueprintReadOnly, Category = "IModelTree")
+		FString rawValue;
+	UPROPERTY(BlueprintReadOnly, Category = "IModelTree")
+		FString typeName;
+};
+USTRUCT(BlueprintType)
+struct FIModelNodeItem
+{
+	GENERATED_USTRUCT_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "IModelTree")
+		FExtendedData extendedData;
+	UPROPERTY(BlueprintReadOnly, Category = "IModelTree")
+		bool hasChildren = false;
+	UPROPERTY(BlueprintReadOnly, Category = "IModelTree")
+		FString description;
+	UPROPERTY(BlueprintReadOnly, Category = "IModelTree")
+		FNodeKey key;
+	UPROPERTY(BlueprintReadOnly, Category = "IModelTree")
+		FLabelDefinition labelDefinition;
+	UPROPERTY(BlueprintReadOnly, Category = "IModelTree")
+		bool supportsFiltering = false;
+};
+USTRUCT(BlueprintType)
+struct FResult
+{
+	GENERATED_USTRUCT_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "IModelTree")
+		TArray<FIModelNodeItem> items;
+
+	UPROPERTY(BlueprintReadOnly, Category = "IModelTree")
+		int total = 0;
+};
+USTRUCT(BlueprintType)
+struct FIModelPagedNodesRes
+{
+	GENERATED_USTRUCT_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "IModelTree")
+		FResult result;
+};
+
+USTRUCT(BlueprintType)
+struct FFilteredResItem
+{
+	GENERATED_USTRUCT_BODY()
+
+	//Can't use uproperty here because it doesn't support Struct recursion via arrays
+		TArray<FFilteredResItem> children;
+
+	UPROPERTY(BlueprintReadOnly, Category = "IModelTree")
+		FIModelNodeItem node;
+};
+
+USTRUCT(BlueprintType)
+struct FFilteredNodesRes
+{
+	GENERATED_USTRUCT_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "IModelTree")
+		TArray<FFilteredResItem> result;
 };
 
 USTRUCT(BlueprintType)

@@ -131,6 +131,9 @@ MODULE_EXPORT namespace AdvViz::SDK
 		bool ConvertJsonFileToKeyValueMap(std::filesystem::path const& jsonPath,
 			std::filesystem::path const& textureDir, KeyValueStringMap& outMap) const;
 
+		bool RenameMaterialInJsonFile(std::filesystem::path const& jsonPath,
+			std::string const& newMaterialName, std::string& outError) const;
+
 	private:
 		class Impl;
 		const std::unique_ptr<Impl> impl_;

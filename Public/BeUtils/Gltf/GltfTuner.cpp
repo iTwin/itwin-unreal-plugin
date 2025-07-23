@@ -342,16 +342,18 @@ public:
 				const auto& clusterId = clusterEntry->first;
 				const auto& cluster = clusterEntry->second;
 				int32_t materialId = clusterId.material_;
-				bool bOverrideColor = false;
-				bool bCustomMaterial = false;
-				if (clusterId.itwinMaterialID_ && materialId >= 0 && CanConvertITwinMaterials())
+
+				GltfMaterialInfo matInfo;
+				matInfo.gltfMaterialIndex_ = materialId;
+
+				if (clusterId.itwinMaterialID_ && CanConvertITwinMaterials())
 				{
 					// The final primitive will have 1 iTwin material.
-					// See if we should also tune the corresponding gltf material.
-					materialId = ConvertITwinMaterial(*clusterId.itwinMaterialID_,
+					// See if we should also tune the corresponding glTF material.
+					ConvertITwinMaterial(*clusterId.itwinMaterialID_,
 						materialId, gltfMaterials, gltfTextures, gltfImages,
-						bOverrideColor, cluster.colors_);
-					bCustomMaterial = (materialId >= 0 && materialId != clusterId.material_);
+						matInfo, cluster.colors_);
+					materialId = matInfo.gltfMaterialIndex_;
 				}
 				auto primitive = gltfBuilder.AddMeshPrimitive(meshIndex, materialId, clusterId.mode_);
 				primitive.SetIndices(cluster.indices_, true);
@@ -362,7 +364,7 @@ public:
 				{
 					primitive.SetUVs(cluster.uvs_);
 				}
-				else if (bCustomMaterial && MaterialUsingTextures(gltfMaterials[materialId]))
+				else if (matInfo.hasCustomDefinition_ && MaterialUsingTextures(gltfMaterials[materialId]))
 				{
 					// Quick fix for models not using texture originally: they are exported without UVs by
 					// the Mesh Export Service (MES), but we do need UVs to map textures added by the user
@@ -384,7 +386,7 @@ public:
 					gltfBuilder.ComputeFastUVs(primitive, cluster.positions_, cluster.normals_,
 						cluster.indices_, tileTransform_, nodeUsingThisMesh);
 				}
-				if (!cluster.colors_.empty() && !bOverrideColor)
+				if (!cluster.colors_.empty() && !matInfo.overrideColor_)
 					primitive.SetColors(cluster.colors_);
 				if (!cluster.featureIds_.empty())
 					primitive.SetFeatureIds(cluster.featureIds_, clusterId.hasMaterialFeatureId_);

@@ -10,7 +10,7 @@
 
 #pragma once
 
-#include <IncludeITwin3DTileset.h>
+#include <IncludeCesium3DTileset.h>
 
 #include <Containers/Array.h>
 #include <Templates/PimplPtr.h>

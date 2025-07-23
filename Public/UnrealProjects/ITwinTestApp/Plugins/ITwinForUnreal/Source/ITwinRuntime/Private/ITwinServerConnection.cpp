@@ -27,11 +27,16 @@ DEFINE_LOG_CATEGORY(LogITwinHttp);
 
 std::shared_ptr<std::string> AITwinServerConnection::GetAccessTokenPtr() const
 {
+	if (Environment == EITwinEnvironment::Invalid)
+	{
+		ensureMsgf(false, TEXT("Invalid environment in server connection"));
+		return {};
+	}
 	auto const& AuthMngr = FITwinAuthorizationManager::GetInstance(
 		static_cast<AdvViz::SDK::EITwinEnvironment>(Environment));
 	if (!ensure(AuthMngr))
 	{
-		return std::shared_ptr <std::string>();
+		return {};
 	}
 	return AuthMngr->GetAccessToken();
 }
@@ -114,9 +119,9 @@ bool AITwinServerConnection::CheckRequest(FHttpRequestPtr const& CompletedReques
 }
 
 /*static*/
-void AITwinServerConnection::SetITwinAppIDArray(ITwin::AppIDArray const& ITwinAppIDs)
+void AITwinServerConnection::SetITwinAppIDArray(ITwin::AppIDArray const& ITwinAppIDs, bool bLogIDs /*= true*/)
 {
-	UITwinWebServices::SetITwinAppIDArray(ITwinAppIDs);
+	UITwinWebServices::SetITwinAppIDArray(ITwinAppIDs, bLogIDs);
 }
 
 void AITwinServerConnection::SetITwinAppID(const FString& AppID)
@@ -127,6 +132,19 @@ void AITwinServerConnection::SetITwinAppID(const FString& AppID)
 FString AITwinServerConnection::UrlPrefix() const
 {
 	return ITwinServerEnvironment::GetUrlPrefix(Environment);
+}
+
+void AITwinServerConnection::PostLoad()
+{
+	Super::PostLoad();
+
+	if (Environment == EITwinEnvironment::Invalid)
+	{
+		Environment = UITwinWebServices::GetDefaultEnvironment();
+
+		const FString EnvName = ITwinServerEnvironment::ToName(Environment).ToString();
+		BE_LOGI("ITwinAPI", "Using iTwin environment: " << TCHAR_TO_UTF8(*EnvName));
+	}
 }
 
 #if WITH_EDITOR

@@ -477,8 +477,13 @@ void InsertAnimatedMeshSubElemsRecursively(FIModelElementsKey const& AnimationKe
 	for (auto const ElementDesignation : Elements)
 	{
 		FITwinElement* pElem;
+		// NOT safe to use ElementForSLOW here: we may be in a worker thread!
 		if constexpr (std::is_same_v<ITwinElementID, typename ElemDesignationContainer::value_type>)
-			pElem = &Scene.ElementForSLOW(ElementDesignation);
+		{
+			pElem = Scene.GetElementForSLOW(ElementDesignation);
+			if (!pElem)
+				continue; // Element not known after querying metadata! (azdev#1704016)
+		}
 		else
 			pElem = &Scene.ElementFor(ElementDesignation);
 		FITwinElement& Elem = *pElem;

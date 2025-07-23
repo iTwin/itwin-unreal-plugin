@@ -262,6 +262,30 @@ public:
 		BlueprintCallable)
 	void AddSavedViewGroup(const FString& groupName);
 
+	UFUNCTION(Category = "iTwin|Tree",
+		BlueprintCallable)
+	void GetPagedNodes(const FString& KeyString = "", int Offset = 0, int Count = 1000);
+
+	UFUNCTION(Category = "iTwin|Tree",
+		BlueprintCallable)
+	void GetModelFilteredNodes(const FString& Filter);
+
+	UFUNCTION(Category = "iTwin|Tree",
+		BlueprintCallable)
+	void GetCategoryFilteredNodes(const FString& Filter);
+
+	UFUNCTION(Category = "iTwin|Tree",
+		BlueprintCallable)
+	void GetCategoryNodes(const FString& KeyString = "");
+
+	UFUNCTION(Category = "iTwin",
+		BlueprintCallable)
+	void GetElementProperties(const FString& ElementId);
+
+	UFUNCTION(Category = "iTwin",
+		BlueprintCallable)
+	void SelectElement(const FString& ElementId);
+
 	UFUNCTION(Category = "iTwin|Load",
 		BlueprintCallable)
 	void Reset();
@@ -302,6 +326,12 @@ public:
 
 	AdvViz::SDK::EMaterialKind GetMaterialKind(uint64_t MaterialId) const;
 	void SetMaterialKind(uint64_t MaterialId, AdvViz::SDK::EMaterialKind NewKind);
+
+	//! Retrieves some properties (base material kind, translucency requirement) required by material
+	//! customizations.
+	//! Returns whether the given material has a custom definition.
+	bool GetMaterialCustomRequirements(uint64_t MaterialId, AdvViz::SDK::EMaterialKind& OutMaterialKind,
+		bool& bOutRequiresTranslucency) const;
 
 	//! Rename a material.
 	bool SetMaterialName(uint64_t MaterialId, FString const& NewName);
@@ -403,6 +433,7 @@ public:
 	//! Returns the list of IDs of the supported (ie. having Cesium format) reality data attached to the iModel.
 	TFuture<TArray<FString>> GetAttachedRealityDataIds();
 	void SetLightForForcedShadowUpdate(ULightComponent* SkyLight);
+	TFuture<TArray<FString>> GetChildrenModelIds(const FString& ParentModelId);
 
 private:
 	void SetResolvedChangesetId(FString const& InChangesetId);
@@ -427,6 +458,10 @@ private:
 	virtual void OnSavedViewDeleted(bool bSuccess, FString const& SavedViewId, FString const& Response) override;
 	virtual void OnSavedViewEdited(bool bSuccess, FSavedView const& SavedView, FSavedViewInfo const& SavedViewInfo) override;
 	virtual void OnElementPropertiesRetrieved(bool bSuccess, FElementProperties const& ElementProps, FString const& ElementId) override;
+	virtual void OnIModelPagedNodesRetrieved(bool bSuccess, FIModelPagedNodesRes const& IModelNodes) override;
+	virtual void OnIModelCategoryNodesRetrieved(bool bSuccess, FIModelPagedNodesRes const& IModelNodes) override;
+	virtual void OnModelFilteredNodesRetrieved(bool bSuccess, FFilteredNodesRes const& FilteredNodes, FString const& Filter) override;
+	virtual void OnCategoryFilteredNodesRetrieved(bool bSuccess, FFilteredNodesRes const& IModelNodes, FString const& Filter) override;
 	virtual void OnMaterialPropertiesRetrieved(bool bSuccess, AdvViz::SDK::ITwinMaterialPropertiesMap const& props) override;
 	virtual void OnTextureDataRetrieved(bool bSuccess, std::string const& textureId, AdvViz::SDK::ITwinTextureData const& textureData) override;
 	virtual void OnIModelQueried(bool bSuccess, FString const& QueryResult, HttpRequestID const&) override;

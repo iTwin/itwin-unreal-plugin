@@ -136,7 +136,7 @@ public:
 	void RefreshScene();
 
 	//! Adds a new spline at specified position, for the given usage.
-	bool AddSpline(FVector const& Position);
+	AITwinSplineHelper* AddSpline(FVector const& Position);
 
 	//! Adds a spline loaded from the decoration service.
 	bool LoadSpline(const std::shared_ptr<AdvViz::SDK::ISpline>& spline,
@@ -153,10 +153,12 @@ public:
 	DECLARE_DYNAMIC_MULTICAST_DELEGATE(FSplineOrPointRemovedEvent);
 	UPROPERTY()
 	FSplineOrPointRemovedEvent SplinePointRemovedEvent;
-
 	UPROPERTY()
 	FSplineOrPointRemovedEvent SplineRemovedEvent;
-
+	
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE(FSplinePointSelectedEvent);
+	UPROPERTY()
+	FSplinePointSelectedEvent SplinePointSelectedEvent;
 
 protected:
 	virtual void SetEnabledImpl(bool bValue) override;

@@ -98,7 +98,10 @@ public:
 	bool OnClickedElement(ITwinElementID const Element, FHitResult const& HitResult,
 						  bool const bSelectElement = true);
 	void DescribeElement(ITwinElementID const Element, TWeakObjectPtr<UPrimitiveComponent> HitComponent = {});
-	void HideElements(std::unordered_set<ITwinElementID> const& InElementIDs, bool IsConstruction);
+	void HideElements(std::unordered_set<ITwinElementID> const& InElementIDs, bool IsConstruction, bool Force = false);
+	void HideModels(std::unordered_set<ITwinElementID> const& InModelIDs, bool Force = false);
+	void HideCategories(std::unordered_set<ITwinElementID> const& InCategoryIDs, bool Force = false);
+	void HideCategoriesPerModel(std::unordered_set<std::pair<ITwinElementID, ITwinElementID>, FITwinSceneTile::pair_hash> const& InCategoryPerModelIDs, bool Force =false);
 	//! Returns the selected Element's ID, if an Element is selected, or ITwin::NOT_ELEMENT.
 	ITwinElementID GetSelectedElement() const;
 	//! Select the given material (use ITwin::NOT_MATERIAL to de-select).

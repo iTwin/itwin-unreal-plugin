@@ -37,16 +37,20 @@ UCesiumWebMapTileServiceRasterOverlay::CreateOverlay(
 
   CesiumRasterOverlays::WebMapTileServiceRasterOverlayOptions wmtsOptions;
   if (!Style.IsEmpty()) {
-    wmtsOptions.style = TCHAR_TO_UTF8(*this->Style);
+    wmtsOptions.style = std::string(reinterpret_cast<const char*>(
+        StringCast<UTF8CHAR>(*this->Style).Get()));
   }
   if (!Layer.IsEmpty()) {
-    wmtsOptions.layer = TCHAR_TO_UTF8(*this->Layer);
+    wmtsOptions.layer = std::string(reinterpret_cast<const char*>(
+        StringCast<UTF8CHAR>(*this->Layer).Get()));
   }
   if (!Format.IsEmpty()) {
-    wmtsOptions.format = TCHAR_TO_UTF8(*this->Format);
+    wmtsOptions.format.emplace(std::string(reinterpret_cast<const char*>(
+        StringCast<UTF8CHAR>(*this->Format).Get())));
   }
   if (!TileMatrixSetID.IsEmpty()) {
-    wmtsOptions.tileMatrixSetID = TCHAR_TO_UTF8(*this->TileMatrixSetID);
+    wmtsOptions.tileMatrixSetID = std::string(reinterpret_cast<const char*>(
+        StringCast<UTF8CHAR>(*this->TileMatrixSetID).Get()));
   }
 
   if (bSpecifyZoomLevels && MaximumLevel > MinimumLevel) {

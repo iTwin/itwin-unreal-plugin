@@ -69,7 +69,7 @@ public:
 
 	bool ActionOnTick(float DeltaTime);
 
-	bool AddSpline(FVector const& Position);
+	AITwinSplineHelper* AddSpline(FVector const& Position);
 
 	bool LoadSpline(AdvViz::SDK::SharedSpline const& Spline);
 
@@ -371,6 +371,7 @@ bool AITwinSplineTool::FImpl::DoMouseClickAction()
 					if (pointIndex != INDEX_NONE)
 					{
 						SetSelectedPointIndex(pointIndex);
+						owner.SplinePointSelectedEvent.Broadcast();
 					}
 				}
 				return true;
@@ -747,9 +748,9 @@ AITwinSplineHelper* AITwinSplineTool::FImpl::CreateSpline(EITwinSplineUsage Spli
 	return CreatedSpline;
 }
 
-bool AITwinSplineTool::FImpl::AddSpline(FVector const& Position)
+AITwinSplineHelper* AITwinSplineTool::FImpl::AddSpline(FVector const& Position)
 {
-	return CreateSpline(ToolUsage, Position, {}) != nullptr;
+	return CreateSpline(ToolUsage, Position, {});
 }
 
 bool AITwinSplineTool::FImpl::LoadSpline(const AdvViz::SDK::SharedSpline& Spline)
@@ -996,7 +997,7 @@ bool AITwinSplineTool::DoMouseClickActionImpl()
 	return Impl->DoMouseClickAction();
 }
 
-bool AITwinSplineTool::AddSpline(FVector const& Position)
+AITwinSplineHelper* AITwinSplineTool::AddSpline(FVector const& Position)
 {
 	return Impl->AddSpline(Position);
 }

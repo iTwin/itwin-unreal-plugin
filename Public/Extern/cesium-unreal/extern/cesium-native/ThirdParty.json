@@ -87,7 +87,7 @@
   {
     "name": "RapidJSON",
     "url": "https://github.com/Tencent/rapidjson",
-    "version": "fcb23c2dbf561ec0798529be4f66394d3e4996d8",
+    "version": "a95e013b97ca6523f32da23f5095fcc9dd6067e5",
     "license": ["MIT"]
   },
   {

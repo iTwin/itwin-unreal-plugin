@@ -211,7 +211,7 @@ namespace AdvViz::SDK
 					{
 						int numUpdated = 0;
 					};
-					SJout jout;
+					Sout jout;
 					if (http->PutJsonJBody(jout, url, keyframesToPut) != 200)
 					{
 						return make_unexpected(std::string("http failed: ") + url);
@@ -531,6 +531,7 @@ namespace AdvViz::SDK
 					p->Load(sceneId, ITimelineClip::Id(clipId));
 					clips_.push_back(p);
 				}
+				BE_LOGI("ITwinDecoration", "Timeline loaded "<< data.clipIds.size() <<" clips " );
 				shouldSave_ = false;
 			}
 			else
@@ -581,6 +582,7 @@ namespace AdvViz::SDK
 					if (http->DeleteJsonJBody(clipsOut, url, clipsToDelete) != 200)
 						return make_unexpected(std::string("http failed: ") + url);
 
+				BE_LOGI("ITwinDecoration","Timeline save : deleted "<<toDeleteClips_.size()<<" clips");
 				toDeleteClips_.clear();
 				return {};
 			}();
@@ -608,6 +610,9 @@ namespace AdvViz::SDK
 							serverSideData_.id = jout.timelines[0].id;
 						else
 							return make_unexpected(std::string("Server returned no id value for saved timeline."));
+
+						BE_LOGI("ITwinDecoration", "Timeline saved new clip " << jin.timelines[0].name);
+
 					}
 					else
 					{
@@ -626,6 +631,7 @@ namespace AdvViz::SDK
 					{
 						return make_unexpected(fmt::format("http failed: {} with status {}", url, status));
 					}
+					BE_LOGI("ITwinDecoration", "Timeline saved new clip " << jin.timelines[0].name);
 					BE_ASSERT(jout.numUpdated == 1);
 				}
 			}

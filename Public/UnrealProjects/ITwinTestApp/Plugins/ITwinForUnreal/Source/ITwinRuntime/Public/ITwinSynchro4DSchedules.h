@@ -42,6 +42,9 @@ public:
 	UMaterialInterface* BaseMaterialTranslucent = nullptr;
 
 	UPROPERTY(EditAnywhere, Category = "iTwin")
+	UMaterialInterface* BaseMaterialTranslucent_TwoSided = nullptr;
+
+	UPROPERTY(EditAnywhere, Category = "iTwin")
 	UMaterialInterface* BaseMaterialGlass = nullptr;
 
 	/// Not used for tilesets, as we need to set opacity mask for Synchro animations. Introduced to generate
@@ -334,11 +337,11 @@ public:
 
 	/// Helper method: determines the schedule's time range (at least the part that has been streamed to us
 	/// so far), then determines and sets the script speed so that the whole construction schedule's replay
-	/// takes a fixed duration (currently around 30 seconds, plus or minus a small amount of rounding)
+	/// takes a fixed duration (Default is 30 seconds)
 	UFUNCTION(Category = "Schedules Replay",
 		CallInEditor,
 		BlueprintCallable)
-	void AutoReplaySpeed();
+	void AutoReplaySpeed(int ReplayPlayTime = 30);
 
 	/// Start or restart replay of the schedule animation at the current script time and speed
 	UFUNCTION(Category = "Schedules Replay",

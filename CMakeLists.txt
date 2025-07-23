@@ -10,8 +10,11 @@ foreach (dir Private Public)
 	message ("Using \"${dir}\" as main dir.")
 	# CMake expects a call to project(), done by the root CMakeLists.txt file.
 	# So we first include a cmake file whose sole purpose is to give us the project name.
-	include ("${dir}/CMake/projectName.cmake")
-	project (${beProjectName})
+	if (NOT BE_PROJECT_NAME)
+		include ("${dir}/CMake/projectName.cmake")
+	endif ()
+	message ("Using BE_PROJECT_NAME: ${BE_PROJECT_NAME}")
+	project (${BE_PROJECT_NAME})
 	# Now include the main cmake file (which is processed as if it was in the root dir).
 	include ("${dir}/CMake/main.cmake")
 	# Exit the file so that we don't raise the error below.

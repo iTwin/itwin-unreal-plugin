@@ -9,6 +9,10 @@
 #include <ITwinAppIdHelper.h>
 #include <ITwinServerConnection.h>
 
+#include <Compil/BeforeNonUnrealIncludes.h>
+#	include <Core/Tools/Log.h>
+#include <Compil/AfterNonUnrealIncludes.h>
+
 /*static*/
 bool AITwinAppIdHelper::bFreezeAppId = false;
 
@@ -28,7 +32,11 @@ void AITwinAppIdHelper::PostLoad()
 	// Also test whether the AppID was not frozen (important when the authorization has been processed, with
 	// the possibility to refresh the access token in background...)
 	if (!AppId.IsEmpty() && !AITwinAppIdHelper::bFreezeAppId)
+	{
+		BE_LOGI("ITwinAPI", "Reloading AppID from level");
+
 		AITwinServerConnection::SetITwinAppID(AppId);
+	}
 }
 
 #if WITH_EDITOR
@@ -41,6 +49,10 @@ void AITwinAppIdHelper::PostEditChangeProperty(FPropertyChangedEvent& PropertyCh
 	if (!PropertyChangedEvent.Property)
 		return;
 	if (PropertyChangedEvent.Property->GetFName() == GET_MEMBER_NAME_CHECKED(AITwinAppIdHelper, AppId))
+	{
+		BE_LOGI("ITwinAPI", "Setting AppID from Editor");
+
 		AITwinServerConnection::SetITwinAppID(AppId);
+	}
 }
 #endif //#if WITH_EDITOR

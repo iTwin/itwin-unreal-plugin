@@ -23,7 +23,7 @@
 #include <GameFramework/Pawn.h>
 #include <GameFramework/PlayerStart.h>
 #include <AnimTimeline/ITwinTimelineActor.h>
-#include <IncludeITwin3DTileset.h>
+#include <IncludeCesium3DTileset.h>
 #include <ITwinIModel.h>
 #include <ITwinRealityData.h>
 #include <ITwinServerConnection.h>
@@ -36,7 +36,6 @@
 
 #include <Misc/MessageDialog.h>
 #include <Materials/MaterialInstanceDynamic.h>
-
 #include <Async/Async.h>
 #include <atomic>
 #include <chrono>
@@ -324,6 +323,7 @@ public:
 		LoadMaterials,
 		LoadSplines,
 		LoadPopulations,
+		LoadAnnotations,
 
 		LOAD_TASK_END,
 
@@ -403,6 +403,7 @@ private:
 	void LoadPopulationsInGame(bool bHasLoadedPopulations);
 	void DissociateAnimation(const std::string& animId);
 	void LoadSplinesInGame(bool bHasLoadedSplines);
+	void LoadAnnotationsInGame(bool bHasLoadedSplines);
 
 	void OnCustomMaterialsLoaded_GameThread(bool bHasLoadedMaterials);
 
@@ -605,6 +606,9 @@ std::function<bool()> AITwinDecorationHelper::FImpl::GetAsyncFunctor(EAsyncTask 
 	{
 		// TODO_LC move edition of actor in Game-thread part? (could be destroyed when the lambda is
 		// executed)
+		// Ghislain: this is also a pb because SetTimelineSDK replaces the existing ITimelineClip shared_ptr,
+		// which leads to releasing UMovieSceneTrack strong ptr, which should be done in Game thread or GC thread.
+		// This happens in Carrot PIE when opening an itwin then trying to open a different one with 'O' shortcut
 		AITwinTimelineActor* timelineActor = (AITwinTimelineActor*)UGameplayStatics::GetActorOfClass(
 			Owner.GetWorld(), AITwinTimelineActor::StaticClass());
 		return [DecoIO, timelineActor]() {
@@ -633,7 +637,10 @@ std::function<bool()> AITwinDecorationHelper::FImpl::GetAsyncFunctor(EAsyncTask 
 	{
 		return [DecoIO]() { return DecoIO->LoadSplinesFromServer(); };
 	}
-
+	case EAsyncTask::LoadAnnotations:
+	{
+		return [DecoIO]() { return DecoIO->LoadAnnotationsFromServer(); };
+	}
 	case EAsyncTask::SaveDecoration:
 	{
 		return [DecoIO]() {
@@ -704,7 +711,12 @@ void AITwinDecorationHelper::FImpl::OnAsyncTaskDone_GameThread(ETaskExitStatus T
 			LoadSplinesInGame(bSuccess);
 		}
 		break;
-
+	case EAsyncTask::LoadAnnotations:
+		if (TaskExitStatus == ETaskExitStatus::Completed)
+		{
+			LoadAnnotationsInGame(bSuccess);
+		}
+		break;
 	case EAsyncTask::SaveDecoration:
 		{
 			OnDecorationSaved_GameThread(bSuccess, bIsDeletingCustomMaterials);
@@ -924,6 +936,11 @@ FString AITwinDecorationHelper::GetLoadedITwinId() const
 	return Impl->GetLoadedITwinId();
 }
 
+void AITwinDecorationHelper::SetLoadedSceneId(FString InLoadedSceneId, bool inNewsScene /*= false*/)
+{
+	Impl->DecorationIO->SetLoadedSceneId(InLoadedSceneId, inNewsScene);
+}
+
 void AITwinDecorationHelper::FImpl::DissociateAnimation(const std::string& animId)
 {
 	auto& instancesManager(DecorationIO->instancesManager_);
@@ -1111,6 +1128,54 @@ void AITwinDecorationHelper::FImpl::LoadSplinesInGame(bool bHasLoadedSplines)
 
 	Owner.OnSplinesLoaded.Broadcast(true);
 }
+void AITwinDecorationHelper::FImpl::LoadAnnotationsInGame(bool bHasLoadedAnnoations)
+{
+	checkSlow(IsInGameThread());
+	auto& annotationsManager(DecorationIO->annotationsManager);
+	if (!annotationsManager)
+		return;
+
+	if (!(GEngine && GEngine->GameViewport))
+	{
+		BE_LOGW("ITwinDecoration", "Annotations cannot be loaded in Editor");
+		return;
+	}
+
+	const UWorld* World = Owner.GetWorld();
+
+/*	AITwinSplineTool* splineTool =
+		(AITwinSplineTool*)UGameplayStatics::GetActorOfClass(World, AITwinSplineTool::StaticClass());
+
+	if (!splineTool)
+	{
+		BE_LOGW("ITwinDecoration", "Splines can't be loaded because there is no SplineTool actor.");
+		return;
+	}
+
+	for (auto const& splinePtr : splinesManager->GetSplines())
+	{
+		TUniquePtr<FITwinTilesetAccess> LinkedTileset;
+		if (!splinePtr->GetLinkedModelType().empty())
+		{
+			// Splines linked to a specific model can be loaded now, but only if their 3D tileset has
+			// already been created (in general, it won't be the case...)
+			LinkedTileset = ITwin::GetLinkedTileset(splinePtr, World);
+			if (!LinkedTileset)
+				continue;
+		}
+		splineTool->LoadSpline(splinePtr, LinkedTileset.Get());
+
+		if (LinkedTileset)
+		{
+			// Avoid loading the same splines again.
+			ModelsWithLoadedSplines.insert(LinkedTileset->GetDecorationKey());
+		}
+	}
+
+	Owner.OnSplinesLoaded.Broadcast(true);*/
+	//todocc
+	Owner.OnAnnotationsLoaded.Broadcast(true);
+}
 
 void AITwinDecorationHelper::LoadDecoration()
 {
@@ -1189,10 +1254,10 @@ bool AITwinDecorationHelper::FImpl::ShouldSaveDecoration(bool bPromptUser) const
 		&& DecorationIO->materialPersistenceMngr->NeedUpdateDB();
 	bool const saveScenes = DecorationIO->scene->ShouldSave();
 	bool const saveTimeline = DecorationIO->scene->GetTimeline() && DecorationIO->scene->GetTimeline()->ShouldSave();
-	bool const saveSplines = DecorationIO->splinesManager
-		&& DecorationIO->splinesManager->HasSplinesToSave();
+	bool const saveSplines = DecorationIO->splinesManager && DecorationIO->splinesManager->HasSplinesToSave();
+	bool const saveAnnotations = DecorationIO->annotationsManager && DecorationIO->annotationsManager->HasAnnotationToSave();
 
-	if (!saveInstances && !saveMaterials && !saveScenes && !saveTimeline && !saveSplines)
+	if (!saveInstances && !saveMaterials && !saveScenes && !saveTimeline && !saveSplines && !saveAnnotations)
 		return false;
 
 	if (bPromptUser &&
@@ -1806,6 +1871,21 @@ FString AITwinDecorationHelper::GetSceneID() const
 		return FString(Impl->DecorationIO->scene->GetId().c_str());
 	else
 		return FString();
+}
+
+void AITwinDecorationHelper::InitDecorationService()
+{
+	Impl->InitDecorationService();
+}
+
+AdvViz::expected<std::vector<std::shared_ptr<AdvViz::SDK::IScenePersistence>>, int> AITwinDecorationHelper::GetITwinScenes(const FString& itwinid)
+{
+	return Impl->DecorationIO->GetITwinScenes(itwinid);
+}
+
+std::shared_ptr<AdvViz::SDK::IAnnotationsManager> AITwinDecorationHelper::GetAnnotationManager() const
+{
+	return Impl->DecorationIO->annotationsManager;
 }
 
 void AITwinDecorationHelper::Lock(SaveLockerImpl* saver)

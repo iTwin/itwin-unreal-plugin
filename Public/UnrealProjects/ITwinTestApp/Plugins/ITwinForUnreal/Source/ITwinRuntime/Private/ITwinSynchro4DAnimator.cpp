@@ -289,6 +289,7 @@ void FITwinSynchro4DAnimator::OnFadeOutNonAnimatedElements()
 			SceneTile.ForEachExtractedEntity(
 				[&IModelInternals, &FillColor, &SceneTile](FITwinExtractedEntity& ExtractedElement)
 				{
+					// Safe to use ElementForSLOW here: we are in game thread
 					if (IModelInternals.SceneMapping.ElementForSLOW(ExtractedElement.ElementID)
 						.AnimationKeys.empty())
 					{

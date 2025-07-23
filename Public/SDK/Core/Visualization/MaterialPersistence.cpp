@@ -82,6 +82,9 @@ namespace AdvViz::SDK
 			std::filesystem::path const& textureDir,
 			KeyValueStringMap& outMap) const;
 
+		bool RenameMaterialInJsonFile(std::filesystem::path const& jsonPath,
+			std::string const& newMaterialName, std::string& outError) const;
+
 	private:
 		// For transfer to/from DB
 		struct SJsonMaterialWithId
@@ -275,7 +278,7 @@ namespace AdvViz::SDK
 					texId = texId.substr(MAT_LIBRARY_PREFIX.length());
 				}
 				// We should never encounter textures such as "Metals/0"...
-				BE_ASSERT(texId == NONE_TEXTURE || !texId.ends_with(NONE_TEXTURE));
+				BE_ASSERT(texId == NONE_TEXTURE || !texId.ends_with(std::string("/") + NONE_TEXTURE));
 
 				ITwinChannelMap const texMap = {
 					.texture = texId,
@@ -1101,7 +1104,7 @@ namespace AdvViz::SDK
 
 		// implement the 6 possible cases of the variant
 		// bool, int, double, std::string, Object, Array
-		// some are not used at all, since we the response only deals with strings primitives
+		// some are not used at all, since the response only deals with string primitives
 
 		void operator()(const bool& boolValue) const
 		{
@@ -1318,6 +1321,7 @@ namespace AdvViz::SDK
 				if (key.ends_with("Map")
 					&& !value.empty()
 					&& value != "\"\""
+					&& value != "\"0\""
 					&& !value.ends_with("/0\""))
 				{
 					auto baseName = std::filesystem::path(trimPath(value)).filename();
@@ -1328,6 +1332,41 @@ namespace AdvViz::SDK
 
 		return true;
 	}
+
+	bool MaterialPersistenceManager::Impl::RenameMaterialInJsonFile(std::filesystem::path const& jsonPath,
+		std::string const& newMaterialName, std::string& outError) const
+	{
+		std::error_code ec;
+		if (!std::filesystem::exists(jsonPath, ec))
+		{
+			outError = fmt::format("Cannot open file '{}' for reading. {}",
+				jsonPath.generic_string(), ec.message());
+			return false;
+		}
+		SJsonMaterialWithId jsonMat;
+		{
+			std::ifstream ifs(jsonPath);
+			if (!Json::FromStream(jsonMat, ifs, outError))
+			{
+				return false;
+			}
+		}
+		jsonMat.displayName = newMaterialName;
+
+		std::ofstream ofs(jsonPath);
+		if (ofs.is_open())
+		{
+			ofs << rfl::json::write(jsonMat, YYJSON_WRITE_PRETTY);
+			return true;
+		}
+		else
+		{
+			outError = fmt::format("Cannot open file '{}' for writing.",
+				jsonPath.generic_string());
+			return false;
+		}
+	}
+
 
 	//-----------------------------------------------------------------------------------
 	// MaterialPersistenceManager
@@ -1508,5 +1547,11 @@ namespace AdvViz::SDK
 		std::filesystem::path const& textureDir, KeyValueStringMap& outMap) const
 	{
 		return GetImpl().ConvertJsonFileToKeyValueMap(jsonPath, textureDir, outMap);
+	}
+
+	bool MaterialPersistenceManager::RenameMaterialInJsonFile(std::filesystem::path const& jsonPath,
+		std::string const& newMaterialName, std::string& outError) const
+	{
+		return GetImpl().RenameMaterialInJsonFile(jsonPath, newMaterialName, outError);
 	}
 }

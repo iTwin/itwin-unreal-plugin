@@ -4,6 +4,7 @@
 #include "CesiumLifetime.h"
 #include "CesiumRasterOverlay.h"
 #include "CesiumRuntime.h"
+#include "CesiumRuntimeSettings.h"
 #include "CreateGltfOptions.h"
 #include "ExtensionImageAssetUnreal.h"
 #include <Cesium3DTilesSelection/Tile.h>
@@ -33,7 +34,9 @@ UnrealPrepareRendererResources::prepareInLoadThread(
 
   options.alwaysIncludeTangents = this->_pActor->GetAlwaysIncludeTangents();
   options.createPhysicsMeshes = this->_pActor->GetCreatePhysicsMeshes();
-
+  auto& Settings = *GetDefault<UCesiumRuntimeSettings>();
+  options.showPointGeometries = Settings.bShowPointGeometries;
+  options.showLineGeometries = Settings.bShowLineGeometries;
   options.ignoreKhrMaterialsUnlit = this->_pActor->GetIgnoreKhrMaterialsUnlit();
 
   if (this->_pActor->_featuresMetadataDescription) {

@@ -16,6 +16,8 @@ add_library(Visualization ${libtype}
 		InstancesGroup.cpp
 		InstancesManager.h
 		InstancesManager.cpp
+		AnnotationsManager.h
+		AnnotationsManager.cpp
 		MaterialPersistence.cpp
 		MaterialPersistence.h
 		ScenePersistenceDS.cpp

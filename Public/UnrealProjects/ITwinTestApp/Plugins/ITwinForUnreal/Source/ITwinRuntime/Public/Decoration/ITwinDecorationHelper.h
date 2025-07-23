@@ -18,6 +18,9 @@
 #include <string>
 #include <optional>
 #include <vector>
+#include <ITwinRuntime/Private/Compil/BeforeNonUnrealIncludes.h>
+#	include <SDK/Core/Tools/Error.h>
+#include <ITwinRuntime/Private/Compil/AfterNonUnrealIncludes.h>
 
 #include <ITwinDecorationHelper.generated.h>
 
@@ -34,6 +37,8 @@ namespace AdvViz::SDK {
 	struct ITwinAtmosphereSettings;
 	struct ITwinSceneSettings;
 	class RefID;
+	class IScenePersistence;
+	class IAnnotationsManager;
 }
 
 struct ITwinSceneInfo
@@ -97,6 +102,9 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FOnDecorationIODone OnSplinesLoaded;
 
+	UPROPERTY(BlueprintAssignable)
+	FOnDecorationIODone OnAnnotationsLoaded;
+
 	/** Delegate when decoration is fully loaded. */
 	FSimpleMulticastDelegate OnDecorationLoaded;
 
@@ -120,6 +128,8 @@ public:
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
 	FString GetLoadedITwinId() const;
 
+	UFUNCTION(Category = "iTwin", BlueprintCallable)
+	void SetLoadedSceneId(FString InLoadedSceneId, bool inNewsScene = false);
 
 	//! Start loading the decoration attached to current model, if any (asynchronous).
 	UFUNCTION(Category = "iTwin",
@@ -202,7 +212,12 @@ public:
 	FTransform GetHomeCamera() const;
 
 	FString GetSceneID() const;
+	void InitDecorationService();
 
+
+	AdvViz::expected<std::vector<std::shared_ptr< AdvViz::SDK::IScenePersistence>>, int>  GetITwinScenes(const FString& itwinid);
+
+	std::shared_ptr<AdvViz::SDK::IAnnotationsManager> GetAnnotationManager() const;
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;

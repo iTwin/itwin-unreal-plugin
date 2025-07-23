@@ -83,9 +83,11 @@ MODULE_EXPORT namespace AdvViz::SDK
 		const std::string& GetId() const override;
 		const std::string& GetName() const override;
 		const std::string& GetITwinId() const override;
+		virtual std::string GetLastModified() const override;
 
 		// Set Http server to use (if none provided, the default created by Config is used.)
 		void SetHttp(std::shared_ptr<Http> http);
+		static void SetDefaulttHttp(std::shared_ptr<Http> http);
 
 		ScenePersistenceAPI(ScenePersistenceAPI&) = delete;
 		ScenePersistenceAPI(ScenePersistenceAPI&&) = delete;

@@ -24,6 +24,7 @@ class AITwinIModel;
 namespace AdvViz::SDK
 {
 	struct ITwinMaterial;
+	class MaterialPersistenceManager;
 }
 
 namespace ITwin
@@ -40,6 +41,7 @@ public:
 	using ITwinMaterial = AdvViz::SDK::ITwinMaterial;
 	using TextureKeySet = AdvViz::SDK::TextureKeySet;
 	using TextureUsageMap = AdvViz::SDK::TextureUsageMap;
+	using MaterialPersistencePtr = std::shared_ptr<AdvViz::SDK::MaterialPersistenceManager>;
 
 	struct ExportError
 	{
@@ -53,6 +55,10 @@ public:
 		bool bIsUserCancel = false;
 	};
 
+	//! Returns true if a material file already exists in given directory.
+	//! In such case, OutExistingFilePath will be assigned the corresponding file path.
+	static bool MaterialExistsInDir(FString const& MaterialFolder, FString& OutExistingFilePath);
+
 	using ExportResult = AdvViz::expected<
 		void,
 		ExportError>;
@@ -65,7 +71,8 @@ public:
 	//! Loads a material definition from an asset file.
 	static bool LoadMaterialFromAssetPath(FString const& AssetPath, ITwinMaterial& OutMaterial,
 		TextureKeySet& OutTexKeys, TextureUsageMap& OutTextureUsageMap,
-		AdvViz::SDK::ETextureSource& OutTexSource);
+		AdvViz::SDK::ETextureSource& OutTexSource,
+		MaterialPersistencePtr const& MatIOMngr);
 
 	//! Returns the path to user-defined material library. The folder may not exist.
 	static FString GetCustomLibraryPath();
@@ -73,6 +80,11 @@ public:
 	//! Parse the given directory, detecting custom material definitions (valid material.json files) if any.
 	static int32 ParseJsonMaterialsInDirectory(FString const& DirectoryPath,
 		TArray<FAssetData>& OutAssetDataArray);
+
+	static AdvViz::expected<void, std::string> RemoveCustomMaterial(const FString& AssetPath);
+
+	static AdvViz::expected<void, std::string> RenameCustomMaterial(const FString& OldAssetPath,
+		const FString& NewDisplayName, const FString& NewDirectory, bool bOverwrite);
 
 #if WITH_EDITOR
 	static bool ImportJsonToLibrary(FString const& JsonPath);

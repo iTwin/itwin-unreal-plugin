@@ -15,6 +15,7 @@
 
 #include <MaterialPrediction/ITwinMaterialPredictionStatus.h>
 
+#include <functional>
 #include <memory>
 #include <optional>
 #include <unordered_set>
@@ -56,11 +57,14 @@ public:
 	};
 
 	using MaterialPersistencePtr = std::shared_ptr<AdvViz::SDK::MaterialPersistenceManager>;
-	static void SetMaterialPersistenceManager(MaterialPersistencePtr const& Mngr);
-	static MaterialPersistencePtr const& GetMaterialPersistenceManager();
+	static void SetGlobalPersistenceManager(MaterialPersistencePtr const& Mngr);
+	static MaterialPersistencePtr const& GetGlobalPersistenceManager();
 
 
 	FITwinIModelMaterialHandler();
+
+	MaterialPersistencePtr const& GetPersistenceManager() const;
+	void SetSpecificPersistenceManager(MaterialPersistencePtr const& Mngr);
 
 	void Initialize(std::shared_ptr<BeUtils::GltfTuner> const& InTuner, AITwinIModel* OwnerIModel = nullptr);
 
@@ -120,6 +124,10 @@ public:
 	void SetMaterialKind(uint64_t MaterialId, AdvViz::SDK::EMaterialKind NewKind,
 		FITwinSceneMapping& SceneMapping);
 
+	//! Retrieves some properties which have an impact on the base material used at render time.
+	//! Returns whether the given material has a custom definition.
+	bool GetMaterialCustomRequirements(uint64_t MaterialId, AdvViz::SDK::EMaterialKind& OutMaterialKind,
+		bool& bOutRequiresTranslucency) const;
 
 	//! Rename a material.
 	bool SetMaterialName(uint64_t MaterialId, FString const& NewName);
@@ -137,14 +145,15 @@ public:
 		FString const& IModelId,
 		FITwinSceneMapping& SceneMapping,
 		UITwinMaterialDefaultTexturesHolder const& DefaultTexturesHolder,
-		bool bForceResetUnusedtextures = false);
+		bool bForceRefreshAllParameters = false,
+		std::function<void(AdvViz::SDK::ITwinMaterial&)> const& CustomizeMaterialFunc = {});
 
 	bool LoadMaterialWithoutRetuning(AdvViz::SDK::ITwinMaterial& OutNewMaterial,
 		uint64_t MaterialId,
 		FString const& AssetFilePath,
 		FString const& IModelId,
 		BeUtils::WLock const& Lock,
-		bool bForceResetUnusedtextures = false);
+		bool bForceRefreshAllParameters = false);
 
 
 	//-----------------------------------------------------------------------------------
@@ -180,6 +189,11 @@ private:
 	void SaveMLPredictionState();
 	void LoadMLPredictionState(bool& bActivateML, BeUtils::WLock const& Lock);
 
+	void UpdateModelFromMatMLPrediction(bool bSuccess,
+		AdvViz::SDK::ITwinMaterialPrediction const& Prediction,
+		std::string const& error,
+		AITwinIModel& IModel);
+
 
 private:
 	std::shared_ptr<BeUtils::GltfTuner> GltfTuner;
@@ -204,6 +218,8 @@ private:
 	EITwinMaterialPredictionStatus MLMaterialPredictionStatus = EITwinMaterialPredictionStatus::Unknown;
 
 
-	//! Persistence manager for material settings.
-	static MaterialPersistencePtr MaterialPersistenceMngr;
+	//! Persistence manager for material settings. A given instance will use either a specific manager, or
+	//! the global one.
+	MaterialPersistencePtr SpecificPersistenceMngr;
+	static MaterialPersistencePtr GlobalPersistenceMngr;
 };

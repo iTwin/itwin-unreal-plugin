@@ -26,6 +26,7 @@ enum class EITwinModelType : uint8
 	IModel,
 	RealityData,
 	AnimationKeyframe,
+	Scene,
 
 	Count UMETA(Hidden),
 	Invalid = Count UMETA(Hidden)

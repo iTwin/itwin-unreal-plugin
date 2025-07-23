@@ -97,6 +97,22 @@ void FITwinDefaultWebServicesObserver::OnIModelPropertiesRetrieved(bool bSuccess
 {
 	ensureMsgf(false, TEXT("%s does not handle querying IModel properties"), GetObserverName());
 }
+void FITwinDefaultWebServicesObserver::OnIModelPagedNodesRetrieved(bool bSuccess, FIModelPagedNodesRes const& IModelNodes)
+{
+	ensureMsgf(false, TEXT("%s does not handle models tree"), GetObserverName());
+}
+void FITwinDefaultWebServicesObserver::OnIModelCategoryNodesRetrieved(bool bSuccess, FIModelPagedNodesRes const& IModelNodes)
+{
+	ensureMsgf(false, TEXT("%s does not handle categories tree"), GetObserverName());
+}
+void FITwinDefaultWebServicesObserver::OnModelFilteredNodesRetrieved(bool bSuccess, FFilteredNodesRes const& IModelNodes, FString const& Filter)
+{
+	ensureMsgf(false, TEXT("%s does not handle models search tree"), GetObserverName());
+}
+void FITwinDefaultWebServicesObserver::OnCategoryFilteredNodesRetrieved(bool bSuccess, FFilteredNodesRes const& IModelNodes, FString const& Filter)
+{
+	ensureMsgf(false, TEXT("%s does not handle categories search tree"), GetObserverName());
+}
 void FITwinDefaultWebServicesObserver::OnConvertedIModelCoordsToGeoCoords(bool bSuccess,
 	AdvViz::SDK::GeoCoordsReply const& GeoCoords, HttpRequestID const& RequestID)
 {

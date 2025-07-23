@@ -8,6 +8,7 @@
 
 
 #include <ITwinTilesetAccess.h>
+#include <ITwinGoogle3DTileset.h>
 
 #include "ITwinTilesetAccess.inl"
 #include <Decoration/ITwinDecorationHelper.h>
@@ -16,29 +17,40 @@
 
 namespace ITwin
 {
-	static constexpr double ITWIN_BEST_SCREEN_ERROR = 1.0;
-	static constexpr double ITWIN_WORST_SCREEN_ERROR = 100.0;
-
-	//! Get a max-screenspace-error value from a percentage (value in range [0;1])
-	double ToScreenSpaceError(float QualityValue)
-	{
-		double const NormalizedQuality = std::clamp(QualityValue, 0.f, 1.f);
-		double ScreenError = NormalizedQuality * ITWIN_BEST_SCREEN_ERROR + (1.0 - NormalizedQuality) * ITWIN_WORST_SCREEN_ERROR;
-		return ScreenError;
-	}
+	static constexpr double IMODEL_BEST_SCREENSPACE_ERROR = 1.0;
+	static constexpr double IMODEL_WORST_SCREENSPACE_ERROR = 100.0;
+	// Google 3D's memory usage grows exponentially with SSE because of the openendedness of the tileset
+	// and the lack of occlusion culling or accounting for the "shape" of the tile's geometry (mostly flat
+	// in constructible areas...) to compare with the target SSE.
+	// *** The RAM usage is extremely sensitive to this "best" SSE value ***
+	// An SSE of 11 was found to have a 1.5GB footprint, but an SSE of 5 used almost 4GB,
+	// and an SSE of 1 more than 10GB!! (and when starting up directly at 100%, no tiles were showing
+	// for some reason, as if some kind of bottleneck prevented even the coarsest LODs to show...)
+	const double GOOGLE3D_BEST_SCREENSPACE_ERROR = 8.0;
+	static constexpr double GOOGLE3D_WORST_SCREENSPACE_ERROR = 100.0;
 
 	//! Adjust the tileset quality, given a percentage (value in range [0;1])
-	void SetTilesetQuality(ACesium3DTileset& Tileset, float Value)
+	void SetTilesetQuality(ACesium3DTileset& Tileset, float QualityValue)
 	{
-		Tileset.SetMaximumScreenSpaceError(ToScreenSpaceError(Value));
+		double const NormalizedQuality = std::clamp(QualityValue, 0.f, 1.f);
+		double const ScreenspaceError = (nullptr != Cast<AITwinGoogle3DTileset>(&Tileset))
+			? (NormalizedQuality * GOOGLE3D_BEST_SCREENSPACE_ERROR
+				+ (1.0 - NormalizedQuality) * GOOGLE3D_WORST_SCREENSPACE_ERROR)
+			: (NormalizedQuality * IMODEL_BEST_SCREENSPACE_ERROR
+				+ (1.0 - NormalizedQuality) * IMODEL_WORST_SCREENSPACE_ERROR);
+		Tileset.SetMaximumScreenSpaceError(ScreenspaceError);
 	}
 
 	//! Returns the tileset quality as a percentage (value in range [0;1])
 	float GetTilesetQuality(ACesium3DTileset const& Tileset)
 	{
-		double ScreenError = std::clamp(Tileset.MaximumScreenSpaceError, ITWIN_BEST_SCREEN_ERROR, ITWIN_WORST_SCREEN_ERROR);
-		double NormalizedQuality = (ScreenError - ITWIN_WORST_SCREEN_ERROR) / (ITWIN_BEST_SCREEN_ERROR - ITWIN_WORST_SCREEN_ERROR);
-		return static_cast<float>(NormalizedQuality);
+		bool const bForGoogle3DTiles = (nullptr != Cast<AITwinGoogle3DTileset>(&Tileset));
+		auto const BestSSE =
+			bForGoogle3DTiles ? GOOGLE3D_BEST_SCREENSPACE_ERROR : IMODEL_BEST_SCREENSPACE_ERROR;
+		auto const WorstSSE =
+			bForGoogle3DTiles ? GOOGLE3D_WORST_SCREENSPACE_ERROR : IMODEL_WORST_SCREENSPACE_ERROR;
+		double const ScreenspaceError = std::clamp(Tileset.MaximumScreenSpaceError, BestSSE, WorstSSE);
+		return static_cast<float>((ScreenspaceError - WorstSSE) / (BestSSE - WorstSSE));
 	}
 
 	UCesiumPolygonRasterOverlay* GetCutoutOverlay(ACesium3DTileset const& Tileset)
@@ -138,7 +150,7 @@ void FITwinTilesetAccess::SetTilesetQuality(float Value)
 	if (!Tileset)
 		return;
 
-	Tileset->SetMaximumScreenSpaceError(ITwin::ToScreenSpaceError(Value));
+	ITwin::SetTilesetQuality(*Tileset, Value);
 
 	AITwinDecorationHelper* DecoHelper = GetDecorationHelper();
 	if (DecoHelper)

@@ -1,4 +1,11 @@
 function(configure_cesium_library targetName)
+
+    if (CMAKE_VERSION VERSION_GREATER_EQUAL 3.31)
+        # AdvViz: suppress many warnings about 'install()' paths in cesium-native, not our concern (hopefully),
+        # so reduce output flooding. Placing it directly in this function was the only way to make it work!
+        cmake_policy(SET CMP0177 OLD)
+    endif()
+
     if (MSVC)
         target_compile_options(${targetName} PRIVATE /W4 /WX /wd4201 /bigobj /w45038 /w44254 /w44242 /w44191 /w45220)
     else()

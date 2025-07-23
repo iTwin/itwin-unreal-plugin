@@ -1245,10 +1245,22 @@ static void loadPrimitive(
   CesiumGltf::MeshPrimitive& primitive =
       mesh.primitives[options.primitiveIndex];
 
+  if (!options.pMeshOptions->pNodeOptions->pModelOptions->showPointGeometries &&
+      primitive.mode == CesiumGltf::MeshPrimitive::Mode::POINTS) {
+    return;
+  }
+  if (!options.pMeshOptions->pNodeOptions->pModelOptions->showLineGeometries &&
+      (primitive.mode == CesiumGltf::MeshPrimitive::Mode::LINES ||
+       primitive.mode == CesiumGltf::MeshPrimitive::Mode::LINE_LOOP ||
+       primitive.mode == CesiumGltf::MeshPrimitive::Mode::LINE_STRIP)) {
+    return;
+  }
+
   if (primitive.mode != CesiumGltf::MeshPrimitive::Mode::TRIANGLES &&
       primitive.mode != CesiumGltf::MeshPrimitive::Mode::TRIANGLE_STRIP &&
+      primitive.mode != CesiumGltf::MeshPrimitive::Mode::LINES &&
       primitive.mode != CesiumGltf::MeshPrimitive::Mode::POINTS) {
-    // TODO: add support for other primitive types.
+    // TODO: add support for LINE_LOOP, LINE_STRIP and TRIANGLE_FAN.
     UnsupportedPrimitiveLogger.OnUnsupportedMode(primitive.mode);
     return;
   }
@@ -1413,6 +1425,7 @@ static void loadPrimitive(
 
   TArray<uint32> indices;
   if (primitive.mode == CesiumGltf::MeshPrimitive::Mode::TRIANGLES ||
+      primitive.mode == CesiumGltf::MeshPrimitive::Mode::LINES ||
       primitive.mode == CesiumGltf::MeshPrimitive::Mode::POINTS) {
     TRACE_CPUPROFILER_EVENT_SCOPE(Cesium::CopyIndices)
     indices.SetNum(static_cast<TArray<uint32>::SizeType>(indicesView.size()));
@@ -1447,8 +1460,10 @@ static void loadPrimitive(
   bool needToGenerateFlatNormals = normalsAreRequired && !hasNormals;
   bool needToGenerateTangents = needsTangents && !hasTangents;
   bool duplicateVertices = needToGenerateFlatNormals || needToGenerateTangents;
-  duplicateVertices = duplicateVertices &&
-                      primitive.mode != CesiumGltf::MeshPrimitive::Mode::POINTS;
+  duplicateVertices =
+      duplicateVertices &&
+      primitive.mode != CesiumGltf::MeshPrimitive::Mode::POINTS &&
+      primitive.mode != CesiumGltf::MeshPrimitive::Mode::LINES;
 
   TArray<FStaticMeshBuildVertex> StaticMeshBuildVertices;
   StaticMeshBuildVertices.SetNum(
@@ -1762,7 +1777,8 @@ static void loadPrimitive(
   section.MinVertexIndex = 0;
   section.MaxVertexIndex = StaticMeshBuildVertices.Num() - 1;
   section.bEnableCollision =
-      primitive.mode != CesiumGltf::MeshPrimitive::Mode::POINTS;
+      primitive.mode != CesiumGltf::MeshPrimitive::Mode::POINTS &&
+      primitive.mode != CesiumGltf::MeshPrimitive::Mode::LINES;
   section.bCastShadow = true;
   section.MaterialIndex = 0;
 
@@ -1802,7 +1818,7 @@ static void loadPrimitive(
 
   primitiveResult.transform = transform * yInvertMatrix * scaleMatrix;
 
-  if (primitive.mode != CesiumGltf::MeshPrimitive::Mode::POINTS &&
+  if (section.bEnableCollision &&
       options.pMeshOptions->pNodeOptions->pModelOptions->createPhysicsMeshes) {
     if (StaticMeshBuildVertices.Num() != 0 && indices.Num() != 0) {
       TRACE_CPUPROFILER_EVENT_SCOPE(Cesium::ChaosCook)
@@ -3049,9 +3065,12 @@ static void loadPrimitiveGameThreadPart(
 
   UStaticMeshComponent* pMesh = nullptr;
   ICesiumPrimitive* pCesiumPrimitive = nullptr;
-  if (meshPrimitive.mode == CesiumGltf::MeshPrimitive::Mode::POINTS) {
+  if (meshPrimitive.mode == CesiumGltf::MeshPrimitive::Mode::POINTS ||
+      meshPrimitive.mode == CesiumGltf::MeshPrimitive::Mode::LINES) {
     UCesiumGltfPointsComponent* pPointMesh =
         NewObject<UCesiumGltfPointsComponent>(pGltf, componentName);
+    pPointMesh->bLinesList =
+        (meshPrimitive.mode == CesiumGltf::MeshPrimitive::Mode::LINES);
     pPointMesh->UsesAdditiveRefinement =
         tile.getRefine() == Cesium3DTilesSelection::TileRefine::Add;
     pPointMesh->GeometricError = static_cast<float>(tile.getGeometricError());

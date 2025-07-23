@@ -99,7 +99,14 @@ MODULE_EXPORT namespace AdvViz::SDK
 		void GetElementProperties(
 			std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId,
 			std::string const& elementId);
-
+		void GetPagedNodes(std::string const& iTwinId, std::string const& iModelId,
+			std::string const& changesetId, std::string const& parentKey = "", int offset = 0, int count = 1000);
+		void GetModelFilteredNodePaths(std::string const& iTwinId, std::string const& iModelId,
+			std::string const& changesetId, std::string const& filter);
+		void GetCategoryFilteredNodePaths(std::string const& iTwinId, std::string const& iModelId,
+			std::string const& ChangesetId, std::string const& Filter);
+		void GetCategoryNodes(std::string const& iTwinId, std::string const& iModelId,
+			std::string const& changesetId, std::string const& parentKey = "", int offset = 0, int count = 1000);
 		void GetIModelProperties(
 			std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId);
 

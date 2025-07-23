@@ -175,10 +175,14 @@ namespace AdvViz::SDK::Tools
 
 	void CreateAdvVizLogChannels()
 	{
+		CreateLogChannel("ITwinAdvViz", Level::info);
 		CreateLogChannel("ITwinAPI", Level::info);
 		CreateLogChannel("ITwinScene", Level::info);
 		CreateLogChannel("ITwinDecoration", Level::info);
 		CreateLogChannel("ITwinMaterial", Level::info);
+		CreateLogChannel("ITwinQuery", Level::info);
+		CreateLogChannel("ITwin4DImp", Level::info);
+		CreateLogChannel("ITwinRender", Level::info);
 		CreateLogChannel("App", Level::info);
 		CreateLogChannel("AppUI", Level::info);
 		CreateLogChannel("Timeline", Level::info);

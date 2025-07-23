@@ -14,6 +14,7 @@
 #include <HttpModule.h>
 #include <Interfaces/IHttpResponse.h>
 #include <Misc/Base64.h>
+#include <Misc/EngineVersionComparison.h>
 #include <Misc/FileHelper.h>
 #include "Tasks/Task.h"
 
@@ -95,7 +96,12 @@ FUEHttp::Response FUEHttp::Do(FString verb, const std::string& url, const std::s
 		while (true)
 		{
 			status = HttpRequest->GetStatus();
+		#if UE_VERSION_OLDER_THAN(5, 4, 0) // UE5.3
 			if (status == EHttpRequestStatus::Failed_ConnectionError)
+		#else // ie UE5.4+
+			if (status == EHttpRequestStatus::Failed
+				&& EHttpFailureReason::ConnectionError == HttpRequest->GetFailureReason())
+		#endif
 			{
 				if (verb != "POST") //post is not safe to retry, it will potentially create new resources.   
 				{

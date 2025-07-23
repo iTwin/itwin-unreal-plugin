@@ -30,6 +30,10 @@ namespace ITwin
 
 	//! Returns the cut-out polygons overlay for the given tileset.
 	ITWINRUNTIME_API UCesiumPolygonRasterOverlay* GetCutoutOverlay(ACesium3DTileset const& Tileset);
+
+	//! This is the screenspace error it is best limiting oneself to with Google 3D Tiles,
+	//! to avoid huge memory usage and download times
+	ITWINRUNTIME_API extern const double GOOGLE3D_BEST_SCREENSPACE_ERROR;
 }
 
 

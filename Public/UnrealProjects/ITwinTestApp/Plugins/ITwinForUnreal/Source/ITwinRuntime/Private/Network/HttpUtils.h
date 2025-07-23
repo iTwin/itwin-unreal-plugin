@@ -10,15 +10,12 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include <Logging/LogMacros.h>
 
 #include <Compil/BeforeNonUnrealIncludes.h>
 #	include <Core/ITwinAPI/ITwinRequestTypes.h>
 #include <Compil/AfterNonUnrealIncludes.h>
 
 #include <mutex>
-
-DECLARE_LOG_CATEGORY_EXTERN(ITwinQuery, Log, All);
 
 namespace ITwinHttp
 {

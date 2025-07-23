@@ -167,6 +167,7 @@ namespace AdvViz::SDK {
 		{
 			std::string name;
 			std::string itwinid;
+			std::string lastModified;
 		};
 	public:
 		std::string id_;
@@ -176,10 +177,16 @@ namespace AdvViz::SDK {
 		bool shoudSave_ = false;
 		std::vector<std::shared_ptr<AdvViz::SDK::LinkAPI>> links_;
 		std::shared_ptr<AdvViz::SDK::ITimeline> timeline_;
+		std::shared_ptr<Http> http_;
 
-
-		std::shared_ptr<Http>& GetHttp() { return creds.Http_; }
-		void SetHttp(const std::shared_ptr<Http>& http) { creds.SetDefaultHttp(http); }
+		std::shared_ptr<Http>& GetHttp() { 
+			if (http_)
+				return http_;
+			if (!creds.Http_)
+				creds.SetDefaultHttp(GetDefaultHttp());
+			return creds.GetHttp();
+		}
+		void SetHttp(const std::shared_ptr<Http>& http) { http_ = http; }
 
 		bool Create(
 			const std::string& name, const std::string& itwinid, bool keepCurrentValues = false)
@@ -244,7 +251,9 @@ namespace AdvViz::SDK {
 		}
 		bool Get(const std::string& itwinid, const std::string& id)
 		{
-			struct SJsonOutData { std::string displayName; std::string id; std::string iTwinId; };
+			struct SJsonOutData {
+				std::string displayName;	std::string id; std::string iTwinId; std::optional<std::string> lastModified;
+			};
 			struct SJsonOut { SJsonOutData scene; };
 			SJsonOut jOut;
 			long status = GetHttp()->GetJson(jOut, "iTwins/" + itwinid + "/scenes/" + id);
@@ -253,6 +262,8 @@ namespace AdvViz::SDK {
 				jsonScene_.itwinid = jOut.scene.iTwinId;
 				jsonScene_.name = jOut.scene.displayName;
 				id_ = jOut.scene.id;
+				if (jOut.scene.lastModified)
+					jsonScene_.lastModified = *jOut.scene.lastModified;
 				BE_LOGI("ITwinScene", "Loaded Scene in Scene API with ID " << id_ << "from itwin "<< itwinid);
 				return true;
 			}
@@ -360,6 +371,12 @@ namespace AdvViz::SDK {
 
 	}
 
+	std::string ScenePersistenceAPI::GetLastModified() const
+	{
+		return GetImpl().jsonScene_.lastModified;
+	}
+
+
 	const std::string& ScenePersistenceAPI::GetITwinId() const
 	{
 		return GetImpl().jsonScene_.itwinid;
@@ -371,7 +388,6 @@ namespace AdvViz::SDK {
 
 	ScenePersistenceAPI::ScenePersistenceAPI() :impl_(new Impl)
 	{
-		GetImpl().SetHttp(GetDefaultHttp());
 	}
 
 	ScenePersistenceAPI::Impl& ScenePersistenceAPI::GetImpl() const {
@@ -1634,6 +1650,12 @@ namespace AdvViz::SDK {
 		return res;
 
 	}
+
+	void ScenePersistenceAPI::SetDefaulttHttp(std::shared_ptr<Http> http)
+	{
+		creds.SetDefaultHttp(http);
+	}
+
 
 	AdvViz::expected<std::vector<std::shared_ptr<IScenePersistence>>, int> GetITwinScenesAPI(
 		const std::string& itwinid)

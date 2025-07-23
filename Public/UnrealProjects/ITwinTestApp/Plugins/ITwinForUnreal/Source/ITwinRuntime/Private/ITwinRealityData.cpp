@@ -8,7 +8,7 @@
 
 #include <ITwinRealityData.h>
 
-#include <IncludeITwin3DTileset.h>
+#include <IncludeCesium3DTileset.h>
 #include <ITwinGeolocation.h>
 #include <ITwinServerConnection.h>
 #include <ITwinSetupMaterials.h>
