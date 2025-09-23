@@ -75,6 +75,23 @@ public:
 
 	AdvViz::SDK::EITwinAuthStatus CheckAuthorizationStatus();
 
+	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
+	static void SetUseExternalBrowser(bool bInUseExternalBrowser);
+
+	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
+	static bool UseExternalBrowser();
+
+	//! Initiates the authorization process, but instead of opening an external web browser, returns the
+	//! URL instead.
+	//! \remark If an authorization already exists and is still valid, an empty URL is returned.
+	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
+	FString InitiateAuthorizationURL();
+
+	//! Returns the authorization URL currently valid, if any.
+	//! \remark If an authorization already exists and is still valid, an empty URL is returned.
+	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
+	FString GetAuthorizationURL();
+
 	//! Returns the last error encountered, if any.
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
 	FString GetLastError() const;

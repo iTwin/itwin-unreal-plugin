@@ -14,6 +14,8 @@
 #include <UObject/StrongObjectPtr.h>
 #include <Decoration/ITwinDecorationServiceSettings.h>
 
+#define ITWIN_AUTH_ENFORCE_DISABLE_EXTERNAL_BROWSER() 0
+
 void AITwinSelector::BeginPlay()
 {
 	Super::BeginPlay();
@@ -24,7 +26,35 @@ void AITwinSelector::BeginPlay()
 	ITwinWebService = NewObject<UITwinWebServices>(this);
 	// Check authorization
 	ITwinWebService->OnAuthorizationChecked.AddDynamic(this, &AITwinSelector::OnAuthorizationDone);
+
+#if !ITWIN_AUTH_ENFORCE_DISABLE_EXTERNAL_BROWSER()
+	// Depending on the plugin settings (boolean bUseExternalBrowserForAuthorization in
+	// UITwinDecorationServiceSettings), the call below will either open an external browser or just fill
+	// an URL which can then be processed by the application though another method (web widget...)
 	ITwinWebService->CheckAuthorization();
+
+	const FString AuthURL = ITwinWebService->GetAuthorizationURL();
+	// If no external browser is used for the authorization, it's the responsibility of the application to
+	// process the authorization URL:
+	if (!ITwinWebService->UseExternalBrowser() && !AuthURL.IsEmpty())
+	{
+		// Here, we could create/fill a login widget in Unreal...
+		// ...
+		// ...
+		// ...
+	}
+
+#else // ITWIN_AUTH_ENFORCE_DISABLE_EXTERNAL_BROWSER
+	// Simplified code to enforce processing the authorization without any external browser:
+	const FString AuthURL = ITwinWebService->InitiateAuthorizationURL();
+	if (!AuthURL.IsEmpty())
+	{
+		// Here, we could create/fill a login widget in Unreal...
+		// ...
+		// ...
+		// ...
+	}
+#endif // ITWIN_AUTH_ENFORCE_DISABLE_EXTERNAL_BROWSER
 }
 
 FString AITwinSelector::GetIModelDisplayName(const FString& iModelId) const

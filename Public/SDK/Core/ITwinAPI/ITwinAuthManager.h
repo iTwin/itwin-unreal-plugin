@@ -95,6 +95,8 @@ MODULE_EXPORT namespace AdvViz::SDK
 
 		bool IsAuthorizationInProgress() const;
 
+		std::string GetCurrentAuthorizationURL() const;
+
 		//! Switch to client credentials grant type (for internal usage only).
 		bool SetClientCredentialGrantType(std::string const& clientID, std::string const& clientSecret,
 			std::optional<std::string> const& imsName = std::nullopt,
@@ -112,6 +114,7 @@ MODULE_EXPORT namespace AdvViz::SDK
 		void GetRefreshToken(std::string& refreshToken) const;
 		std::chrono::system_clock::time_point GetExpirationTime() const;
 
+		void SetAuthorizationURL(std::string const& authorizationURL);
 
 	private:
 		//! Returns the access token to use, it may be the "override" or regular one.
@@ -153,8 +156,10 @@ MODULE_EXPORT namespace AdvViz::SDK
 		virtual bool SavePrivateData(std::string const& data, int keyIndex = 0) const = 0;
 		virtual bool LoadPrivateData(std::string& data, int keyIndex = 0) const = 0;
 
-		virtual bool LaunchWebBrowser(std::string const& state, std::string const& codeVerifier, std::string& error) const = 0;
-
+		/// Starts the actual authorization. A possible implementation could consist in opening
+		/// a web browser.
+		virtual bool StartAuthorizationInstance(std::string const& state, std::string const& codeVerifier,
+			std::string& error) = 0;
 
 	protected:
 		const EITwinEnvironment env_;
@@ -171,6 +176,7 @@ MODULE_EXPORT namespace AdvViz::SDK
 		std::shared_ptr<Http> http_;
 		std::shared_ptr<IHttpRouter> httpRouter_;
 		std::atomic_bool hasBoundAuthPort_ = false;
+		std::string currentAuthorizationURL_;
 		int loadRefreshTokenAttempts_ = 0;
 
 		EITwinAuthGrantType grantType_ = EITwinAuthGrantType::AuthCode;

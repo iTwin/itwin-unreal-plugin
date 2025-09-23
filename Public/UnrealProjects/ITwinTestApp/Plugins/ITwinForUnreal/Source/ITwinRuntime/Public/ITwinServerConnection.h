@@ -47,6 +47,11 @@ public:
 		EditAnywhere)
 	EITwinEnvironment Environment = EITwinEnvironment::Invalid;
 
+
+	UPROPERTY(Category = "iTwin",
+		EditAnywhere)
+	FString AuthorizationURL;
+
 	virtual void PostLoad() override;
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
@@ -62,6 +67,14 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin")
 	bool HasAccessToken() const { return !GetAccessToken().IsEmpty(); }
+
+	//! Initiates the authorization process, but instead of opening an external web browser, fills the
+	//! AuthorizationURL instead.
+	//! \remark If an authorization already exists and is still valid, an empty URL is set.
+	UFUNCTION(Category = "iTwin",
+		CallInEditor,
+		BlueprintCallable)
+	void FillAuthorizationURL();
 
 	static bool CheckRequest(FHttpRequestPtr const& CompletedRequest, FHttpResponsePtr const& Response,
 		bool connectedSuccessfully, FString* pstrError = nullptr, bool const bWillRetry = false);

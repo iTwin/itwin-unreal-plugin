@@ -28,6 +28,9 @@ public:
 	static bool LoadToken(FString& OutInfo, AdvViz::SDK::EITwinEnvironment Env);
 	static void DeleteTokenFile(AdvViz::SDK::EITwinEnvironment Env);
 
+	static void SetUseExternalBrowser(bool bInUseExternalBrowser);
+	static bool UseExternalBrowser();
+
 #if WITH_TESTS
 	static void SetupTestMode(AdvViz::SDK::EITwinEnvironment Env, FString const& TokenFileSuffix);
 #endif
@@ -39,6 +42,15 @@ public:
 	FITwinAuthorizationManager(AdvViz::SDK::EITwinEnvironment Env);
 	~FITwinAuthorizationManager();
 
+	/// Helper to disable the use of external browser for a given scope.
+	class [[nodiscard]] FExternalBrowserDisabler
+	{
+	public:
+		FExternalBrowserDisabler();
+		~FExternalBrowserDisabler();
+	private:
+		const bool bOldUseExternalBrowser = UseExternalBrowser();
+	};
 
 private:
 	static bool SavePrivateData(FString const& InInfo, AdvViz::SDK::EITwinEnvironment Env, int KeyIndex, FString const& FileSuffix);
@@ -47,5 +59,9 @@ private:
 	virtual bool SavePrivateData(std::string const& data, int keyIndex = 0) const override;
 	virtual bool LoadPrivateData(std::string& data, int keyIndex = 0) const override;
 
-	virtual bool LaunchWebBrowser(std::string const& state, std::string const& codeVerifier, std::string& error) const override;
+	virtual bool StartAuthorizationInstance(std::string const& state, std::string const& codeVerifier, std::string& error) override;
+
+
+	//! Whether the authorization process should open an external web browser (default mode in plugin).
+	static bool bUseExternalBrowser;
 };

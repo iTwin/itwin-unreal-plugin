@@ -1082,6 +1082,11 @@ UITwinWebServices::UITwinWebServices()
 		{
 			InitDefaultEnvironmentFromDecoSettings(DecoSettings);
 		}
+		if (DecoSettings)
+		{
+			FITwinAuthorizationManager::SetUseExternalBrowser(
+				DecoSettings->bUseExternalBrowserForAuthorization);
+		}
 		bHasTestedDecoScope = true;
 	}
 
@@ -1232,6 +1237,54 @@ AdvViz::SDK::EITwinAuthStatus UITwinWebServices::CheckAuthorizationStatus()
 bool UITwinWebServices::CheckAuthorization()
 {
 	return CheckAuthorizationStatus() == AdvViz::SDK::EITwinAuthStatus::Success;
+}
+
+
+/*static*/
+void UITwinWebServices::SetUseExternalBrowser(bool bInUseExternalBrowser)
+{
+	FITwinAuthorizationManager::SetUseExternalBrowser(bInUseExternalBrowser);
+}
+
+/*static*/
+bool UITwinWebServices::UseExternalBrowser()
+{
+	return FITwinAuthorizationManager::UseExternalBrowser();
+}
+
+FString UITwinWebServices::InitiateAuthorizationURL()
+{
+	FITwinAuthorizationManager::FExternalBrowserDisabler ExternalBrowserDisabler;
+	return GetAuthorizationURL();
+}
+
+FString UITwinWebServices::GetAuthorizationURL()
+{
+	AdvViz::SDK::EITwinAuthStatus Status = AdvViz::SDK::EITwinAuthStatus::None;
+	if (Impl->authManager_ && Impl->authManager_->IsAuthorizationInProgress())
+	{
+		Status = AdvViz::SDK::EITwinAuthStatus::InProgress;
+	}
+	else if (ServerConnection && ServerConnection->HasAccessToken())
+	{
+		Status = AdvViz::SDK::EITwinAuthStatus::Success;
+	}
+	else
+	{
+		// No authorization started yet => initiate it now.
+		Status = CheckAuthorizationStatus();
+	}
+	if (Status == AdvViz::SDK::EITwinAuthStatus::InProgress
+		&& ensure(Impl->authManager_))
+	{
+		return UTF8_TO_TCHAR(Impl->authManager_->GetCurrentAuthorizationURL().c_str());
+	}
+	else
+	{
+		// The authorization may have failed early, or reloaded from a cached token. No URL can be
+		// returned in such case.
+		return {};
+	}
 }
 
 void UITwinWebServices::OnAuthDoneImpl(bool bSuccess, std::string const& Error, bool bBroadcastResult /*= true*/)

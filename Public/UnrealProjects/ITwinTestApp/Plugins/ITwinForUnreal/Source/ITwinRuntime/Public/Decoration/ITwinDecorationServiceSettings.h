@@ -88,6 +88,18 @@ public:
 		meta = (ConfigRestartRequired = true))
 	bool bLoadDecorationsInPlugin = false;
 
+	/// Whether an external web browser will be opened to perform the iTwin authorization. This is the
+	/// default mode. If you disable it, you'll have to retrieve the URL from the instance of
+	/// UITwinWebServices initiating the authorization, and process the URL in another way (using a web
+	/// browser widget typically...)
+	UPROPERTY(
+		Config,
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "Connection",
+		meta = (ConfigRestartRequired = true))
+	bool bUseExternalBrowserForAuthorization = true;
+
 	/// Can be used to customize the environments where the Decoration Service is used for scene persistence.
 	/// Note that scene persistence is being migrated to a different service, so this option is just here for
 	/// transitioning.

@@ -62,21 +62,20 @@ bool AITwinServerConnection::CheckRequest(FHttpRequestPtr const& CompletedReques
 
 	Be::CleanUpGuard FillErrorCleanup([&requestError, &CompletedRequest, pstrError, bWillRetry]
 	{
-		if (!requestError.IsEmpty())
+		if (!requestError.IsEmpty() && UITwinWebServices::ShouldLogErrors())
 		{
-			if (UITwinWebServices::ShouldLogErrors())
+			FString const Correlation = CompletedRequest->GetHeader(TEXT("X-Correlation-ID"));
+			if (bWillRetry)
 			{
-				if (bWillRetry)
-				{
-					BE_LOGW("ITwinAPI", "Request failed (but will retry), to "
-						<< TCHAR_TO_UTF8(*CompletedRequest->GetURL())
-						<< ", with " << TCHAR_TO_UTF8(*requestError));
-				}
-				else
-				{
-					BE_LOGE("ITwinAPI", "Request to " << TCHAR_TO_UTF8(*CompletedRequest->GetURL())
-						<< " failed with " << TCHAR_TO_UTF8(*requestError));
-				}
+				BE_LOGW("ITwinAPI", "Request failed (but will retry), to "
+					<< TCHAR_TO_UTF8(*CompletedRequest->GetURL()) << ", X-Correlation-ID="
+					<< TCHAR_TO_UTF8(*Correlation) << ", with " << TCHAR_TO_UTF8(*requestError));
+			}
+			else
+			{
+				BE_LOGE("ITwinAPI", "Request to " << TCHAR_TO_UTF8(*CompletedRequest->GetURL())
+					<< ", X-Correlation-ID=" << TCHAR_TO_UTF8(*Correlation)
+					<< ", failed with " << TCHAR_TO_UTF8(*requestError));
 			}
 		}
 		if (pstrError)
@@ -145,6 +144,28 @@ void AITwinServerConnection::PostLoad()
 		const FString EnvName = ITwinServerEnvironment::ToName(Environment).ToString();
 		BE_LOGI("ITwinAPI", "Using iTwin environment: " << TCHAR_TO_UTF8(*EnvName));
 	}
+}
+
+void AITwinServerConnection::FillAuthorizationURL()
+{
+	if (Environment == EITwinEnvironment::Invalid)
+	{
+		ensureMsgf(false, TEXT("Invalid environment in server connection"));
+		return;
+	}
+	auto const& AuthMngr = FITwinAuthorizationManager::GetInstance(
+		static_cast<AdvViz::SDK::EITwinEnvironment>(Environment));
+	if (!ensure(AuthMngr))
+	{
+		return;
+	}
+	FITwinAuthorizationManager::FExternalBrowserDisabler ExternalBrowserDisabler;
+	if (!AuthMngr->IsAuthorizationInProgress() && !HasAccessToken())
+	{
+		// No authorization started yet => initiate it now.
+		AuthMngr->CheckAuthorization();
+	}
+	AuthorizationURL = UTF8_TO_TCHAR(AuthMngr->GetCurrentAuthorizationURL().c_str());
 }
 
 #if WITH_EDITOR

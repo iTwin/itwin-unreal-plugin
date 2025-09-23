@@ -174,6 +174,33 @@ namespace
 }
 
 /*static*/
+bool FITwinAuthorizationManager::bUseExternalBrowser = true;
+
+/*static*/
+void FITwinAuthorizationManager::SetUseExternalBrowser(bool bInUseExternalBrowser)
+{
+	bUseExternalBrowser = bInUseExternalBrowser;
+}
+
+/*static*/
+bool FITwinAuthorizationManager::UseExternalBrowser()
+{
+	return bUseExternalBrowser;
+}
+
+FITwinAuthorizationManager::FExternalBrowserDisabler::FExternalBrowserDisabler()
+	: bOldUseExternalBrowser(UseExternalBrowser())
+{
+	SetUseExternalBrowser(false);
+}
+
+FITwinAuthorizationManager::FExternalBrowserDisabler::~FExternalBrowserDisabler()
+{
+	// Restore previous state.
+	SetUseExternalBrowser(bOldUseExternalBrowser);
+}
+
+/*static*/
 void FITwinAuthorizationManager::OnStartup()
 {
 	// Adapt Unreal to SDK Core's authentication management
@@ -228,7 +255,7 @@ bool FITwinAuthorizationManager::LoadPrivateData(std::string& data, int keyIndex
 	return true;
 }
 
-bool FITwinAuthorizationManager::LaunchWebBrowser(std::string const& state, std::string const& codeVerifier, std::string& error) const
+bool FITwinAuthorizationManager::StartAuthorizationInstance(std::string const& state, std::string const& codeVerifier, std::string& error)
 {
 	TArray<uint8> verifierSha;
 	FEncryptionContextOpenSSL().CalcSHA256(TArrayView<const uint8>(
@@ -250,12 +277,18 @@ bool FITwinAuthorizationManager::LaunchWebBrowser(std::string const& state, std:
 		+ "&state=" + state.c_str()
 		+ "&code_challenge=" + CodeChallenge
 		+ "&code_challenge_method=S256";
-	FString Error;
-	FPlatformProcess::LaunchURL(*LaunchURL, nullptr, &Error);
-	if (!Error.IsEmpty())
+	// Store the authorization URL (useful in case we do not use the external web browser...)
+	this->SetAuthorizationURL(TCHAR_TO_UTF8(*LaunchURL));
+
+	if (UseExternalBrowser())
 	{
-		error = TCHAR_TO_UTF8(*FString::Printf(TEXT("Could not launch web browser! %s"), *Error));
-		return false;
+		FString Error;
+		FPlatformProcess::LaunchURL(*LaunchURL, nullptr, &Error);
+		if (!Error.IsEmpty())
+		{
+			error = TCHAR_TO_UTF8(*FString::Printf(TEXT("Could not launch web browser! %s"), *Error));
+			return false;
+		}
 	}
 	return true;
 }

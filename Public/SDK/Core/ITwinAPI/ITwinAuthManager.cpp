@@ -479,7 +479,17 @@ namespace AdvViz::SDK
 		}
 	}
 
+	std::string ITwinAuthManager::GetCurrentAuthorizationURL() const
+	{
+		Lock lock(mutex_);
+		return currentAuthorizationURL_;
+	}
 
+	void ITwinAuthManager::SetAuthorizationURL(std::string const& authorizationURL)
+	{
+		Lock lock(mutex_);
+		currentAuthorizationURL_ = authorizationURL;
+	}
 
 	namespace
 	{
@@ -770,9 +780,9 @@ namespace AdvViz::SDK
 			hasBoundAuthPort_ = true;
 		}
 
-		// Open Web Browser
+		// Start the actual authorization (typically by opening a Web Browser).
 		std::string brwError;
-		if (!LaunchWebBrowser(state, verifier, brwError))
+		if (!StartAuthorizationInstance(state, verifier, brwError))
 		{
 			this->NotifyResult(false, brwError);
 			return EITwinAuthStatus::Failed;
