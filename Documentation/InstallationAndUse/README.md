@@ -75,6 +75,18 @@ It is also possible to load "external" tilesets (ie. non-iModels, like tileset c
   This actor can be found in the content browser inside folder `Plugins/iTwin for Unreal C++ Classes/CesiumRuntime/Public`.<br>
 - In the actor's Details panel, in the `Cesium` section, fill the `Source`, `Url`, `Ion Asset ID`, `Ion Access token` fields depending on the source of your tileset.
 
+## Packaging issues
+
+Many packaging issues are actually build issues, for which there is a dedicated Troubleshooting section in [the developers documentation](../ForDevelopers/)
+
+### Unable to copy file Singleton.dll
+
+The packaging process may try to access a file that is already loaded by the Unreal Editor.
+When this happens, you will need to:
+* Close the Unreal Editor,
+* Delete the `Binaries`, `Intermediate` and `Saved` folders in your project root,
+* Force a rebuild of the project with Visual Studio.
+
 ## Configuration file
 Some advanced settings can be configured in a ".ini" configuration file located at `C:\Users\<YOUR_USERNAME>\AppData\Local\Unreal Engine\Engine\Config\UserEngine.ini`.
 Be careful to use the exact subfolders as shown above, as Unreal Engine uses other configuration files at similar locations, but only editing this one will allow the plugin to access the settings.

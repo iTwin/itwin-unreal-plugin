@@ -15,7 +15,7 @@ To run Unreal Engine, make sure you are using a dedicated GPU. The performance l
 
 - [CMake 3.28 or newer 3.xx version (_not_ CMake 4.x)](https://cmake.org/download/)
 - [Python 3.9 or newer](https://www.python.org/downloads/)
-- [Visual Studio 2022](https://dev.epicgames.com/documentation/en-us/unreal-engine/setting-up-visual-studio-development-environment-for-cplusplus-projects-in-unreal-engine?application_version=5.3)
+- [Visual Studio 2022 version **17.14**](https://dev.epicgames.com/documentation/en-us/unreal-engine/setting-up-visual-studio-development-environment-for-cplusplus-projects-in-unreal-engine?application_version=5.3)
 
 ### <a id="configure-itwin-platform"></a> Configure access to the iTwin Platform
 
