@@ -83,11 +83,26 @@ Developer Mode for Windows must be enabled, as explained [here](https://learn.mi
 
 ### Clean Build
 
-1. remove your cmake Build folder
-2. call `git clean -dfX` in your source folder
+1. Remove your cmake Build folder
+2. Call `git clean -dfX` in your source folder
 
 
-## Troubleshooting the build
+## Troubleshooting
+
+### Error "401 Unauthorized" or "403 Forbidden"
+
+These errors mean there was a problem with authentication or checking permissions. It can affect some or all requests to the remote services providing the data needed by the plugin. There can be several reasons why this error appears in the logs:
+
+* You do not have sufficient permissions to access the iTwin project
+   * Check you user permissions on Bentley Infrastructure Cloud's "Manage your team" page for this iTwin
+* Your user is not registered as a Bentley developer, or your Trial period has expired
+   * Go to https://developer.bentley.com to comply with this requirement
+* Your app ID is no longer valid: app ID's created with a Trial developer account are only valid as long as the Trial period, after which new app ID's must be created.
+
+If you have checked the above and the error still occurs, here a several things you can try:
+* Close your Unreal application, and remove all files with extension `.dat` in `C:\Users\<YOUR_USER_NAME>\AppData\Local\Bentley\Cache` before retrying it
+   * This seems especially useful when you see occasional `Authorization found - expires in (...)` messages in the logs but with many `[InsufficientPermissions]: userId tag do not match` errors as well.
+* Log out from the Bentley account in your web browser, then log back in.
 
 ### The namespace (...) already contains a definition for 'CesiumRuntime'
 
@@ -151,6 +166,8 @@ Solutions:
 
 ### Image size (OBJ) exceeds maximum allowable size
 
+(See also similar issue about EXE size below)
+
 Symptom:
 ```
 ..\Plugins\Marketplace\ITwinForUnreal\Intermediate\Build\Win64\x64\UnrealGame\Development\CesiumRuntime\Module.CesiumRuntime.2.cpp.obj : fatal error LNK1248: image size (11E2FF130) exceeds maximum allowable size (FFFFFFFF)
@@ -165,4 +182,36 @@ Solution: modify (or create) the `BuildConfiguration.xml` file located in `%APPD
 </BuildConfiguration>
 (...)
 </Configuration>
+```
+
+### Invalid file or disk full: cannot seek to (...)
+
+This error is subtly different from the previous one:
+```
+UATHelper: Packaging (Windows): [13/14] Link [x64] XXXXXXXXXX-Win64-Shipping.exe
+UATHelper: Packaging (Windows): ..\Plugins\Marketplace\ITwinForUnreal\Intermediate\Build\Win64\x64\UnrealGame\Shipping\CesiumRuntime\CesiumPrimitiveFeatures.cpp.obj : fatal error LNK1106: invalid file or disk full: cannot seek to 0xA1247918
+```
+Note that the name of the "xxxx.cpp.obj" file mentioned can be anything, what's important is that the 
+Unreal Build Tool is actually trying to link the _executable_ file.
+
+1. A solution is to adjust the project's `YouProject.Target.cs` file to try and reduce the size of the files handled by the linker:
+```
+if (Target.Configuration == UnrealTargetConfiguration.Shipping)
+{
+	bUseUnityBuild = false; // smaller OBJs instead of huge Unity OBJs
+	bAllowLTCG = false; // avoid excessive linker memory/IO from LTCG
+}
+```
+2. You may have to move the plugin to the project's local plugins folder (and delete its `Intermediate` subfolder) if for some reason the build tool cannot find some of the binary files while the plugin is in the `Marketplace` folder.
+3. When building Unreal Engine (entirely!) from its source repository solution, you can also opt for modular linking, for example if you want to keep the `LTCG` optimizations that the above change would disable:
+```
+// Avoid oversized monolithic executables in non-Shipping builds by using modular linking.
+// Only when not building against an installed (binary) engine (BuildEnvironment must be Unique)
+// because installed engines do not include UnrealGame import libraries for modular game linking.
+if (Target.Platform == UnrealTargetPlatform.Win64
+	&& Target.Configuration != UnrealTargetConfiguration.Shipping
+	&& BuildEnvironment == TargetBuildEnvironment.Unique)
+{
+	LinkType = TargetLinkType.Modular;
+}
 ```
