@@ -24,7 +24,8 @@ Before you install the plugin, you need to create and configure your iTwin Platf
 2. Go to [My Models](https://developer.bentley.com/my-imodels/) and create a new iModel.<br>
 3. Go to [My Apps](https://developer.bentley.com/my-apps/) and [register a new iTwin App](https://developer.bentley.com/tutorials/quickstart-web-and-service-apps/#12-register-your-application):
    - Application type: Native
-   - Redirect URIs: http://localhost:3000/signin-callback
+   - Redirect URIs: http://127.0.0.1:33569/signin-callback
+      - Note: previously the mandatory URI was http://127.0.0.1:3000/signin-callback, but the different port number is necessary due to an issue in the latest version of the plugin. The URI will be configurable in the next version of the plugin, for more flexibility.
 
 ### Configure your machine for development
 
