@@ -31,4 +31,12 @@ public:
 		Category = "Material",
 		meta = (ConfigRestartRequired = true))
 	FString CustomMaterialLibraryDirectory = {};
+
+	UPROPERTY(
+		Config,
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "Debug",
+		meta = (ConfigRestartRequired = true))
+	bool DisplayAnimPathDebug = false;
 };

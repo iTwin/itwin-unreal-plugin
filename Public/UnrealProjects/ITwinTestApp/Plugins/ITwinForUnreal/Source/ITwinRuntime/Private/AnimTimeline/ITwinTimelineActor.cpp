@@ -36,7 +36,7 @@
 
 namespace ITwin
 {
-	float fDefaultTimeDelta = 2.f; // default delta time when appending key-frames
+	float fDefaultTimeDelta = 5.f; // default delta time when appending key-frames
 
 	ITWINRUNTIME_API bool GetSynchroDateFromSchedules(TMap<FString, UITwinSynchro4DSchedules*> const& SchedMap, FDateTime& Out, FString& ScheduleIDOut);
 	ITWINRUNTIME_API void SetSynchroDateToSchedules(TMap<FString, UITwinSynchro4DSchedules*> const& SchedMap, const FDateTime& InDate);
@@ -249,9 +249,15 @@ public:
 		if (ret)
 		{
 			AdvViz::SDK::ITimelineKeyframe::KeyframeData KF((*ret)->GetData());
+			// Moving a key-frame should not change its snapshot ID (if any).
+			const std::string oldSnapshotId = (*ret)->GetSnapshotId();
 			RemoveKeyframe(*ret);
 			KF.time = fNewTime;
-			AddKeyframe(KF);
+			auto newKF = AddKeyframe(KF);
+			if (newKF && !oldSnapshotId.empty())
+			{
+				(*newKF)->SetSnapshotId(oldSnapshotId);
+			}
 		}
 	}
 
@@ -1355,8 +1361,9 @@ void AITwinTimelineActor::GetKeyFrameSnapshotIDs(int clipIdx, std::vector<std::s
 	Ids.clear();
 	if (auto clip = Impl->GetClip(clipIdx))
 	{
-		//clip->GetKeyFrameSnapshotIds(Ids);
-		for(int i(0); i < clip->GetKeyframeCount(); i++)
+		const int KFCount = clip->GetKeyframeCount();
+		Ids.reserve(KFCount);
+		for (int i(0); i < KFCount; i++)
 			Ids.push_back(GetKeyFrameSnapshotID(clipIdx, i));
 	}
 }
@@ -1772,6 +1779,8 @@ void AITwinTimelineActor::OnLoad()
 {
 	Impl->OnLoad();
 	OnTimelineLoaded.Broadcast();
+	//when loading , the timeline is up to date
+	Impl->timeline_->SetShouldSave(false);
 }
 
 void AITwinTimelineActor::ReinitPlayer()
@@ -1787,8 +1796,13 @@ void ScreenUtils::SetCurrentView(UWorld* pWorld, const FVector& pos, const FRota
 		pController->SetControlRotation(rot);
 		pController->GetPawnOrSpectator()->SetActorRotation(rot);
 		pController->SetViewTargetWithBlend(pController->GetPawnOrSpectator());
+		if (auto pCamManager = pController->PlayerCameraManager)
+		{
+			pCamManager->UpdateCamera(pWorld->GetDeltaSeconds());
+		}
 	}
 }
+
 void ScreenUtils::SetCurrentView(UWorld* pWorld, const FTransform& ft)
 {
 	SetCurrentView(pWorld, FVector(ft.GetTranslation()), FRotator(ft.GetRotation()));
@@ -1798,10 +1812,15 @@ void ScreenUtils::GetCurrentView(UWorld* pWorld, FVector& pos, FRotator& rot)
 {
 	if (APlayerController* pController = pWorld->GetFirstPlayerController())
 	{
+		//pController->CalcCamera();
+		if (auto pCamManager = pController->PlayerCameraManager)
+		{
+			rot = pCamManager->GetCameraRotation();
+		}
+
 		if (APawn const* Pawn = pController->GetPawn())
 		{
 			pos = Pawn->GetActorLocation();
-			rot = Pawn->GetActorRotation();
 		}
 	}
 }

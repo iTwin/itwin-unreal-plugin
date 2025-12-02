@@ -1,0 +1,136 @@
+
+#define MAX_CUTTING_PLANES 32
+// // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // //
+//                                 !!! IMPORTANT !!!
+// When you edit this file, change also the shader script inside the MF_GlobalClipping
+// node named "Get Cutting Value from Planes" (see comment there), otherwise
+// Unreal (5.3) may reuse a precompiled shader cache...
+// // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // //
+
+uint _czm_NbCuttingPlanes = round(CuttingPlanes_Count);
+float4 PlaneEquation;
+float3 WorldPosition = AbsoluteWorldPosition;
+
+// Encoded boolean values on float (see https://theinstructionlimit.com/encoding-boolean-flags-into-a-float-in-hlsl)
+bool FlipPlanes[MAX_CUTTING_PLANES] = {
+	fmod(FlipPlanes_0_15, 2) == 1,
+	fmod(FlipPlanes_0_15, 4) >= 2,
+	fmod(FlipPlanes_0_15, 8) >= 4,
+	fmod(FlipPlanes_0_15, 16) >= 8,
+	fmod(FlipPlanes_0_15, 32) >= 16,
+	fmod(FlipPlanes_0_15, 64) >= 32,
+	fmod(FlipPlanes_0_15, 128) >= 64,
+	fmod(FlipPlanes_0_15, 256) >= 128,
+	fmod(FlipPlanes_0_15, 512) >= 256,
+	fmod(FlipPlanes_0_15, 1024) >= 512,
+	fmod(FlipPlanes_0_15, 2048) >= 1024,
+	fmod(FlipPlanes_0_15, 4096) >= 2048,
+	fmod(FlipPlanes_0_15, 8192) >= 4096,
+	fmod(FlipPlanes_0_15, 16384) >= 8192,
+	fmod(FlipPlanes_0_15, 32768) >= 16384,
+	fmod(FlipPlanes_0_15, 65536) >= 32768,
+	fmod(FlipPlanes_16_31, 2) == 1,
+	fmod(FlipPlanes_16_31, 4) >= 2,
+	fmod(FlipPlanes_16_31, 8) >= 4,
+	fmod(FlipPlanes_16_31, 16) >= 8,
+	fmod(FlipPlanes_16_31, 32) >= 16,
+	fmod(FlipPlanes_16_31, 64) >= 32,
+	fmod(FlipPlanes_16_31, 128) >= 64,
+	fmod(FlipPlanes_16_31, 256) >= 128,
+	fmod(FlipPlanes_16_31, 512) >= 256,
+	fmod(FlipPlanes_16_31, 1024) >= 512,
+	fmod(FlipPlanes_16_31, 2048) >= 1024,
+	fmod(FlipPlanes_16_31, 4096) >= 2048,
+	fmod(FlipPlanes_16_31, 8192) >= 4096,
+	fmod(FlipPlanes_16_31, 16384) >= 8192,
+	fmod(FlipPlanes_16_31, 32768) >= 16384,
+	fmod(FlipPlanes_16_31, 65536) >= 32768
+};
+
+bool ActivePlanes[MAX_CUTTING_PLANES] = {
+	fmod(ActivePlanes_0_15, 2) == 1,
+	fmod(ActivePlanes_0_15, 4) >= 2,
+	fmod(ActivePlanes_0_15, 8) >= 4,
+	fmod(ActivePlanes_0_15, 16) >= 8,
+	fmod(ActivePlanes_0_15, 32) >= 16,
+	fmod(ActivePlanes_0_15, 64) >= 32,
+	fmod(ActivePlanes_0_15, 128) >= 64,
+	fmod(ActivePlanes_0_15, 256) >= 128,
+	fmod(ActivePlanes_0_15, 512) >= 256,
+	fmod(ActivePlanes_0_15, 1024) >= 512,
+	fmod(ActivePlanes_0_15, 2048) >= 1024,
+	fmod(ActivePlanes_0_15, 4096) >= 2048,
+	fmod(ActivePlanes_0_15, 8192) >= 4096,
+	fmod(ActivePlanes_0_15, 16384) >= 8192,
+	fmod(ActivePlanes_0_15, 32768) >= 16384,
+	fmod(ActivePlanes_0_15, 65536) >= 32768,
+	fmod(ActivePlanes_16_31, 2) == 1,
+	fmod(ActivePlanes_16_31, 4) >= 2,
+	fmod(ActivePlanes_16_31, 8) >= 4,
+	fmod(ActivePlanes_16_31, 16) >= 8,
+	fmod(ActivePlanes_16_31, 32) >= 16,
+	fmod(ActivePlanes_16_31, 64) >= 32,
+	fmod(ActivePlanes_16_31, 128) >= 64,
+	fmod(ActivePlanes_16_31, 256) >= 128,
+	fmod(ActivePlanes_16_31, 512) >= 256,
+	fmod(ActivePlanes_16_31, 1024) >= 512,
+	fmod(ActivePlanes_16_31, 2048) >= 1024,
+	fmod(ActivePlanes_16_31, 4096) >= 2048,
+	fmod(ActivePlanes_16_31, 8192) >= 4096,
+	fmod(ActivePlanes_16_31, 16384) >= 8192,
+	fmod(ActivePlanes_16_31, 32768) >= 16384,
+	fmod(ActivePlanes_16_31, 65536) >= 32768
+};
+
+
+#define GET_CLIPPING_FROM_PLANE(_PlaneIndex)			\
+	if (_PlaneIndex >= _czm_NbCuttingPlanes) break;		\
+														\
+	if (ActivePlanes[_PlaneIndex]) {					\
+		PlaneEquation = PlaneEquation_ ## _PlaneIndex;	\
+		PlanesClipping = step(dot(PlaneEquation.xyz, WorldPosition) - PlaneEquation.w, 0);	\
+		if (FlipPlanes[_PlaneIndex]) PlanesClipping = 1.0 - PlanesClipping;					\
+														\
+		if (PlanesClipping == 0) break;					\
+	}													\
+
+
+PlanesClipping = 1.0;
+
+UNROLL
+for (int GroupIndex = 0; GroupIndex < 1; GroupIndex++)
+{
+	GET_CLIPPING_FROM_PLANE(0);
+	GET_CLIPPING_FROM_PLANE(1);
+	GET_CLIPPING_FROM_PLANE(2);
+	GET_CLIPPING_FROM_PLANE(3);
+	GET_CLIPPING_FROM_PLANE(4);
+	GET_CLIPPING_FROM_PLANE(5);
+	GET_CLIPPING_FROM_PLANE(6);
+	GET_CLIPPING_FROM_PLANE(7);
+	GET_CLIPPING_FROM_PLANE(8);
+	GET_CLIPPING_FROM_PLANE(9);
+	GET_CLIPPING_FROM_PLANE(10);
+	GET_CLIPPING_FROM_PLANE(11);
+	GET_CLIPPING_FROM_PLANE(12);
+	GET_CLIPPING_FROM_PLANE(13);
+	GET_CLIPPING_FROM_PLANE(14);
+	GET_CLIPPING_FROM_PLANE(15);
+	GET_CLIPPING_FROM_PLANE(16);
+	GET_CLIPPING_FROM_PLANE(17);
+	GET_CLIPPING_FROM_PLANE(18);
+	GET_CLIPPING_FROM_PLANE(19);
+	GET_CLIPPING_FROM_PLANE(20);
+	GET_CLIPPING_FROM_PLANE(21);
+	GET_CLIPPING_FROM_PLANE(22);
+	GET_CLIPPING_FROM_PLANE(23);
+	GET_CLIPPING_FROM_PLANE(24);
+	GET_CLIPPING_FROM_PLANE(25);
+	GET_CLIPPING_FROM_PLANE(26);
+	GET_CLIPPING_FROM_PLANE(27);
+	GET_CLIPPING_FROM_PLANE(28);
+	GET_CLIPPING_FROM_PLANE(29);
+	GET_CLIPPING_FROM_PLANE(30);
+	GET_CLIPPING_FROM_PLANE(31);
+}
+return CuttingPlanes_Count;

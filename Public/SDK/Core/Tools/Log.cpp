@@ -189,6 +189,7 @@ namespace AdvViz::SDK::Tools
 		CreateLogChannel("http", Level::info);
 		CreateLogChannel("json", Level::info);
 		CreateLogChannel("keyframeAnim", Level::info);
+		CreateLogChannel("FITwinHDRILibrary", Level::info);
 	}
 }
 

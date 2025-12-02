@@ -10,8 +10,11 @@
 
 #include "CoreMinimal.h"
 #include <ITwinFwd.h>
+#include <CesiumGeoreference.h>
 
 #include <Templates/SharedPointer.h>
+
+#include <functional>
 
 class ACesiumGeoreference;
 class UWorld;
@@ -34,6 +37,15 @@ public:
 	//! with a worldwide coverage like Google 3D to set some default location for viewing, but not prevent
 	//! the actual iModel to be loaded from setting the "right" location.
 	bool bCanBypassCurrentLocation = false;
+	//! When the default GeoReference is loaded from the iTwin information and not from Ecef location defined
+	//! at iModel level, the elevation needs to be evaluated from another request.
+	bool bNeedElevationEvaluation = false;
 
 	static TSharedPtr<FITwinGeolocation> Get(UWorld& World);
+
+	//! Returns true if the default geo-ref retrieval (for current iTwin) request is still in progress, and
+	//! thus the actual loading of tilesets should be delayed.
+	static bool IsDefaultGeoRefRequestInProgress();
+
+	static std::function<FVector(bool& bRequestInProgress, bool& bHasRelevantElevation)> GetDefaultGeoRefFct;
 };

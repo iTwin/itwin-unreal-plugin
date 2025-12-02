@@ -47,11 +47,6 @@ public:
 	UPROPERTY(EditAnywhere, Category = "iTwin")
 	UMaterialInterface* BaseMaterialGlass = nullptr;
 
-	/// Not used for tilesets, as we need to set opacity mask for Synchro animations. Introduced to generate
-	/// the material previews.
-	UPROPERTY(EditAnywhere, Category = "iTwin")
-	UMaterialInterface* BaseMaterialOpaque = nullptr;
-
 	UPROPERTY(Category = "Schedules Querying",
 		VisibleAnywhere)
 	FString ScheduleId;
@@ -425,6 +420,12 @@ public:
 
 	// For debugging, passing opaque FITwinSceneTile pointer.
 	void DisableAnimationInTile(void* SceneTile);
+
+	/// <summary>
+	///  manage dynamic shadows for animated meshes
+	/// </summary>
+	/// <param name="bDynamic"></param>
+	void SetMeshesDynamicShadows(bool bDynamic);
 
 private:
 	class FImpl;

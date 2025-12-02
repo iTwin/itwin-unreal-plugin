@@ -42,6 +42,32 @@ MODULE_EXPORT namespace AdvViz::SDK
 		ClientCredentials
 	};
 
+	enum class EITwinAuthOverrideMode : uint8_t
+	{
+		/**
+		 * @brief No override: we will use the regular token retrieved through the standard iTwin
+		 * authorization process.
+		 */
+		None,
+
+		/**
+		 * @brief Access token retrieved from another process (such as iTwinStudio).
+		 */
+		IPC,
+
+		/**
+		 * @brief Authorization temporarily granted to access another user's iTwins.
+		 */
+		SharedITwins,
+
+		/**
+		 * @brief Usually a fake authorization, specific to unit testing.
+		 * @remark This does not grant access to anything, obviously.
+		 */
+		Testing
+	};
+
+
 	/// In the future, the whole authorization process will be moved here.
 	/// For now, we only centralize the access token.
 
@@ -62,6 +88,9 @@ MODULE_EXPORT namespace AdvViz::SDK
 
 		static void AddScope(std::string const& extraScope);
 		static bool HasScope(std::string const& scope);
+
+		static void SetRedirectUriPort(int port);
+		static int GetRedirectUriPort();
 
 		static SharedInstance& GetInstance(EITwinEnvironment env);
 
@@ -84,6 +113,9 @@ MODULE_EXPORT namespace AdvViz::SDK
 		bool HasAccessToken() const;
 		std::shared_ptr<std::string> GetAccessToken() const;
 
+		//! Returns the regular access token, ignoring any override.
+		std::string const& GetRegularAccessToken() const;
+
 		//! Sets the regular access token for this environment.
 		void SetAccessToken(std::string const& accessToken);
 
@@ -91,7 +123,15 @@ MODULE_EXPORT namespace AdvViz::SDK
 		//! with the one provided as argument, so that GetAccessToken() returns the
 		//! "override" token instead of the regular one.
 		//! Pass an empty string to restore the regular token.
-		void SetOverrideAccessToken(std::string const& accessToken);
+		//! The same mechanism was extended to retrieve the authorization from another process, and for unit
+		//! testing.
+		void SetOverrideAccessToken(std::string const& accessToken, EITwinAuthOverrideMode overrideMode);
+
+		//! Restore the regular access token, by resetting the override one.
+		void ResetOverrideAccessToken();
+
+		//! Returns the access token override mode.
+		EITwinAuthOverrideMode GetOverrideMode() const;
 
 		bool IsAuthorizationInProgress() const;
 
@@ -102,6 +142,9 @@ MODULE_EXPORT namespace AdvViz::SDK
 			std::optional<std::string> const& imsName = std::nullopt,
 			std::optional<std::string> const& customScope = std::nullopt);
 
+		//! Encode/decode a token.
+		virtual bool EncodeToken(std::string const& InToken, std::string const& InKeyRoot, std::string& OutEncode) const  = 0;
+		virtual bool DecodeToken(std::string const& InEncoded, std::string const& InKeyRoot, std::string& OutToken) const = 0;
 
 	protected:
 		ITwinAuthManager(EITwinEnvironment Env);
@@ -170,6 +213,7 @@ MODULE_EXPORT namespace AdvViz::SDK
 		mutable Mutex mutex_;
 		std::string accessToken_;
 		std::string overrideAccessToken_;
+		EITwinAuthOverrideMode overrideMode_ = EITwinAuthOverrideMode::None;
 		std::shared_ptr<std::string> currentToken_;
 		ITwinAuthInfo authInfo_;
 

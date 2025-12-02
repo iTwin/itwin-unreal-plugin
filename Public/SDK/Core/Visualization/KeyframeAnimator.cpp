@@ -12,7 +12,9 @@
 #include "KeyframeAnimation.h"
 #include "InstancesManager.h"
 #include "Core/Tools/FactoryClassInternalHelper.h"
+#ifndef GLM_ENABLE_EXPERIMENTAL
 #define GLM_ENABLE_EXPERIMENTAL
+#endif
 #include <glm/gtx/quaternion.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include "Core/Tools/Log.h"
@@ -77,7 +79,7 @@ namespace AdvViz::SDK
 					for (int j = 0; j < 3; j++)
 						ColRow3x4(mat2, i, j) = matrix[i][j];
 
-				double4 tr = { value.translation[0], value.translation[1], value.translation[2], 0.0 };
+				double3 tr = { value.translation[0], value.translation[1], value.translation[2]};
 				if (auto transform = transform_.lock())
 					tr = transform->PositionToClient(tr);
 				
@@ -352,16 +354,16 @@ namespace AdvViz::SDK
 		{
 			boundingBoxesTransformed.clear();
 			boundingBoxesTransformed.reserve(clientBoundingBoxes.size());
-			double4 p;
+			double3 p;
 			for (const auto& bbox : clientBoundingBoxes)
 			{
 				BoundingBox b;
-				p = { bbox.min[0], bbox.min[1], bbox.min[2], 0.0 };
+				p = { bbox.min[0], bbox.min[1], bbox.min[2]};
 				p = transform->PositionFromClient(p);
-				BoundingBoxAddPoint(b, (double3&)p);
-				p = { bbox.max[0], bbox.max[1], bbox.max[2], 0.0 };
+				BoundingBoxAddPoint(b, p);
+				p = { bbox.max[0], bbox.max[1], bbox.max[2]};
 				p = transform->PositionFromClient(p);
-				BoundingBoxAddPoint(b, (double3&)p);
+				BoundingBoxAddPoint(b, p);
 				boundingBoxesTransformed.push_back(b);
 			}
 		}

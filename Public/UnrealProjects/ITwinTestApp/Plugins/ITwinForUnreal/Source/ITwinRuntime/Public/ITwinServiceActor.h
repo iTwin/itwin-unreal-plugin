@@ -11,8 +11,8 @@
 
 #include <GameFramework/Actor.h>
 #include <ITwinFwd.h>
+#include <ITwinLogCategory.h>
 #include <ITwinWebServices/ITwinWebServicesObserver.h>
-#include <Logging/LogMacros.h>
 
 #include <ITwinRuntime/Private/Compil/BeforeNonUnrealIncludes.h>
 #	include <SDK/Core/ITwinAPI/ITwinAuthStatus.h>
@@ -21,8 +21,6 @@
 #include <ITwinServiceActor.generated.h>
 
 class UITwinWebServices;
-
-ITWINRUNTIME_API DECLARE_LOG_CATEGORY_EXTERN(LogITwin, Log, All);
 
 
 //! Base class for all actors interacting with an iTwin Web Service.

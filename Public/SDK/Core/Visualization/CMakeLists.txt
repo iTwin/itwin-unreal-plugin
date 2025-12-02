@@ -37,6 +37,8 @@ add_library(Visualization ${libtype}
 		KeyframeAnimation.cpp 
 		KeyframeAnimator.h
 		KeyframeAnimator.cpp 
+		PathAnimation.h
+		PathAnimation.cpp 
 		RefID.h
 		RefID.cpp
 )
@@ -63,6 +65,7 @@ if(SDK_ADDUNITTEST)
 		Tests/SceneAPITest.cpp
 		Tests/Mock.h
 		Tests/RefIDTest.cpp
+		Tests/AnnotationTest.cpp
 	)
 	target_compile_features(VisualizationTest PRIVATE ${DefaultCXXSTD})
 	target_compile_definitions(VisualizationTest PRIVATE "CMAKE_SOURCE_DIR=\"${CMAKE_SOURCE_DIR}\"")

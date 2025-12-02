@@ -14,6 +14,7 @@
 #include <Hashing/UnrealString.h>
 
 #include <Cesium3DTilesSelection/Tile.h> // see CesiumTileID later on
+#include <CesiumLoadedTile.h>
 #include <CesiumMaterialType.h>
 #include <ITwinCoordSystem.h>
 #include <ITwinElementID.h>
@@ -39,6 +40,7 @@
 
 #include <Compil/BeforeNonUnrealIncludes.h>
 	#include <BeHeaders/Compil/AlwaysFalse.h>
+	#include <BeHeaders/Util/OptionsClass.h>
 	#include <boost/container/small_vector.hpp>
 	#include <boost/multi_index_container.hpp>
 	#include <boost/multi_index/hashed_index.hpp>
@@ -49,12 +51,12 @@
 
 
 class AActor;
-class UCesiumCustomVisibilitiesMeshComponent;
+class UITwinExtractedMeshComponent;
 class UMaterialInstanceDynamic;
 class UMaterialInterface;
 class UPrimitiveComponent;
 class UStaticMeshComponent;
-class FITwinSceneMappingBuilder;
+class UITwinSceneMappingBuilder;
 class UTexture;
 
 namespace AdvViz::SDK
@@ -167,7 +169,7 @@ struct FITwinElementFeaturesInTile
 	[[nodiscard]] TWeakObjectPtr<UMaterialInstanceDynamic> GetFirstValidMaterial() const;
 	/// Clear data related to this Element used after loading a given tile: we want to keep the ordering in
 	/// the FITwinSceneTile even if the tile is unloaded/reloaded, which might not yield the same order of
-	/// ElementID encountered in OnMeshConstructed (eg. following retuning)
+	/// ElementID encountered in OnTileMeshPrimitiveConstructed (eg. following retuning)
 	void Unload();
 };
 
@@ -231,8 +233,10 @@ struct FITwinExtractedEntity
 	/// To avoid resetting to OriginalTransform at each tick during a time segment where the entity is not to
 	/// be transformed
 	bool bIsCurrentlyTransformed = false;
-	/// Something than can be used to transform the entity in the UE world.
-	TWeakObjectPtr<UCesiumCustomVisibilitiesMeshComponent> MeshComponent;
+	/// Mandatory: something than can be used to transform the entity in the UE world.
+	TWeakObjectPtr<UStaticMeshComponent> TransformableMeshComponent;
+	/// Set only when Extraction (not glT tuning) is used, cf. SetHidden
+	TWeakObjectPtr<UITwinExtractedMeshComponent> ExtractedMeshComponent;
 	/// UV index where feature IDs were baked
 	std::optional<uint32> FeatureIDsUVIndex;
 	/// Material used to render the entity in the UE world
@@ -241,7 +245,7 @@ struct FITwinExtractedEntity
 	FITwinShadingTextureFlags TextureFlags = {};
 
 	[[nodiscard]] bool IsValid() const {
-		return MeshComponent.IsValid() && Material.IsValid();
+		return TransformableMeshComponent.IsValid() && Material.IsValid();
 	}
 	/// Set the extracted mesh hidden or not.
 	void SetHidden(bool bHidden);
@@ -264,7 +268,7 @@ struct FITwinExtractedElement
 	void Unload();
 };
 
-using CesiumTileID = Cesium3DTilesSelection::TileID;
+using CesiumTileID = ITwin::CesiumTileID;
 
 /// "Useless" since it is the first and thus default index into the multi_index_container's below.
 /// On retrospect, it's probably better to use it rather than rely on the container declaration, to
@@ -289,10 +293,24 @@ struct IndexByGUID {};
 /// For SourceElementIDs
 struct IndexBySourceID {};
 
+OPTIONS_CLASS_START(FPickingOptions, )
+OPTIONS_CLASS_ADD_MEMBER(bool, OnlyVisibleTiles, false)
+OPTIONS_CLASS_ADD_MEMBER(bool, TestElementVisibility, false)
+OPTIONS_CLASS_ADD_MEMBER(bool, MakeSelected, false)
+OPTIONS_CLASS_ADD_MEMBER(bool, SkipResetSelection, false)
+OPTIONS_CLASS_END
+
+OPTIONS_CLASS_START(FShowHideOptions, )
+OPTIONS_CLASS_ADD_MEMBER(bool, OnlyVisibleTiles, false)
+OPTIONS_CLASS_ADD_MEMBER(bool, ConstructionData, false)
+OPTIONS_CLASS_ADD_MEMBER(bool, SkipResetSelection, false)
+OPTIONS_CLASS_ADD_MEMBER(bool, Force, false)
+OPTIONS_CLASS_END
+
 class FITwinSceneTile
 {
 	friend class FITwinSceneMapping;
-	friend class FITwinSceneMappingBuilder;
+	friend class UITwinSceneMappingBuilder;
 
 	/// Use random_access as the first, and thus the default, indexation mode, to "discourage" the use
 	/// of the slower alternative (ElementID hashing), typically for performance-critical tasks like
@@ -355,9 +373,12 @@ public:
 	/// (CesiumTileID is a variant)
 	FITwinSceneTile(const CesiumTileID& InTileID) : TileID(InTileID) {}
 
-	/// I would have preferred it const, but see comment in implem of FITwinSceneTile::Unload
+	/// I would have preferred it const, but see comment in implem of FITwinSceneTile::Unload.
+	/// This member must be kept because it is the basis of indexation in FITwinSceneMapping::KnownTiles,
+	/// even when the matching cesium tile is unloaded and pCesiumTile thus reset to nullptr.
+	/// When pCesiumTile is set, TileID must obviously match pCesiumTile->GetTileID().
 	CesiumTileID TileID;
-	Cesium3DTilesSelection::Tile* pCesiumTile = nullptr;
+	ICesiumLoadedTile* pCesiumTile = nullptr;
 	/// Maximum Feature ID in the tile. Only relevant when it does not equal ITwin::NOT_FEATURE.
 	ITwinFeatureID MaxFeatureID = ITwin::NOT_FEATURE;
 	/// RGBA texture where the 'RGB' part is the Synchro Highlight color (used by both opaque and translucent
@@ -414,6 +435,8 @@ private:
 	std::unordered_set<ITwinElementID> CurrentSavedViewHiddenCategories;
 	std::unordered_set<ITwinElementID> CurrentConstructionHiddenElements;
 	std::unordered_set<std::pair<ITwinElementID, ITwinElementID>, pair_hash> CurrentSavedViewHiddenCategoriesPerModel;
+	std::unordered_set<std::pair<ITwinElementID, ITwinElementID>, pair_hash> CurrentSavedViewAlwaysDrawnCategoriesPerModel;
+	std::unordered_set<ITwinElementID> CurrentSavedViewAlwaysDrawnElements;
 
 	/// Store materials in which we have set our own custom textures, as the initial textures should be
 	/// restored before #destroyGltfParameterValues is called (our textures are either static textures which
@@ -459,18 +482,13 @@ private:
 	/// \return Whether the Element could indeed be selected in any of the currently known tiles. Failure to
 	///		select can indeed happen when the Element is hidden through the material shader (but NO LONGER
 	///		when it is already selected!)
-	bool PickElement(ITwinElementID const& InElemID, bool const bOnlyVisibleTiles, FTextureNeeds& TextureNeeds,
-		bool const bTestElementVisibility = false, bool const bSelectElement = true);
+	bool PickElement(ITwinElementID const& InElemID, FTextureNeeds& TextureNeeds, FPickingOptions const Opts);
 	/// Same as PickElement, but for a Material ID.
-	bool PickMaterial(ITwinMaterialID const& InMaterialID, bool const bOnlyVisibleTiles, FTextureNeeds& TextureNeeds,
-		bool const bTestElementVisibility = false, bool const bSelectMaterial = true);
+	bool PickMaterial(ITwinMaterialID const& InMaterialID, FTextureNeeds& TextureNeeds, FPickingOptions const Opts);
 
 	template<typename SelectableHelper, typename SelectableID>
 	bool TPickSelectable(SelectableHelper const& PickHelper, SelectableID const& InElemID,
-		bool const bOnlyVisibleTiles,
-		FTextureNeeds& TextureNeeds,
-		bool const bTestElemVisibility = false,
-		bool const bSelectElem = true);
+						 FTextureNeeds& TextureNeeds, FPickingOptions const Opts);
 
 	template<typename SelectableHelper>
 	void TResetSelection(SelectableHelper const& Helper, FTextureNeeds& TextureNeeds);
@@ -483,16 +501,22 @@ private:
 		std::function<void(FeatureType*)> UnhideFeatures,
 		std::function<void(FeatureType*)> HideFeatures,
 		FITwinSceneTile::FTextureNeeds& TextureNeeds,
-		std::optional<IDType> SelectedID = std::nullopt,
-		bool const Force = false);
-	void HideElements(std::unordered_set<ITwinElementID> const& InElemIDs, bool const bOnlyVisibleTiles,
-		FTextureNeeds& TextureNeeds, bool const IsConstruction, bool const Force = false);
-	void HideModels(std::unordered_set<ITwinElementID> const& InModelIDs,
-		bool const bOnlyVisibleTiles, FTextureNeeds& TextureNeeds, bool const Force = false);
-	void HideCategories(std::unordered_set<ITwinElementID> const& InCategoryIDs,
-		bool const bOnlyVisibleTiles, FTextureNeeds& TextureNeeds, bool const Force = false);
-	void HideCategoriesPerModel(std::unordered_set<std::pair<ITwinElementID, ITwinElementID>, FITwinSceneTile::pair_hash> const& InCategoryPerModelIDs,
-		bool const bOnlyVisibleTiles, FTextureNeeds& TextureNeeds, bool const Force = false);
+		FShowHideOptions const Opts,
+		std::optional<IDType> SelectedID = std::nullopt);
+	void HideElements(std::unordered_set<ITwinElementID> const& InElemIDs, FTextureNeeds& TextureNeeds,
+					  FShowHideOptions const Opts);
+	void HideModels(std::unordered_set<ITwinElementID> const& InModelIDs, FTextureNeeds& TextureNeeds,
+					FShowHideOptions const Opts);
+	void HideCategories(std::unordered_set<ITwinElementID> const& InCategoryIDs, FTextureNeeds& TextureNeeds,
+						FShowHideOptions const Opts);
+	void HideCategoriesPerModel(
+		std::unordered_set<std::pair<ITwinElementID, ITwinElementID>, FITwinSceneTile::pair_hash> const& InCategoryPerModelIDs,
+		FTextureNeeds& TextureNeeds, FShowHideOptions const Opts);
+	void ShowCategoriesPerModel(
+		std::unordered_set<std::pair<ITwinElementID, ITwinElementID>, FITwinSceneTile::pair_hash> const& InCategoryPerModelIDs,
+		FTextureNeeds& TextureNeeds, FShowHideOptions const Opts);
+	void ShowElements(std::unordered_set<ITwinElementID> const& InElemIDs, FTextureNeeds& TextureNeeds,
+					  FShowHideOptions const Opts);
 
 	template<typename ElementsCont>
 	void ForEachElementFeaturesSLOW(ElementsCont const& ForElementIDs,
@@ -513,6 +537,7 @@ private:
 public:
 	[[nodiscard]] bool IsLoaded() const;
 	void Unload();
+	FString GetIDString() const;
 	FString ToString() const;
 	void DrawTileBox(UWorld const* World) const; ///< no-op if !ENABLE_DRAW_DEBUG
 	//[[nodiscard]] bool HasAnyVisibleMesh() const; <== no longer used, blame here to retrieve
@@ -687,7 +712,7 @@ struct FElemAnimRequirements
 class FITwinElement
 {
 public:
-	bool bHasMesh = false; ///< true when encountered in FITwinSceneMappingBuilder
+	bool bHasMesh = false; ///< true when encountered in UITwinSceneMappingBuilder
 	/// The only member strictly required for a valid structure, although usually you'll soon have either the
 	/// Parent or the BBox known as well.
 	const ITwinElementID ElementID = ITwin::NOT_ELEMENT;
@@ -801,7 +826,9 @@ private:
 	std::unordered_set<ITwinElementID> HiddenElementsFromSavedView;
 	std::unordered_set<ITwinElementID> HiddenModelsFromSavedView;
 	std::unordered_set<ITwinElementID> HiddenCategoriesFromSavedView;
-	std::unordered_set<std::pair<ITwinElementID,ITwinElementID>, FITwinSceneTile::pair_hash> HiddenCategoriesPerModelFromSavedView;
+	std::unordered_set<std::pair<ITwinElementID, ITwinElementID>, FITwinSceneTile::pair_hash> HiddenCategoriesPerModelFromSavedView;
+	std::unordered_set<std::pair<ITwinElementID, ITwinElementID>, FITwinSceneTile::pair_hash> AlwaysDrawnCategoriesPerModelFromSavedView;
+	std::unordered_set<ITwinElementID> AlwaysDrawnElementsFromSavedView;
 	/// Transform for conversion of this iModel's internal coordinates (saved views, synchro transforms...)
 	/// into and from Unreal coordinates (with the current Georeference and iModel transform: needs to be
 	/// updated if it changes)
@@ -826,8 +853,7 @@ public:
 	void ForEachKnownTile(std::function<void(FITwinSceneTile&)> const& Func);
 	void ForEachKnownTile(std::function<void(FITwinSceneTile const&)> const& Func) const;
 	[[nodiscard]] FITwinSceneTile& KnownTile(ITwinScene::TileIdx const Rank);
-	FITwinSceneTile& KnownTileSLOW(Cesium3DTilesSelection::Tile& CesiumTile,
-								   ITwinScene::TileIdx* Rank = nullptr);
+	FITwinSceneTile& KnownTileSLOW(ICesiumLoadedTile& CesiumTile, ITwinScene::TileIdx* Rank = nullptr);
 	[[nodiscard]] FITwinSceneTile* FindKnownTileSLOW(CesiumTileID const& TileId);
 	/// Do not actually erase the tile from the KnownTiles container, as it would shift all
 	/// ITwinScene::TileIdx ;^^ Keep the (light-weight) structure forever, just clear its content.
@@ -987,9 +1013,11 @@ public:
 	bool PickVisibleElement(ITwinElementID const& InElemID, bool const bSelectElement = true);
 
 	void HideElements(std::unordered_set<ITwinElementID> const& InElemIDs, bool IsConstruction, bool Force = false);
+	void ShowElements(std::unordered_set<ITwinElementID> const& InElemIDs, bool Force = false);
 	void HideModels(std::unordered_set<ITwinElementID> const& InModelIDs, bool Force = false);
 	void HideCategories(std::unordered_set<ITwinElementID> const& InCategoryIDs, bool Force = false);
 	void HideCategoriesPerModel(std::unordered_set<std::pair<ITwinElementID, ITwinElementID>,FITwinSceneTile::pair_hash> const& InCategoryPerModelIDs, bool Force = false);
+	void ShowCategoriesPerModel(std::unordered_set<std::pair<ITwinElementID, ITwinElementID>, FITwinSceneTile::pair_hash> const& InCategoryPerModelIDs, bool Force = false);
 	/// Not const because empty set may be added to GeometryIDToElementIDs before being returned
 	[[nodiscard]] std::unordered_set<ITwinElementID> const& ConstructionDataElements();
 	[[nodiscard]] std::unordered_set<ITwinElementID> const& GetSavedViewHiddenElements();
@@ -1012,8 +1040,8 @@ public:
 	std::pair<FITwinSceneTile const*, FITwinGltfMeshComponentWrapper const*> FindOwningTileSLOW(
 		UPrimitiveComponent const* Component) const;
 
-	/// Reset everything (unless we need to keep the visibility state) - should only be called before the tileset is reloaded.
-	void Reset(bool bKeepVisibilityState = false);
+	/// Reset everything (except the visibility state) - should only be called before the tileset is reloaded.
+	void Reset();
 
 	/// Edit a scalar parameter in all Unreal materials created for the given ITwin material.
 	void SetITwinMaterialChannelIntensity(uint64_t ITwinMaterialID,

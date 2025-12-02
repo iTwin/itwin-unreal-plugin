@@ -12,7 +12,8 @@
 #include "Core/Tools/Tools.h"
 #include "Core/ITwinAPI/ITwinScene.h"
 #include "Core/Visualization/Timeline.h"
-#include "../Tools/Types.h"
+#include "Core/Tools/Types.h"
+#include "MaterialPersistence.h"
 
 MODULE_EXPORT namespace AdvViz::SDK
 {
@@ -95,6 +96,12 @@ MODULE_EXPORT namespace AdvViz::SDK
 		virtual void SetTimeline(const std::shared_ptr<AdvViz::SDK::ITimeline>& timeline) = 0;
 		virtual std::shared_ptr<AdvViz::SDK::ITimeline> GetTimeline() = 0;
 
+		// HDRI import/export, same for DS and API, may need to be combined later
+		virtual std::string ExportHDRIAsJson(ITwinHDRISettings const& hdri) const = 0;
+
+		virtual bool ConvertHDRIJsonFileToKeyValueMap(std::filesystem::path const& jsonPath, KeyValueStringMap& outMap) const = 0;
 	};
+
+#define ITWIN_DEFAULT_SCENE_NAME "default scene"
 
 }

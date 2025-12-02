@@ -95,7 +95,7 @@ TEST_CASE("SceneAPI"){
 
 			REQUIRE(GetDefaultHttp().get() != nullptr);
 			std::vector<std::string> objects;
-			auto respKeyPost = std::pair("POST", "/iTwins/eaa1a1d1-0e60-4894-92be-c393fba76ca6/scenes");
+			auto respKeyPost = std::pair("POST", "/scenes");
 			mock->responseFct_[respKeyPost] = [] {
 				std::string s = "\
 				{\
@@ -111,7 +111,7 @@ TEST_CASE("SceneAPI"){
 				return HTTPMock::Response2(200, s);
 				};
 
-			auto respKeyGet = std::pair("GET", "/iTwins/eaa1a1d1-0e60-4894-92be-c393fba76ca6/scenes/995970f2-bdfb-4d6b-8224-a40e890859fb");
+			auto respKeyGet = std::pair("GET", "/scenes/995970f2-bdfb-4d6b-8224-a40e890859fb");
 			mock->responseFct_[respKeyGet] = [] {
 				std::string s = "\
 				{\
@@ -126,7 +126,7 @@ TEST_CASE("SceneAPI"){
 				}";
 				return HTTPMock::Response2(200, s);
 				};
-			auto respKeyPATCH = std::pair("PATCH", "/iTwins/eaa1a1d1-0e60-4894-92be-c393fba76ca6/scenes/995970f2-bdfb-4d6b-8224-a40e890859fb");
+			auto respKeyPATCH = std::pair("PATCH", "/scenes/995970f2-bdfb-4d6b-8224-a40e890859fb");
 			mock->responseFct_[respKeyPATCH] = [] {
 				std::string s = "\
 				{\
@@ -141,7 +141,7 @@ TEST_CASE("SceneAPI"){
 				}";
 				return HTTPMock::Response2(200, s);
 				};
-			auto respKeyGetObj = std::pair("GET", "/iTwins/eaa1a1d1-0e60-4894-92be-c393fba76ca6/scenes/995970f2-bdfb-4d6b-8224-a40e890859fb/objects");
+			auto respKeyGetObj = std::pair("GET", "/scenes/995970f2-bdfb-4d6b-8224-a40e890859fb/objects");
 			mock->responseFct_[respKeyGetObj] = [&objects] {
 				std::string objectss;
 				for (auto a : objects)
@@ -157,23 +157,30 @@ TEST_CASE("SceneAPI"){
 				return HTTPMock::Response2(200, s);
 				};
 
-			auto respKeyPostObj = std::pair("POST", "/iTwins/eaa1a1d1-0e60-4894-92be-c393fba76ca6/scenes/995970f2-bdfb-4d6b-8224-a40e890859fb/objects");
+			auto respKeyPostObj = std::pair("POST", "/scenes/995970f2-bdfb-4d6b-8224-a40e890859fb/objects");
 			mock->responseFctWithData_[respKeyPostObj] = [&objects]  (const std::string& data){
 
 				size_t ss = objects.size();
 				auto id = "995970f2-bdfb-4d6b-8224-" + std::to_string(ss);
 				std::string obj = "{ \"id\": \"" + id + "\",";
-				obj += data.substr(1);
+				if (data.starts_with("{\"objects\":[{"))
+				{
+					obj += data.substr(13,data.length()- 15);
+				}
+				else
+				{ 
+					obj += data.substr(1);
+				}
 				objects.push_back(obj);
 				std::string s = "\
 				{\
-					\"object\" : { \
+					\"objects\" :[ { \
 						\"id\": \""+ id +"\"\
 					}\
-				}";
+				]}";
 				return HTTPMock::Response2(200, s);
 				};
-			auto respKeyDelete = std::pair("DELETE", "/iTwins/eaa1a1d1-0e60-4894-92be-c393fba76ca6/scenes/995970f2-bdfb-4d6b-8224-a40e890859fb");
+			auto respKeyDelete = std::pair("DELETE", "/scenes/995970f2-bdfb-4d6b-8224-a40e890859fb");
 			mock->responseFct_[respKeyDelete] = [] {
 				return HTTPMock::Response2(204, "");
 				};

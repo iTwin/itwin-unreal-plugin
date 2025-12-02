@@ -55,18 +55,39 @@ if (_czm_width != 1 && !_czm_knownXY)
 	_czm_pixelX = _czm_featureIndex % _czm_width;
 	_czm_pixelY = _czm_featureIndex / _czm_width;
 }
+// 0 = use only BaseColor (no 4D nor Selection highlight), 1 = use none of the BaseColor
+// intermediate values used to blink between Selection/BaseColor when not done below between Selection/4D
+float BaseColorBlendRatio = 0.;
 if (_czm_width != 1 && _czm_pixelY < _czm_height)
 {
+	float4 SelecHideRGBA = Selection_RGBA_DATA.Load(int3(_czm_pixelX, _czm_pixelY, 0));
+	bool bSelected = (SelecHideRGBA.x + SelecHideRGBA.y + SelecHideRGBA.z) != 0;
 	// No 4D color nor custom opacity => use both color and opacity from Selection_RGBA_DATA
 	if ((Combined_RGBA.x + Combined_RGBA.y + Combined_RGBA.z) == 0
 		&& Combined_RGBA.w >= 0.98)
 	{
-		Combined_RGBA = Selection_RGBA_DATA.Load(int3(_czm_pixelX, _czm_pixelY, 0));
+		Combined_RGBA = SelecHideRGBA;
+		// Note: this will also blink hidden Elements into visibility, which sounds a good idea
+		// when they are selected by some other mean
+		if (bSelected)
+			BaseColorBlendRatio = BlinkingFactor; // Don't blink alpha, material may be opaque...
 	}
-	// else: still need to account for hiding of Elements through Selection_RGBA_DATA:
-	else if (Selection_RGBA_DATA.Load(int3(_czm_pixelX, _czm_pixelY, 0)).w == 0)
+	else
 	{
-		Combined_RGBA.w = 0;
+		BaseColorBlendRatio = 1.; // Use none of the base color
+		// When selected, blink between Selection and 4D:
+		if (bSelected)
+		{
+			Combined_RGBA.xyz *= (1. - BlinkingFactor);
+			Combined_RGBA.xyz += BlinkingFactor * SelecHideRGBA.xyz;
+		}
+		// Still need to account for hiding of Elements through Selection_RGBA_DATA's alpha:
+		else if (SelecHideRGBA.w == 0)
+		{
+			Combined_RGBA.w = 0;
+		}
 	}
+	if (bSelected && SelecHideRGBA.w == 0)
+		Combined_RGBA.w = BlinkingFactor;
 }
-return FeatureID;
+return BaseColorBlendRatio;

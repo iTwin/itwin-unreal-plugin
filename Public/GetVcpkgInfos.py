@@ -29,18 +29,33 @@ for packageInfo in installedPackages.values():
 # Write the list of packages.
 (pathlib.Path(args["outDir"])/"PACKAGES").write_text(";".join(packageInfos.keys()))
 # Retrieve the (direct) dependencies of each package.
-dependInfos = subprocess.check_output(f"{args['vcpkgExe']} depend-info --x-install-root {args['installedDir']} {' '.join(installedPackages.keys())}", stderr = subprocess.STDOUT, text = True, shell = True)
+dependInfos = subprocess.check_output(f"{args['vcpkgExe']} depend-info --x-install-root {args['installedDir']} {' '.join(installedPackages.keys())}",
+										cwd = args['sourceDir'], stderr = subprocess.STDOUT, text = True, shell = True)
 # The command above returned a list of lines like this (one for each package):
 # curl[non-http, ssl, schannel, sspi]:x64-windows-static-md-release: vcpkg-cmake, vcpkg-cmake-config, zlib:x64-windows-static-md-release
 for packageDependInfo in dependInfos.strip("\n").split("\n"):
 	packageName, dependencies = packageDependInfo.split(": ")
+	# Skip warnings like "warning: vcpkg-make is only supported on 'native', which does not match x64-windows-unreal-release"
+	# which incidently make our parsing fail (ie. let the other possible warnings be treated as error):
+	if packageName == "warning" and "is only supported on 'native" in dependencies:
+		continue
 	packageName = getShortPackageName(packageName)
 	packageInfos[packageName]["beDependencies"] = []
+	# vcpkg depend-info bug: not using features restrictions from manifest file (vcpkg.json)!
+	# As long as cpp-httplib is built with default-features (ie with brotli support), leave this commented out.
+	# This is the default in cesium-native's vcpkg.json, but not in cesium-unreal's overlay port of cesium-native...
+	# Although for some reason (cache bug??) it seems to build and require it even when building cesium-native
+	# dependencies through cesium-unreal's overlay port (with feature 'dependencies-only')... But not when copying
+	# the same in our own vcpkg.json?!
+	#if packageName == "brotli":
+	#	continue
 	for dependency in dependencies.split(", ") if dependencies != "" else []:
 		packageInfos[packageName]["beDependencies"].append(getShortPackageName(dependency))
 # Iterate over each package and write package-specific info files.
 for packageName, packageInfo in packageInfos.items():
 	# Write direct dependencies.
+	if not "beDependencies" in packageInfo:
+		raise Exception(f"Error looking for {packageName}'s dependencies!")
 	(pathlib.Path(args["outDir"])/f"DEPENDENCIES_{packageName}").write_text(";".join(packageInfo["beDependencies"]))
 	# Retrieve the list of header and lib files for this packages.
 	# These informations are retrieved from the files "vcpkg/info/.list" which store the names of all installed items (files, directories).

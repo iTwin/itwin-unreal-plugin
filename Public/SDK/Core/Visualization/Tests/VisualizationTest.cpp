@@ -8,14 +8,16 @@
 
 #include "../Visualization.h"
 #include <filesystem>
-
 #include <catch2/catch_all.hpp>
 #include <httpmockserver/mock_server.h>
 #include <httpmockserver/port_searcher.h>
 #include "Mock.h"
 
-using namespace AdvViz::SDK;
+#include "Core/Tools/Tools.h"
+#include "Core/Tools/Internal_mathConv.inl"
+#include <numbers>
 
+using namespace AdvViz::SDK;
 
 HTTPMock* GetHttpMock()
 {
@@ -135,4 +137,62 @@ TEST_CASE("Visualization:ExtendedDecoration") {
 }
 
 
+TEST_CASE("GCSTransform::WGS84GeodeticToECEF") {
+	SECTION("Eiffel Tower") {
+		double3 latLonHeightRad = { 48.8584, 2.2945, 79.07 }; // Paris Eiffel Tower coordinates
+		// convert degrees to radians
+		latLonHeightRad[0] = latLonHeightRad[0] * std::numbers::pi / 180.0;
+		latLonHeightRad[1] = latLonHeightRad[1] * std::numbers::pi / 180.0;
+		double3 pos = GCSTransform::WGS84GeodeticToECEF(latLonHeightRad);
+		CHECK((pos[0] - 4200987.789) < 1e-2);
+		CHECK((pos[1] - 168325.184) < 1e-2);
+		CHECK((pos[2] - 4780272.588) < 1e-2);
+	}
+	SECTION("Louvre") {
+		double3 latLonHeightRad = { 48.86079461877862, 2.337627906746917 }; // Paris Louvre coordinates
+		// convert degrees to radians
+		latLonHeightRad[0] = latLonHeightRad[0] * std::numbers::pi / 180.0;
+		latLonHeightRad[1] = latLonHeightRad[1] * std::numbers::pi / 180.0;
+		double3 pos = GCSTransform::WGS84GeodeticToECEF(latLonHeightRad);
+		CHECK((pos[0] - 4200607.545) < 1e-2);
+		CHECK((pos[1] - 171477.019) < 1e-2);
+		CHECK((pos[2] - 4780388.241) < 1e-2);
+	}
+}
+
+TEST_CASE("GCSTransform::WGS84ECEFToENU") {
+	double3 latLonHeightRad = { 48.8584, 2.2945, 79.07 }; // Paris Eiffel Tower coordinates
+	// convert degrees to radians
+	latLonHeightRad[0] = latLonHeightRad[0] * std::numbers::pi / 180.0;
+	latLonHeightRad[1] = latLonHeightRad[1] * std::numbers::pi / 180.0;
+	dmat4x4 matrix = GCSTransform::WGS84ECEFToENUMatrix(latLonHeightRad);
+	const glm::dmat4x4& m = AdvViz::SDK::internal::toGlm(matrix);
+	glm::dvec4 v = m * glm::dvec4(4200987.789, 168325.184, 4780272.588, 1.0); // Paris Eiffel Tower coordinates
+	CHECK((v[0]) < 1e-2);
+	CHECK((v[1]) < 1e-2);
+	CHECK((v[2]) < 1e-2);
+
+	glm::dvec4 v2 = m * glm::dvec4(4200607.545, 171477.019, 4780388.241, 1.0); // Paris Louvre coordinates, based on google map, distance is ~3.2kms from Eiffel Tower
+	CHECK((v2[0] - 3164.530) < 1e-2);
+	CHECK((v2[1] - 267.194) < 1e-2);
+	CHECK((v2[2] + 79.85) < 1e-2);
+}
+
+TEST_CASE("GCSTransform::WGS84ENUToECEF") {
+	double3 latLonHeightRad = { 48.8584, 2.2945, 79.07 }; // Paris Eiffel Tower coordinates
+	// convert degrees to radians
+	latLonHeightRad[0] = latLonHeightRad[0] * std::numbers::pi / 180.0;
+	latLonHeightRad[1] = latLonHeightRad[1] * std::numbers::pi / 180.0;
+	dmat4x4 matrix = GCSTransform::WGS84ENUToECEFMatrix(latLonHeightRad);
+	const glm::dmat4x4& m = AdvViz::SDK::internal::toGlm(matrix);
+	glm::dvec4 v = m * glm::dvec4(0., 0., 0., 1.0);
+	CHECK((v[0]- 4200987.789) < 1e-2);
+	CHECK((v[1]- 168325.184) < 1e-2);
+	CHECK((v[2]- 4780272.588) < 1e-2);
+
+	glm::dvec4 v2 = m * glm::dvec4(3164.530, 267.194, -79.85, 1.0);
+	CHECK((v2[0] - 4200607.545) < 1e-2);
+	CHECK((v2[1] - 171477.019) < 1e-2);
+	CHECK((v2[2] - 4780388.241) < 1e-2);
+}
 

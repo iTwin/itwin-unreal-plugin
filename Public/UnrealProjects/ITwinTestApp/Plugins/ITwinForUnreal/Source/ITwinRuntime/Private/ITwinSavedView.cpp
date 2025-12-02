@@ -163,43 +163,48 @@ namespace
 {
 	if (!IsValid(iModel))
 		return;
-	TSet<FString> allHiddenIds;
-	allHiddenIds.Append(SavedView.HiddenElements);
-	std::unordered_set<ITwinElementID> mergedIds;
 	FITwinIModelInternals& IModelInternals = GetInternals(*iModel);
-	for (auto& elId : allHiddenIds)
-	{
-		// Update selection highlight
-		ITwinElementID PickedEltID = ITwin::ParseElementID(elId);// ex: "0x20000001241"
-		mergedIds.insert(PickedEltID);
-	}
-	for (const auto& elem : SavedView.AlwaysDrawnElements)
-	{
-		ITwinElementID PickedEltID = ITwin::ParseElementID(elem);
-		mergedIds.erase(PickedEltID);
-	}
 	auto InsertParsedIDs = [](const auto& inputIds){
 		std::unordered_set<ITwinElementID> res;
 		res.reserve(inputIds.Num());
 		for (const auto& Id : inputIds)
 		{
-			ITwinElementID PickedID = ITwin::ParseElementID(Id);
+			ITwinElementID PickedID = ITwin::ParseElementID(Id);// ex: "0x20000001241"
 			res.insert(PickedID);
 		}
 		return res;
 	};
-	std::unordered_set<ITwinElementID> HiddenModels = InsertParsedIDs(SavedView.HiddenModels);
-	std::unordered_set<ITwinElementID> HiddenCategories = InsertParsedIDs(SavedView.HiddenCategories);
-	std::unordered_set<std::pair<ITwinElementID, ITwinElementID>, FITwinSceneTile::pair_hash> HiddenCategoriesPerModel;
-	for (auto& CategoryPerModel : SavedView.HiddenCategoriesPerModel)
+	auto InsertPairParsedIDs = [](const auto& inputIds) {
+		std::unordered_set<std::pair<ITwinElementID, ITwinElementID>, FITwinSceneTile::pair_hash> res;
+		res.reserve(inputIds.Num());
+		for (const auto& Id : inputIds)
+		{
+			res.insert({ ITwin::ParseElementID(Id.CategoryId),
+						 ITwin::ParseElementID(Id.ModelId) });
+		}
+		return res;
+	};
+	auto HiddenElements = InsertParsedIDs(SavedView.HiddenElements);
+	auto AlwaysDrawnElements = InsertParsedIDs(SavedView.AlwaysDrawnElements);
+	auto HiddenModels = InsertParsedIDs(SavedView.HiddenModels);
+	auto HiddenCategories = InsertParsedIDs(SavedView.HiddenCategories);
+	auto HiddenCategoriesPerModel = InsertPairParsedIDs(SavedView.HiddenCategoriesPerModel);
+	auto AlwaysDrawnCategoriesPerModel = InsertPairParsedIDs(SavedView.AlwaysDrawnCategoriesPerModel);
+	//remove alwaysdrawncategoriespermodel from the list if their model is hidden
+	for (auto it = AlwaysDrawnCategoriesPerModel.begin(); it != AlwaysDrawnCategoriesPerModel.end(); )
 	{
-		HiddenCategoriesPerModel.insert({ ITwin::ParseElementID(CategoryPerModel.CategoryId), 
-										  ITwin::ParseElementID(CategoryPerModel.ModelId) });
+		if (HiddenModels.count(it->second))
+			it = AlwaysDrawnCategoriesPerModel.erase(it);
+		else
+			++it;
 	}
-	IModelInternals.HideCategoriesPerModel(HiddenCategoriesPerModel, true);
 	IModelInternals.HideCategories(HiddenCategories, true);
 	IModelInternals.HideModels(HiddenModels, true);
-	IModelInternals.HideElements(mergedIds, false, true);
+	IModelInternals.HideCategories(HiddenCategories, true);
+	IModelInternals.HideCategoriesPerModel(HiddenCategoriesPerModel, true);
+	IModelInternals.ShowCategoriesPerModel(AlwaysDrawnCategoriesPerModel, true);
+	IModelInternals.HideElements(HiddenElements, false, true);
+	IModelInternals.ShowElements(AlwaysDrawnElements, true);
 	IModelInternals.HideElements(
 		iModel->bShowConstructionData ? std::unordered_set<ITwinElementID>()
 		: IModelInternals.SceneMapping.ConstructionDataElements(),
@@ -307,7 +312,7 @@ void AITwinSavedView::OnSavedViewThumbnailUpdated(bool bSuccess, FString const& 
 
 void AITwinSavedView::MoveToSavedView()
 {
-	if (SavedViewId.IsEmpty())
+	if (SavedViewId.IsEmpty() && !Impl->bSavedViewTransformIsSet)
 	{
 		BE_LOGE("ITwinAPI", "ITwinSavedView has no SavedViewId - cannot move to it");
 		return;

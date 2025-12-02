@@ -97,10 +97,12 @@ TSharedRef<FSlateStyleSet> FITwinStyle::Create(FITwinStyleArgs const& CtorArgs /
 		ContentDir = IPluginManager::Get().FindPlugin(TEXT("ITwinForUnreal"))->GetContentDir() / TEXT("ITwin/Icons");
 	}
 
+	const FVector2D Icon10x10(10.0f, 10.0f);
 	//const FVector2D Icon16x16(16.0f, 16.0f);
 	const FVector2D Icon24x24(24.0f, 24.0f);
 	//const FVector2D Icon32x32(32.0f, 32.0f);
 	const FVector2D Icon48x48(48.0f, 48.0f);
+
 
 	// Customize Application icons
 	if (CtorArgs.bShowAppIcon)
@@ -116,6 +118,16 @@ TSharedRef<FSlateStyleSet> FITwinStyle::Create(FITwinStyleArgs const& CtorArgs /
 	StyleSet->Set("AppIconPadding", FMargin(5.0f, 5.0f, 5.0f, 5.0f));
 	StyleSet->Set("AppIconPadding.Small", FMargin(4.0f, 4.0f, 0.0f, 0.0f));
 
+	// For (Slate) Color Picker
+	const FTextBlockStyle& NormalText = FAppStyle::Get().GetWidgetStyle<FTextBlockStyle>("NormalText");
+	StyleSet->Set("NormalText", FTextBlockStyle(NormalText)
+		.SetColorAndOpacity(FLinearColor::White)
+	);
+	const FExpandableAreaStyle& ExpandableAreaStyle = FAppStyle::Get().GetWidgetStyle<FExpandableAreaStyle>("ExpandableArea");
+	StyleSet->Set("ExpandableArea", FExpandableAreaStyle(ExpandableAreaStyle)
+		.SetCollapsedImage(IMAGE_PLUGIN_BRUSH("TreeArrow_Collapsed-10", Icon10x10, FLinearColor::White))
+		.SetExpandedImage(IMAGE_PLUGIN_BRUSH("TreeArrow_Expanded-10", Icon10x10, FLinearColor::White))
+	);
 	return StyleSet;
 }
 

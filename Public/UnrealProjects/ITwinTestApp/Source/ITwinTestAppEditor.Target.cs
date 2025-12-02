@@ -15,6 +15,7 @@ public class ITwinTestAppEditorTarget : TargetRules
 	{
 		Type = TargetType.Editor;
 		DefaultBuildSettings = BuildSettingsVersion.V4;
-		IncludeOrderVersion = EngineIncludeOrderVersion.Unreal5_3;
+		IncludeOrderVersion = EngineIncludeOrderVersion.Latest;
+		bUseAdaptiveUnityBuild = false;
 	}
 }

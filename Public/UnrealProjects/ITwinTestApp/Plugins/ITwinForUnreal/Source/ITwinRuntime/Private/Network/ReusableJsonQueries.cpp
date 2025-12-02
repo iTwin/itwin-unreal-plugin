@@ -11,7 +11,7 @@
 #include "ITwinServerEnvironment.h"
 
 #include <Compil/BeforeNonUnrealIncludes.h>
-#	include <BeHeaders/Compil/CleanUpGuard.h>
+#	include <BeHeaders/Util/CleanUpGuard.h>
 #	include <Core/Tools/Log.h>
 #include <Compil/AfterNonUnrealIncludes.h>
 

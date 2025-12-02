@@ -29,7 +29,44 @@ void FUEHttp::Init()
 FUEHttp::FUEHttp()
 {}
 
-FUEHttp::Response FUEHttp::Do(FString verb, const std::string& url, const std::string& body,
+void FUEHttp::SetExecuteAsyncCallbackInGameThread(bool bInExecAsyncCallbackInGameThread)
+{
+	bExecAsyncCallbackInGameThread = bInExecAsyncCallbackInGameThread;
+}
+
+namespace
+{
+	using FSharedRequest = TSharedRef<IHttpRequest, ESPMode::ThreadSafe>;
+
+	static constexpr int MAX_REQUEST_RETRY = 4;
+
+	inline bool ShouldAbort(FSharedRequest& HttpRequest, EHttpRequestStatus::Type& status, int& retryCount)
+	{
+		status = HttpRequest->GetStatus();
+
+		// Retry request in case of connection error
+	#if UE_VERSION_OLDER_THAN(5, 4, 0) // UE5.3
+		if (status == EHttpRequestStatus::Failed_ConnectionError)
+	#else // ie UE5.4+
+		if (status == EHttpRequestStatus::Failed
+			&& EHttpFailureReason::ConnectionError == HttpRequest->GetFailureReason())
+	#endif
+		{
+			// POST is not safe to retry, it will potentially create new resources.
+			if (retryCount < MAX_REQUEST_RETRY && HttpRequest->GetVerb() != "POST")
+			{
+				HttpRequest->ProcessRequest();
+				retryCount++;
+				return false;
+			}
+			else
+				return true;
+		}
+
+		return (status == EHttpRequestStatus::Failed);
+	}
+}
+FUEHttp::Response FUEHttp::Do(FString verb, const std::string& url, const BodyParams& bodyParams,
 	const Headers& headers /*= {}*/, bool isFullUrl /*= false*/, std::function<void(const Response&)> callbackFct /*= {}*/)
 {
 	//auto HttpRequest = FHttpModule::Get().CreateRequest();
@@ -41,27 +78,43 @@ FUEHttp::Response FUEHttp::Do(FString verb, const std::string& url, const std::s
 		HttpRequest->SetHeader(Key.c_str(), Value.c_str());
 	}
 
-	if (!body.empty())
+	if (!bodyParams.empty())
 	{
-		HttpRequest->SetContentAsString(body.c_str());
+		if (bodyParams.GetEncoding() == AdvViz::SDK::Tools::EStringEncoding::Utf8)
+			HttpRequest->SetContentAsString(UTF8_TO_TCHAR(bodyParams.str().c_str()));
+		else
+			HttpRequest->SetContentAsString(bodyParams.str().c_str());
 	}
 
 	if (callbackFct)
 	{
 		HttpRequest->OnProcessRequestComplete().BindLambda(
-			[callbackFct](FHttpRequestPtr pRequest,
+			[callbackFct, bExecAsyncCallbackInGT = this->bExecAsyncCallbackInGameThread](FHttpRequestPtr pRequest,
 				FHttpResponsePtr pResponse,
 				bool connectedSuccessfully){
 					int32 code = 0;
 					if (connectedSuccessfully && pRequest->GetStatus() == EHttpRequestStatus::Succeeded) {
 						code = pResponse->GetResponseCode();
 						FString outputString(std::move(pResponse->GetContentAsString()));
-						UE::Tasks::Launch(UE_SOURCE_LOCATION,
-							[callbackFct, code, outputString]() mutable {
+						// In Unreal, request callbacks are executed in game thread (which is fine, as a lot
+						// of operations regarding actors and world require this...)
+						// I'm not sure why we would prefer to start a thread here, but I added an option to
+						// avoid breaking anything. TODO_JDE discuss this option.
+						if (bExecAsyncCallbackInGT)
+						{
+							std::string s(TCHAR_TO_UTF8(*outputString));
+							Response response(code, std::move(s));
+							callbackFct(response);
+						}
+						else
+						{
+							UE::Tasks::Launch(UE_SOURCE_LOCATION,
+								[callbackFct, code, outputString]() mutable {
 								std::string s(TCHAR_TO_UTF8(*outputString));
 								Response response(code, std::move(s));
 								callbackFct(response); },
-							UE::Tasks::ETaskPriority::Normal);
+								UE::Tasks::ETaskPriority::Normal);
+							}
 					}
 				}
 		);
@@ -95,26 +148,7 @@ FUEHttp::Response FUEHttp::Do(FString verb, const std::string& url, const std::s
 		// wait a valid response
 		while (true)
 		{
-			status = HttpRequest->GetStatus();
-		#if UE_VERSION_OLDER_THAN(5, 4, 0) // UE5.3
-			if (status == EHttpRequestStatus::Failed_ConnectionError)
-		#else // ie UE5.4+
-			if (status == EHttpRequestStatus::Failed
-				&& EHttpFailureReason::ConnectionError == HttpRequest->GetFailureReason())
-		#endif
-			{
-				if (verb != "POST") //post is not safe to retry, it will potentially create new resources.   
-				{
-					HttpRequest->ProcessRequest();
-					retryCount++;
-					if (retryCount > 4)
-						break;
-				}
-				else
-					break;
-			}
-
-			if (status == EHttpRequestStatus::Failed)
+			if (ShouldAbort(HttpRequest, status, retryCount))
 				break;
 
 			response = HttpRequest->GetResponse();
@@ -249,9 +283,15 @@ FUEHttp::Response FUEHttp::DoFile(FString verb, const std::string& url, const st
 	TSharedPtr<IHttpResponse, ESPMode::ThreadSafe> response;
 	int32 code = 0;
 	int32 counter = 30*60 * 1000; // 30 minutes timeout
+
+	EHttpRequestStatus::Type status;
+	int retryCount = MAX_REQUEST_RETRY; // no retry for upload
 	// wait a valid response
 	while (true)
 	{
+		if (ShouldAbort(HttpRequest, status, retryCount))
+			break;
+
 		response = HttpRequest->GetResponse();
 		if (response.IsValid())
 			code = response->GetResponseCode();

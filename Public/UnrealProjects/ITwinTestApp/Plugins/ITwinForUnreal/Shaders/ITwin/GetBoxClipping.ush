@@ -1,0 +1,171 @@
+
+// // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // //
+//                                 !!! IMPORTANT !!!
+// When you edit this file, change also the shader script inside the MF_GlobalClipping
+// node named "Get Cutting Value from Box" (see comment there), otherwise
+// Unreal (5.3) may reuse a precompiled shader cache...
+// // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // //
+
+#define MAX_CUTTING_BOXES 32
+
+uint NumBoxes = round(BoxCount);
+float3 WorldPosition = AbsoluteWorldPosition;
+
+// Encoded boolean values on float (see https://theinstructionlimit.com/encoding-boolean-flags-into-a-float-in-hlsl)
+bool FlipBoxes[MAX_CUTTING_BOXES] = {
+	fmod(FlipBoxes_0_15, 2) == 1,
+	fmod(FlipBoxes_0_15, 4) >= 2,
+	fmod(FlipBoxes_0_15, 8) >= 4,
+	fmod(FlipBoxes_0_15, 16) >= 8,
+	fmod(FlipBoxes_0_15, 32) >= 16,
+	fmod(FlipBoxes_0_15, 64) >= 32,
+	fmod(FlipBoxes_0_15, 128) >= 64,
+	fmod(FlipBoxes_0_15, 256) >= 128,
+	fmod(FlipBoxes_0_15, 512) >= 256,
+	fmod(FlipBoxes_0_15, 1024) >= 512,
+	fmod(FlipBoxes_0_15, 2048) >= 1024,
+	fmod(FlipBoxes_0_15, 4096) >= 2048,
+	fmod(FlipBoxes_0_15, 8192) >= 4096,
+	fmod(FlipBoxes_0_15, 16384) >= 8192,
+	fmod(FlipBoxes_0_15, 32768) >= 16384,
+	fmod(FlipBoxes_0_15, 65536) >= 32768,
+	fmod(FlipBoxes_16_31, 2) == 1,
+	fmod(FlipBoxes_16_31, 4) >= 2,
+	fmod(FlipBoxes_16_31, 8) >= 4,
+	fmod(FlipBoxes_16_31, 16) >= 8,
+	fmod(FlipBoxes_16_31, 32) >= 16,
+	fmod(FlipBoxes_16_31, 64) >= 32,
+	fmod(FlipBoxes_16_31, 128) >= 64,
+	fmod(FlipBoxes_16_31, 256) >= 128,
+	fmod(FlipBoxes_16_31, 512) >= 256,
+	fmod(FlipBoxes_16_31, 1024) >= 512,
+	fmod(FlipBoxes_16_31, 2048) >= 1024,
+	fmod(FlipBoxes_16_31, 4096) >= 2048,
+	fmod(FlipBoxes_16_31, 8192) >= 4096,
+	fmod(FlipBoxes_16_31, 16384) >= 8192,
+	fmod(FlipBoxes_16_31, 32768) >= 16384,
+	fmod(FlipBoxes_16_31, 65536) >= 32768
+};
+
+bool ActiveBoxes[MAX_CUTTING_BOXES] = {
+	fmod(ActiveBoxes_0_15, 2) == 1,
+	fmod(ActiveBoxes_0_15, 4) >= 2,
+	fmod(ActiveBoxes_0_15, 8) >= 4,
+	fmod(ActiveBoxes_0_15, 16) >= 8,
+	fmod(ActiveBoxes_0_15, 32) >= 16,
+	fmod(ActiveBoxes_0_15, 64) >= 32,
+	fmod(ActiveBoxes_0_15, 128) >= 64,
+	fmod(ActiveBoxes_0_15, 256) >= 128,
+	fmod(ActiveBoxes_0_15, 512) >= 256,
+	fmod(ActiveBoxes_0_15, 1024) >= 512,
+	fmod(ActiveBoxes_0_15, 2048) >= 1024,
+	fmod(ActiveBoxes_0_15, 4096) >= 2048,
+	fmod(ActiveBoxes_0_15, 8192) >= 4096,
+	fmod(ActiveBoxes_0_15, 16384) >= 8192,
+	fmod(ActiveBoxes_0_15, 32768) >= 16384,
+	fmod(ActiveBoxes_0_15, 65536) >= 32768,
+	fmod(ActiveBoxes_16_31, 2) == 1,
+	fmod(ActiveBoxes_16_31, 4) >= 2,
+	fmod(ActiveBoxes_16_31, 8) >= 4,
+	fmod(ActiveBoxes_16_31, 16) >= 8,
+	fmod(ActiveBoxes_16_31, 32) >= 16,
+	fmod(ActiveBoxes_16_31, 64) >= 32,
+	fmod(ActiveBoxes_16_31, 128) >= 64,
+	fmod(ActiveBoxes_16_31, 256) >= 128,
+	fmod(ActiveBoxes_16_31, 512) >= 256,
+	fmod(ActiveBoxes_16_31, 1024) >= 512,
+	fmod(ActiveBoxes_16_31, 2048) >= 1024,
+	fmod(ActiveBoxes_16_31, 4096) >= 2048,
+	fmod(ActiveBoxes_16_31, 8192) >= 4096,
+	fmod(ActiveBoxes_16_31, 16384) >= 8192,
+	fmod(ActiveBoxes_16_31, 32768) >= 16384,
+	fmod(ActiveBoxes_16_31, 65536) >= 32768
+};
+
+float3 bottomLeft = float3(-0.5, -0.5, -0.5);
+float3 topRight = float3(0.5, 0.5, 0.5);
+float3 pos_BoxCoords = float3(0.0, 0.0, 0.0);
+float3x3 boxInvMatrix = float3x3(pos_BoxCoords, pos_BoxCoords, pos_BoxCoords);
+float3 s = pos_BoxCoords;
+
+// By convention (same as in MF_Clipping), this clipping value should be understood as
+// an opacity: a value of 1 means no cutting, while a value of 0 will hide the geometry.
+// By default, the box is additive: a value of 1 (inclusion) should increment the global
+// clipping, and a value of 0 (no inclusion) should *decrement* it -> 2X-1 does work.
+// In case of box inversion (FlipBox_X), the box is subtractive ->
+
+float clippingValue = 1.0;
+float isInsideValueForBox = 0.0;
+
+uint NumActiveBoxes = 0;
+uint NumActiveAdditiveBoxes = 0;
+float AdditiveBoxValue = 0.0;
+float SubtractiveBoxValue = 0.0;
+
+// test inclusion in a box without branching (from https://stackoverflow.com/questions/12751080/glsl-point-inside-box-test)
+
+#define GET_CLIPPING_FROM_BOX(_BoxIndex)							\
+	if (_BoxIndex >= NumBoxes) break;								\
+																	\
+	if (ActiveBoxes[_BoxIndex]) {									\
+		boxInvMatrix = float3x3(BoxInvMatrix_col0_ ## _BoxIndex ## .xyz, BoxInvMatrix_col1_ ## _BoxIndex ## .xyz, BoxInvMatrix_col2_ ## _BoxIndex ## .xyz);	\
+		pos_BoxCoords = mul(boxInvMatrix, WorldPosition - BoxTranslation_ ## _BoxIndex ## .xyz);	\
+		s = step(bottomLeft, pos_BoxCoords) - step(topRight, pos_BoxCoords);						\
+		isInsideValueForBox = s.x * s.y * s.z;						\
+		if (FlipBoxes[_BoxIndex]) {									\
+			SubtractiveBoxValue += isInsideValueForBox;				\
+		}															\
+		else {														\
+			NumActiveAdditiveBoxes++;								\
+			AdditiveBoxValue += isInsideValueForBox;				\
+		}															\
+		NumActiveBoxes++;											\
+	}																\
+
+
+UNROLL
+for (int GroupIndex = 0; GroupIndex < 1; GroupIndex++)
+{
+	GET_CLIPPING_FROM_BOX(0);
+	GET_CLIPPING_FROM_BOX(1);
+	GET_CLIPPING_FROM_BOX(2);
+	GET_CLIPPING_FROM_BOX(3);
+	GET_CLIPPING_FROM_BOX(4);
+	GET_CLIPPING_FROM_BOX(5);
+	GET_CLIPPING_FROM_BOX(6);
+	GET_CLIPPING_FROM_BOX(7);
+	GET_CLIPPING_FROM_BOX(8);
+	GET_CLIPPING_FROM_BOX(9);
+	GET_CLIPPING_FROM_BOX(10);
+	GET_CLIPPING_FROM_BOX(11);
+	GET_CLIPPING_FROM_BOX(12);
+	GET_CLIPPING_FROM_BOX(13);
+	GET_CLIPPING_FROM_BOX(14);
+	GET_CLIPPING_FROM_BOX(15);
+	GET_CLIPPING_FROM_BOX(16);
+	GET_CLIPPING_FROM_BOX(17);
+	GET_CLIPPING_FROM_BOX(18);
+	GET_CLIPPING_FROM_BOX(19);
+	GET_CLIPPING_FROM_BOX(20);
+	GET_CLIPPING_FROM_BOX(21);
+	GET_CLIPPING_FROM_BOX(22);
+	GET_CLIPPING_FROM_BOX(23);
+	GET_CLIPPING_FROM_BOX(24);
+	GET_CLIPPING_FROM_BOX(25);
+	GET_CLIPPING_FROM_BOX(26);
+	GET_CLIPPING_FROM_BOX(27);
+	GET_CLIPPING_FROM_BOX(28);
+	GET_CLIPPING_FROM_BOX(29);
+	GET_CLIPPING_FROM_BOX(30);
+	GET_CLIPPING_FROM_BOX(31);
+}
+
+if (NumActiveBoxes > 0)
+{
+	if (SubtractiveBoxValue > 0.0)
+		clippingValue = 0.0;
+	else if (NumActiveAdditiveBoxes > 0)
+		clippingValue = AdditiveBoxValue;
+}
+
+return step(1.0, clippingValue);

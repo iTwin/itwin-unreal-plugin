@@ -13,7 +13,9 @@
 #include "Engine/World.h"
 #include "UObject/WeakObjectPtrTemplates.h"
 
-#include <ITwinServiceActor.h> // for LogITwin
+#include <ITwinRuntime/Private/Compil/BeforeNonUnrealIncludes.h>
+#	include <Core/Tools/Log.h>
+#include <ITwinRuntime/Private/Compil/AfterNonUnrealIncludes.h>
 
 template <typename ActorType>
 class TWorldSingleton
@@ -34,7 +36,8 @@ public:
 				}
 				else
 				{
-					UE_LOG(LogITwin, Error, TEXT("Found more than one actor of class %s"), *GetNameSafe(ActorType::StaticClass()));
+					BE_LOGE("ITwin", "Found more than one actor of class "
+						<< TCHAR_TO_UTF8(*GetNameSafe(ActorType::StaticClass())));
 				}
 			}
 			if (!Actor.IsValid())

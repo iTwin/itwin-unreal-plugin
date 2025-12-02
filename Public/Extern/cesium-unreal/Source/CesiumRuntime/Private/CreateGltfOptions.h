@@ -12,8 +12,6 @@
 
 #include <Cesium3DTilesSelection/TileLoadResult.h>
 
-class ICesiumMeshBuildCallbacks;
-
 /**
  * Various settings and options for loading a glTF model from a 3D Tileset.
  */
@@ -63,7 +61,6 @@ struct CreateModelOptions {
    * for the model as it loads.
    */
   bool ignoreKhrMaterialsUnlit = false;
-  TWeakPtr<ICesiumMeshBuildCallbacks> MeshBuildCallbacks = nullptr;
 
   Cesium3DTilesSelection::TileLoadResult tileLoadResult;
 
@@ -82,7 +79,6 @@ public:
         showPointGeometries(other.showPointGeometries),
         showLineGeometries(other.showLineGeometries),
         ignoreKhrMaterialsUnlit(other.ignoreKhrMaterialsUnlit),
-        MeshBuildCallbacks(other.MeshBuildCallbacks),
         tileLoadResult(std::move(other.tileLoadResult)) {
     pModel = std::get_if<CesiumGltf::Model>(&this->tileLoadResult.contentKind);
   }

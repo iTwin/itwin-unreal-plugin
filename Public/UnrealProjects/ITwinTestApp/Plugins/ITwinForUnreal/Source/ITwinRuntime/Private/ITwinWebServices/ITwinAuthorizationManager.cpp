@@ -8,9 +8,10 @@
 
 #include "ITwinAuthorizationManager.h"
 
+#include <EncryptionContextOpenSSL.h>
+
 #include <ITwinServerEnvironment.h>
 #include <PlatformHttp.h>
-#include <EncryptionContextOpenSSL.h>
 #include <HttpServerModule.h>
 #include <IHttpRouter.h>
 #include <HttpModule.h>
@@ -40,12 +41,28 @@ namespace
 	static FString TokenFileSuffix;
 
 
-	/// Return an AES256 (symmetric) key
-	TArray<uint8> GetKey(AdvViz::SDK::EITwinEnvironment Env, int KeyIndex = 0)
+	TArray<uint8> ConvertToKey(FString KeyRoot)
 	{
 		// This handler uses AES256, which has 32-byte keys.
 		static const int32 KeySizeInBytes = 32;
+		if (!ensure(KeyRoot.Len() > 0))
+		{
+			KeyRoot += "0";
+		}
+		while (KeyRoot.Len() < KeySizeInBytes)
+		{
+			KeyRoot.Append(*KeyRoot.Reverse());
+		}
+		TArray<uint8> Key;
+		Key.Reset(KeySizeInBytes);
+		Key.Append(
+			TArrayView<const uint8>((const uint8*)StringCast<ANSICHAR>(*KeyRoot).Get(), KeySizeInBytes).GetData(), KeySizeInBytes);
+		return Key;
+	}
 
+	/// Return an AES256 (symmetric) key
+	TArray<uint8> GetKey(AdvViz::SDK::EITwinEnvironment Env, int KeyIndex = 0)
+	{
 		FString SepChar;
 		if (KeyIndex > 0)
 		{
@@ -59,15 +76,72 @@ namespace
 		KeyRoot += FString(FPlatformProcess::UserName()).Replace(TEXT(" "), TEXT("")).Left(10);
 		KeyRoot += SepChar;
 		KeyRoot += FString(AdvViz::SDK::ITwinAuthManager::GetAppID(Env).c_str()).Reverse().Replace(TEXT("-"), TEXT("A"));
-		while (KeyRoot.Len() < KeySizeInBytes)
+
+		return ConvertToKey(KeyRoot);
+	}
+
+	bool EncryptToken(FString const& Token, TArray<uint8> const& Key, TArray<uint8>& OutCryptedData)
+	{
+		if (Key.Num() != 32)
 		{
-			KeyRoot.Append(*KeyRoot.Reverse());
+			ensureMsgf(false, TEXT("wrong key"));
+			return false;
 		}
-		TArray<uint8> Key;
-		Key.Reset(KeySizeInBytes);
-		Key.Append(
-			TArrayView<const uint8>((const uint8*)StringCast<ANSICHAR>(*KeyRoot).Get(), KeySizeInBytes).GetData(), KeySizeInBytes);
-		return Key;
+		EPlatformCryptoResult EncryptResult = EPlatformCryptoResult::Failure;
+		TArray<uint8> OutCiphertext = FEncryptionContextOpenSSL().Encrypt_AES_256_ECB(
+			TArrayView<const uint8>(
+				(const uint8*)StringCast<ANSICHAR>(*Token).Get(), Token.Len()),
+			Key, EncryptResult);
+		if (EncryptResult != EPlatformCryptoResult::Success)
+		{
+			return false;
+		}
+		TArray<uint8> rawData;
+		FMemoryWriter memWriter(rawData, true);
+		FArchiveProxy archive(memWriter);
+		memWriter.SetIsSaving(true);
+
+		uint32 TokenLen = Token.Len();
+		archive << TokenLen;
+		archive << OutCiphertext;
+
+		OutCryptedData = rawData;
+		return true;
+	}
+
+	bool DecryptToken(TArray<uint8> const& InCryptedData, TArray<uint8> const& Key, FString& OutToken)
+	{
+		FMemoryReader memReader(InCryptedData, true);
+		FArchiveProxy archive(memReader);
+		memReader.SetIsLoading(true);
+
+		uint32 TokenLen = 0;
+		TArray<uint8> Ciphertext;
+		archive << TokenLen;
+		archive << Ciphertext;
+
+		if (TokenLen == 0)
+		{
+			return false;
+		}
+
+		EPlatformCryptoResult DecryptResult = EPlatformCryptoResult::Failure;
+		TArray<uint8> Plaintext = FEncryptionContextOpenSSL().Decrypt_AES_256_ECB(
+			Ciphertext, Key, DecryptResult);
+		if (DecryptResult != EPlatformCryptoResult::Success)
+		{
+			return false;
+		}
+		if (Plaintext.Num() < (int32)TokenLen)
+		{
+			return false;
+		}
+		OutToken.Reset(TokenLen);
+		for (uint32 i = 0; i < TokenLen; ++i)
+		{
+			OutToken.AppendChar(static_cast<TCHAR>(Plaintext[i]));
+		}
+		return true;
 	}
 
 	FString GetTokenFilename(AdvViz::SDK::EITwinEnvironment Env, FString const& FileSuffix, bool bCreateDir)
@@ -131,7 +205,7 @@ namespace
 			}
 			routeHandle->Get() = FHttpServerModule::Get().GetHttpRouter(Port)
 				->BindRoute(FHttpPath(redirectUriEndpoint.c_str()), requestsVerb,
-#if UE_VERSION_NEWER_THAN(5, 4, 0)
+#if !UE_VERSION_OLDER_THAN(5, 5, 0)
 					FHttpRequestHandler::CreateLambda(
 #endif
 						[routeHandlePtr, Port, coreRequestHandler = requestHandlerCB]
@@ -159,7 +233,7 @@ namespace
 				}
 				return true;
 			}
-#if UE_VERSION_NEWER_THAN(5, 4, 0)
+#if !UE_VERSION_OLDER_THAN(5, 5, 0)
 			)
 #endif
 			);
@@ -309,7 +383,7 @@ void FITwinAuthorizationManager::SetupTestMode(AdvViz::SDK::EITwinEnvironment En
 	TokenFileSuffix = InTokenFileSuffix;
 }
 
-#endif //WITH_TESTS
+#endif // WITH_TESTS
 
 /*static*/
 bool FITwinAuthorizationManager::SavePrivateData(FString const& Token, AdvViz::SDK::EITwinEnvironment Env, int KeyIndex,
@@ -332,33 +406,15 @@ bool FITwinAuthorizationManager::SavePrivateData(FString const& Token, AdvViz::S
 	}
 
 	auto const Key = GetKey(Env, KeyIndex);
-	if (Key.Num() != 32)
-	{
-		ensureMsgf(false, TEXT("wrong key"));
-		return false;
-	}
 
-	EPlatformCryptoResult EncryptResult = EPlatformCryptoResult::Failure;
-	TArray<uint8> OutCiphertext = FEncryptionContextOpenSSL().Encrypt_AES_256_ECB(
-		TArrayView<const uint8>(
-			(const uint8*)StringCast<ANSICHAR>(*Token).Get(), Token.Len()),
-		Key, EncryptResult);
-	if (EncryptResult != EPlatformCryptoResult::Success)
+	TArray<uint8> CryptedData;
+	if (!EncryptToken(Token, Key, CryptedData))
 	{
 		return false;
 	}
-	TArray<uint8> rawData;
-	FMemoryWriter memWriter(rawData, true);
-	FArchiveProxy archive(memWriter);
-	memWriter.SetIsSaving(true);
-
-	uint32 TokenLen = Token.Len();
-	archive << TokenLen;
-	archive << OutCiphertext;
-
-	if (rawData.Num())
+	if (CryptedData.Num())
 	{
-		return FFileHelper::SaveArrayToFile(rawData, *OutputFileName);
+		return FFileHelper::SaveArrayToFile(CryptedData, *OutputFileName);
 	}
 	else
 	{
@@ -393,38 +449,7 @@ bool FITwinAuthorizationManager::LoadPrivateData(FString& OutToken, AdvViz::SDK:
 	{
 		return false;
 	}
-
-	FMemoryReader memReader(rawData, true);
-	FArchiveProxy archive(memReader);
-	memReader.SetIsLoading(true);
-
-	uint32 TokenLen = 0;
-	TArray<uint8> Ciphertext;
-	archive << TokenLen;
-	archive << Ciphertext;
-
-	if (TokenLen == 0)
-	{
-		return false;
-	}
-
-	EPlatformCryptoResult EncryptResult = EPlatformCryptoResult::Failure;
-	TArray<uint8> Plaintext = FEncryptionContextOpenSSL().Decrypt_AES_256_ECB(
-		Ciphertext, Key, EncryptResult);
-	if (EncryptResult != EPlatformCryptoResult::Success)
-	{
-		return false;
-	}
-	if (Plaintext.Num() < (int32)TokenLen)
-	{
-		return false;
-	}
-	OutToken.Reset(TokenLen);
-	for (uint32 i = 0; i < TokenLen; ++i)
-	{
-		OutToken.AppendChar(static_cast<TCHAR>(Plaintext[i]));
-	}
-	return true;
+	return DecryptToken(rawData, Key, OutToken);
 }
 
 /*static*/
@@ -437,4 +462,62 @@ bool FITwinAuthorizationManager::LoadToken(FString& OutToken, AdvViz::SDK::EITwi
 void FITwinAuthorizationManager::DeleteTokenFile(AdvViz::SDK::EITwinEnvironment Env)
 {
 	SaveToken({}, Env);
+}
+
+/*static*/
+bool FITwinAuthorizationManager::EncodeTokenData(FString const& InToken, FString const& InKeyRoot, FString& OutEncoded)
+{
+	auto const Key = ConvertToKey(InKeyRoot);
+	TArray<uint8> CryptedData;
+	if (!EncryptToken(InToken, Key, CryptedData) || CryptedData.IsEmpty())
+	{
+		return false;
+	}
+	auto const Crypted_B64 = FBase64::Encode(CryptedData, EBase64Mode::UrlSafe);
+	if (Crypted_B64.IsEmpty())
+	{
+		return false;
+	}
+	OutEncoded = Crypted_B64;
+	return true;
+}
+
+bool FITwinAuthorizationManager::EncodeToken(std::string const& InToken, std::string const& InKeyRoot, std::string& OutEncoded) const
+{
+	FString Encoded;
+	if (!EncodeTokenData(ANSI_TO_TCHAR(InToken.c_str()), ANSI_TO_TCHAR(InKeyRoot.c_str()), Encoded))
+	{
+		return false;
+	}
+	OutEncoded = TCHAR_TO_ANSI(*Encoded);
+	return true;
+}
+
+/*static*/
+bool FITwinAuthorizationManager::DecodeTokenData(FString const& InEncoded, FString const& InKeyRoot, FString& OutToken)
+{
+	TArray<uint8> Crypted;
+	if (!FBase64::Decode(InEncoded, Crypted, EBase64Mode::UrlSafe))
+	{
+		return false;
+	}
+	auto const Key = ConvertToKey(InKeyRoot);
+	FString DecodedToken;
+	if (!DecryptToken(Crypted, Key, DecodedToken))
+	{
+		return false;
+	}
+	OutToken = TCHAR_TO_ANSI(*DecodedToken);
+	return true;
+}
+
+bool FITwinAuthorizationManager::DecodeToken(std::string const& InEncoded, std::string const& InKeyRoot, std::string& OutToken) const
+{
+	FString DecodedToken;
+	if (!DecodeTokenData(ANSI_TO_TCHAR(InEncoded.c_str()), ANSI_TO_TCHAR(InKeyRoot.c_str()), DecodedToken))
+	{
+		return false;
+	}
+	OutToken = TCHAR_TO_ANSI(*DecodedToken);
+	return true;
 }

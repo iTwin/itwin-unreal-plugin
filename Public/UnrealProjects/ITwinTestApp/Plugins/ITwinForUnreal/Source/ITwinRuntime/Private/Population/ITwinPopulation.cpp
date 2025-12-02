@@ -7,9 +7,15 @@
 +--------------------------------------------------------------------------------------*/
 
 #include "Population/ITwinPopulation.h"
+#include "Population/ITwinPopulation.inl"
+#include "Population/ITwinAnimPathManager.h"
 #include "Population/ITwinPopulationWithPathExt.h"
+#include <Clipping/ITwinClippingTool.h>
+#include <Helpers/WorldSingleton.h>
+
 #include "Math/UEMathConversion.h"
 
+#include <DrawDebugHelpers.h>
 #include "Materials/MaterialInstanceConstant.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/StaticMeshActor.h"
@@ -26,8 +32,12 @@
 #include <Serialization/JsonReader.h>
 #include <Serialization/JsonWriter.h>
 #include <Serialization/JsonSerializer.h>
+#include <Decoration/ITwinContentLibrarySettings.h>
+
 
 #include <Compil/BeforeNonUnrealIncludes.h>
+#	include <BeHeaders/Compil/EnumSwitchCoverage.h>
+#	include <SDK/Core/Tools/Assert.h>
 #	include <SDK/Core/Visualization/InstancesGroup.h>
 #	include <SDK/Core/Visualization/InstancesManager.h>
 #include <Compil/AfterNonUnrealIncludes.h>
@@ -36,11 +46,170 @@
 #include <array>
 
 
+//---------------------------------------------------------------------------------------
+// struct FITwinFoliageComponentHolder
+//---------------------------------------------------------------------------------------
+
+void FITwinFoliageComponentHolder::InitWithMasterMesh(AITwinPopulation& PopulationActor, UStaticMesh* Mesh)
+{
+	if (ensure(Mesh))
+	{
+		MasterMesh = Mesh;
+
+		InitFoliageMeshComponent(PopulationActor);
+
+		for (int32 i = 0; i < Mesh->GetStaticMaterials().Num(); ++i)
+		{
+			FoliageInstMeshComp->SetMaterial(i, Mesh->GetMaterial(i));
+		}
+	}
+}
+
+void FITwinFoliageComponentHolder::InitFoliageMeshComponent(AITwinPopulation& PopulationActor)
+{
+	if (!FoliageInstMeshComp)
+	{
+		FoliageInstMeshComp = NewObject<UFoliageInstancedStaticMeshComponent>(&PopulationActor, UFoliageInstancedStaticMeshComponent::StaticClass());
+		FoliageInstMeshComp->SetupAttachment(PopulationActor.K2_GetRootComponent());
+		//PopulationActor.SetRootComponent(FoliageInstMeshComp.Get());
+	}
+}
+
+void FITwinFoliageComponentHolder::BeginPlay(AITwinPopulation& PopulationActor)
+{
+	InitFoliageMeshComponent(PopulationActor);
+
+	if (FoliageInstMeshComp && MasterMesh)
+	{
+		FoliageInstMeshComp->RegisterComponent();
+
+		// Set the mesh (the movable mobility is needed to avoid a warning
+		// when playing in the editor).
+		FoliageInstMeshComp->SetMobility(EComponentMobility::Movable);
+		FoliageInstMeshComp->SetStaticMesh(MasterMesh.Get());
+		FoliageInstMeshComp->SetMobility(EComponentMobility::Static);
+
+		FoliageInstMeshComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		FoliageInstMeshComp->SetEnableGravity(false);
+
+		// Disable AO to get a better framerate (the unreal editor disables it
+		// when instantiating a mesh with foliage)
+		FoliageInstMeshComp->bAffectDistanceFieldLighting = false;
+	}
+}
+
+int32 FITwinFoliageComponentHolder::GetInstanceCount() const
+{
+	return FoliageInstMeshComp ? FoliageInstMeshComp->GetInstanceCount() : 0;
+}
+
+FBox FITwinFoliageComponentHolder::GetMasterMeshBoundingBox() const
+{
+	if (FoliageInstMeshComp && FoliageInstMeshComp->GetStaticMesh())
+	{
+		return FoliageInstMeshComp->GetStaticMesh()->GetBoundingBox();
+	}
+	else
+	{
+		return FBox(); // return an invalid box
+	}
+}
+
+FBoxSphereBounds FITwinFoliageComponentHolder::GetMasterMeshBounds() const
+{
+	if (MasterMesh)
+	{
+		return MasterMesh->GetBounds();
+	}
+	else
+	{
+		return {};
+	}
+}
+
+
+
+//---------------------------------------------------------------------------------------
+// class AITwinPopulation
+//---------------------------------------------------------------------------------------
+
 struct AITwinPopulation::FImpl
 {
 	std::shared_ptr<AdvViz::SDK::IInstancesManager> instancesManager_;
 	std::shared_ptr<AdvViz::SDK::IInstancesGroup> instancesGroup_; // the group to which this population belongs
 };
+
+/* static */
+AITwinPopulation* AITwinPopulation::CreatePopulation(const UObject* WorldContextObject, const FString& AssetPath,
+	AVizInstancesManagerPtr const& AvizInstanceManager,
+	AVizInstancesGroupPtr const& AvizInstanceGroup)
+{
+	// Spawn a new actor with a deferred call in order to be able
+	// to set the static mesh before BeginPlay is called.
+	FTransform spawnTransform;
+	AActor* newActor = UGameplayStatics::BeginDeferredActorSpawnFromClass(
+		WorldContextObject, AITwinPopulation::StaticClass(), spawnTransform,
+		ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+
+	AITwinPopulation* population = Cast<AITwinPopulation>(newActor);
+
+	if (!population)
+	{
+		return nullptr;
+	}
+
+	UStaticMesh* Mesh = LoadObject<UStaticMesh>(nullptr, *AssetPath);
+	if (Mesh)
+	{
+		FITwinFoliageComponentHolder& FoliageHolder = population->FoliageComponents.AddDefaulted_GetRef();
+		FoliageHolder.InitWithMasterMesh(*population, Mesh);
+	}
+	else
+	{
+		// We now support Blueprint format, to handle groups of meshes (introduced to fix Nanite limitations,
+		// as translucent materials cannot be rendered with Nanite, so we separate the opaque mesh parts from
+		// the translucent ones, and save them as a blueprint).
+		FString BPLoadPath = FString::Printf(TEXT("Blueprint'%s.%s_C'"), *AssetPath, *FPaths::GetPathLeaf(AssetPath));
+
+		// from https://dev.epicgames.com/community/snippets/d5R/load-spawn-blueprint-actor-asset-from-c-w-o-prev-ref?locale=pt-br
+		TSoftClassPtr<AActor> ActorBpClass = TSoftClassPtr<AActor>(FSoftObjectPath(BPLoadPath));
+
+		// The actual loading.
+		UClass* LoadedBpAsset = ActorBpClass.LoadSynchronous();
+		if (!LoadedBpAsset)
+		{
+			return nullptr;
+		}
+
+		// (Optional, depends on how you continue using it)
+		// Make sure GC doesn't steal it away from us, again
+		LoadedBpAsset->AddToRoot();
+
+		// From here on, it's business as usual, common actor spawning, just using the BP asset we loaded
+		// above.
+		FVector Loc = FVector::ZeroVector;
+		FRotator Rot = FRotator::ZeroRotator;
+		FActorSpawnParameters SpawnParams = FActorSpawnParameters();
+		AActor* BP_Actor = WorldContextObject->GetWorld()->SpawnActor(LoadedBpAsset, &Loc, &Rot, SpawnParams);
+		TArray<UActorComponent*> BP_Meshes = BP_Actor->K2_GetComponentsByClass(UStaticMeshComponent::StaticClass());
+
+		// Create foliage components from loaded meshes:
+		for (int32 i = 0; i < BP_Meshes.Num(); ++i)
+		{
+			UStaticMeshComponent* MeshComp = Cast<UStaticMeshComponent>(BP_Meshes[i]);
+			FITwinFoliageComponentHolder& FoliageHolder = population->FoliageComponents.AddDefaulted_GetRef();
+			FoliageHolder.InitWithMasterMesh(*population, MeshComp->GetStaticMesh().Get());
+		}
+	}
+
+	UGameplayStatics::FinishSpawningActor(newActor, spawnTransform);
+
+	population->SetInstancesManager(AvizInstanceManager);
+	population->SetInstancesGroup(AvizInstanceGroup);
+	population->SetObjectRef(TCHAR_TO_UTF8(*AssetPath));
+
+	return population;
+}
 
 AITwinPopulation::AITwinPopulation()
 	: Impl(MakePimpl<FImpl>())
@@ -53,14 +222,52 @@ AITwinPopulation::AITwinPopulation()
 	SquareSideLength = 100000;
 }
 
-void AITwinPopulation::InitFoliageMeshComponent()
+inline bool AITwinPopulation::CheckInstanceCount() const
 {
-	if (!meshComp)
+	int32 InstCount_UE = -1;
+	for (auto const& FoliageComp : FoliageComponents)
 	{
-		meshComp = NewObject<UFoliageInstancedStaticMeshComponent>(this, UFoliageInstancedStaticMeshComponent::StaticClass());
-		meshComp->SetupAttachment(RootComponent);
-		SetRootComponent(meshComp.Get());
+		ensure(FoliageComp.FoliageInstMeshComp);
+		if (!ensureMsgf(InstCount_UE == -1 ||
+			InstCount_UE == FoliageComp.GetInstanceCount(),
+			TEXT("All foliage components should have the same number of instances.")))
+		{
+			return false;
+		}
+		InstCount_UE = FoliageComp.GetInstanceCount();
 	}
+
+	if (Impl->instancesManager_)
+	{
+		uint64_t InstCountUE_Aviz = Impl->instancesManager_->GetInstanceCountByObjectRef(objectRef, Impl->instancesGroup_->GetId());
+		if (!ensureMsgf((int32)InstCountUE_Aviz == InstCount_UE,
+			TEXT("The UE and AdvViz::SDK population should have the same number of instances.")))
+		{
+			return false;
+		}
+	}
+
+	return true;
+}
+
+FBox AITwinPopulation::GetMasterMeshBoundingBox() const
+{
+	FBox Box;
+	for (auto const& FoliageComp : FoliageComponents)
+	{
+		Box += FoliageComp.GetMasterMeshBoundingBox();
+	}
+	return Box;
+}
+
+FBoxSphereBounds AITwinPopulation::GetMasterMeshBounds() const
+{
+	FBoxSphereBounds Bounds;
+	for (auto const& FoliageComp : FoliageComponents)
+	{
+		Bounds = Bounds + FoliageComp.GetMasterMeshBounds();
+	}
+	return Bounds;
 }
 
 namespace
@@ -77,7 +284,8 @@ namespace
 	void UpdateAVizInstanceTransform(
 		AdvViz::SDK::IInstance& dstInstance, const FTransform& srcInstanceTransform)
 	{
-		dstInstance.SetTransform(FITwinMathConversion::UEtoSDK(srcInstanceTransform));
+		const AdvViz::SDK::dmat3x4 m(FITwinMathConversion::UEtoSDK(srcInstanceTransform)); //LC: don't know exactly why but using a temporary variable removes warning C4686: 'FITwinMathConversion::UEtoSDK': possible change in behavior, change in UDT return calling convention 
+		dstInstance.SetTransform(m);
 	}
 
 	void UpdateAVizInstanceColorShift(
@@ -151,28 +359,82 @@ namespace
 	}
 }
 
+
+std::shared_ptr<AdvViz::SDK::IInstance> AITwinPopulation::GetAVizInstance(int32 instanceIndex)
+{
+	const AdvViz::SDK::SharedInstVect& instances = Impl->instancesManager_->GetInstancesByObjectRef(objectRef, Impl->instancesGroup_->GetId());
+	if (instanceIndex >= 0 && instanceIndex < instances.size())
+	{
+		return instances[instanceIndex];
+	}
+	return std::shared_ptr<AdvViz::SDK::IInstance>();
+}
+
+bool AITwinPopulation::ToggleAutoRebuildTree(std::optional<bool> const& bSuspendAutoRebuildOpt /*= std::nullopt*/)
+{
+	bool bPreviousValue = false;
+	bool bNewValue = false;
+	if (!FoliageComponents.IsEmpty())
+	{
+		bPreviousValue = FoliageComponents[0].FoliageInstMeshComp->bAutoRebuildTreeOnInstanceChanges;
+		bNewValue = bSuspendAutoRebuildOpt.value_or(!bPreviousValue);
+	}
+	for (auto& FoliageComp : FoliageComponents)
+	{
+		// All foliage components should have the same value...
+		BE_ASSERT(bPreviousValue == FoliageComp.FoliageInstMeshComp->bAutoRebuildTreeOnInstanceChanges);
+
+		FoliageComp.FoliageInstMeshComp->bAutoRebuildTreeOnInstanceChanges = bNewValue;
+
+		if (bNewValue)
+		{
+			// When re-enabling automatic rebuild, we should also invalidate tree if needed.
+			FoliageComp.FoliageInstMeshComp->BuildTreeIfOutdated(/*Async*/true, /*ForceUpdate*/false);
+		}
+	}
+	return bPreviousValue;
+}
+
+AITwinPopulation::FAutoRebuildTreeDisabler::FAutoRebuildTreeDisabler(AITwinPopulation& InPopulation)
+	: Population(&InPopulation)
+{
+	bAutoRebuildTreeOnInstanceChanges_Old = InPopulation.ToggleAutoRebuildTree(false);
+}
+
+AITwinPopulation::FAutoRebuildTreeDisabler::~FAutoRebuildTreeDisabler()
+{
+	if (Population.IsValid())
+	{
+		Population->ToggleAutoRebuildTree(bAutoRebuildTreeOnInstanceChanges_Old);
+	}
+}
+
+
 FTransform AITwinPopulation::GetInstanceTransform(int32 instanceIndex) const
 {
 	FTransform instTM;
 
-	if (instanceIndex >= 0 && instanceIndex < meshComp->GetInstanceCount())
+	if (instanceIndex >= 0 && instanceIndex < GetNumberOfInstances())
 	{
-		meshComp->GetInstanceTransform(instanceIndex, instTM, true);
+		FoliageComponents[0].FoliageInstMeshComp->GetInstanceTransform(instanceIndex, instTM, true);
 	}
 
 	return instTM;
 }
 
-void AITwinPopulation::SetInstanceTransformUEOnly(int32 instanceIndex, const FTransform& tm)
-{
-	meshComp->UpdateInstanceTransform(instanceIndex, tm, true);
-}
-
 void AITwinPopulation::SetInstanceTransform(int32 instanceIndex, const FTransform& tm)
 {
-	if (instanceIndex >= 0 && instanceIndex < meshComp->GetInstanceCount())
+	if (SetInstanceTransformUEOnly(instanceIndex, tm))
 	{
-		SetInstanceTransformUEOnly(instanceIndex, tm);
+		if (IsClippingPrimitive())
+		{
+			// Notify the Clipping Tool.
+			auto ClippingActor = TWorldSingleton<AITwinClippingTool>().Get(GetWorld());
+			if (ensure(ClippingActor))
+			{
+				ClippingActor->OnClippingInstanceModified(objectType, instanceIndex);
+			}
+		}
 		
 		const AdvViz::SDK::SharedInstVect& instances = Impl->instancesManager_->GetInstancesByObjectRef(objectRef, Impl->instancesGroup_->GetId());
 		if (instanceIndex < instances.size())
@@ -184,20 +446,49 @@ void AITwinPopulation::SetInstanceTransform(int32 instanceIndex, const FTransfor
 	}
 }
 
+void AITwinPopulation::MarkFoliageRenderStateDirty()
+{
+	for (auto& FoliageComp : FoliageComponents)
+	{
+		FoliageComp.FoliageInstMeshComp->MarkRenderStateDirty();
+	}
+}
+
+FBox AITwinPopulation::GetInstanceBoundingBox(int32 instanceIndex) const
+{
+	FBox Box;
+	if (ensure(instanceIndex >= 0 && instanceIndex < GetNumberOfInstances()))
+	{
+		const FTransform InstTransform = GetInstanceTransform(instanceIndex);
+		for (auto const& FoliageComp : FoliageComponents)
+		{
+			if (FoliageComp.FoliageInstMeshComp)
+			{
+				Box += FoliageComp.GetMasterMeshBoundingBox().TransformBy(InstTransform);
+			}
+		}
+	}
+	return Box;
+}
+
 FVector AITwinPopulation::GetInstanceColorVariation(int32 instanceIndex) const
 {
 	FVector instColVar(0.5);
 
-	if (instanceIndex >= 0 && instanceIndex < meshComp->GetInstanceCount())
+	if (instanceIndex >= 0 && instanceIndex < GetNumberOfInstances())
 	{
-		float* colorVar = nullptr;
+		float const* colorVar = nullptr;
+		auto const* meshComp(FoliageComponents[0].FoliageInstMeshComp.Get());
 		if (meshComp->NumCustomDataFloats == 3)
 		{
 			colorVar = &meshComp->PerInstanceSMCustomData[instanceIndex*3];
 		}
-		instColVar.X = colorVar[0];
-		instColVar.Y = colorVar[1];
-		instColVar.Z = colorVar[2];
+		if (colorVar)
+		{
+			instColVar.X = colorVar[0];
+			instColVar.Y = colorVar[1];
+			instColVar.Z = colorVar[2];
+		}
 	}
 
 	return instColVar;
@@ -205,17 +496,8 @@ FVector AITwinPopulation::GetInstanceColorVariation(int32 instanceIndex) const
 
 void AITwinPopulation::SetInstanceColorVariation(int32 instanceIndex, const FVector& v)
 {
-	if (instanceIndex >= 0 && instanceIndex < meshComp->GetInstanceCount())
+	if (SetInstanceColorVariationUEOnly(instanceIndex, v))
 	{
-		if (meshComp->NumCustomDataFloats != 3)
-		{
-			meshComp->SetNumCustomDataFloats(3);
-		}
-
-		meshComp->SetCustomDataValue(instanceIndex, 0, v.X, true);
-		meshComp->SetCustomDataValue(instanceIndex, 1, v.Y, true);
-		meshComp->SetCustomDataValue(instanceIndex, 2, v.Z, true);
-
 		const AdvViz::SDK::SharedInstVect& instances = Impl->instancesManager_->GetInstancesByObjectRef(objectRef, Impl->instancesGroup_->GetId());
 		if (instanceIndex < instances.size())
 		{
@@ -224,6 +506,37 @@ void AITwinPopulation::SetInstanceColorVariation(int32 instanceIndex, const FVec
 			inst.SetShouldSave(true);
 		}
 	}
+}
+
+AdvViz::SDK::RefID AITwinPopulation::GetInstanceRefId(int32 instanceIndex) const
+{
+	if (instanceIndex >= 0 && instanceIndex < GetNumberOfInstances())
+	{
+		const AdvViz::SDK::SharedInstVect& instances =
+			Impl->instancesManager_->GetInstancesByObjectRef(objectRef, Impl->instancesGroup_->GetId());
+		if (ensure(instanceIndex < instances.size()))
+		{
+			AdvViz::SDK::IInstance const& inst = *instances[instanceIndex];
+			return inst.GetRefId();
+		}
+	}
+	return AdvViz::SDK::RefID::Invalid();
+}
+
+int32 AITwinPopulation::GetInstanceIndexFromRefId(const AdvViz::SDK::RefID& refId) const
+{
+	if (Impl->instancesManager_ && Impl->instancesGroup_)
+	{
+		const AdvViz::SDK::SharedInstVect& instances =
+			Impl->instancesManager_->GetInstancesByObjectRef(objectRef, Impl->instancesGroup_->GetId());
+		auto it = std::find_if(instances.begin(), instances.end(),
+			[&refId](auto&& inst) { return inst->GetRefId() == refId; });
+		if (it != instances.end())
+		{
+			return static_cast<int32>(std::distance(instances.begin(), it));
+		}
+	}
+	return INDEX_NONE;
 }
 
 namespace
@@ -261,7 +574,7 @@ namespace
 	}};
 }
 
-/*static*/ FVector AITwinPopulation::GetRandomColorShift(const EITwinInstantiatedObjectType& type)
+/*static*/ FVector AITwinPopulation::GetRandomColorShift(const EITwinInstantiatedObjectType type)
 {
 	FVector colorShift(0.0, 0.0, 0.0);
 	if (type == EITwinInstantiatedObjectType::Vehicle)
@@ -284,7 +597,33 @@ namespace
 	return colorShift;
 }
 
-void AITwinPopulation::AddInstance(const FTransform& transform)
+void AITwinPopulation::FinalizeAddedInstance(int32 instIndex, const FTransform* FinalTransform /*= nullptr*/,
+	const AdvViz::SDK::RefID* EnforcedRefID /*= nullptr*/)
+{
+	if (EnforcedRefID
+		&& ensureMsgf(GetInstanceIndexFromRefId(*EnforcedRefID) == INDEX_NONE,
+					TEXT("cannot have duplicated ref ID!")))
+	{
+		auto AVizInst = GetAVizInstance(instIndex);
+		if (ensure(AVizInst))
+			AVizInst->SetRefId(*EnforcedRefID);
+	}
+	if (IsClippingPrimitive())
+	{
+		// Notify the Clipping Tool.
+		auto ClippingActor = TWorldSingleton<AITwinClippingTool>().Get(GetWorld());
+		if (ensure(ClippingActor))
+		{
+			ClippingActor->OnClippingInstanceAdded(this, objectType, instIndex);
+		}
+	}
+	if (FinalTransform)
+	{
+		SetInstanceTransform(instIndex, *FinalTransform);
+	}
+}
+
+int32 AITwinPopulation::AddInstance(const FTransform& transform, bool bInteractivePlacement /*= false*/)
 {
 	// This function is used for the manual addition of a single instance.
 	// The current position will be used later for the automatic filling of
@@ -298,15 +637,33 @@ void AITwinPopulation::AddInstance(const FTransform& transform)
 	ueInstanceInfo.colorShift = GetRandomColorShift(objectType);
 
 	// Add an UE instance and apply the transform and color shift
-	int32 instIndex = meshComp->AddInstance(ueInstanceInfo.transform, false);
-
-	if (meshComp->NumCustomDataFloats != 3)
+	int32 instIndex = INDEX_NONE;
+	for (auto& FoliageComp : FoliageComponents)
 	{
-		meshComp->SetNumCustomDataFloats(3);
+		auto* meshComp(FoliageComp.FoliageInstMeshComp.Get());
+		int32 instIndexInUE = meshComp->AddInstance(ueInstanceInfo.transform, false);
+		ensure(instIndex == INDEX_NONE || instIndex == instIndexInUE);
+		instIndex = instIndexInUE;
+
+		if (meshComp->NumCustomDataFloats != 3)
+		{
+			meshComp->SetNumCustomDataFloats(3);
+		}
+		meshComp->SetCustomDataValue(instIndex, 0, ueInstanceInfo.colorShift.X);
+		meshComp->SetCustomDataValue(instIndex, 1, ueInstanceInfo.colorShift.Y);
+		meshComp->SetCustomDataValue(instIndex, 2, ueInstanceInfo.colorShift.Z);
 	}
-	meshComp->SetCustomDataValue(instIndex, 0, ueInstanceInfo.colorShift.X);
-	meshComp->SetCustomDataValue(instIndex, 1, ueInstanceInfo.colorShift.Y);
-	meshComp->SetCustomDataValue(instIndex, 2, ueInstanceInfo.colorShift.Z);
+	if (instIndex == INDEX_NONE)
+	{
+		ensureMsgf(false, TEXT("no instance added"));
+		return INDEX_NONE;
+	}
+
+	if (IsClippingPrimitive() && !bInteractivePlacement)
+	{
+		// Perform additional operations for the clipping tool.
+		FinalizeAddedInstance(instIndex);
+	}
 
 	// Add the same instance in the manager of the SDK core
 	uint64_t instCount = Impl->instancesManager_->GetInstanceCountByObjectRef(objectRef, Impl->instancesGroup_->GetId());
@@ -314,17 +671,48 @@ void AITwinPopulation::AddInstance(const FTransform& transform)
 	const AdvViz::SDK::SharedInstVect& instances = Impl->instancesManager_->GetInstancesByObjectRef(objectRef, Impl->instancesGroup_->GetId());
 	AdvViz::SDK::IInstance& instance = *instances[instCount];
 	UpdateAVizInstance(instance, ueInstanceInfo);
-	instance.SetName(std::string("inst"));
+	instance.SetName("inst");
 	instance.SetObjectRef(objectRef);
 	instance.SetGroup(Impl->instancesGroup_);
+
+	BE_ASSERT(CheckInstanceCount());
+
+	return instIndex;
 }
 
 void AITwinPopulation::RemoveInstance(int32 instIndex)
 {
-	if (instIndex < 0 || instIndex > meshComp->GetInstanceCount())
+	AITwinClippingTool* ClippingActor = IsClippingPrimitive()
+		? TWorldSingleton<AITwinClippingTool>().Get(GetWorld()) : nullptr;
+	if (ClippingActor)
+	{
+		// 2 notifications are needed in some cases: *before* and *after* the actual removal:
+		// - before the event so that we can notify anyone with valid RefID
+		// - after the event to let the cutout manager reconstruct its list of cutouts.
+		ClippingActor->BeforeRemoveClippingInstances(objectType, { instIndex });
+	}
+
+	bool bValidIndex = false;
+	if (instIndex >= 0)
+	{
+		for (auto& FoliageComp : FoliageComponents)
+		{
+			if (instIndex < FoliageComp.GetInstanceCount())
+			{
+				FoliageComp.FoliageInstMeshComp->RemoveInstance(instIndex);
+				bValidIndex = true;
+			}
+		}
+	}
+
+	if (!bValidIndex)
 		return;
 
-	meshComp->RemoveInstance(instIndex);
+	if (ClippingActor)
+	{
+		// Second notification for the Clipping Tool.
+		ClippingActor->OnClippingInstancesRemoved(objectType, { instIndex });
+	}
 
 	std::vector<int32_t> indices;
 	indices.push_back(instIndex);
@@ -339,7 +727,14 @@ void AITwinPopulation::RemoveInstance(int32 instIndex)
 			ueInst->population_ = this;
 			ueInst->instanceIndex_ = i;
 		}
+		if (auto animPathExt = inst->GetExtension<InstanceWithSplinePathExt>())
+		{
+			animPathExt->Population_ = this;
+			animPathExt->InstanceIdx_ = i;
+		}
 	}
+
+	BE_ASSERT(CheckInstanceCount());
 }
 
 void AITwinPopulation::RemoveInstances(const TArray<int32>& instanceIndices)
@@ -347,11 +742,28 @@ void AITwinPopulation::RemoveInstances(const TArray<int32>& instanceIndices)
 	if (instanceIndices.IsEmpty())
 		return;
 
-	meshComp->RemoveInstances(instanceIndices, true);
+	AITwinClippingTool* ClippingActor = IsClippingPrimitive()
+		? TWorldSingleton<AITwinClippingTool>().Get(GetWorld()) : nullptr;
+	if (ClippingActor)
+	{
+		// Same remark as for #RemoveInstance: two-step notification
+		ClippingActor->BeforeRemoveClippingInstances(objectType, instanceIndices);
+	}
+
+	for (auto& FoliageComp : FoliageComponents)
+	{
+		FoliageComp.FoliageInstMeshComp->RemoveInstances(instanceIndices, true);
+	}
+
+	if (ClippingActor)
+	{
+		// Second notification for the Clipping Tool.
+		ClippingActor->OnClippingInstancesRemoved(objectType, instanceIndices);
+	}
 
 	std::vector<int32_t> indices;
 	indices.reserve((size_t)instanceIndices.Num());
-	for(auto const& ind : instanceIndices)
+	for (auto const& ind : instanceIndices)
 	{
 		indices.push_back(ind);
 	}
@@ -366,6 +778,22 @@ void AITwinPopulation::RemoveInstances(const TArray<int32>& instanceIndices)
 			ueInst->population_ = this;
 			ueInst->instanceIndex_ = i;
 		}
+		if (auto animPathExt = inst->GetExtension<InstanceWithSplinePathExt>())
+		{
+			animPathExt->Population_ = this;
+			animPathExt->InstanceIdx_ = i;
+		}
+	}
+
+	BE_ASSERT(CheckInstanceCount());
+}
+
+void AITwinPopulation::OnInstanceRestored(const AdvViz::SDK::RefID& restoredID)
+{
+	if (Impl->instancesManager_ && Impl->instancesGroup_)
+	{
+		Impl->instancesManager_->OnInstancesRestored(objectRef, Impl->instancesGroup_->GetId(),
+			{ restoredID });
 	}
 }
 
@@ -381,7 +809,7 @@ void AITwinPopulation::UpdateInstancesFromAVizToUE()
 
 	checkVersion = true;
 
-	for(size_t i = 0; i < numInst; ++i)
+	for (size_t i = 0; i < numInst; ++i)
 	{
 		AdvViz::SDK::IInstance* inst = instances[i].get();
 		
@@ -401,20 +829,25 @@ void AITwinPopulation::UpdateInstancesFromAVizToUE()
 		instancesColorVar[i*3 + 2] = ueInstInfo.colorShift.Z;
 	}
 
-	meshComp->AddInstances(instancesTM, false);
-
-	// Set the custom data for color variations
-	if (meshComp->NumCustomDataFloats != 3)
+	for (auto& FoliageComp : FoliageComponents)
 	{
-		meshComp->SetNumCustomDataFloats(3);
-	}
-	for(size_t i = 0; i < numInst; ++i)
-	{
-		meshComp->SetCustomData(i, MakeArrayView(&instancesColorVar[i*3], 3), true);
-	}
+		auto* meshComp(FoliageComp.FoliageInstMeshComp.Get());
 
-	// Clear the selection to avoid an UE cash when removing instances
-	meshComp->ClearInstanceSelection();
+		meshComp->AddInstances(instancesTM, false);
+
+		// Set the custom data for color variations
+		if (meshComp->NumCustomDataFloats != 3)
+		{
+			meshComp->SetNumCustomDataFloats(3);
+		}
+		for (size_t i = 0; i < numInst; ++i)
+		{
+			meshComp->SetCustomData(i, MakeArrayView(&instancesColorVar[i*3], 3), true);
+		}
+
+		// Clear the selection to avoid an UE cash when removing instances
+		meshComp->ClearInstanceSelection();
+	}
 
 	if (GetExtension<FITwinPopulationWithPathExt>())
 	{
@@ -425,6 +858,17 @@ void AITwinPopulation::UpdateInstancesFromAVizToUE()
 		SetActorTickEnabled(false);
 	}
 
+	if (IsClippingPrimitive())
+	{
+		// Notify the Clipping Tool.
+		auto ClippingActor = TWorldSingleton<AITwinClippingTool>().Get(GetWorld());
+		if (ensure(ClippingActor))
+		{
+			ClippingActor->OnClippingInstancesLoaded(this, objectType);
+		}
+	}
+
+	BE_ASSERT(CheckInstanceCount());
 }
 
 std::shared_ptr<AdvViz::SDK::IInstancesManager>& AITwinPopulation::GetInstanceManager()
@@ -432,7 +876,7 @@ std::shared_ptr<AdvViz::SDK::IInstancesManager>& AITwinPopulation::GetInstanceMa
 	return Impl->instancesManager_;
 }
 
-void AITwinPopulation::SetInstancesManager(std::shared_ptr<AdvViz::SDK::IInstancesManager>& instManager)
+void AITwinPopulation::SetInstancesManager(AVizInstancesManagerPtr const& instManager)
 {
 	Impl->instancesManager_ = instManager;
 }
@@ -442,7 +886,7 @@ std::shared_ptr<AdvViz::SDK::IInstancesGroup>& AITwinPopulation::GetInstancesGro
 	return Impl->instancesGroup_;
 }
 
-void AITwinPopulation::SetInstancesGroup(std::shared_ptr<AdvViz::SDK::IInstancesGroup>& instGroup)
+void AITwinPopulation::SetInstancesGroup(AVizInstancesGroupPtr const& instGroup)
 {
 	Impl->instancesGroup_ = instGroup;
 }
@@ -451,14 +895,14 @@ void AITwinPopulation::SetObjectRef(const std::string& objRef)
 {
 	objectRef = objRef;
 
-	if (objRef.find(std::string("Character")) != std::string::npos)
+	if (objRef.find("Character") != std::string::npos)
 	{
 		objectType = EITwinInstantiatedObjectType::Character;
 	}
-	else if (objRef.find(std::string("Vehicle")) != std::string::npos ||
-			 objRef.find(std::string("Construction")) != std::string::npos)
+	else if (objRef.find("Vehicle") != std::string::npos ||
+			 objRef.find("Construction") != std::string::npos)
 	{
-		if (objRef.find(std::string("Crane")) != std::string::npos)
+		if (objRef.find("Crane") != std::string::npos)
 		{
 			objectType = EITwinInstantiatedObjectType::Crane;
 		}
@@ -471,9 +915,20 @@ void AITwinPopulation::SetObjectRef(const std::string& objRef)
 			SetColorVariationIntensity(1.f);
 		}
 	}
-	else if (objRef.find(std::string("Vegetation")) != std::string::npos)
+	else if (objRef.find("Vegetation") != std::string::npos)
 	{
 		objectType = EITwinInstantiatedObjectType::Vegetation;
+	}
+	else if (objRef.find("ClippingPlane") != std::string::npos)
+	{
+		objectType = EITwinInstantiatedObjectType::ClippingPlane;
+	}
+	else if (objRef.find("ClippingBox") != std::string::npos)
+	{
+		objectType = EITwinInstantiatedObjectType::ClippingBox;
+		// The cube imported for this tool has a side of one meter, which is quite small for an
+		// infrastructure project. Increase its size to start seeing something.
+		BaseTransform.MultiplyScale3D(FVector(10.0));
 	}
 
 #if WITH_EDITOR
@@ -521,12 +976,31 @@ bool AITwinPopulation::IsPerpendicularToSurface() const
 	return objectType == EITwinInstantiatedObjectType::Vehicle;
 }
 
+FString AITwinPopulation::GetObjectTypeName() const
+{
+	switch (objectType)
+	{
+	case EITwinInstantiatedObjectType::Vehicle:			return TEXT("vehicle");
+	case EITwinInstantiatedObjectType::Vegetation:		return TEXT("vegetation");
+	case EITwinInstantiatedObjectType::Character:		return TEXT("character");
+	case EITwinInstantiatedObjectType::ClippingPlane:	return TEXT("plane");
+	case EITwinInstantiatedObjectType::ClippingBox:		return TEXT("cube");
+	case EITwinInstantiatedObjectType::Crane:			return TEXT("crane");
+	BE_NO_UNCOVERED_ENUM_ASSERT_AND_FALLTHROUGH
+	case EITwinInstantiatedObjectType::Other:			return TEXT("object");
+	}
+}
+
 float AITwinPopulation::GetColorVariationIntensity() const
 {
-	for (int32 i = 0; i < meshComp->GetNumMaterials(); ++i)
+	UFoliageInstancedStaticMeshComponent const* meshComp = FoliageComponents.IsEmpty()
+		? nullptr
+		: FoliageComponents[0].FoliageInstMeshComp.Get();
+	int32 const NumMats = meshComp ? meshComp->GetNumMaterials() : 0;
+	for (int32 i = 0; i < NumMats; ++i)
 	{
-		UMaterialInterface* mat = meshComp->GetMaterial(i);
-		UMaterialInstance* matInst = dynamic_cast<UMaterialInstance*>(mat);
+		UMaterialInterface const* mat = meshComp->GetMaterial(i);
+		UMaterialInstance const* matInst = dynamic_cast<UMaterialInstance const*>(mat);
 		if (matInst) // editable parameters are only in material instances
 		{
 			float colorVariationIntensity = 0.f;
@@ -543,21 +1017,26 @@ float AITwinPopulation::GetColorVariationIntensity() const
 
 void AITwinPopulation::SetColorVariationIntensity(const float& f)
 {
-	for (int32 i = 0; i < meshComp->GetNumMaterials(); ++i)
+	for (auto const& FoliageComp : FoliageComponents)
 	{
-		UMaterialInterface* mat = meshComp->GetMaterial(i);
-		UMaterialInstance* matInst = dynamic_cast<UMaterialInstance*>(mat);
-
-		if (matInst) // editable parameters are only in material instances
+		auto* meshComp(FoliageComp.FoliageInstMeshComp.Get());
+		int32 const NumMats = meshComp->GetNumMaterials();
+		for (int32 i = 0; i < NumMats; ++i)
 		{
-			UMaterialInstanceDynamic* mtlInstDyn = dynamic_cast<UMaterialInstanceDynamic*>(mat);
-			if (!mtlInstDyn)
+			UMaterialInterface* mat = meshComp->GetMaterial(i);
+			UMaterialInstance* matInst = dynamic_cast<UMaterialInstance*>(mat);
+
+			if (matInst) // editable parameters are only in material instances
 			{
-				mtlInstDyn = meshComp->CreateDynamicMaterialInstance(i);
-			}
-			if (mtlInstDyn)
-			{
-				mtlInstDyn->SetScalarParameterValue(FName("ColorVariationIntensity"), f);
+				UMaterialInstanceDynamic* mtlInstDyn = dynamic_cast<UMaterialInstanceDynamic*>(mat);
+				if (!mtlInstDyn)
+				{
+					mtlInstDyn = meshComp->CreateDynamicMaterialInstance(i);
+				}
+				if (mtlInstDyn)
+				{
+					mtlInstDyn->SetScalarParameterValue(FName("ColorVariationIntensity"), f);
+				}
 			}
 		}
 	}
@@ -565,14 +1044,21 @@ void AITwinPopulation::SetColorVariationIntensity(const float& f)
 
 int32 AITwinPopulation::GetNumberOfInstances() const
 {
-	return meshComp->GetInstanceCount();
+	if (FoliageComponents.IsEmpty())
+	{
+		return 0;
+	}
+	else
+	{
+		return FoliageComponents[0].GetInstanceCount();
+	}
 }
 
 void AITwinPopulation::SetNumberOfInstances(const int32& NewInstanceCount)
 {
-	if (!ensure(meshComp))
+	if (!ensure(FoliageComponents.Num() > 0))
 		return;
-	const int32 DiffInstances = NewInstanceCount - meshComp->GetInstanceCount();
+	const int32 DiffInstances = NewInstanceCount - GetNumberOfInstances();
 	if (DiffInstances > 0)
 	{
 		AddInstances(DiffInstances);
@@ -595,12 +1081,15 @@ void AITwinPopulation::SetSquareSideLength(const int32& n)
 
 void AITwinPopulation::SetInstancesZCoordinate(const float& maxDistToSquareCenter, const float& z)
 {
-	int32 totalNumInstances = meshComp->GetInstanceCount();
+	if (!ensure(FoliageComponents.Num() > 0))
+		return;
+	auto const& FoliageComp0 = FoliageComponents[0];
+	const int32 totalNumInstances = FoliageComp0.GetInstanceCount();
 
 	for (int32 i = 0; i < totalNumInstances; ++i)
 	{
 		FTransform tm;
-		meshComp->GetInstanceTransform(i, tm);
+		FoliageComp0.FoliageInstMeshComp->GetInstanceTransform(i, tm);
 		FMatrix mat = tm.ToMatrixWithScale();
 		FVector pos = tm.GetTranslation();
 
@@ -618,26 +1107,14 @@ void AITwinPopulation::SetInstancesZCoordinate(const float& maxDistToSquareCente
 void AITwinPopulation::BeginPlay()
 {
 	Super::BeginPlay();
-	
-	InitFoliageMeshComponent();
 
-	if (meshComp && mesh)
+	for (auto& FoliageComp : FoliageComponents)
 	{
-		meshComp->RegisterComponent();
+		FoliageComp.BeginPlay(*this);
+	}
 
-		// Set the mesh (the movable mobility is needed to avoid a warning
-		// when playing in the editor).
-		meshComp->SetMobility(EComponentMobility::Movable);
-		meshComp->SetStaticMesh(mesh.Get());
-		meshComp->SetMobility(EComponentMobility::Static);
-
-		meshComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-		meshComp->SetEnableGravity(false);
-
-		// Disable AO to get a better framerate (the unreal editor disables it
-		// when instantiating a mesh with foliage)
-		meshComp->bAffectDistanceFieldLighting = false;
-
+	if (FoliageComponents.Num() > 0 && InitialNumberOfInstances > 0)
+	{
 		AddInstances(InitialNumberOfInstances);
 	}
 }
@@ -654,7 +1131,7 @@ void AITwinPopulation::AddInstances(int32 numInst)
 {
 	if (numInst <= 0)
 		return;
-	if (!ensure(meshComp))
+	if (FoliageComponents.IsEmpty())
 		return;
 
 	double halfLength = static_cast<double>(SquareSideLength)*0.5;
@@ -664,7 +1141,7 @@ void AITwinPopulation::AddInstances(int32 numInst)
 	instancesTM.SetNum(numInst);
 	TArray<float> instancesColorVar;
 	instancesColorVar.SetNum(numInst*3);
-	int32 oldNumInst = meshComp->GetInstanceCount();
+	int32 oldNumInst = GetNumberOfInstances();
 	static bool intersectWorld = true;
 
 	const bool bSyncWithAdvVizSDK = (bool)Impl->instancesManager_;
@@ -723,33 +1200,37 @@ void AITwinPopulation::AddInstances(int32 numInst)
 			AdvViz::SDK::IInstance& inst = *instances[oldNumInst + i];
 			UpdateAVizInstance(inst, ueInstInfo);
 			inst.SetShouldSave(true);
-			inst.SetName(std::string("inst"));
+			inst.SetName("inst");
 			inst.SetObjectRef(objectRef);
 			inst.SetGroup(Impl->instancesGroup_);
 		}
 	}
 
-	meshComp->AddInstances(instancesTM, false);
-
-	// Set the custom data for color variations
-	if (meshComp->NumCustomDataFloats != 3)
+	for (auto& FoliageComp : FoliageComponents)
 	{
-		meshComp->SetNumCustomDataFloats(3);
-	}
-	for (int32 i = 0; i < numInst; ++i)
-	{
-		meshComp->SetCustomData(oldNumInst + i, MakeArrayView(&instancesColorVar[i*3], 3));
+		auto* meshComp(FoliageComp.FoliageInstMeshComp.Get());
+		meshComp->AddInstances(instancesTM, false);
+
+		// Set the custom data for color variations
+		if (meshComp->NumCustomDataFloats != 3)
+		{
+			meshComp->SetNumCustomDataFloats(3);
+		}
+		for (int32 i = 0; i < numInst; ++i)
+		{
+			meshComp->SetCustomData(oldNumInst + i, MakeArrayView(&instancesColorVar[i*3], 3));
+		}
+
+		// Clear the selection to avoid an UE cash when removing instances
+		meshComp->ClearInstanceSelection();
 	}
 
-	// Clear the selection to avoid an UE cash when removing instances
-	meshComp->ClearInstanceSelection();
+	BE_ASSERT(CheckInstanceCount());
 }
 
 void AITwinPopulation::RemoveInstances(int32 NumInst)
 {
-	if (!ensure(meshComp))
-		return;
-	const int32 TotalNumInstances = meshComp->GetInstanceCount();
+	const int32 TotalNumInstances = GetNumberOfInstances();
 
 	if (NumInst == 1)
 	{
@@ -778,15 +1259,45 @@ void AITwinPopulation::RemoveAllInstances()
 	SetNumberOfInstances(0);
 }
 
+void AITwinPopulation::SetCollisionEnabled(ECollisionEnabled::Type NewType)
+{
+	for (auto& FoliageComp : FoliageComponents)
+	{
+		FoliageComp.FoliageInstMeshComp->SetCollisionEnabled(NewType);
+	}
+}
+
+void AITwinPopulation::SetHiddenInGame(bool bHiddenInGame)
+{
+	for (auto& FoliageComp : FoliageComponents)
+	{
+		FoliageComp.FoliageInstMeshComp->SetHiddenInGame(bHiddenInGame, true);
+	}
+}
+
+bool AITwinPopulation::IsHiddenInGame() const
+{
+	return !FoliageComponents.IsEmpty()
+		&& FoliageComponents[0].FoliageInstMeshComp->bHiddenInGame != 0;
+}
+
 void AITwinPopulation::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 	if (auto ext = GetExtension<FITwinPopulationWithPathExt>())
 		ext->UpdatePopulationInstances();
 
-	if (bDisplayInfo)
+	static bool bDisplayAnimPathDebug = []()
 	{
-		const int32 TotalNumInstances = meshComp->GetInstanceCount();
+		// By default, we don't display the debug info for animation paths.
+		// The user can enable it in the project settings.
+		UITwinContentLibrarySettings const* ContentSettings = GetDefault<UITwinContentLibrarySettings>();
+		return ContentSettings && ContentSettings->DisplayAnimPathDebug;
+	}();
+
+	if (bDisplayAnimPathDebug)
+	{
+		const int32 TotalNumInstances = GetNumberOfInstances();
 		for (int32 i = 0; i < TotalNumInstances; ++i)
 		{
 			FTransform tm = GetInstanceTransform(i);
@@ -827,3 +1338,32 @@ AdvViz::expected<void, std::string> FITwinInstance::Update()
 	return AdvViz::expected<void, std::string>();
 }
 
+
+#if ENABLE_DRAW_DEBUG
+
+// Console command to draw bounding boxes
+static FAutoConsoleCommandWithWorldAndArgs FCmd_ITwinDisplayFeaturesBBoxes(
+	TEXT("cmd.ITwin_PopulationBoundingBox"),
+	TEXT("Display populations as bounding boxes."),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+{
+	for (TActorIterator<AITwinPopulation> PopIter(World); PopIter; ++PopIter)
+	{
+		int32 NumInstances = PopIter->GetNumberOfInstances();
+		for (int32 i(0); i < NumInstances; ++i)
+		{
+			FVector Center, Extent;
+			PopIter->GetInstanceBoundingBox(i).GetCenterAndExtents(Center, Extent);
+			DrawDebugBox(
+				World,
+				Center,
+				Extent,
+				FColor::Green,
+				/*bool bPersistent =*/ false,
+				/*float LifeTime =*/ 10.f);
+		}
+	}
+})
+);
+
+#endif // ENABLE_DRAW_DEBUG

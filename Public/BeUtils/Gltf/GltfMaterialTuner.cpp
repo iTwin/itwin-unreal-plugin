@@ -608,6 +608,65 @@ namespace BeUtils
 		}
 	}
 
+	/*static*/
+	GltfMaterialTuner::LoadCesiumImageResult
+	GltfMaterialTuner::ResampleTextureBuffer(
+		std::vector<std::byte> const& fullSizeCesiumBuffer,
+		std::vector<std::byte>& thumbnailCesiumBuffer,
+		uint32_t desiredSize,
+		std::string const& contextInfo)
+	{
+		using namespace CesiumGltfContent;
+
+		if (desiredSize < 2)
+		{
+			return AdvViz::make_unexpected(GenericFailureDetails{ "wrong desired size" });
+		}
+
+		// Note that the input buffer should correspond to a format supported by Cesium (PNG/JPG)
+		CesiumGltf::Image image;
+		auto loadResult = LoadImageCesium(image, fullSizeCesiumBuffer, contextInfo);
+		if (!loadResult)
+		{
+			return AdvViz::make_unexpected(loadResult.error());
+		}
+
+		auto const& srcImage(*image.pAsset);
+		const uint32_t srcImageSize = (uint32_t)std::max(srcImage.width, srcImage.height);
+		if (srcImageSize <= desiredSize)
+		{
+			// The input image is already small enough.
+			thumbnailCesiumBuffer = fullSizeCesiumBuffer;
+			return true;
+		}
+
+		CesiumGltf::Image outImage;
+		outImage.pAsset.emplace();
+		auto& targetImg(*outImage.pAsset);
+		targetImg.channels = srcImage.channels;
+		targetImg.bytesPerChannel = srcImage.bytesPerChannel;
+
+		// Keep the same aspect ratio.
+		const float fRatio = 1.f * desiredSize / srcImageSize;
+		targetImg.width = std::max(static_cast<int32_t>(fRatio * srcImage.width), 2);
+		targetImg.height = std::max(static_cast<int32_t>(fRatio * srcImage.height), 2);
+		targetImg.pixelData.resize(static_cast<size_t>(
+			targetImg.width * targetImg.height * targetImg.channels * targetImg.bytesPerChannel), std::byte(255));
+
+		if (!ImageManipulation::blitImage(targetImg,
+			{ 0, 0, targetImg.width, targetImg.height },
+			srcImage,
+			{ 0, 0, srcImage.width, srcImage.height }))
+		{
+			return AdvViz::make_unexpected(GenericFailureDetails{ "could not resample source image" });
+		}
+		thumbnailCesiumBuffer = ImageManipulation::savePng(targetImg);
+		if (thumbnailCesiumBuffer.empty())
+		{
+			return AdvViz::make_unexpected(GenericFailureDetails{ "failed formatting PNG thumbnail" });
+		}
+		return true;
+	}
 
 	GltfMaterialTuner::GltfMaterialTuner(std::shared_ptr<GltfMaterialHelper> const& materialHelper)
 		: materialHelper_(materialHelper)

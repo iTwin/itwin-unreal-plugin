@@ -37,37 +37,21 @@ define_property (GLOBAL PROPERTY beExtraFoldersToSymlink
 	FULL_DOCS "Contains the absolute paths of extra folders to symlink")
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}")
 include (be_get_vcpkg_infos)
-# See Public/Extern/cesium-unreal/extern/cesium-native/CMakeLists.txt for use of ezvcpkg.
-# Reproducing logic from ezvcpkg.cmake otherwise need to reorder includes below which doesn't seem to work easily...
-if (NOT EZVCPKG_BASEDIR)
-	if (DEFINED ENV{EZVCPKG_BASEDIR})
-		set(EZVCPKG_BASEDIR $ENV{EZVCPKG_BASEDIR})
-	else()
-		# HOME is probably defined on Windows only when running from git-bash or similar environments,
-		# hence on some machines this "/." will translate to the root folder of the current drive
-		# (which is actually better than $HOME/.ezvcpkg when using a devdrive...)
-		set(EZVCPKG_BASEDIR "$ENV{HOME}/.ezvcpkg")
-	endif()
-endif()
-# We are going to use some third-party include folders coming from cesium-native.
-# These folders are located in the ezvcpkg work dir, using a custom triplet evaluated by cesium.
-# So here we ask cesium to evaluate this triplet for us.
-# This is done in a function, to prevent unwanted variables defined in the included .cmake from leaking in the global scope.
-function (getCesiumVcpkgTriplet result)
-	include (${CMAKE_SOURCE_DIR}/Public/Extern/cesium-unreal/extern/cesium-native/cmake/detect-vcpkg-triplet.cmake)
-	# See "Public/Extern/cesium-unreal/extern/CMakeLists.txt" for the "-unreal" suffix.
-	set (${result} "${DETECTED_VCPKG_TRIPLET}-unreal" PARENT_SCOPE)
-endfunction ()
-getCesiumVcpkgTriplet (cesiumVcpkgTriplet)
-set ( glm_INCLUDE_DIR      "${EZVCPKG_BASEDIR}/2024.11.16/installed/${cesiumVcpkgTriplet}/include/" )
-set ( expected_INCLUDE_DIR "${EZVCPKG_BASEDIR}/2024.11.16/installed/${cesiumVcpkgTriplet}/include/" )
-set ( fmt_INCLUDE_DIR      "${EZVCPKG_BASEDIR}/2024.11.16/installed/${cesiumVcpkgTriplet}/include/" )
-set ( fmt_LIB_DIR          "${EZVCPKG_BASEDIR}/2024.11.16/installed/${cesiumVcpkgTriplet}/lib/" )
+set(glm_INCLUDE_DIR      "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/include/")
+# Set those globally like in cesium-native, they all look quite useful
+# From Public/Extern/cesium-unreal/extern/cesium-native/cmake/macros/configure_cesium_library.cmake
+add_definitions(
+	"-D GLM_FORCE_XYZW_ONLY=1" # Disable .rgba and .stpq to make it easier to view values from debugger
+	"-D GLM_FORCE_EXPLICIT_CTOR=1" # Disallow implicit conversions between dvec3 <-> dvec4, dvec3 <-> fvec3, etc
+	"-D GLM_FORCE_INTRINSICS=1" # Force SIMD code paths
+	"-D GLM_ENABLE_EXPERIMENTAL=1" # Allow use of experimental extensions
+)
+set(expected_INCLUDE_DIR "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/include/")
+set(fmt_INCLUDE_DIR      "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/include/")
+set(fmt_LIB_DIR          "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/lib/")
 add_subdirectory(Public/SDK)
-include (advanced_option)
 include (be_add_feature_option)
 include (options)
-include (be_file_utils)
 include (be_add_unreal_project)
 include (be_get_targets)
 include (be_add_test)
@@ -80,6 +64,7 @@ if (MSVC AND TARGET tidy-static)
 	target_compile_options(tidy-static PRIVATE /wd4389 /wd4456 /wd4702)
 endif ()
 set (CMAKE_CXX_STANDARD 20)
+
 # Binaries used by Unreal apps/plugins are stored in the same folder "Binaries",
 # independently of the config (UnrealDebug, Release...).
 # So to allow building different configs, we have to set a different name for each config
@@ -91,6 +76,7 @@ include_directories (
 	"${CMAKE_SOURCE_DIR}/Public/Extern" # for boost
 )
 find_package (Catch2 3 REQUIRED)
+find_package (Async++ REQUIRED)
 add_subdirectory (Public/BeHeaders)
 add_subdirectory (Public/Extern/boost) # Actually a small subset, see CMakeLists to expand it
 add_subdirectory (Public/BeUtils)
@@ -111,14 +97,16 @@ set (ITwinForUnreal_PluginDef
 				libmicrohttpd
 				Visualization
 )
-# Generate ITwinTestAppConfig.h (storing the app ID) in ThirdParty dir, so that it's ignored by git.
-configure_file (Public/ITwinTestAppConfig/ITwinTestAppConfig.h.in
+if (BE_SECONDARY_APPS)
+  # Generate ITwinTestAppConfig.h (storing the app ID) in ThirdParty dir, so that it's ignored by git.
+  configure_file (Public/ITwinTestAppConfig/ITwinTestAppConfig.h.in
 	"${CMAKE_SOURCE_DIR}/Public/UnrealProjects/ITwinTestApp/Source/ThirdParty/Include/ITwinTestAppConfig/ITwinTestAppConfig.h")
-be_add_unreal_project ("Public/UnrealProjects/ITwinTestApp"
+  be_add_unreal_project ("Public/UnrealProjects/ITwinTestApp"
 	MAIN_DEPENDS
 		Visualization
 	PLUGINS
 		${ITwinForUnreal_PluginDef}
-)
-# Set ITwinTestApp_Editor as VS default startup project, that's what most users will want to run.
-set_property(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY VS_STARTUP_PROJECT ITwinTestApp_Editor)
+  )
+  # Set ITwinTestApp_Editor as VS default startup project, that's what most users will want to run.
+  set_property(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY VS_STARTUP_PROJECT ITwinTestApp_Editor)
+endif()

@@ -1,5 +1,8 @@
+// Copyright 2020-2025 CesiumGS, Inc. and Contributors
+
 #include "UnrealPrepareRendererResources.h"
 #include "Cesium3DTileset.h"
+#include "Cesium3DTilesetLifecycleEventReceiver.h"
 #include "CesiumGltfComponent.h"
 #include "CesiumLifetime.h"
 #include "CesiumRasterOverlay.h"
@@ -12,7 +15,6 @@
 #include <CesiumAsync/AsyncSystem.h>
 #include <CesiumGeospatial/Ellipsoid.h>
 #include <glm/mat4x4.hpp>
-#include <CesiumMeshBuildCallbacks.h>
 
 UnrealPrepareRendererResources::UnrealPrepareRendererResources(
     ACesium3DTileset* pActor)
@@ -46,9 +48,6 @@ UnrealPrepareRendererResources::prepareInLoadThread(
     options.pEncodedMetadataDescription_DEPRECATED =
         &(*this->_pActor->_metadataDescription_DEPRECATED);
   }
-
-  // propagate mesh construction callback, if any
-  options.MeshBuildCallbacks = this->_pActor->GetMeshBuildCallbacks();
 
   const CesiumGeospatial::Ellipsoid& ellipsoid = tileLoadResult.ellipsoid;
 
@@ -89,7 +88,8 @@ void* UnrealPrepareRendererResources::prepareInMainThread(
         this->_pActor->GetWaterMaterial(),
         this->_pActor->GetCustomDepthParameters(),
         tile,
-        this->_pActor->GetCreateNavCollision());
+        this->_pActor->GetCreateNavCollision(),
+        this->_pActor->GetDoubleSidedCollisions());
   }
   // UE_LOG(LogCesium, VeryVerbose, TEXT("No content for tile"));
   return nullptr;
@@ -107,10 +107,8 @@ void UnrealPrepareRendererResources::free(
   } else if (pMainThreadResult) {
     UCesiumGltfComponent* pGltf =
         reinterpret_cast<UCesiumGltfComponent*>(pMainThreadResult);
-    if (this->_pActor->GetMeshBuildCallbacks().IsValid())
-    {
-        this->_pActor->GetMeshBuildCallbacks().Pin()->BeforeTileDestruction(
-            tile, pGltf);
+    if (auto* Receiver = this->_pActor->GetLifecycleEventReceiver()) {
+      Receiver->OnTileUnloading(*pGltf);
     }
     CesiumLifetime::destroyComponentRecursively(pGltf);
   }

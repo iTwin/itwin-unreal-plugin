@@ -23,6 +23,8 @@ public:
 
 	FUEHttp();
 
+	virtual void SetExecuteAsyncCallbackInGameThread(bool bInExecAsyncCallbackInGameThread) override;
+
 protected:
 	
 	virtual void SetBasicAuth(const char* login, const char* passwd) override {
@@ -40,17 +42,17 @@ protected:
 		Do(TEXT("GET"), url, {}, headers, isFullUrl, callback);
 	}
 
-	virtual Response DoPatch(const std::string& url, const std::string& body, const Headers& h = {}) override
+	virtual Response DoPatch(const std::string& url, const BodyParams& body, const Headers& h = {}) override
 	{
 		return Do(TEXT("PATCH"), url, body, h);
 	}
 
-	virtual Response DoPost(const std::string& url, const std::string& body, const Headers& h = {})  override
+	virtual Response DoPost(const std::string& url, const BodyParams& body, const Headers& h = {})  override
 	{
 		return Do(TEXT("POST"), url, body, h);
 	}
 
-	virtual void DoAsyncPost(std::function<void(const Response&)> callback, const std::string& url, const std::string& body = "", const Headers& headers = {})
+	virtual void DoAsyncPost(std::function<void(const Response&)> callback, const std::string& url, const BodyParams& body = {}, const Headers& headers = {})
 	{
 		Do(TEXT("POST"), url, body, headers, false, callback);
 	}
@@ -61,12 +63,12 @@ protected:
 		return DoFile(TEXT("POST"), url, fileParamName, filePath, extraParams, h);
 	}
 
-	virtual Response DoPut(const std::string& url, const std::string& body, const Headers& h = {})  override
+	virtual Response DoPut(const std::string& url, const BodyParams& body, const Headers& h = {})  override
 	{
 		return Do(TEXT("PUT"), url, body, h);
 	}
 
-	virtual void DoAsyncPut(std::function<void(const Response&)> callback, const std::string& url, const std::string& body = "", const Headers& headers = {})
+	virtual void DoAsyncPut(std::function<void(const Response&)> callback, const std::string& url, const BodyParams& body = {}, const Headers& headers = {})
 	{
 		Do(TEXT("PUT"), url, body, headers, false, callback);
 	}
@@ -77,15 +79,18 @@ protected:
 		return Response(0, std::string(""));
 	}
 
-	virtual Response DoDelete(const std::string& url, const std::string& body, const Headers& h = {}) override
+	virtual Response DoDelete(const std::string& url, const BodyParams& body, const Headers& h = {}) override
 	{
 		return Do(TEXT("DELETE"), url, body, h);
 	}
 
-	Response Do(FString verb, const std::string& url, const std::string& body, const Headers& headers = {}, bool isFullUrl = false, std::function<void(const Response&)> callbackFct = {});
+	Response Do(FString verb, const std::string& url, const BodyParams& body, const Headers& headers = {}, bool isFullUrl = false, std::function<void(const Response&)> callbackFct = {});
 	Response DoFile(FString verb, const std::string& url, const std::string& fileParamName, const std::string& filePath, const KeyValueVector& extraParams = {}, const Headers& headers = {});
 
 	using AdvViz::SDK::Tools::TypeId<FUEHttp>::GetTypeId;
 	std::uint64_t GetDynTypeId() const override { return GetTypeId(); }
 	bool IsTypeOf(std::uint64_t i) const override { return (i == GetTypeId()) || AdvViz::SDK::Http::IsTypeOf(i); }
+
+private:
+	bool bExecAsyncCallbackInGameThread = false;
 };

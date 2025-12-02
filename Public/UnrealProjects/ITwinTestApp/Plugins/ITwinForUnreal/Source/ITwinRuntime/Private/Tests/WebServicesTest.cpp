@@ -1045,7 +1045,7 @@ public:
 		}													\
 	}
 
-	IMPLEMENT_OBS_CALLBACK(OnITwinInfoRetrieved, FITwinInfo);
+	IMPLEMENT_OBS_CALLBACK(OnITwinInfoRetrieved, AdvViz::SDK::ITwinInfo);
 	IMPLEMENT_OBS_CALLBACK(OnITwinsRetrieved, FITwinInfos);
 	IMPLEMENT_OBS_CALLBACK(OnIModelsRetrieved, FIModelInfos);
 	IMPLEMENT_OBS_CALLBACK(OnChangesetsRetrieved, FChangesetInfos);
@@ -1120,7 +1120,11 @@ bool FITwinAPITestHelperBase::Init(AdvViz::SDK::EITwinEnvironment Env /*= EITwin
 	ensureMsgf(IsInGameThread(), TEXT("UT should be initialized in game thread"));
 	if (!bHasSetTestToken)
 	{
-		AdvViz::SDK::ITwinAuthManager::GetInstance(Env)->SetOverrideAccessToken(ITWINTEST_ACCESS_TOKEN);
+		auto& AuthMngr = AdvViz::SDK::ITwinAuthManager::GetInstance(Env);
+		if (ensure(AuthMngr))
+		{
+			AuthMngr->SetOverrideAccessToken(ITWINTEST_ACCESS_TOKEN, AdvViz::SDK::EITwinAuthOverrideMode::Testing);
+		}
 		bHasSetTestToken = true;
 	}
 	bInitDone = true;
@@ -1277,13 +1281,13 @@ bool FITwinWebServicesRequestTest::RunTest(const FString& /*Parameters*/)
 	{
 		FString const ITwinId = TEXT(ITWINID_CAYMUS_EAP);
 
-		Observer->OnITwinInfoRetrievedFunc = [this, ITwinId, TestErrorMessage](bool bSuccess, FITwinInfo const& ITwinIfo)
+		Observer->OnITwinInfoRetrievedFunc = [this, ITwinId, TestErrorMessage](bool bSuccess, AdvViz::SDK::ITwinInfo const& ITwinIfo)
 		{
 			if (bSuccess)
 			{
-				UTEST_EQUAL("Id", ITwinIfo.Id, ITwinId);
-				UTEST_EQUAL("DisplayName", ITwinIfo.DisplayName, TEXT("Bentley Caymus EAP"));
-				UTEST_EQUAL("Status", ITwinIfo.Status, TEXT("Active"));
+				UTEST_EQUAL("Id", FString(ITwinIfo.id.c_str()), ITwinId);
+				UTEST_EQUAL("DisplayName", UTF8_TO_TCHAR(ITwinIfo.displayName.value_or(std::u8string()).c_str()), TEXT("Bentley Caymus EAP"));
+				UTEST_EQUAL("Status", ANSI_TO_TCHAR(ITwinIfo.status.value_or("").c_str()), TEXT("Active"));
 			}
 			else
 			{

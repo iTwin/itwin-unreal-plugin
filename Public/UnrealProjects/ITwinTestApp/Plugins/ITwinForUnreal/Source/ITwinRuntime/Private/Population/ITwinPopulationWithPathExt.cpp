@@ -9,6 +9,8 @@
 
 #include "Population/ITwinPopulationWithPathExt.h"
 
+#include <Population/ITwinPopulation.inl>
+
 FITwinPopulationWithPathExt::FITwinPopulationWithPathExt()
 {
 }
@@ -31,40 +33,33 @@ void FITwinPopulationWithPathExt::InstanceToUpdateTransForm(size_t instIndex, co
 
 void FITwinPopulationWithPathExt::UpdatePopulationInstances()
 {
-	if (population_ == nullptr || !population_->meshComp)
+	if (population_ == nullptr || population_->FoliageComponents.IsEmpty())
 		return;
 	{
 		if ( (instancesToUpdateTr_.GetRAutoLock().Get().size() == 0)
 			&& (instancesToUpdateColor_.GetRAutoLock().Get().size() == 0))
 			return;
 
-		auto meshComp = population_->meshComp;
-		meshComp->bAutoRebuildTreeOnInstanceChanges = false;
+		// Disable automatic rebuild until all instances have been updated.
+		AITwinPopulation::FAutoRebuildTreeDisabler RebuildTreeDisabler(*population_);
 
 		// update transformation
 		{
 			auto locked = instancesToUpdateTr_.GetAutoLock();
 			for (auto const& [instIndex, prop] : locked.Get())
-				meshComp->UpdateInstanceTransform(instIndex, prop, true);
+				population_->SetInstanceTransformUEOnly(instIndex, prop, /*bMarkRenderStateDirty*/false);
 			locked.Get().clear();
 		}
 		// update color
 		{
 			auto locked = instancesToUpdateColor_.GetAutoLock();
-			if (meshComp->NumCustomDataFloats != 3)
-				meshComp->SetNumCustomDataFloats(3);
 			for (auto const& [instIndex, prop] : locked.Get())
-			{
-				meshComp->SetCustomDataValue(instIndex, 0, prop.X, true);
-				meshComp->SetCustomDataValue(instIndex, 1, prop.Y, true);
-				meshComp->SetCustomDataValue(instIndex, 2, prop.Z, true);
-			}
+				population_->SetInstanceColorVariationUEOnly(instIndex, prop, /*bMarkRenderStateDirty*/false);
 			locked.Get().clear();
-		}
 
-		meshComp->bAutoRebuildTreeOnInstanceChanges = true;
-		meshComp->BuildTreeIfOutdated(true, false);
-		
+			// mark render state dirty when all instances have been updated.
+			population_->MarkFoliageRenderStateDirty();
+		}
 	}
 }
 

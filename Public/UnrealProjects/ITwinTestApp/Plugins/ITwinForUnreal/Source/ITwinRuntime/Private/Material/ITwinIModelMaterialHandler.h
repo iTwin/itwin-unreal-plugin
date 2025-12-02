@@ -13,6 +13,7 @@
 #include <CoreMinimal.h>
 #include <Containers/Map.h>
 
+#include <Material/ITwinMaterialLoadingUtils.h>
 #include <MaterialPrediction/ITwinMaterialPredictionStatus.h>
 
 #include <functional>
@@ -55,6 +56,7 @@ public:
 		FString DisplayName;
 		bool bAdvancedConversion = false;
 	};
+	using FMaterialAssetInfo = ITwin::FMaterialAssetInfo;
 
 	using MaterialPersistencePtr = std::shared_ptr<AdvViz::SDK::MaterialPersistenceManager>;
 	static void SetGlobalPersistenceManager(MaterialPersistencePtr const& Mngr);
@@ -96,7 +98,8 @@ public:
 	/// Enforce reloading material definitions as read from the decoration service.
 	void ReloadCustomizedMaterials();
 
-	void InitForSingleMaterial(FString const& IModelId, uint64_t const MaterialId);
+	void InitForSingleMaterial(FString const& IModelId, uint64_t const MaterialId,
+		std::shared_ptr<BeUtils::GltfMaterialHelper> const& SrcIModelMatHelper);
 
 	//-----------------------------------------------------------------------------------
 	// Access/Modify properties
@@ -106,7 +109,11 @@ public:
 	void SetMaterialChannelIntensity(uint64_t MaterialId, AdvViz::SDK::EChannelType Channel, double Intensity,
 		FITwinSceneMapping& SceneMapping);
 
+	//! Return the color defined for this channel. Beware the 'A' component of this color has no meaning for
+	//! EChannelType::Color, as the opacity is to be retrieved from EChannelType::Opacity.
 	FLinearColor GetMaterialChannelColor(uint64_t MaterialId, AdvViz::SDK::EChannelType Channel) const;
+	//! Sets the color for the given channel. Beware the 'A' component of this color will be ignored for
+	//! EChannelType::Color, as the opacity is controlled by the EChannelType::Opacity channel.
 	void SetMaterialChannelColor(uint64_t MaterialId, AdvViz::SDK::EChannelType Channel, FLinearColor const& Color,
 		FITwinSceneMapping& SceneMapping);
 
@@ -141,7 +148,8 @@ public:
 	bool LoadMaterialFromAssetFile(uint64_t MaterialId, FString const& AssetFilePath,
 		AITwinIModel& IModel);
 
-	bool LoadMaterialFromAssetFile(uint64_t MaterialId, FString const& AssetFilePath,
+	bool LoadMaterialFromAssetFile(uint64_t MaterialId,
+		FMaterialAssetInfo const& MaterialAssetInfo,
 		FString const& IModelId,
 		FITwinSceneMapping& SceneMapping,
 		UITwinMaterialDefaultTexturesHolder const& DefaultTexturesHolder,
@@ -150,7 +158,7 @@ public:
 
 	bool LoadMaterialWithoutRetuning(AdvViz::SDK::ITwinMaterial& OutNewMaterial,
 		uint64_t MaterialId,
-		FString const& AssetFilePath,
+		FMaterialAssetInfo const& MaterialAssetInfo,
 		FString const& IModelId,
 		BeUtils::WLock const& Lock,
 		bool bForceRefreshAllParameters = false);

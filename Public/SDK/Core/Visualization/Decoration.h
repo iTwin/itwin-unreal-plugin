@@ -31,6 +31,14 @@ namespace AdvViz::SDK
 		virtual void Delete() = 0;
 		/// Get decoration identifier
 		virtual const std::string& GetId() = 0;
+
+		virtual void SetGCSTransform(const Tools::IGCSTransformPtr& transform) = 0;
+		virtual const Tools::IGCSTransformPtr& GetGCSTransform() const = 0;
+
+		/// Set Geo Coordinate System
+		virtual void SetGCS(const GCS& v) = 0;
+		/// Get Geo Coordinate System
+		virtual const std::optional<GCS>& GetGCS()const = 0;
 	};
 
 	class ADVVIZ_LINK  Decoration : public IDecoration, Tools::TypeId<Decoration>
@@ -45,6 +53,14 @@ namespace AdvViz::SDK
 		void Delete() override;
 		/// Get decoration identifier
 		const std::string& GetId() override;
+
+		/// Set Geo Coordinate System
+		void SetGCS(const GCS& v) override;
+		/// Get Geo Coordinate System
+		const std::optional<GCS>& GetGCS()const override;
+
+		virtual void SetGCSTransform(const Tools::IGCSTransformPtr& transform) override;
+		virtual const Tools::IGCSTransformPtr& GetGCSTransform() const override;
 
 		// Set Http server to use (if none provided, the default created by Config is used.)
 		void SetHttp(std::shared_ptr<Http> http);
@@ -62,6 +78,7 @@ namespace AdvViz::SDK
 		class Impl;
 		const std::unique_ptr<Impl> impl_;
 		Impl& GetImpl();
+		const Impl& GetImpl() const;
 	};
 
 	ADVVIZ_LINK std::vector<std::shared_ptr<IDecoration>> GetITwinDecorations(const std::string& itwinid);

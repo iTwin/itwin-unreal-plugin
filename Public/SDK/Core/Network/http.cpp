@@ -33,7 +33,7 @@ namespace AdvViz::SDK
 		return Get(url, h, isFullUrl);
 	}
 
-	Http::Response Http::PutJson(const std::string& url, const std::string& body, const Headers& hi)
+	Http::Response Http::PutJson(const std::string& url, const BodyParams& body, const Headers& hi)
 	{
 		Headers h(hi);
 		h.emplace_back("accept", "application/json");
@@ -41,7 +41,7 @@ namespace AdvViz::SDK
 		return Put(url, body, h);
 	}
 
-	Http::Response Http::PatchJson(const std::string& url, const std::string& body, const Headers& hi)
+	Http::Response Http::PatchJson(const std::string& url, const BodyParams& body, const Headers& hi)
 	{
 		Headers h(hi);
 		h.emplace_back("accept", "application/json");
@@ -49,7 +49,7 @@ namespace AdvViz::SDK
 		return Patch(url, body, h);
 	}
 
-	Http::Response Http::PostJson(const std::string& url, const std::string& body, const Headers& hi)
+	Http::Response Http::PostJson(const std::string& url, const BodyParams& body, const Headers& hi)
 	{
 		Headers h(hi);
 		h.emplace_back("accept", "application/json");
@@ -57,7 +57,7 @@ namespace AdvViz::SDK
 		return Post(url, body, h);
 	}
 
-	Http::Response Http::DeleteJson(const std::string& url, const std::string& body, const Headers& hi)
+	Http::Response Http::DeleteJson(const std::string& url, const BodyParams& body, const Headers& hi)
 	{
 		Headers h(hi);
 		h.emplace_back("accept", "application/json");
@@ -79,7 +79,7 @@ namespace AdvViz::SDK
 
 	}
 
-	AdvViz::SDK::Http::Response Http::Patch(const std::string& url, const std::string& body, const Headers& hi /*= {}*/)
+	AdvViz::SDK::Http::Response Http::Patch(const std::string& url, const BodyParams& body, const Headers& hi /*= {}*/)
 	{
 		Headers h(hi);
 		if (accessToken_)
@@ -87,7 +87,7 @@ namespace AdvViz::SDK
 		return DoPatch(url, body, h);
 	}
 
-	AdvViz::SDK::Http::Response Http::Post(const std::string& url, const std::string& body, const Headers& hi /*= {}*/)
+	AdvViz::SDK::Http::Response Http::Post(const std::string& url, const BodyParams& body, const Headers& hi /*= {}*/)
 	{
 		Headers h(hi);
 		if (accessToken_)
@@ -102,7 +102,7 @@ namespace AdvViz::SDK
 		return DoPostFile(url, fileParamName, filePath, extraParams, h);
 	}
 
-	AdvViz::SDK::Http::Response Http::Put(const std::string& url, const std::string& body, const Headers& hi /*= {}*/)
+	AdvViz::SDK::Http::Response Http::Put(const std::string& url, const BodyParams& body, const Headers& hi /*= {}*/)
 	{
 		Headers h(hi);
 		if (accessToken_)
@@ -118,12 +118,17 @@ namespace AdvViz::SDK
 		return DoPutBinaryFile(url, filePath, h);
 	}
 
-	AdvViz::SDK::Http::Response Http::Delete(const std::string& url, const std::string& body, const Headers& hi /*= {}*/)
+	AdvViz::SDK::Http::Response Http::Delete(const std::string& url, const BodyParams& body, const Headers& hi /*= {}*/)
 	{
 		Headers h(hi);
 		if (accessToken_)
 			h.emplace_back("Authorization", std::string("Bearer ") + *accessToken_);
 		return DoDelete(url, body, h);
+	}
+
+	void Http::SetExecuteAsyncCallbackInGameThread(bool)
+	{
+
 	}
 
 }

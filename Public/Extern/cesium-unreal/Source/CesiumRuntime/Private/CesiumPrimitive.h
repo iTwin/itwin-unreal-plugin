@@ -3,12 +3,13 @@
 #pragma once
 
 #include "Cesium3DTileset.h"
-#include "CesiumEncodedFeaturesMetadata.h"
 #include "CesiumEncodedMetadataUtility.h"
+#include "CesiumLoadedTile.h"
 #include "CesiumMetadataPrimitive.h"
 #include "CesiumPrimitiveFeatures.h"
 #include "CesiumPrimitiveMetadata.h"
 #include "CesiumRasterOverlays.h"
+#include "EncodedFeaturesMetadata.h"
 #include <CesiumGltf/AccessorUtility.h>
 #include <cstdint>
 #include <glm/mat4x4.hpp>
@@ -39,12 +40,12 @@ public:
   /**
    * The encoded representation of the primitive's EXT_mesh_features extension.
    */
-  CesiumEncodedFeaturesMetadata::EncodedPrimitiveFeatures EncodedFeatures;
+  EncodedFeaturesMetadata::EncodedPrimitiveFeatures EncodedFeatures;
   /**
    * The encoded representation of the primitive's EXT_structural_metadata
    * extension.
    */
-  CesiumEncodedFeaturesMetadata::EncodedPrimitiveMetadata EncodedMetadata;
+  EncodedFeaturesMetadata::EncodedPrimitiveMetadata EncodedMetadata;
 
   PRAGMA_DISABLE_DEPRECATION_WARNINGS
   /**
@@ -122,7 +123,7 @@ public:
 };
 
 UINTERFACE()
-class UCesiumPrimitive : public UInterface {
+class UCesiumPrimitive : public UCesiumLoadedTilePrimitive {
   GENERATED_BODY()
 };
 
@@ -135,11 +136,22 @@ class UCesiumPrimitive : public UInterface {
  * code reuse and make certain functions (e.g., UpdateTransformFromCesium())
  * simpler.
  */
-class ICesiumPrimitive {
+class ICesiumPrimitive : public ICesiumLoadedTilePrimitive {
   GENERATED_BODY()
 public:
   virtual CesiumPrimitiveData& getPrimitiveData() = 0;
   virtual const CesiumPrimitiveData& getPrimitiveData() const = 0;
+
+// from ICesiumLoadedTilePrimitive:
+  const CesiumGltf::MeshPrimitive* GetMeshPrimitive() const override {
+    return getPrimitiveData().pMeshPrimitive;
+  }
+  const FCesiumPrimitiveFeatures& GetPrimitiveFeatures() const override {
+    return getPrimitiveData().Features;
+  }
+  const FCesiumPrimitiveMetadata& GetPrimitiveMetadata() const override {
+    return getPrimitiveData().Metadata;
+  }
 
   virtual void
   UpdateTransformFromCesium(const glm::dmat4& CesiumToUnrealTransform) = 0;

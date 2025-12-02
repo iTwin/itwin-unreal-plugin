@@ -18,7 +18,7 @@ FPrimitiveSceneProxy* UCesiumGltfPointsComponent::CreateSceneProxy() {
   }
 
   FCesiumGltfPointsSceneProxy* Proxy =
-      new FCesiumGltfPointsSceneProxy(this, GetScene()->GetFeatureLevel(), bLinesList);
+      new FCesiumGltfPointsSceneProxy(this, GetScene()->GetFeatureLevel());
 
   FCesiumGltfPointsSceneProxyTilesetData TilesetData;
   TilesetData.UpdateFromComponent(this);

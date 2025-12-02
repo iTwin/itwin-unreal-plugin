@@ -19,6 +19,7 @@
 #include <unordered_set>
 
 class AITwinIModel;
+class UPrimitiveComponent;
 
 
 /// Helper to trace a ray in the scene, and collecting information on the impacted iTwin element.
@@ -29,8 +30,13 @@ public:
 
 	/// Add actors to ignore in intersection tests.
 	void AddIgnoredActors(const TArray<AActor*>& ActorsToIgnore);
+	void AddIgnoredActors(const TArray<const AActor*>& ActorsToIgnore);
 
-	ITwinElementID VisitElementsUnderCursor(UWorld const* World, FVector2D& MousePosition,
+	/// Add components to ignore in intersection tests.
+	void AddIgnoredComponents(const TArray<UPrimitiveComponent*>& ComponentsToIgnore);
+
+	ITwinElementID VisitElementsUnderCursor(UWorld const* World,
+		FVector2D& OutMousePosition, FVector& OutTraceStart, FVector& OutTraceEnd,
 		std::function<void(FHitResult const&, std::unordered_set<ITwinElementID>&)>&& HitResultHandler,
 		std::optional<uint32> const& MaxUniqueElementsHit = std::nullopt,
 		std::optional<float> const& CustomTraceExtentInMeters = std::nullopt,

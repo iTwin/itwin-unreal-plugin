@@ -16,6 +16,7 @@
 MODULE_EXPORT namespace AdvViz::SDK 
 {
 	class ISplinesManager;
+	class IPathAnimator;
 
 	class IInstancesManager : public Tools::Factory<IInstancesManager>, public Tools::ExtensionSupport
 	{
@@ -35,6 +36,8 @@ MODULE_EXPORT namespace AdvViz::SDK
 		/// Remove instances by object reference (indices must be in descending order)
 		virtual void RemoveInstancesByObjectRef(const std::string& objectRef, const RefID& gpId, const std::vector<int32_t> indicesInDescendingOrder) = 0;
 		virtual void RemoveGroupInstances(const RefID& gpId) = 0;
+		/// Called after restoring instances (undo/redo system).
+		virtual void OnInstancesRestored(const std::string& objectRef, const RefID& gpId, const std::vector<RefID>& restoredInstances) = 0;
 		/// Check if there are instances
 		virtual bool HasInstances() const = 0;
 		/// Check if there are instances to save on the server
@@ -52,6 +55,7 @@ MODULE_EXPORT namespace AdvViz::SDK
 		virtual IInstancesGroupPtr GetInstancesGroupBySplineID(const RefID& splineId) const = 0;
 
 		virtual void SetSplineManager(std::shared_ptr<ISplinesManager> const& splineManager) = 0;
+		virtual void SetAnimPathManager(std::shared_ptr<IPathAnimator> const& animPathManager) = 0;
 	};
 
 	class ADVVIZ_LINK InstancesManager : public IInstancesManager, Tools::TypeId<InstancesManager>
@@ -73,6 +77,8 @@ MODULE_EXPORT namespace AdvViz::SDK
 		/// Remove instances by object reference (indices must be in descending order)
 		void RemoveInstancesByObjectRef(const std::string& objectRef, const RefID& gpId, const std::vector<int32_t> indicesInDescendingOrder) override;
 		void RemoveGroupInstances(const RefID& gpId) override;
+		/// Called after restoring instances (undo/redo system).
+		void OnInstancesRestored(const std::string& objectRef, const RefID& gpId, const std::vector<RefID>& restoredInstances) override;
 		/// Check if there are instances
 		bool HasInstances() const override;
 		/// Check if there are instances to save on the server
@@ -91,6 +97,7 @@ MODULE_EXPORT namespace AdvViz::SDK
 		IInstancesGroupPtr GetInstancesGroupBySplineID(const RefID& splineId) const override;
 
 		void SetSplineManager(std::shared_ptr<ISplinesManager> const& splineManager) override;
+		void SetAnimPathManager(std::shared_ptr<IPathAnimator> const& animPathManager) override;
 
 		/// Set Http server to use (if none provided, the default created by Config is used.)
 		void SetHttp(std::shared_ptr<Http> http);

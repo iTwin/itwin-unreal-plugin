@@ -337,11 +337,11 @@ TMap<FString, FString> UCesiumMetadataValueBlueprintLibrary::GetValuesAsStrings(
 uint64 FCesiumMetadataValueAccess::GetUnsignedInteger64(
     const FCesiumMetadataValue& Value,
     uint64 DefaultValue) {
-    return swl::visit(
-        [DefaultValue](auto value) -> uint64 {
-        return CesiumGltf::MetadataConversions<uint64_t, decltype(value)>::convert(
-            value)
-            .value_or(DefaultValue);
-    },
-        Value._value);
+  return swl::visit(
+      [DefaultValue](auto value) -> uint64 {
+        return CesiumGltf::MetadataConversions<uint64_t, decltype(value)>::
+            convert(value)
+                .value_or(DefaultValue);
+      },
+      Value._value);
 }

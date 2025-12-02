@@ -8,7 +8,8 @@
 
 #pragma once
 
-#include <CesiumMeshBuildCallbacks.h>
+#include <Cesium3DTilesetLifecycleEventReceiver.h>
+#include "Components.h"
 #include "MaterialTypes.h"
 
 #include <ITwinElementID.h>
@@ -17,10 +18,12 @@
 #include <optional>
 #include <unordered_map>
 
+using FCesiumToUnrealTexCoordMap = std::unordered_map<int32_t, uint32_t>;
 
 class FITwinSceneTile;
 struct FITwinExtractedEntity;
 struct FCesiumPropertyTableProperty;
+class ICesiumLoadedTilePrimitive;
 class UMaterialInterface;
 class UMaterialInstanceDynamic;
 class UStaticMesh;
@@ -49,9 +52,9 @@ struct FITwinMeshExtractionOptions
 class FITwinGltfMeshComponentWrapper
 {
 public:
-	FITwinGltfMeshComponentWrapper(
-		UStaticMeshComponent& MeshComponent,
-		ICesiumMeshBuildCallbacks::FCesiumMeshData const& CesiumData);
+	FITwinGltfMeshComponentWrapper(UStaticMeshComponent& MeshComponent, uint64_t ITwinMaterialID);
+	FITwinGltfMeshComponentWrapper(ICesiumLoadedTilePrimitive& TilePrim,
+								   std::optional<uint32> uvIndexForFeatures);
 
 	/// Extract faces matching the given element, if any, as a new Unreal mesh.
 	/// \return true if a sub-mesh was actually extracted.
@@ -103,10 +106,6 @@ public:
 
 	std::optional<uint64_t> const& GetITwinMaterialIDOpt() const { return iTwinMaterialID_; }
 	bool HasITwinMaterialID(uint64_t MatID) const { return iTwinMaterialID_ && *iTwinMaterialID_ == MatID; }
-
-	/// Enforce the material ID. Should be used with care, as the material ID is normally deduced from the
-	/// FCesiumMeshData passed to the constructor...
-	void EnforceITwinMaterialID(uint64_t MatID);
 
 	/// Apply Func to all material instances linked to this mesh (including extracted entities if any).
 	void ForEachMaterialInstance(std::function<void(UMaterialInstanceDynamic&)> const& Func);

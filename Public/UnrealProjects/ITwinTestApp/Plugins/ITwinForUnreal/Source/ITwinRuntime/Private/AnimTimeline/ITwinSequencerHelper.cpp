@@ -534,8 +534,10 @@ FGuid USequencerHelper::GetPActorGuidFromLevelSequence(AActor* pActor, FString l
 		return FGuid();
 	}
 	FGuid guid;
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	if (pActor && pActor->GetWorld())
 		guid = pLevelSeq->FindBindingFromObject(pActor, pActor->GetWorld());
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	bOutSuccess = guid.IsValid();
 	outInfoMsg = GetOutMsg(bOutSuccess, fname);
 	return guid;
@@ -749,8 +751,8 @@ TrackType* USequencerHelper::AddTrackToActorInLevelSequence(AActor* pActor, FStr
 
 	pTrack = pLevelSeq->MovieScene->AddTrack<TrackType>(guid);
 
-	if (Cast<UMovieScene3DTransformTrack>(pTrack) != NULL)
-		Cast<UMovieScene3DTransformTrack>(pTrack)->SetBlenderSystem(UMovieSceneQuaternionBlenderSystem::StaticClass());
+	if (auto pTransTrack = Cast<UMovieScene3DTransformTrack>((UMovieScenePropertyTrack*)pTrack))
+		pTransTrack->SetBlenderSystem(UMovieSceneQuaternionBlenderSystem::StaticClass());
 
 	bOutSuccess = (pTrack != nullptr);
 	outInfoMsg = GetOutMsg(bOutSuccess, fname);

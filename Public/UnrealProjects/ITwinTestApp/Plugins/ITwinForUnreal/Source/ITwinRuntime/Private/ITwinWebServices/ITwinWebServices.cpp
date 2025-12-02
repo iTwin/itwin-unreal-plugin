@@ -57,6 +57,21 @@ namespace
 			WorkingInstance = PreviousInstance;
 		}
 	};
+
+	// Return true if both TCHAR_TO_ANSI and TCHAR_TO_UTF8 would produce the same result
+	inline bool IsEncodingIndifferent(FString const& Str)
+	{
+		return std::string(TCHAR_TO_ANSI(*Str)) == std::string(TCHAR_TO_UTF8(*Str));
+	}
+
+	// String conversion for iTwin identifiers - the encoding should not matter, as all those identifiers
+	// are pure ascii.
+	// This function just adds a check on this important rule.
+	inline std::string IDToStdString(FString const& StrId)
+	{
+		BE_ASSERT(IsEncodingIndifferent(StrId));
+		return TCHAR_TO_ANSI(*StrId);
+	}
 }
 
 /*static*/
@@ -80,6 +95,16 @@ void UITwinWebServices::SetLogErrors(bool bInLogErrors)
 void UITwinWebServices::AddScope(FString const& ExtraScope)
 {
 	FITwinAuthorizationManager::AddScope(TCHAR_TO_UTF8(*ExtraScope));
+}
+
+
+/*static*/
+UITwinWebServices::PreAuthFunc UITwinWebServices::PreAuthCallback;
+
+/*static*/
+void UITwinWebServices::SetPreAuthFunc(PreAuthFunc const& InPreAuthCallback)
+{
+	PreAuthCallback = InPreAuthCallback;
 }
 
 /*static*/
@@ -202,6 +227,7 @@ public:
 	virtual void OnTextureDataRetrieved(bool bSuccess, std::string const& textureId, AdvViz::SDK::ITwinTextureData const& textureData) override;
 	virtual void OnMatMLPredictionRetrieved(bool bSuccess, AdvViz::SDK::ITwinMaterialPrediction const& prediction, std::string const& error = {}) override;
 	virtual void OnMatMLPredictionProgress(float fProgressRatio) override;
+	virtual void OnGoogleCuratedContentAccessRetrieved(bool bSuccess, AdvViz::SDK::ITwinGoogleCuratedContentAccess const& infos, AdvViz::SDK::RequestID const&) override;
 };
 
 
@@ -278,13 +304,13 @@ namespace
 	}
 	inline void ToCoreSavedViewInfo(FSavedViewInfo const& SavedViewInfo, AdvViz::SDK::SavedViewInfo& coreSV)
 	{
-		coreSV.id = TCHAR_TO_ANSI(*SavedViewInfo.Id);
+		coreSV.id = IDToStdString(SavedViewInfo.Id);
 		coreSV.displayName = TCHAR_TO_UTF8(*SavedViewInfo.DisplayName);
 		coreSV.shared = SavedViewInfo.bShared;
 	}
 	inline void ToCoreSavedViewGroupInfo(FSavedViewGroupInfo const& SavedViewGroupInfo, AdvViz::SDK::SavedViewGroupInfo& coreSVGroup)
 	{
-		coreSVGroup.id = TCHAR_TO_ANSI(*SavedViewGroupInfo.Id);
+		coreSVGroup.id = IDToStdString(SavedViewGroupInfo.Id);
 		coreSVGroup.displayName = TCHAR_TO_UTF8(*SavedViewGroupInfo.DisplayName);
 		coreSVGroup.shared = SavedViewGroupInfo.bShared;
 		coreSVGroup.readOnly = SavedViewGroupInfo.bReadOnly;
@@ -445,18 +471,26 @@ void UITwinWebServices::FImpl::OnRequestError(std::string const& strError, int r
 	}
 }
 
+namespace
+{
+	inline FITwinInfo ToUEITwinInfo(AdvViz::SDK::ITwinInfo const& coreInfo)
+	{
+		return FITwinInfo {
+			.Id =			coreInfo.id.c_str(),
+			.DisplayName =	UTF8_TO_TCHAR(coreInfo.displayName.value_or(std::u8string()).c_str()),
+			.Status	=		coreInfo.status.value_or("").c_str(),
+			.Number =		coreInfo.number.value_or("").c_str()
+		};
+	}
+}
+
 void UITwinWebServices::FImpl::OnITwinsRetrieved(bool bSuccess, AdvViz::SDK::ITwinInfos const& coreInfos)
 {
 	FITwinInfos infos;
 	infos.iTwins.Reserve(coreInfos.iTwins.size());
 	Algo::Transform(coreInfos.iTwins, infos.iTwins,
-		[](AdvViz::SDK::ITwinInfo const& V) -> FITwinInfo { return {
-			V.id.c_str(),
-			UTF8_TO_TCHAR(V.displayName.c_str()),
-			V.status.c_str(),
-			V.number.c_str()
-		};
-	});
+		[](AdvViz::SDK::ITwinInfo const& V) -> FITwinInfo { return ToUEITwinInfo(V); }
+	);
 	owner_.OnGetiTwinsComplete.Broadcast(bSuccess, infos);
 	if (observer_)
 	{
@@ -466,17 +500,11 @@ void UITwinWebServices::FImpl::OnITwinsRetrieved(bool bSuccess, AdvViz::SDK::ITw
 
 void UITwinWebServices::FImpl::OnITwinInfoRetrieved(bool bSuccess, AdvViz::SDK::ITwinInfo const& coreInfo)
 {
-	FITwinInfo const info =
-	{
-		coreInfo.id.c_str(),
-		UTF8_TO_TCHAR(coreInfo.displayName.c_str()),
-		coreInfo.status.c_str(),
-		coreInfo.number.c_str()
-	};
+	FITwinInfo const info = ToUEITwinInfo(coreInfo);
 	owner_.OnGetITwinInfoComplete.Broadcast(bSuccess, info);
 	if (observer_)
 	{
-		observer_->OnITwinInfoRetrieved(bSuccess, info);
+		observer_->OnITwinInfoRetrieved(bSuccess, coreInfo);
 	}
 }
 
@@ -634,6 +662,7 @@ void UITwinWebServices::FImpl::OnSavedViewRetrieved(bool bSuccess, AdvViz::SDK::
 		TSet<FString>(),
 		TSet<FString>(),
 		TSet<FString>(),
+		TSet<FPerModelCategoryVisibilityProps>(),
 		TSet<FPerModelCategoryVisibilityProps>(),
 		TSet<FString>(),
 		FDisplayStyle()
@@ -1041,6 +1070,15 @@ void UITwinWebServices::FImpl::OnMatMLPredictionProgress(float fProgressRatio)
 	}
 }
 
+void UITwinWebServices::FImpl::OnGoogleCuratedContentAccessRetrieved(bool bSuccess,
+	AdvViz::SDK::ITwinGoogleCuratedContentAccess const& infos, AdvViz::SDK::RequestID const& FromRequestID)
+{
+	if (observer_)
+	{
+		observer_->OnGoogleCuratedContentAccessRetrieved(bSuccess, infos, HttpRequestID(FromRequestID.c_str()));
+	}
+}
+
 
 /// UITwinWebServices
 UITwinWebServices::UITwinWebServices()
@@ -1123,6 +1161,46 @@ UITwinWebServices::AuthManagerPtr& UITwinWebServices::GetAuthManager() const
 {
 	return FITwinAuthorizationManager::GetInstance(
 		static_cast<AdvViz::SDK::EITwinEnvironment>(Environment));
+}
+
+void UITwinWebServices::SetRegularAccessToken(const FString& InAccessToken)
+{
+	auto& AuthMngr = GetAuthManager();
+	if (ensure(AuthMngr))
+	{
+		AuthMngr->SetAccessToken(TCHAR_TO_ANSI(*InAccessToken));
+	}
+}
+
+void UITwinWebServices::SetOverrideAccessToken(const FString& InAccessToken, AdvViz::SDK::EITwinAuthOverrideMode InOverrideMode)
+{
+	auto& AuthMngr = GetAuthManager();
+	if (ensure(AuthMngr))
+	{
+		AuthMngr->SetOverrideAccessToken(TCHAR_TO_ANSI(*InAccessToken), InOverrideMode);
+	}
+}
+
+void UITwinWebServices::ResetOverrideAccessToken()
+{
+	auto& AuthMngr = GetAuthManager();
+	if (ensure(AuthMngr))
+	{
+		AuthMngr->ResetOverrideAccessToken();
+	}
+}
+
+AdvViz::SDK::EITwinAuthOverrideMode UITwinWebServices::GetOverrideMode() const
+{
+	auto const& AuthMngr = GetAuthManager();
+	if (ensure(AuthMngr))
+	{
+		return AuthMngr->GetOverrideMode();
+	}
+	else
+	{
+		return AdvViz::SDK::EITwinAuthOverrideMode::None;
+	}
 }
 
 void UITwinWebServices::SetServerConnection(TObjectPtr<AITwinServerConnection> const& InConnection)
@@ -1218,6 +1296,16 @@ bool UITwinWebServices::InitServerConnectionFromWorld()
 
 AdvViz::SDK::EITwinAuthStatus UITwinWebServices::CheckAuthorizationStatus()
 {
+	if (PreAuthCallback)
+	{
+		// See if the authorization should be overridden from outside (typically when it can be retrieved from
+		// the parent application).
+		EITwinEnvironment OverrideEnv = PreAuthCallback();
+		if (OverrideEnv != EITwinEnvironment::Invalid)
+		{
+			SetEnvironment(OverrideEnv);
+		}
+	}
 	if (TryGetServerConnection(true))
 	{
 		// We could get a valid server connection. No need to do anything more (note that the token
@@ -1389,7 +1477,7 @@ bool UITwinWebServices::ConsumeLastError(FString& OutError)
 
 FString UITwinWebServices::GetRequestError(HttpRequestID const& InRequestId) const
 {
-	return Impl->GetRequestError(TCHAR_TO_ANSI(*InRequestId)).c_str();
+	return Impl->GetRequestError(IDToStdString(InRequestId)).c_str();
 }
 
 #if WITH_TESTS
@@ -1417,7 +1505,7 @@ void UITwinWebServices::DoRequest(FunctorType&& InFunctor)
 
 void UITwinWebServices::GetITwinInfo(FString ITwinId)
 {
-	DoRequest([this, ITwinId]() { Impl->GetITwinInfo(TCHAR_TO_ANSI(*ITwinId)); });
+	DoRequest([this, ITwinId]() { Impl->GetITwinInfo(IDToStdString(ITwinId)); });
 }
 
 void UITwinWebServices::GetiTwins()
@@ -1427,13 +1515,13 @@ void UITwinWebServices::GetiTwins()
 
 void UITwinWebServices::GetiTwiniModels(FString ITwinId)
 {
-	DoRequest([this, ITwinId]() { Impl->GetITwinIModels(TCHAR_TO_ANSI(*ITwinId)); });
+	DoRequest([this, ITwinId]() { Impl->GetITwinIModels(IDToStdString(ITwinId)); });
 }
 
 void UITwinWebServices::DoGetiModelChangesets(FString const& IModelId, bool bRestrictToLatest)
 {
 	DoRequest([this, &IModelId, bRestrictToLatest]() {
-		Impl->GetIModelChangesets(TCHAR_TO_ANSI(*IModelId), bRestrictToLatest); }
+		Impl->GetIModelChangesets(IDToStdString(IModelId), bRestrictToLatest); }
 	);
 }
 
@@ -1450,19 +1538,19 @@ void UITwinWebServices::GetiModelLatestChangeset(FString iModelId)
 void UITwinWebServices::GetExports(FString IModelId, FString ChangesetId)
 {
 	DoRequest([this, IModelId, ChangesetId]() {
-		Impl->GetExports(TCHAR_TO_ANSI(*IModelId), TCHAR_TO_ANSI(*ChangesetId)); }
+		Impl->GetExports(IDToStdString(IModelId), IDToStdString(ChangesetId)); }
 	);
 }
 
 void UITwinWebServices::GetExportInfo(FString ExportId)
 {
-	DoRequest([this, ExportId]() { Impl->GetExportInfo(TCHAR_TO_ANSI(*ExportId)); });
+	DoRequest([this, ExportId]() { Impl->GetExportInfo(IDToStdString(ExportId)); });
 }
 
 void UITwinWebServices::StartExport(FString IModelId, FString ChangesetId)
 {
 	DoRequest([this, IModelId, ChangesetId]() {
-		Impl->StartExport(TCHAR_TO_ANSI(*IModelId), TCHAR_TO_ANSI(*ChangesetId)); }
+		Impl->StartExport(IDToStdString(IModelId), IDToStdString(ChangesetId)); }
 	);
 }
 
@@ -1470,37 +1558,40 @@ void UITwinWebServices::StartExport(FString IModelId, FString ChangesetId)
 void UITwinWebServices::GetAllSavedViews(FString iTwinId, FString iModelId, FString GroupId /*= ""*/, int Top /*= 100*/, int Skip /*= 0*/)
 {
 	DoRequest([this, iTwinId, iModelId, GroupId, Top, Skip]() {
-		Impl->GetAllSavedViews(TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId), TCHAR_TO_ANSI(*GroupId), Top, Skip);
+		Impl->GetAllSavedViews(IDToStdString(iTwinId), IDToStdString(iModelId), IDToStdString(GroupId), Top, Skip);
 	});
 }
 
 void UITwinWebServices::GetSavedViewGroups(FString iTwinId, FString iModelId /*= ""*/)
 {
 	DoRequest([this, iTwinId, iModelId]() {
-		Impl->GetSavedViewsGroups(TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId));
+		Impl->GetSavedViewsGroups(IDToStdString(iTwinId), IDToStdString(iModelId));
 		});
 }
 
 void UITwinWebServices::GetSavedView(FString SavedViewId)
 {
-	DoRequest([this, SavedViewId]() { Impl->GetSavedView(TCHAR_TO_ANSI(*SavedViewId)); });
+	DoRequest([this, SavedViewId]() { Impl->GetSavedView(IDToStdString(SavedViewId)); });
 }
 
 void UITwinWebServices::GetSavedViewExtension(FString SavedViewId, FString ExtensionName)
 {
 	DoRequest([this, SavedViewId, ExtensionName]() { 
-		Impl->GetSavedViewExtension(TCHAR_TO_ANSI(*SavedViewId), TCHAR_TO_ANSI(*ExtensionName)); 
+		Impl->GetSavedViewExtension(IDToStdString(SavedViewId), TCHAR_TO_ANSI(*ExtensionName)); 
 	});
 }
 
 void UITwinWebServices::GetSavedViewThumbnail(FString SavedViewId)
 {
-	DoRequest([this, SavedViewId]() { Impl->GetSavedViewThumbnail(TCHAR_TO_ANSI(*SavedViewId)); });
+	DoRequest([this, SavedViewId]() { Impl->GetSavedViewThumbnail(IDToStdString(SavedViewId)); });
 }
 
 void UITwinWebServices::UpdateSavedViewThumbnail(FString SavedViewId, FString ThumbnailURL)
 {
-	DoRequest([this, SavedViewId, ThumbnailURL]() { Impl->UpdateSavedViewThumbnail(TCHAR_TO_ANSI(*SavedViewId), TCHAR_TO_ANSI(*ThumbnailURL)); });
+	// N.B. ThumbnailURL being encoded in base64, the encoding is indifferent here.
+	BE_ASSERT(IsEncodingIndifferent(ThumbnailURL));
+
+	DoRequest([this, SavedViewId, ThumbnailURL]() { Impl->UpdateSavedViewThumbnail(IDToStdString(SavedViewId), TCHAR_TO_UTF8(*ThumbnailURL)); });
 }
 
 void UITwinWebServices::AddSavedView(FString ITwinId, FSavedView SavedView, FSavedViewInfo SavedViewInfo, FString IModelId /*= ""*/, FString GroupId /*= ""*/)
@@ -1511,8 +1602,8 @@ void UITwinWebServices::AddSavedView(FString ITwinId, FSavedView SavedView, FSav
 	ToCoreSavedViewInfo(SavedViewInfo, coreSVInfo);
 
 	DoRequest([this, ITwinId, IModelId, &coreSV, &coreSVInfo, GroupId]() {
-		Impl->AddSavedView(TCHAR_TO_ANSI(*ITwinId), coreSV, coreSVInfo, 
-						   TCHAR_TO_ANSI(*IModelId), TCHAR_TO_ANSI(*GroupId));
+		Impl->AddSavedView(IDToStdString(ITwinId), coreSV, coreSVInfo,
+						   IDToStdString(IModelId), IDToStdString(GroupId));
 	});
 }
 
@@ -1531,14 +1622,14 @@ void UITwinWebServices::AddSavedViewGroup(FString ITwinId, FString IModelId, FSa
 	ToCoreSavedViewGroupInfo(SavedViewGroupInfo, coreSVGroupInfo);
 
 	DoRequest([this, ITwinId, IModelId, &coreSVGroupInfo]() {
-		Impl->AddSavedViewGroup(TCHAR_TO_ANSI(*ITwinId), TCHAR_TO_ANSI(*IModelId),
+		Impl->AddSavedViewGroup(IDToStdString(ITwinId), IDToStdString(IModelId),
 		coreSVGroupInfo);
 		});
 }
 
 void UITwinWebServices::DeleteSavedView(FString SavedViewId)
 {
-	DoRequest([this, SavedViewId]() { Impl->DeleteSavedView(TCHAR_TO_ANSI(*SavedViewId)); });
+	DoRequest([this, SavedViewId]() { Impl->DeleteSavedView(IDToStdString(SavedViewId)); });
 }
 
 void UITwinWebServices::OnSavedViewDeleted(bool bSuccess, FString const& SavedViewId, FString const& Response) const
@@ -1563,13 +1654,13 @@ void UITwinWebServices::EditSavedView(FSavedView SavedView, FSavedViewInfo Saved
 
 void UITwinWebServices::GetRealityData(FString ITwinId)
 {
-	DoRequest([this, ITwinId]() { Impl->GetRealityData(TCHAR_TO_ANSI(*ITwinId)); });
+	DoRequest([this, ITwinId]() { Impl->GetRealityData(IDToStdString(ITwinId)); });
 }
 
 void UITwinWebServices::GetRealityData3DInfo(FString ITwinId, FString RealityDataId)
 {
 	DoRequest([this, ITwinId, RealityDataId]() {
-		Impl->GetRealityData3DInfo(TCHAR_TO_ANSI(*ITwinId), TCHAR_TO_ANSI(*RealityDataId));
+		Impl->GetRealityData3DInfo(IDToStdString(ITwinId), IDToStdString(RealityDataId));
 	});
 }
 
@@ -1577,7 +1668,7 @@ void UITwinWebServices::GetRealityData3DInfo(FString ITwinId, FString RealityDat
 void UITwinWebServices::GetElementProperties(FString iTwinId, FString iModelId, FString ChangesetId, FString ElementId)
 {
 	DoRequest([this, iTwinId, iModelId, ChangesetId, ElementId]() {
-		Impl->GetElementProperties(TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId), TCHAR_TO_ANSI(*ChangesetId), TCHAR_TO_ANSI(*ElementId));
+		Impl->GetElementProperties(IDToStdString(iTwinId), IDToStdString(iModelId), IDToStdString(ChangesetId), IDToStdString(ElementId));
 	});
 }
 
@@ -1585,7 +1676,7 @@ void UITwinWebServices::GetPagedNodes(FString const& iTwinId, FString const& iMo
 	FString const& ChangesetId, FString const& parentKey /*= ""*/, int offset /*= 0*/, int count /*= 1000*/)
 {
 	DoRequest([this, iTwinId, iModelId, ChangesetId, parentKey, offset, count]() {
-		Impl->GetPagedNodes(TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId), TCHAR_TO_ANSI(*ChangesetId), TCHAR_TO_ANSI(*parentKey), offset, count);
+		Impl->GetPagedNodes(IDToStdString(iTwinId), IDToStdString(iModelId), IDToStdString(ChangesetId), TCHAR_TO_UTF8(*parentKey), offset, count);
 		});
 }
 
@@ -1593,7 +1684,7 @@ void UITwinWebServices::GetModelFilteredNodes(FString const& iTwinId, FString co
 	FString const& ChangesetId, FString const& Filter)
 {
 	DoRequest([this, iTwinId, iModelId, ChangesetId, Filter]() {
-		Impl->GetModelFilteredNodePaths(TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId), TCHAR_TO_ANSI(*ChangesetId), TCHAR_TO_ANSI(*Filter));
+		Impl->GetModelFilteredNodePaths(IDToStdString(iTwinId), IDToStdString(iModelId), IDToStdString(ChangesetId), TCHAR_TO_UTF8(*Filter));
 		});
 }
 
@@ -1601,7 +1692,7 @@ void UITwinWebServices::GetCategoryFilteredNodes(FString const& iTwinId, FString
 	FString const& ChangesetId, FString const& Filter)
 {
 	DoRequest([this, iTwinId, iModelId, ChangesetId, Filter]() {
-		Impl->GetCategoryFilteredNodePaths(TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId), TCHAR_TO_ANSI(*ChangesetId), TCHAR_TO_ANSI(*Filter));
+		Impl->GetCategoryFilteredNodePaths(IDToStdString(iTwinId), IDToStdString(iModelId), IDToStdString(ChangesetId), TCHAR_TO_UTF8(*Filter));
 		});
 }
 
@@ -1609,14 +1700,14 @@ void UITwinWebServices::GetCategoryNodes(FString const& iTwinId, FString const& 
 	FString const& ChangesetId, FString const& parentKey /*= ""*/, int offset /*= 0*/, int count /*= 1000*/)
 {
 	DoRequest([this, iTwinId, iModelId, ChangesetId, parentKey, offset, count]() {
-		Impl->GetCategoryNodes(TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId), TCHAR_TO_ANSI(*ChangesetId), TCHAR_TO_ANSI(*parentKey), offset, count);
+		Impl->GetCategoryNodes(IDToStdString(iTwinId), IDToStdString(iModelId), IDToStdString(ChangesetId), TCHAR_TO_UTF8(*parentKey), offset, count);
 		});
 }
 
 void UITwinWebServices::GetIModelProperties(FString iTwinId, FString iModelId, FString ChangesetId)
 {
 	DoRequest([this, iTwinId, iModelId, ChangesetId]() {
-		Impl->GetIModelProperties(TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId), TCHAR_TO_ANSI(*ChangesetId));
+		Impl->GetIModelProperties(IDToStdString(iTwinId), IDToStdString(iModelId), IDToStdString(ChangesetId));
 	});
 }
 
@@ -1627,7 +1718,7 @@ void UITwinWebServices::ConvertIModelCoordsToGeoCoords(FString iTwinId, FString 
 				NotifRequestID=std::move(NotifRequestID)] () mutable
 		{
 			Impl->ConvertIModelCoordsToGeoCoords(
-				TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId), TCHAR_TO_ANSI(*ChangesetId),
+				IDToStdString(iTwinId), IDToStdString(iModelId), IDToStdString(ChangesetId),
 				IModelSpatialCoords.X, IModelSpatialCoords.Y, IModelSpatialCoords.Z,
 				[NotifRequestID = std::move(NotifRequestID)](AdvViz::SDK::RequestID const& RequestID)
 					{ if (NotifRequestID) NotifRequestID(HttpRequestID(RequestID.c_str())); });
@@ -1643,8 +1734,8 @@ void UITwinWebServices::QueryIModel(FString iTwinId, FString iModelId, FString C
 AdvViz::SDK::ITwinAPIRequestInfo UITwinWebServices::InfosToQueryIModel(FString iTwinId, FString iModelId,
 	FString ChangesetId, FString ECSQLQuery, int Offset, int Count)
 {
-	return Impl->InfosToQueryIModel(TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId),
-		TCHAR_TO_ANSI(*ChangesetId), TCHAR_TO_ANSI(*ECSQLQuery), Offset, Count);
+	return Impl->InfosToQueryIModel(IDToStdString(iTwinId), IDToStdString(iModelId),
+		IDToStdString(ChangesetId), TCHAR_TO_UTF8(*ECSQLQuery), Offset, Count);
 }
 
 void UITwinWebServices::QueryIModelRows(FString iTwinId, FString iModelId, FString ChangesetId,
@@ -1658,17 +1749,17 @@ void UITwinWebServices::QueryIModelRows(FString iTwinId, FString iModelId, FStri
 		 FilterError=std::move(FilterError)] () mutable
 		{
 			Impl->QueryIModel(
-				TCHAR_TO_ANSI(*iTwinId),
-				TCHAR_TO_ANSI(*iModelId),
-				TCHAR_TO_ANSI(*ChangesetId),
-				TCHAR_TO_ANSI(*ECSQLQuery),
+				IDToStdString(iTwinId),
+				IDToStdString(iModelId),
+				IDToStdString(ChangesetId),
+				TCHAR_TO_UTF8(*ECSQLQuery),
 				Offset,
 				Count,
 				[NotifRequestID = std::move(NotifRequestID)](AdvViz::SDK::RequestID const& RequestID)
 					{ if (NotifRequestID) NotifRequestID(HttpRequestID(RequestID.c_str())); },
 				RequestInfo,
-				[FilterError = std::move(FilterError)](std::string const& StrError, bool& bAllowRetry, bool& bLogError)
-					{ if (FilterError) FilterError(std::string(StrError.c_str()), bAllowRetry, bLogError);  }
+				[FilterError = std::move(FilterError)](long statusCode, std::string const& StrError, bool& bAllowRetry, bool& bLogError)
+					{ if (FilterError) FilterError(statusCode, std::string(StrError.c_str()), bAllowRetry, bLogError);  }
 				);
 		});
 }
@@ -1679,8 +1770,8 @@ void UITwinWebServices::GetMaterialProperties(
 {
 	DoRequest([this, iTwinId, iModelId, ChangesetId, MaterialId]() {
 		Impl->GetMaterialProperties(
-			TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId), TCHAR_TO_ANSI(*ChangesetId),
-			TCHAR_TO_ANSI(*MaterialId));
+			IDToStdString(iTwinId), IDToStdString(iModelId), IDToStdString(ChangesetId),
+			IDToStdString(MaterialId));
 	});
 }
 
@@ -1692,9 +1783,9 @@ void UITwinWebServices::GetMaterialListProperties(
 		std::vector<std::string> coreMatIds;
 		coreMatIds.reserve(MaterialIds.Num());
 		for (FString const& id : MaterialIds)
-			coreMatIds.push_back(TCHAR_TO_ANSI(*id));
+			coreMatIds.push_back(IDToStdString(id));
 		Impl->GetMaterialListProperties(
-			TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId), TCHAR_TO_ANSI(*ChangesetId),
+			IDToStdString(iTwinId), IDToStdString(iModelId), IDToStdString(ChangesetId),
 			coreMatIds);
 	});
 }
@@ -1705,8 +1796,8 @@ void UITwinWebServices::GetTextureData(
 {
 	DoRequest([this, iTwinId, iModelId, ChangesetId, TextureId]() {
 		Impl->GetTextureData(
-			TCHAR_TO_ANSI(*iTwinId), TCHAR_TO_ANSI(*iModelId), TCHAR_TO_ANSI(*ChangesetId),
-			TCHAR_TO_ANSI(*TextureId));
+			IDToStdString(iTwinId), IDToStdString(iModelId), IDToStdString(ChangesetId),
+			IDToStdString(TextureId));
 	});
 }
 
@@ -1735,9 +1826,14 @@ EITwinMaterialPredictionStatus UITwinWebServices::GetMaterialMLPrediction(
 
 	return static_cast<EITwinMaterialPredictionStatus>(
 		Impl->GetMaterialMLPrediction(
-			TCHAR_TO_ANSI(*iTwinId),
-			TCHAR_TO_ANSI(*iModelId),
-			TCHAR_TO_ANSI(*ChangesetId)));
+			IDToStdString(iTwinId),
+			IDToStdString(iModelId),
+			IDToStdString(ChangesetId)));
+}
+
+void UITwinWebServices::GetGoogleCuratedContentAccess()
+{
+	Impl->GetGoogleCuratedContentAccess();
 }
 
 void UITwinWebServices::SetCustomServerURL(std::string const& ServerUrl)

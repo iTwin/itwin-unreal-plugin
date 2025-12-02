@@ -26,7 +26,7 @@ hackDuplicateByPlatform = ["zconf.h"]
 # But this requires adding more info in the "added" file (to know if the file was
 # copied on purpose), because currently when removing old file we raise an error if
 # the file we try to remove is not a symlink.
-# So as a workaround we simply decided what to do based the file extension.
+# So as a workaround we simply decide what to do based on the file extension.
 def ShouldCopy(path: str):
 	return pathlib.Path(path).suffix.lower() in [".dll"]
 
@@ -55,13 +55,21 @@ def CreateSymlink2(target: pathlib.Path, link: pathlib.Path):
 	#   If the target has been modified after the link was created, we must re-create the link
     #   so that tools that check the modification date (eg. UBT) will correctly see that the file
 	#   (ie. the link) has changed and thus properly rebuild what depends on it.
-	isUpToDate = link.is_symlink() and os.path.realpath(link.readlink().as_posix().replace('//?/', '')) == os.path.realpath(target.as_posix())
+	currentLinkTarget = \
+		os.path.realpath(link.readlink().as_posix().replace('//?/', '')) if link.is_symlink() else ''
+	desiredTarget = os.path.realpath(target.as_posix())
+	isUpToDate = currentLinkTarget == desiredTarget
 	if target.is_file():
 		isUpToDate = isUpToDate and link.lstat().st_mtime >= target.stat().st_mtime
 	if isUpToDate:
 		#print(f'Up to Date symlink "{link}" -> "{target}".')
 		return
 	print(f'Create symlink "{link}" -> "{target}".')
+	# For debugging overwritten links:
+	# if not link.is_symlink():
+	#	print(f'...coz {link} is not a symlink')
+	# else:
+	#	print(f'...coz {link} points at {currentLinkTarget} instead of {desiredTarget}')
 	link.unlink(True)
 	link.parent.mkdir(parents=True, exist_ok=True)
 	link.symlink_to(target, target.is_dir())
@@ -98,19 +106,32 @@ def CreateSymlink(target: str, link: str):
 
 def SetupCesium(src: str, dst:str, overrideSrc: str):
 	#print(f'SetupCesium "{src}" -> "{dst}".')
-	for subDir, globPattern in [('Include', '*'), ('Lib', '*/*')]:
-		for itemPathSrc in pathlib.Path(src, subDir).glob(globPattern):
-			itemPathRel = itemPathSrc.relative_to(src)
-			itemPathDst = pathlib.Path(dst, itemPathRel)
-			# For libs coming from vcpkg, we have to use carrot's libs, not cesium's libs.
-			# See Public/CesiumDependencies/CMakeLists.txt for explanation.
-			# "src" arg points to cesium lib folder, so here we look in overrideSrc folder
-			# (which points to carrot lib folder) if a lib with the same name exists here.
-			# If so, we take the "override" (ie. carrot) lib.
-			overrideItemPathSrc = pathlib.Path(overrideSrc)/"lib"/itemPathSrc.name
-			if overrideItemPathSrc.exists():
-				itemPathSrc = overrideItemPathSrc
-			CreateSymlink2(itemPathSrc, itemPathDst)
+	for itemPathSrc in pathlib.Path(src, 'Lib').glob('*/*'):
+		itemPathRel = itemPathSrc.relative_to(src)
+		itemPathDst = pathlib.Path(dst, itemPathRel)
+		# If a lib from our vcpkg manifest has a custom-built (non-vcpkg) version in cesium,
+		# we're probably running into trouble. This should no longer happen
+		# "src" arg points to cesium lib folder, so here we look in overrideSrc folder
+		# (which points to the common vcpkg lib folder) if a lib with the same name exists there.
+		overrideItemPathSrc = pathlib.Path(overrideSrc)/"lib"/itemPathSrc.name
+		# Rely on lib size, this is executed at every build...
+		if overrideItemPathSrc.is_file() and os.path.getsize(itemPathSrc) != os.path.getsize(overrideItemPathSrc):
+			raise Exception(f'Library mismatch found: {itemPathSrc} ({os.path.getsize(itemPathSrc)} bytes) vs. {overrideItemPathSrc} ({os.path.getsize(overrideItemPathSrc)} bytes)')
+		CreateSymlink2(itemPathSrc, itemPathDst)
+	for itemPathSrc in pathlib.Path(src, 'Include').glob('*'):
+		itemPathRel = itemPathSrc.relative_to(src)
+		itemPathDst = pathlib.Path(dst, itemPathRel)
+		# If a header is both in $src/Include and in $overrideSrc/include, it may already have been
+		# done (if it is also a dep of our own code) and we would end up with two different targets
+		# for the same link in command_SetupExternFiles_xxx.py file, leading to the symlink being
+		# constantly recreated, its timestamp changing, and thus CPPs being rebuilt constantly by
+		# incremental builds. Thus, use the 'overrideSrc' path instead, as existing link targets
+		# are tested and linking skipped if already correct.
+		overrideItemPathSrc = pathlib.Path(overrideSrc)/"include"/itemPathSrc.name
+		if overrideItemPathSrc.exists():
+			itemPathSrc = overrideItemPathSrc
+		CreateSymlink2(itemPathSrc, itemPathDst)
+
 
 if os.path.exists(sys.argv[1]):
 	f = open(sys.argv[1])

@@ -54,6 +54,7 @@ public:
 	FITwinSceneMapping SceneMapping;
 	std::shared_ptr<FIModelUninitializer> Uniniter;
 	std::unordered_set<ITwinScene::TileIdx> TilesPendingRenderReadiness;
+	double LastScheduleDownloadProgressLogged = -100.;
 
 	FITwinIModelInternals(AITwinIModel& InOwner) : Owner(InOwner)
 		, SceneMapping(InOwner.HasAnyFlags(RF_ClassDefaultObject))
@@ -88,20 +89,24 @@ public:
 		return (ITwin::NOT_ELEMENT != Elem.ElementID); // <== means it was not found
 	}
 
-	void OnNewTileBuilt(Cesium3DTilesSelection::TileID const& TileID);
-	void UnloadKnownTile(Cesium3DTilesSelection::TileID const& TileID);
+	void OnNewTileBuilt(ITwin::CesiumTileID const& TileID);
+	void UnloadKnownTile(ITwin::CesiumTileID const& TileID);
 	void OnElementsTimelineModified(FITwinElementTimeline& ModifiedTimeline,
 									std::vector<ITwinElementID> const* OnlyForElements = nullptr);
-	void OnVisibilityChanged(const Cesium3DTilesSelection::TileID& TileID, bool visible);
+	void OnVisibilityChanged(ITwin::CesiumTileID const& TileID, bool visible);
 	void SetNeedForcedShadowUpdate() const;
+	void OnScheduleDownloadProgressed(double PercentComplete);
+	void LogScheduleDownloadProgressed();
 
 	bool OnClickedElement(ITwinElementID const Element, FHitResult const& HitResult,
 						  bool const bSelectElement = true);
 	void DescribeElement(ITwinElementID const Element, TWeakObjectPtr<UPrimitiveComponent> HitComponent = {});
 	void HideElements(std::unordered_set<ITwinElementID> const& InElementIDs, bool IsConstruction, bool Force = false);
+	void ShowElements(std::unordered_set<ITwinElementID> const& InElementIDs, bool Force = false);
 	void HideModels(std::unordered_set<ITwinElementID> const& InModelIDs, bool Force = false);
 	void HideCategories(std::unordered_set<ITwinElementID> const& InCategoryIDs, bool Force = false);
 	void HideCategoriesPerModel(std::unordered_set<std::pair<ITwinElementID, ITwinElementID>, FITwinSceneTile::pair_hash> const& InCategoryPerModelIDs, bool Force =false);
+	void ShowCategoriesPerModel(std::unordered_set<std::pair<ITwinElementID, ITwinElementID>, FITwinSceneTile::pair_hash> const& InCategoryPerModelIDs, bool Force =false);
 	//! Returns the selected Element's ID, if an Element is selected, or ITwin::NOT_ELEMENT.
 	ITwinElementID GetSelectedElement() const;
 	//! Select the given material (use ITwin::NOT_MATERIAL to de-select).

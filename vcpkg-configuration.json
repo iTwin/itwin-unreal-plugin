@@ -1,0 +1,14 @@
+{
+	"$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg-configuration.schema.json",
+	"default-registry": {
+		"kind": "git",
+		"baseline": "d5ec528843d29e3a52d745a64b469f810b2cedbf",
+		"repository": "https://github.com/microsoft/vcpkg"
+	},
+	"overlay-ports": [
+		"Public/Extern/cesium-unreal/extern/vcpkg-overlays"
+	],
+	"overlay-triplets": [
+		"vcpkg-triplets"
+	]
+}

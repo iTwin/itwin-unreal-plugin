@@ -26,11 +26,23 @@ MODULE_EXPORT namespace AdvViz::SDK
 	class IInstance : public Tools::Factory<IInstance>, public Tools::ExtensionSupport
 	{
 	public:
+		// Database id
 		virtual const std::string& GetId() const = 0;
 		virtual void SetId(const std::string& id) = 0;
 
+		virtual const RefID& GetRefId() const = 0;
+		virtual void SetRefId(const RefID& id) = 0;
+
 		virtual const std::shared_ptr<IInstancesGroup>& GetGroup() const = 0;
 		virtual void SetGroup(const std::shared_ptr<IInstancesGroup>& group) = 0;
+
+		// Animation id can correspond to key frame animation or path animation
+		virtual const std::string& GetAnimId() const = 0;
+		virtual void SetAnimId(const std::string& id) = 0;
+
+		virtual const std::optional<RefID>& GetAnimPathId() const = 0;
+		virtual void SetAnimPathId(const RefID& id) = 0;
+		virtual void RemoveAnimPathId() = 0;
 
 		virtual const std::string& GetName() const = 0;
 		virtual void SetName(const std::string& name) = 0;
@@ -46,8 +58,6 @@ MODULE_EXPORT namespace AdvViz::SDK
 
 		virtual bool ShouldSave() const = 0;
 		virtual void SetShouldSave(bool value) = 0;
-		virtual void SetAnimId(const std::string& id) = 0;
-		virtual const std::string& GetAnimId() const = 0;
 
 		virtual expected<void, std::string> Update() = 0;
 	};
@@ -58,11 +68,18 @@ MODULE_EXPORT namespace AdvViz::SDK
 		const std::string& GetId() const override;
 		void SetId(const std::string& id) override;
 
+		const RefID& GetRefId() const override;
+		void SetRefId(const RefID& id) override;
+		void RemoveAnimPathId() override;
+
 		const std::shared_ptr<IInstancesGroup>& GetGroup() const override;
 		void SetGroup(const std::shared_ptr<IInstancesGroup>& group) override;
 
 		const std::string& GetAnimId() const override;
 		void SetAnimId(const std::string& id) override;
+
+		void SetAnimPathId(const RefID& id) override;
+		const std::optional<RefID>& GetAnimPathId() const override;
 
 		const std::string& GetName() const override;
 		void SetName(const std::string& name) override;
@@ -94,7 +111,7 @@ MODULE_EXPORT namespace AdvViz::SDK
 		Impl& GetImpl();
 	};
 
-	typedef std::vector<std::shared_ptr<IInstance>> SharedInstVect;
 	typedef std::shared_ptr<IInstance> IInstancePtr;
 	typedef std::weak_ptr<IInstance> IInstanceWPtr;
+	typedef std::vector<IInstancePtr> SharedInstVect;
 }

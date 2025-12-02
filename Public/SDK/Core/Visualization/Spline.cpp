@@ -93,6 +93,13 @@ namespace AdvViz::SDK
 		return *impl_;
 	}
 
+	std::shared_ptr<ISplinePoint> SplinePoint::Clone() const
+	{
+		std::shared_ptr<SplinePoint> clone = std::make_shared<SplinePoint>();
+		clone->GetImpl() = *impl_;
+		return std::static_pointer_cast<ISplinePoint>(clone);
+	}
+
 	template<>
 	Tools::Factory<ISplinePoint>::Globals::Globals()
 	{
@@ -118,8 +125,11 @@ namespace AdvViz::SDK
 		std::string name_;
 		ESplineUsage usage_ = ESplineUsage::Undefined;
 		bool closedLoop_ = false;
-		std::string linkedModelType_; // only set if the spline is linked to a model
-		std::string linkedModelId_; // only set if the spline is linked to a model
+
+		std::vector<SplineLinkedModel> linkedModels_; // empty if the spline is not linked to any model
+		bool enableEffect_ = true;
+		bool invertEffect_ = false; // introduced for MapCutout
+
 		dmat3x4 transform_;
 		SharedSplinePointVect points_;
 		SharedSplinePointVect removedPoints_; // used by the spline manager for the saving.
@@ -127,6 +137,8 @@ namespace AdvViz::SDK
 		bool shouldSave_ = false;
 
 	public:
+		void CopyWithoutSharing(Impl const& other);
+
 		const RefID& GetId() const { return id_; }
 		void SetId(const RefID& id) { id_ = id; }
 
@@ -253,12 +265,66 @@ namespace AdvViz::SDK
 			}
 		}
 
-		const std::string& GetLinkedModelType() const { return linkedModelType_; }
-		void SetLinkedModelType(const std::string& type) { linkedModelType_ = type; }
+		const std::vector<SplineLinkedModel>& GetLinkedModels() const { return linkedModels_; }
+		void SetLinkedModels(const std::vector<SplineLinkedModel>& models)
+		{
+			if (models != linkedModels_)
+			{
+				linkedModels_ = models;
+				shouldSave_ = true;
+			}
+		}
 
-		const std::string& GetLinkedModelId() const { return linkedModelId_; }
-		void SetLinkedModelId(const std::string& id) { linkedModelId_ = id; }
+		bool IsEnabledEffect() const { return enableEffect_; }
+		void EnableEffect(bool bEnable)
+		{
+			if (bEnable != enableEffect_)
+			{
+				enableEffect_ = bEnable;
+				shouldSave_ = true;
+			}
+		}
+
+		bool GetInvertEffect() const { return invertEffect_; }
+		void SetInvertEffect(bool bInvert)
+		{
+			if (bInvert != invertEffect_)
+			{
+				invertEffect_ = bInvert;
+				shouldSave_ = true;
+			}
+		}
 	};
+
+	namespace
+	{
+		void ClonePoints(SharedSplinePointVect& dst, SharedSplinePointVect const& src)
+		{
+			dst.clear();
+			dst.reserve(src.size());
+			for (auto const& srcPoint : src)
+			{
+				dst.emplace_back(srcPoint->Clone());
+			}
+		}
+	}
+
+	void Spline::Impl::CopyWithoutSharing(Impl const& other)
+	{
+		id_ = other.id_;
+		name_ = other.name_;
+		usage_ = other.usage_;
+		closedLoop_ = other.closedLoop_;
+
+		linkedModels_ = other.linkedModels_;
+		enableEffect_ = other.enableEffect_;
+		invertEffect_ = other.invertEffect_;
+
+		transform_ = other.transform_;
+		ClonePoints(points_, other.points_);
+		ClonePoints(removedPoints_, other.removedPoints_);
+		shouldSave_ = other.shouldSave_;
+	}
 
 	const RefID& Spline::GetId() const { return impl_->GetId(); }
 	void Spline::SetId(const RefID& id) { impl_->SetId(id); }
@@ -272,11 +338,14 @@ namespace AdvViz::SDK
 	bool Spline::IsClosedLoop() const { return impl_->IsClosedLoop(); }
 	void Spline::SetClosedLoop(bool bClosedLoop) { impl_->SetClosedLoop(bClosedLoop); }
 
-	const std::string& Spline::GetLinkedModelType() const { return impl_->GetLinkedModelType(); }
-	void Spline::SetLinkedModelType(const std::string& type) { impl_->SetLinkedModelType(type); }
+	const std::vector<SplineLinkedModel>& Spline::GetLinkedModels() const { return impl_->GetLinkedModels(); }
+	void Spline::SetLinkedModels(const std::vector<SplineLinkedModel>& models) { impl_->SetLinkedModels(models); }
 
-	const std::string& Spline::GetLinkedModelId() const { return impl_->GetLinkedModelId(); }
-	void Spline::SetLinkedModelId(const std::string& id) { impl_->SetLinkedModelId(id); }
+	bool Spline::IsEnabledEffect() const { return impl_->IsEnabledEffect(); }
+	void Spline::EnableEffect(bool bEnable) { impl_->EnableEffect(bEnable); }
+
+	bool Spline::GetInvertEffect() const { return impl_->GetInvertEffect(); }
+	void Spline::SetInvertEffect(bool bInvert) { impl_->SetInvertEffect(bInvert); }
 
 	const dmat3x4& Spline::GetTransform() const { return impl_->GetTransform(); }
 	void Spline::SetTransform(const dmat3x4& mat) { impl_->SetTransform(mat); }
@@ -297,6 +366,13 @@ namespace AdvViz::SDK
 	const SharedSplinePointVect& Spline::GetRemovedPoints() const { return impl_->GetRemovedPoints(); }
 	void Spline::ClearPoints() { impl_->ClearPoints(); }
 	void Spline::ClearRemovedPoints() { impl_->ClearRemovedPoints(); }
+
+	std::shared_ptr<ISpline> Spline::Clone() const
+	{
+		std::shared_ptr<Spline> clone = std::make_shared<Spline>();
+		clone->GetImpl().CopyWithoutSharing(*impl_);
+		return std::static_pointer_cast<ISpline>(clone);
+	}
 
 	Spline::Spline():impl_(new Impl())
 	{}

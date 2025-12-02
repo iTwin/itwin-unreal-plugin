@@ -12,7 +12,7 @@
 #include <ITwinGeolocation.h>
 #include <ITwinSetupMaterials.h>
 #include <ITwinTilesetAccess.h>
-
+#include <Clipping/ITwinClippingCustomPrimitiveDataHelper.h>
 #include <Decoration/ITwinDecorationHelper.h>
 
 #include <Kismet/GameplayStatics.h>
@@ -21,6 +21,9 @@
 
 #include <Compil/BeforeNonUnrealIncludes.h>
 #	include <Core/ITwinAPI/ITwinScene.h>
+#	include <Core/ITwinAPI/ITwinTypes.h>
+#	include <Core/Network/http.h>
+#	include <Core/Tools/Log.h>
 #include <Compil/AfterNonUnrealIncludes.h>
 
 
@@ -29,7 +32,16 @@
 
 namespace
 {
+	//! Used if the user provides his own Google API key.
 	static FString DefaultGoogle3DTilesetKey;
+
+	//! Used when the access token is retrieved from iTwin API.
+	static AdvViz::SDK::ITwinGoogleCuratedContentAccess ITwinGoogleAccess;
+
+	inline bool HasITwinGoogleAccess()
+	{
+		return !ITwinGoogleAccess.url.empty() && !ITwinGoogleAccess.accessToken.empty();
+	}
 }
 
 
@@ -62,6 +74,23 @@ namespace ITwin
 	}
 }
 
+
+class AITwinGoogle3DTileset::FTilesetAccess : public FITwinTilesetAccess
+{
+public:
+	FTilesetAccess(AITwinGoogle3DTileset* InGoogleTileset);
+	virtual TUniquePtr<FITwinTilesetAccess> Clone() const override;
+
+	virtual ITwin::ModelDecorationIdentifier GetDecorationKey() const override;
+	virtual AITwinDecorationHelper* GetDecorationHelper() const override;
+	virtual const ACesium3DTileset* GetTileset() const override;
+	virtual ACesium3DTileset* GetMutableTileset() const override;
+
+private:
+	TWeakObjectPtr<AITwinGoogle3DTileset> GoogleTileset;
+};
+
+
 class AITwinGoogle3DTileset::FImpl
 {
 public:
@@ -69,7 +98,7 @@ public:
 	AITwinDecorationHelper* PersistenceMgr = nullptr;
 	bool bHasLoadedGeoLocationFromDeco = false;
 	bool bEnableGeoRefEdition = true; // Geo-location can be imposed by outside - when the loaded imodels/reality-data are geo-located
-
+	TStrongObjectPtr<UITwinClippingCustomPrimitiveDataHelper> ClippingHelper;
 
 	FImpl(AITwinGoogle3DTileset& InOwner)
 		: Owner(InOwner)
@@ -133,11 +162,16 @@ void AITwinGoogle3DTileset::FImpl::SetGeoLocation(std::array<double, 3> const& l
 	{
 		// First time we initialize the common geo-reference
 		Geoloc->GeoReference->SetOriginPlacement(EOriginPlacement::CartographicOrigin);
+		// update decoration geo-reference
+		AITwinDecorationHelper* DecoHelper = Cast<AITwinDecorationHelper>(UGameplayStatics::GetActorOfClass(Owner.GetWorld(), AITwinDecorationHelper::StaticClass()));
+		if (DecoHelper)
+			DecoHelper->SetDecoGeoreference(FVector(latLongHeight[0], latLongHeight[1], latLongHeight[2]));
 	}
 
 	Geoloc->GeoReference->SetOriginLatitude(latLongHeight[0]);
 	Geoloc->GeoReference->SetOriginLongitude(latLongHeight[1]);
 	Geoloc->GeoReference->SetOriginHeight(latLongHeight[2]);
+	Geoloc->bNeedElevationEvaluation = false;
 
 	// Manage persistence
 	if (!PersistenceMgr)
@@ -172,6 +206,93 @@ void AITwinGoogle3DTileset::SetDefaultKey(FString const& DefaultGoogleKey, UWorl
 			}
 		}
 	}
+}
+
+/*static*/
+void AITwinGoogle3DTileset::SetContentAccess(AdvViz::SDK::ITwinGoogleCuratedContentAccess const& ContentAccess, UWorld* World)
+{
+	if (ITwinGoogleAccess.accessToken != ContentAccess.accessToken
+		|| ITwinGoogleAccess.url != ContentAccess.url)
+	{
+		ITwinGoogleAccess = ContentAccess;
+
+		const FString NewToken = ANSI_TO_TCHAR(ContentAccess.accessToken.c_str());
+		BE_ASSERT(NewToken == FString(UTF8_TO_TCHAR(ContentAccess.accessToken.c_str())),
+			"expecting ascii token", ContentAccess.accessToken);
+		const FString NewUrl = ANSI_TO_TCHAR(ContentAccess.url.c_str());
+		const TMap<FString, FString> RequestHeaders =
+		{
+			{ TEXT("Authorization"), TEXT("Bearer ") + NewToken }
+		};
+
+		// Update all Google tilesets already instantiated.
+		for (TActorIterator<AITwinGoogle3DTileset> GooIter(World); GooIter; ++GooIter)
+		{
+			AITwinGoogle3DTileset* Tileset = *GooIter;
+			Tileset->SetRequestHeaders(RequestHeaders);
+			Tileset->SetUrl(NewUrl);
+		}
+	}
+}
+
+/*static*/
+std::string AITwinGoogle3DTileset::ElevationtKey;
+
+/*static*/ void AITwinGoogle3DTileset::SetElevationtKey(std::string const& GoogleElevationKey)
+{
+	ElevationtKey = GoogleElevationKey;
+}
+
+/*static*/
+bool AITwinGoogle3DTileset::RequestElevationtAtGeolocation(AdvViz::SDK::ITwinGeolocationInfo const& GeolocationInfo,
+	std::function<void(std::optional<double> const& elevationOpt)>&& InCallback)
+{
+	using namespace AdvViz::SDK;
+	if (ElevationtKey.empty())
+		return false;
+
+	BE_LOGI("ITwinAdvViz", "Requesting elevation at ["
+		<< GeolocationInfo.latitude << ", " << GeolocationInfo.longitude << "]");
+
+	static std::shared_ptr<Http> g_GoogleHttp;
+	if (!g_GoogleHttp)
+	{
+		g_GoogleHttp = std::shared_ptr<Http>(Http::New());
+		g_GoogleHttp->SetBaseUrl("https://maps.googleapis.com/maps/api");
+		g_GoogleHttp->SetExecuteAsyncCallbackInGameThread(true); // mandatory here! (callbacks will access world/actors)
+	}
+	struct SElevationInfo
+	{
+		double elevation = -1.0;
+		double resolution = -1.0;
+	};
+	struct SElevationResults
+	{
+		std::vector<SElevationInfo> results;
+		std::string status;
+	};
+	using SharedElevationResults = Tools::TSharedLockableDataPtr<SElevationResults>;
+	SharedElevationResults dataOut = std::make_shared<Tools::RWLockablePtrObject<SElevationResults>>(
+		new SElevationResults());
+
+	const std::string relativeUrl = fmt::format("elevation/json?locations={}%2C{}&key={}",
+		GeolocationInfo.latitude, GeolocationInfo.longitude, ElevationtKey);
+
+	g_GoogleHttp->AsyncGetJson<SElevationResults>(dataOut,
+		[Callback = std::move(InCallback)](long status, SharedElevationResults ElevationResultsPtr)
+	{
+		auto lock(ElevationResultsPtr->GetRAutoLock());
+		const SElevationResults& ElevationResults = lock.Get();
+
+		std::optional<double> elevation;
+		if (status >= 200 && status < 300 && !ElevationResults.results.empty())
+		{
+			elevation = ElevationResults.results[0].elevation;
+		}
+		Callback(elevation);
+	},
+		relativeUrl);
+	return true;
 }
 
 /*static*/
@@ -227,9 +348,13 @@ AITwinGoogle3DTileset* AITwinGoogle3DTileset::MakeInstance(UWorld& World, bool b
 				GeoRef->SetOriginLatitude(40.0325817);
 				GeoRef->SetOriginLongitude(-75.6274583);
 				GeoRef->SetOriginHeight(94.0);
+				Geoloc->bNeedElevationEvaluation = false;
 			}
 		}
 	}
+
+	// Make use of our own materials (important for packaged version!)
+	ITwin::SetupMaterials(FTilesetAccess(Tileset));
 
 	// Instantiate a UCesiumPolygonRasterOverlay component, which can then be populated with polygons to
 	// enable cutout (ACesiumCartographicPolygon)
@@ -253,16 +378,35 @@ AITwinGoogle3DTileset::AITwinGoogle3DTileset()
 		{
 			SetUrl(FString(GOOGLE_3D_TILESET_URL) + GoogleKey);
 		}
+		else if (HasITwinGoogleAccess())
+		{
+			SetRequestHeaders(
+			{
+				{
+					TEXT("Authorization"),
+					FString(TEXT("Bearer ")) + ANSI_TO_TCHAR(ITwinGoogleAccess.accessToken.c_str())
+				}
+			});
+			SetUrl(ANSI_TO_TCHAR(ITwinGoogleAccess.url.c_str()));
+		}
 
 		ShowCreditsOnScreen = true;
 
 		// Quick fix for EAP: add Google logo to the left
 		UserCredit = TEXT("<img alt=\"Google\" src=\"https://assets.ion.cesium.com/google-credit.png\" style=\"vertical-align:-5px\">");
 		bHighPriorityUserCredit = true;
-
-		// Make use of our own materials (important for packaged version!)
-		ITwin::SetupMaterials(*this);
 	}
+}
+
+AITwinGoogle3DTileset::~AITwinGoogle3DTileset()
+{
+	Impl->ClippingHelper.Reset();
+}
+
+void AITwinGoogle3DTileset::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	Impl->ClippingHelper.Reset();
+	Super::EndPlay(EndPlayReason);
 }
 
 void AITwinGoogle3DTileset::SetActorHiddenInGame(bool bNewHidden)
@@ -333,3 +477,60 @@ void AITwinGoogle3DTileset::OnSceneLoaded(bool bSuccess)
 	Impl->OnSceneLoaded(bSuccess);
 }
 
+UITwinClippingCustomPrimitiveDataHelper* AITwinGoogle3DTileset::GetClippingHelper() const
+{
+	return Impl->ClippingHelper.Get();
+}
+
+bool AITwinGoogle3DTileset::MakeClippingHelper()
+{
+	Impl->ClippingHelper =
+		TStrongObjectPtr<UITwinClippingCustomPrimitiveDataHelper>(NewObject<UITwinClippingCustomPrimitiveDataHelper>(this));
+	Impl->ClippingHelper->SetModelIdentifier(
+		std::make_pair(EITwinModelType::GlobalMapLayer, FString()));
+
+	// Connect mesh creation callback
+	this->SetLifecycleEventReceiver(Impl->ClippingHelper.Get());
+
+	return true;
+}
+
+
+AITwinGoogle3DTileset::FTilesetAccess::FTilesetAccess(AITwinGoogle3DTileset* InGoogleTileset)
+	: FITwinTilesetAccess(InGoogleTileset)
+	, GoogleTileset(InGoogleTileset)
+{
+
+}
+
+TUniquePtr<FITwinTilesetAccess> AITwinGoogle3DTileset::FTilesetAccess::Clone() const
+{
+	return MakeUnique<FTilesetAccess>(GoogleTileset.Get());
+}
+
+ITwin::ModelDecorationIdentifier AITwinGoogle3DTileset::FTilesetAccess::GetDecorationKey() const
+{
+	return std::make_pair(EITwinModelType::GlobalMapLayer, FString());
+}
+
+AITwinDecorationHelper* AITwinGoogle3DTileset::FTilesetAccess::GetDecorationHelper() const
+{
+	// For now, the offset and quality settings of the Google tileset are saved at hand in a custom
+	// way, not as a standard layer in the scene.
+	ensureMsgf(false, TEXT("persistence of Google tileset settings is handled apart"));
+	return nullptr;
+}
+
+const ACesium3DTileset* AITwinGoogle3DTileset::FTilesetAccess::GetTileset() const
+{
+	return GoogleTileset.Get();
+}
+ACesium3DTileset* AITwinGoogle3DTileset::FTilesetAccess::GetMutableTileset() const
+{
+	return GoogleTileset.Get();
+}
+
+TUniquePtr<FITwinTilesetAccess> AITwinGoogle3DTileset::MakeTilesetAccess()
+{
+	return MakeUnique<FTilesetAccess>(this);
+}

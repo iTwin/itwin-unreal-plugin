@@ -11,7 +11,7 @@
 
 #if WITH_EDITOR
 
-#include <ITwinServiceActor.h>
+#include <ITwinLogCategory.h>
 
 
 FITwinUELogAdapter::FITwinUELogAdapter(std::string name, Level sev)

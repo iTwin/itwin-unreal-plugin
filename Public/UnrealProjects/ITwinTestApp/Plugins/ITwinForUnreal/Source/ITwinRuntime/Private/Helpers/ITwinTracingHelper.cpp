@@ -26,7 +26,6 @@
 struct FITwinTracingHelper::FImpl
 {
 	TArray<FHitResult> AllHits;
-	TArray<FHitResult> BackHits;
 	FComponentQueryParams QueryParams;
 
 	FImpl() {
@@ -35,62 +34,18 @@ struct FITwinTracingHelper::FImpl
 	bool LineTraceMulti(UWorld const* World, FVector const& TraceStart, FVector const& TraceEnd);
 };
 
-
 bool FITwinTracingHelper::FImpl::LineTraceMulti(UWorld const* World,
 	FVector const& TraceStart, FVector const& TraceEnd)
 {
 	AllHits.Reset();
-
-	bool bHasFrontHits = World->LineTraceMultiByObjectType(AllHits, TraceStart, TraceEnd,
+	// Note: to get "back hits" as well, the static mesh component's UBodySetup::bDoubleSidedGeometry must be set to true
+	return World->LineTraceMultiByObjectType(AllHits, TraceStart, TraceEnd,
 			FCollisionObjectQueryParams::AllObjects, QueryParams);
-
-	// our materials are double-sided, and LineTraceMultiByObjectType misses back hits, so let's launch
-	// a second "ray" to get potential back hits (I did not find any option to do it in one call)
-	BackHits.Reset();
-	bool bHasBackHits = World->LineTraceMultiByObjectType(BackHits, TraceEnd, TraceStart,
-		FCollisionObjectQueryParams::AllObjects, QueryParams);
-
-	// merge both arrays
-	if (bHasBackHits)
-	{
-		if (bHasFrontHits)
-		{
-			float const TraceExtent = (TraceEnd - TraceStart).Length();
-			for (FHitResult& BackHit : BackHits)
-			{
-				float const DistFromStart = TraceExtent - BackHit.Distance;
-				BackHit.Distance = DistFromStart;
-				// Invert back impact normal
-				BackHit.ImpactNormal = -BackHit.ImpactNormal;
-				BackHit.Normal = -BackHit.Normal;
-				auto Index = AllHits.FindLastByPredicate(
-					[DistFromStart](FHitResult const& HitRes)
-				{
-					return HitRes.Distance > DistFromStart;
-				});
-				if (Index == INDEX_NONE)
-				{
-					AllHits.Push(BackHit);
-				}
-				else
-				{
-					AllHits.Insert(BackHit, Index);
-				}
-			}
-		}
-		else
-		{
-			AllHits = BackHits;
-		}
-	}
-	return bHasBackHits || bHasFrontHits;
 }
-
 
 FITwinTracingHelper::FITwinTracingHelper()
 	: Impl(MakePimpl<FImpl>())
 {
-
 }
 
 void FITwinTracingHelper::AddIgnoredActors(const TArray<AActor*>& ActorsToIgnore)
@@ -98,7 +53,18 @@ void FITwinTracingHelper::AddIgnoredActors(const TArray<AActor*>& ActorsToIgnore
 	Impl->QueryParams.AddIgnoredActors(ActorsToIgnore);
 }
 
-ITwinElementID FITwinTracingHelper::VisitElementsUnderCursor(UWorld const* World, FVector2D& MousePosition,
+void FITwinTracingHelper::AddIgnoredActors(const TArray<const AActor*>& ActorsToIgnore)
+{
+	Impl->QueryParams.AddIgnoredActors(ActorsToIgnore);
+}
+
+void FITwinTracingHelper::AddIgnoredComponents(const TArray<UPrimitiveComponent*>& ComponentsToIgnore)
+{
+	Impl->QueryParams.AddIgnoredComponents(ComponentsToIgnore);
+}
+
+ITwinElementID FITwinTracingHelper::VisitElementsUnderCursor(UWorld const* World,
+	FVector2D& MousePosition, FVector& OutTraceStart, FVector& OutTraceEnd,
 	std::function<void(FHitResult const&, std::unordered_set<ITwinElementID>&)>&& HitResultHandler,
 	std::optional<uint32> const& MaxUniqueElementsHit /*= std::nullopt*/,
 	std::optional<float> const& CustomTraceExtentInMeters /*= std::nullopt*/,
@@ -150,6 +116,9 @@ ITwinElementID FITwinTracingHelper::VisitElementsUnderCursor(UWorld const* World
 			}
 		}
 	}
+	OutTraceStart = TraceStart;
+	OutTraceEnd = TraceEnd;
+
 	return FirstEltID;
 }
 

@@ -465,6 +465,16 @@ namespace AdvViz::SDK
 		auto it = GetImpl().keyframes_.insert(p);
 		if (!it.second)
 			return make_unexpected(std::string("Keyframe already exists"));
+		auto dit = std::find_if(GetImpl().toDeleteKeyframes_.begin(), GetImpl().toDeleteKeyframes_.end(), 
+		[p](const std::shared_ptr<AdvViz::SDK::ITimelineKeyframe>& other)
+			{
+				return p->GetData().id == other->GetData().id;
+			}
+		);
+		if (dit != GetImpl().toDeleteKeyframes_.end()) // moving key frame by removing and adding again, need to ensure the deleted is clear
+		{
+			GetImpl().toDeleteKeyframes_.erase(dit);
+		}
 		GetImpl().shouldSave_ = true;
 		return p;
 	}
@@ -575,6 +585,7 @@ namespace AdvViz::SDK
 				{
 					if (c->GetId().IsValid())
 						clipsToDelete.ids.push_back(static_cast<const std::string>(c->GetId()));
+					c->SetShouldSave(false);
 				}
 
 				std::string url = "scenes/" + sceneId_ + "/timelineClips";

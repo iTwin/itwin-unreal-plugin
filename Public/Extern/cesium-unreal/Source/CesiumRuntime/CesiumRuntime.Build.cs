@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using Microsoft.Extensions.Logging;
 
 public class CesiumRuntime : ModuleRules
 {
@@ -19,40 +20,45 @@ public class CesiumRuntime : ModuleRules
 
         PrivateIncludePaths.AddRange(
             new string[] {
-              Path.Combine(GetModuleDirectory("Renderer"), "Private")
+              Path.Combine(GetModuleDirectory("Renderer"), "Private"),
+              Path.Combine(GetModuleDirectory("Renderer"), "Internal")
             }
         );
 
         string platform;
-        string libSearchPattern;
+        string libExtension;
+        string libPrefix;
         if (Target.Platform == UnrealTargetPlatform.Win64)
         {
             platform = "Windows-AMD64-";
-            libSearchPattern = "*.lib";
-        }
-        else if (Target.Platform == UnrealTargetPlatform.Mac)
-        {
-            platform = "Darwin-universal-";
-            libSearchPattern = "lib*.a";
-        }
-        else if (Target.Platform == UnrealTargetPlatform.Android)
-        {
-            platform = "Android-aarch64-";
-            libSearchPattern = "lib*.a";
-        }
-        else if (Target.Platform == UnrealTargetPlatform.Linux)
-        {
-            platform = "Linux-x86_64-";
-            libSearchPattern = "lib*.a";
-        }
-        else if(Target.Platform == UnrealTargetPlatform.IOS)
-        {
-            platform = "iOS-ARM64-";
-            libSearchPattern = "lib*.a";
+            libPrefix = "";
+            libExtension = ".lib";
         }
         else
         {
-            throw new InvalidOperationException("Cesium for Unreal does not support this platform.");
+            libPrefix = "lib";
+            libExtension = ".a";
+            if (Target.Platform == UnrealTargetPlatform.Mac)
+            {
+                platform = "Darwin-universal-";
+                PublicFrameworks.Add("SystemConfiguration");
+            }
+            else if (Target.Platform == UnrealTargetPlatform.Android)
+            {
+                platform = "Android-aarch64-";
+            }
+            else if (Target.Platform == UnrealTargetPlatform.Linux)
+            {
+                platform = "Linux-x86_64-";
+            }
+            else if (Target.Platform == UnrealTargetPlatform.IOS)
+            {
+                platform = "iOS-ARM64-";
+            }
+            else
+            {
+                throw new InvalidOperationException("Cesium for Unreal does not support this platform.");
+            }
         }
 
         string libPathBase = Path.Combine(ModuleDirectory, "../ThirdParty/lib/" + platform);
@@ -60,7 +66,7 @@ public class CesiumRuntime : ModuleRules
         string libPathRelease = libPathBase + "Release";
 
         bool useDebug = false;
-        if (Target.Configuration == UnrealTargetConfiguration.Debug || Target.Configuration == UnrealTargetConfiguration.DebugGame)
+        if (Target.Configuration == UnrealTargetConfiguration.Debug)
         {
             if (Directory.Exists(libPathDebug))
             {
@@ -69,11 +75,60 @@ public class CesiumRuntime : ModuleRules
         }
 
         string libPath = useDebug ? libPathDebug : libPathRelease;
-
-        string[] allLibs = Directory.Exists(libPath) ? Directory.GetFiles(libPath, libSearchPattern) : new string[0];
-
-        PublicAdditionalLibraries.AddRange(allLibs);
-
+        string[] allCesiumLibs = Directory.Exists(libPath) // We can safely glob that
+            ? Directory.GetFiles(libPath, libPrefix + "Cesium*" + libExtension) : new string[0];
+        if (!Directory.Exists(libPath))
+        {
+			Logger.LogInformation($"iTwinForUnreal/CesiumRuntime: Cannot find cesium-native libraries (OK when running CMake and CesiumDependencies has not been built yet): {libPath}");
+        }
+        PublicAdditionalLibraries.AddRange(allCesiumLibs);
+        string[] allAbseilLibs = Directory.Exists(libPath) // these too, there are a lot...
+            ? Directory.GetFiles(libPath, libPrefix + "absl_*" + libExtension) : new string[0];
+        PublicAdditionalLibraries.AddRange(allAbseilLibs);
+        // AdvViz: Don't glob the rest, we would get ALL libraries built by vcpkg, be them for this module
+        // or for other modules in the project, like ITwinRuntime... Or even libs not linked with any
+        // Unreal module (side DLLs, ffmpeg executable deps...), because of the way we link everything built
+        // by vcpkg. This for example caused link errors because of ffmpeg's dependency 'avcodec' which
+        // probably conflicted with an Unreal Engine version of the same...
+        string[] allOtherLibs = {
+            "ada",
+            "asmjit",
+            "astcenc-avx2-static",
+            "async++",
+            "blend2d",
+            "brotlicommon",
+            "brotlidec",
+            "brotlienc",
+            "draco",
+            "fmt",
+            "glm",
+            "jpeg",
+            "ktx",
+            "libmodpbase64",
+            "libsharpyuv",
+            "libwebp",
+            "libwebpdecoder",
+            "libwebpdemux",
+            "libwebpmux",
+            "meshoptimizer",
+            "s2",
+            "spdlog",
+            "sqlite3",
+            "tidy_static",
+            "tinyxml2",
+            "turbojpeg",
+            "zlibstatic-ng",
+            "zstd",
+        };
+        foreach (string libName in allOtherLibs)
+        {
+            PublicAdditionalLibraries.Add(Path.Combine(libPath, libPrefix + libName + libExtension));
+        }
+        // On Linux, cpp-httplib uses getaddrinfo_a, which is in the anl library.
+        if (Target.Platform == UnrealTargetPlatform.Linux)
+        {
+            PublicSystemLibraries.Add("anl");
+        }
         PublicDependencyModuleNames.AddRange(
             new string[]
             {
@@ -91,7 +146,11 @@ public class CesiumRuntime : ModuleRules
                 "DeveloperSettings",
                 "UMG",
                 "Renderer",
-                "OpenSSL"
+                "OpenSSL",
+                "Json",
+                "JsonUtilities",
+                "Slate",
+                "SlateCore"
             }
         );
 
@@ -130,8 +189,6 @@ public class CesiumRuntime : ModuleRules
             PublicDependencyModuleNames.AddRange(
                 new string[] {
                     "UnrealEd",
-                    "Slate",
-                    "SlateCore",
                     "WorldBrowser",
                     "ContentBrowser",
                     "MaterialEditor"
@@ -147,7 +204,7 @@ public class CesiumRuntime : ModuleRules
         );
 
         ShadowVariableWarningLevel = WarningLevel.Off;
-        IncludeOrderVersion = EngineIncludeOrderVersion.Unreal5_2;
+        IncludeOrderVersion = EngineIncludeOrderVersion.Latest;
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
         CppStandard = CppStandardVersion.Cpp20;

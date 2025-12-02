@@ -87,7 +87,7 @@ MODULE_EXPORT namespace AdvViz::SDK
 
 		// Set Http server to use (if none provided, the default created by Config is used.)
 		void SetHttp(std::shared_ptr<Http> http);
-		static void SetDefaulttHttp(std::shared_ptr<Http> http);
+		static void SetDefaultHttp(std::shared_ptr<Http> http);
 
 		ScenePersistenceAPI(ScenePersistenceAPI&) = delete;
 		ScenePersistenceAPI(ScenePersistenceAPI&&) = delete;
@@ -116,6 +116,8 @@ MODULE_EXPORT namespace AdvViz::SDK
 		std::uint64_t GetDynTypeId() const override { return GetTypeId(); }
 		bool IsTypeOf(std::uint64_t i) const override { return (i == GetTypeId()) || IScenePersistence::IsTypeOf(i); }
 
+		std::string ExportHDRIAsJson(ITwinHDRISettings const& hdri) const override;
+		bool ConvertHDRIJsonFileToKeyValueMap(std::filesystem::path const& jsonPath, KeyValueStringMap& outMap) const override;
 	protected:
 		class Impl;
 		const std::unique_ptr<Impl> impl_;

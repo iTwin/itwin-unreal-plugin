@@ -28,14 +28,13 @@ MODULE_EXPORT namespace AdvViz::SDK
 		std::optional<std::string> name;
 		std::optional<std::string> colorTheme;
 		std::optional<std::string> displayMode;
-		bool ShouldSave() const { return shouldSave_; }
-		void SetShouldSave(bool value) { shouldSave_ = value; }
-		RefID id; //maybe
-
+		RefID id;
 		bool shouldSave_ = false;
 
-
+		bool ShouldSave() const { return shouldSave_; }
+		void SetShouldSave(bool value) { shouldSave_ = value; }
 	};
+
 	class IAnnotationsManager : public Tools::Factory<IAnnotationsManager>, public Tools::ExtensionSupport
 	{
 	public:
@@ -45,13 +44,14 @@ MODULE_EXPORT namespace AdvViz::SDK
 		virtual void SaveDataOnServerDS(const std::string& decorationId) = 0;
 
 
-		//get all Annotations
+		/// Get all Annotations
 		virtual std::vector<std::shared_ptr<Annotation> > GetAnnotations() = 0;
 
 		virtual void AddAnnotation(const std::shared_ptr<Annotation>&) = 0;
 		virtual void RemoveAnnotation(const std::shared_ptr<Annotation>&) = 0;
+		virtual void RestoreAnnotation(const std::shared_ptr<Annotation>&) = 0;
 
-		/// Check if there are instances to save on the server
+		/// Check if there are annotations to save on the server
 		virtual bool HasAnnotationToSave() const = 0;
 	};
 
@@ -63,14 +63,15 @@ MODULE_EXPORT namespace AdvViz::SDK
 		/// Save the data on the server
 		void SaveDataOnServerDS(const std::string& decorationId) override;
 
-		std::vector<std::shared_ptr<Annotation> > GetAnnotations()override;
+		std::vector<std::shared_ptr<Annotation> > GetAnnotations() override;
 		void AddAnnotation(const std::shared_ptr<Annotation>&) override;
-		void RemoveAnnotation(const std::shared_ptr<Annotation>&)override;
+		void RemoveAnnotation(const std::shared_ptr<Annotation>&) override;
+		void RestoreAnnotation(const std::shared_ptr<Annotation>&) override;
 
 		void SetHttp(std::shared_ptr<Http> const& http);
 
-		/// Check if there are instances to save on the server
-		virtual bool HasAnnotationToSave() const override;
+		/// Check if there are annotations to save on the server
+		bool HasAnnotationToSave() const override;
 
 		AnnotationsManager(AnnotationsManager&) = delete;
 		AnnotationsManager(AnnotationsManager&&) = delete;

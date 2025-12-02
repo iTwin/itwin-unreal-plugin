@@ -25,7 +25,6 @@ std::string GetRealityDataIdFromUrl(const std::string& url)
 	const auto it = std::ranges::find_if(urlParts, [](const auto& s){return std::regex_match(s,
 		std::regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"));});
 	return it == urlParts.end() ? std::string() : *it;
-	return {};
 }
 
 bool ContainsUUIDLikeSubstring(const std::string& name)

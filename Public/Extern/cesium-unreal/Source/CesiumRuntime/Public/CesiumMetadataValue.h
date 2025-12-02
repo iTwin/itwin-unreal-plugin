@@ -2,7 +2,6 @@
 
 #pragma once
 
-#include "CesiumGltf/PropertyTypeTraits.h"
 #include "CesiumMetadataEnum.h"
 #include "CesiumMetadataValueType.h"
 #include "CesiumPropertyArray.h"
@@ -895,7 +894,6 @@ public:
    * be converted to an uint64.
    * @return The value as an unsigned 64-bit integer.
    */
-  static uint64 GetUnsignedInteger64(
-      const FCesiumMetadataValue& Value,
-      uint64 DefaultValue);
+  static uint64
+  GetUnsignedInteger64(const FCesiumMetadataValue& Value, uint64 DefaultValue);
 };

@@ -18,6 +18,8 @@
 #	endif // !MODULE_EXPORT
 #endif
 
+#include <SDK/Core/Tools/StringWithEncoding.h>
+
 MODULE_EXPORT namespace AdvViz::SDK
 {
 	using RequestID = std::string;
@@ -39,7 +41,7 @@ MODULE_EXPORT namespace AdvViz::SDK
 		const std::string AcceptHeader;
 
 		std::string ContentType;
-		std::string ContentString;
+		Tools::StringWithEncoding ContentString;
 
 		std::map<std::string, std::string> CustomHeaders;
 
@@ -54,6 +56,8 @@ MODULE_EXPORT namespace AdvViz::SDK
 		bool discardAllHeaders = false;
 		bool isFullUrl = false; // If true, UrlSuffix should contain a full URL, including the protocol
 
+		bool enforceRegularToken = false;
+
 		bool HasCustomHeader(std::string const& headerKey) const
 		{
 			return CustomHeaders.find(headerKey) != CustomHeaders.end();
@@ -62,7 +66,7 @@ MODULE_EXPORT namespace AdvViz::SDK
 
 	// Some errors can be filtered to avoid retrying the corresponding requests, and/or discard them from the
 	// logs.
-	using FilterErrorFunc =	std::function<void(std::string const&, bool& bAllowRetry, bool& bLogError)>;
+	using FilterErrorFunc =	std::function<void(long statusCode, std::string const&, bool& bAllowRetry, bool& bLogError)>;
 
 	using CustomRequestCallback =
 		std::function<bool(long status, std::string const& response, RequestID const&, std::string& strError)>;

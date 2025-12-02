@@ -141,4 +141,8 @@ namespace AdvViz::SDK
 	{
 		ITWIN_SDK_WARN(GetObserverName() + " does not handle material predictions");
 	}
+	void ITwinDefaultWebServicesObserver::OnGoogleCuratedContentAccessRetrieved(bool /*bSuccess*/, ITwinGoogleCuratedContentAccess const& /*infos*/, RequestID const&)
+	{
+		ITWIN_SDK_WARN(GetObserverName() + " does not handle Google curated content access");
+	}
 }

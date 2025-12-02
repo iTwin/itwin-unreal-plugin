@@ -17,6 +17,7 @@
 #include "AssertHandler.h"
 #include "Log.h"
 #include "Types.h"
+#include "StringWithEncoding.h"
 #include "StrongTypeId.h"
 #include "CommonInterfaceClass.h"
 #include "LockableObject.h"

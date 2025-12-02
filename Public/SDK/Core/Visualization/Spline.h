@@ -69,6 +69,8 @@ MODULE_EXPORT namespace AdvViz::SDK
 		
 		virtual bool ShouldSave() const = 0;
 		virtual void SetShouldSave(bool value) = 0;
+
+		virtual std::shared_ptr<ISplinePoint> Clone() const = 0;
 	};
 
 	// ------------------------------------------------------------------------
@@ -104,6 +106,8 @@ MODULE_EXPORT namespace AdvViz::SDK
 		SplinePoint();
 		virtual ~SplinePoint();
 
+		std::shared_ptr<ISplinePoint> Clone() const override;
+
 		using Tools::TypeId<SplinePoint>::GetTypeId;
 		std::uint64_t GetDynTypeId() const override { return GetTypeId(); }
 		bool IsTypeOf(std::uint64_t i) const override { return (i == GetTypeId()) || ISplinePoint::IsTypeOf(i); }
@@ -120,6 +124,16 @@ MODULE_EXPORT namespace AdvViz::SDK
 	// ------------------------------------------------------------------------
 	//                                 ISpline
 
+	struct SplineLinkedModel
+	{
+		std::string modelType;
+		std::string modelId; // can be left empty for GlobalMapLayer (Google tileset)
+
+		bool operator==(SplineLinkedModel const& other) const {
+			return modelType == other.modelType && modelId == other.modelId;
+		}
+	};
+
 	class ISpline : public Tools::Factory<ISpline>
 	{
 	public:
@@ -135,11 +149,14 @@ MODULE_EXPORT namespace AdvViz::SDK
 		virtual bool IsClosedLoop() const = 0;
 		virtual void SetClosedLoop(bool bClosedLoop) = 0;
 
-		virtual const std::string& GetLinkedModelType() const = 0;
-		virtual void SetLinkedModelType(const std::string& type) = 0;
+		virtual const std::vector<SplineLinkedModel>& GetLinkedModels() const = 0;
+		virtual void SetLinkedModels(const std::vector<SplineLinkedModel>& models) = 0;
 
-		virtual const std::string& GetLinkedModelId() const = 0;
-		virtual void SetLinkedModelId(const std::string& id) = 0;
+		virtual bool IsEnabledEffect() const = 0;
+		virtual void EnableEffect(bool bEnable) = 0;
+
+		virtual bool GetInvertEffect() const = 0;
+		virtual void SetInvertEffect(bool bInvert) = 0;
 
 		virtual const dmat3x4& GetTransform() const = 0;
 		virtual void SetTransform(const dmat3x4& mat) = 0;
@@ -161,6 +178,10 @@ MODULE_EXPORT namespace AdvViz::SDK
 		virtual const SharedSplinePointVect& GetRemovedPoints() const = 0;
 		virtual void ClearPoints() = 0;
 		virtual void ClearRemovedPoints() = 0;
+
+		// Make a full clone of this spline. The clone should be made totally independent from the source
+		// (not sharing points, typically).
+		virtual std::shared_ptr<ISpline> Clone() const = 0;
 	};
 
 	// ------------------------------------------------------------------------
@@ -181,11 +202,14 @@ MODULE_EXPORT namespace AdvViz::SDK
 		bool IsClosedLoop() const override;
 		void SetClosedLoop(bool bClosedLoop) override;
 
-		const std::string& GetLinkedModelType() const override;
-		void SetLinkedModelType(const std::string& type) override;
+		const std::vector<SplineLinkedModel>& GetLinkedModels() const override;
+		void SetLinkedModels(const std::vector<SplineLinkedModel>& models) override;
 
-		const std::string& GetLinkedModelId() const override;
-		void SetLinkedModelId(const std::string& id) override;
+		bool IsEnabledEffect() const override;
+		void EnableEffect(bool bEnable) override;
+
+		bool GetInvertEffect() const override;
+		void SetInvertEffect(bool bInvert) override;
 
 		const dmat3x4& GetTransform() const override;
 		void SetTransform(const dmat3x4& mat) override;
@@ -207,6 +231,8 @@ MODULE_EXPORT namespace AdvViz::SDK
 		const SharedSplinePointVect& GetRemovedPoints() const override;
 		void ClearPoints() override;
 		void ClearRemovedPoints() override;
+
+		std::shared_ptr<ISpline> Clone() const override;
 
 		using Tools::TypeId<Spline>::GetTypeId;
 		std::uint64_t GetDynTypeId() const override { return GetTypeId(); }

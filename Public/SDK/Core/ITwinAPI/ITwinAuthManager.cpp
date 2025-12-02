@@ -11,7 +11,7 @@
 
 #include "ITwinAuthObserver.h"
 #include "ITwinWebServices.h"
-#include <../BeHeaders/Compil/CleanUpGuard.h>
+#include <../BeHeaders/Util/CleanUpGuard.h>
 
 #include <Core/Tools/Assert.h>
 
@@ -63,12 +63,13 @@ namespace AdvViz::SDK
 	class ITwinAuthManager::Credentials
 	{
 	public:
-		static constexpr int LocalhostPort = 3000;
 		static constexpr auto RedirectUriEndpoint = "/signin-callback";
 
 		static AppIDArray AppIDs;
 
 	private:
+		static int RedirectUriPort;
+
 		static constexpr auto minimalScope_ = "itwin-platform" \
 			OPTIONAL_OFFLINE_ACCESS_SCOPE \
 			;
@@ -78,7 +79,7 @@ namespace AdvViz::SDK
 	public:
 		static std::string GetRedirectUri()
 		{
-			return fmt::format("http://localhost:{}{}", LocalhostPort, RedirectUriEndpoint);
+			return fmt::format("http://127.0.0.1:{}{}", RedirectUriPort, RedirectUriEndpoint);
 		}
 		static std::string GetScope()
 		{
@@ -119,6 +120,15 @@ namespace AdvViz::SDK
 		{
 			return GetBeIMSUrl("ims", env);
 		}
+
+		static void SetRedirectUriPort(int port)
+		{
+			RedirectUriPort = port;
+		}
+		static int GetRedirectUriPort()
+		{
+			return RedirectUriPort;
+		}
 	};
 
 	/*static*/
@@ -126,6 +136,9 @@ namespace AdvViz::SDK
 
 	/*static*/
 	std::string ITwinAuthManager::Credentials::extraScopes_;
+
+	/*static*/
+	int ITwinAuthManager::Credentials::RedirectUriPort = 3000;
 
 	namespace
 	{
@@ -232,6 +245,18 @@ namespace AdvViz::SDK
 	}
 
 	/*static*/
+	void ITwinAuthManager::SetRedirectUriPort(int port)
+	{
+		Credentials::SetRedirectUriPort(port);
+	}
+
+	/*static*/
+	int ITwinAuthManager::GetRedirectUriPort()
+	{
+		return Credentials::GetRedirectUriPort();
+	}
+
+	/*static*/
 	std::string ITwinAuthManager::GetRedirectUri()
 	{
 		return Credentials::GetRedirectUri();
@@ -306,15 +331,30 @@ namespace AdvViz::SDK
 		Lock lock(mutex_);
 		accessToken_ = accessToken;
 		*currentToken_ = GetCurrentAccessToken();
-		
 	}
 
-	void ITwinAuthManager::SetOverrideAccessToken(std::string const& accessToken)
+	void ITwinAuthManager::SetOverrideAccessToken(std::string const& accessToken, EITwinAuthOverrideMode overrideMode)
 	{
 		Lock lock(mutex_);
 		overrideAccessToken_ = accessToken;
+		overrideMode_ = overrideMode;
+		if (accessToken.empty() && overrideMode != EITwinAuthOverrideMode::None)
+		{
+			BE_ISSUE("inconsistent override mode (will revert to None)", (size_t)overrideMode);
+			overrideMode_ = EITwinAuthOverrideMode::None;
+		}
 		*currentToken_ = GetCurrentAccessToken();
+	}
 
+	void ITwinAuthManager::ResetOverrideAccessToken()
+	{
+		SetOverrideAccessToken({}, EITwinAuthOverrideMode::None);
+	}
+
+	EITwinAuthOverrideMode ITwinAuthManager::GetOverrideMode() const
+	{
+		Lock lock(mutex_);
+		return overrideMode_;
 	}
 
 	std::string const& ITwinAuthManager::GetCurrentAccessToken() const
@@ -322,6 +362,11 @@ namespace AdvViz::SDK
 		return !overrideAccessToken_.empty() ? overrideAccessToken_ : accessToken_;
 	}
 
+	std::string const& ITwinAuthManager::GetRegularAccessToken() const
+	{
+		Lock lock(mutex_);
+		return accessToken_;
+	}
 
 	bool ITwinAuthManager::HasRefreshToken() const
 	{
@@ -680,7 +725,9 @@ namespace AdvViz::SDK
 			// emphasize the handling of the result (even though it would be done automatically)
 			resultGuard.cleanup();
 		});
-		request->Process(*http_, "/connect/token", requestBody, headers);
+		request->Process(*http_, "/connect/token",
+			HttpRequest::BodyParams(requestBody, AdvViz::SDK::Tools::EStringEncoding::Ansi),
+			headers);
 
 		return request->GetRequestID();
 	}
@@ -734,7 +781,7 @@ namespace AdvViz::SDK
 		}
 		auto routeHandle = httpRouter_->MakeRouteHandler();
 		httpRouter_->BindRoute(routeHandle,
-			Credentials::LocalhostPort,
+			Credentials::GetRedirectUriPort(),
 			Credentials::RedirectUriEndpoint,
 			EVerb::Get,
 			[=, this, httpRouter = this->httpRouter_, IsValidRequestHandler = this->stillValid_]

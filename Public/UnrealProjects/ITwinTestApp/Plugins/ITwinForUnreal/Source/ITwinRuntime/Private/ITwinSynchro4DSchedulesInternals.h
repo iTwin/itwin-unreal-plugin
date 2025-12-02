@@ -50,7 +50,7 @@ class FITwinSynchro4DSchedulesInternals
 	const bool bDoNotBuildTimelines; ///< defaults to false, true only for internal unit testing
 	FITwinScheduleTimelineBuilder Builder;
 	/// The value tells whether the range is valid or not (empty schedule)
-	std::optional<bool> ScheduleTimeRangeIsKnown;
+	std::optional<bool> ScheduleTimeRangeIsKnownAndValid;
 	FITwinSchedulesImport SchedulesApi; // <== must be declared AFTER Builder
 	std::recursive_mutex& Mutex;
 	std::vector<FITwinSchedule>& Schedules;
@@ -94,6 +94,8 @@ class FITwinSynchro4DSchedulesInternals
 	bool TileCompatibleWithSchedule(ITwinScene::TileIdx const& TileRank) const;
 	bool TileCompatibleWithSchedule(FITwinSceneTile const& SceneTile) const;
 
+	bool useDynamicShadows = false;
+
 public:
 	FITwinSynchro4DSchedulesInternals(UITwinSynchro4DSchedules& Owner, bool const InDoNotBuildTimelines,
 									  std::recursive_mutex& Mutex, std::vector<FITwinSchedule>& Schedules,
@@ -123,7 +125,7 @@ public:
 							std::unordered_set<ITwinScene::ElemIdx>&& MeshElements);
 	void SetScheduleTimeRangeIsKnown();
 	void HideNonAnimatedDuplicates(FITwinSceneTile& SceneTile, FElementsGroup const& NonAnimatedDuplicates);
-
+	void OnDownloadProgressed(double PercentComplete);
 	FITwinSchedulesImport& GetSchedulesApiReadyForUnitTesting();
 
 	static FTransform ComputeTransformFromFinalizedKeyframe(FITwinCoordConversions const& CoordConv,
@@ -138,4 +140,6 @@ public:
 		ITwin::Timeline::FDeferredPlaneEquation const& Deferred, FBox const& ElementsBox);
 	static void FinalizeAnchorPos(FITwinCoordConversions const& CoordConv,
 		ITwin::Timeline::FDeferredAnchor const& Deferred, FBox const& ElementsBox);
+
+	void SetMeshesDynamicShadows(bool bDynamic);
 };

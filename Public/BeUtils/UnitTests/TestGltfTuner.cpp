@@ -379,7 +379,7 @@ void CheckGltf(const CesiumGltf::Model& expected, const CesiumGltf::Model& actua
 CesiumGltf::Model TestTune(BeUtils::GltfBuilder& gltfBuilder)
 {
 	CesiumGltf::Model out;
-	BeUtils::GltfTuner(true).Tune(gltfBuilder.GetModel(), glm::dmat4x4(1.), glm::dvec4(0.), out);
+	BeUtils::GltfTuner(true).apply(gltfBuilder.GetModel(), glm::dmat4x4(1.), glm::dvec4(0.), out);
 	return out;
 }
 
@@ -615,7 +615,7 @@ TEST_CASE("TestSplitAndMerge")
 		.patches = {{{3,1},{4,1},{5,1}}, {{9,2},{10,2},{11,2}}},
 		.material = 2});
 	CesiumGltf::Model out_tuned;
-	tuner.Tune(gltfBuilder.GetModel(), glm::dmat4x4(1.0), glm::dvec4(0.), out_tuned);
+	tuner.apply(gltfBuilder.GetModel(), glm::dmat4x4(1.0), glm::dvec4(0.), out_tuned);
 	CheckGltf(expectedBuilder.GetModel(), out_tuned);
 }
 
@@ -715,7 +715,7 @@ TEST_CASE("TestSplitMaterialFeatureId")
 	BeUtils::GltfTuner tuner(true);
 	tuner.SetMaterialRules({ .itwinMatIDsToSplit_ = {{0x1981, 0x1982, 0x1983, 0x1984}} });
 	CesiumGltf::Model out_tuned;
-	tuner.Tune(gltfBuilder.GetModel(), glm::dmat4x4(1.0), glm::dvec4(0.), out_tuned);
+	tuner.apply(gltfBuilder.GetModel(), glm::dmat4x4(1.0), glm::dvec4(0.), out_tuned);
 	CheckGltf(expectedBuilder.GetModel(), out_tuned);
 }
 
@@ -746,6 +746,6 @@ TEST_CASE("TestSplitMaterialFeatureId_OneMaterial")
 	BeUtils::GltfTuner tuner(true);
 	tuner.SetMaterialRules({ .itwinMatIDsToSplit_ = {{0x1984}} }); // correspond to material ID #3
 	CesiumGltf::Model out_tuned;
-	tuner.Tune(gltfBuilder.GetModel(), glm::dmat4x4(1.0), glm::dvec4(0.), out_tuned);
+	tuner.apply(gltfBuilder.GetModel(), glm::dmat4x4(1.0), glm::dvec4(0.), out_tuned);
 	CheckGltf(expectedBuilder.GetModel(), out_tuned);
 }

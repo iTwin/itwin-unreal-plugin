@@ -12,6 +12,9 @@
 #include "CoreMinimal.h"
 #include "ITwinPickingOptions.generated.h"
 
+class UPrimitiveComponent;
+
+
 USTRUCT(BlueprintType, Category = "iTwin")
 struct ITWINRUNTIME_API FITwinPickingOptions
 {
@@ -40,4 +43,12 @@ public:
 
 	//! Custom mouse position to use for picking.
 	const FVector2D* CustomMousePosition = nullptr;
+
+	//! Optional array of actors to ignore during picking.
+	UPROPERTY()
+	TArray<const AActor*> ActorsToIgnore;
+
+	//! Optional array of components to ignore during picking.
+	UPROPERTY()
+	TArray<UPrimitiveComponent*> ComponentsToIgnore;
 };

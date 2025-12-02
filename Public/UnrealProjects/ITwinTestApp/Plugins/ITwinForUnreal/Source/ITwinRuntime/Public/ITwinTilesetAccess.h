@@ -11,11 +11,15 @@
 #pragma once
 
 #include <ITwinModelType.h>
+#include <Templates/Function.h>
+#include <UObject/WeakObjectPtrTemplates.h>
 
+class AActor;
 class ACesium3DTileset;
 class AITwinDecorationHelper;
 struct ITwinSceneInfo;
 class UCesiumPolygonRasterOverlay;
+class FITwinTilesetAccess;
 
 namespace ITwin
 {
@@ -31,9 +35,14 @@ namespace ITwin
 	//! Returns the cut-out polygons overlay for the given tileset.
 	ITWINRUNTIME_API UCesiumPolygonRasterOverlay* GetCutoutOverlay(ACesium3DTileset const& Tileset);
 
+	using VisitTilesetFunction = TFunction<void(FITwinTilesetAccess const&)>;
+	ITWINRUNTIME_API void IterateAllITwinTilesets(const VisitTilesetFunction& VisitFunc, class UWorld* World);
+
 	//! This is the screenspace error it is best limiting oneself to with Google 3D Tiles,
 	//! to avoid huge memory usage and download times
 	ITWINRUNTIME_API extern const double GOOGLE3D_BEST_SCREENSPACE_ERROR;
+
+	ITWINRUNTIME_API TUniquePtr<FITwinTilesetAccess> GetTilesetAccess(AActor* Actor);
 }
 
 
@@ -42,38 +51,44 @@ namespace ITwin
 class ITWINRUNTIME_API FITwinTilesetAccess
 {
 public:
-	FITwinTilesetAccess(AActor& TilesetOwnerActor);
+	FITwinTilesetAccess(AActor* TilesetOwnerActor);
 	virtual ~FITwinTilesetAccess();
+
+	virtual TUniquePtr<FITwinTilesetAccess> Clone() const = 0;
+
+	bool IsValid() const { return TilesetOwner.IsValid(); }
 
 	// Persistence management
 	virtual ITwin::ModelDecorationIdentifier GetDecorationKey() const = 0;
 	virtual AITwinDecorationHelper* GetDecorationHelper() const = 0;
 
-	void ApplyLoadedInfo(ITwinSceneInfo const& LoadedSceneInfo, bool bIsModelFullyLoaded);
+	void ApplyLoadedInfo(ITwinSceneInfo const& LoadedSceneInfo, bool bIsModelFullyLoaded) const;
 
-	const ACesium3DTileset* GetTileset() const;
-	ACesium3DTileset* GetMutableTileset();
+	virtual const ACesium3DTileset* GetTileset() const;
+	virtual ACesium3DTileset* GetMutableTileset() const;
 	bool HasTileset() const;
 
 	// Visibility
-	void HideTileset(bool bHide);
+	void HideTileset(bool bHide) const;
 	bool IsTilesetHidden() const;
 
 	/// Returns the tileset quality as a percentage (value in range [0;1])
 	float GetTilesetQuality() const;
 
 	/// Adjust the tileset quality, given a percentage (value in range [0;1])
-	void SetTilesetQuality(float Value);
+	void SetTilesetQuality(float Value) const;
 
 	/// Returns the model manual "offset" (= scene placement customization).
 	void GetModelOffset(FVector& Pos, FVector& Rot) const;
 
 	/// Sets the model manual "offset" (= scene placement customization), and persist it to Cloud.
-	void SetModelOffset(const FVector& Pos, const FVector& Rot);
+	void SetModelOffset(const FVector& Pos, const FVector& Rot) const;
+
+	virtual void RefreshTileset() const;
 
 protected:
-	virtual void OnModelOffsetLoaded();
+	virtual void OnModelOffsetLoaded() const;
 
 private:
-	AActor& TilesetOwner;
+	TWeakObjectPtr<AActor> TilesetOwner;
 };

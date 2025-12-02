@@ -142,8 +142,6 @@ void VisibilityApproxEqual(FAutomationTestBase& Test, const Test_ElementState& x
 
 } // namespace ITwin::Timeline
 
-using namespace ITwin::Timeline;
-
 constexpr auto AutomationContext = EAutomationTestFlags::EngineFilter |
 #if UE_VERSION_OLDER_THAN(5, 5, 0)
 	EAutomationTestFlags::ApplicationContextMask
@@ -153,10 +151,11 @@ constexpr auto AutomationContext = EAutomationTestFlags::EngineFilter |
 ;
 
 BEGIN_DEFINE_SPEC(GetStateAtTimeSpec, "Bentley.ITwinForUnreal.ITwinRuntime.Timeline", AutomationContext)
-	std::optional<Test_ElementTimeline> ElementTimeline;
+	std::optional<ITwin::Timeline::Test_ElementTimeline> ElementTimeline;
 END_DEFINE_SPEC(GetStateAtTimeSpec)
 void GetStateAtTimeSpec::Define()
 {
+	using namespace ITwin::Timeline;
 	Describe("A spec for GetStateAtTime methods", [this]()
 		{
 			BeforeEach([this]()
@@ -439,10 +438,11 @@ void GetStateAtTimeSpec::Define()
 } // end of Define method
 
 BEGIN_DEFINE_SPEC(MainTimelineAddSpec, "Bentley.ITwinForUnreal.ITwinRuntime.Timeline", AutomationContext)
-	std::optional<ITwin::Timeline::MainTimelineBase<Test_ElementTimelineEx>> Timeline;
+	std::optional<ITwin::Timeline::MainTimelineBase<ITwin::Timeline::Test_ElementTimelineEx>> Timeline;
 END_DEFINE_SPEC(MainTimelineAddSpec)
 void MainTimelineAddSpec::Define()
 {
+	using namespace ITwin::Timeline;
 	BeforeEach([this]()
 		{
 			Timeline.emplace();

@@ -28,16 +28,26 @@
 	,{
 		"name": "win64Unreal"
 		,"displayName": "Windows 64 Unreal"
-		,"description": "Default build using Visual Studio generator"
+		,"description": "Uses cesium-unreal's custom tailored triplet: statically linked, dynamic CRT, Release-only build using Visual Studio generator"
 		,"generator": "Visual Studio 17 2022"
 		,"binaryDir": "${sourceDir}/../build/${presetName}"
 		,"architecture": "x64"
+		// Does not work as expected (see Public/Extern/cesium-unreal/extern/vcpkg-overlays/triplets/shared/common.cmake)
+		//,"environment": {
+		//	"CESIUM_VCPKG_RELEASE_ONLY": "ON"
+		//}
 		,"cacheVariables": {
 			"CMAKE_TOOLCHAIN_FILE": "${dollar}<VCPKG_ROOT>/scripts/buildsystems/vcpkg.cmake"
-			,"VCPKG_TARGET_TRIPLET": "x64-windows-static-md-release"
+			,"VCPKG_TARGET_TRIPLET": "x64-windows-unreal-release"
+			// Should be simply x64-windows (or left unset), but this leads to building gRPC twice
+			// (see its portfile, gRPC build needs itself to be built for the host too), which is LONG!
+			// Since we never cross-compile, we don't care to have a different value here as in TARGET:
+			,"VCPKG_HOST_TRIPLET": "x64-windows-unreal-release"
 			,"CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreadedDLL"
 			,"VIZSDK_BUILD_CONTEXT":"Unreal"
 			,"SELECTED_PRESET": "${presetName}"
+			// Not preventing vcpkg from building -dbg variants either... :/
+			//,"VCPKG_BUILD_TYPE": "Release"
 		}
 	}
 	,{

@@ -41,7 +41,7 @@ MODULE_EXPORT namespace AdvViz::SDK
 		void SetEnvironment(EITwinEnvironment env);
 
 		//! Returns the authorization token, if any.
-		std::string GetAuthToken() const;
+		std::string GetAuthToken(bool enforceRegularToken = false) const;
 
 		//! Change the server URL - only used for unit testing
 		void SetCustomServerURL(std::string const& serverUrl);
@@ -143,6 +143,8 @@ MODULE_EXPORT namespace AdvViz::SDK
 		void SetupForMaterialMLPrediction();
 		EITwinMatMLPredictionStatus GetMaterialMLPrediction(
 			std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId);
+
+		void GetGoogleCuratedContentAccess();
 
 		void RunCustomRequest(
 			ITwinAPIRequestInfo const& requestInfo,

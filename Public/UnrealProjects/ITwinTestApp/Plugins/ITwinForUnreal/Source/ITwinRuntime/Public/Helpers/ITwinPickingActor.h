@@ -9,16 +9,17 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include <Engine/HitResult.h>
 #include <GameFramework/Actor.h>
 #include <Helpers/ITwinPickingOptions.h>
+#include <Helpers/ITwinPickingResult.h>
 
 #include "ITwinPickingActor.generated.h"
 
 class AITwinIModel;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnMaterialPicked, uint64, MaterialId, FString, IModelId);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnElemPicked, FString, ElementId);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnElemPicked, FString, ElementId, FString, IModelId);
+
 
 UCLASS()
 class ITWINRUNTIME_API AITwinPickingActor : public AActor
@@ -49,14 +50,7 @@ public:
 	void PickUnderCursorWithOptions(FString& ElementId, FVector2D& MousePosition, AITwinIModel* ThisIModelOnly,
 									FHitResult& VisibleHit, FITwinPickingOptions const& Options);
 
-	struct FPickingResult
-	{
-		FString ElementId;
-		FVector2D MousePosition = FVector2D::ZeroVector;
-		FHitResult HitResult;
-		TOptional<uint64> MaterialId;
-		AITwinIModel* PickedMaterialIModel = nullptr; // IModel owning the picked material, if any.
-	};
+	using FPickingResult = FITwinPickingResult;
 
 	/// Variant of PickUnderCursorWithOptions only available in C++ (uint64 is not supported by BP).
 	/// Useful to retrieve the picked material ID without having to use the OnMaterialPicked delegate.

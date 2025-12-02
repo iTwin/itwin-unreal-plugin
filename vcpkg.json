@@ -1,39 +1,55 @@
 {
-    "dependencies": [
-        "catch2",
-        "cpr",
-        {
-            "name": "ffmpeg",
-            "features": [
-                "ffmpeg",
-                "x264",
-                "zlib"
-            ]
-        },
-        {
-            "name": "grpc",
-            "features": [
-                "codegen"
-            ]
-        },
-        "libassert",
-        "libmicrohttpd",
-        "node-addon-api",
-        "protobuf",
-        "reflectcpp",
-        "s2geometry",
-        "stduuid",
-        "utf8-range"
-    ],
-    "builtin-baseline": "1a66c32c6f90c2f646529975c3c076ed3dbdae0c",
-    "overrides": [
-        {
-            "name": "libassert",
-            "version": "2.1.5"
-        },
-        {
-            "name": "reflectcpp",
-            "version": "0.17.0"
-        }
-    ]
+	"$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+	"name": "bentley-advanced-visualization",
+	"dependencies": [
+		"catch2"
+		,{
+			"name": "cesium-native",
+			"default-features": false,
+			"features": [
+				"dependencies-only"
+			]
+		}
+		,"cpr"
+		,{
+			"name": "ffmpeg",
+			"features": [
+				"ffmpeg",
+				"x264",
+				"zlib"
+			]
+		}
+		,{
+			"name": "grpc",
+			"features": [
+				"codegen"
+			]
+		}
+		,"libassert"
+		,"libmicrohttpd"
+		,"node-addon-api"
+		,"protobuf"
+		,"reflectcpp"
+		,"s2geometry"
+		,"stduuid"
+		,"utf8-range"
+	],
+	"overrides": [
+		{
+			"name": "cpp-httplib",
+			"version": "0.23.0"
+		},
+		{
+			"name": "libassert",
+			"version": "2.1.5"
+		},
+		{
+			"name": "reflectcpp",
+			"version": "0.17.0"
+		}
+		,{
+			"name": "spdlog",
+			"version": "1.15.3"
+		}
+	]
 }

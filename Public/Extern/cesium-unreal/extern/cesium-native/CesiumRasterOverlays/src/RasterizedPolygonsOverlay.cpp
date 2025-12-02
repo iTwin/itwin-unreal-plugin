@@ -190,6 +190,7 @@ public:
             pOwner,
             asyncSystem,
             pAssetAccessor,
+            nullptr,
             std::nullopt,
             pPrepareRendererResources,
             pLogger,
@@ -202,7 +203,7 @@ public:
         _invertSelection(invertSelection) {}
 
   virtual CesiumAsync::Future<LoadedRasterOverlayImage>
-  loadTileImage(RasterOverlayTile& overlayTile) override {
+  loadTileImage(const RasterOverlayTile& overlayTile) override {
     // Choose the texture size according to the geometry screen size and raster
     // SSE, but no larger than the maximum texture size.
     const RasterOverlayOptions& options = this->getOwner().getOptions();

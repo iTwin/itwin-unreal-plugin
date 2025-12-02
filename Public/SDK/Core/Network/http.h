@@ -14,8 +14,6 @@
 #include <shared_mutex>
 #include <Core/Json/Json.h>
 #include <Core/Tools/Tools.h>
-#include "Core/Json/Json.h"
-
 
 namespace AdvViz::SDK {
 
@@ -66,38 +64,40 @@ namespace AdvViz::SDK {
 		virtual void SetBasicAuth(const char* login, const char* passwd) = 0;
 		virtual bool DecodeBase64(const std::string& src, RawData& buffer) const = 0;
 
-		Response PatchJson(const std::string& url, const std::string& body, const Headers& h = {});
-		Response PostJson(const std::string& url, const std::string& body, const Headers& h = {});
-		Response PutJson(const std::string& url, const std::string& body, const Headers& h = {});
-		Response DeleteJson(const std::string& url, const std::string& body, const Headers& h = {});
+		/// Specific to UE implementation.
+		virtual void SetExecuteAsyncCallbackInGameThread(bool);
 
+		using BodyParams = Tools::StringWithEncoding;
 
-
+		Response PatchJson(const std::string& url, const BodyParams& body, const Headers& h = {});
+		Response PostJson(const std::string& url, const BodyParams& body, const Headers& h = {});
+		Response PutJson(const std::string& url, const BodyParams& body, const Headers& h = {});
+		Response DeleteJson(const std::string& url, const BodyParams& body, const Headers& h = {});
 
 
 		Response Get(const std::string& url, const Headers& h = {}, bool isFullUrl = false);
-		Response Patch(const std::string& url, const std::string& body, const Headers& h = {});
-		Response Post(const std::string& url, const std::string& body, const Headers& h = {});
+		Response Patch(const std::string& url, const BodyParams& body, const Headers& h = {});
+		Response Post(const std::string& url, const BodyParams& body, const Headers& h = {});
 		Response PostFile(const std::string& url, const std::string& fileParamName, const std::string& filePath,
 			const KeyValueVector& extraParams = {}, const Headers& h = {});
-		Response Put(const std::string& url, const std::string& body, const Headers& h = {});
+		Response Put(const std::string& url, const BodyParams& body, const Headers& h = {});
 		Response PutBinaryFile(const std::string& url, const std::string& filePath, const Headers& headers = {}) ;
-		Response Delete(const std::string& url, const std::string& body, const Headers& h = {});
+		Response Delete(const std::string& url, const BodyParams& body, const Headers& h = {});
 
 
-		protected:
+	protected:
 
 		virtual Response DoGet(const std::string& url, const Headers& h = {}, bool isFullUrl = false) = 0;
 		virtual void DoAsyncGet(std::function<void(const Response&)> callback, const std::string& url, const Headers& h = {}, bool isFullUrl = false) = 0;
-		virtual Response DoPatch(const std::string& url, const std::string& body, const Headers& h = {}) = 0;
-		virtual Response DoPost(const std::string& url, const std::string& body, const Headers& h = {}) = 0;
-		virtual void DoAsyncPost(std::function<void(const Response&)> callback, const std::string& url, const std::string& body = "", const Headers& headers = {}) = 0;
+		virtual Response DoPatch(const std::string& url, const BodyParams& body, const Headers& h = {}) = 0;
+		virtual Response DoPost(const std::string& url, const BodyParams& body, const Headers& h = {}) = 0;
+		virtual void DoAsyncPost(std::function<void(const Response&)> callback, const std::string& url, const BodyParams& body = {}, const Headers& headers = {}) = 0;
 		virtual Response DoPostFile(const std::string& url, const std::string& fileParamName, const std::string& filePath,
 			const KeyValueVector& extraParams = {}, const Headers& h = {}) = 0;
-		virtual Response DoPut(const std::string& url, const std::string& body, const Headers& h = {}) = 0;
-		virtual void DoAsyncPut(std::function<void(const Response&)> callback, const std::string& url, const std::string& body = "", const Headers& headers = {}) = 0;
+		virtual Response DoPut(const std::string& url, const BodyParams& body, const Headers& h = {}) = 0;
+		virtual void DoAsyncPut(std::function<void(const Response&)> callback, const std::string& url, const BodyParams& body = {}, const Headers& headers = {}) = 0;
 		virtual Response DoPutBinaryFile(const std::string& url, const std::string& filePath, const Headers& headers = {}) = 0;
-		virtual Response DoDelete(const std::string& url, const std::string& body, const Headers& h = {}) = 0;
+		virtual Response DoDelete(const std::string& url, const BodyParams& body, const Headers& h = {}) = 0;
 
 		friend class HttpRequest;
 
@@ -109,15 +109,19 @@ namespace AdvViz::SDK {
 		{
 			Response r(GetJsonStr(url, h, isFullUrl));
 			if (IsSuccessful(r))
-				Json::FromString(t, r.second);
+			{
+				if (!Json::FromString(t, r.second))
+					return 500; // internal error during json parsing
+			}
 			else
 				BE_LOGE("http", "GetJson failed code:" << r.first<<" url:" << url << " body out:" << r.second);
 			return r.first;
 		}
 
 		template<typename TFunctor>
-		inline void AsyncGet(const TFunctor &fct, const std::string& url, const Headers& h = {}, bool isFullUrl = false)
+		inline void AsyncGet(const TFunctor &fct, const std::string& url, const Headers& hi = {}, bool isFullUrl = false)
 		{
+			Headers h(hi);
 			if (accessToken_)
 				h.emplace_back("Authorization", std::string("Bearer ") + *accessToken_);
 			DoAsyncGet(fct, url, h, isFullUrl);
@@ -128,9 +132,9 @@ namespace AdvViz::SDK {
 		{
 			AsyncGet([sharedData, fct, url](const Response& r) {
 				{
-					auto dataLock(sharedData.GetAutoLock());
+					auto dataLock(sharedData->GetAutoLock());
 					if (IsSuccessful(r))
-						Json::FromString(*dataLock.Get(), r.second);
+						Json::FromString(dataLock.Get(), r.second);
 					else
 						BE_LOGE("http", "AsyncGetJson failed code: " << r.first << " url: " << url << " body out: " << r.second);
 				}
@@ -143,31 +147,31 @@ namespace AdvViz::SDK {
 		}
 
 		template<typename Type>
-		inline long PutJson(Type& t, const std::string& url, const std::string& body, const Headers& h = {})
+		inline long PutJson(Type& t, const std::string& url, const BodyParams& body, const Headers& h = {})
 		{
 			Response r(PutJson(url, body, h));
 			if (IsSuccessful(r))
 				Json::FromString(t, r.second);
 			else
-				BE_LOGE("http", "PutJson failed code:"<< r.first << " url:"<<url << " body in:" << body << " body out:" << r.second);
+				BE_LOGE("http", "PutJson failed code:"<< r.first << " url:"<<url << " body in:" << body.str() << " body out:" << r.second);
 			return r.first;
 		}
 
 		template<typename Type, typename TypeBody>
 		inline long PutJsonJBody(Type& t, const std::string& url, const TypeBody& body, const Headers& h = {})
 		{
-			std::string bodyStr(Json::ToString(body));
-			return PutJson<Type>(t, url, bodyStr, h);
+			const BodyParams bodyParams(Json::ToString(body));
+			return PutJson<Type>(t, url, bodyParams, h);
 		}
 
 		template<typename TFunctor>
-		inline void AsyncPut(const TFunctor& fct, const std::string& url, const std::string& body, const Headers& h = {})
+		inline void AsyncPut(const TFunctor& fct, const std::string& url, const BodyParams& body, const Headers& h = {})
 		{
 			DoAsyncPut(fct, url, body, h);
 		}
 
 		template<typename Type, typename TFunctor>
-		inline void AsyncPutJson(const Tools::TSharedLockableDataPtr<Type>& sharedData, const TFunctor& fct, const std::string& url, const std::string& body, const Headers& hi = {})
+		inline void AsyncPutJson(const Tools::TSharedLockableDataPtr<Type>& sharedData, const TFunctor& fct, const std::string& url, const BodyParams& body, const Headers& hi = {})
 		{
 			Headers h(hi);
 			h.emplace_back("accept", "application/json");
@@ -188,12 +192,12 @@ namespace AdvViz::SDK {
 		template<typename Type, typename TFunctor, typename TypeBody>
 		inline void AsyncPutJsonJBody(const Tools::TSharedLockableDataPtr<Type>& sharedData, const TFunctor& fct, const std::string& url, const TypeBody& body, const Headers& h = {})
 		{
-			std::string bodyStr(Json::ToString(body));
-			AsyncPutJson<Type>(sharedData, fct, url, bodyStr, h);
+			const BodyParams bodyParams(Json::ToString(body));
+			AsyncPutJson<Type>(sharedData, fct, url, bodyParams, h);
 		}
 
 		template<typename Type, typename TFunctor>
-		inline void AsyncPutJson(const Tools::TSharedLockableData<Type>& sharedData, const TFunctor& fct, const std::string& url, const std::string& body, const Headers& hi = {})
+		inline void AsyncPutJson(const Tools::TSharedLockableData<Type>& sharedData, const TFunctor& fct, const std::string& url, const BodyParams& body, const Headers& hi = {})
 		{
 			Headers h(hi);
 			h.emplace_back("accept", "application/json");
@@ -216,56 +220,55 @@ namespace AdvViz::SDK {
 		template<typename Type, typename TFunctor, typename TypeBody>
 		inline void AsyncPutJsonJBody(const Tools::TSharedLockableData<Type>& sharedData, const TFunctor& fct, const std::string& url, const TypeBody& body, const Headers& h = {})
 		{
-			std::string bodyStr(Json::ToString(body));
-			AsyncPutJson<Type>(sharedData, fct, url, bodyStr, h);
+			const BodyParams bodyParams(Json::ToString(body));
+			AsyncPutJson<Type>(sharedData, fct, url, bodyParams, h);
 		}
 
 
-
 		template<typename Type>
-		inline long PatchJson(Type& t, const std::string& url, const std::string& body, const Headers& h = {})
+		inline long PatchJson(Type& t, const std::string& url, const BodyParams& body, const Headers& h = {})
 		{
 			Response r(PatchJson(url, body, h));
 			if (IsSuccessful(r))
 				Json::FromString<Type>(t, r.second);
 			else
-				BE_LOGE("http", "PatchJson failed code:" << r.first << " url:" << url << " body in:" << body << " body out:" << r.second);
+				BE_LOGE("http", "PatchJson failed code:" << r.first << " url:" << url << " body in:" << body.str() << " body out:" << r.second);
 			return r.first;
 		}
 
 		template<typename Type, typename TypeBody>
 		inline long PatchJsonJBody(Type& t, const std::string& url, const TypeBody& body, const Headers& h = {})
 		{
-			std::string bodyStr(Json::ToString(body));
-			return PatchJson<Type>(t, url, bodyStr, h);
+			const BodyParams bodyParams(Json::ToString(body));
+			return PatchJson<Type>(t, url, bodyParams, h);
 		}
 		template<typename Type>
-		inline long PostJson(Type& t, const std::string& url, const std::string& body, const Headers& h = {})
+		inline long PostJson(Type& t, const std::string& url, const BodyParams& body, const Headers& h = {})
 		{
 			Response r(PostJson(url, body, h));
 			if (IsSuccessful(r))
 				Json::FromString<Type>(t, r.second);
 			else
-				BE_LOGE("http", "PostJson failed code:" << r.first << " url:" << url << " body in:" << body << " body out:" << r.second);
+				BE_LOGE("http", "PostJson failed code:" << r.first << " url:" << url << " body in:" << body.str() << " body out:" << r.second);
 			return r.first;
 		}
 		
 		template<typename Type, typename TypeBody>
 		inline long PostJsonJBody(Type& t, const std::string& url, const TypeBody& body, const Headers& h = {})
 		{
-			std::string bodyStr(Json::ToString(body));
-			return PostJson<Type>(t, url, bodyStr, h);
+			const BodyParams bodyParams(Json::ToString(body));
+			return PostJson<Type>(t, url, bodyParams, h);
 		}
 		
 
 		template<typename TFunctor>
-		inline void AsyncPost(const TFunctor& fct, const std::string& url, const std::string& body, const Headers& h = {})
+		inline void AsyncPost(const TFunctor& fct, const std::string& url, const BodyParams& body, const Headers& h = {})
 		{
 			DoAsyncPost(fct, url, body, h);
 		}
 
 		template<typename Type, typename TFunctor>
-		inline void AsyncPostJson(const Tools::TSharedLockableDataPtr<Type>& sharedData, const TFunctor& fct, const std::string& url, const std::string& body, const Headers& hi = {})
+		inline void AsyncPostJson(const Tools::TSharedLockableDataPtr<Type>& sharedData, const TFunctor& fct, const std::string& url, const BodyParams& body, const Headers& hi = {})
 		{
 			Headers h(hi);
 			h.emplace_back("accept", "application/json");
@@ -286,12 +289,12 @@ namespace AdvViz::SDK {
 		template<typename Type, typename TFunctor, typename TypeBody>
 		inline void AsyncPostJsonJBody(const Tools::TSharedLockableDataPtr<Type>& sharedData, const TFunctor& fct, const std::string& url, const TypeBody& body, const Headers& h = {})
 		{
-			std::string bodyStr(Json::ToString(body));
-			AsyncPostJson<Type>(sharedData, fct, url, bodyStr, h);
+			const BodyParams bodyParams(Json::ToString(body));
+			AsyncPostJson<Type>(sharedData, fct, url, bodyParams, h);
 		}
 
 		template<typename Type, typename TFunctor>
-		inline void AsyncPostJson(const Tools::TSharedLockableData<Type>& sharedData, const TFunctor& fct, const std::string& url, const std::string& body, const Headers& hi = {})
+		inline void AsyncPostJson(const Tools::TSharedLockableData<Type>& sharedData, const TFunctor& fct, const std::string& url, const BodyParams& body, const Headers& hi = {})
 		{
 			Headers h(hi);
 			h.emplace_back("accept", "application/json");
@@ -314,28 +317,27 @@ namespace AdvViz::SDK {
 		template<typename Type, typename TFunctor, typename TypeBody>
 		inline void AsyncPostJsonJBody(const Tools::TSharedLockableData<Type>& sharedData, const TFunctor& fct, const std::string& url, const TypeBody& body, const Headers& h = {})
 		{
-			std::string bodyStr(Json::ToString(body));
-			AsyncPostJson<Type>(sharedData, fct, url, bodyStr, h);
+			const BodyParams bodyParams(Json::ToString(body));
+			AsyncPostJson<Type>(sharedData, fct, url, bodyParams, h);
 		}
 
 		template<typename Type>
-		inline long DeleteJson(Type& t, const std::string& url, const std::string& body, const Headers& h = {})
+		inline long DeleteJson(Type& t, const std::string& url, const BodyParams& body, const Headers& h = {})
 		{
 			Response r(DeleteJson(url, body, h));
 			if (IsSuccessful(r))
 				Json::FromString(t, r.second);
 			else
-				BE_LOGE("http", "DeleteJson failed code:" << r.first << " url:" << url << " body in:" << body << " body out:" << r.second);
+				BE_LOGE("http", "DeleteJson failed code:" << r.first << " url:" << url << " body in:" << body.str() << " body out:" << r.second);
 			return r.first;
 		}
 
 		template<typename Type, typename TypeBody>
 		inline long DeleteJsonJBody(Type& t, const std::string& url, const TypeBody& body, const Headers& h = {})
 		{
-			std::string bodyStr(Json::ToString(body));
-			return DeleteJson<Type>(t, url, bodyStr, h);
+			const BodyParams bodyParams(Json::ToString(body));
+			return DeleteJson<Type>(t, url, bodyParams, h);
 		}
-
 
 
 		virtual ~Http();

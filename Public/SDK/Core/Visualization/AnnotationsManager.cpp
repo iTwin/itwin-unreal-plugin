@@ -48,7 +48,7 @@ namespace AdvViz::SDK
 		struct SJsonAnnotation
 		{
 			ANNOTATION_STRUCT_MEMBERS
-			std::optional < std::string >id;
+			std::optional<std::string> id;
 		};
 
 		std::shared_ptr<Annotation> AddAnnotation()
@@ -102,7 +102,7 @@ namespace AdvViz::SDK
 
 			if (!ret)
 			{
-				BE_LOGW("ITwinDecoration", "Loading of splines failed. " << ret.error());
+				BE_LOGW("ITwinDecoration", "Loading of annotations failed. " << ret.error());
 			}
 		}
 
@@ -118,7 +118,7 @@ namespace AdvViz::SDK
 			std::vector<size_t> newIndices;
 			std::vector<size_t> updatedIndices;
 
-			// Sort splines for requests (addition/update)
+			// Sort annotations for requests (addition/update)
 			for (auto const& item : annotations_)
 			{
 				if (!item->id.HasDBIdentifier())
@@ -224,22 +224,36 @@ namespace AdvViz::SDK
 		{
 			if (annotation)
 			{
+				BE_ASSERT(std::find(removedAnnotations_.begin(), removedAnnotations_.end(), annotation) == removedAnnotations_.end());
 				removedAnnotations_.push_back(annotation);
 				std::erase(annotations_, annotation);
 			}
 		}
 
+		void RestoreAnnotation(const std::shared_ptr<Annotation>& annotation)
+		{
+			if (annotation)
+			{
+				auto it = std::find(annotations_.begin(), annotations_.end(), annotation);
+				BE_ASSERT(it == annotations_.end());
+				if (it == annotations_.end())
+				{
+					annotations_.push_back(annotation);
+				}
+				std::erase(removedAnnotations_, annotation);
+			}
+		}
 
 		bool HasAnnotationToSave() const
 		{
 			for (const auto& it : annotations_)
 			{
-					if (!it->id.HasDBIdentifier()
+				if (!it->id.HasDBIdentifier()
 					|| it->ShouldSave()
 					)
-					{
-						return true;
-					}
+				{
+					return true;
+				}
 			}
 			for (const auto& it : removedAnnotations_)
 			{
@@ -275,17 +289,22 @@ namespace AdvViz::SDK
 		return GetImpl().annotations_;
 	}
 
-	void AdvViz::SDK::AnnotationsManager::AddAnnotation(const std::shared_ptr<Annotation>& annotation)
+	void AnnotationsManager::AddAnnotation(const std::shared_ptr<Annotation>& annotation)
 	{
 		GetImpl().annotations_.push_back(annotation);
 	}
 
-	void AdvViz::SDK::AnnotationsManager::RemoveAnnotation(const std::shared_ptr<Annotation>& annotation )
+	void AnnotationsManager::RemoveAnnotation(const std::shared_ptr<Annotation>& annotation)
 	{
 		GetImpl().RemoveAnnotation(annotation);
 	}
 
-	bool AdvViz::SDK::AnnotationsManager::HasAnnotationToSave() const
+	void AnnotationsManager::RestoreAnnotation(const std::shared_ptr<Annotation>& annotation)
+	{
+		GetImpl().RestoreAnnotation(annotation);
+	}
+
+	bool AnnotationsManager::HasAnnotationToSave() const
 	{
 		return GetImpl().HasAnnotationToSave();
 	}

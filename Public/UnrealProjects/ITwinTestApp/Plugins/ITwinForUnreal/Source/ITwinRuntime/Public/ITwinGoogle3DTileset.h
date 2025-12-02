@@ -14,9 +14,17 @@
 
 #include <Containers/Array.h>
 #include <Templates/PimplPtr.h>
+#include <functional>
+#include <optional>
 
 #include <ITwinGoogle3DTileset.generated.h>
 
+class FITwinTilesetAccess;
+namespace AdvViz::SDK
+{
+	struct ITwinGoogleCuratedContentAccess;
+	struct ITwinGeolocationInfo;
+}
 
 UCLASS()
 class ITWINRUNTIME_API AITwinGoogle3DTileset : public ACesium3DTileset
@@ -32,12 +40,22 @@ public:
 	//! This key is private to the user account.
 	static void SetDefaultKey(FString const& DefaultGoogleKey, UWorld* World = nullptr);
 
+	//! Initiates the access token and url to use to access Google 3D tileset.
+	static void SetContentAccess(AdvViz::SDK::ITwinGoogleCuratedContentAccess const& ContentAccess, UWorld* World);
+
+	//! Fill the key used to access the Google elevation API.
+	static void SetElevationtKey(std::string const& GoogleElevationKey);
+	//! Start a request to retrieve an evaluation of the elevation at given location.
+	//! Returns true if the elevation key is available, and thus the request could be started.
+	static bool RequestElevationtAtGeolocation(AdvViz::SDK::ITwinGeolocationInfo const& GeolocationInfo,
+		std::function<void(std::optional<double> const& elevationOpt)>&& Callback);
+
 	static AITwinGoogle3DTileset* MakeInstance(UWorld& World, bool bGeneratePhysicsMeshes = false);
 
 	AITwinGoogle3DTileset();
-
+	~AITwinGoogle3DTileset();
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void SetActorHiddenInGame(bool bNewHidden) override;
-
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 #endif
@@ -57,10 +75,19 @@ public:
 		BlueprintCallable)
 	bool IsGeoLocationLocked() const;
 
+	class UITwinClippingCustomPrimitiveDataHelper* GetClippingHelper() const;
+	bool MakeClippingHelper();
+
+	//! Creates a helper to perform some requests/modifications on the tileset.
+	TUniquePtr<FITwinTilesetAccess> MakeTilesetAccess();
 
 private:
 	class FImpl;
 	TPimplPtr<FImpl> Impl;
+
+	class FTilesetAccess;
+
+	static std::string ElevationtKey;
 };
 
 

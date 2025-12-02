@@ -242,6 +242,9 @@ struct FSavedView
 		TSet<FPerModelCategoryVisibilityProps> HiddenCategoriesPerModel;
 
 	UPROPERTY(BlueprintReadOnly, Category = "SavedView")
+		TSet<FPerModelCategoryVisibilityProps> AlwaysDrawnCategoriesPerModel;
+
+	UPROPERTY(BlueprintReadOnly, Category = "SavedView")
 		TSet<FString> AlwaysDrawnElements;
 
 	UPROPERTY(BlueprintReadWrite, Category = "SavedView")

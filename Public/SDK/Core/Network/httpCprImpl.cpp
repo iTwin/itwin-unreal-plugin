@@ -72,8 +72,8 @@ namespace AdvViz::SDK::Impl
 	}
 
 	Http::Response HttpCpr::DoPut(const std::string& url,
-											  const std::string& body /*= "" */,
-											  const Headers& headers /*= {} */)
+								  const BodyParams& body /*= {} */,
+								  const Headers& headers /*= {} */)
 	{
 		cpr::Header h;
 		for (auto& i : headers)
@@ -81,13 +81,13 @@ namespace AdvViz::SDK::Impl
 		cpr::Response r;
 		if (auth_)
 			r = cpr::Put(cpr::Url{ GetBaseUrlStr() + '/' + url }
-				, cpr::Body{ body }
+				, cpr::Body{ body.str() }
 				, h
 				, *auth_
 			);
 		else
 			r = cpr::Put(cpr::Url{ GetBaseUrlStr() + '/' + url }
-				, cpr::Body{ body }
+				, cpr::Body{ body.str() }
 				, h
 		);
 		return Response(r.status_code, std::move(r.text));
@@ -115,8 +115,8 @@ namespace AdvViz::SDK::Impl
 	}
 
 	Http::Response HttpCpr::DoPatch(const std::string& url,
-												const std::string& body /*= "" */,
-												const Headers& headers /*= {} */)
+									const BodyParams& body /*= {} */,
+									const Headers& headers /*= {} */)
 	{
 		cpr::Header h;
 		for (auto& i : headers)
@@ -124,21 +124,21 @@ namespace AdvViz::SDK::Impl
 		cpr::Response r;
 		if (auth_)
 			r = cpr::Patch(cpr::Url{ GetBaseUrlStr() + '/' + url }
-				, cpr::Body{ body }
+				, cpr::Body{ body.str() }
 				, h
 				, *auth_
 			);
 		else
 			r = cpr::Patch(cpr::Url{ GetBaseUrlStr() + '/' + url }
-				, cpr::Body{ body }
+				, cpr::Body{ body.str() }
 				, h
 		);
 		return Response(r.status_code, std::move(r.text));
 	}
 
 	Http::Response HttpCpr::DoPost(const std::string& url,
-											   const std::string& body /*= "" */,
-											   const Headers& headers /*= {} */)
+								   const BodyParams& body /*= {} */,
+								   const Headers& headers /*= {} */)
 	{
 		cpr::Header h;
 		for (auto& i : headers)
@@ -146,19 +146,19 @@ namespace AdvViz::SDK::Impl
 		cpr::Response r;
 		if (auth_)
 			r = cpr::Post(cpr::Url{ GetBaseUrlStr() + '/' + url }
-				, cpr::Body{ body }
+				, cpr::Body{ body.str() }
 				, h
 				, *auth_
 			);
 		else
 			r = cpr::Post(cpr::Url{ GetBaseUrlStr() + '/' + url }
-				, cpr::Body{ body }
+				, cpr::Body{ body.str() }
 				, h
 		);
 		return Response(r.status_code, std::move(r.text));
 	}
 
-	void HttpCpr::DoAsyncPost(std::function<void(const Response&)> callback, const std::string& url, const std::string& body, const Headers& headers)
+	void HttpCpr::DoAsyncPost(std::function<void(const Response&)> callback, const std::string& url, const BodyParams& body, const Headers& headers)
 	{
 		cpr::Header h;
 		for (auto& i : headers)
@@ -169,11 +169,11 @@ namespace AdvViz::SDK::Impl
 			callback(resp);
 			}
 			, cpr::Url{ GetBaseUrlStr() + '/' + url}
-			, cpr::Body{ body }
+			, cpr::Body{ body.str() }
 		, h);
 	}
 
-	void HttpCpr::DoAsyncPut(std::function<void(const Response&)> callback, const std::string& url, const std::string& body, const Headers& headers)
+	void HttpCpr::DoAsyncPut(std::function<void(const Response&)> callback, const std::string& url, const BodyParams& body, const Headers& headers)
 	{
 		cpr::Header h;
 		for (auto& i : headers)
@@ -184,7 +184,7 @@ namespace AdvViz::SDK::Impl
 			callback(resp);
 			}
 			, cpr::Url{ GetBaseUrlStr() + '/' + url }
-			, cpr::Body{ body }
+			, cpr::Body{ body.str() }
 		, h);
 	}
 
@@ -216,8 +216,8 @@ namespace AdvViz::SDK::Impl
 	}
 
 	Http::Response HttpCpr::DoGet(const std::string& url,
-											  const Headers& headers /*= {} */,
-											  bool isFullUrl /*= false*/)
+								  const Headers& headers /*= {} */,
+								  bool isFullUrl /*= false*/)
 	{
 		cpr::Header h;
 		for (auto& i : headers)
@@ -251,7 +251,7 @@ namespace AdvViz::SDK::Impl
 	}
 
 	Http::Response HttpCpr::DoDelete(const std::string& url,
-									const std::string& body /*= "" */,
+									const BodyParams& body /*= {} */,
 									const Headers& headers /*= {} */)
 	{
 
@@ -261,13 +261,13 @@ namespace AdvViz::SDK::Impl
 		cpr::Response r;
 		if (auth_)
 			r = cpr::Delete(cpr::Url{ GetBaseUrlStr() + '/' + url }
-				, cpr::Body{ body }
+				, cpr::Body{ body.str() }
 				, h
 				, *auth_
 			);
 		else
 			r = cpr::Delete(cpr::Url{ GetBaseUrlStr() + '/' + url }
-				, cpr::Body{ body }
+				, cpr::Body{ body.str() }
 				, h
 		);
 		return Response(r.status_code, std::move(r.text));

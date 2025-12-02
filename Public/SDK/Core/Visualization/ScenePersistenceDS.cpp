@@ -94,6 +94,12 @@ namespace AdvViz::SDK {
 			double fog;
 			double exposure;
 			bool useHeliodon;
+
+			std::optional<std::string> HDRIImage;
+			std::optional<double> HDRIZRotation;
+			std::optional<double> sunIntensity;
+
+			
 		};
 		struct SJSonSceneSettings
 		{
@@ -111,6 +117,14 @@ namespace AdvViz::SDK {
 			std::string name;
 			std::string itwinid;
 			SJSonEnvironment environment;
+		};
+		struct SJSonHDRI
+		{
+			std::string	hdriName;
+			double		sunPitch;
+			double		sunYaw;
+			double		sunIntensity;
+			double		rotation;
 		};
 	public:
 		std::string id_;
@@ -185,7 +199,7 @@ namespace AdvViz::SDK {
 		bool Delete()
 		{
 			std::string s("scenes/" + id_);
-			auto status = GetHttp()->Delete(s, "");
+			auto status = GetHttp()->Delete(s, {});
 			if (status.first != 200)
 			{
 				BE_LOGW("ITwinScene", "Delete Scene in DS failed. Http status: " << status.first);
@@ -198,6 +212,41 @@ namespace AdvViz::SDK {
 				jsonScene_ = SJsonScene();
 				return true;
 			}
+		}
+
+		inline void HDRIToJson(ITwinHDRISettings const& hdri, SJSonHDRI& jsonHdri) const
+		{
+			jsonHdri.hdriName = hdri.hdriName;
+			jsonHdri.sunPitch = hdri.sunPitch;
+			jsonHdri.sunYaw = hdri.sunYaw;
+			jsonHdri.sunIntensity = hdri.sunIntensity;
+			jsonHdri.rotation = hdri.rotation;
+		}
+
+		std::string ExportHDRIAsJson(ITwinHDRISettings const& hdri) const
+		{
+			SJSonHDRI jsonHdri;
+			HDRIToJson(hdri, jsonHdri);
+			return rfl::json::write(jsonHdri, YYJSON_WRITE_PRETTY);
+		}
+
+		bool ConvertHDRIJsonFileToKeyValueMap(std::filesystem::path const& jsonPath, KeyValueStringMap& outMap) const
+		{
+			SJSonHDRI jsonHdri;
+			std::ifstream ifs(jsonPath);
+			std::string parseError;
+			if (!Json::FromStream(jsonHdri, ifs, parseError))
+			{
+				return false;
+			}
+
+			outMap["hdriName"] = jsonHdri.hdriName;
+			outMap["sunPitch"] = std::to_string(jsonHdri.sunPitch);
+			outMap["sunYaw"] = std::to_string(jsonHdri.sunYaw);
+			outMap["sunIntensity"] = std::to_string(jsonHdri.sunIntensity);
+			outMap["rotation"] = std::to_string(jsonHdri.rotation);
+
+			return true;
 		}
 	};
 
@@ -292,6 +341,9 @@ namespace AdvViz::SDK {
 		jsonatmo.fog = atmo.fog;
 		jsonatmo.exposure = atmo.exposure;
 		jsonatmo.useHeliodon = atmo.useHeliodon;
+		jsonatmo.HDRIImage = atmo.HDRIImage;
+		jsonatmo.sunIntensity = atmo.sunIntensity;
+		jsonatmo.HDRIZRotation = atmo.HDRIZRotation;
 		GetImpl().shoudSave_ = true;
 	}
 
@@ -310,6 +362,9 @@ namespace AdvViz::SDK {
 		atmo.fog = jsonatmo.fog;
 		atmo.exposure = jsonatmo.exposure;
 		atmo.useHeliodon = jsonatmo.useHeliodon;
+		atmo.HDRIImage = jsonatmo.HDRIImage;
+		atmo.sunIntensity = jsonatmo.sunIntensity;
+		atmo.HDRIZRotation = jsonatmo.HDRIZRotation;
 		return atmo;
 	}
 
@@ -537,6 +592,15 @@ namespace AdvViz::SDK {
 	void ScenePersistenceDS::SetTimeline(const std::shared_ptr<AdvViz::SDK::ITimeline>& timeline)
 	{
 		GetImpl().timeline_ = timeline;
+	}
+
+	std::string ScenePersistenceDS::ExportHDRIAsJson(ITwinHDRISettings const& hdri) const 
+	{
+		return GetImpl().ExportHDRIAsJson(hdri);
+	}
+
+	bool ScenePersistenceDS::ConvertHDRIJsonFileToKeyValueMap(std::filesystem::path const& jsonPath, KeyValueStringMap& outMap) const {
+		return GetImpl().ConvertHDRIJsonFileToKeyValueMap(jsonPath, outMap);
 	}
 
 	std::shared_ptr<AdvViz::SDK::ITimeline> ScenePersistenceDS::GetTimeline()

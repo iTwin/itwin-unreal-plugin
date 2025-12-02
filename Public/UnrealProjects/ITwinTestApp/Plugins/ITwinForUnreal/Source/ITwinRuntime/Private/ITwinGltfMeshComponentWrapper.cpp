@@ -19,6 +19,7 @@
 #include <StaticMeshResources.h>
 
 #include <CesiumFeatureIdSet.h>
+#include <CesiumLoadedTile.h>
 #include <CesiumModelMetadata.h>
 #include <CesiumPrimitiveFeatures.h>
 
@@ -31,36 +32,30 @@
 //=======================================================================================
 // class FITwinGltfMeshComponentWrapper
 //=======================================================================================
-FITwinGltfMeshComponentWrapper::FITwinGltfMeshComponentWrapper(
-	UStaticMeshComponent& MeshComponent,
-	ICesiumMeshBuildCallbacks::FCesiumMeshData const& CesiumData)
-	: gltfMeshComponent_(&MeshComponent)
-	, pMetadata_(&CesiumData.Metadata)
-	, pFeatures_(&CesiumData.Features)
-	, pGltfToUnrealTexCoordMap_(&CesiumData.GltfToUnrealTexCoordMap)
+FITwinGltfMeshComponentWrapper::FITwinGltfMeshComponentWrapper(ICesiumLoadedTilePrimitive& TilePrim,
+															   std::optional<uint32> uvIndexForFeatures)
+	: gltfMeshComponent_(&TilePrim.GetMeshComponent())
+	, pMetadata_(&TilePrim.GetLoadedTile().GetModelMetadata())
+	, pFeatures_(&TilePrim.GetPrimitiveFeatures())
+	, uvIndexForFeatures_(uvIndexForFeatures)
 {
-	if (CesiumData.pMeshPrimitive)
+	auto* pMeshPrimitive = TilePrim.GetMeshPrimitive();
+	if (pMeshPrimitive)
 	{
-		// Store the uvAccessor index for features, in case we need to bake them later
-		// (see #BakeFeatureIDsInVertexUVs)
-		auto featAccessorIt = CesiumData.pMeshPrimitive->attributes.find("_FEATURE_ID_0");
-		if (featAccessorIt != CesiumData.pMeshPrimitive->attributes.end()) {
-			featuresAccessorIndex_ = featAccessorIt->second;
-			// test if we have already some UVs storing features per vertex:
-			auto uvIndexIt = CesiumData.GltfToUnrealTexCoordMap.find(*featuresAccessorIndex_);
-			if (uvIndexIt != CesiumData.GltfToUnrealTexCoordMap.cend()) {
-				uvIndexForFeatures_ = uvIndexIt->second;
-			}
-		}
-
 		// Test if this primitive is linked to a specific ITwin Material ID (test extension specially added
 		// by our gltf tuning process.
-		auto const* matIdExt = CesiumData.pMeshPrimitive->getExtension<BeUtils::ExtensionITwinMaterialID>();
+		auto const* matIdExt = pMeshPrimitive->getExtension<BeUtils::ExtensionITwinMaterialID>();
 		if (matIdExt)
 		{
 			iTwinMaterialID_ = matIdExt->materialId;
 		}
 	}
+}
+
+FITwinGltfMeshComponentWrapper::FITwinGltfMeshComponentWrapper(UStaticMeshComponent& MeshComponent, 
+															   uint64_t ITwinMaterialID)
+	: gltfMeshComponent_(&MeshComponent), iTwinMaterialID_(ITwinMaterialID)
+{
 }
 
 TObjectPtr<UStaticMesh> FITwinGltfMeshComponentWrapper::GetSourceStaticMesh() const
@@ -120,7 +115,7 @@ inline void FITwinGltfMeshComponentWrapper::CheckFeatureIDUniqueness(
 	FSimpleStaticMeshSection& curSection,
 	const ITwinFeatureID& FeatureID) const
 {
-	checkSlow(FeatureID < std::numeric_limits<ITwinFeatureID>::max());
+	checkSlow(FeatureID.value() < std::numeric_limits<ITwinFeatureID::ValueType>::max());
 	if (curSection.CommonFeatureID && (*curSection.CommonFeatureID != FeatureID))
 	{
 		curSection.CommonFeatureID.reset();
@@ -228,7 +223,7 @@ FITwinGltfMeshComponentWrapper::EMetadataStatus FITwinGltfMeshComponentWrapper::
 			// start a new section
 			curSection.NumTriangles = 1;
 			curSection.FirstIndex = 3 * FaceIndex; // *not* FaceIndex!
-			checkSlow(FeatureID < std::numeric_limits<ITwinFeatureID>::max());
+			checkSlow(FeatureID < std::numeric_limits<ITwinFeatureID::ValueType>::max());
 			curSection.CommonFeatureID.emplace(FeatureID);
 			curEltID = elementID;
 		}
@@ -329,7 +324,8 @@ void FITwinGltfMeshComponentWrapper::InitExtractedMeshComponent(
 	pMesh->SetCustomDepthStencilValue(gltfMeshComponent_->CustomDepthStencilValue);
 	pMesh->bCastDynamicShadow = gltfMeshComponent_->bCastDynamicShadow;
 
-	ExtractedEntity.MeshComponent = pMesh;
+	ExtractedEntity.TransformableMeshComponent = pMesh;
+	ExtractedEntity.ExtractedMeshComponent = pMesh;
 	// I think this may not always be the final world transform, probably when the gltf primitive's parent
 	// component (the UCesiumGltfComponent) is not yet attached to the tileset, which is done only in
 	// ACesium3DTileset::showTilesToRender, *before* making the tile visible. This could be tested with:
@@ -352,7 +348,7 @@ bool FITwinGltfMeshComponentWrapper::FinalizeExtractedEntity(
 	FITwinMeshExtractionOptions const& Options,
 	std::optional<uint32> const& UVIndexForFeatures) const
 {
-	if (!ExtractedEntity.MeshComponent.IsValid() || !SrcStaticMesh)
+	if (!ExtractedEntity.TransformableMeshComponent.IsValid() || !SrcStaticMesh)
 	{
 		ensureMsgf(false, TEXT("mesh destroyed before finalization!"));
 		return false;
@@ -366,8 +362,8 @@ bool FITwinGltfMeshComponentWrapper::FinalizeExtractedEntity(
 	const FStaticMeshVertexBuffers& SrcVertexBuffers = SrcLODResources.VertexBuffers;
 
 	UStaticMesh* pStaticMesh = NewObject<UStaticMesh>(
-		ExtractedEntity.MeshComponent.Get(), MeshName);
-	ExtractedEntity.MeshComponent->SetStaticMesh(pStaticMesh);
+		ExtractedEntity.TransformableMeshComponent.Get(), MeshName);
+	ExtractedEntity.TransformableMeshComponent->SetStaticMesh(pStaticMesh);
 
 	pStaticMesh->SetFlags(SrcStaticMesh->GetFlags());
 	pStaticMesh->NeverStream = SrcStaticMesh->NeverStream;
@@ -534,17 +530,16 @@ bool FITwinGltfMeshComponentWrapper::FinalizeExtractedEntity(
 
 	pStaticMesh->CreateBodySetup();
 
-	// TODO_GCO: try to avoid crashes I had with heavy scenes only - should MeshComponent be a strong ptr??
-	if (!ensure(ExtractedEntity.MeshComponent.IsValid()))
+	// TODO_GCO: try to avoid crashes I had with heavy scenes only - should it be a strong ptr??
+	if (!ensure(ExtractedEntity.TransformableMeshComponent.IsValid()))
 		return false;
-	ExtractedEntity.MeshComponent->SetMobility(gltfMeshComponent_->Mobility);
-
-	ExtractedEntity.MeshComponent->AttachToComponent(gltfMeshComponent_.Get(),
-													 FAttachmentTransformRules::KeepWorldTransform);
-	ExtractedEntity.MeshComponent->SetWorldTransform(ExtractedEntity.OriginalTransform, false,
-													 nullptr, ETeleportType::TeleportPhysics);
-	ExtractedEntity.MeshComponent->RegisterComponent();
-	ExtractedEntity.MeshComponent->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	ExtractedEntity.TransformableMeshComponent->SetMobility(gltfMeshComponent_->Mobility);
+	ExtractedEntity.TransformableMeshComponent->AttachToComponent(gltfMeshComponent_.Get(),
+																  FAttachmentTransformRules::KeepWorldTransform);
+	ExtractedEntity.TransformableMeshComponent->SetWorldTransform(ExtractedEntity.OriginalTransform, false,
+																  nullptr, ETeleportType::TeleportPhysics);
+	ExtractedEntity.TransformableMeshComponent->RegisterComponent();
+	ExtractedEntity.TransformableMeshComponent->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 
 	// Extracted entities should *always* have their Feature IDs baked in UVs
 	if (UVIndexForFeatures)
@@ -558,7 +553,7 @@ bool FITwinGltfMeshComponentWrapper::FinalizeExtractedEntity(
 	// Do not show the extracted entity if the source mesh is currently invisible
 	if (!gltfMeshComponent_->IsVisible())
 	{
-		ExtractedEntity.MeshComponent->SetVisibility(false, /*bPropagateToChildren*/true);
+		ExtractedEntity.TransformableMeshComponent->SetVisibility(false, /*bPropagateToChildren*/true);
 	}
 	return true;
 }
@@ -1012,33 +1007,6 @@ uint32 FITwinGltfMeshComponentWrapper::ExtractSomeElements(
 
 std::optional<uint32> FITwinGltfMeshComponentWrapper::GetFeatureIDsInVertexUVs()
 {
-	if (uvIndexForFeatures_) {
-		// already baked before
-		return uvIndexForFeatures_;
-	}
-	if (!featuresAccessorIndex_) {
-		// the input primitive has no features
-		return std::nullopt;
-	}
-
-	if (pGltfToUnrealTexCoordMap_ == nullptr) {
-		checkf(false, TEXT("need to maintain TexCoordMap of GLTF mesh"));
-		return std::nullopt;
-	}
-
-	auto AlreadyInMap = pGltfToUnrealTexCoordMap_->find(*featuresAccessorIndex_);
-	if (AlreadyInMap != pGltfToUnrealTexCoordMap_->end())
-	{
-		uvIndexForFeatures_ = AlreadyInMap->second;
-		return uvIndexForFeatures_;
-	}
-
-	ensureMsgf(false, TEXT("On-demand baking of feature IDs in UVs is no longer possible"));
-	// Blame here if you want to know the reasons. In short, it was first deactivated by Ghislain following
-	// random crashes in packaged apps, and then Julot changed the signature of #BakeFeatureIDsInVertexUVs to
-	// fix another bug (dealing with vertex duplication in #loadPrimitive), so it was useless to
-	// maintain a code that could no longer be reborn without major changes...
-
 	return uvIndexForFeatures_;
 }
 
@@ -1072,13 +1040,4 @@ void FITwinGltfMeshComponentWrapper::ForEachMaterialInstance(std::function<void(
 			}
 		}
 	}
-}
-
-void FITwinGltfMeshComponentWrapper::EnforceITwinMaterialID(uint64_t MatID)
-{
-	// This method should only be called in very specific cases (creation of a dummy mapping to apply our
-	// materials to a generic, non-Cesium mesh).
-	ensureMsgf(!iTwinMaterialID_ || *iTwinMaterialID_ == MatID,
-		TEXT("changing iTwin Material ID for a mesh is strange"));
-	iTwinMaterialID_ = MatID;
 }

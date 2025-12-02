@@ -82,7 +82,7 @@ private:
 	ITwinHttp::FMutex& Mutex;///< TODO_GCO: use a per-Schedule mutex?
 	bool bUseAPIM = false; ///< MUST be before XXXPagination members below! (see ctors)
 	const int RequestPagination;///< pageSize for paginated requests EXCEPT animation bindings
-	const int BindingsRequestPagination;///< pageSize for paginated *animation bindings* requests
+	/*const <= NextGen hack*/ int BindingsRequestPagination;///< pageSize for paginated *animation bindings* requests
 	/// When passing a collection of ElementIDs to filter a request, we need to cap the size for performance
 	/// reasons. Julius suggested to cap to 1000 on the server.
 	const size_t MaxElementIDsFilterSize;
@@ -115,7 +115,7 @@ private:
 	static int CheckPagination(int Pagination, FString const& PaginationSetting)
 	{
 		// 50K is the true limit on server: until now I had used 30K with ES-API because of "gateway timeout"
-		// errors, but APIM seems to work well with 50K
+		// errors, but APIM seems to work well with 50K (well, only for Legacy for the moment...)
 		int const MaxPagination = 50'000;
 		if (Pagination > MaxPagination)
 		{
@@ -131,7 +131,7 @@ public:
 			std::vector<FITwinSchedule>& InSchedules)
 		: Owner(&InOwner)
 		, Mutex(InMutex)
-		, bUseAPIM(Owner->Owner->bStream4DFromAPIM)
+		, bUseAPIM(Owner->Owner->bStream4DFromAPIM && !Owner->Owner->bDebugWithDummyTimelines)
 		, RequestPagination(CheckPagination(
 			ITwin_TestOverrides::RequestPagination > 0
 				? ITwin_TestOverrides::RequestPagination : InOwner.Owner->ScheduleQueriesServerPagination,
@@ -201,6 +201,7 @@ private:
 	FUrlArgList ConcatPaginationParams(FUrlArgList&& ArgList, std::optional<FString> const& PageToken);
 	void RequestSchedules(ReusableJsonQueries::FStackingToken const&,
 		std::optional<FString> const PageToken = {}, FLock* optLock = nullptr);
+	void RequestScheduleStatistics(ReusableJsonQueries::FStackingToken const&, size_t const SchedIdx, FLock&);
 	void AutoRequestScheduleItems(ReusableJsonQueries::FStackingToken const& Token,
 		size_t const SchedStartIdx, size_t const SchedEndIdx, FLock* optLock = nullptr);
 	/// \param ElementsIt When not equal to ElementsEnd from the start, get ElementIDs with which to filter
@@ -237,6 +238,9 @@ private:
 					 FLock&);
 	void ParseTaskDetails(TSharedPtr<FJsonObject> const& JsonObj, size_t const SchedIdx,
 						  size_t const TaskInVec, FLock& Lock);
+	bool ParseTaskDates(TSharedPtr<FJsonObject> const& JsonObj, FDateTime& Start, FDateTime& Finish,
+						FString& StartStr, FString& FinishStr,
+		bool const bActualOrPlanned);
 	void ParseAppearanceProfileDetails(TSharedPtr<FJsonObject> const& JsonObj, size_t const SchedIdx,
 		FString const AppearanceProfileId, size_t const AppearanceProfileInVec, FLock& Lock);
 	void RequestAllAppearanceProfiles(ReusableJsonQueries::FStackingToken const&, size_t const SchedStartIdx,
@@ -353,6 +357,43 @@ private:
 		}
 		check(false);
 		return "<invalId>";
+	}
+
+	void OnScheduleDownloadProgressed(FITwinSchedule& Sched, FLock&)
+	{
+		// TODO: log only once, of course + aggregate currently downloaded "properties" counts vs. total counts
+		// into a single percentage value to notify the UITwinSynchro4DSchedules which will ultimately relay
+		// the information to some UX widget
+		if (!Sched.bHasLoggedStats)
+		{
+			Sched.bHasLoggedStats = true;
+			S4D_LOG(TEXT("Statistics for the schedule Id %s named '%s':\n\tTasks: %llu,\n\tAppearance profiles: %llu,\n\tAnimation Bindings: %llu,\n\tStatic transforms: %llu,\n\t3D Path assignments: %llu,\n\t3D Paths: %llu,\n\t3D Paths keyframes: %llu"),
+				*Sched.Id, *Sched.Name, Sched.StatisticsTotal.TaskCount, Sched.StatisticsTotal.AppearanceProfileCount,
+				// Note: the animation binding count does not match the final "bindings" count displayed, by far.
+				// I'm sure there's a reason, probably due to grouping and/or leaf vs. non-leaf Element nodes, etc. ;-)
+				Sched.StatisticsTotal.AnimationBindingCount, Sched.StatisticsTotal.Animation3dTransformCount,
+				Sched.StatisticsTotal.Animation3dPathAssignmentCount, Sched.StatisticsTotal.Animation3dPathCount,
+				Sched.StatisticsTotal.Animation3dPathKeyframeCount);
+		}
+		size_t const TotalCount = Sched.StatisticsTotal.TaskCount
+			+ Sched.StatisticsTotal.AppearanceProfileCount
+			+ Sched.StatisticsTotal.AnimationBindingCount
+			+ Sched.StatisticsTotal.Animation3dTransformCount
+			+ Sched.StatisticsTotal.Animation3dPathAssignmentCount
+			+ Sched.StatisticsTotal.Animation3dPathCount
+			+ Sched.StatisticsTotal.Animation3dPathKeyframeCount;
+		if (TotalCount != 0) // could happen depending on ordering of replies
+		{
+			SchedulesInternals().OnDownloadProgressed(100. * std::min(1.,
+				( Sched.StatisticsCurrent.TaskCount
+				+ Sched.StatisticsCurrent.AppearanceProfileCount
+				+ Sched.StatisticsCurrent.AnimationBindingCount
+				+ Sched.StatisticsCurrent.Animation3dTransformCount
+				+ Sched.StatisticsCurrent.Animation3dPathAssignmentCount
+				+ Sched.StatisticsCurrent.Animation3dPathCount
+				+ Sched.StatisticsCurrent.Animation3dPathKeyframeCount)
+					/ (double)TotalCount));
+		}
 	}
 
 	FString const& PageSizeParam() const
@@ -553,6 +594,11 @@ void FITwinSchedulesImport::FImpl::AutoRequestScheduleItems(ReusableJsonQueries:
 		optLock.emplace(Mutex);
 		Lock = &(*optLock);
 	}
+	if (bUseAPIM)
+		for (size_t SchedIdx = SchedStartIdx; SchedIdx < SchedEndIdx; ++SchedIdx)
+		{
+			RequestScheduleStatistics(Token, SchedIdx, *Lock);
+		}
 	RequestAllTasks(Token, SchedStartIdx, SchedEndIdx, *Lock);
 	if (PrefetchWholeSchedule())
 	{
@@ -564,6 +610,28 @@ void FITwinSchedulesImport::FImpl::AutoRequestScheduleItems(ReusableJsonQueries:
 			Request3DPathKeyframes(Token, SchedIdx, ITwin::INVALID_IDX, {}, *Lock);
 		}
 	}
+}
+
+void FITwinSchedulesImport::FImpl::RequestScheduleStatistics(ReusableJsonQueries::FStackingToken const& Token,
+	size_t const SchedIdx, FLock& Lock)
+{
+	Queries->StackRequest(Token, &Lock, ITwinHttp::EVerb::Get,
+		{ Schedules[SchedIdx].Id, TEXT("animation-statistics") }, {},
+		[this, SchedIdx, &Token](TSharedPtr<FJsonObject> const& Reply)
+		{
+			auto const& JsonObj = Reply->GetObjectField(TEXT("animationStatistics"));
+			FITwinScheduleStats Tmp;
+			JSON_GETNUMBER_OR(JsonObj, "animation3dPathAssignmentCount", Tmp.Animation3dPathAssignmentCount, return);
+			JSON_GETNUMBER_OR(JsonObj, "animation3dPathCount", Tmp.Animation3dPathCount, return);
+			JSON_GETNUMBER_OR(JsonObj, "animation3dPathKeyframeCount", Tmp.Animation3dPathKeyframeCount, return);
+			JSON_GETNUMBER_OR(JsonObj, "animation3dTransformCount", Tmp.Animation3dTransformCount, return);
+			JSON_GETNUMBER_OR(JsonObj, "animationBindingCount", Tmp.AnimationBindingCount, return);
+			JSON_GETNUMBER_OR(JsonObj, "appearanceProfileCount", Tmp.AppearanceProfileCount, return);
+			JSON_GETNUMBER_OR(JsonObj, "taskCount", Tmp.TaskCount, return);
+			FLock Lock(Mutex);
+			Schedules[SchedIdx].StatisticsTotal = Tmp;
+			OnScheduleDownloadProgressed(Schedules[SchedIdx], Lock);
+		});
 }
 
 void FITwinSchedulesImport::FImpl::RequestAllTasks(ReusableJsonQueries::FStackingToken const& Token,
@@ -591,7 +659,7 @@ void FITwinSchedulesImport::FImpl::RequestAllTasks(ReusableJsonQueries::FStackin
 					bool const bMoreToCome = Reply->TryGetStringField(TEXT("nextPageToken"), NextPageToken);
 					FLock Lock(Mutex);
 					auto&& Sched = Schedules[SchedIdx];
-					S4D_LOG(TEXT("Received %d tasks (total %d%s) for schedule '%s'"), Items.Num(),
+					S4D_VERBOSE(TEXT("Received %d tasks (total %d%s) for schedule '%s'"), Items.Num(),
 						(int)Sched.Tasks.size() + Items.Num(),
 						bMoreToCome ? TEXT(", more to come") : TEXT(", final reply"),
 						*Schedules[SchedIdx].Name);
@@ -616,6 +684,8 @@ void FITwinSchedulesImport::FImpl::RequestAllTasks(ReusableJsonQueries::FStackin
 						ParseTaskDetails(TaskObj, SchedIdx, KnownTask.first->second, Lock);
 						MainTimeline.IncludeTimeRange(Sched.Tasks[KnownTask.first->second].TimeRange);
 					}
+					Sched.StatisticsCurrent.TaskCount += (size_t)Items.Num();
+					OnScheduleDownloadProgressed(Sched, Lock);
 					if (!bMoreToCome)
 					{
 						SetScheduleTimeRangeIsKnown();
@@ -654,7 +724,7 @@ void FITwinSchedulesImport::FImpl::RequestAllAppearanceProfiles(
 					bool const bMoreToCome = Reply->TryGetStringField(TEXT("nextPageToken"), NextPageToken);
 					FLock Lock(Mutex);
 					auto&& Sched = Schedules[SchedIdx];
-					S4D_LOG(TEXT("Received %d appearance profiles (total %d%s) for schedule '%s'"),
+					S4D_VERBOSE(TEXT("Received %d appearance profiles (total %d%s) for schedule '%s'"),
 						Items.Num(), (int)Sched.AppearanceProfiles.size() + Items.Num(),
 						bMoreToCome ? TEXT(", more to come") : TEXT(", final reply"),
 						*Schedules[SchedIdx].Name);
@@ -677,6 +747,8 @@ void FITwinSchedulesImport::FImpl::RequestAllAppearanceProfiles(
 						ParseAppearanceProfileDetails(AppearanceObj, SchedIdx, AppearanceId,
 													  KnownAppearance.first->second, Lock);
 					}
+					Sched.StatisticsCurrent.AppearanceProfileCount += (size_t)Items.Num();
+					OnScheduleDownloadProgressed(Sched, Lock);
 				}
 			});
 	}
@@ -699,7 +771,7 @@ template<typename TPropertyId> bool IsEmpty(TPropertyId const& PropertyId);
 template<> bool IsEmpty(FString const& PropertyId) { return PropertyId.IsEmpty(); }
 template<> bool IsEmpty(std::pair<FString, bool> const& PropertyId) { return PropertyId.first.IsEmpty(); }
 
-} // ns ITwin
+} // ns Detail
 
 template<typename TPropertyId, typename TProperty, class TInsertable>
 std::pair<TProperty*, bool> FITwinSchedulesImport::FImpl::EmplaceProperty(
@@ -1044,7 +1116,7 @@ std::set<ITwinElementID>::const_iterator FITwinSchedulesImport::FImpl::RequestAn
 
 			} // for NewBindings
 
-			S4D_LOG(TEXT("Received %d Bindings, total Elements/Groups bound: %llu"), Items.Num(),
+			S4D_VERBOSE(TEXT("Received %d Bindings, total Elements/Groups bound: %llu"), Items.Num(),
 				[&Sched]()
 				{
 					std::unordered_set<decltype(FAnimationBinding::AnimatedEntities)> Bound;
@@ -1083,6 +1155,8 @@ std::set<ITwinElementID>::const_iterator FITwinSchedulesImport::FImpl::RequestAn
 				S4D_VERBOSE(TEXT("Complete binding notified: %s"),
 							*Sched.AnimationBindings[Binding].ToString());
 			}
+			Sched.StatisticsCurrent.AnimationBindingCount += (size_t)Items.Num();
+			OnScheduleDownloadProgressed(Sched, Lock);
 		},
 		JsonPostString ? FString(*JsonPostString) : FString());
 
@@ -1116,27 +1190,70 @@ void FITwinSchedulesImport::FImpl::CompletedProperty(FITwinSchedule& Schedule, s
 	}
 }
 
+bool FITwinSchedulesImport::FImpl::ParseTaskDates(TSharedPtr<FJsonObject> const& JsonObj,
+	FDateTime& Start, FDateTime& Finish, FString& StartStr, FString& FinishStr,
+	bool const bActualOrPlanned)
+{
+	if (!JsonObj->TryGetStringField(bActualOrPlanned ? TEXT("actualStart") : TEXT("plannedStart"), StartStr)
+		|| StartStr.IsEmpty())
+	{
+		return false;
+	}
+	if (!JsonObj->TryGetStringField(bActualOrPlanned ? TEXT("actualFinish") : TEXT("plannedFinish"), FinishStr)
+		|| FinishStr.IsEmpty())
+	{
+		return false;
+	}
+	return FDateTime::ParseIso8601(*StartStr, Start) && FDateTime::ParseIso8601(*FinishStr, Finish);
+}
+
 void FITwinSchedulesImport::FImpl::ParseTaskDetails(TSharedPtr<FJsonObject> const& JsonObj,
 	size_t const SchedIdx, size_t const TaskInVec, FLock& Lock)
 {
-	FString Name = JsonObj->GetStringField(TEXT("name"));
-	// Using "Planned" ATM (Laurynas said timerange filtering does that too), but we should probably also
-	// support the notion of "Best date" (Actual if any, Planned otw) like Synchro/Pineapple (TODO_GCO)
-	FString PlannedStartStr, PlannedFinishStr;
-	JSON_GETSTR_OR(JsonObj, "plannedStart", PlannedStartStr, return)
-	JSON_GETSTR_OR(JsonObj, "plannedFinish", PlannedFinishStr, return)
-	FDateTime PlannedStart, PlannedFinish;
-	bool const bCouldParseDates = FDateTime::ParseIso8601(*PlannedStartStr, PlannedStart)
-							   && FDateTime::ParseIso8601(*PlannedFinishStr, PlannedFinish);
 	auto& Sched = Schedules[SchedIdx];
 	auto& Task = Sched.Tasks[TaskInVec];
-	Task.Name = std::move(Name);
+	Task.Name = JsonObj->GetStringField(TEXT("name"));
+	// Using  "Best dates" (Actual if any, Planned otw) like Synchro/Pineapple/DesignReview
+	FDateTime Start, Finish, ActualStart, ActualFinish; FString StartStr, FinishStr;
+	bool bUsesActualDates = true;
+	bool bCouldParseDates =
+		ParseTaskDates(JsonObj, ActualStart, ActualFinish, StartStr, FinishStr, bUsesActualDates);
+	bool const bHasActualDates = bCouldParseDates; // might be invalid (Start > Finish)
+	if (!bCouldParseDates || ActualStart > ActualFinish)
+	{
+		bUsesActualDates = false;
+		bCouldParseDates = ParseTaskDates(JsonObj, Start, Finish, StartStr, FinishStr, bUsesActualDates);
+		// either the Planned ones, or the Actual ones if !bCouldParseDates
+		if ((bHasActualDates && ActualStart > ActualFinish)
+			|| (bCouldParseDates && Start > Finish))
+		{
+			bCouldParseDates |= bHasActualDates;
+			if (bCouldParseDates)
+				Start = Finish;
+			else
+			{
+				bUsesActualDates = true;
+				Start = Finish = ActualFinish;
+			}
+			BE_LOGW("ITwin4DImp", "Task " << TCHAR_TO_UTF8(*Task.Id) << " named '"
+				<< TCHAR_TO_UTF8(*Task.Name) << "' for schedule Id " << TCHAR_TO_UTF8(*Sched.Id)
+				<< " had Start > Finish => assigned Finish to Start so now both are: "
+				<< TCHAR_TO_UTF8(*StartStr)
+				<< " (" << (bUsesActualDates ? "Actual" : "Planned") << " dates)");
+		}
+	}
+	else
+	{
+		Start = ActualStart;
+		Finish = ActualFinish;
+	}
 	if (ensure(bCouldParseDates))
 	{
-		Task.TimeRange.first = ITwin::Time::FromDateTime(PlannedStart);
-		Task.TimeRange.second = ITwin::Time::FromDateTime(PlannedFinish);
-		S4D_VERBOSE(TEXT("Task %s named '%s' for schedule Id %s spans %s to %s"),
-					*Task.Id, *Task.Name, *Sched.Id, *PlannedStartStr, *PlannedFinishStr);
+		Task.TimeRange.first = ITwin::Time::FromDateTime(Start);
+		Task.TimeRange.second = ITwin::Time::FromDateTime(Finish);
+		S4D_VERBOSE(TEXT("Task %s named '%s' for schedule Id %s spans %s to %s ('%s' dates)"),
+					*Task.Id, *Task.Name, *Sched.Id, *StartStr, *FinishStr,
+					bUsesActualDates ? TEXT("Actual") : TEXT("Planned"));
 		CompletedProperty(Sched, Task.Bindings, Lock, TEXT("TaskDetails"));
 	}
 	else
@@ -1595,7 +1712,7 @@ void FITwinSchedulesImport::FImpl::RequestAllStaticTransfoAssignments(
 			auto Items = Reply->GetArrayField(bUseAPIM ? TEXT("animation3dTransforms") : TEXT("items"));
 			FLock Lock(Mutex);
 			auto&& Sched = Schedules[SchedIdx];
-			S4D_LOG(TEXT(
+			S4D_VERBOSE(TEXT(
 				"Received %d static transfo. assignments (total static+3D paths: %d%s) for schedule '%s'"),
 				Items.Num(), (int)Sched.TransfoAssignments.size() + Items.Num(),
 				bMoreToCome ? TEXT(", more to come") : TEXT(", final reply"),
@@ -1607,6 +1724,8 @@ void FITwinSchedulesImport::FImpl::RequestAllStaticTransfoAssignments(
 			Sched.TransfoAssignments.reserve(Sched.TransfoAssignments.size() + Items.Num());
 			for (auto&& TransfoObj : Items)
 				ParseStaticTransfoAssignment(TransfoObj->AsObject(), SchedIdx, &Lock);
+			Sched.StatisticsCurrent.Animation3dTransformCount += (size_t)Items.Num();
+			OnScheduleDownloadProgressed(Sched, Lock);
 		});
 }
 
@@ -1702,7 +1821,7 @@ void FITwinSchedulesImport::FImpl::RequestAll3DPathTransfoAssignments(
 			auto Items = Reply->GetArrayField(bUseAPIM ? TEXT("animation3dPathAssignments") : TEXT("items"));
 			FLock Lock(Mutex);
 			auto&& Sched = Schedules[SchedIdx];
-			S4D_LOG(TEXT(
+			S4D_VERBOSE(TEXT(
 				"Received %d 3D path transfo. assignments (total static+3D paths: %d%s) for schedule '%s'"),
 				Items.Num(), (int)Sched.TransfoAssignments.size() + Items.Num(),
 				bMoreToCome ? TEXT(", more to come") : TEXT(", final reply"),
@@ -1714,6 +1833,8 @@ void FITwinSchedulesImport::FImpl::RequestAll3DPathTransfoAssignments(
 			Sched.TransfoAssignments.reserve(Sched.TransfoAssignments.size() + Items.Num());
 			for (auto&& TransfoObj : Items)
 				Parse3DPathTransfoAssignment(TransfoObj->AsObject(), SchedIdx, Token, &Lock);
+			Sched.StatisticsCurrent.Animation3dPathAssignmentCount += (size_t)Items.Num();
+			OnScheduleDownloadProgressed(Sched, Lock);
 		});
 }
 
@@ -1826,7 +1947,7 @@ void FITwinSchedulesImport::FImpl::Request3DPathKeyframes(ReusableJsonQueries::F
 				TotalParsedKeyframes = KeyframesArray.Num();
 			else
 				TotalParsedKeyframes += KeyframesArray.Num();
-			S4D_LOG(TEXT("Received %d 3D path keyframes (total: %llu%s) for schedule '%s'"),
+			S4D_VERBOSE(TEXT("Received %d 3D path keyframes (total: %llu%s) for schedule '%s'"),
 				KeyframesArray.Num(), TotalParsedKeyframes,
 				bMoreToCome ? TEXT(", more to come") : TEXT(", final reply"), *Schedules[SchedIdx].Name);
 			if (bMoreToCome)
@@ -1879,6 +2000,8 @@ void FITwinSchedulesImport::FImpl::Request3DPathKeyframes(ReusableJsonQueries::F
 				if (!bMoreToCome)
 					Finalize3DPath(Path3D);
 			}
+			Sched.StatisticsCurrent.Animation3dPathKeyframeCount += (size_t)KeyframesArray.Num();
+			OnScheduleDownloadProgressed(Sched, Lock);
 		});
 }
 
@@ -1899,7 +2022,8 @@ void FITwinSchedulesImport::FImpl::SetSchedulesImportConnectors(
 void FITwinSchedulesImport::FImpl::ResetConnection(FString const& ITwinAkaProjectAkaContextId,
 	FString const& IModelId, FString const& InChangesetId, FString const& CustomCacheDir)
 {
-	{	FLock Lock(Mutex);
+	{
+		FLock Lock(Mutex);
 		// I can imagine the URL or the token could need updating (new mirror, auth renew),
 		// but not the iTwin nor the iModel
 		ensure((!Queries && ITwinId.IsEmpty() && TargetedIModelId.IsEmpty())
@@ -1925,7 +2049,7 @@ void FITwinSchedulesImport::FImpl::ResetConnection(FString const& ITwinAkaProjec
 		}
 		std::function<FString()> GetBearerToken = [] { return FString(); };
 		if (!UnitTesting)
-			GetBearerToken = [SchedComp=Owner->Owner]() -> FString
+			GetBearerToken = [SchedComp = Owner->Owner]() -> FString
 			{
 				AITwinIModel const& IModel = *Cast<AITwinIModel const>(SchedComp->GetOwner());
 				if (ensure(IModel.ServerConnection))
@@ -1953,20 +2077,30 @@ void FITwinSchedulesImport::FImpl::ResetConnection(FString const& ITwinAkaProjec
 				if (!AITwinServerConnection::CheckRequest(CompletedRequest, Response, bConnectedSuccessfully,
 					&StrError, bWillRetry))
 				{
-					if (!bHasFetchingErrors)
-						FirstFetchingError = StrError;
-					bHasFetchingErrors = true;
+					if (bUseAPIM && bConnectedSuccessfully && bWillRetry
+						&& StrError.Contains(TEXT("InvalidSchedulesRequest"))
+						&& StrError.Contains(TEXT("InvalidValue"))
+						&& StrError.Contains(TEXT("Top value")))
+					{
+						SchedulesGeneration = EITwinSchedulesGeneration::NextGen;
+					}
+					else
+					{
+						if (!bHasFetchingErrors)
+							FirstFetchingError = StrError;
+						bHasFetchingErrors = true;
+					}
 					return false;
 				}
 				return true;
 			},
 			Mutex,
 			(!Owner->Owner || Owner->Owner->DebugRecordSessionQueries.IsEmpty()
-						   || !Owner->Owner->DebugSimulateSessionQueries.IsEmpty())
-				? nullptr : (*Owner->Owner->DebugRecordSessionQueries),
-			SchedApiSession, 
+				|| !Owner->Owner->DebugSimulateSessionQueries.IsEmpty())
+			? nullptr : (*Owner->Owner->DebugRecordSessionQueries),
+			SchedApiSession,
 			(!Owner->Owner || Owner->Owner->DebugSimulateSessionQueries.IsEmpty())
-				? nullptr : (*Owner->Owner->DebugSimulateSessionQueries),
+			? nullptr : (*Owner->Owner->DebugSimulateSessionQueries),
 			GetOnScheduleQueryingStatusChanged(),
 			GetBearerToken);
 	} // end Lock
@@ -1986,26 +2120,24 @@ void FITwinSchedulesImport::FImpl::ResetConnection(FString const& ITwinAkaProjec
 		Queries->NewBatch(
 			[this](ReusableJsonQueries::FStackingToken const& Token) { RequestSchedules(Token); });
 	}
-
-	// Wait for the completion of the initial request or batch, assuming Legacy schedules: if none received,
-	// switch to NextGen and try again (see important comment on this assumption in GetSchedulesAPIBaseUrl!)
-	// TODO_GCO: If we ever need both, we could easily have two SchedulesApi, one for each server,
-	// there's no hurry and we're supposed to query through a proxy anyway (see GetSchedulesAPIBaseUrl)
+	Queries->NewBatch([this](ReusableJsonQueries::FStackingToken const& Token)
+		{
+			// SchedulesGeneration is Unknown unless we got the $top error (see InvalidValue in above handler)
+			// in that case we need to query again the bindings with the right $top value
+			if (bUseAPIM && !Schedules.empty() && EITwinSchedulesGeneration::NextGen == SchedulesGeneration)
+			{
+				BindingsRequestPagination = 10'000;
+				// just a tmp hack:
+				ensure(1 == Schedules.size());
+				FLock Lock(Mutex);
+				RequestAnimationBindings(Token, 0, Lock);
+			}
+		});
 	Queries->NewBatch([this](ReusableJsonQueries::FStackingToken const& Token)
 		{
 			FLock Lock(Mutex);
 			if (Schedules.empty())
 			{
-				// Lack of support for the itwin-platform scope in ES-API version of the Next-Gen 4D API means
-				// that you will get an error all the time (unless testing Legacy first, in which case you'll
-				// get an error only for iModels with no Legacy schedule, including no schedule at all.
-				// => disable NextGen in ES-API, we won't need it. It will used only through APIM, and
-				// Legacy/NextGen is entirely transparent there (requests are proxied internally by APIM to
-				// the backends).
-				//BE_LOGW("ITwin4DImp", "No Legacy schedule found, trying NextGen..."));
-				//SchedulesGeneration = EITwinSchedulesGeneration::NextGen;
-				//Queries->ChangeRemoteUrl(GetSchedulesAPIBaseUrl());
-				//RequestSchedules(Token);
 				SetScheduleTimeRangeIsKnown();
 			}
 			else
@@ -2044,7 +2176,7 @@ std::pair<int, int> FITwinSchedulesImport::FImpl::HandlePendingQueries()
 	if (LastRoundedQueueSize != RoundedQueueSize
 		|| LastDisplayedQueueSizeIncrements != DisplayedQueueSizeIncrements)
 	{
-		S4D_LOG(TEXT("Still %d pending batches, and %d requests in current batch..."), QueueSize.first, QueueSize.second);
+		S4D_VERBOSE(TEXT("Still %d pending batches, and %d requests in current batch..."), QueueSize.first, QueueSize.second);
 		LastRoundedQueueSize = RoundedQueueSize;
 		LastDisplayedQueueSizeIncrements = DisplayedQueueSizeIncrements;
 	}

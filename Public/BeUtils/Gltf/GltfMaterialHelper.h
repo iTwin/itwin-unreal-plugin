@@ -155,8 +155,10 @@ public:
 	// Textures
 	//===================================================================================
 
-	void SetTextureDirectory(std::filesystem::path const& textureDir, WLock const&);
-	std::filesystem::path const& GetTextureDirectory(RWLockBase const&) const { return textureDir_; }
+	void CopyTextureDataFrom(GltfMaterialHelper const& other, WLock const&);
+
+	void SetTextureDirectory(std::filesystem::path const& textureDir, WLock const&, bool bCreateAtOnce = false);
+	std::filesystem::path const& GetTextureDirectory(RWLockBase const&) const;
 
 	void ListITwinTexturesToDownload(std::vector<std::string>& missingTextureIds, WLock const&);
 	void ListITwinTexturesToResolve(std::unordered_map<AdvViz::SDK::TextureKey, std::string>& itwinTextures,

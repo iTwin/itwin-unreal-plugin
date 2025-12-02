@@ -8,7 +8,8 @@
 
 
 #include <Decoration/ITwinDecorationHelper.h>
-#include <Engine/StaticMesh.h>
+
+#include <Decoration/DecorationWaitableLoadEvent.h>
 #include <Decoration/DecorationAsyncIOHelper.h>
 #include <Decoration/ITwinDecorationServiceSettings.h>
 
@@ -20,17 +21,20 @@
 #include <Kismet/GameplayStatics.h>
 #include <EngineUtils.h> // for TActorIterator<>
 #include <Engine/GameViewportClient.h>
+#include <Engine/StaticMesh.h>
 #include <GameFramework/Pawn.h>
 #include <GameFramework/PlayerStart.h>
 #include <AnimTimeline/ITwinTimelineActor.h>
-#include <IncludeCesium3DTileset.h>
+#include <ITwinGeolocation.h>
+#include <ITwinGoogle3DTileset.h>
 #include <ITwinIModel.h>
 #include <ITwinRealityData.h>
 #include <ITwinServerConnection.h>
-#include <ITwinTilesetAccess.h>
+#include <Material/ITwinMaterialLibrary.h>
 #include <Population/ITwinKeyframePath.h>
 #include <Population/ITwinPopulation.h>
 #include <Population/ITwinPopulationWithPathExt.h>
+#include <Population/ITwinAnimPathManager.h>
 #include <Spline/ITwinSplineHelper.h>
 #include <Spline/ITwinSplineTool.h>
 
@@ -39,16 +43,19 @@
 #include <Async/Async.h>
 #include <atomic>
 #include <chrono>
+#include <Content/ITwinContentManager.h>
+#include <Math/UEMathConversion.h>
+
 
 #include <Compil/BeforeNonUnrealIncludes.h>
 #	include "SDK/Core/Visualization/MaterialPersistence.h"
 #	include "SDK/Core/Visualization/Timeline.h"
 #	include "SDK/Core/ITwinAPI/ITwinAuthManager.h"
-#	include <BeHeaders/Compil/CleanUpGuard.h>
+#	include <BeHeaders/Util/CleanUpGuard.h>
 #	include <BeHeaders/Compil/EnumSwitchCoverage.h>
-#   include "SDK/Core/Visualization/ScenePersistence.h"
 #   include "SDK/Core/Visualization/SplinesManager.h"
 #   include "SDK/Core/Visualization/KeyframeAnimator.h"
+#	include <numbers>
 #include <Compil/AfterNonUnrealIncludes.h>
 
 
@@ -75,53 +82,83 @@ namespace ITwin
 		return nullptr;
 	}
 
-	TUniquePtr<FITwinTilesetAccess> GetTilesetAccess(ModelLink const& ModelKey, const UWorld* World)
+	TUniquePtr<FITwinTilesetAccess> GetGoogleTilesetAccess(const UWorld* World)
 	{
-		if (ModelKey.first == EITwinModelType::IModel)
+		for (TActorIterator<AITwinGoogle3DTileset> Google3DIter(World); Google3DIter; ++Google3DIter)
 		{
-			auto* Model = GetIModelByID(ModelKey.second, World);
-			if (Model)
-				return Model->MakeTilesetAccess();
-		}
-		else if (ModelKey.first == EITwinModelType::RealityData)
-		{
-			auto* Model = GetRealityDataByID(ModelKey.second, World);
-			if (Model)
-				return Model->MakeTilesetAccess();
+			return (*Google3DIter)->MakeTilesetAccess();
 		}
 		return {};
 	}
 
-	ModelLink GetSplineModelLink(AdvViz::SDK::SharedSpline const& Spline)
+	TUniquePtr<FITwinTilesetAccess> GetTilesetAccess(ModelLink const& ModelKey, const UWorld* World)
 	{
-		if (!Spline || Spline->GetLinkedModelId().empty())
+		switch (ModelKey.first)
 		{
-			return std::make_pair(EITwinModelType::Invalid, FString());
-		}
-		else
+		case EITwinModelType::IModel:
 		{
-			// Spline is linked to a specific model
-			return std::make_pair(
-				ITwin::StrToModelType(Spline->GetLinkedModelType()),
-				UTF8_TO_TCHAR(Spline->GetLinkedModelId().c_str())
-			);
+			auto* Model = GetIModelByID(ModelKey.second, World);
+			if (Model)
+				return Model->MakeTilesetAccess();
+			break;
 		}
+		case EITwinModelType::RealityData:
+		{
+			auto* Model = GetRealityDataByID(ModelKey.second, World);
+			if (Model)
+				return Model->MakeTilesetAccess();
+			break;
+		}
+		case EITwinModelType::GlobalMapLayer:
+		{
+			return GetGoogleTilesetAccess(World);
+		}
+		BE_UNCOVERED_ENUM_ASSERT_AND_BREAK(
+		case EITwinModelType::AnimationKeyframe:
+		case EITwinModelType::Scene:
+		case EITwinModelType::Invalid: );
+		}
+		return {};
 	}
 
-	TUniquePtr<FITwinTilesetAccess> GetLinkedTileset(AdvViz::SDK::SharedSpline const& Spline, const UWorld* World)
+	std::set<ModelLink> GetSplineModelLinks(AdvViz::SDK::SharedSpline const& Spline)
 	{
-		TUniquePtr<FITwinTilesetAccess> LinkedTileset;
-		if (!Spline->GetLinkedModelType().empty())
+		std::set<ModelLink> Links;
+		if (Spline)
 		{
-			// Spline is linked to a specific model
-			ModelLink const Key = GetSplineModelLink(Spline);
-			LinkedTileset = GetTilesetAccess(Key, World);
+			for (auto const& ModelLink : Spline->GetLinkedModels())
+			{
+				Links.insert(std::make_pair(
+					ITwin::StrToModelType(ModelLink.modelType),
+					UTF8_TO_TCHAR(ModelLink.modelId.c_str())
+				));
+			}
+		}
+		return Links;
+	}
+
+	int32 GetLinkedTilesets(
+		AITwinSplineTool::TilesetAccessArray& OutArray,
+		AdvViz::SDK::SharedSpline const& Spline,
+		const UWorld* World)
+	{
+		OutArray.Reset();
+
+		std::set<ModelLink> const Links = GetSplineModelLinks(Spline);
+		for (auto const& Key : Links)
+		{
+			// Spline is linked to specific model(s)
+			TUniquePtr<FITwinTilesetAccess> LinkedTileset = GetTilesetAccess(Key, World);
 			if (LinkedTileset && !LinkedTileset->HasTileset())
 			{
 				LinkedTileset.Reset();
 			}
+			if (LinkedTileset)
+			{
+				OutArray.Add(std::move(LinkedTileset));
+			}
 		}
-		return LinkedTileset;
+		return OutArray.Num();
 	}
 
 	AdvViz::SDK::SharedSplineVect GetLinkedSplines(AdvViz::SDK::ISplinesManager const& SplinesManager,
@@ -130,7 +167,7 @@ namespace ITwin
 		AdvViz::SDK::SharedSplineVect LinkedSplines;
 		for (auto const& Spline : SplinesManager.GetSplines())
 		{
-			if (GetSplineModelLink(Spline) == Key)
+			if (GetSplineModelLinks(Spline).contains(Key))
 				LinkedSplines.push_back(Spline);
 		}
 		return LinkedSplines;
@@ -155,7 +192,7 @@ namespace ITwin
 		return nullptr;
 	}
 
-	bool ShouldLoadDecoration(FString const& ITwinId, UWorld const* World)
+	bool ShouldLoadScene(FString const& ITwinId, UWorld const* World)
 	{
 		if (ITwinId.IsEmpty())
 		{
@@ -182,7 +219,7 @@ namespace ITwin
 		return(DecoHelper == nullptr);
 	}
 
-	void LoadDecoration(const FString & ITwinId, UWorld* World)
+	void LoadScene(const FString & ITwinId, UWorld* World)
 	{
 		if (!World)
 		{
@@ -196,7 +233,7 @@ namespace ITwin
 			DecoHelper = World->SpawnActor<AITwinDecorationHelper>();
 			DecoHelper->SetLoadedITwinId(ITwinId);
 		}
-		DecoHelper->LoadDecoration();
+		DecoHelper->LoadScene();
 	}
 
 	ITWINRUNTIME_API void LoadIModelDecorationMaterials(AITwinIModel& IModel, UWorld* World)
@@ -208,16 +245,16 @@ namespace ITwin
 		}
 		else
 		{
-			LoadDecoration(IModel.ITwinId, World);
+			LoadScene(IModel.ITwinId, World);
 		}
 	}
 
-	void SaveDecoration(FString const& ITwinId, UWorld const* World)
+	void SaveScene(FString const& ITwinId, UWorld const* World)
 	{
 		AITwinDecorationHelper* DecoHelper = GetDecorationHelper(ITwinId, World);
 		if (DecoHelper)
 		{
-			DecoHelper->SaveDecoration(false /*bPromptUser*/);
+			DecoHelper->SaveScene(false /*bPromptUser*/);
 		}
 	}
 
@@ -235,7 +272,7 @@ namespace ITwin
 			s.Quality = l.GetQuality();
 		if (l.HasVisibility())
 			s.Visibility = l.GetVisibility();
-		FMatrix dstMat;
+		FMatrix dstMat(FMatrix::Identity);
 		FVector dstPos;
 		if (l.HasTransform())
 		{
@@ -285,6 +322,18 @@ namespace ITwin
 		}
 		l->Delete(false); // cancel delete
 	}
+
+	// The scene loader thread should wait for iTwin geo-location request
+	class FITwinGeolocInfoEvent : public FDecorationWaitableLoadEvent
+	{
+	public:
+		virtual bool ShouldWait() const override {
+			return FITwinGeolocation::IsDefaultGeoRefRequestInProgress();
+		}
+		virtual std::string Describe() const override {
+			return "iTwin geo-location";
+		}
+	};
 }
 
 
@@ -322,6 +371,7 @@ public:
 		LoadScenes = LOAD_TASK_START,
 		LoadMaterials,
 		LoadSplines,
+		LoadPathAnimations,
 		LoadPopulations,
 		LoadAnnotations,
 
@@ -356,10 +406,10 @@ public:
 	bool HasITwinID() const;
 
 
-	void StartLoadingDecoration(const UObject* WorldContextObject);
+	void StartLoadingDecoration(UWorld* WorldContextObject);
 	void StartLoadingIModelMaterials(AITwinIModel& IModel);
 
-	bool ShouldSaveDecoration(bool bPromptUser) const;
+	bool ShouldSaveScene(bool bPromptUser) const;
 
 	struct SaveRequestOptions
 	{
@@ -367,7 +417,7 @@ public:
 		bool bUponCustomMaterialsDeletion = false;
 		bool bPromptUser = true;
 	};
-	void SaveDecoration(SaveRequestOptions const& opts);
+	void SaveScene(SaveRequestOptions const& opts);
 
 	void DeleteAllCustomMaterials();
 
@@ -403,7 +453,12 @@ private:
 	void LoadPopulationsInGame(bool bHasLoadedPopulations);
 	void DissociateAnimation(const std::string& animId);
 	void LoadSplinesInGame(bool bHasLoadedSplines);
+	bool LoadSplineIfAllLinkedModelsReady(
+		AdvViz::SDK::SharedSpline const& AdvVizSpline,
+		AITwinSplineTool* SplineTool,
+		const UWorld* World);
 	void LoadAnnotationsInGame(bool bHasLoadedSplines);
+	void LoadPathAnimationsInGame(bool bHasLoadePathAnimations);
 
 	void OnCustomMaterialsLoaded_GameThread(bool bHasLoadedMaterials);
 
@@ -413,7 +468,6 @@ private:
 
 	void PreSaveCameras();
 	void LoadCameras();
-
 
 public:
 	// For loading and saving
@@ -446,7 +500,6 @@ private:
 	bool bLoadingMaterialsForSpecificModels = false;
 	std::set<std::string> SpecificIModelsForMaterialLoading;
 	std::set<ITwin::ModelLink> ModelsWithLoadedSplines;
-
 };
 
 
@@ -593,7 +646,6 @@ void AITwinDecorationHelper::FImpl::StartAsyncTask(EAsyncTask TaskType, TaskFunc
 	}), 1.f /* tick once per second*/);
 }
 
-
 std::function<bool()> AITwinDecorationHelper::FImpl::GetAsyncFunctor(EAsyncTask AsyncTask)
 {
 	// Share all data for use in the lambda (the game mode may be deleted while the lambda is
@@ -613,10 +665,17 @@ std::function<bool()> AITwinDecorationHelper::FImpl::GetAsyncFunctor(EAsyncTask 
 			Owner.GetWorld(), AITwinTimelineActor::StaticClass());
 		return [DecoIO, timelineActor]() {
 			auto ret = DecoIO->LoadSceneFromServer();
-			if (DecoIO && DecoIO->scene && DecoIO->scene->GetTimeline() && timelineActor)
+			if (DecoIO->scene && DecoIO->scene->GetTimeline() && timelineActor)
 			{
 				timelineActor->SetTimelineSDK(DecoIO->scene->GetTimeline());
 			}
+			// ***** Synchronization with itwin requests *****
+			// If the loading of the scene is very fast (typically if it fails very soon), it may happen
+			// that the iTwin Manager has not even finished its requests to retrieve the available models in
+			// the selected iTwin and its geo-reference, which could introduce some randomness (typically if
+			// the iTwin contains only one model: in such case, we should normally automatically load the
+			// latter; but this can work only if the iTwin Manager has finished its requests.
+			DecoIO->WaitForExternalLoadEvents(60);
 			return ret;
 		};
 	}
@@ -640,6 +699,10 @@ std::function<bool()> AITwinDecorationHelper::FImpl::GetAsyncFunctor(EAsyncTask 
 	case EAsyncTask::LoadAnnotations:
 	{
 		return [DecoIO]() { return DecoIO->LoadAnnotationsFromServer(); };
+	}
+	case EAsyncTask::LoadPathAnimations:
+	{
+		return [DecoIO]() { return DecoIO->LoadPathAnimationFromServer(); };
 	}
 	case EAsyncTask::SaveDecoration:
 	{
@@ -711,12 +774,21 @@ void AITwinDecorationHelper::FImpl::OnAsyncTaskDone_GameThread(ETaskExitStatus T
 			LoadSplinesInGame(bSuccess);
 		}
 		break;
+
 	case EAsyncTask::LoadAnnotations:
 		if (TaskExitStatus == ETaskExitStatus::Completed)
 		{
 			LoadAnnotationsInGame(bSuccess);
 		}
 		break;
+
+	case EAsyncTask::LoadPathAnimations:
+		if (TaskExitStatus == ETaskExitStatus::Completed)
+		{
+			LoadPathAnimationsInGame(bSuccess);
+		}
+		break;
+
 	case EAsyncTask::SaveDecoration:
 		{
 			OnDecorationSaved_GameThread(bSuccess, bIsDeletingCustomMaterials);
@@ -767,12 +839,13 @@ void AITwinDecorationHelper::FImpl::OnAsyncTaskDone_GameThread(ETaskExitStatus T
 
 namespace ITwinMsg
 {
+	static const FString LongITwinServicesResponseTime = TEXT("The iTwin services are taking a longer time to complete.\n");
 	static const FString LongDecoServerResponseTime = TEXT("The decoration service is taking a longer time to complete.\n");
 	static const FString ConfirmAbortLoadDeco = TEXT("\nDo you want to load your model without any population/material customization?\n");
 	static const FString ConfirmAbortSaveDeco = TEXT("\nDo you want to abort saving the modifications you made to your population/materials?\n");
 
 	inline FString GetConfirmAbortLoadMsg() {
-		return LongDecoServerResponseTime + ConfirmAbortLoadDeco;
+		return LongITwinServicesResponseTime + ConfirmAbortLoadDeco;
 	}
 	inline FString GetConfirmAbortSaveMsg() {
 		return LongDecoServerResponseTime + ConfirmAbortSaveDeco;
@@ -809,7 +882,7 @@ std::shared_ptr<FDecorationAsyncIOHelper> AITwinDecorationHelper::FImpl::GetDeco
 	return DecorationIO;
 }
 
-void AITwinDecorationHelper::FImpl::StartLoadingDecoration(const UObject* WorldContextObject)
+void AITwinDecorationHelper::FImpl::StartLoadingDecoration(UWorld* WorldContextObject)
 {
 	auto DecoIO = GetDecorationAsyncIOHelper();
 	DecoIO->InitDecorationService(WorldContextObject);
@@ -866,9 +939,9 @@ void AITwinDecorationHelper::FImpl::AsyncLoadScene()
 		ITwinMsg::GetConfirmAbortLoadMsg());
 	Owner.OnSceneLoadingStartStop.Broadcast(true);
 }
-void AITwinDecorationHelper::FImpl::SaveDecoration(SaveRequestOptions const& opts)
+void AITwinDecorationHelper::FImpl::SaveScene(SaveRequestOptions const& opts)
 {
-	if (!ShouldSaveDecoration(opts.bPromptUser))
+	if (!ShouldSaveScene(opts.bPromptUser))
 		return;
 
 	bIsDeletingCustomMaterials = opts.bUponCustomMaterialsDeletion;
@@ -890,10 +963,11 @@ void AITwinDecorationHelper::FImpl::SaveDecoration(SaveRequestOptions const& opt
 			&& !ShouldAbort()
 			&& ElapsedSec < 300)
 		{
-			FHttpModule::Get().GetHttpManager().Flush(EHttpFlushReason::Default);
+			FHttpModule::Get().GetHttpManager().Flush(EHttpFlushReason::FullFlush);
 			FPlatformProcess::Sleep(1.f);
 			ElapsedSec++;
 		}
+		FHttpModule::Get().GetHttpManager().Flush(EHttpFlushReason::Shutdown);
 	}
 }
 
@@ -1029,7 +1103,7 @@ void AITwinDecorationHelper::FImpl::LoadPopulationsInGame(bool bHasLoadedPopulat
 					}
 					auto inst = instancesManager->AddInstance(objectRef, gp->GetId());
 					inst->SetShouldSave(true);
-					inst->SetName(std::string("inst"));
+					inst->SetName("inst");
 					inst->SetObjectRef(objectRef);
 					inst->SetAnimId((std::string)infoId);
 					AdvViz::SDK::float3 cs;
@@ -1075,11 +1149,61 @@ void AITwinDecorationHelper::FImpl::LoadPopulationsInGame(bool bHasLoadedPopulat
 			}
 			population->UpdateInstancesFromAVizToUE();
 		}
+
+		auto& pathAnimator(DecorationIO->pathAnimator);
+		if (pathAnimator)
+		{
+			const AdvViz::SDK::SharedInstVect& instances = instancesManager->GetInstancesByObjectRef(objRef.first.c_str(), objRef.second);
+			for (size_t i = 0; i < instances.size(); ++i)
+			{
+				AdvViz::SDK::IInstance* inst = instances[i].get();
+				if (inst->GetAnimPathId())
+				{
+					auto AnimPathInfo = pathAnimator->GetAnimationPathInfo(inst->GetAnimPathId().value());
+					std::shared_ptr<InstanceWithSplinePathExt> animPathExt = std::make_shared<InstanceWithSplinePathExt>(AnimPathInfo, population, i);
+					inst->AddExtension(animPathExt);
+					AnimPathInfo->AddExtension(animPathExt);
+				}
+			}
+		}
 	}
 
 	bPopulationEnabled = true;
 
 	Owner.OnPopulationsLoaded.Broadcast(true);
+}
+
+bool AITwinDecorationHelper::FImpl::LoadSplineIfAllLinkedModelsReady(
+	AdvViz::SDK::SharedSpline const& AdvVizSpline,
+	AITwinSplineTool* SplineTool,
+	const UWorld* World)
+{
+	AITwinSplineTool::TilesetAccessArray LinkedTilesets;
+
+	// Splines linked to specific models can be loaded now, but only if the corresponding 3D tilesets
+	// have all been created (in general, it won't be the case...)
+	ITwin::GetLinkedTilesets(LinkedTilesets, AdvVizSpline, World);
+	if (LinkedTilesets.Num() < (int32)AdvVizSpline->GetLinkedModels().size())
+	{
+		// This spline will be loaded later, once all linked tilesets are ready.
+		return false;
+	}
+
+	std::set<ITwin::ModelLink> LoadedKeys;
+	for (auto const& LinkedTileset : LinkedTilesets)
+	{
+		LoadedKeys.insert(LinkedTileset->GetDecorationKey());
+	}
+
+	if (!SplineTool->LoadSpline(AdvVizSpline, std::move(LinkedTilesets)))
+	{
+		return false;
+	}
+
+	// Avoid loading the same splines again.
+	ModelsWithLoadedSplines.insert(LoadedKeys.begin(), LoadedKeys.end());
+
+	return true;
 }
 
 void AITwinDecorationHelper::FImpl::LoadSplinesInGame(bool bHasLoadedSplines)
@@ -1108,26 +1232,12 @@ void AITwinDecorationHelper::FImpl::LoadSplinesInGame(bool bHasLoadedSplines)
 
 	for (auto const& splinePtr : splinesManager->GetSplines())
 	{
-		TUniquePtr<FITwinTilesetAccess> LinkedTileset;
-		if (!splinePtr->GetLinkedModelType().empty())
-		{
-			// Splines linked to a specific model can be loaded now, but only if their 3D tileset has
-			// already been created (in general, it won't be the case...)
-			LinkedTileset = ITwin::GetLinkedTileset(splinePtr, World);
-			if (!LinkedTileset)
-				continue;
-		}
-		splineTool->LoadSpline(splinePtr, LinkedTileset.Get());
-
-		if (LinkedTileset)
-		{
-			// Avoid loading the same splines again.
-			ModelsWithLoadedSplines.insert(LinkedTileset->GetDecorationKey());
-		}
+		LoadSplineIfAllLinkedModelsReady(splinePtr, splineTool, World);
 	}
 
 	Owner.OnSplinesLoaded.Broadcast(true);
 }
+
 void AITwinDecorationHelper::FImpl::LoadAnnotationsInGame(bool bHasLoadedAnnoations)
 {
 	checkSlow(IsInGameThread());
@@ -1141,60 +1251,60 @@ void AITwinDecorationHelper::FImpl::LoadAnnotationsInGame(bool bHasLoadedAnnoati
 		return;
 	}
 
-	const UWorld* World = Owner.GetWorld();
-
-/*	AITwinSplineTool* splineTool =
-		(AITwinSplineTool*)UGameplayStatics::GetActorOfClass(World, AITwinSplineTool::StaticClass());
-
-	if (!splineTool)
-	{
-		BE_LOGW("ITwinDecoration", "Splines can't be loaded because there is no SplineTool actor.");
-		return;
-	}
-
-	for (auto const& splinePtr : splinesManager->GetSplines())
-	{
-		TUniquePtr<FITwinTilesetAccess> LinkedTileset;
-		if (!splinePtr->GetLinkedModelType().empty())
-		{
-			// Splines linked to a specific model can be loaded now, but only if their 3D tileset has
-			// already been created (in general, it won't be the case...)
-			LinkedTileset = ITwin::GetLinkedTileset(splinePtr, World);
-			if (!LinkedTileset)
-				continue;
-		}
-		splineTool->LoadSpline(splinePtr, LinkedTileset.Get());
-
-		if (LinkedTileset)
-		{
-			// Avoid loading the same splines again.
-			ModelsWithLoadedSplines.insert(LinkedTileset->GetDecorationKey());
-		}
-	}
-
-	Owner.OnSplinesLoaded.Broadcast(true);*/
-	//todocc
 	Owner.OnAnnotationsLoaded.Broadcast(true);
 }
 
-void AITwinDecorationHelper::LoadDecoration()
+void AITwinDecorationHelper::FImpl::LoadPathAnimationsInGame(bool bHasLoadePathAnimations)
+{
+}
+
+void AITwinDecorationHelper::InitContentManager()
+{
+	if (!iTwinContentManager)
+	{
+		iTwinContentManager = NewObject<UITwinContentManager>();
+
+		// Temporary path, should be replaced by component center download path.
+		// TODO_MACOS
+		iTwinContentManager->SetContentRootPath(TEXT("C:\\ProgramData\\Bentley\\iTwinEngage\\Content"));
+	}
+
+	FITwinMaterialLibrary::InitPaths(*this);
+}
+
+void AITwinDecorationHelper::LoadScene()
 {
 	if (!ensure(Impl->HasITwinID()))
 	{
 		return;
 	}
+
+	// The scene loader thread should wait for iTwin geo-location request
+	RegisterWaitableLoadEvent(std::make_unique<ITwin::FITwinGeolocInfoEvent>());
+
+	InitContentManager();
+
 	// This will start the asynchronous loading of materials, populations...
 	Impl->StartLoadingDecoration(GetWorld());
 }
 
-bool AITwinDecorationHelper::IsLoadingDecoration() const
+FString AITwinDecorationHelper::GetContentRootPath() const
 {
-	return Impl->IsRunningAsyncLoadTask();
+	if (ensure(iTwinContentManager))
+	{
+		return iTwinContentManager->GetContentRootPath();
+	}
+	return {};
 }
 
 bool AITwinDecorationHelper::IsLoadingScene() const
 {
-	return Impl->IsRunningAsyncTask(FImpl::EAsyncTask::LoadScenes);
+	return Impl->IsRunningAsyncLoadTask();
+}
+
+void AITwinDecorationHelper::RegisterWaitableLoadEvent(std::unique_ptr<FDecorationWaitableLoadEvent>&& LoadEventPtr)
+{
+	Impl->DecorationIO->RegisterWaitableLoadEvent(std::move(LoadEventPtr));
 }
 
 void AITwinDecorationHelper::LoadIModelMaterials(AITwinIModel& IModel)
@@ -1241,7 +1351,7 @@ void AITwinDecorationHelper::FImpl::OnCustomMaterialsLoaded_GameThread(bool bHas
 	bMaterialEditionEnabled = true;
 }
 
-bool AITwinDecorationHelper::FImpl::ShouldSaveDecoration(bool bPromptUser) const
+bool AITwinDecorationHelper::FImpl::ShouldSaveScene(bool bPromptUser) const
 {
 	if (!HasITwinID() || !DecorationIO->decoration)
 	{
@@ -1270,24 +1380,24 @@ bool AITwinDecorationHelper::FImpl::ShouldSaveDecoration(bool bPromptUser) const
 	return true;
 }
 
-bool AITwinDecorationHelper::ShouldSaveDecoration(bool bPromptUser /*= true*/) const
+bool AITwinDecorationHelper::ShouldSaveScene(bool bPromptUser /*= true*/) const
 {
-	return Impl->ShouldSaveDecoration(bPromptUser);
+	return Impl->ShouldSaveScene(bPromptUser);
 }
 
-void AITwinDecorationHelper::SaveDecoration(bool bPromptUser /*= true*/)
+void AITwinDecorationHelper::SaveScene(bool bPromptUser /*= true*/)
 {
-	Impl->SaveDecoration(FImpl::SaveRequestOptions{ .bPromptUser = bPromptUser });
+	Impl->SaveScene(FImpl::SaveRequestOptions{ .bPromptUser = bPromptUser });
 }
 
-void AITwinDecorationHelper::SaveDecorationOnExit(bool bPromptUser /*= true*/)
+void AITwinDecorationHelper::SaveSceneOnExit(bool bPromptUser /*= true*/)
 {
-	Impl->SaveDecoration(FImpl::SaveRequestOptions{ .bUponExit = true, .bPromptUser = bPromptUser });
+	Impl->SaveScene(FImpl::SaveRequestOptions{ .bUponExit = true, .bPromptUser = bPromptUser });
 }
 
 void AITwinDecorationHelper::FImpl::OnDecorationSaved_GameThread(bool bSaved, bool bHasResetMaterials)
 {
-	Owner.OnDecorationSaved.Broadcast(bSaved);
+	Owner.OnSceneSaved.Broadcast(bSaved);
 
 	// Now that material definitions have been reset, update the iModels
 	if (bSaved && bHasResetMaterials)
@@ -1307,18 +1417,24 @@ size_t AITwinDecorationHelper::FImpl::LoadSplinesLinkedToModel(ITwin::ModelLink 
 		// Already done.
 		return 0;
 	}
-	if (!DecorationIO->splinesManager)
+	if (!TilesetAccess.HasTileset())
+	{
+		BE_LOGW("ITwinDecoration", "Linked splines can't be loaded (no tileset yet).");
 		return 0;
+	}
+	if (!DecorationIO->splinesManager)
+	{
+		return 0;
+	}
 	// Find linked splines
 	auto const LinkedSplines = ITwin::GetLinkedSplines(*DecorationIO->splinesManager, Key);
 	if (LinkedSplines.empty())
+	{
 		return 0;
-
+	}
 	const UWorld* World = Owner.GetWorld();
-
 	AITwinSplineTool* SplineTool =
 		(AITwinSplineTool*)UGameplayStatics::GetActorOfClass(World, AITwinSplineTool::StaticClass());
-
 	if (!SplineTool)
 	{
 		BE_LOGW("ITwinDecoration", "Linked splines can't be loaded because there is no SplineTool actor.");
@@ -1326,17 +1442,11 @@ size_t AITwinDecorationHelper::FImpl::LoadSplinesLinkedToModel(ITwin::ModelLink 
 	}
 
 	size_t LoadedSplines = 0;
-	if (!TilesetAccess.HasTileset())
-	{
-		BE_LOGW("ITwinDecoration", "Linked splines can't be loaded (no tileset yet).");
-		return 0;
-	}
 	for (auto const& Spline : LinkedSplines)
 	{
-		if (SplineTool->LoadSpline(Spline, &TilesetAccess))
+		if (LoadSplineIfAllLinkedModelsReady(Spline, SplineTool, World))
 			LoadedSplines++;
 	}
-	ModelsWithLoadedSplines.insert(Key);
 	return LoadedSplines;
 }
 
@@ -1454,39 +1564,11 @@ AITwinPopulation* AITwinDecorationHelper::CreatePopulation(FString assetPath, co
 		return nullptr;
 	}
 
-	AITwinPopulation* population;
-	// Spawn a new actor with a deferred call in order to be able
-	// to set the static mesh before BeginPlay is called.
-	FTransform spawnTransform;
-	AActor* newActor = UGameplayStatics::BeginDeferredActorSpawnFromClass(
-		this, AITwinPopulation::StaticClass(), spawnTransform,
-		ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+	if (iTwinContentManager)
+		iTwinContentManager->DownloadFromAssetPath(assetPath);
 
-	population = Cast<AITwinPopulation>(newActor);
-
-	if (!population)
-	{
-		return nullptr;
-	}
-
-	population->InitFoliageMeshComponent();
-
-	UStaticMesh* mesh = LoadObject<UStaticMesh>(nullptr, *assetPath);
-
-	if (mesh)
-	{
-		population->mesh = mesh;
-		for (int32 i = 0; i < mesh->GetStaticMaterials().Num(); ++i)
-		{
-			population->meshComp->SetMaterial(i, mesh->GetMaterial(i));
-		}
-	}
-
-	UGameplayStatics::FinishSpawningActor(newActor, spawnTransform);
-
-	population->SetInstancesManager(Impl->DecorationIO->instancesManager_);
-	population->SetInstancesGroup(gp);
-	population->SetObjectRef(ITwin::ConvertToStdString(assetPath));
+	AITwinPopulation* population = AITwinPopulation::CreatePopulation(this, assetPath,
+		Impl->DecorationIO->instancesManager_, gp);
 
 	return population;
 }
@@ -1653,7 +1735,7 @@ void AITwinDecorationHelper::EndPlay(const EEndPlayReason::Type EndPlayReason)
 void AITwinDecorationHelper::OnCloseRequested(FViewport*)
 {
 	if (!bOverrideOnSceneClose_)
-		SaveDecorationOnExit();
+		SaveSceneOnExit();
 }
 
 void AITwinDecorationHelper::FImpl::DeleteAllCustomMaterials()
@@ -1677,7 +1759,7 @@ void AITwinDecorationHelper::FImpl::DeleteAllCustomMaterials()
 			DecorationIO->materialPersistenceMngr->RequestDeleteIModelMaterialsInDB(imodelId);
 		}
 		// Propose to save at once (with a specific flag set to perform refresh at the end).
-		SaveDecoration(SaveRequestOptions{ .bUponCustomMaterialsDeletion = true });
+		SaveScene(SaveRequestOptions{ .bUponCustomMaterialsDeletion = true });
 	}
 }
 
@@ -1875,6 +1957,7 @@ FString AITwinDecorationHelper::GetSceneID() const
 
 void AITwinDecorationHelper::InitDecorationService()
 {
+	InitContentManager();
 	Impl->InitDecorationService();
 }
 
@@ -1888,6 +1971,16 @@ std::shared_ptr<AdvViz::SDK::IAnnotationsManager> AITwinDecorationHelper::GetAnn
 	return Impl->DecorationIO->annotationsManager;
 }
 
+std::string AITwinDecorationHelper::ExportHDRIAsJson(AdvViz::SDK::ITwinHDRISettings const& hdri) const
+{
+	return Impl->DecorationIO->scene->ExportHDRIAsJson(hdri);
+}
+
+bool AITwinDecorationHelper::ConvertHDRIJsonFileToKeyValueMap(std::string assetPath, AdvViz::SDK::KeyValueStringMap& keyValueMap) const
+{
+	return Impl->DecorationIO->scene->ConvertHDRIJsonFileToKeyValueMap(assetPath, keyValueMap);
+}
+
 void AITwinDecorationHelper::Lock(SaveLockerImpl* saver)
 {
 	saver->sceneStatus = Impl->DecorationIO->scene && Impl->DecorationIO->scene->ShouldSave();
@@ -1895,7 +1988,7 @@ void AITwinDecorationHelper::Lock(SaveLockerImpl* saver)
 	{
 		saver->linksStatus[link.first] = link.second->ShouldSave();
 	}
-	saver->timelineStatus = Impl->DecorationIO->scene->GetTimeline() && Impl->DecorationIO->scene->ShouldSave();
+	saver->timelineStatus = Impl->DecorationIO->scene->GetTimeline() && Impl->DecorationIO->scene->GetTimeline()->ShouldSave();
 }
 
 void AITwinDecorationHelper::Unlock(SaveLockerImpl* saver )
@@ -1949,4 +2042,19 @@ void AITwinDecorationHelper::RemoveComponent(EITwinModelType ct, const FString& 
 void AITwinDecorationHelper::ConnectSplineToolToSplinesManager(AITwinSplineTool* splineTool)
 {
 	splineTool->SetSplinesManager(Impl->DecorationIO->GetSplinesManager());
+}
+
+void AITwinDecorationHelper::ConnectPathAnimator(AITwinAnimPathManager* manager)
+{
+	manager->SetPathAnimator(Impl->DecorationIO->GetPathAnimator());
+}
+
+void AITwinDecorationHelper::SetDecoGeoreference(const FVector& latLongHeight)
+{
+	Impl->DecorationIO->SetDecoGeoreference(latLongHeight);
+}
+
+AdvViz::expected<void, std::string> AITwinDecorationHelper::InitDecoGeoreference()
+{ 
+	return Impl->DecorationIO->InitDecoGeoreference();
 }

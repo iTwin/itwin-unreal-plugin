@@ -105,6 +105,12 @@ namespace BeUtils
 			std::vector<std::byte>& cesiumBuffer,
 			std::string& strError);
 
+		static LoadCesiumImageResult ResampleTextureBuffer(
+			std::vector<std::byte> const& fullSizeCesiumBuffer,
+			std::vector<std::byte>& thumbnailCesiumBuffer,
+			uint32_t desiredSize,
+			std::string const& contextInfo);
+
 	protected:
 		//! Merge color (if any) and alpha textures into one single texture, and return the resulting image
 		//! path (or an error).

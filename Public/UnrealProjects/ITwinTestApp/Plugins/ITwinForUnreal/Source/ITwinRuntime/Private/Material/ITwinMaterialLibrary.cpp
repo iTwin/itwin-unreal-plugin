@@ -9,6 +9,7 @@
 #include <Material/ITwinMaterialLibrary.h>
 
 #include <Decoration/ITwinContentLibrarySettings.h>
+#include <Decoration/ITwinDecorationHelper.h>
 #include <Material/ITwinMaterialDataAsset.h>
 #include <ITwinIModel.h>
 
@@ -208,7 +209,7 @@ FITwinMaterialLibrary::ExportResult FITwinMaterialLibrary::ExportMaterialToDisk(
 			}
 			else if (texMapOpt->eSource == ETextureSource::Library)
 			{
-				FString const MatLibraryFullPath = FPaths::ProjectContentDir() / ITwin::MAT_LIBRARY;
+				FString const MatLibraryFullPath = GetBentleyLibraryPath();
 				TextureSrcPath = TCHAR_TO_UTF8(*MatLibraryFullPath);
 				TextureSrcPath /= texMapOpt->texture;
 
@@ -268,7 +269,7 @@ FITwinMaterialLibrary::ExportResult FITwinMaterialLibrary::ExportMaterialToDisk(
 		}
 	}
 	// Enforce material display name
-	matSettings.displayName = TCHAR_TO_UTF8(*MaterialName);
+	matSettings.displayName = std::string(reinterpret_cast<const char*>(StringCast<UTF8CHAR>(*MaterialName).Get()));
 
 	std::string const jsonMatStr = MatIOMngr->ExportAsJson(matSettings, IModelId, MaterialId);
 	if (jsonMatStr.empty())
@@ -295,7 +296,8 @@ FITwinMaterialLibrary::ExportResult FITwinMaterialLibrary::ExportMaterialToDisk(
 bool FITwinMaterialLibrary::LoadMaterialFromAssetPath(FString const& AssetPath, ITwinMaterial& OutMaterial,
 	TextureKeySet& OutTexKeys, TextureUsageMap& OutTextureUsageMap,
 	AdvViz::SDK::ETextureSource& OutTexSource,
-	MaterialPersistencePtr const& MatIOMngr)
+	MaterialPersistencePtr const& MatIOMngr,
+	FString const* DestinationJsonPath /*= nullptr*/)
 {
 	using namespace AdvViz::SDK;
 
@@ -308,7 +310,8 @@ bool FITwinMaterialLibrary::LoadMaterialFromAssetPath(FString const& AssetPath, 
 	OutTexSource = ETextureSource::Library;
 
 	std::optional<ETextureSource> enforcedTexSource;
-	if (AssetPath.EndsWith(TEXT(".json")))
+	const bool bIsJsonFormat = AssetPath.EndsWith(TEXT(".json"));
+	if (bIsJsonFormat)
 	{
 		// The file was saved inside the packaged application (for the custom material library).
 		// Try to parse the Json, and make the texture paths absolute.
@@ -335,12 +338,84 @@ bool FITwinMaterialLibrary::LoadMaterialFromAssetPath(FString const& AssetPath, 
 			KeyValueMap[TCHAR_TO_UTF8(*StrKey)] = TCHAR_TO_UTF8(*StrValue);
 		}
 	}
-	return MatIOMngr->GetMaterialSettingsFromKeyValueMap(KeyValueMap,
+	const bool bSuccess = MatIOMngr->GetMaterialSettingsFromKeyValueMap(KeyValueMap,
 		OutMaterial, OutTexKeys, OutTextureUsageMap, enforcedTexSource);
+
+#if RESAVE_ITWIN_MATERIAL_LIBRARY_AS_JSON()
+	if (bSuccess && !bIsJsonFormat && DestinationJsonPath)
+	{
+		bool bCanSaveJson = true;
+		for (auto const& TexKey : OutTexKeys)
+		{
+			if (TexKey.eSource != ETextureSource::Library)
+			{
+				BE_ISSUE("material should reference only textures from MatLibrary!", TexKey.id);
+				bCanSaveJson = false;
+			}
+		}
+		std::string const jsonMatStr = MatIOMngr->ExportAsJson(OutMaterial, "any_imodel", 999);
+		if (jsonMatStr.empty())
+		{
+			BE_ISSUE("Failed to re-export material as JSON", OutMaterial.displayName);
+			bCanSaveJson = false;
+		}
+		if (bCanSaveJson)
+		{
+			std::filesystem::path const OutputJsonPath = TCHAR_TO_UTF8(**DestinationJsonPath);
+			std::ofstream(OutputJsonPath) << jsonMatStr;
+			{
+				std::error_code ec;
+				if (!std::filesystem::exists(OutputJsonPath, ec))
+				{
+					BE_ISSUE("Failed writing material definition to file", OutputJsonPath.generic_string());
+				}
+			}
+		}
+	}
+#endif // RESAVE_ITWIN_MATERIAL_LIBRARY_AS_JSON
+
+	return bSuccess;
+}
+
+/*static*/ FString FITwinMaterialLibrary::BeMatLibraryRootPath;
+
+/*static*/
+void FITwinMaterialLibrary::InitPaths(AITwinDecorationHelper const& DecoHelper)
+{
+	const FString ExternalMatLibraryPath = DecoHelper.GetContentRootPath() / TEXT("Materials");
+	if (FPaths::DirectoryExists(ExternalMatLibraryPath))
+	{
+		// New content paradigm (future compatibility with the Component Center).
+		BeMatLibraryRootPath = ExternalMatLibraryPath;
+	}
+	else
+	{
+		// Previously, the MaterialLibrary content was packaged withing the Unreal application.
+		BeMatLibraryRootPath = FPaths::ProjectContentDir() / ITwin::MAT_LIBRARY;
+		// This path no longer exists in default iTwin applications => log and display error (the user did
+		// not install the additional content in the right location...)
+		static FString LastExtDirChecked;
+		if (!FPaths::DirectoryExists(BeMatLibraryRootPath) && LastExtDirChecked != ExternalMatLibraryPath)
+		{
+			LastExtDirChecked = ExternalMatLibraryPath; // avoid displaying the same message several times.
+			FString DefaultMatLibraryPath = ExternalMatLibraryPath;
+			DefaultMatLibraryPath.ReplaceInline(TEXT("\\"), TEXT("/"), ESearchCase::CaseSensitive);
+			FString const StrMessage =
+				TEXT("No iTwin Material Library found: please install it in this directory: ")
+				+ DefaultMatLibraryPath
+				+ TEXT("\n\nIf you don\'t, you may get some missing textures when loading existing scenes.");
+			std::string const StrMessage_utf8 = TCHAR_TO_UTF8(*StrMessage);
+			//BE_ISSUE(StrMessage_utf8.c_str());
+			BE_LOGE("ContentHelper", StrMessage_utf8);
+			FMessageDialog::Open(EAppMsgCategory::Error, EAppMsgType::Ok,
+				FText::FromString(StrMessage),
+				FText::FromString(""));
+		}
+	}
 }
 
 /*static*/
-FString FITwinMaterialLibrary::GetCustomLibraryPath()
+const FString& FITwinMaterialLibrary::GetCustomLibraryPath()
 {
 	static const auto GetUserMatLibraryPath = []() -> FString
 	{
@@ -359,6 +434,44 @@ FString FITwinMaterialLibrary::GetCustomLibraryPath()
 	};
 	static const FString CustomMatLibraryPath = GetUserMatLibraryPath();
 	return CustomMatLibraryPath;
+}
+
+/*static*/
+const FString& FITwinMaterialLibrary::GetBentleyLibraryPath()
+{
+	ensureMsgf(!BeMatLibraryRootPath.IsEmpty(), TEXT("InitPaths must be called before!"));
+	return BeMatLibraryRootPath;
+}
+
+/*static*/
+FString FITwinMaterialLibrary::GetBeLibraryPathForLoading(const FString& RelativeMaterialName)
+{
+	ensure(FPathViews::GetExtension(RelativeMaterialName).IsEmpty());
+	if (UseExternalPathForBentleyLibrary())
+	{
+		return GetBentleyLibraryPath() / RelativeMaterialName / TEXT(MATERIAL_JSON_BASENAME);
+	}
+	else
+	{
+		return FString::Printf(TEXT("/Game/%s/%s"), ITwin::MAT_LIBRARY, *RelativeMaterialName);
+	}
+}
+
+/*static*/
+bool FITwinMaterialLibrary::UseExternalPathForBentleyLibrary()
+{
+	static const auto UseExternalDir = []() -> bool
+	{
+		return !FITwinMaterialLibrary::GetBentleyLibraryPath().EndsWith(ITwin::MAT_LIBRARY);
+	};
+	static const bool bUseExternalDir = UseExternalDir();
+	return bUseExternalDir;
+}
+
+/*static*/
+bool FITwinMaterialLibrary::UseJsonFormatForBentleyLibrary()
+{
+	return UseExternalPathForBentleyLibrary();
 }
 
 /*static*/
@@ -518,6 +631,14 @@ bool FITwinMaterialLibrary::ImportJsonToLibrary(FString const& AssetPath)
 {
 	using namespace AdvViz::SDK;
 
+	if (UseJsonFormatForBentleyLibrary())
+	{
+		ensure(false);
+		// If we use the JSON format for materials, this import should be simplified much: no need to
+		// create any Unreal asset (UITwinMaterialDataAsset) - instead we should just rewrite the json file so that
+		// all textures have the <MatLibrary> tag (and point to the final location).
+		return false;
+	}
 	if (!AssetPath.EndsWith(TEXT(".json")))
 	{
 		ensureMsgf(false, TEXT("expecting a .json file and got %s"), *AssetPath);
@@ -533,7 +654,7 @@ bool FITwinMaterialLibrary::ImportJsonToLibrary(FString const& AssetPath)
 	FStringView AssetDir, AssetName, AssetExt;
 	FPathViews::Split(AssetPath, AssetDir, AssetName, AssetExt); // <asset_dir> / "material" / "json"
 
-	FString const MatLibraryPath = FPaths::ProjectContentDir() / ITwin::MAT_LIBRARY;
+	FString const MatLibraryPath = GetBentleyLibraryPath();
 	FStringView RelativePathView;
 	if (!ensure(FPathViews::TryMakeChildPathRelativeTo(AssetDir, MatLibraryPath, RelativePathView)))
 	{
@@ -597,6 +718,60 @@ bool FITwinMaterialLibrary::ImportJsonToLibrary(FString const& AssetPath)
 	Package->FullyLoad();
 	Package->SetDirtyFlag(true);
 	return UEditorLoadingAndSavingUtils::SavePackages({ Package }, true);
+}
+
+/*static*/
+bool FITwinMaterialLibrary::ConvertAssetToJson(FString const& AssetPath)
+{
+#if RESAVE_ITWIN_MATERIAL_LIBRARY_AS_JSON()
+	std::filesystem::path CurFile(TCHAR_TO_UTF8(*AssetPath));
+
+	// From <MatLibrary>/Folder.uasset, generate <MatLibrary>/Folder/material.json
+	std::filesystem::path const MaterialSubDirectory = CurFile.parent_path() / CurFile.stem();
+	std::error_code ec;
+	if (!std::filesystem::is_directory(MaterialSubDirectory, ec))
+	{
+		BE_ISSUE("sub-directory for material does not exist", MaterialSubDirectory.generic_string());
+		return false;
+	}
+	std::filesystem::path JsonForCurFile = MaterialSubDirectory / MATERIAL_JSON_BASENAME;
+	if (std::filesystem::exists(JsonForCurFile, ec))
+	{
+		return false;
+	}
+	const FString StrJsonForCurFile = UTF8_TO_TCHAR(JsonForCurFile.generic_string().c_str());
+
+	AdvViz::SDK::TextureKeySet NewTextures;
+	AdvViz::SDK::TextureUsageMap NewTextureUsageMap;
+	AdvViz::SDK::ITwinMaterial NewMaterial;
+	AdvViz::SDK::ETextureSource TexSource = AdvViz::SDK::ETextureSource::Library;
+
+	// We need a path in the form of "/Game/MaterialLibrary/xxx.uasset"
+	FString const MatLibraryPath = GetBentleyLibraryPath();
+	FStringView RelativePathView;
+	if (!ensure(FPathViews::TryMakeChildPathRelativeTo(AssetPath, MatLibraryPath, RelativePathView)))
+	{
+		ensureMsgf(false, TEXT("Path %s not inside Material Library (%s)"), *AssetPath, *MatLibraryPath);
+		return false;
+	}
+	FString RelativePath = FString(RelativePathView);
+	RelativePath.ReplaceInline(TEXT(".uasset"), TEXT("")); // remove extension
+	FString PackageName = FString::Printf(TEXT("/Game/%s/%s"), ITwin::MAT_LIBRARY, *RelativePath);
+
+	if (LoadMaterialFromAssetPath(PackageName, NewMaterial,
+		NewTextures, NewTextureUsageMap, TexSource,
+		AITwinIModel::GetMaterialPersistenceManager(),
+		&StrJsonForCurFile))
+	{
+		const bool bConverted = std::filesystem::exists(JsonForCurFile, ec);
+		BE_ASSERT(bConverted);
+		return bConverted;
+	}
+#else
+	BE_ISSUE("RESAVE_ITWIN_MATERIAL_LIBRARY_AS_JSON not defined!");
+#endif
+
+	return false;
 }
 
 #endif // WITH_EDITOR

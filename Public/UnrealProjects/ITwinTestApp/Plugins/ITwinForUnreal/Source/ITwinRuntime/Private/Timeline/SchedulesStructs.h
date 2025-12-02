@@ -284,8 +284,24 @@ enum class EITwinSchedulesGeneration : uint8
 	Unknown
 };
 
+
 /**
- * Schedules obtained from /api/v1/schedules, filtered by targeted iModel
+ * Statistics obtained from https://api.bentley.com/schedules/{scheduleId}/animation-statistics
+ */
+class FITwinScheduleStats
+{
+public:
+	size_t Animation3dPathAssignmentCount = 0;
+	size_t Animation3dPathCount = 0;
+	size_t Animation3dPathKeyframeCount = 0;
+	size_t Animation3dTransformCount = 0;
+	size_t AnimationBindingCount = 0;
+	size_t AppearanceProfileCount = 0;
+	size_t TaskCount = 0;
+};
+
+/**
+ * Schedules obtained from https://api.bentley.com/schedules, filtered by targeted iModel
  */
 class FITwinSchedule
 {
@@ -293,6 +309,9 @@ public:
 	FString Id, Name; // <== keep first and ordered, for list init
 	/// "Unknown" also means "Not needed", when used with APIM, which hides this detail from us.
 	EITwinSchedulesGeneration Generation = EITwinSchedulesGeneration::Unknown;
+	/// Schedule statistics, eg. for download progress feedback purposes
+	FITwinScheduleStats StatisticsTotal, StatisticsCurrent;
+	bool bHasLoggedStats = false;
 
 	// Not good here, prevents the class from going into a vector (could use a shared pointer? for the moment
 	// the sync will remain in FITwinSchedulesImport::FImpl

@@ -18,10 +18,16 @@ set(cesium_native_targets
     CesiumGltfReader
     CesiumGltfWriter
     CesiumIonClient
+    CesiumITwinClient
+    CesiumVectorData
     CesiumQuantizedMeshTerrain
     CesiumRasterOverlays
     CesiumUtility
 )
+
+if(NOT CESIUM_DISABLE_CURL) 
+    list(APPEND cesium_native_targets CesiumCurl)
+endif()
 
 cesium_glob_files(test_sources
     ${CMAKE_CURRENT_LIST_DIR}/src/*.cpp
@@ -95,6 +101,19 @@ target_compile_definitions(cesium-native-tests
 PRIVATE
   CESIUM_NATIVE_DATA_DIR=\"${CMAKE_CURRENT_LIST_DIR}/../data\"
 )
+
+# AdvViz: install the tests exe to tools/cesium-native so that we can run them from our solution
+install(TARGETS cesium-native-tests
+	RUNTIME DESTINATION tools/cesium-native
+)
+# AdvViz: Taken from configure_cesium_library, so that cesium-native-tests is listed in the
+# generated cesium-nativeTargets.cmake, leading to the cesium-native-tests target being available
+# after calling find_package(cesium-native REQUIRED)
+if(CESIUM_INSTALL_STATIC_LIBS AND CESIUM_INSTALL_HEADERS)
+  install(TARGETS cesium-native-tests
+	  EXPORT CesiumExports
+  )
+endif()
 
 include(CTest)
 include(doctest)

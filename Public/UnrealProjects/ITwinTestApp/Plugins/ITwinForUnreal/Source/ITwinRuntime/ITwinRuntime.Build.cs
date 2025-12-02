@@ -18,6 +18,7 @@ public class ITwinRuntime : ModuleRules
 
 	public ITwinRuntime(ReadOnlyTargetRules Target) : base(Target)
 	{
+		bWarningsAsErrors = true;
 		new CommandLineArguments(System.Environment.GetCommandLineArgs()).ApplyTo(this);
 		Logger.LogInformation($"bBeUseUnity {GetType().Name} = {bBeUseUnity}");
 		bUseUnity = bBeUseUnity;
@@ -36,18 +37,35 @@ public class ITwinRuntime : ModuleRules
 			"HTTPServer",
 			"Json",
 			"JsonUtilities",
-			"PlatformCryptoOpenSSL",
 			"RenderCore",
 			"RHI",
 			"SDKCore",
 			"Slate",
 			"SlateCore",
-			"UE5Coro",
+            "UMG",
+            "UE5Coro",
 			"LevelSequence",
 			"CinematicCamera",
 			"MovieScene",
-			"MovieSceneTracks"
-		});
+			"MovieSceneTracks",
+            "PakFile"
+        });
+		if (Target.Version.MinorVersion == 5) // ie Unreal 5.5
+		{
+			PrivateDependencyModuleNames.Add("PlatformCryptoOpenSSL");
+		}
+		else // Unreal 5.6(+)
+		{
+			PrivateDependencyModuleNames.AddRange(new string[]{
+				"PlatformCrypto",
+				"PlatformCryptoContext",
+				"PlatformCryptoTypes"
+			});
+		}
+		if (Target.Configuration != UnrealTargetConfiguration.Shipping)
+		{
+            PrivateDependencyModuleNames.Add("CQTest");
+        }
 		if (Target.bBuildEditor)
 		{
 			PrivateDependencyModuleNames.AddRange(new string[]{
@@ -61,17 +79,11 @@ public class ITwinRuntime : ModuleRules
 		string libExtension = ".lib";
 		string libPrefix = "";
 		string libSuffix = "d";
+
 		if (Target.Platform == UnrealTargetPlatform.Mac)
 		{
 			libExtension = ".a";
 			libPrefix = "lib";
-		}
-
-        if (Target.Configuration == UnrealTargetConfiguration.Development)
-        {
-            PublicDependencyModuleNames.AddRange(new string[]{
-                "CQTest"
-            });
 		}
 		if (Target.Configuration == UnrealTargetConfiguration.Development ||
 			Target.Configuration == UnrealTargetConfiguration.Shipping)
@@ -79,6 +91,7 @@ public class ITwinRuntime : ModuleRules
 			libFolder = "Release";
 			libSuffix = "";
 		}
+
 		PublicAdditionalLibraries.AddRange(new string[]{
 			Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, libPrefix + "BeUtils" + libSuffix + libExtension),
 			Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, libPrefix + "cpr" + libExtension),

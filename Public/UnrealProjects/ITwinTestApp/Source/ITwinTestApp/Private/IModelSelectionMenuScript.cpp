@@ -62,7 +62,7 @@ void AIModelSelectionMenuScript::OnLoadIModel(FString InIModelId, FString InExpo
 	{
 		DecoHelper = GetWorld()->SpawnActor<AITwinDecorationHelper>();
 		DecoHelper->SetLoadedITwinId(Info.ITwinId);
-		DecoHelper->LoadDecoration();
+		DecoHelper->LoadScene();
 	}
 
 	IModel->OnIModelLoaded.AddDynamic(this, &AIModelSelectionMenuScript::IModelLoaded);

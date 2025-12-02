@@ -21,10 +21,13 @@
 #	include "SDK/Core/Visualization/AnnotationsManager.h"
 #	include "SDK/Core/Visualization/ScenePersistence.h"
 #	include "SDK/Core/Visualization/KeyframeAnimation.h"
+#	include "SDK/Core/Visualization/PathAnimation.h"
 #include <ITwinRuntime/Private/Compil/AfterNonUnrealIncludes.h>
 
 #include <atomic>
+#include <memory>
 #include <set>
+#include <shared_mutex>
 
 namespace AdvViz::SDK
 {
@@ -33,6 +36,7 @@ namespace AdvViz::SDK
 	class ILink;
 }
 
+class FDecorationWaitableLoadEvent;
 class AITwinDecorationHelper;
 class AITwinIModel;
 
@@ -41,17 +45,22 @@ class FDecorationAsyncIOHelper
 public:
 	using LinkSharedPtr = std::shared_ptr<AdvViz::SDK::ILink>;
 	using ModelIdentifier = ITwin::ModelDecorationIdentifier;
+	using WaitableLoadEventUPtr = std::unique_ptr<FDecorationWaitableLoadEvent>;
 
 	FDecorationAsyncIOHelper() = default;
+	~FDecorationAsyncIOHelper();
 
 	void RequestStop();
 	bool IsInitialized() const;
 
-	void InitDecorationService(const UObject* WorldContextObject);
+	void InitDecorationService(UWorld* WorldContextObject);
 
 	void SetLoadedITwinId(const FString& ITwinId);	
 	FString GetLoadedITwinId() const;
 	void SetLoadedSceneId(FString InLoadedSceneId, bool inNewsScene = false);
+
+	void RegisterWaitableLoadEvent(WaitableLoadEventUPtr&& LoadEventPtr);
+	void WaitForExternalLoadEvents(int MaxSecondsToWait);
 
 	bool LoadCustomMaterials(TMap<FString, TWeakObjectPtr<AITwinIModel>> const& idToIModel,
 		std::set<std::string> const& specificModels = {});
@@ -64,13 +73,19 @@ public:
 
 	LinkSharedPtr CreateLink(ModelIdentifier const& Key);
 	bool LoadSplinesFromServer();
+	bool LoadPathAnimationFromServer();
 
 	std::shared_ptr<AdvViz::SDK::ISplinesManager> const& GetSplinesManager();
-
+	std::shared_ptr<AdvViz::SDK::IPathAnimator> const& GetPathAnimator();
 	AdvViz::expected<std::vector<std::shared_ptr< AdvViz::SDK::IScenePersistence>>, int>  GetITwinScenes(const FString& itwinid);
+
+	void SetDecoGeoreference(const FVector& latLongHeightDeg);
+	AdvViz::expected<void, std::string> InitDecoGeoreference();
 
 private:
 	bool LoadITwinDecoration();
+	bool ShouldWaitForLoadEvent(bool bLogInfo = false) const;
+	void ResetWaitableLoadEvents();
 
 private:
 	FString LoadedITwinId;
@@ -87,6 +102,7 @@ private:
 	// std::shared_ptr<AdvViz::SDK::IScenePersistence> DSscene; //scene from decoration service if we use sceneAPI obsolete
 	std::shared_ptr<AdvViz::SDK::ISplinesManager> splinesManager;
 	std::shared_ptr<AdvViz::SDK::IAnnotationsManager> annotationsManager;
+	std::shared_ptr<AdvViz::SDK::IPathAnimator> pathAnimator;
 
 	std::shared_ptr<std::atomic_bool> shouldStop = std::make_shared<std::atomic_bool>(false);
 	bool decorationIsLinked = false;
@@ -95,4 +111,9 @@ private:
 
 	friend class AITwinDecorationHelper;
 	void PostLoadSceneFromServer();
+	void InitDecorationServiceConnection(const UWorld* WorldContextObject);
+	bool bNeedInitConfig = true;
+
+	mutable std::shared_mutex WaitableLoadEventsMutex;
+	std::vector<WaitableLoadEventUPtr> WaitableLoadEvents;
 };

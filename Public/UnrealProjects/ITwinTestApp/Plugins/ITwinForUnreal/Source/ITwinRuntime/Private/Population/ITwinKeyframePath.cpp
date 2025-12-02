@@ -25,7 +25,7 @@
 #	include <SDK/Core/Visualization/KeyframeAnimator.h>
 #include <Compil/AfterNonUnrealIncludes.h>
 
-#define VISSIM_DEMO
+//#define VISSIM_DEMO
 
 #ifdef VISSIM_DEMO
 // VISSIM Test: makes unit conversion and offset animation.
@@ -33,9 +33,9 @@ class MyTransform : public AdvViz::SDK::Tools::IGCSTransform
 {
 public:
 	// Unreal => SDK
-	AdvViz::SDK::double4 PositionFromClient(const AdvViz::SDK::double4& v) override
+	AdvViz::SDK::double3 PositionFromClient(const AdvViz::SDK::double3& v) override
 	{
-		AdvViz::SDK::double4 r = {
+		AdvViz::SDK::double3 r = {
 			(v[0] - translation_[0]) / unitScale_,
 			(-v[1] - translation_[1]) / unitScale_,
 			(v[2] - translation_[2]) / unitScale_,
@@ -44,14 +44,23 @@ public:
 	} 
 
 	// SDK => Unreal
-	AdvViz::SDK::double4 PositionToClient(const AdvViz::SDK::double4& v) override
+	AdvViz::SDK::double3 PositionToClient(const AdvViz::SDK::double3& v) override
 	{
-		AdvViz::SDK::double4 r = {
+		AdvViz::SDK::double3 r = {
 			v[0] * unitScale_ + translation_[0],
 			-(v[1] * unitScale_ + translation_[1]),
 			v[2] * unitScale_ + translation_[2],
 		};
 		return r;
+	}
+
+	AdvViz::SDK::dmat4x4 MatrixFromClient(const AdvViz::SDK::dmat4x4& m) override
+	{
+		return m;
+	}
+	AdvViz::SDK::dmat4x4 MatrixToClient(const AdvViz::SDK::dmat4x4& m) override
+	{
+		return m;
 	}
 
 	AdvViz::SDK::double4 translation_;

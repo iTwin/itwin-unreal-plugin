@@ -7,17 +7,21 @@
 +--------------------------------------------------------------------------------------*/
 
 #include "ITwinSceneMapping.h"
+#include <ITwinCesiumTileID.inl>
 #include <ITwinDynamicShadingProperty.h>
 #include <ITwinDynamicShadingProperty.inl>
+#include <ITwinExtractedMeshComponent.h>
 #include <ITwinIModel.h>
 #include <ITwinUtilityLibrary.h>
+#include <Material/ITwinMaterialParameters.h>
+#include <Material/ITwinMaterialParameters.inl>
 #include <Math/UEMathExts.h>
 #include <Timeline/Timeline.h>
 #include <Timeline/SchedulesConstants.h>
 
-#include <ITwinExtractedMeshComponent.h>
-#include <Material/ITwinMaterialParameters.h>
-#include <Material/ITwinMaterialParameters.inl>
+#include <Compil/BeforeNonUnrealIncludes.h>
+#	include <Core/Tools/Log.h>
+#include <Compil/AfterNonUnrealIncludes.h>
 
 #include <Engine/Texture.h>
 #include <GenericPlatform/GenericPlatformTime.h>
@@ -378,11 +382,11 @@ FITwinSceneTile& FITwinSceneMapping::KnownTile(ITwinScene::TileIdx const Rank)
 	return const_cast<FITwinSceneTile&>(KnownTiles.get<IndexByRank>()[Rank.value()]);
 }
 
-FITwinSceneTile& FITwinSceneMapping::KnownTileSLOW(Cesium3DTilesSelection::Tile& CesiumTile,
+FITwinSceneTile& FITwinSceneMapping::KnownTileSLOW(ICesiumLoadedTile& CesiumTile,
 												   ITwinScene::TileIdx* Rank/*= nullptr*/)
 {
 	auto& ByRank = KnownTiles.get<IndexByRank>();
-	auto const It = ByRank.emplace_back(CesiumTile.getTileID()).first;
+	auto const It = ByRank.emplace_back(ITwin::GetCesiumTileID(CesiumTile)).first;
 	if (Rank)
 	{
 		*Rank = ITwinScene::TileIdx(static_cast<uint32_t>(It - ByRank.begin()));
@@ -558,20 +562,27 @@ void FITwinSceneMapping::ApplySelectingAndHiding(FITwinSceneTile& SceneTile)
 {
 	if (SceneTile.IsLoaded())
 	{
-		FITwinSceneTile::FTextureNeeds TextureNeeds;
-		constexpr bool bOnlyVisibleTiles = false;// because bVisible not yet set!
 		//if (ITwin::NOT_ELEMENT != SelectedElement) <== No, may need to deselect!
-		SceneTile.PickElement(SelectedElement, bOnlyVisibleTiles, TextureNeeds);
-		SceneTile.PickMaterial(SelectedMaterial, bOnlyVisibleTiles, TextureNeeds);
-		SceneTile.HideCategoriesPerModel(HiddenCategoriesPerModelFromSavedView, bOnlyVisibleTiles, TextureNeeds, true);
-		SceneTile.HideCategories(HiddenCategoriesFromSavedView, bOnlyVisibleTiles, TextureNeeds, true);
-		SceneTile.HideModels(HiddenModelsFromSavedView, bOnlyVisibleTiles, TextureNeeds, true);
+		FITwinSceneTile::FTextureNeeds TextureNeeds;
+		// Note: keeping the default value of 'false' for FPickingOptions::OnlyVisibleTiles because
+		// bVisible is not yet set! (same for FShowHideOptions)
+		SceneTile.PickElement(SelectedElement, TextureNeeds, FPickingOptions().MakeSelected(true));
+		SceneTile.PickMaterial(SelectedMaterial, TextureNeeds, FPickingOptions().MakeSelected(true)
+			// For all calls except the first one above, skip the ResetSelection call otherwise the element
+			// selected is overwritten... (azdev#1808163)
+			.SkipResetSelection(true));
+		auto const ShowHideOpts = FShowHideOptions().SkipResetSelection(true).Force(true);
+		SceneTile.HideCategories(HiddenCategoriesFromSavedView, TextureNeeds, ShowHideOpts);
+		SceneTile.HideModels(HiddenModelsFromSavedView, TextureNeeds, ShowHideOpts);
+		SceneTile.HideCategoriesPerModel(HiddenCategoriesPerModelFromSavedView, TextureNeeds, ShowHideOpts);
 		//if (bHiddenConstructionData) <== No, may need to un-hide!
 		SceneTile.HideElements(
 			bHiddenConstructionData ? ConstructionDataElements() : std::unordered_set<ITwinElementID>(),
-			bOnlyVisibleTiles, TextureNeeds, true);
+			TextureNeeds, FShowHideOptions(ShowHideOpts).ConstructionData(true));
 		//if (!HiddenElementsFromSavedView.empty()) <== same
-		SceneTile.HideElements(HiddenElementsFromSavedView, bOnlyVisibleTiles, TextureNeeds, false, true);
+		SceneTile.HideElements(HiddenElementsFromSavedView, TextureNeeds, ShowHideOpts);
+		SceneTile.ShowElements(AlwaysDrawnElementsFromSavedView, TextureNeeds, ShowHideOpts);
+		SceneTile.ShowCategoriesPerModel(AlwaysDrawnCategoriesPerModelFromSavedView, TextureNeeds, ShowHideOpts);
 		this->bNewSelectingAndHidingTexturesNeedSetupInMaterials |= TextureNeeds.bWasCreated;
 		if (TextureNeeds.bWasChanged)
 			UpdateSelectingAndHidingTextures();
@@ -587,12 +598,16 @@ void FITwinSceneMapping::OnVisibilityChanged(FITwinSceneTile& SceneTile, bool bV
 		{
 			SceneTile.ForEachExtractedEntity([](FITwinExtractedEntity& Extracted)
 				{
-					if (!Extracted.MeshComponent.IsValid() || !Extracted.MeshComponent->GetOuter())
+					if (!Extracted.TransformableMeshComponent.IsValid()
+						|| !Extracted.TransformableMeshComponent->GetOuter())
+					{
 						return;
-					if (auto* SceneComp = Cast<USceneComponent>(Extracted.MeshComponent->GetOuter()))
+					}
+					if (auto* SceneComp
+						= Cast<USceneComponent>(Extracted.TransformableMeshComponent->GetOuter()))
 					{
 						Extracted.OriginalTransform = SceneComp->GetComponentTransform();
-						Extracted.MeshComponent->SetWorldTransform(
+						Extracted.TransformableMeshComponent->SetWorldTransform(
 							Extracted.OriginalTransform, false, nullptr, ETeleportType::TeleportPhysics);
 					}
 				});
@@ -690,7 +705,7 @@ int FITwinSceneMapping::ParseIModelMetadata(TArray<TSharedPtr<FJsonValue>> const
 			// Same comment about const_cast as on FITwinSceneTile::FindElementFeaturesSLOW
 			const_cast<FITwinElement&>(Elem).ParentInVec = ITwinScene::NOT_ELEM;
 		}
-		UE_LOG(ITwinSceneMap, Error, TEXT("Loop found in iModel Elements hierarchy, it will be IGNORED!"));
+		BE_LOGE("ITwinAPI", "Loop found in iModel Elements hierarchy, it will be IGNORED!");
 		return 0;
 	}
 	if (GoodFedGUIDs != JsonRows.Num() || GoodSrcIDs != JsonRows.Num())
@@ -1276,11 +1291,12 @@ FBox const& FITwinSceneMapping::GetBoundingBox(ITwinElementID const Element) con
 		return Elem.BBox;
 	}
 	// The Element bounding boxes are created and expanded as mesh components are notified by Cesium
-	// (see FITwinSceneMappingBuilder::OnMeshConstructed), we have no other way of knowing them.
+	// (see UITwinSceneMappingBuilder::OnTileMeshPrimitiveConstructed), we have no other way of knowing them.
 	// Note that FITwinIModelInternals::HasElementWithID uses this assumption too for the moment.
 	// We never know when the full and most accurate BBox is obtained, since new tiles and new LODs can
 	// always come later, containing the Element, so improving this with a cache a tricky, unless we cache
-	// the box and all the tile IDs that contributed to it, so that we can skip them in OnMeshConstructed.
+	// the box and all the tile IDs that contributed to it, so that we can skip them in
+	// OnTileMeshPrimitiveConstructed.
 	static FBox EmptyBox(ForceInit);
 	return EmptyBox;
 }
@@ -1546,18 +1562,12 @@ bool FITwinSceneMapping::PickVisibleElement(ITwinElementID const& InElemID,
 	// and secondly because the visibility (thru shader) could have changed since the Element was selected!
 	//if (bSelectElement && InElemID == SelectedElement)
 	//	return false;
-	if ((HiddenElementsFromSavedView.find(InElemID) != HiddenElementsFromSavedView.end())
-		|| (bHiddenConstructionData
-			&& (ConstructionDataElements().find(InElemID) != ConstructionDataElements().end())))
-	{
-		return false;
-	}
 	bool bPickedInATile = false;
 	FITwinSceneTile::FTextureNeeds TextureNeeds;
 	ForEachKnownTile([&InElemID, &bPickedInATile, &TextureNeeds, bSelectElement](FITwinSceneTile& SceneTile)
 	{
-		bPickedInATile |= SceneTile.PickElement(InElemID, /*bOnlyVisibleTiles*/true, TextureNeeds,
-												/*bTestElementVisibility*/true, bSelectElement);
+		bPickedInATile |= SceneTile.PickElement(InElemID, TextureNeeds,
+			FPickingOptions().OnlyVisibleTiles(true).TestElementVisibility(true).MakeSelected(bSelectElement));
 	});
 	this->bNewSelectingAndHidingTexturesNeedSetupInMaterials |= TextureNeeds.bWasCreated;
 	if (bSelectElement)
@@ -1572,13 +1582,14 @@ bool FITwinSceneMapping::PickVisibleElement(ITwinElementID const& InElemID,
 	return bPickedInATile;
 }
 
-void FITwinSceneMapping::HideElements(std::unordered_set<ITwinElementID> const& InElemIDs, bool IsConstruction, bool Force/* = false*/)
+void FITwinSceneMapping::HideElements(std::unordered_set<ITwinElementID> const& InElemIDs, bool IsConstruction,
+									  bool bForce/* = false*/)
 {
-	// Note: SelectionAndHiding texture affects both "batched" and Extracted Element meshes
 	FITwinSceneTile::FTextureNeeds TextureNeeds;
-	ForEachKnownTile([&InElemIDs, &TextureNeeds, IsConstruction, Force](FITwinSceneTile& SceneTile)
+	ForEachKnownTile([&InElemIDs, &TextureNeeds, IsConstruction, bForce](FITwinSceneTile& SceneTile)
 	{
-		SceneTile.HideElements(InElemIDs, /*bOnlyVisibleTiles*/true, TextureNeeds, IsConstruction, Force);
+		SceneTile.HideElements(InElemIDs, TextureNeeds,
+			FShowHideOptions().OnlyVisibleTiles(true).ConstructionData(IsConstruction).Force(bForce));
 	});
 	if (IsConstruction)
 		bHiddenConstructionData = !InElemIDs.empty();
@@ -1589,13 +1600,27 @@ void FITwinSceneMapping::HideElements(std::unordered_set<ITwinElementID> const& 
 		UpdateSelectingAndHidingTextures();
 }
 
-void FITwinSceneMapping::HideModels(std::unordered_set<ITwinElementID> const& InModelIDs, bool Force/* = false*/)
+void FITwinSceneMapping::ShowElements(std::unordered_set<ITwinElementID> const& InElemIDs, bool bForce/* = false*/)
 {
-	// Note: SelectionAndHiding texture affects both "batched" and Extracted Element meshes
 	FITwinSceneTile::FTextureNeeds TextureNeeds;
-	ForEachKnownTile([&InModelIDs, &TextureNeeds, Force](FITwinSceneTile& SceneTile)
+	ForEachKnownTile([&InElemIDs, &TextureNeeds, bForce](FITwinSceneTile& SceneTile)
 		{
-			SceneTile.HideModels(InModelIDs, /*bOnlyVisibleTiles*/true, TextureNeeds, Force);
+			SceneTile.ShowElements(InElemIDs, TextureNeeds,
+								   FShowHideOptions().OnlyVisibleTiles(true).Force(bForce));
+		});
+	AlwaysDrawnElementsFromSavedView = InElemIDs;
+	this->bNewSelectingAndHidingTexturesNeedSetupInMaterials |= TextureNeeds.bWasCreated;
+	if (TextureNeeds.bWasChanged)
+		UpdateSelectingAndHidingTextures();
+}
+
+void FITwinSceneMapping::HideModels(std::unordered_set<ITwinElementID> const& InModelIDs, bool bForce/* = false*/)
+{
+	FITwinSceneTile::FTextureNeeds TextureNeeds;
+	ForEachKnownTile([&InModelIDs, &TextureNeeds, bForce](FITwinSceneTile& SceneTile)
+		{
+			SceneTile.HideModels(InModelIDs, TextureNeeds,
+								 FShowHideOptions().OnlyVisibleTiles(true).Force(bForce));
 		});
 	HiddenModelsFromSavedView = InModelIDs;
 	this->bNewSelectingAndHidingTexturesNeedSetupInMaterials |= TextureNeeds.bWasCreated;
@@ -1603,13 +1628,13 @@ void FITwinSceneMapping::HideModels(std::unordered_set<ITwinElementID> const& In
 		UpdateSelectingAndHidingTextures();
 }
 
-void FITwinSceneMapping::HideCategories(std::unordered_set<ITwinElementID> const& InCategoryIDs, bool Force/* = false*/)
+void FITwinSceneMapping::HideCategories(std::unordered_set<ITwinElementID> const& InCategoryIDs, bool bForce/* = false*/)
 {
-	// Note: SelectionAndHiding texture affects both "batched" and Extracted Element meshes
 	FITwinSceneTile::FTextureNeeds TextureNeeds;
-	ForEachKnownTile([&InCategoryIDs, &TextureNeeds, Force](FITwinSceneTile& SceneTile)
+	ForEachKnownTile([&InCategoryIDs, &TextureNeeds, bForce](FITwinSceneTile& SceneTile)
 		{
-			SceneTile.HideCategories(InCategoryIDs, /*bOnlyVisibleTiles*/true, TextureNeeds, Force);
+			SceneTile.HideCategories(InCategoryIDs, TextureNeeds,
+									 FShowHideOptions().OnlyVisibleTiles(true).Force(bForce));
 		});
 	HiddenCategoriesFromSavedView = InCategoryIDs;
 	this->bNewSelectingAndHidingTexturesNeedSetupInMaterials |= TextureNeeds.bWasCreated;
@@ -1617,15 +1642,33 @@ void FITwinSceneMapping::HideCategories(std::unordered_set<ITwinElementID> const
 		UpdateSelectingAndHidingTextures();
 }
 
-void FITwinSceneMapping::HideCategoriesPerModel(std::unordered_set<std::pair<ITwinElementID,ITwinElementID>,FITwinSceneTile::pair_hash> const& InCategoryPerModelIDs, bool Force/* = false*/)
+void FITwinSceneMapping::HideCategoriesPerModel(
+	std::unordered_set<std::pair<ITwinElementID, ITwinElementID>, FITwinSceneTile::pair_hash> const& InCategoryPerModelIDs,
+	bool bForce/* = false*/)
 {
-	// Note: SelectionAndHiding texture affects both "batched" and Extracted Element meshes
 	FITwinSceneTile::FTextureNeeds TextureNeeds;
-	ForEachKnownTile([&InCategoryPerModelIDs, &TextureNeeds, Force](FITwinSceneTile& SceneTile)
+	ForEachKnownTile([&InCategoryPerModelIDs, &TextureNeeds, bForce](FITwinSceneTile& SceneTile)
 		{
-			SceneTile.HideCategoriesPerModel(InCategoryPerModelIDs, /*bOnlyVisibleTiles*/true, TextureNeeds, Force);
+			SceneTile.HideCategoriesPerModel(InCategoryPerModelIDs, TextureNeeds,
+											 FShowHideOptions().OnlyVisibleTiles(true).Force(bForce));
 		});
 	HiddenCategoriesPerModelFromSavedView = InCategoryPerModelIDs;
+	this->bNewSelectingAndHidingTexturesNeedSetupInMaterials |= TextureNeeds.bWasCreated;
+	if (TextureNeeds.bWasChanged)
+		UpdateSelectingAndHidingTextures();
+}
+
+void FITwinSceneMapping::ShowCategoriesPerModel(
+	std::unordered_set<std::pair<ITwinElementID, ITwinElementID>, FITwinSceneTile::pair_hash> const& InCategoryPerModelIDs,
+	bool bForce /*= false*/)
+{
+	FITwinSceneTile::FTextureNeeds TextureNeeds;
+	ForEachKnownTile([&InCategoryPerModelIDs, &TextureNeeds, bForce](FITwinSceneTile& SceneTile)
+		{
+			SceneTile.ShowCategoriesPerModel(InCategoryPerModelIDs, TextureNeeds,
+											 FShowHideOptions().OnlyVisibleTiles(true).Force(bForce));
+		});
+	AlwaysDrawnCategoriesPerModelFromSavedView = InCategoryPerModelIDs;
 	this->bNewSelectingAndHidingTexturesNeedSetupInMaterials |= TextureNeeds.bWasCreated;
 	if (TextureNeeds.bWasChanged)
 		UpdateSelectingAndHidingTextures();
@@ -1684,8 +1727,8 @@ bool FITwinSceneMapping::PickVisibleMaterial(ITwinMaterialID const& InMaterialID
 		// General case, based on per-feature pixels in a texture, exactly as for ElementIDs.
 		ForEachKnownTile([&InMaterialID, &bPickedMaterial, &TextureNeeds](FITwinSceneTile& SceneTile)
 		{
-			bPickedMaterial |= SceneTile.PickMaterial(InMaterialID, /*bOnlyVisibleTiles*/true, TextureNeeds,
-				/*bTestElementVisibility*/true);
+			bPickedMaterial |= SceneTile.PickMaterial(InMaterialID, TextureNeeds,
+				FPickingOptions().OnlyVisibleTiles(true).TestElementVisibility(true).MakeSelected(true));
 		});
 	}
 
@@ -1719,20 +1762,17 @@ FITwinSceneMapping::FindOwningTileSLOW(UPrimitiveComponent const* Component) con
 	return { nullptr, nullptr };
 }
 
-void FITwinSceneMapping::Reset(bool bKeepVisibilityState /*= false*/)
+void FITwinSceneMapping::Reset()
 {
 	bool bHiddenConstruction = bHiddenConstructionData;
 	auto HiddenModels = HiddenModelsFromSavedView;
 	auto HiddenCategories = HiddenCategoriesFromSavedView;
 	auto HiddenElements = HiddenElementsFromSavedView;
 	*this = FITwinSceneMapping(false);
-	if (bKeepVisibilityState)
-	{
-		this->bHiddenConstructionData = bHiddenConstruction;
-		this->HiddenModelsFromSavedView = HiddenModels;
-		this->HiddenCategoriesFromSavedView = HiddenCategories;
-		this->HiddenElementsFromSavedView = HiddenElements;
-	}
+	this->bHiddenConstructionData = bHiddenConstruction;
+	this->HiddenModelsFromSavedView = HiddenModels;
+	this->HiddenCategoriesFromSavedView = HiddenCategories;
+	this->HiddenElementsFromSavedView = HiddenElements;
 }
 
 FString FITwinSceneMapping::ToString() const
@@ -1760,6 +1800,25 @@ namespace
 			return false;
 		}
 		Color4.A = Alpha;
+		MatInstance.SetVectorParameterValueByInfo(ParameterInfo, Color4);
+		return true;
+	}
+
+	bool SetBaseColorValue(UMaterialInstanceDynamic& MatInstance, FMaterialParameterInfo const& ParameterInfo,
+		FLinearColor const& NewValue, bool bModifyAlpha)
+	{
+		FLinearColor Color4;
+		if (!MatInstance.GetVectorParameterValue(ParameterInfo, Color4))
+		{
+			return false;
+		}
+		Color4.R = NewValue.R;
+		Color4.G = NewValue.G;
+		Color4.B = NewValue.B;
+		if (bModifyAlpha)
+		{
+			Color4.A = NewValue.A;
+		}
 		MatInstance.SetVectorParameterValueByInfo(ParameterInfo, Color4);
 		return true;
 	}
@@ -1932,10 +1991,12 @@ void FITwinSceneMapping::SetITwinMaterialChannelColor(uint64_t ITwinMaterialID,
 		InColor[1],
 		InColor[2],
 		InColor[3]);
+	// When modifying the color channel (which is most common case), we don't want to modify the opacity!
+	const bool bModifyAlpha = Channel != AdvViz::SDK::EChannelType::Color;
 	auto const UpdateUnrealMatFunc = [&](UMaterialInstanceDynamic& MatInstance)
 	{
-		MatInstance.SetVectorParameterValueByInfo(ColorParamInfo->GlobalParamInfo, NewValue);
-		MatInstance.SetVectorParameterValueByInfo(ColorParamInfo->LayerParamInfo, NewValue);
+		SetBaseColorValue(MatInstance, ColorParamInfo->GlobalParamInfo, NewValue, bModifyAlpha);
+		SetBaseColorValue(MatInstance, ColorParamInfo->LayerParamInfo, NewValue, bModifyAlpha);
 	};
 
 	ForEachKnownTile([&](FITwinSceneTile& SceneTile)

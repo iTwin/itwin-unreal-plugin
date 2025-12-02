@@ -12,7 +12,7 @@
 #include "ITwinAuthManager.h"
 #include "ITwinWebServicesObserver.h"
 
-#include <../BeHeaders/Compil/CleanUpGuard.h>
+#include <../BeHeaders/Util/CleanUpGuard.h>
 
 #include <fmt/format.h>
 
@@ -241,6 +241,9 @@ namespace AdvViz::SDK
 		EITwinMatMLPredictionStatus ProcessMatMLPrediction(std::string const& iTwinId,
 			std::string const& iModelId, std::string const& changesetId);
 
+		void OnGoogleCuratedContentAccessRetrieved(bool bSuccess,
+			ITwinGoogleCuratedContentAccess const& googleContentAccess, RequestID const& requestID);
+
 		void SetLastError(std::string const& strError, RequestID const& requestID,
 			int retriesLeft, bool bLogError = true);
 
@@ -308,17 +311,24 @@ namespace AdvViz::SDK
 		ModifyServerSetting([this, env] { env_ = env; });
 	}
 
-	std::string ITwinWebServices::GetAuthToken() const
+	std::string ITwinWebServices::GetAuthToken(bool enforceRegularToken /*= false*/) const
 	{
-		std::string authToken;
 		auto const& authMngr = ITwinAuthManager::GetInstance(env_);
 		if (authMngr)
 		{
-			auto token =  authMngr->GetAccessToken();
+			if (enforceRegularToken
+				&& authMngr->GetOverrideMode() == EITwinAuthOverrideMode::SharedITwins)
+			{
+				// Some requests cannot work with the shared-iTwin token.
+				return authMngr->GetRegularAccessToken();
+			}
+			auto token = authMngr->GetAccessToken();
 			if (token)
+			{
 				return *token;
+			}
 		}
-		return authToken;
+		return {};
 	}
 
 	void ITwinWebServices::SetObserver(IITwinWebServicesObserver* InObserver)
@@ -405,7 +415,7 @@ namespace AdvViz::SDK
 		std::pair<float, int> retryInfo = // in case of failure
 			shouldRetry ? shouldRetry(attempt, 0/*Unset*/) : std::make_pair(0.f, 0/*no retry on failure!*/);
 
-		std::string const authToken = owner_.GetAuthToken();
+		std::string const authToken = owner_.GetAuthToken(requestInfo.enforceRegularToken);
 		if (authToken.empty())
 		{
 			return;
@@ -459,11 +469,11 @@ namespace AdvViz::SDK
 		{
 			// Dump request to temp folder.
 			requestDumpPath = std::filesystem::temp_directory_path()/"iTwinRequestDump"/
-				RequestDump::GetRequestHash(requestInfo.UrlSuffix, requestInfo.ContentString);
+				RequestDump::GetRequestHash(requestInfo.UrlSuffix, requestInfo.ContentString.str());
 			std::filesystem::remove_all(requestDumpPath);
 			std::filesystem::create_directories(requestDumpPath);
 			std::ofstream(requestDumpPath/"request.json") << rfl::json::write(
-				RequestDump::Request{requestInfo.UrlSuffix, requestInfo.ContentString}, YYJSON_WRITE_PRETTY);
+				RequestDump::Request{requestInfo.UrlSuffix, requestInfo.ContentString.str()}, YYJSON_WRITE_PRETTY);
 		}
 		using RequestPtr = HttpRequest::RequestPtr;
 		using Response = HttpRequest::Response;
@@ -506,7 +516,7 @@ namespace AdvViz::SDK
 				bool bLogError(true);
 				if (!bValidResponse && filterError)
 				{
-					filterError(requestError, bAllowRetry, bLogError);
+					filterError(response.first, requestError, bAllowRetry, bLogError);
 				}
 
 				this->SetLastError(
@@ -592,8 +602,27 @@ namespace AdvViz::SDK
 				return;
 			setErrorGuard.release();
 		});
-		request->Process(*owner_.http_, requestInfo.UrlSuffix, requestInfo.ContentString, headers,
+		request->Process(*owner_.http_, requestInfo.UrlSuffix,
+			{ requestInfo.ContentString.str(), requestInfo.ContentString.GetEncoding() },
+			headers,
 			requestInfo.isFullUrl);
+	}
+
+	namespace Detail
+	{
+		struct SITwinInfo2
+		{
+			rfl::Flatten<ITwinInfo> iTwinData;
+			rfl::Rename<"class", std::optional<std::string>> class2_;
+		};
+		struct SITwinInfo2Holder
+		{
+			SITwinInfo2 iTwin;
+		};
+		struct SITwinInfo2Vec
+		{
+			std::vector<SITwinInfo2> iTwins;
+		};
 	}
 
 	void ITwinWebServices::GetITwinInfo(std::string const& iTwinId)
@@ -611,15 +640,17 @@ namespace AdvViz::SDK
 			iTwinRequestInfo,
 			[this](Http::Response const& response, RequestID const&, std::string& strError) -> bool
 		{
-			struct ITwinInfoHolder
-			{
-				ITwinInfo iTwin;
-			} infoHolder;
+			Detail::SITwinInfo2Holder infoHolder;
 			bool const bResult = Http::IsSuccessful(response)
 				&& Json::FromString(infoHolder, response.second, strError);
+			if (bResult)
+			{
+				// workaround for "class" field:
+				infoHolder.iTwin.iTwinData.get().class_ = infoHolder.iTwin.class2_.get();
+			}
 			if (impl_->observer_)
 			{
-				impl_->observer_->OnITwinInfoRetrieved(bResult, infoHolder.iTwin);
+				impl_->observer_->OnITwinInfoRetrieved(bResult, infoHolder.iTwin.iTwinData.get());
 			}
 			return bResult;
 		});
@@ -639,8 +670,26 @@ namespace AdvViz::SDK
 			[this](Http::Response const& response, RequestID const&, std::string& strError) -> bool
 		{
 			ITwinInfos iTwinInfos;
+
+			Detail::SITwinInfo2Vec iTwinInfo2Vec;
 			bool const bResult = Http::IsSuccessful(response)
-				&& Json::FromString(iTwinInfos, response.second, strError);
+				&& Json::FromString(iTwinInfo2Vec, response.second, strError);
+
+			if (bResult)
+			{
+				// workaround for "class" field:
+				iTwinInfos.iTwins.reserve(iTwinInfo2Vec.iTwins.size());
+				std::transform(
+					iTwinInfo2Vec.iTwins.cbegin(), iTwinInfo2Vec.iTwins.cend(),
+					std::back_inserter(iTwinInfos.iTwins),
+					[](auto const& info2) noexcept
+					{
+						ITwinInfo info = info2.iTwinData.get();
+						info.class_ = info2.class2_.get();
+						return info;
+					}
+				);
+			}
 			if (impl_->observer_)
 			{
 				impl_->observer_->OnITwinsRetrieved(bResult, iTwinInfos);
@@ -1339,6 +1388,16 @@ namespace AdvViz::SDK
 				impl_->observer_->OnSavedViewThumbnailRetrieved(false, savedViewId, {});
 			}
 			return bResult;
+		},
+			{},
+			[](long /*statusCode*/, std::string const& strError, bool& bAllowRetry, bool& bLogError)
+		{
+			// Filter some usual errors to avoid useless retries. Missing thumbnails will not appear
+			// magically on the server ;-)
+			if (strError.find("[ImageNotFound]: Requested image is not available") != std::string::npos)
+			{
+				bAllowRetry = bLogError = false;
+			}
 		});
 	}
 
@@ -1354,7 +1413,7 @@ namespace AdvViz::SDK
 			.ContentType	= "application/json",
 			.ContentString	= "{\"image\":\"" + thumbnailURL + "\"}"
 		};
-		
+
 		impl_->ProcessHttpRequest(
 			requestInfo,
 			[this, savedViewId](Http::Response const& response, RequestID const& requestId, std::string& strError) -> bool
@@ -1683,6 +1742,16 @@ namespace AdvViz::SDK
 				impl_->observer_->OnRealityDataRetrieved(bResult, realityData);
 			}
 			return bResult;
+		},
+			{}, // notifyRequestID
+			[](long statusCode, std::string const& /*strError*/, bool& bAllowRetry, bool& bLogError)
+		{
+			// Error 404 ("Not Found") is not really an error: it just means there are no reality data in this
+			// iTwin! Neither retry nor log error in such (common) case.
+			if (statusCode == 404)
+			{
+				bAllowRetry = bLogError = false;
+			}
 		});
 	}
 
@@ -3515,6 +3584,51 @@ Content-Type: application/octet-stream
 		std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId)
 	{
 		return impl_->ProcessMatMLPrediction(iTwinId, iModelId, changesetId);
+	}
+
+	void ITwinWebServices::Impl::OnGoogleCuratedContentAccessRetrieved(bool bSuccess,
+		ITwinGoogleCuratedContentAccess const& googleContentAccess, RequestID const& requestId)
+	{
+		if (observer_)
+		{
+			observer_->OnGoogleCuratedContentAccessRetrieved(bSuccess, googleContentAccess, requestId);
+		}
+		// see https://developer.bentley.com/apis/google-curated-content/operations/access-3d-tiles/
+
+		// The token, if any, "provides access to the content for approximately one hour" => request a new
+		// token after a delay.
+		const int delayInMinutes = bSuccess ? 50 : 1;
+		UniqueDelayedCall(uniqueName_ + "GoogleCont",
+			[this, isValidLambda = isThisValid_]() /*mutable*/
+		{
+			if (*isValidLambda)
+			{
+				this->owner_.GetGoogleCuratedContentAccess();
+			}
+			return DelayedCall::EReturnedValue::Done;
+		}, 60.f * delayInMinutes);
+	}
+
+	void ITwinWebServices::GetGoogleCuratedContentAccess()
+	{
+		ITwinAPIRequestInfo const requestInfo =
+		{
+			.ShortName = __func__,
+			.Verb = EVerb::Post,
+			.UrlSuffix = "/curated-content/google/map-tiles/3d",
+			.AcceptHeader = "application/vnd.bentley.itwin-platform.v1+json",
+		};
+
+		impl_->ProcessHttpRequest(
+			requestInfo,
+			[this](Http::Response const& response, RequestID const& requestId, std::string& strError) -> bool
+		{
+			ITwinGoogleCuratedContentAccess googleContentAccess;
+			bool const bResult = Http::IsSuccessful(response)
+				&& Json::FromString(googleContentAccess, response.second, strError);
+			impl_->OnGoogleCuratedContentAccessRetrieved(bResult, googleContentAccess, requestId);
+			return bResult;
+		});
 	}
 
 	void ITwinWebServices::RunCustomRequest(

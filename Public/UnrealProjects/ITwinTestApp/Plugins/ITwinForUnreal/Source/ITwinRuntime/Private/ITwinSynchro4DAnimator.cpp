@@ -18,6 +18,9 @@
 #include <Timeline/Timeline.h>
 #include <Timeline/TimeInSeconds.h>
 #include <Timeline/SchedulesConstants.h>
+#include <Engine/Engine.h>
+
+#include <GameFramework/GameUserSettings.h>
 
 #include <GenericPlatform/GenericPlatformTime.h>
 #include <Materials/MaterialInstanceDynamic.h>
@@ -62,6 +65,8 @@ class FITwinSynchro4DAnimator::FImpl
 	std::optional<double> LastAnimationTime;
 	bool bIsPlaying = false, bIsPaused = true;
 
+	std::optional<bool> bPrevIsPlaying;
+
 // Variables used by ApplyAnimation to handle distribution of the work load over several ticks:
 	/// Schedule time used to apply the animation: it should probably be consistent for the whole scene,
 	/// even though the animation is applied over several ticks (which means AnimationTime <= ScheduleTime)
@@ -99,6 +104,24 @@ FITwinSynchro4DAnimator::FITwinSynchro4DAnimator(UITwinSynchro4DSchedules& InOwn
 {
 }
 
+
+void FITwinSynchro4DAnimator::ManageMeshDynamicShadows(FITwinSynchro4DSchedulesInternals& SchedInternals)
+{
+	if (!Impl->bPrevIsPlaying.has_value() || Impl->bPrevIsPlaying.value() != Impl->bIsPlaying)
+	{
+		// get current quality
+		UGameUserSettings* Settings = GEngine->GetGameUserSettings();
+		int32 OverallQualityLevel = 3;
+		if (Settings)
+			OverallQualityLevel = Settings->GetOverallScalabilityLevel();
+
+		bool bDyn = Impl->bIsPlaying && OverallQualityLevel >= 3;
+		SchedInternals.SetMeshesDynamicShadows(bDyn);
+	}
+
+	Impl->bPrevIsPlaying = Impl->bIsPlaying;
+}
+
 void FITwinSynchro4DAnimator::TickAnimation(float DeltaTime, bool const bForceUpdateAll)
 {
 	auto&& SchedInternals = GetInternals(Owner);
@@ -107,6 +130,9 @@ void FITwinSynchro4DAnimator::TickAnimation(float DeltaTime, bool const bForceUp
 	{
 		ensure(false); return;
 	}
+
+	ManageMeshDynamicShadows(SchedInternals);
+
 	if (!Impl->bIsPlaying && !Impl->bIsPaused)
 	{
 		return;
@@ -199,8 +225,8 @@ void FITwinSynchro4DAnimator::FImpl::StopAnimationInTiles(FITwinSceneTile* OnlyT
 				{
 					if (bResetForcedOpa)
 						Extracted.SetForcedOpacity(1.f);
-					if (Extracted.MeshComponent.IsValid())
-						Extracted.MeshComponent->SetWorldTransform(Extracted.OriginalTransform, false,
+					if (Extracted.TransformableMeshComponent.IsValid())
+						Extracted.TransformableMeshComponent->SetWorldTransform(Extracted.OriginalTransform, false,
 							nullptr, ETeleportType::TeleportPhysics);
 				});
 			SchedInternals.HideNonAnimatedDuplicates(SceneTile, NonAnimatedDuplicates);
@@ -434,7 +460,7 @@ namespace Detail
 		if (State.Props.Transform)
 		{
 			State.EnsureTransform();
-			ExtractedEntity.MeshComponent->SetWorldTransform(
+			ExtractedEntity.TransformableMeshComponent->SetWorldTransform(
 				ExtractedEntity.OriginalTransform * (*State.AsTransform),
 				false, nullptr, ETeleportType::TeleportPhysics);
 			// TODO_GCO: could optimize the static-transform case, with a static transform ID (not a hash...)
@@ -443,8 +469,8 @@ namespace Detail
 		else if (ExtractedEntity.bIsCurrentlyTransformed)
 		{
 			ExtractedEntity.bIsCurrentlyTransformed = false;
-			ExtractedEntity.MeshComponent->SetWorldTransform(ExtractedEntity.OriginalTransform,
-															 false, nullptr, ETeleportType::TeleportPhysics);
+			ExtractedEntity.TransformableMeshComponent->SetWorldTransform(
+				ExtractedEntity.OriginalTransform, false, nullptr, ETeleportType::TeleportPhysics);
 		}
 	#endif // SYNCHRO4D_ENABLE_TRANSFORMATIONS()
 		if (!State.IModelInvariants.bUseGltfTunerInsteadOfMeshExtr)

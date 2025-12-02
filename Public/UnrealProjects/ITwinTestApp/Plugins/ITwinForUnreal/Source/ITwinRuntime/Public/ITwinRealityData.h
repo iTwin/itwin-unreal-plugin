@@ -15,6 +15,7 @@
 
 struct FCartographicProps;
 class FITwinTilesetAccess;
+class UITwinClippingCustomPrimitiveDataHelper;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnRealityDataLoaded, bool, bSuccess, FString, RealityDataId);
 
@@ -32,6 +33,8 @@ public:
 	FString ITwinId;
 
 	AITwinRealityData();
+	~AITwinRealityData();
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void Destroyed() override;
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
@@ -75,6 +78,14 @@ public:
 	bool IsGeolocated() const { return bGeolocated; }
 
 	TUniquePtr<FITwinTilesetAccess> MakeTilesetAccess();
+
+	UITwinClippingCustomPrimitiveDataHelper* GetClippingHelper() const;
+	bool MakeClippingHelper();
+
+	UFUNCTION(Category = "iTwin",
+		CallInEditor,
+		BlueprintCallable)
+	void ZoomOnRealityData();
 
 private:
 	UPROPERTY(Category = "iTwin",

@@ -107,6 +107,8 @@ MODULE_EXPORT namespace AdvViz::SDK
 		void SetTimeline(const std::shared_ptr<AdvViz::SDK::ITimeline>& timeline) override;
 		std::shared_ptr<AdvViz::SDK::ITimeline> GetTimeline() override;
 
+		std::string ExportHDRIAsJson(ITwinHDRISettings const& hdri) const override;
+		bool ConvertHDRIJsonFileToKeyValueMap(std::filesystem::path const& jsonPath, KeyValueStringMap& outMap) const override;
 	protected:
 		class Impl;
 		const std::unique_ptr<Impl> impl_;

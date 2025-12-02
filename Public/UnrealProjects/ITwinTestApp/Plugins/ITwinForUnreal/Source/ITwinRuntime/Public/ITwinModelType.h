@@ -25,6 +25,7 @@ enum class EITwinModelType : uint8
 {
 	IModel,
 	RealityData,
+	GlobalMapLayer,
 	AnimationKeyframe,
 	Scene,
 
@@ -46,6 +47,7 @@ namespace ITwin
 		{
 		case EITwinModelType::IModel:				return "iModel";
 		case EITwinModelType::RealityData:			return "RealityData";
+		case EITwinModelType::GlobalMapLayer:		return "GlobalMapLayer";
 		case EITwinModelType::AnimationKeyframe:	return "AnimationKeyframe";
 
 		case EITwinModelType::Invalid:
@@ -64,6 +66,8 @@ namespace ITwin
 			return EITwinModelType::IModel;
 		else if (Str == "RealityData")
 			return EITwinModelType::RealityData;
+		else if (Str == "GlobalMapLayer")
+			return EITwinModelType::GlobalMapLayer;
 		else if (Str == "AnimationKeyframe")
 			return EITwinModelType::AnimationKeyframe;
 		if (bAssertIfInvalid)

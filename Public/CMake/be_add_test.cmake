@@ -6,7 +6,7 @@
 #               [TIMEOUT timeout]
 #               [EXE_ARGS arg arg ...]
 #               [COVERED_TARGETS target target ...])
-# testTarget: An existing target name (is must be added by be_add_binary beforehand).
+# testTarget: An existing target name (is must have been added by add_binary beforehand).
 # JS: Indicates the test is a javascript file, not an executable.
 # OV_EXT: Indicates the test is for an Omniverse extension.
 #         This requires that CAYMUS_CREATE_INSTALL_DIR points to a valid OV install directory.

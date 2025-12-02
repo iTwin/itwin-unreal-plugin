@@ -8,7 +8,7 @@
 
 #pragma once
 
-#include <Cesium3DTilesSelection/TilesetExternals.h>
+#include <Cesium3DTilesSelection/GltfModifier.h>
 
 #include <boost/container/small_vector.hpp>
 #include <boost/container_hash/hash.hpp>
@@ -33,7 +33,7 @@ using ITwinMaterialInfoReadCallback = std::function<void(std::vector<ITwinMateri
 template <class T, std::size_t N> using SmallVec = boost::container::small_vector<T, N>;
 using Anim4DId = std::variant<uint64_t/*ITwinElementID*/, SmallVec<int32_t, 2>/*Timeline indices*/>;
 
-class GltfTuner : public Cesium3DTilesSelection::GltfTuner
+class GltfTuner : public Cesium3DTilesSelection::GltfModifier
 {
 public:
 	//! Specifies how primitives should be merged or split.
@@ -99,9 +99,9 @@ public:
 	///		constructed tuner. Useful for unit tests.
 	GltfTuner(bool const bTuneWithoutRules = false);
 	~GltfTuner();
-	virtual bool Tune(const CesiumGltf::Model& model, const glm::dmat4& tileTransform,
+	virtual bool apply(const CesiumGltf::Model& model, const glm::dmat4& tileTransform,
 		const glm::dvec4& rootTranslation, CesiumGltf::Model& tunedModel) override;
-	virtual void ParseTilesetJson(const rapidjson::Document& tilesetJson) override;
+	virtual void parseTilesetJson(const rapidjson::Document& tilesetJson) override;
 	int SetMaterialRules(Rules&& rules);
 	int SetAnim4DRules(Rules&& rules);
 

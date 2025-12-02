@@ -132,7 +132,7 @@ ITWIN_FUNCTIONAL_TEST_EX(IModelRender, false)
 	{
 		// Upon test exit, also clear the "override token", which is useful when running tests manually in the editor.
 		// It allows to then launch the app without having to restart UE.
-		FITwinAuthorizationManager::GetInstance(AdvViz::SDK::EITwinEnvironment::Prod)->SetOverrideAccessToken("");
+		FITwinAuthorizationManager::GetInstance(AdvViz::SDK::EITwinEnvironment::Prod)->ResetOverrideAccessToken();
 		UITwinWebServices::SetLogErrors(bLogErrorsBackup);
 	};
 	auto MockServer = GetMockServer(TestName);
@@ -161,12 +161,12 @@ ITWIN_FUNCTIONAL_TEST_EX(IModelRender, false)
 	// attached to the tested model, we must ensure the dummy access token is available for the whole
 	// asynchronous decoration loading (see #GetDecorationAccessToken...)
 	AITwinDecorationHelper* DecoHelper = ITwin::GetDecorationHelper(IModel->GetModelLoadInfo().ITwinId, World);
-	if (DecoHelper && DecoHelper->IsLoadingDecoration())
+	if (DecoHelper && DecoHelper->IsLoadingScene())
 	{
-		TPromise<void> DecoPromise;
+		TPromise<bool/*dummy, void no longer compiles*/> DecoPromise;
 		const auto DelegateHandle = DecoHelper->OnDecorationLoaded.AddLambda([&]()
 		{
-			DecoPromise.SetValue();
+			DecoPromise.SetValue(true/*dummy*/);
 		});
 		co_await DecoPromise.GetFuture();
 		DecoHelper->OnDecorationLoaded.Remove(DelegateHandle);

@@ -8,17 +8,19 @@
 
 #include "ITwinFunctionalTest.h"
 #if WITH_EDITOR
+#include <AutomationBlueprintFunctionLibrary.h>
+#include <AutomationScreenshotOptions.h>
+#include <FileHelpers.h>
 #include <FunctionalTest.h>
 #include <FunctionalTestBase.h>
-#include <AutomationScreenshotOptions.h>
-#include <Tests/AutomationCommon.h>
-#include <AutomationBlueprintFunctionLibrary.h>
-#include <FunctionalTestingModule.h>
-#include <FileHelpers.h>
 #include <FunctionalTestingHelper.h>
-#include <Interfaces/IScreenShotToolsModule.h>
+#include <FunctionalTestingModule.h>
+#include <HAL/FileManager.h>
 #include <IAutomationControllerModule.h>
 #include <Interfaces/IPluginManager.h>
+#include <Interfaces/IScreenShotToolsModule.h>
+#include <Misc/FileHelper.h>
+#include <Tests/AutomationCommon.h>
 #endif // WITH_EDITOR
 
 #if WITH_TESTS && WITH_EDITOR
@@ -104,14 +106,14 @@ UE5Coro::TCoroutine<> TakeScreenshot(const FString Name)
 {
 	// Use a small margin to account for "low" resolution of file time stamps.
 	const auto BeforeScreenshotDate = FDateTime::UtcNow()-FTimespan::FromSeconds(1);
-	TPromise<void> Promise;
+	TPromise<bool/*dummy, void no longer compiles*/> Promise;
 	FAutomationScreenshotOptions Options;
 	// TODO_AW configure options (resolution, tolerance...)
 	Options.Resolution = {640, 360}; // Use low resolution to avoid bloating ADO.
 	const auto DelegateHandle = FAutomationTestFramework::Get().OnScreenshotTakenAndCompared.AddLambda([&]()
 		{
 			UE_LOG(LogFunctionalTest, Display, TEXT("OnScreenshotTakenAndCompared, now = %lld"), FDateTime::UtcNow().GetTicks());
-			Promise.SetValue();
+			Promise.SetValue(true/*dummy*/);
 		});
 	auto* const World = AutomationCommon::GetAnyGameWorld();
 	UE_LOG(LogFunctionalTest, Display, TEXT("Before TakeAutomationScreenshot, now = %lld"), FDateTime::UtcNow().GetTicks());

@@ -7,6 +7,7 @@
 #include "RHIResources.h"
 #include "Runtime/Launch/Resources/Version.h"
 #include "SceneInterface.h"
+#include "SceneView.h"
 #include "StaticMeshResources.h"
 
 FCesiumGltfPointsSceneProxyTilesetData::FCesiumGltfPointsSceneProxyTilesetData()
@@ -25,7 +26,6 @@ void FCesiumGltfPointsSceneProxyTilesetData::UpdateFromComponent(
   UsesAdditiveRefinement = Component->UsesAdditiveRefinement;
   GeometricError = Component->GeometricError;
   Dimensions = Component->Dimensions;
-  bLinesList = Component->bLinesList;
 }
 
 SIZE_T FCesiumGltfPointsSceneProxy::GetTypeHash() const {
@@ -35,12 +35,11 @@ SIZE_T FCesiumGltfPointsSceneProxy::GetTypeHash() const {
 
 FCesiumGltfPointsSceneProxy::FCesiumGltfPointsSceneProxy(
     UCesiumGltfPointsComponent* InComponent,
-    ERHIFeatureLevel::Type InFeatureLevel,
-    bool bLinesList)
+    ERHIFeatureLevel::Type InFeatureLevel)
     : FPrimitiveSceneProxy(InComponent),
       RenderData(InComponent->GetStaticMesh()->GetRenderData()),
       NumPoints(RenderData->LODResources[0].IndexBuffer.GetNumIndices()),
-      bAttenuationSupported(!bLinesList &&
+      bAttenuationSupported(
           RHISupportsManualVertexFetch(GetScene().GetShaderPlatform())),
       TilesetData(),
       AttenuationVertexFactory(
@@ -52,19 +51,11 @@ FCesiumGltfPointsSceneProxy::FCesiumGltfPointsSceneProxy(
 
 FCesiumGltfPointsSceneProxy::~FCesiumGltfPointsSceneProxy() {}
 
-#if ENGINE_VERSION_5_4_OR_HIGHER
 void FCesiumGltfPointsSceneProxy::CreateRenderThreadResources(
     FRHICommandListBase& RHICmdList) {
   AttenuationVertexFactory.InitResource(RHICmdList);
   AttenuationIndexBuffer.InitResource(RHICmdList);
 }
-#else
-void FCesiumGltfPointsSceneProxy::CreateRenderThreadResources() {
-  FRHICommandListBase& RHICmdList = FRHICommandListImmediate::Get();
-  AttenuationVertexFactory.InitResource(RHICmdList);
-  AttenuationIndexBuffer.InitResource(RHICmdList);
-}
-#endif
 
 void FCesiumGltfPointsSceneProxy::DestroyRenderThreadResources() {
   AttenuationVertexFactory.ReleaseResource();
@@ -125,7 +116,6 @@ uint32 FCesiumGltfPointsSceneProxy::GetMemoryFootprint(void) const {
 void FCesiumGltfPointsSceneProxy::UpdateTilesetData(
     const FCesiumGltfPointsSceneProxyTilesetData& InTilesetData) {
   TilesetData = InTilesetData;
-  ensure(!TilesetData.bLinesList || !bAttenuationSupported); // see ctor
 }
 
 float FCesiumGltfPointsSceneProxy::GetGeometricError() const {
@@ -218,22 +208,17 @@ void FCesiumGltfPointsSceneProxy::CreateMesh(FMeshBatch& Mesh) const {
   Mesh.VertexFactory = &RenderData->LODVertexFactories[0].VertexFactory;
   Mesh.MaterialRenderProxy = Material->GetRenderProxy();
   Mesh.ReverseCulling = IsLocalToWorldDeterminantNegative();
-  Mesh.Type = TilesetData.bLinesList ? PT_LineList : PT_PointList;
+  Mesh.Type = PT_PointList;
   Mesh.DepthPriorityGroup = SDPG_World;
   Mesh.LODIndex = 0;
   Mesh.bCanApplyViewModeOverrides = false;
   Mesh.bUseAsOccluder = false;
-  Mesh.bWireframe = TilesetData.bLinesList;
+  Mesh.bWireframe = false;
 
   FMeshBatchElement& BatchElement = Mesh.Elements[0];
   BatchElement.IndexBuffer = &RenderData->LODResources[0].IndexBuffer;
   BatchElement.FirstIndex = 0;
   BatchElement.MinVertexIndex = 0;
   BatchElement.MaxVertexIndex = NumPoints - 1;
-  if (TilesetData.bLinesList) {
-    ensure((NumPoints % 2) == 0);
-    BatchElement.NumPrimitives = NumPoints / 2;
-  } else {
-    BatchElement.NumPrimitives = NumPoints;
-  }
+  BatchElement.NumPrimitives = NumPoints;
 }

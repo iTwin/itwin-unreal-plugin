@@ -34,13 +34,18 @@ add_library (BeUtils
 	SplineSampling/SplineSampling.h
 	SplineSampling/SplineUtils.h
 )
+if (MSVC)
+	# We should probably use find_package(fmt REQUIRED) instead because this compilation flag
+	# is an INTERFACE requirement of fmt, but I had issues doing that - will see later...
+	target_compile_options(BeUtils PRIVATE /utf-8) # Needed for "fmt" lib
+endif ()
 target_include_directories (BeUtils PUBLIC
 	"${CMAKE_BINARY_DIR}/Public/CesiumDependencies/Source/ThirdParty/include"
 )
-target_link_libraries (BeUtils
+target_link_libraries (BeUtils PRIVATE
 	Cesium3DTilesSelection
 	Visualization
-	Network
+	Async++
 )
 # "${CMAKE_BINARY_DIR}/CesiumDependencies/Source" is created by target InstallCesiumDependencies.
 add_dependencies (BeUtils InstallCesiumDependencies)

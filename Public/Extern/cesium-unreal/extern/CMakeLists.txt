@@ -6,17 +6,25 @@ project(
     LANGUAGES CXX C
 )
 
+# AdvViz: default to local subdir: embedding project should still build cesium-native's overlay port but with 'dependencies-only'
+set(CESIUM_UNREAL_NATIVE_DIRECTORY "cesium-native" CACHE PATH "directory for Cesium Native source if not installed via package manager")
+
 if (DEFINED ENV{UNREAL_ENGINE_ROOT} AND NOT UNREAL_ENGINE_ROOT)
   set(UNREAL_ENGINE_ROOT "$ENV{UNREAL_ENGINE_ROOT}")
 endif()
 
 if (NOT UNREAL_ENGINE_ROOT)
-  # On Windows, try to use the default UE 5.3 location
-  set(WINDOWS_DEFAULT_UNREAL_INSTALLATION "C:/Program Files/Epic Games/UE_5.3")
-  if (WIN32 AND EXISTS "${WINDOWS_DEFAULT_UNREAL_INSTALLATION}")
-    set(UNREAL_ENGINE_ROOT "${WINDOWS_DEFAULT_UNREAL_INSTALLATION}")
+  # On Windows and Mac, try to use the default UE 5.4 location
+  if (WIN32)
+     set(DEFAULT_UNREAL_INSTALLATION "C:/Program Files/Epic Games/UE_5.4")
+  elseif(APPLE)
+    set(DEFAULT_UNREAL_INSTALLATION "/Users/Shared/Epic Games/UE_5.4")
+  endif()
+
+  if (NOT EXISTS "${DEFAULT_UNREAL_INSTALLATION}")
+     message(FATAL_ERROR "Please specify the root of your Unreal Engine installation, either by setting the UNREAL_ENGINE_ROOT environment variable or with -DUNREAL_ENGINE_ROOT=path on the cmake command-line.")
   else()
-    message(FATAL_ERROR "Please specify the root of your Unreal Engine installation, either by setting the UNREAL_ENGINE_ROOT environment variable or with -DUNREAL_ENGINE_ROOT=path on the cmake command-line.")
+    set(UNREAL_ENGINE_ROOT "${DEFAULT_UNREAL_INSTALLATION}")
   endif()
 endif()
 
@@ -55,13 +63,16 @@ endif()
 set(PRIVATE_CESIUM_SQLITE ON)
 
 set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreadedDLL)
+# AdvViz: The "../" below is causing policy warnings CMP0177, but it is necessary because we build out of source with symlinks...
 set(CMAKE_INSTALL_PREFIX ${CMAKE_CURRENT_LIST_DIR}/../Source/ThirdParty)
+# Don't: cmake_path(NORMAL_PATH CMAKE_INSTALL_PREFIX)
 set(CMAKE_INSTALL_LIBDIR ${CMAKE_INSTALL_PREFIX}/lib/${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}-$<IF:$<CONFIG:Debug>,Debug,Release>)
+set(CMAKE_INSTALL_INCLUDEDIR ${CMAKE_INSTALL_PREFIX}/include)
 
 # Always define NDEBUG, since Unreal does in debug anyway.
 # We don't want any mismatches, especially with class member ordering.
 # But still let debug builds force assertions.
-add_compile_definitions(NDEBUG $<$<CONFIG:Debug>:CESIUM_FORCE_ASSERTIONS>)
+add_compile_definitions(NDEBUG $<$<CONFIG:Debug>:CESIUM_FORCE_ASSERTIONS> $<$<CONFIG:UnrealDebug>:CESIUM_FORCE_ASSERTIONS>)
 
 # On Mac and Linux, Unreal uses -fvisibility-ms-compat.
 # On Android, it uses -fvisibility=hidden
@@ -105,27 +116,32 @@ if (CESIUM_USE_UNREAL_TRACING)
   list(APPEND CESIUM_EXTRA_INCLUDES "${CMAKE_CURRENT_SOURCE_DIR}/include")
 endif()
 
-# vcpkg setup
-set(ENV{VCPKG_OVERLAY_PORTS} "${CMAKE_CURRENT_LIST_DIR}/vcpkg-overlays")
-set(ENV{VCPKG_OVERLAY_TRIPLETS} "${CMAKE_CURRENT_LIST_DIR}/vcpkg-overlays/triplets")
-
-include(${CMAKE_CURRENT_SOURCE_DIR}/cesium-native/cmake/detect-vcpkg-triplet.cmake)
-
-if (NOT VCPKG_TRIPLET)
-    if (DEFINED ENV{VCPKG_TRIPLET})
-        set(VCPKG_TRIPLET "$ENV{VCPKG_TRIPLET}")
-    elseif(DETECTED_VCPKG_TRIPLET_ERROR)
-        message(FATAL_ERROR "${DETECTED_VCPKG_TRIPLET_ERROR}")
-    else()
-        set(VCPKG_TRIPLET "${DETECTED_VCPKG_TRIPLET}-unreal")
-    endif()
-endif()
-
-# Our OpenSSL is part of Unreal Engine, so need to install it.
+# Our OpenSSL is part of Unreal Engine, no need to install it.
 set(CESIUM_EXCLUDE_INSTALL_HEADERS openssl)
 set(CESIUM_EXCLUDE_INSTALL_STATIC_LIBS openssl)
+# Skip including curl asset accessor as it causes issues on Android and iOS
+set(CESIUM_DISABLE_CURL TRUE)
 
-add_subdirectory(cesium-native)
+if(CESIUM_UNREAL_NATIVE_DIRECTORY)
+  # STB isn't technically part of the public interface, but it's used by the downstream Cesium for Unreal project
+  set(CESIUM_PACKAGES_PUBLIC stb)
+  set(CESIUM_PACKAGES_PRIVATE
+    # AdvViz: added this one because our vcpkg seems to ignore the '"default-features": false' set on cpp-httplib in both
+	# cesium-unreal's overlay port for cesium-native, and cesium-native's own vcpkg.json, probably because of the version
+	# override in Carrot.git's root vcpkg.json :/ (manifest mode still somewhat buggy...)
+    brotli
+  )
+  set(CESIUM_PACKAGES_TEST catch2)
+  set(CESIUM_INSTALL_EXTERNALLY_BUILT_DEPENDENCIES ON)
+  add_subdirectory("${CESIUM_UNREAL_NATIVE_DIRECTORY}" cesium-native)
+  # Don't build the cesium-native tests by default, unless explicitly required
+  # (an embedding project may want to execute them as part of its own build)
+  if (NOT CESIUM_TESTS_ENABLED)
+	set_target_properties(cesium-native-tests PROPERTIES EXCLUDE_FROM_ALL 1 EXCLUDE_FROM_DEFAULT_BUILD 1)
+  endif()
+else()
+  find_package(cesium-native)
+endif()
 
 # cesium-native doesn't require this header to be public, but Cesium for Unreal wants to use it.
 #install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/cesium-native/extern/stb/stb_image_resize.h TYPE INCLUDE)
@@ -145,10 +161,26 @@ endif()
 option(BUILD_SHARED_LIB OFF)
 option(SUPPORT_CONSOLE_APP OFF)
 set(LIB_INSTALL_DIR ${CMAKE_INSTALL_LIBDIR})
+set(CMAKE_POLICY_VERSION_MINIMUM "3.5")
 add_subdirectory(tidy-html5)
-
-# Don't build the cesium-native tests by default
-set_target_properties(cesium-native-tests PROPERTIES EXCLUDE_FROM_ALL 1 EXCLUDE_FROM_DEFAULT_BUILD 1)
 
 add_subdirectory(swl-variant)
 install(DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/swl-variant/include/" DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+
+if(VCPKG_INSTALLED_DIR AND NOT CESIUM_INSTALL_EXTERNALLY_BUILT_DEPENDENCIES)
+    set(CESIUM_VCPKG_DIR "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}")
+    set(CESIUM_VCPKG_LIBDIR "${CESIUM_VCPKG_DIR}/$<IF:$<CONFIG:Debug>,debug/lib,lib>")
+
+    message(STATUS "CESIUM_VCPKG_LIBDIR: ${CESIUM_VCPKG_LIBDIR}")
+
+    install(DIRECTORY "${CESIUM_VCPKG_LIBDIR}/"
+            DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+            PATTERN libcrypto.* EXCLUDE
+            PATTERN libssl.* EXCLUDE
+            )
+
+    install(DIRECTORY "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/include/"
+            DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
+            PATTERN openssl EXCLUDE
+            )
+endif()

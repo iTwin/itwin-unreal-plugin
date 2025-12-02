@@ -25,17 +25,27 @@ namespace AdvViz::SDK
 		std::optional<float3> colorShift_;
 		dmat3x4 transform_;
 		std::string animationid_;
+		std::optional<RefID> animPathId_;
+
+		RefID refId_; // identifies instances created at runtime when they are not yet saved on the server
 		bool shouldSave_ = false;
 	};
 
 	const std::string& Instance::GetId() const { return impl_->id_; }
 	void Instance::SetId(const std::string& id) { impl_->id_ = id; }
 
+	const RefID& Instance::GetRefId() const { return impl_->refId_; }
+	void Instance::SetRefId(const RefID& id) { impl_->refId_ = id; }
+
 	const std::shared_ptr<IInstancesGroup>& Instance::GetGroup() const { return impl_->group_; }
 	void Instance::SetGroup(const std::shared_ptr<IInstancesGroup>& group) { impl_->group_ = group; }
 
 	const std::string& Instance::GetAnimId() const { return impl_->animationid_; }
 	void Instance::SetAnimId(const std::string &id) { impl_->animationid_ = id; }
+
+	const std::optional<RefID>& Instance::GetAnimPathId() const { return impl_->animPathId_; }
+	void Instance::SetAnimPathId(const RefID& id) { impl_->animPathId_ = id; }
+	void Instance::RemoveAnimPathId() { impl_->animPathId_.reset(); }
 	
 	const std::string& Instance::GetName() const { return impl_->name_; }
 	void Instance::SetName(const std::string& name) { impl_->name_ = name; }

@@ -77,9 +77,25 @@ MODULE_EXPORT namespace AdvViz::SDK
 	struct ITwinInfo
 	{
 		std::string id;
-		std::string displayName;
-		std::string status;
-		std::string number;
+		std::optional<std::string> class_; // "class" can't be used as field (c++ reserved word)
+		std::optional<std::string> subClass;
+		std::optional<std::string> type;
+		std::optional<std::string> number;
+		std::optional<std::u8string> displayName;
+		std::optional<std::string> geographicLocation;
+		std::optional<double> latitude;
+		std::optional<double> longitude;
+		std::optional<std::string> ianaTimeZone;
+		std::optional<std::string> dataCenterLocation;
+		std::optional<std::string> status;
+		std::optional<std::string> parentId;
+		std::optional<std::string> iTwinAccountId;
+		std::optional<std::u8string> imageName;
+		std::optional<std::string> image;
+		std::optional<std::string> createdDateTime;
+		std::optional<std::string> createdBy;
+		std::optional<std::string> lastModifiedDateTime;
+		std::optional<std::string> lastModifiedBy;
 	};
 
 	struct ITwinInfos
@@ -389,5 +405,12 @@ MODULE_EXPORT namespace AdvViz::SDK
 	struct GeoCoordsReply
 	{
 		std::optional<std::vector<GeoCoordsConverted>> geoCoords;
+	};
+
+	struct ITwinGoogleCuratedContentAccess
+	{
+		std::optional<std::string> type;
+		std::string url;
+		std::string accessToken;
 	};
 }

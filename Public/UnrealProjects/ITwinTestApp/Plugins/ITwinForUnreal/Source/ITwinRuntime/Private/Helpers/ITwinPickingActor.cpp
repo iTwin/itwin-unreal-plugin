@@ -76,7 +76,12 @@ void AITwinPickingActor::PickUnderCursorWithOptions(FPickingResult& OutPickingRe
 	}
 
 	FITwinTracingHelper TracingHelper;
-	TracingHelper.VisitElementsUnderCursor(GetWorld(), OutPickingResult.MousePosition,
+	if (Options.ActorsToIgnore.Num() > 0)
+		TracingHelper.AddIgnoredActors(Options.ActorsToIgnore);
+	if (Options.ComponentsToIgnore.Num() > 0)
+		TracingHelper.AddIgnoredComponents(Options.ComponentsToIgnore);
+	TracingHelper.VisitElementsUnderCursor(GetWorld(),
+		OutPickingResult.MousePosition, OutPickingResult.TraceStart, OutPickingResult.TraceEnd,
 		[this, PickedIModel, &Options, &PickedEltID, &PickedMaterial, &PickedMaterialIModel, &VisibleHit, &TracingHelper]
 		(FHitResult const& HitResult, std::unordered_set<ITwinElementID>& DejaVu)
 	{
@@ -128,7 +133,8 @@ void AITwinPickingActor::PickUnderCursorWithOptions(FPickingResult& OutPickingRe
 		}
 
 	}, MaxUniqueElementsHit, CustomTraceExtentInMeters, CustomMousePosition);
-
+	
+	static FString LastPickedIModelId = FString("");
 	if (!PickedIModel && VisibleHit.HasValidHitObjectHandle())
 		PickedIModel = Cast<AITwinIModel>(VisibleHit.GetActor()->GetOwner());
 	if (Options.bSelectElement)
@@ -143,13 +149,14 @@ void AITwinPickingActor::PickUnderCursorWithOptions(FPickingResult& OutPickingRe
 		{
 			// convert picked element ID to string.
 			ElementId = ITwin::ToString(PickedEltID);
-			OnElemPicked.Broadcast(ElementId);
+			OnElemPicked.Broadcast(ElementId, PickedIModel->IModelId);
+			LastPickedIModelId = PickedIModel->IModelId;
 		}
 		else
 		{
 			if (PickedIModel)
 				DeSelect(PickedIModel);
-			OnElemPicked.Broadcast("");
+			OnElemPicked.Broadcast("", LastPickedIModelId);
 		}
 	}
 

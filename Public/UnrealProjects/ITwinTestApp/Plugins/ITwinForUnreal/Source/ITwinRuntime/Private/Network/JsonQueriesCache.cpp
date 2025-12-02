@@ -14,7 +14,7 @@
 #include <ITwinServerEnvironment.h>
 
 #include <ITwinRuntime/Private/Compil/BeforeNonUnrealIncludes.h>
-#	include <BeHeaders/Compil/CleanUpGuard.h>
+#	include <BeHeaders/Util/CleanUpGuard.h>
 #	include <Core/Tools/Log.h>
 #include <ITwinRuntime/Private/Compil/AfterNonUnrealIncludes.h>
 
@@ -502,6 +502,17 @@ void FJsonQueriesCache::Write(TSharedRef<FJsonObject>& JsonObj, int const Respon
 	}
 }
 
+namespace
+{
+	inline FString ToUnrealString(AdvViz::SDK::Tools::StringWithEncoding const& ContentString)
+	{
+		if (ContentString.GetEncoding() == AdvViz::SDK::Tools::EStringEncoding::Utf8)
+			return UTF8_TO_TCHAR(ContentString.str().c_str());
+		else
+			return ANSI_TO_TCHAR(ContentString.str().c_str());
+	}
+}
+
 void FJsonQueriesCache::ToJson(AdvViz::SDK::ITwinAPIRequestInfo const& Req, TSharedRef<FJsonObject>& JsonObj) 
 	const
 {
@@ -512,7 +523,7 @@ void FJsonQueriesCache::ToJson(AdvViz::SDK::ITwinAPIRequestInfo const& Req, TSha
 		if (Req.ContentString.empty())
 			JsonObj->SetStringField(TEXT("payload"), TEXT("{}"));//otherwise won't work in Get(..)
 		else
-			JsonObj->SetStringField(TEXT("payload"), Req.ContentString.c_str());
+			JsonObj->SetStringField(TEXT("payload"), ToUnrealString(Req.ContentString));
 	}
 	if (Impl->bIsRecordingForSimulation)
 	{
@@ -598,7 +609,7 @@ std::optional<QueriesCache::FSessionMap::const_iterator> FJsonQueriesCache::Look
 	case ITwinHttp::EVerb::Post:
 	{
 		It = Impl->SessionMap.find(
-			QueriesCache::FQueryKey(Request.UrlSuffix.c_str(), Request.ContentString.c_str()));
+			QueriesCache::FQueryKey(Request.UrlSuffix.c_str(), ToUnrealString(Request.ContentString)));
 		break;
 	}
 	default:

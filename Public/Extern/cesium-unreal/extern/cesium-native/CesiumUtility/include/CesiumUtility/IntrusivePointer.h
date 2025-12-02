@@ -1,4 +1,6 @@
 #pragma once
+
+#include <functional>
 #include <type_traits>
 #include <utility>
 
@@ -16,8 +18,13 @@ namespace CesiumUtility {
  *
  * @tparam T The type of object controlled.
  */
-template <class T> class IntrusivePointer final {
+template <typename T> class IntrusivePointer final {
 public:
+  /**
+   * @brief The type pointed to by this pointer.
+   */
+  using element_type = T;
+
   /**
    * @brief Default constructor.
    */
@@ -69,9 +76,19 @@ public:
   ~IntrusivePointer() noexcept { this->releaseReference(); }
 
   /**
+   * @brief Implicitly converts this implicit pointer to a raw pointer.
+   */
+  operator T*() noexcept { return this->_p; }
+
+  /**
+   * @brief Implicitly converts this implicit pointer to a raw pointer.
+   */
+  operator const T*() const noexcept { return this->_p; }
+
+  /**
    * @brief Constructs a new instance and assigns it to this IntrusivePointer.
    * If this IntrusivePointer already points to another instance,
-   * {@link releaseReference} is called on it.
+   * `releaseReference` is called on it.
    *
    * @param constructorArguments The arguments to the constructor to create the
    * new instance.
@@ -174,6 +191,12 @@ public:
   explicit operator bool() const noexcept { return this->_p != nullptr; }
 
   /**
+   * @brief Implicit conversion to `bool`, being `true` iff this is not the
+   * `nullptr`.
+   */
+  explicit operator bool() noexcept { return this->_p != nullptr; }
+
+  /**
    * @brief Returns the internal pointer.
    */
   T* get() const noexcept { return this->_p; }
@@ -248,3 +271,14 @@ const_intrusive_cast(const IntrusivePointer<U>& p) noexcept {
 }
 
 } // namespace CesiumUtility
+
+/** @brief Hash implementation for \ref CesiumUtility::IntrusivePointer. */
+template <typename T> struct std::hash<CesiumUtility::IntrusivePointer<T>> {
+  /** @brief Returns a `size_t` hash of the provided \ref
+   * CesiumUtility::IntrusivePointer<T>. */
+  std::size_t
+  operator()(const CesiumUtility::IntrusivePointer<T>& key) const noexcept {
+    std::hash<T*> hasher{};
+    return hasher(key.get());
+  }
+};

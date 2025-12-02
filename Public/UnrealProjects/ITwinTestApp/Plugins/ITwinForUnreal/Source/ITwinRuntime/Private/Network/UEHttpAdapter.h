@@ -24,7 +24,7 @@ public:
 	virtual void Process(
 		AdvViz::SDK::Http& http,
 		std::string const& url,
-		std::string const& body,
+		AdvViz::SDK::Http::BodyParams const& body,
 		AdvViz::SDK::Http::Headers const& headers,
 		bool isFullUrl = false) override;
 

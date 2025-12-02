@@ -101,7 +101,7 @@ void GltfBuilder::AddMetadataProperty(const std::string& className,
 	{
 		auto& propertyTable = extension.propertyTables[featureSetIndex];
 		BE_ASSERT(propertyTable.classProperty == className);
-		BE_ASSERT(propertyTable.count == values.size());
+		BE_ASSERT((uint64_t)propertyTable.count == values.size());
 
 		auto& property = propertyTable.properties[propertyName];
 		property.values = AddBufferView(values, {});

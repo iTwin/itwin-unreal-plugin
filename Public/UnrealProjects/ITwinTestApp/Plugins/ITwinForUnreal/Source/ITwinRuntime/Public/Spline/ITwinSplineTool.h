@@ -10,6 +10,7 @@
 
 #include <Templates/PimplPtr.h>
 #include <ITwinInteractiveTool.h>
+#include <ITwinTilesetAccess.h>
 #include <Math/MathFwd.h>
 #include <Spline/ITwinSplineEnums.h>
 #include <memory>
@@ -61,19 +62,37 @@ public:
 
 	//! Sets the selected spline.
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
-	void SetSelectedSpline(AITwinSplineHelper* splineHelper);
+	void SetSelectedSpline(AITwinSplineHelper* SplineHelper);
 
 	//! Sets the selected point index (in the selected spline).
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
 	void SetSelectedPointIndex(int32 pointIndex);
 
+	//! Returns the selected point index (in the selected spline), if any. INDEX_NONE if no spline is
+	//! selected, or no point is selected in the selected spline.
+	UFUNCTION(Category = "iTwin", BlueprintCallable)
+	int32 GetSelectedPointIndex() const;
+
 	//! Returns true if there is a selected spline and a selected point.
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
 	bool HasSelectedPoint() const;
 
+	/// Overridden from AITwinInteractiveTool
+	virtual TUniquePtr<IActiveStateRecord> MakeStateRecord() const override;
+	virtual bool RestoreState(IActiveStateRecord const& State) override;
+	virtual TUniquePtr<ISelectionRecord> MakeSelectionRecord() const override;
+	virtual bool HasSameSelection(ISelectionRecord const& Selection) const override;
+	virtual bool RestoreSelection(ISelectionRecord const& Selection) override;
+	virtual TUniquePtr<IItemBackup> MakeSelectedItemBackup() const override;
+	virtual bool RestoreItem(IItemBackup const& ItemBackup) override;
+
 	//! Deletes the currently selected spline, and its associated cartographic polygon (if any).
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
 	void DeleteSelectedSpline();
+
+	//! Deletes the spline passed as parameter, and its associated cartographic polygon (if any).
+	UFUNCTION(Category = "iTwin", BlueprintCallable)
+	void DeleteSpline(AITwinSplineHelper* SplineHelper);
 
 	//! Returns true if the current point can be deleted (for the cutout feature, it prevents
 	//! having less than 3 points to keep a non-empty area).
@@ -106,8 +125,14 @@ public:
 	void SetMode(EITwinSplineToolMode NewMode);
 
 	//! Toggle the interactive creation mode.
+	//! If bAutoSelectCutoutTarget is true, and the spline tool usage is Cutout, the cut-out target will be
+	//! determined by the layer intersected upon the first click.
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
-	void ToggleInteractiveCreationMode();
+	void ToggleInteractiveCreationMode(bool bAutoSelectCutoutTarget = false);
+
+	//! Abort current interactive creation.
+	UFUNCTION(Category = "iTwin", BlueprintCallable)
+	void AbortInteractiveCreation();
 
 	//! Returns the current spline tool destination usage.
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
@@ -117,8 +142,31 @@ public:
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
 	void SetUsage(EITwinSplineUsage NewUsage);
 
-	//! Sets the target 3D Tileset for cut-out polygons.
-	void SetCutoutTarget(FITwinTilesetAccess* CutoutTargetAccess);
+	using TilesetAccessUniquePtr = TUniquePtr<FITwinTilesetAccess>;
+	using TilesetAccessArray = TArray<TilesetAccessUniquePtr>;
+	//! Sets the target 3D tilesets for cut-out polygons.
+	void SetCutoutTargets(TilesetAccessArray&& CutoutTargets);
+	//! Return the target 3D tilesets for cut-out polygons.
+	TilesetAccessArray const& GetCutoutTargets() const;
+
+	class [[nodiscard]] FAutomaticVisibilityDisabler
+	{
+	public:
+		FAutomaticVisibilityDisabler();
+		~FAutomaticVisibilityDisabler();
+	private:
+		const bool bAutomaticVisibility_Old;
+	};
+	//! Returns whether the visibility of the splines in the viewport is automatically deduced from the
+	//! activation/deactivation of this tool.
+	static bool AutomaticSplineVisibility();
+	//! Turn the automatic visibility of the splines on/off.
+	static void SetAutomaticSplineVisibility(bool bAutomatic);
+
+	//! Returns whether the effect of the selected spline (if any) is inverted.
+	bool GetInvertSelectedSplineEffect() const;
+	//! Inverts (or not, depending on bInvertEffect) the effect of the selected spline, if any.
+	void SetInvertSelectedSplineEffect(bool bInvertEffect);
 
 	//! Sets the population tool associated to current context, if applicable.
 	void SetPopulationTool(AITwinPopulationTool* InPopulationTool);
@@ -135,12 +183,20 @@ public:
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
 	void RefreshScene();
 
+	//! Change the view camera so that the edited splines can be edited from top.
+	UFUNCTION(Category = "iTwin", BlueprintCallable)
+	void OnOverviewCamera(bool bInUndoRedoContext = false);
+
+	//! Modify the view camera in an animated way.
+	UFUNCTION(Category = "iTwin", BlueprintCallable)
+	void StartBlendedCameraMovement(FTransform const& NewCameraTransform);
+
 	//! Adds a new spline at specified position, for the given usage.
 	AITwinSplineHelper* AddSpline(FVector const& Position);
 
 	//! Adds a spline loaded from the decoration service.
 	bool LoadSpline(const std::shared_ptr<AdvViz::SDK::ISpline>& spline,
-		FITwinTilesetAccess* CutoutTargetAccess = nullptr);
+		TilesetAccessArray&& InCutoutTargets = {});
 
 	//! Sets the AdvViz::SDK spline manager (which stores the data for splines and saves it on the decoration service).
 	void SetSplinesManager(const std::shared_ptr<AdvViz::SDK::ISplinesManager>& splinesManager);
@@ -155,10 +211,29 @@ public:
 	FSplineOrPointRemovedEvent SplinePointRemovedEvent;
 	UPROPERTY()
 	FSplineOrPointRemovedEvent SplineRemovedEvent;
-	
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FSplineBeforeRemoveEvent, AITwinSplineHelper*, SplineBeingRemoved);
+	UPROPERTY()
+	FSplineBeforeRemoveEvent SplineBeforeRemovedEvent;
+
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE(FSplineSelectionEvent);
+	UPROPERTY()
+	FSplineSelectionEvent SplineSelectionEvent;
+
 	DECLARE_DYNAMIC_MULTICAST_DELEGATE(FSplinePointSelectedEvent);
 	UPROPERTY()
 	FSplinePointSelectedEvent SplinePointSelectedEvent;
+
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FSplinePointMovedEvent, bool, bMovedInITS);
+	UPROPERTY()
+	FSplinePointMovedEvent SplinePointMovedEvent;
+
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FSplineAddedEvent, AITwinSplineHelper*, NewSpline);
+	UPROPERTY()
+	FSplineAddedEvent SplineAddedEvent;
+
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOverviewCameraEvent, FTransform, InitialCameraTransform);
+	UPROPERTY()
+	FOverviewCameraEvent OverviewCameraEvent;
 
 protected:
 	virtual void SetEnabledImpl(bool bValue) override;
@@ -169,16 +244,26 @@ protected:
 	virtual void SetSelectionTransformImpl(const FTransform & Transform) override;
 	virtual void DeleteSelectionImpl() override;
 	virtual void ResetToDefaultImpl() override;
+	virtual bool StartInteractiveCreationImpl() override;
+	virtual bool IsInteractiveCreationModeImpl() const override;
 
 private:
 	class FImpl;
 	TPimplPtr<FImpl> Impl;
 
-	/// Target 3D Tileset for cut-out polygons.
-	UPROPERTY()
-	TWeakObjectPtr<ACesium3DTileset> CutoutTarget = nullptr;
+	/// Target 3D Tileset(s) for cut-out polygons.
+	TilesetAccessArray CutoutTargets;
 
 	/// Population tool, if applicable.
 	UPROPERTY()
 	TWeakObjectPtr<AITwinPopulationTool> PopulationTool = nullptr;
 };
+
+namespace ITwin
+{
+	ITWINRUNTIME_API void EnableSplineTool(UObject* WorldContextObject,
+		bool bEnable,
+		EITwinSplineUsage Usage,
+		AITwinSplineTool::TilesetAccessArray&& CutoutTargetAccess = {},
+		bool bAutomaticCutoutTarget = false);
+}

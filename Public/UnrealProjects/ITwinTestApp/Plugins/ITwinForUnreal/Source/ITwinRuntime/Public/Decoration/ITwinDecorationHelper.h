@@ -20,11 +20,13 @@
 #include <vector>
 #include <ITwinRuntime/Private/Compil/BeforeNonUnrealIncludes.h>
 #	include <SDK/Core/Tools/Error.h>
+#	include <SDK/Core/Visualization/MaterialPersistence.h>
 #include <ITwinRuntime/Private/Compil/AfterNonUnrealIncludes.h>
 
 #include <ITwinDecorationHelper.generated.h>
 
 class FDecorationAsyncIOHelper;
+class FDecorationWaitableLoadEvent;
 class FViewport;
 class AITwinIModel;
 class AITwinPopulation;
@@ -32,10 +34,13 @@ class AITwinPopulationWithPath;
 class AITwinKeyframePath;
 class AITwinSplineTool;
 class AITwinSplineHelper;
+class UITwinContentManager;
+class AITwinAnimPathManager;
 
 namespace AdvViz::SDK {
 	struct ITwinAtmosphereSettings;
 	struct ITwinSceneSettings;
+	struct ITwinHDRISettings;
 	class RefID;
 	class IScenePersistence;
 	class IAnnotationsManager;
@@ -85,7 +90,7 @@ public:
 	// Callbacks for the different I/O operations
 
 	UPROPERTY(BlueprintAssignable)
-	FOnDecorationIODone OnDecorationSaved;
+	FOnDecorationIODone OnSceneSaved;
 
 	UPROPERTY(BlueprintAssignable)
 	FOnDecorationIODone OnPopulationsLoaded;
@@ -108,6 +113,8 @@ public:
 	/** Delegate when decoration is fully loaded. */
 	FSimpleMulticastDelegate OnDecorationLoaded;
 
+	UPROPERTY()
+	UITwinContentManager* iTwinContentManager = nullptr;
 
 	//! Sets the decoration client mode. Can be used to customize the handling of decorations for specific
 	//! usages.
@@ -131,19 +138,23 @@ public:
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
 	void SetLoadedSceneId(FString InLoadedSceneId, bool inNewsScene = false);
 
-	//! Start loading the decoration attached to current model, if any (asynchronous).
+	//! Start loading the scene selected by SetLoadedSceneId(asynchronous).
 	UFUNCTION(Category = "iTwin",
 		CallInEditor,
 		BlueprintCallable)
-	void LoadDecoration();
+	void LoadScene();
+
+	//! Returns the root directory path for the official content.
+	FString GetContentRootPath() const;
 
 	void LoadIModelMaterials(AITwinIModel& IModel);
 
-	//! Returns true if the loading of a decoration is in progress.
-	bool IsLoadingDecoration() const;
-
 	//! Returns true if the loading of a scene is in progress.
 	bool IsLoadingScene() const;
+
+	//! Registers an event to wait at the end of the scene loading, for synchronization between the loading
+	//! of the scene and some iTwin requests.
+	void RegisterWaitableLoadEvent(std::unique_ptr<FDecorationWaitableLoadEvent>&& LoadEventPtr);
 
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
 	bool IsPopulationEnabled() const;
@@ -151,18 +162,18 @@ public:
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
 	bool IsMaterialEditionEnabled() const;
 
-	//! Start saving the decoration attached to current model, if some modifications were applied.
+	//! Start saving the Scene attached to current model
 	//! If bPromptUser is true, a message box will be displayed to confirm he wants to save his editions.
 	UFUNCTION(Category = "iTwin",
 		CallInEditor,
 		BlueprintCallable)
-	void SaveDecoration(bool bPromptUser = true);
+	void SaveScene(bool bPromptUser = true);
 
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
-	bool ShouldSaveDecoration(bool bPromptUser = true) const;
+	bool ShouldSaveScene(bool bPromptUser = true) const;
 
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
-	void SaveDecorationOnExit(bool bPromptUser = true);
+	void SaveSceneOnExit(bool bPromptUser = true);
 
 	//! Permanently deletes all material customizations for current model (cannot be undone!)
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
@@ -199,6 +210,7 @@ public:
 	void RemoveComponent(EITwinModelType ct, const FString& id) const;
 
 	void ConnectSplineToolToSplinesManager(AITwinSplineTool* splineTool);
+	void ConnectPathAnimator(AITwinAnimPathManager* manager);
 
 	// return link identifiers found in scene
 	std::vector<ITwin::ModelLink> GetLinkedElements() const;
@@ -214,10 +226,17 @@ public:
 	FString GetSceneID() const;
 	void InitDecorationService();
 
+	void SetDecoGeoreference(const FVector& latLongHeight);
+	AdvViz::expected<void, std::string> InitDecoGeoreference();
 
 	AdvViz::expected<std::vector<std::shared_ptr< AdvViz::SDK::IScenePersistence>>, int>  GetITwinScenes(const FString& itwinid);
 
 	std::shared_ptr<AdvViz::SDK::IAnnotationsManager> GetAnnotationManager() const;
+
+	/// Export the given HDRI definition to json format.
+	std::string ExportHDRIAsJson(AdvViz::SDK::ITwinHDRISettings const& hdri) const;
+
+	bool ConvertHDRIJsonFileToKeyValueMap(std::string assetPath, AdvViz::SDK::KeyValueStringMap& keyValueMap) const;
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -228,6 +247,8 @@ private:
 	UFUNCTION()
 	void OnRealityDataLoaded(bool bSuccess, FString StringId);
 	void OnCloseRequested(FViewport* Viewport);
+	void InitContentManager();
+
 
 	// Enabled/disables windows system FMessageDialog so that it can be replaced with an Unreal widget
 	bool bOverrideOnSceneClose_ = false;

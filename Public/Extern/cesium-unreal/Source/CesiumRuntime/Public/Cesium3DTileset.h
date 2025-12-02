@@ -20,16 +20,18 @@
 #include "Interfaces/IHttpRequest.h"
 #include "PrimitiveSceneProxy.h"
 #include <PhysicsEngine/BodyInstance.h>
+#include <Subsystems/EngineSubsystem.h>
 #include <atomic>
 #include <chrono>
 #include <glm/mat4x4.hpp>
 #include <unordered_map>
 #include <vector>
-#include "Cesium3DTileset.generated.h"
 
 #ifdef CESIUM_DEBUG_TILE_STATES
 #include <Cesium3DTilesSelection/DebugTileStateDatabase.h>
 #endif
+
+#include "Cesium3DTileset.generated.h"
 
 class UMaterialInterface;
 class ACesiumCartographicSelection;
@@ -37,13 +39,27 @@ class ACesiumCameraManager;
 class UCesiumBoundingVolumePoolComponent;
 class CesiumViewExtension;
 struct FCesiumCamera;
-class ICesiumMeshBuildCallbacks;
+class ICesium3DTilesetLifecycleEventReceiver;
 
 namespace Cesium3DTilesSelection {
+class GltfModifier;
 class Tileset;
 class TilesetView;
 class TileOcclusionRendererProxyPool;
 } // namespace Cesium3DTilesSelection
+
+UCLASS()
+class CESIUMRUNTIME_API UCesiumDisableCaptureMovieMode
+    : public UEngineSubsystem {
+  GENERATED_BODY()
+
+public:
+  UCesiumDisableCaptureMovieMode();
+
+  /// Use this to disable the use of updateViewOffline entirely
+  UPROPERTY(BlueprintReadWrite, Category = "Cesium")
+  bool bToggled = false;
+};
 
 /**
  * The delegate for OnCesium3DTilesetLoadFailure, which is triggered when
@@ -322,7 +338,8 @@ public:
   FString UserCredit;
 
   /**
-   * If true, the user credit text will always have the highest priority (thus will be on the left).
+   * If true, the user credit text will always have the highest priority (thus
+   * will be on the left).
    */
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cesium")
   bool bHighPriorityUserCredit = false;
@@ -811,6 +828,17 @@ private:
   bool CreatePhysicsMeshes = true;
 
   /**
+   * Whether to enable doubled-sided collisions (both "front" and "back" faces)
+   * on the physics meshes created when CreatePhysicsMeshes is true.
+   */
+  UPROPERTY(
+      EditAnywhere,
+      BlueprintGetter = GetDoubleSidedCollisions,
+      BlueprintSetter = SetDoubleSidedCollisions,
+      Category = "Cesium|Physics")
+  bool DoubleSidedCollisions = false;
+
+  /**
    * Whether to generate navigation collisions for this tileset.
    *
    * Enabling this option creates collisions for navigation when a 3D Tiles
@@ -1106,6 +1134,12 @@ public:
   UFUNCTION(BlueprintSetter, Category = "Cesium|Physics")
   void SetCreatePhysicsMeshes(bool bCreatePhysicsMeshes);
 
+  UFUNCTION(BlueprintGetter, Category = "Cesium|Physics")
+  bool GetDoubleSidedCollisions() const { return DoubleSidedCollisions; }
+
+  UFUNCTION(BlueprintSetter, Category = "Cesium|Physics")
+  void SetDoubleSidedCollisions(bool bCreatePhysicsMeshes);
+
   UFUNCTION(BlueprintGetter, Category = "Cesium|Navigation")
   bool GetCreateNavCollision() const { return CreateNavCollision; }
 
@@ -1271,27 +1305,24 @@ public:
   void UpdateTransformFromCesium();
 
   /**
-   * Get the attached mesh construction callback, if any.
+   * Sets the glTF modifier, an optional extension class that can edit
+   * each tile's glTF model after it has been loaded, before it can be
+   * displayed. Can only be called in the same engine tick after the tileset
+   * actor was spawned, or {@link RefreshTileset} was called.
    */
-  const TWeakPtr<ICesiumMeshBuildCallbacks>& GetMeshBuildCallbacks() const {
-      return this->_meshBuildCallbacks;
-  }
+  void SetGltfModifier(
+      const std::shared_ptr<Cesium3DTilesSelection::GltfModifier>& InModifier);
 
-  /**
-   * Set the mesh construction callback.
-   * Can be used to be notified when a mesh component is created from a Cesium
-   * primitive.
+  /** Gets the optional receiver of events related to tile components' lifecycle
    */
-  void SetMeshBuildCallbacks(const TWeakPtr<ICesiumMeshBuildCallbacks>& Callbacks);
+  ICesium3DTilesetLifecycleEventReceiver* GetLifecycleEventReceiver();
 
-  //! Sets the optional glTF model tuner.
-  void SetGltfTuner(const std::shared_ptr<Cesium3DTilesSelection::GltfTuner>& tuner);
-
-  //! Returns whether some Gltf tuning is to be achieved.
-  bool NeedGltfTuning(const Cesium3DTilesSelection::Tile& tile) const;
-
-  // AdvViz: Quick hack to avoid using updateViewOffline during movie clip previewing
-  static bool AllowCaptureMovieMode;
+  /** Sets a receiver of events related to tile components' lifecycle,
+   * like tile primitive and material creation, tile finishing its loading cycle
+   * or about to unload, etc. It must implement
+   * {@link ICesium3DTilesetLifecycleEventReceiver}, otherwise it will be as if
+   * nullptr were passed. */
+  void SetLifecycleEventReceiver(UObject* InEventReceiver);
 
 private:
   /**
@@ -1325,8 +1356,8 @@ private:
    *
    * @param tiles The tiles
    */
-  void
-  showTilesToRender(const std::vector<Cesium3DTilesSelection::Tile*>& tiles);
+  void showTilesToRender(
+      const std::vector<Cesium3DTilesSelection::Tile::ConstPointer>& tiles);
 
   /**
    * Will be called after the tileset is loaded or spawned, to register
@@ -1402,14 +1433,20 @@ private:
   // If we find a way to clear the wrong occlusion information in the
   // Unreal Engine, then this field may be removed, and the
   // tilesToHideThisFrame may be hidden immediately.
-  std::vector<Cesium3DTilesSelection::Tile*> _tilesToHideNextFrame;
+  std::vector<Cesium3DTilesSelection::Tile::ConstPointer> _tilesToHideNextFrame;
 
   int32 _tilesetsBeingDestroyed;
 
-  // optional callback - when it is set, it will be called whenever a static
-  // mesh component is created from a cesium primitive.
-  TWeakPtr<ICesiumMeshBuildCallbacks> _meshBuildCallbacks;
-  std::shared_ptr<Cesium3DTilesSelection::GltfTuner> _gltfTuner;
+  // Make this visible to the garbage collector, but don't save/load/copy it.
+  // Use UObject instead of TScriptInterface as suggested by
+  // https://www.stevestreeting.com/2020/11/02/ue4-c-interfaces-hints-n-tips/,
+  // even though this cannot be implemented through Blueprints for the moment
+  // (see comment over UCesium3DTilesetLifecycleEventReceiver for instructions),
+  // it's best being prepared for the future.
+  UPROPERTY(Transient, DuplicateTransient, TextExportTransient)
+  UObject* _pLifecycleEventReceiver;
+
+  std::shared_ptr<Cesium3DTilesSelection::GltfModifier> _gltfModifier;
 
   friend class UnrealPrepareRendererResources;
   friend class UCesiumGltfPointsComponent;

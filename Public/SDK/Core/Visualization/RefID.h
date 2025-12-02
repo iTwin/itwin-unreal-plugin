@@ -72,6 +72,9 @@ MODULE_EXPORT namespace AdvViz::SDK
 		// For Hash computations.
 		uint64_t ID() const { return id_; }
 
+		// Only useful when dealing with cross-lang conversions.
+		static RefID FromUInt64(uint64_t id) { return RefID(id); }
+
 	private:
 		static uint64_t NextID();
 

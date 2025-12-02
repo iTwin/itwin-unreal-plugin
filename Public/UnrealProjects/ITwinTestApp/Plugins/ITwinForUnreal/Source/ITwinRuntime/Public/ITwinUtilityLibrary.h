@@ -10,7 +10,10 @@
 
 #include <Kismet/BlueprintFunctionLibrary.h>
 #include <glm/glm.hpp>
+#include <CesiumGeometry/OrientedBoundingBox.h>
 #include <ITwinUtilityLibrary.generated.h>
+
+class ACesium3DTileset;
 
 USTRUCT()
 struct FITwinCoordConversions
@@ -95,4 +98,10 @@ public:
 	//! Duplicated from this (not exported) function in CesiumRuntime:
 	//! FMatrix FITwinVecMath::createMatrix(const glm::dmat4& m)
 	static FMatrix ConvertMatrix_GlmToUnreal(const glm::dmat4& m);
+
+	static void ZoomOn(FBox const& FocusBBox, UWorld* World, double MinDistanceToCenter = 10000);
+
+	static CesiumGeometry::OrientedBoundingBox GetOrientedBoundingBox(ACesium3DTileset* Tileset);
+	static FBox GetUnrealAxisAlignBoundingBox(ACesium3DTileset* Tileset);
+
 };

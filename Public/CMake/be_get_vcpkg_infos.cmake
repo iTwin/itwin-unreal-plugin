@@ -16,6 +16,7 @@ execute_process (
 \"vcpkgExe\":\"${Z_VCPKG_EXECUTABLE}\",\
 \"triplet\":\"${VCPKG_TARGET_TRIPLET}\",\
 \"installedDir\":\"${VCPKG_INSTALLED_DIR}\",\
+\"sourceDir\":\"${CMAKE_SOURCE_DIR}\",\
 \"outDir\":\"${CMAKE_BINARY_DIR}/_beVcpkgInfos\"\
 }"
 	COMMAND_ERROR_IS_FATAL ANY

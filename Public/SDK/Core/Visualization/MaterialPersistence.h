@@ -42,6 +42,8 @@ MODULE_EXPORT namespace AdvViz::SDK
 		MaterialPersistenceManager();
 		~MaterialPersistenceManager();
 
+		void CopyPathsAndURLsFrom(MaterialPersistenceManager const& other);
+
 		bool NeedUpdateDB() const;
 
 		/// Load the data from the server

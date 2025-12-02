@@ -22,6 +22,12 @@ void AITwinAppIdHelper::FreezeAppId()
 	AITwinAppIdHelper::bFreezeAppId = true;
 }
 
+AITwinAppIdHelper::AITwinAppIdHelper()
+{
+	// Store the current value of the port.
+	AuthRedirectUriPort = AITwinServerConnection::GetAuthRedirectUriPort();
+}
+
 void AITwinAppIdHelper::PostLoad()
 {
 	Super::PostLoad();
@@ -31,11 +37,20 @@ void AITwinAppIdHelper::PostLoad()
 	// with an empty one.
 	// Also test whether the AppID was not frozen (important when the authorization has been processed, with
 	// the possibility to refresh the access token in background...)
-	if (!AppId.IsEmpty() && !AITwinAppIdHelper::bFreezeAppId)
+	if (!AITwinAppIdHelper::bFreezeAppId)
 	{
-		BE_LOGI("ITwinAPI", "Reloading AppID from level");
+		if (!AppId.IsEmpty())
+		{
+			BE_LOGI("ITwinAPI", "Reloading AppID from level");
 
-		AITwinServerConnection::SetITwinAppID(AppId);
+			AITwinServerConnection::SetITwinAppID(AppId);
+		}
+		if (AuthRedirectUriPort > 0)
+		{
+			BE_LOGI("ITwinAPI", "Reloading Redirect Uri Port from level: " << AuthRedirectUriPort);
+
+			AITwinServerConnection::SetAuthRedirectUriPort(AuthRedirectUriPort);
+		}
 	}
 }
 
@@ -53,6 +68,12 @@ void AITwinAppIdHelper::PostEditChangeProperty(FPropertyChangedEvent& PropertyCh
 		BE_LOGI("ITwinAPI", "Setting AppID from Editor");
 
 		AITwinServerConnection::SetITwinAppID(AppId);
+	}
+	if (PropertyChangedEvent.Property->GetFName() == GET_MEMBER_NAME_CHECKED(AITwinAppIdHelper, AuthRedirectUriPort))
+	{
+		BE_LOGI("ITwinAPI", "Setting Redirect Uri Port from Editor");
+
+		AITwinServerConnection::SetAuthRedirectUriPort(AuthRedirectUriPort);
 	}
 }
 #endif //#if WITH_EDITOR

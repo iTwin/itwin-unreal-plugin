@@ -4,11 +4,43 @@ if (NOT VCPKG_LIBRARY_LINKAGE)
     set(VCPKG_LIBRARY_LINKAGE static)
 endif()
 
-if(NOT VCPKG_MANIFEST_MODE)
+# By default, Use ezvcpkg to install dependencies. But don't use
+# ezvcpkg if it appears that this configuration is using vcpkg
+# manifest mode already, either by building cesium-native directly,
+# or via a higher level project that has added cesium-native as a
+# subdirectory and is using vcpkg to statisfy its dependencies.
+
+#In a fresh build, before CMakeCache.txt exists, determine whether to
+#use ezvcpkg. After this, CESIUM_USE_EZVCPG will be in the cache.
+set(CESIUM_USE_EZVCPKG_DEFAULT ON)
+if (VCPKG_MANIFEST_MODE)
+    set(CESIUM_USE_EZVCPKG_DEFAULT OFF)
+elseif (CMAKE_TOOLCHAIN_FILE)
+    get_filename_component(toolchainFile "${CMAKE_TOOLCHAIN_FILE}" NAME)
+    if(toolchainFile STREQUAL "vcpkg.cmake")
+        set(CESIUM_USE_EZVCPKG_DEFAULT OFF)
+    endif()
+endif()
+
+option(CESIUM_USE_EZVCPKG "use ezvcpkg helper" ${CESIUM_USE_EZVCPKG_DEFAULT})
+option(CESIUM_DISABLE_CURL "Disable cesium-native's use of libcurl" OFF)
+
+if(CESIUM_USE_EZVCPKG)
+  # Keep vcpkg from running in manifset mode. It will try to because
+  # this directory contains a vcpkg.json manifest.
+  set(VCPKG_MANIFEST_MODE OFF CACHE BOOL "vcpkg manifest mode should not be enabled with ezvcpg!")
   include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/ezvcpkg/ezvcpkg.cmake)
 endif()
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/detect-vcpkg-triplet.cmake)
+
+# Note: VCPKG_TRIPLET is not used by vcpkg! The relevant variables are
+# VCPKG_TARGET_TRIPLET and VCPKG_HOST_TRIPLET. ezvcpkg and our custom
+# installation code use VCPKG_TRIPLET, so initialize it here.
+
+if (VCPKG_TARGET_TRIPLET)
+    set(VCPKG_TRIPLET "${VCPKG_TARGET_TRIPLET}")
+endif()
 
 if (NOT VCPKG_TRIPLET)
     if (DEFINED ENV{VCPKG_TRIPLET})
@@ -21,9 +53,14 @@ if (NOT VCPKG_TRIPLET)
     else()
         set(VCPKG_TRIPLET "${DETECTED_VCPKG_TRIPLET}")
     endif()
+    if (NOT CESIUM_USE_EZVCPKG)
+        set(VCPKG_TARGET_TRIPLET "${VCPKG_TRIPLET}")
+    endif()
 endif()
 
 message(STATUS "VCPKG_TRIPLET ${VCPKG_TRIPLET}")
+message(STATUS "VCPKG_TARGET_TRIPLET ${VCPKG_TARGET_TRIPLET}")
+message(STATUS "VCPKG_PLATFORM_TOOLSET_VERSION $ENV{VCPKG_PLATFORM_TOOLSET_VERSION}")
 
 if (NOT VCPKG_OVERLAY_PORTS)
     if (DEFINED ENV{VCPKG_OVERLAY_PORTS})
@@ -31,7 +68,9 @@ if (NOT VCPKG_OVERLAY_PORTS)
     endif()
 endif()
 
-list(APPEND VCPKG_OVERLAY_PORTS "${CMAKE_CURRENT_SOURCE_DIR}/extern/vcpkg/ports")
+if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/extern/vcpkg/ports")
+    list(APPEND VCPKG_OVERLAY_PORTS "${CMAKE_CURRENT_SOURCE_DIR}/extern/vcpkg/ports")
+endif()
 
 message(STATUS "VCPKG_OVERLAY_PORTS ${VCPKG_OVERLAY_PORTS}")
 
@@ -44,29 +83,40 @@ endif()
 message(STATUS "VCPKG_OVERLAY_TRIPLETS ${VCPKG_OVERLAY_TRIPLETS}")
 
 # These packages are used in the public headers of Cesium libraries, so we need to distribute the headers and binaries
-# with the installation
+# with the installation. Engine-specific needs can use the CESIUM_PACKAGES_* variables to add more (see. Unreal plugin).
 # Note that fmt is a public dependency of the vcpkg version of spdlog
-# STB is not technically part of the public interface, but it is used by the downstream Cesium for Unreal project
-set(PACKAGES_PUBLIC asyncplusplus expected-lite fmt glm rapidjson spdlog stb ada-url)
+set(PACKAGES_PUBLIC ${CESIUM_PACKAGES_PUBLIC} asyncplusplus expected-lite fmt glm rapidjson spdlog ada-url)
 # These packages are used in the code and produce binaries, but are not part of the public interface.  Therefore we need
 # to distribute the binaries for linking, but not the headers, as downstream consumers don't need them
 # OpenSSL and abseil are both dependencies of s2geometry
-set(PACKAGES_PRIVATE
+set(PACKAGES_PRIVATE ${CESIUM_PACKAGES_PRIVATE}
     abseil draco ktx modp-base64 meshoptimizer openssl s2geometry
     libjpeg-turbo sqlite3 tinyxml2 libwebp zlib-ng picosha2
     earcut-hpp cpp-httplib[core] libmorton zstd
 )
 
-# Packages only used for testing
-set(PACKAGES_TEST doctest)
+# asmjit needed by blend2d on non-iOS platforms (iOS doesn't support JIT)
+if(NOT IOS AND NOT VCPKG_CMAKE_SYSTEM_NAME MATCHES "iOS")
+    list(APPEND PACKAGES_PRIVATE blend2d asmjit)
+else()
+    # Use [core] feature to disable default jit feature.
+    list(APPEND PACKAGES_PRIVATE blend2d[core])
+endif()
 
-if(NOT VCPKG_MANIFEST_MODE)
+if(NOT CESIUM_DISABLE_CURL)
+    list(APPEND PACKAGES_PRIVATE curl)
+endif()
+
+# Packages only used for testing
+set(PACKAGES_TEST ${CESIUM_PACKAGES_TEST} doctest)
+
+if(CESIUM_USE_EZVCPKG)
     set(PACKAGES_ALL ${PACKAGES_PUBLIC})
     list(APPEND PACKAGES_ALL ${PACKAGES_PRIVATE})
     list(APPEND PACKAGES_ALL ${PACKAGES_TEST})
 
     ezvcpkg_fetch(
-        COMMIT 2024.11.16
+        COMMIT 2025.09.17
         PACKAGES ${PACKAGES_ALL}
         # Clean the build trees after building, so that we don't use a ton a disk space on the CI cache
         CLEAN_BUILDTREES
@@ -87,7 +137,7 @@ endif()
 include("cmake/defaults.cmake")
 
 project(cesium-native
-    VERSION 0.45.0
+    VERSION 0.52.0
     LANGUAGES CXX C
 )
 
@@ -97,9 +147,9 @@ include(CMakeDependentOption)
 set(PACKAGE_BASE_DIR "${EZVCPKG_PACKAGES_DIR}")
 set(PACKAGE_BUILD_DIR "${EZVCPKG_DIR}")
 
-if(VCPKG_MANIFEST_MODE)
+if(NOT EZVCPKG_PACKAGES_DIR)
     set(PACKAGE_BUILD_DIR "${VCPKG_INSTALLED_DIR}/${VCPKG_TRIPLET}/")
-    set(PACKAGE_BASE_DIR "$ENV{VCPKG_ROOT}/packages")
+    set(PACKAGE_BASE_DIR "<SHOULD_NOT_NEED_THIS>")
 endif()
 
 message(STATUS "PACKAGE_BASE_DIR ${PACKAGE_BASE_DIR}")
@@ -120,39 +170,64 @@ cmake_dependent_option(
 
 set(CESIUM_CLANG_TIDY_USE_THREADS 14 CACHE STRING "Sets the number of threads for run-clang-tidy to use.")
 
-if(CESIUM_INSTALL_STATIC_LIBS OR CESIUM_INSTALL_HEADERS)
-    foreach(PACKAGE ${PACKAGES_PUBLIC})
-        string(REGEX REPLACE "\[.*\]" "" PACKAGE ${PACKAGE})
-        set(PACKAGE_DIR ${PACKAGE_BASE_DIR}/${PACKAGE}_${VCPKG_TRIPLET})
-        message(DEBUG "PACKAGE_DIR ${PACKAGE_DIR}")
-
-        if(CESIUM_INSTALL_HEADERS AND NOT PACKAGE IN_LIST CESIUM_EXCLUDE_INSTALL_HEADERS)
-            install(
-                DIRECTORY ${PACKAGE_DIR}/include/
-                TYPE INCLUDE
-            )
-        endif()
-
-        if (CESIUM_INSTALL_STATIC_LIBS AND NOT PACKAGE IN_LIST CESIUM_EXCLUDE_INSTALL_STATIC_LIBS AND EXISTS ${PACKAGE_DIR}/lib)
-            install(
-                DIRECTORY $<IF:$<CONFIG:Debug>,${PACKAGE_DIR}/debug/lib/,${PACKAGE_DIR}/lib/>
-                DESTINATION ${CMAKE_INSTALL_LIBDIR}
-            )
+if (CESIUM_INSTALL_EXTERNALLY_BUILT_DEPENDENCIES)
+	set(PACKAGE_INCLUDE_PATTERN ".*/include/")
+	set(PLATFORM_LIB_PATTERN ".*\\.a$")
+	if (WIN32)
+		set(PLATFORM_LIB_PATTERN ".*\\.lib$")
+	endif()
+    foreach(PACKAGE ${PACKAGES_PUBLIC};${PACKAGES_PRIVATE})
+        string(REGEX REPLACE "\\[.*\\]" "" PACKAGE "${PACKAGE}")
+		# The "_*_" wildcard is for the version, which we could alternatively retr1ieve from parsing the "vcpkg list"...
+		file(GLOB PACKAGE_LIST "${VCPKG_INSTALLED_DIR}/vcpkg/info/${PACKAGE}_*_${VCPKG_TRIPLET}.list")
+		set(installStaticLibs ON)
+		set(installPublicHeaders ON)
+        if (PACKAGE IN_LIST CESIUM_EXCLUDE_INSTALL_STATIC_LIBS)
+			set(installStaticLibs OFF)
+		endif()
+        if ((NOT PACKAGE IN_LIST PACKAGES_PUBLIC) OR PACKAGE IN_LIST CESIUM_EXCLUDE_INSTALL_HEADERS)
+			set(installPublicHeaders OFF)
+		endif()
+		if ((installStaticLibs OR installPublicHeaders) AND EXISTS "${PACKAGE_LIST}")
+			file(STRINGS "${PACKAGE_LIST}" PACKAGE_ENTRIES)
+			set(lastWholeIncludeDirInstalled)
+			foreach(PACKAGE_ENTRY ${PACKAGE_ENTRIES})
+				if ("${PACKAGE_ENTRY}" MATCHES ${PLATFORM_LIB_PATTERN})
+					if (installStaticLibs)
+						install(FILES "${VCPKG_INSTALLED_DIR}/${PACKAGE_ENTRY}" DESTINATION ${CMAKE_INSTALL_LIBDIR})
+					endif()
+				elseif (installPublicHeaders
+					AND "${PACKAGE_ENTRY}" MATCHES ${PACKAGE_INCLUDE_PATTERN}
+					AND (NOT PACKAGE_ENTRY STREQUAL "${VCPKG_TRIPLET}/include/")
+					# include subdirs appear in hierarchical order in the list files, eg. "x64-windows-unreal-release/include/absl/"
+					# then "x64-windows-unreal-release/include/absl/algorithm/", etc.
+					AND (NOT lastWholeIncludeDirInstalled
+						OR NOT "${VCPKG_INSTALLED_DIR}/${PACKAGE_ENTRY}" MATCHES "^${lastWholeIncludeDirInstalled}"
+					)
+				)
+					set(fullPath "${VCPKG_INSTALLED_DIR}/${PACKAGE_ENTRY}")
+					if (IS_DIRECTORY "${fullPath}")
+						# Remove trailing slash
+						string(REGEX REPLACE "/$" "" fullPath "${fullPath}")
+						# Install whole include subdir, to avoid cluttering the cmake_install file.
+						# Note: this means files in the subdir which may not appear in the list file will still be installed
+						install(DIRECTORY "${fullPath}" TYPE INCLUDE)
+						# Need to escape '+' (and '.'?) signs which can appear in paths (eg. in async++) but will produce
+						# this error when put in a regex: << RegularExpression::compile(): Nested *?+. >>
+						# (Not sure whether the dot is part of the character list or just terminating the sentence...)
+						string(REPLACE "+" "\\+" lastWholeIncludeDirInstalled "${fullPath}")
+					else()
+						# Install single header from the 'include' root
+						install(FILES "${fullPath}" TYPE INCLUDE)
+					endif()
+				endif()
+			endforeach()
+		elseif (installStaticLibs OR installPublicHeaders)
+			message(FATAL_ERROR "Found no list file for package ${PACKAGE}!")
         endif()
     endforeach()
-endif()
-
-if(CESIUM_INSTALL_STATIC_LIBS)
-    foreach(PACKAGE ${PACKAGES_PRIVATE})
-        set(PACKAGE_DIR ${PACKAGE_BASE_DIR}/${PACKAGE}_${VCPKG_TRIPLET})
-        message(DEBUG "PACKAGE_DIR ${PACKAGE_DIR}")
-        if (NOT PACKAGE IN_LIST CESIUM_EXCLUDE_INSTALL_STATIC_LIBS AND EXISTS ${PACKAGE_DIR}/lib)
-            install(
-                DIRECTORY $<IF:$<CONFIG:Debug>,${PACKAGE_DIR}/debug/lib/,${PACKAGE_DIR}/lib/>
-                DESTINATION ${CMAKE_INSTALL_LIBDIR}
-            )
-        endif()
-    endforeach()
+else()
+	message(FATAL_ERROR "Support for CESIUM_INSTALL_EXTERNALLY_BUILT_DEPENDENCIES=OFF removed in AdvViz fork because installing from vcpkg 'packages' directory is not compatible with vcpkg binary caching!")
 endif()
 
 if(NOT DEFINED CMAKE_C_COMPILER_LAUNCHER AND NOT DEFINED CMAKE_CXX_COMPILER_LAUNCHER)
@@ -186,6 +261,7 @@ option(CESIUM_GLM_STRICT_ENABLED "Whether to force strict GLM compile definition
 option(CESIUM_DISABLE_DEFAULT_ELLIPSOID "Whether to disable the WGS84 default value for ellipsoid parameters across cesium-native." OFF)
 option(CESIUM_MSVC_STATIC_RUNTIME_ENABLED "Whether to enable static linking for MSVC runtimes" OFF)
 option(CESIUM_DEBUG_TILE_UNLOADING "Whether to enable tracking of tile _doNotUnloadSubtreeCount modifications for tile unloading debugging." OFF)
+option(CESIUM_CLANG_TIME_TRACE "Whether to enable the -ftime-trace compilation option when building with Clang." OFF)
 
 if (CESIUM_MSVC_STATIC_RUNTIME_ENABLED)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
@@ -210,6 +286,7 @@ if(CESIUM_ENABLE_CLANG_TIDY)
 endif()
 
 # Add Modules
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake/modules")
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/extern/cmake-modules/")
 if (CESIUM_COVERAGE_ENABLED AND NOT MSVC)
     include(CodeCoverage)
@@ -243,24 +320,45 @@ list(APPEND CMAKE_PREFIX_PATH "${PACKAGE_BUILD_DIR}")
 # However, for some of the vcpkg built libraries where they don't provide a prope cmake config file, we have to declare
 # and imporeted library target ourselves. This is the case for modp_b64::modp_b64, picosha2::picosha2 and earcut. In
 # these cases, we *do* have the somewhat ugly and verbose details in the extern/CMakeLists.txt file.
+#
+# XXX Above comment should be obsoleted by these first calls to
+# find_package, which resolve to our own modules that provide
+# targets. If needed, they can be installed with CMake config files
+# etc.
+find_package(zlib-ng REQUIRED)
+find_package(modp_b64 REQUIRED)
+
+find_package(ada CONFIG REQUIRED)
 find_package(Async++ CONFIG REQUIRED)
 find_package(doctest CONFIG REQUIRED)
 find_package(draco CONFIG REQUIRED)
 find_package(expected-lite CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
-find_package(meshoptimizer CONFIG REQUIRED)
 find_package(httplib CONFIG REQUIRED)
 find_package(Ktx CONFIG REQUIRED)
 find_package(libmorton CONFIG REQUIRED)
 find_package(libjpeg-turbo CONFIG REQUIRED)
+find_package(meshoptimizer CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(s2 CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_package(tinyxml2 CONFIG REQUIRED)
 find_package(unofficial-sqlite3 CONFIG REQUIRED)
 find_package(WebP CONFIG REQUIRED)
-find_package(ada CONFIG REQUIRED)
+find_package(blend2d CONFIG REQUIRED)
+# asmjit should not be included with iOS builds as iOS doesn't support JIT compilation.
+if(NOT IOS AND NOT VCPKG_CMAKE_SYSTEM_NAME MATCHES "iOS")
+    find_package(asmjit CONFIG REQUIRED)
+endif()
 
+if(NOT CESIUM_DISABLE_CURL)
+    find_package(CURL REQUIRED)
+endif()
+
+
+if(NOT CESIUM_DISABLE_CURL)
+    find_package(CURL REQUIRED)
+endif()
 
 # Private Library (s2geometry)
 add_subdirectory(extern EXCLUDE_FROM_ALL)
@@ -282,8 +380,15 @@ add_subdirectory(Cesium3DTilesWriter)
 add_subdirectory(Cesium3DTilesContent)
 add_subdirectory(CesiumRasterOverlays)
 add_subdirectory(Cesium3DTilesSelection)
+add_subdirectory(CesiumClientCommon)
 add_subdirectory(CesiumIonClient)
+add_subdirectory(CesiumITwinClient)
 add_subdirectory(CesiumQuantizedMeshTerrain)
+add_subdirectory(CesiumVectorData)
+
+if(NOT CESIUM_DISABLE_CURL)
+    add_subdirectory(CesiumCurl)
+endif()
 
 # Private Targets
 if (CESIUM_TESTS_ENABLED)
@@ -295,3 +400,23 @@ endif()
 
 
 add_subdirectory(doc)
+
+include(CMakePackageConfigHelpers)
+
+if(CESIUM_INSTALL_STATIC_LIBS AND CESIUM_INSTALL_HEADERS)
+  install(EXPORT CesiumExports
+    FILE cesium-nativeTargets.cmake
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/cesium-native/cmake)
+
+  install(FILES
+    "${CMAKE_CURRENT_LIST_DIR}/cmake/modules/Findzlib-ng.cmake"
+    "${CMAKE_CURRENT_LIST_DIR}/cmake/modules/Findmodp_b64.cmake"
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/cesium-native/cmake)
+
+  configure_package_config_file(${CMAKE_CURRENT_SOURCE_DIR}/cmake/config/Config.cmake.in
+    "${CMAKE_CURRENT_BINARY_DIR}/cesium-nativeConfig.cmake"
+    INSTALL_DESTINATION ${CMAKE_INSTALL_DATADIR}/cesium-native/cmake)
+
+  install(FILES ${CMAKE_CURRENT_BINARY_DIR}/cesium-nativeConfig.cmake
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/cesium-native/cmake)
+endif()

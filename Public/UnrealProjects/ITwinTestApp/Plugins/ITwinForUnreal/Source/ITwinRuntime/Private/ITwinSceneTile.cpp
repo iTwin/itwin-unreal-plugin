@@ -126,9 +126,9 @@ void FITwinExtractedElement::Unload()
 
 void FITwinExtractedEntity::SetHidden(bool bHidden)
 {
-	if (MeshComponent.IsValid())
+	if (ExtractedMeshComponent.IsValid())
 	{
-		MeshComponent->SetFullyHidden(bHidden);
+		ExtractedMeshComponent->SetFullyHidden(bHidden);
 	}
 }
 
@@ -181,14 +181,14 @@ namespace ITwin
 
 bool FITwinExtractedEntity::SetBaseMaterial(UMaterialInterface* BaseMaterial)
 {
-	if (!MeshComponent.IsValid())
+	if (!TransformableMeshComponent.IsValid())
 	{
 		// Was the tile from which this mesh was extracted invalidated?
 		return false;
 	}
 
 	UMaterialInstanceDynamic* NewMaterialInstance =
-		ITwin::ChangeBaseMaterialInUEMesh(*MeshComponent, BaseMaterial, &this->Material);
+		ITwin::ChangeBaseMaterialInUEMesh(*TransformableMeshComponent, BaseMaterial, &this->Material);
 	if (!NewMaterialInstance)
 	{
 		return false;
@@ -505,8 +505,8 @@ void FITwinSceneTile::UseTunedMeshAsExtract(FITwinExtractedElement& DummyExtr,
 	if (!ensure(GltfMeshWrapperIndex < GltfMeshes.size()))
 		return;
 	auto& MeshWrapper = GltfMeshes[GltfMeshWrapperIndex];
-	auto* MeshComp = Cast<UCesiumCustomVisibilitiesMeshComponent>(MeshWrapper.MeshComponent());
-	if (!ensure(MeshComp != nullptr))
+	auto* MeshComp = MeshWrapper.MeshComponent();
+	if (!ensure(IsValid(MeshComp)))
 		return;
 	auto const UVIndex = MeshWrapper.GetFeatureIDsInVertexUVs();
 	if (!ensure(UVIndex))
@@ -518,7 +518,7 @@ void FITwinSceneTile::UseTunedMeshAsExtract(FITwinExtractedElement& DummyExtr,
 	DummyExtr.Entities.emplace_back(FITwinExtractedEntity{
 		.ElementID = DummyExtr.ElementID,
 		.OriginalTransform = MeshComp->GetComponentTransform(),
-		.MeshComponent = MeshComp,
+		.TransformableMeshComponent = MeshComp,
 		.FeatureIDsUVIndex = UVIndex,
 		.Material = Material,
 		//.TextureFlags <== will be ignored, see UpdateExtractedElement in ITwinSynchro4DAnimator.cpp
@@ -697,7 +697,7 @@ public:
 			FITwinExtractedElement& Extracted = SceneTile.ExtractedElement(FeaturesToSelect.ExtractedRank);
 			for (auto&& Entry : Extracted.Entities)
 			{
-				if (Entry.MeshComponent.IsValid() && Entry.MeshComponent->IsVisible())
+				if (Entry.ExtractedMeshComponent.IsValid() && Entry.ExtractedMeshComponent->IsVisible())
 				{
 					return true;
 				}
@@ -822,21 +822,18 @@ void FITwinSceneTile::CreateAndSetSelectingAndHiding(FeaturesInTile& FeaturesToS
 
 template<typename SelectableHelper, typename SelectableID>
 bool FITwinSceneTile::TPickSelectable(SelectableHelper const& PickHelper, SelectableID const& InElemID,
-	bool const bOnlyVisibleTiles,
-	FTextureNeeds& TextureNeeds,
-	bool const bTestElemVisibility/*=false*/,
-	bool const bSelectElem/*=true*/)
+									  FTextureNeeds& TextureNeeds, FPickingOptions const Opts)
 {
 	// filter out hidden and empty tiles
-	if ((bOnlyVisibleTiles && !bVisible) || MaxFeatureID == ITwin::NOT_FEATURE)
+	if ((Opts.OnlyVisibleTiles() && !bVisible) || MaxFeatureID == ITwin::NOT_FEATURE)
 		return false;
 	// Bad! See similar comment at the beginning of FITwinSceneMapping::PickVisibleElement
-	//if (bSelectElem && InElemID == SelectedElement)
+	//if (Opts.MakeSelected() && InElemID == SelectedElement)
 	//	return false;
-	ensure(InElemID != SelectableHelper::NoneSelected() || bSelectElem);//de-selecting requires bSelecElem==true...
+	ensure(InElemID != SelectableHelper::NoneSelected() || Opts.MakeSelected());//de-selecting requires bSelecElem==true...
 
 	// 0. SAFETY measure
-	if (bSelectElem && SelectingAndHiding
+	if (Opts.MakeSelected() && SelectingAndHiding
 		// (TextureDimension^^2) would do and allow a small margin, but we assert against TotalUsedPixels...
 		&& SelectingAndHiding->GetTotalUsedPixels() < (MaxFeatureID.value() + 1))
 	{
@@ -849,7 +846,7 @@ bool FITwinSceneTile::TPickSelectable(SelectableHelper const& PickHelper, Select
 
 	// 1. Reset current selection, if any, when we (try to) select an Element (even if the same),
 	//    or simply when we deselect
-	if (bSelectElem)
+	if (Opts.MakeSelected() && !Opts.SkipResetSelection())
 	{
 		ResetSelection(TextureNeeds);
 	}
@@ -863,15 +860,21 @@ bool FITwinSceneTile::TPickSelectable(SelectableHelper const& PickHelper, Select
 	}
 	if (FeaturesToSelect != nullptr && !FeaturesToSelect->Features.empty())
 	{
-		if (bTestElemVisibility)
+		if (Opts.TestElementVisibility())
 		{
-			// Redundant with the tests made at the beginning of FITwinSceneMapping::PickVisibleElement!
-			//if (SelectingAndHiding)
-			//{
-			//	auto&& SelHide_BGRA = SelectingAndHiding->GetPixel(FeaturesToSelect->Features[0].value());
-			//	if (SelHide_BGRA[3] == 0)
-			//		return false;
-			//}
+			// This used to be commented out as redundant with explicit (and much faster) tests made at the
+			// beginning of FITwinSceneMapping::PickVisibleElement on HiddenElementsFromSavedView,
+			// bHiddenConstructionData and ConstructionDataElements, BUT with all the other hiding reasons
+			// now (per-category or per-model from saved views, etc. see FITwinSceneMapping's method
+			// ApplySelectingAndHiding) skipping this was probably very buggy!
+			// That and FITwinSceneMapping::PickVisibleMaterial also reaches this code and didn't have the
+			// early tests like in PickVisibleElement!
+			if (SelectingAndHiding)
+			{
+				auto&& SelHide_BGRA = SelectingAndHiding->GetPixel(FeaturesToSelect->Features[0].value());
+				if (SelHide_BGRA[3] == 0)
+					return false;
+			}
 			if (HighlightsAndOpacities)
 			{
 				auto&& S4D_BGRA = HighlightsAndOpacities->GetPixel(FeaturesToSelect->Features[0].value());
@@ -885,7 +888,7 @@ bool FITwinSceneTile::TPickSelectable(SelectableHelper const& PickHelper, Select
 				}
 			}
 		}
-		if (bSelectElem)
+		if (Opts.MakeSelected())
 		{
 			CreateAndSetSelectingAndHiding(*FeaturesToSelect, TextureNeeds,
 				SelectableHelper::GetSelectedItemColor(), /*bColorOrAlpha: color only*/true);
@@ -899,20 +902,18 @@ bool FITwinSceneTile::TPickSelectable(SelectableHelper const& PickHelper, Select
 	}
 }
 
-bool FITwinSceneTile::PickElement(ITwinElementID const& InElemID, bool const bOnlyVisibleTiles,
-	FTextureNeeds& TextureNeeds, bool const bTestElemVisibility/*=false*/, bool const bSelectElem/*=true*/)
+bool FITwinSceneTile::PickElement(ITwinElementID const& InElemID, FTextureNeeds& TextureNeeds,
+								  FPickingOptions const Opts)
 {
 	ElementSelectionHelper EltSelectionHelper(*this);
-	return TPickSelectable(EltSelectionHelper, InElemID, bOnlyVisibleTiles, TextureNeeds,
-		bTestElemVisibility, bSelectElem);
+	return TPickSelectable(EltSelectionHelper, InElemID, TextureNeeds, Opts);
 }
 
-bool FITwinSceneTile::PickMaterial(ITwinMaterialID const& InMaterialID, bool const bOnlyVisibleTiles,
-	FTextureNeeds& TextureNeeds, bool const bTestElemVisibility/*=false*/, bool const bSelectMaterial/*=true*/)
+bool FITwinSceneTile::PickMaterial(ITwinMaterialID const& InMaterialID, FTextureNeeds& TextureNeeds,
+								   FPickingOptions const Opts)
 {
 	MaterialSelectionHelper MatSelectionHelper(*this);
-	return TPickSelectable(MatSelectionHelper, InMaterialID, bOnlyVisibleTiles, TextureNeeds,
-		bTestElemVisibility, bSelectMaterial);
+	return TPickSelectable(MatSelectionHelper, InMaterialID, TextureNeeds, Opts);
 }
 
 template<typename IDType, typename FeatureType>
@@ -922,8 +923,8 @@ void FITwinSceneTile::THideIDs(std::unordered_set<IDType>& CurrentHiddenItems,
 		std::function<void(FeatureType*)> UnhideFeatures,
 		std::function<void(FeatureType*)> HideFeatures,
 		FITwinSceneTile::FTextureNeeds& TextureNeeds,
-		std::optional<IDType> SelectedID /*= std::nullopt*/,
-		bool const Force /*= false*/)
+		FShowHideOptions Opts,
+		std::optional<IDType> SelectedID /*= std::nullopt*/)
 {
 	// Update hidden elements in current saved view
 	for (auto it = CurrentHiddenItems.begin(); it != CurrentHiddenItems.end();)
@@ -946,13 +947,13 @@ void FITwinSceneTile::THideIDs(std::unordered_set<IDType>& CurrentHiddenItems,
 	{
 		// Element already hidden in previous saved view
 		// Nothing to do.
-		if (CurrentHiddenItems.find(InID) != CurrentHiddenItems.end() && !Force)
+		if (CurrentHiddenItems.find(InID) != CurrentHiddenItems.end() && !Opts.Force())
 			continue;
 
 		CurrentHiddenItems.insert(InID);
 
 		// 1. Deselect element to be hidden if any.
-		if (SelectedID && *SelectedID == InID)
+		if (SelectedID && *SelectedID == InID && !Opts.SkipResetSelection())
 		{
 			ResetSelection(TextureNeeds);
 		}
@@ -970,16 +971,16 @@ void FITwinSceneTile::THideIDs(std::unordered_set<IDType>& CurrentHiddenItems,
 }
 
 void FITwinSceneTile::HideElements(std::unordered_set<ITwinElementID> const& InElemIDs,
-	bool const bOnlyVisibleTiles, FTextureNeeds& TextureNeeds, bool const IsConstruction, bool const Force/* = false*/)
+	FTextureNeeds& TextureNeeds, FShowHideOptions const Opts)
 {
 	if (MaxFeatureID == ITwin::NOT_FEATURE
-		 || (bOnlyVisibleTiles && !bVisible)) // filter out hidden tiles too (other LODs, culled out...)
+		 || (Opts.OnlyVisibleTiles() && !bVisible)) // filter out hidden tiles too (other LODs, culled out...)
 	{
 		// No Feature at all.
 		return;
 	}
 	auto& CurrentHiddenElements =
-		IsConstruction ? CurrentConstructionHiddenElements : CurrentSavedViewHiddenElements;
+		Opts.ConstructionData() ? CurrentConstructionHiddenElements : CurrentSavedViewHiddenElements;
 
 	THideIDs<ITwinElementID, FITwinElementFeaturesInTile>(
 		CurrentHiddenElements,
@@ -989,17 +990,57 @@ void FITwinSceneTile::HideElements(std::unordered_set<ITwinElementID> const& InE
 		[this, &TextureNeeds](FITwinElementFeaturesInTile* f) {
 			CreateAndSetSelectingAndHiding(*f, TextureNeeds, ITwin::COLOR_HIDDEN_ELEMENT_BGRA, false);
 		},
-		TextureNeeds,
-		SelectedElement,
-		Force
-	);
+		TextureNeeds, Opts, SelectedElement);
+}
+
+void FITwinSceneTile::ShowElements(std::unordered_set<ITwinElementID> const& InElemIDs,
+	FTextureNeeds& TextureNeeds, FShowHideOptions const Opts)
+{
+	if (MaxFeatureID == ITwin::NOT_FEATURE
+		|| (Opts.OnlyVisibleTiles() && !bVisible)) // filter out hidden tiles too (other LODs, culled out...)
+	{
+		// No Feature at all.
+		return;
+	}
+	auto& CurrentAlwaysDrawnElements = CurrentSavedViewAlwaysDrawnElements;
+
+	// Update always drawn elements in current saved view
+	for (auto it = CurrentAlwaysDrawnElements.begin(); it != CurrentAlwaysDrawnElements.end();)
+	{
+		if (InElemIDs.find(*it) == InElemIDs.end())
+			it = CurrentAlwaysDrawnElements.erase(it);
+		else
+			++it;
+	}
+
+	for (const auto& InID : InElemIDs)
+	{
+		// Element already shown in previous saved view
+		// Nothing to do.
+		if (CurrentAlwaysDrawnElements.find(InID) != CurrentAlwaysDrawnElements.end() && !Opts.Force())
+			continue;
+
+		CurrentAlwaysDrawnElements.insert(InID);
+
+		// 2. Show new Element, only if it exists in the tile.
+		FITwinElementFeaturesInTile* FeaturesToUnHide = nullptr;
+		if (InID != ITwin::NOT_ELEMENT)
+		{
+			FeaturesToUnHide = FindElementFeaturesSLOW(InID);
+		}
+		if (FeaturesToUnHide && !FeaturesToUnHide->Features.empty())
+		{
+			SelectingAndHiding->SetPixelsAlpha(FeaturesToUnHide->Features, 255);
+			TextureNeeds.bWasChanged = true;
+		}
+	}
 }
 
 void FITwinSceneTile::HideModels(std::unordered_set<ITwinElementID> const& InModelIDs,
-	bool const bOnlyVisibleTiles, FTextureNeeds& TextureNeeds, bool const Force/* = false*/)
+	FTextureNeeds& TextureNeeds, FShowHideOptions const Opts)
 {
 	if (MaxFeatureID == ITwin::NOT_FEATURE
-		|| (bOnlyVisibleTiles && !bVisible)) // filter out hidden tiles too (other LODs, culled out...)
+		|| (Opts.OnlyVisibleTiles() && !bVisible)) // filter out hidden tiles too (other LODs, culled out...)
 	{
 		// No Feature at all.
 		return;
@@ -1014,17 +1055,14 @@ void FITwinSceneTile::HideModels(std::unordered_set<ITwinElementID> const& InMod
 		[this, &TextureNeeds](FITwinModelFeaturesInTile* f) {
 			CreateAndSetSelectingAndHiding(*f, TextureNeeds, ITwin::COLOR_HIDDEN_ELEMENT_BGRA, false);
 		},
-		TextureNeeds,
-		std::nullopt,
-		Force
-	);
+		TextureNeeds, Opts);
 }
 
 void FITwinSceneTile::HideCategories(std::unordered_set<ITwinElementID> const& InCategoryIDs,
-	bool const bOnlyVisibleTiles, FTextureNeeds& TextureNeeds, bool const Force/* = false*/)
+	FTextureNeeds& TextureNeeds, FShowHideOptions const Opts)
 {
 	if (MaxFeatureID == ITwin::NOT_FEATURE
-		|| (bOnlyVisibleTiles && !bVisible)) // filter out hidden tiles too (other LODs, culled out...)
+		|| (Opts.OnlyVisibleTiles() && !bVisible)) // filter out hidden tiles too (other LODs, culled out...)
 	{
 		// No Feature at all.
 		return;
@@ -1039,17 +1077,15 @@ void FITwinSceneTile::HideCategories(std::unordered_set<ITwinElementID> const& I
 		[this, &TextureNeeds](FITwinCategoryFeaturesInTile* f) {
 			CreateAndSetSelectingAndHiding(*f, TextureNeeds, ITwin::COLOR_HIDDEN_ELEMENT_BGRA, false);
 		},
-		TextureNeeds,
-		std::nullopt,
-		Force
-	);
+		TextureNeeds, Opts);
 }
 
-void FITwinSceneTile::HideCategoriesPerModel(std::unordered_set<std::pair<ITwinElementID,ITwinElementID>, FITwinSceneTile::pair_hash> const& InCategoryPerModelIDs,
-	bool const bOnlyVisibleTiles, FTextureNeeds& TextureNeeds, bool const Force/* = false*/)
+void FITwinSceneTile::HideCategoriesPerModel(
+	std::unordered_set<std::pair<ITwinElementID,ITwinElementID>, FITwinSceneTile::pair_hash> const& InCategoryPerModelIDs,
+	FTextureNeeds& TextureNeeds, FShowHideOptions const Opts)
 {
 	if (MaxFeatureID == ITwin::NOT_FEATURE
-		|| (bOnlyVisibleTiles && !bVisible)) // filter out hidden tiles too (other LODs, culled out...)
+		|| (Opts.OnlyVisibleTiles() && !bVisible)) // filter out hidden tiles too (other LODs, culled out...)
 	{
 		// No Feature at all.
 		return;
@@ -1077,7 +1113,7 @@ void FITwinSceneTile::HideCategoriesPerModel(std::unordered_set<std::pair<ITwinE
 	{
 		// Element already hidden in previous saved view
 		// Nothing to do.
-		if (CurrentHiddenItems.find(InID) != CurrentHiddenItems.end() && !Force)
+		if (CurrentHiddenItems.find(InID) != CurrentHiddenItems.end() && !Opts.Force())
 			continue;
 
 		CurrentHiddenItems.insert(InID);
@@ -1095,6 +1131,50 @@ void FITwinSceneTile::HideCategoriesPerModel(std::unordered_set<std::pair<ITwinE
 	}
 }
 
+void FITwinSceneTile::ShowCategoriesPerModel(
+	std::unordered_set<std::pair<ITwinElementID, ITwinElementID>, FITwinSceneTile::pair_hash> const& InCategoryPerModelIDs,
+	FTextureNeeds& TextureNeeds, FShowHideOptions const Opts)
+{
+	if (MaxFeatureID == ITwin::NOT_FEATURE
+		|| (Opts.OnlyVisibleTiles() && !bVisible)) // filter out hidden tiles too (other LODs, culled out...)
+	{
+		// No Feature at all.
+		return;
+	}
+	auto& CurrentAlwaysDrawnCategories = CurrentSavedViewAlwaysDrawnCategoriesPerModel;
+
+	// Update always drawn categories in current saved view
+	for (auto it = CurrentAlwaysDrawnCategories.begin(); it != CurrentAlwaysDrawnCategories.end();)
+	{
+		if (InCategoryPerModelIDs.find(*it) == InCategoryPerModelIDs.end())
+			it = CurrentAlwaysDrawnCategories.erase(it);
+		else
+			++it;
+	}
+
+	for (const auto& InID : InCategoryPerModelIDs)
+	{
+		// Category already shown in previous saved view
+		// Nothing to do.
+		if (CurrentAlwaysDrawnCategories.find(InID) != CurrentAlwaysDrawnCategories.end() && !Opts.Force())
+			continue;
+
+		CurrentAlwaysDrawnCategories.insert(InID);
+
+		// 2. Show new category, only if it exists in the tile.
+		FITwinCategoryPerModelFeaturesInTile* FeaturesToUnHide = nullptr;
+		if (InID.first != ITwin::NOT_ELEMENT && InID.second != ITwin::NOT_ELEMENT)
+		{
+			FeaturesToUnHide = FindCategoryPerModelFeaturesSLOW(InID);
+		}
+		if (FeaturesToUnHide && !FeaturesToUnHide->Features.empty())
+		{
+			SelectingAndHiding->SetPixelsAlpha(FeaturesToUnHide->Features, 255);
+			TextureNeeds.bWasChanged = true;
+		}
+	}
+}
+
 bool FITwinSceneTile::Need4DAnimTexturesSetupInMaterials() const
 {
 	return (HighlightsAndOpacities && bNeed4DHighlightsOpaTextureSetupInMaterials)
@@ -1106,13 +1186,25 @@ bool FITwinSceneTile::NeedSelectingAndHidingTexturesSetupInMaterials() const
 	return (SelectingAndHiding && bNeedSelectingAndHidingTextureSetupInMaterials);
 }
 
+FString FITwinSceneTile::GetIDString() const
+{
+	FString IdStr(Cesium3DTilesSelection::TileIdUtilities::createTileIdString(TileID.first).c_str());
+	if (!TileID.second.empty())
+	{
+		IdStr += TEXT(" (") + FString(TileID.second.c_str()) + TEXT(")");
+	}
+	return IdStr;
+}
+
 FString FITwinSceneTile::ToString() const
 {
-	auto* renderContent = pCesiumTile ? pCesiumTile->getContent().getRenderContent() : nullptr;
 	return FString::Printf(TEXT(
-		"Tile %s tuneVer#%d Viz:%d #Elems:%llu #Extr:%llu(%llu) #Feat:%u #Gltf:%llu #Mats:%llu\n\t4D:%d #Tml:%llu Tex[HiO/CUT/SEL]:%d/%d/%d NeedSetup[HiO/CUT/SEL]:%d/%d/%d\n\tSelec:%s CurSVHidn:%llu CurCSTHidn:%llu"),
-		*FString(Cesium3DTilesSelection::TileIdUtilities::createTileIdString(TileID).c_str()),
-		renderContent ? renderContent->getModel()._tuneVersion : -1,
+		"Tile %s tuneVer#%d Viz:%d #Elems:%llu #Extr:%llu(%llu) #Feat:%u #Gltf:%llu #Mats:%llu\n\t" \
+		"4D:%d #Tml:%llu Tex[HiO/CUT/SEL]:%d/%d/%d NeedSetup[HiO/CUT/SEL]:%d/%d/%d\n\t" \
+		"Selec:%s CurSVHidn:%llu CurCSTHidn:%llu"),
+		*GetIDString(),
+		(pCesiumTile->GetGltfModel() && pCesiumTile->GetGltfModel()->version)
+			? (*pCesiumTile->GetGltfModel()->version) : -1,
 		bVisible ? 1 : 0, ElementsFeatures.size(), ExtractedElements.size(),
 		[this]() { size_t Total = 0;
 			for (auto const& Extr : ExtractedElements) Total += Extr.Entities.size(); return Total; } (),

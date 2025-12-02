@@ -32,6 +32,7 @@
 #include "UE5Coro/LatentAwaiter.h"
 #include <optional>
 #include <Engine/Engine.h>
+#include <Engine/HitResult.h>
 
 using namespace UE5Coro;
 using namespace UE5Coro::Private;

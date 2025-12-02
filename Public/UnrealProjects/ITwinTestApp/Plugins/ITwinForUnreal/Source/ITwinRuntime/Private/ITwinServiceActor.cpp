@@ -60,8 +60,12 @@ void AITwinServiceActor::UpdateWebServices()
 #if WITH_TESTS
 void AITwinServiceActor::SetTestMode(FString const& ServerUrl)
 {
-	// Set a fake access token, to prevent the AuthorizationManager from trying to retrieve a real token
-	FITwinAuthorizationManager::GetInstance(AdvViz::SDK::EITwinEnvironment::Prod)->SetOverrideAccessToken("TestToken");
+	// Set a fake access token, to prevent the AuthorizationManager from trying to retrieve a real token.
+	auto& AuthMngr = FITwinAuthorizationManager::GetInstance(AdvViz::SDK::EITwinEnvironment::Prod);
+	if (ensure(AuthMngr))
+	{
+		AuthMngr->SetOverrideAccessToken("TestToken", AdvViz::SDK::EITwinAuthOverrideMode::Testing);
+	}
 	// Create ServerConnection & WebServices pointing to the mock server.
 	ServerConnection = NewObject<AITwinServerConnection>(this);
 	ServerConnection->Environment = EITwinEnvironment::Prod;

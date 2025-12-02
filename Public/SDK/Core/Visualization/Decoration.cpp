@@ -13,12 +13,6 @@
 
 namespace AdvViz::SDK {
 
-	struct SJSonGCS
-	{
-		std::string wkt;
-		std::array<float, 3> center = {0.f, 0.f, 0.f};
-	};
-
 	class Decoration::Impl
 	{
 	public:
@@ -26,12 +20,13 @@ namespace AdvViz::SDK {
 		{
 			std::string name;
 			std::string itwinid;
-			std::optional<SJSonGCS> gcs;
+			std::optional<GCS> gcs;
 		};
 
 		std::string id_;
 		std::shared_ptr<Http> http_;
 		SJsonDeco jsonDeco_;
+		Tools::IGCSTransformPtr gcsTransfrom_;
 
 		std::shared_ptr<Http>& GetHttp() { return http_; }
 		void SetHttp(const std::shared_ptr<Http>& http) { http_ = http; }
@@ -39,13 +34,12 @@ namespace AdvViz::SDK {
 		void Create(
 			const std::string& name, const std::string& itwinid)
 		{
-			struct SJsonIn { std::string name; std::string itwinid; };
-			SJsonIn jIn{ name, itwinid };
+			jsonDeco_.name = name;
+			jsonDeco_.itwinid = itwinid;
 			struct SJsonOut { std::string id; SJsonDeco data; };
 			SJsonOut jOut;
 
-
-			long status = GetHttp()->PostJsonJBody(jOut, std::string("decorations"), jIn);
+			long status = GetHttp()->PostJsonJBody(jOut, std::string("decorations"), jsonDeco_);
 			if (status == 200 || status == 201)
 			{
 				jsonDeco_ = std::move(jOut.data);
@@ -78,7 +72,7 @@ namespace AdvViz::SDK {
 		void Delete()
 		{
 			std::string s("decorations/" + id_);
-			Http::Response status = GetHttp()->Delete(s, "");
+			Http::Response status = GetHttp()->Delete(s, {});
 			if (status.first != 200)
 			{
 				BE_LOGW("ITwinDecoration", "Delete decoration failed. Http status: " << status.first);
@@ -132,6 +126,26 @@ namespace AdvViz::SDK {
 		return GetImpl().id_;
 	}
 
+	void Decoration::SetGCSTransform(const Tools::IGCSTransformPtr& transform)
+	{
+		GetImpl().gcsTransfrom_ = transform;
+	}
+
+	const Tools::IGCSTransformPtr& Decoration::GetGCSTransform() const
+	{
+		return GetImpl().gcsTransfrom_;
+	}
+
+	const std::optional<GCS>& Decoration::GetGCS() const
+	{
+		return GetImpl().jsonDeco_.gcs;
+	}
+
+	void Decoration::SetGCS(const GCS &gcs)
+	{
+		GetImpl().jsonDeco_.gcs = gcs;
+	}
+
 	Decoration::~Decoration()
 	{
 	}
@@ -142,6 +156,10 @@ namespace AdvViz::SDK {
 	}
 
 	Decoration::Impl& Decoration::GetImpl() {
+		return *impl_;
+	}
+
+	const Decoration::Impl& Decoration::GetImpl() const {
 		return *impl_;
 	}
 
@@ -159,7 +177,7 @@ namespace AdvViz::SDK {
 			std::string id;
 			std::string name;
 			std::string itwinid;
-			std::optional<SJSonGCS> gcs;
+			std::optional<GCS> gcs;
 		};
 
 		auto ret = HttpGetWithLink<SJsonDecoWithId>(http,

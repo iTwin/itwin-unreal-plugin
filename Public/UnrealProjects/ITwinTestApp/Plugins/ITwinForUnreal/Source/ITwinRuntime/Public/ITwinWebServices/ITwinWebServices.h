@@ -26,6 +26,8 @@
 namespace AdvViz::SDK
 {
 	class ITwinAuthManager;
+
+	enum class EITwinAuthOverrideMode : uint8_t;
 }
 
 #include "ITwinWebServices.generated.h"
@@ -68,6 +70,10 @@ class ITWINRUNTIME_API UITwinWebServices : public UObject, public AdvViz::SDK::I
 {
 	GENERATED_BODY()
 public:
+	// Optional callback called (if any) before the 1st authorization occurs, and returning the
+	// environment imposed by the potential override access token.
+	using PreAuthFunc = TFunction<EITwinEnvironment()>;
+
 	UITwinWebServices();
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
@@ -219,6 +225,9 @@ public:
 														   FString ChangesetId);
 	//-------------------------------------------------------------------------------------------------------
 
+	void GetGoogleCuratedContentAccess();
+
+
 	void SetCustomServerURL(std::string const& ServerUrl);
 
 	void RunCustomRequest(
@@ -316,6 +325,15 @@ public:
 	AuthManagerPtr& GetAuthManager() const;
 	void SetServerConnection(TObjectPtr<AITwinServerConnection> const& InConnection);
 
+	//! Set the regular access token.
+	void SetRegularAccessToken(const FString& InAccessToken);
+	//! Set the access token overriding the regular one.
+	void SetOverrideAccessToken(const FString& InAccessToken, AdvViz::SDK::EITwinAuthOverrideMode InOverrideMode);
+	//! Restore the regular access token, by resetting the override one.
+	void ResetOverrideAccessToken();
+	//! Returns the access token override mode.
+	AdvViz::SDK::EITwinAuthOverrideMode GetOverrideMode() const;
+
 	//! Initialize the server connection from the level, if all connection actors in the level are using the
 	//! same environment. If no server connection actor exists in the world, or if there are several ones not
 	//! sharing the same environment, this WebServices actor will not be modified and false is returned.
@@ -332,6 +350,8 @@ public:
 
 	//! Can be called to customize the scopes used to request the authorization.
 	static void AddScope(FString const& ExtraScope);
+
+	static void SetPreAuthFunc(PreAuthFunc const& InPreAuthCallback);
 
 	static void SetPreferredEnvironment(EITwinEnvironment Env);
 	static EITwinEnvironment GetDefaultEnvironment();
@@ -386,4 +406,5 @@ private:
 	TPimplPtr<FImpl> Impl;
 
 	static bool bLogErrors;
+	static PreAuthFunc PreAuthCallback;
 };

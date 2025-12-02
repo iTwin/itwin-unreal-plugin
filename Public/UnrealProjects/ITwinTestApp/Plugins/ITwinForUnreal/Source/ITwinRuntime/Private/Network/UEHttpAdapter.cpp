@@ -40,7 +40,7 @@ public:
 			if (connectedSuccessfully)
 			{
 				Response.first = UEResponse->GetResponseCode();
-				Response.second = TCHAR_TO_ANSI(*UEResponse->GetContentAsString());
+				Response.second = TCHAR_TO_UTF8(*UEResponse->GetContentAsString());
 				if (RequestPtr && RequestPtr->NeedRawData() && UEResponse->GetContentLength() > 0)
 				{
 					// In case we receive some binary data, we may want to get it and not just a (truncated)
@@ -64,7 +64,7 @@ public:
 
 	void Process(AdvViz::SDK::Http const& http,
 				 std::string const& url,
-				 std::string const& body,
+				 AdvViz::SDK::Http::BodyParams const& bodyParams,
 				 AdvViz::SDK::Http::Headers const& headers,
 				 bool isFullUrl)
 	{
@@ -78,9 +78,12 @@ public:
 		{
 			UERequest->SetHeader(Key.c_str(), Value.c_str());
 		}
-		if (!body.empty())
+		if (!bodyParams.empty())
 		{
-			UERequest->SetContentAsString(body.c_str());
+			if (bodyParams.GetEncoding() == AdvViz::SDK::Tools::EStringEncoding::Utf8)
+				UERequest->SetContentAsString(UTF8_TO_TCHAR(bodyParams.str().c_str()));
+			else
+				UERequest->SetContentAsString(bodyParams.str().c_str());
 		}
 		UERequest->ProcessRequest();
 	}
@@ -92,7 +95,7 @@ public:
 		if (response.first == HTTP_CONNECT_ERR)
 		{
 			FString const UEError = EHttpRequestStatus::ToString(UERequest->GetStatus());
-			requestError = TCHAR_TO_ANSI(*UEError);
+			requestError = TCHAR_TO_UTF8(*UEError);
 			return false;
 		}
 		else if (!EHttpResponseCodes::IsOk(response.first))
@@ -101,7 +104,7 @@ public:
 				(int)response.first,
 				*EHttpResponseCodes::GetDescription(
 					(EHttpResponseCodes::Type)response.first).ToString());
-			requestError = TCHAR_TO_ANSI(*UEError);
+			requestError = TCHAR_TO_UTF8(*UEError);
 			return false;
 		}
 		else
@@ -123,7 +126,7 @@ FUEHttpRequest::FUEHttpRequest()
 void FUEHttpRequest::Process(
 	AdvViz::SDK::Http& http,
 	std::string const& url,
-	std::string const& body,
+	AdvViz::SDK::Http::BodyParams const& body,
 	AdvViz::SDK::Http::Headers const& headers,
 	bool isFullUrl /*= false*/)
 {

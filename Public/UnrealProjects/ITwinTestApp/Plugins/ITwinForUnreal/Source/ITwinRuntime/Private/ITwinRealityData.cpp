@@ -15,6 +15,7 @@
 #include <ITwinIModel.h>
 #include <ITwinTilesetAccess.h>
 #include <ITwinTilesetAccess.inl>
+#include <Clipping/ITwinClippingCustomPrimitiveDataHelper.h>
 
 #include <Dom/JsonObject.h>
 #include <Dom/JsonValue.h>
@@ -25,8 +26,25 @@
 #include <Serialization/JsonReader.h>
 #include <Serialization/JsonSerializer.h>
 #include "Decoration/ITwinDecorationHelper.h"
-
+#include <Kismet/GameplayStatics.h>
 #include <EngineUtils.h> // for TActorIterator<>
+#include <ITwinUtilityLibrary.h>
+
+
+
+class AITwinRealityData::FTilesetAccess : public FITwinTilesetAccess
+{
+public:
+	FTilesetAccess(AITwinRealityData* InRealityData);
+	virtual TUniquePtr<FITwinTilesetAccess> Clone() const override;
+
+	virtual ITwin::ModelDecorationIdentifier GetDecorationKey() const override;
+	virtual AITwinDecorationHelper* GetDecorationHelper() const override;
+
+private:
+	TWeakObjectPtr<AITwinRealityData> RealityData;
+};
+
 
 class AITwinRealityData::FImpl
 {
@@ -36,6 +54,7 @@ public:
 	double Longitude = 0;
 	AITwinDecorationHelper* DecorationPersistenceMgr = nullptr;
 	uint32 TilesetLoadedCount = 0;
+	TStrongObjectPtr<UITwinClippingCustomPrimitiveDataHelper> ClippingHelper;
 
 	FImpl(AITwinRealityData& InOwner)
 		: Owner(InOwner)
@@ -53,7 +72,11 @@ public:
 		Tileset->SetActorLabel(Owner.GetActorLabel() + TEXT(" tileset"));
 #endif
 		Tileset->AttachToActor(&Owner, FAttachmentTransformRules::KeepRelativeTransform);
-		Tileset->SetCreatePhysicsMeshes(false);
+		if (ClippingHelper)
+		{
+			Tileset->SetLifecycleEventReceiver(ClippingHelper.Get());
+		}
+		Tileset->SetCreatePhysicsMeshes(true);// true since azdev#1737290
 		Tileset->SetTilesetSource(ETilesetSource::FromUrl);
 		Tileset->SetUrl(Info.MeshUrl);
 
@@ -71,13 +94,22 @@ public:
 				Geoloc->GeoReference->SetOriginLatitude(Latitude);
 				Geoloc->GeoReference->SetOriginLongitude(Longitude);
 				Geoloc->GeoReference->SetOriginHeight(0);
+				Geoloc->bNeedElevationEvaluation = true;
+
+				// update decoration geo-reference
+				AITwinDecorationHelper* DecoHelper = Cast<AITwinDecorationHelper>(UGameplayStatics::GetActorOfClass(Owner.GetWorld(), AITwinDecorationHelper::StaticClass()));
+				if (DecoHelper)
+				{
+					FVector latLongHeight(Latitude, Longitude, 0);
+					DecoHelper->SetDecoGeoreference(latLongHeight);
+				}
 			}
 			Tileset->SetGeoreference(Geoloc->GeoReference.Get());
 		}
 		else
 			Tileset->SetGeoreference(Geoloc->LocalReference.Get());
 		// Make use of our own materials (important for packaged version!)
-		ITwin::SetupMaterials(*Tileset);
+		ITwin::SetupMaterials(FTilesetAccess(&Owner));
 
 		TilesetLoadedCount = 0;
 		Tileset->OnTilesetLoaded.AddDynamic(&Owner, &AITwinRealityData::OnTilesetLoaded);
@@ -105,6 +137,17 @@ AITwinRealityData::AITwinRealityData()
 	:Impl(MakePimpl<FImpl>(*this))
 {
 	SetRootComponent(CreateDefaultSubobject<USceneComponent>(TEXT("root")));
+}
+
+AITwinRealityData::~AITwinRealityData()
+{
+	Impl->ClippingHelper.Reset();
+}
+
+void AITwinRealityData::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	Impl->ClippingHelper.Reset();
+	Super::EndPlay(EndPlayReason);
 }
 
 void AITwinRealityData::UpdateOnSuccessfulAuthorization()
@@ -178,43 +221,38 @@ ACesium3DTileset* AITwinRealityData::GetMutableTileset()
 }
 
 
-class AITwinRealityData::FTilesetAccess : public FITwinTilesetAccess
-{
-public:
-	FTilesetAccess(AITwinRealityData& InRealityData);
-
-	virtual ITwin::ModelDecorationIdentifier GetDecorationKey() const override;
-	virtual AITwinDecorationHelper* GetDecorationHelper() const override;
-
-private:
-	AITwinRealityData& RealityData;
-};
-
-AITwinRealityData::FTilesetAccess::FTilesetAccess(AITwinRealityData& InRealityData)
+AITwinRealityData::FTilesetAccess::FTilesetAccess(AITwinRealityData* InRealityData)
 	: FITwinTilesetAccess(InRealityData)
 	, RealityData(InRealityData)
 {
 
 }
 
+TUniquePtr<FITwinTilesetAccess> AITwinRealityData::FTilesetAccess::Clone() const
+{
+	return MakeUnique<FTilesetAccess>(RealityData.Get());
+}
 
 ITwin::ModelDecorationIdentifier AITwinRealityData::FTilesetAccess::GetDecorationKey() const
 {
-	return std::make_pair(EITwinModelType::RealityData, RealityData.RealityDataId);
+	return std::make_pair(EITwinModelType::RealityData,
+		RealityData.IsValid() ? RealityData->RealityDataId : FString());
 }
 
 AITwinDecorationHelper* AITwinRealityData::FTilesetAccess::GetDecorationHelper() const
 {
-	if (!RealityData.Impl->DecorationPersistenceMgr)
+	if (!RealityData.IsValid())
+		return nullptr;
+	if (!RealityData->Impl->DecorationPersistenceMgr)
 	{
-		RealityData.Impl->FindPersistenceMgr();
+		RealityData->Impl->FindPersistenceMgr();
 	}
-	return RealityData.Impl->DecorationPersistenceMgr;
+	return RealityData->Impl->DecorationPersistenceMgr;
 }
 
 TUniquePtr<FITwinTilesetAccess> AITwinRealityData::MakeTilesetAccess()
 {
-	return MakeUnique<FTilesetAccess>(*this);
+	return MakeUnique<FTilesetAccess>(this);
 }
 
 
@@ -302,3 +340,100 @@ void AITwinRealityData::Destroyed()
 	for (auto& Child: ChildrenCopy)
 		GetWorld()->DestroyActor(Child);
 }
+
+UITwinClippingCustomPrimitiveDataHelper* AITwinRealityData::GetClippingHelper() const
+{
+	return Impl->ClippingHelper.Get();
+}
+
+bool AITwinRealityData::MakeClippingHelper()
+{
+	if (RealityDataId.IsEmpty())
+		return false;
+
+	Impl->ClippingHelper =
+		TStrongObjectPtr<UITwinClippingCustomPrimitiveDataHelper>(NewObject<UITwinClippingCustomPrimitiveDataHelper>(this));
+	Impl->ClippingHelper->SetModelIdentifier(
+		std::make_pair(EITwinModelType::RealityData, RealityDataId));
+
+	ACesium3DTileset* Tileset = GetMutableTileset();
+	if (Tileset)
+	{
+		// Connect mesh creation callback
+		Tileset->SetLifecycleEventReceiver(Impl->ClippingHelper.Get());
+	}
+	return true;
+}
+
+CesiumGeometry::OrientedBoundingBox GetOrientedBoundingBox(ACesium3DTileset* Tileset)
+{
+	const Cesium3DTilesSelection::Tile* pRootTile = Tileset->GetTileset()->getRootTile();
+	const ACesiumGeoreference* pGeoreference = Tileset->ResolveGeoreference();
+
+	if (pRootTile && pGeoreference) {
+		return Cesium3DTilesSelection::getOrientedBoundingBoxFromBoundingVolume(
+			pRootTile->getBoundingVolume(),
+			pGeoreference->GetEllipsoid()->GetNativeEllipsoid());
+	}
+	return CesiumGeometry::OrientedBoundingBox(glm::dvec3(0, 0, 0), glm::dmat3(1));
+}
+
+
+FBox GetUnrealAxisAlignBoundingBox(ACesium3DTileset* Tileset)
+{
+	const ACesiumGeoreference* pGeoreference = Tileset->ResolveGeoreference();
+	CesiumGeometry::OrientedBoundingBox obb = GetOrientedBoundingBox(Tileset);
+
+	std::array<glm::dvec3, 8> corners = { glm::dvec3(1.,1.,1.),  glm::dvec3(-1.,1.,1.),  glm::dvec3(-1.,-1.,1.),  glm::dvec3(1.,-1.,1.),
+										 glm::dvec3(1.,1.,-1.), glm::dvec3(-1.,1.,-1.), glm::dvec3(-1.,-1.,-1.), glm::dvec3(1.,-1.,-1.)
+	};
+
+	FBox box;
+	for (const glm::dvec3& corner : corners) {
+		glm::dvec3 cornerPos = obb.getCenter() + obb.getHalfAxes() * corner;
+		FVector cornerPos2(cornerPos.x, cornerPos.y, cornerPos.z);
+		box += pGeoreference->TransformEarthCenteredEarthFixedPositionToUnreal(
+			cornerPos2);
+	}
+	return box;
+}
+
+void AITwinRealityData::ZoomOnRealityData()
+{
+	ACesium3DTileset* Tileset = GetMutableTileset();
+	if (Tileset)
+	{
+		FBox TilesetBBox = UITwinUtilityLibrary::GetUnrealAxisAlignBoundingBox(Tileset);
+		// hack around extravagant project extents: limit half size to 10km: it looks big but there is a x0.2
+		// empirical ratio in FImpl::ZoomOn already...
+		double const MaxHalfSize = 10'000 * 100;
+		FVector Ctr, HalfSize;
+		TilesetBBox.GetCenterAndExtents(Ctr, HalfSize);
+		if (TilesetBBox.IsValid && HalfSize.GetAbsMax() < MaxHalfSize)
+		{
+			UITwinUtilityLibrary::ZoomOn(TilesetBBox, GetWorld());
+		}
+		else
+		{
+			double Ratio = MaxHalfSize;
+			if (std::abs(HalfSize.X) >= MaxHalfSize)
+				Ratio /= std::abs(HalfSize.X);
+			else if (std::abs(HalfSize.Y) >= MaxHalfSize)
+				Ratio /= std::abs(HalfSize.Y);
+			else
+				Ratio /= std::abs(HalfSize.Z);
+			UITwinUtilityLibrary::ZoomOn(FBox(Ctr - Ratio * HalfSize, Ctr + Ratio * HalfSize), GetWorld());
+		}
+	}
+}
+
+static FAutoConsoleCommandWithWorldAndArgs FCmd_ZoomOnRealityData(
+	TEXT("cmd.ZoomOnRealityData"),
+	TEXT("Refresh all iModel tilesets."),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+		{
+			TActorIterator<AITwinRealityData> RealityDataIter(World);
+			if (!RealityDataIter)
+				return;
+			(*RealityDataIter)->ZoomOnRealityData();
+		}));

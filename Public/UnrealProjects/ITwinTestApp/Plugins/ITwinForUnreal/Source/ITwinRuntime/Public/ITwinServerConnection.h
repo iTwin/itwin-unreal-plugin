@@ -26,7 +26,13 @@ enum class EITwinEnvironment : uint8
 	Dev,
 	Invalid,
 };
-
+UENUM()
+enum class EITwinSceneService : uint8
+{
+	DecorationService,
+	SceneAPI,
+	Invalid,
+};
 namespace ITwin
 {
 	// App ID can be depend on the chosen environment, so we store all possible values
@@ -47,6 +53,9 @@ public:
 		EditAnywhere)
 	EITwinEnvironment Environment = EITwinEnvironment::Invalid;
 
+	UPROPERTY(Category = "iTwin",
+		EditAnywhere)
+	EITwinSceneService SceneService = EITwinSceneService::Invalid;
 
 	UPROPERTY(Category = "iTwin",
 		EditAnywhere)
@@ -85,6 +94,12 @@ public:
 	//! This function is a convenience for non-Bentley apps, since such apps only use this env.
 	UFUNCTION(BlueprintCallable, Category = "iTwin")
 	static void SetITwinAppID(const FString& AppID);
+	//! Returns the current value of the port used for the redirect Uri of the authorization process.
+	UFUNCTION(BlueprintCallable, Category = "iTwin")
+	static int GetAuthRedirectUriPort();
+	//! Sets the port for the redirect Uri used in authorization process (the default port is 3000).
+	UFUNCTION(BlueprintCallable, Category = "iTwin")
+	static void SetAuthRedirectUriPort(int Port);
 };
 
 DECLARE_LOG_CATEGORY_EXTERN(LogITwinHttp, Log, All);

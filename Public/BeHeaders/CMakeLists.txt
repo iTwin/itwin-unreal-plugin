@@ -8,7 +8,6 @@ set(compilHeaders
 	Compil/Attributes.h
 	Compil/AutoOperators.h
 	Compil/Break.h
-	Compil/CleanUpGuard.h
 	Compil/EmptyBases.h
 	Compil/EnumSwitchCoverage.h
 )
@@ -26,7 +25,9 @@ set(strongTypesHeaders
 )
 source_group(StrongTypes FILES ${strongTypesHeaders})
 set(utilHeaders
+	Util/CleanUpGuard.h
 	Util/Enumerations.h
+	Util/OptionsClass.h
 )
 source_group(Util FILES ${utilHeaders})
 add_library(BeHeaders INTERFACE ${boostHeaders} ${compilHeaders} ${strongTypesHeaders} ${utilHeaders})

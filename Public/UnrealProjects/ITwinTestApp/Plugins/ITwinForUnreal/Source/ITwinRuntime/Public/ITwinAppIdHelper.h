@@ -11,7 +11,8 @@
 #include <GameFramework/Actor.h>
 #include <ITwinAppIdHelper.generated.h>
 
-//! Utility to be used in the Editor mode to set the iTwin app ID manually in the UI.
+//! Utility to be used in the Editor mode to set the iTwin app ID manually, and/or customize the
+//! port used for the redirect Uri of the authorization process.
 //! Useful when you do not have c++ code or blueprint at hand to set the app ID.
 //! Typical use:
 //! - Create a new level
@@ -24,6 +25,8 @@ class ITWINRUNTIME_API AITwinAppIdHelper : public AActor
 {
 	GENERATED_BODY()
 public:
+	AITwinAppIdHelper();
+
 	//! Depending on the context, we may want to disable this behavior totally (typically when loading a
 	//! level in the game, after having grabbed an access token with a previous application ID).
 	static void FreezeAppId();
@@ -39,6 +42,13 @@ private:
 	UPROPERTY(Category = "iTwin",
 		EditAnywhere)
 	FString AppId;
+
+	//! Use this property only to set the authorization's redirect uri port, not to get it,
+	//! as the stored value may be wrong if the redirect uri port has been changed "externally"
+	//! by calling eg. AITwinServerConnection::SetAuthRedirectUriPort().
+	UPROPERTY(Category = "iTwin",
+		EditAnywhere)
+	int AuthRedirectUriPort;
 
 	static bool bFreezeAppId;
 };

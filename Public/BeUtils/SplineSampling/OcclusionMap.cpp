@@ -15,7 +15,8 @@
 #include <BeUtils/Misc/Random.h>
 
 #include <algorithm>
-#include <async++.h>
+// Just a wrapper for async++.h that disables some warnings
+#include <CesiumAsync/Impl/cesium-async++.h>
 
 
 namespace BeUtils
@@ -351,8 +352,8 @@ namespace BeUtils
 				progHelper,
 				segments);
 
-			async::parallel_for(async::irange(0, nHeight_), [&iter](int y) {
-				iter.RunSubTask(y);
+			async::parallel_for(async::irange(0LL, (int64_t)nHeight_), [&iter](auto y) {
+				iter.RunSubTask((int)y);
 			});
 
 			if (iter.CancelledPopulating())

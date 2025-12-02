@@ -16,6 +16,15 @@
 	#include <boost/functional/hash.hpp>
 #include <Compil/AfterNonUnrealIncludes.h>
 
+namespace ITwin
+{
+	// Cesium3DTilesSelection::TileID are not unique in a given tileset (as stated in the documentation), but
+	// we do need unique identifiers for our scene mapping, so we introduced a second element of
+	// identification for the known cases of non uniqueness which are (at least) the up-sampling mechanism
+	// used by raster overlays (cartographic polygons).
+	using CesiumTileID = std::pair<Cesium3DTilesSelection::TileID, std::string>;
+}
+
 namespace std
 {
 	// provide with missing hashing support for Cesium TileID

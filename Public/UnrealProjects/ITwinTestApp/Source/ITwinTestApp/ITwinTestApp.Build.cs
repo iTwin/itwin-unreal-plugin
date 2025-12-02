@@ -26,9 +26,16 @@ public class ITwinTestApp : ModuleRules
 			"CesiumRuntime",
 			"ITwinRuntime",
 			"Json",
-			"PlatformCryptoOpenSSL",
 			"WebBrowser",
         });
+		if (Target.Version.MinorVersion == 5) // ie Unreal 5.5
+		{
+			PublicDependencyModuleNames.Add("PlatformCryptoOpenSSL");
+		}
+		else // Unreal 5.6(+)
+		{
+			PublicDependencyModuleNames.Add("PlatformCryptoContext");
+		}
 		PrivateDependencyModuleNames.AddRange(new string[]{
             "Slate",
             "SlateCore",

@@ -32,10 +32,12 @@ struct FProjectExtents;
 struct FEcefLocation;
 
 namespace AdvViz::SDK {
+	struct ITwinInfo;
 	struct ITwinMaterialPropertiesMap;
 	struct ITwinMaterialPrediction;
 	struct ITwinTextureData;
 	struct GeoCoordsReply;
+	struct ITwinGoogleCuratedContentAccess;
 }
 
 using HttpRequestID = FString;
@@ -47,7 +49,7 @@ public:
 
 	virtual void OnITwinsRetrieved(bool bSuccess, FITwinInfos const& Infos) = 0;
 
-	virtual void OnITwinInfoRetrieved(bool bSuccess, FITwinInfo const& Info) = 0;
+	virtual void OnITwinInfoRetrieved(bool bSuccess, AdvViz::SDK::ITwinInfo const& Info) = 0;
 
 	virtual void OnIModelsRetrieved(bool bSuccess, FIModelInfos const& Infos) = 0;
 
@@ -84,6 +86,9 @@ public:
 	virtual void OnTextureDataRetrieved(bool bSuccess, std::string const& textureId, AdvViz::SDK::ITwinTextureData const& textureData) = 0;
 	virtual void OnMatMLPredictionRetrieved(bool bSuccess, AdvViz::SDK::ITwinMaterialPrediction const& prediction, std::string const& error = {}) = 0;
 	virtual void OnMatMLPredictionProgress(float fProgressRatio) = 0;
+
+	virtual void OnGoogleCuratedContentAccessRetrieved(bool bSuccess,
+		AdvViz::SDK::ITwinGoogleCuratedContentAccess const& infos, HttpRequestID const& RequestID) = 0;
 };
 
 
@@ -96,7 +101,7 @@ public:
 	/// overridden from IITwinWebServicesObserver:
 	virtual void OnAuthorizationDone(bool bSuccess, std::string const& Error) override;
 	virtual void OnITwinsRetrieved(bool bSuccess, FITwinInfos const& Infos) override;
-	virtual void OnITwinInfoRetrieved(bool bSuccess, FITwinInfo const& Info) override;
+	virtual void OnITwinInfoRetrieved(bool bSuccess, AdvViz::SDK::ITwinInfo const& Info) override;
 	virtual void OnIModelsRetrieved(bool bSuccess, FIModelInfos const& Infos) override;
 	virtual void OnRealityDataRetrieved(bool bSuccess, FITwinRealityDataInfos const& Infos) override;
 	virtual void OnRealityData3DInfoRetrieved(bool bSuccess, FITwinRealityData3DInfo const& Info) override;
@@ -128,6 +133,9 @@ public:
 	virtual void OnTextureDataRetrieved(bool bSuccess, std::string const& textureId, AdvViz::SDK::ITwinTextureData const& textureData) override;
 	virtual void OnMatMLPredictionRetrieved(bool bSuccess, AdvViz::SDK::ITwinMaterialPrediction const& prediction, std::string const& error = {}) override;
 	virtual void OnMatMLPredictionProgress(float fProgressRatio) override;
+
+	virtual void OnGoogleCuratedContentAccessRetrieved(bool bSuccess,
+		AdvViz::SDK::ITwinGoogleCuratedContentAccess const& infos, HttpRequestID const& RequestID) override;
 
 protected:
 	virtual const TCHAR* GetObserverName() const = 0;

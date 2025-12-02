@@ -8,49 +8,29 @@
 
 #pragma once
 
-#include <CesiumMeshBuildCallbacks.h>
+#include <Cesium3DTilesetLifecycleEventReceiver.h>
+
+#include "ITwinSceneMappingBuilder.generated.h"
 
 class AITwinIModel;
 class FITwinSceneMapping;
 
-class FITwinSceneMappingBuilder : public ICesiumMeshBuildCallbacks
+UCLASS()
+class UITwinSceneMappingBuilder : public UObject, public ICesium3DTilesetLifecycleEventReceiver
 {
-	using Super = ICesiumMeshBuildCallbacks;
+	GENERATED_BODY()
 public:
-	FITwinSceneMappingBuilder(AITwinIModel& IModel);
+	void SetIModel(AITwinIModel& InIModel);
 
-	virtual void OnMeshConstructed(Cesium3DTilesSelection::Tile& Tile,
-		UStaticMeshComponent& MeshComponent, UMaterialInstanceDynamic& Material,
-		FCesiumMeshData const& CesiumData) override;
-
-	virtual void OnTileConstructed(const Cesium3DTilesSelection::Tile& Tile) override;
-
-	virtual void OnVisibilityChanged(const Cesium3DTilesSelection::TileID& TileID, bool visible) override;
-
-	virtual void BeforeTileDestruction(
-		const Cesium3DTilesSelection::Tile& Tile,
-		USceneComponent* TileGltfComponent) override;
-
-	enum class EPropertyType : uint8
-	{
-		Element,
-		Category,
-		Model,
-		Geometry,
-		Material
-	};
-
-	virtual UMaterialInstanceDynamic* CreateMaterial_GameThread(Cesium3DTilesSelection::Tile const& Tile,
-		UStaticMeshComponent const& MeshComponent, CesiumGltf::MeshPrimitive const* pMeshPrimitive,
-		UMaterialInterface*& pBaseMaterial, FCesiumModelMetadata const& Metadata,
-		FCesiumPrimitiveFeatures const& Features, UObject* InOuter, FName const& Name) override;
-
-	virtual void TuneMaterial(
-		CesiumGltf::Material const& glTFmaterial,
-		CesiumGltf::MaterialPBRMetallicRoughness const& pbr,
-		UMaterialInstanceDynamic* pMaterial,
-		EMaterialParameterAssociation association,
-		int32 index) const override;
+	void OnTileMeshPrimitiveLoaded(ICesiumLoadedTilePrimitive& TilePrim) override;
+	void OnTileLoaded(ICesiumLoadedTile& Tile) override;
+	void OnTileVisibilityChanged(ICesiumLoadedTile& Tile, bool visible) override;
+	void OnTileUnloading(ICesiumLoadedTile& Tile) override;
+	UMaterialInstanceDynamic* CreateMaterial(ICesiumLoadedTilePrimitive& TilePrim,
+		UMaterialInterface* pDefaultBaseMaterial, FName const& Name) override;
+	void CustomizeMaterial(ICesiumLoadedTilePrimitive& TilePrim,
+		UMaterialInstanceDynamic& Material, const UCesiumMaterialUserData* pCesiumData,
+		CesiumGltf::Material const& glTFmaterial) override;
 
 	/// Create a dummy mapping composed of just one tile using one material. Introduced to apply materials
 	/// from the Material Library to arbitrary meshes.
@@ -63,5 +43,5 @@ private:
 		UMaterialInterface*& pBaseMaterial, FCesiumModelMetadata const& Metadata,
 		FCesiumPrimitiveFeatures const& Features) const;
 
-	AITwinIModel& IModel;
+	AITwinIModel* IModel = nullptr;
 };

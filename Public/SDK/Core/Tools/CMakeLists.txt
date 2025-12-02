@@ -22,6 +22,7 @@ add_library(Tools OBJECT
 		IDelayedCallHandler.cpp
 		JsonCacheUtilities.h
 		JsonCacheUtilities.cpp
+		StringWithEncoding.h
 		StrongTypeId.h
 		LockableObject.h
 		CommonInterfaceClass.h

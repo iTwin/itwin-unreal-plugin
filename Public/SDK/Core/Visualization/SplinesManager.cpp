@@ -61,8 +61,9 @@ namespace AdvViz::SDK
 			std::array<double, 12> transform;
 			std::optional<std::string> userData;
 
-			std::optional<std::string> linkedModelType;
-			std::optional<std::string> linkedModelId;
+			std::optional<std::vector<SplineLinkedModel>> linkedModels;
+			std::optional<bool> enableEffect;
+			std::optional<bool> invertEffect;
 			std::optional<bool> closedLoop;
 		};
 
@@ -85,6 +86,8 @@ namespace AdvViz::SDK
 				return "PopulationZone";
 			case ESplineUsage::PopulationPath:
 				return "PopulationPath";
+			case ESplineUsage::AnimPath:
+				return "AnimPath";
 			}
 		}
 
@@ -100,6 +103,8 @@ namespace AdvViz::SDK
 				return ESplineUsage::PopulationZone;
 			else if (strUsage == "PopulationPath")
 				return ESplineUsage::PopulationPath;
+			else if (strUsage == "AnimPath")
+				return ESplineUsage::AnimPath;
 
 			BE_ISSUE("unknown spline usage", strUsage);
 			return ESplineUsage::Undefined;
@@ -186,11 +191,19 @@ namespace AdvViz::SDK
 			}
 			dst.transform = src.GetTransform();
 
-			auto const& linkedModelId = src.GetLinkedModelId();
-			if (!linkedModelId.empty())
+			auto const& linkedModels = src.GetLinkedModels();
+			if (!linkedModels.empty())
 			{
-				dst.linkedModelType = src.GetLinkedModelType();
-				dst.linkedModelId = linkedModelId;
+				auto& dstLinkedModels = dst.linkedModels.emplace();
+				dstLinkedModels = linkedModels;
+			}
+			if (src.GetInvertEffect())
+			{
+				dst.invertEffect = true;
+			}
+			if (!src.IsEnabledEffect())
+			{
+				dst.enableEffect = false;
 			}
 			return dst;
 		}
@@ -218,11 +231,21 @@ namespace AdvViz::SDK
 					dst.AddPoint()->SetId(src.pointIDs[i]);
 				}
 			}
-			if (src.linkedModelType && src.linkedModelId)
+			std::vector<SplineLinkedModel> linkedModels;
+			if (src.linkedModels)
 			{
-				dst.SetLinkedModelType(*src.linkedModelType);
-				dst.SetLinkedModelId(*src.linkedModelId);
+				linkedModels = *src.linkedModels;
 			}
+			// For compatibility with earlier versions: by default, cut-out was applied to the Google
+			// tileset only.
+			if (dst.GetUsage() == ESplineUsage::MapCutout
+				&& linkedModels.empty())
+			{
+				linkedModels.push_back({ .modelType = "GlobalMapLayer" });
+			}
+			dst.SetLinkedModels(linkedModels);
+			dst.EnableEffect(src.enableEffect.value_or(true));
+			dst.SetInvertEffect(src.invertEffect.value_or(false));
 		}
 
 		void LoadSplines(const std::string& decorationId)
@@ -577,6 +600,17 @@ namespace AdvViz::SDK
 			return {};
 		}
 
+		SharedSpline GetSplineByDBId(const std::string& id) const
+		{
+			auto it = std::find_if(splines_.begin(), splines_.end(),
+				[&id](SharedSpline const& spl) {
+					return spl->GetId().HasDBIdentifier() && spl->GetId().GetDBIdentifier() == id;
+				});
+			if (it != splines_.end())
+				return *it;
+			return {};
+		}
+
 		SharedSplineVect const& GetSplines() const
 		{
 			return splines_;
@@ -617,6 +651,19 @@ namespace AdvViz::SDK
 			}
 		}
 
+		void RestoreSpline(const SharedSpline& spline)
+		{
+			std::erase_if(removedSplines_, [&spline](const auto& removedSpline)
+			{
+				return removedSpline->GetId() == spline->GetId();
+			});
+			auto existingSpline = GetSplineById(spline->GetId());
+			if (!existingSpline)
+			{
+				splines_.push_back(spline);
+			}
+		}
+
 		bool HasSplines() const
 		{
 			return !splines_.empty();
@@ -627,11 +674,15 @@ namespace AdvViz::SDK
 			for (const auto& spline : splines_)
 			{
 				if (spline->ShouldSave())
-				{
 					return true;
-				}
 			}
-			return !removedSplines_.empty();
+			for (auto const& spline : removedSplines_)
+			{
+				auto const& splineId = spline->GetId();
+				if (splineId.HasDBIdentifier())
+					return true;
+			}
+			return false;
 		}
 
 		RefID GetLoadedSplineId(std::string const& splineDBIdentifier) const
@@ -665,6 +716,11 @@ namespace AdvViz::SDK
 		return GetImpl().GetSplineById(id);
 	}
 
+	SharedSpline SplinesManager::GetSplineByDBId(const std::string& id) const
+	{
+		return GetImpl().GetSplineByDBId(id);
+	}
+
 	SharedSplineVect const& SplinesManager::GetSplines() const
 	{
 		return GetImpl().GetSplines();
@@ -683,6 +739,11 @@ namespace AdvViz::SDK
 	void SplinesManager::RemoveSpline(const SharedSpline& spline)
 	{
 		GetImpl().RemoveSpline(spline);
+	}
+
+	void SplinesManager::RestoreSpline(const SharedSpline& spline)
+	{
+		GetImpl().RestoreSpline(spline);
 	}
 
 	bool SplinesManager::HasSplines() const

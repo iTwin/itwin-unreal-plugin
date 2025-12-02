@@ -12,7 +12,9 @@
 
 #include <Material/ITwinMaterialDefaultTexturesHolder.h>
 #include <Material/ITwinMaterialLibrary.h>
-#include <Material/TextureLoadingUtils.h>
+#include <Material/ITwinMaterialLoadingUtils.h>
+#include <Material/ITwinMaterialPreviewHolder.h>
+#include <Material/ITwinTextureLoadingUtils.h>
 
 #include <Network/JsonQueriesCache.h>
 #include <ITwinWebServices/ITwinWebServices.h>
@@ -24,7 +26,6 @@
 #include <ITwinIModel.h>
 #include <ITwinIModelInternals.h>
 #include <ITwinSceneMappingBuilder.h>
-#include <ITwinSynchro4DSchedules.h>
 
 #include <Components/StaticMeshComponent.h>
 #include <Engine/StaticMesh.h>
@@ -37,7 +38,8 @@
 
 #include <Compil/BeforeNonUnrealIncludes.h>
 #	include <BeBuildConfig/MaterialTuning.h>
-#	include <BeHeaders/Compil/CleanUpGuard.h>
+#	include <BeHeaders/Compil/AlwaysFalse.h>
+#	include <BeHeaders/Util/CleanUpGuard.h>
 #	include <BeUtils/Gltf/GltfMaterialHelper.h>
 #	include <BeUtils/Gltf/GltfMaterialTuner.h>
 #	include <BeUtils/Gltf/GltfTuner.h>
@@ -154,18 +156,29 @@ FITwinIModelMaterialHandler::GetMutableCustomMaterials()
 	return VisualizeMaterialMLPrediction() ? MLPredictionMaterials : ITwinMaterials;
 }
 
+namespace
+{
+	static FString BuildTextureDirectoryForIModel(AITwinIModel const* IModel,
+		FString const& DirNameIfNoModel = TEXT("Common"))
+	{
+		FString TextureDir = FPlatformProcess::UserSettingsDir();
+		if (!TextureDir.IsEmpty())
+		{
+			// TODO_JDE - Should it depend on the changeset?
+			FString const IModelId = IModel ? IModel->IModelId : DirNameIfNoModel;
+			TextureDir = FPaths::Combine(TextureDir,
+				TEXT("Bentley"), TEXT("Cache"), TEXT("Textures"), *IModelId);
+		}
+		return TextureDir;
+	}
+}
 
 void FITwinIModelMaterialHandler::InitTextureDirectory(AITwinIModel const* IModel)
 {
 	// In case we need to download textures, setup a destination folder depending on current iModel
-	FString TextureDir = FPlatformProcess::UserSettingsDir();
+	const FString TextureDir = BuildTextureDirectoryForIModel(IModel);
 	if (!TextureDir.IsEmpty())
 	{
-		// TODO_JDE - Should it depend on the changeset?
-		FString const IModelId = IModel ? IModel->IModelId : TEXT("Common");
-		TextureDir = FPaths::Combine(TextureDir,
-			TEXT("Bentley"), TEXT("Cache"), TEXT("Textures"),
-			*IModelId);
 		BeUtils::WLock Lock(GltfMatHelper->GetMutex());
 		GltfMatHelper->SetTextureDirectory(*TextureDir, Lock);
 	}
@@ -412,12 +425,12 @@ void FITwinIModelMaterialHandler::UpdateModelFromMatMLPrediction(bool bSuccess,
 				AdvViz::SDK::PerIModelTextureSet IModelTextures;
 				IModelTextures.emplace(IModelId, itIModelTex->second);
 
-				std::map<std::string, std::shared_ptr<BeUtils::GltfMaterialHelper>> IModelIdToMatHalper;
-				IModelIdToMatHalper.emplace(IModelId, GltfMatHelper);
+				std::map<std::string, std::shared_ptr<BeUtils::GltfMaterialHelper>> IModelIdToMatHelper;
+				IModelIdToMatHelper.emplace(IModelId, GltfMatHelper);
 
 				ITwin::ResolveDecorationTextures(*MatIOMngr,
 					IModelTextures, MatIOMngr->GetTextureUsageMap(),
-					IModelIdToMatHalper, false, &Lock);
+					IModelIdToMatHelper, false, &Lock);
 			}
 		}
 	}
@@ -440,8 +453,6 @@ void FITwinIModelMaterialHandler::UpdateModelFromMatMLPrediction(bool bSuccess,
 		{ TEXT("Steel"),			TEXT("Metal/Stainless_steel") },
 		{ TEXT("Wood"),				TEXT("Wood/Wood11") },
 	};
-	const FString MaterialLibraryPath = FString(TEXT("/Game/")) / ITwin::MAT_LIBRARY;
-
 
 	// Get the maximum material ID in the iModel.
 	uint64 MaxMaterialID = 0;
@@ -507,7 +518,7 @@ void FITwinIModelMaterialHandler::UpdateModelFromMatMLPrediction(bool bSuccess,
 			{
 				AdvViz::SDK::ITwinMaterial NewMaterial;
 				[[maybe_unused]] bool const bLoadOK = LoadMaterialWithoutRetuning(NewMaterial, MatID,
-					MaterialLibraryPath / mappingIt->AssetPath,
+					FITwinMaterialLibrary::GetBeLibraryPathForLoading(mappingIt->AssetPath),
 					IModel.IModelId, Lock);
 				ensureMsgf(bLoadOK, TEXT("Could not load material from %s"), *mappingIt->AssetPath);
 			}
@@ -777,7 +788,7 @@ void FITwinIModelMaterialHandler::SplitGltfModelForCustomMaterials(bool bForceRe
 
 void FITwinIModelMaterialHandler::Retune()
 {
-	GltfTuner->retune();
+	GltfTuner->trigger();
 }
 
 double FITwinIModelMaterialHandler::GetMaterialChannelIntensity(uint64_t MaterialId, AdvViz::SDK::EChannelType Channel) const
@@ -985,12 +996,12 @@ namespace
 				// channel) to discard the effect.
 				NewTexture = DefaultTexturesHolder.GetDefaultTextureForChannel(this->Channel);
 			}
-			else if (this->NewValue.eSource == AdvViz::SDK::ETextureSource::Library
+			else if (this->NewValue.eSource != AdvViz::SDK::ETextureSource::LocalDisk
 				&& !bHasBuiltMergedTexture)
 			{
-				// In packaged mode, there is no physical file for such textures => use Cesium asset accessor
+				// There may be no physical file yet for such textures => use Cesium asset accessor
 				// mechanism to deal with those textures.
-				NewTexture = ITwin::ResolveMatLibraryTexture(GltfMatHelper, NewTexPath);
+				NewTexture = ITwin::ResolveAsUnrealTexture(GltfMatHelper, NewTexPath, this->NewValue.eSource);
 			}
 			else
 			{
@@ -1451,7 +1462,7 @@ bool FITwinIModelMaterialHandler::GetMaterialCustomRequirements(uint64_t Materia
 bool FITwinIModelMaterialHandler::LoadMaterialWithoutRetuning(
 	AdvViz::SDK::ITwinMaterial& OutNewMaterial,
 	uint64_t MaterialId,
-	FString const& AssetFilePath,
+	FMaterialAssetInfo const& MaterialAssetInfo,
 	FString const& IModelId,
 	BeUtils::WLock const& Lock,
 	bool bForceRefreshAllParameters /*= false*/)
@@ -1465,15 +1476,60 @@ bool FITwinIModelMaterialHandler::LoadMaterialWithoutRetuning(
 		return false;
 	}
 
+	// List of all channels which can hold a texture:
+	auto const ChansWithTex = {
+		AdvViz::SDK::EChannelType::Color,
+		AdvViz::SDK::EChannelType::Metallic,
+		AdvViz::SDK::EChannelType::Normal,
+		AdvViz::SDK::EChannelType::Roughness,
+		AdvViz::SDK::EChannelType::Opacity,
+		AdvViz::SDK::EChannelType::AmbientOcclusion,
+	};
+
 	ITwinMaterial& NewMaterial(OutNewMaterial);
 	TextureKeySet NewTextures;
 	TextureUsageMap NewTextureUsageMap;
 	ETextureSource TexSource = ETextureSource::Library;
-	if (!FITwinMaterialLibrary::LoadMaterialFromAssetPath(AssetFilePath, NewMaterial,
-		NewTextures, NewTextureUsageMap, TexSource, MatIOMngr))
+
+	bool bValidMaterial = false;
+	std::visit([&](auto&& AssetInfo)
+	{
+		using T = std::decay_t<decltype(AssetInfo)>;
+		if constexpr (std::is_same_v<T, FString>)
+		{
+			// This is the path to a material file.
+			bValidMaterial = FITwinMaterialLibrary::LoadMaterialFromAssetPath(AssetInfo, NewMaterial,
+				NewTextures, NewTextureUsageMap, TexSource, MatIOMngr);
+		}
+		else if constexpr (std::is_same_v<T, ITwin::FMaterialPtr>)
+		{
+			if (AssetInfo)
+			{
+				NewMaterial = *AssetInfo;
+				TexSource = ETextureSource::LocalDisk;
+				bValidMaterial = true;
+
+				// Gather textures used by this material.
+				for (auto eChan : ChansWithTex)
+				{
+					auto const MapOpt = NewMaterial.GetChannelMapOpt(eChan);
+					if (MapOpt && MapOpt->HasTexture())
+					{
+						const TextureKey texKey = { MapOpt->texture, MapOpt->eSource };
+						NewTextures.insert(texKey);
+						NewTextureUsageMap[texKey].AddChannel(eChan);
+					}
+				}
+			}
+		}
+		else static_assert(always_false_v<T>, "non-exhaustive visitor!");
+	}, MaterialAssetInfo);
+
+	if (!bValidMaterial)
 	{
 		return false;
 	}
+
 	// If no color map is defined, ensure we use the NONE_TEXTURE tag in order to *remove* any imported
 	// iTwin color texture.
 	if (!NewMaterial.GetChannelMapOpt(EITwinChannelType::Color))
@@ -1488,14 +1544,6 @@ bool FITwinIModelMaterialHandler::LoadMaterialWithoutRetuning(
 	{
 		// Set NONE_TEXTURE in all unused slot, to enforce material update in UE (typically for the material
 		// preview...)
-		auto const ChansWithTex = {
-			AdvViz::SDK::EChannelType::Color,
-			AdvViz::SDK::EChannelType::Metallic,
-			AdvViz::SDK::EChannelType::Normal,
-			AdvViz::SDK::EChannelType::Roughness,
-			AdvViz::SDK::EChannelType::Opacity,
-			AdvViz::SDK::EChannelType::AmbientOcclusion,
-		};
 		for (auto eChan : ChansWithTex)
 		{
 			if (!NewMaterial.GetChannelMapOpt(eChan))
@@ -1516,15 +1564,14 @@ bool FITwinIModelMaterialHandler::LoadMaterialWithoutRetuning(
 		std::string const imodelId = TCHAR_TO_UTF8(*IModelId);
 
 		PerIModelTextureSet PerModelTextures;
-		std::map<std::string, std::shared_ptr<BeUtils::GltfMaterialHelper>> imodelIdToMatHalper;
+		std::map<std::string, std::shared_ptr<BeUtils::GltfMaterialHelper>> imodelIdToMatHelper;
 		PerModelTextures.emplace(imodelId, NewTextures);
-		imodelIdToMatHalper.emplace(imodelId, GltfMatHelper);
+		imodelIdToMatHelper.emplace(imodelId, GltfMatHelper);
 
-		// No authorization is needed here (textures present locally...)
 		if (!ITwin::ResolveDecorationTextures(
 			*MatIOMngr,
 			PerModelTextures, NewTextureUsageMap,
-			imodelIdToMatHalper,
+			imodelIdToMatHelper,
 			/*bResolveLocalDiskTextures =*/ TexSource == ETextureSource::LocalDisk,
 			&Lock))
 		{
@@ -1538,7 +1585,7 @@ bool FITwinIModelMaterialHandler::LoadMaterialWithoutRetuning(
 }
 
 bool FITwinIModelMaterialHandler::LoadMaterialFromAssetFile(uint64_t MaterialId,
-	FString const& AssetFilePath,
+	FMaterialAssetInfo const& MaterialAssetInfo,
 	FString const& IModelId,
 	FITwinSceneMapping& SceneMapping,
 	UITwinMaterialDefaultTexturesHolder const& DefaultTexturesHolder,
@@ -1570,7 +1617,7 @@ bool FITwinIModelMaterialHandler::LoadMaterialFromAssetFile(uint64_t MaterialId,
 		GltfMatHelper->StoreInitialAlphaModeIfNeeded(MaterialId, CurrentAlphaMode, Lock);
 
 		// Actually load the material.
-		if (!LoadMaterialWithoutRetuning(NewMaterial, MaterialId, AssetFilePath, IModelId,
+		if (!LoadMaterialWithoutRetuning(NewMaterial, MaterialId, MaterialAssetInfo, IModelId,
 										 Lock, bForceRefreshAllParameters))
 		{
 			return false;
@@ -1762,7 +1809,8 @@ FITwinIModelMaterialHandler::MaterialPersistencePtr const& FITwinIModelMaterialH
 		return GetGlobalPersistenceManager();
 }
 
-void FITwinIModelMaterialHandler::InitForSingleMaterial(FString const& IModelId, uint64_t const MaterialId)
+void FITwinIModelMaterialHandler::InitForSingleMaterial(FString const& IModelId, uint64_t const MaterialId,
+	std::shared_ptr<BeUtils::GltfMaterialHelper> const& SrcIModelMatHelper)
 {
 	// Do not call Initialize: here we do not want to use any glTF tuner nor iModel: we just want to edit
 	// the material instance through the SceneMapping updates.
@@ -1774,18 +1822,37 @@ void FITwinIModelMaterialHandler::InitForSingleMaterial(FString const& IModelId,
 	{
 		BeUtils::WLock Lock(GltfMatHelper->GetMutex());
 		GltfMatHelper->CreateITwinMaterialSlot(MaterialId, "DUMMY_MAT", Lock);
+
+		if (SrcIModelMatHelper)
+		{
+			// By copying the texture data map, we fasten the generation of the preview computed for the UI,
+			// as we will reuse both merged texture (metallic+roughness...) and textures downloaded in cache
+			// (for iTwin source, coming from the MES).
+			// During export, this is not as important since the textures were just duplicated in a new
+			// directory.
+			GltfMatHelper->CopyTextureDataFrom(*SrcIModelMatHelper, Lock);
+		}
+		else
+		{
+			// Make sure the material helper has a valid texture directory in case it needs to merge some
+			// channels together (metallic+roughness, color+alpha...)
+			GltfMatHelper->SetTextureDirectory(
+				*BuildTextureDirectoryForIModel(nullptr, IModelId), Lock, true /*bCreateAtOnce*/);
+		}
 	}
 }
 
 namespace ITwin
 {
-	ITWINRUNTIME_API bool LoadMaterialOnGenericMesh(FString const& AssetFilePath, AStaticMeshActor& MeshActor)
+	ITWINRUNTIME_API bool LoadMaterialOnGenericMesh(FMaterialAssetInfo const& MaterialAssetInfo,
+		AStaticMeshActor& MeshActor,
+		std::shared_ptr<BeUtils::GltfMaterialHelper> const& SrcIModelMatHelper /*= {}*/)
 	{
 		using namespace AdvViz::SDK;
 
 		// Use default values for iModel and material ID (it has to be constant so that the mechanism of
-		// incremental updates works correctly when generating a batch of previews.
-		FString const IModelId = TEXT("DUMMY_IMODEL_ID");
+		// incremental updates works correctly when generating a batch of previews).
+		FString const IModelId = TEXT("PREVIEW_IMODEL_ID");
 		uint64_t const MaterialId = 0;
 
 		// Use a distinct material handler for each preview mesh.
@@ -1806,45 +1873,62 @@ namespace ITwin
 			// Use a temporary persistence manager, to avoid messing real materials.
 			std::shared_ptr<AdvViz::SDK::MaterialPersistenceManager> SpecificPersistenceMngr;
 			SpecificPersistenceMngr = std::make_shared<AdvViz::SDK::MaterialPersistenceManager>();
-			FString const MaterialLibraryPath = FPaths::ProjectContentDir() / ITwin::MAT_LIBRARY;
-			SpecificPersistenceMngr->SetMaterialLibraryDirectory(TCHAR_TO_UTF8(*MaterialLibraryPath));
+			auto const& GlobalPersistenceMngr = FITwinIModelMaterialHandler::GetGlobalPersistenceManager();
+			if (ensure(GlobalPersistenceMngr))
+			{
+				SpecificPersistenceMngr->CopyPathsAndURLsFrom(*GlobalPersistenceMngr);
+			}
 
 			MaterialHandler->SetSpecificPersistenceManager(SpecificPersistenceMngr);
-			MaterialHandler->InitForSingleMaterial(IModelId, MaterialId);
+			MaterialHandler->InitForSingleMaterial(IModelId, MaterialId, SrcIModelMatHelper);
 			PerMeshMaterialHandlers[MeshComponent] = MaterialHandler;
 		}
 
+		bool bValidMaterial = false;
 		ITwinMaterial NewMaterial;
-		TextureKeySet NewTextures;
-		TextureUsageMap NewTextureUsageMap;
-		ETextureSource TexSource = ETextureSource::Library;
-		if (!FITwinMaterialLibrary::LoadMaterialFromAssetPath(AssetFilePath, NewMaterial,
-			NewTextures, NewTextureUsageMap, TexSource,
-			MaterialHandler->GetPersistenceManager()))
+
+		std::visit([&](auto&& AssetInfo)
+		{
+			using T = std::decay_t<decltype(AssetInfo)>;
+			if constexpr (std::is_same_v<T, FString>)
+			{
+				// This is the path to a material file.
+				TextureKeySet NewTextures;
+				TextureUsageMap NewTextureUsageMap;
+				ETextureSource TexSource = ETextureSource::Library;
+				bValidMaterial = FITwinMaterialLibrary::LoadMaterialFromAssetPath(AssetInfo, NewMaterial,
+					NewTextures, NewTextureUsageMap, TexSource,
+					MaterialHandler->GetPersistenceManager());
+			}
+			else if constexpr (std::is_same_v<T, ITwin::FMaterialPtr>)
+			{
+				if (AssetInfo)
+				{
+					NewMaterial = *AssetInfo;
+					bValidMaterial = true;
+				}
+			}
+			else static_assert(always_false_v<T>, "non-exhaustive visitor!");
+		}, MaterialAssetInfo);
+
+		if (!bValidMaterial)
 		{
 			return false;
 		}
 
-		UITwinSynchro4DSchedules* SchedulesComp = Cast<UITwinSynchro4DSchedules>(
-			UITwinSynchro4DSchedules::StaticClass()->GetDefaultObject());
+		UITwinMaterialPreviewHolder* MatPreviewComp = Cast<UITwinMaterialPreviewHolder>(
+			UITwinMaterialPreviewHolder::StaticClass()->GetDefaultObject());
 		UMaterialInterface* pBaseMaterial = nullptr;
 		if (NewMaterial.kind == AdvViz::SDK::EMaterialKind::PBR)
 		{
-			if (NewMaterial.GetChannelIntensityOpt(AdvViz::SDK::EChannelType::Alpha).value_or(1.) < 1.)
-			{
-				pBaseMaterial = SchedulesComp->BaseMaterialTranslucent;
-			}
+			if (NewMaterial.GetChannelIntensityOpt(AdvViz::SDK::EChannelType::Opacity).value_or(1.) < 1.)
+				pBaseMaterial = MatPreviewComp->BaseMaterialTranslucent;
 			else
-			{
-				// Use a special, 100% opaque, variant of our material (introduced for this purpose, because
-				// due to the way our Masked material is designed, it renders 100% transparent on arbitrary
-				// meshes).
-				pBaseMaterial = SchedulesComp->BaseMaterialOpaque;
-			}
+				pBaseMaterial = MatPreviewComp->BaseMaterialMasked;
 		}
 		else // Glass
 		{
-			pBaseMaterial = SchedulesComp->BaseMaterialGlass;
+			pBaseMaterial = MatPreviewComp->BaseMaterialGlass;
 		}
 		if (!ensure(IsValid(pBaseMaterial)))
 		{
@@ -1866,9 +1950,9 @@ namespace ITwin
 		DefaultTexturesHolder->RegisterComponent();
 
 		FITwinSceneMapping SceneMapping(false);
-		FITwinSceneMappingBuilder::BuildFromNonCesiumMesh(SceneMapping, MeshComponent, MaterialId);
+		UITwinSceneMappingBuilder::BuildFromNonCesiumMesh(SceneMapping, MeshComponent, MaterialId);
 
-		return MaterialHandler->LoadMaterialFromAssetFile(MaterialId, AssetFilePath,
+		return MaterialHandler->LoadMaterialFromAssetFile(MaterialId, MaterialAssetInfo,
 			IModelId, SceneMapping,
 			*DefaultTexturesHolder,
 			true /*bForceRefreshAllParameters*/,
@@ -1920,7 +2004,7 @@ static FAutoConsoleCommandWithWorldAndArgs FCmd_ITwinSetMaterialToMesh(
 	}
 
 	ITwin::LoadMaterialOnGenericMesh(
-		FString(TEXT("/Game/")) / ITwin::MAT_LIBRARY / MaterialName,
+		FITwinMaterialLibrary::GetBeLibraryPathForLoading(MaterialName),
 		*EditedMesh);
 }));
 

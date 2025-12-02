@@ -15,13 +15,15 @@
 #include <Engine/World.h>
 
 #include <Compil/BeforeNonUnrealIncludes.h>
+#	include <BeUtils/Misc/RWLock.h>
+#	include <Core/ITwinAPI/ITwinTypes.h>
 #	include <Core/Tools/Log.h>
 #include <Compil/AfterNonUnrealIncludes.h>
 
 namespace ITwin
 {
-	extern void LoadDecoration(FString const& ITwinID, UWorld* World);
-	extern void SaveDecoration(FString const& ITwinID, UWorld const* World);
+	extern void LoadScene(FString const& ITwinID, UWorld* World);
+	extern void SaveScene(FString const& ITwinID, UWorld const* World);
 }
 
 class AITwinDigitalTwin::FImpl
@@ -37,6 +39,18 @@ public:
 		LoadDecoration
 	};
 	EOperationUponAuth PendingOperation = EOperationUponAuth::None;
+
+	// iTwin info
+	std::shared_mutex ITwinInfoMutex;
+	enum class EITwinInfoRequestStatus : uint8_t
+	{
+		NotStarted,
+		InProgress,
+		Done
+	};
+	EITwinInfoRequestStatus ITwinInfoRequestStatus = EITwinInfoRequestStatus::NotStarted;
+	std::optional<AdvViz::SDK::ITwinGeolocationInfo> GeolocInfo;
+
 
 	FImpl(AITwinDigitalTwin& InOwner)
 		: Owner(InOwner)
@@ -79,15 +93,32 @@ void AITwinDigitalTwin::UpdateOnSuccessfulAuthorization()
 	Impl->PendingOperation = FImpl::EOperationUponAuth::None;
 }
 
-void AITwinDigitalTwin::OnITwinInfoRetrieved(bool bSuccess, FITwinInfo const& Info)
+void AITwinDigitalTwin::OnITwinInfoRetrieved(bool bSuccess, AdvViz::SDK::ITwinInfo const& Info)
 {
+	BeUtils::WLock WLock(Impl->ITwinInfoMutex);
 	if (bSuccess)
 	{
-		checkf(ITwinId == Info.Id, TEXT("mismatch in iTwin ID (%s vs %s)"), *ITwinId, *Info.Id);
+		ensureMsgf(ITwinId == ANSI_TO_TCHAR(Info.id.c_str()),
+			TEXT("mismatch in iTwin ID (%s vs %s)"), *ITwinId, ANSI_TO_TCHAR(Info.id.c_str()));
 #if WITH_EDITOR
-		SetActorLabel(Info.DisplayName);
+		SetActorLabel(UTF8_TO_TCHAR(Info.displayName.value_or(std::u8string()).c_str()));
 #endif
+		// Store latitude & longitude registered at the iTwin level.
+		// TODO_JDE We could/should use it to customize the default geo-location as in iTwin Engage
+		if (Info.latitude && Info.longitude)
+		{
+			Impl->GeolocInfo.emplace(AdvViz::SDK::ITwinGeolocationInfo
+				{
+					.latitude = *Info.latitude,
+					.longitude = *Info.longitude
+				});
+		}
+		else
+		{
+			Impl->GeolocInfo.reset();
+		}
 	}
+	Impl->ITwinInfoRequestStatus = FImpl::EITwinInfoRequestStatus::Done;
 }
 
 void AITwinDigitalTwin::OnIModelsRetrieved(bool bSuccess, FIModelInfos const& IModelInfos)
@@ -152,10 +183,13 @@ void AITwinDigitalTwin::UpdateITwin()
 		return;
 	}
 
-#if WITH_EDITOR
 	// make a request to get the display name
+	// (we could possibly use the optional iTwin's geo-location...)
 	WebServices->GetITwinInfo(ITwinId);
-#endif
+	{
+		BeUtils::WLock WLock(Impl->ITwinInfoMutex);
+		Impl->ITwinInfoRequestStatus = FImpl::EITwinInfoRequestStatus::InProgress;
+	}
 
 	// fetch iModels
 	WebServices->GetiTwiniModels(ITwinId);
@@ -178,12 +212,12 @@ void AITwinDigitalTwin::LoadDecoration()
 		Impl->PendingOperation = FImpl::EOperationUponAuth::LoadDecoration;
 		return;
 	}
-	ITwin::LoadDecoration(ITwinId, GetWorld());
+	ITwin::LoadScene(ITwinId, GetWorld());
 }
 
 void AITwinDigitalTwin::SaveDecoration()
 {
-	ITwin::SaveDecoration(ITwinId, GetWorld());
+	ITwin::SaveScene(ITwinId, GetWorld());
 }
 
 #if WITH_EDITOR

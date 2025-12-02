@@ -8,12 +8,17 @@
 
 
 #include <ITwinTilesetAccess.h>
+
 #include <ITwinGoogle3DTileset.h>
+#include <ITwinIModel.h>
+#include <ITwinRealityData.h>
 
 #include "ITwinTilesetAccess.inl"
 #include <Decoration/ITwinDecorationHelper.h>
 #include <Math/UEMathExts.h>
 #include <CesiumPolygonRasterOverlay.h>
+
+#include <EngineUtils.h> // for TActorIterator<>
 
 namespace ITwin
 {
@@ -73,10 +78,58 @@ namespace ITwin
 		Tileset.AddInstanceComponent(RasterOverlay);
 		RasterOverlay->RegisterComponent();
 	}
+
+	template <class TITwinTilesetOwner>
+	inline void TIterateAllITwinTilesets(VisitTilesetFunction const& VisitFunc, UWorld* World)
+	{
+		using ITwinActorIterator = TActorIterator<TITwinTilesetOwner>;
+		for (ITwinActorIterator ITwinActorIter(World); ITwinActorIter; ++ITwinActorIter)
+		{
+			auto TilesetAccess = (*ITwinActorIter)->MakeTilesetAccess();
+			if (TilesetAccess)
+			{
+				VisitFunc(*TilesetAccess);
+			}
+		}
+	}
+
+	void IterateAllITwinTilesets(VisitTilesetFunction const& VisitFunc, UWorld* World)
+	{
+		if (!ensure(World))
+			return;
+		TIterateAllITwinTilesets<AITwinIModel>(VisitFunc, World);
+		TIterateAllITwinTilesets<AITwinRealityData>(VisitFunc, World);
+		TIterateAllITwinTilesets<AITwinGoogle3DTileset>(VisitFunc, World);
+	}
+
+	TUniquePtr<FITwinTilesetAccess> GetTilesetAccess(AActor* Actor)
+	{
+		AITwinGoogle3DTileset* GoogleTileset = Cast<AITwinGoogle3DTileset>(Actor);
+		if (GoogleTileset)
+		{
+			return GoogleTileset->MakeTilesetAccess();
+		}
+		AActor* TilesetOwner = Actor;
+		if (Actor->IsA(ACesium3DTileset::StaticClass()))
+		{
+			TilesetOwner = Actor->GetOwner();
+		}
+		AITwinIModel* IModel = Cast<AITwinIModel>(TilesetOwner);
+		if (IModel)
+		{
+			return IModel->MakeTilesetAccess();
+		}
+		AITwinRealityData* RealityData = Cast<AITwinRealityData>(TilesetOwner);
+		if (RealityData)
+		{
+			return RealityData->MakeTilesetAccess();
+		}
+		return {};
+	}
 }
 
 
-FITwinTilesetAccess::FITwinTilesetAccess(AActor& TilesetOwnerActor)
+FITwinTilesetAccess::FITwinTilesetAccess(AActor* TilesetOwnerActor)
 	: TilesetOwner(TilesetOwnerActor)
 {
 }
@@ -88,12 +141,12 @@ FITwinTilesetAccess::~FITwinTilesetAccess()
 
 const ACesium3DTileset* FITwinTilesetAccess::GetTileset() const
 {
-	return ITwin::TGetTileset<ACesium3DTileset const>(TilesetOwner);
+	return IsValid() ? ITwin::TGetTileset<ACesium3DTileset const>(*TilesetOwner) : nullptr;
 }
 
-ACesium3DTileset* FITwinTilesetAccess::GetMutableTileset()
+ACesium3DTileset* FITwinTilesetAccess::GetMutableTileset() const
 {
-	return ITwin::TGetTileset<ACesium3DTileset>(TilesetOwner);
+	return IsValid() ? ITwin::TGetTileset<ACesium3DTileset>(*TilesetOwner) : nullptr;
 }
 
 bool FITwinTilesetAccess::HasTileset() const
@@ -102,7 +155,7 @@ bool FITwinTilesetAccess::HasTileset() const
 }
 
 // Visibility
-void FITwinTilesetAccess::HideTileset(bool bHide)
+void FITwinTilesetAccess::HideTileset(bool bHide) const
 {
 	ACesium3DTileset* Tileset = GetMutableTileset();
 	if (!Tileset)
@@ -144,7 +197,7 @@ float FITwinTilesetAccess::GetTilesetQuality() const
 	}
 }
 
-void FITwinTilesetAccess::SetTilesetQuality(float Value)
+void FITwinTilesetAccess::SetTilesetQuality(float Value) const
 {
 	ACesium3DTileset* Tileset = GetMutableTileset();
 	if (!Tileset)
@@ -167,13 +220,18 @@ void FITwinTilesetAccess::SetTilesetQuality(float Value)
 
 void FITwinTilesetAccess::GetModelOffset(FVector& Pos, FVector& Rot) const
 {
-	Pos = TilesetOwner.GetActorLocation() / 100.0;
-	Rot = TilesetOwner.GetActorRotation().Euler();
+	if (IsValid())
+	{
+		Pos = TilesetOwner->GetActorLocation() / 100.0;
+		Rot = TilesetOwner->GetActorRotation().Euler();
+	}
 }
 
-void FITwinTilesetAccess::SetModelOffset(const FVector& Pos, const FVector& Rot)
+void FITwinTilesetAccess::SetModelOffset(const FVector& Pos, const FVector& Rot) const
 {
-	TilesetOwner.SetActorLocationAndRotation(Pos, FQuat::MakeFromEuler(Rot));
+	if (!IsValid())
+		return;
+	TilesetOwner->SetActorLocationAndRotation(Pos, FQuat::MakeFromEuler(Rot));
 	// SetActorLocationAndRotation already calls that, and only when needed (SetModelOffset gets called from
 	// Carrot UI even when merely clicking into then away from the offset edit fields!)
 	//OnIModelOffsetChanged();
@@ -183,42 +241,51 @@ void FITwinTilesetAccess::SetModelOffset(const FVector& Pos, const FVector& Rot)
 	{
 		auto const DecoKey = GetDecorationKey();
 		ITwinSceneInfo SceneInfo = DecoHelper->GetSceneInfo(DecoKey);
-		if (!SceneInfo.Offset.has_value() || !SceneInfo.Offset->Equals(TilesetOwner.GetTransform()))
+		if (!SceneInfo.Offset.has_value() || !SceneInfo.Offset->Equals(TilesetOwner->GetTransform()))
 		{
-			SceneInfo.Offset = TilesetOwner.GetTransform();
+			SceneInfo.Offset = TilesetOwner->GetTransform();
 			DecoHelper->SetSceneInfo(DecoKey, SceneInfo);
 		}
 	}
 }
 
-void FITwinTilesetAccess::OnModelOffsetLoaded()
+void FITwinTilesetAccess::OnModelOffsetLoaded() const
 {
 
 }
 
-void FITwinTilesetAccess::ApplyLoadedInfo(ITwinSceneInfo const& SceneInfo, bool bIsModelFullyLoaded)
+void FITwinTilesetAccess::ApplyLoadedInfo(ITwinSceneInfo const& SceneInfo, bool bIsModelFullyLoaded) const
 {
-	if (SceneInfo.Offset)
+	if (SceneInfo.Offset && ensure(IsValid()))
 	{
 		// Beware we can call this twice for iModels: first during scene loading, and then when the model is
 		// fully loaded.
 		if (bIsModelFullyLoaded)
 		{
 			// Avoid doing a costly refresh if nothing has changed
-			if (!FITwinMathExts::StrictlyEqualTransforms(TilesetOwner.GetActorTransform(), *SceneInfo.Offset))
+			if (!FITwinMathExts::StrictlyEqualTransforms(TilesetOwner->GetActorTransform(), *SceneInfo.Offset))
 			{
-				TilesetOwner.SetActorTransform(*SceneInfo.Offset, false, nullptr, ETeleportType::TeleportPhysics);
+				TilesetOwner->SetActorTransform(*SceneInfo.Offset, false, nullptr, ETeleportType::TeleportPhysics);
 				OnModelOffsetLoaded();
 			}
 		}
 		else
 		{
 			// The model is not yet loaded => just update the actor transformation.
-			TilesetOwner.SetActorTransform(*SceneInfo.Offset, true);
+			TilesetOwner->SetActorTransform(*SceneInfo.Offset, true);
 		}
 	}
 	if (SceneInfo.Visibility)
 		HideTileset(!*SceneInfo.Visibility);
 	if (SceneInfo.Quality)
 		SetTilesetQuality(*SceneInfo.Quality);
+}
+
+void FITwinTilesetAccess::RefreshTileset() const
+{
+	// Default behavior consists in just calling the corresponding method on the tileset.
+	// (See AITwinIModel::FTilesetAccess override...)
+	ACesium3DTileset* Tileset = GetMutableTileset();
+	if (Tileset)
+		Tileset->RefreshTileset();
 }

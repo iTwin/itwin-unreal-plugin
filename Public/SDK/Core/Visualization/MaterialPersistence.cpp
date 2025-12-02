@@ -58,6 +58,8 @@ namespace AdvViz::SDK
 		std::string GetRelativeURL(TextureKey const& textureKey) const;
 		std::string GetTextureURL(TextureKey const& textureKey) const;
 
+		void CopyPathsAndURLsFrom(Impl const& other);
+
 		PerIModelTextureSet const& GetDecorationTexturesByIModel() const { return perIModelTextures_; }
 		TextureUsageMap const& GetTextureUsageMap() const { return textureUsageMap_; }
 		TextureUsage GetTextureUsage(TextureKey const& textureKey) const;
@@ -506,6 +508,9 @@ namespace AdvViz::SDK
 			std::filesystem::canonical(texPath, ec).generic_string());
 		std::string const basename = fmt::format("{0:#x}_{1}",
 			pathHash, texPath.filename().generic_string());
+
+		BE_LOGI("ITwinDecoration", "Uploading texture " << filePath << " as " << basename << "...");
+
 		auto const r = GetHttp()->PostFile(
 			"decorations/" + decorationId + "/files",
 			"file", filePath, { { "filename", basename } });
@@ -519,7 +524,7 @@ namespace AdvViz::SDK
 			Lock lock(dataMutex_);
 			localToDecoTexId_.emplace(filePath, basename);
 
-			BE_LOGI("ITwinDecoration", "Uploaded texture " << filePath << " as " << basename);
+			BE_LOGI("ITwinDecoration", "Uploaded texture " << filePath);
 		}
 		else
 		{
@@ -625,6 +630,14 @@ namespace AdvViz::SDK
 	std::string MaterialPersistenceManager::Impl::GetTextureURL(TextureKey const& textureKey) const
 	{
 		return GetBaseURL(textureKey.eSource) + GetRelativeURL(textureKey);
+	}
+
+	void MaterialPersistenceManager::Impl::CopyPathsAndURLsFrom(Impl const& other)
+	{
+		decorationBaseURL_ = other.decorationBaseURL_;
+		decorationFilesRelativeURL_ = other.decorationFilesRelativeURL_;
+		materialLibraryURL_ = other.materialLibraryURL_;
+		materialDirectory_ = other.materialDirectory_;
 	}
 
 
@@ -1322,6 +1335,7 @@ namespace AdvViz::SDK
 					&& !value.empty()
 					&& value != "\"\""
 					&& value != "\"0\""
+					&& !value.starts_with("\"<") /* avoid losing symbolic prefix such as <MatLibrary> */
 					&& !value.ends_with("/0\""))
 				{
 					auto baseName = std::filesystem::path(trimPath(value)).filename();
@@ -1381,6 +1395,11 @@ namespace AdvViz::SDK
 	MaterialPersistenceManager::~MaterialPersistenceManager()
 	{
 
+	}
+
+	void MaterialPersistenceManager::CopyPathsAndURLsFrom(MaterialPersistenceManager const& other)
+	{
+		GetImpl().CopyPathsAndURLsFrom(other.GetImpl());
 	}
 
 	void MaterialPersistenceManager::SetHttp(std::shared_ptr<Http> http)

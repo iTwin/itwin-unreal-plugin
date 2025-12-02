@@ -19,73 +19,44 @@
 #	include <Core/Tools/Types.h>
 #include <Compil/AfterNonUnrealIncludes.h>
 
-class FITwinMathConversion
+inline AdvViz::SDK::double3 toAdvizSdk(FVector const& ueVec)
+{
+	return AdvViz::SDK::double3{ ueVec.X, ueVec.Y, ueVec.Z };
+}
+
+inline AdvViz::SDK::dmat4x4 toAdvizSdk(FMatrix const& ueMat) // SDK::dmat4x4 (glm) matrix is colomn+major, FMatrix is row-major 
+{
+	AdvViz::SDK::dmat4x4 sdkMat;
+	for (int32 i = 0; i < 4; ++i)
+		for (int32 j = 0; j < 4; ++j)
+			AdvViz::SDK::ColRow4x4(sdkMat,i,j) = ueMat.M[i][j];
+	return sdkMat;
+}
+
+inline FVector toUnreal(AdvViz::SDK::double3 const& sdkVec)
+{
+	return FVector(sdkVec[0], sdkVec[1], sdkVec[2]);
+}
+
+inline FMatrix toUnreal(AdvViz::SDK::dmat4x4 const& sdkMat) // SDK::dmat4x4 (glm) matrix is colomn+major, FMatrix is row-major 
+{
+	FMatrix ueMat;
+	for (int32 i = 0; i < 4; ++i)
+		for (int32 j = 0; j < 4; ++j)
+			ueMat.M[i][j] = AdvViz::SDK::ColRow4x4(sdkMat, i, j);
+	return ueMat;
+}
+
+class ITWINRUNTIME_API FITwinMathConversion
 {
 public:
+
+	static AdvViz::SDK::Tools::IGCSTransformPtr transform_;
 	// Vector
-	[[nodiscard]] static AdvViz::SDK::double3 UEtoSDK(FVector const& ueVec)
-	{
-		AdvViz::SDK::double3 sdkVec;
-		sdkVec[0] = ueVec.X;
-		sdkVec[1] = ueVec.Y;
-		sdkVec[2] = ueVec.Z;
-		return sdkVec;
-	}
-
-	[[nodiscard]] static FVector SDKtoUE(AdvViz::SDK::double3 const& sdkVec)
-	{
-		FVector ueVec;
-		ueVec.X = sdkVec[0];
-		ueVec.Y = sdkVec[1];
-		ueVec.Z = sdkVec[2];
-		return ueVec;
-	}
-
+	[[nodiscard]] static AdvViz::SDK::double3 UEtoSDK(FVector const& ueVec, bool applyGCS = true);
+	[[nodiscard]] static FVector SDKtoUE(AdvViz::SDK::double3 const& sdkVec, bool applyGCS = true);
 	// Transform
-	[[nodiscard]] static AdvViz::SDK::dmat3x4 UEtoSDK(FTransform const& ueTransform)
-	{
-		using namespace AdvViz::SDK;
-
-		AdvViz::SDK::dmat3x4 sdkTransform;
-
-		FMatrix srcMat = ueTransform.ToMatrixWithScale();
-		FVector srcPos = ueTransform.GetTranslation();
-
-		for (int32 i = 0; i < 3; ++i)
-		{
-			for (int32 j = 0; j < 3; ++j)
-			{
-				ColRow3x4(sdkTransform,j,i) = srcMat.M[i][j];
-			}
-		}
-		ColRow3x4(sdkTransform, 0, 3) = srcPos.X;
-		ColRow3x4(sdkTransform, 1, 3) = srcPos.Y;
-		ColRow3x4(sdkTransform, 2, 3) = srcPos.Z;
-		return sdkTransform;
-	}
-
-	[[nodiscard]] static FTransform SDKtoUE(AdvViz::SDK::dmat3x4 const& sdkTransform)
-	{
-		using namespace AdvViz::SDK;
-
-		FMatrix ueMat(FMatrix::Identity);
-		for (unsigned i = 0; i < 3; ++i)
-		{
-			for (unsigned j = 0; j < 3; ++j)
-			{
-				ueMat.M[j][i] = ColRow3x4(sdkTransform,i, j);
-			}
-		}
-
-		FVector uePos(
-			ColRow3x4(sdkTransform,0, 3),
-			ColRow3x4(sdkTransform,1, 3),
-			ColRow3x4(sdkTransform,2, 3));
-
-		FTransform ueTransform;
-		ueTransform.SetFromMatrix(ueMat);
-		ueTransform.SetTranslation(uePos);
-
-		return ueTransform;
-	}
+	[[nodiscard]] static AdvViz::SDK::dmat3x4 UEtoSDK(FTransform const& ueTransform, bool applyGCS = true);
+	[[nodiscard]] static FTransform SDKtoUE(AdvViz::SDK::dmat3x4 const& sdkTransform, bool applyGCS = true);
+	
 };

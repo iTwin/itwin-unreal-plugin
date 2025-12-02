@@ -31,5 +31,8 @@ namespace AdvViz::SDK::Tools
 		bool IsTypeOf(std::uint64_t i) const override { return (i == GetTypeId()) || IAssertHandler::IsTypeOf(i); }
 	};
 
+	using AssertHandlerPtr = libassert::handler_ptr;
+
 	ADVVIZ_LINK void InitAssertHandler(std::string const& moduleName);
+	ADVVIZ_LINK AssertHandlerPtr GetAssertFailureHandler();
 }

@@ -18,6 +18,8 @@
 
 #include <optional>
 #include <array>
+#include <core/Json/Json.h>
+
 MODULE_EXPORT namespace AdvViz::SDK
 {
 
@@ -39,6 +41,9 @@ MODULE_EXPORT namespace AdvViz::SDK
 		double fog;
 		double exposure;
 		bool useHeliodon;
+		std::optional<std::string> HDRIImage;
+		std::optional<double> HDRIZRotation;
+		std::optional<double> sunIntensity;
 		bool operator==(const ITwinAtmosphereSettings& other) const
 		{
 			return fabs(this->sunAzimuth-other.sunAzimuth)<1e-5 
@@ -52,6 +57,9 @@ MODULE_EXPORT namespace AdvViz::SDK
 				&& fabs(this->fog - other.fog) < 1e-5
 				&& fabs(this->exposure - other.exposure) < 1e-5
 				&& this->useHeliodon == other.useHeliodon
+				&& this->HDRIImage == other.HDRIImage
+				&& ((!this->HDRIZRotation.has_value() && !other.HDRIZRotation.has_value()) || (this->HDRIZRotation.has_value() && other.HDRIZRotation.has_value() && fabs(this->HDRIZRotation.value() - other.HDRIZRotation.value()) < 1e-5))
+				&& ((!this->sunIntensity.has_value() && !other.sunIntensity.has_value()) || (this->sunIntensity.has_value() && other.sunIntensity.has_value() && fabs(this->sunIntensity.value() - other.sunIntensity.value()) < 1e-5))
 				;
 		}
 	};
@@ -71,15 +79,35 @@ MODULE_EXPORT namespace AdvViz::SDK
 
 		}
 	};
+
+	struct ITwinHDRISettings
+	{
+		std::string	hdriName;
+		double		sunPitch;
+		double		sunYaw;
+		double		sunIntensity;
+		double		rotation;	// rotation of the hdri around the up vector
+		bool operator==(const ITwinHDRISettings& other) const
+		{
+			return this->hdriName==other.hdriName
+				&& fabs(this->sunPitch - other.sunPitch) < 1e-5
+				&& fabs(this->sunYaw - other.sunYaw) < 1e-5
+				&& fabs(this->sunIntensity - other.sunIntensity) < 1e-5
+				&& fabs(this->rotation - other.rotation) < 1e-5
+				;
+		}
+	};
+
 	struct ITwinEnvironment
 	{
 		ITwinAtmosphereSettings atmosphere;
-		ITwinSceneSettings sceneSettings;
+		ITwinSceneSettings		sceneSettings;
+		ITwinHDRISettings		hdri;
 	};
+
 	struct ITwinScene
 	{
 		std::string name;
 		ITwinEnvironment environment;
 	};
-
 }

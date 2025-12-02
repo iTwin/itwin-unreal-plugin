@@ -9,17 +9,23 @@
 #pragma once
 
 #include "CoreMinimal.h"
+
+#include <Spline/ITwinSplineEnums.h>
+
+#include <Containers/Map.h>
 #include <GameFramework/Actor.h>
 #include <ITwinModelType.h>
 #include <UObject/ObjectMacros.h>
-#include <Spline/ITwinSplineEnums.h>
+#include <Templates/Function.h>
+
 #include <memory>
-#include <optional>
+#include <set>
 #include "ITwinSplineHelper.generated.h"
 
 namespace AdvViz::SDK
 {
 	class ISpline;
+	class RefID;
 }
 
 class USceneComponent;
@@ -28,6 +34,8 @@ class USplineMeshComponent;
 class UStaticMeshComponent;
 class UCesiumGlobeAnchorComponent;
 class ACesiumCartographicPolygon;
+class ACesiumGeoreference;
+class FITwinTilesetAccess;
 
 
 //! This class is used to edit a spline.
@@ -57,6 +65,12 @@ public:
 	//! Returns the AdvViz::SDK::ISpline of this spline helper.
 	std::shared_ptr<AdvViz::SDK::ISpline> GetAVizSpline() const;
 
+	//! Sets the AdvViz::SDK::ISpline of this spline helper.
+	void SetAVizSpline(std::shared_ptr<AdvViz::SDK::ISpline> const& Spline);
+
+	//! Returns the identifier of the underlying AdvViz::SDK::ISpline, if any.
+	AdvViz::SDK::RefID GetAVizSplineId() const;
+
 	//! Returns the number of points in the spline.
 	int32 GetNumberOfSplinePoints() const;
 
@@ -74,8 +88,8 @@ public:
 	//! Returns the spline's usage.
 	EITwinSplineUsage GetUsage() const;
 
-	//! Returns the model linked to this spline, if any.
-	std::optional<ITwin::ModelLink> GetLinkedModel() const;
+	//! Returns the model(s) linked to this spline, if any.
+	std::set<ITwin::ModelLink> GetLinkedModels() const;
 
 	//! Returns the spline's tangent mode.
 	EITwinTangentMode GetTangentMode() const;
@@ -84,19 +98,47 @@ public:
 	//! It does nothing for the Custom mode, which should be set for points individually.
 	void SetTangentMode(const EITwinTangentMode mode);
 
-	//! Given a mesh component (obtained by a line tracing operation after a user click for example)
-	//! it returns the associated point index in this spline.
-	int32 FindPointIndexFromMeshComponent(UStaticMeshComponent* meshComp) const;
+	//! Given a mesh component (obtained by a line tracing operation after a user click for example), return
+	//! the associated point index in this spline, if any (else return INDEX_NONE).
+	int32 FindPointIndexFromMeshComponent(UStaticMeshComponent* MeshComp) const;
+
+	//! Return the mesh component for the given spline point, if any.
+	UStaticMeshComponent* GetPointMeshComponent(int32 PointIndex) const;
+
+	//! Given a spline mesh component (obtained by a line tracing operation after a user click for example),
+	//! return the associated segment index in this spline, if any (else return INDEX_NONE).
+	int32 FindSegmentIndexFromSplineComponent(USplineMeshComponent* SplineMeshComp) const;
 
 	//! Returns the associated Cesium cartographic polygon (if any).
-	ACesiumCartographicPolygon* GetCartographicPolygon() const;
+	ACesiumCartographicPolygon* GetCartographicPolygonForTileset(FITwinTilesetAccess const& TilesetAccess) const;
+	ACesiumCartographicPolygon* GetCartographicPolygonForGeoref(TSoftObjectPtr<ACesiumGeoreference> const& Georef) const;
+	bool HasCartographicPolygon() const;
 
 	//! Sets the associated Cesium cartographic polygon.
-	void SetCartographicPolygon(ACesiumCartographicPolygon* polygon);
+	void SetCartographicPolygonForTileset(ACesiumCartographicPolygon* polygon, FITwinTilesetAccess const& TilesetAccess);
+	void SetCartographicPolygonForGeoref(ACesiumCartographicPolygon* polygon, TSoftObjectPtr<ACesiumGeoreference> const& Georef);
+
+	//! Clones the cartographic polygon associated to this spline (if any) for the given tileset geo-reference.
+	ACesiumCartographicPolygon* ClonePolygonForTileset(FITwinTilesetAccess const& TilesetAccess);
+	ACesiumCartographicPolygon* ClonePolygonForGeoref(TSoftObjectPtr<ACesiumGeoreference> const& Georef);
+
+	//! Deletes all cartographic polygons owned by this spline.
+	void DeleteCartographicPolygons(TFunction<void(ACesiumCartographicPolygon*)> const& BeforeDeleteCallback);
+
+	template <typename TFunc>
+	void IterateAllCartographicPolygons(TFunc const& Func) const;
 
 	//! Sets the current transformation of the spline. markSplineForSaving should be true to ensure
 	//! that the change will be saved on the server, but false if it's called in a loading operation.
-	void SetTransform(const FTransform& NewTransform, bool markSplineForSaving);
+	void SetTransform(const FTransform& NewTransform, bool bMarkSplineForSaving);
+
+	//! Returns the current transformation for the selection gizmo (we should return the position of the
+	//! barycenter rather than the actor location, which is confounded with the first spline point when
+	//! interactive creation mode is used).
+	FTransform GetTransformForUserInteraction() const;
+
+	//! Sets the transformation from the selection gizmo (user interaction).
+	void SetTransformFromUserInteraction(const FTransform& NewTransform);
 
 	//! Gets the location of the spline point at the given index.
 	FVector GetLocationAtSplinePoint(int32 pointIndex) const;
@@ -106,6 +148,9 @@ public:
 
 	//! Includes the current spline in the given box (using points in world space).
 	bool IncludeInWorldBox(FBox& Box) const;
+
+	//! Test line intersection with the polygon defined by the spline's points.
+	bool DoesLineIntersectSplinePolygon(const FVector& Start, const FVector& End) const;
 
 	//! Returns the minimum number of points to build a valid spline. The returned value depends on whether
 	//! the spline is closed or not.
@@ -126,10 +171,32 @@ public:
 	//! If it's the existing point, pointIndex is incremented by 1.
 	void DuplicatePoint(int32& pointIndex, FVector& newWorldPosition);
 
+	//! Inserts a new point at the given index. Returns the new point index (which will be PointIndex if it
+	//! succeeded, or else INDEX_NONE).
+	int32 InsertPointAt(const int32 PointIndex, FVector const& NewWorldPosition);
+
+	//! Activates or deactivates this cut-out polygon in the given tileset.
+	void ActivateCutoutEffect(FITwinTilesetAccess const& TilesetAccess, bool bActivate,
+		bool bIsCreatingSpline = false);
+
+	//! Returns whether the effect induced by this spline is enabled.
+	bool IsEnabledEffect() const;
+
+	//! Set whether the effect induced by this spline is enabled or not.
+	void EnableEffect(bool bEnable);
+
+	//! Returns whether the cut-out effect is inverted.
+	bool IsInvertedCutoutEffect() const;
+
+	//! Set whether we invert this cut-out polygon effect in the given tileset.
+	void InvertCutoutEffect(FITwinTilesetAccess const& TilesetAccess, bool bInvert);
+
+
 	//! The globe anchor is a constraint ensuring that the spline helper is correctly
 	//! placed on the earth surface.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Cesium")
 	UCesiumGlobeAnchorComponent* GlobeAnchor;
+
 
 private:
 	struct FImpl;
@@ -150,7 +217,7 @@ private:
 	UPROPERTY()
 	TArray<TObjectPtr<USplineMeshComponent>> SplineMeshComponents;
 
-	// Optional pointer to a cartographic polygon (can be left null)
+	// Per geo-reference cartographic polygons (only relevant for cut-out usage).
 	UPROPERTY()
-	TObjectPtr<ACesiumCartographicPolygon> CartographicPolygon;
+	TMap< TSoftObjectPtr<ACesiumGeoreference>, TObjectPtr<ACesiumCartographicPolygon> > PerGeorefPolygonMap;
 };

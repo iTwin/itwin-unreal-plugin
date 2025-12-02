@@ -39,8 +39,6 @@ namespace ITwin::Synchro4D
 		}
 		return ColorBGR;
 	}
-
-	extern bool s_bMaskTilesUntilFullyAnimated; // ITwinSynchro4DAnimator.cpp
 }
 
 /// Special BGR value to signal coloring should be disabled in the material shader.

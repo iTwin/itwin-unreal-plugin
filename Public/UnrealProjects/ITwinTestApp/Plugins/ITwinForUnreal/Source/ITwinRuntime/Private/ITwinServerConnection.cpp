@@ -18,7 +18,7 @@
 #include <Serialization/JsonSerializer.h>
 
 #include <Compil/BeforeNonUnrealIncludes.h>
-#	include <BeHeaders/Compil/CleanUpGuard.h>
+#	include <BeHeaders/Util/CleanUpGuard.h>
 #	include <Core/ITwinAPI/ITwinWebServices.h>
 #include <Compil/AfterNonUnrealIncludes.h>
 
@@ -104,7 +104,7 @@ bool AITwinServerConnection::CheckRequest(FHttpRequestPtr const& CompletedReques
 
 		// see if we can get more information in the response
 		std::string detailedError = AdvViz::SDK::ITwinWebServices::GetErrorDescriptionFromJson(
-			TCHAR_TO_ANSI(*Response->GetContentAsString()), "\t");
+			TCHAR_TO_UTF8(*Response->GetContentAsString()), "\t");
 		if (!detailedError.empty())
 		{
 			requestError += detailedError.c_str();
@@ -123,9 +123,21 @@ void AITwinServerConnection::SetITwinAppIDArray(ITwin::AppIDArray const& ITwinAp
 	UITwinWebServices::SetITwinAppIDArray(ITwinAppIDs, bLogIDs);
 }
 
+/*static*/
 void AITwinServerConnection::SetITwinAppID(const FString& AppID)
 {
 	UITwinWebServices::SetITwinAppIDArray({ TCHAR_TO_UTF8(*AppID) });
+}
+
+/*static*/
+int AITwinServerConnection::GetAuthRedirectUriPort()
+{
+	return AdvViz::SDK::ITwinAuthManager::GetRedirectUriPort();
+}
+/*static*/
+void AITwinServerConnection::SetAuthRedirectUriPort(int Port)
+{
+	AdvViz::SDK::ITwinAuthManager::SetRedirectUriPort(Port);
 }
 
 FString AITwinServerConnection::UrlPrefix() const

@@ -7,15 +7,8 @@
 # Instead, we want to have these files copied somewhere in our build dir.
 # So we create a symlink, inside the build dir, that points to the source dir containing the root CMakeLists.txt.
 file (CREATE_LINK "${CMAKE_SOURCE_DIR}/Public/Extern/cesium-unreal/extern" "${CMAKE_CURRENT_BINARY_DIR}/extern" SYMBOLIC)
-# We need to disable vcpkg manifest mode, otherwise ezvcpkg is not executed.
-set (VCPKG_MANIFEST_MODE OFF)
-# For libs that are downloaded by both carrot's vcpkg and cesium's ezvcpkg,
-# We have to make sure headers and libs match (eg. do not include carrot's header and link with cesium's lib).
-# We do not have much control over the linked libs: since carrot's vcpkg is executed first, carrot's libs will be used
-# (vcpkg/ezvcpkg first checks if target xxx already exists before calling add_library(xxx)).
-# So here we set the carrot's include path first, so that cesium source files will include from there.
-include_directories ("${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/include")
-cmake_path(GET BE_UNREAL_ENGINE_DIR PARENT_PATH UNREAL_ENGINE_ROOT) # Needed on non-Windows platforms.
+set(CESIUM_UNREAL_NATIVE_DIRECTORY "cesium-native")
+set(CESIUM_TESTS_ENABLED ON)
 add_subdirectory ("${CMAKE_CURRENT_BINARY_DIR}/extern" "${CMAKE_CURRENT_BINARY_DIR}/build")
 # Retrieve all the targets added by add_subdirectory() above.
 be_get_targets (cesiumUnrealExternTargets "${CMAKE_CURRENT_BINARY_DIR}/extern")
@@ -38,8 +31,6 @@ be_get_targets (cesiumUnrealExternTargetsFiltered "${CMAKE_CURRENT_BINARY_DIR}/e
 foreach (target ${cesiumUnrealExternTargetsFiltered})
 	add_dependencies (InstallCesiumDependencies ${target})
 endforeach ()
-# We want to run cesium-native-tests.
-# To do so, we need to reset EXCLUDE_FROM_DEFAULT_BUILD to its default value (false),
-# so that msbuild can actually build it (it must appear as "enabled" in the VS configuration manager).
-set_target_properties(cesium-native-tests PROPERTIES EXCLUDE_FROM_DEFAULT_BUILD FALSE)
+# We want to run cesium-native-tests, so I modified cesium-native so that the tests are installed,
+# thus we have the cesium-native-tests target thanks to the find_package in main.cmake
 be_add_test (cesium-native-tests)

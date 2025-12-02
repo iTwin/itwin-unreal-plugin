@@ -20,6 +20,7 @@
 #include <set>
 
 class AITwinIModel;
+class AITwinDecorationHelper;
 
 namespace AdvViz::SDK
 {
@@ -55,6 +56,9 @@ public:
 		bool bIsUserCancel = false;
 	};
 
+	//! Must be called before loading any material.
+	static void InitPaths(AITwinDecorationHelper const& DecoHelper);
+
 	//! Returns true if a material file already exists in given directory.
 	//! In such case, OutExistingFilePath will be assigned the corresponding file path.
 	static bool MaterialExistsInDir(FString const& MaterialFolder, FString& OutExistingFilePath);
@@ -72,10 +76,26 @@ public:
 	static bool LoadMaterialFromAssetPath(FString const& AssetPath, ITwinMaterial& OutMaterial,
 		TextureKeySet& OutTexKeys, TextureUsageMap& OutTextureUsageMap,
 		AdvViz::SDK::ETextureSource& OutTexSource,
-		MaterialPersistencePtr const& MatIOMngr);
+		MaterialPersistencePtr const& MatIOMngr,
+		FString const* DestinationJsonPath = nullptr);
 
 	//! Returns the path to user-defined material library. The folder may not exist.
-	static FString GetCustomLibraryPath();
+	static const FString& GetCustomLibraryPath();
+
+	//! Returns the path to iTwinEngage's material library.
+	static const FString& GetBentleyLibraryPath();
+
+	//! Given a relative path (eg. "Landscape/Grass"), returns the path to be used to load the material
+	//! asset - depending on the current content installation mode, it can be either an Unreal path (starting
+	//! with "/Game/", and without any extension), or an absolute path to a material.json file.
+	static FString GetBeLibraryPathForLoading(const FString& RelativeMaterialName);
+
+	//! Returns whether the Bentley Material Library is installed in a separate directory, and not
+	//! packaged withing the application as before.
+	static bool UseExternalPathForBentleyLibrary();
+
+	//! Returns true if JSON format should be used for Bentley Material Library.
+	static bool UseJsonFormatForBentleyLibrary();
 
 	//! Parse the given directory, detecting custom material definitions (valid material.json files) if any.
 	static int32 ParseJsonMaterialsInDirectory(FString const& DirectoryPath,
@@ -88,5 +108,20 @@ public:
 
 #if WITH_EDITOR
 	static bool ImportJsonToLibrary(FString const& JsonPath);
+
+	static bool ConvertAssetToJson(FString const& AssetPath);
 #endif
+
+private:
+	//! Root path for the official iTwinEngage material library.
+	static FString BeMatLibraryRootPath;
 };
+
+// Can be activated to generate the material library from a collection previously exported in iTwinEngage.
+#define CREATE_ITWIN_MATERIAL_LIBRARY() 0
+
+// dev tool to convert the .uasset material definitions back to Json (for future refactoring with
+// the component center, because individual .pak files do not seem to support non-Unreal files such
+// as png/jpg textures, so in the end we will totally bypass the Unreal asset format for our
+// basic material collection)
+#define RESAVE_ITWIN_MATERIAL_LIBRARY_AS_JSON() 0

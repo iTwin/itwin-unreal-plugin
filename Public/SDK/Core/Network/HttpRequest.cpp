@@ -93,7 +93,7 @@ namespace AdvViz::SDK
 	}
 
 
-	Http::Response HttpRequest::DoProcess(Http& http, std::string const& url, std::string const& body,
+	Http::Response HttpRequest::DoProcess(Http& http, std::string const& url, BodyParams const& body,
 										  Http::Headers const& headers, bool isFullUrl /*= false*/)
 	{
 		switch (verb_)

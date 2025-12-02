@@ -24,6 +24,7 @@
 #include <Timeline/SchedulesStructs.h>
 #include <IncludeCesium3DTileset.h>
 
+#include <Components/StaticMeshComponent.h>
 #include <HAL/PlatformFileManager.h>
 #include <Logging/LogMacros.h>
 #include <Materials/MaterialInstance.h>
@@ -65,7 +66,8 @@ namespace ITwin
 		return false;
 	}
 
-	ITWINRUNTIME_API void SetSynchroDateToSchedules(TMap<FString, UITwinSynchro4DSchedules*> const& SchedMap, const FDateTime& InDate)
+	ITWINRUNTIME_API void SetSynchroDateToSchedules(TMap<FString, UITwinSynchro4DSchedules*> const& SchedMap,
+													const FDateTime& InDate)
 	{
 		for (auto const& [_, Synchro4DSchedules] : SchedMap)
 			if (IsValid(Synchro4DSchedules) && Synchro4DSchedules->IsAvailable())
@@ -106,7 +108,7 @@ void UITwinSynchro4DSchedules::FImpl::UpdateGltfTunerRules()
 	if (!ensure(Internals.GltfTuner))
 	{
 		// TODO_GCO: but existing tiles will not be setup for 4D :/
-		Internals.MinGltfTunerVersionForAnimation = 0;//to apply schedule nonetheless
+		Internals.MinGltfTunerVersionForAnimation = -1;//to apply schedule nonetheless
 		return;
 	}
 	// Called explicitly when toggling flag off from UI, we need to reset 4D tuning rules:
@@ -307,17 +309,18 @@ FITwinScheduleTimeline const& FITwinSynchro4DSchedulesInternals::GetTimeline() c
 
 void FITwinSynchro4DSchedulesInternals::SetScheduleTimeRangeIsKnown()
 {
-	// NOT Owner.GetDateRange(), which relies on ScheduleTimeRangeIsKnown set below!
+	// NOT Owner.GetDateRange(), which relies on ScheduleTimeRangeIsKnownAndValid set below!
 	auto const& DateRange = GetTimeline().GetDateRange();
 	if (DateRange != FDateRange())
 	{
-		ScheduleTimeRangeIsKnown = true;
+		ScheduleTimeRangeIsKnownAndValid = true;
 		Owner.OnScheduleTimeRangeKnown.Broadcast(DateRange.GetLowerBoundValue(),
 												 DateRange.GetUpperBoundValue());
 	}
 	else
 	{
-		ScheduleTimeRangeIsKnown = false;
+		ScheduleTimeRangeIsKnownAndValid = false;
+		OnDownloadProgressed(100.);
 		Owner.OnScheduleTimeRangeKnown.Broadcast(FDateTime::MinValue(), FDateTime::MinValue());
 	}
 }
@@ -384,13 +387,14 @@ bool FITwinSynchro4DSchedulesInternals::TileCompatibleWithSchedule(FITwinSceneTi
 
 bool FITwinSynchro4DSchedulesInternals::TileTunedForSchedule(FITwinSceneTile const& SceneTile) const
 {
-	auto* renderContent = SceneTile.pCesiumTile ? SceneTile.pCesiumTile->getContent().getRenderContent()
-												: nullptr;
-	if (!renderContent)
+	if (!SceneTile.pCesiumTile)
 		return false;
+	auto* Model = SceneTile.pCesiumTile->GetGltfModel();
+	if (!Model)
+		return true;
 	// When using the glTF tuner, no use storing stuff about loaded tiles until schedule is fully available:
 	// retuning will unload all the SceneTile's anyway (even though the Cesium native tiles are not)!
-	return (MinGltfTunerVersionForAnimation <= renderContent->getModel()._tuneVersion);
+	return (!Model->version || MinGltfTunerVersionForAnimation <= (*Model->version));
 }
 
 /// Most of the handling is delayed until the beginning of the next tick: this was because of past
@@ -432,7 +436,7 @@ bool FITwinSynchro4DSchedulesInternals::OnNewTileBuilt(FITwinSceneTile& SceneTil
 {
 	if (IsPrefetchedAvailableAndApplied())
 	{
-		SceneTile.pCesiumTile->setRenderEngineReadiness(false);
+		SceneTile.pCesiumTile->SetRenderReady(false);
 		SetupAndApply4DAnimationSingleTile(SceneTile);
 		return true;
 	}
@@ -472,7 +476,7 @@ void FITwinSynchro4DSchedulesInternals::SetupAndApply4DAnimationSingleTile(FITwi
 		auto const& SceneMapping = GetInternals(*Cast<AITwinIModel>(Owner.GetOwner())).SceneMapping;
 		ElementsReceived.erase(SceneMapping.KnownTileRank(SceneTile));
 		// Tile remains non-render-ready: except if you want to for debugging purposes, then uncomment:
-		// SceneTile.pCesiumTile->setRenderEngineReadiness(true);
+		// SceneTile.pCesiumTile->SetRenderReady(true);
 		return;
 	}
 	if (!SceneTile.bIsSetupFor4DAnimation)
@@ -480,6 +484,28 @@ void FITwinSynchro4DSchedulesInternals::SetupAndApply4DAnimationSingleTile(FITwi
 		Setup4DAnimationSingleTile(SceneTile, {}, nullptr);
 	}
 	Animator.ApplyAnimationOnTile(SceneTile);
+}
+
+void FITwinSynchro4DSchedulesInternals::SetMeshesDynamicShadows(bool bDynamic)
+{
+	auto& SceneMapping = GetInternals(*Cast<AITwinIModel>(Owner.GetOwner())).SceneMapping;
+	SceneMapping.ForEachKnownTile([bDynamic](FITwinSceneTile& SceneTile)
+		{
+			if (SceneTile.TimelinesIndices.empty())
+				return;
+			for (auto& Mesh : SceneTile.GltfMeshWrappers())
+				if (UStaticMeshComponent* MeshComp = Mesh.MeshComponent())
+				{
+					auto shadowCacheInvalidationBehavior = bDynamic ? EShadowCacheInvalidationBehavior::Always : EShadowCacheInvalidationBehavior::Auto;
+					if (MeshComp->ShadowCacheInvalidationBehavior != shadowCacheInvalidationBehavior)
+					{
+						MeshComp->ShadowCacheInvalidationBehavior = shadowCacheInvalidationBehavior;
+						MeshComp->MarkRenderStateDirty();
+					}
+				}
+		});
+
+	useDynamicShadows = bDynamic;
 }
 
 void FITwinSynchro4DSchedulesInternals::Setup4DAnimationSingleTile(FITwinSceneTile& SceneTile,
@@ -536,6 +562,20 @@ void FITwinSynchro4DSchedulesInternals::Setup4DAnimationSingleTile(FITwinSceneTi
 			, Index);
 	}
 	HideNonAnimatedDuplicates(SceneTile, MainTimeline.GetNonAnimatedDuplicates());
+	
+	if (!SceneTile.TimelinesIndices.empty())
+	{
+		for (auto& Mesh : SceneTile.GltfMeshWrappers())
+			if (UStaticMeshComponent* MeshComp = Mesh.MeshComponent())
+			{
+				auto shadowCacheInvalidationBehavior = useDynamicShadows ? EShadowCacheInvalidationBehavior::Always : EShadowCacheInvalidationBehavior::Auto;
+				if (MeshComp->ShadowCacheInvalidationBehavior != shadowCacheInvalidationBehavior)
+				{
+					MeshComp->ShadowCacheInvalidationBehavior = shadowCacheInvalidationBehavior;
+					MeshComp->MarkRenderStateDirty();
+				}
+			}
+	}
 }
 
 void FITwinSynchro4DSchedulesInternals::HandleReceivedElements(bool& bNew4DAnimTexToUpdate)
@@ -937,6 +977,15 @@ bool FITwinSynchro4DSchedulesInternals::ResetSchedules()
 	return true;
 }
 
+void FITwinSynchro4DSchedulesInternals::OnDownloadProgressed(double PercentComplete)
+{
+	AITwinIModel* IModel = Cast<AITwinIModel>(Owner.GetOwner());
+	if (!IModel)
+		return;
+	FITwinIModelInternals& IModelInternals = GetInternals(*IModel);
+	IModelInternals.OnScheduleDownloadProgressed(PercentComplete);
+}
+
 //---------------------------------------------------------------------------------------
 // class UITwinSynchro4DSchedules
 //---------------------------------------------------------------------------------------
@@ -957,13 +1006,11 @@ UITwinSynchro4DSchedules::UITwinSynchro4DSchedules(bool bDoNotBuildTimelines)
 		ConstructorHelpers::FObjectFinder<UMaterialInstance> BaseMaterialTranslucent;
 		ConstructorHelpers::FObjectFinder<UMaterialInstance> BaseMaterialTranslucent_TwoSided;
 		ConstructorHelpers::FObjectFinder<UMaterialInstance> BaseMaterialGlass;
-		ConstructorHelpers::FObjectFinder<UMaterialInstance> BaseMaterialOpaque;
 		FConstructorStatics()
 			: BaseMaterialMasked(TEXT("/ITwinForUnreal/ITwin/Materials/MI_ITwinInstance"))
 			, BaseMaterialTranslucent(TEXT("/ITwinForUnreal/ITwin/Materials/MI_ITwinInstanceTranslucent"))
 			, BaseMaterialTranslucent_TwoSided(TEXT("/ITwinForUnreal/ITwin/Materials/MI_ITwinInstanceTranslucent_TwoSided"))
 			, BaseMaterialGlass(TEXT("/ITwinForUnreal/ITwin/Materials/MI_ITwinGlass"))
-			, BaseMaterialOpaque(TEXT("/ITwinForUnreal/ITwin/Materials/MI_ITwinOpaque"))
 		{}
 	};
 	static FConstructorStatics ConstructorStatics;
@@ -971,7 +1018,6 @@ UITwinSynchro4DSchedules::UITwinSynchro4DSchedules(bool bDoNotBuildTimelines)
 	this->BaseMaterialTranslucent = ConstructorStatics.BaseMaterialTranslucent.Object;
 	this->BaseMaterialTranslucent_TwoSided = ConstructorStatics.BaseMaterialTranslucent_TwoSided.Object;
 	this->BaseMaterialGlass = ConstructorStatics.BaseMaterialGlass.Object;
-	this->BaseMaterialOpaque = ConstructorStatics.BaseMaterialOpaque.Object;
 }
 
 UITwinSynchro4DSchedules::~UITwinSynchro4DSchedules()
@@ -982,7 +1028,7 @@ UITwinSynchro4DSchedules::~UITwinSynchro4DSchedules()
 
 FDateRange UITwinSynchro4DSchedules::GetDateRange() const
 {
-	if (Impl->Internals.ScheduleTimeRangeIsKnown && *Impl->Internals.ScheduleTimeRangeIsKnown)
+	if (Impl->Internals.ScheduleTimeRangeIsKnownAndValid && *Impl->Internals.ScheduleTimeRangeIsKnownAndValid)
 		return Impl->Internals.GetTimeline().GetDateRange();
 	else
 		return FDateRange();
@@ -1130,6 +1176,7 @@ void UITwinSynchro4DSchedules::OnQueryLoopStatusChange(bool bQueryLoopIsRunning)
 	{
 		UE_LOG(LogITwinSched, Display, TEXT("Query loop now idling. %s"),
 										*Impl->Internals.SchedulesApi.ToString());
+		Impl->Internals.OnDownloadProgressed(100.);
 		if (bUseGltfTunerInsteadOfMeshExtraction)
 			Impl->UpdateGltfTunerRules();
 		if (!DebugDumpAsJsonAfterQueryAll.IsEmpty())
@@ -1211,6 +1258,11 @@ void SetNeedForcedShadowUpdate(AActor* Owner)
 	AITwinIModel* IModel = Cast<AITwinIModel>(Owner);
 	if (!IModel) return;
 	GetInternals(*IModel).SetNeedForcedShadowUpdate();
+}
+
+void UITwinSynchro4DSchedules::SetMeshesDynamicShadows(bool bDynamic)
+{
+	GetInternals(*this).SetMeshesDynamicShadows(bDynamic);
 }
 
 void UITwinSynchro4DSchedules::Pause()

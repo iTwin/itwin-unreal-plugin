@@ -17,7 +17,7 @@ void FITwinDefaultWebServicesObserver::OnITwinsRetrieved(bool bSuccess, FITwinIn
 {
 	ensureMsgf(false, TEXT("%s does not handle iTwins"), GetObserverName());
 }
-void FITwinDefaultWebServicesObserver::OnITwinInfoRetrieved(bool bSuccess, FITwinInfo const& Info)
+void FITwinDefaultWebServicesObserver::OnITwinInfoRetrieved(bool bSuccess, AdvViz::SDK::ITwinInfo const& /*Info*/)
 {
 	ensureMsgf(false, TEXT("%s does not handle iTwins"), GetObserverName());
 }
@@ -137,4 +137,9 @@ void FITwinDefaultWebServicesObserver::OnMatMLPredictionRetrieved(bool bSuccess,
 void FITwinDefaultWebServicesObserver::OnMatMLPredictionProgress(float )
 {
 	ensureMsgf(false, TEXT("%s does not handle material predictions"), GetObserverName());
+}
+void FITwinDefaultWebServicesObserver::OnGoogleCuratedContentAccessRetrieved(bool ,
+	AdvViz::SDK::ITwinGoogleCuratedContentAccess const& , HttpRequestID const& )
+{
+	ensureMsgf(false, TEXT("%s does not handle Google curated content access"), GetObserverName());
 }

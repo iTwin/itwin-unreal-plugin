@@ -12,6 +12,7 @@
 
 class UITwinSynchro4DSchedules;
 class FITwinSceneTile;
+class FITwinSynchro4DSchedulesInternals;
 
 /// Class owned by an UITwinSynchro4DSchedules component which role is to enact the construction
 /// schedules' animations for the iModel. It manages an internal mapping from "game time" to script time,
@@ -34,6 +35,8 @@ public:
 	bool IsPlaying() const;
 	void Pause();
 	void Stop();
+
+	void ManageMeshDynamicShadows(FITwinSynchro4DSchedulesInternals& SchedInternals);
 
 	void TickAnimation(float DeltaTime, bool const bForceUpdateAll);
 

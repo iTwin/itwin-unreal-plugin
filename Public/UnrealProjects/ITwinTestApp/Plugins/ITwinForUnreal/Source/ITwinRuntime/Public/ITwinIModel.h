@@ -24,6 +24,7 @@ struct FCesium3DTilesetLoadFailureDetails;
 class FITwinTilesetAccess;
 struct FSavedViewInfos;
 struct FSavedViewGroupInfos;
+class UITwinClippingCustomPrimitiveDataHelper;
 class UITwinMaterialDefaultTexturesHolder;
 class ULightComponent;
 namespace AdvViz::SDK
@@ -148,6 +149,13 @@ public:
 		EditAnywhere)
 	bool bSynchro4DAutoLoadSchedule = true;
 
+	/// Percentage of the data needed to replay a 4D schedule (if any) that is estimated to be available.
+	/// Includes internal iModel data not strictly part of the schedule but required for it to replay:
+	/// this data needs to be downloaded even when there is no schedule. When the schedule is fully available,
+	/// or when it had been determined that there is no schedule, the variable is set to 100.
+	UPROPERTY(Category = "iTwin", VisibleAnywhere)
+	double ScheduleDownloadPercentComplete = 0.;
+
 public:
 	AITwinIModel();
 	~AITwinIModel();
@@ -235,6 +243,22 @@ public:
 		BlueprintCallable)
 	void ShowConstructionData(bool bShow);
 
+	UFUNCTION(Category = "iTwin",
+		BlueprintCallable)
+	void UpdateConstructionData();
+
+	void HideCategories(std::vector<std::string> const& InCategoryIDs, bool forceUpdate);
+
+	void HideModels(std::vector<std::string> const& InModelIDs, bool forceUpdate);
+
+	void HideElements(std::vector<std::string> const& InElementIDs, bool forceUpdate);
+
+	void ShowElements(std::vector<std::string> const& InElementIDs, bool forceUpdate);
+
+	void HideCategoriesPerModel(std::vector<std::string> const& InModelIDs, std::vector<std::string> const& InCategoryIDs, bool forceUpdate);
+
+	void ShowCategoriesPerModel(std::vector<std::string> const& InModelIDs, std::vector<std::string> const& InCategoryIDs, bool forceUpdate);
+
 	UPROPERTY(Category = "iTwin", EditAnywhere)
 	bool bShowConstructionData = true;
 
@@ -313,7 +337,11 @@ public:
 	double GetMaterialChannelIntensity(uint64_t MaterialId, AdvViz::SDK::EChannelType Channel) const;
 	void SetMaterialChannelIntensity(uint64_t MaterialId, AdvViz::SDK::EChannelType Channel, double Intensity);
 
+	//! Return the color defined for this channel. Beware the 'A' component of this color has no meaning for
+	//! EChannelType::Color, as the opacity is to be retrieved from EChannelType::Opacity.
 	FLinearColor GetMaterialChannelColor(uint64_t MaterialId, AdvViz::SDK::EChannelType Channel) const;
+	//! Sets the color for the given channel. Beware the 'A' component of this color will be ignored for
+	//! EChannelType::Color, as the opacity is controlled by the EChannelType::Opacity channel.
 	void SetMaterialChannelColor(uint64_t MaterialId, AdvViz::SDK::EChannelType Channel, FLinearColor const& Color);
 
 	UITwinMaterialDefaultTexturesHolder const& GetDefaultTexturesHolder();
@@ -424,6 +452,8 @@ public:
 	const FProjectExtents* GetProjectExtents() const;
 	//! Returns null if the iModel is not geolocated, or if it is not known yet.
 	const FEcefLocation* GetEcefLocation() const;
+	//! Returns a bounding box for the loaded tileset, if any.
+	bool GetBoundingBox(FBox& OutBox, bool bClampOutlandishValues) const;
 	//! Returns null if the tileset has not been constructed yet.
 	const ACesium3DTileset* GetTileset() const;
 	ACesium3DTileset* GetTileset();
@@ -434,6 +464,11 @@ public:
 	TFuture<TArray<FString>> GetAttachedRealityDataIds();
 	void SetLightForForcedShadowUpdate(ULightComponent* SkyLight);
 	TFuture<TArray<FString>> GetChildrenModelIds(const FString& ParentModelId);
+	TFuture<TArray<FString>> GetSubCategoryIds(const FString& ParentCategoryId);
+
+	UITwinClippingCustomPrimitiveDataHelper* GetClippingHelper() const;
+	bool MakeClippingHelper();
+	void SetNeedForcedShadowUpdate();
 
 private:
 	void SetResolvedChangesetId(FString const& InChangesetId);

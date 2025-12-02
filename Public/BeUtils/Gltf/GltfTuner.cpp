@@ -121,20 +121,20 @@ inline bool MaterialUsingTextures(CesiumGltf::Material const& material)
 }
 
 /// These versions are only compared to other GltfTunerVersions (or the derived GltfTunerRulesEx) versions,
-/// not to actual tuner versions, so they don't really need to be initialized to GltfTuner::initialVersion
-/// like the tuner's version. But to avoid confusion, I think it's better to have the same initial value.
+/// not to actual tuner versions, so they don't really need to be initialized to -1 like the tuner's version.
+/// But to avoid confusion, I think it's better to have the same initial value.
 struct GltfTunerVersions
 {
 	//! Used to detect if we should recompute material-related derived data.
-	int materialRulesVersion_ = GltfTuner::initialVersion;
+	int materialRulesVersion_ = -1;
 	//! Used to detect if we should recompute 4D animation related derived data.
-	int anim4DRulesVersion_ = GltfTuner::initialVersion;
+	int anim4DRulesVersion_ = -1;
 };
 
 //! Rules with additional precomputed derived data.
 struct GltfTunerRulesEx : public GltfTunerVersions
 {
-	int version_ = GltfTuner::initialVersion; //< Comparable to Cesium3DTilesSelection::GltfTuner::currentVersion
+	int version_ = -1;
 	GltfTuner::Rules tuningRules_;
 	//! Maps each element ID to the index of its containing group.
 	std::unordered_map<uint64_t, std::pair<size_t, size_t>> elementToGroups_;
@@ -691,20 +691,20 @@ struct GltfTuner::Impl : public GltfTunerVersions
 	//! std::move'd to rulesEx_ when actually tuning and rulesVersion_ has changed, so don't reuse after that
 	Rules nextTuningRules_;
 	GltfTunerRulesEx rulesEx_;
-	//! Tune() and SetRules() can be called by different threads (typically Tune() is called on a background
+	//! apply() and SetRules() can be called by different threads (typically Tune() is called on a background
 	//! thread), so we have to protect access to data used by both methods.
 	std::shared_mutex mutex_;
 
 	std::vector<ITwinMaterialInfo> itwinMaterials_;
 	std::shared_ptr<GltfMaterialHelper> materialHelper_;
 
-	void UpdateRulesIfNeeded(Cesium3DTilesSelection::GltfTuner const& tuner);
+	void UpdateRulesIfNeeded(Cesium3DTilesSelection::GltfModifier const& tuner);
 };
 
 GltfTuner::GltfTuner(bool const bTuneWithoutRules) : impl_(new Impl())
 {
-	if (bTuneWithoutRules && -1 == getCurrentVersion())
-		retune();
+	if (bTuneWithoutRules && !getCurrentVersion())
+		trigger();
 }
 
 // Needed explicitly here so that impl_'s destruction occurs in the CPP where Impl is defined
@@ -712,12 +712,12 @@ GltfTuner::~GltfTuner()
 {
 }
 
-void GltfTuner::Impl::UpdateRulesIfNeeded(Cesium3DTilesSelection::GltfTuner const& tuner)
+void GltfTuner::Impl::UpdateRulesIfNeeded(Cesium3DTilesSelection::GltfModifier const& tuner)
 {
 	BeUtils::WLock wlock(mutex_);
 	// Test if we should recompute rules derived data.
 	bool newMatRules = false, newAnim4DRules = false;
-	if (tuner.getCurrentVersion() > rulesEx_.version_)
+	if (tuner.getCurrentVersion() && (*tuner.getCurrentVersion()) > rulesEx_.version_)
 	{
 		if (materialRulesVersion_ > rulesEx_.materialRulesVersion_)
 		{
@@ -733,7 +733,7 @@ void GltfTuner::Impl::UpdateRulesIfNeeded(Cesium3DTilesSelection::GltfTuner cons
 			rulesEx_.anim4DRulesVersion_ = anim4DRulesVersion_;
 			rulesEx_.tuningRules_.anim4DGroups_ = std::move(nextTuningRules_.anim4DGroups_);
 		}
-		rulesEx_.version_ = tuner.getCurrentVersion();
+		rulesEx_.version_ = *tuner.getCurrentVersion();
 		constexpr size_t none = (size_t)-1;
 		auto& elemToGroups = rulesEx_.elementToGroups_;
 		if (newMatRules && newAnim4DRules) // clear all
@@ -778,7 +778,7 @@ void GltfTuner::Impl::UpdateRulesIfNeeded(Cesium3DTilesSelection::GltfTuner cons
 	}
 }
 
-bool GltfTuner::Tune(const CesiumGltf::Model& model, const glm::dmat4& tileTransform,
+bool GltfTuner::apply(const CesiumGltf::Model& model, const glm::dmat4& tileTransform,
 	const glm::dvec4& rootTranslation, CesiumGltf::Model& tunedModel)
 {
 	impl_->UpdateRulesIfNeeded(*this);
@@ -790,15 +790,14 @@ bool GltfTuner::Tune(const CesiumGltf::Model& model, const glm::dmat4& tileTrans
 		glm::dvec4(0.),
 		rootTranslation);
 	// Need to lock also during GltfTunerHelper::Tune(..), because several background cesium threads can call
-	// GltfTuner::Tune(..) at the same time! But here we only need a shared_lock, whereas UpdateRulesIfNeeded
+	// GltfTuner::apply(..) at the same time! But here we only need a shared_lock, whereas UpdateRulesIfNeeded
 	// of course requires a unique_lock.
 	BeUtils::RLock rlock(impl_->mutex_);
-	int const curVer = getCurrentVersion();
-	if (-1 != curVer && model._tuneVersion < curVer)
+	if (getCurrentVersion() && model.version < (*getCurrentVersion()))
 	{
 		tunedModel = std::move(
 			GltfTunerHelper(model, impl_->rulesEx_, impl_->materialHelper_, tileTransform_shifted).Tune());
-		tunedModel._tuneVersion = curVer;
+		tunedModel.version = *getCurrentVersion();
 		return true;
 	}
 	return false;
@@ -814,13 +813,13 @@ int GltfTuner::SetMaterialRules(Rules&& tuningRules)
 		&& impl_->rulesEx_.tuningRules_.materialGroups_.empty()
 		&& impl_->rulesEx_.tuningRules_.itwinMatIDsToSplit_.empty())
 	{
-		return getCurrentVersion();
+		return getCurrentVersion() ? (*getCurrentVersion()) : -1;
 	}
 	impl_->nextTuningRules_.materialGroups_ = std::move(tuningRules.materialGroups_);
 	impl_->nextTuningRules_.itwinMatIDsToSplit_ = std::move(tuningRules.itwinMatIDsToSplit_);
 	++impl_->materialRulesVersion_;
-	retune();
-	return getCurrentVersion();
+	trigger();
+	return *getCurrentVersion();
 }
 
 int GltfTuner::SetAnim4DRules(Rules&& tuningRules)
@@ -831,12 +830,12 @@ int GltfTuner::SetAnim4DRules(Rules&& tuningRules)
 	// Optimize when resetting this type of rules several times
 	if (tuningRules.anim4DGroups_.empty() && impl_->rulesEx_.tuningRules_.anim4DGroups_.empty())
 	{
-		return getCurrentVersion();
+		return getCurrentVersion() ? (*getCurrentVersion()) : -1;
 	}
 	impl_->nextTuningRules_.anim4DGroups_ = std::move(tuningRules.anim4DGroups_);
 	++impl_->anim4DRulesVersion_;
-	retune();
-	return getCurrentVersion();
+	trigger();
+	return *getCurrentVersion();
 }
 
 
@@ -870,7 +869,7 @@ namespace Detail
 	}
 }
 
-void GltfTuner::ParseTilesetJson(const rapidjson::Document& tilesetJson)
+void GltfTuner::parseTilesetJson(const rapidjson::Document& tilesetJson)
 {
 	// Detect and parse property "iTwinMaterials", if any
 	// This can be added by the Mesh-Export Service for Cesium tilesets.

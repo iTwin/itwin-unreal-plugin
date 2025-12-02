@@ -12,6 +12,7 @@
 #include "Config.h"
 #include "InstancesGroup.h"
 #include "SplinesManager.h"
+#include "PathAnimation.h"
 #include "../Singleton/singleton.h"
 
 namespace AdvViz::SDK
@@ -27,6 +28,7 @@ namespace AdvViz::SDK
 		std::map<std::pair<std::string /*objRef*/, RefID/*group*/>, SharedInstVect> mapObjectRefToDeletedInstances_;
 		std::vector<IInstancesGroupPtr> instancesGroupsToDelete_;
 		std::shared_ptr<ISplinesManager> splineManager_;
+		std::shared_ptr<IPathAnimator> animPathManager_;
 
 		std::shared_ptr<Http>& GetHttp() { return http_; }
 		void SetHttp(const std::shared_ptr<Http>& http) { http_ = http; }
@@ -34,6 +36,11 @@ namespace AdvViz::SDK
 		void SetSplineManager(std::shared_ptr<ISplinesManager> const& splineManager)
 		{
 			splineManager_ = splineManager;
+		}
+
+		void SetAnimPathManager(std::shared_ptr<IPathAnimator> const& animPathManager)
+		{
+			animPathManager_ = animPathManager;
 		}
 
 		void Clear()
@@ -156,7 +163,13 @@ namespace AdvViz::SDK
 					inst->SetId(row.id);
 					inst->SetName(row.name);
 					if (row.animationid.has_value())
+					{
 						inst->SetAnimId(row.animationid.value());
+						if (auto animPathInfo = animPathManager_->FindAnimationPathInfoByDBId(row.animationid.value()))
+						{
+							inst->SetAnimPathId(animPathInfo->GetId());
+						}
+					}
 
 					inst->SetObjectRef(row.objref);
 					if (row.colorshift.has_value() && row.colorshift.value() != "")
@@ -293,6 +306,15 @@ namespace AdvViz::SDK
 			// Sort instances for requests (addition/update)
 			for(auto& inst : instances)
 			{
+				if (inst->GetAnimPathId())
+				{
+					// update animation path database id within the instance
+					auto animPathRefId = animPathManager_->GetAnimationPathInfo(*(inst->GetAnimPathId()))->GetId();
+					BE_ASSERT(animPathRefId.HasDBIdentifier(), "animation paths should be saved before instances");
+					inst->SetAnimId(animPathRefId.GetDBIdentifier());
+					inst->SetAnimPathId(animPathRefId);
+				}
+
 				if (inst->GetId().empty())
 				{
 					SJsonInst jInst;
@@ -329,7 +351,12 @@ namespace AdvViz::SDK
 						for(size_t i = 0; i < newInstIndices.size(); ++i)
 						{
 							IInstance& inst = *instances[newInstIndices[i]];
+							// update database id within the instance
 							inst.SetId(jOutPost.instances[i].id);
+							RefID refId = inst.GetRefId();
+							refId.SetDBIdentifier(jOutPost.instances[i].id);
+							inst.SetRefId(refId);
+
 							inst.SetShouldSave(false);
 						}
 					}
@@ -522,6 +549,22 @@ namespace AdvViz::SDK
 			}
 		}
 
+		void OnInstancesRestored(const std::string& objectRef, const RefID& gpId, const std::vector<RefID>& restoredInstances)
+		{
+			auto pair = std::make_pair(objectRef, gpId);
+			[[maybe_unused]] SharedInstVect const& currentInstances = mapObjectRefToInstances_[pair];
+			SharedInstVect& deletedInstances = mapObjectRefToDeletedInstances_[pair];
+
+			for (RefID const& refID : restoredInstances)
+			{
+				BE_ASSERT(std::find_if(currentInstances.begin(), currentInstances.end(),
+						[&refID](const IInstancePtr& p) { return p->GetRefId() == refID; })
+						!= currentInstances.end(), "restored instance not found!");
+				std::erase_if(deletedInstances,
+					[&refID](const IInstancePtr& p) { return p->GetRefId() == refID; });
+			}
+		}
+
 		bool HasInstances() const
 		{
 			for (const auto& it : mapObjectRefToInstances_)
@@ -666,6 +709,11 @@ namespace AdvViz::SDK
 		GetImpl().RemoveGroupInstances(gpId);
 	}
 
+	void InstancesManager::OnInstancesRestored(const std::string& objectRef, const RefID& gpId, const std::vector<RefID>& restoredInstances)
+	{
+		GetImpl().OnInstancesRestored(objectRef, gpId, restoredInstances);
+	}
+
 	bool InstancesManager::HasInstances() const
 	{
 		return GetImpl().HasInstances();
@@ -714,6 +762,11 @@ namespace AdvViz::SDK
 	void InstancesManager::SetSplineManager(std::shared_ptr<ISplinesManager> const& splineManager)
 	{
 		GetImpl().SetSplineManager(splineManager);
+	}
+
+	void InstancesManager::SetAnimPathManager(std::shared_ptr<IPathAnimator> const& animPathManager)
+	{
+		GetImpl().SetAnimPathManager(animPathManager);
 	}
 
 	void InstancesManager::SetHttp(std::shared_ptr<Http> http)

@@ -26,7 +26,9 @@ namespace AdvViz::SDK
 
 		void SetVerb(EVerb verb);
 
-		inline virtual void Process(Http& http, std::string const& url, std::string const& body, Http::Headers const& headers, bool isFullUrl = false)
+		using BodyParams = Http::BodyParams;
+
+		inline virtual void Process(Http& http, std::string const& url, BodyParams const& body, Http::Headers const& headers, bool isFullUrl = false)
 		{
 			Response r = DoProcess(http, url, body, headers, isFullUrl);
 			if (responseCallback_)
@@ -35,7 +37,7 @@ namespace AdvViz::SDK
 			}
 		}
 
-		Http::Response DoProcess(Http& http, std::string const& url, std::string const& body, Http::Headers const& headers, bool isFullUrl = false);
+		Http::Response DoProcess(Http& http, std::string const& url, BodyParams const& body, Http::Headers const& headers, bool isFullUrl = false);
 
 		EVerb GetVerb() const { return verb_; }
 		const char* GetRequestID() const;

@@ -21,6 +21,10 @@
 #include <Kismet/GameplayStatics.h>
 #include <Kismet/KismetMathLibrary.h>
 #include <UObject/UObjectIterator.h>
+#include <GameFramework/Pawn.h>
+#include <GameFramework/PlayerController.h>
+#include <GameFramework/PlayerStart.h>
+#include <Engine/World.h>
 
 FTransform UITwinUtilityLibrary::Inverse(FTransform const& Transform)
 {
@@ -364,4 +368,72 @@ bool UITwinUtilityLibrary::GetSavedViewFromPlayerController(const AITwinIModel* 
 	auto Transform = FTransform(Rotation_UE, Location_UE);
 	OutSavedView = GetSavedViewFromUnrealTransform(IModel, Transform);
 	return true;
+}
+
+
+/*static*/ void UITwinUtilityLibrary::ZoomOn(FBox const& FocusBBox, UWorld* World, double MinDistanceToCenter /*= 10000*/)
+{
+	if (!ensure(World)) return;
+	auto* PlayerController = World->GetFirstPlayerController();
+	APawn* Pawn = PlayerController ? PlayerController->GetPawnOrSpectator() : nullptr;
+
+	static FVector HomeForwardDir;
+	static FRotator HomeOrientation;
+	static bool initstatic = false;
+	if (!initstatic)
+	{
+		TArray<AActor*> PlayerStarts;
+		UGameplayStatics::GetAllActorsOfClass(World, APlayerStart::StaticClass(), PlayerStarts);
+		if (!PlayerStarts.IsEmpty() && PlayerController && Pawn)
+		{
+			HomeForwardDir = PlayerStarts[0]->GetActorForwardVector();
+			HomeOrientation = PlayerStarts[0]->GetActorRotation();
+		}
+		initstatic = true;
+	}
+	if (Pawn)
+	{
+		auto const BBoxLen = FocusBBox.GetSize().Length();
+		Pawn->SetActorLocation(
+			// "0.2" is empirical, "projectExtents" is usually quite larger than the model itself
+			FocusBBox.GetCenter()
+			- FMath::Max(0.2 * BBoxLen, MinDistanceToCenter)
+			* HomeForwardDir,
+			false, nullptr, ETeleportType::TeleportPhysics);
+		PlayerController->SetControlRotation(HomeOrientation);
+	}
+}
+
+
+/*static*/ CesiumGeometry::OrientedBoundingBox UITwinUtilityLibrary::GetOrientedBoundingBox(ACesium3DTileset* Tileset)
+{
+	const Cesium3DTilesSelection::Tile* pRootTile = Tileset->GetTileset()->getRootTile();
+	const ACesiumGeoreference* pGeoreference = Tileset->ResolveGeoreference();
+
+	if (pRootTile && pGeoreference) {
+		return Cesium3DTilesSelection::getOrientedBoundingBoxFromBoundingVolume(
+			pRootTile->getBoundingVolume(),
+			pGeoreference->GetEllipsoid()->GetNativeEllipsoid());
+	}
+	return CesiumGeometry::OrientedBoundingBox(glm::dvec3(0, 0, 0), glm::dmat3(1));
+}
+
+
+/*static*/FBox UITwinUtilityLibrary::GetUnrealAxisAlignBoundingBox(ACesium3DTileset* Tileset)
+{
+	const ACesiumGeoreference* pGeoreference = Tileset->ResolveGeoreference();
+	CesiumGeometry::OrientedBoundingBox obb = GetOrientedBoundingBox(Tileset);
+
+	std::array<glm::dvec3, 8> corners = { glm::dvec3(1.,1.,1.),  glm::dvec3(-1.,1.,1.),  glm::dvec3(-1.,-1.,1.),  glm::dvec3(1.,-1.,1.),
+										 glm::dvec3(1.,1.,-1.), glm::dvec3(-1.,1.,-1.), glm::dvec3(-1.,-1.,-1.), glm::dvec3(1.,-1.,-1.)
+	};
+
+	FBox box;
+	for (const glm::dvec3& corner : corners) {
+		glm::dvec3 cornerPos = obb.getCenter() + obb.getHalfAxes() * corner;
+		FVector cornerPos2(cornerPos.x, cornerPos.y, cornerPos.z);
+		box += pGeoreference->TransformEarthCenteredEarthFixedPositionToUnreal(
+			cornerPos2);
+	}
+	return box;
 }

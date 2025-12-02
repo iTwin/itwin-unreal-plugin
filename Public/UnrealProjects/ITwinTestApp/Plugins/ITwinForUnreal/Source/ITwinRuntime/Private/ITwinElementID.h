@@ -14,6 +14,7 @@
 	// otherwise it wouldn't compile! (with incomplete messages from Visual so...)
 	#include <BeHeaders/StrongTypes/TaggedValue_hash.h>
 	#include <BeHeaders/StrongTypes/TaggedValueFW.h>
+	#include <unordered_set>
 #include <Compil/AfterNonUnrealIncludes.h>
 
 /// IModel Element ID type as stored in Cesium tiles metadata. Note that an ElementID is unique inside a
@@ -38,4 +39,5 @@ namespace ITwin
 	[[nodiscard]] ITwinElementID ParseElementID(FString FromStr);
 	[[nodiscard]] FString ToString(ITwinElementID const& Elem);
 	ITWINRUNTIME_API void IncrementElementID(FString& ElemStr);
+	[[nodiscard]] std::unordered_set<ITwinElementID> InsertParsedIDs(const std::vector<std::string>& inputIds);
 }

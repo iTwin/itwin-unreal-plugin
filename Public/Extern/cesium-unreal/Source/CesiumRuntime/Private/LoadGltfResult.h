@@ -3,7 +3,6 @@
 #pragma once
 
 #include "CesiumCommon.h"
-#include "CesiumEncodedFeaturesMetadata.h"
 #include "CesiumMetadataPrimitive.h"
 #include "CesiumModelMetadata.h"
 #include "CesiumPrimitiveFeatures.h"
@@ -13,6 +12,7 @@
 #include "Chaos/TriangleMeshImplicitObject.h"
 #include "Containers/Map.h"
 #include "Containers/UnrealString.h"
+#include "EncodedFeaturesMetadata.h"
 #include "Math/TransformNonVectorized.h"
 #include "StaticMeshResources.h"
 #include "Templates/SharedPointer.h"
@@ -27,8 +27,6 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
-
-class ICesiumMeshBuildCallbacks;
 
 namespace LoadGltfResult {
 /**
@@ -60,12 +58,9 @@ struct LoadedPrimitiveResult {
   int32_t materialIndex = -1;
 
   glm::dmat4x4 transform{1.0};
-#if ENGINE_VERSION_5_4_OR_HIGHER
+
   Chaos::FTriangleMeshImplicitObjectPtr pCollisionMesh = nullptr;
-#else
-  TSharedPtr<Chaos::FTriangleMeshImplicitObject, ESPMode::ThreadSafe>
-      pCollisionMesh = nullptr;
-#endif
+
   std::string name{};
 
   TUniquePtr<CesiumTextureUtility::LoadedTextureResult> baseColorTexture;
@@ -76,11 +71,25 @@ struct LoadedPrimitiveResult {
   TUniquePtr<CesiumTextureUtility::LoadedTextureResult> occlusionTexture;
   TUniquePtr<CesiumTextureUtility::LoadedTextureResult> waterMaskTexture;
   std::unordered_map<std::string, uint32_t> textureCoordinateParameters;
+
   /**
    * A map of feature ID set names to their corresponding texture coordinate
    * indices in the Unreal mesh.
    */
   TMap<FString, uint32_t> FeaturesMetadataTexCoordParameters;
+
+  /**
+   * A map of accessors indices that point to feature ID attributes to the index
+   * of the same feature ID set in CesiumPrimitiveFeatures.
+   */
+  std::unordered_map<int32_t, int32_t> AccessorToFeatureIdIndexMap;
+
+  /**
+   * A map of accessors indices that point to feature ID attributes to the
+   * value that indicates that no feature is associated with the vertices or
+   * texels that have this value.
+   */
+  std::unordered_map<int32_t, int64_t> AccessorToNullFeatureIdMap;
 
   bool isUnlit = false;
 
@@ -109,9 +118,9 @@ struct LoadedPrimitiveResult {
   FCesiumPrimitiveMetadata Metadata{};
 
   /** Encodes the EXT_mesh_features on a mesh primitive. */
-  CesiumEncodedFeaturesMetadata::EncodedPrimitiveFeatures EncodedFeatures{};
+  EncodedFeaturesMetadata::EncodedPrimitiveFeatures EncodedFeatures{};
   /** Encodes the EXT_structural_metadata on a mesh primitive. */
-  CesiumEncodedFeaturesMetadata::EncodedPrimitiveMetadata EncodedMetadata{};
+  EncodedFeaturesMetadata::EncodedPrimitiveMetadata EncodedMetadata{};
 
   PRAGMA_DISABLE_DEPRECATION_WARNINGS
   // For backwards compatibility with CesiumEncodedMetadataComponent.
@@ -153,13 +162,6 @@ struct LoadedPrimitiveResult {
    * for computing the UV at a hit location on a primitive.
    */
   CesiumGltf::IndexAccessorType IndexAccessor;
-
-  /**
-   * Optional mesh build callbacks. Called at the end of the mesh creation in
-   * Unreal, to let you update your own structures based on the cesium
-   * primitive just loaded.
-   */
-  TWeakPtr<ICesiumMeshBuildCallbacks> MeshBuildCallbacks;
 #pragma endregion
 };
 
@@ -210,7 +212,7 @@ struct LoadedModelResult {
   FCesiumModelMetadata Metadata{};
 
   /** Encodes the EXT_structural_metadata on a glTF model. */
-  CesiumEncodedFeaturesMetadata::EncodedModelMetadata EncodedMetadata{};
+  EncodedFeaturesMetadata::EncodedModelMetadata EncodedMetadata{};
 
   /** For backwards compatibility with CesiumEncodedMetadataComponent. */
   std::optional<CesiumEncodedMetadataUtility::EncodedMetadata>

@@ -97,9 +97,6 @@ private:
 
 		if (method == "GET")
 		{
-			//---------------------------------------------------------------------------
-			// GetITwinInfo
-			//---------------------------------------------------------------------------
 			return Response(cpr::status::HTTP_OK,
 				"{\"total_rows\":4,\"rows\":[" \
 				"{\"roughness\":0.884214,\"roughnessMap\":\"\u003cMatLibrary\u003e/Roof_Tiles/roughness.png\",\"metallic\":0,\"opacity\":1,\"opacityMap\":\"0xbd64766217cf1f3f_hlfoot.png\",\"normal\":1,\"normalMap\":\"\u003cMatLibrary\u003e/Roof_Tiles/normal.png\",\"ao\":1,\"aoMap\":\"\u003cMatLibrary\u003e/Roof_Tiles/AO.png\",\"albedoMap\":\"\u003cMatLibrary\u003e/Roof_Tiles/color.png\",\"color\":\"#FFFFFF\",\"type\":\"PBR\",\"id\":\"83_8eb0fcc5-712b-48b6-a74d-5c80e50008b1\"}," \

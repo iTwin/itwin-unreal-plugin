@@ -1,5 +1,5 @@
 if( TARGET httpmockserver)
-	Message("httpmockserver alreay added")
+	message("httpmockserver already added")
 else ()
 	# *Begin section*
 	# Consistency with <Carrot.git>/Public/CMake/main.cmake.

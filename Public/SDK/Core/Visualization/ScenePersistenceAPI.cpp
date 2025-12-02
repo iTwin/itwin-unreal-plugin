@@ -127,7 +127,7 @@ namespace AdvViz::SDK {
 		std::string envPrefix;
 		static std::string server;
 	};
-	std::string  Credential::server = "itwinscenes-eus.bentley.com/v1";
+	std::string  Credential::server = "api.bentley.com";
 	static Credential creds;
 	namespace
 	{
@@ -151,6 +151,9 @@ namespace AdvViz::SDK {
 			double fog = 0;
 			double exposure = 0;
 			bool useHeliodon = true;
+			std::optional<std::string> HDRIImage;
+			std::optional<double> HDRIZRotation;
+			std::optional<double> sunIntensity;
 		};
 		struct SJSonSceneSettings
 		{
@@ -168,6 +171,14 @@ namespace AdvViz::SDK {
 			std::string name;
 			std::string itwinid;
 			std::string lastModified;
+		};
+		struct SJSonHDRI
+		{
+			std::string	hdriName;
+			double		sunPitch;
+			double		sunYaw;
+			double		sunIntensity;
+			double		rotation;
 		};
 	public:
 		std::string id_;
@@ -197,7 +208,7 @@ namespace AdvViz::SDK {
 			struct SJsonOut { SJsonOutData scene; };
 			SJsonOut jOut;
 
-			long status = GetHttp()->PostJsonJBody(jOut, "iTwins/"+ itwinid + "/scenes", jIn);
+			long status = GetHttp()->PostJsonJBody(jOut,"scenes?iTwinId="+itwinid, jIn);
 			if (status == 200 || status == 201)
 			{
 				if (!keepCurrentValues)
@@ -237,7 +248,7 @@ namespace AdvViz::SDK {
 			struct SJsonOutData { std::string displayName; std::string id; std::string iTwinId; };
 			struct SJsonOut { SJsonOutData scene; };
 			SJsonOut jOut;
-			long status = GetHttp()->PatchJsonJBody(jOut, "iTwins/" + jsonScene_.itwinid + "/scenes/" + id_, jIn);
+			long status = GetHttp()->PatchJsonJBody(jOut, "scenes/" + id_ + "?iTwinId=" + jsonScene_.itwinid , jIn);
 			if (status == 200)
 			{
 				BE_LOGI("ITwinScene", "Save Scene in Scene API with ID " << id_ <<" itwin " << jsonScene_.itwinid);
@@ -256,7 +267,7 @@ namespace AdvViz::SDK {
 			};
 			struct SJsonOut { SJsonOutData scene; };
 			SJsonOut jOut;
-			long status = GetHttp()->GetJson(jOut, "iTwins/" + itwinid + "/scenes/" + id);
+			long status = GetHttp()->GetJson(jOut, "scenes/" + id + "?iTwinId=" + itwinid);
 			if (status == 200)
 			{
 				jsonScene_.itwinid = jOut.scene.iTwinId;
@@ -276,8 +287,8 @@ namespace AdvViz::SDK {
 
 		bool Delete()
 		{
-			std::string s("iTwins/" + jsonScene_.itwinid + "/scenes/" + id_);
-			auto status = GetHttp()->Delete(s, "");
+			std::string s("scenes/" + id_ + "?iTwinId=" + jsonScene_.itwinid);
+			auto status = GetHttp()->Delete(s, {});
 			if (status.first != 204)
 			{
 				BE_LOGW("ITwinScene", "Delete Scene in Scene API failed. Http status: " << status.first);
@@ -291,7 +302,43 @@ namespace AdvViz::SDK {
 				return true;
 			}
 		}
+
+		inline void HDRIToJson(ITwinHDRISettings const& hdri, SJSonHDRI& jsonHdri) const
+		{
+			jsonHdri.hdriName = hdri.hdriName;
+			jsonHdri.sunPitch = hdri.sunPitch;
+			jsonHdri.sunYaw = hdri.sunYaw;
+			jsonHdri.sunIntensity = hdri.sunIntensity;
+			jsonHdri.rotation = hdri.rotation;
+		}
+
+		std::string ExportHDRIAsJson(ITwinHDRISettings const& hdri) const
+		{
+			SJSonHDRI jsonHdri;
+			HDRIToJson(hdri, jsonHdri);
+			return rfl::json::write(jsonHdri, YYJSON_WRITE_PRETTY);
+		}
+
+		bool ConvertHDRIJsonFileToKeyValueMap(std::filesystem::path const& jsonPath, KeyValueStringMap& outMap) const
+		{
+			SJSonHDRI jsonHdri;
+			std::ifstream ifs(jsonPath);
+			std::string parseError;
+			if (!Json::FromStream(jsonHdri, ifs, parseError))
+			{
+				return false;
+			}
+
+			outMap["hdriName"] = jsonHdri.hdriName;
+			outMap["sunPitch"] = std::to_string(jsonHdri.sunPitch);
+			outMap["sunYaw"] = std::to_string(jsonHdri.sunYaw);
+			outMap["sunIntensity"] = std::to_string(jsonHdri.sunIntensity);
+			outMap["rotation"] = std::to_string(jsonHdri.rotation);
+
+			return true;
+		}
 	};
+	static bool postRequiresObjectsArray = true;
 
 	static std::string DSIDtoSceneAPIGuid(const std::string& dsi)
 	{
@@ -408,6 +455,10 @@ namespace AdvViz::SDK {
 		jsonatmo.fog = atmo.fog;
 		jsonatmo.exposure = atmo.exposure;
 		jsonatmo.useHeliodon = atmo.useHeliodon;
+		jsonatmo.HDRIImage = atmo.HDRIImage;
+		jsonatmo.HDRIZRotation = atmo.HDRIZRotation;
+		jsonatmo.sunIntensity = atmo.sunIntensity;
+		//wait until scene API support those values 
 		GetImpl().shoudSave_ = true;
 	}
 
@@ -426,6 +477,9 @@ namespace AdvViz::SDK {
 		atmo.fog = jsonatmo.fog;
 		atmo.exposure = jsonatmo.exposure;
 		atmo.useHeliodon = jsonatmo.useHeliodon;
+		atmo.HDRIImage = jsonatmo.HDRIImage;
+		atmo.sunIntensity = jsonatmo.sunIntensity;
+		atmo.HDRIZRotation = jsonatmo.HDRIZRotation;
 		return atmo;
 	}
 
@@ -547,7 +601,7 @@ namespace AdvViz::SDK {
 			std::optional< std::string> name;
 		};
 		struct Data {
-			std::optional<bool> visible;
+			std::optional<bool> visible; //obsolete
 			rfl::Rename<"class", std::optional<std::string>> type;
 			std::optional<std::string> repositoryId;
 			std::optional<std::string> id;
@@ -568,6 +622,7 @@ namespace AdvViz::SDK {
 			std::optional<Data> data;
 			std::optional<std::string> displayName;
 			std::optional<std::string> relatedId;
+			std::optional<bool> visible;
 		};
 		struct SceneAPIUrl
 		{
@@ -586,7 +641,7 @@ namespace AdvViz::SDK {
 		};
 
 		SJsonOut jOut;
-		long status = http->GetJson(jOut, "iTwins/" + GetImpl().jsonScene_.itwinid + "/scenes/" + GetId() + "/objects", { });
+		long status = http->GetJson(jOut, "scenes/" + GetId() + "/objects?iTwinId=" + GetImpl().jsonScene_.itwinid, { });
 		bool continueLoading = true;
 		bool atmosphereFound = false;
 		bool sceneSettingsFound = false;
@@ -596,7 +651,6 @@ namespace AdvViz::SDK {
 			std::string ref;
 			std::vector<double> adjusts;
 			std::string id;
-			std::optional<std::string> displayName; // used for type for decoration & DecorationScene ( for timeline)
 		};
 		std::vector<SLinkData> sublinks;
 		std::vector<std::string> animations;
@@ -617,15 +671,23 @@ namespace AdvViz::SDK {
 					if (row.kind == "RepositoryResource")
 					{
 						std::optional<std::string> ttype = row.data->type.get();
+						std::string& linkType = link->GetImpl().link_.type;
 						if (row.data && ttype.has_value())
 						{
 							if (*ttype == "iModels")
-								link->GetImpl().link_.type = "iModel";
+								linkType = "iModel";
 							if (*ttype == "RealityData")
-								link->GetImpl().link_.type = "RealityData";
+							{
+								linkType = "RealityData";
+								link->GetImpl().shoudSave_ = true;
+							}
 						}
-						link->SetType("iModel"); // check row class
-						if (row.data && row.data->visible)
+						link->SetType(linkType.empty()? "iModel" : linkType); // check row class
+						if (row.visible)
+						{
+							link->GetImpl().link_.visibility = *row.visible;
+						}
+						else if (row.data && row.data->visible)
 							link->GetImpl().link_.visibility = *row.data->visible;
 						if (row.data && row.data->id)
 							link->GetImpl().link_.ref = *row.data->id;
@@ -949,11 +1011,7 @@ namespace AdvViz::SDK {
 					{
 						std::string id;
 					};
-					struct SJsonOut
-					{
-						SJsonO2 object;
-					};
-					SJsonOut jOut;
+
 					if (link->GetImpl().parentLink_)
 					{
 						if (link->GetImpl().parentLink_->GetId().empty())
@@ -962,26 +1020,61 @@ namespace AdvViz::SDK {
 						}
 						link->SetRef(link->GetImpl().parentLink_->GetId());
 					}
+					const Http::BodyParams bodyParams(GenerateBody(link, false));
 
-					std::string body = GenerateBody(link, false);
-					long status = http->PostJson(jOut, "iTwins/" + GetImpl().jsonScene_.itwinid + "/scenes/" + GetId() + "/objects", body);
-
-					if (status == 200 || status == 201)
+					if (postRequiresObjectsArray)
 					{
-						link->GetImpl().id_ = jOut.object.id;
-						BE_LOGI("ITwinScene", "Add Link for scene " << GetId()\
-							<< " new link Id " << link->GetImpl().id_ << " type : " << link->GetType() << " ref : " << link->GetRef());
-						link->GetImpl().shoudSave_ = false;
-						if (link->GetImpl().parentLink_)
+						struct SJsonOut
 						{
-							link->GetImpl().parentLink_->GetImpl().sublinkId_ = jOut.object.id;
+							std::vector<SJsonO2> objects;
+						};
+						SJsonOut jOut;
+						long status = http->PostJson(jOut, "scenes/" + GetId() + "/objects?iTwinId=" + GetImpl().jsonScene_.itwinid, bodyParams);
+
+						if ((status == 200 || status == 201) && jOut.objects.size() == 1)
+						{
+							link->GetImpl().id_ = jOut.objects[0].id;
+							BE_LOGI("ITwinScene", "Add Link for scene " << GetId()\
+								<< " new link Id " << link->GetImpl().id_ << " type : " << link->GetType() << " ref : " << link->GetRef());
+							link->GetImpl().shoudSave_ = false;
+							if (link->GetImpl().parentLink_)
+							{
+								link->GetImpl().parentLink_->GetImpl().sublinkId_ = link->GetImpl().id_;
+							}
+						}
+						else
+						{
+							BE_LOGW("ITwinScene", "Add Link for scene " << GetId() << " failed. Http status : " << status  \
+								<< " with link Id " << link->GetImpl().id_ << " type : " << link->GetType() << " ref : " << link->GetRef());
 						}
 					}
 					else
 					{
-						BE_LOGW("ITwinScene", "Add Link for scene " << GetId() << " failed. Http status : " << status  \
-							<< " with link Id " << link->GetImpl().id_ << " type : " << link->GetType() << " ref : " << link->GetRef());
+						struct SJsonOut
+						{
+							SJsonO2 object;
+						};
+						SJsonOut jOut;
+						long status = http->PostJson(jOut, "scenes/" + GetId() + "/objects?iTwinId=" + GetImpl().jsonScene_.itwinid, bodyParams);
+
+						if (status == 200 || status == 201)
+						{
+							link->GetImpl().id_ = jOut.object.id;
+							BE_LOGI("ITwinScene", "Add Link for scene " << GetId()\
+								<< " new link Id " << link->GetImpl().id_ << " type : " << link->GetType() << " ref : " << link->GetRef());
+							link->GetImpl().shoudSave_ = false;
+							if (link->GetImpl().parentLink_)
+							{
+								link->GetImpl().parentLink_->GetImpl().sublinkId_ = link->GetImpl().id_;
+							}
+						}
+						else
+						{
+							BE_LOGW("ITwinScene", "Add Link for scene " << GetId() << " failed. Http status : " << status  \
+								<< " with link Id " << link->GetImpl().id_ << " type : " << link->GetType() << " ref : " << link->GetRef());
+						}
 					}
+
 				}
 				else if (link->GetImpl().shouldDelete_ && !link->GetImpl().id_.empty())
 				{
@@ -996,7 +1089,7 @@ namespace AdvViz::SDK {
 					struct SJsonInEmpty {};
 					SJsonOutEmpty jOut;
 					SJsonInEmpty Jin;
-					std::string url("iTwins/" + GetImpl().jsonScene_.itwinid + "/scenes/" + GetId() + "/objects/" + link->GetImpl().id_);
+					std::string url("scenes/" + GetId() + "/objects/" + link->GetImpl().id_ +"?iTwinId="+ GetImpl().jsonScene_.itwinid);
 					auto status = http->DeleteJsonJBody(jOut, url, Jin);
 					if (status != 200)
 					{
@@ -1026,8 +1119,8 @@ namespace AdvViz::SDK {
 					{
 						link->SetRef(link->GetImpl().parentLink_->GetId());
 					}
-					std::string body = GenerateBody(link, true);
-					auto status = http->PatchJson(jOut, "iTwins/" + GetImpl().jsonScene_.itwinid + "/scenes/" + GetId() + "/objects/" + link->GetId(), body);
+					const Http::BodyParams bodyParams(GenerateBody(link, true));
+					auto status = http->PatchJson(jOut, "scenes/" + GetId() + "/objects/" + link->GetId() + "?iTwinId=" + GetImpl().jsonScene_.itwinid, bodyParams);
 					if (status == 200)
 					{
 						BE_LOGI("ITwinScene", "Update Link for scene " << GetId() << " with link Id " << link->GetImpl().id_ << " type : " << link->GetType() << " ref : " << link->GetRef());
@@ -1091,6 +1184,25 @@ namespace AdvViz::SDK {
 		return 	std::shared_ptr<AdvViz::SDK::ILink>(LinkAPI::New());
 	}
 
+	template <typename T>
+	std::string ToPostString(const T& t)
+	{
+		if (postRequiresObjectsArray)
+		{
+			struct SJSONObjects
+			{
+				std::vector<T> objects;
+			};
+			SJSONObjects jobs;
+			jobs.objects.push_back(t);
+			return Json::ToString(jobs);
+		}
+		else
+		{
+			return Json::ToString(t);
+		}
+	}
+
 	std::string ScenePersistenceAPI::GenerateBody(const std::shared_ptr<LinkAPI>& link, bool forPatch)
 	{
 
@@ -1100,27 +1212,27 @@ namespace AdvViz::SDK {
 			{
 				std::string id;
 				rfl::Rename<"class", std::string> type;
-				std::optional<bool> visible;
 				std::string repositoryId;
+				std::string iTwinId;
 			};
 			if (forPatch)
 			{
 				struct SJsonIn
 				{
 					SJsonInData data;
-					std::string iTwinId;
+					std::optional<bool> visible;
 				};
 				SJsonIn Jin;
 				if (link->HasVisibility())
 				{
-					Jin.data.visible = link->GetVisibility();
+					Jin.visible = link->GetVisibility();
 				}
 				else
 				{
-					Jin.data.visible = true;
+					Jin.visible = true;
 				}
 				Jin.data.id = link->GetRef();
-				Jin.iTwinId = GetImpl().jsonScene_.itwinid;
+				Jin.data.iTwinId = GetImpl().jsonScene_.itwinid;
 
 				if (link->GetType() == "iModel")
 				{
@@ -1142,20 +1254,20 @@ namespace AdvViz::SDK {
 					std::string version = "1.0.0";
 					std::string kind = "RepositoryResource";
 					SJsonInData data;
-					std::string iTwinId;
-
+					std::optional<bool> visible;
 				};
+
 				SJsonIn Jin;
 				if (link->HasVisibility())
 				{
-					Jin.data.visible = link->GetVisibility();
+					Jin.visible = link->GetVisibility();
 				}
 				else
 				{
-					Jin.data.visible = true;
+					Jin.visible = true;
 				}
 				Jin.data.id = link->GetRef();
-				Jin.iTwinId = GetImpl().jsonScene_.itwinid;
+				Jin.data.iTwinId = GetImpl().jsonScene_.itwinid;
 				if (link->GetType() == "iModel")
 				{
 					Jin.data.repositoryId = "iModels";
@@ -1166,7 +1278,8 @@ namespace AdvViz::SDK {
 					Jin.data.repositoryId = "RealityData";
 					Jin.data.type = "RealityData";
 				}
-				return Json::ToString(Jin);
+				
+				return ToPostString(Jin);
 			}
 
 		}
@@ -1223,7 +1336,7 @@ namespace AdvViz::SDK {
 				SJsonIn Jin;
 				Jin.data = data;
 				Jin.displayName = link->GetRef();
-				return Json::ToString(Jin);
+				return ToPostString(Jin);
 			}
 		}
 		else if (link->GetType() == "atmosphere")
@@ -1252,7 +1365,7 @@ namespace AdvViz::SDK {
 				};
 				SJsonIn Jin;
 				Jin.data.atmosphere = GetImpl().jsonAtmo_;
-				return Json::ToString(Jin);
+				return ToPostString(Jin);
 			}
 		}
 		else if (link->GetType() == "SceneSettings")
@@ -1302,7 +1415,7 @@ namespace AdvViz::SDK {
 				};
 				SJsonIn Jin;
 				Jin.data = inData;
-				return Json::ToString(Jin);
+				return ToPostString(Jin);
 			}
 		}
 		else if (link->GetType() == "timeline")
@@ -1348,7 +1461,7 @@ namespace AdvViz::SDK {
 				};
 				SJsonIn Jin;
 				Jin.data = inData;
-				return Json::ToString(Jin);
+				return ToPostString(Jin);
 			}
 		}
 		else if (link->GetType() == "clip")
@@ -1465,7 +1578,7 @@ namespace AdvViz::SDK {
 				SJsonIn Jin;
 				Jin.data = inData;
 				Jin.displayName = (*clipp)->GetName();
-				return Json::ToString(Jin);
+				return ToPostString(Jin);
 			}
 		}
 		else if (link->GetType() == "decoration" || link->GetType() == "DecorationScene")
@@ -1498,7 +1611,7 @@ namespace AdvViz::SDK {
 				SJsonIn Jin;
 				Jin.data.decorationId = DSIDtoSceneAPIGuid(link->GetRef());
 				Jin.displayName = link->GetType();
-				return Json::ToString(Jin);
+				return ToPostString(Jin);
 			}
 		}
 		else if (link->GetType() == "adjustment")
@@ -1513,7 +1626,7 @@ namespace AdvViz::SDK {
 				std::vector<double> adjustment;
 				SJsonInDataList categories; //temp until it comes optional
 				SJsonInDataList models;//temp until it comes optional
-				std::optional<std::string> displayName;
+				//std::optional<std::string> displayName;
 			};
 			SJsonInData data;
 			if (link->HasTransform())
@@ -1566,7 +1679,7 @@ namespace AdvViz::SDK {
 				Jin.data = data;
 				Jin.displayName = link->GetType();
 				Jin.relatedId = link->GetRef();
-				return Json::ToString(Jin);
+				return ToPostString(Jin);
 			}
 		}
 		BE_ISSUE("Unknown Link Type", link->GetType());
@@ -1651,11 +1764,19 @@ namespace AdvViz::SDK {
 
 	}
 
-	void ScenePersistenceAPI::SetDefaulttHttp(std::shared_ptr<Http> http)
+	void ScenePersistenceAPI::SetDefaultHttp(std::shared_ptr<Http> http)
 	{
 		creds.SetDefaultHttp(http);
 	}
 
+	std::string ScenePersistenceAPI::ExportHDRIAsJson(ITwinHDRISettings const& hdri) const
+	{
+		return GetImpl().ExportHDRIAsJson(hdri);
+	}
+
+	bool ScenePersistenceAPI::ConvertHDRIJsonFileToKeyValueMap(std::filesystem::path const& jsonPath, KeyValueStringMap& outMap) const {
+		return GetImpl().ConvertHDRIJsonFileToKeyValueMap(jsonPath, outMap);
+	}
 
 	AdvViz::expected<std::vector<std::shared_ptr<IScenePersistence>>, int> GetITwinScenesAPI(
 		const std::string& itwinid)
@@ -1690,7 +1811,7 @@ namespace AdvViz::SDK {
 		};
 
 		SJsonOut jOut;
-		long status = http->GetJson(jOut, "iTwins/" + itwinid + "/scenes", {});
+		long status = http->GetJson(jOut, "scenes?iTwinId=" + itwinid, {});
 		bool continueLoading = true;
 		while (continueLoading)
 		{
@@ -1737,7 +1858,7 @@ namespace AdvViz::SDK {
 		//}
 
 		return scenes;
-	}
+; 	}
 
 
 	LinkAPI::Impl& LinkAPI::GetImpl() const

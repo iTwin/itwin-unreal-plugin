@@ -26,10 +26,17 @@ MODULE_EXPORT namespace AdvViz::SDK
 		virtual size_t GetNumberOfSplines() const = 0;
 		virtual SharedSpline GetSpline(const size_t index) const = 0;
 		virtual SharedSpline GetSplineById(const RefID& id) const = 0;
+		virtual SharedSpline GetSplineByDBId(const std::string& id) const = 0;
 		virtual SharedSplineVect const& GetSplines() const = 0;
+
 		virtual SharedSpline AddSpline() = 0;
+
 		virtual void RemoveSpline(const size_t index) = 0;
 		virtual void RemoveSpline(const SharedSpline& spline) = 0;
+
+		/// Restore a spline (supposedly removed before).
+		virtual void RestoreSpline(const SharedSpline& spline) = 0;
+
 		virtual bool HasSplines() const = 0;
 		virtual bool HasSplinesToSave() const = 0;
 
@@ -49,11 +56,15 @@ MODULE_EXPORT namespace AdvViz::SDK
 		size_t GetNumberOfSplines() const override;
 		SharedSpline GetSpline(const size_t index) const override;
 		SharedSpline GetSplineById(const RefID& id) const override;
+		SharedSpline GetSplineByDBId(const std::string& id) const override;
 		SharedSplineVect const& GetSplines() const override;
 		SharedSpline AddSpline() override;
 
 		void RemoveSpline(const size_t index) override;
 		void RemoveSpline(const SharedSpline& spline) override;
+
+		void RestoreSpline(const SharedSpline& spline) override;
+
 		bool HasSplines() const override;
 		bool HasSplinesToSave() const override;
 

@@ -42,6 +42,9 @@ public:
 	FITwinAuthorizationManager(AdvViz::SDK::EITwinEnvironment Env);
 	~FITwinAuthorizationManager();
 
+	virtual bool EncodeToken(std::string const& InToken, std::string const& InKeyRoot, std::string& OutEncoded) const override;
+	virtual bool DecodeToken(std::string const& InEncoded, std::string const& InKeyRoot, std::string& OutToken) const override;
+
 	/// Helper to disable the use of external browser for a given scope.
 	class [[nodiscard]] FExternalBrowserDisabler
 	{
@@ -55,6 +58,10 @@ public:
 private:
 	static bool SavePrivateData(FString const& InInfo, AdvViz::SDK::EITwinEnvironment Env, int KeyIndex, FString const& FileSuffix);
 	static bool LoadPrivateData(FString& OutInfo, AdvViz::SDK::EITwinEnvironment Env, int KeyIndex, FString const& FileSuffix);
+
+	static bool EncodeTokenData(FString const& InToken, FString const& InKeyRoot, FString& OutEncoded);
+	static bool DecodeTokenData(FString const& InEncoded, FString const& InKeyRoot, FString& OutToken);
+
 
 	virtual bool SavePrivateData(std::string const& data, int keyIndex = 0) const override;
 	virtual bool LoadPrivateData(std::string& data, int keyIndex = 0) const override;

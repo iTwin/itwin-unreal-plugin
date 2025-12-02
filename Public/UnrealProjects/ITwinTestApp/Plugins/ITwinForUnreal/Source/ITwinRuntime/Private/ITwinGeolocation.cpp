@@ -10,6 +10,14 @@
 #include <CesiumGeoreference.h>
 #include <EngineUtils.h>
 #include <Engine/World.h>
+#include <Kismet/GameplayStatics.h>
+
+#include <Compil/BeforeNonUnrealIncludes.h>
+#	include <Core/Tools/Log.h>
+#include <Compil/AfterNonUnrealIncludes.h>
+#include <Decoration/ITwinDecorationHelper.h>
+
+std::function<FVector(bool& bRequestInProgress, bool& bHasRelevantElevation)> FITwinGeolocation::GetDefaultGeoRefFct;
 
 void FITwinGeolocation::CheckInit(UWorld& World)
 {
@@ -33,9 +41,36 @@ void FITwinGeolocation::CheckInit(UWorld& World)
 		Params.Name = GeoRefName;
 		GeoReference = World.SpawnActor<ACesiumGeoreference>(Params);
 		GeoReference->SetOriginPlacement(EOriginPlacement::TrueOrigin); // here means "not yet inited"
+		bNeedElevationEvaluation = false;
 	#if WITH_EDITOR
 		GeoReference->SetActorLabel(GeoRefName);
 	#endif
+		if (GeoReference->GetEllipsoid()->GetRadii().GetAbsMax() < 2.0)
+		{
+			BE_LOGE("ITwinAdvViz", "Corrupted ellipsoid (WGS84 asset missing?)");
+		}
+
+		if (GetDefaultGeoRefFct)
+		{
+			bool bDefaultGeoRefInProgress = false;
+			bool bHasRelevantElevation = false;
+			FVector VLongLat = GetDefaultGeoRefFct(bDefaultGeoRefInProgress, bHasRelevantElevation);
+			ensureMsgf(!bDefaultGeoRefInProgress, TEXT("iTwin geo-ref request still in progress"));
+			if (VLongLat.X != 0. || VLongLat.Y != 0.)
+			{
+				bCanBypassCurrentLocation = true;
+				bNeedElevationEvaluation = !bHasRelevantElevation;
+				GeoReference->SetOriginPlacement(EOriginPlacement::CartographicOrigin);
+				GeoReference->SetOriginLongitudeLatitudeHeight(VLongLat);
+				// update decoration geo-reference
+				AITwinDecorationHelper* DecoHelper = Cast<AITwinDecorationHelper>(UGameplayStatics::GetActorOfClass(&World, AITwinDecorationHelper::StaticClass()));
+				if (DecoHelper)
+				{
+					FVector latLongHeight(VLongLat.Y, VLongLat.X, VLongLat.Z);
+					DecoHelper->SetDecoGeoreference(latLongHeight);
+				}
+			}
+		}
 	}
 	if (!LocalReference.IsValid())
 	{
@@ -64,4 +99,19 @@ void FITwinGeolocation::CheckInit(UWorld& World)
 	}
 	Instance->CheckInit(World);
 	return Instance;
+}
+
+/*static*/ bool FITwinGeolocation::IsDefaultGeoRefRequestInProgress()
+{
+	if (GetDefaultGeoRefFct)
+	{
+		bool bDefaultGeoRefInProgress = false;
+		bool bHasRelevantElevation = false;
+		FVector VLongLat = GetDefaultGeoRefFct(bDefaultGeoRefInProgress, bHasRelevantElevation);
+		return bDefaultGeoRefInProgress;
+	}
+	else
+	{
+		return false;
+	}
 }

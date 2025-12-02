@@ -50,7 +50,7 @@ private:
 	virtual void UpdateOnSuccessfulAuthorization() override;
 
 	/// overridden from IITwinWebServicesObserver:
-	virtual void OnITwinInfoRetrieved(bool bSuccess, FITwinInfo const& Info) override;
+	virtual void OnITwinInfoRetrieved(bool bSuccess, AdvViz::SDK::ITwinInfo const& Info) override;
 	virtual void OnIModelsRetrieved(bool bSuccess, FIModelInfos const& Infos) override;
 	virtual void OnRealityDataRetrieved(bool bSuccess, FITwinRealityDataInfos const& Infos) override;
 

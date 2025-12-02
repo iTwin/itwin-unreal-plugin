@@ -1,6 +1,7 @@
 #include <CesiumAsync/AsyncSystem.h>
 #include <CesiumAsync/Future.h>
 #include <CesiumAsync/IAssetAccessor.h>
+#include <CesiumAsync/SharedAssetDepot.h>
 #include <CesiumAsync/SharedFuture.h>
 #include <CesiumGeometry/QuadtreeTileID.h>
 #include <CesiumGeometry/QuadtreeTilingScheme.h>
@@ -54,6 +55,7 @@ QuadtreeRasterOverlayTileProvider::QuadtreeRasterOverlayTileProvider(
     const IntrusivePointer<const RasterOverlay>& pOwner,
     const CesiumAsync::AsyncSystem& asyncSystem,
     const std::shared_ptr<IAssetAccessor>& pAssetAccessor,
+    const std::shared_ptr<CreditSystem>& pCreditSystem,
     std::optional<Credit> credit,
     const std::shared_ptr<IPrepareRasterOverlayRendererResources>&
         pPrepareRendererResources,
@@ -69,6 +71,7 @@ QuadtreeRasterOverlayTileProvider::QuadtreeRasterOverlayTileProvider(
           pOwner,
           asyncSystem,
           pAssetAccessor,
+          pCreditSystem,
           credit,
           pPrepareRendererResources,
           pLogger,
@@ -96,9 +99,7 @@ QuadtreeRasterOverlayTileProvider::QuadtreeRasterOverlayTileProvider(
 
   this->_pTileDepot.emplace(std::function(
       [pThis = this, loadParentTile](
-          const AsyncSystem& asyncSystem,
-          [[maybe_unused]] const std::shared_ptr<IAssetAccessor>&
-              pAssetAccessor,
+          const SharedAssetContext& context,
           const QuadtreeTileID& key)
           -> Future<ResultPointer<LoadedQuadtreeImage>> {
         return pThis->loadQuadtreeTileImage(key)
@@ -113,7 +114,8 @@ QuadtreeRasterOverlayTileProvider::QuadtreeRasterOverlayTileProvider(
                  key,
                  currentLevel = key.level,
                  minimumLevel = pThis->getMinimumLevel(),
-                 asyncSystem](LoadedRasterOverlayImage&& loaded)
+                 asyncSystem =
+                     context.asyncSystem](LoadedRasterOverlayImage&& loaded)
                     -> Future<ResultPointer<LoadedQuadtreeImage>> {
                   if (loaded.pImage && !loaded.errorList.hasErrors() &&
                       loaded.pImage->width > 0 && loaded.pImage->height > 0) {
@@ -141,9 +143,9 @@ QuadtreeRasterOverlayTileProvider::QuadtreeRasterOverlayTileProvider(
                         ResultPointer<LoadedQuadtreeImage>(pLoadedImage));
                   }
 
-                  // Tile failed to load, try loading the parent tile instead.
-                  // We can only initiate a new tile request from the main
-                  // thread, though.
+                  // Tile failed to load, try loading the parent tile
+                  // instead. We can only initiate a new tile request from
+                  // the main thread, though.
                   if (currentLevel > minimumLevel) {
                     return asyncSystem.runInMainThread([key, loadParentTile]() {
                       return loadParentTile(key);
@@ -392,8 +394,9 @@ CesiumAsync::SharedFuture<
 QuadtreeRasterOverlayTileProvider::getQuadtreeTile(
     const CesiumGeometry::QuadtreeTileID& tileID) {
   return this->_pTileDepot->getOrCreate(
-      this->getAsyncSystem(),
-      this->getAssetAccessor(),
+      SharedAssetContext{
+          .asyncSystem = this->getAsyncSystem(),
+          .pAssetAccessor = this->getAssetAccessor()},
       tileID);
 }
 
@@ -461,7 +464,7 @@ void blitImage(
 
 CesiumAsync::Future<LoadedRasterOverlayImage>
 QuadtreeRasterOverlayTileProvider::loadTileImage(
-    RasterOverlayTile& overlayTile) {
+    const RasterOverlayTile& overlayTile) {
   // Figure out which quadtree level we need, and which tiles from that level.
   // Load each needed tile (or pull it from cache).
   std::vector<CesiumAsync::SharedFuture<ResultPointer<LoadedQuadtreeImage>>>

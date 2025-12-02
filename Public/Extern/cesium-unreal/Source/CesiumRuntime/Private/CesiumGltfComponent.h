@@ -4,14 +4,16 @@
 
 #include "Cesium3DTilesSelection/Tile.h"
 #include "Cesium3DTileset.h"
-#include "CesiumEncodedFeaturesMetadata.h"
 #include "CesiumEncodedMetadataUtility.h"
+#include "CesiumLoadedTile.h"
 #include "CesiumModelMetadata.h"
 #include "Components/PrimitiveComponent.h"
 #include "Components/SceneComponent.h"
 #include "CoreMinimal.h"
 #include "CustomDepthParameters.h"
+#include "EncodedFeaturesMetadata.h"
 #include "Interfaces/IHttpRequest.h"
+#include "Templates/Function.h"
 #include <CesiumAsync/SharedFuture.h>
 #include <glm/mat4x4.hpp>
 #include <memory>
@@ -56,7 +58,7 @@ struct FRasterOverlayTile {
 };
 
 UCLASS()
-class UCesiumGltfComponent : public USceneComponent {
+class UCesiumGltfComponent : public USceneComponent, public ICesiumLoadedTile {
   GENERATED_BODY()
 
 public:
@@ -88,7 +90,8 @@ public:
       UMaterialInterface* BaseWaterMaterial,
       FCustomDepthParameters CustomDepthParameters,
       Cesium3DTilesSelection::Tile& tile,
-      bool createNavCollision);
+      bool createNavCollision,
+      bool doubleSidedCollisions);
 
   UCesiumGltfComponent();
 
@@ -104,8 +107,10 @@ public:
   UPROPERTY(EditAnywhere, Category = "Rendering")
   FCustomDepthParameters CustomDepthParameters{};
 
+  Cesium3DTilesSelection::Tile* pTile = nullptr;
+
   FCesiumModelMetadata Metadata{};
-  CesiumEncodedFeaturesMetadata::EncodedModelMetadata EncodedMetadata{};
+  EncodedFeaturesMetadata::EncodedModelMetadata EncodedMetadata{};
 
   PRAGMA_DISABLE_DEPRECATION_WARNINGS
   std::optional<CesiumEncodedMetadataUtility::EncodedMetadata>
@@ -133,11 +138,18 @@ public:
   virtual void BeginDestroy() override;
   virtual void OnVisibilityChanged() override;
 
+  // from ICesiumLoadedTile
+  const CesiumGltf::Model* GetGltfModel() const override;
+  const FCesiumModelMetadata& GetModelMetadata() const override;
+  const Cesium3DTilesSelection::Tile* GetTile() const override;
+  const Cesium3DTilesSelection::TileID& GetTileID() const override;
+  ACesium3DTileset& GetTilesetActor() override;
+  FVector GetGltfToUnrealLocalVertexPositionScaleFactor() const override;
+  void SetRenderReady(bool bToggle) override;
+
   void UpdateFade(float fadePercentage, bool fadingIn);
 
 private:
   UPROPERTY()
   UTexture2D* Transparent1x1 = nullptr;
-
-  std::function<void(bool/*visible*/)> ITwinVisibilityChanged;
 };

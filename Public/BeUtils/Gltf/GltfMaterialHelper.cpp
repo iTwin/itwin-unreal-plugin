@@ -1098,10 +1098,35 @@ void GltfMaterialHelper::SetMaterialFullDefinition(uint64_t matID, AdvViz::SDK::
 	SetMaterialFullDefinition(matID, matDefinition, lock);
 }
 
-void GltfMaterialHelper::SetTextureDirectory(std::filesystem::path const& textureDir, WLock const&)
+void GltfMaterialHelper::CopyTextureDataFrom(GltfMaterialHelper const& other, WLock const&)
+{
+	RLock otherLock(other.mutex_);
+	textureDir_ = other.textureDir_;
+	hasValidTextureDir_ = other.hasValidTextureDir_;
+	textureDataMap_ = other.textureDataMap_;
+}
+
+void GltfMaterialHelper::SetTextureDirectory(std::filesystem::path const& textureDir, WLock const& lock,
+	bool bCreateAtOnce /*= false*/)
 {
 	textureDir_ = textureDir;
 	hasValidTextureDir_.reset(); // Enforce check next time we initiate a download
+
+	if (bCreateAtOnce)
+	{
+		std::string dirError;
+		if (!CheckTextureDir(dirError, lock))
+		{
+			BE_ISSUE("texture directory error: ", dirError);
+		}
+	}
+}
+
+std::filesystem::path const& GltfMaterialHelper::GetTextureDirectory(RWLockBase const&) const
+{
+	BE_ASSERT(!textureDir_.empty(), "no texture directory!");
+	BE_ASSERT(hasValidTextureDir_ && *hasValidTextureDir_, "potentially invalid texture directory");
+	return textureDir_;
 }
 
 bool GltfMaterialHelper::CheckTextureDir(std::string& strError, WLock const&)
