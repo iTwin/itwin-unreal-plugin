@@ -6,7 +6,7 @@ If you prefer to not use the pre-compiled version of the plugin, you can compile
 To use the iTwin plugin, you need to create an account at [developer.bentley.com](https://developer.bentley.com). There is a free 90 day trial available. The developer account is required for utilizing the streaming API within the plugin. If your trial period is over and you would like to continue using and testing the plugin, please get in touch with us.<br>
 This initial release supports Windows 11; Windows 10 might work, but has not been tested officially (you may conduct tests on Windows 10 yourself if you would like). A version for Mac is in development.<br>
 Only iModels and their Saved Views are supported at the moment; Reality Data can be loaded through blueprints only (no GUI is available in the ITwinTestApp for them at the moment).<br>
-[Unreal Engine 5.3](https://dev.epicgames.com/documentation/en-us/unreal-engine/installing-unreal-engine?application_version=5.3) is the currently supported version. Other Unreal Engine versions will be supported in future updates.<br>
+[Unreal Engine 5.5](https://dev.epicgames.com/documentation/en-us/unreal-engine/installing-unreal-engine?application_version=5.5) is the currently supported version. Other Unreal Engine versions will be supported in future updates.<br>
 
 To run Unreal Engine, make sure you are using a dedicated GPU. The performance largely depends on the power of your graphics card. For more information on recommended system specs for Unreal Engine, please visit [Epic's website](https://dev.epicgames.com/documentation/de-de/unreal-engine/hardware-and-software-specifications-for-unreal-engine).
 
@@ -15,7 +15,7 @@ To run Unreal Engine, make sure you are using a dedicated GPU. The performance l
 
 - [CMake 3.28 or newer 3.xx version (_not_ CMake 4.x)](https://cmake.org/download/)
 - [Python 3.9 or newer](https://www.python.org/downloads/)
-- [Visual Studio 2022 version **17.14**](https://dev.epicgames.com/documentation/en-us/unreal-engine/setting-up-visual-studio-development-environment-for-cplusplus-projects-in-unreal-engine?application_version=5.3)
+- [Visual Studio 2022 version **17.14**](https://dev.epicgames.com/documentation/en-us/unreal-engine/setting-up-visual-studio-development-environment-for-cplusplus-projects-in-unreal-engine?application_version=5.5)
 
 ### <a id="configure-itwin-platform"></a> Configure access to the iTwin Platform
 
@@ -123,6 +123,8 @@ This can be done by adding/updating this line in your `*.Target.cs` files:<br>
      `DefaultBuildSettings = BuildSettingsVersion.V4;`
 
 ### Visual Studio 17.12+ and "__has_feature"
+
+_This is only relevant for older versions of this plugin that supported Unreal Engine 5.3_
 
 Unreal Engine 5.3 (and 5.4) no longer work by default since Visual Studio version 17.12, with these errors:
 

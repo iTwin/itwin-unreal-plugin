@@ -2,14 +2,14 @@
 
 If you would like to transition a project which uses the (now deprecated) [3DFT plugin](https://github.com/iTwin/unreal-engine-3dft-plugin) to the new iTwin for Unreal plugin, please follow these stepes.
 
-1. Make sure your project is using Unreal Engine version 5.3.<br>
-   See "Change a Project's Unreal Engine Version" [here](https://dev.epicgames.com/documentation/en-us/unreal-engine/managing-game-code-in-unreal-engine?application_version=5.3).
+1. Make sure your project is using Unreal Engine version 5.5.<br>
+   See "Change a Project's Unreal Engine Version" [here](https://dev.epicgames.com/documentation/en-us/unreal-engine/managing-game-code-in-unreal-engine?application_version=5.5).
 2. Remove the dependency to the 3DFT plugin. This is done by following these steps:
    - If the 3DFT plugin folder is located inside your project:
      1. Make sure your project is not open in Unreal Editor.
      2. Remove the folder `Plugins\iTwin` from your project.
    - If the 3DFT plugin folder is located inside in the Unreal Engine folder:<br>
-     In the Unreal Editor, disable the `iTwin` plugin as explained [here](https://dev.epicgames.com/documentation/en-us/unreal-engine/working-with-plugins-in-unreal-engine?application_version=5.3).
+     In the Unreal Editor, disable the `iTwin` plugin as explained [here](https://dev.epicgames.com/documentation/en-us/unreal-engine/working-with-plugins-in-unreal-engine?application_version=5.5).
 3. Make sure your project is not open in the Unreal Editor.
 4. If not done yet, install the iTwin for Unreal plugin as described on the [Installation Readme](https://github.com/iTwin/itwin-unreal-plugin/tree/main/Documentation/ForDevelopers/).
 5. Remove the folders `Binaries` and `Intermediate` that may exist at the root of your project's folder.

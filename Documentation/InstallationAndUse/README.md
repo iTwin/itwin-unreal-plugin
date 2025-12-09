@@ -6,7 +6,7 @@ Follow these instructions to install the pre-compiled plugin into Unreal Engine.
 To use the iTwin plugin, you need to create an account at [developer.bentley.com](https://developer.bentley.com). There is a free 90 day trial available. The developer account is required for utilizing the streaming API within the plugin. If your trial period is over and you would like to continue using and testing the plugin, please get in touch with us.<br>
 This initial release supports Windows 11; Windows 10 might work, but has not been tested officially (you may conduct tests on Windows 10 yourself if you would like). A version for Mac is in development.<br>
 Only iModels and their Saved Views are supported at the moment; Reality Data can be loaded through blueprints only (no GUI is available in the ITwinTestApp for them at the moment).<br>
-[Unreal Engine 5.3](https://dev.epicgames.com/documentation/en-us/unreal-engine/installing-unreal-engine?application_version=5.3) is the currently supported version. Other Unreal Engine versions will be supported in future updates.<br>
+[Unreal Engine 5.5](https://dev.epicgames.com/documentation/en-us/unreal-engine/installing-unreal-engine?application_version=5.5) is the currently supported version. Other Unreal Engine versions will be supported in future updates.<br>
 
 To run Unreal Engine, make sure you are using a dedicated GPU. The performance largely depends on the power of your graphics card. For more information on recommended system specs for Unreal Engine, please visit [Epic's website](https://dev.epicgames.com/documentation/de-de/unreal-engine/hardware-and-software-specifications-for-unreal-engine).
 
@@ -27,7 +27,7 @@ Before you install the plugin, you need to create and configure your iTwin Platf
 1. Go to the [Releases](https://github.com/iTwin/itwin-unreal-plugin/releases) page.
 2. Download ITwinForUnreal.zip from the latest release.
 3. Extract the zip archive to Unreal Engine's `Engine/Plugins/Marketplace` folder.<br>
-   For example, on Unreal Engine 5.3 on Windows, this is typically `C:\Program Files\Epic Games\UE_5.3\Engine\Plugins\Marketplace`.<br>
+   For example, on Unreal Engine 5.5 on Windows, this is typically `C:\Program Files\Epic Games\UE_5.5\Engine\Plugins\Marketplace`.<br>
    You may need to create the `Marketplace` folder yourself.<br>
    After extraction, you should have a folder `Engine/Plugins/Marketplace/ITwinForUnreal/Binaries` for example.
 4. The plugin is now ready to use.
