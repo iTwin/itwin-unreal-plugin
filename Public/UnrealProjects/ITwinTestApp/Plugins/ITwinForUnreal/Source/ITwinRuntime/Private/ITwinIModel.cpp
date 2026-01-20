@@ -2,7 +2,7 @@
 |
 |     $Source: ITwinIModel.cpp $
 |
-|  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
+|  $Copyright: (c) 2026 Bentley Systems, Incorporated. All rights reserved. $
 |
 +--------------------------------------------------------------------------------------*/
 
@@ -316,6 +316,7 @@ public:
 	}
 
 	void Initialize();
+	void OnWorldDestroyed(UWorld* InWorld);
 	void ResetSceneMapping();
 	void HandleTilesHavingChangedVisibility();
 	void HandleTilesRenderReadiness();
@@ -1214,6 +1215,15 @@ void AITwinIModel::Tick(float Delta)
 	Impl->ForceShadowUpdatesIfNeeded();
 }
 
+
+void AITwinIModel::FImpl::OnWorldDestroyed(UWorld* InWorld)
+{
+	if (IsValid(InWorld) && IsValid(&Owner) && Owner.GetWorld() == InWorld)
+	{
+		Internals.Uniniter->Run();
+	}
+}
+
 /// Lazy-initialize most of the stuff formerly done either in the constructor (iModel's or its Impl's), or
 /// even in PostLoad. The problem was that this stuff is only useful for "active" actors, ie either played
 /// in-game (or PIE), or used interactively in the Editor, BUT various other actors are instantiated, eg. the
@@ -1242,6 +1252,9 @@ void AITwinIModel::FImpl::Initialize()
 		SceneMappingBuilder.Reset();
 		ClippingHelper.Reset();
 	});
+	// When loading a level (or doing "Save current Level as"), EndPlay is not called (because not in PIE...)
+	// and detroying the old world crashes because of the leak! (at least starting from UE 5.6)
+	GEngine->OnWorldDestroyed().AddRaw(this, &AITwinIModel::FImpl::OnWorldDestroyed);
 
 	CreateSynchro4DSchedulesComponent(GetTuner());
 
@@ -3004,11 +3017,14 @@ void AITwinIModel::PostActorCreated()
 AITwinIModel::~AITwinIModel()
 {
 	Impl->Internals.Uniniter->Run();
+	if (IsValid(GEngine)) // GEngine is invalid when closing the Editor...
+		GEngine->OnWorldDestroyed().RemoveAll(Impl.Get());
 }
 
 void AITwinIModel::EndPlay(const EEndPlayReason::Type EndPlayReason) /*override*/
 {
 	Impl->Internals.Uniniter->Run();
+	GEngine->OnWorldDestroyed().RemoveAll(Impl.Get());
 	Super::EndPlay(EndPlayReason);
 }
 

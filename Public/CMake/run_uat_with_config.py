@@ -2,7 +2,7 @@
 #
 #     $Source: run_uat_with_config.py $
 #
-#  $Copyright: (c) 2025 Bentley Systems, Incorporated. All rights reserved. $
+#  $Copyright: (c) 2026 Bentley Systems, Incorporated. All rights reserved. $
 #
 #--------------------------------------------------------------------------------------
 
