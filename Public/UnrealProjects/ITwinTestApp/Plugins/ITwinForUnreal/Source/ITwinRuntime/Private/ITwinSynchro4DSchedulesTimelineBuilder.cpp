@@ -301,6 +301,7 @@ void Add3DPathTransformToTimeline(FITwinElementTimeline& ElementTimeline, FTimeR
 		TransformAnchor);
 	bool const bRelativeKFPositions = (ITwin::Timeline::EAnchorPoint::Original == BaseAnchor.AnchorPoint);
 	FVector FirstPos = FVector::Zero();
+	double LastKFRelativeTime = 0.;
 	if (bRelativeKFPositions)
 	{
 		// No: the Element's position in the iModel is apparently the position at the start of the path,
@@ -309,7 +310,18 @@ void Add3DPathTransformToTimeline(FITwinElementTimeline& ElementTimeline, FTimeR
 		//if (b3DPathReverseDirection)
 		//	FirstPos = std::max_element(Keyframes.begin(), Keyframes.end())->Transform.GetLocation();
 		//else
-		FirstPos = std::min_element(Keyframes.begin(), Keyframes.end())->Transform.GetLocation();
+		auto const FirstKF = std::min_element(Keyframes.begin(), Keyframes.end());
+		FirstPos = FirstKF->Transform.GetLocation();
+		if (b3DPathReverseDirection)
+			LastKFRelativeTime = FirstKF->RelativeTime;
+		else
+			LastKFRelativeTime = std::max_element(Keyframes.begin(), Keyframes.end())->RelativeTime;
+	}
+	else
+	{
+		LastKFRelativeTime = b3DPathReverseDirection
+			? std::min_element(Keyframes.begin(), Keyframes.end())->RelativeTime
+			: std::max_element(Keyframes.begin(), Keyframes.end())->RelativeTime;
 	}
 	// TODO_GCO: there are other cases of nilpotent paths, but harder to detect since alignments other than
 	// 'Original' need to compare the Translation component of the Transform to the right bounding box value
@@ -330,15 +342,23 @@ void Add3DPathTransformToTimeline(FITwinElementTimeline& ElementTimeline, FTimeR
 		KeyRot.ToAxisAndAngle(RotAxis, Angle);
 		RotAxis = CoordConv.IModelToUnreal.TransformVector(RotAxis);
 		RotAxis.Normalize();
+		bool const bIsLastKF = (Key.RelativeTime == LastKFRelativeTime);
 		// Note: SetTransformationAt will order keyframes by their time point, whatever their ordering in
 		// the input vector
 		double const ActualRelativeTime =
-			b3DPathReverseDirection ? (1. - Key.RelativeTime) : Key.RelativeTime;
+			(b3DPathReverseDirection ? (1. - Key.RelativeTime) : Key.RelativeTime)
+			// Prevent one KF overwriting another one when a resource is assigned to successive 3D paths
+			// on exactly adjacent tasks (time-wise)
+			// (noticed while investigating https://github.com/iTwin/itwin-unreal-plugin/issues/89)
+			- (bIsLastKF ? KEYFRAME_TIME_EPSILON : 0.);
 		ElementTimeline.SetTransformationAt(TaskTimes.first + ActualRelativeTime * TaskDuration,
 			bRelativeKFPositions
 				? CoordConv.IModelToUnreal.TransformVector(Key.Transform.GetTranslation() - FirstPos)
 				: CoordConv.IModelToUnreal.TransformPosition(Key.Transform.GetTranslation()),
-			FQuat(RotAxis, Angle), BaseAnchor, EInterpolation::Linear);
+			FQuat(RotAxis, Angle), BaseAnchor,
+			// "Step": ie. do not interpolate linearly between successive paths!
+			// (ADO#1979908 = https://github.com/iTwin/itwin-unreal-plugin/issues/89)
+			bIsLastKF ? EInterpolation::Step : EInterpolation::Linear);
 	}
 }
 

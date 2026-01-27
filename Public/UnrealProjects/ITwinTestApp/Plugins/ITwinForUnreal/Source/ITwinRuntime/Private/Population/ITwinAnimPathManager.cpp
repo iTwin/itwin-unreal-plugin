@@ -10,6 +10,7 @@
 #include <Population/ITwinPopulationTool.h>
 #include <Population/ITwinKeyframePath.h>
 #include <Population/ITwinPopulation.h>
+#include <Population/ITwinPopulation.inl>
 #include <Population/ITwinPopulationWithPathExt.h>
 #include <Spline/ITwinSplineHelper.h>
 #include <BeUtils/SplineSampling/SplineSampling.h>

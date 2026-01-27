@@ -17,6 +17,7 @@
 #include <Helpers/ITwinTracingHelper.h>
 #include <ITwinGoogle3DTileset.h>
 #include <ITwinRealityData.h>
+#include <Population/ITwinPopulation.inl>
 
 #include <EngineUtils.h> // for TActorIterator<>
 #include <Engine/EngineTypes.h>

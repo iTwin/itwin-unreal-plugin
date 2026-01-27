@@ -153,7 +153,7 @@ public:
 	/// Includes internal iModel data not strictly part of the schedule but required for it to replay:
 	/// this data needs to be downloaded even when there is no schedule. When the schedule is fully available,
 	/// or when it had been determined that there is no schedule, the variable is set to 100.
-	UPROPERTY(Category = "iTwin", VisibleAnywhere)
+	UPROPERTY(Category = "iTwin", VisibleAnywhere, BlueprintReadOnly)
 	double ScheduleDownloadPercentComplete = 0.;
 
 public:
