@@ -64,15 +64,6 @@ std::optional<_PropertyValues> PropertyTimeline<_PropertyValues>::GetStateAtTime
 {
 	if (Values.empty())
 		return {};
-	// To be consistent with iModel.js behavior, we do this special case for when current time is equal to
-	// or greater than the last entry time. In this case we return the last entry, ignoring entryTimeBehavior.
-	// Without this special case, when all the following consitions are met:
-	// - current time is exactly equal to the last entry time,
-	// - entryTimeBehavior == StateAtEntryTimeBehavior::UseLeftInterval
-	// - second to last entry has "step" interpolation
-	// then we would return the second to last entry, instead of the last entry.
-	if (time >= Values.rbegin()->Time)
-		return *Values.rbegin();
 	// "auto entryIt" resolves to a std::forward_iterator (at least in VS2022 17.8.5) and fails to compile,
 	// because we need a std::bidirectional_iterator, which std::set::[const_]iterator actually is...!
 	//const auto entryIt = ...
@@ -87,7 +78,13 @@ std::optional<_PropertyValues> PropertyTimeline<_PropertyValues>::GetStateAtTime
 	if (entryIt == Values.cend())
 		return *Values.rbegin();
 	const auto& entry1 = *(entryIt);
+	if (time == entry1.Time)
+		return entry1;
+	// TODO_GCO: contradicting the purpose of StateAtEntryTimeBehavior here, because it feels so nonsensical!
+	// Remove StateAtEntryTimeBehavior entirely unless a good reason is found for such a behavior (see enum doc)
 	const auto& entry0 = *(--entryIt);
+	if (time == entry0.Time)
+		return entry0;
 	switch (entry0.Interpolation)
 	{
 		case EInterpolation::Step:

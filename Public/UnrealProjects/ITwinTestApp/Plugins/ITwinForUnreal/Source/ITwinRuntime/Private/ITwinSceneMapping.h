@@ -1020,6 +1020,7 @@ public:
 	void ShowCategoriesPerModel(std::unordered_set<std::pair<ITwinElementID, ITwinElementID>, FITwinSceneTile::pair_hash> const& InCategoryPerModelIDs, bool Force = false);
 	/// Not const because empty set may be added to GeometryIDToElementIDs before being returned
 	[[nodiscard]] std::unordered_set<ITwinElementID> const& ConstructionDataElements();
+	void ShouldHideConstructionData(bool bHide) { bHiddenConstructionData = bHide; }
 	[[nodiscard]] std::unordered_set<ITwinElementID> const& GetSavedViewHiddenElements();
 	[[nodiscard]] std::unordered_set<ITwinElementID> const& GetSavedViewHiddenModels();
 	[[nodiscard]] std::unordered_set<ITwinElementID> const& GetSavedViewHiddenCategories();

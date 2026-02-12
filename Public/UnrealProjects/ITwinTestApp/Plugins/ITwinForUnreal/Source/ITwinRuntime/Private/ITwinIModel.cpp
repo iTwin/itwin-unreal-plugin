@@ -1257,6 +1257,7 @@ void AITwinIModel::FImpl::Initialize()
 	GEngine->OnWorldDestroyed().AddRaw(this, &AITwinIModel::FImpl::OnWorldDestroyed);
 
 	CreateSynchro4DSchedulesComponent(GetTuner());
+	Internals.SceneMapping.ShouldHideConstructionData(!Owner.bShowConstructionData);
 
 	// Formerly in PostLoad (see method comment for why it was a problem)
 	if (bWasLoadedFromDisk)
@@ -2388,13 +2389,15 @@ void AITwinIModel::SetLightForForcedShadowUpdate(ULightComponent* DirLight)
 void AITwinIModel::ShowConstructionData(bool bShow)
 {
 	bShowConstructionData = bShow;
-	GetInternals(*this).HideElements(
+	auto& Internals = GetInternals(*this);
+	Internals.SceneMapping.ShouldHideConstructionData(!bShow);
+	Internals.HideElements(
 		bShowConstructionData ? std::unordered_set<ITwinElementID>()
-		: GetInternals(*this).SceneMapping.ConstructionDataElements(),
+		: Internals.SceneMapping.ConstructionDataElements(),
 		true);
-	GetInternals(*this).HideModels(GetInternals(*this).SceneMapping.GetSavedViewHiddenModels(), true);
-	GetInternals(*this).HideCategories(GetInternals(*this).SceneMapping.GetSavedViewHiddenCategories(), true);
-	GetInternals(*this).HideElements(GetInternals(*this).SceneMapping.GetSavedViewHiddenElements(), false, true);
+	Internals.HideModels(Internals.SceneMapping.GetSavedViewHiddenModels(), true);
+	Internals.HideCategories(Internals.SceneMapping.GetSavedViewHiddenCategories(), true);
+	Internals.HideElements(Internals.SceneMapping.GetSavedViewHiddenElements(), false, true);
 }
 
 void AITwinIModel::UpdateConstructionData()

@@ -28,6 +28,14 @@
 
 #include <algorithm>
 
+// To avoid random overwrites in the case of exactly adjacent tasks (timewise), use different
+// epsilons at start and end of tasks to set the "before" and the "after" states. An alternative
+// would be to prioritize the keyframe setting calls (SetColorAt, etc.) depending on whether
+// the setting is for before the task, at task start, end or after the end.
+#define KF_START_EPSILON KEYFRAME_TIME_EPSILON
+#define KF_END_2_EPSILON (2 * KEYFRAME_TIME_EPSILON)
+#define KF_END_3_EPSILON (3 * KEYFRAME_TIME_EPSILON)
+
 void AddColorToTimeline(FITwinElementTimeline& ElementTimeline,
 						FAppearanceProfile const& Profile, FTimeRangeInSeconds const& Time)
 {
@@ -52,7 +60,7 @@ void AddColorToTimeline(FITwinElementTimeline& ElementTimeline,
 		? std::nullopt : std::optional<FVector>(Profile.ActiveAppearance.Base.Color);
 	if (ColorBefore != StartColor)
 	{
-		ElementTimeline.SetColorAt(Time.first - KEYFRAME_TIME_EPSILON, ColorBefore, EInterpolation::Step);
+		ElementTimeline.SetColorAt(Time.first - KF_START_EPSILON, ColorBefore, EInterpolation::Step);
 	}
 	// Since we don't need the epsilon for the following calls to SetColorAt, don't test it here, in case we
 	// get extra short tasks but user still expects to see the StartColor when time is exactly Time.first
@@ -65,9 +73,12 @@ void AddColorToTimeline(FITwinElementTimeline& ElementTimeline,
 	}
 	else
 	{
-		// The difference with Visibilities is that there is no FinishColor (no color interp)
+		// The difference with Visibilities is that there is no no color interpolation (ie no
+		// FActiveAppearance::FinishColor, as opposed to FActiveAppearance::FinishAlpha)
 		ElementTimeline.SetColorAt(Time.first, StartColor, EInterpolation::Step);
-		ElementTimeline.SetColorAt(Time.second, ColorAfter, EInterpolation::Step);
+		// In case of exactly adjacent tasks, the larger epsilon avoids random overwrite of the second
+		// task's "before" color by the first task's "after" color
+		ElementTimeline.SetColorAt(Time.second - KF_END_2_EPSILON, ColorAfter, EInterpolation::Step);
 	}
 }
 
@@ -170,17 +181,20 @@ void AddCuttingPlaneToTimeline(FITwinElementTimeline& ElementTimeline, FAppearan
 	// (resp. ends) at FullyGrown.
 	if (bVisibleOutsideTask && !bInvertGrowth)
 	{
-		ElementTimeline.SetCuttingPlaneAt(Time.first, {}, EGrowthStatus::FullyGrown, EInterpolation::Step);
+		ElementTimeline.SetCuttingPlaneAt(Time.first - KF_START_EPSILON, {}, EGrowthStatus::FullyGrown,
+										  EInterpolation::Step);
 	}
-	ElementTimeline.SetCuttingPlaneAt(Time.first + KEYFRAME_TIME_EPSILON, PlaneOrientation,
+	ElementTimeline.SetCuttingPlaneAt(Time.first, PlaneOrientation,
 		bInvertGrowth ? EGrowthStatus::DeferredFullyGrown : EGrowthStatus::DeferredFullyRemoved,
 		EInterpolation::Linear, TransformKeyframe);
-	ElementTimeline.SetCuttingPlaneAt(Time.second - KEYFRAME_TIME_EPSILON, PlaneOrientation,
+	// In case of exactly adjacent tasks, the larger epsilon avoids random overwrite of the second task's
+	// "FullyGrown" KF by one of the first task's ending keyframes below:
+	ElementTimeline.SetCuttingPlaneAt(Time.second - KF_END_3_EPSILON, PlaneOrientation,
 		bInvertGrowth ? EGrowthStatus::DeferredFullyRemoved : EGrowthStatus::DeferredFullyGrown,
 		EInterpolation::Step, TransformKeyframe);
 	if (bVisibleOutsideTask && bInvertGrowth)
 	{
-		ElementTimeline.SetCuttingPlaneAt(Time.second, {}, EGrowthStatus::FullyGrown, EInterpolation::Step);
+		ElementTimeline.SetCuttingPlaneAt(Time.second - KF_END_2_EPSILON, {}, EGrowthStatus::FullyGrown, EInterpolation::Step);
 	}
 }
 	
@@ -195,18 +209,19 @@ void AddVisibilityToTimeline(FITwinElementTimeline& ElementTimeline,
 	}
 	else
 	{
-		// Every case but 'Maintenance' tasks need a keyframe at some point: start, end or both
-		if (Profile.ProfileType == EProfileAction::Maintenance
-			// About the "== 1" tests: is the animation alpha multiplied, or somehow replacing the
-			// material's "base" opacity? In the latter case, these tests are wrong, and on top of that,
-			// Features initially rendered with the Translucent material could switch to the Opaque...
-			&& (Profile.StartAppearance.bUseOriginalAlpha || Profile.StartAppearance.Alpha == 1)
-			&& (Profile.ActiveAppearance.Base.bUseOriginalAlpha ||
-				(Profile.ActiveAppearance.Base.Alpha == 1 && Profile.ActiveAppearance.FinishAlpha == 1))
-			&& (Profile.FinishAppearance.bUseOriginalAlpha || Profile.FinishAppearance.Alpha == 1))
-		{
-			return;
-		}
+		// DO NOT optimize, KF are needed in the case of successive tasks! (eg. Maintain followed by Install)
+		// Was: Every case but 'Maintenance' tasks need a keyframe at some point: start, end or both.
+		//if (Profile.ProfileType == EProfileAction::Maintenance
+		//	// About the "== 1" tests: is the animation alpha multiplied, or somehow replacing the
+		//	// material's "base" opacity? In the latter case, these tests are wrong, and on top of that,
+		//	// Features initially rendered with the Translucent material could switch to the Opaque...
+		//	&& (Profile.StartAppearance.bUseOriginalAlpha || Profile.StartAppearance.Alpha == 1)
+		//	&& (Profile.ActiveAppearance.Base.bUseOriginalAlpha ||
+		//		(Profile.ActiveAppearance.Base.Alpha == 1 && Profile.ActiveAppearance.FinishAlpha == 1))
+		//	&& (Profile.FinishAppearance.bUseOriginalAlpha || Profile.FinishAppearance.Alpha == 1))
+		//{
+		//	return;
+		//}
 		bool const bZeroTimeTask = ((Time.second - KEYFRAME_TIME_EPSILON) <= Time.first);
 		float const AlphaBefore =
 			(EProfileAction::Install == Profile.ProfileType
@@ -220,10 +235,10 @@ void AddVisibilityToTimeline(FITwinElementTimeline& ElementTimeline,
 		{
 			if (AlphaBefore != AlphaAfter)
 			{
-				ElementTimeline.SetVisibilityAt(Time.first - KEYFRAME_TIME_EPSILON,
+				ElementTimeline.SetVisibilityAt(Time.first - KF_END_3_EPSILON,
 												AlphaBefore, EInterpolation::Step);
 			}
-			ElementTimeline.SetVisibilityAt(Time.second, AlphaAfter, EInterpolation::Step);
+			ElementTimeline.SetVisibilityAt(Time.second - KF_END_2_EPSILON, AlphaAfter, EInterpolation::Step);
 			return;
 		}
 		float const StartAlpha =
@@ -232,7 +247,7 @@ void AddVisibilityToTimeline(FITwinElementTimeline& ElementTimeline,
 			Profile.ActiveAppearance.Base.bUseOriginalAlpha ? 1.f : Profile.ActiveAppearance.FinishAlpha;
 		if (AlphaBefore != StartAlpha)
 		{
-			ElementTimeline.SetVisibilityAt(Time.first - KEYFRAME_TIME_EPSILON,
+			ElementTimeline.SetVisibilityAt(Time.first - KF_START_EPSILON,
 											AlphaBefore, EInterpolation::Step);
 		}
 		if (StartAlpha == FinishAlpha)
@@ -242,12 +257,12 @@ void AddVisibilityToTimeline(FITwinElementTimeline& ElementTimeline,
 		else
 		{
 			ElementTimeline.SetVisibilityAt(Time.first, StartAlpha, EInterpolation::Linear);
-			ElementTimeline.SetVisibilityAt(Time.second - KEYFRAME_TIME_EPSILON,
+			ElementTimeline.SetVisibilityAt(Time.second - KF_END_3_EPSILON,
 											FinishAlpha, EInterpolation::Step);
 		}
 		if (AlphaAfter != FinishAlpha)
 		{
-			ElementTimeline.SetVisibilityAt(Time.second, AlphaAfter, EInterpolation::Step);
+			ElementTimeline.SetVisibilityAt(Time.second - KF_END_2_EPSILON, AlphaAfter, EInterpolation::Step);
 		}
 	}
 }

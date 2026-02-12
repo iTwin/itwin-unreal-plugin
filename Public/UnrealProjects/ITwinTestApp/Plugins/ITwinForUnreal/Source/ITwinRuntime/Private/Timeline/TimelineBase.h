@@ -68,13 +68,17 @@ class PropertyEntry
 template<class _Values>
 bool NoEffect(const _Values& Prop);
 
-//! This enum controls the behavior of function GetStateAtTime() when the given time
-//! matches exactly the time of an entry (say, entry N).
-//! This has an effect only if entry N-1 uses "step" interpolation.
-//! With UseLeftInterval behavior, GetStateAtTime() will return value N-1,
-//! which is consistent with iModel.js behavior.
-//! With UseRightInterval will return value N, which can be useful in some cases
-//! (and seems more sensible).
+//! This enum was rendered meaningless by overriding its intent because it led to rendering the 4D
+//! schedule in a way that was both nonsensical and in flagrant contradiction with Synchro Pro, since
+//! setting the schedule time exactly on a keyframe (task start or end date) would use the values from
+//! _before_ the task('s start or end)!!
+//! It controlled the behavior of function GetStateAtTime() when the given time matched exactly
+//! the time of an entry (say, entry N). This had an effect only if entry N-1 used "step" interpolation.
+//! With UseLeftInterval behavior, GetStateAtTime() returned value N-1, which is consistent with iModel.js
+//! behavior. With UseRightInterval it returned value N, which can be useful in some cases (and seems more
+//! sensible), but LumenRT and iTwin Engage used UseLeftInterval as a default to "match iModel.js".
+//! I don't know how we determined that iModel.js had this behavior, because in the online viewer it is not
+//! possible to set an exact date anyway... (except the start or end dates of the whole schedule)
 enum class StateAtEntryTimeBehavior
 {
 	UseLeftInterval, //!< Consider entry N belongs in interval [N-1, N] (same behavior as iModel.js)

@@ -252,7 +252,7 @@ void GetStateAtTimeSpec::Define()
 					AreApproxEqual(*this,
 						Test_ElementState{
 							Test_Visibility{0.24f},
-							Test_Color{true, FVector{0.5f, 0.7f, 0.9f}},
+							Test_Color{false, FVector{0.0f, 0.0f, 0.0f}},
 							{},
 							Test_CuttingPlane{FVector4f(1,0,0,20), false, false}},
 						ElementTimeline->GetStateAtTime(190,
@@ -330,8 +330,6 @@ void GetStateAtTimeSpec::Define()
 							VisibilityApproxEqual(*this,
 								ElementTimeline->GetStateAtTime(220,
 									ITwin::Timeline::StateAtEntryTimeBehavior::UseLeftInterval, nullptr),
-								// would be 0.2 if not the last keyframe - hack introduced in Schedule.inl to
-								// conform to iModel.js behavior :/
 								0.4f);
 							VisibilityApproxEqual(*this,
 								ElementTimeline->GetStateAtTime(220,
@@ -346,13 +344,11 @@ void GetStateAtTimeSpec::Define()
 							VisibilityApproxEqual(*this,
 								ElementTimeline->GetStateAtTime(220,
 									ITwin::Timeline::StateAtEntryTimeBehavior::UseLeftInterval, nullptr),
-								// so now it's really 0.2
-								0.2f);
+								0.4f);
 							VisibilityApproxEqual(*this,
 								ElementTimeline->GetStateAtTime(220,
 									ITwin::Timeline::StateAtEntryTimeBehavior::UseRightInterval, nullptr),
-								// now it's 0.5 because entry0 for RightInterval is 220, which interp is Next
-								0.5f);
+								0.4f);
 						});
 					It("should use value from Next keyframe(t=240)",
 						[this]()
@@ -368,17 +364,14 @@ void GetStateAtTimeSpec::Define()
 							entry.Interpolation = ITwin::Timeline::EInterpolation::Step;
 							entry.test_value_ = 0.5f;
 							ElementTimeline->test_visibility_.Values.insert(entry);
-							// t=220 is no longer the last keyframe, but the interpolation used is that of
-							// entry0, which differs with Use*Interval
-							// so these first 2 tests are actually the same as the other test above...
 							VisibilityApproxEqual(*this,
 								ElementTimeline->GetStateAtTime(220,
 									ITwin::Timeline::StateAtEntryTimeBehavior::UseLeftInterval, nullptr),
-								0.2f);
+								0.4f);
 							VisibilityApproxEqual(*this,
 								ElementTimeline->GetStateAtTime(220,
 									ITwin::Timeline::StateAtEntryTimeBehavior::UseRightInterval, nullptr),
-								0.5f);
+								0.4f);
 							VisibilityApproxEqual(*this,
 								ElementTimeline->GetStateAtTime(240,
 									ITwin::Timeline::StateAtEntryTimeBehavior::UseLeftInterval, nullptr),
@@ -406,11 +399,11 @@ void GetStateAtTimeSpec::Define()
 							VisibilityApproxEqual(*this,
 								ElementTimeline->GetStateAtTime(220,
 									ITwin::Timeline::StateAtEntryTimeBehavior::UseLeftInterval, nullptr),
-								0.2f);
+								0.4f);
 							VisibilityApproxEqual(*this,
 								ElementTimeline->GetStateAtTime(220,
 									ITwin::Timeline::StateAtEntryTimeBehavior::UseRightInterval, nullptr),
-								0.5f);
+								0.4f);
 							VisibilityApproxEqual(*this,
 								ElementTimeline->GetStateAtTime(240,
 									ITwin::Timeline::StateAtEntryTimeBehavior::UseLeftInterval, nullptr),
@@ -426,7 +419,7 @@ void GetStateAtTimeSpec::Define()
 							VisibilityApproxEqual(*this,
 								ElementTimeline->GetStateAtTime(220,
 									ITwin::Timeline::StateAtEntryTimeBehavior::UseRightInterval, nullptr),
-								0.5f);
+								0.4f);
 							// Test no interp:
 							VisibilityApproxEqual(*this,
 								ElementTimeline->GetStateAtTime(230,
