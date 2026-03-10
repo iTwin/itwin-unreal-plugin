@@ -59,6 +59,7 @@ For example: `C:\MyUnrealApp\Plugins\ITwinForUnreal`.
    - `Loading Method`: `Automatic`,
    - `iModel Id`: the ID of your iModel,
    - `Changeset Id`: the ID of the specific changeset you want to import, or `latest` to let the plugin decide which.
+      - **Important**: to replay a Synchro4D schedule's animation, **you must use the latest changeset** for the iModel. Earlier changesets might work but there is no guarantee they will.
 Then the iModel should appear in the viewport.
 
 Note: to determine the iModel ID or changeset ID, you can find them in the URL when you choose to visualize an iModel in the online viewer:
