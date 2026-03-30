@@ -11,6 +11,7 @@
 #pragma once
 
 #include <IncludeCesium3DTileset.h>
+#include <ITwinModelType.h>
 
 #include <Containers/Array.h>
 #include <Templates/PimplPtr.h>
@@ -50,10 +51,12 @@ public:
 	static bool RequestElevationtAtGeolocation(AdvViz::SDK::ITwinGeolocationInfo const& GeolocationInfo,
 		std::function<void(std::optional<double> const& elevationOpt)>&& Callback);
 
-	static AITwinGoogle3DTileset* MakeInstance(UWorld& World, bool bGeneratePhysicsMeshes = false);
+	static AITwinGoogle3DTileset* MakeInstance(UWorld& World,
+		bool bGeneratePhysicsMeshes = false, float DpiScaleForCredits = 1.0f);
 
 	AITwinGoogle3DTileset();
 	~AITwinGoogle3DTileset();
+	virtual void Tick(float DeltaTime) override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void SetActorHiddenInGame(bool bNewHidden) override;
 #if WITH_EDITOR
@@ -75,11 +78,18 @@ public:
 		BlueprintCallable)
 	bool IsGeoLocationLocked() const;
 
-	class UITwinClippingCustomPrimitiveDataHelper* GetClippingHelper() const;
+	class UITwinClipping3DTilesetHelper* GetClippingHelper() const;
 	bool MakeClippingHelper();
 
 	//! Creates a helper to perform some requests/modifications on the tileset.
 	TUniquePtr<FITwinTilesetAccess> MakeTilesetAccess();
+
+	ITwin::ModelLink GetModelLink() const {
+		return std::make_pair(EITwinModelType::GlobalMapLayer, FString());
+	}
+
+	//! Scale the credits appearing on the bottom.
+	void SetCreditsWidgetDisplayScale(float InScale);
 
 private:
 	class FImpl;

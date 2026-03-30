@@ -4,9 +4,7 @@
 
 #include "CesiumLoadTestCore.h"
 
-#include "CesiumAsync/ICacheDatabase.h"
 #include "CesiumRuntime.h"
-
 #include "CesiumTestHelpers.h"
 #include "Editor.h"
 #include "Engine/LocalPlayer.h"
@@ -14,6 +12,10 @@
 #include "Tests/AutomationCommon.h"
 #include "Tests/AutomationEditorCommon.h"
 #include "UnrealClient.h"
+
+THIRD_PARTY_INCLUDES_START
+#include <CesiumAsync/ICacheDatabase.h>
+THIRD_PARTY_INCLUDES_END
 
 namespace Cesium {
 

@@ -10,6 +10,7 @@
 
 #include <CoreMinimal.h>
 #include <AssetRegistry/AssetData.h>
+#include <Misc/Optional.h>
 
 #include <ITwinRuntime/Private/Compil/BeforeNonUnrealIncludes.h>
 #	include <SDK/Core/Tools/Error.h>
@@ -67,16 +68,30 @@ public:
 		void,
 		ExportError>;
 
+	struct ExportOptions
+	{
+		//! If set, will be used to write textures, if any (the directory will be created if needed).
+		//! If left empty, the main DestinationFolder is used (ie. beside the material definition file).
+		FString CustomTextureDir = {};
+		//! If left empty, a file "material.json" will be written.
+		FString CustomBasename = {};
+		//! Whether we should request user confirmation before overwriting an existing material.
+		bool bPromptBeforeOverwrite = true;
+	};
 	//! Export the given material to disk. If the process succeeds, a .json description will be generated
 	//! as well as textures in the destination folder passed as parameter.
+	//! If CustomBasename is left empty, a file "material.json" will be written.
 	static ExportResult ExportMaterialToDisk(AITwinIModel const& OwnerIModel, uint64_t MaterialId,
-		FString const& MaterialName, FString const& DestinationFolder, bool bPromptBeforeOverwrite = true);
+		FString const& MaterialName,
+		FString const& DestinationFolder,
+		ExportOptions const& Options = {});
 
 	//! Loads a material definition from an asset file.
 	static bool LoadMaterialFromAssetPath(FString const& AssetPath, ITwinMaterial& OutMaterial,
 		TextureKeySet& OutTexKeys, TextureUsageMap& OutTextureUsageMap,
 		AdvViz::SDK::ETextureSource& OutTexSource,
 		MaterialPersistencePtr const& MatIOMngr,
+		TOptional<FString> const& CustomTextureDir = {},
 		FString const* DestinationJsonPath = nullptr);
 
 	//! Returns the path to user-defined material library. The folder may not exist.

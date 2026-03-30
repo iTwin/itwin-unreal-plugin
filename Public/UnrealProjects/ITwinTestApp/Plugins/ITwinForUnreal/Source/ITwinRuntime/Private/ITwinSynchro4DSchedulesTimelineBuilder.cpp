@@ -12,14 +12,13 @@
 #include "ITwinSceneMapping.h"
 #include "ITwinSynchro4DSchedules.h"
 #include "ITwinSynchro4DSchedulesInternals.h"
-#include "ITwinUtilityLibrary.h"
+#include <Timeline/SchedulesKeyframes.h>
+#include <Timeline/SchedulesStructs.inl>
+#include <Timeline/Timeline.h>
+
 #include <Compil/BeforeNonUnrealIncludes.h>
 	#include <BeHeaders/Compil/AlwaysFalse.h>
 #include <Compil/AfterNonUnrealIncludes.h>
-#include <Math/UEMathExts.h> // for RandomFloatColorFromIndex
-#include <Timeline/Timeline.h>
-#include <Timeline/SchedulesConstants.h>
-#include <Timeline/SchedulesStructs.h>
 
 #include <JsonObjectConverter.h>
 #include <HAL/PlatformFileManager.h>
@@ -27,478 +26,8 @@
 #include <Misc/Paths.h>
 
 #include <algorithm>
-
-// To avoid random overwrites in the case of exactly adjacent tasks (timewise), use different
-// epsilons at start and end of tasks to set the "before" and the "after" states. An alternative
-// would be to prioritize the keyframe setting calls (SetColorAt, etc.) depending on whether
-// the setting is for before the task, at task start, end or after the end.
-#define KF_START_EPSILON KEYFRAME_TIME_EPSILON
-#define KF_END_2_EPSILON (2 * KEYFRAME_TIME_EPSILON)
-#define KF_END_3_EPSILON (3 * KEYFRAME_TIME_EPSILON)
-
-void AddColorToTimeline(FITwinElementTimeline& ElementTimeline,
-						FAppearanceProfile const& Profile, FTimeRangeInSeconds const& Time)
-{
-	if (Profile.ProfileType == EProfileAction::Neutral) // handled in AddVisibilityToTimeline
-	{
-		return;
-	}
-	// Wrong in the case of successive tasks: we could get the same problem with colors as with growth
-	// reported there: https://dev.azure.com/bentleycs/e-onsoftware/_workitems/edit/1551970
-	//if (Profile.StartAppearance.bUseOriginalColor
-	//	&& Profile.ActiveAppearance.Base.bUseOriginalColor
-	//	&& Profile.FinishAppearance.bUseOriginalColor)
-	//{
-	//	return;
-	//}
-	// Note: ProfileType is already handled in ParseAppearanceProfileDetails so that bUseOriginalColor
-	// are correctly set, so no need to test ProfileType here
-	using namespace ITwin::Timeline;
-	auto const ColorBefore = Profile.StartAppearance.bUseOriginalColor
-		? std::nullopt : std::optional<FVector>(Profile.StartAppearance.Color);
-	auto const StartColor = Profile.ActiveAppearance.Base.bUseOriginalColor
-		? std::nullopt : std::optional<FVector>(Profile.ActiveAppearance.Base.Color);
-	if (ColorBefore != StartColor)
-	{
-		ElementTimeline.SetColorAt(Time.first - KF_START_EPSILON, ColorBefore, EInterpolation::Step);
-	}
-	// Since we don't need the epsilon for the following calls to SetColorAt, don't test it here, in case we
-	// get extra short tasks but user still expects to see the StartColor when time is exactly Time.first
-	bool const bZeroTimeTask = ((Time.second /*- KEYFRAME_TIME_EPSILON*/) <= Time.first);
-	auto const ColorAfter = Profile.FinishAppearance.bUseOriginalColor
-		? std::nullopt : std::optional<FVector>(Profile.FinishAppearance.Color);
-	if (bZeroTimeTask)
-	{
-		ElementTimeline.SetColorAt(Time.first, ColorAfter, EInterpolation::Step);
-	}
-	else
-	{
-		// The difference with Visibilities is that there is no no color interpolation (ie no
-		// FActiveAppearance::FinishColor, as opposed to FActiveAppearance::FinishAlpha)
-		ElementTimeline.SetColorAt(Time.first, StartColor, EInterpolation::Step);
-		// In case of exactly adjacent tasks, the larger epsilon avoids random overwrite of the second
-		// task's "before" color by the first task's "after" color
-		ElementTimeline.SetColorAt(Time.second - KF_END_2_EPSILON, ColorAfter, EInterpolation::Step);
-	}
-}
-
-/// IMPORTANT: the orientation here is such that it points into the half space that is *cut out*,
-/// NOT the part that remains visible.
-FVector GetCuttingPlaneOrientation(FActiveAppearance const& Appearance)
-{
-	FVector Orientation;
-	// Note: not using FVector::[Up|Left|etc.]Vector because 'Right' is +Y in UE but +X in iTwin
-	switch (Appearance.GrowthSimulationMode)
-	{
-	case EGrowthSimulationMode::Bottom2Top:
-		Orientation = FVector::ZAxisVector;
-		break;
-	case EGrowthSimulationMode::Top2Bottom:
-		Orientation = -FVector::ZAxisVector;
-		break;
-	case EGrowthSimulationMode::Left2Right:
-		Orientation = FVector::XAxisVector;
-		break;
-	case EGrowthSimulationMode::Right2Left:
-		Orientation = -FVector::XAxisVector;
-		break;
-	case EGrowthSimulationMode::Front2Back:
-		Orientation = FVector::YAxisVector;
-		break;
-	case EGrowthSimulationMode::Back2Front:
-		Orientation = -FVector::YAxisVector;
-		break;
-	case EGrowthSimulationMode::Custom:
-		Orientation = { Appearance.GrowthDirectionCustom.X,
-						Appearance.GrowthDirectionCustom.Y,
-						Appearance.GrowthDirectionCustom.Z };
-		Orientation.Normalize();
-		break;
-	case EGrowthSimulationMode::None:
-	case EGrowthSimulationMode::Unknown:
-	default:
-		Orientation = FVector::ZeroVector;
-		ensure(false);
-		break;
-	}
-	// No, bInvertGrowth only changes the BBox boundary from which we start, not the direction
-	return /*Appearance.bInvertGrowth ? (-Orientation) :*/ Orientation;
-}
-
-void AddCuttingPlaneToTimeline(FITwinElementTimeline& ElementTimeline, FAppearanceProfile const& Profile,
-	FTimeRangeInSeconds const& Time, FITwinCoordConversions const& CoordConv,
-	ITwin::Timeline::PTransform const* const TransformKeyframe = nullptr)
-{
-	auto const& GrowthAppearance = Profile.ActiveAppearance;// all others are ignored...
-	if (Profile.ProfileType == EProfileAction::Neutral) // handled in AddVisibilityToTimeline
-	{
-		return;
-	}
-	bool const bZeroTimeTask = ((Time.second - KEYFRAME_TIME_EPSILON) <= Time.first);
-	if (bZeroTimeTask)
-	{
-		return; // nothing to do, FullyGrown/FullyRemoved states would be handled by Visibilities already
-	}
-	using namespace ITwin::Timeline;
-	if (GrowthAppearance.GrowthSimulationMode == EGrowthSimulationMode::None
-		|| GrowthAppearance.GrowthSimulationMode == EGrowthSimulationMode::Unknown)
-	{
-		// We need this keyframe for (at least) these cases of successive tasks:
-		//	* Growth-simulated "Remove" or "Temporary" task A followed by non-growth-simulated task B
-		//	  (of any on-Neutral kind): without these, task A's "FullyRemoved" keyframe would also apply
-		//	  during task B!
-		//	* Non-growth-simulated "Install" or "Maintenance" task A followed by growth-simulated task B of
-		//	  kind "Install" or "Temporary": without these, task B's "FullyRemoved" keyframe would also apply
-		//	  during task A!
-		// From https://dev.azure.com/bentleycs/e-onsoftware/_workitems/edit/1551970
-		if (EProfileAction::Remove == Profile.ProfileType
-			|| EProfileAction::Maintenance == Profile.ProfileType)
-		{
-			ElementTimeline.SetCuttingPlaneAt(Time.first, {}, EGrowthStatus::FullyGrown, EInterpolation::Step);
-		}
-		if (EProfileAction::Install == Profile.ProfileType
-			|| EProfileAction::Maintenance == Profile.ProfileType)
-		{
-			ElementTimeline.SetCuttingPlaneAt(Time.second, {}, EGrowthStatus::FullyGrown, EInterpolation::Step);
-		}
-		return;
-	}
-	FVector PlaneOrientation = CoordConv.IModelToUntransformedIModelInUE
-		.TransformVector(GetCuttingPlaneOrientation(GrowthAppearance));
-	if (!PlaneOrientation.Normalize())
-		return;
-	bool const bVisibleOutsideTask = (Profile.ProfileType == EProfileAction::Maintenance);
-	// 'bInvertGrowth' is "Simulate as Remove" in SynchroPro, but it is only applicable to Maintenance
-	// and Temporary tasks, for which the default growth behaves like Install, and thus needs can a custom
-	// flag to be inverted and behave like a Remove action.
-	bool const bInvertGrowth = (Profile.ProfileType == EProfileAction::Remove)
-		|| (GrowthAppearance.bInvertGrowth && (Profile.ProfileType == EProfileAction::Maintenance
-											|| Profile.ProfileType == EProfileAction::Temporary));
-	// Regular growth means "building (new or temp) stuff", while inverted growth means "removing"
-	// (dismantling) existing/temp stuff. Before new/temp stuff is built, or after existing/temp stuff is
-	// removed, visibility is 0 anyway so the cutting plane setting does not matter, thus we only need a
-	// 'Step' keyframe when FullyRemoved before (resp. after) the task but the growth status starts
-	// (resp. ends) at FullyGrown.
-	if (bVisibleOutsideTask && !bInvertGrowth)
-	{
-		ElementTimeline.SetCuttingPlaneAt(Time.first - KF_START_EPSILON, {}, EGrowthStatus::FullyGrown,
-										  EInterpolation::Step);
-	}
-	ElementTimeline.SetCuttingPlaneAt(Time.first, PlaneOrientation,
-		bInvertGrowth ? EGrowthStatus::DeferredFullyGrown : EGrowthStatus::DeferredFullyRemoved,
-		EInterpolation::Linear, TransformKeyframe);
-	// In case of exactly adjacent tasks, the larger epsilon avoids random overwrite of the second task's
-	// "FullyGrown" KF by one of the first task's ending keyframes below:
-	ElementTimeline.SetCuttingPlaneAt(Time.second - KF_END_3_EPSILON, PlaneOrientation,
-		bInvertGrowth ? EGrowthStatus::DeferredFullyRemoved : EGrowthStatus::DeferredFullyGrown,
-		EInterpolation::Step, TransformKeyframe);
-	if (bVisibleOutsideTask && bInvertGrowth)
-	{
-		ElementTimeline.SetCuttingPlaneAt(Time.second - KF_END_2_EPSILON, {}, EGrowthStatus::FullyGrown, EInterpolation::Step);
-	}
-}
-	
-void AddVisibilityToTimeline(FITwinElementTimeline& ElementTimeline,
-							 FAppearanceProfile const& Profile, FTimeRangeInSeconds const& Time)
-{
-	using namespace ITwin::Timeline;
-	if (Profile.ProfileType == EProfileAction::Neutral)
-	{
-		// "Neutral" means "neutralize", ie. the Element is hidden the whole time!
-		ElementTimeline.SetVisibilityAt(Time.first, 0.f, EInterpolation::Step);
-	}
-	else
-	{
-		// DO NOT optimize, KF are needed in the case of successive tasks! (eg. Maintain followed by Install)
-		// Was: Every case but 'Maintenance' tasks need a keyframe at some point: start, end or both.
-		//if (Profile.ProfileType == EProfileAction::Maintenance
-		//	// About the "== 1" tests: is the animation alpha multiplied, or somehow replacing the
-		//	// material's "base" opacity? In the latter case, these tests are wrong, and on top of that,
-		//	// Features initially rendered with the Translucent material could switch to the Opaque...
-		//	&& (Profile.StartAppearance.bUseOriginalAlpha || Profile.StartAppearance.Alpha == 1)
-		//	&& (Profile.ActiveAppearance.Base.bUseOriginalAlpha ||
-		//		(Profile.ActiveAppearance.Base.Alpha == 1 && Profile.ActiveAppearance.FinishAlpha == 1))
-		//	&& (Profile.FinishAppearance.bUseOriginalAlpha || Profile.FinishAppearance.Alpha == 1))
-		//{
-		//	return;
-		//}
-		bool const bZeroTimeTask = ((Time.second - KEYFRAME_TIME_EPSILON) <= Time.first);
-		float const AlphaBefore =
-			(EProfileAction::Install == Profile.ProfileType
-				|| EProfileAction::Temporary == Profile.ProfileType) ? 0.f
-			: (Profile.StartAppearance.bUseOriginalAlpha ? 1.f : Profile.StartAppearance.Alpha);
-		float const AlphaAfter =
-			(EProfileAction::Remove == Profile.ProfileType
-				|| EProfileAction::Temporary == Profile.ProfileType) ? 0.f
-			: (Profile.FinishAppearance.bUseOriginalAlpha ? 1.f : Profile.FinishAppearance.Alpha);
-		if (bZeroTimeTask)
-		{
-			if (AlphaBefore != AlphaAfter)
-			{
-				ElementTimeline.SetVisibilityAt(Time.first - KF_END_3_EPSILON,
-												AlphaBefore, EInterpolation::Step);
-			}
-			ElementTimeline.SetVisibilityAt(Time.second - KF_END_2_EPSILON, AlphaAfter, EInterpolation::Step);
-			return;
-		}
-		float const StartAlpha =
-			Profile.ActiveAppearance.Base.bUseOriginalAlpha ? 1.f : Profile.ActiveAppearance.Base.Alpha;
-		float const FinishAlpha =
-			Profile.ActiveAppearance.Base.bUseOriginalAlpha ? 1.f : Profile.ActiveAppearance.FinishAlpha;
-		if (AlphaBefore != StartAlpha)
-		{
-			ElementTimeline.SetVisibilityAt(Time.first - KF_START_EPSILON,
-											AlphaBefore, EInterpolation::Step);
-		}
-		if (StartAlpha == FinishAlpha)
-		{
-			ElementTimeline.SetVisibilityAt(Time.first, StartAlpha, EInterpolation::Step);
-		}
-		else
-		{
-			ElementTimeline.SetVisibilityAt(Time.first, StartAlpha, EInterpolation::Linear);
-			ElementTimeline.SetVisibilityAt(Time.second - KF_END_3_EPSILON,
-											FinishAlpha, EInterpolation::Step);
-		}
-		if (AlphaAfter != FinishAlpha)
-		{
-			ElementTimeline.SetVisibilityAt(Time.second - KF_END_2_EPSILON, AlphaAfter, EInterpolation::Step);
-		}
-	}
-}
-
-ITwin::Timeline::PTransform const& AddStaticTransformToTimeline(FITwinElementTimeline& ElementTimeline,
-	FTimeRangeInSeconds const& TaskTimes, FTransform const& Transform, FITwinCoordConversions const&)
-{
-	using namespace ITwin::Timeline;
-	ElementTimeline.SetTransformationDisabledAt(TaskTimes.second, EInterpolation::Step);
-	// Let's keep the possible anterior transformation set:
-	//ElementTimeline.SetTransformationDisabledAt(TaskTimes.first, EInterpolation::Step);
-	return ElementTimeline.SetTransformationAt(TaskTimes.first /*+ KEYFRAME_TIME_EPSILON*/,
-		// KEEPING iModel-space transform here! I couldn't make static transfos work without hacking directly
-		// in FITwinSynchro4DSchedulesInternals::ComputeTransformFromFinalizedKeyframe... :/
-		Transform.GetTranslation(), Transform.GetRotation(),
-		FDeferredAnchor{ EAnchorPoint::Static, false, FVector::ZeroVector },
-		EInterpolation::Step);
-}
-
-void Add3DPathTransformToTimeline(FITwinElementTimeline& ElementTimeline, FTimeRangeInSeconds const& TaskTimes,
-	std::variant<ITwin::Timeline::EAnchorPoint, FVector> const& TransformAnchor,
-	std::vector<FTransformKey> const& Keyframes, FITwinCoordConversions const& CoordConv,
-	bool const b3DPathReverseDirection)
-{
-	if (Keyframes.empty())
-		return;
-	using namespace ITwin::Timeline;
-	// Let's keep the possible anterior transformation set:
-	//ElementTimeline.SetTransformationDisabledAt(TaskTimes.first, EInterpolation::Step);
-	double const TaskDuration = TaskTimes.second - TaskTimes.first;
-	FDeferredAnchor BaseAnchor;
-    std::visit([&BaseAnchor, &CoordConv](auto&& Var)
-		{
-			using T = std::decay_t<decltype(Var)>;
-			if constexpr (std::is_same_v<T, EAnchorPoint>)
-			{
-				if (EAnchorPoint::Original != Var)
-				{
-					BaseAnchor.bDeferred = true;
-					BaseAnchor.AnchorPoint = Var;
-				}
-			}
-			else if constexpr (std::is_same_v<T, FVector>)
-			{
-				BaseAnchor.bDeferred = false;
-				BaseAnchor.AnchorPoint = EAnchorPoint::Custom;
-				BaseAnchor.Offset = CoordConv.IModelToUnreal.TransformVector(Var);
-			}
-			else static_assert(always_false_v<T>, "non-exhaustive visitor!");
-		},
-		TransformAnchor);
-	bool const bRelativeKFPositions = (ITwin::Timeline::EAnchorPoint::Original == BaseAnchor.AnchorPoint);
-	FVector FirstPos = FVector::Zero();
-	double LastKFRelativeTime = 0.;
-	if (bRelativeKFPositions)
-	{
-		// No: the Element's position in the iModel is apparently the position at the start of the path,
-		// (as witnessed in azdev#1625066's project when the animation is Stop'd) even if it is to be
-		// applied in reverse, so offsets must always be computed from this position.
-		//if (b3DPathReverseDirection)
-		//	FirstPos = std::max_element(Keyframes.begin(), Keyframes.end())->Transform.GetLocation();
-		//else
-		auto const FirstKF = std::min_element(Keyframes.begin(), Keyframes.end());
-		FirstPos = FirstKF->Transform.GetLocation();
-		if (b3DPathReverseDirection)
-			LastKFRelativeTime = FirstKF->RelativeTime;
-		else
-			LastKFRelativeTime = std::max_element(Keyframes.begin(), Keyframes.end())->RelativeTime;
-	}
-	else
-	{
-		LastKFRelativeTime = b3DPathReverseDirection
-			? std::min_element(Keyframes.begin(), Keyframes.end())->RelativeTime
-			: std::max_element(Keyframes.begin(), Keyframes.end())->RelativeTime;
-	}
-	// TODO_GCO: there are other cases of nilpotent paths, but harder to detect since alignments other than
-	// 'Original' need to compare the Translation component of the Transform to the right bounding box value
-	// (center for Center alignment, etc.)
-	if (ITwin::Timeline::EAnchorPoint::Original == BaseAnchor.AnchorPoint
-		&& Keyframes.end() == std::find_if(Keyframes.begin(), Keyframes.end(),
-			[&First=Keyframes.begin()->Transform](FTransformKey const& K) {
-				return !FITwinMathExts::StrictlyEqualTransforms(K.Transform, First); }))
-	{
-		// Corner case of a nilpotent 3D path (azdev#1608204)
-		return;
-	}
-	for (auto&& Key : Keyframes)
-	{
-		FVector RotAxis; double Angle;
-		FQuat KeyRot = Key.Transform.GetRotation();
-		KeyRot.Normalize();
-		KeyRot.ToAxisAndAngle(RotAxis, Angle);
-		RotAxis = CoordConv.IModelToUnreal.TransformVector(RotAxis);
-		RotAxis.Normalize();
-		bool const bIsLastKF = (Key.RelativeTime == LastKFRelativeTime);
-		// Note: SetTransformationAt will order keyframes by their time point, whatever their ordering in
-		// the input vector
-		double const ActualRelativeTime =
-			(b3DPathReverseDirection ? (1. - Key.RelativeTime) : Key.RelativeTime)
-			// Prevent one KF overwriting another one when a resource is assigned to successive 3D paths
-			// on exactly adjacent tasks (time-wise)
-			// (noticed while investigating https://github.com/iTwin/itwin-unreal-plugin/issues/89)
-			- (bIsLastKF ? KEYFRAME_TIME_EPSILON : 0.);
-		ElementTimeline.SetTransformationAt(TaskTimes.first + ActualRelativeTime * TaskDuration,
-			bRelativeKFPositions
-				? CoordConv.IModelToUnreal.TransformVector(Key.Transform.GetTranslation() - FirstPos)
-				: CoordConv.IModelToUnreal.TransformPosition(Key.Transform.GetTranslation()),
-			FQuat(RotAxis, Angle), BaseAnchor,
-			// "Step": ie. do not interpolate linearly between successive paths!
-			// (ADO#1979908 = https://github.com/iTwin/itwin-unreal-plugin/issues/89)
-			bIsLastKF ? EInterpolation::Step : EInterpolation::Linear);
-	}
-}
-
-void CreateTestingTimeline(FITwinElementTimeline& Timeline, FITwinCoordConversions const& CoordConv)
-{
-	constexpr double delta = 1000. * KEYFRAME_TIME_EPSILON;
-
-	// Initial conditions, to not depend on the first keyframe of each feature, which can be much farther
-	// along the timeline
-	using namespace ITwin::Timeline;
-	Timeline.SetColorAt(0., std::nullopt/*ie. bUseOriginalColor*/, EInterpolation::Step);
-	Timeline.SetVisibilityAt(0., 1.f, EInterpolation::Step);
-	Timeline.SetCuttingPlaneAt(0., {}, EGrowthStatus::FullyGrown, EInterpolation::Step);
-
-	// tests occur every 4 deltas: one before task, one for task duration, one after task, one for blink
-	constexpr int cycle = 4;
-	FTimeRangeInSeconds TimeRange = { - (cycle - 1) * delta, 0. };
-	size_t Idx = 0;
-	auto const incrTimes = [&TimeRange, &cycle, &delta] () -> FTimeRangeInSeconds const&
-		{
-			TimeRange.first += cycle * delta;
-			TimeRange.second = TimeRange.first + delta;
-			return TimeRange;
-		};
-	FAppearanceProfile Profile;
-	Profile.ProfileType = EProfileAction::Maintenance;
-	
-	auto const blinkAndResetBetweenTests = [&Timeline, &TimeRange, delta] ()
-		{
-			double const BlinkStart = TimeRange.second + delta;
-			// "Blink" the Element
-			Timeline.SetVisibilityAt(BlinkStart - KEYFRAME_TIME_EPSILON, 1, EInterpolation::Step);
-			Timeline.SetVisibilityAt(BlinkStart, 0.f, EInterpolation::Step);
-			// End blink and instruct to use the next keyframes' values, if any, otherwise reset values
-			Timeline.SetVisibilityAt(BlinkStart + delta, 1.f, EInterpolation::Next);
-			Timeline.SetColorAt(BlinkStart + delta, std::nullopt, EInterpolation::Next);
-			Timeline.SetCuttingPlaneAt(BlinkStart + delta, {}, EGrowthStatus::FullyGrown, EInterpolation::Next);
-		};
-	auto const testColor = [&Timeline, &Profile, &Idx, &incrTimes, &blinkAndResetBetweenTests]
-		(bool start, bool active, bool finish)
-		{
-			Profile.StartAppearance.bUseOriginalColor = !start;
-			Profile.ActiveAppearance.Base.bUseOriginalColor = !active;
-			Profile.FinishAppearance.bUseOriginalColor = !finish;
-			if (start) Profile.StartAppearance.Color =
-				FITwinMathExts::RandomFloatColorFromIndex(Idx++, nullptr);
-			if (active) Profile.ActiveAppearance.Base.Color =
-				FITwinMathExts::RandomFloatColorFromIndex(Idx++, nullptr);
-			if (finish) Profile.FinishAppearance.Color =
-				FITwinMathExts::RandomFloatColorFromIndex(Idx++, nullptr);
-			AddColorToTimeline(Timeline, Profile, incrTimes());
-			blinkAndResetBetweenTests();
-		};
-	// Reset to defaults
-	Profile.StartAppearance.bUseOriginalAlpha = true;
-	Profile.ActiveAppearance.Base.bUseOriginalAlpha = true;
-	Profile.FinishAppearance.bUseOriginalAlpha = true;
-	Profile.ActiveAppearance.GrowthSimulationMode = EGrowthSimulationMode::None;
-	testColor(false, true, false);
-	testColor(false, true, true);
-	testColor(true, true, false);
-	testColor(true, true, true);
-
-	auto const testAlpha = [&Timeline, &Profile, &Idx, &incrTimes, &blinkAndResetBetweenTests]
-		(bool start, bool active, bool activeVaries, bool finish)
-		{
-			Profile.StartAppearance.bUseOriginalAlpha = !start;
-			Profile.ActiveAppearance.Base.bUseOriginalAlpha = !active;
-			Profile.FinishAppearance.bUseOriginalAlpha = !finish;
-			if (start)
-				Profile.StartAppearance.Alpha = .25f;
-			if (active)
-			{
-				if (activeVaries)
-				{
-					Profile.ActiveAppearance.Base.Alpha = .05f;
-					Profile.ActiveAppearance.FinishAlpha = 1.f;
-					if ((Idx++) % 2 == 0) std::swap(
-						Profile.ActiveAppearance.Base.Alpha, Profile.ActiveAppearance.FinishAlpha);
-				}
-				else
-					Profile.ActiveAppearance.FinishAlpha = Profile.ActiveAppearance.Base.Alpha = .1f;
-			}
-			if (finish)
-				Profile.FinishAppearance.Alpha = .5f;
-
-			AddVisibilityToTimeline(Timeline, Profile, incrTimes());
-			blinkAndResetBetweenTests();
-		};
-
-	// Reset to defaults
-	Profile.ActiveAppearance.GrowthSimulationMode = EGrowthSimulationMode::None;
-	Profile.StartAppearance.bUseOriginalColor = true;
-	Profile.ActiveAppearance.Base.bUseOriginalColor = true;
-	Profile.FinishAppearance.bUseOriginalColor = true;
-	testAlpha(false, true, false, false);
-	testAlpha(false, true, true, false);
-	//testAlpha(false, true, false, true);
-	testAlpha(false, true, true, true);
-	//testAlpha(true, true, false, false);
-	testAlpha(true, true, true, true);
-
-	// Reset to defaults
-	Profile.StartAppearance.bUseOriginalColor = true;
-	Profile.ActiveAppearance.Base.bUseOriginalColor = true;
-	Profile.FinishAppearance.bUseOriginalColor = true;
-	Profile.StartAppearance.bUseOriginalAlpha = true;
-	Profile.ActiveAppearance.Base.bUseOriginalAlpha = true;
-	Profile.FinishAppearance.bUseOriginalAlpha = true;
-	Profile.ActiveAppearance.GrowthDirectionCustom = FVector(1., 1., 1.);
-	Profile.ActiveAppearance.bInvertGrowth = false;
-	for (uint8_t i = 0; i <= (int)EGrowthSimulationMode::Custom; ++i)
-	{
-		Profile.ActiveAppearance.GrowthSimulationMode = (EGrowthSimulationMode)i;
-		AddCuttingPlaneToTimeline(Timeline, Profile, incrTimes(), CoordConv);
-		blinkAndResetBetweenTests();
-	}
-	Profile.ActiveAppearance.bInvertGrowth = true;
-	for (uint8_t i = 0; i <= (int)EGrowthSimulationMode::Custom; ++i)
-	{
-		Profile.ActiveAppearance.GrowthSimulationMode = (EGrowthSimulationMode)i;
-		AddCuttingPlaneToTimeline(Timeline, Profile, incrTimes(), CoordConv);
-		blinkAndResetBetweenTests();
-	}
-}
+#include <memory>
+#include <vector>
 
 namespace Detail {
 
@@ -522,16 +51,36 @@ void InsertAnimatedMeshSubElemsRecursively(FIModelElementsKey const& AnimationKe
 		else
 			pElem = &Scene.ElementFor(ElementDesignation);
 		FITwinElement& Elem = *pElem;
-		if (Elem.AnimationKeys.end()
-			== std::find(Elem.AnimationKeys.begin(), Elem.AnimationKeys.end(), AnimationKey))
+		// Insert without duplication, and using a deterministic ordering (for
+		// CreateTimelineKeyframesWithTaskDependencies), because concurrent 4D queries could obviously be received
+		// in an arbitrary order:
+		auto const FirstGreaterOrEqual = std::lower_bound(
+			Elem.AnimationKeys.begin(), Elem.AnimationKeys.end(), AnimationKey,
+			[](const FIModelElementsKey& a, const FIModelElementsKey& b)
+			{
+				if (a.Key.index() == b.Key.index())
+				{
+					bool Result = false;
+					std::visit([&b, &Result](auto&& Key)
+						{
+							using T = std::decay_t<decltype(Key)>;
+							return Key < std::get<T>(b.Key);
+						},
+						a.Key);
+					return Result;
+				}
+				else return (a.Key.index() < b.Key.index());
+			});
+		if (FirstGreaterOrEqual == Elem.AnimationKeys.end() || AnimationKey != (*FirstGreaterOrEqual))
 		{
-			Elem.AnimationKeys.push_back(AnimationKey);
+			Elem.AnimationKeys.insert(FirstGreaterOrEqual, AnimationKey);
 		}
 		// When pre-fetching bindings, no Element has been received yet... It's annoying to have to add the
 		// Elements to their timeline(s) only once some geometry has been received for them :/
 		// On the other hand adding intermediate non-leaves Elements has some cost later on when iterating
 		// on a timeline's AnimatedMeshElements: let's assume only leave nodes have meshes? TODO_GCO
-		if ((bPrefetchAllElementAnimationBindings && Elem.SubElemsInVec.empty()) || Elem.bHasMesh)
+		if ((bPrefetchAllElementAnimationBindings && Elem.SubElemsInVec.empty())
+			|| (Elem.bHasMesh && Elem.BBox.IsValid))
 		{
 			if (!OutSet.insert(Elem.ElementID).second)
 				continue; // already in set: no need for RemoveNonAnimatedDuplicate nor recursion
@@ -579,41 +128,150 @@ void HideNonAnimatedDuplicates(FITwinSceneMapping const& Scene, ContainerToHandl
 
 } // ns Detail
 
+class FITwinScheduleTimelineBuilder::FImpl
+{
+public:
+	UITwinSynchro4DSchedules const* Owner;
+	FITwinCoordConversions const* CoordConversions;
+	FITwinScheduleTimeline MainTimeline;
+	FOnElementsTimelineModified OnElementsTimelineModified;
+
+	void CreateAnimationBindingKeyframes(FITwinSchedule const& Schedule, FITwinElementTimeline& ElemTimeline,
+		size_t const AnimationBindingIndex, bool const bHasOnlyNeutralTasks);
+
+	// Need to split (or add) a timeline if:
+	// * it has at least one Neutral task and some Elements are also bound to Install/Remove tasks
+	//		while some others are not
+	// * it has a Maintain task for which some Elements are bound to Install/Remove tasks before or after it
+	//		while some others are not: in that case, both the appearance profile and the transform of the Install
+	//		task have priority over the Maintain task's outside its timerange.
+	//
+	// \return True if task dependencies were found and thus all keyframes created, false otherwise (ie caller will
+	//		create the keyframes the usual way, for the whole input timeline).
+	bool CreateTimelineKeyframesWithTaskDependencies(FITwinSceneMapping& SceneMapping,
+		FITwinSchedule& Schedule, // not const coz I'm adding the subgroups to it but could use separate counter
+		FITwinElementTimeline& ElemTimeline, int const TimelineIndex,
+		std::unordered_set<FElementsGroup>& KeyframedSubgroups)
+	{
+		if (!ensure(!ElemTimeline.GetIModelElements().empty()))
+			return false;
+		bool bOnlyInstallOrRemove = true;
+		for (size_t AnimationBindingIndex : ElemTimeline.AnimationBindings())
+		{
+			auto&& Binding = Schedule.AnimationBindings[AnimationBindingIndex];
+			auto Action = Schedule.AppearanceProfiles[Binding.AppearanceProfileInVec].ProfileType;
+			if (EProfileAction::Install != Action && EProfileAction::Remove != Action)
+			{
+				bOnlyInstallOrRemove = false;
+				break;
+			}
+		}
+		if (bOnlyInstallOrRemove)
+			return false;
+		// Split the timeline's elements set into subgroups sharing the same list of (sorted) animation keys.
+		// Not optimal, but seems less CPU-intensive than the alternative (which could be for example to create the
+		// timelines element by element but merge them on the fly using the whole timeline as key?).
+		// We could also check that bindings not shared by all Elements would not actually interfere, like having no
+		// Inst/Rem tasks (but there is also the case of the Temp task acting as Rem regarding visibility
+		// outside subsequent Temp/Maint tasks), but it could be a lot of logic to code for a minor perf gain.
+		auto ElemIt = ElemTimeline.GetIModelElements().begin();
+		// TODO_GCO: need an "ElemTimeline.GetIModelElementsRanks()"
+		FITwinElement::FAnimKeysVec const RefAnimKeys = SceneMapping.ElementForSLOW(*ElemIt).AnimationKeys;
+		++ElemIt;
+		std::optional<std::vector<std::pair<FITwinElement::FAnimKeysVec, FElementsGroup>>> SplitElemGroups;
+		for (; ElemIt != ElemTimeline.GetIModelElements().end(); ++ElemIt)
+		{
+			auto const& Elem = SceneMapping.ElementForSLOW(*ElemIt);
+			if (!SplitElemGroups)
+			{
+				if (RefAnimKeys == Elem.AnimationKeys)
+				{
+					continue;
+				}
+				else
+				{
+					// Create the first split group with all the elements tested so far
+					SplitElemGroups.emplace();
+					SplitElemGroups->emplace_back(std::make_pair(
+						RefAnimKeys, FElementsGroup(ElemTimeline.GetIModelElements().begin(), ElemIt)));
+				}
+			}
+			else
+			{
+				auto SplitGroupExists = std::find_if(SplitElemGroups->begin(), SplitElemGroups->end(),
+					[&Elem](auto const& SplitGroup) { return SplitGroup.first == Elem.AnimationKeys; });
+				if (SplitGroupExists != SplitElemGroups->end())
+					SplitGroupExists->second.insert(*ElemIt);
+				else
+					SplitElemGroups->emplace_back(std::make_pair(
+						Elem.AnimationKeys, FElementsGroup{ *ElemIt }));
+			}
+		}
+		// If all Elems have the same bindings (belong to the same timelines), nothing to do:
+		if (!SplitElemGroups)
+			return false;
+		bool bUseExisting = true;
+		for (auto& [CommonAnimationKeys, ElementsSubGroup] : (*SplitElemGroups))
+		{
+			if (!KeyframedSubgroups.insert(ElementsSubGroup).second) // !inserted = already present thus handled
+				continue;
+			FIModelElementsKey const SubgroupElementsKey(Schedule.Groups.size());
+			FITwinElementTimeline* pSubgroupTimeline;
+			if (bUseExisting)
+			{
+				bUseExisting = false;
+				MainTimeline.ResetElementTimelineFor(TimelineIndex, SubgroupElementsKey);
+				ElemTimeline.IModelElementsRef() = ElementsSubGroup;
+				pSubgroupTimeline = &ElemTimeline;
+			}
+			else
+			{
+				pSubgroupTimeline = &MainTimeline.ElementTimelineFor(SubgroupElementsKey, ElementsSubGroup);
+			}
+			for (auto&& AnimationKey : CommonAnimationKeys)
+			{
+				if (auto* Timeline = MainTimeline.GetElementTimelineFor(AnimationKey))
+					pSubgroupTimeline->AnimationBindings().insert(pSubgroupTimeline->AnimationBindings().end(),
+						Timeline->GetAnimationBindings().begin(), Timeline->GetAnimationBindings().end());
+			}
+			Schedule.Groups.emplace_back(std::move(ElementsSubGroup));
+			bool const bHasOnlyNeutralTasks = Schedule.HasOnlyNeutralBindings(
+				pSubgroupTimeline->AnimationBindings().begin(), pSubgroupTimeline->AnimationBindings().end());
+			for (size_t AnimationBindingIndex : ElemTimeline.AnimationBindings())
+			{
+				CreateAnimationBindingKeyframes(Schedule, *pSubgroupTimeline, AnimationBindingIndex,
+												bHasOnlyNeutralTasks);
+			}
+		}
+		//// We can either create a separate timeline only for task-dependency compliance keyframes, or have one
+		//// timeline for active task appearances, and a second for inactive ranges?
+		//for (auto&& [CommonAnimKeys, SplitGroup] : (*SplitElemGroups))
+		//{
+		//	for (size_t AnimationBindingIndex : ElemTimeline.AnimationBindings())
+		//	{
+		//		auto&& Binding = Schedule.AnimationBindings[AnimationBindingIndex];
+		//		auto Action = Schedule.AppearanceProfiles[Binding.AppearanceProfileInVec].ProfileType;
+		//		if (EProfileAction::Neutral == Action)
+		//		{
+		//			bool bHasNonNeutralTask = false;
+		//			for (auto&& AnimKey : CommonAnimKeys)
+		//			{
+		//			}
+		//		}
+		//	}
+		//}
+		return true;
+	}
+};
+
 bool FITwinScheduleTimelineBuilder::IsUnitTesting() const
 {
-	return nullptr == Owner;
+	return nullptr == Impl->Owner;
 }
 
-void FITwinScheduleTimelineBuilder::UpdateAnimationGroupInTimeline(size_t const GroupIndex,
-	FElementsGroup const& GroupElements, FSchedLock&)
+void FITwinScheduleTimelineBuilder::OnReceivedScheduleStats(FITwinScheduleStats const& Stats, FSchedLock&)
 {
-	FITwinElementTimeline* Timeline = MainTimeline.GetElementTimelineFor(FIModelElementsKey(GroupIndex));
-	if (Timeline) // group may be used by bindings not yet notified, so the case !Timeline is perfectly fine
-	{
-		// until we load iModel metadata for it, Unit Testing can only support "flat" iModels
-		// and no SourceID-duplicates!
-		if (IsUnitTesting())
-		{
-			Timeline->IModelElementsRef() = GroupElements; // the whole updated group is passed
-			Timeline->OnIModelElementsAdded(); // just invalidates group's BBox
-		}
-		else
-		{
-			AITwinIModel* IModel = Cast<AITwinIModel>(Owner->GetOwner());
-			if (!ensure(IModel))
-				return;
-			FITwinSceneMapping& Scene = GetInternals(*IModel).SceneMapping;
-			std::vector<ITwinElementID> ElementsSetDiff;
-			Detail::InsertAnimatedMeshSubElemsRecursively(FIModelElementsKey(GroupIndex), Scene, GroupElements,
-				MainTimeline, Timeline->IModelElementsRef(),
-				GetInternals(*Owner).PrefetchWholeSchedule(),
-				&ElementsSetDiff);
-			::Detail::HideNonAnimatedDuplicates(Scene, ElementsSetDiff, MainTimeline);
-			Timeline->OnIModelElementsAdded(); // just invalidates group's BBox
-			if (OnElementsTimelineModified)
-				OnElementsTimelineModified(*Timeline, &ElementsSetDiff);
-		}
-	}
+	// TODO_GCO: could reserve MainTimeline's container
 }
 
 void FITwinScheduleTimelineBuilder::AddAnimationBindingToTimeline(FITwinSchedule const& Schedule,
@@ -622,7 +280,42 @@ void FITwinScheduleTimelineBuilder::AddAnimationBindingToTimeline(FITwinSchedule
 	auto&& Binding = Schedule.AnimationBindings[AnimationBindingIndex];
 	if (!ensure(Binding.NotifiedVersion == VersionToken::None))
 		return;
-	AITwinIModel* IModel = Owner ? Cast<AITwinIModel>(Owner->GetOwner()) : nullptr;
+	std::optional<FIModelElementsKey> AnimationKey;
+	std::visit([&](auto&& Ident)
+		{
+			using T = std::decay_t<decltype(Ident)>;
+			if constexpr (std::is_same_v<T, ITwinElementID>)
+			{
+				AnimationKey.emplace(Ident);
+			}
+			else if constexpr (std::is_same_v<T, FGuid>)
+			{
+				AnimationKey.emplace(Ident);
+			}
+			else if constexpr (std::is_same_v<T, FString>)
+			{
+				AnimationKey.emplace(Binding.GroupInVec);
+			}
+			else static_assert(always_false_v<T>, "non-exhaustive visitor!");
+		},
+		Binding.AnimatedEntities);
+	if (!AnimationKey)
+		return;
+	FITwinElementTimeline& ElementTimeline = Impl->MainTimeline.ElementTimelineFor(*AnimationKey, {});
+	ElementTimeline.AnimationBindings().emplace_back(AnimationBindingIndex);
+	if (Impl->Owner && Impl->Owner->bDebugWithDummyTimelines)
+	{
+		ITwin::Timeline::CreateTestingTimeline(ElementTimeline, *Impl->CoordConversions);
+	}
+}
+
+//! Handle inter-task dependencies: some constraints need to be applied per-Element, like showing Elements
+//! outside tasks only after the first Install task (except if none): the first Install task for Elements
+//! of a same assignment can differ, so the case cannot be handled by merely adding a keyframe to any of the
+//! existing ElementTimelineEx.
+void FITwinScheduleTimelineBuilder::FinalizeTimeline(FITwinSchedule& Schedule)
+{
+	AITwinIModel* IModel = Impl->Owner ? Cast<AITwinIModel>(Impl->Owner->GetOwner()) : nullptr;
 	if (!ensure(IModel || IsUnitTesting()))
 		return;
 	FITwinSceneMapping* pScene = nullptr;
@@ -630,67 +323,114 @@ void FITwinScheduleTimelineBuilder::AddAnimationBindingToTimeline(FITwinSchedule
 	{
 		pScene = &GetInternals(*IModel).SceneMapping;
 	}
-	bool bSingleElement = true;
-	ITwinElementID SingleElementID;
-	FElementsGroup BoundElements;
-	std::optional<FIModelElementsKey> AnimationKey;
-	std::visit([&](auto&& Ident)
-		{
-			using T = std::decay_t<decltype(Ident)>;
-			if constexpr (std::is_same_v<T, ITwinElementID>)
+	for (auto ElemTimelinePtr : Impl->MainTimeline.GetContainer())
+	{
+		if (!ensure(!ElemTimelinePtr->AnimationBindings().empty()))
+			continue;
+		// All bindings listed necessarily animate the same Elements since are part of the same timeline
+		auto&& Binding = Schedule.AnimationBindings[*ElemTimelinePtr->AnimationBindings().begin()];
+		if (!ensure(Binding.NotifiedVersion == VersionToken::InitialVersion))
+			return;
+		FElementsGroup BoundElements;
+		std::visit([&](auto&& Ident)
 			{
-				SingleElementID = Ident;
-				BoundElements.insert(SingleElementID);
-				AnimationKey.emplace(SingleElementID);
-			}
-			else if constexpr (std::is_same_v<T, FGuid>)
-			{
-				if (pScene && pScene->FindElementIDForGUID(Ident, SingleElementID))
+				using T = std::decay_t<decltype(Ident)>;
+				if constexpr (std::is_same_v<T, ITwinElementID>)
 				{
-					BoundElements.insert(SingleElementID);
-					AnimationKey.emplace(SingleElementID);
+					BoundElements.insert(Ident);
 				}
-				else
-					SingleElementID = ITwin::NOT_ELEMENT;
-			}
-			else if constexpr (std::is_same_v<T, FString>)
-			{
-				SingleElementID = ITwin::NOT_ELEMENT;
-				BoundElements = Schedule.Groups[Binding.GroupInVec];
-				AnimationKey.emplace(Binding.GroupInVec);
-			}
-			else static_assert(always_false_v<T>, "non-exhaustive visitor!");
-		},
-		Binding.AnimatedEntities);
-	FElementsGroup AnimatedMeshElements;
-	// until we load iModel metadata for it, Unit Testing can only support "flat" iModels
-	// and no SourceID-duplicates!
-	if (IsUnitTesting())
-	{
-		AnimatedMeshElements = BoundElements;
-	}
-	else
-	{
-		if (!AnimationKey || !ensure(!BoundElements.empty()))
-			return;
-		Detail::InsertAnimatedMeshSubElemsRecursively(*AnimationKey, *pScene, BoundElements, MainTimeline,
-			AnimatedMeshElements, GetInternals(*Owner).PrefetchWholeSchedule());
+				else if constexpr (std::is_same_v<T, FGuid>)
+				{
+					ITwinElementID SingleElementID;
+					if (pScene && pScene->FindElementIDForGUID(Ident, SingleElementID))
+					{
+						BoundElements.insert(SingleElementID);
+					}
+				}
+				else if constexpr (std::is_same_v<T, FString>)
+				{
+					BoundElements = Schedule.Groups[Binding.GroupInVec];
+				}
+				else static_assert(always_false_v<T>, "non-exhaustive visitor!");
+			},
+			Binding.AnimatedEntities);
+		FElementsGroup AnimatedMeshElements;
+		// until we load iModel metadata for it, Unit Testing can only support "flat" iModels
+		// and no SourceID-duplicates!
+		if (IsUnitTesting())
+		{
+			AnimatedMeshElements = BoundElements;
+		}
+		else
+		{
+			if (!ensure(!BoundElements.empty()))
+				return;
+			Detail::InsertAnimatedMeshSubElemsRecursively(ElemTimelinePtr->GetIModelElementsKey(), *pScene,
+				BoundElements, Impl->MainTimeline, AnimatedMeshElements,
+				GetInternals(*Impl->Owner).PrefetchWholeSchedule());
+			Detail::HideNonAnimatedDuplicates(*pScene, AnimatedMeshElements, Impl->MainTimeline);
+		}
 		if (AnimatedMeshElements.empty()) // no 'ensure', it seems to happen in rare cases
-			return;
-		::Detail::HideNonAnimatedDuplicates(*pScene, AnimatedMeshElements, MainTimeline);
+			continue;
+		ElemTimelinePtr->IModelElementsRef().swap(AnimatedMeshElements);
+		// Respecting the "plans" may mean splitting the group of Elements, this is why it must be done
+		// AFTER InsertAnimatedMeshSubElemsRecursively because child Elems can be assigned independently
+		// from their Parents.
 	}
-	FITwinElementTimeline& ElementTimeline = MainTimeline.ElementTimelineFor(*AnimationKey,
-																			 AnimatedMeshElements);
-	if (Owner && Owner->bDebugWithDummyTimelines)
+	int TimelineIndex = 0;
+	// Subgroups split from timelines will be encountered in several calls to CreateAnimationBindingKeyframes,
+	// so we need to keep track of them because the first call will already have created their keyframes.
+	std::unordered_set<FElementsGroup> KeyframedSubgroups;
+	for (auto ElemTimelinePtr : Impl->MainTimeline.GetContainer())
 	{
-		CreateTestingTimeline(ElementTimeline, *CoordConversions);
+		// Will stay null if there should be no task dependencies (and for unit testing)
+		if (IsUnitTesting() // TODO_GCO: no iModel nor SceneMapping at all for unit testing, right?
+			|| !Impl->CreateTimelineKeyframesWithTaskDependencies(*pScene, Schedule, *ElemTimelinePtr,
+																  TimelineIndex, KeyframedSubgroups))
+		{
+			bool const bHasOnlyNeutralTasks = Schedule.HasOnlyNeutralBindings(
+				ElemTimelinePtr->AnimationBindings().begin(), ElemTimelinePtr->AnimationBindings().end());
+			for (size_t AnimationBindingIndex : ElemTimelinePtr->AnimationBindings())
+			{
+				Impl->CreateAnimationBindingKeyframes(Schedule, *ElemTimelinePtr, AnimationBindingIndex,
+													  bHasOnlyNeutralTasks);
+			}
+		}
+		++TimelineIndex;
 	}
-	else
+}
+
+/// @brief Actually creates the keyframes needed to animate the Elements according to their
+///			schedule's binding.
+/// Can be called several times for the same ElementTimeline but different AnimationBindingIndex's,
+/// when a group of Elements is bound to several tasks in a way that remains compatible to their
+/// being animated by the same timeline, ie inter-task dependencies do not require further splitting
+/// of the group.
+/// @param Schedule Owner's schedule data, filled with the result from *all* needed 4D queries.
+/// @param ElementTimeline Timeline for *some* (or all) Elements associated to the binding. Properties
+///			resulting from inter-task dependencies must have been resolved at this point.
+/// @param AnimationBindingIndex Index in Schedule's array of animation bindings.
+void FITwinScheduleTimelineBuilder::FImpl::CreateAnimationBindingKeyframes(FITwinSchedule const& Schedule,
+	FITwinElementTimeline& ElementTimeline, size_t const AnimationBindingIndex, bool const bHasOnlyNeutralTasks)
+{
+	if (Owner && !Owner->bDebugWithDummyTimelines)
 	{
+		auto&& Binding = Schedule.AnimationBindings[AnimationBindingIndex];
 		auto&& AppearanceProfile = Schedule.AppearanceProfiles[Binding.AppearanceProfileInVec];
 		auto&& Task = Schedule.Tasks[Binding.TaskInVec];
-		AddColorToTimeline(ElementTimeline, AppearanceProfile, Task.TimeRange);
-		AddVisibilityToTimeline(ElementTimeline, AppearanceProfile, Task.TimeRange);
+		ITwin::Timeline::FTaskDependenciesData TaskDeps{ .bHasOnlyNeutralTasks = bHasOnlyNeutralTasks };
+		if (EProfileAction::Maintenance == AppearanceProfile.ProfileType
+			|| EProfileAction::Temporary == AppearanceProfile.ProfileType)
+		{
+			Schedule.FindAnyPriorityAppearances(ElementTimeline.GetAnimationBindings().begin(),
+				ElementTimeline.GetAnimationBindings().end(), Binding, AppearanceProfile.ProfileType, TaskDeps);
+			ensure(!(TaskDeps.ProfileForcedVisibilityBefore && (*TaskDeps.ProfileForcedVisibilityBefore == false)
+					  && TaskDeps.ProfileForcedAppearanceBefore != nullptr));
+			ensure(!(TaskDeps.ProfileForcedVisibilityAfter && (*TaskDeps.ProfileForcedVisibilityAfter == false)
+					  && TaskDeps.ProfileForcedAppearanceAfter != nullptr));
+		}
+		ITwin::Timeline::AddColorToTimeline(ElementTimeline, AppearanceProfile, Task.TimeRange, TaskDeps);
+		ITwin::Timeline::AddVisibilityToTimeline(ElementTimeline, AppearanceProfile, Task.TimeRange, TaskDeps);
 		ITwin::Timeline::PTransform const* TransformKeyframe = nullptr;
 	#if SYNCHRO4D_ENABLE_TRANSFORMATIONS()
 		if (ITwin::INVALID_IDX != Binding.TransfoAssignmentInVec) // optional
@@ -704,8 +444,8 @@ void FITwinScheduleTimelineBuilder::AddAnimationBindingToTimeline(FITwinSchedule
 			if (Binding.bStaticTransform
 				&& std::holds_alternative<FTransform>(TransfoAssignment.Transformation))
 			{
-				TransformKeyframe = &AddStaticTransformToTimeline(ElementTimeline, Task.TimeRange,
-					std::get<0>(TransfoAssignment.Transformation), *CoordConversions);
+				TransformKeyframe = &ITwin::Timeline::AddStaticTransformToTimeline(ElementTimeline,
+					Task.TimeRange, std::get<0>(TransfoAssignment.Transformation), *CoordConversions, TaskDeps);
 			}
 			else if (!Binding.bStaticTransform
 				&& std::holds_alternative<FPathAssignment>(TransfoAssignment.Transformation))
@@ -714,9 +454,9 @@ void FITwinScheduleTimelineBuilder::AddAnimationBindingToTimeline(FITwinSchedule
 				if (ensure(ITwin::INVALID_IDX != PathAssignment.Animation3DPathInVec))
 				{
 					auto&& Path3D = Schedule.Animation3DPaths[PathAssignment.Animation3DPathInVec].Keyframes;
-					Add3DPathTransformToTimeline(ElementTimeline, Task.TimeRange,
+					ITwin::Timeline::Add3DPathTransformToTimeline(&ElementTimeline, Task.TimeRange,
 						PathAssignment.TransformAnchor, Path3D, *CoordConversions,
-						PathAssignment.b3DPathReverseDirection);
+						PathAssignment.b3DPathReverseDirection, TaskDeps);
 				}
 			}
 			else
@@ -724,9 +464,15 @@ void FITwinScheduleTimelineBuilder::AddAnimationBindingToTimeline(FITwinSchedule
 				ensureMsgf(false, TEXT("Inconsistent transformation assignment interpretation"));
 			}
 		}
+		else
+		{
+			ElementTimeline.SetTransformationDisabledAt(Task.TimeRange.first, ITwin::Timeline::EInterpolation::Step);
+			ITwin::Timeline::HandleFallbackTransfoOutsideTaskIfNeeded(
+				ElementTimeline, Task.TimeRange, *CoordConversions, TaskDeps);
+		}
 	#endif // SYNCHRO4D_ENABLE_TRANSFORMATIONS
-		AddCuttingPlaneToTimeline(ElementTimeline, AppearanceProfile, Task.TimeRange,
-								  *CoordConversions, TransformKeyframe);
+		ITwin::Timeline::AddCuttingPlaneToTimeline(ElementTimeline, AppearanceProfile, Task.TimeRange,
+												   *CoordConversions, TransformKeyframe);
 	}
 	if (OnElementsTimelineModified) OnElementsTimelineModified(ElementTimeline, nullptr);
 }
@@ -736,36 +482,38 @@ FITwinScheduleTimelineBuilder FITwinScheduleTimelineBuilder::CreateForUnitTestin
 	FITwinCoordConversions const& InCoordConv)
 {
 	FITwinScheduleTimelineBuilder Builder;
-	Builder.Owner = nullptr;
-	Builder.CoordConversions = &InCoordConv;
+	Builder.Impl->Owner = nullptr;
+	Builder.Impl->CoordConversions = &InCoordConv;
 	return Builder;
 }
 
 // private, for CreateForUnitTesting
 FITwinScheduleTimelineBuilder::FITwinScheduleTimelineBuilder()
+	: Impl(MakePimpl<FImpl>())
 {
 }
 
 FITwinScheduleTimelineBuilder::FITwinScheduleTimelineBuilder(UITwinSynchro4DSchedules const& InOwner,
 															 FITwinCoordConversions const& InCoordConv)
-	: Owner(&InOwner)
-	, CoordConversions(&InCoordConv)
+	: Impl(MakePimpl<FImpl>())
 {
+	Impl->Owner = &InOwner;
+	Impl->CoordConversions = &InCoordConv;
 }
 
 void FITwinScheduleTimelineBuilder::Initialize(FOnElementsTimelineModified&& InOnElementsTimelineModified)
 {
 	ensure(EInit::Pending == InitState);
 	InitState = EInit::Ready;
-	OnElementsTimelineModified = std::move(InOnElementsTimelineModified);
+	Impl->OnElementsTimelineModified = std::move(InOnElementsTimelineModified);
 }
 
 FITwinScheduleTimelineBuilder& FITwinScheduleTimelineBuilder::operator=(FITwinScheduleTimelineBuilder&& Other)
 {
-	Owner = Other.Owner;
-	CoordConversions = Other.CoordConversions;
-	MainTimeline = Other.MainTimeline;
-	OnElementsTimelineModified = Other.OnElementsTimelineModified;
+	Impl->Owner = Other.Impl->Owner;
+	Impl->CoordConversions = Other.Impl->CoordConversions;
+	Impl->MainTimeline = Other.Impl->MainTimeline;
+	Impl->OnElementsTimelineModified = Other.Impl->OnElementsTimelineModified;
 	ensure(EInit::Pending == Other.InitState);
 	InitState = Other.InitState;
 	Other.InitState = EInit::Disposable;
@@ -783,25 +531,35 @@ void FITwinScheduleTimelineBuilder::Uninitialize()
 		return;
 	if (EInit::Pending != InitState)
 	{
-		for (auto const& ElementTimelinePtr : MainTimeline.GetContainer())
+		for (auto const& ElementTimelinePtr : Impl->MainTimeline.GetContainer())
 			if (ElementTimelinePtr->ExtraData)
 				delete (static_cast<FTimelineToScene*>(ElementTimelinePtr->ExtraData));
 
-		AITwinIModel* IModel = Cast<AITwinIModel>(Owner->GetOwner());
+		AITwinIModel* IModel = Cast<AITwinIModel>(Impl->Owner->GetOwner());
 		if (ensure(IModel))
 		{
-			GetInternals(*IModel).SceneMapping.ForEachKnownTile([](FITwinSceneTile& SceneTile)
+			auto& SceneMapping = GetInternals(*IModel).SceneMapping;
+			SceneMapping.ForEachKnownTile([](FITwinSceneTile& SceneTile)
 				{
 					SceneTile.TimelinesIndices.clear();
+				});
+			SceneMapping.MutateElements([](FITwinElement& Elem)
+				{
+					Elem.AnimationKeys.clear();
+					Elem.Requirements = {};
 				});
 		}
 	}
 	InitState = EInit::Disposable;
 }
 
+FITwinScheduleTimeline& FITwinScheduleTimelineBuilder::Timeline() { return Impl->MainTimeline; }
+
+FITwinScheduleTimeline const& FITwinScheduleTimelineBuilder::GetTimeline() const { return Impl->MainTimeline; }
+
 void FITwinScheduleTimelineBuilder::DebugDumpFullTimelinesAsJson(FString const& RelPath) const
 {
-	FString TimelineAsJson = GetTimeline().ToPrettyJsonString();
+	FString TimelineAsJson = Impl->MainTimeline.ToPrettyJsonString();
 	IPlatformFile& FileManager = FPlatformFileManager::Get().GetPlatformFile();
 	FString Path = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir());
 	Path.Append(RelPath);
@@ -819,12 +577,12 @@ void FITwinScheduleTimelineBuilder::DebugDumpFullTimelinesAsJson(FString const& 
 	if (FileManager.FileExists(*Path))
 		FileManager.DeleteFile(*Path);
 	FFileHelper::SaveStringToFile(TimelineAsJson, *Path, FFileHelper::EEncodingOptions::ForceUTF8);
-	if (!IsUnitTesting() && CoordConversions)
+	if (!IsUnitTesting() && Impl->CoordConversions)
 	{
 		if (FileManager.FileExists(*CoordConvPath))
 			FileManager.DeleteFile(*CoordConvPath);
 		FString CCString;
-		FJsonObjectConverter::UStructToJsonObjectString(*CoordConversions, CCString, 0, 0);
+		FJsonObjectConverter::UStructToJsonObjectString(*Impl->CoordConversions, CCString, 0, 0);
 		FFileHelper::SaveStringToFile(CCString, *CoordConvPath, FFileHelper::EEncodingOptions::ForceUTF8);
 	}
 }

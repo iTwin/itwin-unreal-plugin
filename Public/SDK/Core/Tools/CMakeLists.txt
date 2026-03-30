@@ -33,6 +33,11 @@ add_library(Tools OBJECT
 		GCSTransform.cpp
 		CrashInfo.h
 		CrashInfo.cpp
+		SharedRecursiveMutex.cpp
+		SharedRecursiveMutex.h
+		SharedMutexCheck.cpp
+		SharedMutexCheck.h
+		TaskFinishMonitor.h
 )
 target_compile_features(Tools PRIVATE ${DefaultCXXSTD})
 set_target_properties(Tools PROPERTIES FOLDER "SDK/Core") 

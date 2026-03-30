@@ -31,6 +31,7 @@ public:
 	using RequestKey = std::pair<std::string, std::string>; // pair { method, url } identifying a request
 	std::map<RequestKey, std::function<Response2()>> responseFct_;
 	std::map<RequestKey, std::function<Response2(const std::string&)>> responseFctWithData_;
+	std::map<RequestKey, std::function<Response2(const std::vector<UrlArg>&)>> responseFctWithArgs_;
 
 private:
 
@@ -39,13 +40,16 @@ private:
 		const std::string& url,
 		const std::string& method,
 		const std::string& data,
-		const std::vector<UrlArg>& /*urlArguments*/,
+		const std::vector<UrlArg>& urlArguments,
 		const std::vector<Header>& /*headers*/)
 	{
 		RequestKey const requestKey(method, url);
-		auto it = responseFct_.find(requestKey);
-		if (it != responseFct_.end())
-			return it->second();
+		auto it0 = responseFctWithArgs_.find(requestKey);
+		if (it0 != responseFctWithArgs_.end())
+			return it0->second(urlArguments);
+		auto it1 = responseFct_.find(requestKey);
+		if (it1 != responseFct_.end())
+			return it1->second();
 		auto it2 = responseFctWithData_.find(requestKey);
 		if (it2 != responseFctWithData_.end())
 			return it2->second(data);

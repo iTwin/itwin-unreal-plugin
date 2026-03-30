@@ -16,6 +16,8 @@
 #include "Core/Tools/Tools.h"
 #include "Core/Tools/Internal_mathConv.inl"
 #include <numbers>
+#include <chrono>
+#include <thread>
 
 using namespace AdvViz::SDK;
 
@@ -58,6 +60,19 @@ void SetDefaultConfig()
 	CreateAdvVizLogChannels();
 }
 
+bool WaitForAsyncTask(std::atomic_bool& taskFinished, int maxSeconds)
+{
+	using namespace std::chrono_literals;
+
+	int elapsedMilliSec = 0;
+	while (!taskFinished && elapsedMilliSec < maxSeconds * 1000)
+	{
+		std::this_thread::sleep_for(100ms);
+		elapsedMilliSec += 100;
+	}
+	return taskFinished;
+}
+
 TEST_CASE("Visualization"){
 
 	SECTION("Decoration") {
@@ -85,12 +100,21 @@ TEST_CASE("Visualization"){
 				return HTTPMock::Response2(200, "{\"id\":\"66c476ed1129763cf5485826\"");
 				};
 
-			auto decoration = IDecoration::New();
-			decoration->Create("test auto", "");
-			REQUIRE(decoration->GetId() != "");
+			std::shared_ptr<IDecoration> decoration(IDecoration::New());
+			std::atomic_bool asyncCreateDone = false;
+			decoration->AsyncCreate("test auto", "",
+				[decoration, &asyncCreateDone](bool bSuccess)
+			{
+				REQUIRE(bSuccess);
+				REQUIRE(decoration->GetId() != "");
+				asyncCreateDone = true;
+			});
+
+			// Make sure we get the response before continuing.
+			REQUIRE(WaitForAsyncTask(asyncCreateDone, 10));
 
 			// create a decoration copy by fetching previous decoration from server
-			auto decoration2 = IDecoration::New();
+			std::shared_ptr<IDecoration> decoration2(IDecoration::New());
 			decoration2->Get(decoration->GetId());
 			REQUIRE(decoration2->GetId() == decoration->GetId());
 

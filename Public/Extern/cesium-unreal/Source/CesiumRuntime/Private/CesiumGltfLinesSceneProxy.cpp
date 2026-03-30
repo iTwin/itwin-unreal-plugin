@@ -8,7 +8,6 @@
 #include "Runtime/Launch/Resources/Version.h"
 #include "SceneInterface.h"
 #include "SceneView.h"
-#include "StaticMeshResources.h"
 
 SIZE_T FCesiumGltfLinesSceneProxy::GetTypeHash() const {
   static size_t UniquePointer;
@@ -17,12 +16,13 @@ SIZE_T FCesiumGltfLinesSceneProxy::GetTypeHash() const {
 
 FCesiumGltfLinesSceneProxy::FCesiumGltfLinesSceneProxy(
     UCesiumGltfLinesComponent* InComponent,
-    ERHIFeatureLevel::Type InFeatureLevel)
+    FSceneInterfaceWrapper InSceneInterfaceParams)
     : FPrimitiveSceneProxy(InComponent),
       RenderData(InComponent->GetStaticMesh()->GetRenderData()),
       NumLines(RenderData->LODResources[0].IndexBuffer.GetNumIndices() / 2),
       Material(InComponent->GetMaterial(0)),
-      MaterialRelevance(InComponent->GetMaterialRelevance(InFeatureLevel)) {}
+      MaterialRelevance(
+          InSceneInterfaceParams.GetMaterialRelevance(InComponent)) {}
 
 FCesiumGltfLinesSceneProxy::~FCesiumGltfLinesSceneProxy() {}
 

@@ -69,16 +69,24 @@ void GltfBuilder::MeshPrimitive::SetFeatureIds(const std::vector<std::array<_T, 
 		builder_.AddBufferView(featureIds, CesiumGltf::BufferView::Target::ARRAY_BUFFER),
 		featureIds, false);
 	primitive_.attributes.emplace("_FEATURE_ID_0", accessorIndex);
+
+	int64_t const featureCount = static_cast<int64_t>(
+		(*std::max_element(featureIds.begin(), featureIds.end()))[0]
+		);
+
 	auto& extension = primitive_.addExtension<CesiumGltf::ExtensionExtMeshFeatures>();
-	auto& featureId = extension.featureIds.emplace_back();
-	featureId.featureCount = static_cast<int64_t>((*std::max_element(featureIds.begin(), featureIds.end()))[0]);
-	featureId.attribute = 0;
-	featureId.propertyTable = 0;
+
+	{
+		auto& featureId = extension.featureIds.emplace_back();
+		featureId.featureCount = featureCount;
+		featureId.attribute = 0;
+		featureId.propertyTable = 0;
+	}
 
 	if (bShareBufferForMatIDs)
 	{
 		auto& featureId_matID = extension.featureIds.emplace_back();
-		featureId_matID.featureCount = featureId.featureCount;
+		featureId_matID.featureCount = featureCount;
 		featureId_matID.attribute = 0;
 		featureId_matID.propertyTable = 1;
 	}

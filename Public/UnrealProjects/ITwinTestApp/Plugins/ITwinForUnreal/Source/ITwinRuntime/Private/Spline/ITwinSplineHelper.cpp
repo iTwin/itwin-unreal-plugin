@@ -83,7 +83,7 @@ struct AITwinSplineHelper::FImpl
 	AITwinSplineHelper& Owner;
 	EITwinTangentMode TangentMode = EITwinTangentMode::Custom;
 	EITwinSplineUsage Usage = EITwinSplineUsage::Undefined;
-	std::shared_ptr<AdvViz::SDK::ISpline> Spline;
+	AdvViz::SDK::ISplinePtr Spline;
 	double ScaleFactor = 2.0;
 
 	struct FTracingData
@@ -97,12 +97,14 @@ struct AITwinSplineHelper::FImpl
 		bool bNeedUpdateTracingData = true;
 	};
 	mutable FTracingData TracingData;
+	bool bSelected = false;
+	int32 SelectedPointIndex = -1;
 
 	static constexpr double RIBBON_SCALE = 0.60;
 	static std::optional<EITwinSplineUsage> UsageForSpawnedActor;
 
 	FImpl(AITwinSplineHelper& InOwner);
-	void Initialize(USplineComponent* splineComp, std::shared_ptr<AdvViz::SDK::ISpline> spline);
+	void Initialize(USplineComponent* splineComp, AdvViz::SDK::ISplinePtr spline);
 	void UpdatePointFromUEtoAViz(int32 pointIndex);
 	void UpdatePointFromAVizToUE(int32 pointIndex);
 	void UpdateSplineFromUEtoAViz();
@@ -165,11 +167,19 @@ struct AITwinSplineHelper::FImpl
 
 	inline bool CheckNumberOfPoints() const
 	{
-		if (!ensureMsgf(!Spline ||
-			Owner.SplineComponent->GetNumberOfSplinePoints() == static_cast<int32>(Spline->GetNumberOfPoints()),
-			TEXT("The UE and AdvViz::SDK splines should have the same number of points.")))
+		if (!Spline)
 		{
+			BE_ISSUE("CheckNumberOfPoints: no Spline object.");
 			return false;
+		}
+		{
+			auto spline = Spline->GetRAutoLock();
+			if (!ensureMsgf(
+				Owner.SplineComponent->GetNumberOfSplinePoints() == static_cast<int32>(spline->GetNumberOfPoints()),
+				TEXT("The UE and AdvViz::SDK splines should have the same number of points.")))
+			{
+				return false;
+			}
 		}
 
 		if (!ensureMsgf(Owner.PerGeorefPolygonMap.IsEmpty() ||
@@ -190,6 +200,9 @@ struct AITwinSplineHelper::FImpl
 			UpdateTracingData();
 		return TracingData.SplineBarycenter;
 	}
+
+	void SetSelected(bool bInSelected);
+	void SetSelectedPointIndex(int32 PointIndex);
 };
 
 /*static*/
@@ -218,20 +231,33 @@ void AITwinSplineHelper::FImpl::ForEachUESplineComponent(TFunc const& Func) cons
 }
 
 void AITwinSplineHelper::FImpl::Initialize(
-	USplineComponent* splineComp, std::shared_ptr<AdvViz::SDK::ISpline> spline)
+	USplineComponent* splineComp, AdvViz::SDK::ISplinePtr splinePtr2)
 {
-	Owner.SplineComponent = splineComp;
-	Spline = spline;
+	if (!splineComp || !splinePtr2)
+	{
+		BE_ISSUE("Invalid parameters to initialize the spline helper.");
+		return;
+	}
 
-	ensureMsgf(Spline && static_cast<EITwinSplineUsage>(Spline->GetUsage()) == this->Usage,
-		TEXT("spline usage mismatch vs AdvViz::SDK"));
+	Owner.SplineComponent = splineComp;
+	Spline = splinePtr2;
+
+	size_t numberOfPoints = 0;
+	int32 numberOfSplinePoints = 0;
+	{
+		auto spline = Spline->GetRAutoLock();
+		ensureMsgf(Spline && static_cast<EITwinSplineUsage>(spline->GetUsage()) == this->Usage,
+			TEXT("spline usage mismatch vs AdvViz::SDK"));
+		numberOfPoints = spline->GetNumberOfPoints();
+		numberOfSplinePoints = splineComp->GetNumberOfSplinePoints();
+	}
 
 	// Detect the direction of the update
-	if (Spline->GetNumberOfPoints() == 0 && splineComp->GetNumberOfSplinePoints() > 0)
+	if (numberOfPoints == 0 && numberOfSplinePoints > 0)
 	{
 		UpdateSplineFromUEtoAViz();
 	}
-	else if (Spline->GetNumberOfPoints() > 0 && splineComp->GetNumberOfSplinePoints() == 0)
+	else if (numberOfPoints > 0 && numberOfSplinePoints == 0)
 	{
 		UpdateSplineFromAVizToUE();
 	}
@@ -250,7 +276,12 @@ void AITwinSplineHelper::FImpl::UpdatePointFromUEtoAViz(int32 pointIndex)
 	size_t index = static_cast<size_t>(pointIndex);
 	USplineComponent const& SplineComp(*Owner.SplineComponent);
 
-	SharedSplinePoint point = Spline->GetPoint(index);
+	ISplinePointPtr pointPtr;
+	{
+		auto spline = Spline->GetRAutoLock();
+		pointPtr = spline->GetPoint(index);
+	}
+	auto point = pointPtr->GetAutoLock();
 	point->SetPosition(MathConv::UEtoSDK(SplineComp.GetLocationAtSplinePoint(index, SPL_LOCAL)));
 	point->SetUpVector(MathConv::UEtoSDK(SplineComp.GetUpVectorAtSplinePoint(index, SPL_LOCAL)));
 	point->SetInTangent(MathConv::UEtoSDK(SplineComp.GetArriveTangentAtSplinePoint(index, SPL_LOCAL)));
@@ -268,7 +299,10 @@ void AITwinSplineHelper::FImpl::UpdatePointFromAVizToUE(int32 pointIndex)
 	if (!Spline || !Owner.SplineComponent)
 		return;
 
-	SharedSplinePoint point = Spline->GetPoint(static_cast<size_t>(pointIndex));
+	auto spline = Spline->GetRAutoLock();
+
+	ISplinePointPtr pointPtr = spline->GetPoint(static_cast<size_t>(pointIndex));
+	auto point = pointPtr->GetAutoLock();
 	USplineComponent& SplineComp(*Owner.SplineComponent);
 
 	SplineComp.SetLocationAtSplinePoint(
@@ -292,13 +326,17 @@ void AITwinSplineHelper::FImpl::UpdateSplineFromUEtoAViz()
 		return;
 	USplineComponent const& SplineComp(*Owner.SplineComponent);
 
-	Spline->SetTransform(FITwinMathConversion::UEtoSDK(Owner.GetActorTransform()));
-
-	// Adjust the number of points in the AdvViz::SDK spline
-	const int32 NbPoints = SplineComp.GetNumberOfSplinePoints();
-	if (NbPoints != static_cast<int32>(Spline->GetNumberOfPoints()))
+	int32 NbPoints = 0;
 	{
-		Spline->SetNumberOfPoints(static_cast<size_t>(NbPoints));
+		auto spline = Spline->GetAutoLock();
+		spline->SetTransform(FITwinMathConversion::UEtoSDK(Owner.GetActorTransform()));
+
+		// Adjust the number of points in the AdvViz::SDK spline
+		NbPoints = SplineComp.GetNumberOfSplinePoints();
+		if (NbPoints != static_cast<int32>(spline->GetNumberOfPoints()))
+		{
+			spline->SetNumberOfPoints(static_cast<size_t>(NbPoints));
+		}
 	}
 
 	for (int32 i = 0; i < NbPoints; ++i)
@@ -308,7 +346,10 @@ void AITwinSplineHelper::FImpl::UpdateSplineFromUEtoAViz()
 
 	CHECK_NUMBER_OF_POINTS();
 
-	Spline->SetShouldSave(true);
+	{
+		auto spline = Spline->GetAutoLock();
+		spline->SetShouldSave(true);
+	}
 }
 
 void AITwinSplineHelper::FImpl::UpdateSplineFromAVizToUE()
@@ -316,10 +357,11 @@ void AITwinSplineHelper::FImpl::UpdateSplineFromAVizToUE()
 	if (!Spline || !Owner.SplineComponent)
 		return;
 
-	Owner.SetTransform(FITwinMathConversion::SDKtoUE(Spline->GetTransform()), false);
+	auto spline = Spline->GetAutoLock();
+	Owner.SetTransform(FITwinMathConversion::SDKtoUE(spline->GetTransform()), false);
 
 	// Adjust the number of points in all USplineComponent(s)
-	const int32 NbPoints = static_cast<int32>(Spline->GetNumberOfPoints());
+	const int32 NbPoints = static_cast<int32>(spline->GetNumberOfPoints());
 
 	ForEachUESplineComponent([NbPoints](USplineComponent& SplineComp)
 	{
@@ -343,7 +385,7 @@ void AITwinSplineHelper::FImpl::UpdateSplineFromAVizToUE()
 	});
 	CHECK_NUMBER_OF_POINTS();
 
-	ForEachUESplineComponent([bIsClosedLoop = Spline->IsClosedLoop()](USplineComponent& SplineComponent)
+	ForEachUESplineComponent([bIsClosedLoop = spline->IsClosedLoop()](USplineComponent& SplineComponent)
 	{
 		SplineComponent.SetClosedLoop(bIsClosedLoop, false /*bUpdateSpline*/);
 	});
@@ -360,8 +402,9 @@ void AITwinSplineHelper::FImpl::UpdateSplineFromAVizToUE()
 	bool isSameModeForAllPoints = true;
 	bool bHasInitializedMode = false;
 	AdvViz::SDK::ESplineTangentMode tgtMode = AdvViz::SDK::ESplineTangentMode::Linear;
-	for (auto const& spPoint : Spline->GetPoints())
+	for (auto const& spPointPtr : spline->GetPoints())
 	{
+		auto spPoint = spPointPtr->GetRAutoLock();
 		if (!bHasInitializedMode)
 		{
 			tgtMode = spPoint->GetInTangentMode();
@@ -466,6 +509,8 @@ void AITwinSplineHelper::FImpl::AddSplineMeshComponentsForPoint(int32 pointIndex
 	const FVector2D SplineScale(ScaleFactor * FImpl::RIBBON_SCALE, 1.0);
 	splineMeshComp->SetStartScale(SplineScale, false);
 	splineMeshComp->SetEndScale(SplineScale, false);
+
+	splineMeshComp->SetCustomPrimitiveDataFloat(0, bSelected ? 1.0f : 0.0f);
 }
 
 void AITwinSplineHelper::FImpl::AddMeshComponentsForPoint(int32 pointIndex)
@@ -493,6 +538,8 @@ void AITwinSplineHelper::FImpl::AddMeshComponentsForPoint(int32 pointIndex)
 
 	pointMeshComp->SetRelativeLocation(Owner.SplineComponent->GetLocationAtSplinePoint(pointIndex, SPL_LOCAL));
 	pointMeshComp->SetRelativeScale3D(FVector(ScaleFactor));
+
+	pointMeshComp->SetCustomPrimitiveDataFloat(0, bSelected ? 1.0f : 0.0f);
 
 	// Update meshes
 	UpdateMeshComponentsForPoint(pointIndex);
@@ -586,10 +633,11 @@ void AITwinSplineHelper::FImpl::SetTransform(const FTransform& NewTransform, boo
 
 	if (Spline)
 	{
-		Spline->SetTransform(FITwinMathConversion::UEtoSDK(NewTransform));
+		auto spline = Spline->GetAutoLock();
+		spline->SetTransform(FITwinMathConversion::UEtoSDK(NewTransform));
 		if (markSplineForSaving)
 		{
-			Spline->SetShouldSave(true);
+			spline->SetShouldSave(true);
 		}
 	}
 }
@@ -766,10 +814,14 @@ void AITwinSplineHelper::FImpl::DeletePoint(int32 pointIndex)
 	// Update tangents in the secondary polygons
 	CopyPointToSecondaryCartographicPolygons(pointIndex, prevPointIndex, nextPointIndex);
 
-	if (Spline && pointIndex < Spline->GetNumberOfPoints())
+	if (Spline)
 	{
-		UpdatePointFromUEtoAViz(prevPointIndex);
-		UpdatePointFromUEtoAViz(nextPointIndex);
+		auto spline = Spline->GetAutoLock();
+		if (pointIndex < spline->GetNumberOfPoints())
+		{
+			UpdatePointFromUEtoAViz(prevPointIndex);
+			UpdatePointFromUEtoAViz(nextPointIndex);
+		}
 	}
 
 	// Remove the spline point
@@ -779,9 +831,17 @@ void AITwinSplineHelper::FImpl::DeletePoint(int32 pointIndex)
 		{
 			SplineComponent.RemoveSplinePoint(pointIndex);
 		});
-		if (Spline && pointIndex < Spline->GetNumberOfPoints())
+		if (Spline)
 		{
-			Spline->RemovePoint(static_cast<size_t>(pointIndex));
+			auto spline = Spline->GetAutoLock();
+			if (pointIndex < spline->GetNumberOfPoints())
+			{
+				spline->RemovePoint(static_cast<size_t>(pointIndex));
+			}
+		}
+		if (pointIndex == SelectedPointIndex)
+		{
+			SelectedPointIndex = -1;
 		}
 		CHECK_NUMBER_OF_POINTS();
 	}
@@ -844,7 +904,10 @@ void AITwinSplineHelper::FImpl::DuplicatePoint(int32 pointIndex)
 	// Add the same point in the SDK Core spline.
 	if (Spline)
 	{
-		Spline->InsertPoint(static_cast<size_t>(pointIndex));
+		{
+			auto spline = Spline->GetAutoLock();
+			spline->InsertPoint(static_cast<size_t>(pointIndex));
+		}
 		UpdatePointFromUEtoAViz(pointIndex);
 		UpdatePointFromUEtoAViz(pointIndex + 1);
 	}
@@ -912,7 +975,8 @@ void AITwinSplineHelper::FImpl::ScaleMeshComponentsForCurrentPOV()
 	bool const bOrtho = pController->PlayerCameraManager->IsOrthographic();
 	if (bOrtho)
 	{
-		// TODO_JDE
+		// TODO_JDE - orthographic camera
+		BE_ISSUE("Spline mesh components automatic scaling not implemented in orthographic view.");
 		return;
 	}
 	FVector const CameraPos = pController->PlayerCameraManager->GetCameraLocation();
@@ -981,7 +1045,8 @@ void AITwinSplineHelper::FImpl::SetClosedLoop(bool bInClosedLoop, bool bUpdateSp
 		}
 		if (Spline)
 		{
-			Spline->SetClosedLoop(bInClosedLoop);
+			auto spline = Spline->GetAutoLock();
+			spline->SetClosedLoop(bInClosedLoop);
 		}
 	}
 	CHECK_NUMBER_OF_SPLINE_MESH_COMPONENTS();
@@ -1101,6 +1166,12 @@ bool AITwinSplineHelper::FImpl::DoesLineIntersectSplinePolygon(const FVector& St
 	auto const& Vertices(TracingData.SplinePolygon.Vertices);
 	auto const& Normal(TracingData.SplinePolygon.Normal);
 
+	// Filter degenerated cases...
+	if (Vertices.Num() < 3)
+	{
+		return false;
+	}
+
 	// If the ray doesn't cross the plane, don't bother going any further.
 	const float DistStart = FVector::PointPlaneDist(Start, (FVector)Vertices[0], (FVector)Normal);
 	const float DistEnd = FVector::PointPlaneDist(End, (FVector)Vertices[0], (FVector)Normal);
@@ -1137,6 +1208,52 @@ bool AITwinSplineHelper::FImpl::DoesLineIntersectSplinePolygon(const FVector& St
 	}
 
 	return true;
+}
+
+void AITwinSplineHelper::FImpl::SetSelected(bool bInSelected)
+{
+	if (bSelected == bInSelected)
+		return;
+
+	// Don't keep a point selected if the spline is globally deselected.
+	if (!bInSelected)
+	{
+		SetSelectedPointIndex(-1);
+	}
+
+	bSelected = bInSelected;
+	const float fSelectionValue = bSelected ? 1.0f : 0.0f;
+	for (auto const& SplineMeshComp : Owner.SplineMeshComponents)
+	{
+		if (SplineMeshComp)
+		{
+			SplineMeshComp->SetCustomPrimitiveDataFloat(0, fSelectionValue);
+		}
+	}
+	for (auto const& PointMeshComp : Owner.PointMeshComponents)
+	{
+		if (PointMeshComp)
+		{
+			PointMeshComp->SetCustomPrimitiveDataFloat(0, fSelectionValue);
+		}
+	}
+}
+
+void AITwinSplineHelper::FImpl::SetSelectedPointIndex(int32 PointIndex)
+{
+	if (this->SelectedPointIndex == PointIndex)
+		return;
+	if (this->SelectedPointIndex >= 0
+		&& ensure(this->SelectedPointIndex < Owner.PointMeshComponents.Num()))
+	{
+		Owner.PointMeshComponents[this->SelectedPointIndex]->SetCustomPrimitiveDataFloat(1, 0.0f);
+	}
+	this->SelectedPointIndex = PointIndex;
+	if (this->SelectedPointIndex >= 0
+		&& ensure(this->SelectedPointIndex < Owner.PointMeshComponents.Num()))
+	{
+		Owner.PointMeshComponents[this->SelectedPointIndex]->SetCustomPrimitiveDataFloat(1, 1.0f);
+	}
 }
 
 
@@ -1183,12 +1300,12 @@ AITwinSplineHelper::AITwinSplineHelper()
 	PrimaryActorTick.bCanEverTick = true;
 }
 
-std::shared_ptr<AdvViz::SDK::ISpline> AITwinSplineHelper::GetAVizSpline() const
+AdvViz::SDK::ISplinePtr AITwinSplineHelper::GetAVizSpline() const
 {
 	return Impl->Spline;
 }
 
-void AITwinSplineHelper::SetAVizSpline(std::shared_ptr<AdvViz::SDK::ISpline> const& Spline)
+void AITwinSplineHelper::SetAVizSpline(AdvViz::SDK::ISplinePtr const& Spline)
 {
 	if (Impl->Spline != Spline)
 	{
@@ -1201,20 +1318,27 @@ void AITwinSplineHelper::SetAVizSpline(std::shared_ptr<AdvViz::SDK::ISpline> con
 AdvViz::SDK::RefID AITwinSplineHelper::GetAVizSplineId() const
 {
 	if (Impl->Spline)
-		return Impl->Spline->GetId();
+	{
+		auto spline = Impl->Spline->GetRAutoLock();
+		return spline->GetId();
+	}
 	else
 		return AdvViz::SDK::RefID::Invalid();
 }
 
 namespace ITwin {
-	std::set<ModelLink> GetSplineModelLinks(AdvViz::SDK::SharedSpline const& Spline);
+	std::set<ModelLink> GetSplineModelLinks(AdvViz::SDK::ISplinePtr const& Spline);
 }
 
 std::set<ITwin::ModelLink> AITwinSplineHelper::GetLinkedModels() const
 {
-	if (Impl->Spline && !Impl->Spline->GetLinkedModels().empty())
+	if (Impl->Spline)
 	{
-		return ITwin::GetSplineModelLinks(Impl->Spline);
+		auto spline = Impl->Spline->GetRAutoLock();
+		if (!spline->GetLinkedModels().empty())
+		{
+			return ITwin::GetSplineModelLinks(Impl->Spline);
+		}
 	}
 	return {};
 }
@@ -1234,15 +1358,20 @@ void AITwinSplineHelper::SetClosedLoop(bool bInClosedLoop, bool bUpdateSpline /*
 	Impl->SetClosedLoop(bInClosedLoop, bUpdateSpline);
 }
 
-void AITwinSplineHelper::Initialize(USplineComponent* splineComp, std::shared_ptr<AdvViz::SDK::ISpline> spline)
+void AITwinSplineHelper::Initialize(USplineComponent* splineComp, AdvViz::SDK::ISplinePtr spline)
 {
 	Impl->Initialize(splineComp, spline);
 }
 
 EITwinSplineUsage AITwinSplineHelper::GetUsage() const
 {
-	ensureMsgf(!Impl->Spline || static_cast<EITwinSplineUsage>(Impl->Spline->GetUsage()) == Impl->Usage,
-		TEXT("unsynchronized spline usage Unreal vs AdvViz::SDK"));
+	ensureMsgf(Impl->Spline, TEXT("unsynchronized spline usage Unreal vs AdvViz::SDK"));
+	if (Impl->Spline)
+	{
+		auto spline = Impl->Spline->GetRAutoLock();
+		ensureMsgf(static_cast<EITwinSplineUsage>(spline->GetUsage()) == Impl->Usage,
+			TEXT("unsynchronized spline usage Unreal vs AdvViz::SDK"));
+	}
 	return Impl->Usage;
 }
 
@@ -1491,6 +1620,11 @@ int32 AITwinSplineHelper::InsertPointAt(const int32 PointIndex, FVector const& N
 	return Impl->InsertPointAt(PointIndex, NewWorldPosition);
 }
 
+void AITwinSplineHelper::SetActorHiddenInGame(bool bNewHidden)
+{
+	Super::SetActorHiddenInGame(bNewHidden);
+}
+
 void AITwinSplineHelper::Tick(float /*DeltaTime*/)
 {
 	if (IsHidden())
@@ -1503,8 +1637,7 @@ void AITwinSplineHelper::Tick(float /*DeltaTime*/)
 
 namespace ITwin
 {
-	bool AddCutoutPolygon(FITwinTilesetAccess const& TilesetAccess, ACesiumCartographicPolygon* Polygon);
-	bool RemoveCutoutPolygon(FITwinTilesetAccess const& TilesetAccess, ACesiumCartographicPolygon* Polygon);
+	bool ActivateCutoutPolygon(FITwinTilesetAccess const& TilesetAccess, ACesiumCartographicPolygon* Polygon, bool bActivate);
 	void InvertCutoutPolygonEffect(FITwinTilesetAccess const& TilesetAccess, ACesiumCartographicPolygon* Polygon, bool bInvertEffect);
 }
 
@@ -1518,28 +1651,24 @@ void AITwinSplineHelper::ActivateCutoutEffect(FITwinTilesetAccess const& Tileset
 	if (bActivated_Cur == bActivate && !bIsCreatingSpline)
 		return; // Nothing to do
 
-	bool bModified = false;
 	ACesiumCartographicPolygon* Polygon = GetCartographicPolygonForTileset(TilesetAccess);
-	if (bActivate)
+	if (bActivate && !Polygon)
 	{
 		// Here me may need to instantiate a new polygon, if none exists yet for this tileset
 		// geo-reference:
-		if (!Polygon)
-		{
-			Polygon = ClonePolygonForTileset(TilesetAccess);
-		}
-		bModified = Polygon && ITwin::AddCutoutPolygon(TilesetAccess, Polygon);
+		Polygon = ClonePolygonForTileset(TilesetAccess);
 	}
-	else
+	if (Polygon)
 	{
-		bModified = Polygon && ITwin::RemoveCutoutPolygon(TilesetAccess, Polygon);
+		ITwin::ActivateCutoutPolygon(TilesetAccess, Polygon, bActivate);
 	}
 
 	// Handle persistence:
 	if (Impl->Spline)
 	{
 		// Rebuild the list of linked models in SDKCore
-		std::vector<AdvViz::SDK::SplineLinkedModel> LinkedModels = Impl->Spline->GetLinkedModels();
+		auto spline = Impl->Spline->GetAutoLock();
+		std::vector<AdvViz::SDK::SplineLinkedModel> LinkedModels = spline->GetLinkedModels();
 		const AdvViz::SDK::SplineLinkedModel EditedModel = {
 			.modelType = ITwin::ModelTypeToString(Link.first),
 			.modelId = TCHAR_TO_UTF8(*Link.second)
@@ -1559,14 +1688,17 @@ void AITwinSplineHelper::ActivateCutoutEffect(FITwinTilesetAccess const& Tileset
 					&& LinkedModel.modelId == EditedModel.modelId;
 			});
 		}
-		Impl->Spline->SetLinkedModels(LinkedModels);
+		spline->SetLinkedModels(LinkedModels);
 		ensure(GetLinkedModels().contains(Link) == bActivate);
 	}
 }
 
 bool AITwinSplineHelper::IsEnabledEffect() const
 {
-	return Impl->Spline && Impl->Spline->IsEnabledEffect();
+	if (!Impl->Spline)
+		return false;
+	auto spline = Impl->Spline->GetRAutoLock();
+	return spline->IsEnabledEffect();
 }
 
 void AITwinSplineHelper::EnableEffect(bool bEnable)
@@ -1574,13 +1706,17 @@ void AITwinSplineHelper::EnableEffect(bool bEnable)
 	// Handle persistence
 	if (Impl->Spline)
 	{
-		Impl->Spline->EnableEffect(bEnable);
+		auto spline = Impl->Spline->GetAutoLock();
+		spline->EnableEffect(bEnable);
 	}
 }
 
 bool AITwinSplineHelper::IsInvertedCutoutEffect() const
 {
-	return Impl->Spline && Impl->Spline->GetInvertEffect();
+	if (!Impl->Spline)
+		return false;
+	auto spline = Impl->Spline->GetRAutoLock();
+	return spline->GetInvertEffect();
 }
 
 void AITwinSplineHelper::InvertCutoutEffect(FITwinTilesetAccess const& TilesetAccess, bool bInvert)
@@ -1600,6 +1736,27 @@ void AITwinSplineHelper::InvertCutoutEffect(FITwinTilesetAccess const& TilesetAc
 	// Handle persistence
 	if (Impl->Spline)
 	{
-		Impl->Spline->SetInvertEffect(bInvert);
+		auto spline = Impl->Spline->GetAutoLock();
+		spline->SetInvertEffect(bInvert);
 	}
+}
+
+void AITwinSplineHelper::SetSelected(bool bSelected)
+{
+	Impl->SetSelected(bSelected);
+}
+
+bool AITwinSplineHelper::IsSelected() const
+{
+	return Impl->bSelected;
+}
+
+void AITwinSplineHelper::SetSelectedPointIndex(int32 PointIndex)
+{
+	Impl->SetSelectedPointIndex(PointIndex);
+}
+
+int32 AITwinSplineHelper::GetSelectedPointIndex() const
+{
+	return IsSelected() ? Impl->SelectedPointIndex : -1;
 }

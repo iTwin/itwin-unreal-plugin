@@ -537,17 +537,17 @@ std::unordered_set<ITwinElementID> const& FITwinSceneMapping::ConstructionDataEl
 	return GeometryIDToElementIDs[1];
 }
 
-std::unordered_set<ITwinElementID> const& FITwinSceneMapping::GetSavedViewHiddenElements()
+std::unordered_set<ITwinElementID> const& FITwinSceneMapping::GetSavedViewHiddenElements() const
 {
 	return HiddenElementsFromSavedView;
 }
 
-std::unordered_set<ITwinElementID> const& FITwinSceneMapping::GetSavedViewHiddenModels()
+std::unordered_set<ITwinElementID> const& FITwinSceneMapping::GetSavedViewHiddenModels() const
 {
 	return HiddenModelsFromSavedView;
 }
 
-std::unordered_set<ITwinElementID> const& FITwinSceneMapping::GetSavedViewHiddenCategories()
+std::unordered_set<ITwinElementID> const& FITwinSceneMapping::GetSavedViewHiddenCategories() const
 {
 	return HiddenCategoriesFromSavedView;
 }
@@ -575,14 +575,14 @@ void FITwinSceneMapping::ApplySelectingAndHiding(FITwinSceneTile& SceneTile)
 		SceneTile.HideCategories(HiddenCategoriesFromSavedView, TextureNeeds, ShowHideOpts);
 		SceneTile.HideModels(HiddenModelsFromSavedView, TextureNeeds, ShowHideOpts);
 		SceneTile.HideCategoriesPerModel(HiddenCategoriesPerModelFromSavedView, TextureNeeds, ShowHideOpts);
+		SceneTile.ShowCategoriesPerModel(AlwaysDrawnCategoriesPerModelFromSavedView, TextureNeeds, ShowHideOpts);
+		//if (!HiddenElementsFromSavedView.empty()) <== same
+		SceneTile.HideElements(HiddenElementsFromSavedView, TextureNeeds, ShowHideOpts);
+		SceneTile.ShowElements(AlwaysDrawnElementsFromSavedView, TextureNeeds, ShowHideOpts);
 		//if (bHiddenConstructionData) <== No, may need to un-hide!
 		SceneTile.HideElements(
 			bHiddenConstructionData ? ConstructionDataElements() : std::unordered_set<ITwinElementID>(),
 			TextureNeeds, FShowHideOptions(ShowHideOpts).ConstructionData(true));
-		//if (!HiddenElementsFromSavedView.empty()) <== same
-		SceneTile.HideElements(HiddenElementsFromSavedView, TextureNeeds, ShowHideOpts);
-		SceneTile.ShowElements(AlwaysDrawnElementsFromSavedView, TextureNeeds, ShowHideOpts);
-		SceneTile.ShowCategoriesPerModel(AlwaysDrawnCategoriesPerModelFromSavedView, TextureNeeds, ShowHideOpts);
 		this->bNewSelectingAndHidingTexturesNeedSetupInMaterials |= TextureNeeds.bWasCreated;
 		if (TextureNeeds.bWasChanged)
 			UpdateSelectingAndHidingTextures();
@@ -634,13 +634,38 @@ void FITwinSceneMapping::FinishedParsingIModelMetadata()
 //#endif
 	decltype(SourceElementIDs) Empty;
 	SourceElementIDs.swap(Empty);
+
+	bNeedConvertElemBBoxes = true;
+}
+
+/// Returns true on success
+bool FITwinSceneMapping::ParseElementBBox(TSharedPtr<FJsonValue> const& BBoxLow,
+										  TSharedPtr<FJsonValue> const& BBoxHigh, FBox& ElemBBox)
+{
+	const TSharedPtr<FJsonObject>* LoAsObj;
+	const TSharedPtr<FJsonObject>* HiAsObj;
+	if (!BBoxLow->TryGetObject(LoAsObj) || !BBoxHigh->TryGetObject(HiAsObj))
+		return false;
+	FVector Low, High;
+	if (!(*LoAsObj)->TryGetNumberField(TEXT("X"), Low.X)
+		|| !(*LoAsObj)->TryGetNumberField(TEXT("Y"), Low.Y)
+		|| !(*LoAsObj)->TryGetNumberField(TEXT("Z"), Low.Z)
+		|| !(*HiAsObj)->TryGetNumberField(TEXT("X"), High.X)
+		|| !(*HiAsObj)->TryGetNumberField(TEXT("Y"), High.Y)
+		|| !(*HiAsObj)->TryGetNumberField(TEXT("Z"), High.Z))
+		return false;
+	if (Low.X == High.X && Low.Y == High.Y && Low.Z == High.Z)
+		return false;
+	ElemBBox = FBox(Low, High);
+	return true;
 }
 
 int FITwinSceneMapping::ParseIModelMetadata(TArray<TSharedPtr<FJsonValue>> const& JsonRows)
 {
-	int GoodSrcIDs = 0, GoodFedGUIDs = 0, EmptyFedGUIDs = 0, EmptySrcIDs = 0;
+	int GoodSrcIDs = 0, GoodFedGUIDs = 0, EmptyFedGUIDs = 0, EmptySrcIDs = 0, NoBBoxElems = 0;
 	auto& GuidMap = FederatedElementGUIDs.get<IndexByGUID>();
 	auto& SourceIdMap = SourceElementIDs.get<IndexBySourceID>();
+	int i = 0;
 	for (auto const& Row : JsonRows)
 	{
 		auto const& Entries = Row->AsArray();
@@ -649,12 +674,17 @@ int FITwinSceneMapping::ParseIModelMetadata(TArray<TSharedPtr<FJsonValue>> const
 		ITwinElementID const ElemId = ITwin::ParseElementID(Entries[0]->AsString());
 		if (!ensure(ITwin::NOT_ELEMENT != ElemId))
 			continue;
+		++i;
 		ITwinScene::ElemIdx InVec = ITwinScene::NOT_ELEM;
 		FITwinElement& Elem = ElementForSLOW(ElemId, &InVec);
 		if (ITwinScene::NOT_ELEM != Elem.ParentInVec)
-			continue; // already known - our SQL query indeed generates duplicates in some iModel, why...?
-		ITwinElementID const ParentId = (Entries.Num() < 2 || Entries[1]->IsNull())
-			? ITwin::NOT_ELEMENT : ITwin::ParseElementID(Entries[1]->AsString());
+			continue; // already known - our SQL query indeed generates duplicates in some iModels, why...?
+		if (Entries.Num() >= 3)
+			NoBBoxElems += (ParseElementBBox(Entries[1], Entries[2], Elem.BBox) ? 0 : 1);
+		else
+			++NoBBoxElems;
+		ITwinElementID const ParentId = (Entries.Num() < 4 || Entries[3]->IsNull())
+			? ITwin::NOT_ELEMENT : ITwin::ParseElementID(Entries[3]->AsString());
 		if (ITwin::NOT_ELEMENT != ParentId)
 		{
 			FITwinElement& ParentElem = ElementForSLOW(ParentId, &Elem.ParentInVec);
@@ -664,12 +694,12 @@ int FITwinSceneMapping::ParseIModelMetadata(TArray<TSharedPtr<FJsonValue>> const
 			// fills them
 			ParentElem.SubElemsInVec.push_back(InVec);
 		}
-		if (Entries.Num() >= 3)
-			ParseSomeElementIdentifier<FGuid>(GuidMap, InVec, Entries[2], GoodFedGUIDs, EmptyFedGUIDs);
+		if (Entries.Num() >= 5)
+			ParseSomeElementIdentifier<FGuid>(GuidMap, InVec, Entries[4], GoodFedGUIDs, EmptyFedGUIDs);
 		else
 			++EmptyFedGUIDs;
-		if (Entries.Num() >= 4)
-			ParseSomeElementIdentifier<FString>(SourceIdMap, InVec, Entries[3], GoodSrcIDs, EmptySrcIDs);
+		if (Entries.Num() >= 6)
+			ParseSomeElementIdentifier<FString>(SourceIdMap, InVec, Entries[5], GoodSrcIDs, EmptySrcIDs);
 		else
 			++EmptySrcIDs;
 	}
@@ -708,17 +738,17 @@ int FITwinSceneMapping::ParseIModelMetadata(TArray<TSharedPtr<FJsonValue>> const
 		BE_LOGE("ITwinAPI", "Loop found in iModel Elements hierarchy, it will be IGNORED!");
 		return 0;
 	}
-	if (GoodFedGUIDs != JsonRows.Num() || GoodSrcIDs != JsonRows.Num())
+	if (GoodFedGUIDs != JsonRows.Num() || GoodSrcIDs != JsonRows.Num() || NoBBoxElems != 0)
 	{
 		int const OtherErr = (2 * JsonRows.Num() - EmptyFedGUIDs - EmptySrcIDs) - GoodFedGUIDs - GoodSrcIDs;
-		UE_LOG(ITwinSceneMap, Display, TEXT("When parsing Element metadata: out of %d entries received, %d had no Federation GUID, %d had no Source Element ID%s"),
-			JsonRows.Num(), EmptyFedGUIDs, EmptySrcIDs, OtherErr
+		UE_LOG(ITwinSceneMap, Display, TEXT("When parsing Element metadata: out of %d entries received, %d have no valid BBox, %d had no Federation GUID, %d had no Source Element ID%s"),
+			JsonRows.Num(), NoBBoxElems, EmptyFedGUIDs, EmptySrcIDs, OtherErr
 			? (*FString::Printf(
 				TEXT(", %d Federation GUIDs or Source Element IDs were incomplete or could not be parsed"),
 				OtherErr))
 			: TEXT(""));
 	}
-	return GoodFedGUIDs;//informative only, but FedGUIDs are more important than SrcID
+	return i;
 }
 
 template<typename TSomeID, typename TMapByRank>
@@ -1291,12 +1321,12 @@ FBox const& FITwinSceneMapping::GetBoundingBox(ITwinElementID const Element) con
 		return Elem.BBox;
 	}
 	// The Element bounding boxes are created and expanded as mesh components are notified by Cesium
-	// (see UITwinSceneMappingBuilder::OnTileMeshPrimitiveConstructed), we have no other way of knowing them.
+	// (see UITwinSceneMappingBuilder::OnTileMeshPrimitiveLoaded), we have no other way of knowing them.
 	// Note that FITwinIModelInternals::HasElementWithID uses this assumption too for the moment.
 	// We never know when the full and most accurate BBox is obtained, since new tiles and new LODs can
 	// always come later, containing the Element, so improving this with a cache a tricky, unless we cache
 	// the box and all the tile IDs that contributed to it, so that we can skip them in
-	// OnTileMeshPrimitiveConstructed.
+	// OnTileMeshPrimitiveLoaded.
 	static FBox EmptyBox(ForceInit);
 	return EmptyBox;
 }
@@ -1304,6 +1334,36 @@ FBox const& FITwinSceneMapping::GetBoundingBox(ITwinElementID const Element) con
 void FITwinSceneMapping::SetIModel2UnrealTransfos(AITwinIModel const& IModel)
 {
 	UITwinUtilityLibrary::GetIModelCoordinateConversions(IModel, CoordConversions);
+}
+
+void FITwinSceneMapping::ConvertElemBBoxesIfNeeded()
+{
+	if (bNeedConvertElemBBoxes)
+	{
+		bNeedConvertElemBBoxes = false;
+		auto const& Trsf = GetIModel2UnrealCoordConv().IModelToUntransformedIModelInUE;
+		for (auto& Elem : AllElements)
+		{
+			FBox& Box = const_cast<FITwinElement&>(Elem).BBox;
+			if (!Box.IsValid)
+				continue;
+			Box.Min = Trsf.TransformPosition(Box.Min);
+			Box.Max = Trsf.TransformPosition(Box.Max);
+			if (Box.Min.X > Box.Max.X) std::swap(Box.Min.X, Box.Max.X);
+			if (Box.Min.Y > Box.Max.Y) std::swap(Box.Min.Y, Box.Max.Y);
+			if (Box.Min.Z > Box.Max.Z) std::swap(Box.Min.Z, Box.Max.Z);
+		}
+	}
+}
+
+FBox FITwinSceneMapping::GetBoundingBoxOfAllGlTFMeshes() const
+{
+	FBox Box;
+	ForEachKnownTile([&Box](FITwinSceneTile const& SceneTile)
+	{
+		Box += SceneTile.GetBoundingBoxOfGlTFMeshes();
+	});
+	return Box;
 }
 
 namespace
@@ -1553,6 +1613,11 @@ void FITwinSceneMapping::HidePrimitivesWithExtractedEntities(bool bHide /*= true
 				}
 			});
 	});
+}
+
+bool FITwinSceneMapping::IsElementVisible(ITwinScene::ElemIdx const Rank) /*should be const*/
+{
+	return PickVisibleElement(ElementFor(Rank).ElementID, /*bSelectElement*/false);
 }
 
 bool FITwinSceneMapping::PickVisibleElement(ITwinElementID const& InElemID,

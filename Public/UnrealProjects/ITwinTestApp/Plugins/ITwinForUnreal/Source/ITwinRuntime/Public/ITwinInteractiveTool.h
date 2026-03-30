@@ -49,6 +49,10 @@ public:
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
 	static void DisableAll(UWorld* World);
 
+	/// Returns the active (=enabled) tool, if any.
+	UFUNCTION(Category = "iTwin", BlueprintCallable)
+	static AITwinInteractiveTool* GetActiveTool(UWorld* World);
+
 	/// Initiates the interactive creation of a new item (its position following the mouse cursor).
 	/// \return True if a new item could be created and is ready to be positioned.
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
@@ -57,6 +61,14 @@ public:
 	/// Returns true if the tool is currently creating a new item interactively (its position following the mouse cursor).
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
 	bool IsInteractiveCreationMode() const;
+
+	/// Aborts current interactive creation of a new item.
+	UFUNCTION(Category = "iTwin", BlueprintCallable)
+	void AbortInteractiveCreation(bool bTriggeredFromITS);
+
+	/// Validates current interactive creation of a new item.
+	UFUNCTION(Category = "iTwin", BlueprintCallable)
+	void ValidateInteractiveCreation(bool bTriggeredFromITS);
 
 	/// Function handling the click action (LMB) for the tool. Returns whether a significant action was done.
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
@@ -111,8 +123,20 @@ public:
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
 	bool IsPopulationTool() const;
 
+	/// Returns true if the tool is currently used on a cutout primitive.
+	UFUNCTION(Category = "iTwin", BlueprintCallable)
+	bool IsUsedOnCutoutPrimitive() const;
+
+	/// Switch the tool usage to cutout mode on or off.
+	UFUNCTION(Category = "iTwin", BlueprintCallable)
+	void SetUsedOnCutoutPrimitive(bool bForCutout);
+
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
 	bool IsCompatibleWithGizmo() const;
+
+	/// In some specific cases (cut-out plane), only the Z axis of the translation gizmo should be displayed.
+	UFUNCTION(Category = "iTwin", BlueprintCallable)
+	bool ShowOnlyTranslationZGizmo() const;
 
 	void SetCustomPickingExtentInMeters(float PickingExtent);
 	float GetCustomPickingExtentInMeters() const;
@@ -121,9 +145,13 @@ public:
 		TArray<const AActor*>&& IgnoredActors = {},
 		TArray<UPrimitiveComponent*>&& IgnoredComponents = {}) const;
 
-	DECLARE_DYNAMIC_MULTICAST_DELEGATE(FInteractiveCreationCompletedEvent);
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FInteractiveCreationCompletedEvent, bool, bEventTriggeredFromITS);
 	UPROPERTY()
 	FInteractiveCreationCompletedEvent InteractiveCreationCompletedEvent;
+
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FInteractiveCreationAbortedEvent, bool, bEventTriggeredFromITS);
+	UPROPERTY()
+	FInteractiveCreationAbortedEvent InteractiveCreationAbortedEvent;
 
 protected:
 	virtual void SetEnabledImpl(bool bValue) PURE_VIRTUAL(AITwinInteractiveTool::SetEnabledImpl);
@@ -144,10 +172,16 @@ protected:
 
 	virtual bool IsPopulationToolImpl() const { return false; }
 
+	virtual void SetUsedOnCutoutPrimitiveImpl(bool /*bForCutout*/) { }
+	virtual bool IsUsedOnCutoutPrimitiveImpl() const { return false; }
+
 	virtual bool IsCompatibleWithGizmoImpl() const { return true; }
+	virtual bool ShowOnlyTranslationZGizmoImpl() const { return false; }
 
 	virtual bool StartInteractiveCreationImpl() { return false; }
 	virtual bool IsInteractiveCreationModeImpl() const { return false; }
+	virtual void AbortInteractiveCreationImpl(bool bTriggeredFromITS);
+	virtual void ValidateInteractiveCreationImpl(bool bTriggeredFromITS);
 
 private:
 	TOptional<float> CustomPickingExtentInMeters = {};

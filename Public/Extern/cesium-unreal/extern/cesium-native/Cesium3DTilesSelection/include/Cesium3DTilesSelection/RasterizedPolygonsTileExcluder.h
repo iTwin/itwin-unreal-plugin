@@ -40,6 +40,16 @@ public:
   virtual bool shouldExclude(const Tile& tile) const noexcept override;
 
   /**
+   * @brief Determines whether a given point is inside a polygon and therefore
+   * should be excluded.
+   *
+   * @param point The point to check.
+   * @return true if the point should be excluded because it is inside a
+   * polygon.
+   */
+  bool shouldExcludePoint(const glm::dvec3& position) const noexcept;
+
+  /**
    * @brief Gets the overlay defining the polygons.
    */
   const CesiumRasterOverlays::RasterizedPolygonsOverlay& getOverlay() const;

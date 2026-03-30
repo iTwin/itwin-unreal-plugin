@@ -24,6 +24,7 @@
 #endif
 
 #include <Core/Tools/Tools.h>
+#include <Core/Network/http.h>
 
 #include "ITwinAuthInfo.h"
 #include "ITwinAuthStatus.h"
@@ -111,7 +112,7 @@ MODULE_EXPORT namespace AdvViz::SDK
 		EITwinAuthStatus CheckAuthorization();
 
 		bool HasAccessToken() const;
-		std::shared_ptr<std::string> GetAccessToken() const;
+		std::shared_ptr<ThreadSafeAccessToken> GetAccessToken() const;
 
 		//! Returns the regular access token, ignoring any override.
 		std::string const& GetRegularAccessToken() const;
@@ -146,6 +147,12 @@ MODULE_EXPORT namespace AdvViz::SDK
 		virtual bool EncodeToken(std::string const& InToken, std::string const& InKeyRoot, std::string& OutEncode) const  = 0;
 		virtual bool DecodeToken(std::string const& InEncoded, std::string const& InKeyRoot, std::string& OutToken) const = 0;
 
+		//! Resets current authorization token, if it was acquired from the SDK, rather than set from
+		//! SetOverrideAccessToken, and reset cached data so that the next authorization process triggers a
+		//! new login.
+		virtual bool Logout();
+
+
 	protected:
 		ITwinAuthManager(EITwinEnvironment Env);
 		static std::string GetRedirectUri();
@@ -159,22 +166,25 @@ MODULE_EXPORT namespace AdvViz::SDK
 
 		void SetAuthorizationURL(std::string const& authorizationURL);
 
+
 	private:
+		enum class EAuthContext
+		{
+			StdRequest,
+			Reload,
+			Logout,
+		};
+
 		//! Returns the access token to use, it may be the "override" or regular one.
 		std::string const& GetCurrentAccessToken() const;
 
 		bool TryLoadRefreshToken();
-		void ResetRefreshToken();
+		bool ResetRefreshToken();
 
-		bool SaveAccessToken(std::string const& accessToken) const;
+		bool SaveAccessToken(std::string const& accessToken, EAuthContext authContext) const;
 		bool ReloadAccessToken(std::string& readAccessToken, ITwinAuthInfo& readAuthInfo) const;
 
 		/// Update the authorization information upon successful server response
-		enum class EAuthContext
-		{
-			StdRequest,
-			Reload
-		};
 		void SetAuthorizationInfo(std::string const& accessToken, ITwinAuthInfo const& authInfo,
 			EAuthContext authContext = EAuthContext::StdRequest);
 
@@ -214,7 +224,7 @@ MODULE_EXPORT namespace AdvViz::SDK
 		std::string accessToken_;
 		std::string overrideAccessToken_;
 		EITwinAuthOverrideMode overrideMode_ = EITwinAuthOverrideMode::None;
-		std::shared_ptr<std::string> currentToken_;
+		std::shared_ptr<ThreadSafeAccessToken> currentToken_;
 		ITwinAuthInfo authInfo_;
 
 		std::shared_ptr<Http> http_;

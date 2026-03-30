@@ -1,7 +1,7 @@
 {
 	"FileVersion": 3,
-	"Version": 22,
-	"VersionName": "0.1.22",
+	"Version": 23,
+	"VersionName": "0.1.23",
 	"FriendlyName": "iTwin for Unreal",
 	"Description": "",
 	"Category": "Other",
@@ -24,7 +24,19 @@
 			"Name": "CesiumRuntime",
 			"Type": "Runtime",
 			"LoadingPhase": "PostConfigInit",
-			"PlatformAllowList": [
+			"WhitelistPlatforms": [
+				"Win64",
+				"Mac",
+				"Linux",
+				"Android",
+				"IOS"
+			]
+		},
+		{
+			"Name": "CesiumEditor",
+			"Type": "Editor",
+			"LoadingPhase": "PostEngineInit",
+			"WhitelistPlatforms": [
 				"Win64",
 				"Mac",
 				"Linux",

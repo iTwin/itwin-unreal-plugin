@@ -11,7 +11,6 @@
 #include <CoreMinimal.h>
 #include <Math/Vector.h>
 #include <Misc/AutomationTest.h>
-#include <Misc/EngineVersionComparison.h>
 #include <Misc/LowLevelTestAdapter.h>
 
 #include <Hashing/UnrealMath.h>
@@ -142,15 +141,8 @@ void VisibilityApproxEqual(FAutomationTestBase& Test, const Test_ElementState& x
 
 } // namespace ITwin::Timeline
 
-constexpr auto AutomationContext = EAutomationTestFlags::EngineFilter |
-#if UE_VERSION_OLDER_THAN(5, 5, 0)
-	EAutomationTestFlags::ApplicationContextMask
-#else
-	EAutomationTestFlags_ApplicationContextMask
-#endif
-;
-
-BEGIN_DEFINE_SPEC(GetStateAtTimeSpec, "Bentley.ITwinForUnreal.ITwinRuntime.Timeline", AutomationContext)
+BEGIN_DEFINE_SPEC(GetStateAtTimeSpec, "Bentley.ITwinForUnreal.ITwinRuntime.Timeline",
+				  EAutomationTestFlags::EngineFilter | EAutomationTestFlags_ApplicationContextMask)
 	std::optional<ITwin::Timeline::Test_ElementTimeline> ElementTimeline;
 END_DEFINE_SPEC(GetStateAtTimeSpec)
 void GetStateAtTimeSpec::Define()
@@ -430,7 +422,8 @@ void GetStateAtTimeSpec::Define()
 		}); // end of Describe call
 } // end of Define method
 
-BEGIN_DEFINE_SPEC(MainTimelineAddSpec, "Bentley.ITwinForUnreal.ITwinRuntime.Timeline", AutomationContext)
+BEGIN_DEFINE_SPEC(MainTimelineAddSpec, "Bentley.ITwinForUnreal.ITwinRuntime.Timeline",
+				  EAutomationTestFlags::EngineFilter | EAutomationTestFlags_ApplicationContextMask)
 	std::optional<ITwin::Timeline::MainTimelineBase<ITwin::Timeline::Test_ElementTimelineEx>> Timeline;
 END_DEFINE_SPEC(MainTimelineAddSpec)
 void MainTimelineAddSpec::Define()

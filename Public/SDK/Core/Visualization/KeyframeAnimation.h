@@ -48,8 +48,8 @@ namespace AdvViz::SDK
 		virtual bool IsFullyLoaded() const = 0;
 		virtual expected<void, std::string> Load() = 0;
 
-		virtual expected<void, std::string> Save(std::shared_ptr<Http>& http, const std::string& animationId, const std::string& animationKeyFramesInfoId) = 0;
-		virtual void AsyncSave(std::shared_ptr<Http>& http, const std::string& animationId, const std::string& animationKeyFramesInfoId, const std::function<void(long httpResult)>& callbackfct) = 0;
+		virtual expected<void, std::string> Save(const std::shared_ptr<Http>& http, const std::string& animationId, const std::string& animationKeyFramesInfoId) = 0;
+		virtual void AsyncSave(const std::shared_ptr<Http>& http, const std::string& animationId, const std::string& animationKeyFramesInfoId, const std::function<void(long httpResult)>& callbackfct) = 0;
 	};
 
 	using IAnimationKeyframeChunkPtr = TSharedLockableDataPtr<IAnimationKeyframeChunk>;
@@ -86,8 +86,8 @@ namespace AdvViz::SDK
 		std::uint64_t GetDynTypeId() const override { return GetTypeId(); }
 		bool IsTypeOf(std::uint64_t i) const override { return (i == GetTypeId()) || IAnimationKeyframeChunk::IsTypeOf(i); }
 
-		expected<void, std::string> Save(std::shared_ptr<Http>& http, const std::string& animationId, const std::string& animationKeyFramesInfoId) override;
-		void AsyncSave(std::shared_ptr<Http>& http, const std::string& animationId, const std::string& animationKeyFramesInfoId, const std::function<void(long httpResult)>& callbackfct)override;
+		expected<void, std::string> Save(const std::shared_ptr<Http>& http, const std::string& animationId, const std::string& animationKeyFramesInfoId) override;
+		void AsyncSave(const std::shared_ptr<Http>& http, const std::string& animationId, const std::string& animationKeyFramesInfoId, const std::function<void(long httpResult)>& callbackfct)override;
 
 		bool IsFullyLoaded() const override;
 		expected<void, std::string> Load() override;
@@ -105,38 +105,38 @@ namespace AdvViz::SDK
 	{
 	public:
 		virtual void SetObjectId(const std::string& v) = 0;
-		virtual const std::string& GetObjectId()const = 0;
+		virtual const std::string& GetObjectId() const = 0;
 
 		virtual void SetType(const std::string& v) = 0;
-		virtual const std::string& GetType()const = 0;
+		virtual const std::string& GetType() const = 0;
 
 		virtual void SetKeyframeInterval(float v) = 0;
-		virtual float GetKeyframeInterval()const = 0;
+		virtual float GetKeyframeInterval() const = 0;
 
 		virtual void SetStartTime(double v) = 0;
-		virtual double GetStartTime()const = 0;
+		virtual double GetStartTime() const = 0;
 
 		virtual void SetKeyframeCount(int v) = 0;
-		virtual int GetKeyframeCount()const = 0;
+		virtual int GetKeyframeCount() const = 0;
 
 		virtual void SetChunkSize(int v) = 0;
-		virtual int GetChunkSize()const = 0;
+		virtual int GetChunkSize() const = 0;
 
 		virtual void SetStates(const std::vector<std::string> &v) = 0;
-		virtual const std::vector<std::string> &GetStates()const = 0;
+		virtual const std::vector<std::string>& GetStates() const = 0;
 
 		virtual void SetTags(const std::vector<std::string> &v) = 0;
-		virtual const std::vector<std::string> &GetTags()const = 0;
+		virtual const std::vector<std::string>& GetTags() const = 0;
 
 		virtual void SetGCS(const GCS& v) = 0;
-		virtual const GCS& GetGCS()const = 0;
+		virtual const GCS& GetGCS() const = 0;
 
 		virtual bool ShouldSave() const;
 
-		virtual expected<void, std::string> Save(std::shared_ptr<Http>& http, bool bChunk = true) = 0;
+		virtual expected<void, std::string> Save(const std::shared_ptr<Http>& http, bool bChunk = true) = 0;
 
 		//note: doesn't save chunks
-		virtual void AsyncSave(std::shared_ptr<Http>& http, const std::function<void(const IAnimationKeyframeInfo::Id& id)>& callBackfct) =0;
+		virtual void AsyncSave(const std::shared_ptr<Http>& http, const std::function<void(const IAnimationKeyframeInfo::Id& id)>& callBackfct) = 0;
 
 		virtual IAnimationKeyframeChunkPtr CreateChunk() = 0;
 		virtual size_t GetChunkCount() const = 0;
@@ -201,8 +201,8 @@ namespace AdvViz::SDK
 		void SetGCS(const GCS &v) override;
 		const GCS &GetGCS() const override;
 
-		expected<void, std::string> Save(std::shared_ptr<Http>& http, bool bChunks=true) override;
-		void AsyncSave(std::shared_ptr<Http>& http, const std::function<void(const IAnimationKeyframeInfo::Id& id)>& callBackfct) override;
+		expected<void, std::string> Save(const std::shared_ptr<Http>& http, bool bChunks = true) override;
+		void AsyncSave(const std::shared_ptr<Http>& http, const std::function<void(const IAnimationKeyframeInfo::Id& id)>& callBackfct) override;
 		IAnimationKeyframeChunkPtr CreateChunk() override;
 
 		size_t GetChunkCount() const override;
@@ -237,7 +237,10 @@ namespace AdvViz::SDK
 	public:
 		virtual bool ShouldSave() const = 0;
 		virtual expected<void, std::string> LoadAnimationKeyFrameInfos() = 0;
-		virtual expected<void, std::string> Save(std::shared_ptr<Http>& http, bool bInfos = true) = 0;
+		virtual void AsyncLoadAnimationKeyFrameInfos(
+			const std::function<void(IAnimationKeyframeInfoPtr&)>& onCreateKeyFrameInfo,
+			const std::function<void(expected<void, std::string> const&)>& onFinish) = 0;
+		virtual expected<void, std::string> Save(std::shared_ptr<Http> const& http, bool bInfos = true) = 0;
 		virtual expected<void, std::string> Delete() = 0;
 		virtual IAnimationKeyframeInfoPtr AddAnimationKeyframeInfo(const std::string& objectId) = 0;
 		virtual expected<IAnimationKeyframeInfoPtr, std::string> LoadKeyframesInfo(const IAnimationKeyframeInfo::Id& animationKeyframeInfoId) = 0;
@@ -262,7 +265,11 @@ namespace AdvViz::SDK
 		virtual ~AnimationKeyframe();
 		
 		expected<void, std::string> LoadAnimationKeyFrameInfos() override;
-		expected<void, std::string> Save(std::shared_ptr<Http>& http, bool bInfos = true) override;
+		void AsyncLoadAnimationKeyFrameInfos(
+			const std::function<void(IAnimationKeyframeInfoPtr&)>& onCreateKeyFrameInfo, 
+			const std::function<void(expected<void, std::string> const&)>& onFinish)override;
+
+		expected<void, std::string> Save(std::shared_ptr<Http> const& http, bool bInfos = true) override;
 		expected<void, std::string> Delete() override;
 
 		IAnimationKeyframeInfoPtr AddAnimationKeyframeInfo(const std::string& objectId) override;
@@ -291,8 +298,13 @@ namespace AdvViz::SDK
 		Impl& GetImpl();
 		const Impl& GetImpl() const;
 	private:
-		const std::unique_ptr<Impl> impl_;
+		const std::shared_ptr<Impl> impl_;
 	};
+
+	typedef TSharedLockableDataPtr<std::vector<IAnimationKeyframePtr>> TAnimationsKeyframeVecPtr;
+	ADVVIZ_LINK void AsyncGetITwinAnimationKeyframes(const std::string& itwinid, 
+		std::function<void(IAnimationKeyframePtr&)> onCreateAnimationsKeyframe,
+		std::function<void(expected<void, std::string> const&)> onFinishCallback);
 
 	ADVVIZ_LINK std::vector<IAnimationKeyframePtr> GetITwinAnimationKeyframes(const std::string& itwinid);
 

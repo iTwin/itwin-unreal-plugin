@@ -86,7 +86,8 @@ namespace AdvViz::SDK
 				ColRow3x4(mat2, 0, 3) = tr[0];
 				ColRow3x4(mat2, 1, 3) = tr[1];
 				ColRow3x4(mat2, 2, 3) = tr[2];
-				instance_->SetTransform(mat2);
+				auto instanceLock = instance_->GetAutoLock();
+				instanceLock->SetTransform(mat2);
 
 				#ifdef DEBUGCULLING
 					float3 col = { 1.f, 1.f, 1.f };
@@ -99,16 +100,19 @@ namespace AdvViz::SDK
 		
 		const dmat3x4& GetTransform() const
 		{
-			return instance_->GetTransform();
+			auto instanceLock = instance_->GetRAutoLock();
+			return instanceLock.Get().GetTransform();
 		}
 
 		void Update()
 		{
-			instance_->Update();
+			auto instanceLock = instance_->GetAutoLock();
+			instanceLock->Update();
 		}
 
 		void Hide()
 		{
+			auto instanceLock = instance_->GetAutoLock();
 #ifndef DEBUGCULLING
 			dmat3x4 mat;
 			for (int i = 0; i < 3; i++)
@@ -117,12 +121,12 @@ namespace AdvViz::SDK
 			ColRow3x4(mat, 0, 3) = 0.f;
 			ColRow3x4(mat, 1, 3) = 0.f;
 			ColRow3x4(mat, 2, 3) = 0.f;
-			instance_->SetTransform(mat);
+			instanceLock->SetTransform(mat);
 #else
 			float3 col = { 1.f, 0.f, 0.f };
 			instance_->SetColorShift(col);
 #endif
-			instance_->Update();
+			instanceLock->Update();
 		}
 
 		void RequestLoad(const TimeRange &timeRange)
@@ -210,7 +214,7 @@ namespace AdvViz::SDK
 		GetImpl().bboxInfoIds_ = MakeSharedLockableData<std::pair<std::uint64_t /*queryId*/, std::set<IAnimationKeyframeInfo::Id>>>();
 	}
 
-	expected<void, std::string> KeyframeAnimator::AssociateInstances(const std::shared_ptr<IInstancesGroup>& gp)
+	expected<void, std::string> KeyframeAnimator::AssociateInstances(const IInstancesGroupPtr& gpPtr)
 	{
 		auto animationKeyframePtr(GetImpl().animationKeyframe_.lock());
 		if (!animationKeyframePtr)
@@ -220,9 +224,10 @@ namespace AdvViz::SDK
 		if (!instanceManager)
 			return make_unexpected("no instanceManager associated");
 
-		if (!gp)
+		if (!gpPtr)
 			return make_unexpected("no valid group");
 
+		auto gp = gpPtr->GetAutoLock();
 		auto instances = gp->GetInstances();
 
 		auto lock(animationKeyframePtr->GetAutoLock());
@@ -234,10 +239,10 @@ namespace AdvViz::SDK
 			auto inst = it.lock();
 			if (inst)
 			{
-				auto& keyframeInfoId = inst->GetAnimId();
+				auto instanceLock = inst->GetAutoLock();
+				auto& keyframeInfoId = instanceLock->GetAnimId();
 				auto animInfo = animationKeyframe.GetAnimationKeyframeInfo(IAnimationKeyframeInfo::Id(keyframeInfoId));
 				auto lockInfo(animInfo->GetAutoLock());
-				[[maybe_unused]] auto& info = lockInfo.Get();
 				lockInfo->AddExtension(std::make_shared<InstanceWithPathExt>(inst, animInfo, transform));
 			}
 		}

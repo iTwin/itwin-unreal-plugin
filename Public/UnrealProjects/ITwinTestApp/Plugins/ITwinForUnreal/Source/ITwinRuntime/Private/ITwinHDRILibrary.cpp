@@ -126,11 +126,31 @@ FITwinHDRILibrary::ITwinHDRI FITwinHDRILibrary::ConvertKeyValueMapToDRISettings(
 
 FITwinHDRILibrary::LoadHdriResult FITwinHDRILibrary::GetHrdiFromName(AITwinDecorationHelper const* persistanceMngr, FString NewHDRIName)
 {
-	LoadHdriResult res;
 
+
+	LoadHdriResult res;
+	FString PathName = TEXT("/Game/") + FString(ITwin::HDRI_LIBRARY) + TEXT("/") + NewHDRIName;
+	bool FullPath = NewHDRIName.StartsWith(TEXT("/Game/"));
 	auto l = GetListOfHDRIPresets();
 	std::string strname = TCHAR_TO_UTF8(*NewHDRIName);
-	if (std::find_if(l.begin(), l.end(), [strname](const std::pair<std::string,bool> &item)
+	if (persistanceMngr && persistanceMngr->iTwinContentManager)
+	{
+		if (!persistanceMngr->iTwinContentManager->HasComponentIDInPath(NewHDRIName).IsEmpty())
+		{
+			FString componentId = persistanceMngr->iTwinContentManager->ShouldDownloadComponent(PathName);
+			if (!componentId.IsEmpty())
+			{
+				persistanceMngr->iTwinContentManager->DownloadedComponent(componentId);
+			}
+			PathName = persistanceMngr->iTwinContentManager->SanitizePath(NewHDRIName);
+			FullPath = true;
+		}
+		else if (FullPath)
+		{
+			PathName = NewHDRIName;
+		}
+	}
+	if (!FullPath && std::find_if(l.begin(), l.end(), [strname](const std::pair<std::string,bool> &item)
 	{
 		if(item.first == strname)
 			return true;
@@ -144,12 +164,11 @@ FITwinHDRILibrary::LoadHdriResult FITwinHDRILibrary::GetHrdiFromName(AITwinDecor
 		BE_LOGE("FITwinHDRILibrary", fmt::format("HDRI named {} not found in presets.", TCHAR_TO_UTF8(*NewHDRIName)));
 		return res;
 	}
-
-	FString PathName = TEXT("/Game/") + FString(ITwin::HDRI_LIBRARY) + TEXT("/") + NewHDRIName;
 	if (persistanceMngr && persistanceMngr->iTwinContentManager)
 	{
 		persistanceMngr->iTwinContentManager->DownloadFromAssetPath(PathName);
 	}
+
 	UTextureCube* DefaultTextureCube = LoadObject<UTextureCube>(nullptr, *PathName);
 	if (!DefaultTextureCube)
 	{

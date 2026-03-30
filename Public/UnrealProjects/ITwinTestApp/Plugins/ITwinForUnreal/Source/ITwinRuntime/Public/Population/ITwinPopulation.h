@@ -43,9 +43,11 @@ namespace AdvViz::SDK
 }
 class AITwinPopulation;
 class FITwinPopulationWithPathExt;
+class UInstancedStaticMeshComponent;
 class UFoliageInstancedStaticMeshComponent;
 
 namespace ECollisionEnabled { enum Type : int; }
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FInteractiveInstancePlacementEvent, FString, ObjectRef);
 
 USTRUCT()
 struct FITwinFoliageComponentHolder
@@ -56,7 +58,10 @@ struct FITwinFoliageComponentHolder
 	TObjectPtr<UStaticMesh> MasterMesh;
 
 	UPROPERTY(Category = "iTwin", EditAnywhere)
-	TObjectPtr<UFoliageInstancedStaticMeshComponent> FoliageInstMeshComp;
+	TObjectPtr<UInstancedStaticMeshComponent> InstancedMeshComponent;
+
+	UPROPERTY(Category = "iTwin", VisibleAnywhere)
+	bool bIsFoliageComponent = false;
 
 	void InitWithMasterMesh(AITwinPopulation& PopulationActor, UStaticMesh* Mesh);
 
@@ -70,7 +75,6 @@ struct FITwinFoliageComponentHolder
 	FBoxSphereBounds GetMasterMeshBounds() const;
 };
 
-
 UCLASS()
 class ITWINRUNTIME_API AITwinPopulation : public AActor, public AdvViz::SDK::Tools::ExtensionSupport
 {
@@ -78,7 +82,7 @@ class ITWINRUNTIME_API AITwinPopulation : public AActor, public AdvViz::SDK::Too
 	
 public:
 	using AVizInstancesManagerPtr = std::shared_ptr<AdvViz::SDK::IInstancesManager>;
-	using AVizInstancesGroupPtr = std::shared_ptr<AdvViz::SDK::IInstancesGroup>;
+	using AVizInstancesGroupPtr = AdvViz::SDK::IInstancesGroupPtr;
 
 
 	static AITwinPopulation* CreatePopulation(const UObject* WorldContextObject, const FString& AssetPath,
@@ -91,7 +95,7 @@ public:
 	FBox GetMasterMeshBoundingBox() const;
 	FBoxSphereBounds GetMasterMeshBounds() const;
 		
-	std::shared_ptr<AdvViz::SDK::IInstance> GetAVizInstance(int32 instanceIndex);
+	AdvViz::SDK::IInstancePtr GetAVizInstance(int32 instanceIndex) const;
 
 	/// Toggle the automatic rebuild of the internal tree (UE internal structure to optimize the
 	/// hierarchy of instances.
@@ -105,9 +109,21 @@ public:
 	public:
 		FAutoRebuildTreeDisabler(AITwinPopulation& InPopulation);
 		~FAutoRebuildTreeDisabler();
-	private:
+	protected:
 		TWeakObjectPtr<AITwinPopulation> Population;
+	private:
 		bool bAutoRebuildTreeOnInstanceChanges_Old = false;
+	};
+
+	/// Utility object to manage the interactive transformation of an instance.
+	/// During its lifetime, the automatic rebuild of the internal UE tree is disabled.
+	class [[nodiscard]] FInteractiveTransformationScope : public FAutoRebuildTreeDisabler
+	{
+	public:
+		FInteractiveTransformationScope(AITwinPopulation& InPopulation);
+		~FInteractiveTransformationScope();
+	private:
+		bool const bBeingTransformed_Old = false;
 	};
 
 	FTransform GetInstanceTransform(int32 instanceIndex) const;
@@ -121,9 +137,15 @@ public:
 	/// only once for the ISM.
 	void MarkFoliageRenderStateDirty();
 
-	void SetInstanceTransform(int32 instanceIndex, const FTransform& tm);
+	void SetInstanceTransform(int32 instanceIndex, const FTransform& tm, bool bTriggeredFromITS = false);
 
-	const FTransform& GetBaseTransform() { return BaseTransform; }
+	const FTransform& GetBaseTransform() const { return BaseTransform; }
+
+	/// Returns whether an interactive transformation is currently happening on this population.
+	bool IsBeingInteractivelyTransformed() const;
+
+	/// Set whether an interactive transformation is currently happening on this population.
+	void SetBeingInteractivelyTransformed(bool bBeingTransformed);
 
 	/// Returns the bounding box of the given instance.
 	FBox GetInstanceBoundingBox(int32 instanceIndex) const;
@@ -132,11 +154,25 @@ public:
 	void SetInstanceColorVariation(int32 instanceIndex, const FVector& v);
 	inline bool SetInstanceColorVariationUEOnly(int32 instanceIndex, const FVector& v, bool bMarkRenderStateDirty = true);
 
+	UFUNCTION(Category = "iTwin",
+		BlueprintCallable)
+	void SetSelectedInstanceIndex(int32 InstanceIndex);
+
+	UFUNCTION(Category = "iTwin",
+		BlueprintCallable)
+	int32 GetSelectedInstanceIndex() const {
+		return SelectedInstanceIndex;
+	}
+
+	UFUNCTION(Category = "iTwin",
+		BlueprintCallable)
+	bool HasSelectedInstance() const {	return SelectedInstanceIndex != INDEX_NONE; }
+
 	AdvViz::SDK::RefID GetInstanceRefId(int32 instanceIndex) const;
 	int32 GetInstanceIndexFromRefId(const AdvViz::SDK::RefID& refId) const;
 
 	float GetColorVariationIntensity() const;
-	void SetColorVariationIntensity(const float& f);
+	void SetColorVariationIntensity(const float& Intensity);
 
 	int32 GetNumberOfInstances() const;
 	void SetNumberOfInstances(const int32& n);
@@ -153,8 +189,11 @@ public:
 	void FinalizeAddedInstance(int32 instIndex, const FTransform* FinalTransform = nullptr,
 		const AdvViz::SDK::RefID* EnforcedRefID = nullptr);
 
+	//! Remove the given instance, and invalidates the decoration for saving.
 	void RemoveInstance(int32 instanceIndex);
-	void RemoveInstances(const TArray<int32>& instanceIndices);
+	//! Remove the given instances, and invalidates the decoration for saving. The indices provided will be
+	//! sorted in reversed order (from higher to lower).
+	void RemoveInstances(TArray<int32>& instanceIndices);
 
 	//! Remove all instances belonging to this population, and invalidates the decoration for saving.
 	UFUNCTION(Category = "iTwin",
@@ -174,19 +213,21 @@ public:
 
 	void UpdateInstancesFromAVizToUE();
 
-	AVizInstancesManagerPtr& GetInstanceManager();
+	AVizInstancesManagerPtr const& GetInstanceManager() const;
 	void SetInstancesManager(AVizInstancesManagerPtr const& instManager);
 
-	AVizInstancesGroupPtr& GetInstancesGroup();
+	AdvViz::SDK::IInstancesGroupPtr const& GetInstancesGroup() const;
 	void SetInstancesGroup(AVizInstancesGroupPtr const& instGroup);
 
 	void SetObjectRef(const std::string& objRef);
 	const std::string& GetObjectRef() const;
-	const AdvViz::SDK::RefID& GetInstanceGroupId() const;
+	AdvViz::SDK::RefID GetInstanceGroupId() const;
 	
 	bool IsRotationVariationEnabled() const;
 	bool IsScaleVariationEnabled() const;
 	bool IsPerpendicularToSurface() const;
+
+	EITwinInstantiatedObjectType GetObjectType() const { return objectType; }
 
 	//! Returns whether this population corresponds to a clipping primitive (thus synchronized with the
 	//! clipping tool).
@@ -199,19 +240,42 @@ public:
 	static FVector GetRandomColorShift(const EITwinInstantiatedObjectType type);
 
 
+	static FInteractiveInstancePlacementEvent InteractiveInstancePlacementEvent;
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
-	void Tick(float DeltaTime) override;
+	virtual void Tick(float DeltaTime) override;
 
 
 private:
+	// 3 floats for color variations
+	// 1 float for selection
+	// 1 float for opacity factor
+	//
+	// Selection and opacity were introduced for cutout (see material graph in
+	// Content/Clipping/Clipping/M_TranslucentWithEdges)
+	static constexpr int32 NUM_CUSTOM_FLOATS_PER_INSTANCE = 5;
+
+	static constexpr int32 CUSTOM_FLOAT_SELECTION_INDEX =	3;
+	static constexpr int32 CUSTOM_FLOAT_OPACITY_INDEX =		4;
+
+
 	void AddInstances(int32 numInst);
 	void RemoveInstances(int32 numInst);
 
 	inline bool CheckInstanceCount() const;
 
+	FORCEINLINE void CheckNumCustomDataFloats(UInstancedStaticMeshComponent& MeshComponent);
 
+	inline bool SetInstanceSelectedUEOnly(int32 InstanceIndex, bool bSelected, bool bMarkRenderStateDirty = true);
+
+	void UpdateInstanceIndicesAfterRemoval(std::vector<int32_t> const& IndicesInReversedOrder,
+		AdvViz::SDK::RefID const& GroupId, bool bHasUsedRemoveAtSwap);
+	bool CheckInstanceIndices(AdvViz::SDK::RefID const& GroupId) const;
+
+	//signal
+	static void SignalInstanceCreation(const FString& objectRef);
 private:
 	UPROPERTY(Category = "iTwin", EditAnywhere)
 	TArray<FITwinFoliageComponentHolder> FoliageComponents;
@@ -231,6 +295,7 @@ private:
 	UPROPERTY(Category = "iTwin", EditAnywhere)
 	FTransform BaseTransform = FTransform::Identity;
 
+	int32 SelectedInstanceIndex = INDEX_NONE;
 
 	struct FImpl;
 	TPimplPtr<FImpl> Impl;
@@ -240,6 +305,7 @@ private:
 	EITwinInstantiatedObjectType objectType = EITwinInstantiatedObjectType::Other;
 
 	friend class FITwinPopulationWithPathExt;
+
 };
 
 class FITwinInstance : public AdvViz::SDK::Instance, AdvViz::SDK::Tools::TypeId<FITwinInstance>
@@ -247,11 +313,12 @@ class FITwinInstance : public AdvViz::SDK::Instance, AdvViz::SDK::Tools::TypeId<
 public:
 	FITwinInstance();
 
-	AdvViz::expected<void, std::string> Update() override;
+	virtual AdvViz::expected<void, std::string> Update() override;
+	virtual void OnIndexChanged(const int32_t newIndex) override;
 
 	using AdvViz::SDK::Tools::TypeId<FITwinInstance>::GetTypeId;
-	std::uint64_t GetDynTypeId() const override { return GetTypeId(); }
-	bool IsTypeOf(std::uint64_t i) const override { return (i == GetTypeId()) || AdvViz::SDK::Instance::IsTypeOf(i); }
+	virtual std::uint64_t GetDynTypeId() const override { return GetTypeId(); }
+	virtual bool IsTypeOf(std::uint64_t i) const override { return (i == GetTypeId()) || AdvViz::SDK::Instance::IsTypeOf(i); }
 
 	TWeakObjectPtr<AITwinPopulation> population_;
 	static const std::uint32_t NotSet = std::numeric_limits<std::uint32_t>::max();

@@ -10,23 +10,186 @@
 #include "Timeline.h"
 #include "Core/Network/HttpGetWithLink.h"
 #include "Core/Singleton/singleton.h"
+#include "Core/Visualization/AsyncHelpers.h"
+#include "Core/Visualization/AsyncHttp.inl"
 #include "Config.h"
 
 namespace AdvViz::SDK
 {
+	namespace
+	{
+		struct SJsonIds
+		{
+			std::vector<std::string> ids;
+		};
+	}
+
+
+	template <typename TServerData>
+	struct TServerDataProps
+	{
+
+	};
+
+	// Create one timeline/clip on the server.
+	template <typename TSavableItem, typename TSJin>
+	void TCreateSingleItemOnServer(
+		TSavableItem* itemPtr,
+		std::string const& url,
+		TSJin const& jin,
+		std::shared_ptr<Http> const& http,
+		std::shared_ptr<AsyncRequestGroupCallback> callbackPtr)
+	{
+		using TSJout = TSJin;
+		using ServerDataPropsAccess = TServerDataProps<TSJin>;
+
+		std::weak_ptr<TSavableItem> itemWptr(itemPtr->shared_from_this());
+
+		AsyncPostJsonJBody<TSJout>(http, callbackPtr,
+			[url, itemWptr,
+			 itemName = ServerDataPropsAccess::GetName(jin)](
+				long httpCode,
+				const Tools::TSharedLockableData<TSJout>& joutPtr)
+		{
+			auto itemPtr = itemWptr.lock();
+			if (!itemPtr)
+				return false;
+
+			bool bSuccess = (httpCode == 201);
+			if (bSuccess)
+			{
+				auto unlockedJout = joutPtr->GetAutoLock();
+				TSJout const& jout = unlockedJout.Get();
+
+				auto const& idOnServer = ServerDataPropsAccess::GetId(jout);
+				bSuccess = idOnServer.has_value();
+				if (bSuccess)
+				{
+					if (!idOnServer->empty())
+					{
+						itemPtr->SetDBIdentifier(idOnServer.value());
+					}
+					itemPtr->serverSideData_.id = idOnServer;
+					itemPtr->OnSaved();
+				}
+				else
+				{
+					BE_LOGW("ITwinDecoration", "Server returned no id for timeline " << itemName
+						<< " url: " << url);
+				}
+			}
+			else
+			{
+				BE_LOGW("ITwinDecoration", "Save timeline " << itemName << " failed."
+					<< " url: " << url
+					<< " Http status: " << httpCode);
+			}
+			return bSuccess;
+		}, url, jin);
+	}
+
+	// Update one existing timeline/clip on the server.
+	template <typename TSavableItem, typename TSJin>
+	void TUpdateSingleItemOnServer(
+		TSavableItem* itemPtr,
+		std::string const& url,
+		TSJin const& jin,
+		std::shared_ptr<Http> const& http,
+		std::shared_ptr<AsyncRequestGroupCallback> callbackPtr)
+	{
+		struct Sout
+		{
+			int numUpdated = 0;
+		};
+
+		using ServerDataPropsAccess = TServerDataProps<TSJin>;
+
+		std::weak_ptr<TSavableItem> itemWptr(itemPtr->shared_from_this());
+
+		AsyncPutJsonJBody<Sout>(http, callbackPtr,
+			[itemWptr, url,
+			itemName = ServerDataPropsAccess::GetName(jin)](
+				long httpCode,
+				const Tools::TSharedLockableData<Sout>& joutPtr)
+		{
+			auto itemPtr = itemWptr.lock();
+			if (!itemPtr)
+				return false;
+			bool bSuccess = (httpCode == 200);
+			if (bSuccess)
+			{
+				auto unlockedJout = joutPtr->GetAutoLock();
+				Sout const& jout = unlockedJout.Get();
+				bSuccess = (jout.numUpdated == 1);
+				if (bSuccess)
+				{
+					BE_LOGI("ITwinDecoration", "Updated timeline " << itemName);
+					itemPtr->OnSaved();
+				}
+				else
+				{
+					BE_LOGW("ITwinDecoration", "Update timeline " << itemName << " failed."
+						<< " url: " << url
+						<< " Http status: " << httpCode);
+				}
+			}
+			else
+			{
+				BE_LOGW("ITwinDecoration", "Update timeline " << itemName << " failed."
+					<< " url: " << url
+					<< " Http status: " << httpCode);
+			}
+			return bSuccess;
+		}, url, jin);
+	}
+
+	template <typename TSavableItem, typename TSJin>
+	void TCreateOrUpdateSingleItemOnServer(
+		TSavableItem* itemPtr,
+		std::string const& url,
+		TSJin const& jin,
+		std::shared_ptr<Http> const& http,
+		std::shared_ptr<AsyncRequestGroupCallback> callbackPtr)
+	{
+		using ServerDataPropsAccess = TServerDataProps<TSJin>;
+
+		itemPtr->OnStartSave();
+
+		if (!ServerDataPropsAccess::GetId(jin).has_value())
+		{
+			TCreateSingleItemOnServer(itemPtr, url, jin, http, callbackPtr);
+		}
+		else
+		{
+			TUpdateSingleItemOnServer(itemPtr, url, jin, http, callbackPtr);
+		}
+	}
+
 	////////////////////////////////////////////////////////////////////// TimelineKeyframe /////////////////////////////////////
-	struct TimelineKeyframe::Impl
+	struct TimelineKeyframe::Impl final : public SavableItemWithID
 	{
 		KeyframeData keyframeData;
 		std::optional<std::string> snapshotId;
-		bool changed = false;
+
+		void SetId(const RefID& id) override
+		{
+			SavableItemWithID::SetId(id);
+			if (id.HasDBIdentifier())
+			{
+				keyframeData.id = id.GetDBIdentifier();
+			}
+		}
 	};
 
 	void TimelineKeyframe::InternalCreate(const KeyframeData& data, bool markAsChanged)
 	{
+		if (data.id && !data.id->empty())
+		{
+			GetImpl().SetDBIdentifier(data.id.value());
+		}
 		GetImpl().keyframeData = data;
 		GetImpl().keyframeData.time = RoundTime(data.time); 
-		GetImpl().changed = markAsChanged;
+		GetImpl().SetShouldSave(markAsChanged);
 	}
 
 	void TimelineKeyframe::Update(const KeyframeData& data)
@@ -37,7 +200,7 @@ namespace AdvViz::SDK
 		GetImpl().keyframeData = data;
 		GetImpl().keyframeData.time = oldtime;
 		GetImpl().keyframeData.id = id;
-		GetImpl().changed = true;
+		GetImpl().InvalidateDB();
 	}
 
 	const TimelineKeyframe::KeyframeData& TimelineKeyframe::GetData() const
@@ -45,19 +208,21 @@ namespace AdvViz::SDK
 		return GetImpl().keyframeData;
 	}
 
-	bool TimelineKeyframe::Changed() const
+	ESaveStatus TimelineKeyframe::GetSaveStatus() const
 	{
-		return GetImpl().changed;
+		return GetImpl().GetSaveStatus();
 	}
-
-	bool TimelineKeyframe::ShouldSave() const
+	void TimelineKeyframe::SetSaveStatus(ESaveStatus status)
 	{
-		return GetImpl().changed /*|| !GetImpl().keyframeData.id*/;
+		GetImpl().SetSaveStatus(status);
 	}
-
-	void TimelineKeyframe::SetShouldSave(bool value)
+	const RefID& TimelineKeyframe::GetId() const
 	{
-		GetImpl().changed = value;
+		return GetImpl().GetId();
+	}
+	void TimelineKeyframe::SetId(const RefID& id)
+	{
+		GetImpl().SetId(id);
 	}
 
 	bool TimelineKeyframe::CompareForOrder(ITimelineKeyframe* b) const
@@ -80,16 +245,6 @@ namespace AdvViz::SDK
 	{
 		return *impl_;
 	}
-
-	const ITimelineKeyframe::Id& TimelineKeyframe::GetId() const {
-		thread_local static ITimelineKeyframe::Id id;
-
-		if (GetImpl().keyframeData.id)
-			id = ITimelineKeyframe::Id(*GetImpl().keyframeData.id);
-		
-		return id;
-	}
-
 
 	void TimelineKeyframe::SetSnapshotId(const std::string& Id)
 	{
@@ -122,28 +277,47 @@ namespace AdvViz::SDK
 	bool operator<(const double& lk, const std::shared_ptr<ITimelineKeyframe>& fk) { return lk < fk->GetData().time; }
 	bool operator<(const std::shared_ptr<ITimelineKeyframe>& a, const std::shared_ptr<ITimelineKeyframe>& b) { return a->CompareForOrder(b.get()); }
 
-	struct TimelineClip::Impl
+
+	struct TimelineClipServerSideData
 	{
-		struct ServerSideData {
-			std::string name;
-			bool enable = true;
-			std::vector<std::string> keyFrameIds;
-			std::optional<std::string> id;
-		};
+		std::string name;
+		bool enable = true;
+		std::vector<std::string> keyFrameIds;
+		std::optional<std::string> id;
+	};
+
+	struct TimelineClipServerCreationData
+	{
+		std::array<TimelineClipServerSideData, 1> timelineClips;
+	};
+
+	struct TimelineClip::Impl final : public SavableItemWithID, public std::enable_shared_from_this<TimelineClip::Impl>
+	{
+		using ServerSideData = TimelineClipServerSideData;
+		using ServerCreationData = TimelineClipServerCreationData;
+
 		ServerSideData serverSideData_;
 		std::set<std::shared_ptr<ITimelineKeyframe>, std::less<>> keyframes_;
 		std::string sceneId_;
 		std::shared_ptr<Http> http_;
-		bool shouldSave_ = false;
 		std::vector<std::shared_ptr<ITimelineKeyframe>> toDeleteKeyframes_;
 		std::optional<std::string> snapshotId;
 
-		expected<void, std::string> Load(std::shared_ptr<Http>& http, const std::string& sceneId, const ITimelineClip::Id& timelineClipId)
+		void SetId(const RefID& id) override
+		{
+			SavableItemWithID::SetId(id);
+			if (id.HasDBIdentifier())
+			{
+				serverSideData_.id = id.GetDBIdentifier();
+			}
+		}
+
+		expected<void, std::string> Load(const std::shared_ptr<Http>& http, const std::string& sceneId, const std::string& timelineClipId)
 		{
 			sceneId_ = sceneId;
-			serverSideData_.id = static_cast<const std::string>(timelineClipId);
+			serverSideData_.id = timelineClipId;
 			http_ = http;
-			std::string url = "scenes/" + sceneId_ + "/timelineClips/" + static_cast<const std::string>(timelineClipId);
+			std::string url = "scenes/" + sceneId_ + "/timelineClips/" + timelineClipId;
 
 			if (http->GetJson(serverSideData_, url) == 200)
 			{
@@ -162,7 +336,7 @@ namespace AdvViz::SDK
 						return make_unexpected(std::string("http failed: ") + urlkeys);
 					}
 				}
-				shouldSave_ = false;
+				SetShouldSave(false);
 			}
 			else
 			{
@@ -172,150 +346,42 @@ namespace AdvViz::SDK
 			return {};
 		}
 
-		expected<void, std::string> Save(std::shared_ptr<Http>& http, const std::string& sceneId)
+		void AsyncSaveClipData(
+			std::shared_ptr<Http> const& http,
+			std::shared_ptr<AsyncRequestGroupCallback> callbackPtr);
+
+		void AsyncSaveKeyframes(
+			std::shared_ptr<Http> const& http,
+			std::shared_ptr<AsyncRequestGroupCallback> callbackPtr,
+			std::function<void(bool)>&& saveClipData);
+
+		void AsyncDeleteKeyframes(
+			std::shared_ptr<Http> const& http,
+			std::shared_ptr<AsyncRequestGroupCallback> callbackPtr);
+
+		void AsyncSave(const std::shared_ptr<Http>& http, const std::string& sceneId,
+			std::shared_ptr<AsyncRequestGroupCallback> callbackPtr)
 		{
 			sceneId_ = sceneId;
 
-			// save framekeys in batch
-			auto ret = [this, &http]() -> expected<void, std::string>
+			// In order to save the list of clips, we need to know the keyframes IDs on the server.
+			// Therefore we save key-frames, then the clip data.
+			AsyncSaveKeyframes(http, callbackPtr,
+				[http, this, callbackPtr](bool bSuccess)
 			{
-				struct SJin {
-					std::vector<ITimelineKeyframe::KeyframeData> timelineKeyFrames;
-				};
-				SJin keyframesToPost;
-				SJin keyframesToPut;
-				typedef SJin SJout;
-				SJout keyframesOut;
-				std::vector<std::shared_ptr<ITimelineKeyframe>> timelineKeyframesToUpdate;
-
-				for (auto& k : keyframes_)
+				if (bSuccess && ShouldSave())
 				{
-					auto& keyData = k->GetData();
-					if (keyData.id)
-					{
-						if (k->Changed())
-							keyframesToPut.timelineKeyFrames.push_back(keyData);
-					}
-					else
-					{
-						keyframesToPost.timelineKeyFrames.push_back(keyData);
-						timelineKeyframesToUpdate.push_back(k);
-					}
+					AsyncSaveClipData(http, callbackPtr);
 				}
-
-				std::string url = "scenes/" + sceneId_ + "/timelineKeyFrames";
-
-				if (!keyframesToPut.timelineKeyFrames.empty())
-				{
-					struct Sout
-					{
-						int numUpdated = 0;
-					};
-					Sout jout;
-					if (http->PutJsonJBody(jout, url, keyframesToPut) != 200)
-					{
-						return make_unexpected(std::string("http failed: ") + url);
-					}
-				}
-				
-				keyframesOut.timelineKeyFrames.clear();
-				if (!keyframesToPost.timelineKeyFrames.empty())
-				{
-					if (http->PostJsonJBody(keyframesOut, url, keyframesToPost) == 201)
-					{
-						BE_ASSERT(keyframesOut.timelineKeyFrames.size() == keyframesToPost.timelineKeyFrames.size());
-						size_t loopCount = std::min(keyframesOut.timelineKeyFrames.size(), keyframesToPost.timelineKeyFrames.size());
-						for (size_t i = 0; i < loopCount; ++i)
-						{
-							timelineKeyframesToUpdate[i]->InternalCreate(keyframesOut.timelineKeyFrames[i], false);
-						}
-					}
-					else
-					{
-						return make_unexpected(std::string("http failed: ") + url);
-					}
-				}
-				return expected<void, std::string>();
-				}();
-
-			if (!ret)
-				return ret;
+			});
 
 			// delete keys
-			ret = [this, &http]() -> expected<void, std::string>
-				{
-					struct SJin {
-						std::vector<std::string> ids;
-					};
-					SJin keyframesToDelete;
-					typedef SJin SJout;
-					SJout keyframesOut;
-					for (auto& k : toDeleteKeyframes_)
-					{
-						auto& keyData = k->GetData();
-						if (keyData.id)
-							keyframesToDelete.ids.push_back(static_cast<const std::string>(*keyData.id));
-					}
-
-					std::string url = "scenes/" + sceneId_ + "/timelineKeyFrames";
-					if (!keyframesToDelete.ids.empty())
-						if (http->DeleteJsonJBody(keyframesOut, url, keyframesToDelete) != 200)
-							return make_unexpected(std::string("http failed: ") + url);
-
-					toDeleteKeyframes_.clear();
-					return {};
-				}();
-
-			if (!ret)
-				return ret;
-
-			if (shouldSave_)
-			{
-				std::string url = "scenes/" + sceneId_ + "/timelineClips";
-
-				serverSideData_.keyFrameIds.clear();
-				for (auto& clip : keyframes_)
-					serverSideData_.keyFrameIds.push_back(static_cast<const std::string>(clip->GetId()));
-
-				struct SJin {
-					std::array<ServerSideData, 1> timelineClips;
-				};
-				SJin jin;
-				jin.timelineClips[0] = serverSideData_;
-
-				if (!serverSideData_.id.has_value())
-				{
-					SJin jout;
-					if (http->PostJsonJBody(jout, url, jin) == 201)
-					{
-						BE_ASSERT(jout.timelineClips[0].id.has_value());
-						serverSideData_.id = jout.timelineClips[0].id;
-					}
-					else
-					{
-						return make_unexpected(std::string("http failed: ") + url);
-					}
-				}
-				else
-				{
-					struct SJout
-					{
-						int numUpdated = 0;
-					};
-					SJout jout;
-					if (http->PutJsonJBody(jout, url, jin) != 200)
-					{
-						return make_unexpected(std::string("http failed: ") + url);
-					}
-				}
-			}
-			shouldSave_ = false;
-			return {};
+			AsyncDeleteKeyframes(http, callbackPtr);
 		}
 
-		bool ShouldSave() const
+		bool HasSomethingToSave() const
 		{
-			if (/*!serverSideData_.id ||*/ shouldSave_)
+			if (ShouldSave())
 				return true;
 
 			for (auto& kf : keyframes_)
@@ -324,26 +390,251 @@ namespace AdvViz::SDK
 			return false;
 		}
 
-		void SetShouldSave(bool value)
+		void OnStartSaveKeyframes()
 		{
-			shouldSave_ = value;
 			for (auto& kf : keyframes_)
-				kf->SetShouldSave(value);
+			{
+				kf->OnStartSave();
+			}
+		}
+
+		void OnKeyframesSaved()
+		{
+			for (auto& kf : keyframes_)
+			{
+				kf->OnSaved();
+			}
 		}
 	};
 
-	expected<void, std::string> TimelineClip::Load(const std::string& sceneId, const ITimelineClip::Id& timelineClipId)
+
+	template <>
+	struct TServerDataProps<TimelineClipServerCreationData>
 	{
-		std::shared_ptr<Http>& http = GetDefaultHttp();
-		return GetImpl().Load(http, sceneId, timelineClipId);
+		static std::string GetName(TimelineClipServerCreationData const& jin)
+		{
+			return std::string("clip ") + jin.timelineClips[0].name;
+		}
+		static std::optional<std::string> const& GetId(TimelineClipServerCreationData const& jout)
+		{
+			return jout.timelineClips[0].id;
+		}
+	};
+
+
+	void TimelineClip::Impl::AsyncSaveKeyframes(
+		std::shared_ptr<Http> const& http,
+		std::shared_ptr<AsyncRequestGroupCallback> callbackPtr,
+		std::function<void(bool)>&& saveClipData)
+	{
+		BE_ASSERT(!sceneId_.empty());
+		std::string const url = "scenes/" + sceneId_ + "/timelineKeyFrames";
+
+		// save frame keys in batch
+		struct SJin {
+			std::vector<ITimelineKeyframe::KeyframeData> timelineKeyFrames;
+		};
+		SJin keyframesToPost;
+		SJin keyframesToPut;
+		typedef SJin SJout;
+		std::vector<std::shared_ptr<ITimelineKeyframe>> timelineKeyframesToCreate;
+		std::vector<std::shared_ptr<ITimelineKeyframe>> timelineKeyframesToUpdate;
+
+		bool bNeedCreateKeyframes(false);
+		for (auto& k : keyframes_)
+		{
+			auto& keyData = k->GetData();
+			if (keyData.id)
+			{
+				if (k->ShouldSave())
+				{
+					keyframesToPut.timelineKeyFrames.push_back(keyData);
+					timelineKeyframesToUpdate.push_back(k);
+					k->OnStartSave();
+				}
+			}
+			else
+			{
+				keyframesToPost.timelineKeyFrames.push_back(keyData);
+				timelineKeyframesToCreate.push_back(k);
+				k->OnStartSave();
+				bNeedCreateKeyframes = true;
+			}
+		}
+
+		if (!keyframesToPut.timelineKeyFrames.empty())
+		{
+			struct Sout
+			{
+				int numUpdated = 0;
+			};
+			AsyncPutJsonJBody<Sout>(http, callbackPtr,
+				[url, timelineKeyframesToUpdate](
+					long httpCode,
+					const Tools::TSharedLockableData<Sout>& /*joutPtr*/)
+			{
+				const bool bSuccess = (httpCode == 200);
+				if (bSuccess)
+				{
+					for (auto const& kfPtr : timelineKeyframesToUpdate)
+					{
+						kfPtr->OnSaved();
+					}
+				}
+				else
+				{
+					BE_LOGW("ITwinDecoration", "Updating timeline keyframes failed."
+						<< " url: " << url
+						<< " Http status: " << httpCode);
+				}
+				return bSuccess;
+			}, url, keyframesToPut);
+		}
+
+
+		if (bNeedCreateKeyframes)
+		{
+			AsyncPostJsonJBody<SJout>(http, callbackPtr,
+				[url, timelineKeyframesToCreate,
+				onKFCreated = std::move(saveClipData)](
+					long httpCode,
+					const Tools::TSharedLockableData<SJout>& joutPtr)
+			{
+				bool bSuccess = (httpCode == 201);
+				if (bSuccess)
+				{
+					auto unlockedJout = joutPtr->GetAutoLock();
+					SJout const& keyframesOut = unlockedJout.Get();
+					bSuccess = (keyframesOut.timelineKeyFrames.size() == timelineKeyframesToCreate.size());
+					if (bSuccess)
+					{
+						for (size_t i = 0; i < timelineKeyframesToCreate.size(); ++i)
+						{
+							timelineKeyframesToCreate[i]->InternalCreate(keyframesOut.timelineKeyFrames[i], false);
+							timelineKeyframesToCreate[i]->OnSaved();
+						}
+					}
+					else
+					{
+						BE_LOGW("ITwinDecoration", "Wrong number of created keyframes: "
+							<< keyframesOut.timelineKeyFrames.size() << "/" << timelineKeyframesToCreate.size()
+							<< " url: " << url);
+					}
+				}
+				else
+				{
+					BE_LOGW("ITwinDecoration", "Creating timeline keyframes failed."
+						<< " url: " << url
+						<< " Http status: " << httpCode);
+				}
+				onKFCreated(bSuccess);
+				return bSuccess;
+			}, url, keyframesToPost);
+		}
+		else
+		{
+			// All key-frames have their identifier => we can save clip data at once.
+			saveClipData(true);
+		}
 	}
 
-	expected<void, std::string> TimelineClip::Save(const std::string& sceneId)
+	void TimelineClip::Impl::AsyncDeleteKeyframes(
+		std::shared_ptr<Http> const& http,
+		std::shared_ptr<AsyncRequestGroupCallback> callbackPtr)
 	{
-		std::shared_ptr<Http>& http = GetDefaultHttp();
-		return GetImpl().Save(http, sceneId);
+		BE_ASSERT(!sceneId_.empty());
+		std::string const url = "scenes/" + sceneId_ + "/timelineKeyFrames";
+
+		using SJin = SJsonIds;
+		using SJout = SJsonIds;
+
+		SJin keyframesToDelete;
+		for (auto& k : toDeleteKeyframes_)
+		{
+			auto& keyData = k->GetData();
+			if (keyData.id)
+				keyframesToDelete.ids.push_back(*keyData.id);
+		}
+
+		if (!keyframesToDelete.ids.empty())
+		{
+			// Beware in asynchronous mode, toDeleteKeyframes_ can be modified before the request is
+			// done, hence the copy to 'deletedHere'.
+			AsyncDeleteJsonJBody<SJout>(http, callbackPtr,
+				[this, url, deletedHere = toDeleteKeyframes_](
+					long httpCode,
+					const Tools::TSharedLockableData<SJout>& /*joutPtr*/)
+			{
+				bool const bSuccess = (httpCode == 200 || httpCode == 204 /* No-Content*/);
+				if (bSuccess)
+				{
+					for (auto const& deletedInServer : deletedHere)
+					{
+						std::erase(toDeleteKeyframes_, deletedInServer);
+					}
+				}
+				else
+				{
+					BE_LOGW("ITwinDecoration", "Delete timeline keyframes failed."
+						<< " url: " << url
+						<< " Http status: " << httpCode);
+				}
+				return bSuccess;
+			}, url, keyframesToDelete);
+		}
+		else
+		{
+			toDeleteKeyframes_.clear();
+		}
 	}
 
+	void TimelineClip::Impl::AsyncSaveClipData(
+		std::shared_ptr<Http> const& http,
+		std::shared_ptr<AsyncRequestGroupCallback> callbackPtr)
+	{
+		if (ShouldSave())
+		{
+			std::string url = "scenes/" + sceneId_ + "/timelineClips";
+
+			serverSideData_.keyFrameIds.clear();
+			serverSideData_.keyFrameIds.reserve(keyframes_.size());
+			for (auto const& keyframe : keyframes_)
+			{
+				BE_ASSERT(keyframe->HasDBIdentifier()); // keyframe supposedly saved before
+				serverSideData_.keyFrameIds.push_back(keyframe->GetDBIdentifier());
+			}
+
+			TimelineClipServerCreationData jin;
+			jin.timelineClips[0] = serverSideData_;
+			TCreateOrUpdateSingleItemOnServer(this, url, jin, http, callbackPtr);
+		}
+	}
+
+
+	expected<void, std::string> TimelineClip::Load(const std::string& sceneId, const std::string& timelineClipId)
+	{
+		return GetImpl().Load(GetDefaultHttp(), sceneId, timelineClipId);
+	}
+
+	void TimelineClip::AsyncSave(const std::string& sceneId, std::shared_ptr<AsyncRequestGroupCallback> callbackPtr)
+	{
+		GetImpl().AsyncSave(GetDefaultHttp(), sceneId, callbackPtr);
+	}
+
+	bool TimelineClip::HasSomethingToSave() const
+	{
+		return GetImpl().HasSomethingToSave();
+	}
+
+	void TimelineClip::OnStartSaveKeyframes()
+	{
+		GetImpl().OnStartSaveKeyframes();
+	}
+
+	void TimelineClip::OnKeyframesSaved()
+	{
+		GetImpl().OnKeyframesSaved();
+	}
 
 	expected<std::shared_ptr<ITimelineKeyframe>, std::string> TimelineClip::GetKeyframe(double time) const
 	{
@@ -408,19 +699,6 @@ namespace AdvViz::SDK
 	TimelineClip::~TimelineClip()
 	{}
 
-	const TimelineClip::Id& TimelineClip::GetId() const {
-		thread_local static TimelineClip::Id id;
-		if (GetImpl().serverSideData_.id)
-			id = TimelineClip::Id(*GetImpl().serverSideData_.id);
-		else
-			id.Reset();
-		return id;
-	}
-	void TimelineClip::SetId(const ITimelineClip::Id& id)
-	{
-		GetImpl().serverSideData_.id = static_cast<const std::string>(id);
-	}
-
 	const std::string& TimelineClip::GetName() const
 	{
 		return GetImpl().serverSideData_.name;
@@ -429,7 +707,7 @@ namespace AdvViz::SDK
 	void TimelineClip::SetName(const std::string& name)
 	{
 		GetImpl().serverSideData_.name = name;
-		GetImpl().shouldSave_ = true;
+		InvalidateDB();
 	}
 
 	bool TimelineClip::IsEnabled() const
@@ -475,7 +753,7 @@ namespace AdvViz::SDK
 		{
 			GetImpl().toDeleteKeyframes_.erase(dit);
 		}
-		GetImpl().shouldSave_ = true;
+		GetImpl().InvalidateDB();
 		return p;
 	}
 
@@ -486,63 +764,112 @@ namespace AdvViz::SDK
 			return make_unexpected(std::string("Keyframe not found"));
 		GetImpl().toDeleteKeyframes_.push_back(*it);
 		GetImpl().keyframes_.erase(it);
-		GetImpl().shouldSave_ = true;
+		GetImpl().InvalidateDB();
 		return {};
 	}
 
-	bool TimelineClip::ShouldSave() const {
-		return GetImpl().ShouldSave();
-	}
-
-	void TimelineClip::SetShouldSave(bool value)
+	ESaveStatus TimelineClip::GetSaveStatus() const
 	{
-		return GetImpl().SetShouldSave(value);
-
+		return GetImpl().GetSaveStatus();
+	}
+	void TimelineClip::SetSaveStatus(ESaveStatus status)
+	{
+		GetImpl().SetSaveStatus(status);
+	}
+	const RefID& TimelineClip::GetId() const
+	{
+		return GetImpl().GetId();
+	}
+	void TimelineClip::SetId(const RefID& id)
+	{
+		GetImpl().SetId(id);
 	}
 
 
 	////////////////////////////////////////////////////////////////////// Timeline /////////////////////////////////////
 
-	struct Timeline::Impl
+	struct TimelineServerSideData
 	{
-		struct ServerSideData {
-			std::string name;
-			std::vector<std::string> clipIds;
-			std::optional<std::string> id;
-		};
+		std::string name;
+		std::vector<std::string> clipIds;
+		std::optional<std::string> id;
+	};
+
+	struct TimelineServerCreationData
+	{
+		std::array<TimelineServerSideData, 1> timelines;
+	};
+
+	struct Timeline::Impl final : public SavableItemWithID, public std::enable_shared_from_this<Timeline::Impl>
+	{
+		using ServerSideData = TimelineServerSideData;
+		using ServerCreationData = TimelineServerCreationData;
+
 		ServerSideData serverSideData_;
 		std::list<std::shared_ptr<ITimelineClip>> clips_;
 		std::string sceneId_;
 		std::shared_ptr<Http> http_;
-		bool shouldSave_ = false;
 		std::vector<std::shared_ptr<ITimelineClip>> toDeleteClips_;
+		std::shared_ptr< std::atomic_bool > isThisValid_;
+
+		Impl()
+		{
+			isThisValid_ = std::make_shared<std::atomic_bool>(true);
+		}
+
+		~Impl()
+		{
+			*isThisValid_ = false;
+		}
+
+		void SetId(const RefID& id) override
+		{
+			SavableItemWithID::SetId(id);
+			if (id.HasDBIdentifier())
+			{
+				serverSideData_.id = id.GetDBIdentifier();
+			}
+		}
 
 		std::shared_ptr<ITimelineClip> AddClip(const std::string &name)
 		{
 			auto p = std::shared_ptr<ITimelineClip>(ITimelineClip::New());
 			p->SetName(name);
 			clips_.push_back(p);
-			shouldSave_ = true;
+			InvalidateDB();
 			return p;
 		}
 
-		expected<void, std::string> Load(std::shared_ptr<Http>& http, const std::string& sceneId, const ITimeline::Id& timelineId)
+		std::shared_ptr<ITimelineClip> GetClipByRefID(RefID const& id) const
+		{
+			auto it = std::find_if(clips_.begin(), clips_.end(),
+				[&id](std::shared_ptr<ITimelineClip> const& clipPtr) {
+				return clipPtr->GetId() == id;
+			});
+			if (it != clips_.end())
+			{
+				return *it;
+			}
+			return {};
+		}
+
+		expected<void, std::string> Load(const std::shared_ptr<Http>& http, const std::string& sceneId, const std::string& timelineId)
 		{
 			sceneId_ = sceneId;
-			serverSideData_.id = static_cast<const std::string>(timelineId);
+			serverSideData_.id = timelineId;
 			http_ = http;
-			std::string url = "scenes/" + sceneId_ + "/timelines/" + static_cast<const std::string>(timelineId);
+			std::string url = "scenes/" + sceneId_ + "/timelines/" + timelineId;
 			ServerSideData data;
 			if (http->GetJson(data, url) == 200)
 			{
 				for (const auto& clipId : data.clipIds)
 				{
 					auto p = std::shared_ptr<ITimelineClip>(ITimelineClip::New());
-					p->Load(sceneId, ITimelineClip::Id(clipId));
+					p->Load(sceneId, clipId);
 					clips_.push_back(p);
 				}
 				BE_LOGI("ITwinDecoration", "Timeline loaded "<< data.clipIds.size() <<" clips " );
-				shouldSave_ = false;
+				SetShouldSave(false);
 			}
 			else
 			{
@@ -552,136 +879,172 @@ namespace AdvViz::SDK
 			return {};
 		}
 
-		expected<void, std::string> Save(std::shared_ptr<Http>& http, const std::string& sceneId)
+
+		void AsyncSaveTimeline(
+			std::shared_ptr<Http> const& http,
+			std::string const& sceneId,
+			std::shared_ptr<AsyncRequestGroupCallback> callbackPtr);
+
+		void AsyncSave(
+			std::shared_ptr<Http> const& http,
+			std::string const& sceneId,
+			std::function<void(bool)>&& onDataSavedFunc = {})
 		{
 			sceneId_ = sceneId;
 
-			std::string url = "scenes/" + sceneId_ + "/timelines";
+			std::shared_ptr<AsyncRequestGroupCallback> callbackPtr =
+				std::make_shared<AsyncRequestGroupCallback>(std::move(onDataSavedFunc), isThisValid_);
 
-			serverSideData_.clipIds.clear();
-			for (auto& clip : clips_)
+			// Gather clips to save or to delete.
+			std::vector<std::shared_ptr<ITimelineClip>> savedClips;
+			for (auto const& clip : clips_)
 			{
 				if (clip->GetKeyframeCount() > 0)
-				{
-					clip->Save(sceneId);
-					serverSideData_.clipIds.push_back(static_cast<const std::string>(clip->GetId()));
-				}
+					savedClips.push_back(clip);
 				else
-				{
 					toDeleteClips_.push_back(clip);
-				}
 			}
+
+			callbackPtr->AddRequestToWait(); // One dummy request for the clips
+
+			// In order to save the timeline, we need to know the clip IDs on the server, so we'll save the
+			// timeline *after* all clips are saved.
+			std::function<void(bool)> onAllClipsSavedFunc =
+				[http, this, callbackPtr,
+				 savedClips, sceneId](bool bSuccess)
+			{
+				if (bSuccess && callbackPtr->IsValid())
+				{
+					serverSideData_.clipIds.clear();
+					serverSideData_.clipIds.reserve(savedClips.size());
+					for (auto const& clip : savedClips)
+					{
+						BE_ASSERT(clip->HasDBIdentifier()); // clip supposedly saved before
+						serverSideData_.clipIds.push_back(clip->GetDBIdentifier());
+					}
+					AsyncSaveTimeline(http, sceneId, callbackPtr);
+				}
+				callbackPtr->OnRequestDone(bSuccess);
+			};
+
+			std::shared_ptr<AsyncRequestGroupCallback> callback_clips =
+				std::make_shared<AsyncRequestGroupCallback>(std::move(onAllClipsSavedFunc), isThisValid_);
+			for (auto const& clip : savedClips)
+			{
+				clip->AsyncSave(sceneId, callback_clips);
+			}
+			callback_clips->OnFirstLevelRequestsRegistered();
+
 
 			// delete clips
-			auto ret = [this, &http]() -> expected<void, std::string>
+			if (!toDeleteClips_.empty())
 			{
-				struct SJin {
-					std::vector<std::string> ids;
-				};
+				using SJin = SJsonIds;
+				using SJout = SJsonIds;
+
 				SJin clipsToDelete;
-				typedef SJin SJout;
-				SJout clipsOut;
 				for (auto& c: toDeleteClips_)
 				{
-					if (c->GetId().IsValid())
-						clipsToDelete.ids.push_back(static_cast<const std::string>(c->GetId()));
-					c->SetShouldSave(false);
+					if (c->HasDBIdentifier())
+						clipsToDelete.ids.push_back(c->GetDBIdentifier());
+					c->OnStartSave();
 				}
 
-				std::string url = "scenes/" + sceneId_ + "/timelineClips";
 				if (!clipsToDelete.ids.empty())
-					if (http->DeleteJsonJBody(clipsOut, url, clipsToDelete) != 200)
-						return make_unexpected(std::string("http failed: ") + url);
-
-				BE_LOGI("ITwinDecoration","Timeline save : deleted "<<toDeleteClips_.size()<<" clips");
-				toDeleteClips_.clear();
-				return {};
-			}();
-
-			if (!ret)
-				return ret;
-
-			if (shouldSave_)
-			{
-				struct SJin {
-					std::array<ServerSideData, 1> timelines;
-				};
-				SJin jin;
-				jin.timelines[0] = serverSideData_;
-
-				long status = 0;
-				if (!serverSideData_.id.has_value())
 				{
-					SJin jout;
-					status = http->PostJsonJBody(jout, url, jin);
-					if (status == 201)
+					std::string url = "scenes/" + sceneId_ + "/timelineClips";
+					// Beware in asynchronous mode, toDeleteClips_ can be modified before the request is
+					// done, hence the copy to 'deletedHere'.
+					AsyncDeleteJsonJBody<SJout>(http, callbackPtr,
+						[this, url, deletedHere = toDeleteClips_](
+							long httpCode,
+							const Tools::TSharedLockableData<SJout>& /*joutPtr*/)
 					{
-						BE_ASSERT(jout.timelines[0].id.has_value());
-						if (jout.timelines[0].id)
-							serverSideData_.id = jout.timelines[0].id;
+						const bool bSuccess = (httpCode == 200 || httpCode == 204 /* No-Content*/);
+						if (bSuccess)
+						{
+							for (auto const& deletedInServer : deletedHere)
+							{
+								deletedInServer->OnSaved();
+								std::erase(toDeleteClips_, deletedInServer);
+							}
+							BE_LOGI("ITwinDecoration", "Timeline save: deleted " << deletedHere.size() << " clips");
+						}
 						else
-							return make_unexpected(std::string("Server returned no id value for saved timeline."));
-
-						BE_LOGI("ITwinDecoration", "Timeline saved new clip " << jin.timelines[0].name);
-
-					}
-					else
-					{
-						return make_unexpected(fmt::format("http failed: {} with status {}", url, status));
-					}
+						{
+							BE_LOGW("ITwinDecoration", "Delete timeline clips failed."
+								<< " url: " << url
+								<< " Http status: " << httpCode);
+						}
+						return bSuccess;
+					}, url, clipsToDelete);
 				}
 				else
 				{
-					struct Sout
-					{
-						int numUpdated = 0;
-					};
-					Sout jout;
-					status = http->PutJsonJBody(jout, url, jin);
-					if (status != 200)
-					{
-						return make_unexpected(fmt::format("http failed: {} with status {}", url, status));
-					}
-					BE_LOGI("ITwinDecoration", "Timeline saved new clip " << jin.timelines[0].name);
-					BE_ASSERT(jout.numUpdated == 1);
+					toDeleteClips_.clear();
 				}
 			}
-			shouldSave_ = false;
-			return {};
+
+			callbackPtr->OnFirstLevelRequestsRegistered();
 		}
 
-		bool ShouldSave() const
+		bool HasSomethingToSave() const
 		{
-			if (shouldSave_)
+			if (ShouldSave())
 				return true;
 			for (auto& clip : clips_)
-				if (clip && clip->ShouldSave())
+				if (clip && clip->HasSomethingToSave())
 					return true;
 			return false;
 		}
-		void SetShouldSave(bool value)
+	};
+
+	template <>
+	struct TServerDataProps<TimelineServerCreationData>
+	{
+		static std::string GetName(TimelineServerCreationData const& jin)
 		{
-			shouldSave_ = value;
-			for (auto& clip : clips_)
-				clip->SetShouldSave(value);
+			return jin.timelines[0].name;
+		}
+		static std::optional<std::string> const& GetId(TimelineServerCreationData const& jout)
+		{
+			return jout.timelines[0].id;
 		}
 	};
 
-	expected<void, std::string> Timeline::Load(const std::string& sceneId, const ITimeline::Id& timelineId)
+	void Timeline::Impl::AsyncSaveTimeline(
+		std::shared_ptr<Http> const& http,
+		std::string const& sceneId,
+		std::shared_ptr<AsyncRequestGroupCallback> callbackPtr)
 	{
-		std::shared_ptr<Http>& http = GetDefaultHttp();
-		return GetImpl().Load(http, sceneId, timelineId);
+		if (ShouldSave())
+		{
+			OnStartSave();
+			std::string const url = "scenes/" + sceneId + "/timelines";
+
+			TimelineServerCreationData jin;
+			jin.timelines[0] = serverSideData_;
+			TCreateOrUpdateSingleItemOnServer(this, url, jin, http, callbackPtr);
+		}
 	}
 
-	expected<void, std::string> Timeline::Save(const std::string& sceneId)
+
+	expected<void, std::string> Timeline::Load(const std::string& sceneId, const std::string& timelineId)
 	{
-		std::shared_ptr<Http>& http = GetDefaultHttp();
-		return GetImpl().Save(http, sceneId);
+		return GetImpl().Load(GetDefaultHttp(), sceneId, timelineId);
 	}
 
-	bool Timeline::ShouldSave() const
+	void Timeline::AsyncSave(const std::string& sceneId,
+		std::function<void(bool)>&& onDataSavedFunc /*= {}*/)
 	{
-		return GetImpl().ShouldSave();
+		return GetImpl().AsyncSave(
+			GetDefaultHttp(),
+			sceneId, std::move(onDataSavedFunc));
+	}
+
+	bool Timeline::HasSomethingToSave() const
+	{
+		return GetImpl().HasSomethingToSave();
 	}
 
 	std::shared_ptr<ITimelineClip> Timeline::AddClip(const std::string& name)
@@ -698,7 +1061,7 @@ namespace AdvViz::SDK
 		std::advance(it, index);
 		GetImpl().toDeleteClips_.push_back(*it);
 		GetImpl().clips_.erase(it);
-		GetImpl().shouldSave_ = true;
+		GetImpl().InvalidateDB();
 		return {};
 	}
 
@@ -710,6 +1073,11 @@ namespace AdvViz::SDK
 		auto it = GetImpl().clips_.begin();
 		std::advance(it, index);
 		return *it;
+	}
+
+	std::shared_ptr<ITimelineClip> Timeline::GetClipByRefID(RefID const& id) const
+	{
+		return GetImpl().GetClipByRefID(id);
 	}
 
 	size_t Timeline::GetClipCount() const
@@ -765,23 +1133,21 @@ namespace AdvViz::SDK
 	Timeline::~Timeline()
 	{}
 
-	const Timeline::Id& Timeline::GetId() const {
-		thread_local static Timeline::Id id;
-
-		if (GetImpl().serverSideData_.id)
-			id = Timeline::Id(*GetImpl().serverSideData_.id);
-		else
-			id.Reset();
-		return id;
-	}
-	void Timeline::SetId(const ITimeline::Id& id)
+	ESaveStatus Timeline::GetSaveStatus() const
 	{
-		GetImpl().serverSideData_.id = static_cast<const std::string>(id);
+		return GetImpl().GetSaveStatus();
 	}
-
-	void Timeline::SetShouldSave(bool value)
+	void Timeline::SetSaveStatus(ESaveStatus status)
 	{
-		return GetImpl().SetShouldSave(value);
+		GetImpl().SetSaveStatus(status);
+	}
+	const RefID& Timeline::GetId() const
+	{
+		return GetImpl().GetId();
+	}
+	void Timeline::SetId(const RefID& id)
+	{
+		GetImpl().SetId(id);
 	}
 
 	std::vector<std::shared_ptr<AdvViz::SDK::ITimelineClip>> Timeline::GetObsoleteClips() const
@@ -798,7 +1164,7 @@ namespace AdvViz::SDK
 
 	expected<std::vector<SSceneTimelineInfo>, std::string> GetSceneTimelines(const std::string& sceneId)
 	{
-		std::shared_ptr<Http>& http = GetDefaultHttp();
+		std::shared_ptr<Http> const& http = GetDefaultHttp();
 
 		struct SJout {
 			std::string name;
@@ -814,7 +1180,7 @@ namespace AdvViz::SDK
 			[&timelineIds](SJout& data) -> expected<void, std::string> {
 				if (!data.id)
 					return make_unexpected(std::string("Server returned no id value."));
-				SSceneTimelineInfo info = { data.name, ITimeline::Id(*data.id) };
+				SSceneTimelineInfo info = { data.name, *data.id };
 				timelineIds.push_back(info);
 				return {};
 			});
@@ -824,9 +1190,9 @@ namespace AdvViz::SDK
 		return timelineIds;
 	}
 
-	expected<ITimeline::Id, std::string> AddSceneTimeline(const std::string& sceneId, const std::string& sceneName)
+	expected<std::string, std::string> AddSceneTimeline(const std::string& sceneId, const std::string& sceneName)
 	{
-		std::shared_ptr<Http>& http = GetDefaultHttp();
+		std::shared_ptr<Http> const& http = GetDefaultHttp();
 		struct ServerSideData {
 			std::string name;
 			std::vector<std::string> clipIds;
@@ -838,14 +1204,14 @@ namespace AdvViz::SDK
 		SJin jin;
 		typedef SJin SJout;
 		SJout jout;
-		ITimeline::Id id;
+		std::string id;
 		jin.timelines[0].name = sceneName;
 		std::string url = "scenes/" + sceneId + "/timelines";
 
 		if (http->PostJsonJBody(jout, url, jin) == 201)
 		{
 			if (jout.timelines[0].id)
-				id = ITimeline::Id(*jout.timelines[0].id);
+				id = *jout.timelines[0].id;
 			else
 				return make_unexpected(std::string("Server returned no id value."));
 		}

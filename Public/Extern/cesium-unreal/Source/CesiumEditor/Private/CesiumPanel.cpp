@@ -10,9 +10,6 @@
 #include "CesiumIonServerSelector.h"
 #include "CesiumRuntime.h"
 #include "CesiumRuntimeSettings.h"
-THIRD_PARTY_INCLUDES_START
-#include "CesiumUtility/Uri.h"
-THIRD_PARTY_INCLUDES_END
 #include "Editor.h"
 #include "Framework/MultiBox/MultiBoxBuilder.h"
 #include "Interfaces/IPluginManager.h"
@@ -24,6 +21,10 @@ THIRD_PARTY_INCLUDES_END
 #include "Widgets/Input/SComboBox.h"
 #include "Widgets/Input/SHyperlink.h"
 #include "Widgets/Layout/SScrollBox.h"
+
+THIRD_PARTY_INCLUDES_START
+#include <CesiumUtility/Uri.h>
+THIRD_PARTY_INCLUDES_END
 
 CesiumPanel::CesiumPanel() : _pQuickAddPanel(nullptr), _pLastServer(nullptr) {
   this->_serverChangedDelegateHandle =
@@ -256,7 +257,7 @@ TSharedRef<SWidget> CesiumPanel::BasicQuickAddPanel() {
 TSharedRef<SWidget> CesiumPanel::Version() {
   IPluginManager& PluginManager = IPluginManager::Get();
   TSharedPtr<IPlugin> Plugin =
-      PluginManager.FindPlugin(TEXT("CesiumForUnreal"));
+      PluginManager.FindPlugin(TEXT("ITwinForUnreal"));
 
   FString Version = Plugin ? TEXT("v") + Plugin->GetDescriptor().VersionName
                            : TEXT("Unknown Version");

@@ -8,6 +8,7 @@
 
 
 #include "UEHttp.h"
+#include "UEHttpAdapter.h" // just for ConvertUnrealHttpResponse
 
 #include <HAL/PlatformProcess.h>
 #include <HttpManager.h>
@@ -17,6 +18,7 @@
 #include <Misc/EngineVersionComparison.h>
 #include <Misc/FileHelper.h>
 #include "Tasks/Task.h"
+#include "GenericPlatform/GenericPlatformHttp.h"
 
 /*static*/
 void FUEHttp::Init()
@@ -29,16 +31,12 @@ void FUEHttp::Init()
 FUEHttp::FUEHttp()
 {}
 
-void FUEHttp::SetExecuteAsyncCallbackInGameThread(bool bInExecAsyncCallbackInGameThread)
-{
-	bExecAsyncCallbackInGameThread = bInExecAsyncCallbackInGameThread;
-}
-
 namespace
 {
 	using FSharedRequest = TSharedRef<IHttpRequest, ESPMode::ThreadSafe>;
 
 	static constexpr int MAX_REQUEST_RETRY = 4;
+	static const long HTTP_CONNECT_ERR = -2; // use same code as in #FUEHttpRequest...
 
 	inline bool ShouldAbort(FSharedRequest& HttpRequest, EHttpRequestStatus::Type& status, int& retryCount)
 	{
@@ -67,11 +65,17 @@ namespace
 	}
 }
 FUEHttp::Response FUEHttp::Do(FString verb, const std::string& url, const BodyParams& bodyParams,
-	const Headers& headers /*= {}*/, bool isFullUrl /*= false*/, std::function<void(const Response&)> callbackFct /*= {}*/)
+	const Headers& headers /*= {}*/, bool isFullUrl /*= false*/,
+	std::function<void(const Response&)> callbackFct /*= {}*/,
+	EAsyncCallbackExecutionMode asyncCBExecMode /*= Default*/)
 {
+	using namespace AdvViz::SDK;
 	//auto HttpRequest = FHttpModule::Get().CreateRequest();
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> HttpRequest = FHttpModule::Get().CreateRequest();
 	HttpRequest->SetVerb(verb);
+	if (!isFullUrl && (url.starts_with("http:") || url.starts_with("https:")))
+		isFullUrl = true;
+
 	HttpRequest->SetURL((isFullUrl ? url : (GetBaseUrlStr() + '/' + url)).c_str());
 	for (auto const& [Key, Value] : headers)
 	{
@@ -80,7 +84,7 @@ FUEHttp::Response FUEHttp::Do(FString verb, const std::string& url, const BodyPa
 
 	if (!bodyParams.empty())
 	{
-		if (bodyParams.GetEncoding() == AdvViz::SDK::Tools::EStringEncoding::Utf8)
+		if (bodyParams.GetEncoding() == Tools::EStringEncoding::Utf8)
 			HttpRequest->SetContentAsString(UTF8_TO_TCHAR(bodyParams.str().c_str()));
 		else
 			HttpRequest->SetContentAsString(bodyParams.str().c_str());
@@ -88,36 +92,38 @@ FUEHttp::Response FUEHttp::Do(FString verb, const std::string& url, const BodyPa
 
 	if (callbackFct)
 	{
-		HttpRequest->OnProcessRequestComplete().BindLambda(
-			[callbackFct, bExecAsyncCallbackInGT = this->bExecAsyncCallbackInGameThread](FHttpRequestPtr pRequest,
-				FHttpResponsePtr pResponse,
-				bool connectedSuccessfully){
-					int32 code = 0;
-					if (connectedSuccessfully && pRequest->GetStatus() == EHttpRequestStatus::Succeeded) {
-						code = pResponse->GetResponseCode();
-						FString outputString(std::move(pResponse->GetContentAsString()));
-						// In Unreal, request callbacks are executed in game thread (which is fine, as a lot
-						// of operations regarding actors and world require this...)
-						// I'm not sure why we would prefer to start a thread here, but I added an option to
-						// avoid breaking anything. TODO_JDE discuss this option.
-						if (bExecAsyncCallbackInGT)
-						{
-							std::string s(TCHAR_TO_UTF8(*outputString));
-							Response response(code, std::move(s));
-							callbackFct(response);
-						}
-						else
-						{
-							UE::Tasks::Launch(UE_SOURCE_LOCATION,
-								[callbackFct, code, outputString]() mutable {
-								std::string s(TCHAR_TO_UTF8(*outputString));
-								Response response(code, std::move(s));
-								callbackFct(response); },
-								UE::Tasks::ETaskPriority::Normal);
-							}
+		// By default in Unreal, request callbacks are executed in game thread (which is fine, as a lot
+		// of operations regarding actors and world require this...). Keep this policy if the requested
+		// callback execution mode is 'GameThread'.
+		if (asyncCBExecMode == EAsyncCallbackExecutionMode::GameThread)
+		{
+			HttpRequest->SetDelegateThreadPolicy(EHttpRequestDelegateThreadPolicy::CompleteOnGameThread);
+		}
+		else
+		{
+			// Reduce latency, doesn't wait the next GT tick
+			HttpRequest->SetDelegateThreadPolicy(EHttpRequestDelegateThreadPolicy::CompleteOnHttpThread);
+		}
+
+		HttpRequest->OnProcessRequestComplete().BindLambda([callbackFct, asyncCBExecMode]
+			(FHttpRequestPtr pRequest, FHttpResponsePtr pResponse, bool connectedSuccessfully)
+				{
+					auto Response = ConvertUnrealHttpResponse({}, pResponse, connectedSuccessfully);
+					if (asyncCBExecMode == EAsyncCallbackExecutionMode::GameThread)
+					{
+						callbackFct(std::move(Response));
+					}
+					else
+					{
+						UE::Tasks::Launch(UE_SOURCE_LOCATION,
+							[callbackFct, Response = std::move(Response)]() mutable
+							{
+								callbackFct(std::move(Response));
+							},
+							UE::Tasks::ETaskPriority::Normal);
 					}
 				}
-		);
+			);
 
 		bool bStartedRequest = HttpRequest->ProcessRequest();
 		if (!bStartedRequest)
@@ -128,53 +134,36 @@ FUEHttp::Response FUEHttp::Do(FString verb, const std::string& url, const BodyPa
 	}
 	else
 	{
+		BE_ASSERT(!IsInGameThread()); // bad practice to do sync requests in the game thread!
+		std::mutex mtx;
+		std::condition_variable cv;
+		bool completed = false;
+		bool connectedSuccessfully = false;
+
+		HttpRequest->SetDelegateThreadPolicy(EHttpRequestDelegateThreadPolicy::CompleteOnHttpThread);
+		HttpRequest->OnProcessRequestComplete().BindLambda(
+			[&cv, &mtx, &completed, &connectedSuccessfully](FHttpRequestPtr pRequest,
+				FHttpResponsePtr pResponse,
+				bool connectedSuccessfully2) {
+				{
+					std::lock_guard<std::mutex> lock(mtx);
+					completed = true;
+					connectedSuccessfully = connectedSuccessfully2;
+				}
+				cv.notify_one();
+			});
+
 		bool bStartedRequest = HttpRequest->ProcessRequest();
 		if (!bStartedRequest)
 		{
-			BE_LOGE("http", "Failed to start HTTP Request.");
+			BE_LOGE("http", "Failed to start HTTP Request:" << url);
 			return Response(0, std::string(""));
 		}
 
-		if (IsInGameThread())
-		{
-			FHttpModule::Get().GetHttpManager().Flush(EHttpFlushReason::Default);
-		}
+		std::unique_lock<std::mutex> lock(mtx);
+		cv.wait_for(lock, std::chrono::hours(1), [&completed]() { return completed; });
 
-		TSharedPtr<IHttpResponse, ESPMode::ThreadSafe> response;
-		int32 code = 0;
-		int32 counter = 60 * 60 * 1000; // 1h timeout to prevent potential infinite loop (FHttpModule has its own timeout)
-		EHttpRequestStatus::Type status;
-		int retryCount = 0;
-		// wait a valid response
-		while (true)
-		{
-			if (ShouldAbort(HttpRequest, status, retryCount))
-				break;
-
-			response = HttpRequest->GetResponse();
-			if (response.IsValid())
-				code = response->GetResponseCode();
-
-			if (code != 0)
-				break;
-			FPlatformProcess::Sleep(0.001);
-
-			counter--;
-			if (!counter)
-				break;
-		}
-
-		if (code && response.IsValid())
-		{
-			FString outputString = response->GetContentAsString();
-			std::string s(TCHAR_TO_UTF8(*outputString));
-			return Response(response->GetResponseCode(), std::move(s));
-		}
-
-		if (counter == 0)
-			return Response(408, std::string(""));
-
-		return Response(0, std::string(""));
+		return ConvertUnrealHttpResponse({}, HttpRequest->GetResponse(), connectedSuccessfully);
 	}
 }
 
@@ -205,7 +194,9 @@ namespace
 }
 
 FUEHttp::Response FUEHttp::DoFile(FString verb, const std::string& url, const std::string& fileParamName, const std::string& filePath,
-	const KeyValueVector& extraParams /*= {}*/, const Headers& headers /*= {}*/)
+	const KeyValueVector& extraParams /*= {}*/, const Headers& headers /*= {}*/,
+	std::function<void(const Response&)> callbackFct /*= {}*/,
+	EAsyncCallbackExecutionMode asyncCBExecMode /*= Default*/)
 {
 	// inspired from: https://dev.epicgames.com/community/learning/tutorials/R6rv/unreal-engine-upload-an-image-using-http-post-request-c
 	FString FileName(UTF8_TO_TCHAR(fileParamName.c_str()));
@@ -267,17 +258,66 @@ FUEHttp::Response FUEHttp::DoFile(FString verb, const std::string& url, const st
 	HttpRequest->SetContent(CombinedContent);
 
 
-	// Send the request 
-	bool bStartedRequest = HttpRequest->ProcessRequest();
-	if (!bStartedRequest)
+	if (callbackFct)
 	{
-		BE_LOGE("http", "Failed to start HTTP Request.");
+		// Asynchronous mode.
+		if (asyncCBExecMode == EAsyncCallbackExecutionMode::GameThread)
+		{
+			HttpRequest->SetDelegateThreadPolicy(EHttpRequestDelegateThreadPolicy::CompleteOnGameThread);
+		}
+		else
+		{
+			HttpRequest->SetDelegateThreadPolicy(EHttpRequestDelegateThreadPolicy::CompleteOnHttpThread);
+		}
+
+		HttpRequest->OnProcessRequestComplete().BindLambda(
+			[callbackFct, asyncCBExecMode](FHttpRequestPtr pRequest,
+										   FHttpResponsePtr pResponse,
+										   bool connectedSuccessfully) 
+		{
+			const int32 code = (connectedSuccessfully && pResponse)
+				? pResponse->GetResponseCode()
+				: HTTP_CONNECT_ERR;
+			FString outputString;
+			if (connectedSuccessfully && pRequest->GetStatus() == EHttpRequestStatus::Succeeded)
+			{
+				outputString = pResponse->GetContentAsString();
+			}
+			// Same remark as in FUEHttp::Do...
+			if (asyncCBExecMode == EAsyncCallbackExecutionMode::GameThread)
+			{
+				std::string s(TCHAR_TO_UTF8(*outputString));
+				Response response(code, std::move(s));
+				callbackFct(response);
+			}
+			else
+			{
+				UE::Tasks::Launch(UE_SOURCE_LOCATION,
+					[callbackFct, code, outputString]() mutable {
+					std::string s(TCHAR_TO_UTF8(*outputString));
+					Response response(code, std::move(s));
+					callbackFct(response); },
+					UE::Tasks::ETaskPriority::Normal);
+			}
+		}
+		);
+
+		bool bStartedRequest = HttpRequest->ProcessRequest();
+		if (!bStartedRequest)
+		{
+			BE_LOGE("http", "Failed to start HTTP File Request.");
+		}
 		return Response(0, std::string(""));
 	}
 
-	if (IsInGameThread())
+	BE_ASSERT(!IsInGameThread()); // bad practice to do sync requests in the game thread!
+
+	// Start the request and run it in a synchronous way
+	bool bStartedRequest = HttpRequest->ProcessRequest();
+	if (!bStartedRequest)
 	{
-		FHttpModule::Get().GetHttpManager().Flush(EHttpFlushReason::Default);
+		BE_LOGE("http", "Failed to start HTTP File Request.");
+		return Response(0, std::string(""));
 	}
 		
 	TSharedPtr<IHttpResponse, ESPMode::ThreadSafe> response;
@@ -298,7 +338,9 @@ FUEHttp::Response FUEHttp::DoFile(FString verb, const std::string& url, const st
 
 		if (code != 0)
 			break;
-		FPlatformProcess::Sleep(0.001);
+		FPlatformProcess::Sleep(0.01);
+		if (IsInGameThread())
+			FHttpModule::Get().GetHttpManager().Tick(0.01);
 
 		counter--;
 		if (!counter)
@@ -315,6 +357,13 @@ FUEHttp::Response FUEHttp::DoFile(FString verb, const std::string& url, const st
 		return Response(408, std::string(""));
 
 	return Response(0, std::string(""));
+}
+
+std::string FUEHttp::EncodeForUrl(const std::string& str) const
+{
+	FString outputString = FGenericPlatformHttp::UrlEncode(UTF8_TO_TCHAR(str.c_str()));
+	std::string s(TCHAR_TO_UTF8(*outputString));
+	return s;
 }
 
 bool FUEHttp::DecodeBase64(const std::string& SrcString, RawData& Buffer) const

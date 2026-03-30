@@ -24,6 +24,11 @@ public:
 
   void SetCredits(const FString& InCredits, const FString& InOnScreenCredits);
 
+  /**
+   * Sets the global display scale of the widget (a value of 1 would reset the default size).
+   */
+  void SetDisplayScale(float InScale);
+
 private:
   UScreenCreditsWidget(const FObjectInitializer& ObjectInitializer);
   ~UScreenCreditsWidget();
@@ -56,7 +61,9 @@ private:
   class UCreditsDecorator* _decoratorPopup;
   int32 _numImagesLoading;
   FSlateFontInfo _font;
+  float _defaultFontSize;
   TArray<FSlateBrush*> _creditImages;
+  float _displayScale = 1.0f;
   friend class UCreditsDecorator;
 };
 

@@ -37,7 +37,7 @@ void FPoolRequest::Cancel()
 		if (!EHttpRequestStatus::IsFinished(Request->GetStatus()))
 		{
 			// With the current code, we have an AsyncRoutine only when we have a cache hit, ie. the Request
-			// will never be started. If we had both a Request and an AsyncRoutine, we would d need to make
+			// will never be started. If we had both a Request and an AsyncRoutine, we would need to make
 			// sure it is fulfilled somehow even though the Request's completion functor will not be called
 			// (unless it is? with bConnectedSuccessfully set to false?).
 			ensure(!AsyncRoutine || EHttpRequestStatus::Type::NotStarted == Request->GetStatus());
@@ -475,7 +475,7 @@ void FReusableJsonQueries::HandlePendingQueries()
 			if (!Impl->bIsRunning)
 			{
 				Impl->bIsRunning = true;
-				if (Impl->OnScheduleQueryingStatusChanged) // <== NB: only set for prefetched case
+				if (Impl->OnScheduleQueryingStatusChanged) // <== NB: only set for NON-prefetched case
 					Impl->OnScheduleQueryingStatusChanged->Broadcast(Impl->bIsRunning);
 			}
 		}
@@ -486,7 +486,7 @@ void FReusableJsonQueries::HandlePendingQueries()
 				if (Impl->bIsRunning)
 				{
 					Impl->bIsRunning = false;
-					if (Impl->OnScheduleQueryingStatusChanged) // <== NB: only set for prefetched case
+					if (Impl->OnScheduleQueryingStatusChanged) // <== NB: only set for NON-prefetched case
 						Impl->OnScheduleQueryingStatusChanged->Broadcast(Impl->bIsRunning);
 				}
 			}

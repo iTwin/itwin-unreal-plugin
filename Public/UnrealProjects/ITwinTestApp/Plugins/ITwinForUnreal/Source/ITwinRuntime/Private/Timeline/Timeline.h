@@ -25,6 +25,7 @@
 #include <Compil/BeforeNonUnrealIncludes.h>
 	#include <BeHeaders/Compil/AlwaysFalse.h>
 	#include <BeHeaders/StrongTypes/TaggedValue.h>
+	#include <boost/container/small_vector.hpp>
 #include <Compil/AfterNonUnrealIncludes.h>
 
 #include <memory>
@@ -33,6 +34,7 @@
 
 class AActor;
 class FJsonValue;
+class FITwinSchedule;
 
 namespace ITwin::Flag {
 
@@ -171,6 +173,8 @@ ITWIN_TIMELINE_DEFINE_OBJECT_PROPERTIES(Element,
 	(PClippingPlane, ClippingPlane)
 )
 
+template <class T, std::size_t N> using FSmallVec = boost::container::small_vector<T, N>;
+
 /// ElementTimeline stores the individual property timelines for a given Synchro4D Task's
 /// animatedElementId. This class adds a mapping to the scene entities belonging to the
 /// Element, and their initial transformation matrix, in case it can be animated.
@@ -181,10 +185,16 @@ public:
 
 private:
 	FIModelElementsKey IModelElementsKey;
+	/// Note: if we want to persist the whole timelines instead of the 4D api replies in the cache, we need to replace
+	/// the ElemID in this container by FedGUIDs (same for IModelElementOffsets' keys): or maybe we use Elem ranks
+	/// instead (and only replace by FedGUIDs if we want to persist)
 	FElementsGroup IModelElements;
 	/// Cache of offsets between each Element's BBox center and the center of the whole group's BBox
 	/// (only in the case of a group of Elements - see FIModelElementsKey)
 	std::unordered_map<ITwinElementID, FVector> IModelElementOffsets;
+	using FBindings = FSmallVec<size_t, 4>;
+	FBindings AnimationBindingsIndices;
+
 	FBox IModelElementsBoundingBox;
 	bool bIModelElementsBBoxNeedsUpdate = true;
 	bool bModified = true;
@@ -209,6 +219,8 @@ public:
 		std::function<FBox const&(ITwinElementID const)> const& SingleBBoxGetter);
 	[[nodiscard]] FBox const& GetIModelElementsBBox(
 		std::function<FBox(FElementsGroup const&)> ElementsBBoxGetter);
+	[[nodiscard]] FBindings& AnimationBindings() { return AnimationBindingsIndices; }
+	[[nodiscard]] FBindings const& GetAnimationBindings() const { return AnimationBindingsIndices; }
 	/// SLOW!
 	[[nodiscard]] bool AppliesToElement(ITwinElementID const& ElementID) const;
 	/// Returns the total number of keyframes in the timeline
@@ -259,12 +271,15 @@ public:
 	// Removed: test FITwinElement::AnimationKeys instead
 	//[[nodiscard]] bool HasTimelineForElement(ITwinElementID const& ElementID) const;
 	/// Get or create and return a timeline for the Element or group of Elements.
-	[[nodiscard]] ElementTimelineEx& ElementTimelineFor(FIModelElementsKey const IModelElementsKey,
-														FElementsGroup const& Elements);
+	[[nodiscard]] ElementTimelineEx& ElementTimelineFor(FIModelElementsKey const& IModelElementsKey,
+		FElementsGroup const& Elements, int* pTimelineIndex = nullptr);
 	/// Get an existing timeline for the Element or group of Elements.
 	/// \return An existing timeline, or nullptr if none was found.
 	[[nodiscard]] ElementTimelineEx* GetElementTimelineFor(FIModelElementsKey const& IModelElementsKey,
-														   int* Index = nullptr) const;
+														   int* pTimelineIndex = nullptr) const;
+	/// Only reuse the timeline index in the container, reassigning it to the new Elements key: none of the members
+	/// are preserved.
+	void ResetElementTimelineFor(int TimelineIndex, FIModelElementsKey const& NewIModelElementsKey);
 
 	/// Dumps the timelines as an array of individual FElementsGroup timelines: since this is used for
 	/// unit testing, the array is ordered with respect to FElementsGroup's Elements, not to any
@@ -273,8 +288,6 @@ public:
 	template<typename JsonPrintPolicy> [[nodiscard]] FString ToJsonString() const;
 	[[nodiscard]] FString ToPrettyJsonString() const;
 	[[nodiscard]] FString ToCondensedJsonString() const;
-
-	void FixColor();
 
 	// In case we need the elementTimelineId_ inside ElementTimelineEx, we'd have to override this:
 	//std::shared_ptr<ElementTimelineEx> Add(const typename Super::ObjectTimelinePtr& object) override;

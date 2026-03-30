@@ -20,6 +20,7 @@ class AITwinDecorationHelper;
 struct ITwinSceneInfo;
 class UCesiumPolygonRasterOverlay;
 class FITwinTilesetAccess;
+class UITwinClipping3DTilesetHelper;
 
 namespace ITwin
 {
@@ -29,15 +30,16 @@ namespace ITwin
 	//! Returns the tileset quality as a percentage (value in range [0;1])
 	ITWINRUNTIME_API float GetTilesetQuality(ACesium3DTileset const& Tileset);
 
-	//! Adds support for cut-out polygons to the given tileset.
-	ITWINRUNTIME_API void InitCutoutOverlay(ACesium3DTileset& Tileset);
-
 	//! Returns the cut-out polygons overlay for the given tileset.
 	ITWINRUNTIME_API UCesiumPolygonRasterOverlay* GetCutoutOverlay(ACesium3DTileset const& Tileset);
 
 	using VisitTilesetFunction = TFunction<void(FITwinTilesetAccess const&)>;
 	ITWINRUNTIME_API void IterateAllITwinTilesets(const VisitTilesetFunction& VisitFunc, class UWorld* World);
 
+	using TilesetAccessUPtr = TUniquePtr<FITwinTilesetAccess>;
+	using TilesetAccessUPtrArray = TArray<TilesetAccessUPtr>;
+	ITWINRUNTIME_API void GatherTilesetsOfModelType(TilesetAccessUPtrArray& OutTilesets, EITwinModelType ModelType, class UWorld* World);
+	ITWINRUNTIME_API TilesetAccessUPtr GetTilesetAccessFromModelLink(const ModelLink& ModelLink, class UWorld* World);
 	//! This is the screenspace error it is best limiting oneself to with Google 3D Tiles,
 	//! to avoid huge memory usage and download times
 	ITWINRUNTIME_API extern const double GOOGLE3D_BEST_SCREENSPACE_ERROR;
@@ -58,9 +60,14 @@ public:
 
 	bool IsValid() const { return TilesetOwner.IsValid(); }
 
+	EITwinModelType GetModelType() const;
+
 	// Persistence management
 	virtual ITwin::ModelDecorationIdentifier GetDecorationKey() const = 0;
 	virtual AITwinDecorationHelper* GetDecorationHelper() const = 0;
+
+	// Added for convenience, for code not related to persistence.
+	ITwin::ModelLink GetModelLink() const { return GetDecorationKey(); }
 
 	void ApplyLoadedInfo(ITwinSceneInfo const& LoadedSceneInfo, bool bIsModelFullyLoaded) const;
 
@@ -83,6 +90,14 @@ public:
 
 	/// Sets the model manual "offset" (= scene placement customization), and persist it to Cloud.
 	void SetModelOffset(const FVector& Pos, const FVector& Rot) const;
+
+	/// Returns the cut-out helper for the owning layer.
+	virtual UITwinClipping3DTilesetHelper* GetClippingHelper() const = 0;
+
+	virtual FBox GetBoundingBox() const = 0;
+
+	/// Creates the cut-out polygons overlay for the tileset, if not already present.
+	void InitCutoutOverlay() const;
 
 	virtual void RefreshTileset() const;
 

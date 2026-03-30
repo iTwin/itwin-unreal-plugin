@@ -26,39 +26,16 @@ public:
 		UERequest->SetVerb(ITwinHttp::GetVerbString(eVerb));
 	}
 
-	static const long HTTP_CONNECT_ERR = -2;
-
 	void SetResponseCallback(
 		AdvViz::SDK::HttpRequest::RequestPtr const& requestPtr,
 		AdvViz::SDK::HttpRequest::ResponseCallback const& callback)
 	{
 		UERequest->OnProcessRequestComplete().BindLambda(
-			[this, ResultCallback = callback, RequestPtr = requestPtr]
-			(FHttpRequestPtr pUERequest, FHttpResponsePtr UEResponse, bool connectedSuccessfully)
+			[this, ResultCallback = callback, SDKRequestPtr = requestPtr]
+			(FHttpRequestPtr /*pUERequest*/, FHttpResponsePtr UEResponse, bool connectedSuccessfully)
 		{
-			AdvViz::SDK::Http::Response Response;
-			if (connectedSuccessfully)
-			{
-				Response.first = UEResponse->GetResponseCode();
-				Response.second = TCHAR_TO_UTF8(*UEResponse->GetContentAsString());
-				if (RequestPtr && RequestPtr->NeedRawData() && UEResponse->GetContentLength() > 0)
-				{
-					// In case we receive some binary data, we may want to get it and not just a (truncated)
-					// string...
-					const TArray<uint8>& content = UEResponse->GetContent();
-					Response.rawdata_ = std::make_shared<AdvViz::SDK::Http::RawData>();
-					AdvViz::SDK::Http::RawData& rawdata(*Response.rawdata_);
-					rawdata.reserve(content.Num());
-					for (uint8 b : content)
-						rawdata.push_back(b);
-				}
-			}
-			else
-			{
-				// Signal a connection error (see CheckResponse)
-				Response.first = HTTP_CONNECT_ERR;
-			}
-			ResultCallback(RequestPtr, Response);
+			ResultCallback(SDKRequestPtr,
+						   ConvertUnrealHttpResponse(SDKRequestPtr, UEResponse, connectedSuccessfully));
 		});
 	}
 
@@ -94,7 +71,8 @@ public:
 	{
 		if (response.first == HTTP_CONNECT_ERR)
 		{
-			FString const UEError = EHttpRequestStatus::ToString(UERequest->GetStatus());
+			FString const UEError = TEXT("Connection to the server failed (unreachable?)");
+			//+ EHttpRequestStatus::ToString(CompletedRequest->GetStatus()); <= obviously "Failed", so pointless
 			requestError = TCHAR_TO_UTF8(*UEError);
 			return false;
 		}
@@ -116,6 +94,51 @@ public:
 private:
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> const UERequest;
 };
+
+AdvViz::SDK::Http::Response ConvertUnrealHttpResponse(
+	AdvViz::SDK::HttpRequest::RequestPtr const& SDKRequestPtr,
+	FHttpResponsePtr UEResponse, bool connectedSuccessfully)
+{
+	AdvViz::SDK::Http::Response Response;
+	if (connectedSuccessfully && UEResponse.IsValid())
+	{
+		Response.first = UEResponse->GetResponseCode();
+		Response.second = TCHAR_TO_UTF8(*UEResponse->GetContentAsString());
+		if (SDKRequestPtr && SDKRequestPtr->NeedRawData() && UEResponse->GetContentLength() > 0)
+		{
+			// In case we receive some binary data, we may want to get it and not just a (truncated) string...
+			const TArray<uint8>& content = UEResponse->GetContent();
+			Response.rawdata_ = std::make_shared<AdvViz::SDK::Http::RawData>();
+			AdvViz::SDK::Http::RawData& rawdata(*Response.rawdata_);
+			rawdata.reserve(content.Num());
+			for (uint8 b : content)
+				rawdata.push_back(b);
+		}
+		if (Response.first != 0)
+		{
+			auto UEHeaders = UEResponse->GetAllHeaders();
+			Response.headers_ = std::make_unique<AdvViz::SDK::Http::Headers>();
+			for (const auto& header : UEHeaders)
+			{
+				FString Key, Value;
+				if (header.Split(TEXT(":"), &Key, &Value))
+				{
+					Response.headers_->emplace_back(TCHAR_TO_UTF8(*Key), TCHAR_TO_UTF8(*Value.TrimStart()));
+				}
+			}
+		}
+	}
+	else if (connectedSuccessfully)
+	{
+		Response.first = FUEHttpRequest::HTTP_INVALID_UE_RESPONSE;
+	}
+	else
+	{
+		// Signal a connection error (see CheckResponse)
+		Response.first = FUEHttpRequest::HTTP_CONNECT_ERR;
+	}
+	return std::move(Response);
+}
 
 FUEHttpRequest::FUEHttpRequest()
 	: Impl(MakePimpl<FUEHttpRequest::FImpl>())

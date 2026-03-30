@@ -17,7 +17,7 @@
 
 MODULE_EXPORT namespace AdvViz::SDK 
 {
-	class ADVVIZ_LINK  LinkAPI : public ILink, public Tools::Factory<LinkAPI>
+	class ADVVIZ_LINK LinkAPI final : public ILink, public Tools::Factory<LinkAPI>
 	{
 	public:
 		LinkAPI();
@@ -44,13 +44,17 @@ MODULE_EXPORT namespace AdvViz::SDK
 		 bool HasQuality() const override;
 		 bool HasTransform() const override;
 
+		 //------------------------------------------------------------------------------
+		 /// overridden from ISavableItem
+		 const RefID& GetId() const override;
+		 void SetId(const RefID& id) override;
 
-		 bool ShouldSave()const override;
-		 void SetShouldSave(bool shouldSave) override;
+		 ESaveStatus GetSaveStatus() const override;
+		 void SetSaveStatus(ESaveStatus status) override;
+		 //------------------------------------------------------------------------------
 
 		 void Delete(bool value = true) override;
-		 bool ShouldDelete() override;
-		 const std::string& GetId() override;
+		 bool ShouldDelete() const override;
 
 		 // for type check
 		 using TypeId<LinkAPI>::GetTypeId;
@@ -67,27 +71,39 @@ MODULE_EXPORT namespace AdvViz::SDK
 		friend class ScenePersistenceAPI;
 	};
 
-	class ADVVIZ_LINK  ScenePersistenceAPI : public IScenePersistence, public Tools::Factory<ScenePersistenceAPI>
+	namespace SceneAPIDetails {
+		struct SJsonOut;
+	}
+
+	class AsyncRequestGroupCallback;
+
+	class ADVVIZ_LINK ScenePersistenceAPI : public IScenePersistence, public Tools::Factory<ScenePersistenceAPI>
 	{
 	public:
 		//store data necessary for creation in the future
 		void PrepareCreation(const std::string& name, const std::string& itwinid) override;
 		/// Create new Scene on server
-		bool Create(
-			const std::string& name, const std::string& itwinid) override;
+		void AsyncCreate(
+			const std::string& name, const std::string& itwinid,
+			std::function<void(bool)>&& onCreationDoneFunc = {}) override;
 		/// Retrieve the Scene from server
 		bool Get(const std::string& itwinid, const std::string& id) override;
+		void AsyncGet(const std::string&, const std::string& id, std::function<void(expected<void, std::string> const&)> onFinish)override;
+
 		/// Delete the Scene on server
 		bool Delete() override;
 		/// Get Scene identifier
-		const std::string& GetId() const override;
-		const std::string& GetName() const override;
-		const std::string& GetITwinId() const override;
-		virtual std::string GetLastModified() const override;
+		const std::string& GetId() const final;
+		const std::string& GetName() const final;
+		const std::string& GetITwinId() const final;
+		virtual std::string GetLastModified() const final;
 
 		// Set Http server to use (if none provided, the default created by Config is used.)
 		void SetHttp(std::shared_ptr<Http> http);
 		static void SetDefaultHttp(std::shared_ptr<Http> http);
+
+		//allow disable export of resources (IModels/RealityData) when saving the scene. This is useful for scenepersistence that are not responsible for managing these resources, and want to avoid sending them to the server when saving the scene ( in case of Itwin Engage)
+		static void EnableExportOfResources(bool bEnable);
 
 		ScenePersistenceAPI(ScenePersistenceAPI&) = delete;
 		ScenePersistenceAPI(ScenePersistenceAPI&&) = delete;
@@ -99,17 +115,17 @@ MODULE_EXPORT namespace AdvViz::SDK
 		ITwinAtmosphereSettings GetAtmosphere() const override;
 		void SetSceneSettings(const ITwinSceneSettings&) override;
 		ITwinSceneSettings GetSceneSettings() const override;
-		bool Save() override;
-		bool ShouldSave() const override;
-		void SetShouldSave(bool shouldSave) const override;
+		void AsyncSave(std::function<void(bool)>&& onDataSavedFunc = {}) override;
+		bool ShouldSave() const final;
+		void SetShouldSave(bool shouldSave) const final;
 
 		//links management
 		std::vector<std::shared_ptr<ILink>> GetLinks() const override;
 		void AddLink(std::shared_ptr<ILink>) override;
 		std::shared_ptr<ILink> MakeLink() override;
 
-		void SetTimeline(const std::shared_ptr<AdvViz::SDK::ITimeline>& timeline) override;
-		std::shared_ptr<AdvViz::SDK::ITimeline> GetTimeline() override;
+		void SetTimeline(const std::shared_ptr<AdvViz::SDK::ITimeline>& timeline) final;
+		std::shared_ptr<AdvViz::SDK::ITimeline> GetTimeline() final;
 
 		// for type check
 		using TypeId<ScenePersistenceAPI>::GetTypeId;
@@ -118,24 +134,40 @@ MODULE_EXPORT namespace AdvViz::SDK
 
 		std::string ExportHDRIAsJson(ITwinHDRISettings const& hdri) const override;
 		bool ConvertHDRIJsonFileToKeyValueMap(std::filesystem::path const& jsonPath, KeyValueStringMap& outMap) const override;
+
+
+		void AsyncRefreshLinks(std::function<void(expected<void, std::string> const&)> callback) override;
+
 	protected:
 		class Impl;
-		const std::unique_ptr<Impl> impl_;
+		const std::shared_ptr<Impl> impl_;
 		Impl& GetImpl() const;
 
 
 		//links management
-		void LoadLinks();
-		void SaveLinks();
+		using LinkAPIPtr = std::shared_ptr<LinkAPI>;
+		using LinkAPIPtrVec = std::vector<LinkAPIPtr>;
 
-		std::string GenerateBody(const std::shared_ptr<LinkAPI>& link, bool forPatch); //else for post
-		std::vector<std::shared_ptr<LinkAPI>> GenerateSubLinks();
-		std::vector<std::shared_ptr<LinkAPI>> GeneratePreLinks();
+		void LoadLinks();
+		void AsyncSaveLinksVec(
+			LinkAPIPtrVec links,
+			bool bSubLink,
+			std::shared_ptr<AsyncRequestGroupCallback> callbackPtr,
+			std::function<void(bool)>&& onLinksSavedFunc);
+		void AsyncSaveLinks(std::shared_ptr<AsyncRequestGroupCallback> callbackPtr);
+		void OnLinkSaved(LinkAPIPtr link, std::string const& idOnServer);
+
+
+		std::string GenerateBody(const LinkAPIPtr& link, bool forPatch, bool ignoretimelineID = true); // if not for patch, then it is for post
+		LinkAPIPtrVec GenerateSubLinks();
+		LinkAPIPtrVec GeneratePreLinks();
 	};
 
 	//global function to get all scenes from a Itwin
-	ADVVIZ_LINK  AdvViz::expected<std::vector<std::shared_ptr<IScenePersistence>>, int>  GetITwinScenesAPI(const std::string& itwinid);
-
+	ADVVIZ_LINK AdvViz::expected<ScenePtrVector, HttpError> GetITwinScenesAPI(const std::string& itwinid);
+	ADVVIZ_LINK void AsyncGetITwinSceneInfosAPI(const std::string& itwinid,
+		std::function<void(AdvViz::expected<SceneInfoVec, HttpError>)>&& callback,
+		Http::EAsyncCallbackExecutionMode asyncCBExecMode = Http::EAsyncCallbackExecutionMode::Default);
 
 	ADVVIZ_LINK void SetSceneAPIConfig(const Config::SConfig& c);
 }

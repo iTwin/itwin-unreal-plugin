@@ -9,14 +9,16 @@
 #pragma once
 
 #include <optional>
+#include <ITwinModelType.h>
 #include <ITwinServiceActor.h>
 #include <Templates/PimplPtr.h>
 #include <ITwinRealityData.generated.h>
 
 struct FCartographicProps;
 class FITwinTilesetAccess;
-class UITwinClippingCustomPrimitiveDataHelper;
+class UITwinClipping3DTilesetHelper;
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnRealityDataInfoLoaded, bool, bSuccess, FString, RealityDataId);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnRealityDataLoaded, bool, bSuccess, FString, RealityDataId);
 
 UCLASS()
@@ -31,6 +33,16 @@ public:
 	UPROPERTY(Category = "iTwin",
 		EditAnywhere)
 	FString ITwinId;
+
+	UPROPERTY(Category = "iTwin",
+		BlueprintAssignable)
+	FOnRealityDataInfoLoaded OnRealityDataInfoLoaded;
+
+	UPROPERTY(Category = "iTwin",
+		BlueprintAssignable)
+	FOnRealityDataLoaded OnRealityDataLoaded;
+
+
 
 	AITwinRealityData();
 	~AITwinRealityData();
@@ -63,10 +75,6 @@ public:
 	UFUNCTION()
 	void OnTilesetLoaded();
 
-	UPROPERTY(Category = "iTwin",
-		BlueprintAssignable)
-	FOnRealityDataLoaded OnRealityDataLoaded;
-
 	std::optional<FCartographicProps> GetNativeGeoreference() const;
 
 	/// Return true if the required identifiers for loading reality data are all set.
@@ -79,18 +87,27 @@ public:
 
 	TUniquePtr<FITwinTilesetAccess> MakeTilesetAccess();
 
-	UITwinClippingCustomPrimitiveDataHelper* GetClippingHelper() const;
+	ITwin::ModelLink GetModelLink() const {
+		return std::make_pair(EITwinModelType::RealityData, RealityDataId);
+	}
+
+	UITwinClipping3DTilesetHelper* GetClippingHelper() const;
 	bool MakeClippingHelper();
+
+	bool GetBoundingBox(FBox& OutBox, bool bClampOutlandishValues);
 
 	UFUNCTION(Category = "iTwin",
 		CallInEditor,
 		BlueprintCallable)
 	void ZoomOnRealityData();
 
+	/// overridden from IITwinWebServicesObserver:
+	virtual void OnRealityData3DInfoRetrieved(bool bSuccess, FITwinRealityData3DInfo const& Info) override;
+
 private:
 	UPROPERTY(Category = "iTwin",
 		VisibleAnywhere)
-	bool bGeolocated;
+	bool bGeolocated = false;
 
 	class FImpl;
 	TPimplPtr<FImpl> Impl;
@@ -98,9 +115,6 @@ private:
 
 	/// overridden from AITwinServiceActor:
 	virtual void UpdateOnSuccessfulAuthorization() override;
-
-	/// overridden from IITwinWebServicesObserver:
-	virtual void OnRealityData3DInfoRetrieved(bool bSuccess, FITwinRealityData3DInfo const& Info) override;
 
 	/// overridden from FITwinDefaultWebServicesObserver
 	virtual const TCHAR* GetObserverName() const override;

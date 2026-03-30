@@ -14,7 +14,8 @@
 #include <HAL/PlatformProcess.h>
 #include <HAL/PlatformFile.h>
 #include <HAL/PlatformFileManager.h>
-
+#include <HttpModule.h>
+#include <Interfaces/IHttpResponse.h>
 #include <Misc/LowLevelTestAdapter.h>
 #include <Misc/Paths.h>
 
@@ -23,6 +24,7 @@
 #	include <Core/ITwinAPI/ITwinAuthManager.h>
 #	include <Core/ITwinAPI/ITwinMaterial.h>
 #	include <Core/Network/http.h>
+#	include <Core/Visualization/AsyncHelpers.h>
 #	include <Core/Visualization/MaterialPersistence.h>
 #include <Compil/AfterNonUnrealIncludes.h>
 
@@ -58,7 +60,7 @@ public:
 		{
 			return ProcessFilesTest(url, method, data, urlArguments, headers);
 		}
-		return Response(cpr::status::HTTP_NOT_FOUND,
+		return Response(MHD_HTTP_NOT_FOUND,
 			std::string("Page not found: ") + url);
 	}
 
@@ -79,7 +81,7 @@ private:
 		{{ "accept", "application/json" },								\
 		 { "Content-Type", "application/json; charset=UTF-8" },			\
 		 { "Authorization", "Bearer " ITWINTEST_ACCESS_TOKEN } });		\
-	if (HeaderStatus != cpr::status::HTTP_OK)							\
+	if (HeaderStatus != MHD_HTTP_OK)							\
 	{																	\
 		return Response(HeaderStatus, "Error in headers.");				\
 	}																	\
@@ -97,7 +99,7 @@ private:
 
 		if (method == "GET")
 		{
-			return Response(cpr::status::HTTP_OK,
+			return Response(MHD_HTTP_OK,
 				"{\"total_rows\":4,\"rows\":[" \
 				"{\"roughness\":0.884214,\"roughnessMap\":\"\u003cMatLibrary\u003e/Roof_Tiles/roughness.png\",\"metallic\":0,\"opacity\":1,\"opacityMap\":\"0xbd64766217cf1f3f_hlfoot.png\",\"normal\":1,\"normalMap\":\"\u003cMatLibrary\u003e/Roof_Tiles/normal.png\",\"ao\":1,\"aoMap\":\"\u003cMatLibrary\u003e/Roof_Tiles/AO.png\",\"albedoMap\":\"\u003cMatLibrary\u003e/Roof_Tiles/color.png\",\"color\":\"#FFFFFF\",\"type\":\"PBR\",\"id\":\"83_8eb0fcc5-712b-48b6-a74d-5c80e50008b1\"}," \
 				"{\"roughness\":0.8988662958145142,\"metallic\":0,\"opacity\":1,\"normal\":0.2551162838935852,\"normalMap\":\"0xd4919cc328654b18_Normal.png\",\"albedoMap\":\"0x23a8b53872b49b9a_grid.jpeg\",\"color\":\"#CCC3B3\",\"type\":\"Glass\",\"id\":\"328_8eb0fcc5-712b-48b6-a74d-5c80e50008b1\"}," \
@@ -109,10 +111,10 @@ private:
 		{
 			if (data != "{\"materials\":[{\"id\":\"357_8eb0fcc5-712b-48b6-a74d-5c80e50008b1\",\"displayName\":\"Glass #357\",\"type\":\"Glass\",\"color\":\"#33FF33\",\"albedoMapFactor\":0.0}]}")
 			{
-				return Response(cpr::status::HTTP_EXPECTATION_FAILED, "Unexpected new material");
+				return Response(MHD_HTTP_EXPECTATION_FAILED, "Unexpected new material");
 			}
 			bHasAddedMaterial = true;
-			return Response(cpr::status::HTTP_CREATED,
+			return Response(MHD_HTTP_CREATED,
 				"{\"materials\":[{\"roughness\":0.85,\"metallic\":0.75,\"opacity\":1,\"opacityMap\":\"0x34efa79259bb8be0_Vector 1.png\",\"color\":\"#FFFFFF\",\"uvScaling\":[0.5,0.5],\"uvOffset\":[0,0],\"uvRotationAngle\":0,\"type\":\"Glass\",\"id\":\"357_8eb0fcc5-712b-48b6-a74d-5c80e50008b1\"}]}"
 			);
 		}
@@ -120,26 +122,26 @@ private:
 		{
 			if (data.find("328_8eb0fcc5-712b-48b6-a74d-5c80e50008b1") == std::string::npos)
 			{
-				return Response(cpr::status::HTTP_EXPECTATION_FAILED, "Bad material id");
+				return Response(MHD_HTTP_EXPECTATION_FAILED, "Bad material id");
 			}
 			if (data.find("#CCC3B3") == std::string::npos)
 			{
-				return Response(cpr::status::HTTP_EXPECTATION_FAILED, "Bad material color");
+				return Response(MHD_HTTP_EXPECTATION_FAILED, "Bad material color");
 			}
 			if (data.find("0.1234") == std::string::npos)
 			{
-				return Response(cpr::status::HTTP_EXPECTATION_FAILED, "Bad material roughness");
+				return Response(MHD_HTTP_EXPECTATION_FAILED, "Bad material roughness");
 			}
 			if (data.find("_UT_TextureToUpload.png") == std::string::npos)
 			{
-				return Response(cpr::status::HTTP_EXPECTATION_FAILED, "Bad material opacity map");
+				return Response(MHD_HTTP_EXPECTATION_FAILED, "Bad material opacity map");
 			}
 			bHasModifiedMaterial = true;
-			return Response(cpr::status::HTTP_OK,
+			return Response(MHD_HTTP_OK,
 				"{\"numUpdated\":1}"
 			);
 		}
-		return Response(cpr::status::HTTP_NOT_FOUND, "Page not found.");
+		return Response(MHD_HTTP_NOT_FOUND, "Page not found.");
 	}
 
 	/// Process /files requests
@@ -160,38 +162,38 @@ private:
 				{ "Content-Type", "multipart/form-data; boundary=*" },
 				{ "Authorization", "Bearer " ITWINTEST_ACCESS_TOKEN }
 			});
-			if (HeaderStatus != cpr::status::HTTP_OK)
+			if (HeaderStatus != MHD_HTTP_OK)
 			{
 				return Response(HeaderStatus, "Error in headers.");
 			}
 			if (data.size() < expectedFileSize)
 			{
 				BE_LOGE("ITwinDecoration", "[File Upload] not the expected data size: " << data.size());
-				return Response(cpr::status::HTTP_PRECONDITION_FAILED, "Not the expected data size");
+				return Response(MHD_HTTP_PRECONDITION_FAILED, "Not the expected data size");
 			}
 			if (data.find("Content-Disposition: form-data; name=\"filename\"") == std::string::npos)
 			{
 				BE_LOGE("ITwinDecoration", "[File Upload] missing \"filename\" in content");
-				return Response(cpr::status::HTTP_EXPECTATION_FAILED, "Missing form data");
+				return Response(MHD_HTTP_EXPECTATION_FAILED, "Missing form data");
 			}
 			if (data.find("Content-Disposition: form-data; name=\"file\"") == std::string::npos)
 			{
 				BE_LOGE("ITwinDecoration", "[File Upload] missing \"file\" in content");
-				return Response(cpr::status::HTTP_EXPECTATION_FAILED, "Missing form data");
+				return Response(MHD_HTTP_EXPECTATION_FAILED, "Missing form data");
 			}
 			//if (data.find("Content-Type: image/png") == std::string::npos)
 			if (data.find("Content-Type: application/octet-stream") == std::string::npos)
 			{
 				BE_LOGE("ITwinDecoration", "[File Upload] wrong Content-Type");
-				return Response(cpr::status::HTTP_UNSUPPORTED_MEDIA_TYPE, "Wrong Content-Type");
+				return Response(MHD_HTTP_UNSUPPORTED_MEDIA_TYPE, "Wrong Content-Type");
 			}
 			bHasReceivedFile = true;
-			return Response(cpr::status::HTTP_CREATED,
+			return Response(MHD_HTTP_CREATED,
 				std::string("{\"filename\": \"0xa6a83333a6a95d69_UT_TextureToUpload.png\", \"length\": ") + std::to_string(expectedFileSize) + " }");
 		}
 		// We could test the download as well, but the latter is performed by cesium asset accessor, which
 		// is probably heavily tested by Cesium team...
-		return Response(cpr::status::HTTP_NOT_FOUND, "Page not found.");
+		return Response(MHD_HTTP_NOT_FOUND, "Page not found.");
 	}
 
 };
@@ -204,6 +206,27 @@ std::unique_ptr<httpmock::MockServer> FMaterialPersistenceMockServer::MakeServer
 }
 
 
+class FITwinMaterialIOAsyncCallback
+{
+public:
+	void OnRequestStarted()
+	{
+		NumRequestsStarted++;
+	}
+	void OnRequestDone()
+	{
+		NumRequestsDone++;
+	}
+
+	bool IsDone() const { return NumRequestsDone == NumRequestsStarted; }
+
+private:
+	uint32 NumRequestsStarted = 0;
+	uint32 NumRequestsDone = 0;
+};
+
+using FITwinMaterialIOAsyncCallbackPtr = std::shared_ptr<FITwinMaterialIOAsyncCallback>;
+
 
 class FITwinMatPersistenceTestHelper : public FITwinAPITestHelperBase
 {
@@ -214,6 +237,8 @@ public:
 	~FITwinMatPersistenceTestHelper();
 
 	std::shared_ptr<MaterialPersistenceManager> GetMatIOMngr() { return MatIO; }
+	bool& GetServerValidationResponseFlag() { return bServerValidationResponseFlag; }
+	FITwinMaterialIOAsyncCallbackPtr GetMatAsyncCallback() { return MatAsyncCallback; }
 
 protected:
 	virtual bool DoInit(AdvViz::SDK::EITwinEnvironment) override;
@@ -223,6 +248,8 @@ private:
 	FITwinMatPersistenceTestHelper() {}
 
 	std::shared_ptr<MaterialPersistenceManager> MatIO;
+	bool bServerValidationResponseFlag = false;
+	FITwinMaterialIOAsyncCallbackPtr MatAsyncCallback;
 };
 
 /*static*/
@@ -243,15 +270,22 @@ bool FITwinMatPersistenceTestHelper::DoInit(AdvViz::SDK::EITwinEnvironment Env)
 		return false;
 	}
 
-	MatIO = std::make_shared<MaterialPersistenceManager>();
+	ensure(IsInGameThread());
+	AdvViz::SDK::InitMainThreadId();
 
 	// Use our local mock server's URL
 	std::shared_ptr<AdvViz::SDK::Http> Http;
 	Http.reset(AdvViz::SDK::Http::New());
 	Http->SetBaseUrl(GetServerUrl().c_str());
 	Http->SetAccessToken(AdvViz::SDK::ITwinAuthManager::GetInstance(Env)->GetAccessToken());
+	AdvViz::SDK::SetSupportAsyncCallbacksInMainThread(Http->SupportsExecuteAsyncCallbackInMainThread());
 
+	MatIO = std::make_shared<MaterialPersistenceManager>();
 	MatIO->SetHttp(Http);
+
+	bServerValidationResponseFlag = false;
+
+	MatAsyncCallback = std::make_shared<FITwinMaterialIOAsyncCallback>();
 
 	return true;
 }
@@ -266,14 +300,27 @@ FITwinMatPersistenceTestHelper::~FITwinMatPersistenceTestHelper()
 	Cleanup();
 }
 
-//
-//
-//DEFINE_LATENT_AUTOMATION_COMMAND_ONE_PARAMETER(FNUTWaitForMockServerResponse, TestObserverPtr, Observer);
-//
-//bool FNUTWaitForMockServerResponse::Update()
-//{
-//	return !Observer || !Observer->IsWaitingForServerResponse();
-//}
+
+DEFINE_LATENT_AUTOMATION_COMMAND_ONE_PARAMETER(FNUTWaitForMockServerResponseFlag, bool&, bServerValidationResponseFlag);
+
+bool FNUTWaitForMockServerResponseFlag::Update()
+{
+	return bServerValidationResponseFlag;
+}
+DEFINE_LATENT_AUTOMATION_COMMAND_ONE_PARAMETER(FNUTWaitForAsyncMaterialSaving, FITwinMaterialIOAsyncCallbackPtr, MatAsyncCallback);
+
+bool FNUTWaitForAsyncMaterialSaving::Update()
+{
+	if (!MatAsyncCallback || MatAsyncCallback->IsDone())
+	{
+		check(FITwinMatPersistenceTestHelper::Instance().PostCondition());
+		return true;
+	}
+	else
+	{
+		return false;
+	}
+}
 
 
 
@@ -290,7 +337,9 @@ bool FITwinMaterialPersistenceTest::RunTest(const FString& /*Parameters*/)
 	}
 
 	auto pMatIOMngr = Helper.GetMatIOMngr();
+	FITwinMaterialIOAsyncCallbackPtr MatAsyncCallback = Helper.GetMatAsyncCallback();
 	auto& MatIOMngr = *pMatIOMngr;
+	bool& bServerValidationResponseFlag = Helper.GetServerValidationResponseFlag();
 
 	const std::string url = Helper.GetServerUrl();
 
@@ -299,64 +348,99 @@ bool FITwinMaterialPersistenceTest::RunTest(const FString& /*Parameters*/)
 	SECTION("MockServer Validation")
 	{
 		// Most basic test, just to validate the mock server
-		// This one is synchronous.
-		cpr::Response r = cpr::Get(cpr::Url{ url + "/arg_test?x=0&b=2" });
-		UTEST_EQUAL("status_code", 200, r.status_code);
+		const auto Request = FHttpModule::Get().CreateRequest();
+		Request->SetVerb(TEXT("GET"));
+		const std::string fullUrl = url + "/arg_test?x=0&b=2";
+		Request->SetURL(fullUrl.c_str());
+		Request->OnProcessRequestComplete().BindLambda(
+			[this, &bServerValidationResponseFlag]
+			(FHttpRequestPtr, FHttpResponsePtr Response, bool bConnectedSuccessfully) mutable
+			{
+				TestTrue("bConnectedSuccessfully", bConnectedSuccessfully);
+				TestEqual("status_code", 200, Response->GetResponseCode());
+				bServerValidationResponseFlag = true;
+			});
+		Request->ProcessRequest();
 	}
 
 	SECTION("Load Materials")
 	{
-		// this call is synchronous (for now) 
-		MatIOMngr.LoadDataFromServer(TEST_DECO_ID);
+		std::atomic_bool IsLoadFinished = false;
 
-		AdvViz::SDK::PerIModelTextureSet const& perModelTextures =
-			MatIOMngr.GetDecorationTexturesByIModel();
-		UTEST_EQUAL("imodels in decoration", perModelTextures.size(), 1);
-		UTEST_EQUAL("decoration textures", perModelTextures.begin()->second.size(), 9);
-
-		// Each texture should have an usage.
-		for (auto const& texKey : perModelTextures.begin()->second)
+		auto const ValidateLoadedMaterials = [this, pMatIOMngr, imodelId, &IsLoadFinished]()
 		{
-			UTEST_TRUE("has usage", MatIOMngr.GetTextureUsage(texKey).flags_ != 0);
-		}
+			auto& MatIOMngr = *pMatIOMngr;
+			AdvViz::SDK::PerIModelTextureSet const& perModelTextures =
+				MatIOMngr.GetDecorationTexturesByIModel();
+			UTEST_EQUAL("imodels in decoration", perModelTextures.size(), 1);
+			UTEST_EQUAL("decoration textures", perModelTextures.begin()->second.size(), 9);
 
-		// Check a few loaded settings
-		AdvViz::SDK::ITwinMaterial matDefinition;
+			// Each texture should have an usage.
+			for (auto const& texKey : perModelTextures.begin()->second)
+			{
+				UTEST_TRUE("has usage", MatIOMngr.GetTextureUsage(texKey).flags_ != 0);
+			}
 
-		UTEST_TRUE("mat #83", MatIOMngr.GetMaterialSettings(imodelId, 83, matDefinition));
+			// Check a few loaded settings
+			AdvViz::SDK::ITwinMaterial matDefinition;
+
+			UTEST_TRUE("mat #83", MatIOMngr.GetMaterialSettings(imodelId, 83, matDefinition));
+			{
+				auto const colorMap = matDefinition.GetChannelMapOpt(AdvViz::SDK::EChannelType::Color);
+				UTEST_TRUE("mat #83 color map", colorMap
+					&& colorMap->eSource == AdvViz::SDK::ETextureSource::Library
+					&& colorMap->texture == "Roof_Tiles/color.png");
+				UTEST_TRUE("color map usage", MatIOMngr.GetTextureUsage({ colorMap->texture, colorMap->eSource })
+					.HasChannel(AdvViz::SDK::EChannelType::Color));
+				auto const color = matDefinition.GetChannelColorOpt(AdvViz::SDK::EChannelType::Color);
+				bool const bIsExpectedColor = color && *color == AdvViz::SDK::ITwinColor{ 1., 1., 1., 1. };
+				UTEST_TRUE("mat #83 color", bIsExpectedColor);
+			}
+
+			UTEST_TRUE("mat #56", MatIOMngr.GetMaterialSettings(imodelId, 56, matDefinition));
+			{
+				auto const metallicMap = matDefinition.GetChannelMapOpt(AdvViz::SDK::EChannelType::Metallic);
+				UTEST_TRUE("mat #56 metallic map", metallicMap
+					&& metallicMap->eSource == AdvViz::SDK::ETextureSource::Decoration
+					&& metallicMap->texture == "0xade57343837ffcc8_road_4ln2w_height.jpg");
+				UTEST_TRUE("metallic map usage", MatIOMngr.GetTextureUsage({ metallicMap->texture, metallicMap->eSource })
+					.HasChannel(AdvViz::SDK::EChannelType::Metallic));
+				auto const normalValue = matDefinition.GetChannelIntensityOpt(AdvViz::SDK::EChannelType::Normal);
+				UTEST_TRUE("mat #56 normal amplitude", normalValue && std::fabs(*normalValue - 0.725) < 1e-5);
+				auto const normalMap = matDefinition.GetChannelMapOpt(AdvViz::SDK::EChannelType::Normal);
+				UTEST_TRUE("mat #56 normal map", normalMap
+					&& normalMap->eSource == AdvViz::SDK::ETextureSource::Decoration
+					&& normalMap->texture == "0xd4919cc328654b18_Normal.png");
+				UTEST_TRUE("normal map usage", MatIOMngr.GetTextureUsage({ normalMap->texture, normalMap->eSource })
+					.HasChannel(AdvViz::SDK::EChannelType::Normal));
+				auto const color = matDefinition.GetChannelColorOpt(AdvViz::SDK::EChannelType::Color);
+				bool const bIsExpectedColor = color && (std::fabs((*color)[1] - 0.4313725) < 1e-5);
+				UTEST_TRUE("mat #56 color", bIsExpectedColor);
+			}
+
+			IsLoadFinished = true;
+			return true;
+		};
+
+		MatAsyncCallback->OnRequestStarted();
+		MatIOMngr.AsyncLoadDataFromServer(TEST_DECO_ID,
+			[this,
+			 ValidateLoadedMaterials = std::move(ValidateLoadedMaterials),
+			 MatAsyncCallback](AdvViz::expected<void, std::string> const&)
 		{
-			auto const colorMap = matDefinition.GetChannelMapOpt(AdvViz::SDK::EChannelType::Color);
-			UTEST_TRUE("mat #83 color map", colorMap
-				&& colorMap->eSource == AdvViz::SDK::ETextureSource::Library
-				&& colorMap->texture == "Roof_Tiles/color.png");
-			UTEST_TRUE("color map usage", MatIOMngr.GetTextureUsage({ colorMap->texture, colorMap->eSource })
-				.HasChannel(AdvViz::SDK::EChannelType::Color));
-			auto const color = matDefinition.GetChannelColorOpt(AdvViz::SDK::EChannelType::Color);
-			bool const bIsExpectedColor = color && *color == AdvViz::SDK::ITwinColor{ 1., 1., 1., 1. };
-			UTEST_TRUE("mat #83 color", bIsExpectedColor);
-		}
+			AsyncTask(ENamedThreads::GameThread,
+				[this,
+				 ValidateLoadedMaterials = std::move(ValidateLoadedMaterials),
+				 MatAsyncCallback]()
+			{
+				ValidateLoadedMaterials();
+				MatAsyncCallback->OnRequestDone();
+			});
+		});
 
-		UTEST_TRUE("mat #56", MatIOMngr.GetMaterialSettings(imodelId, 56, matDefinition));
-		{
-			auto const metallicMap = matDefinition.GetChannelMapOpt(AdvViz::SDK::EChannelType::Metallic);
-			UTEST_TRUE("mat #56 metallic map", metallicMap
-				&& metallicMap->eSource == AdvViz::SDK::ETextureSource::Decoration
-				&& metallicMap->texture == "0xade57343837ffcc8_road_4ln2w_height.jpg");
-			UTEST_TRUE("metallic map usage", MatIOMngr.GetTextureUsage({ metallicMap->texture, metallicMap->eSource })
-				.HasChannel(AdvViz::SDK::EChannelType::Metallic));
-			auto const normalValue = matDefinition.GetChannelIntensityOpt(AdvViz::SDK::EChannelType::Normal);
-			UTEST_TRUE("mat #56 normal amplitude", normalValue && std::fabs(*normalValue - 0.725) < 1e-5);
-			auto const normalMap = matDefinition.GetChannelMapOpt(AdvViz::SDK::EChannelType::Normal);
-			UTEST_TRUE("mat #56 normal map", normalMap
-				&& normalMap->eSource == AdvViz::SDK::ETextureSource::Decoration
-				&& normalMap->texture == "0xd4919cc328654b18_Normal.png");
-			UTEST_TRUE("normal map usage", MatIOMngr.GetTextureUsage({ normalMap->texture, normalMap->eSource })
-				.HasChannel(AdvViz::SDK::EChannelType::Normal));
-			auto const color = matDefinition.GetChannelColorOpt(AdvViz::SDK::EChannelType::Color);
-			bool const bIsExpectedColor = color && (std::fabs((*color)[1] - 0.4313725) < 1e-5);
-			UTEST_TRUE("mat #56 color", bIsExpectedColor);
-		}
+		FITwinAPITestHelperBase::WaitForAsyncTask(IsLoadFinished, 20 /*seconds*/);
 
+		// After loading, IO manager should be up-to-date
 		UTEST_FALSE(TEXT("DB up-to-date"), MatIOMngr.NeedUpdateDB());
 	}
 
@@ -394,7 +478,9 @@ bool FITwinMaterialPersistenceTest::RunTest(const FString& /*Parameters*/)
 		UTEST_TRUE(TEXT("DB Invalidation"), MatIOMngr.NeedUpdateDB());
 
 		// The texture will be uploaded now.
-		MatIOMngr.SaveDataOnServer(TEST_DECO_ID);
+		MatAsyncCallback->OnRequestStarted();
+		MatIOMngr.AsyncSaveDataOnServer(TEST_DECO_ID,
+			[MatAsyncCallback](bool) { MatAsyncCallback->OnRequestDone(); });
 		UTEST_FALSE(TEXT("DB up-to-date"), MatIOMngr.NeedUpdateDB());
 	}
 
@@ -410,11 +496,15 @@ bool FITwinMaterialPersistenceTest::RunTest(const FString& /*Parameters*/)
 
 		UTEST_TRUE(TEXT("DB Invalidation"), MatIOMngr.NeedUpdateDB());
 
-		MatIOMngr.SaveDataOnServer(TEST_DECO_ID);
+		MatAsyncCallback->OnRequestStarted();
+		MatIOMngr.AsyncSaveDataOnServer(TEST_DECO_ID,
+			[MatAsyncCallback](bool) { MatAsyncCallback->OnRequestDone(); });
 		UTEST_FALSE(TEXT("DB up-to-date"), MatIOMngr.NeedUpdateDB());
 	}
 
-	UTEST_TRUE("Post-Condition", Helper.PostCondition());
+	ADD_LATENT_AUTOMATION_COMMAND(FNUTWaitForAsyncMaterialSaving(MatAsyncCallback));
+
+	ADD_LATENT_AUTOMATION_COMMAND(FNUTWaitForMockServerResponseFlag(bServerValidationResponseFlag));
 
 	return true;
 }

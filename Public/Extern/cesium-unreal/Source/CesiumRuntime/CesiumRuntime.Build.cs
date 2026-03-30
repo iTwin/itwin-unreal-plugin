@@ -66,8 +66,10 @@ public class CesiumRuntime : ModuleRules
         string libPathRelease = libPathBase + "Release";
 
         bool useDebug = false;
+        string tidyPostfix = "";
         if (Target.Configuration == UnrealTargetConfiguration.Debug)
         {
+            tidyPostfix = "d";
             if (Directory.Exists(libPathDebug))
             {
                 useDebug = true;
@@ -113,9 +115,11 @@ public class CesiumRuntime : ModuleRules
             "meshoptimizer",
             "s2",
             "spdlog",
+            "spz",
             "sqlite3",
-            "tidy_static",
+            "tidy_static" + tidyPostfix,
             "tinyxml2",
+            "zlib",
             "turbojpeg",
             "zlibstatic-ng",
             "zstd",
@@ -150,7 +154,8 @@ public class CesiumRuntime : ModuleRules
                 "Json",
                 "JsonUtilities",
                 "Slate",
-                "SlateCore"
+                "SlateCore",
+                "ChaosCore"
             }
         );
 
@@ -203,8 +208,13 @@ public class CesiumRuntime : ModuleRules
             }
         );
 
+#if UE_5_7_OR_LATER
+        IncludeOrderVersion = EngineIncludeOrderVersion.Unreal5_7;
+        CppCompileWarningSettings.ShadowVariableWarningLevel = WarningLevel.Off;
+#else
+        IncludeOrderVersion = EngineIncludeOrderVersion.Unreal5_4;
         ShadowVariableWarningLevel = WarningLevel.Off;
-        IncludeOrderVersion = EngineIncludeOrderVersion.Latest;
+#endif
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
         CppStandard = CppStandardVersion.Cpp20;

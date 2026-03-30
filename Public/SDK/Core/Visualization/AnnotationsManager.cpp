@@ -9,82 +9,103 @@
 #include "AnnotationsManager.h"
 
 #include "Core/Network/HttpGetWithLink.h"
-#include "Config.h"
-#include "InstancesGroup.h"
-#include "SplinesManager.h"
+#include "SavableItemManager.h"
+#include "SavableItemManager.inl"
+
 #include "../Singleton/singleton.h"
 
 namespace AdvViz::SDK
 {
-	class AnnotationsManager::Impl
+	struct SThreadSafeData
+	{
+		std::vector<AnnotationPtr> annotations_;
+		std::vector<AnnotationPtr> removedAnnotations_;
+		RefID::DBToIDMap annotationIDMap_;
+	};
+
+
+	struct SJsonAnnotation
+	{
+		std::array<double, 3> position;
+		std::string text;
+		std::optional<int> fontSize;
+		std::optional<std::string> name;
+		std::optional<std::string> colorTheme;
+		std::optional<std::string> displayMode;
+		std::optional<std::string> id;
+	};
+
+	SJsonAnnotation ToJsonAnnotation(const Annotation& src)
+	{
+		SJsonAnnotation dst;
+		if (src.HasDBIdentifier())
+		{
+			dst.id = src.GetDBIdentifier();
+		}
+		dst.name = src.name;
+		dst.text = src.text;
+		dst.fontSize = src.fontSize;
+		dst.position = src.position;
+		dst.colorTheme = src.colorTheme;
+		dst.displayMode = src.displayMode;
+		return dst;
+	}
+
+	struct SJsonAnnotationVect
+	{
+		std::vector<SJsonAnnotation> annotations;
+	};
+
+	template <>
+	struct SavableItemJsonHelper<Annotation>
+	{
+		using JsonVec = SJsonAnnotationVect;
+
+		void AppendItem(JsonVec& jsonVec, Annotation const& annot)
+		{
+			jsonVec.annotations.emplace_back(ToJsonAnnotation(annot));
+		}
+	};
+
+	class AnnotationsManager::Impl : public SavableItemManager
 	{
 	public:
-		std::shared_ptr<Http> http_;
-		std::vector<std::shared_ptr<Annotation>> annotations_;
-		std::vector<std::shared_ptr<Annotation>> removedAnnotations_;
-		RefID::DBToIDMap annotationIDMap_;
-
-		std::shared_ptr<Http>& GetHttp() { return http_; }
-		void SetHttp(const std::shared_ptr<Http>& http) { http_ = http; }
+		Tools::RWLockableObject<SThreadSafeData> thdata_;
 
 		void Clear()
 		{
-			annotations_.clear();
-			removedAnnotations_.clear();
-			annotationIDMap_.clear();
+			auto thdata = thdata_.GetAutoLock();
+			thdata->annotations_.clear();
+			thdata->removedAnnotations_.clear();
+			thdata->annotationIDMap_.clear();
 		}
 
-		// Some structures used in I/O functions
-		struct SJsonIds { std::vector<std::string> ids; };
-
-#define ANNOTATION_STRUCT_MEMBERS \
-		std::array<double, 3> position;\
-		std::string text;\
-		std::optional<std::string> name;\
-		std::optional<std::string> colorTheme;\
-		std::optional<std::string> displayMode;\
-
-
-		struct SJsonAnnotation
+		AnnotationPtr AddAnnotation()
 		{
-			ANNOTATION_STRUCT_MEMBERS
-			std::optional<std::string> id;
-		};
-
-		std::shared_ptr<Annotation> AddAnnotation()
-		{
-			std::shared_ptr<Annotation> annotation(new Annotation);
-			annotations_.push_back(annotation);
-			return annotation;
+			Annotation* annotation(new Annotation);
+			AnnotationPtr annotationPtr = MakeSharedLockableDataPtr<Annotation>(annotation);
+			auto thdata = thdata_.GetAutoLock();
+			thdata->annotations_.push_back(annotationPtr);
+			return annotationPtr;
 		}
 
-		void FromJsonAnnotation(Annotation& dst, const SJsonAnnotation& src)
+		void FromJsonAnnotation(AnnotationPtr& dstPtr, const SJsonAnnotation& src)
 		{
+			auto dst = dstPtr->GetAutoLock();
 			if (src.id)
 			{
-				dst.id = RefID::FromDBIdentifier(*src.id, annotationIDMap_);
+				auto thdata = thdata_.GetAutoLock();
+				dst->SetId(RefID::FromDBIdentifier(*src.id, thdata->annotationIDMap_));
 			}
-			dst.name = src.name;
-			dst.position = src.position;
-			dst.text = src.text;
-			dst.colorTheme = src.colorTheme;
-			dst.displayMode = src.displayMode;
+			dst->name = src.name;
+			dst->position = src.position;
+			dst->text = src.text;
+			dst->fontSize = src.fontSize;
+			dst->colorTheme = src.colorTheme;
+			dst->displayMode = src.displayMode;
+			dst->SetShouldSave(false);
 		}
-		SJsonAnnotation ToJsonAnnotation(const Annotation& src)
-		{
-			SJsonAnnotation dst;
-			auto const& srcId = src.id;
-			if (srcId.HasDBIdentifier())
-			{
-				dst.id = srcId.GetDBIdentifier();
-			}
-			dst.name = src.name;
-			dst.text = src.text;
-			dst.position = src.position;
-			dst.colorTheme = src.colorTheme;
-			dst.displayMode = src.displayMode;
-			return dst;
-		}
+
 		void LoadAnnotations(const std::string& decorationId)
 		{
 			auto ret = HttpGetWithLink<SJsonAnnotation>(GetHttp(),
@@ -93,10 +114,9 @@ namespace AdvViz::SDK
 				[this](SJsonAnnotation const& row) -> expected<void, std::string>
 				{
 					if (!row.id)
-						return make_unexpected(std::string("Server returned no id for annotation."));
+						return make_unexpected("Server returned no id for annotation.");
 					auto annotation = AddAnnotation();
-					FromJsonAnnotation(*annotation, row);
-					annotation->SetShouldSave(false);
+					FromJsonAnnotation(annotation, row);
 					return {};
 				});
 
@@ -106,135 +126,99 @@ namespace AdvViz::SDK
 			}
 		}
 
-		void SaveAnnotations(const std::string& decorationId)
+		void AsyncLoadAnnotations(const std::string& decorationId, 
+			std::function<void(AdvViz::SDK::AnnotationPtr&)> OnAnnotationLoaded, 
+			std::function<void(expected<void, std::string> const&)> OnLoadFinished)
 		{
-			struct SJsonAnnotationVect
-			{
-				std::vector<SJsonAnnotation> annotations;
-			};
-			SJsonAnnotationVect jInPost, jInPut;
-
-			size_t index = 0;
-			std::vector<size_t> newIndices;
-			std::vector<size_t> updatedIndices;
-
-			// Sort annotations for requests (addition/update)
-			for (auto const& item : annotations_)
-			{
-				if (!item->id.HasDBIdentifier())
+			AsyncHttpGetWithLink<SJsonAnnotation>(GetHttp(),
+				"decorations/" + decorationId + "/annotations",
+				{} /* extra headers*/,
+				[this, OnAnnotationLoaded](SJsonAnnotation const& row) -> expected<void, std::string>
 				{
-					jInPost.annotations.emplace_back(ToJsonAnnotation(*item));
-					newIndices.push_back(index);
-				}
-				else if (item->ShouldSave())
-				{
-					jInPut.annotations.emplace_back(ToJsonAnnotation(*item));
-					updatedIndices.push_back(index);
-				}
-				++index;
-			}
-
-			// Post (new)
-			if (!jInPost.annotations.empty())
-			{
-				SJsonIds jOutPost;
-				long status = GetHttp()->PostJsonJBody(
-					jOutPost, "decorations/" + decorationId + "/annotations", jInPost);
-
-				if (status == 200 || status == 201)
-				{
-					if (newIndices.size() == jOutPost.ids.size())
-					{
-						for (size_t i = 0; i < newIndices.size(); ++i)
-						{
-							Annotation& item = *annotations_[newIndices[i]];
-
-							// Update the DB identifier only.
-							RefID Id = item.id;
-							Id.SetDBIdentifier(jOutPost.ids[i]);
-							item.id = Id;
-							item.SetShouldSave(false);
-						}
-					}
-				}
-				else
-				{
-					BE_LOGW("ITwinDecoration", "Saving new annotations failed. Http status: " << status);
-				}
-			}
-
-			// Put (updated)
-			if (!jInPut.annotations.empty())
-			{
-				struct SJsonSplineOutUpd { int64_t numUpdated = 0; };
-				SJsonSplineOutUpd jOutPut;
-				long status = GetHttp()->PutJsonJBody(
-					jOutPut, "decorations/" + decorationId + "/annotations", jInPut);
-
-				if (status == 200 || status == 201)
-				{
-					if (updatedIndices.size() == static_cast<size_t>(jOutPut.numUpdated))
-					{
-						for (size_t i = 0; i < updatedIndices.size(); ++i)
-						{
-							annotations_[updatedIndices[i]]->SetShouldSave(false);
-						}
-					}
-				}
-				else
-				{
-					BE_LOGW("ITwinDecoration", "Updating annotations failed. Http status: " << status);
-				}
-			}
+					if (!row.id)
+						return make_unexpected("Server returned no id for annotation.");
+					auto annotation = AddAnnotation();
+					FromJsonAnnotation(annotation, row);
+					if (OnAnnotationLoaded)
+						OnAnnotationLoaded(annotation);
+					return {};
+				},
+				OnLoadFinished
+			);
 		}
 
-		void DeleteAnnotations(const std::string& decorationId)
+		AnnotationPtr GetAnnotationById(const RefID& id) const
 		{
-			struct SJsonEmpty {};
-			SJsonIds jIn;
-			SJsonEmpty jOut;
-
-			jIn.ids.reserve(removedAnnotations_.size());
-			for (auto const& item : removedAnnotations_)
-			{
-				auto const& Id = item->id;
-				if (Id.HasDBIdentifier())
-					jIn.ids.push_back(Id.GetDBIdentifier());
-			}
-
-			if (jIn.ids.empty())
-			{
-				return;
-			}
-
-			long status = GetHttp()->DeleteJsonJBody(
-				jOut, "decorations/" + decorationId + "/annotations", jIn);
-
-			if (status == 200 || status == 201)
-			{
-				removedAnnotations_.clear();
-			}
-			else
-			{
-				BE_LOGW("ITwinDecoration", "Deleting annotations failed. Http status: " << status);
-			}
+			auto thdata = thdata_.GetAutoLock();
+			auto it = std::find_if(thdata->annotations_.begin(), thdata->annotations_.end(),
+				[&id](AnnotationPtr const& itemPtr) {
+				auto item = itemPtr->GetRAutoLock();
+				return item->GetId() == id;
+			});
+			if (it != thdata->annotations_.end())
+				return *it;
+			return {};
 		}
 
-		void RemoveAnnotation(const std::shared_ptr<Annotation>& annotation)
+		/////////////////////////////////////////////////////////////////////////////////
+		/// for use in TAsyncSaveItems
+		AnnotationPtr GetItemById(RefID const& id) const
+		{
+			return GetAnnotationById(id);
+		}
+
+		void OnItemDeletedOnDB(RefID const& deletedId) override
+		{
+			auto thdata = thdata_.GetAutoLock();
+			std::erase_if(thdata->removedAnnotations_, [&deletedId](const auto& annotPtr)
+			{
+				auto annot = annotPtr->GetRAutoLock();
+				return annot->GetId() == deletedId;
+			});
+		}
+		/////////////////////////////////////////////////////////////////////////////////
+
+		void AsyncSaveAnnotations(const std::string& decorationId, std::shared_ptr<AsyncRequestGroupCallback> callbackPtr)
+		{
+			auto thdata = thdata_.GetAutoLock();
+			TAsyncSaveItems<Impl, Annotation>(*this,
+				"decorations/" + decorationId + "/annotations",
+				thdata->annotations_,
+				callbackPtr);
+		}
+
+		void AsyncDeleteAnnotations(const std::string& decorationId, std::shared_ptr<AsyncRequestGroupCallback> callbackPtr)
+		{
+			auto thdata = thdata_.GetAutoLock();
+			TAsyncDeleteItems<Impl, Annotation>(*this,
+				"decorations/" + decorationId + "/annotations",
+				thdata->removedAnnotations_,
+				callbackPtr);
+		}
+
+		void AsyncSaveDataOnServer(const std::string& decorationId,
+			std::function<void(bool)>&& onDataSavedFunc = {});
+
+
+		void RemoveAnnotation(const AnnotationPtr& annotation)
 		{
 			if (annotation)
 			{
-				BE_ASSERT(std::find(removedAnnotations_.begin(), removedAnnotations_.end(), annotation) == removedAnnotations_.end());
-				removedAnnotations_.push_back(annotation);
-				std::erase(annotations_, annotation);
+				auto thdata = thdata_.GetAutoLock();
+				BE_ASSERT(std::find(thdata->removedAnnotations_.begin(), thdata->removedAnnotations_.end(), annotation) == thdata->removedAnnotations_.end());
+				thdata->removedAnnotations_.push_back(annotation);
+				std::erase(thdata->annotations_, annotation);
 			}
 		}
 
-		void RestoreAnnotation(const std::shared_ptr<Annotation>& annotation)
+		void RestoreAnnotation(const AnnotationPtr& annotation)
 		{
 			if (annotation)
 			{
-				auto it = std::find(annotations_.begin(), annotations_.end(), annotation);
+				auto thdata = thdata_.GetAutoLock();
+				auto it = std::find(thdata->annotations_.begin(), thdata->annotations_.end(), annotation);
+				auto& removedAnnotations_ = thdata->removedAnnotations_;
+				auto& annotations_ = thdata->annotations_;
 				BE_ASSERT(it == annotations_.end());
 				if (it == annotations_.end())
 				{
@@ -246,18 +230,19 @@ namespace AdvViz::SDK
 
 		bool HasAnnotationToSave() const
 		{
-			for (const auto& it : annotations_)
+			auto thdata = thdata_.GetRAutoLock();
+			for (const auto& itPtr : thdata->annotations_)
 			{
-				if (!it->id.HasDBIdentifier()
-					|| it->ShouldSave()
-					)
+				auto it = itPtr->GetRAutoLock();
+				if (it->ShouldSave())
 				{
 					return true;
 				}
 			}
-			for (const auto& it : removedAnnotations_)
+			for (const auto& itPtr : thdata->removedAnnotations_)
 			{
-				if (it->id.HasDBIdentifier())
+				auto it = itPtr->GetRAutoLock();
+				if (it->HasDBIdentifier())
 				{
 					return true;
 				}
@@ -265,41 +250,70 @@ namespace AdvViz::SDK
 			return false;
 		}
 
-
 	};
 
-	void AnnotationsManager::LoadDataFromServerDS(const std::string& decorationId)
+	void AnnotationsManager::Impl::AsyncSaveDataOnServer(const std::string& decorationId,
+		std::function<void(bool)>&& onDataSavedFunc /*= {}*/)
+	{
+		std::shared_ptr<AsyncRequestGroupCallback> callbackPtr =
+			std::make_shared<AsyncRequestGroupCallback>(
+				std::move(onDataSavedFunc), isThisValid_);
+
+		// Save the annotations
+		AsyncSaveAnnotations(decorationId, callbackPtr);
+
+		// Delete obsolete annotations
+		AsyncDeleteAnnotations(decorationId, callbackPtr);
+
+		callbackPtr->OnFirstLevelRequestsRegistered();
+	}
+
+
+	void AnnotationsManager::LoadDataFromServer(const std::string& decorationId)
 	{
 		GetImpl().Clear();
 		GetImpl().LoadAnnotations(decorationId);
 	}
 
-	void AnnotationsManager::SaveDataOnServerDS(const std::string& decorationId)
+	void AnnotationsManager::AsyncLoadDataFromServer(const std::string& decorationId,
+		std::function<void(AdvViz::SDK::AnnotationPtr&)> OnAnnotationLoaded,
+		std::function<void(expected<void, std::string> const&)> OnLoadFinished)
 	{
-		// Save the annotations
-		GetImpl().SaveAnnotations(decorationId);
+		GetImpl().Clear();
+		GetImpl().AsyncLoadAnnotations(decorationId, OnAnnotationLoaded, OnLoadFinished);
+	}
 
-		// Delete obsolete annotations
-		GetImpl().DeleteAnnotations(decorationId);
+	void AnnotationsManager::AsyncSaveDataOnServer(const std::string& decorationId,
+		std::function<void(bool)>&& onDataSavedFunc /*= {}*/)
+	{
+		GetImpl().AsyncSaveDataOnServer(decorationId, std::move(onDataSavedFunc));
 	}
 
 
-	std::vector<std::shared_ptr<AdvViz::SDK::Annotation> > AdvViz::SDK::AnnotationsManager::GetAnnotations()
+	std::vector<AnnotationPtr > AdvViz::SDK::AnnotationsManager::GetAnnotations()
 	{
-		return GetImpl().annotations_;
+		auto thdata = GetImpl().thdata_.GetRAutoLock();
+		return thdata->annotations_;
 	}
 
-	void AnnotationsManager::AddAnnotation(const std::shared_ptr<Annotation>& annotation)
+	void AnnotationsManager::AddAnnotation(const AnnotationPtr& annotation)
 	{
-		GetImpl().annotations_.push_back(annotation);
+		if (annotation)
+		{
+			auto annot = annotation->GetAutoLock();
+			if (!annot->HasDBIdentifier())
+				annot->SetShouldSave(true);
+		}
+		auto thdata = GetImpl().thdata_.GetAutoLock();
+		thdata->annotations_.push_back(annotation);
 	}
 
-	void AnnotationsManager::RemoveAnnotation(const std::shared_ptr<Annotation>& annotation)
+	void AnnotationsManager::RemoveAnnotation(const AnnotationPtr& annotation)
 	{
 		GetImpl().RemoveAnnotation(annotation);
 	}
 
-	void AnnotationsManager::RestoreAnnotation(const std::shared_ptr<Annotation>& annotation)
+	void AnnotationsManager::RestoreAnnotation(const AnnotationPtr& annotation)
 	{
 		GetImpl().RestoreAnnotation(annotation);
 	}
@@ -314,9 +328,10 @@ namespace AdvViz::SDK
 		GetImpl().SetHttp(http);
 	}
 
-	AnnotationsManager::AnnotationsManager():impl_(new Impl())
+	AnnotationsManager::AnnotationsManager()
+		: impl_(new Impl())
 	{
-		GetImpl().SetHttp(GetDefaultHttp());
+
 	}
 
 	AnnotationsManager::~AnnotationsManager()

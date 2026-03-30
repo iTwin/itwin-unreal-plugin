@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "CesiumCompat.h"
 #include "PrimitiveSceneProxy.h"
 #include "StaticMeshResources.h"
 
@@ -18,7 +19,7 @@ public:
 
   FCesiumGltfLinesSceneProxy(
       UCesiumGltfLinesComponent* InComponent,
-      ERHIFeatureLevel::Type InFeatureLevel);
+      FSceneInterfaceWrapper InSceneInterfaceParams);
 
   virtual ~FCesiumGltfLinesSceneProxy();
 

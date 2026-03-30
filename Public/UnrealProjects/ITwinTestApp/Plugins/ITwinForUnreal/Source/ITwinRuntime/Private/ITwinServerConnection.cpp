@@ -25,7 +25,7 @@
 DEFINE_LOG_CATEGORY(LogITwinHttp);
 
 
-std::shared_ptr<std::string> AITwinServerConnection::GetAccessTokenPtr() const
+std::shared_ptr<AdvViz::SDK::ThreadSafeAccessToken> AITwinServerConnection::GetAccessTokenPtr() const
 {
 	if (Environment == EITwinEnvironment::Invalid)
 	{
@@ -45,10 +45,12 @@ FString AITwinServerConnection::GetAccessToken() const
 {
 	auto token = GetAccessTokenPtr();
 	if (token)
-		return token->c_str();
-	else
-		return{};
-
+	{
+		auto tokenPtr = token->Get();
+		if (tokenPtr)
+			return tokenPtr->c_str();
+	}
+	return {};
 }
 
 /// Checks the request status, response code, and logs any failure (does not assert)
@@ -84,9 +86,10 @@ bool AITwinServerConnection::CheckRequest(FHttpRequestPtr const& CompletedReques
 		}
 	});
 
-	if (!connectedSuccessfully) // Response is nullptr
+	if (!connectedSuccessfully || !Response.IsValid())
 	{
-		requestError = EHttpRequestStatus::ToString(CompletedRequest->GetStatus());
+		requestError = TEXT("Connection to the server failed (unreachable?)");
+		//+ EHttpRequestStatus::ToString(CompletedRequest->GetStatus()); <= obviously "Failed", so pointless
 		return false;
 	}
 	else if (!EHttpResponseCodes::IsOk(Response->GetResponseCode()))
@@ -138,6 +141,33 @@ int AITwinServerConnection::GetAuthRedirectUriPort()
 void AITwinServerConnection::SetAuthRedirectUriPort(int Port)
 {
 	AdvViz::SDK::ITwinAuthManager::SetRedirectUriPort(Port);
+}
+
+/*static*/
+void AITwinServerConnection::Logout()
+{
+	const AdvViz::SDK::EITwinEnvironment Env =
+		static_cast<AdvViz::SDK::EITwinEnvironment>(UITwinWebServices::GetDefaultEnvironment());
+	if (Env == AdvViz::SDK::EITwinEnvironment::Invalid)
+	{
+		ensureMsgf(false, TEXT("wrong default env"));
+		BE_LOGE("ITwinAPI", "Logout failure: invalid environment");
+		return;
+	}
+	auto const& AuthMngr = FITwinAuthorizationManager::GetInstance(Env);
+	if (!ensure(AuthMngr))
+	{
+		BE_LOGE("ITwinAPI", "Logout failure: no authorization manager");
+		return;
+	}
+	if (AuthMngr->Logout())
+	{
+		BE_LOGI("ITwinAPI", "Successfully logged out");
+	}
+	else
+	{
+		BE_LOGE("ITwinAPI", "Logout failure");
+	}
 }
 
 FString AITwinServerConnection::UrlPrefix() const

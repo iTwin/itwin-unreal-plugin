@@ -10,7 +10,6 @@
 				"dependencies-only"
 			]
 		}
-		,"cpr"
 		,{
 			"name": "ffmpeg",
 			"features": [
@@ -36,20 +35,20 @@
 	],
 	"overrides": [
 		{
-			"name": "cpp-httplib",
-			"version": "0.23.0"
-		},
-		{
-			"name": "libassert",
-			"version": "2.1.5"
-		},
-		{
-			"name": "reflectcpp",
-			"version": "0.17.0"
+			"name": "abseil",
+			"version": "20250814.1"
 		}
 		,{
-			"name": "spdlog",
-			"version": "1.15.3"
+			"name": "c-ares",
+			"version": "1.34.6"
+		}
+		,{
+			"name": "cpp-httplib",
+			"version": "0.37.1"
+		}
+		,{
+			"name": "ffmpeg",
+			"version": "8.0.1"
 		}
 	]
 }

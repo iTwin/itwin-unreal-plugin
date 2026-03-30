@@ -36,7 +36,7 @@ public:
 	std::mutex s_Mutex;
 	UWorld* EditorWorld = nullptr;
 	std::recursive_mutex ScheduleMutex;
-	std::vector<FITwinSchedule> Schedules;
+	std::optional<FITwinSchedule> Schedule;
 	std::optional<FITwinScheduleTimelineBuilder> TimelineBuilder;
 	/// Only pointed to, not copied, by TimelineBuilder, so persist it here:
 	std::optional<FITwinCoordConversions> CoordConv;
@@ -89,7 +89,7 @@ public:
 			std::swap(ITwin_TestOverrides::BindingsRequestPagination, *optBindingsRequestPagination);
 			std::swap(ITwin_TestOverrides::MaxElementIDsFilterSize, *optMaxElementIDsFilterSize);
 			// Note: neither make_unique (nor emplace) can obviously call the private ctor:
-			Schedules.emplace_back(FITwinSchedule{
+			Schedule.emplace(FITwinSchedule{
 				// Note: schedule Id passed below is equal to project Id, as is often the case to this day
 				TEXT("3497df55-60e9-44fd-91ec-3c86473884f5"),
 				// Could be anything, cache.txt overwrite is skipped when unit testing
@@ -99,15 +99,15 @@ public:
 				(*optUseAPIM) ? TEXT("https://qa-api.bentley.com/schedules")
 							  : TEXT("https://qa-es-api.bentley.com/4dschedule/v1/schedules"),
 				TimelineBuilder->Timeline(), TStrongObjectPtr<UObject>(EditorWorld), ScheduleMutex, 
-				Schedules));
+				Schedule));
 			std::swap(ITwin_TestOverrides::RequestPagination, *optRequestPagination);
 			std::swap(ITwin_TestOverrides::BindingsRequestPagination, *optBindingsRequestPagination);
 			std::swap(ITwin_TestOverrides::MaxElementIDsFilterSize, *optMaxElementIDsFilterSize);
 			SchedulesApi->SetSchedulesImportConnectors(
 				std::bind(&FITwinScheduleTimelineBuilder::AddAnimationBindingToTimeline, &(*TimelineBuilder),
 						  std::placeholders::_1, std::placeholders::_2, std::placeholders::_3),
-				std::bind(&FITwinScheduleTimelineBuilder::UpdateAnimationGroupInTimeline, &(*TimelineBuilder),
-						  std::placeholders::_1, std::placeholders::_2, std::placeholders::_3),
+				std::bind(&FITwinScheduleTimelineBuilder::OnReceivedScheduleStats, &(*TimelineBuilder),
+						  std::placeholders::_1, std::placeholders::_2),
 				[](FGuid const&, ITwinElementID& OutElem) { OutElem = ITwin::NOT_ELEMENT; return false; });
 			SchedulesApi->ResetConnectionForTesting(TEXT("3497df55-60e9-44fd-91ec-3c86473884f5"),
 				TEXT("82aeb38a-81cd-4fc6-9244-5d6244cfd21b"), TEXT("657d00da87c8cfe932a403a378ae2099d2ad1c7a"),
@@ -137,7 +137,7 @@ void Synchro4DImportSpec::WaitFullSchedule(const FDoneDelegate& Done,
 			{
 				if (!TestTrue("Something went wrong querying the full schedule",
 					Helper->SchedulesApi && Helper->SchedulesApi->HasFinishedPrefetching()
-					&& !Helper->SchedulesApi->HasFetchingErrors() && !Helper->Schedules.empty()))
+					&& !Helper->SchedulesApi->HasFetchingErrors() && Helper->Schedule))
 				{
 					throw std::runtime_error("Critical error");
 				}

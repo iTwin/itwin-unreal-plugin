@@ -18,17 +18,17 @@ namespace AdvViz::SDK
 	class SplinePoint::Impl
 	{
 	public:
-		std::string id_; // id defined by the server
+		RefID id_; // identifies the point (and may hold id defined by the server)
 		double3 position_;
 		double3 upVector_;
 		double3 inTangent_;
 		double3 outTangent_;
 		ESplineTangentMode inTangentMode_ = ESplineTangentMode::Linear;
 		ESplineTangentMode outTangentMode_ = ESplineTangentMode::Linear;
-		bool shouldSave_ = false;
+		ESaveStatus saveStatus_ = ESaveStatus::NeverSaved;
 
-		const std::string& GetId() const { return id_; };
-		void SetId(const std::string& id) { id_ = id; };
+		const RefID& GetId() const { return id_; };
+		void SetId(const RefID& id) { id_ = id; };
 
 		const double3& GetPosition() const { return position_; }
 		void SetPosition(const double3& position) { position_ = position; }
@@ -42,12 +42,12 @@ namespace AdvViz::SDK
 		const double3& GetOutTangent() const { return outTangent_; }
 		void SetOutTangent(const double3& tangent) { outTangent_ = tangent; }
 
-		bool ShouldSave() const { return shouldSave_; }
-		void SetShouldSave(bool value) { shouldSave_ = value; }
+		ESaveStatus GetSaveStatus() const { return saveStatus_; }
+		void SetSaveStatus(ESaveStatus status) { saveStatus_ = status; }
 	};
 
-	const std::string& SplinePoint::GetId() const { return impl_->GetId(); }
-	void SplinePoint::SetId(const std::string& id) { impl_->SetId(id); };
+	const RefID& SplinePoint::GetId() const { return impl_->GetId(); }
+	void SplinePoint::SetId(const RefID& id) { impl_->SetId(id); };
 
 	const double3& SplinePoint::GetPosition() const { return impl_->GetPosition(); }
 	void SplinePoint::SetPosition(const double3& position) { impl_->SetPosition(position); }
@@ -79,8 +79,8 @@ namespace AdvViz::SDK
 	const double3& SplinePoint::GetOutTangent() const { return impl_->GetOutTangent(); }
 	void SplinePoint::SetOutTangent(const double3& tangent) { impl_->SetOutTangent(tangent); }
 
-	bool SplinePoint::ShouldSave() const { return impl_->ShouldSave(); }
-	void SplinePoint::SetShouldSave(bool value) { impl_->SetShouldSave(value); }
+	ESaveStatus SplinePoint::GetSaveStatus() const { return impl_->GetSaveStatus(); }
+	void SplinePoint::SetSaveStatus(ESaveStatus status) { impl_->SetSaveStatus(status); }
 
 	SplinePoint::SplinePoint():impl_(new Impl())
 	{}
@@ -93,11 +93,12 @@ namespace AdvViz::SDK
 		return *impl_;
 	}
 
-	std::shared_ptr<ISplinePoint> SplinePoint::Clone() const
+	ISplinePointPtr SplinePoint::Clone() const
 	{
-		std::shared_ptr<SplinePoint> clone = std::make_shared<SplinePoint>();
-		clone->GetImpl() = *impl_;
-		return std::static_pointer_cast<ISplinePoint>(clone);
+		ISplinePoint* p = ISplinePoint::New();
+		static_cast<SplinePoint*>(p)->GetImpl() = *impl_;
+		ISplinePointPtr clone = MakeSharedLockableDataPtr(p);
+		return clone;
 	}
 
 	template<>
@@ -131,10 +132,10 @@ namespace AdvViz::SDK
 		bool invertEffect_ = false; // introduced for MapCutout
 
 		dmat3x4 transform_;
-		SharedSplinePointVect points_;
-		SharedSplinePointVect removedPoints_; // used by the spline manager for the saving.
+		ISplinePointPtrVect points_;
+		ISplinePointPtrVect removedPoints_; // used by the spline manager for the saving.
 
-		bool shouldSave_ = false;
+		ESaveStatus saveStatus_ = ESaveStatus::NeverSaved;
 
 	public:
 		void CopyWithoutSharing(Impl const& other);
@@ -148,12 +149,24 @@ namespace AdvViz::SDK
 		const dmat3x4& GetTransform() const { return transform_; }
 		void SetTransform(const dmat3x4& mat) { transform_ = mat; }
 
-		SharedSplinePoint GetPoint(const size_t index) const
+		ISplinePointPtr GetPoint(const size_t index) const
 		{
-			return index < points_.size() ? points_[index] : SharedSplinePoint();
+			return index < points_.size() ? points_[index] : ISplinePointPtr();
 		}
 
-		void SetPoint(const size_t index, SharedSplinePoint point)
+		ISplinePointPtr GetPointById(const RefID& id) const
+		{
+			auto it = std::find_if(points_.begin(), points_.end(),
+				[&id](ISplinePointPtr const& pointPtr) {
+				auto point = pointPtr->GetRAutoLock();
+				return point->GetId() == id;
+			});
+			if (it != points_.end())
+				return *it;
+			return {};
+		}
+
+		void SetPoint(const size_t index, ISplinePointPtr point)
 		{
 			if (index < points_.size())
 			{
@@ -161,19 +174,20 @@ namespace AdvViz::SDK
 			}
 		}
 
-		SharedSplinePoint InsertPoint(const size_t index)
+		ISplinePointPtr InsertPoint(const size_t index)
 		{
-			SharedSplinePoint splinePoint;
+			ISplinePointPtr splinePoint;
 			if (index <= points_.size())
 			{
-				splinePoint.reset(ISplinePoint::New());
+				ISplinePoint* point = ISplinePoint::New();
+				point->SetShouldSave(true);
+				splinePoint = MakeSharedLockableDataPtr(point);
 				points_.insert(points_.cbegin() + index, splinePoint);
-				splinePoint->SetShouldSave(true);
 			}
 			return splinePoint;
 		}
 
-		SharedSplinePoint AddPoint()
+		ISplinePointPtr AddPoint()
 		{
 			return InsertPoint(points_.size());
 		}
@@ -182,7 +196,7 @@ namespace AdvViz::SDK
 		{
 			if (index < points_.size())
 			{
-				SharedSplinePointVect::const_iterator itPoint = points_.cbegin() + index;
+				ISplinePointPtrVect::const_iterator itPoint = points_.cbegin() + index;
 				removedPoints_.push_back(*itPoint);
 				points_.erase(itPoint);
 			}
@@ -216,22 +230,34 @@ namespace AdvViz::SDK
 
 		bool ShouldSave() const
 		{ 
-			if (shouldSave_ || !removedPoints_.empty())
+			if (saveStatus_ == ESaveStatus::ShouldSave || !removedPoints_.empty())
 				return true;
 
-			for (auto const& point : points_)
+			for (auto const& pointPtr : points_)
 			{
+				auto point = pointPtr->GetRAutoLock();
 				if (point->ShouldSave())
 					return true;
 			}
-
 			return false;
 		}
-		void SetShouldSave(bool value) { shouldSave_ = value; }
 
-		const SharedSplinePointVect& GetPoints() const { return points_; }
-		const SharedSplinePointVect& GetRemovedPoints() const { return removedPoints_; }
+		ESaveStatus GetSaveStatus() const { return saveStatus_; }
+		void SetSaveStatus(ESaveStatus status) { saveStatus_ = status; }
+		inline void SetShouldSave(bool value) { SetSaveStatus(value ? ESaveStatus::ShouldSave : ESaveStatus::Done); }
+
+		const ISplinePointPtrVect& GetPoints() const { return points_; }
+		const ISplinePointPtrVect& GetRemovedPoints() const { return removedPoints_; }
 		void ClearPoints() { points_.clear(); }
+
+		void UnregisterRemovedPointById(const RefID& pointId)
+		{
+			std::erase_if(removedPoints_, [&pointId](ISplinePointPtr const& pointPtr)
+			{
+				auto point = pointPtr->GetRAutoLock();
+				return point->GetId() == pointId;
+			});
+		}
 		void ClearRemovedPoints() { removedPoints_.clear(); }
 
 		ESplineUsage GetUsage() const { return usage_; }
@@ -246,7 +272,7 @@ namespace AdvViz::SDK
 				{
 					SetClosedLoop(true);
 				}
-				shouldSave_ = true;
+				SetShouldSave(true);
 			}
 		}
 
@@ -261,7 +287,7 @@ namespace AdvViz::SDK
 			if (bInClosedLoop != closedLoop_)
 			{
 				closedLoop_ = bInClosedLoop;
-				shouldSave_ = true;
+				SetShouldSave(true);
 			}
 		}
 
@@ -271,7 +297,7 @@ namespace AdvViz::SDK
 			if (models != linkedModels_)
 			{
 				linkedModels_ = models;
-				shouldSave_ = true;
+				SetShouldSave(true);
 			}
 		}
 
@@ -281,7 +307,7 @@ namespace AdvViz::SDK
 			if (bEnable != enableEffect_)
 			{
 				enableEffect_ = bEnable;
-				shouldSave_ = true;
+				SetShouldSave(true);
 			}
 		}
 
@@ -291,19 +317,20 @@ namespace AdvViz::SDK
 			if (bInvert != invertEffect_)
 			{
 				invertEffect_ = bInvert;
-				shouldSave_ = true;
+				SetShouldSave(true);
 			}
 		}
 	};
 
 	namespace
 	{
-		void ClonePoints(SharedSplinePointVect& dst, SharedSplinePointVect const& src)
+		void ClonePoints(ISplinePointPtrVect& dst, ISplinePointPtrVect const& src)
 		{
 			dst.clear();
 			dst.reserve(src.size());
-			for (auto const& srcPoint : src)
+			for (auto const& srcPointPtr : src)
 			{
+				auto const& srcPoint = srcPointPtr->GetRAutoLock();
 				dst.emplace_back(srcPoint->Clone());
 			}
 		}
@@ -323,7 +350,7 @@ namespace AdvViz::SDK
 		transform_ = other.transform_;
 		ClonePoints(points_, other.points_);
 		ClonePoints(removedPoints_, other.removedPoints_);
-		shouldSave_ = other.shouldSave_;
+		saveStatus_ = other.saveStatus_;
 	}
 
 	const RefID& Spline::GetId() const { return impl_->GetId(); }
@@ -350,28 +377,31 @@ namespace AdvViz::SDK
 	const dmat3x4& Spline::GetTransform() const { return impl_->GetTransform(); }
 	void Spline::SetTransform(const dmat3x4& mat) { impl_->SetTransform(mat); }
 
-	SharedSplinePoint Spline::GetPoint(const size_t index) const { return impl_->GetPoint(index); }
-	void Spline::SetPoint(const size_t index, SharedSplinePoint point) { impl_->SetPoint(index,  point); }
-	SharedSplinePoint Spline::InsertPoint(const size_t index) { return impl_->InsertPoint(index); }
-	SharedSplinePoint Spline::AddPoint() { return impl_->AddPoint(); }
+	ISplinePointPtr Spline::GetPoint(const size_t index) const { return impl_->GetPoint(index); }
+	ISplinePointPtr Spline::GetPointById(const RefID& id) const { return impl_->GetPointById(id); }
+	void Spline::SetPoint(const size_t index, ISplinePointPtr point) { impl_->SetPoint(index,  point); }
+	ISplinePointPtr Spline::InsertPoint(const size_t index) { return impl_->InsertPoint(index); }
+	ISplinePointPtr Spline::AddPoint() { return impl_->AddPoint(); }
 	void Spline::RemovePoint(const size_t index) { impl_->RemovePoint(index); }
 
 	size_t Spline::GetNumberOfPoints() const { return impl_->GetNumberOfPoints(); }
 	void Spline::SetNumberOfPoints(size_t nbPoints) { impl_->SetNumberOfPoints(nbPoints); }
 
+	ESaveStatus Spline::GetSaveStatus() const { return impl_->GetSaveStatus(); }
+	void Spline::SetSaveStatus(ESaveStatus status) { impl_->SetSaveStatus(status); }
 	bool Spline::ShouldSave() const { return impl_->ShouldSave(); }
-	void Spline::SetShouldSave(bool value) { impl_->SetShouldSave(value); }
 
-	const SharedSplinePointVect& Spline::GetPoints() const { return impl_->GetPoints(); }
-	const SharedSplinePointVect& Spline::GetRemovedPoints() const { return impl_->GetRemovedPoints(); }
+	const ISplinePointPtrVect& Spline::GetPoints() const { return impl_->GetPoints(); }
+	const ISplinePointPtrVect& Spline::GetRemovedPoints() const { return impl_->GetRemovedPoints(); }
 	void Spline::ClearPoints() { impl_->ClearPoints(); }
-	void Spline::ClearRemovedPoints() { impl_->ClearRemovedPoints(); }
+	void Spline::UnregisterRemovedPointById(const RefID& pointId) { impl_->UnregisterRemovedPointById(pointId); }
 
-	std::shared_ptr<ISpline> Spline::Clone() const
+	ISplinePtr Spline::Clone() const
 	{
-		std::shared_ptr<Spline> clone = std::make_shared<Spline>();
-		clone->GetImpl().CopyWithoutSharing(*impl_);
-		return std::static_pointer_cast<ISpline>(clone);
+		ISpline* p = ISpline::New();
+		static_cast<Spline*>(p)->GetImpl().CopyWithoutSharing(*impl_);
+		ISplinePtr clone = MakeSharedLockableDataPtr(p);
+		return clone;
 	}
 
 	Spline::Spline():impl_(new Impl())

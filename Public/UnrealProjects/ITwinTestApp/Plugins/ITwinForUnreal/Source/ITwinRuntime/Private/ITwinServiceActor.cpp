@@ -139,14 +139,13 @@ void AITwinServiceActor::OnAuthorizationDone(bool bSuccess, std::string const& A
 	}
 }
 
-
 FString AITwinServiceActor::GetAccessToken() const
 {
 	if (ServerConnection)
 	{
-		auto token = ServerConnection->GetAccessTokenPtr();
-		if (token)
-			return token->c_str();
+		auto token = ServerConnection->GetAccessToken();
+		if (!token.IsEmpty())
+			return token;
 	}
 	BE_LOGE("ITwinAPI", "[" << TCHAR_TO_UTF8(GetObserverName()) << "] No access token");
 	return {};

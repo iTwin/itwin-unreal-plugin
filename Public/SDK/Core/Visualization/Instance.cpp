@@ -15,9 +15,7 @@ namespace AdvViz::SDK
 	class Instance::Impl
 	{
 	public:
-		// ids defined by the server
-		std::string id_;
-		std::shared_ptr<IInstancesGroup> group_;
+		IInstancesGroupPtr group_;
 
 		// other data
 		std::string name_;
@@ -27,18 +25,15 @@ namespace AdvViz::SDK
 		std::string animationid_;
 		std::optional<RefID> animPathId_;
 
-		RefID refId_; // identifies instances created at runtime when they are not yet saved on the server
-		bool shouldSave_ = false;
+		RefID refId_; // identifies the instance (and may hold id defined by the server)
+		ESaveStatus saveStatus_ = ESaveStatus::NeverSaved;
 	};
 
-	const std::string& Instance::GetId() const { return impl_->id_; }
-	void Instance::SetId(const std::string& id) { impl_->id_ = id; }
+	const RefID& Instance::GetId() const { return impl_->refId_; }
+	void Instance::SetId(const RefID& id) { impl_->refId_ = id; }
 
-	const RefID& Instance::GetRefId() const { return impl_->refId_; }
-	void Instance::SetRefId(const RefID& id) { impl_->refId_ = id; }
-
-	const std::shared_ptr<IInstancesGroup>& Instance::GetGroup() const { return impl_->group_; }
-	void Instance::SetGroup(const std::shared_ptr<IInstancesGroup>& group) { impl_->group_ = group; }
+	const IInstancesGroupPtr& Instance::GetGroup() const { return impl_->group_; }
+	void Instance::SetGroup(const IInstancesGroupPtr& group) { impl_->group_ = group; }
 
 	const std::string& Instance::GetAnimId() const { return impl_->animationid_; }
 	void Instance::SetAnimId(const std::string &id) { impl_->animationid_ = id; }
@@ -59,12 +54,17 @@ namespace AdvViz::SDK
 	const dmat3x4& Instance::GetTransform() const { return impl_->transform_; }
 	void Instance::SetTransform(const dmat3x4& mat) { impl_->transform_ = mat; }
 
-	bool Instance::ShouldSave() const { return impl_->shouldSave_; }
-	void Instance::SetShouldSave(bool value) { impl_->shouldSave_ = value; }
+	ESaveStatus Instance::GetSaveStatus() const { return impl_->saveStatus_; }
+	void Instance::SetSaveStatus(ESaveStatus status) { impl_->saveStatus_ = status; }
 
 	expected<void, std::string> Instance::Update()
 	{
 		return expected<void, std::string>();
+	}
+
+	void Instance::OnIndexChanged(const int32_t /*newIndex*/)
+	{
+
 	}
 
 	Instance::Instance():impl_(new Impl())

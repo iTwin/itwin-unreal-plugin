@@ -145,6 +145,12 @@ struct FITwinElementFeaturesInTile
 	/// We'll need for each tile a mapping from an ElementID to all FeatureIDs which it is made of,
 	/// to repeat the "animation" data at all corresponding slots in the HighlightsAndOpacities and
 	/// CuttingPlane textures.
+	/// We can use a small_vector here, because in general there will be only one feature matching an
+	/// ElementID in a tile. Indeed, the Feature is the most fine-grained iTwin property, and in general (and
+	/// probably always) it *implies* the other properties (material/catagory/sub-category/model).
+	/// (Remember that 'Features' are built by aggregating ElementID/CategoryID/Sub-CategoryID/MaterialID
+	/// in the Mesh Export Service, so a feature can be seen as a tuple of those properties, and as the
+	/// Element implies the other ones, different features probably never match the same Element).
 	FSmallVec<ITwinFeatureID, 2> Features;
 	/// All material instances for this tile which are applied on Features of this ElementID.
 	FSmallVec<TWeakObjectPtr<UMaterialInstanceDynamic>, 2> Materials;
@@ -169,7 +175,7 @@ struct FITwinElementFeaturesInTile
 	[[nodiscard]] TWeakObjectPtr<UMaterialInstanceDynamic> GetFirstValidMaterial() const;
 	/// Clear data related to this Element used after loading a given tile: we want to keep the ordering in
 	/// the FITwinSceneTile even if the tile is unloaded/reloaded, which might not yield the same order of
-	/// ElementID encountered in OnTileMeshPrimitiveConstructed (eg. following retuning)
+	/// ElementID encountered in OnTileMeshPrimitiveLoaded (eg. following retuning)
 	void Unload();
 };
 
@@ -180,7 +186,11 @@ struct FITwinMaterialFeaturesInTile
 	/// same comment about constancy as for FITwinElementFeaturesInTile
 	ITwinMaterialID MaterialID;
 	FITwinPropertyTextureFlag SelectingAndHidingTexFlag = {};
-	FSmallVec<ITwinFeatureID, 2> Features;
+
+	// There is absolutely no reason for this container to be small! In a given tile, many features can use
+	// the same material.... The same remark is valid for #FITwinModelFeaturesInTile,
+	// #FITwinCategoryFeaturesInTile, #FITwinCategoryPerModelFeaturesInTile
+	std::unordered_set<ITwinFeatureID> Features;
 
 	void InvalidateSelectingAndHidingTexFlags(FITwinSceneTile& SceneTile);
 };
@@ -190,7 +200,7 @@ struct FITwinModelFeaturesInTile
 	/// same comment about constancy as for FITwinElementFeaturesInTile
 	ITwinElementID ModelID;
 	FITwinPropertyTextureFlag SelectingAndHidingTexFlag = {};
-	FSmallVec<ITwinFeatureID, 2> Features;
+	std::unordered_set<ITwinFeatureID> Features;
 
 	void InvalidateSelectingAndHidingTexFlags(FITwinSceneTile& SceneTile);
 };
@@ -200,7 +210,7 @@ struct FITwinCategoryFeaturesInTile
 	/// same comment about constancy as for FITwinElementFeaturesInTile
 	ITwinElementID CategoryID;
 	FITwinPropertyTextureFlag SelectingAndHidingTexFlag = {};
-	FSmallVec<ITwinFeatureID, 2> Features;
+	std::unordered_set<ITwinFeatureID> Features;
 
 	void InvalidateSelectingAndHidingTexFlags(FITwinSceneTile& SceneTile);
 };
@@ -211,7 +221,7 @@ struct FITwinCategoryPerModelFeaturesInTile
 	ITwinElementID CategoryID;
 	ITwinElementID ModelID;
 	FITwinPropertyTextureFlag SelectingAndHidingTexFlag = {};
-	FSmallVec<ITwinFeatureID, 2> Features;
+	std::unordered_set<ITwinFeatureID> Features;
 
 	void InvalidateSelectingAndHidingTexFlags(FITwinSceneTile& SceneTile);
 };
@@ -539,6 +549,9 @@ public:
 	void Unload();
 	FString GetIDString() const;
 	FString ToString() const;
+
+	// Returns a bounding box enclosing the glTF meshes already instantiated in this tile.
+	FBox GetBoundingBoxOfGlTFMeshes() const;
 	void DrawTileBox(UWorld const* World) const; ///< no-op if !ENABLE_DRAW_DEBUG
 	//[[nodiscard]] bool HasAnyVisibleMesh() const; <== no longer used, blame here to retrieve
 	void AddMaterial(UMaterialInstanceDynamic* MaterialInUse);
@@ -712,7 +725,8 @@ struct FElemAnimRequirements
 class FITwinElement
 {
 public:
-	bool bHasMesh = false; ///< true when encountered in UITwinSceneMappingBuilder
+	/// true when encountered in UITwinSceneMappingBuilder, but check also BBox.IsValid in case of mismatch
+	bool bHasMesh = false;
 	/// The only member strictly required for a valid structure, although usually you'll soon have either the
 	/// Parent or the BBox known as well.
 	const ITwinElementID ElementID = ITwin::NOT_ELEMENT;
@@ -720,8 +734,8 @@ public:
 	ITwinScene::ElemIdx ParentInVec = ITwinScene::NOT_ELEM;
 	/// Index in FITwinSceneMapping::DuplicateElements
 	ITwinScene::DuplIdx DuplicatesList = ITwinScene::NOT_DUPL;
-	/// Timeline indexing key of (one of) the timeline(s) applying to this Element.
 	using FAnimKeysVec = FSmallVec<FIModelElementsKey, 2>;
+	/// Timeline indexing keys of the timelines applying to this Element.
 	FAnimKeysVec AnimationKeys;
 	/// UE-World AABB for the Elements AS IF the iModel were "untransformed", ie default-placed (no custom
 	/// offset nor rotation). We need the boxes for cutting plane animation, 3D path anchor, etc. which need
@@ -822,7 +836,7 @@ private:
 	// Currently hidden Elements, for whatever reason (as a mask of see EHiddenByFlag)
 	//std::unordered_map<ITwinElementID, uint8_t/*Reasons(s)*/> HiddenElements;
 	//std::unordered_set<ITwinElementID> HiddenConstructionData; == empty or GeometryIDToElementIDs[1]!!
-	bool bHiddenConstructionData = false;
+	bool bHiddenConstructionData = true;
 	std::unordered_set<ITwinElementID> HiddenElementsFromSavedView;
 	std::unordered_set<ITwinElementID> HiddenModelsFromSavedView;
 	std::unordered_set<ITwinElementID> HiddenCategoriesFromSavedView;
@@ -840,6 +854,9 @@ private:
 		bool bNeedUpdateSelectingAndHidingTextures = false;
 	};
 	std::optional<FTextureUpdateDisabler> TextureUpdateDisabler;
+	/// Had to defer that a little bit because when the metadata are in cache, FinishedParsingIModelMetadata
+	/// is called before CoordConversions is set
+	bool bNeedConvertElemBBoxes = false;
 
 public:
 	using FSceneTilesCont = boost::multi_index_container<FITwinSceneTile,
@@ -968,6 +985,11 @@ public:
 	[[nodiscard]] FTransform const& GetIModel2UnrealTransfo() const { return CoordConversions.IModelToUnreal; }
 	[[nodiscard]] FITwinCoordConversions const& GetIModel2UnrealCoordConv() const { return CoordConversions; }
 	void SetIModel2UnrealTransfos(AITwinIModel const& IModel);
+	/// Do not call from FinishedParsingIModelMetadata, which can happen before CoordConversions has been set
+	void ConvertElemBBoxesIfNeeded();
+
+	/// Get the AABB of all instantiated glTF meshes in all tiles (in UE coordinates).
+	[[nodiscard]] FBox GetBoundingBoxOfAllGlTFMeshes() const;
 
 	static void SetForcedOpacity(TWeakObjectPtr<UMaterialInstanceDynamic> const& Mat, float const Opacity);
 	static void SetupFeatureIdUVIndex(FITwinSceneTile& SceneTile, FITwinExtractedEntity& ExtractedEntity);
@@ -1004,6 +1026,9 @@ public:
 	/// able to see only the animated parts of a Synchro4D animation...)
 	void HidePrimitivesWithExtractedEntities(bool bHide = true);
 
+	// Current calls PickVisibleElement, but we should have a more optimized way to do this...
+	[[nodiscard]] bool IsElementVisible(ITwinScene::ElemIdx const Rank) /*should be const*/;
+
 	/// Checks whether the Element can be picked, ie if it is visible. Optionally 
 	/// \param InElemID Element to check. Pass NOT_ELEMENT to just discard any existing selection.
 	/// \param bSelectElement If check succeeds, select the Element.
@@ -1021,9 +1046,9 @@ public:
 	/// Not const because empty set may be added to GeometryIDToElementIDs before being returned
 	[[nodiscard]] std::unordered_set<ITwinElementID> const& ConstructionDataElements();
 	void ShouldHideConstructionData(bool bHide) { bHiddenConstructionData = bHide; }
-	[[nodiscard]] std::unordered_set<ITwinElementID> const& GetSavedViewHiddenElements();
-	[[nodiscard]] std::unordered_set<ITwinElementID> const& GetSavedViewHiddenModels();
-	[[nodiscard]] std::unordered_set<ITwinElementID> const& GetSavedViewHiddenCategories();
+	[[nodiscard]] std::unordered_set<ITwinElementID> const& GetSavedViewHiddenElements() const;
+	[[nodiscard]] std::unordered_set<ITwinElementID> const& GetSavedViewHiddenModels() const;
+	[[nodiscard]] std::unordered_set<ITwinElementID> const& GetSavedViewHiddenCategories() const;
 	[[nodiscard]] bool IsElementHiddenInSavedView(ITwinElementID const& InElemID) const;
 
 	//! Returns the selected Element's ID, if an Element is selected, or ITwin::NOT_ELEMENT.
@@ -1069,6 +1094,8 @@ private:
 	template<typename TSomeID, typename TMapByRank>
 	bool ParseSomeElementIdentifier(TMapByRank& OutIDMap, ITwinScene::ElemIdx const ElemIdx,
 		TSharedPtr<FJsonValue> const& Entry, int& GoodEntry, int& EmptyEntry);
+	bool ParseElementBBox(TSharedPtr<FJsonValue> const& BBoxLow, TSharedPtr<FJsonValue> const& BBoxHigh,
+						  FBox& ElemBBox);
 	void ApplySelectingAndHiding(FITwinSceneTile& SceneTile);
 	/// Extracts the given element in the given tile. New Unreal entities may be created.
 	/// \return the number of created entities in Unreal.

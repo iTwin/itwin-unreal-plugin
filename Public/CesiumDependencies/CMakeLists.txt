@@ -9,6 +9,9 @@
 file (CREATE_LINK "${CMAKE_SOURCE_DIR}/Public/Extern/cesium-unreal/extern" "${CMAKE_CURRENT_BINARY_DIR}/extern" SYMBOLIC)
 set(CESIUM_UNREAL_NATIVE_DIRECTORY "cesium-native")
 set(CESIUM_TESTS_ENABLED ON)
+if (CARROT_OFFICIALBUILD)
+	set(CESIUM_TESTS_ENABLED OFF) # no tests in Carrot pipeline, save time and a lot of logs
+endif()
 add_subdirectory ("${CMAKE_CURRENT_BINARY_DIR}/extern" "${CMAKE_CURRENT_BINARY_DIR}/build")
 # Retrieve all the targets added by add_subdirectory() above.
 be_get_targets (cesiumUnrealExternTargets "${CMAKE_CURRENT_BINARY_DIR}/extern")
@@ -31,6 +34,11 @@ be_get_targets (cesiumUnrealExternTargetsFiltered "${CMAKE_CURRENT_BINARY_DIR}/e
 foreach (target ${cesiumUnrealExternTargetsFiltered})
 	add_dependencies (InstallCesiumDependencies ${target})
 endforeach ()
-# We want to run cesium-native-tests, so I modified cesium-native so that the tests are installed,
-# thus we have the cesium-native-tests target thanks to the find_package in main.cmake
-be_add_test (cesium-native-tests)
+if (CESIUM_TESTS_ENABLED)
+	# We want to run cesium-native-tests, so I modified cesium-native so that the tests are installed,
+	# thus we have the cesium-native-tests target thanks to the find_package in main.cmake
+	be_add_test (cesium-native-tests
+		# Disable coverage, it takes 5+ minutes on ADO agent.
+		#COVERED_TARGETS ${cesiumUnrealExternTargetsFiltered}
+	)
+endif()

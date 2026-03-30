@@ -15,6 +15,7 @@
 #include <UObject/StrongObjectPtr.h>
 #include <optional>
 #include <variant>
+#include <string>
 #include "ITwinSequencerHelper.generated.h"
 
 class ACameraActor;
@@ -40,6 +41,8 @@ public:
 		TT_Double,
 		TT_Transform,
 		TT_Vector,
+		TT_Bool,
+		TT_String,
 	};
 
 	//USTRUCT(BlueprintType)
@@ -61,7 +64,7 @@ public:
 		}
 	};
 
-	typedef std::variant<float, double, FTransform, FVector> KFValueType;
+	typedef std::variant<float, double, FTransform, FVector, bool, std::string> KFValueType;
 
 	// Get/add/remove possessable actor (that is already present in the level)
 
@@ -87,34 +90,9 @@ public:
 
 
 	// Get/add/remove track
-
-	template<class TrackType>
-	static TrackType* GetTrackFromActorInLevelSequence(AActor* pActor, FString levelSequencePath, bool& bOutSuccess, FString& outInfoMsg);
-	template<class TrackType>
-	static TrackType* AddTrackToActorInLevelSequence(AActor* pActor, FString levelSequencePath, bool bOverwriteExisting, bool& bOutSuccess, FString& outInfoMsg);
-	template<class TrackType>
-	static void RemoveTrackFromActorInLevelSequence(AActor* pActor, FString levelSequencePath, bool& bOutSuccess, FString& outInfoMsg);
 	static void RemoveAllTracksFromLevelSequence(AActor* pActor, FString levelSequencePath, bool& bOutSuccess, FString& outInfoMsg);
 
-	// Get/add/remove section
-
-	template<class TrackType>
-	static UMovieSceneSection* GetSectionFromActorInLevelSequence(AActor* pActor, FString levelSequencePath, int iSectionIdx, bool& bOutSuccess, FString& outInfoMsg);
-	template<class TrackType>
-	static UMovieSceneSection* AddSectionToActorInLevelSequence(AActor* pActor, FString levelSequencePath, FFrameNumber FrameNum, EMovieSceneBlendType eBlendType, bool& bOutSuccess, FString& outInfoMsg);
-	template<class TrackType>
-	static void RemoveSectionFromActorInLevelSequence(AActor* pActor, FString levelSequencePath, int iSectionIdx, bool& bOutSuccess, FString& outInfoMsg);
-
-	// Add/remove key-frames
-
-	template<typename T>
-	static FFrameNumberRange AddKeyFrameToActor(AActor* pActor, FString levelSequencePath, int iSectionIdx, FFrameNumber iFrameNum, const T& Value, int iKeyInterp, bool& bOutSuccess, FString& outInfoMsg);
-	template<typename T>
-	static FFrameNumberRange AddKeyFrameToTrack(UMovieSceneTrack* pTrack, int iSectionIdx, FFrameNumber iFrameNum, const T& Value, int iKeyInterp, bool& bOutSuccess, FString& outInfoMsg);
-	template<typename T>
-	static FFrameNumberRange RemoveKeyFrameFromActor(AActor* pActor, FString levelSequencePath, int iSectionIdx, FFrameNumber iFrameNum, bool& bOutSuccess, FString& outInfoMsg);
-	template<typename T>
-	static FFrameNumberRange RemoveKeyFrameFromTrack(UMovieSceneTrack* pTrack, int iSectionIdx, FFrameNumber iFrameNum, bool& bOutSuccess, FString& outInfoMsg);
+	
 	static FFrameNumberRange RemoveKeyFrameFromAllTracks(int iSectionIdx, FFrameNumber iFrameNum, bool& bOutSuccess, FString& outInfoMsg);
 
 	// Get interpolated value
@@ -125,10 +103,10 @@ public:
 	static bool GetFloatValueAtTime(UMovieSceneTrack* pTrack, FString levelSequencePath, float fTime, float& OutValue);
 	UFUNCTION(BlueprintCallable, Category = "SequencerHelper")
 	static bool GetDoubleValueAtTime(UMovieSceneTrack* pTrack, FString levelSequencePath, float fTime, double& OutValue);
-	template<typename T>
-	static bool GetActorValueAtTime(AActor* pActor, FString levelSequencePath, float fTime, T& OutValue);
-	template<typename T>
-	static bool GetTrackValueAtTime(UMovieSceneTrack* pTrack, FString levelSequencePath, float fTime, T& OutValue);
+	static bool GetStringValueAtTime(UMovieSceneTrack* pTrack, FString levelSequencePath, float fTime, std::string& OutValue);
+	UFUNCTION(BlueprintCallable, Category = "SequencerHelper")
+	static bool GetBoolValueAtTime(UMovieSceneTrack* pTrack, FString levelSequencePath, float fTime, bool& OutValue);
+
 
 	// The following functions are based on the transform track that is supposedly always present in the actor sequence
 
@@ -198,4 +176,39 @@ public:
 private:
 	template<class TrackType>
 	static UMovieSceneTrack* CreateTrackForParameter(ACameraActor* pCameraActor, FString levelSequencePath, const TRange<FFrameNumber>& initialRange, FName sTrackName, bool& bRes, FString& outMsg);
+
+	template<typename T>
+	static bool GetActorValueAtTime(AActor* pActor, FString levelSequencePath, float fTime, T& OutValue);
+	template<typename T>
+	static bool GetTrackValueAtTime(UMovieSceneTrack* pTrack, FString levelSequencePath, float fTime, T& OutValue);
+
+	// Get/add/remove section
+
+	template<class TrackType>
+	static UMovieSceneSection* GetSectionFromActorInLevelSequence(AActor* pActor, FString levelSequencePath, int iSectionIdx, bool& bOutSuccess, FString& outInfoMsg);
+	template<class TrackType>
+	static UMovieSceneSection* AddSectionToActorInLevelSequence(AActor* pActor, FString levelSequencePath, FFrameNumber FrameNum, EMovieSceneBlendType eBlendType, bool& bOutSuccess, FString& outInfoMsg);
+	template<class TrackType>
+	static void RemoveSectionFromActorInLevelSequence(AActor* pActor, FString levelSequencePath, int iSectionIdx, bool& bOutSuccess, FString& outInfoMsg);
+
+	// Add/remove key-frames
+
+
+	template<typename T>
+	static FFrameNumberRange AddKeyFrameToActor(AActor* pActor, FString levelSequencePath, int iSectionIdx, FFrameNumber iFrameNum, const T& Value, int iKeyInterp, bool& bOutSuccess, FString& outInfoMsg);
+	template<typename T>
+	static FFrameNumberRange AddKeyFrameToTrack(UMovieSceneTrack* pTrack, int iSectionIdx, FFrameNumber iFrameNum, const T& Value, int iKeyInterp, bool& bOutSuccess, FString& outInfoMsg);
+	template<typename T>
+	static FFrameNumberRange RemoveKeyFrameFromActor(AActor* pActor, FString levelSequencePath, int iSectionIdx, FFrameNumber iFrameNum, bool& bOutSuccess, FString& outInfoMsg);
+	template<typename T>
+	static FFrameNumberRange RemoveKeyFrameFromTrack(UMovieSceneTrack* pTrack, int iSectionIdx, FFrameNumber iFrameNum, bool& bOutSuccess, FString& outInfoMsg);
+
+	// Get/add/remove track
+
+	template<class TrackType>
+	static TrackType* GetTrackFromActorInLevelSequence(AActor* pActor, FString levelSequencePath, bool& bOutSuccess, FString& outInfoMsg);
+	template<class TrackType>
+	static TrackType* AddTrackToActorInLevelSequence(AActor* pActor, FString levelSequencePath, bool bOverwriteExisting, bool& bOutSuccess, FString& outInfoMsg);
+	template<class TrackType>
+	static void RemoveTrackFromActorInLevelSequence(AActor* pActor, FString levelSequencePath, bool& bOutSuccess, FString& outInfoMsg);
 };

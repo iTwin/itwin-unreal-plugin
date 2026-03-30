@@ -1,5 +1,5 @@
 # note: this file is included twice: 
-# first call add the configuration but the *_RELWITHDEBINFO are not set
+# first call add the configuration but the *_UNREALDEBUG are not set
 # second call set the properties
 
 #reference: https://gitlab.kitware.com/cmake/community/-/wikis/FAQ#how-can-i-extend-the-build-modes-with-a-custom-made-one-

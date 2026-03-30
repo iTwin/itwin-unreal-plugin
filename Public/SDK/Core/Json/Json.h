@@ -40,10 +40,14 @@ namespace AdvViz::SDK::Json {
 	template<typename Type, typename From>
 	inline bool FromStream(Type& t, From& s, std::string& parseError, bool bLogParseError = true) {
 		auto result = rfl::json::read<Type>(s);
-		auto const optErr = result.error();
-		if (optErr)
+		if (result.has_value())
 		{
-			parseError = optErr->what();
+			t = std::move(result.value());
+			return true;
+		}
+		else
+		{
+			parseError = std::move(result.error().what());
 			// We may not want to log the error directly, in case the client code handles the error itself.
 			// Typically, some iTwin responses can be very different in specific cases, and thus it is easier
 			// to parse a different structure if the expected one is not provided.
@@ -59,19 +63,18 @@ namespace AdvViz::SDK::Json {
 			// BE_ISSUE("json parse error", parseError);
 			return false;
 		}
-		else
-		{
-			t = result.value();
-			return true;
-		}
 	}
 	template<typename Type>
 	inline bool FromStream(Type& t, const std::string& s, std::string& parseError, bool bLogParseError = true) {
 		auto result = rfl::json::read<Type>(s);
-		auto const optErr = result.error();
-		if (optErr)
+		if (result.has_value())
 		{
-			parseError = optErr->what();
+			t = std::move(result.value());
+			return true;
+		}
+		else
+		{
+			parseError = std::move(result.error().what());
 			// We may not want to log the error directly, in case the client code handles the error itself.
 			// Typically, some iTwin responses can be very different in specific cases, and thus it is easier
 			// to parse a different structure if the expected one is not provided.
@@ -86,11 +89,6 @@ namespace AdvViz::SDK::Json {
 			//
 			// BE_ISSUE("json parse error", parseError);
 			return false;
-		}
-		else
-		{
-			t = result.value();
-			return true;
 		}
 	}
 

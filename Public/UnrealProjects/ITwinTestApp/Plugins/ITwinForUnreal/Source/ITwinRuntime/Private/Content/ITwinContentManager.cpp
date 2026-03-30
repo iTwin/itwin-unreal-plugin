@@ -13,6 +13,8 @@
 #include "HAL/PlatformFile.h"
 #include "HAL/PlatformFilemanager.h"
 #include "IPlatformFilePak.h"
+#include <Decoration/ITwinDecorationHelper.h>
+#include "Internationalization/Regex.h"
 #include <map>
 #include <set>
 
@@ -46,6 +48,60 @@ void UITwinContentManager::LoadContentJsonFile()
     {
         BE_LOGE("ContentHelper", "Failed to load content.json: " << parseError);
     }
+}
+
+FString UITwinContentManager::HasComponentIDInPath(const FString& path) const
+{
+    FRegexPattern Pattern(TEXT("/CC/[0-9A-Fa-f\\-]+/[0-9A-Fa-f\\-]+/[0-9A-Za-z\\%-_ ]+/Game/"));
+    FRegexMatcher Matcher(Pattern, path);
+    if (Matcher.FindNext())
+    {
+        return Matcher.GetCaptureGroup(0).LeftChop(6); // Full match
+    }
+    return FString();
+
+}
+
+bool UITwinContentManager::DownloadedComponent(const FString& componentId) const
+{
+
+    BE_LOGI("ContentHelper", "DownloadedComponent : start downloading from component center: " << TCHAR_TO_UTF8(*componentId));
+
+	bool res = false;
+	if (DecorationHelperPtr && DecorationHelperPtr->OnDownloadRequest.IsBound())
+	{
+		res = DecorationHelperPtr->OnDownloadRequest.Execute(componentId);
+	}
+	if (!res)
+	{
+		BE_LOGE("ContentHelper", "DownloadedComponent: component " << TCHAR_TO_UTF8(*componentId) << " failed to download");
+	}
+    else
+    {
+        BE_LOGI("ContentHelper", "DownloadedComponent: component " << TCHAR_TO_UTF8(*componentId) << " success");
+    }
+	return res;
+}
+
+FString UITwinContentManager::ShouldDownloadComponent(const FString& path) const
+{ 
+    FString componentId = HasComponentIDInPath(path);
+    if (!componentId.IsEmpty() && DownloadedComponents.find(componentId) == DownloadedComponents.end())
+    {
+        return componentId;
+    }
+	return FString();
+}
+
+FString UITwinContentManager::SanitizePath(const FString& path) const
+{
+    FString componentId = HasComponentIDInPath(path);
+    if (!componentId.IsEmpty())
+    {
+		FString res = path.RightChop(componentId.Len());
+		return res;
+    }
+    return path;
 }
 
 void UITwinContentManager::DownloadFromAssetPath(const FString& path)
@@ -109,9 +165,9 @@ void UITwinContentManager::DeinitializePakPlatformFile()
 }
 
 
-void UITwinContentManager::MountPak(const FString& path)
+void UITwinContentManager::MountPak(const FString& path,const FString& id)
 {
-	BE_LOGI("ContentHelper", "Tyring to mount pak file: " << TCHAR_TO_UTF8(*path));
+	BE_LOGI("ContentHelper", "Trying to mount pak file: " << TCHAR_TO_UTF8(*path));
     // Check if the pak file exists
 	if (!FPaths::FileExists(path))
 	{
@@ -134,6 +190,10 @@ void UITwinContentManager::MountPak(const FString& path)
     {
         BE_LOGE("ContentHelper", "PakPlatformFile not available");
         return;
+    }
+    if(!id.IsEmpty())
+	{
+		DownloadedComponents.insert(id);
     }
     BE_LOGI("ContentHelper", TCHAR_TO_UTF8(*path) << " successfully mounted.");
 }

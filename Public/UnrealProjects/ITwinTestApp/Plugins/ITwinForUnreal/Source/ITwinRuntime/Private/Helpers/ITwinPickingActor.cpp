@@ -45,7 +45,7 @@ namespace ITwin
 		FCesiumMetadataValue const* const MaterialIdFound = Table1.Find(ITwinCesium::Metada::MATERIAL_NAME);
 		if (MaterialIdFound != nullptr)
 		{
-			return FCesiumMetadataValueAccess::GetUnsignedInteger64(
+			return CesiumMetadataValueAccess::GetUnsignedInteger64(
 				*MaterialIdFound, ITwin::NOT_ELEMENT.value());
 		}
 		return std::nullopt;
@@ -100,6 +100,7 @@ void AITwinPickingActor::PickUnderCursorWithOptions(FPickingResult& OutPickingRe
 		if (iModel)
 		{
 			ITwinElementID EltID = ITwin::NOT_ELEMENT;
+			// TODO: invisible hits have been filtered out already so...
 			if (TracingHelper.PickVisibleElement(HitResult, *iModel, EltID, Options.bSelectElement))
 			{
 				DejaVu.insert(EltID);

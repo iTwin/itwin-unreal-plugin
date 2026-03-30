@@ -7,31 +7,203 @@
 +--------------------------------------------------------------------------------------*/
 
 #include "SplinesManager.h"
+
 #include "Core/Network/HttpGetWithLink.h"
-#include "Config.h"
 #include "../Singleton/singleton.h"
+#include "SavableItemManager.h"
+#include "SavableItemManager.inl"
 
 namespace AdvViz::SDK
 {
-	class SplinesManager::Impl
+
+	struct SJsonSpline
+	{
+		std::optional<std::string> id;
+		std::optional<std::string> name;
+		std::string usage;
+		std::vector<std::string> pointIDs;
+		std::array<double, 12> transform;
+		std::optional<std::string> userData;
+
+		std::optional<std::vector<SplineLinkedModel>> linkedModels;
+		std::optional<bool> enableEffect;
+		std::optional<bool> invertEffect;
+		std::optional<bool> closedLoop;
+	};
+
+	std::string GetStringFromUsage(const ESplineUsage usage)
+	{
+		switch (usage)
+		{
+		default:
+			BE_ISSUE("unhandled usage case", static_cast<uint8_t>(usage));
+			[[fallthrough]];
+		case ESplineUsage::Undefined:
+			return "Undefined";
+		case ESplineUsage::MapCutout:
+			return "MapCutout";
+		case ESplineUsage::TrafficPath:
+			return "TrafficPath";
+		case ESplineUsage::PopulationZone:
+			return "PopulationZone";
+		case ESplineUsage::PopulationPath:
+			return "PopulationPath";
+		case ESplineUsage::AnimPath:
+			return "AnimPath";
+		}
+	}
+
+	ESplineUsage GetUsageFromString(const std::string& strUsage)
+	{
+		if (strUsage == "Undefined")
+			return ESplineUsage::Undefined;
+		else if (strUsage == "MapCutout")
+			return ESplineUsage::MapCutout;
+		else if (strUsage == "TrafficPath")
+			return ESplineUsage::TrafficPath;
+		else if (strUsage == "PopulationZone")
+			return ESplineUsage::PopulationZone;
+		else if (strUsage == "PopulationPath")
+			return ESplineUsage::PopulationPath;
+		else if (strUsage == "AnimPath")
+			return ESplineUsage::AnimPath;
+
+		BE_ISSUE("unknown spline usage", strUsage);
+		return ESplineUsage::Undefined;
+	}
+
+	std::string GetStringFromTangentMode(const ESplineTangentMode mode)
+	{
+		switch (mode)
+		{
+		case ESplineTangentMode::Linear:
+			return "Linear";
+		case ESplineTangentMode::Smooth:
+			return "Smooth";
+		case ESplineTangentMode::Custom:
+			return "Custom";
+		default:
+			BE_ISSUE("unhandled tangent mode case", static_cast<uint8_t>(mode));
+			return {};
+		}
+	}
+
+	ESplineTangentMode GetTangentModeFromString(const std::string& strMode)
+	{
+		if (strMode == "Linear")
+		{
+			return ESplineTangentMode::Linear;
+		}
+		else if (strMode == "Smooth")
+		{
+			return ESplineTangentMode::Smooth;
+		}
+		else if (strMode == "Custom")
+		{
+			return ESplineTangentMode::Custom;
+		}
+		BE_ISSUE("unknown tangent mode", strMode);
+		return ESplineTangentMode::Linear;
+	}
+
+	SJsonSpline ToJsonSpline(const ISpline& src)
+	{
+		SJsonSpline dst;
+		auto const& srcId = src.GetId();
+		if (srcId.HasDBIdentifier())
+		{
+			dst.id = srcId.GetDBIdentifier();
+		}
+		auto const& srcName = src.GetName();
+		if (!srcName.empty())
+		{
+			dst.name = srcName;
+		}
+		dst.usage = GetStringFromUsage(src.GetUsage());
+		dst.closedLoop = src.IsClosedLoop();
+		for (auto const& pointPtr : src.GetPoints())
+		{
+			auto point = pointPtr->GetRAutoLock();
+			RefID const& pointId = point->GetId();
+			if (pointId.HasDBIdentifier())
+			{
+				dst.pointIDs.push_back(pointId.GetDBIdentifier());
+			}
+			else
+			{
+				BE_ISSUE("points should be saved before splines");
+			}
+		}
+		dst.transform = src.GetTransform();
+
+		auto const& linkedModels = src.GetLinkedModels();
+		if (!linkedModels.empty())
+		{
+			auto& dstLinkedModels = dst.linkedModels.emplace();
+			dstLinkedModels = linkedModels;
+		}
+		if (src.GetInvertEffect())
+		{
+			dst.invertEffect = true;
+		}
+		if (!src.IsEnabledEffect())
+		{
+			dst.enableEffect = false;
+		}
+		return dst;
+	}
+
+	struct SJsonSplineVect
+	{
+		std::vector<SJsonSpline> splines;
+	};
+
+	template <>
+	struct SavableItemJsonHelper<ISpline>
+	{
+		using JsonVec = SJsonSplineVect;
+
+		void AppendItem(JsonVec& jsonVec, ISpline const& spline)
+		{
+			jsonVec.splines.emplace_back(ToJsonSpline(spline));
+		}
+	};
+
+	static inline ISplinePtr FindSplineById(ISplinePtrVect const& splines, const RefID& id)
+	{
+		// TODO_JDE - optimize lookup with map
+		auto it = std::find_if(splines.begin(), splines.end(),
+			[&id](ISplinePtr const& splPtr) {
+			auto spl = splPtr->GetRAutoLock();
+			return spl->GetId() == id;
+		});
+		if (it != splines.end())
+			return *it;
+		return {};
+	}
+
+	class SplinesManager::Impl : public SavableItemManager, public std::enable_shared_from_this<Impl>
 	{
 	public:
-		std::shared_ptr<Http> http_;
-		SharedSplineVect splines_;
-		SharedSplineVect removedSplines_;
-		RefID::DBToIDMap splineIDMap_;
 
-		std::shared_ptr<Http>& GetHttp() { return http_; }
-		void SetHttp(const std::shared_ptr<Http>& http) { http_ = http; }
+
+		struct SThreadSafeData
+		{
+			ISplinePtrVect splines_;
+			ISplinePtrVect removedSplines_;
+			RefID::DBToIDMap splineIDMap_;
+			RefID::DBToIDMap splinePointIDMap_;
+		};
+
+		Tools::RWLockableObject<SThreadSafeData> thdata_;
 
 		void Clear()
 		{
-			splines_.clear();
-			splineIDMap_.clear();
+			auto dataLock = thdata_.GetAutoLock();
+			dataLock->splines_.clear();
+			dataLock->splineIDMap_.clear();
+			dataLock->splinePointIDMap_.clear();
 		}
-
-		// Some structures used in I/O functions
-		struct SJsonIds { std::vector<std::string> ids; };
 
 		#define POINT_STRUCT_MEMBERS \
 			std::array<double, 3> position;\
@@ -52,100 +224,12 @@ namespace AdvViz::SDK
 			std::string id;
 		};
 
-		struct SJsonSpline
-		{
-			std::optional<std::string> id;
-			std::optional<std::string> name;
-			std::string usage;
-			std::vector<std::string> pointIDs;
-			std::array<double, 12> transform;
-			std::optional<std::string> userData;
-
-			std::optional<std::vector<SplineLinkedModel>> linkedModels;
-			std::optional<bool> enableEffect;
-			std::optional<bool> invertEffect;
-			std::optional<bool> closedLoop;
-		};
-
-		struct SJsonEmpty {};
-
-		std::string GetStringFromUsage(const ESplineUsage usage)
-		{
-			switch (usage)
-			{
-			default:
-				BE_ISSUE("unhandled usage case", static_cast<uint8_t>(usage));
-				[[fallthrough]];
-			case ESplineUsage::Undefined:
-				return "Undefined";
-			case ESplineUsage::MapCutout:
-				return "MapCutout";
-			case ESplineUsage::TrafficPath:
-				return "TrafficPath";
-			case ESplineUsage::PopulationZone:
-				return "PopulationZone";
-			case ESplineUsage::PopulationPath:
-				return "PopulationPath";
-			case ESplineUsage::AnimPath:
-				return "AnimPath";
-			}
-		}
-
-		ESplineUsage GetUsageFromString(const std::string& strUsage)
-		{
-			if (strUsage == "Undefined")
-				return ESplineUsage::Undefined;
-			else if (strUsage == "MapCutout")
-				return ESplineUsage::MapCutout;
-			else if (strUsage == "TrafficPath")
-				return ESplineUsage::TrafficPath;
-			else if (strUsage == "PopulationZone")
-				return ESplineUsage::PopulationZone;
-			else if (strUsage == "PopulationPath")
-				return ESplineUsage::PopulationPath;
-			else if (strUsage == "AnimPath")
-				return ESplineUsage::AnimPath;
-
-			BE_ISSUE("unknown spline usage", strUsage);
-			return ESplineUsage::Undefined;
-		}
-
-		std::string GetStringFromTangentMode(const ESplineTangentMode mode)
-		{
-			switch (mode)
-			{
-			case ESplineTangentMode::Linear:
-				return "Linear";
-			case ESplineTangentMode::Smooth:
-				return "Smooth";
-			case ESplineTangentMode::Custom:
-				return "Custom";
-			default:
-				BE_ISSUE("unhandled tangent mode case", static_cast<uint8_t>(mode));
-				return {};
-			}
-		}
-
-		ESplineTangentMode GetTangentModeFromString(const std::string& strMode)
-		{
-			if (strMode == "Linear")
-			{
-				return ESplineTangentMode::Linear;
-			}
-			else if (strMode == "Smooth")
-			{
-				return ESplineTangentMode::Smooth;
-			}
-			else if (strMode == "Custom")
-			{
-				return ESplineTangentMode::Custom;
-			}
-			BE_ISSUE("unknown tangent mode", strMode);
-			return ESplineTangentMode::Linear;
-		}
+		// key: integer coming from a RefID
+		// value: index in the (flat) vector 'pointIDs'
+		using SRefIdIndexMap = std::map<uint64_t, size_t>;
 
 		template<class T>
-		void CopyPoint(T& dst, const ISplinePoint& src)
+		static void CopyPoint(T& dst, const ISplinePoint& src)
 		{
 			dst.position = src.GetPosition();
 			dst.upVector = src.GetUpVector();
@@ -156,79 +240,42 @@ namespace AdvViz::SDK
 		}
 
 		template<class T>
-		void CopyPoint(ISplinePoint& dst, const T& src)
+		static void CopyPoint(ISplinePointPtr& dstPtr, const T& src)
 		{
-			dst.SetPosition(src.position);
-			dst.SetUpVector(src.upVector);
-			dst.SetInTangent(src.inTangent);
-			dst.SetOutTangent(src.outTangent);
-			dst.SetInTangentMode(GetTangentModeFromString(src.inTangentMode));
-			dst.SetOutTangentMode(GetTangentModeFromString(src.outTangentMode));
+			auto point = dstPtr->GetAutoLock();
+			point->SetPosition(src.position);
+			point->SetUpVector(src.upVector);
+			point->SetInTangent(src.inTangent);
+			point->SetOutTangent(src.outTangent);
+			point->SetInTangentMode(GetTangentModeFromString(src.inTangentMode));
+			point->SetOutTangentMode(GetTangentModeFromString(src.outTangentMode));
 		}
 
-		SJsonSpline ToJsonSpline(const ISpline& src)
+		void FromJsonSpline(ISplinePtr& dstPtr, const SJsonSpline& src)
 		{
-			SJsonSpline dst;
-			auto const& srcId = src.GetId();
-			if (srcId.HasDBIdentifier())
-			{
-				dst.id = srcId.GetDBIdentifier();
-			}
-			auto const& srcName = src.GetName();
-			if (!srcName.empty())
-			{
-				dst.name = srcName;
-			}
-			dst.usage = GetStringFromUsage(src.GetUsage());
-			dst.closedLoop = src.IsClosedLoop();
-			for (auto const& point : src.GetPoints())
-			{
-				std::string const& pointId = point->GetId();
-				if (!pointId.empty())
-				{
-					dst.pointIDs.push_back(pointId);
-				}
-			}
-			dst.transform = src.GetTransform();
-
-			auto const& linkedModels = src.GetLinkedModels();
-			if (!linkedModels.empty())
-			{
-				auto& dstLinkedModels = dst.linkedModels.emplace();
-				dstLinkedModels = linkedModels;
-			}
-			if (src.GetInvertEffect())
-			{
-				dst.invertEffect = true;
-			}
-			if (!src.IsEnabledEffect())
-			{
-				dst.enableEffect = false;
-			}
-			return dst;
-		}
-
-		void FromJsonSpline(ISpline& dst, const SJsonSpline& src)
-		{
+			auto dataLock = thdata_.GetAutoLock();
+			auto dst = dstPtr->GetAutoLock();
 			if (src.id)
 			{
-				dst.SetId(RefID::FromDBIdentifier(*src.id, splineIDMap_));
+				dst->SetId(RefID::FromDBIdentifier(*src.id, dataLock->splineIDMap_));
 			}
 			if (src.name)
 			{
-				dst.SetName(*src.name);
+				dst->SetName(*src.name);
 			}
-			dst.SetUsage(GetUsageFromString(src.usage));
+			dst->SetUsage(GetUsageFromString(src.usage));
 			if (src.closedLoop)
 			{
-				dst.SetClosedLoop(*src.closedLoop);
+				dst->SetClosedLoop(*src.closedLoop);
 			}
-			dst.SetTransform(src.transform);
+			dst->SetTransform(src.transform);
 			for (size_t i = 0; i < src.pointIDs.size(); ++i)
 			{
 				if (!src.pointIDs[i].empty())
 				{
-					dst.AddPoint()->SetId(src.pointIDs[i]);
+					auto pointPtr = dst->AddPoint();
+					auto point = pointPtr->GetAutoLock();
+					point->SetId(RefID::FromDBIdentifier(src.pointIDs[i], dataLock->splinePointIDMap_));
 				}
 			}
 			std::vector<SplineLinkedModel> linkedModels;
@@ -238,14 +285,15 @@ namespace AdvViz::SDK
 			}
 			// For compatibility with earlier versions: by default, cut-out was applied to the Google
 			// tileset only.
-			if (dst.GetUsage() == ESplineUsage::MapCutout
+			if (dst->GetUsage() == ESplineUsage::MapCutout
 				&& linkedModels.empty())
 			{
 				linkedModels.push_back({ .modelType = "GlobalMapLayer" });
 			}
-			dst.SetLinkedModels(linkedModels);
-			dst.EnableEffect(src.enableEffect.value_or(true));
-			dst.SetInvertEffect(src.invertEffect.value_or(false));
+			dst->SetLinkedModels(linkedModels);
+			dst->EnableEffect(src.enableEffect.value_or(true));
+			dst->SetInvertEffect(src.invertEffect.value_or(false));
+			dst->SetShouldSave(false);
 		}
 
 		void LoadSplines(const std::string& decorationId)
@@ -256,10 +304,9 @@ namespace AdvViz::SDK
 				[this](SJsonSpline const& row) -> expected<void, std::string>
 				{
 					if (!row.id)
-						return make_unexpected(std::string("Server returned no id for spline."));
-					SharedSpline spline = AddSpline();
-					FromJsonSpline(*spline, row);
-					spline->SetShouldSave(false);
+						return make_unexpected("Server returned no id for spline.");
+					ISplinePtr spline = AddSpline();
+					FromJsonSpline(spline, row);
 					return {};
 				});
 
@@ -271,7 +318,7 @@ namespace AdvViz::SDK
 
 		void LoadSplinePoints(const std::string& decorationId)
 		{
-			std::map<std::string, SharedSplinePoint> mapIdToPoint;
+			std::map<RefID, ISplinePointPtr> mapIdToPoint;
 
 			auto ret = HttpGetWithLink<SJsonPointWithId>(GetHttp(),
 				"decorations/" + decorationId + "/splinepoints",
@@ -281,10 +328,12 @@ namespace AdvViz::SDK
 				if (row.id.empty())
 					return {};
 
-				SharedSplinePoint point(ISplinePoint::New());
-				point->SetId(row.id);
-				CopyPoint<SJsonPointWithId>(*point, row);
-				mapIdToPoint[row.id] = point;
+				ISplinePoint* point(ISplinePoint::New());
+				auto dataLock = thdata_.GetAutoLock();
+				point->SetId(RefID::FromDBIdentifier(row.id, dataLock->splinePointIDMap_));
+				auto pointPtr = MakeSharedLockableDataPtr(point);
+				CopyPoint<SJsonPointWithId>(pointPtr, row);
+				mapIdToPoint[point->GetId()] = pointPtr;
 
 				return {};
 			});
@@ -294,13 +343,17 @@ namespace AdvViz::SDK
 				BE_LOGW("ITwinDecoration", "Loading of spline points failed. " << ret.error());
 			}
 
+			auto thdata = thdata_.GetAutoLock();
+			auto& splines_ = thdata->splines_;
 			// Put the loaded points in splines (their current points only have valid IDs but no valid data).
-			for (auto& spline : splines_)
+			for (auto& splinePtr : splines_)
 			{
+				auto spline = splinePtr->GetAutoLock();
 				size_t const numPoints = spline->GetNumberOfPoints();
 				for (size_t i = 0; i < numPoints; ++i)
 				{
-					SharedSplinePoint point = spline->GetPoint(i);
+					ISplinePointPtr pointPtr = spline->GetPoint(i);
+					auto point = pointPtr->GetAutoLock();
 					auto itPoint = mapIdToPoint.find(point->GetId());
 					if (itPoint != mapIdToPoint.end())
 					{
@@ -317,324 +370,447 @@ namespace AdvViz::SDK
 			LoadSplinePoints(decorationId);
 		}
 
-		void SaveSplinePoints(const std::string& decorationId)
+		void AsyncLoadSplines(const std::string& decorationId, 
+			const std::function<void(ISplinePtr&)>& onSplineLoaded,
+			const std::function<void(expected<void, std::string> const&)>& onComplete)
 		{
+			auto thisPtr = shared_from_this();
+			AsyncHttpGetWithLink<SJsonSpline>(GetHttp(),
+				"decorations/" + decorationId + "/splines",
+				{} /* extra headers*/,
+				[thisPtr, onSplineLoaded](SJsonSpline const& row) -> expected<void, std::string>
+				{
+					if (!row.id)
+						return make_unexpected("Server returned no id for spline.");
+					ISplinePtr spline = thisPtr->AddSpline();
+					thisPtr->FromJsonSpline(spline, row);
+					onSplineLoaded(spline);
+					return {};
+				},
+				onComplete);
+		}
+
+		void AsyncLoadSplinePoints(const std::string& decorationId, 
+			const std::function<void(ISplinePointPtr&)>& onSplinePointLoaded,
+			const std::function<void(expected<void, std::string> const&)>& onComplete
+			)
+		{
+			std::shared_ptr<std::map<std::string, ISplinePointPtr>> mapIdToPoint = std::make_shared<std::map<std::string, ISplinePointPtr>>();
+			auto thisPtr = shared_from_this();
+			AsyncHttpGetWithLink<SJsonPointWithId>(GetHttp(),
+				"decorations/" + decorationId + "/splinepoints",
+				{} /* extra headers*/,
+				[thisPtr, mapIdToPoint, onSplinePointLoaded](SJsonPointWithId const& row) -> expected<void, std::string>
+				{
+					if (row.id.empty())
+						return {};
+
+					ISplinePoint* point(ISplinePoint::New());
+					auto dataLock = thisPtr->thdata_.GetAutoLock();
+					point->SetId(RefID::FromDBIdentifier(row.id, dataLock->splinePointIDMap_));
+					auto pointPtr = MakeSharedLockableDataPtr(point);
+					thisPtr->CopyPoint<SJsonPointWithId>(pointPtr, row);
+					(*mapIdToPoint)[row.id] = pointPtr;
+					onSplinePointLoaded(pointPtr);
+					return {};
+				},
+				[thisPtr, mapIdToPoint, onComplete](expected<void, std::string> const& ret)
+				{
+					if (!ret)
+					{
+						BE_LOGW("ITwinDecoration", "Loading of spline points failed. " << ret.error());
+						onComplete(ret);
+						return;
+					}
+
+					auto thdata = thisPtr->thdata_.GetAutoLock();
+					auto& splines_ = thdata->splines_;
+					// Put the loaded points in splines (their current points only have valid IDs but no valid data).
+					for (auto& splinePtr : splines_)
+					{
+						auto spline = splinePtr->GetAutoLock();
+						size_t const numPoints = spline->GetNumberOfPoints();
+						for (size_t i = 0; i < numPoints; ++i)
+						{
+							ISplinePointPtr pointPtr = spline->GetPoint(i);
+							auto point = pointPtr->GetAutoLock();
+							auto itPoint = mapIdToPoint->find(point->GetDBIdentifier());
+							if (itPoint != mapIdToPoint->end())
+							{
+								spline->SetPoint(i, itPoint->second);
+							}
+						}
+					}
+					onComplete(ret);
+				}
+				);
+		}
+		void AsyncLoadDataFromServer(const std::string& decorationId,
+			const std::function<void(ISplinePtr&)> &onSplineLoaded,
+			const std::function<void(ISplinePointPtr&)> &onSplinePointLoaded,
+			const std::function<void(expected<void, std::string> const&)> &onComplete)
+		{
+			Clear();
+			auto thisPtr = shared_from_this();
+			AsyncLoadSplines(decorationId,
+				onSplineLoaded,
+				[thisPtr, decorationId, onSplinePointLoaded, onComplete](expected<void, std::string> const& ret)
+				{
+					if (!ret)
+					{
+						BE_LOGW("ITwinDecoration", "Loading of splines failed. " << ret.error());
+						onComplete(ret);
+						return;
+					}
+					thisPtr->AsyncLoadSplinePoints(decorationId,
+						onSplinePointLoaded,
+						onComplete);
+				});
+		}
+
+		void AsyncSaveSplinePoints(const std::string& decorationId, std::function<void(bool)>&& onPointsSavedFunc)
+		{
+			std::shared_ptr<AsyncRequestGroupCallback> callbackPtr =
+				std::make_shared<AsyncRequestGroupCallback>(
+					std::move(onPointsSavedFunc), isThisValid_);
+
 			struct SJsonPointVect { std::vector<SJsonPoint> splinePoints; };
 			struct SJsonPointWithIdVect { std::vector<SJsonPointWithId> splinePoints; };
 			SJsonPointVect jInPost;
 			SJsonPointWithIdVect jInPut;
+			std::vector<std::pair<RefID, RefID>> newPointIds;
+			std::vector<std::pair<RefID, RefID>> updatedPointIds;
 
-			size_t splineCount = 0;
-			size_t pointCount = 0;
-			std::vector<std::pair<size_t, size_t>> newPointIndices;
-			std::vector<std::pair<size_t, size_t>> updatedPointIndices;
-
+			auto thdata = thdata_.GetAutoLock();
+			auto& splines_ = thdata->splines_;
 			// Sort points for requests (addition/update)
-			for (auto const& spline : splines_)
+			for (auto const& splinePtr : splines_)
 			{
-				for (SharedSplinePoint const& point : spline->GetPoints())
+				auto spline = splinePtr->GetRAutoLock();	
+				for (ISplinePointPtr const& pointPtr : spline->GetPoints())
 				{
-					if (point->GetId().empty())
+					auto point = pointPtr->GetAutoLock();
+					if (!point->HasDBIdentifier())
 					{
 						SJsonPoint jPoint;
-						CopyPoint<SJsonPoint>(jPoint, *point);
+						CopyPoint<SJsonPoint>(jPoint, point);
 						jInPost.splinePoints.push_back(jPoint);
-						newPointIndices.push_back(std::make_pair(splineCount, pointCount));
+						newPointIds.push_back(std::make_pair(spline->GetId(), point->GetId()));
+						point->OnStartSave();
 					}
 					else if (point->ShouldSave())
 					{
 						SJsonPointWithId jPointWId;
-						CopyPoint<SJsonPointWithId>(jPointWId, *point);
-						jPointWId.id = point->GetId();
+						CopyPoint<SJsonPointWithId>(jPointWId, point);
+						jPointWId.id = point->GetDBIdentifier();
 						jInPut.splinePoints.push_back(jPointWId);
-						updatedPointIndices.push_back(std::make_pair(splineCount, pointCount));
+						updatedPointIds.push_back(std::make_pair(spline->GetId(), point->GetId()));
+						point->OnStartSave();
 					}
-					++pointCount;
 				}
-				++splineCount;
-				pointCount = 0;
 			}
 
 			// Post (new points)
 			if (!jInPost.splinePoints.empty())
 			{
-				SJsonIds jOutPost;
-				long status = GetHttp()->PostJsonJBody(
-					jOutPost, "decorations/" + decorationId + "/splinepoints", jInPost);
-
-				if (status == 200 || status == 201)
-				{
-					if (newPointIndices.size() == jOutPost.ids.size())
+				AsyncPostJsonJBody<SJsonIds>(GetHttp(), callbackPtr,
+					[this, newPointIds](long httpCode,
+										const Tools::TSharedLockableData<SJsonIds>& joutPtr)
 					{
-						for (size_t i = 0; i < newPointIndices.size(); ++i)
+						const bool bSuccess = (httpCode == 200 || httpCode == 201);
+						if (bSuccess)
 						{
-							const std::pair<size_t, size_t>& index = newPointIndices[i];
-							SharedSplinePoint point = splines_[index.first]->GetPoint(index.second);
-							point->SetId(jOutPost.ids[i]);
-							point->SetShouldSave(false);
-							splines_[index.first]->SetShouldSave(true); // the point is added so the spline won't be saved unless we tell her to.
+							auto thdata = thdata_.GetAutoLock();
+							auto& splines = thdata->splines_;
+							auto unlockedJout = joutPtr->GetAutoLock();
+							SJsonIds& jOutPost = unlockedJout.Get();
+							if (newPointIds.size() == jOutPost.ids.size())
+							{
+								for (size_t i = 0; i < newPointIds.size(); ++i)
+								{
+									auto const& index = newPointIds[i];
+									if (auto splinePtr = FindSplineById(splines, index.first))
+									{
+										auto spline = splinePtr->GetAutoLock();
+										RefID pointId = index.second;
+										// Update the DB identifier only.
+										pointId.SetDBIdentifier(jOutPost.ids[i]);
+
+										ISplinePointPtr pointPtr = spline->GetPointById(pointId);
+										if (pointPtr)
+										{
+											auto point = pointPtr->GetAutoLock();
+											point->SetId(pointId);
+											point->OnSaved();
+											spline->SetShouldSave(true); // the point is added so the spline won't be saved unless we tell her to.
+										}
+									}
+								}
+							}
 						}
-					}
-				}
-				else
-				{
-					BE_LOGW("ITwinDecoration", "Saving new points failed. Http status: " << status);
-				}
+						else
+						{
+							BE_LOGW("ITwinDecoration", "Saving new points failed. Http status: " << httpCode);
+						}
+						return bSuccess;
+					},
+						"decorations/" + decorationId + "/splinepoints",
+						jInPost);
 			}
 
 			// Put (updated points)
 			if (!jInPut.splinePoints.empty())
 			{
-				struct SJsonPointOutUpd { int64_t numUpdated; };
-				SJsonPointOutUpd jOutPut;
-				long status = GetHttp()->PutJsonJBody(
-					jOutPut, "decorations/" + decorationId  + "/splinepoints", jInPut);
-
-				if (status == 200 || status == 201)
+				struct SJsonPointOutUpd
 				{
-					if (updatedPointIndices.size() == static_cast<size_t>(jOutPut.numUpdated))
+					int64_t numUpdated = 0;
+				};
+				AsyncPutJsonJBody<SJsonPointOutUpd>(GetHttp(), callbackPtr,
+					[this, updatedPointIds](long httpCode,
+											const Tools::TSharedLockableData<SJsonPointOutUpd>& joutPtr)
+				{
+					const bool bSuccess = (httpCode == 200 || httpCode == 201);
+					if (bSuccess)
 					{
-						for (size_t i = 0; i < updatedPointIndices.size(); ++i)
+						auto unlockedJout = joutPtr->GetAutoLock();
+						auto thdata = thdata_.GetAutoLock();
+						auto const& splines = thdata->splines_;
+						SJsonPointOutUpd& jOutPut = unlockedJout.Get();
+						if (updatedPointIds.size() == static_cast<size_t>(jOutPut.numUpdated))
 						{
-							const std::pair<size_t, size_t>& index = updatedPointIndices[i];
-							SharedSplinePoint point = splines_[index.first]->GetPoint(index.second);
-							point->SetShouldSave(false);
+							for (auto const& index : updatedPointIds)
+							{
+								if (auto splinePtr = FindSplineById(splines, index.first))
+								{
+									auto spline = splinePtr->GetAutoLock();
+									ISplinePointPtr pointPtr = spline->GetPointById(index.second);
+									if (pointPtr)
+									{
+										auto point = pointPtr->GetAutoLock();
+										point->OnSaved();
+									}
+								}
+							}
 						}
 					}
-				}
-				else
-				{
-					BE_LOGW("ITwinDecoration", "Updating points failed. Http status: " << status);
-				}
+					else
+					{
+						BE_LOGW("ITwinDecoration", "Updating points failed. Http status: " << httpCode);
+					}
+					return bSuccess;
+				},
+					"decorations/" + decorationId  + "/splinepoints",
+					jInPut);
 			}
+
+			callbackPtr->OnFirstLevelRequestsRegistered();
 		}
 
-		void SaveSplines(const std::string& decorationId)
+		void AsyncSaveSplines(const std::string& decorationId, std::shared_ptr<AsyncRequestGroupCallback> callbackPtr)
 		{
-			struct SJsonSplineVect
-			{
-				std::vector<SJsonSpline> splines;
-			};
-			SJsonSplineVect jInPost, jInPut;
-
-			size_t splineIndex = 0;
-			std::vector<size_t> newSplineIndices;
-			std::vector<size_t> updatedSplineIndices;
-
-			// Sort splines for requests (addition/update)
-			for (auto const& spline : splines_)
-			{
-				if (!spline->GetId().HasDBIdentifier())
-				{
-					jInPost.splines.emplace_back(ToJsonSpline(*spline));
-					newSplineIndices.push_back(splineIndex);
-				}
-				else if (spline->ShouldSave())
-				{
-					jInPut.splines.emplace_back(ToJsonSpline(*spline));
-					updatedSplineIndices.push_back(splineIndex);
-				}
-				++splineIndex;
-			}
-
-			// Post (new splines)
-			if (!jInPost.splines.empty())
-			{
-				SJsonIds jOutPost;
-				long status = GetHttp()->PostJsonJBody(
-					jOutPost, "decorations/" + decorationId + "/splines", jInPost);
-
-				if (status == 200 || status == 201)
-				{
-					if (newSplineIndices.size() == jOutPost.ids.size())
-					{
-						for (size_t i = 0; i < newSplineIndices.size(); ++i)
-						{
-							ISpline& spline = *splines_[newSplineIndices[i]];
-
-							// Update the DB identifier only.
-							RefID splineId = spline.GetId();
-							splineId.SetDBIdentifier(jOutPost.ids[i]);
-							spline.SetId(splineId);
-
-							spline.SetShouldSave(false);
-						}
-					}
-				}
-				else
-				{
-					BE_LOGW("ITwinDecoration", "Saving new splines failed. Http status: " << status);
-				}
-			}
-
-			// Put (updated splines)
-			if (!jInPut.splines.empty())
-			{
-				struct SJsonSplineOutUpd { int64_t numUpdated = 0; };
-				SJsonSplineOutUpd jOutPut;
-				long status = GetHttp()->PutJsonJBody(
-					jOutPut, "decorations/" + decorationId  + "/splines", jInPut);
-
-				if (status == 200 || status == 201)
-				{
-					if (updatedSplineIndices.size() == static_cast<size_t>(jOutPut.numUpdated))
-					{
-						for (size_t i = 0; i < updatedSplineIndices.size(); ++i)
-						{
-							splines_[updatedSplineIndices[i]]->SetShouldSave(false);
-						}
-					}
-				}
-				else
-				{
-					BE_LOGW("ITwinDecoration", "Updating splines failed. Http status: " << status);
-				}
-			}
+			auto thdata = thdata_.GetAutoLock();
+			TAsyncSaveItems<Impl, ISpline>(*this,
+				"decorations/" + decorationId + "/splines",
+				thdata->splines_,
+				callbackPtr
+			);
 		}
 
-		void DeleteSplinePoints(const std::string& decorationId)
+		void AsyncDeleteSplinePoints(const std::string& decorationId, std::function<void(bool)>&& onPointsDeletedFunc)
 		{
+			BE_ASSERT(IsValidThreadForAsyncSaving());
+
 			SJsonIds jIn;
-			SJsonEmpty jOut;
+			std::vector<std::pair<RefID, RefID>> removedPointIds;
+			
+			auto thdata = thdata_.GetAutoLock();
+			auto& splines_ = thdata->splines_;
 
 			// Get the ids of removed points in splines that are still used.
-			for (auto const& spline : splines_)
+			for (auto const& splinePtr : splines_)
 			{
-				const SharedSplinePointVect& points = spline->GetRemovedPoints();
-				for (auto const& point : points)
+				auto spline = splinePtr->GetRAutoLock();
+				const ISplinePointPtrVect& points = spline->GetRemovedPoints();
+				for (auto const& pointPtr : points)
 				{
-					std::string pointId = point->GetId();
-					if (!pointId.empty())
-						jIn.ids.push_back(pointId);
+					auto point = pointPtr->GetRAutoLock();
+					auto const& pointId = point->GetId();
+					if (pointId.HasDBIdentifier())
+					{
+						jIn.ids.push_back(pointId.GetDBIdentifier());
+						removedPointIds.push_back(
+							std::make_pair(spline->GetId(), point->GetId()));
+					}
 				}
 			}
 
 			if (jIn.ids.empty())
 			{
+				if (onPointsDeletedFunc)
+					onPointsDeletedFunc(true);
 				return;
 			}
 
 			// Delete the points from the server
-			long status = GetHttp()->DeleteJsonJBody(
-				jOut, "decorations/" + decorationId + "/splinepoints", jIn);
+			std::shared_ptr<AsyncRequestGroupCallback> callbackPtr =
+				std::make_shared<AsyncRequestGroupCallback>(
+					std::move(onPointsDeletedFunc), isThisValid_);
 
-			if (status == 200 || status == 201)
+			AsyncDeleteJsonNoOutput(GetHttp(), callbackPtr,
+				[this, removedPointIds](long httpCode)
 			{
-				for (auto const& spline : splines_)
+				const bool bSuccess = (httpCode == 200 || httpCode == 201 || httpCode == 204 /* No-Content*/);
+				if (bSuccess)
 				{
-					spline->ClearRemovedPoints();
+					auto thdata = thdata_.GetAutoLock();
+					auto const& splines = thdata->splines_;
+					for (auto const& removed : removedPointIds)
+					{
+						if (auto splinePtr = FindSplineById(splines, removed.first))
+						{
+							auto spline = splinePtr->GetAutoLock();
+							spline->UnregisterRemovedPointById(removed.second);
+						}
+					}
 				}
-			}
-			else
-			{
-				BE_LOGW("ITwinDecoration", "Deleting spline points failed. Http status: " << status);
-			}
+				else
+				{
+					BE_LOGW("ITwinDecoration", "Deleting spline points failed. Http status: " << httpCode);
+				}
+				return bSuccess;
+			},
+				"decorations/" + decorationId + "/splinepoints",
+				jIn);
+
+			callbackPtr->OnFirstLevelRequestsRegistered();
 		}
 
-		void DeleteSplines(const std::string& decorationId)
+		void AsyncDeleteSplines(const std::string& decorationId, std::shared_ptr<AsyncRequestGroupCallback> callbackPtr)
 		{
-			SJsonIds jIn;
-			SJsonEmpty jOut;
-
-			jIn.ids.reserve(removedSplines_.size());
-			for (auto const& spline : removedSplines_)
-			{
-				auto const& splineId = spline->GetId();
-				if (splineId.HasDBIdentifier())
-					jIn.ids.push_back(splineId.GetDBIdentifier());
-			}
-
-			if (jIn.ids.empty())
-			{
-				return;
-			}
-
-			long status = GetHttp()->DeleteJsonJBody(
-				jOut, "decorations/" + decorationId + "/splines", jIn);
-
-			if (status == 200 || status == 201)
-			{
-				removedSplines_.clear();
-			}
-			else
-			{
-				BE_LOGW("ITwinDecoration", "Deleting splines failed. Http status: " << status);
-			}
+			auto thdata = thdata_.GetAutoLock();
+			TAsyncDeleteItems<Impl, ISpline>(*this,
+				"decorations/" + decorationId + "/splines",
+				thdata->removedSplines_,
+				callbackPtr);
 		}
 
-		void SaveDataOnServer(const std::string& decorationId)
+		void AsyncSaveDataOnServer(const std::string& decorationId, std::function<void(bool)>&& onDataSavedFunc)
 		{
+			// Helper used to call onDataSavedFunc when *all* requests are processed.
+			std::shared_ptr<AsyncRequestGroupCallback> saveAllCallback =
+				std::make_shared<AsyncRequestGroupCallback>(
+					std::move(onDataSavedFunc), isThisValid_);
+
 			// Save the points first so that they receive their ids from the server,
-			// which are the stored in each spline.
-			SaveSplinePoints(decorationId);
-			SaveSplines(decorationId);
+			// which are then stored in each spline.
+			saveAllCallback->AddRequestToWait();
+			AsyncSaveSplinePoints(decorationId,
+				[this, decorationId, saveAllCallback](bool bSuccess) mutable
+			{
+				AsyncSaveSplines(decorationId, saveAllCallback);
+				saveAllCallback->OnRequestDone(bSuccess);
+			});
 
-			// Delete obsolete points and splines
-			DeleteSplinePoints(decorationId);
-			DeleteSplines(decorationId);
+			// Delete obsolete points and then splines
+			saveAllCallback->AddRequestToWait();
+			AsyncDeleteSplinePoints(decorationId,
+				[this, decorationId, saveAllCallback](bool bSuccess)
+			{
+				AsyncDeleteSplines(decorationId, saveAllCallback);
+				saveAllCallback->OnRequestDone(bSuccess);
+			});
+
+			saveAllCallback->OnFirstLevelRequestsRegistered();
 		}
 
 		size_t GetNumberOfSplines() const
 		{
+			auto thdata = thdata_.GetRAutoLock();
+			auto& splines_ = thdata->splines_;
 			return splines_.size();
 		}
 
-		SharedSpline GetSpline(const size_t index) const
+		ISplinePtr GetSpline(const size_t index) const
 		{
+			auto thdata = thdata_.GetRAutoLock();
+			auto& splines_ = thdata->splines_;
 			if (index < splines_.size())
 			{
 				return splines_[index];
 			}
-			return SharedSpline();
+			return ISplinePtr();
 		}
 
-		SharedSpline GetSplineById(const RefID& id) const
+		ISplinePtr GetSplineById(const RefID& id) const
 		{
-			// TODO_JDE - optimize lookup with map
-			auto it = std::find_if(splines_.begin(), splines_.end(),
-				[&id](SharedSpline const& spl) {
-				return spl->GetId() == id;
+			auto thdata = thdata_.GetRAutoLock();
+			return FindSplineById(thdata->splines_, id);
+		}
+
+		/////////////////////////////////////////////////////////////////////////////////
+		/// for use in TAsyncSaveItems
+		ISplinePtr GetItemById(RefID const& id) const
+		{
+			return GetSplineById(id);
+		}
+
+		void OnItemDeletedOnDB(RefID const& deletedId) override
+		{
+			auto thdata = thdata_.GetAutoLock();
+			std::erase_if(thdata->removedSplines_, [&deletedId](const auto& removedSplinePtr)
+			{
+				auto removedSpline = removedSplinePtr->GetRAutoLock();
+				return removedSpline->GetId() == deletedId;
 			});
-			if (it != splines_.end())
-				return *it;
-			return {};
 		}
+		/////////////////////////////////////////////////////////////////////////////////
 
-		SharedSpline GetSplineByDBId(const std::string& id) const
+		ISplinePtr GetSplineByDBId(const std::string& id) const
 		{
+			auto thdata = thdata_.GetRAutoLock();
+			auto& splines_ = thdata->splines_;
 			auto it = std::find_if(splines_.begin(), splines_.end(),
-				[&id](SharedSpline const& spl) {
-					return spl->GetId().HasDBIdentifier() && spl->GetId().GetDBIdentifier() == id;
+				[&id](ISplinePtr const& spl) {
+					auto splLocked = spl->GetRAutoLock();
+					return splLocked->HasDBIdentifier() && splLocked->GetDBIdentifier() == id;
 				});
 			if (it != splines_.end())
 				return *it;
 			return {};
 		}
 
-		SharedSplineVect const& GetSplines() const
+		ISplinePtrVect GetSplines() const
 		{
+			auto thdata = thdata_.GetRAutoLock();
+			auto& splines_ = thdata->splines_;
 			return splines_;
 		}
 
-		SharedSpline AddSpline()
+		ISplinePtr AddSpline()
 		{
-			SharedSpline spline(ISpline::New());
+			auto thdata = thdata_.GetAutoLock();
+			auto& splines_ = thdata->splines_;
+			ISplinePtr spline = MakeSharedLockableDataPtr(ISpline::New());
 			splines_.push_back(spline);
 			return spline;
 		}
 
 		void RemoveSpline(const size_t index)
 		{
+			auto thdata = thdata_.GetAutoLock();
+			auto& splines_ = thdata->splines_;
 			if (index < splines_.size())
 			{
-				AdvViz::SDK::SharedSplineVect::const_iterator it = splines_.cbegin() + index;
-				removedSplines_.push_back(*it);
+				AdvViz::SDK::ISplinePtrVect::const_iterator it = splines_.cbegin() + index;
+				thdata->removedSplines_.push_back(*it);
 				splines_.erase(it);
 			}
 		}
 
-		void RemoveSpline(const SharedSpline& spline)
+		void RemoveSpline(const ISplinePtr& spline)
 		{
+			auto thdata = thdata_.GetAutoLock();
+			auto& splines_ = thdata->splines_;
 			size_t index = 0;
 			bool found = false;
 			for (auto it = splines_.cbegin(); it != splines_.cend(); ++it, ++index)
@@ -651,33 +827,43 @@ namespace AdvViz::SDK
 			}
 		}
 
-		void RestoreSpline(const SharedSpline& spline)
+		void RestoreSpline(const ISplinePtr& splinePtr)
 		{
-			std::erase_if(removedSplines_, [&spline](const auto& removedSpline)
+			auto thdata = thdata_.GetAutoLock();
+			auto& removedSplines_ = thdata->removedSplines_;
+			auto& splines_ = thdata->splines_;
+			auto spline = splinePtr->GetRAutoLock();
+
+			std::erase_if(removedSplines_, [&spline](const auto& removedSplinePtr)
 			{
+				auto removedSpline = removedSplinePtr->GetRAutoLock();
 				return removedSpline->GetId() == spline->GetId();
 			});
 			auto existingSpline = GetSplineById(spline->GetId());
 			if (!existingSpline)
 			{
-				splines_.push_back(spline);
+				splines_.push_back(splinePtr);
 			}
 		}
 
 		bool HasSplines() const
 		{
-			return !splines_.empty();
+			auto thdata = thdata_.GetRAutoLock();
+			return !thdata->splines_.empty();
 		}
 
 		bool HasSplinesToSave() const
 		{
-			for (const auto& spline : splines_)
+			auto thdata = thdata_.GetRAutoLock();
+			for (const auto& splinePtr : thdata->splines_)
 			{
+				auto spline = splinePtr->GetRAutoLock();
 				if (spline->ShouldSave())
 					return true;
 			}
-			for (auto const& spline : removedSplines_)
+			for (auto const& splinePtr : thdata->removedSplines_)
 			{
+				auto const& spline = splinePtr->GetRAutoLock();
 				auto const& splineId = spline->GetId();
 				if (splineId.HasDBIdentifier())
 					return true;
@@ -687,7 +873,8 @@ namespace AdvViz::SDK
 
 		RefID GetLoadedSplineId(std::string const& splineDBIdentifier) const
 		{
-			return RefID::FindFromDBIdentifier(splineDBIdentifier, splineIDMap_);
+			auto thdata = thdata_.GetRAutoLock();
+			return RefID::FindFromDBIdentifier(splineDBIdentifier, thdata->splineIDMap_);
 		}
 	};
 
@@ -696,9 +883,17 @@ namespace AdvViz::SDK
 		GetImpl().LoadDataFromServer(decorationId);
 	}
 
-	void SplinesManager::SaveDataOnServer(const std::string& decorationId)
+	void SplinesManager::AsyncLoadDataFromServer(const std::string& decorationId, 
+		const std::function<void(ISplinePtr&)>& onSplineLoaded,
+		const std::function<void(ISplinePointPtr&)>& onSplinePointLoaded,
+		const std::function<void(expected<void, std::string> const&)>& onComplete)
 	{
-		GetImpl().SaveDataOnServer(decorationId);
+		GetImpl().AsyncLoadDataFromServer(decorationId, onSplineLoaded, onSplinePointLoaded, onComplete);
+	}
+
+	void SplinesManager::AsyncSaveDataOnServer(const std::string& decorationId, std::function<void(bool)>&& onDataSavedFunc)
+	{
+		GetImpl().AsyncSaveDataOnServer(decorationId, std::move(onDataSavedFunc));
 	}
 
 	size_t SplinesManager::GetNumberOfSplines() const
@@ -706,27 +901,27 @@ namespace AdvViz::SDK
 		return GetImpl().GetNumberOfSplines();
 	}
 
-	SharedSpline SplinesManager::GetSpline(const size_t index) const
+	ISplinePtr SplinesManager::GetSpline(const size_t index) const
 	{
 		return GetImpl().GetSpline(index);
 	}
 
-	SharedSpline SplinesManager::GetSplineById(const RefID& id) const
+	ISplinePtr SplinesManager::GetSplineById(const RefID& id) const
 	{
 		return GetImpl().GetSplineById(id);
 	}
 
-	SharedSpline SplinesManager::GetSplineByDBId(const std::string& id) const
+	ISplinePtr SplinesManager::GetSplineByDBId(const std::string& id) const
 	{
 		return GetImpl().GetSplineByDBId(id);
 	}
 
-	SharedSplineVect const& SplinesManager::GetSplines() const
+	ISplinePtrVect SplinesManager::GetSplines() const
 	{
 		return GetImpl().GetSplines();
 	}
 
-	SharedSpline SplinesManager::AddSpline()
+	ISplinePtr SplinesManager::AddSpline()
 	{
 		return GetImpl().AddSpline();
 	}
@@ -736,12 +931,12 @@ namespace AdvViz::SDK
 		GetImpl().RemoveSpline(index);
 	}
 
-	void SplinesManager::RemoveSpline(const SharedSpline& spline)
+	void SplinesManager::RemoveSpline(const ISplinePtr& spline)
 	{
 		GetImpl().RemoveSpline(spline);
 	}
 
-	void SplinesManager::RestoreSpline(const SharedSpline& spline)
+	void SplinesManager::RestoreSpline(const ISplinePtr& spline)
 	{
 		GetImpl().RestoreSpline(spline);
 	}
@@ -768,7 +963,6 @@ namespace AdvViz::SDK
 
 	SplinesManager::SplinesManager():impl_(new Impl())
 	{
-		GetImpl().SetHttp(GetDefaultHttp());
 	}
 
 	SplinesManager::~SplinesManager() 

@@ -10,8 +10,11 @@
 
 #include <Clipping/ITwinClippingInfoBase.h>
 
-#include <glm/ext/matrix_double3x3.hpp>
-#include <glm/ext/vector_double3.hpp>
+#include <ITwinRuntime/Private/Compil/BeforeNonUnrealIncludes.h>
+	#include <glm/ext/matrix_double3x3.hpp>
+	#include <glm/ext/vector_double3.hpp>
+#include <ITwinRuntime/Private/Compil/AfterNonUnrealIncludes.h>
+
 #include <memory>
 
 #include <ITwinClippingBoxInfo.generated.h>
@@ -25,11 +28,13 @@ struct FITwinClippingBoxInfo : public FITwinClippingInfoBase
 	virtual bool GetInvertEffect() const override;
 	virtual void DeactivatePrimitiveInExcluder(UITwinTileExcluderBase& Excluder) const override;
 
-	void CalcBoxBounds(glm::dmat3x3 const& BoxMatrix, glm::dvec3 const& BoxTranslation);
+	void UpdateBoxProperties(glm::dmat3x3 const& BoxMatrix, glm::dvec3 const& BoxTranslation);
 
 
 	struct FBoxProperties
 	{
+		glm::dmat3x3 BoxInvMatrix = glm::dmat3x3(1.0); // For performance reasons, we store the inverse matrix.
+		glm::dvec3 BoxTranslation = glm::dvec3(0.0);
 		FBoxSphereBounds BoxBounds;
 		bool bInvertEffect = false;
 	};

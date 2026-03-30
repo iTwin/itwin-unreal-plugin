@@ -13,6 +13,7 @@
 #include <ITwinLoadInfo.h>
 #include <ITwinServiceActor.h>
 #include <MaterialPrediction/ITwinMaterialPredictionStatus.h>
+#include <Misc/Optional.h>
 #include <Templates/PimplPtr.h>
 #include <memory>
 #include <ITwinIModel.generated.h>
@@ -24,7 +25,7 @@ struct FCesium3DTilesetLoadFailureDetails;
 class FITwinTilesetAccess;
 struct FSavedViewInfos;
 struct FSavedViewGroupInfos;
-class UITwinClippingCustomPrimitiveDataHelper;
+class UITwinClipping3DTilesetHelper;
 class UITwinMaterialDefaultTexturesHolder;
 class ULightComponent;
 namespace AdvViz::SDK
@@ -78,6 +79,7 @@ public:
 	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnSavedViewGroupsRetrievedEvent, bool, bSuccess, FSavedViewGroupInfos, SavedViewGroups);
 	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnSavedViewGroupAddedEvent, bool, bSuccess, const FSavedViewGroupInfo&, SavedViewGroup);
 	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnSavedViewAddedEvent, bool, bSuccess, const FSavedViewInfo&, SavedView);
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(FOnConfirmLoadNewChangeset, FString, IModelId, FString, IModelName, FString, NewChangesetId, FString, NewChangesetName);
 	UPROPERTY()
 	FOnFinishedLoadingSavedViewsEvent FinishedLoadingSavedViews;
 	UPROPERTY()
@@ -88,6 +90,9 @@ public:
 	FOnSavedViewGroupAddedEvent SavedViewGroupAdded;
 	UPROPERTY()
 	FOnSavedViewAddedEvent SavedViewAdded;
+	UPROPERTY()
+	FOnConfirmLoadNewChangeset ConfirmLoadNewChangeset;
+
 
 	UPROPERTY(Category = "iTwin|Loading",
 		EditAnywhere)
@@ -230,6 +235,10 @@ public:
 		BlueprintCallable)
 	void StartExport();
 
+
+	//! Globally enable or disable saved view updates.
+	static void EnableSavedViewsUpdates(bool bEnableSV);
+
 	UFUNCTION(Category = "iTwin",
 		BlueprintCallable)
 	AITwinSavedView* GetITwinSavedViewActor(const FString& SavedViewId);
@@ -260,7 +269,7 @@ public:
 	void ShowCategoriesPerModel(std::vector<std::string> const& InModelIDs, std::vector<std::string> const& InCategoryIDs, bool forceUpdate);
 
 	UPROPERTY(Category = "iTwin", EditAnywhere)
-	bool bShowConstructionData = true;
+	bool bShowConstructionData = false;
 
 	//! Deselect any element previously selected. This will disable the selection highlight, if any.
 	UFUNCTION(Category = "iTwin",
@@ -318,6 +327,10 @@ public:
 		BlueprintCallable)
 	void RefreshTileset();
 
+	UFUNCTION(Category = "iTwin|Load",
+		BlueprintCallable)
+	void OnLoadNewChangesetConfirmation(const FString& NewChangesetId, bool bLoadNewChangeset);
+
 	//! TEMPORARY (for tests). Triggers a re-tune of the glTF model.
 	UFUNCTION(Category = "iTwin",
 		CallInEditor,
@@ -365,7 +378,8 @@ public:
 	bool SetMaterialName(uint64_t MaterialId, FString const& NewName);
 
 	//! Load a material from an asset file (expecting an asset of class #UITwinMaterialDataAsset).
-	bool LoadMaterialFromAssetFile(uint64_t MaterialId, FString const& AssetFilePath);
+	bool LoadMaterialFromAssetFile(uint64_t MaterialId, FString const& AssetFilePath,
+		TOptional<FString> const& CustomTextureDir = {});
 
 	using GltfMaterialHelperPtr = std::shared_ptr<BeUtils::GltfMaterialHelper>;
 	std::shared_ptr<BeUtils::GltfMaterialHelper> const& GetGltfMaterialHelper() const;
@@ -423,6 +437,10 @@ public:
 	//! Creates a helper to perform some requests/modifications on the tileset.
 	TUniquePtr<FITwinTilesetAccess> MakeTilesetAccess();
 
+	ITwin::ModelLink GetModelLink() const {
+		return std::make_pair(EITwinModelType::IModel, IModelId);
+	}
+
 	void OnIModelOffsetChanged();
 
 	//! Start loading the decoration attached to this model, if any.
@@ -453,7 +471,16 @@ public:
 	//! Returns null if the iModel is not geolocated, or if it is not known yet.
 	const FEcefLocation* GetEcefLocation() const;
 	//! Returns a bounding box for the loaded tileset, if any.
-	bool GetBoundingBox(FBox& OutBox, bool bClampOutlandishValues) const;
+	enum class EBBoxMethod
+	{
+		/* Uses the project extents defined in the model. */
+		ProjectExtents,
+		/* Uses the glTF meshes already created. Can be more precise than project extents, but with the
+		 * disadvantage of depending on which tiles have been loaded.
+		 */
+		UnrealMeshes,
+	};
+	bool GetBoundingBox(FBox& OutBox, bool bClampOutlandishValues, EBBoxMethod Method = EBBoxMethod::ProjectExtents) const;
 	//! Returns null if the tileset has not been constructed yet.
 	const ACesium3DTileset* GetTileset() const;
 	ACesium3DTileset* GetTileset();
@@ -466,12 +493,16 @@ public:
 	TFuture<TArray<FString>> GetChildrenModelIds(const FString& ParentModelId);
 	TFuture<TArray<FString>> GetSubCategoryIds(const FString& ParentCategoryId);
 
-	UITwinClippingCustomPrimitiveDataHelper* GetClippingHelper() const;
+	UITwinClipping3DTilesetHelper* GetClippingHelper() const;
 	bool MakeClippingHelper();
 	void SetNeedForcedShadowUpdate();
 
+	bool AutoRefreshChangeset() const;
+	void DisableAutoRefresh();
+
 private:
 	void SetResolvedChangesetId(FString const& InChangesetId);
+	bool IsFetchingExportForAutoRefresh() const;
 
 	/// overridden from AITwinServiceActor:
 	virtual void UpdateOnSuccessfulAuthorization() override;
@@ -562,6 +593,12 @@ private:
 	//! but since FITwinIModelInternals is defined in the Private folder,
 	//! client code cannot do anything with it (because it cannot even include its declaration header).
 	friend FITwinIModelInternals& GetInternals(AITwinIModel& IModel);
+
+
+	//! When true, check regularly if a new changeset is available
+	UPROPERTY(Category = "iTwin|Loading",
+		EditAnywhere)
+	bool bAutoRefreshChangeset = true;
 
 	class FTilesetAccess;
 };

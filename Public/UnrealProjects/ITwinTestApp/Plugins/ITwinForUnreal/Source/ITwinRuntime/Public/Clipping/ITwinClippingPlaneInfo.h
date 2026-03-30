@@ -20,6 +20,12 @@ struct FITwinClippingPlaneInfo : public FITwinClippingInfoBase
 
 	virtual bool GetInvertEffect() const override { return bInvertEffect; }
 
+	struct FPlaneEquation
+	{
+		FVector PlaneOrientation = FVector::ZAxisVector;
+		double PlaneW = 0.;
+	};
+
 protected:
 	virtual void DoSetInvertEffect(bool bInvert) override;
 
@@ -31,6 +37,7 @@ private:
 	 * visible.
 	 */
 	bool bInvertEffect = false;
+	FPlaneEquation PlaneEquation;
 
 	friend class AITwinClippingTool;
 };

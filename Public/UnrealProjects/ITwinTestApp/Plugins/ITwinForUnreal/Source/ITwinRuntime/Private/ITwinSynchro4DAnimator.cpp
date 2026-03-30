@@ -678,8 +678,7 @@ void FITwinSynchro4DAnimator::FImpl::ApplyTimeline(FITwinElementTimeline& Timeli
 		return; // no mesh yet loaded is animated by this timeline, we can skip it
 	const auto TimelineRange = Timeline.GetTimeRange();
 	// After a timeline has been applied once(*), this is a good optim as most timelines correspond to
-	// tasks which duration is rather small with respect to the whole animation. Note that a hack like
-	// FixColor (see Timeline.cpp) would rather spoil this!
+	// tasks which duration is rather small with respect to the whole animation.
 	// (*) and not "modified" since, like adding Elements to existing (grouped Elements) timelines.
 	//     "Modified" used to also include discovering new tiles using known Elements, but for that we
 	//     now restart from scratch anyway (see TilesHaveNew4DAnimTextures(..) call above)
@@ -872,25 +871,6 @@ template<> inline FContinue Default::operator ()<ITwin::Flag::FPresence>(
 // A couple utility functions
 //---------------------------------------------------------------------------------------
 
-/// This is exactly UE::Math::TVector<T>::SlerpNormals but with proper const ref for params!!
-template<typename T>
-UE::Math::TVector<T> ConstQualSlerpNormals(UE::Math::TVector<T> const& NormalA,
-										   UE::Math::TVector<T> const& NormalB, T const Alpha)
-{
-	using TVector = UE::Math::TVector<T>;
-	using TQuat = UE::Math::TQuat<T>;
-
-	// Find rotation from A to B
-	const TQuat RotationQuat = TQuat::FindBetweenNormals(NormalA, NormalB);
-	const TVector Axis = RotationQuat.GetRotationAxis();
-	const T AngleRads = RotationQuat.GetAngle();
-
-	// Rotate from A toward B using portion of the angle specified by Alpha.
-	const TQuat DeltaQuat(Axis, AngleRads * Alpha);
-	TVector Result = DeltaQuat.RotateVector(NormalA);
-	return Result;
-}
-
 template<typename FDefrdProp>
 void FinalizeDeferredProperty(::Detail::FFinalizeDeferredPropData& UserData, FDefrdProp const& Deferred,
 	std::function<void(FITwinCoordConversions const&, FDefrdProp const&, FBox const&)> const& Finalizer,
@@ -995,7 +975,7 @@ template<> FContinue Default::operator ()<FDefrdPlaneEq>(
 	}
 	else
 	{
-		Out = FDefrdPlaneEq{ ConstQualSlerpNormals(x0.PlaneOrientation, x1.PlaneOrientation, u), nullptr,
+		Out = FDefrdPlaneEq{ FVector3f::SlerpNormals(x0.PlaneOrientation, x1.PlaneOrientation, u), nullptr,
 							 Lerp(x0.PlaneW, x1.PlaneW, u),
 							 ITwin::Timeline::EGrowthStatus::Partial };
 	}

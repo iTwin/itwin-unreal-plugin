@@ -1,4 +1,4 @@
-// Copyright 2020-2024 CesiumGS, Inc. and Contributors
+// Copyright 2020-2025 CesiumGS, Inc. and Contributors
 
 #pragma once
 
@@ -44,29 +44,19 @@ struct CESIUMRUNTIME_API FCesiumFeatureIdSetDescription {
    * This name will also be used to represent the feature ID set in the
    * generated material.
    */
-  UPROPERTY(EditAnywhere, Category = "Cesium")
+  UPROPERTY(EditAnywhere, Category = "Cesium|Features")
   FString Name;
 
   /**
    * The type of the feature ID set.
    */
-  UPROPERTY(EditAnywhere, Category = "Cesium")
+  UPROPERTY(EditAnywhere, Category = "Cesium|Features")
   ECesiumFeatureIdSetType Type = ECesiumFeatureIdSetType::None;
-
-  /**
-   * Whether this feature ID set contains a KHR_texture_transform glTF
-   * extension. Only applicable if the feature ID set is a feature ID texture.
-   */
-  UPROPERTY(
-      EditAnywhere,
-      Category = "Cesium",
-      Meta = (EditCondition = "Type == ECesiumFeatureIdSetType::Texture"))
-  bool bHasKhrTextureTransform = false;
 
   /**
    * The name of the property table that this feature ID set corresponds to.
    */
-  UPROPERTY(EditAnywhere, Category = "Cesium")
+  UPROPERTY(EditAnywhere, Category = "Cesium|Features")
   FString PropertyTableName;
 
   /**
@@ -80,6 +70,13 @@ struct CESIUMRUNTIME_API FCesiumFeatureIdSetDescription {
 
   /**
    * The null feature ID for the feature ID set, if any.
+   * ADvViz-Cesium convergence note: this value used to be set in
+   * AutoFillFeatureIdSetDescriptions() in
+   * CesiumFeaturesMetadataComponent.cpp, but all the AutoFill code was removed
+   * and replaced by a new panel in CesiumEditor: since we don't have it in our
+   * fork, we'll have to report the change if/when it is merged upstream!
+   * (see https://github.com/GhisBntly/cesium-unreal/commit/75e18f740d6411b95545f5841bd191179bfb6fb0)
+   * Maybe CesiumFeaturesMetadataViewer::registerFeatureIdSetInstance?
    */
   UPROPERTY(EditAnywhere, Category = "Cesium")
   int64 NullFeatureId = -1;
@@ -105,7 +102,7 @@ struct CESIUMRUNTIME_API FCesiumPrimitiveFeaturesDescription {
    */
   UPROPERTY(
       EditAnywhere,
-      Category = "Features",
+      Category = "Cesium|Features",
       Meta = (TitleProperty = "Name"))
   TArray<FCesiumFeatureIdSetDescription> FeatureIdSets;
 };
@@ -137,7 +134,7 @@ struct CESIUMRUNTIME_API FCesiumPropertyTablePropertyDescription {
    * The name of this property. This will be how it is referenced in the
    * material.
    */
-  UPROPERTY(EditAnywhere, Category = "Cesium")
+  UPROPERTY(EditAnywhere, Category = "Cesium|Metadata")
   FString Name;
 
   /**
@@ -145,13 +142,13 @@ struct CESIUMRUNTIME_API FCesiumPropertyTablePropertyDescription {
    * information from its EXT_structural_metadata definition. Not all types of
    * properties can be encoded to the GPU, or coerced to GPU-compatible types.
    */
-  UPROPERTY(EditAnywhere, Category = "Cesium")
+  UPROPERTY(EditAnywhere, Category = "Cesium|Metadata")
   FCesiumMetadataPropertyDetails PropertyDetails;
 
   /**
    * Describes how the property will be encoded as data on the GPU, if possible.
    */
-  UPROPERTY(EditAnywhere, Category = "Cesium")
+  UPROPERTY(EditAnywhere, Category = "Cesium|Metadata")
   FCesiumMetadataEncodingDetails EncodingDetails;
 };
 
@@ -168,13 +165,16 @@ struct CESIUMRUNTIME_API FCesiumPropertyTableDescription {
    * in the EXT_structural_metadata extension, then its class name is used
    * instead.
    */
-  UPROPERTY(EditAnywhere, Category = "Cesium")
+  UPROPERTY(EditAnywhere, Category = "Cesium|Metadata")
   FString Name;
 
   /**
    * @brief Descriptions of the properties to upload to the GPU.
    */
-  UPROPERTY(EditAnywhere, Category = "Cesium", Meta = (TitleProperty = "Name"))
+  UPROPERTY(
+      EditAnywhere,
+      Category = "Cesium|Metadata",
+      Meta = (TitleProperty = "Name"))
   TArray<FCesiumPropertyTablePropertyDescription> Properties;
 };
 
@@ -192,22 +192,15 @@ struct CESIUMRUNTIME_API FCesiumPropertyTexturePropertyDescription {
    * The name of this property. This will be how it is referenced in the
    * material.
    */
-  UPROPERTY(EditAnywhere, Category = "Cesium")
+  UPROPERTY(EditAnywhere, Category = "Cesium|Metadata")
   FString Name;
 
   /**
    * Describes the underlying type of this property and other relevant
    * information from its EXT_structural_metadata definition.
    */
-  UPROPERTY(EditAnywhere, Category = "Cesium")
+  UPROPERTY(EditAnywhere, Category = "Cesium|Metadata")
   FCesiumMetadataPropertyDetails PropertyDetails;
-
-  /**
-   * Whether this property texture property contains a KHR_texture_transform
-   * glTF extension.
-   */
-  UPROPERTY(EditAnywhere, Category = "Cesium")
-  bool bHasKhrTextureTransform = false;
 };
 
 /**
@@ -221,13 +214,16 @@ struct CESIUMRUNTIME_API FCesiumPropertyTextureDescription {
   /**
    * @brief The name of this property texture.
    */
-  UPROPERTY(EditAnywhere, Category = "Cesium")
+  UPROPERTY(EditAnywhere, Category = "Cesium|Metadata")
   FString Name;
 
   /**
    * @brief Descriptions of the properties to upload to the GPU.
    */
-  UPROPERTY(EditAnywhere, Category = "Cesium", Meta = (TitleProperty = "Name"))
+  UPROPERTY(
+      EditAnywhere,
+      Category = "Cesium|Metadata",
+      Meta = (TitleProperty = "Name"))
   TArray<FCesiumPropertyTexturePropertyDescription> Properties;
 };
 
@@ -255,7 +251,7 @@ struct CESIUMRUNTIME_API FCesiumPrimitiveMetadataDescription {
    */
   UPROPERTY(
       EditAnywhere,
-      Category = "Metadata",
+      Category = "Cesium|Metadata",
       Meta = (TitleProperty = "Name"))
   TSet<FString> PropertyTextureNames;
 };
@@ -274,7 +270,7 @@ struct CESIUMRUNTIME_API FCesiumModelMetadataDescription {
    */
   UPROPERTY(
       EditAnywhere,
-      Category = "Metadata",
+      Category = "Cesium|Metadata",
       Meta = (TitleProperty = "Name"))
   TArray<FCesiumPropertyTableDescription> PropertyTables;
 
@@ -284,7 +280,7 @@ struct CESIUMRUNTIME_API FCesiumModelMetadataDescription {
    */
   UPROPERTY(
       EditAnywhere,
-      Category = "Metadata",
+      Category = "Cesium|Metadata",
       Meta = (TitleProperty = "Name"))
   TArray<FCesiumPropertyTextureDescription> PropertyTextures;
 };

@@ -386,8 +386,8 @@ void FITwinAuthorizationManager::SetupTestMode(AdvViz::SDK::EITwinEnvironment En
 #endif // WITH_TESTS
 
 /*static*/
-bool FITwinAuthorizationManager::SavePrivateData(FString const& Token, AdvViz::SDK::EITwinEnvironment Env, int KeyIndex,
-	FString const& FileSuffix)
+bool FITwinAuthorizationManager::SavePrivateData(FString const& Token, AdvViz::SDK::EITwinEnvironment Env,
+	int KeyIndex, FString const& FileSuffix)
 {
 	const bool bIsDeletingToken = Token.IsEmpty();
 	FString OutputFileName = GetTokenFilename(Env, FileSuffix, !bIsDeletingToken);
@@ -397,12 +397,25 @@ bool FITwinAuthorizationManager::SavePrivateData(FString const& Token, AdvViz::S
 	}
 	if (bIsDeletingToken)
 	{
-		// just remove the file, if it exists: this will discard any old refresh token
+		// just remove the file, if it exists: this will discard any old refresh token.
 		if (IFileManager::Get().FileExists(*OutputFileName))
 		{
-			IFileManager::Get().Delete(*OutputFileName);
+			if (IFileManager::Get().Delete(*OutputFileName))
+			{
+				return true;
+			}
+			else
+			{
+				// Log file (for the logout blueprint).
+				BE_LOGE("ITwinAPI", "Could not remove authorization cache file: " << TCHAR_TO_UTF8(*OutputFileName));
+				return false;
+			}
 		}
-		return true;
+		else
+		{
+			// Nothing to do.
+			return true;
+		}
 	}
 
 	auto const Key = GetKey(Env, KeyIndex);
@@ -459,9 +472,9 @@ bool FITwinAuthorizationManager::LoadToken(FString& OutToken, AdvViz::SDK::EITwi
 }
 
 /*static*/
-void FITwinAuthorizationManager::DeleteTokenFile(AdvViz::SDK::EITwinEnvironment Env)
+bool FITwinAuthorizationManager::DeleteTokenFile(AdvViz::SDK::EITwinEnvironment Env)
 {
-	SaveToken({}, Env);
+	return SaveToken({}, Env);
 }
 
 /*static*/

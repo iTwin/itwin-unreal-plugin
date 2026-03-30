@@ -73,8 +73,8 @@ namespace AdvViz::SDK
 	AdvViz::SDK::Http::Response Http::Get(const std::string& url, const Headers& hi /*= {}*/, bool isFullUrl /*= false*/)
 	{
 		Headers h(hi);
-		if (accessToken_)
-			h.emplace_back("Authorization", std::string("Bearer ") + *accessToken_);
+		if (accessToken_ && !accessToken_->IsEmpty())
+			h.emplace_back("Authorization", std::string("Bearer ") + *accessToken_->Get());
 		return DoGet(url, h, isFullUrl);
 
 	}
@@ -82,53 +82,60 @@ namespace AdvViz::SDK
 	AdvViz::SDK::Http::Response Http::Patch(const std::string& url, const BodyParams& body, const Headers& hi /*= {}*/)
 	{
 		Headers h(hi);
-		if (accessToken_)
-			h.emplace_back("Authorization", std::string("Bearer ") + *accessToken_);
+		if (accessToken_ && !accessToken_->IsEmpty())
+			h.emplace_back("Authorization", std::string("Bearer ") + *accessToken_->Get());
 		return DoPatch(url, body, h);
 	}
 
 	AdvViz::SDK::Http::Response Http::Post(const std::string& url, const BodyParams& body, const Headers& hi /*= {}*/)
 	{
 		Headers h(hi);
-		if (accessToken_)
-			h.emplace_back("Authorization", std::string("Bearer ") + *accessToken_);
+		if (accessToken_ && !accessToken_->IsEmpty())
+			h.emplace_back("Authorization", std::string("Bearer ") + *accessToken_->Get());
 		return DoPost(url, body, h);
 	}
 
 	AdvViz::SDK::Http::Response Http::PostFile(const std::string& url, const std::string& fileParamName, const std::string& filePath, const KeyValueVector& extraParams /*= {}*/, const Headers& hi /*= {}*/)
 	{
 		Headers h(hi);
-		h.emplace_back("Authorization", std::string("Bearer ") + *accessToken_);
+		if (accessToken_ && !accessToken_->IsEmpty())
+			h.emplace_back("Authorization", std::string("Bearer ") + *accessToken_->Get());
 		return DoPostFile(url, fileParamName, filePath, extraParams, h);
 	}
 
 	AdvViz::SDK::Http::Response Http::Put(const std::string& url, const BodyParams& body, const Headers& hi /*= {}*/)
 	{
 		Headers h(hi);
-		if (accessToken_)
-			h.emplace_back("Authorization", std::string("Bearer ") + *accessToken_);
+		if (accessToken_ && !accessToken_->IsEmpty())
+			h.emplace_back("Authorization", std::string("Bearer ") + *accessToken_->Get());
 		return DoPut(url, body, h);
 	}
 
 	AdvViz::SDK::Http::Response AdvViz::SDK::Http::PutBinaryFile(const std::string& url, const std::string& filePath, const Headers& hi /*= {}*/)
 	{
 		Headers h(hi);
-		if (accessToken_)
-			h.emplace_back("Authorization", std::string("Bearer ") + *accessToken_);
+		if (accessToken_ && !accessToken_->IsEmpty())
+			h.emplace_back("Authorization", std::string("Bearer ") + *accessToken_->Get());
 		return DoPutBinaryFile(url, filePath, h);
 	}
 
 	AdvViz::SDK::Http::Response Http::Delete(const std::string& url, const BodyParams& body, const Headers& hi /*= {}*/)
 	{
 		Headers h(hi);
-		if (accessToken_)
-			h.emplace_back("Authorization", std::string("Bearer ") + *accessToken_);
+		if (accessToken_ && !accessToken_->IsEmpty())
+			h.emplace_back("Authorization", std::string("Bearer ") + *accessToken_->Get());
 		return DoDelete(url, body, h);
 	}
 
-	void Http::SetExecuteAsyncCallbackInGameThread(bool)
+	void Http::AsyncPostFile(std::function<void(const Response&)> callback, const std::string& url,
+		const std::string& fileParamName, const std::string& filePath,
+		const KeyValueVector& extraParams /*= {}*/, const Headers& hi /*= {}*/,
+		EAsyncCallbackExecutionMode asyncCBExecMode /*= Default*/)
 	{
-
+		Headers h(hi);
+		if (accessToken_ && !accessToken_->IsEmpty())
+			h.emplace_back("Authorization", std::string("Bearer ") + *accessToken_->Get());
+		DoAsyncPostFile(callback, url, fileParamName, filePath, extraParams, h, asyncCBExecMode);
 	}
 
 }

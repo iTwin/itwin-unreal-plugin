@@ -8,6 +8,8 @@ Synchro4D_RGBA_DATA.GetDimensions(_czm_width, _czm_height);
 _czm_pixelY = _czm_featureIndex / _czm_width;
 // Second clause added for robustness, in case one wants to test manually with dummy textures,
 // BUT ALSO to handle error cases where FeatureID is invalid in the Cesium tile
+bool bHas4DColor = false;
+bool bHas4DOpacity = false;
 if (_czm_width == 1 || _czm_pixelY >= _czm_height)
 {
 	Combined_RGBA = float4(0, 0, 0, 1);
@@ -17,6 +19,8 @@ else
 	_czm_knownXY = true;
 	_czm_pixelX = _czm_featureIndex % _czm_width;
 	Combined_RGBA = Synchro4D_RGBA_DATA.Load(int3(_czm_pixelX, _czm_pixelY, 0));
+	bHas4DColor = ((Combined_RGBA.x + Combined_RGBA.y + Combined_RGBA.z) != 0);
+	bHas4DOpacity = (Combined_RGBA.w < 0.98);
 }
 Synchro4D_CutPlanes_DATA.GetDimensions(_czm_width, _czm_height);
 if (_czm_width != 1 && !_czm_knownXY)
@@ -29,7 +33,7 @@ if (_czm_width != 1 && !_czm_knownXY)
 //                                 !!! IMPORTANT !!!
 // When you edit this file, change also the shader script inside the MLB_ITwinBlend
 // node named "Get Synchro4D and selection Values per Feature" (see comment there), otherwise
-// Unreal (5.3) may reuse a precompiled shader cache...
+// Unreal (tested with 5.3) may reuse a precompiled shader cache...
 // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // //
 
 
@@ -50,44 +54,61 @@ else
 // Synchro4D color and partial or zero opacity have priority, unless Selection_RGBA_DATA's
 // opacity is set to zero (Element is hidden)
 Selection_RGBA_DATA.GetDimensions(_czm_width, _czm_height);
-if (_czm_width != 1 && !_czm_knownXY)
+bool bHasSelHideTex = (_czm_width != 1);
+if (bHasSelHideTex && !_czm_knownXY)
 {
+	_czm_knownXY = true;
 	_czm_pixelX = _czm_featureIndex % _czm_width;
 	_czm_pixelY = _czm_featureIndex / _czm_width;
 }
 // 0 = use only BaseColor (no 4D nor Selection highlight), 1 = use none of the BaseColor
 // intermediate values used to blink between Selection/BaseColor when not done below between Selection/4D
 float BaseColorBlendRatio = 0.;
-if (_czm_width != 1 && _czm_pixelY < _czm_height)
+if (bHasSelHideTex && _czm_pixelY < _czm_height)
 {
 	float4 SelecHideRGBA = Selection_RGBA_DATA.Load(int3(_czm_pixelX, _czm_pixelY, 0));
 	bool bSelected = (SelecHideRGBA.x + SelecHideRGBA.y + SelecHideRGBA.z) != 0;
-	// No 4D color nor custom opacity => use both color and opacity from Selection_RGBA_DATA
-	if ((Combined_RGBA.x + Combined_RGBA.y + Combined_RGBA.z) == 0
-		&& Combined_RGBA.w >= 0.98)
+	if (bHas4DColor)
 	{
-		Combined_RGBA = SelecHideRGBA;
-		// Note: this will also blink hidden Elements into visibility, which sounds a good idea
-		// when they are selected by some other mean
+		// Use none of the base color: set to 1. and not BlinkingFactor even when selected,
+		// as it is used directly below to mix 4D and selection colors
+		BaseColorBlendRatio = 1.;
+		// When selected, blink between Selection and 4D colors:
 		if (bSelected)
-			BaseColorBlendRatio = BlinkingFactor; // Don't blink alpha, material may be opaque...
+		{
+			Combined_RGBA.xyz = (1. - BlinkingFactor) * Combined_RGBA.xyz;
+			Combined_RGBA.xyz += BlinkingFactor * SelecHideRGBA.xyz;
+		}
 	}
 	else
 	{
-		BaseColorBlendRatio = 1.; // Use none of the base color
-		// When selected, blink between Selection and 4D:
+		Combined_RGBA.xyz = SelecHideRGBA.xyz;
+		// When selected, we need to set the output to the BlinkingFactor so that the base color
+		// can be interpolated with the selection color: this is done outside this GLSL node
+		// (see Lerp node higher up in the Blueprint).
+		// Note: this will blink only RGB, not alpha, as the material may be opaque.
 		if (bSelected)
-		{
-			Combined_RGBA.xyz *= (1. - BlinkingFactor);
-			Combined_RGBA.xyz += BlinkingFactor * SelecHideRGBA.xyz;
-		}
-		// Still need to account for hiding of Elements through Selection_RGBA_DATA's alpha:
-		else if (SelecHideRGBA.w == 0)
-		{
-			Combined_RGBA.w = 0;
-		}
+			BaseColorBlendRatio = BlinkingFactor;
 	}
-	if (bSelected && SelecHideRGBA.w == 0)
-		Combined_RGBA.w = BlinkingFactor;
+	// Make selected Elements less transparent, for clarity:
+	if (bSelected && bHas4DOpacity)
+	{
+		Combined_RGBA.w += (1. - Combined_RGBA.w) / 2.;
+	}
+	// Still need to account for hiding of Elements through Selection_RGBA_DATA's alpha:
+	// Note that SelecHideRGBA.w can only be 0. or 1. so far, no need to "mix alphas".
+	if (SelecHideRGBA.w == 0)
+	{
+		// Make hidden but selected Elements actually visible: multiply the blinking factor
+		// by 1.5 to make it appear opaque longer, in particular when the material is not translucent!
+		if (bSelected)
+			Combined_RGBA.w = min(1., 1.5 * BlinkingFactor);
+		else
+			Combined_RGBA.w = 0;
+	}
+}
+else if (bHas4DColor)
+{
+	BaseColorBlendRatio = 1.; // Use none of the base color
 }
 return BaseColorBlendRatio;

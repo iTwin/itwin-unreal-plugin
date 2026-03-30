@@ -13,7 +13,6 @@
 #include <Population/ITwinPopulation.inl>
 #include <Population/ITwinPopulationWithPathExt.h>
 #include <Spline/ITwinSplineHelper.h>
-#include <BeUtils/SplineSampling/SplineSampling.h>
 #include <Components/SplineComponent.h>
 #include <ITwinIModel.h>
 #include <ITwinRealityData.h>
@@ -23,11 +22,12 @@
 #include <unordered_map>
 
 #include <Compil/BeforeNonUnrealIncludes.h>
+#	include <BeUtils/SplineSampling/SplineSampling.h>
 #	include <SDK/Core/Visualization/Instance.h>
 #	include <SDK/Core/Visualization/InstancesGroup.h>
 #	include <SDK/Core/Visualization/InstancesManager.h>
-#   include "SDK/Core/Visualization/KeyframeAnimator.h"
-#   include "SDK/Core/Visualization/PathAnimation.h"
+#   include <SDK/Core/Visualization/KeyframeAnimator.h>
+#   include <SDK/Core/Visualization/PathAnimation.h>
 #	include <SDK/Core/Visualization/Spline.h>
 #	include <SDK/Core/Tools/Log.h>
 #	include <SDK/Core/Tools/TypeId.h>
@@ -205,7 +205,10 @@ public:
 		auto AnimSpline = [World, SplineId]() -> AITwinSplineHelper*
 			{
 				for (TActorIterator<AITwinSplineHelper> It(World); It; ++It)
-					if (It->GetAVizSpline()->GetId() == SplineId) return *It;
+				{
+					auto splineInst = It->GetAVizSpline()->GetRAutoLock();
+					if (splineInst->GetId() == SplineId) return *It;
+				}
 				return nullptr;
 			}();
 
@@ -288,7 +291,8 @@ void InstanceWithSplinePathExt::UpdateInstance(float DeltaTime)
 	curTime_ += DeltaTime;
 	if (curTime_ > keyFrames_->fTotalTime)
 	{
-		if (pathInfo_->IsLooping())
+		auto pathInfo = pathInfo_->GetRAutoLock();
+		if (pathInfo->IsLooping())
 			curTime_ = 0.f;
 		else
 			return;
@@ -302,7 +306,7 @@ class AITwinAnimPathManager::FImpl
 public:
 	AITwinAnimPathManager& Owner;
 	//std::vector<std::shared_ptr<ITwin::AnimPath>> AnimPaths; // old
-	std::shared_ptr<AdvViz::SDK::IPathAnimator> PathAnimatorPtr;
+	AdvViz::SDK::IPathAnimatorPtr PathAnimatorPtr;
 	std::unordered_map<AdvViz::SDK::RefID, std::shared_ptr<BakedKeyFrames>> TransformCacheMap; // spline Ref ID to FTransform (add xmY offsets for traffic path)
 	float fDeltaTime = 1/60.f;
 
@@ -315,7 +319,8 @@ public:
 		{
 			if (auto InstancePtr = Population->GetAVizInstance(InstanceIdx))
 			{
-				if (auto animPathExt = InstancePtr->GetExtension<InstanceWithSplinePathExt>())
+				auto inst = InstancePtr->GetRAutoLock();
+				if (auto animPathExt = inst->GetExtension<InstanceWithSplinePathExt>())
 				{
 					return animPathExt->pathInfo_;
 					//return PathAnimatorPtr->GetAnimationPathInfo(animPathExt->pathInfo_->GetId());
@@ -331,10 +336,12 @@ public:
 		{
 			if (auto InstancePtr = Population->GetAVizInstance(InstanceIdx))
 			{
-				if (auto animPathExt = InstancePtr->GetExtension<InstanceWithSplinePathExt>())
+				auto inst = InstancePtr->GetAutoLock();
+				if (auto animPathExt = inst->GetExtension<InstanceWithSplinePathExt>())
 				{
-					PathAnimatorPtr->RemoveAnimationPathInfo(animPathExt->pathInfo_->GetId());
-					InstancePtr->RemoveAnimPathId();
+					auto pathInfo = animPathExt->pathInfo_->GetRAutoLock();
+					PathAnimatorPtr->RemoveAnimationPathInfo(pathInfo->GetId());
+					inst->RemoveAnimPathId();
 				}
 			}
 		}
@@ -346,11 +353,16 @@ public:
 		{
 			if (auto InstancePtr = Population->GetAVizInstance(InstanceIdx))
 			{
-				if (auto animPathExt = InstancePtr->GetExtension<InstanceWithSplinePathExt>())
-					return animPathExt->pathInfo_;
-
-				auto NewPathInfo = PathAnimatorPtr->AddAnimationPathInfo();
-				NewPathInfo->SetSplineId(AnimSpline->GetAVizSpline()->GetId());
+				{
+					auto inst = InstancePtr->GetRAutoLock();
+					if (auto animPathExt = inst->GetExtension<InstanceWithSplinePathExt>())
+						return animPathExt->pathInfo_;
+				}
+				auto spline = AnimSpline->GetAVizSpline()->GetRAutoLock();
+				auto inst = InstancePtr->GetAutoLock();
+				auto NewPathInfoPtr = PathAnimatorPtr->AddAnimationPathInfo();
+				auto NewPathInfo = NewPathInfoPtr->GetAutoLock();
+				NewPathInfo->SetSplineId(spline->GetId());
 				NewPathInfo->SetIsEnabled(true);
 				NewPathInfo->SetIsLooping(false);
 				NewPathInfo->SetSpeed(1388.9f); //in cm/s (=50km/h)
@@ -358,13 +370,13 @@ public:
 				NewPathInfo->SetOffsetY(0);
 				NewPathInfo->SetStartTime(0);
 
-				InstancePtr->SetAnimPathId(NewPathInfo->GetId());
+				inst->SetAnimPathId(NewPathInfo->GetId());
 
-				std::shared_ptr<InstanceWithSplinePathExt> animPathExt = std::make_shared<InstanceWithSplinePathExt>(NewPathInfo, Population, InstanceIdx);
-				InstancePtr->AddExtension(animPathExt);
+				std::shared_ptr<InstanceWithSplinePathExt> animPathExt = std::make_shared<InstanceWithSplinePathExt>(NewPathInfoPtr, Population, InstanceIdx);
+				inst->AddExtension(animPathExt);
 				NewPathInfo->AddExtension(animPathExt);
 
-				return NewPathInfo;
+				return NewPathInfoPtr;
 			}
 		}
 		return SharedPathInfo();
@@ -386,7 +398,8 @@ public:
 		{
 			if (auto InstancePtr = Population->GetAVizInstance(InstanceIdx))
 			{
-				if (auto AnimPathExt = InstancePtr->GetExtension<InstanceWithSplinePathExt>())
+				auto inst = InstancePtr->GetAutoLock();
+				if (auto AnimPathExt = inst->GetExtension<InstanceWithSplinePathExt>())
 				{
 					AnimPathExt->keyFrames_->MarkForUpdate();
 					AnimPathExt->curTime_ = 0.f;
@@ -402,8 +415,9 @@ public:
 		PathAnimatorPtr->GetAnimationPathIds(AnimPathIds);
 		for (auto id : AnimPathIds)
 		{
-			if (auto AnimPathInfo = PathAnimatorPtr->GetAnimationPathInfo(id))
+			if (auto AnimPathInfoPtr = PathAnimatorPtr->GetAnimationPathInfo(id))
 			{
+				auto AnimPathInfo = AnimPathInfoPtr->GetRAutoLock();
 				if (auto AnimPathExt = AnimPathInfo->GetExtension<InstanceWithSplinePathExt>())
 				{
 					auto SplineId = AnimPathInfo->GetSplineId();
@@ -433,8 +447,9 @@ public:
 		PathAnimatorPtr->GetAnimationPathIds(AnimPathIds);
 		for (auto id : AnimPathIds)
 		{
-			if (auto AnimPathInfo = PathAnimatorPtr->GetAnimationPathInfo(id))
+			if (auto AnimPathInfoPtr = PathAnimatorPtr->GetAnimationPathInfo(id))
 			{
+				auto AnimPathInfo = AnimPathInfoPtr->GetRAutoLock();
 				if (auto animPathExt = AnimPathInfo->GetExtension<InstanceWithSplinePathExt>())
 				{
 					animPathExt->UpdateInstance(DeltaTime);
@@ -509,12 +524,12 @@ void AITwinAnimPathManager::MarkForUpdate(AITwinPopulation *Population, int32 In
 	Impl->MarkForUpdate(Population, InstanceIdx);
 }
 
-std::shared_ptr<AdvViz::SDK::IAnimationPathInfo> AITwinAnimPathManager::GetAnimPathInfo(AITwinPopulation *Population, int32 InstanceIdx)
+AdvViz::SDK::IAnimationPathInfoPtr AITwinAnimPathManager::GetAnimPathInfo(AITwinPopulation *Population, int32 InstanceIdx)
 {
 	return Impl->GetAnimPathInfo(Population, InstanceIdx);
 }
 
-std::shared_ptr<AdvViz::SDK::IAnimationPathInfo> AITwinAnimPathManager::AddNewAnimPathInfo(AITwinPopulation* Population, int32 InstanceIdx, const AITwinSplineHelper* AnimSpline)
+AdvViz::SDK::IAnimationPathInfoPtr AITwinAnimPathManager::AddNewAnimPathInfo(AITwinPopulation* Population, int32 InstanceIdx, const AITwinSplineHelper* AnimSpline)
 {
 	return Impl->AddNewAnimPathInfo(Population, InstanceIdx, AnimSpline);
 }
@@ -541,7 +556,7 @@ void AITwinAnimPathManager::PlayAnimation(bool bPLay)
 	SetActorTickEnabled(bPLay);
 }
 
-void AITwinAnimPathManager::SetPathAnimator(const std::shared_ptr<AdvViz::SDK::IPathAnimator>& InPathAnimator)
+void AITwinAnimPathManager::SetPathAnimator(const AdvViz::SDK::IPathAnimatorPtr& InPathAnimator)
 {
 	Impl->PathAnimatorPtr = InPathAnimator;
 }
@@ -550,7 +565,8 @@ void AITwinAnimPathManager::SetSpeed(AITwinPopulation* Population, int32 Instanc
 {
 	if (auto AnimPathPtr = Impl->GetAnimPathInfo(Population, InstanceIdx))
 	{
-		AnimPathPtr->SetSpeed(InSpeed);
+		auto animPath = AnimPathPtr->GetAutoLock();
+		animPath->SetSpeed(InSpeed);
 	}
 }
 
@@ -558,7 +574,8 @@ float AITwinAnimPathManager::GetSpeed(AITwinPopulation* Population, int32 Instan
 {
 	if (auto AnimPathPtr = Impl->GetAnimPathInfo(Population, InstanceIdx))
 	{
-		return (float)AnimPathPtr->GetSpeed();
+		auto animPath = AnimPathPtr->GetRAutoLock();
+		return (float)animPath->GetSpeed();
 	}
 	return 0.f;
 }
@@ -567,7 +584,8 @@ void AITwinAnimPathManager::SetLooping(AITwinPopulation* Population, int32 Insta
 {
 	if (auto AnimPathPtr = Impl->GetAnimPathInfo(Population, InstanceIdx))
 	{
-		AnimPathPtr->SetIsLooping(InEnable);
+		auto animPath = AnimPathPtr->GetAutoLock();
+		animPath->SetIsLooping(InEnable);
 	}
 }
 
@@ -575,7 +593,8 @@ bool AITwinAnimPathManager::IsLooping(AITwinPopulation* Population, int32 Instan
 {
 	if (auto AnimPathPtr = Impl->GetAnimPathInfo(Population, InstanceIdx))
 	{
-		return AnimPathPtr->IsLooping();
+		auto animPath = AnimPathPtr->GetRAutoLock();
+		return animPath->IsLooping();
 	}
 	return false;
 }
@@ -584,7 +603,8 @@ void AITwinAnimPathManager::SetEnabled(AITwinPopulation* Population, int32 Insta
 {
 	if (auto AnimPathPtr = Impl->GetAnimPathInfo(Population, InstanceIdx))
 	{
-		AnimPathPtr->SetIsEnabled(InEnable);
+		auto animPath = AnimPathPtr->GetAutoLock();
+		animPath->SetIsEnabled(InEnable);
 	}
 }
 
@@ -592,7 +612,8 @@ bool AITwinAnimPathManager::IsEnabled(AITwinPopulation* Population, int32 Instan
 {
 	if (auto AnimPathPtr = Impl->GetAnimPathInfo(Population, InstanceIdx))
 	{
-		return AnimPathPtr->IsEnabled();
+		auto animPath = AnimPathPtr->GetRAutoLock();
+		return animPath->IsEnabled();
 	}
 	return false;
 }

@@ -861,8 +861,7 @@ TilesetJsonLoader::createLoader(
       .thenInWorkerThread([ellipsoid,
                            asyncSystem = externals.asyncSystem,
                            pAssetAccessor = externals.pAssetAccessor,
-                           pLogger = externals.pLogger,
-                           gltfModifier = externals.gltfModifier](
+                           pLogger = externals.pLogger](
                               const std::shared_ptr<CesiumAsync::IAssetRequest>&
                                   pCompletedRequest) {
         const CesiumAsync::IAssetResponse* pResponse =
@@ -901,12 +900,6 @@ TilesetJsonLoader::createLoader(
               tilesetJson.GetParseError(),
               tilesetJson.GetErrorOffset()));
           return asyncSystem.createResolvedFuture(std::move(result));
-        }
-
-        // Let the optional modifier parse any extra information from
-        // tileset.json
-        if (gltfModifier) {
-          gltfModifier->parseTilesetJson(tilesetJson);
         }
 
         return TilesetJsonLoader::createLoader(
@@ -1044,6 +1037,7 @@ TilesetJsonLoader::loadTileContent(const TileLoadInput& loadInput) {
   const auto& asyncSystem = loadInput.asyncSystem;
   const auto& pAssetAccessor = loadInput.pAssetAccessor;
   const auto& pLogger = loadInput.pLogger;
+  const auto& pSharedAssetSystem = loadInput.pSharedAssetSystem;
   const auto& requestHeaders = loadInput.requestHeaders;
   const auto& contentOptions = loadInput.contentOptions;
 
@@ -1078,6 +1072,7 @@ TilesetJsonLoader::loadTileContent(const TileLoadInput& loadInput) {
            externalContentInitializer = std::move(externalContentInitializer),
            pAssetAccessor,
            asyncSystem,
+           pSharedAssetSystem,
            requestHeaders](std::shared_ptr<CesiumAsync::IAssetRequest>&&
                                pCompletedRequest) mutable {
             auto pResponse = pCompletedRequest->response();
@@ -1127,6 +1122,9 @@ TilesetJsonLoader::loadTileContent(const TileLoadInput& loadInput) {
                   contentOptions.ktx2TranscodeTargets;
               gltfOptions.applyTextureTransform =
                   contentOptions.applyTextureTransform;
+              if (pSharedAssetSystem) {
+                gltfOptions.pSharedAssetSystem = pSharedAssetSystem;
+              }
               return converter(responseData, gltfOptions, assetFetcher)
                   .thenImmediately(
                       [ellipsoid,

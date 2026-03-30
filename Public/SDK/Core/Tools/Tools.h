@@ -23,3 +23,4 @@
 #include "LockableObject.h"
 #include "TaskManager.h"
 #include "GCSTransform.h"
+#include "TaskFinishMonitor.h"

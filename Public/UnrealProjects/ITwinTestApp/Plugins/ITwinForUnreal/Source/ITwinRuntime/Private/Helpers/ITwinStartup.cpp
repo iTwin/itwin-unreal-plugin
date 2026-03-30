@@ -21,7 +21,6 @@
 #include <Network/UEAdvVizTask.h>
 #include <Network/UEHttp.h>
 
-
 // UE headers
 #include <Misc/MessageDialog.h>
 
@@ -30,11 +29,16 @@
 void FITwinStartup::ProposeAttachDebugger([[maybe_unused]] const FString& ContextInfo /*= {}*/)
 {
 #if WITH_EDITOR == 0 && (UE_BUILD_DEBUG || UE_BUILD_DEVELOPMENT)
+	bool bForceWaitDebugger = true;
+#else
+	static bool bForceWaitDebugger = FPlatformMisc::GetEnvironmentVariable(TEXT("BENTLEY_CARROT_WAIT_DEBUGGER")) == TEXT("ON"); // allows to force in shipping for testing
+#endif
+
 	static bool first = true;
-	if (first && !FPlatformMisc::IsDebuggerPresent())
+	if (bForceWaitDebugger && first && !FPlatformMisc::IsDebuggerPresent())
 	{
 		first = false;
-		bool bWaitDebugger = FPlatformMisc::GetEnvironmentVariable(TEXT("BENTLEY_CARROT_WAIT_DEBUGGER")) != TEXT("OFF");
+		bool bWaitDebugger = FPlatformMisc::GetEnvironmentVariable(TEXT("BENTLEY_CARROT_WAIT_DEBUGGER")) != TEXT("OFF"); // allows to disable in certain context (automatic tests)
 		if (bWaitDebugger)
 		{
 			FMessageDialog::Open(EAppMsgType::Ok,
@@ -42,15 +46,6 @@ void FITwinStartup::ProposeAttachDebugger([[maybe_unused]] const FString& Contex
 				FText::FromString(FString::Printf(TEXT("Carrot Debug %s"), *ContextInfo)));
 		}
 	}
-#endif //DEV_GAME
-
-	// enable this code to test crash report mechanism. Set the env var BENTLEY_CARROT_FORCECRASH=ON to trigger a crash in Private/ITwinStudioApp/carrot/.vscode/launch.json.
-	//const bool bMakesCrash = FPlatformMisc::GetEnvironmentVariable(TEXT("BENTLEY_CARROT_FORCECRASH")) == TEXT("ON");
-	//if (bMakesCrash)
-	//{
-	//	int* i = 0;
-	//	*i = 5;
-	//}
 }
 
 /*static*/

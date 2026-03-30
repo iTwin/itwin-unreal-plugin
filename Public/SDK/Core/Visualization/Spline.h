@@ -19,10 +19,12 @@
 
 #include <Core/Tools/Tools.h>
 #include <Core/Tools/Types.h>
-#include <Core/Visualization/RefID.h>
+#include <Core/Visualization/SavableItem.h>
 
 MODULE_EXPORT namespace AdvViz::SDK
 {
+	using namespace Tools;
+
 	enum class ESplineUsage : uint8_t
 	{
 		Undefined = 0,
@@ -42,13 +44,13 @@ MODULE_EXPORT namespace AdvViz::SDK
 
 	// ------------------------------------------------------------------------
 	//                              ISplinePoint
+	class ISplinePoint;
+	typedef TSharedLockableDataPtr<ISplinePoint> ISplinePointPtr;
+	typedef std::vector<ISplinePointPtr> ISplinePointPtrVect;
 
-	class ISplinePoint : public Tools::Factory<ISplinePoint>, public Tools::ExtensionSupport
+	class ISplinePoint : public Tools::Factory<ISplinePoint>, public ISavableItem, public Tools::ExtensionSupport
 	{
 	public:
-		virtual const std::string& GetId() const = 0;
-		virtual void SetId(const std::string& id) = 0;
-
 		virtual const double3& GetPosition() const = 0;
 		virtual void SetPosition(const double3& position) = 0;
 
@@ -66,11 +68,8 @@ MODULE_EXPORT namespace AdvViz::SDK
 		
 		virtual const double3& GetOutTangent() const = 0;
 		virtual void SetOutTangent(const double3& tangent) = 0;
-		
-		virtual bool ShouldSave() const = 0;
-		virtual void SetShouldSave(bool value) = 0;
 
-		virtual std::shared_ptr<ISplinePoint> Clone() const = 0;
+		virtual ISplinePointPtr Clone() const = 0;
 	};
 
 	// ------------------------------------------------------------------------
@@ -79,9 +78,14 @@ MODULE_EXPORT namespace AdvViz::SDK
 	class SplinePoint : public ISplinePoint, public Tools::TypeId<SplinePoint>
 	{
 	public:
-		const std::string& GetId() const override;
-		void SetId(const std::string& id) override;
+		/// overridden from ISavableItem
+		const RefID& GetId() const override;
+		void SetId(const RefID& id) override;
 
+		ESaveStatus GetSaveStatus() const override;
+		void SetSaveStatus(ESaveStatus status) override;
+
+		/// overridden from ISplinePoint
 		const double3& GetPosition() const override;
 		void SetPosition(const double3& position) override;
 		
@@ -99,14 +103,11 @@ MODULE_EXPORT namespace AdvViz::SDK
 		
 		const double3& GetOutTangent() const override;
 		void SetOutTangent(const double3& tangent) override;
-		
-		bool ShouldSave() const override;
-		void SetShouldSave(bool value) override;
 
 		SplinePoint();
 		virtual ~SplinePoint();
 
-		std::shared_ptr<ISplinePoint> Clone() const override;
+		ISplinePointPtr Clone() const override;
 
 		using Tools::TypeId<SplinePoint>::GetTypeId;
 		std::uint64_t GetDynTypeId() const override { return GetTypeId(); }
@@ -118,8 +119,7 @@ MODULE_EXPORT namespace AdvViz::SDK
 		Impl& GetImpl();
 	};
 
-	typedef std::shared_ptr<ISplinePoint> SharedSplinePoint;
-	typedef std::vector<SharedSplinePoint> SharedSplinePointVect;
+
 
 	// ------------------------------------------------------------------------
 	//                                 ISpline
@@ -134,12 +134,12 @@ MODULE_EXPORT namespace AdvViz::SDK
 		}
 	};
 
-	class ISpline : public Tools::Factory<ISpline>
+	class ISpline;
+	typedef TSharedLockableDataPtr<ISpline> ISplinePtr;
+
+	class ISpline : public Tools::Factory<ISpline>, public ISavableItem
 	{
 	public:
-		virtual const RefID& GetId() const = 0;
-		virtual void SetId(const RefID& id) = 0;
-
 		virtual const std::string& GetName() const = 0;
 		virtual void SetName(const std::string& name) = 0;
 
@@ -161,27 +161,27 @@ MODULE_EXPORT namespace AdvViz::SDK
 		virtual const dmat3x4& GetTransform() const = 0;
 		virtual void SetTransform(const dmat3x4& mat) = 0;
 
-		virtual SharedSplinePoint GetPoint(const size_t index) const = 0;
-		virtual void SetPoint(const size_t index, SharedSplinePoint point) = 0;
-		virtual SharedSplinePoint InsertPoint(const size_t index) = 0;
-		virtual SharedSplinePoint AddPoint() = 0;
+		virtual ISplinePointPtr GetPoint(const size_t index) const = 0;
+		virtual ISplinePointPtr GetPointById(const RefID& id) const = 0;
+		virtual void SetPoint(const size_t index, ISplinePointPtr point) = 0;
+		virtual ISplinePointPtr InsertPoint(const size_t index) = 0;
+		virtual ISplinePointPtr AddPoint() = 0;
 		virtual void RemovePoint(const size_t index) = 0;
 
 		virtual size_t GetNumberOfPoints() const = 0;
 		virtual void SetNumberOfPoints(size_t nbPoints) = 0;
 
 		virtual bool ShouldSave() const = 0;
-		virtual void SetShouldSave(bool value) = 0;
 
 		// These functions should only be used by the splines manager.
-		virtual const SharedSplinePointVect& GetPoints() const = 0;
-		virtual const SharedSplinePointVect& GetRemovedPoints() const = 0;
+		virtual const ISplinePointPtrVect& GetPoints() const = 0;
+		virtual const ISplinePointPtrVect& GetRemovedPoints() const = 0;
 		virtual void ClearPoints() = 0;
-		virtual void ClearRemovedPoints() = 0;
+		virtual void UnregisterRemovedPointById(const RefID& pointId) = 0;
 
 		// Make a full clone of this spline. The clone should be made totally independent from the source
 		// (not sharing points, typically).
-		virtual std::shared_ptr<ISpline> Clone() const = 0;
+		virtual ISplinePtr Clone() const = 0;
 	};
 
 	// ------------------------------------------------------------------------
@@ -190,9 +190,14 @@ MODULE_EXPORT namespace AdvViz::SDK
 	class Spline : public ISpline, public Tools::TypeId<Spline>
 	{
 	public:
+		/// overridden from ISavableItem
 		const RefID& GetId() const override;
 		void SetId(const RefID& id) override;
 
+		ESaveStatus GetSaveStatus() const override;
+		void SetSaveStatus(ESaveStatus status) override;
+
+		/// overridden from ISpline
 		const std::string& GetName() const override;
 		void SetName(const std::string& name) override;
 
@@ -214,25 +219,26 @@ MODULE_EXPORT namespace AdvViz::SDK
 		const dmat3x4& GetTransform() const override;
 		void SetTransform(const dmat3x4& mat) override;
 
-		SharedSplinePoint GetPoint(const size_t index) const override;
-		void SetPoint(const size_t index, SharedSplinePoint point) override;
-		SharedSplinePoint InsertPoint(const size_t index) override;
-		SharedSplinePoint AddPoint() override;
+		ISplinePointPtr GetPoint(const size_t index) const override;
+		ISplinePointPtr GetPointById(const RefID& id) const override;
+		void SetPoint(const size_t index, ISplinePointPtr point) override;
+		ISplinePointPtr InsertPoint(const size_t index) override;
+		ISplinePointPtr AddPoint() override;
 		void RemovePoint(const size_t index) override;
 
 		size_t GetNumberOfPoints() const override;
 		void SetNumberOfPoints(size_t nbPoints) override;
 
 		bool ShouldSave() const override;
-		void SetShouldSave(bool value) override;
+
 
 		// These functions should only be used by the splines manager.
-		const SharedSplinePointVect& GetPoints() const override;
-		const SharedSplinePointVect& GetRemovedPoints() const override;
+		const ISplinePointPtrVect& GetPoints() const override;
+		const ISplinePointPtrVect& GetRemovedPoints() const override;
 		void ClearPoints() override;
-		void ClearRemovedPoints() override;
+		void UnregisterRemovedPointById(const RefID& pointId) override;
 
-		std::shared_ptr<ISpline> Clone() const override;
+		ISplinePtr Clone() const override;
 
 		using Tools::TypeId<Spline>::GetTypeId;
 		std::uint64_t GetDynTypeId() const override { return GetTypeId(); }
@@ -247,6 +253,5 @@ MODULE_EXPORT namespace AdvViz::SDK
 		Impl& GetImpl();
 	};
 
-	typedef std::shared_ptr<ISpline> SharedSpline;
-	typedef std::vector<SharedSpline> SharedSplineVect;
+	typedef std::vector<ISplinePtr> ISplinePtrVect;
 }

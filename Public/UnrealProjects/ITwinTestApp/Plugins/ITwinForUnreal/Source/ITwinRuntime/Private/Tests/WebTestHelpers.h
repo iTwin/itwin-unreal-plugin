@@ -17,11 +17,12 @@
 
 #include <Compil/BeforeNonUnrealIncludes.h>
 #	include <Core/ITwinAPI/ITwinEnvironment.h>
-#	include <cpr/cpr.h>
 #	include <httpmockserver/mock_server.h>
 #	include <httpmockserver/port_searcher.h>
+#	include <microhttpd.h>
 #include <Compil/AfterNonUnrealIncludes.h>
 
+#include <atomic>
 #include <map>
 
 
@@ -78,6 +79,9 @@ public:
 
 	/// Check conditions that should be met once all the tests have been run.
 	virtual bool PostCondition() const;
+
+	/// Wait for a given task, for a maximum duration.
+	static bool WaitForAsyncTask(std::atomic_bool& taskFinished, int maxSeconds);
 
 protected:
 	FITwinAPITestHelperBase() {}

@@ -92,13 +92,13 @@ namespace AdvViz::SDK
 		return lockedInstanceList.Get();
 	}
 
-	void InstancesGroup::AddInstance(const std::weak_ptr<IInstance>& inst)
+	void InstancesGroup::AddInstance(const IInstanceWPtr& inst)
 	{
 		Tools::AutoLockObject<decltype(GetImpl().intances_)> lockedInstanceList(GetImpl().intances_);
 		lockedInstanceList.Get().insert(inst);
 	}
 
-	void InstancesGroup::RemoveInstance(const std::weak_ptr<IInstance>& inst)
+	void InstancesGroup::RemoveInstance(const IInstanceWPtr& inst)
 	{
 		Tools::AutoLockObject<decltype(GetImpl().intances_)> lockedInstanceList(GetImpl().intances_);
 		lockedInstanceList.Get().erase(inst);

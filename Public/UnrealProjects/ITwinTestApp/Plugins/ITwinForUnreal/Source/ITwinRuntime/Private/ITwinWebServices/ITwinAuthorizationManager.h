@@ -26,7 +26,7 @@ public:
 
 	static bool SaveToken(FString const& InInfo, AdvViz::SDK::EITwinEnvironment Env);
 	static bool LoadToken(FString& OutInfo, AdvViz::SDK::EITwinEnvironment Env);
-	static void DeleteTokenFile(AdvViz::SDK::EITwinEnvironment Env);
+	static bool DeleteTokenFile(AdvViz::SDK::EITwinEnvironment Env);
 
 	static void SetUseExternalBrowser(bool bInUseExternalBrowser);
 	static bool UseExternalBrowser();

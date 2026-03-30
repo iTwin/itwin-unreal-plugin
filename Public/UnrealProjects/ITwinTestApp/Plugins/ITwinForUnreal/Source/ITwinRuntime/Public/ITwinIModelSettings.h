@@ -214,6 +214,15 @@ public:
 		Category = "iTwin")
 	bool bSynchro4DDisableTransforms = false;
 
+	/// When both a Legacy and a NextGen schedules are available for an iModel actor,
+	/// we cannot use both so we have to choose.
+	UPROPERTY(
+		Config,
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "iTwin")
+	bool bSynchro4DFavorNextGenSchedule = false;
+
 	/// Enable prediction of materials based on an iTwin Machine Learning api. The api is still under
 	/// development. It requires some specific scopes to be added to your iTwin App.
 	UPROPERTY(

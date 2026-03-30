@@ -28,7 +28,7 @@
 #include <ITwinTilesetAccess.inl>
 #include <ITwinUtilityLibrary.h>
 #include <ITwinWebServices/ITwinWebServices.h>
-#include <Clipping/ITwinClippingCustomPrimitiveDataHelper.h>
+#include <Clipping/ITwinClipping3DTilesetHelper.h>
 #include <Clipping/ITwinClippingTool.h>
 #include <Decoration/ITwinDecorationHelper.h>
 #include <Helpers/ITwinConsoleCommandUtils.h>
@@ -71,11 +71,13 @@
 #include <GameFramework/GameUserSettings.h>
 
 #include <Compil/BeforeNonUnrealIncludes.h>
+#	include <BeHeaders/Util/CleanUpGuard.h>
 #	include <BeUtils/Gltf/GltfTuner.h>
 #	include <BeUtils/Misc/MiscUtils.h>
 #	include <Core/ITwinAPI/ITwinMaterial.h>
 #	include <Core/ITwinAPI/ITwinTypes.h>
 #	include <Core/Tools/Log.h>
+#	include <Core/Tools/DelayedCall.h>
 #include <Compil/AfterNonUnrealIncludes.h>
 
 #include <memory>
@@ -90,14 +92,13 @@ namespace ITwin
 		if (!ensure(TilesetAccess.HasTileset()))
 			return;
 		ACesium3DTileset& Tileset = *TilesetAccess.GetMutableTileset();
-		//===================================================================================
-		// Prototype for global clipping (planes or box).
+
+		// Register tileset in cutout tool.
 		auto ClippingTool = TWorldSingleton<AITwinClippingTool>().Get(Tileset.GetWorld());
 		if (ClippingTool)
 		{
 			ClippingTool->RegisterTileset(TilesetAccess);
 		}
-		//===================================================================================
 
 		if (!SchedulesComp)
 		{
@@ -222,6 +223,8 @@ public:
 
 	virtual ITwin::ModelDecorationIdentifier GetDecorationKey() const override;
 	virtual AITwinDecorationHelper* GetDecorationHelper() const override;
+	virtual UITwinClipping3DTilesetHelper* GetClippingHelper() const override;
+	virtual FBox GetBoundingBox() const override;
 
 	virtual void OnModelOffsetLoaded() const override;
 
@@ -238,8 +241,6 @@ public:
 	AITwinIModel& Owner;
 	/// helper to fill/update SceneMapping.
 	TStrongObjectPtr<UITwinSceneMappingBuilder> SceneMappingBuilder;
-	/// helper to activate clipping effects in the mesh components.
-	TStrongObjectPtr<UITwinClippingCustomPrimitiveDataHelper> ClippingHelper;
 	bool bInitialized = false;
 	bool bWasLoadedFromDisk = false;
 	FITwinIModelInternals Internals;
@@ -292,11 +293,37 @@ public:
 	//std::optional<FTransform> LastIModelTransformUpdated; <== look it up to find comment about that
 	std::optional<FTransform> LastTilesetTransformUpdated;
 
+	bool bForcedShadowUpdate = false;
+
+	// For auto-refresh system
+	enum class EAutoRefreshState : uint8 {
+		/// Initial state, when the iModel has not even retrieved its current changeset.
+		NotStarted,
+		/// Sends requests regularly to detect a new changeset
+		FetchLatestChangeset,
+		/// Once a changeset is detected, send regular requests to know when a export is ready for it on the
+		/// Mesh Export Service.
+		FetchLatestChangesetExport,
+		/// When the new changeset is ready to load, we ask user confirmation before loading it.
+		WaitForUserConfirmation,
+		/// If the user has chosen not to load the new changeset in this session.
+		Disabled,
+	};
+	struct FAutoRefreshInfo
+	{
+		EAutoRefreshState State = EAutoRefreshState::NotStarted;
+		FString NewChangesetId;
+		FString NewChangesetName;
+		EITwinExportStatus NewChangesetExportStatus = EITwinExportStatus::Unknown;
+	};
+	FAutoRefreshInfo AutoRefreshInfo;
+
 	static TWeakObjectPtr<ULightComponent> LightForForcedShadowUpdate;
 	static float ForceShadowUpdateMaxEvery;
-	bool bForcedShadowUpdate = false;
 	static double LastForcedShadowUpdate;
-	void ForceShadowUpdatesIfNeeded();
+
+	static bool bEnableSavedViewsUpdates;
+	
 
 	FImpl(AITwinIModel& InOwner)
 		: FITwinIModelMaterialHandler(), Owner(InOwner), Internals(InOwner)
@@ -313,6 +340,8 @@ public:
 		// been completed.
 		for (const auto& Promise: AttachedRealityDataIdsPromises)
 			Promise->SetValue(TArray<FString>{});
+
+		AdvViz::SDK::UniqueDelayedCall("ITIM.Update."+std::to_string(Owner.GetUniqueID()), {}, -1.f);
 	}
 
 	void Initialize();
@@ -320,6 +349,8 @@ public:
 	void ResetSceneMapping();
 	void HandleTilesHavingChangedVisibility();
 	void HandleTilesRenderReadiness();
+
+	void ForceShadowUpdatesIfNeeded();
 
 	bool UseLatestChangeset() const
 	{
@@ -348,6 +379,23 @@ public:
 
 			Owner.WebServices->GetExports(Owner.IModelId, Owner.GetSelectedChangeset());
 		}
+		if (Owner.bAutoRefreshChangeset)
+		{
+			AdvViz::SDK::UniqueDelayedCall("ITIM.Update." + std::to_string(Owner.GetUniqueID()),
+				[this, ThisIModel = TWeakObjectPtr<AITwinIModel>(&Owner)]()
+			{
+				if (!ThisIModel.IsValid())
+					return AdvViz::SDK::DelayedCall::EReturnedValue::Done;
+				if (ThisIModel->AutoRefreshChangeset()
+					&& AutoRefreshInfo.State == EAutoRefreshState::FetchLatestChangeset
+					&& ensure(ThisIModel->WebServices))
+				{
+					ThisIModel->WebServices->GetiModelLatestChangeset(ThisIModel->IModelId);
+				}
+
+				return AdvViz::SDK::DelayedCall::EReturnedValue::Repeat;
+			}, 60.0f /*TickerDelay: 60 s*/);
+		}
 	}
 
 	void MakeTileset(std::optional<FITwinExportInfo> const& ExportInfo = {});
@@ -361,7 +409,7 @@ public:
 		{
 			DecorationPersistenceMgr = *DecoIter;
 		}
-		if (DecorationPersistenceMgr)
+		if (IsValid(DecorationPersistenceMgr))
 		{
 			DecorationPersistenceMgr->OnSceneLoaded.AddDynamic(&Owner, &AITwinIModel::OnSceneLoaded);
 		}
@@ -411,6 +459,7 @@ public:
 		S4D.bDisableCuttingPlanes = Settings.bSynchro4DDisableCuttingPlanes;
 		S4D.bDisableTransforms = Settings.bSynchro4DDisableTransforms;
 		S4D.bStream4DFromAPIM = Settings.bSynchro4DUseAPIM;
+		S4D.bFavorNextGenSchedule = Settings.bSynchro4DFavorNextGenSchedule;
 
 #if UE_VERSION_OLDER_THAN(5, 5, 0)
 		if (!ensure(!GetDefault<URendererSettings>()->bOrderedIndependentTransparencyEnable))
@@ -608,6 +657,21 @@ public:
 	}
 #endif //ENABLE_DRAW_DEBUG
 
+	double LastSchedule4DPercentComplete = 0.;
+	void UpdateIModel4DLoadProgress(std::optional<double> PercentComplete = {})
+	{
+		if (PercentComplete)
+			LastSchedule4DPercentComplete = *PercentComplete;
+		if (!ElementsMetadataQuerying)
+			return;
+		Owner.ScheduleDownloadPercentComplete =
+			(ElementsMetadataQuerying->PercentComplete()
+				* AITwinIModel::FImpl::FQueryElementMetadataPageByPage::MetadataRatioInTotalProgress)
+			+ (1. - AITwinIModel::FImpl::FQueryElementMetadataPageByPage::MetadataRatioInTotalProgress)
+				* LastSchedule4DPercentComplete;
+		Internals.LogScheduleDownloadProgressed();
+	}
+
 	/// Used to query info about all Elements of the iModel by reading rows from its database tables through
 	/// a paginated series of HTTP RPC requests. We'll use an instance to get the the parent-child
 	/// relationships, and (concurrently) another for the "Source Element ID" (aka "Identifier") information,
@@ -616,9 +680,36 @@ public:
 	{
 	public:
 		enum class EState {
-			NotStarted, Running, NeedRestart, Finished, StoppedOnError
+			NotStarted, Running, NeedRestart, Finished, StoppedOnError, Cancelled
 		};
-		static constexpr double MetadataRatioInTotalProgress = 0.35;
+		static constexpr double MetadataRatioInTotalProgress = 0.5;
+
+		void Cancel()
+		{
+			ITwinHttp::FLock Lock(Mutex);
+			State = EState::Cancelled;
+		}
+
+		double PercentComplete() const
+		{
+			ITwinHttp::FLock Lock(Mutex);
+			switch (State)
+			{
+			case EState::NotStarted:
+			case EState::NeedRestart:
+				return 0.;
+			case EState::Finished:
+				return 100.;
+			case EState::StoppedOnError:
+			case EState::Running:
+			case EState::Cancelled:
+				break;
+			}
+			if (TotalRowsExpected > 0)
+				return std::min(99., (100. * QueryRowStart) / TotalRowsExpected);
+			else
+				return 0.;
+		}
 
 	private:
 		AITwinIModel& Owner;
@@ -634,7 +725,8 @@ public:
 		EState State = EState::NotStarted;
 		int QueryRowStart = 0, TotalRowsParsed = 0, TotalRowsExpected = -1;
 		HttpRequestID CurrentRequestID;
-		static constexpr int QueryRowCount = 50000;
+		/// Down from 50K to 32K to accommodate bounding boxes, because server reply is capped to 8MB!
+		static constexpr int QueryRowCount = 32000;
 
 		void DoRestart()
 		{
@@ -661,17 +753,23 @@ public:
 			: Owner(InOwner)
 			, KindOfMetadata(InKindOfMetadata)
 			, ECSQLQueryString(
-				FString("SELECT e.ECInstanceId, e.Parent.Id, e.FederationGuid, a.Identifier")
+				FString("SELECT e.ECInstanceId, b.BBoxLow, b.BBoxHigh, e.Parent.Id, e.FederationGuid, a.Identifier")
 				+ TEXT(" FROM bis.Element e")
-				+ TEXT(" LEFT JOIN bis.ExternalSourceAspect a ON a.Element.Id = e.ECInstanceId"))
+				+ TEXT(" LEFT JOIN bis.ExternalSourceAspect a ON a.Element.Id = e.ECInstanceId")
+				+ TEXT(" LEFT JOIN bis.GeometricElement3d b ON b.ECInstanceId = e.ECInstanceId")
+			)
 			, ECSQLQueryCount(TEXT("SELECT COUNT(*) FROM bis.Element"))
-			, BatchMsg(TEXT("iModel Elements metadata"))
+			, BatchMsg(FString(TEXT("iModel Elements metadata for ")) + InOwner.GetActorNameOrLabel())
 			, Cache(InOwner)
 		{
 			ensure(KindOfMetadata == EElementsMetadata::Combined);//only handling this case now
 		}
 
-		EState GetState() const { return State; }
+		EState GetState() const
+		{
+			ITwinHttp::FLock Lock(Mutex);
+			return State;
+		}
 
 		void Restart()
 		{
@@ -701,6 +799,11 @@ public:
 
 		void QueryNextPage()
 		{
+			if (EState::Cancelled == State)
+			{
+				UE_LOG(LogITwin, Display, TEXT("%s: queries cancelled."), *BatchMsg);
+				return;
+			}
 			State = EState::Running;
 			RequestInfo.emplace(Owner.WebServices->InfosToQueryIModel(
 				Owner.ITwinId, Owner.IModelId, Owner.ResolvedChangesetId,
@@ -735,9 +838,14 @@ public:
 			{
 				return false; // we didn't emit this request
 			}
+			if (EState::Cancelled == State)
+			{
+				UE_LOG(LogITwin, Display, TEXT("%s: queries cancelled."), *BatchMsg);
+				return true;
+			}
 			if (EState::NeedRestart == State)
 			{
-				UE_LOG(LogITwin, Display, TEXT("%s queries interrupted, will restart..."), *BatchMsg);
+				UE_LOG(LogITwin, Display, TEXT("%s: queries interrupted, will restart..."), *BatchMsg);
 				DoRestart();
 				return true;
 			}
@@ -791,25 +899,23 @@ public:
 			{
 				if (bHasReceivedTableCount)
 				{
-					UE_LOG(LogITwin, Display, TEXT("%s table count retrieved from %s: %d..."), *BatchMsg,
+					UE_LOG(LogITwin, Display, TEXT("%s: table count retrieved from %s: %d..."), *BatchMsg,
 						bFromCache ? TEXT("cache") : TEXT("remote"), TotalRowsExpected);
 				}
 				else
 				{
-					UE_LOG(LogITwin, Verbose, TEXT("%s retrieved from %s: %d, asking for more..."), *BatchMsg,
+					UE_LOG(LogITwin, Verbose, TEXT("%s: retrieved from %s: %d, asking for more..."), *BatchMsg,
 						bFromCache ? TEXT("cache") : TEXT("remote"), TotalRowsParsed);
 					if (TotalRowsExpected != -1)
 					{
-						Owner.ScheduleDownloadPercentComplete = 100. * MetadataRatioInTotalProgress
-							* std::min(1., QueryRowStart / (double)TotalRowsExpected);
-						IModelInternals.LogScheduleDownloadProgressed();
+						Owner.Impl->UpdateIModel4DLoadProgress();
 					}
 				}
 				QueryNextPage();
 			}
 			else
 			{
-				UE_LOG(LogITwin, Display, TEXT("Total %s retrieved from %s: %d."), *BatchMsg,
+				UE_LOG(LogITwin, Display, TEXT("%s: total retrieved from %s: %d."), *BatchMsg,
 					/*likely all retrieved from same source...*/bFromCache ? TEXT("cache") : TEXT("remote"),
 					TotalRowsParsed);
 				// This call will release hold of the cache folder, which will "often" allow reuse by cloned
@@ -885,6 +991,7 @@ public:
 TWeakObjectPtr<ULightComponent> AITwinIModel::FImpl::LightForForcedShadowUpdate;
 double AITwinIModel::FImpl::LastForcedShadowUpdate = 0.;
 float AITwinIModel::FImpl::ForceShadowUpdateMaxEvery = 1.f;
+bool AITwinIModel::FImpl::bEnableSavedViewsUpdates = true;
 
 class FITwinIModelImplAccess
 {
@@ -953,7 +1060,13 @@ void AITwinIModel::FImpl::MakeTileset(std::optional<FITwinExportInfo> const& Exp
 	// reaching this: all the preliminary requests might happen before the iModel first ticks, for example if
 	// in the future we have all replies in cache, or no longer use http at all (eg. through Mango?)
 	if (!bInitialized)
+	{
 		Initialize();
+		// UpdateIModel() might have been called from inside Initialize! (via OnLoadingUIEvent etc.)
+		// Do not proceed if we no longer have a valid changeset:
+		if (!Owner.bResolvedChangesetIdValid)
+			return;
+	}
 
 	FITwinExportInfo const CompleteInfo = ExportInfo ? (*ExportInfo) : (*ExportInfoPendingLoad);
 	ExportInfoPendingLoad.reset();
@@ -968,7 +1081,7 @@ void AITwinIModel::FImpl::MakeTileset(std::optional<FITwinExportInfo> const& Exp
 	// It seems risky to NOT do a ResetSchedules here: for example, FITwinElement::AnimationKeys are
 	// not set, MainTimeline::NonAnimatedDuplicates is empty, etc.
 	// We could just "reinterpret" the known schedule data, but since it is in a local cache...
-	if (IsValid(Owner.Synchro4DSchedules))
+	if (IsValid(Owner.Synchro4DSchedules) && ensure(Owner.bResolvedChangesetIdValid))
 		Owner.Synchro4DSchedules->ResetSchedules();
 
 	// *before* SpawnActor otherwise Cesium will create its own default georef
@@ -1006,8 +1119,8 @@ void AITwinIModel::FImpl::MakeTileset(std::optional<FITwinExportInfo> const& Exp
 	// No property table is to be uploaded to the GPU: Element IDs stored in the ELEMENT_NAME table are
 	// 64bits, which we've thus had to map internally to the 32bits FeatureIDs:
 	//pFeaturesMetadataComponent->Description.ModelMetadata.PropertyTables.Add(...);
-	// We don't need use property texture either:
-	// pFeaturesMetadataComponent->Description.PrimitiveMetadata.PropertyTextureNames.Add(...);
+	// We don't use property textures either:
+	//pFeaturesMetadataComponent->Description.PrimitiveMetadata.PropertyTextureNames.Add(...);
 	//pFeaturesMetadataComponent->Description.ModelMetadata.PropertyTextures.Add(...);
 
 #if WITH_EDITOR
@@ -1028,7 +1141,7 @@ void AITwinIModel::FImpl::MakeTileset(std::optional<FITwinExportInfo> const& Exp
 	// not require the Physics data? Note that pawn collisions need to be disabled to
 	// still allow navigation through meshes (see SetActorEnableCollision).
 	Tileset->SetCreatePhysicsMeshes(Settings->IModelCreatePhysicsMeshes);
-	Tileset->SetDoubleSidedCollisions(true); // AdvViz #1927793
+	Tileset->SetEnableDoubleSidedCollisions(true); // AdvViz #1927793
 	Tileset->SetMaximumScreenSpaceError(Settings->TilesetMaximumScreenSpaceError);
 	// connect mesh creation callback
 	Tileset->SetLifecycleEventReceiver(SceneMappingBuilder.Get());
@@ -1199,9 +1312,8 @@ void AITwinIModel::Tick(float Delta)
 		Impl->Initialize();
 	Impl->HandleTilesHavingChangedVisibility();
 	Impl->Internals.SceneMapping.HandleNewSelectingAndHidingTextures();
-	if (bSynchro4DAutoLoadSchedule
-		&& AITwinIModel::FImpl::FQueryElementMetadataPageByPage::EState::Finished
-			== Impl->ElementsMetadataQuerying->GetState())
+	Impl->Internals.SceneMapping.ConvertElemBBoxesIfNeeded();
+	if (bSynchro4DAutoLoadSchedule && bResolvedChangesetIdValid)
 	{
 		// Could also use the Component tick, overriding ShouldTickIfViewportsOnly like for iModels, only
 		// enabling ticking here when above queries are indeed finished but no longer needing a custom
@@ -1250,7 +1362,7 @@ void AITwinIModel::FImpl::Initialize()
 	Internals.Uniniter->Register([this] {
 		ElementsMetadataQuerying->OnIModelUninit();
 		SceneMappingBuilder.Reset();
-		ClippingHelper.Reset();
+		Internals.ClippingHelper.Reset();
 	});
 	// When loading a level (or doing "Save current Level as"), EndPlay is not called (because not in PIE...)
 	// and detroying the old world crashes because of the leak! (at least starting from UE 5.6)
@@ -1269,6 +1381,7 @@ void AITwinIModel::FImpl::Initialize()
 		if (UseLatestChangeset())
 		{
 			Owner.bResolvedChangesetIdValid = false;
+			Owner.ResolvedChangesetId = FString(); // otherwise if we get the same, loading may get stuck
 			Owner.ExportId = FString();
 		}
 
@@ -1286,8 +1399,12 @@ void AITwinIModel::FImpl::Initialize()
 			}
 		}
 	}
-	// Added for Carrot which now uses "LM_Automatic" and "latest" as changesetId
-	else if (Owner.LoadingMethod == ELoadingMethod::LM_Automatic)
+	// Added for Engage which now uses "LM_Automatic" and "latest" as changesetId
+	else if (Owner.LoadingMethod == ELoadingMethod::LM_Automatic
+		// Initialize() is called only once, so this only needs to be called if the resolving of changeset
+		// and export IDs has not yet been bootstrapped. Otherwise it is redundant and caused #1974964
+		// (but only because there was a GetHttpManager().Flush(..) in UEHttp.cpp)
+		&& !Owner.bResolvedChangesetIdValid)
 	{
 		OnLoadingUIEvent();
 	}
@@ -1310,23 +1427,34 @@ void AITwinIModel::UpdateIModel()
 	}
 
 	bResolvedChangesetIdValid = false;
+	ResolvedChangesetId = FString(); // otherwise if we get the same, loading may get stuck
 	ExportStatus = EITwinExportStatus::Unknown;
 	Impl->DestroyTileset();
 	Impl->Update();
 	UpdateSavedViews();
 }
 
-bool AITwinIModel::GetBoundingBox(FBox& OutBox, bool bClampOutlandishValues) const
+bool AITwinIModel::GetBoundingBox(FBox& OutBox, bool bClampOutlandishValues,
+								  EBBoxMethod Method /*= EBBoxMethod::ProjectExtents*/) const
 {
 	auto* const TileSet = GetTileset();
 	if (!TileSet)
 		return false;
-	if (!(Impl->IModelProperties && Impl->IModelProperties->ProjectExtents))
-		return false;
 
-	FITwinIModel3DInfo OutInfo;
-	GetModel3DInfoInCoordSystem(OutInfo, EITwinCoordSystem::UE);
-	FBox const IModelBBox(OutInfo.BoundingBoxMin, OutInfo.BoundingBoxMax);
+	FBox IModelBBox;
+	if (Method == EBBoxMethod::ProjectExtents)
+	{
+		if (!(Impl->IModelProperties && Impl->IModelProperties->ProjectExtents))
+			return false;
+
+		FITwinIModel3DInfo OutInfo;
+		GetModel3DInfoInCoordSystem(OutInfo, EITwinCoordSystem::UE);
+		IModelBBox = FBox(OutInfo.BoundingBoxMin, OutInfo.BoundingBoxMax);
+	}
+	else /* ie. EBBoxMethod::UnrealMeshes */
+	{
+		IModelBBox = Impl->Internals.SceneMapping.GetBoundingBoxOfAllGlTFMeshes();
+	}
 	if (!IModelBBox.IsValid)
 		return false;
 	OutBox = IModelBBox;
@@ -1600,6 +1728,13 @@ void AITwinIModel::SetResolvedChangesetId(FString const& InChangesetId)
 {
 	ResolvedChangesetId = InChangesetId;
 	bResolvedChangesetIdValid = true;
+
+	// If this is the initial resolved changeset, and auto-refresh is enabled, let's send regular requests
+	// to detect a newer changeset:
+	if (AutoRefreshChangeset() && Impl->AutoRefreshInfo.State == FImpl::EAutoRefreshState::NotStarted)
+	{
+		Impl->AutoRefreshInfo.State = FImpl::EAutoRefreshState::FetchLatestChangeset;
+	}
 }
 
 UITwinSynchro4DSchedules* AITwinIModel::GetSynchro4DSchedules()
@@ -1611,10 +1746,119 @@ void AITwinIModel::OnChangesetsRetrieved(bool bSuccess, FChangesetInfos const& I
 {
 	if (!bSuccess)
 		return;
-
-	SetResolvedChangesetId(Infos.Changesets.IsEmpty() ? FString() : Infos.Changesets[0].Id);
+	FString changesetId = Infos.Changesets.IsEmpty() ? FString() : Infos.Changesets[0].Id;
+	if (AutoRefreshChangeset()
+		&& Impl->AutoRefreshInfo.State == FImpl::EAutoRefreshState::FetchLatestChangeset)
+	{
+		if (!changesetId.IsEmpty() && ResolvedChangesetId != changesetId)
+		{
+			FChangesetInfo const& Changeset = Infos.Changesets[0];
+			FString ChangesetFullName = "#" + Changeset.DisplayName + " - " + Changeset.Description;
+			if (Changeset.DisplayName.IsEmpty() && Changeset.Description.IsEmpty())
+			{
+				BE_ISSUE("missing name and description");
+				ChangesetFullName = changesetId;
+			}
+			BE_LOGI("ITwinAPI", "[auto-refresh] new changeset detected for iModelId \""
+				<< TCHAR_TO_UTF8(*IModelId) << "\": \"" << TCHAR_TO_UTF8(*ChangesetFullName) << "\" ("
+				<< TCHAR_TO_UTF8(*changesetId) << ")");
+			// New changeset detected - start requesting its export status
+			Impl->AutoRefreshInfo.NewChangesetId = changesetId;
+			Impl->AutoRefreshInfo.NewChangesetName = ChangesetFullName;
+			Impl->AutoRefreshInfo.NewChangesetExportStatus = EITwinExportStatus::Unknown;
+			if (WebServices)
+			{
+				Impl->AutoRefreshInfo.State = FImpl::EAutoRefreshState::FetchLatestChangesetExport;
+				Impl->AutoRefreshInfo.NewChangesetExportStatus = EITwinExportStatus::NoneFound;
+				BE_LOGI("ITwinAPI", "[auto-refresh] fetching exports for new changeset detected...");
+				WebServices->GetExports(IModelId, Impl->AutoRefreshInfo.NewChangesetId);
+			}
+			else
+			{
+				// Disable auto-refresh (we are probably exiting the application.
+				BE_LOGE("ITwinAPI", "[auto-refresh] cannot fetch exports for new changeset");
+				DisableAutoRefresh();
+			}
+		}
+		return;
+	}
+	SetResolvedChangesetId(changesetId);
 
 	Impl->Update();
+}
+
+bool AITwinIModel::AutoRefreshChangeset() const
+{
+	return bAutoRefreshChangeset
+		&& Impl->UseLatestChangeset()
+		&& Impl->AutoRefreshInfo.State != FImpl::EAutoRefreshState::Disabled;
+}
+
+void AITwinIModel::DisableAutoRefresh()
+{
+	bAutoRefreshChangeset = false;
+	Impl->AutoRefreshInfo = {};
+	Impl->AutoRefreshInfo.State = FImpl::EAutoRefreshState::Disabled;
+}
+
+void AITwinIModel::OnLoadNewChangesetConfirmation(const FString& NewChangesetId, bool bLoadNewChangeset)
+{
+	// In all error cases, we'll disable the auto-refresh to avoid any loop of repeated messages.
+	Be::CleanUpGuard ToggleAutoRefreshOff([this]
+	{
+		DisableAutoRefresh();
+	});
+
+	if (!AutoRefreshChangeset()
+		|| Impl->AutoRefreshInfo.State != FImpl::EAutoRefreshState::WaitForUserConfirmation)
+	{
+		BE_LOGE("ITwinAPI", "Unexpected confirmation to load changeset \""
+			<< TCHAR_TO_UTF8(*NewChangesetId) << "\" for iModelId \""
+			<< TCHAR_TO_UTF8(*IModelId) << "\": auto-refresh state is "
+			<< static_cast<uint8>(Impl->AutoRefreshInfo.State));
+		return;
+	}
+
+	if (bLoadNewChangeset)
+	{
+		if (Impl->AutoRefreshInfo.NewChangesetId.IsEmpty())
+		{
+			BE_LOGE("ITwinAPI", "Missing new changeset ID in auto-refresh for iModelId \""
+				<< TCHAR_TO_UTF8(*IModelId) << "\"");
+			return;
+		}
+		if (Impl->AutoRefreshInfo.NewChangesetId != NewChangesetId)
+		{
+			BE_LOGE("ITwinAPI", "Mismatch in auto-refresh changeset for iModelId \""
+				<< TCHAR_TO_UTF8(*IModelId) << "\": \""
+				<< TCHAR_TO_UTF8(*NewChangesetId) << "\" vs \""
+				<< TCHAR_TO_UTF8(*Impl->AutoRefreshInfo.NewChangesetId) << "\"");
+			return;
+		}
+
+		BE_LOGI("ITwinAPI", "[auto-refresh] new changeset will be loaded for iModelId \""
+			<< TCHAR_TO_UTF8(*IModelId) << "\": ("
+			<< TCHAR_TO_UTF8(*NewChangesetId) << ")");
+
+		// Actually load the new changeset
+		if (ResolvedChangesetId != NewChangesetId)
+		{
+			Impl->DestroyTileset();
+			ExportStatus = EITwinExportStatus::Unknown;
+			SetResolvedChangesetId(NewChangesetId);
+			Impl->Update();
+		}
+		// Reset state to FetchLatestChangeset, to detect next changeset...
+		Impl->AutoRefreshInfo = {};
+		Impl->AutoRefreshInfo.State = FImpl::EAutoRefreshState::FetchLatestChangeset;
+		ToggleAutoRefreshOff.release();
+	}
+	else
+	{
+		// The user prefers to keep the iModel unchanged in this session.
+		// Disable auto-refresh
+		ToggleAutoRefreshOff.cleanup();
+	}
 }
 
 void AITwinIModel::OnTilesetLoadFailure(FCesium3DTilesetLoadFailureDetails const& Details)
@@ -1639,10 +1883,20 @@ void AITwinIModel::OnTilesetLoaded()
 	Impl->TilesetLoadedCount++;
 }
 
+bool AITwinIModel::IsFetchingExportForAutoRefresh() const
+{
+	return AutoRefreshChangeset()
+		&& Impl->AutoRefreshInfo.State == FImpl::EAutoRefreshState::FetchLatestChangesetExport;
+}
+
 void AITwinIModel::OnExportInfosRetrieved(bool bSuccess, FITwinExportInfos const& ExportInfosArray)
 {
 	if (!bSuccess)
 		return;
+
+	const bool bForAutoRefresh = IsFetchingExportForAutoRefresh();
+	EITwinExportStatus& CurrentExportStatus = bForAutoRefresh
+		? Impl->AutoRefreshInfo.NewChangesetExportStatus : this->ExportStatus;
 
 	FITwinExportInfo const* CompleteInfo = nullptr;
 	for (FITwinExportInfo const& Info : ExportInfosArray.ExportInfos)
@@ -1654,30 +1908,86 @@ void AITwinIModel::OnExportInfosRetrieved(bool bSuccess, FITwinExportInfos const
 		}
 		else
 		{
-			ExportStatus = EITwinExportStatus::InProgress;
+			CurrentExportStatus = EITwinExportStatus::InProgress;
 		}
 	}
+
+
 	if (!CompleteInfo)
 	{
-		if (ExportStatus == EITwinExportStatus::NoneFound && Impl->bAutoStartExportIfNeeded)
+		if (CurrentExportStatus == EITwinExportStatus::NoneFound && Impl->bAutoStartExportIfNeeded)
 		{
 			// in manual mode, automatically start an export if none exists yet
 			StartExport();
 		}
+		else if (bForAutoRefresh)
+		{
+			// Restart after a delay
+			FTSTicker::GetCoreTicker().AddTicker(
+				FTickerDelegate::CreateLambda([This = TWeakObjectPtr<AITwinIModel>(this)](float Delta)
+			{
+				if (This.IsValid() && This->WebServices && This->AutoRefreshChangeset())
+				{
+					This->WebServices->GetExports(This->IModelId, This->Impl->AutoRefreshInfo.NewChangesetId);
+				}
+				return false; // One tick
+			}), 5.0f /*DelayInSeconds*/);
+		}
 		return;
 	}
+
 	if (CompleteInfo->iTwinId.IsEmpty() || CompleteInfo->Id.IsEmpty() || CompleteInfo->MeshUrl.IsEmpty())
 	{
-		BE_LOGE("ITwinAPI", "Invalid export info received for iModelId \"" <<
-			TCHAR_TO_UTF8(*IModelId) << "\", those are required fields: "
+		BE_LOGE("ITwinAPI", "Invalid export info received for iModelId \""
+			<< TCHAR_TO_UTF8(*IModelId) << "\", those are required fields: "
 			<< (CompleteInfo->iTwinId.IsEmpty() ? "iTwinId " : "")
 			<< (CompleteInfo->Id.IsEmpty() ? "exportId " : "")
-			<< (CompleteInfo->MeshUrl.IsEmpty() ? "MeshUrl " : ""));
+			<< (CompleteInfo->MeshUrl.IsEmpty() ? "MeshUrl " : "")
+			<< (bForAutoRefresh ? "[auto-refresh]" : ""));
 		return;
 	}
+
+	UE_LOG(LogITwin, Verbose, TEXT("Found a valid export %s for iModel %s"),
+							  *CompleteInfo->Id, *IModelId);
+	CurrentExportStatus = EITwinExportStatus::Complete;
+
+	if (bForAutoRefresh)
+	{
+		BE_LOGI("ITwinAPI", "[auto-refresh] New changeset ready for iModelId \""
+			<< TCHAR_TO_UTF8(*IModelId) << "\"");
+
+		// Since we explicitly requested the exports for the new changeset, the ID should match!
+		BE_ASSERT(CompleteInfo->ChangesetId == Impl->AutoRefreshInfo.NewChangesetId);
+		// In this case, we just test the existence of the export - when it is ready, we'll ask the user
+		// whether he wants to load the new changeset or not.
+		if (CompleteInfo->ChangesetId == Impl->AutoRefreshInfo.NewChangesetId)
+		{
+			// Ask user confirmation if applicable.
+			Impl->AutoRefreshInfo.State = FImpl::EAutoRefreshState::WaitForUserConfirmation;
+			if (ConfirmLoadNewChangeset.IsBound())
+			{
+				ConfirmLoadNewChangeset.Broadcast(IModelId, GetActorNameOrLabel(),
+					Impl->AutoRefreshInfo.NewChangesetId, Impl->AutoRefreshInfo.NewChangesetName);
+			}
+			else
+			{
+				// Directly load the new changeset.
+				OnLoadNewChangesetConfirmation(Impl->AutoRefreshInfo.NewChangesetId, true);
+			}
+		}
+		else
+		{
+			BE_LOGE("ITwinAPI", "Unexpected changeset ID in received export info for iModelId \""
+				<< TCHAR_TO_UTF8(*IModelId) << "\", got "
+				<< TCHAR_TO_UTF8(*CompleteInfo->ChangesetId) << " instead of "
+				<< TCHAR_TO_UTF8(*Impl->AutoRefreshInfo.NewChangesetId));
+			DisableAutoRefresh();
+		}
+		return;
+	}
+
 	UE_LOG(LogITwin, Verbose, TEXT("Proceeding to load iTwin %s with export %s"),
 							  *CompleteInfo->iTwinId, *CompleteInfo->Id);
-	ExportStatus = EITwinExportStatus::Complete;
 	// in Automatic mode, it is still empty and must be set here because the 4D apis require it:
 	ITwinId = CompleteInfo->iTwinId;
 	ExportId = CompleteInfo->Id; // informative only (needed here for  Automatic mode)
@@ -1775,8 +2085,13 @@ void AITwinIModel::OnExportInfoRetrieved(bool bSuccess, FITwinExportInfo const& 
 {
 	// This callback is called when an export was actually found and LoadModel was called with the latter
 	// => update the IModelID and changeset ID accordingly.
+	const bool bForAutoRefresh = IsFetchingExportForAutoRefresh();
+	EITwinExportStatus& CurrentExportStatus = bForAutoRefresh
+		? Impl->AutoRefreshInfo.NewChangesetExportStatus : this->ExportStatus;
+
 	if (bSuccess
-		&& ExportInfo.Status == TEXT("Complete"))
+		&& ExportInfo.Status == TEXT("Complete")
+		&& !bForAutoRefresh)
 	{
 		ExportId = ExportInfo.Id;
 		IModelId = ExportInfo.iModelId;
@@ -1786,6 +2101,7 @@ void AITwinIModel::OnExportInfoRetrieved(bool bSuccess, FITwinExportInfo const& 
 		SetResolvedChangesetId(ExportInfo.ChangesetId);
 	}
 	// Actually load the Cesium tileset if the request was successful and the export is complete
+	// (for auto-refresh, we'll first request a confirmation from the user).
 	FITwinExportInfos infos;
 	infos.ExportInfos.Push(ExportInfo);
 	OnExportInfosRetrieved(bSuccess, infos);
@@ -1793,10 +2109,10 @@ void AITwinIModel::OnExportInfoRetrieved(bool bSuccess, FITwinExportInfo const& 
 	if (!bSuccess || ExportInfo.Status == TEXT("Invalid"))
 	{
 		// server error, or the export may have been interrupted on the server, or deleted...
-		ExportStatus = EITwinExportStatus::Unknown;
+		CurrentExportStatus = EITwinExportStatus::Unknown;
 	}
 
-	if (ExportStatus == EITwinExportStatus::InProgress)
+	if (CurrentExportStatus == EITwinExportStatus::InProgress)
 	{
 		// Still in progress => test again in 3 seconds
 		Impl->TestExportCompletionAfterDelay(ExportInfo.Id, 3.f);
@@ -1983,8 +2299,8 @@ void AITwinIModel::OnIModelQueried(bool bSuccess, FString const& QueryResult, Ht
 		Impl->SubCategoryIdsPromises.Empty();
 		return;
 	}
-	// One and only one of the two "requesters" should handle this reply
-	if (!Impl->ElementsMetadataQuerying->OnQueryCompleted(RequestID, bSuccess, QueryResult))
+	if (!Impl->ElementsMetadataQuerying
+		|| !Impl->ElementsMetadataQuerying->OnQueryCompleted(RequestID, bSuccess, QueryResult))
 	{
 		BE_LOGE("ITwinAPI", "iModel request ID not recognized: " << TCHAR_TO_UTF8(*RequestID));
 	}
@@ -2187,9 +2503,11 @@ bool AITwinIModel::SetMaterialName(uint64_t MaterialId, FString const& NewName)
 	return Impl->SetMaterialName(MaterialId, NewName);
 }
 
-bool AITwinIModel::LoadMaterialFromAssetFile(uint64_t MaterialId, FString const& AssetFilePath)
+bool AITwinIModel::LoadMaterialFromAssetFile(uint64_t MaterialId, FString const& AssetFilePath,
+	TOptional<FString> const& CustomTextureDir /*= {}*/)
 {
-	return Impl->LoadMaterialFromAssetFile(MaterialId, AssetFilePath, *this);
+	return Impl->LoadMaterialFromAssetFile(MaterialId, AssetFilePath, *this,
+		FITwinIModelMaterialHandler::LoadOptions{ .CustomTextureDir = CustomTextureDir });
 }
 
 std::shared_ptr<BeUtils::GltfMaterialHelper> const& AITwinIModel::GetGltfMaterialHelper() const
@@ -2215,7 +2533,7 @@ void AITwinIModel::OnIModelOffsetChanged()
 {
 	Impl->SetLastTransforms();
 	// Bounding boxes have always been stored in Unreal world space AS IF the iModel were untransformed
-	// (see "Note 2" in UITwinSceneMappingBuilder::OnTileMeshPrimitiveConstructed), but this call _is_
+	// (see "Note 2" in UITwinSceneMappingBuilder::OnTileMeshPrimitiveLoaded), but this call _is_
 	// necessary to reset the SceneMapping (esp. re-extract all translucent/transformed Elements to relocate
 	// them correctly). Getting rid of this may be possible by manually relocating extracted Elements (but of
 	// no use if we are to "soon" switch to retuning to replace extraction...)
@@ -2262,6 +2580,22 @@ AITwinDecorationHelper* AITwinIModel::FTilesetAccess::GetDecorationHelper() cons
 	return IModel->Impl->DecorationPersistenceMgr;
 }
 
+UITwinClipping3DTilesetHelper* AITwinIModel::FTilesetAccess::GetClippingHelper() const
+{
+	if (!IModel.IsValid())
+		return nullptr;
+	return IModel->GetClippingHelper();
+}
+
+FBox AITwinIModel::FTilesetAccess::GetBoundingBox() const
+{
+	if (!IModel.IsValid())
+		return {};
+	FBox IModelBBox;
+	if (!IModel->GetBoundingBox(IModelBBox, /*bClampOutlandishValues*/true))
+		return {};
+	return IModelBBox;
+}
 
 void AITwinIModel::FTilesetAccess::OnModelOffsetLoaded() const
 {
@@ -2304,7 +2638,6 @@ void AITwinIModel::LoadMaterialMLPrediction()
 	}
 }
 
-
 void AITwinIModel::StartExport()
 {
 	if (IModelId.IsEmpty())
@@ -2312,7 +2645,10 @@ void AITwinIModel::StartExport()
 		BE_LOGE("ITwinAPI", "IModelId is required to start an export");
 		return;
 	}
-	if (ExportStatus == EITwinExportStatus::InProgress)
+	const bool bForAutoRefresh = IsFetchingExportForAutoRefresh();
+	EITwinExportStatus const CurrentExportStatus = bForAutoRefresh
+		? Impl->AutoRefreshInfo.NewChangesetExportStatus : this->ExportStatus;
+	if (CurrentExportStatus == EITwinExportStatus::InProgress)
 	{
 		// do not accumulate exports...
 		UE_LOG(LogITwin, Display, TEXT("Export is already in progress for ITwinIModel %s"), *IModelId);
@@ -2321,7 +2657,8 @@ void AITwinIModel::StartExport()
 	UpdateWebServices();
 	if (WebServices)
 	{
-		WebServices->StartExport(IModelId, GetSelectedChangeset());
+		WebServices->StartExport(IModelId,
+			bForAutoRefresh ? Impl->AutoRefreshInfo.NewChangesetId : GetSelectedChangeset());
 	}
 }
 
@@ -2329,7 +2666,11 @@ void AITwinIModel::OnExportStarted(bool bSuccess, FString const& InExportId)
 {
 	if (!bSuccess)
 		return;
-	ExportStatus = EITwinExportStatus::InProgress;
+
+	const bool bForAutoRefresh = IsFetchingExportForAutoRefresh();
+	EITwinExportStatus& CurrentExportStatus = bForAutoRefresh
+		? Impl->AutoRefreshInfo.NewChangesetExportStatus : this->ExportStatus;
+	CurrentExportStatus = EITwinExportStatus::InProgress;
 	Impl->TestExportCompletionAfterDelay(InExportId, 3.f); // 3s
 }
 
@@ -2364,9 +2705,18 @@ AITwinSavedView* AITwinIModel::GetITwinSavedViewActor(const FString& SavedViewId
 	return nullptr;
 }
 
+/*static*/ void AITwinIModel::EnableSavedViewsUpdates(bool bEnableSV)
+{
+	FImpl::bEnableSavedViewsUpdates = bEnableSV;
+}
+
 void AITwinIModel::UpdateSavedViews()
 {
-	//don't update saved views if it's already running an update
+	// We can deactivate all saved views requests (there are a lot, which seems to saturate the network
+	// or maybe the iTwin servers (see AzDev#1974543).
+	if (!FImpl::bEnableSavedViewsUpdates)
+		return;
+	// Don't update saved views if it's already running an update
 	if (bIsUpdatingSavedViews)
 		return;
 	UpdateWebServices();
@@ -2741,7 +3091,7 @@ void AITwinIModel::RefreshTileset()
 		if (Tileset)
 		{
 			// Before refreshing the tileset, make sure we invalidate the mapping: note that 
-			// OnTileMeshPrimitiveConstructed calls (during tile loading) occur intertwined with Element
+			// OnTileMeshPrimitiveLoaded calls (during tile loading) occur intertwined with Element
 			// metadata query replies: since both these functions will call ElementForSLOW which inserts new
 			// FITwinElements into the AllElements collection, it ultimately means that Elements ranks are
 			// RANDOM. And I emphasize this emphasis because when query replies are in the cache, the ranks
@@ -2752,10 +3102,10 @@ void AITwinIModel::RefreshTileset()
 			// otherwise Element ranks stored in 4D animation optim structures would be obsolete, which was
 			// the underlying cause for azdev#1621189.
 			Impl->ResetSceneMapping();
-			Impl->ElementsMetadataQuerying->Restart();
+			if (Impl->ElementsMetadataQuerying)
+				Impl->ElementsMetadataQuerying->Restart();
 			if (IsValid(Synchro4DSchedules) && ensure(bResolvedChangesetIdValid))
 			{
-				// Note: already done in RefreshTileset, but this only sets a flag anyway
 				Synchro4DSchedules->ResetSchedules();
 			}
 			Impl->Internals.SceneMapping.SetIModel2UnrealTransfos(*this);
@@ -2981,7 +3331,7 @@ void AITwinIModel::FImpl::HandleTilesRenderReadiness()
 	for (auto&& TileRank : Internals.TilesPendingRenderReadiness)
 	{
 		auto& SceneTile = Internals.SceneMapping.KnownTile(TileRank);
-		if (SceneTile.IsLoaded() && ensure(SceneTile.pCesiumTile))
+		if (SceneTile.IsLoaded() && SceneTile.pCesiumTile)
 		{
 			if (SceneTile.bIsSetupFor4DAnimation // also means ApplyAnimation has been called
 				&& !SceneTile.Need4DAnimTexturesSetupInMaterials()
@@ -3096,13 +3446,42 @@ void FITwinIModelInternals::LogScheduleDownloadProgressed()
 	}
 }
 
-void FITwinIModelInternals::OnScheduleDownloadProgressed(double PercentComplete)
+bool FITwinIModelInternals::AreSynchro4DSchedulesMetadataLoaded() const
 {
-	Owner.ScheduleDownloadPercentComplete =
-		(100. * AITwinIModel::FImpl::FQueryElementMetadataPageByPage::MetadataRatioInTotalProgress)
-		+ (1. - AITwinIModel::FImpl::FQueryElementMetadataPageByPage::MetadataRatioInTotalProgress)
-			* PercentComplete;
-	LogScheduleDownloadProgressed();
+	auto& Impl = FITwinIModelImplAccess::Get(Owner);
+	if (!Impl.ElementsMetadataQuerying)
+		return false;
+	return AITwinIModel::FImpl::FQueryElementMetadataPageByPage::EState::Finished
+		== Impl.ElementsMetadataQuerying->GetState();
+}
+
+void FITwinIModelInternals::Update4DScheduleDownloadStatus(FITwinIModelInternals::E4DScheduleStatus Sched4DStatus,
+	double PercentComplete /*= 0.f*/)
+{
+	auto& Impl = FITwinIModelImplAccess::Get(Owner);
+	switch (Sched4DStatus)
+	{
+	case E4DScheduleStatus::Unknown:
+		Impl.UpdateIModel4DLoadProgress(0.);
+		break;
+	case E4DScheduleStatus::Finished:
+		Impl.UpdateIModel4DLoadProgress(100.);
+		if (!Impl.UseLatestChangeset()
+			&& !Owner.Synchro4DSchedules->IsAvailableAsNextGenSchedule())
+		{
+			BE_LOGE("ITwinAPI", "iModel actor with a Synchro4D schedule must use 'latest' as changesetId to guarantee that the schedule will match.");
+		}
+		break;
+	case E4DScheduleStatus::Loading:
+		Impl.UpdateIModel4DLoadProgress(PercentComplete);
+		break;
+	case E4DScheduleStatus::NoneOrEmpty:
+		if (!Impl.ElementsMetadataQuerying)
+			return;
+		Impl.ElementsMetadataQuerying->Cancel();
+		Impl.UpdateIModel4DLoadProgress(100.);
+		break;
+	}
 }
 
 namespace
@@ -3362,9 +3741,9 @@ void AITwinIModel::HighlightMaterial(uint64 MaterialID)
 }
 
 
-UITwinClippingCustomPrimitiveDataHelper* AITwinIModel::GetClippingHelper() const
+UITwinClipping3DTilesetHelper* AITwinIModel::GetClippingHelper() const
 {
-	return Impl->ClippingHelper.Get();
+	return Impl->Internals.ClippingHelper.Get();
 }
 
 bool AITwinIModel::MakeClippingHelper()
@@ -3372,10 +3751,10 @@ bool AITwinIModel::MakeClippingHelper()
 	if (IModelId.IsEmpty())
 		return false;
 
-	Impl->ClippingHelper =
-		TStrongObjectPtr<UITwinClippingCustomPrimitiveDataHelper>(NewObject<UITwinClippingCustomPrimitiveDataHelper>(this));
-	Impl->ClippingHelper->SetModelIdentifier(
-		std::make_pair(EITwinModelType::IModel, IModelId));
+	FITwinIModelInternals& ModelInternals(GetInternals(*this));
+	ModelInternals.ClippingHelper =
+		TStrongObjectPtr<UITwinClipping3DTilesetHelper>(NewObject<UITwinClipping3DTilesetHelper>(this));
+	ModelInternals.ClippingHelper->InitWith(FTilesetAccess(this));
 	return true;
 }
 
@@ -3601,6 +3980,53 @@ static FAutoConsoleCommandWithWorldAndArgs FCmd_ITwinFitIModelInView(
 	ITwinElementID const ElementID = Args.IsEmpty() ? ITwin::NOT_ELEMENT : ITwin::ParseElementID(Args[0]);
 	ITwin::ZoomOnIModelsOrElement(ElementID, World);
 }));
+
+// Console command to toggle visibility of the supplied Element (assumed to be in the first iModel found),
+// or on the first iModel's selected element, if not supplied and any Element is currently selected.
+static FAutoConsoleCommandWithWorldAndArgs FCmd_ITwinToggleSelectedElement(
+	TEXT("cmd.ITwinToggleSelectedElement"),
+	TEXT("Toggle the visibility of either the supplied Element, or to the first selected Element, if any. If animated, note that the Element's visibility may change at any time after this call."),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+		{
+			ITwinElementID SelectedElement = ITwin::NOT_ELEMENT;
+			AITwinIModel* InIModel = nullptr;
+			if (Args.IsEmpty())
+			{
+				for (TActorIterator<AITwinIModel> IModelIter(World); IModelIter; ++IModelIter)
+				{
+					SelectedElement = GetInternals(**IModelIter).GetSelectedElement();
+					if (SelectedElement != ITwin::NOT_ELEMENT)
+					{
+						InIModel = *IModelIter;
+						break;
+					}
+				}
+			}
+			else
+			{
+				SelectedElement = ITwin::ParseElementID(Args[0]);
+				if (SelectedElement == ITwin::NOT_ELEMENT)
+					return;
+				for (TActorIterator<AITwinIModel> IModelIter(World); IModelIter; ++IModelIter)
+				{
+					if (GetInternals(**IModelIter).HasElementWithID(SelectedElement))
+					{
+						InIModel = *IModelIter;
+						break;
+					}
+				}
+				if (!InIModel)
+					return;
+			}
+			auto& IModelInt = GetInternals(*InIModel);
+			ITwinScene::ElemIdx Rank;
+			auto const* SceneElem = IModelInt.SceneMapping.GetElementForSLOW(SelectedElement, &Rank);
+			if (SceneElem)
+				if (IModelInt.SceneMapping.IsElementVisible(Rank))
+					IModelInt.HideElements({ SelectedElement }, /*IsConstruction*/false, true);
+				else
+					IModelInt.ShowElements({ SelectedElement }, true);
+		}));
 
 // Console command to zoom on the supplied Element (assumed to be in the first iModel found), or on the first
 // iModel's selected element, if not supplied and any Element is currently selected.
@@ -3875,19 +4301,39 @@ static FAutoConsoleCommandWithWorldAndArgs FCmd_ITwinStopAnimInTile(
 
 static FAutoConsoleCommandWithWorldAndArgs FCmd_ITwinGetTicks(
 	TEXT("cmd.ITwinGetTicks"),
-	TEXT("Print tick count matching date string (useful to set up conditional breakpoints...)"),
+	TEXT("Print tick count's matching date string (useful to set up conditional bp), or print date for a tick count. Will try parsing the string as coming from FDate::ToString, then as an Iso date, then as an Http-format date, then if all failed, parse a tick count and print it as a date string."),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld*)
 		{
 			if (!Args.Num())
 				return;
-			FDateTime Date;
-			if (FDateTime::ParseIso8601(*Args[0], Date))
+			// Note: the arguments are split by spaces, even when the whole argument is double-quoted!
+			FString Arg = Args[0];
+			for (int i = 1; i < Args.Num(); ++i)
 			{
-				UE_LOG(LogITwin, Display, TEXT("%s = %lld"), *Args[0], Date.GetTicks());
+				Arg += TEXT(' ');
+				Arg += Args[i];
+			}
+			FDateTime Date;
+			int64 TickCount;
+			if (FDateTime::Parse(*Arg, Date))
+			{
+				UE_LOG(LogITwin, Display, TEXT("(ToString) %s = %lld"), *Arg, Date.GetTicks());
+			}
+			else if (FDateTime::ParseIso8601(*Arg, Date))
+			{
+				UE_LOG(LogITwin, Display, TEXT("(Iso8601) %s = %lld"), *Arg, Date.GetTicks());
+			}
+			else if (FDateTime::ParseHttpDate(*Arg, Date))
+			{
+				UE_LOG(LogITwin, Display, TEXT("(HttpDate) %s = %lld"), *Arg, Date.GetTicks());
+			}
+			else if (FParse::Value(*(TEXT("T=") + Arg), TEXT("T="), TickCount))
+			{
+				UE_LOG(LogITwin, Display, TEXT("(Ticks) %lld = %s"), TickCount, *FDateTime(TickCount).ToString());
 			}
 			else
 			{
-				UE_LOG(LogITwin, Error, TEXT("Date/time parsing error with: %s"), *Args[0]);
+				UE_LOG(LogITwin, Error, TEXT("Date/time parsing error with: %s"), *Arg);
 			}
 		}));
 

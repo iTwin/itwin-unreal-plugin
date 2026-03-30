@@ -67,6 +67,8 @@ public:
   void updateCreditsViewport(bool recreateWidget);
   void removeCreditsFromViewports();
 
+  void SetCreditsWidgetDisplayScale(float InScale);
+
 #if WITH_EDITOR
   void OnRedrawLevelEditingViewports(bool);
   void OnPreBeginPIE(bool bIsSimulating);

@@ -19,8 +19,8 @@
 
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <set>
-#include <vector>
 
 enum class EITwinEnvironment : uint8;
 
@@ -30,13 +30,13 @@ class FITwinSchedulesImport
 
 	// For unit testing
 	FITwinSchedulesImport(FString const& BaseUrl, FITwinScheduleTimeline& MainTimeline,
-		TStrongObjectPtr<UObject> OwnerUObj, std::recursive_mutex& Mux, std::vector<FITwinSchedule>& Scheds);
+		TStrongObjectPtr<UObject> OwnerUObj, std::recursive_mutex& Mux, std::optional<FITwinSchedule>& Scheds);
 	void ResetConnectionForTesting(FString const& ITwinAkaProjectAkaContextId, FString const& IModelId,
 								   FString const& InChangesetId, FString const& CustomCacheDir);
 
 public:
 	FITwinSchedulesImport(UITwinSynchro4DSchedules& Owner, std::recursive_mutex& Mutex,
-						  std::vector<FITwinSchedule>& Schedules);
+						  std::optional<FITwinSchedule>& Schedules);
 	FITwinSchedulesImport(FITwinSchedulesImport&& InOwner) = delete;
 	FITwinSchedulesImport& operator=(FITwinSchedulesImport&& Other);
 	FString ToString() const;
@@ -59,7 +59,7 @@ public:
 	void ResetConnection(FString const& ITwinAkaProjectAkaContextId, FString const& IModelId,
 						 FString const& InChangesetId);
 	void SetSchedulesImportConnectors(FOnAnimationBindingAdded const& InOnAnimBindingAdded,
-									  FOnAnimationGroupModified const& InOnAnimationGroupModified,
+									  FOnReceivedScheduleStats const& InOnReceivedScheduleStats,
 									  FFindElementIDFromGUID const& InFncElementIDFromGUID);
 	std::pair<int, int> HandlePendingQueries();
 	/// \param FromTime Restrict the query to tasks starting (or ending) at or after this date. Ignored if

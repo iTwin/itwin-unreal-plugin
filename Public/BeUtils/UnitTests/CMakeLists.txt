@@ -14,8 +14,9 @@ target_link_libraries (BeUtils_UnitTests
 	BeUtils
 	CesiumGltfWriter
 )
-be_add_test (BeUtils_UnitTests)
-
+be_add_test (BeUtils_UnitTests
+	COVERED_TARGETS BeUtils
+)
 add_custom_command(TARGET BeUtils_UnitTests POST_BUILD
 	COMMAND ${CMAKE_COMMAND} -E copy
 		$<TARGET_FILE:Singleton>

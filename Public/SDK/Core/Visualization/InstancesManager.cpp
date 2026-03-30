@@ -8,30 +8,56 @@
 
 #include "InstancesManager.h"
 
+#include "AsyncHelpers.h"
+#include "AsyncHttp.inl"
 #include "Core/Network/HttpGetWithLink.h"
 #include "Config.h"
 #include "InstancesGroup.h"
 #include "SplinesManager.h"
 #include "PathAnimation.h"
 #include "../Singleton/singleton.h"
+#include <optional>
 
 namespace AdvViz::SDK
 {
-	class InstancesManager::Impl
+	class InstancesManager::Impl : public std::enable_shared_from_this<Impl>
 	{
+
 	public:
 		std::shared_ptr<Http> http_;
-		SharedInstGroupVect instancesGroups_;
-		SharedInstGroupMap mapIdToInstGroups_;
-		RefID::DBToIDMap groupIDMap_;
-		std::map<std::pair<std::string /*objRef*/, RefID/*group*/>, SharedInstVect> mapObjectRefToInstances_;
-		std::map<std::pair<std::string /*objRef*/, RefID/*group*/>, SharedInstVect> mapObjectRefToDeletedInstances_;
-		std::vector<IInstancesGroupPtr> instancesGroupsToDelete_;
 		std::shared_ptr<ISplinesManager> splineManager_;
 		std::shared_ptr<IPathAnimator> animPathManager_;
 
-		std::shared_ptr<Http>& GetHttp() { return http_; }
-		void SetHttp(const std::shared_ptr<Http>& http) { http_ = http; }
+		std::shared_ptr< std::atomic_bool > isThisValid_;
+		using ObjRefAndGPId = std::pair<std::string /*objRef*/, RefID/*group*/>;
+
+		struct SThreadSafeData
+		{
+			SharedInstGroupNameMap instanceGroupsByName_;
+			SharedInstGroupMap mapIdToInstGroups_;
+			RefID::DBToIDMap groupIDMap_;
+			RefID::DBToIDMap instanceIDMap_;
+			std::map<ObjRefAndGPId, SharedInstVect> mapObjectRefToInstances_;
+			std::map<ObjRefAndGPId, SharedInstVect> mapObjectRefToDeletedInstances_;
+			std::vector<IInstancesGroupPtr> instancesGroupsToDelete_;
+		};
+		Tools::RWLockableObject<SThreadSafeData> thdata_;
+
+
+		Impl()
+		{
+			isThisValid_ = std::make_shared<std::atomic_bool>(true);
+
+			SetHttp(GetDefaultHttp());
+		}
+
+		~Impl()
+		{
+			*isThisValid_ = false;
+		}
+
+		std::shared_ptr<Http> const& GetHttp() const { return http_; }
+		void SetHttp(std::shared_ptr<Http> const& http) { http_ = http; }
 
 		void SetSplineManager(std::shared_ptr<ISplinesManager> const& splineManager)
 		{
@@ -45,11 +71,13 @@ namespace AdvViz::SDK
 
 		void Clear()
 		{
-			instancesGroups_.clear();
-			mapIdToInstGroups_.clear();
-			mapObjectRefToInstances_.clear();
-			mapObjectRefToDeletedInstances_.clear();
-			groupIDMap_.clear();
+			auto thdata = thdata_.GetAutoLock();
+			thdata->instanceGroupsByName_.clear();
+			thdata->mapIdToInstGroups_.clear();
+			thdata->mapObjectRefToInstances_.clear();
+			thdata->mapObjectRefToDeletedInstances_.clear();
+			thdata->groupIDMap_.clear();
+			thdata->instanceIDMap_.clear();
 		}
 
 		// Some structures used in I/O functions
@@ -73,7 +101,7 @@ namespace AdvViz::SDK
 			std::string id;
 		};
 
-		void LoadInstancesGroups(const std::string& decorationId, const IInstancesGroupPtr& defaultGroup = {})
+		void LoadInstancesGroups(const std::string& decorationId, const IInstancesGroupPtr& defaultGroupPtr = {})
 		{
 			struct SJsonInstGroupWithId
 			{
@@ -83,11 +111,13 @@ namespace AdvViz::SDK
 				std::string id;
 			};
 
-			if (defaultGroup)
+			if (defaultGroupPtr)
 			{
 				// For compatibility with older version, always associate the empty DB id with the default
 				// group.
-				groupIDMap_[""] = defaultGroup->GetId().ID();
+				auto gp = defaultGroupPtr->GetAutoLock();
+				auto thdata = thdata_.GetAutoLock();
+				thdata->groupIDMap_[""] = gp->GetId().ID();
 			}
 
 			bool hasAddedDefaultGroup = false;
@@ -95,23 +125,33 @@ namespace AdvViz::SDK
 			auto ret = HttpGetWithLink<SJsonInstGroupWithId>(GetHttp(),
 				"decorations/" + decorationId + "/instancesgroups",
 				{} /* extra headers*/,
-				[this, &hasAddedDefaultGroup, &defaultGroup](SJsonInstGroupWithId const& row) -> expected<void, std::string>
+				[this, &hasAddedDefaultGroup, defaultGroupPtr](SJsonInstGroupWithId const& row) -> expected<void, std::string>
 			{
-				IInstancesGroupPtr group;
-				bool const isDefaultGroup = defaultGroup && defaultGroup->GetName() == row.name;
-				if (isDefaultGroup)
-				{
-					group = defaultGroup;
-					// Do not change the internal ID of the default group, only update its DB identifier
-					RefID groupId = group->GetId();
-					groupId.SetDBIdentifier(row.id);
-					group->SetId(groupId);
-					groupIDMap_.emplace(row.id, groupId.ID());
-				}
+				IInstancesGroup* group;
+				IInstancesGroup* defaultGroup;
+				if (defaultGroupPtr)
+					defaultGroup = &defaultGroupPtr->Lock();
 				else
+					defaultGroup = nullptr;
+
+
+				bool const isDefaultGroup = defaultGroup && defaultGroup->GetName() == row.name;
 				{
-					group.reset(IInstancesGroup::New());
-					group->SetId(RefID::FromDBIdentifier(row.id, groupIDMap_));
+					auto thdata = thdata_.GetAutoLock();
+					if (isDefaultGroup)
+					{
+						group = defaultGroup;
+						// Do not change the internal ID of the default group, only update its DB identifier
+						RefID groupId = group->GetId();
+						groupId.SetDBIdentifier(row.id);
+						group->SetId(groupId);
+						thdata->groupIDMap_.emplace(row.id, groupId.ID());
+					}
+					else
+					{
+						group = IInstancesGroup::New();
+						group->SetId(RefID::FromDBIdentifier(row.id, thdata->groupIDMap_));
+					}
 				}
 				group->SetName(row.name);
 				if (row.type.has_value())
@@ -130,17 +170,21 @@ namespace AdvViz::SDK
 					}
 				}
 
-				AddInstancesGroup(group);
+				auto groupPtr = Tools::MakeSharedLockableDataPtr<IInstancesGroup>(group);
+				AddInstancesGroup(groupPtr);
 				if (isDefaultGroup)
+				{
 					hasAddedDefaultGroup = true;
+					defaultGroupPtr->Unlock();
+				}
 				return {};
 			});
 
 			// If we have provided a default group, and did not parse anything here, make sure the instances,
 			// if any, will all be assigned this default group.
-			if (defaultGroup && !hasAddedDefaultGroup)
+			if (defaultGroupPtr && !hasAddedDefaultGroup)
 			{
-				AddInstancesGroup(defaultGroup);
+				AddInstancesGroup(defaultGroupPtr);
 			}
 
 			if (!ret)
@@ -158,15 +202,18 @@ namespace AdvViz::SDK
 				[this, &mat](SJsonInstWithId const& row) -> expected<void, std::string>
 				{
 					IInstance* inst = IInstance::New();
-					std::shared_ptr<IInstance> sharedInst(inst);
+					IInstancePtr sharedInst = MakeSharedLockableDataPtr(inst);
 
-					inst->SetId(row.id);
+					auto thdata = thdata_.GetAutoLock();
+
+					inst->SetId(RefID::FromDBIdentifier(row.id, thdata->instanceIDMap_));
 					inst->SetName(row.name);
 					if (row.animationid.has_value())
 					{
 						inst->SetAnimId(row.animationid.value());
-						if (auto animPathInfo = animPathManager_->FindAnimationPathInfoByDBId(row.animationid.value()))
+						if (auto animPathInfoPtr = animPathManager_->FindAnimationPathInfoByDBId(row.animationid.value()))
 						{
+							auto animPathInfo = animPathInfoPtr->GetRAutoLock();
 							inst->SetAnimPathId(animPathInfo->GetId());
 						}
 					}
@@ -188,15 +235,16 @@ namespace AdvViz::SDK
 					inst->SetTransform(mat);
 
 					std::string const groupid = row.groupid.value_or("");
-					RefID const gpId = RefID::FromDBIdentifier(groupid, groupIDMap_);
-					auto itGroup = mapIdToInstGroups_.find(gpId);
-					if (itGroup != mapIdToInstGroups_.end())
+					RefID const gpId = RefID::FromDBIdentifier(groupid, thdata->groupIDMap_);
+					auto group = GetInstancesGroup(gpId);
+					if (group)
 					{
-						inst->SetGroup(itGroup->second);
-						itGroup->second->AddInstance(sharedInst);
+						inst->SetGroup(group);
+						auto gp = group->GetAutoLock();
+						gp->AddInstance(sharedInst);
 					}
 
-					mapObjectRefToInstances_[std::make_pair(row.objref, gpId)].push_back(sharedInst);
+					thdata->mapObjectRefToInstances_[std::make_pair(row.objref, gpId)].push_back(sharedInst);
 					return {};
 				}
 			);
@@ -206,6 +254,190 @@ namespace AdvViz::SDK
 			}
 		}
 
+		void AsyncLoadInstances(const std::string& decorationId,
+			std::function<void(IInstancePtr&)> onInstanceCreatedCallback,
+			std::function<void(expected<void, std::string> const&)> onFinishCallback)
+		{
+			std::weak_ptr<InstancesManager::Impl> WThis(shared_from_this());
+			AsyncHttpGetWithLink<SJsonInstWithId>(GetHttp(),
+				"decorations/" + decorationId + "/instances",
+				{} /* extra headers*/,
+				[WThis, onInstanceCreatedCallback](SJsonInstWithId const& row) -> expected<void, std::string>
+				{
+					auto SThis = WThis.lock();
+					if (!SThis)
+						return make_unexpected("InstancesManager::Impl no longer exists");
+
+					auto thdata = SThis->thdata_.GetAutoLock();
+
+					IInstance* inst = IInstance::New();
+					inst->SetId(RefID::FromDBIdentifier(row.id, thdata->instanceIDMap_));
+					inst->SetName(row.name);
+					if (row.animationid.has_value())
+					{
+						inst->SetAnimId(row.animationid.value());
+						if (auto animPathInfoPtr = SThis->animPathManager_->FindAnimationPathInfoByDBId(row.animationid.value()))
+						{
+							auto animPathInfo = animPathInfoPtr->GetRAutoLock();
+							inst->SetAnimPathId(animPathInfo->GetId());
+						}
+					}
+
+					inst->SetObjectRef(row.objref);
+					if (row.colorshift.has_value() && row.colorshift.value() != "")
+					{
+						int r, g, b;
+						const char* str = row.colorshift.value().data();
+						if (str[0] == '#')
+							str++;
+						if (sscanf_s(str, "%02x%02x%02x", &r, &g, &b) == 3)
+						{
+							float3 color = { r / 255.f, g / 255.f, b / 255.f };
+							inst->SetColorShift(color);
+						}
+					}
+					dmat3x4 mat;
+					std::memcpy(&mat[0], row.matrix.data(), 12 * sizeof(double));
+					inst->SetTransform(mat);
+					
+					IInstancePtr sharedInst = MakeSharedLockableDataPtr(inst);
+
+					std::string const groupid = row.groupid.value_or("");
+					RefID const gpId = RefID::FromDBIdentifier(groupid, thdata->groupIDMap_);
+					auto itGroup = thdata->mapIdToInstGroups_.find(gpId);
+					if (itGroup != thdata->mapIdToInstGroups_.end())
+					{
+						inst->SetGroup(itGroup->second);
+						auto gp = itGroup->second->GetAutoLock();
+						gp->AddInstance(sharedInst);
+					}
+
+					thdata->mapObjectRefToInstances_[std::make_pair(row.objref, gpId)].push_back(sharedInst);
+
+					onInstanceCreatedCallback(sharedInst);
+					return {};
+				},
+				onFinishCallback
+			);
+		}
+
+		void AsyncLoadInstancesGroups(const std::string& decorationId,
+			std::function<void(IInstancesGroupPtr&)> onCreatedGroupCallback,
+			std::function<void(expected<void, std::string> const& result)> onFinishCallback,
+			const IInstancesGroupPtr& defaultGroupPtr = {})
+		{
+			struct SJsonInstGroupWithId
+			{
+				std::string name;
+				std::optional<std::string> userData;
+				std::optional<std::string> type;
+				std::string id;
+			};
+
+			if (defaultGroupPtr)
+			{
+				// For compatibility with older version, always associate the empty DB id with the default group.
+				auto gp = defaultGroupPtr->GetAutoLock();
+				auto thdata = thdata_.GetAutoLock();
+				thdata->groupIDMap_[""] = gp->GetId().ID();
+			}
+
+			std::shared_ptr<bool> hasAddedDefaultGroup = std::make_shared<bool>(false);
+
+			std::shared_ptr<InstancesManager::Impl> SThis(shared_from_this());
+			IInstancesGroupPtr defaultGroupPtr2(defaultGroupPtr);
+
+			AsyncHttpGetWithLink<SJsonInstGroupWithId>(GetHttp(),
+				"decorations/" + decorationId + "/instancesgroups",
+				{} /* extra headers*/,
+				[SThis, hasAddedDefaultGroup, defaultGroupPtr2, onCreatedGroupCallback](SJsonInstGroupWithId const& row) -> expected<void, std::string>
+				{
+					IInstancesGroup* group;
+					IInstancesGroup* defaultGroup = nullptr;
+					std::optional<Tools::AutoLockObject<RWLockablePtrObject<IInstancesGroup>>> dgpLocked;
+					if (defaultGroupPtr2)
+					{
+						dgpLocked.emplace(defaultGroupPtr2->GetAutoLock());
+						defaultGroup = &dgpLocked->Get();
+					}
+
+					bool const isDefaultGroup = defaultGroup && defaultGroup->GetName() == row.name;
+					{
+						auto thdata = SThis->thdata_.GetAutoLock();
+						if (isDefaultGroup)
+						{
+							group = defaultGroup;
+							// Do not change the internal ID of the default group, only update its DB identifier
+							RefID groupId = group->GetId();
+							groupId.SetDBIdentifier(row.id);
+							group->SetId(groupId);
+							thdata->groupIDMap_.emplace(row.id, groupId.ID());
+						}
+						else
+						{
+							group = IInstancesGroup::New();
+							group->SetId(RefID::FromDBIdentifier(row.id, thdata->groupIDMap_));
+						}
+					}
+					group->SetName(row.name);
+					if (row.type.has_value())
+						group->SetType(row.type.value());
+
+					// We may have saved linked spline as userData. Spline should be loaded *before* populations
+					// to make it work.
+					if (row.userData
+						&& group->GetType() == "spline"
+						&& SThis->splineManager_)
+					{
+						RefID const splineId = SThis->splineManager_->GetLoadedSplineId(*row.userData);
+						if (splineId.IsValid())
+						{
+							group->SetLinkedSplineId(splineId);
+						}
+					}
+					auto groupPtr = Tools::MakeSharedLockableDataPtr<IInstancesGroup>(group);
+					SThis->AddInstancesGroup(groupPtr);
+					if (isDefaultGroup)
+						*hasAddedDefaultGroup = true;
+
+					// Invoke callback for each created group
+					if (onCreatedGroupCallback)
+					{
+						onCreatedGroupCallback(groupPtr);
+					}
+
+					return {};
+				},
+				[SThis, defaultGroupPtr2, hasAddedDefaultGroup, onFinishCallback](expected<void, std::string> const& result)
+				{
+					if (!result)
+					{
+						// Invoke completion callback
+						if (onFinishCallback)
+						{
+							onFinishCallback(result);
+						}
+						return;
+					}
+
+					// If we have provided a default group, and did not parse anything here, make sure the instances,
+					// if any, will all be assigned this default group.
+					if (defaultGroupPtr2 && !*hasAddedDefaultGroup)
+					{
+						SThis->AddInstancesGroup(defaultGroupPtr2);
+					}
+
+					// Invoke completion callback
+					if (onFinishCallback)
+					{
+						expected<void, std::string> result2;
+						onFinishCallback(result2);
+					}
+
+					return;
+				}
+			);
+		}
 		void LoadDataFromServer(const std::string& decorationId, const IInstancesGroupPtr& defaultGroup = {})
 		{
 			Clear();
@@ -213,10 +445,46 @@ namespace AdvViz::SDK
 			LoadInstances(decorationId);
 		}
 
-		void SaveInstancesGroup(
-			const std::string& decorationId,
-			IInstancesGroupPtr& instGroup)
+		void AsyncLoadDataFromServer(const std::string& decorationId,
+			const std::function<void(IInstancePtr&)>& OnCreatedInstancefct,
+			const std::function<void(IInstancesGroupPtr&)>& OnCreatedGroupfct,
+			const std::function<void(expected<void, std::string> const&)>& OnLoadFinishedfct,
+			const IInstancesGroupPtr& defaultGroup = {}
+			)
 		{
+			Clear();
+			std::weak_ptr<InstancesManager::Impl> WThis(shared_from_this());
+			AsyncLoadInstancesGroups(decorationId,
+				OnCreatedGroupfct,
+				[WThis, decorationId, OnCreatedInstancefct, OnLoadFinishedfct](expected<void, std::string> const& result)
+				{
+					if (result)
+					{
+						// Once groups are loaded, load instances
+						if (auto SThis = WThis.lock())
+						{
+							SThis->AsyncLoadInstances(decorationId, OnCreatedInstancefct, OnLoadFinishedfct);
+						}
+						else
+						{
+							OnLoadFinishedfct(make_unexpected("Object destroyed"));
+						}
+					}
+					else
+					{
+						OnLoadFinishedfct(result);
+					}
+				},
+				defaultGroup
+			);
+		}
+
+		void AsyncSaveInstancesGroup(
+			std::string const& decorationId,
+			IInstancesGroupPtr const& instGroupPtr,
+			std::shared_ptr<AsyncRequestGroupCallback> const& callbackPtr)
+		{
+			auto instGroup = instGroupPtr->GetRAutoLock();
 			if (instGroup->GetId().HasDBIdentifier())
 			{
 				return; // skip groups already present on the server
@@ -234,32 +502,45 @@ namespace AdvViz::SDK
 			// we have retrieved the spline identifier on the server.
 			if (instGroup->GetLinkedSplineId() && splineManager_)
 			{
-				auto const linkedSpline = splineManager_->GetSplineById(*instGroup->GetLinkedSplineId());
-				if (linkedSpline && linkedSpline->GetId().HasDBIdentifier())
+				auto const linkedSplinePtr = splineManager_->GetSplineById(*instGroup->GetLinkedSplineId());
+				if (linkedSplinePtr)
 				{
-					jIn.userData = linkedSpline->GetId().GetDBIdentifier();
+					auto linkedSpline = linkedSplinePtr->GetAutoLock();
+					if (linkedSpline->HasDBIdentifier())
+						jIn.userData = linkedSpline->GetId().GetDBIdentifier();
 				}
 			}
 
-			struct SJsonOut { std::string id; };
-			SJsonOut jOut;
-
-			long status = GetHttp()->PostJsonJBody(
-				jOut, "decorations/" + decorationId + "/instancesgroups", jIn);
-
-			if (status == 200 || status == 201)
+			struct SJsonOut
 			{
-				// A new group has been created on the server. Update the identifier internally (but keep
-				// the 'session' ID unchanged)
-				RefID groupId = instGroup->GetId();
-				groupId.SetDBIdentifier(jOut.id);
-				instGroup->SetId(groupId);
-				mapIdToInstGroups_.insert(std::make_pair(groupId, instGroup));
-			}
-			else
+				std::string id;
+			};
+			AsyncPostJsonJBody<SJsonOut>(GetHttp(), callbackPtr,
+				[this, instGroupPtr](long httpCode, const Tools::TSharedLockableData<SJsonOut>& joutPtr)
 			{
-				BE_LOGW("ITwinDecoration", "Save instances group failed. Http status: " << status);
-			}
+				const bool bSuccess = (httpCode == 200 || httpCode == 201);
+				if (bSuccess)
+				{
+					auto instGroup = instGroupPtr->GetAutoLock();
+					auto unlockedJout = joutPtr->GetAutoLock();
+					SJsonOut const& jOut = unlockedJout.Get();
+					// A new group has been created on the server. Update the identifier internally (but keep
+					// the 'session' ID unchanged)
+					RefID groupId = instGroup->GetId();
+					groupId.SetDBIdentifier(jOut.id);
+					instGroup->SetId(groupId);
+
+					auto thdata = thdata_.GetAutoLock();
+					thdata->mapIdToInstGroups_.insert(std::make_pair(groupId, instGroupPtr));
+				}
+				else
+				{
+					BE_LOGW("ITwinDecoration", "Save instances group failed. Http status: " << httpCode);
+				}
+				return bSuccess;
+			},
+				"decorations/" + decorationId + "/instancesgroups",
+				jIn);
 		}
 
 		template<class T>
@@ -280,8 +561,9 @@ namespace AdvViz::SDK
 			dst.objref = src.GetObjectRef();
 			if (src.GetGroup())
 			{
-				BE_ASSERT(src.GetGroup()->GetId().HasDBIdentifier(), "groups should be saved before instances");
-				dst.groupid = src.GetGroup()->GetId().GetDBIdentifier();
+				auto gp = src.GetGroup()->GetAutoLock();
+				BE_ASSERT(gp->GetId().HasDBIdentifier(), "groups should be saved before instances");
+				dst.groupid = gp->GetId().GetDBIdentifier();
 			}
 			auto& animId = src.GetAnimId();
 			if (animId != "")
@@ -290,179 +572,330 @@ namespace AdvViz::SDK
 			}
 		}
 
-		void SaveInstances(
-			const std::string& decorationId,
-			SharedInstVect& instances)
+		IInstancePtr GetInstanceById(ObjRefAndGPId const& objRefAndGroup, RefID const& id) const
+		{
+			auto thdata = thdata_.GetRAutoLock();
+			const auto itVec = thdata->mapObjectRefToInstances_.find(objRefAndGroup);
+			if (itVec == thdata->mapObjectRefToInstances_.cend())
+			{
+				return {};
+			}
+			SharedInstVect const& instVec(itVec->second);
+			auto it = std::find_if(instVec.begin(), instVec.end(),
+				[&id](IInstancePtr const& instPtr) {
+				auto inst = instPtr->GetRAutoLock();
+				return inst->GetId() == id;
+			});
+			if (it != instVec.end())
+				return *it;
+			return {};
+		}
+
+		void AsyncSaveInstances(
+			std::string const& decorationId,
+			ObjRefAndGPId const& objRefAndGroup,
+			SharedInstVect const& instances,
+			std::shared_ptr<AsyncRequestGroupCallback> const& callbackPtr)
 		{
 			struct SJsonInstVect { std::vector<SJsonInst> instances; };
 			struct SJsonInstWithIdVect { std::vector<SJsonInstWithId> instances; };
 			SJsonInstVect jInPost;
 			SJsonInstWithIdVect jInPut;
 
-			int64_t instCount = 0;
-			std::vector<int64_t> newInstIndices;
-			std::vector<int64_t> updatedInstIndices;
+			using RefIDVec = std::vector<RefID>;
+			std::shared_ptr<RefIDVec> pNewInstIds = std::make_shared<RefIDVec>();
+			std::shared_ptr<RefIDVec> pUpdatedInstIds = std::make_shared<RefIDVec>();
+			std::vector<RefID>& newInstIds = *pNewInstIds;
+			std::vector<RefID>& updatedInstIds = *pUpdatedInstIds;
 
 			// Sort instances for requests (addition/update)
-			for(auto& inst : instances)
+			for (auto& instPtr : instances)
 			{
+				auto inst = instPtr->GetAutoLock();
 				if (inst->GetAnimPathId())
 				{
 					// update animation path database id within the instance
-					auto animPathRefId = animPathManager_->GetAnimationPathInfo(*(inst->GetAnimPathId()))->GetId();
+					auto animPathInfoPtr = animPathManager_->GetAnimationPathInfo(*(inst->GetAnimPathId()));
+					auto animPathInfo = animPathInfoPtr->GetRAutoLock();
+					auto animPathRefId = animPathInfo->GetId();	
 					BE_ASSERT(animPathRefId.HasDBIdentifier(), "animation paths should be saved before instances");
 					inst->SetAnimId(animPathRefId.GetDBIdentifier());
 					inst->SetAnimPathId(animPathRefId);
 				}
 
-				if (inst->GetId().empty())
+				if (!inst->HasDBIdentifier())
 				{
 					SJsonInst jInst;
 					CopyInstance<SJsonInst>(jInst, *inst);
 					jInPost.instances.push_back(jInst);
-					newInstIndices.push_back(instCount);
-
+					newInstIds.push_back(inst->GetId());
+					inst->OnStartSave();
 				}
 				else if (inst->ShouldSave())
 				{
 					SJsonInstWithId jInstwId;
 					CopyInstance<SJsonInstWithId>(jInstwId, *inst);
-					jInstwId.id = inst->GetId();
+					jInstwId.id = inst->GetDBIdentifier();
 					jInPut.instances.push_back(jInstwId);
-					updatedInstIndices.push_back(instCount);
+					updatedInstIds.push_back(inst->GetId());
+					inst->OnStartSave();
 				}
-				++instCount;
 			}
 
 
 			// Post (new instances)
 			if (!jInPost.instances.empty())
 			{
-				struct SJsonInstOut { std::string name; std::string id; };
-				struct SJsonInstOutVect	{ std::vector<SJsonInstOut> instances; };
-				SJsonInstOutVect jOutPost;
-				long status = GetHttp()->PostJsonJBody(
-					jOutPost, "decorations/" + decorationId + "/instances", jInPost);
-
-				if (status == 200 || status == 201)
+				struct SJsonIds
 				{
-					if (newInstIndices.size() == jOutPost.instances.size())
-					{
-						for(size_t i = 0; i < newInstIndices.size(); ++i)
-						{
-							IInstance& inst = *instances[newInstIndices[i]];
-							// update database id within the instance
-							inst.SetId(jOutPost.instances[i].id);
-							RefID refId = inst.GetRefId();
-							refId.SetDBIdentifier(jOutPost.instances[i].id);
-							inst.SetRefId(refId);
+					std::vector<std::string> ids;
+				};
 
-							inst.SetShouldSave(false);
+				AsyncPostJsonJBody<SJsonIds>(GetHttp(), callbackPtr,
+					[this, pNewInstIds, objRefAndGroup](long httpCode,
+														const Tools::TSharedLockableData<SJsonIds>& joutPtr)
+				{
+					const bool bSuccess = (httpCode == 200 || httpCode == 201);
+					if (bSuccess)
+					{
+						auto unlockedJout = joutPtr->GetAutoLock();
+						SJsonIds const& jOutPost = unlockedJout.Get();
+						std::vector<RefID> const& newInstIds = *pNewInstIds;
+						if (newInstIds.size() == jOutPost.ids.size())
+						{
+							for (size_t i = 0; i < newInstIds.size(); ++i)
+							{
+								RefID instId = newInstIds[i];
+								// Update the DB identifier only.
+								instId.SetDBIdentifier(jOutPost.ids[i]);
+								BE_ASSERT(instId.HasDBIdentifier());
+
+								if (IInstancePtr instPtr = GetInstanceById(objRefAndGroup, instId))
+								{
+									auto instLock = instPtr->GetAutoLock();
+									IInstance& inst = instLock.Get();
+									inst.SetId(instId); // to store DB identifier in the instance.
+									inst.OnSaved();
+								}
+							}
 						}
 					}
-				}
-				else
-				{
-					BE_LOGW("ITwinDecoration", "Saving new instances failed. Http status: " << status);
-				}
+					else
+					{
+						BE_LOGW("ITwinDecoration", "Saving new instances failed. Http status: " << httpCode);
+					}
+					return bSuccess;
+				},
+					"decorations/" + decorationId + "/instances",
+					jInPost);
 			}
 
 			// Put (updated instances)
 			if (!jInPut.instances.empty())
 			{
-				struct SJsonInstOutUpd { int64_t numUpdated; };
-				SJsonInstOutUpd jOutPut;
-				long status = GetHttp()->PutJsonJBody(
-					jOutPut, "decorations/" + decorationId  + "/instances", jInPut);
-
-				if (status == 200 || status == 201)
+				struct SJsonInstOutUpd
 				{
-					if (updatedInstIndices.size() == static_cast<size_t>(jOutPut.numUpdated))
+					int64_t numUpdated = 0;
+				};
+				AsyncPutJsonJBody<SJsonInstOutUpd>(GetHttp(), callbackPtr,
+					[this, pUpdatedInstIds, objRefAndGroup](long httpCode, const Tools::TSharedLockableData<SJsonInstOutUpd>& joutPtr)
+				{
+					const bool bSuccess = (httpCode == 200 || httpCode == 201);
+					if (bSuccess)
 					{
-						for(size_t i = 0; i < updatedInstIndices.size(); ++i)
+						auto unlockedJout = joutPtr->GetAutoLock();
+						SJsonInstOutUpd const& jOutPut = unlockedJout.Get();
+						std::vector<RefID> const& updatedInstIds = *pUpdatedInstIds;
+						if (updatedInstIds.size() == static_cast<size_t>(jOutPut.numUpdated))
 						{
-							instances[updatedInstIndices[i]]->SetShouldSave(false);
+							for (RefID const& instId : updatedInstIds)
+							{
+								IInstancePtr instPtr = GetInstanceById(objRefAndGroup, instId);
+								if (instPtr)
+								{
+									auto inst = instPtr->GetAutoLock();
+									inst->OnSaved();
+								}
+							}
 						}
+						else
+						{
+							BE_ISSUE("mismatch in updated instance count", updatedInstIds.size(), jOutPut.numUpdated);
+						}
+					}
+					else
+					{
+						BE_LOGW("ITwinDecoration", "Updating instances failed. Http status: " << httpCode);
+					}
+					return bSuccess;
+				},
+					"decorations/" + decorationId  + "/instances",
+					jInPut);
+			}
+		}
+
+		void OnInstanceDeletedOnServer(ObjRefAndGPId const& objRefAndGroup, RefID const& deletedId)
+		{
+			auto thdata = thdata_.GetAutoLock();
+			const auto itVec = thdata->mapObjectRefToDeletedInstances_.find(objRefAndGroup);
+			if (itVec == thdata->mapObjectRefToDeletedInstances_.cend())
+			{
+				return;
+			}
+			SharedInstVect& instVec(itVec->second);
+			std::erase_if(instVec, [&deletedId](const auto& removedInstPtr)
+			{
+				auto removedInst = removedInstPtr->GetRAutoLock();
+				return removedInst->GetId() == deletedId;
+			});
+		}
+
+		void AsyncDeleteInstances(std::string const& decorationId,
+								  ObjRefAndGPId const& objRefAndGroup,
+								  SharedInstVect& instances,
+								  std::shared_ptr<AsyncRequestGroupCallback> const& callbackPtr)
+		{
+			if (instances.empty())
+				return;
+
+			struct JSonIn
+			{
+				std::vector<std::string> ids;
+			} jIn;
+
+			std::vector<RefID> deletedInstIds;
+			jIn.ids.reserve(instances.size());
+			deletedInstIds.reserve(instances.size());
+			for (auto const& instPtr : instances)
+			{
+				auto inst = instPtr->GetRAutoLock();
+				RefID const& instId = inst->GetId();
+				deletedInstIds.push_back(instId);
+				if (instId.HasDBIdentifier())
+					jIn.ids.push_back(instId.GetDBIdentifier());
+			}
+			if (jIn.ids.empty())
+			{
+				// If some instances were removed before being saved, make sure they are definitively
+				// discarded.
+				instances.clear();
+				return;
+			}
+
+			AsyncDeleteJsonNoOutput(GetHttp(), callbackPtr,
+				[this,
+				deletedInstIds, objRefAndGroup](long httpCode)
+			{
+				const bool bSuccess = (httpCode == 200 || httpCode == 201 || httpCode == 204 /* No-Content*/);
+				if (bSuccess)
+				{
+					for (RefID const& deletedId : deletedInstIds)
+					{
+						OnInstanceDeletedOnServer(objRefAndGroup, deletedId);
 					}
 				}
 				else
 				{
-					BE_LOGW("ITwinDecoration", "Updating instances failed. Http status: " << status);
+					BE_LOGW("ITwinDecoration", "Deleting instances failed. Http status: " << httpCode);
 				}
-			}
+				return bSuccess;
+			},
+				"decorations/" + decorationId + "/instances",
+				jIn);
 		}
 
-		void DeleteInstances(const std::string& decorationId, SharedInstVect& instances)
+		void AsyncDeleteInstancesGroup(const std::string& decorationId, const IInstancesGroupPtr& instancesGroupPtr,
+			std::shared_ptr<AsyncRequestGroupCallback> const& callbackPtr)
 		{
-			if (!instances.empty())
-			{
-				struct JSonIn { std::vector<std::string> ids; } jIn;
-				struct JSonOut {} jOut;
-
-				jIn.ids.resize(instances.size());
-				for (size_t i = 0; i < instances.size(); ++i)
-				{
-					jIn.ids[i] = instances[i]->GetId();
-				}
-
-				long status = GetHttp()->DeleteJsonJBody(
-					jOut, "decorations/" + decorationId + "/instances", jIn);
-
-				if (status != 200 && status != 201)
-				{
-					BE_LOGW("ITwinDecoration", "Deleting instances failed. Http status: " << status);
-				}
-
-				instances.clear();
-			}
-		}
-
-		void DeleteInstancesGroup(const std::string& decorationId, const IInstancesGroupPtr& instancesGroup)
-		{
+			auto instancesGroup = instancesGroupPtr->GetAutoLock();
 			if (instancesGroup->GetId().HasDBIdentifier())
 			{
-				struct JSonIn { std::array<std::string, 1> ids; } jIn;
-				struct JSonOut {} jOut;
+				struct JSonIn
+				{
+					std::array<std::string, 1> ids;
+				} jIn;
 				jIn.ids[0] = instancesGroup->GetId().GetDBIdentifier();
-				long status = GetHttp()->DeleteJsonJBody(jOut, "decorations/" + decorationId + "/instancesgroups", jIn);
-				if (status != 200 && status != 201)
-					BE_LOGW("ITwinDecoration", "Deleting instancesgroups failed. Http status: " << status);
+				AsyncDeleteJsonNoOutput(GetHttp(), callbackPtr,
+					[groupName = instancesGroup->GetName()](long httpCode)
+				{
+					const bool bSuccess = (httpCode == 200 || httpCode == 201 || httpCode == 204 /* No-Content*/);
+					if (!bSuccess)
+					{
+						BE_LOGW("ITwinDecoration", "Deleting instance group '" << groupName << "' failed. Http status : " << httpCode);
+					}
+					return bSuccess;
+				},
+					"decorations/" + decorationId + "/instancesgroups",
+					jIn);
 			}
 		}
 
-		void SaveDataOnServer(const std::string& decorationId)
+		void AsyncSaveDataOnServer(const std::string& decorationId, std::function<void(bool)>&& onDataSavedFunc = {})
 		{
-			// Save groups
-			for (auto& instGroup : instancesGroups_)
+			// Called when all is saved.
+			std::function<void(bool)> onPopulationsSavedFunc =
+				[onSaveCallback = std::move(onDataSavedFunc)](bool bSuccess)
 			{
-				SaveInstancesGroup(decorationId, instGroup);
+				BE_LOGV("ITwinDecoration", "Save Populations end");
+				if (onSaveCallback)
+					onSaveCallback(bSuccess);
+			};
+
+			// Helper used to call onDataSavedFunc when *all* requests are processed.
+			std::shared_ptr<AsyncRequestGroupCallback> saveAllCallback =
+				std::make_shared<AsyncRequestGroupCallback>(
+					std::move(onPopulationsSavedFunc), isThisValid_);
+
+
+			// Save groups before instances.
+			saveAllCallback->AddRequestToWait(); // one counting for the groups
+			std::shared_ptr<AsyncRequestGroupCallback> onGroupsSavedCallback =
+				std::make_shared<AsyncRequestGroupCallback>(
+				[this, decorationId, saveAllCallback](bool bSuccess)
+			{
+				if (!saveAllCallback->IsValid())
+					return;
+
+				// Save instances.
+				auto thdata = thdata_.GetRAutoLock();
+				for (auto const& instVec : thdata->mapObjectRefToInstances_)
+				{
+					AsyncSaveInstances(decorationId, instVec.first, instVec.second, saveAllCallback);
+				}
+				saveAllCallback->OnRequestDone(bSuccess);
+			}, isThisValid_);
+
+			auto thdata = thdata_.GetAutoLock();
+
+			for (auto const& instGroup : thdata->instanceGroupsByName_)
+			{
+				AsyncSaveInstancesGroup(decorationId, instGroup.second, onGroupsSavedCallback);
+			}
+			onGroupsSavedCallback->OnFirstLevelRequestsRegistered();
+
+			// Delete obsolete instance groups.
+			for (auto& instGroup : thdata->instancesGroupsToDelete_)
+			{
+				AsyncDeleteInstancesGroup(decorationId, instGroup, saveAllCallback);
 			}
 
-			// Save instances
-			for (auto& instVec : mapObjectRefToInstances_)
+			// Delete obsolete instances.
+			for (auto& instVec : thdata->mapObjectRefToDeletedInstances_)
 			{
-				SaveInstances(decorationId, instVec.second);
+				AsyncDeleteInstances(decorationId, instVec.first, instVec.second, saveAllCallback);
 			}
 
-			for (auto& instGroup : instancesGroupsToDelete_)
-			{
-				DeleteInstancesGroup(decorationId, instGroup);
-			}
-
-			// Delete instances
-			for (auto& instVec : mapObjectRefToDeletedInstances_)
-			{
-				DeleteInstances(decorationId, instVec.second);
-			}
+			saveAllCallback->OnFirstLevelRequestsRegistered();
 		}
 
 		uint64_t GetInstanceCountByObjectRef(const std::string& objectRef, const RefID& gpId) const
 		{
+			auto thdata = thdata_.GetRAutoLock();
 			if (!gpId.IsValid())
 			{
 				// Count instances matching given object in *all* groups.
 				uint64_t ret = 0;
-				for (auto it : mapObjectRefToInstances_)
+				for (auto it : thdata->mapObjectRefToInstances_)
 				{
 					if (it.first.first == objectRef)
 						ret += it.second.size();
@@ -471,8 +904,8 @@ namespace AdvViz::SDK
 			}
 			else
 			{
-				const auto it = mapObjectRefToInstances_.find(std::make_pair(objectRef, gpId));
-				if (it != mapObjectRefToInstances_.cend())
+				const auto it = thdata->mapObjectRefToInstances_.find(std::make_pair(objectRef, gpId));
+				if (it != thdata->mapObjectRefToInstances_.cend())
 				{
 					return static_cast<uint64_t>(it->second.size());
 				}
@@ -482,33 +915,68 @@ namespace AdvViz::SDK
 		
 		void SetInstanceCountByObjectRef(const std::string& objectRef, const RefID& gpId, uint64_t count)
 		{
-			SharedInstVect& currentInstances = mapObjectRefToInstances_[std::make_pair(objectRef, gpId)];
+			auto thdata = thdata_.GetAutoLock();
+			SharedInstVect& currentInstances = thdata->mapObjectRefToInstances_[std::make_pair(objectRef, gpId)];
 			uint64_t oldSize = currentInstances.size();
 			currentInstances.resize(static_cast<size_t>(count));
-			for (uint64_t i = oldSize; i < count; ++i)
+
+			if (count > oldSize)
 			{
-				currentInstances[i].reset(IInstance::New());
+				// Create new instances
+				auto groupPtr = GetInstancesGroup(gpId);
+				if (groupPtr)
+				{
+					auto group = groupPtr->GetAutoLock();
+					for (uint64_t i = oldSize; i < count; ++i)
+					{
+						auto& sharedInst = currentInstances[i];
+						IInstance* inst = IInstance::New();
+						sharedInst = MakeSharedLockableDataPtr<IInstance>(inst);
+						inst->SetObjectRef(objectRef);
+						inst->OnIndexChanged((int32_t)i);
+						inst->SetGroup(groupPtr);
+						group->AddInstance(sharedInst);
+					}
+				}
+				else
+				{
+					BE_ISSUE("invalid group ID");
+					for (uint64_t i = oldSize; i < count; ++i)
+					{
+						auto& sharedInst = currentInstances[i];
+						IInstance* inst = IInstance::New();
+						sharedInst = MakeSharedLockableDataPtr<IInstance>(inst);
+						inst->SetObjectRef(objectRef);
+						inst->OnIndexChanged((int32_t)i);
+					}
+				}
 			}
 		}
 
-		std::shared_ptr<IInstance> AddInstance(const std::string& objectRef, const RefID& gpId)
+		IInstancePtr AddInstance(const std::string& objectRef, const RefID& gpId)
 		{
-			SharedInstVect& currentInstances = mapObjectRefToInstances_[std::make_pair(objectRef, gpId)];
-			auto inst = std::shared_ptr<IInstance>(IInstance::New());
-			currentInstances.push_back(inst);
-			SharedInstGroupMap::const_iterator itGroup = mapIdToInstGroups_.find(gpId);
-			if (itGroup != mapIdToInstGroups_.end())
+			auto thdata = thdata_.GetAutoLock();
+			SharedInstVect& currentInstances = thdata->mapObjectRefToInstances_[std::make_pair(objectRef, gpId)];
+			IInstance* inst = IInstance::New();
+			auto sharedInst = MakeSharedLockableDataPtr<IInstance>(inst);
+			inst->SetObjectRef(objectRef);
+			inst->OnIndexChanged((int32_t)currentInstances.size());
+			currentInstances.push_back(sharedInst);
+			auto group = GetInstancesGroup(gpId);
+			if (group)
 			{
-				itGroup->second->AddInstance(inst);
-				inst->SetGroup(itGroup->second);
+				auto instGroup = group->GetAutoLock();
+				instGroup->AddInstance(sharedInst);
+				inst->SetGroup(group);
 			}
-			return inst;
+			return sharedInst;
 		}
 
 		const SharedInstVect& GetInstancesByObjectRef(const std::string& objectRef, const RefID& gpId) const
 		{
-			const auto it = mapObjectRefToInstances_.find(std::make_pair(objectRef, gpId));
-			if (it != mapObjectRefToInstances_.cend())
+			auto thdata = thdata_.GetRAutoLock();
+			const auto it = thdata->mapObjectRefToInstances_.find(std::make_pair(objectRef, gpId));
+			if (it != thdata->mapObjectRefToInstances_.cend())
 			{
 				return it->second;
 			}
@@ -517,57 +985,73 @@ namespace AdvViz::SDK
 		}
 
 		void RemoveInstancesByObjectRef(
-			const std::string& objectRef, const RefID& gpId, const std::vector<int32_t> indicesInDescendingOrder)
+			const std::string& objectRef, const RefID& gpId,
+			const std::vector<int32_t>& indicesInDescendingOrder, bool bUseRemoveAtSwap)
 		{
+			auto thdata = thdata_.GetAutoLock();
 			auto pair = std::make_pair(objectRef, gpId);
-			SharedInstVect& currentInstances = mapObjectRefToInstances_[pair];
-			SharedInstVect& deletedInstances =  mapObjectRefToDeletedInstances_[pair];
+			SharedInstVect& currentInstances = thdata->mapObjectRefToInstances_[pair];
+			SharedInstVect& deletedInstances =  thdata->mapObjectRefToDeletedInstances_[pair];
 
 			for (auto const& index : indicesInDescendingOrder)
 			{
 				if (index < currentInstances.size())
 				{
 					deletedInstances.push_back(currentInstances[index]);
-					currentInstances.erase(currentInstances.begin() + index);
+					if (bUseRemoveAtSwap && currentInstances.size() > 1)
+					{
+						std::swap(currentInstances[index], currentInstances.back());
+						currentInstances.pop_back();
+
+						auto movedInst = currentInstances[index]->GetAutoLock();
+						movedInst->OnIndexChanged(index);
+					}
+					else
+					{
+						currentInstances.erase(currentInstances.begin() + index);
+					}
 				}
 			}
 		}
 
 		void RemoveGroupInstances(const RefID& gpId)
 		{
-			for (auto it = mapObjectRefToInstances_.begin(); it != mapObjectRefToInstances_.end(); ++it)
+			auto thdata = thdata_.GetAutoLock();
+			for (auto it = thdata->mapObjectRefToInstances_.begin(); it != thdata->mapObjectRefToInstances_.end(); ++it)
 			{
 				if (it->first.second == gpId)
 				{
-					SharedInstVect& currentInstances = mapObjectRefToInstances_[it->first];
-					SharedInstVect& deletedInstances = mapObjectRefToDeletedInstances_[it->first];
+					SharedInstVect& currentInstances = thdata->mapObjectRefToInstances_[it->first];
+					SharedInstVect& deletedInstances = thdata->mapObjectRefToDeletedInstances_[it->first];
 					for (auto& inst : currentInstances)
 						deletedInstances.push_back(inst);
 					currentInstances.clear();
-					it = mapObjectRefToInstances_.erase(it);
+					it = thdata->mapObjectRefToInstances_.erase(it);
 				}
 			}
 		}
 
 		void OnInstancesRestored(const std::string& objectRef, const RefID& gpId, const std::vector<RefID>& restoredInstances)
 		{
+			auto thdata = thdata_.GetAutoLock();
 			auto pair = std::make_pair(objectRef, gpId);
-			[[maybe_unused]] SharedInstVect const& currentInstances = mapObjectRefToInstances_[pair];
-			SharedInstVect& deletedInstances = mapObjectRefToDeletedInstances_[pair];
+			[[maybe_unused]] SharedInstVect const& currentInstances = thdata->mapObjectRefToInstances_[pair];
+			SharedInstVect& deletedInstances = thdata->mapObjectRefToDeletedInstances_[pair];
 
 			for (RefID const& refID : restoredInstances)
 			{
 				BE_ASSERT(std::find_if(currentInstances.begin(), currentInstances.end(),
-						[&refID](const IInstancePtr& p) { return p->GetRefId() == refID; })
+					[&refID](const IInstancePtr& p) { auto i = p->GetAutoLock(); return i->GetRefId() == refID; })
 						!= currentInstances.end(), "restored instance not found!");
 				std::erase_if(deletedInstances,
-					[&refID](const IInstancePtr& p) { return p->GetRefId() == refID; });
+					[&refID](const IInstancePtr& p) { auto i = p->GetAutoLock(); return i->GetRefId() == refID; });
 			}
 		}
 
 		bool HasInstances() const
 		{
-			for (const auto& it : mapObjectRefToInstances_)
+			auto thdata = thdata_.GetRAutoLock();
+			for (const auto& it : thdata->mapObjectRefToInstances_)
 			{
 				if (!it.second.empty())
 				{
@@ -579,18 +1063,20 @@ namespace AdvViz::SDK
 
 		bool HasInstancesToSave() const
 		{
-			for (const auto& it : mapObjectRefToInstances_)
+			auto thdata = thdata_.GetRAutoLock();
+			for (const auto& it : thdata->mapObjectRefToInstances_)
 			{
 				for (const auto& inst : it.second)
 				{
-					if (inst->GetId().empty() ||
-						inst->ShouldSave())
+					auto lockedInst = inst->GetAutoLock();
+					if (!lockedInst->HasDBIdentifier() ||
+						lockedInst->ShouldSave())
 					{
 						return true;
 					}
 				}
 			}
-			for (const auto& it : mapObjectRefToDeletedInstances_)
+			for (const auto& it : thdata->mapObjectRefToDeletedInstances_)
 			{
 				if (!it.second.empty())
 				{
@@ -602,9 +1088,10 @@ namespace AdvViz::SDK
 
 		std::vector<std::pair<std::string, RefID>> GetObjectReferences() const
 		{
+			auto thdata = thdata_.GetRAutoLock();
 			std::vector<std::pair<std::string, RefID>> refs;
-			refs.reserve(mapObjectRefToInstances_.size());
-			for (const auto& it : mapObjectRefToInstances_)
+			refs.reserve(thdata->mapObjectRefToInstances_.size());
+			for (const auto& it : thdata->mapObjectRefToInstances_)
 			{
 				refs.push_back(it.first);
 			}
@@ -615,8 +1102,10 @@ namespace AdvViz::SDK
 		{
 			if (group)
 			{
-				instancesGroups_.push_back(group);
-				mapIdToInstGroups_[group->GetId()] = group;
+				auto thdata = thdata_.GetAutoLock();
+				auto gp = group->GetAutoLock();
+				thdata->instanceGroupsByName_[gp->GetName()] = group;
+				thdata->mapIdToInstGroups_[gp->GetId()] = group;
 			}
 		}
 
@@ -624,48 +1113,54 @@ namespace AdvViz::SDK
 		{
 			if (group)
 			{
-				instancesGroupsToDelete_.push_back(group);
-				std::erase(instancesGroups_, group);
-				mapIdToInstGroups_.erase(group->GetId());
+				auto thdata = thdata_.GetAutoLock();
+				thdata->instancesGroupsToDelete_.push_back(group);
+				auto gp = group->GetAutoLock();
+				thdata->instanceGroupsByName_.erase(gp->GetName());
+				thdata->mapIdToInstGroups_.erase(gp->GetId());
 			}
-		}
-
-		const SharedInstGroupVect& GetInstancesGroups() const
-		{
-			return instancesGroups_;
 		}
 
 		IInstancesGroupPtr GetInstancesGroup(const RefID& gpId) const
 		{
-			auto it = mapIdToInstGroups_.find(gpId);
-			if (it != mapIdToInstGroups_.end())
+			auto thdata = thdata_.GetRAutoLock();
+			auto it = thdata->mapIdToInstGroups_.find(gpId);
+			if (it != thdata->mapIdToInstGroups_.end())
 				return it->second;
 			return {};
 		}
 
-
 		IInstancesGroupPtr GetInstancesGroupByName(const std::string& name) const
 		{
-			//TODO: optimize with map
-			auto it = std::find_if(instancesGroups_.begin(), instancesGroups_.end(),
-				[name](const IInstancesGroupPtr& p) {
-				return p->GetName() == name;
-			});
-			if (it != instancesGroups_.end())
-				return *it;
+			auto thdata = thdata_.GetRAutoLock();
+			auto it = thdata->instanceGroupsByName_.find(name);
+			if (it != thdata->instanceGroupsByName_.end())
+				return it->second;
 			return {};
 		}
 
 		IInstancesGroupPtr GetInstancesGroupBySplineID(const RefID& splineId) const
 		{
+			auto thdata = thdata_.GetRAutoLock();
 			RefID const nullRef = RefID::Invalid();
-			auto it = std::find_if(instancesGroups_.begin(), instancesGroups_.end(),
-				[splineId, &nullRef](const IInstancesGroupPtr& p) {
-				return p->GetLinkedSplineId().value_or(nullRef) == splineId;
+			auto it = std::find_if(thdata->instanceGroupsByName_.begin(), thdata->instanceGroupsByName_.end(),
+				[splineId, &nullRef](const std::pair<const std::string, AdvViz::SDK::IInstancesGroupPtr> &pair) {
+				auto gp = pair.second->GetRAutoLock();
+				return gp->GetLinkedSplineId().value_or(nullRef) == splineId;
 			});
-			if (it != instancesGroups_.end())
-				return *it;
+			if (it != thdata->instanceGroupsByName_.end())
+				return it->second;
 			return {};
+		}
+
+		void IterateInstancesGroups(std::function<void(IInstancesGroup const&)> const& func) const
+		{
+			auto thdata = thdata_.GetRAutoLock();
+			for (auto const& [_, groupPtr] : thdata->instanceGroupsByName_)
+			{
+				auto group = groupPtr->GetRAutoLock();
+				func(*group);
+			}
 		}
 	};
 
@@ -674,9 +1169,18 @@ namespace AdvViz::SDK
 		GetImpl().LoadDataFromServer(decorationId, defaultGroup);
 	}
 
-	void InstancesManager::SaveDataOnServer(const std::string& decorationId)
+	void InstancesManager::AsyncLoadDataFromServer(const std::string& decorationId, 
+		const std::function<void(IInstancePtr&)>& OnCreatedInstancefct,
+		const std::function<void(IInstancesGroupPtr&)>& OnCreatedGroupfct,
+		const std::function<void(expected<void, std::string> const&)>& OnLoadFinishedfct,
+		const IInstancesGroupPtr& defaultGroup = {})
 	{
-		GetImpl().SaveDataOnServer(decorationId);
+		GetImpl().AsyncLoadDataFromServer(decorationId, OnCreatedInstancefct, OnCreatedGroupfct, OnLoadFinishedfct, defaultGroup);
+	}
+
+	void InstancesManager::AsyncSaveDataOnServer(const std::string& decorationId, std::function<void(bool)>&& onDataSavedFunc /*= {}*/)
+	{
+		GetImpl().AsyncSaveDataOnServer(decorationId, std::move(onDataSavedFunc));
 	}
 
 	uint64_t InstancesManager::GetInstanceCountByObjectRef(const std::string& objectRef, const RefID& gpId) const
@@ -689,7 +1193,7 @@ namespace AdvViz::SDK
 		GetImpl().SetInstanceCountByObjectRef(objectRef, gpId, count);
 	}
 
-	std::shared_ptr<IInstance> InstancesManager::AddInstance(const std::string& objectRef, const RefID& gpId)
+	IInstancePtr InstancesManager::AddInstance(const std::string& objectRef, const RefID& gpId)
 	{
 		return GetImpl().AddInstance(objectRef, gpId);
 	}
@@ -699,9 +1203,10 @@ namespace AdvViz::SDK
 		return GetImpl().GetInstancesByObjectRef(objectRef, gpId);
 	}
 
-	void InstancesManager::RemoveInstancesByObjectRef(const std::string& objectRef, const RefID& gpId, const std::vector<int32_t> indicesInDescendingOrder)
+	void InstancesManager::RemoveInstancesByObjectRef(const std::string& objectRef, const RefID& gpId,
+		const std::vector<int32_t>& indicesInDescendingOrder, bool bUseRemoveAtSwap)
 	{
-		GetImpl().RemoveInstancesByObjectRef(objectRef, gpId, indicesInDescendingOrder);
+		GetImpl().RemoveInstancesByObjectRef(objectRef, gpId, indicesInDescendingOrder, bUseRemoveAtSwap);
 	}
 
 	void InstancesManager::RemoveGroupInstances(const RefID& gpId)
@@ -739,11 +1244,6 @@ namespace AdvViz::SDK
 		GetImpl().RemoveInstancesGroup(group);
 	}
 
-	const SharedInstGroupVect& InstancesManager::GetInstancesGroups() const
-	{
-		return GetImpl().GetInstancesGroups();
-	}
-
 	IInstancesGroupPtr InstancesManager::GetInstancesGroup(const RefID& gpId) const
 	{
 		return GetImpl().GetInstancesGroup(gpId);
@@ -757,6 +1257,11 @@ namespace AdvViz::SDK
 	IInstancesGroupPtr InstancesManager::GetInstancesGroupBySplineID(const RefID& splineId) const
 	{
 		return GetImpl().GetInstancesGroupBySplineID(splineId);
+	}
+
+	void InstancesManager::IterateInstancesGroups(std::function<void(IInstancesGroup const&)> const& func) const
+	{
+		GetImpl().IterateInstancesGroups(func);
 	}
 
 	void InstancesManager::SetSplineManager(std::shared_ptr<ISplinesManager> const& splineManager)
@@ -774,9 +1279,8 @@ namespace AdvViz::SDK
 		GetImpl().SetHttp(http);
 	}
 
-	InstancesManager::InstancesManager():impl_(new Impl())
+	InstancesManager::InstancesManager() : impl_(std::make_shared<Impl>())
 	{
-		GetImpl().SetHttp(GetDefaultHttp());
 	}
 
 	InstancesManager::~InstancesManager() 

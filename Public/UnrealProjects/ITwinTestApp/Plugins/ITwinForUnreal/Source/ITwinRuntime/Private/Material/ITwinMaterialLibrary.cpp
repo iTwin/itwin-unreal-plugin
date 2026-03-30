@@ -37,6 +37,7 @@
 #include <ITwinRuntime/Private/Compil/BeforeNonUnrealIncludes.h>
 #	include <BeUtils/Gltf/GltfMaterialHelper.h>
 #	include <BeUtils/Gltf/GltfMaterialTuner.h>
+#	include <BeUtils/Gltf/GltfTextureHelper.h>
 #	include <SDK/Core/Tools/Assert.h>
 #	include <SDK/Core/Tools/Log.h>
 #	include <SDK/Core/Visualization/MaterialPersistence.h>
@@ -73,37 +74,29 @@ namespace
 		if (AccessToken.IsEmpty())
 			return false;
 
-		std::vector<CesiumAsync::IAssetAccessor::THeader> const tHeaders =
-		{
-			{
-				"Authorization",
-				std::string("Bearer ") + TCHAR_TO_ANSI(*AccessToken)
-			}
-		};
-
-		bool bSaveOK = false;
 		// This call should be very fast, as the image, if available, is already in Cesium cache.
 		// And since we test TexAccess.cesiumImage before coming here, we *know* that the image is indeed
 		// available.
-		const std::shared_ptr<CesiumAsync::IAssetAccessor>& pAssetAccessor = getAssetAccessor();
-		const CesiumAsync::AsyncSystem& asyncSystem = getAsyncSystem();
 		const std::string textureURI = GltfMatHelper.GetTextureURL(TexMap.texture, TexMap.eSource);
-		pAssetAccessor
-			->get(asyncSystem, textureURI, tHeaders)
-			.thenImmediately([&bSaveOK, &TextureDstPath](
-				std::shared_ptr<CesiumAsync::IAssetRequest>&& pRequest) {
-			const CesiumAsync::IAssetResponse* pResponse = pRequest->response();
-			if (pResponse) {
+
+		return BeUtils::DownloadTexture(textureURI,
+			std::make_shared<std::string const>(TCHAR_TO_ANSI(*AccessToken)),
+			getAssetAccessor(),
+			getAsyncSystem(),
+			[&TextureDstPath](std::vector<uint8_t> const& TexBuffer)
+		{
+			bool bSaveOK = false;
+			if (!TexBuffer.empty())
+			{
 				TArray64<uint8> Buffer;
 				Buffer.Append(
-					reinterpret_cast<const uint8*>(pResponse->data().data()),
-					pResponse->data().size());
+					reinterpret_cast<const uint8*>(TexBuffer.data()),
+					TexBuffer.size());
 				bSaveOK = FFileHelper::SaveArrayToFile(Buffer,
 					UTF8_TO_TCHAR(TextureDstPath.generic_string().c_str()));
 			}
-		}).wait();
-
-		return bSaveOK;
+			return bSaveOK;
+		});
 	}
 }
 
@@ -127,7 +120,8 @@ bool FITwinMaterialLibrary::MaterialExistsInDir(FString const& DestinationFolder
 /*static*/
 FITwinMaterialLibrary::ExportResult FITwinMaterialLibrary::ExportMaterialToDisk(
 	AITwinIModel const& IModel, uint64_t MaterialId, FString const& MaterialName,
-	FString const& DestinationFolder, bool bPromptBeforeOverwrite /*= true*/)
+	FString const& DestinationFolder,
+	ExportOptions const& Options /*= {}*/)
 {
 	using namespace AdvViz::SDK;
 
@@ -157,8 +151,14 @@ FITwinMaterialLibrary::ExportResult FITwinMaterialLibrary::ExportMaterialToDisk(
 			fmt::format("Could not create directory {}: {}", OutputFolder.generic_string(), ec.message()) });
 	}
 
-	std::filesystem::path const jsonMaterialPath = OutputFolder / MATERIAL_JSON_BASENAME;
-	if (bPromptBeforeOverwrite
+	std::filesystem::path materialBasename = MATERIAL_JSON_BASENAME;
+	if (!Options.CustomBasename.IsEmpty())
+	{
+		materialBasename = TCHAR_TO_UTF8(*Options.CustomBasename);
+		materialBasename.replace_extension("json");
+	}
+	std::filesystem::path const jsonMaterialPath = OutputFolder / materialBasename;
+	if (Options.bPromptBeforeOverwrite
 		&& std::filesystem::exists(jsonMaterialPath, ec))
 	{
 		// Confirm before overwriting...
@@ -183,6 +183,46 @@ FITwinMaterialLibrary::ExportResult FITwinMaterialLibrary::ExportMaterialToDisk(
 			fmt::format("No material {} for iModel '{}'", MaterialId, IModelId) });
 	}
 
+	std::filesystem::path TextureDstFolder = OutputFolder;
+	std::filesystem::path TextureRelativeDir; // relative to OutputFolder (empty if we save textures there).
+	bool bNeedToCheckTextureFolder = false;
+	if (!Options.CustomTextureDir.IsEmpty())
+	{
+		TextureDstFolder = TCHAR_TO_UTF8(*Options.CustomTextureDir);
+		bNeedToCheckTextureFolder = true; // we will create the directory only if there are textures
+
+		TextureRelativeDir = std::filesystem::relative(TextureDstFolder, OutputFolder, ec);
+		if (ec)
+		{
+			return AdvViz::make_unexpected(ExportError{
+				fmt::format("Could not make path {} relative to {}: {}",
+				TextureDstFolder.generic_string(), OutputFolder.generic_string(), ec.message()) });
+		}
+	}
+
+	auto createTextureFolderIfNeeded = [&TextureDstFolder, &bNeedToCheckTextureFolder]()
+		-> AdvViz::expected<void, ExportError>
+	{
+		if (!bNeedToCheckTextureFolder)
+			return {};
+		std::error_code ec;
+		if (!std::filesystem::is_directory(TextureDstFolder, ec)
+			&& !std::filesystem::create_directories(TextureDstFolder, ec))
+		{
+			return AdvViz::make_unexpected(ExportError{
+				fmt::format("Could not create directory {}: {}", TextureDstFolder.generic_string(), ec.message()) });
+		}
+		bNeedToCheckTextureFolder = false;
+		return {};
+	};
+
+#define ITE_ERRCHECK_TEX_FOLDER() {							\
+	auto texResult = createTextureFolderIfNeeded();			\
+	if (!texResult) {										\
+		return AdvViz::make_unexpected(texResult.error());	\
+	}														\
+}
+
 	// If some textures were downloaded from iTwin API (decoration service or iModelRpc), copy them to the
 	// destination folder.
 	BeUtils::RLock Lock(MatHelper->GetMutex());
@@ -195,7 +235,7 @@ FITwinMaterialLibrary::ExportResult FITwinMaterialLibrary::ExportMaterialToDisk(
 		if (texMapOpt && texMapOpt->HasTexture())
 		{
 			std::string TextureBasename = GetChannelName(Channel);
-			std::filesystem::path TextureDstPath = OutputFolder;
+			std::filesystem::path TextureDstPath = TextureDstFolder;
 
 			std::filesystem::path TextureSrcPath;
 
@@ -221,6 +261,7 @@ FITwinMaterialLibrary::ExportResult FITwinMaterialLibrary::ExportMaterialToDisk(
 				// When overwriting an existing custom material, do not try to copy a texture to itself...
 				if (TextureSrcPath != TextureDstPath)
 				{
+					ITE_ERRCHECK_TEX_FOLDER();
 					if (!CopyBinaryFile(
 						UTF8_TO_TCHAR(TextureSrcPath.generic_string().c_str()),
 						UTF8_TO_TCHAR(TextureDstPath.generic_string().c_str())))
@@ -242,6 +283,7 @@ FITwinMaterialLibrary::ExportResult FITwinMaterialLibrary::ExportMaterialToDisk(
 				BE_ASSERT(!ext.empty());
 				TextureBasename += ext;
 				TextureDstPath /= TextureBasename;
+				ITE_ERRCHECK_TEX_FOLDER();
 				if (!DownloadAndSaveTexture(*MatHelper, IModel, *texMapOpt, TextureDstPath))
 				{
 					return AdvViz::make_unexpected(ExportError{
@@ -263,7 +305,7 @@ FITwinMaterialLibrary::ExportResult FITwinMaterialLibrary::ExportMaterialToDisk(
 			// impact.
 			matSettings.SetChannelMap(Channel,
 				ITwinChannelMap{
-					.texture = TextureBasename,
+					.texture = (TextureRelativeDir / TextureBasename).generic_string(),
 					.eSource = ETextureSource::Decoration
 				});
 		}
@@ -297,6 +339,7 @@ bool FITwinMaterialLibrary::LoadMaterialFromAssetPath(FString const& AssetPath, 
 	TextureKeySet& OutTexKeys, TextureUsageMap& OutTextureUsageMap,
 	AdvViz::SDK::ETextureSource& OutTexSource,
 	MaterialPersistencePtr const& MatIOMngr,
+	TOptional<FString> const& CustomTextureDir /*= {}*/,
 	FString const* DestinationJsonPath /*= nullptr*/)
 {
 	using namespace AdvViz::SDK;
@@ -313,11 +356,15 @@ bool FITwinMaterialLibrary::LoadMaterialFromAssetPath(FString const& AssetPath, 
 	const bool bIsJsonFormat = AssetPath.EndsWith(TEXT(".json"));
 	if (bIsJsonFormat)
 	{
-		// The file was saved inside the packaged application (for the custom material library).
+		// The file was saved inside the packaged application (for the custom material library), or
+		// downloaded from the Component Center.
 		// Try to parse the Json, and make the texture paths absolute.
-		std::filesystem::path TextureDir = std::filesystem::path(*AssetPath).parent_path();
+		std::filesystem::path const TextureDir = CustomTextureDir.IsSet()
+			? TCHAR_TO_UTF8(**CustomTextureDir)
+			: std::filesystem::path(*AssetPath).parent_path();
+		const bool bForceUseTexturesFromLocalDir = CustomTextureDir.IsSet();
 		if (!MatIOMngr->ConvertJsonFileToKeyValueMap(
-			TCHAR_TO_UTF8(*AssetPath), TextureDir, KeyValueMap))
+			TCHAR_TO_UTF8(*AssetPath), TextureDir, KeyValueMap, bForceUseTexturesFromLocalDir))
 		{
 			return false;
 		}
@@ -328,6 +375,10 @@ bool FITwinMaterialLibrary::LoadMaterialFromAssetPath(FString const& AssetPath, 
 	else
 	{
 		// The file is part of Bentley's Material Library (packaged at build time).
+		// Obsolete code: since we could not package those asset files together with the PNG textures, in
+		// an individual .pak/.ucas package, we decided to use the json format for the final Material Library
+		// now available on the Component Center.
+		BE_ASSERT(!CustomTextureDir.IsSet());
 		UITwinMaterialDataAsset* MaterialDataAsset = LoadObject<UITwinMaterialDataAsset>(nullptr, *AssetPath);
 		if (!IsValid(MaterialDataAsset))
 		{
@@ -383,7 +434,8 @@ bool FITwinMaterialLibrary::LoadMaterialFromAssetPath(FString const& AssetPath, 
 void FITwinMaterialLibrary::InitPaths(AITwinDecorationHelper const& DecoHelper)
 {
 	const FString ExternalMatLibraryPath = DecoHelper.GetContentRootPath() / TEXT("Materials");
-	if (FPaths::DirectoryExists(ExternalMatLibraryPath))
+	if (AITwinDecorationHelper::UseComponentCenter()
+		|| FPaths::DirectoryExists(ExternalMatLibraryPath))
 	{
 		// New content paradigm (future compatibility with the Component Center).
 		BeMatLibraryRootPath = ExternalMatLibraryPath;

@@ -2,7 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg-configuration.schema.json",
   "default-registry": {
     "kind": "git",
-    "baseline": "d5ec528843d29e3a52d745a64b469f810b2cedbf",
+    "baseline": "afc0a2e01ae104a2474216a2df0e8d78516fd5af",
     "repository": "https://github.com/microsoft/vcpkg"
   },
   "registries": [
@@ -14,6 +14,7 @@
   ],
   "overlay-ports": [
     "vcpkg-overlays"
+    ,"cesium-native/extern/vcpkg/ports"
   ],
   "overlay-triplets": [ "vcpkg-overlays/triplets" ]
 }

@@ -1,3 +1,7 @@
+// Copyright (c) 2018 Seznam.cz, a.s.
+// https://github.com/seznam/httpmockserver
+// Released under the MIT License
+
 /**
  * \file
  * Test environment extensions for GTests.

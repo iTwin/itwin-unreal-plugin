@@ -300,6 +300,11 @@ public:
 	size_t TaskCount = 0;
 };
 
+namespace ITwin::Timeline
+{
+	struct FTaskDependenciesData;
+}
+
 /**
  * Schedules obtained from https://api.bentley.com/schedules, filtered by targeted iModel
  */
@@ -309,9 +314,10 @@ public:
 	FString Id, Name; // <== keep first and ordered, for list init
 	/// "Unknown" also means "Not needed", when used with APIM, which hides this detail from us.
 	EITwinSchedulesGeneration Generation = EITwinSchedulesGeneration::Unknown;
-	/// Schedule statistics, eg. for download progress feedback purposes
-	FITwinScheduleStats StatisticsTotal, StatisticsCurrent;
-	bool bHasLoggedStats = false;
+	/// Schedule statistics, eg. for download progress feedback purposes: expected totals queried from server
+	std::optional<FITwinScheduleStats> StatisticsTotal;
+	/// Schedule statistics, eg. for download progress feedback purposes: current items received from 4D api
+	FITwinScheduleStats StatisticsCurrent;
 
 	// Not good here, prevents the class from going into a vector (could use a shared pointer? for the moment
 	// the sync will remain in FITwinSchedulesImport::FImpl
@@ -349,10 +355,17 @@ public:
 	/// Return a string description with some statistics
 	FString ToString() const;
 
+	template<typename BindingIndexIterator>
+	bool HasOnlyNeutralBindings(BindingIndexIterator First, BindingIndexIterator Last) const;
+
+	template<typename BindingIndexIterator>
+	void FindAnyPriorityAppearances(BindingIndexIterator First, BindingIndexIterator Last,
+		FAnimationBinding const& ThisBinding, EProfileAction const ThisAction,
+		ITwin::Timeline::FTaskDependenciesData& TaskDeps) const;
+
 }; // class FITwinSchedule
 
 using FOnAnimationBindingAdded =
 	std::function<void(FITwinSchedule const&, size_t const/*AnimationBindingIndex*/, FSchedLock&)>;
-using FOnAnimationGroupModified = std::function<
-	void(size_t const/*GroupIndex*/, FElementsGroup const&/*GroupElements*/, FSchedLock&)>;
+using FOnReceivedScheduleStats = std::function<void(FITwinScheduleStats const&, FSchedLock&)>;
 using FFindElementIDFromGUID = std::function<bool(FGuid const&, ITwinElementID&/*OutElem*/)>;

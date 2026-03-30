@@ -41,5 +41,5 @@ MODULE_EXPORT namespace AdvViz::SDK
 	}
 
 
-	ADVVIZ_LINK std::shared_ptr<Http>& GetDefaultHttp();
+	ADVVIZ_LINK std::shared_ptr<Http> const& GetDefaultHttp();
 }

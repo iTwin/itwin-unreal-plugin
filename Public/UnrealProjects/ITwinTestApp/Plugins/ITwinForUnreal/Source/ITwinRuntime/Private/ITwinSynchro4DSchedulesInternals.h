@@ -53,11 +53,13 @@ class FITwinSynchro4DSchedulesInternals
 	std::optional<bool> ScheduleTimeRangeIsKnownAndValid;
 	FITwinSchedulesImport SchedulesApi; // <== must be declared AFTER Builder
 	std::recursive_mutex& Mutex;
-	std::vector<FITwinSchedule>& Schedules;
+	std::optional<FITwinSchedule>& Schedule;
 	FITwinSynchro4DAnimator& Animator;
 	std::shared_ptr<BeUtils::GltfTuner> GltfTuner;
 	/// @see GetMinGltfTunerVersionForAnimation
-	int MinGltfTunerVersionForAnimation = std::numeric_limits<int>::max();
+	static const int64_t UntunedGltfVersionForAnimation = std::numeric_limits<int64_t>::max();
+	int64_t MinGltfTunerVersionForAnimation = UntunedGltfVersionForAnimation;
+	bool bNeedFinalizeTimelines = false;
 	std::shared_ptr<FIModelUninitializer> Uniniter;
 
 	/// For use when PrefetchWholeSchedule() returns true only
@@ -80,7 +82,7 @@ class FITwinSynchro4DSchedulesInternals
 	friend void TestSynchro4DQueries::MakeDummySchedule(FITwinSynchro4DSchedulesInternals&);
 
 	void CheckInitialized(AITwinIModel& IModel);
-	void MutateSchedules(std::function<void(std::vector<FITwinSchedule>&)> const& Func);
+	void MutateSchedules(std::function<void(std::optional<FITwinSchedule>&)> const& Func);
 	void SetupAndApply4DAnimationSingleTile(FITwinSceneTile& SceneTile);
 	void Setup4DAnimationSingleTile(FITwinSceneTile& SceneTile, std::optional<ITwinScene::TileIdx> TileRank,
 		std::unordered_set<ITwinScene::ElemIdx> const* Elements);
@@ -95,17 +97,18 @@ class FITwinSynchro4DSchedulesInternals
 	bool TileCompatibleWithSchedule(FITwinSceneTile const& SceneTile) const;
 
 	bool useDynamicShadows = false;
+	bool bDoNotReuseScheduleMetadata = false;
 
 public:
 	FITwinSynchro4DSchedulesInternals(UITwinSynchro4DSchedules& Owner, bool const InDoNotBuildTimelines,
-									  std::recursive_mutex& Mutex, std::vector<FITwinSchedule>& Schedules,
+									  std::recursive_mutex& Mutex, std::optional<FITwinSchedule>& Schedule,
 									  FITwinSynchro4DAnimator& Animator);
 
 	UMaterialInterface* GetMasterMaterial(ECesiumMaterialType Type,
 										  UITwinSynchro4DSchedules& SchedulesComp);
 	/// When Owner.IsAvailable() returns true, returns the minimum gltf tuning version for which the loaded
 	/// meshes will be compatible with this Schedule's 4D animation. Otherwise, returns -1.
-	int GetMinGltfTunerVersionForAnimation() const { return MinGltfTunerVersionForAnimation; }
+	int64_t GetMinGltfTunerVersionForAnimation() const { return MinGltfTunerVersionForAnimation; }
 	bool TileTunedForSchedule(FITwinSceneTile const& SceneTile) const;
 	void SetGltfTuner(std::shared_ptr<BeUtils::GltfTuner> const& Tuner);
 	[[nodiscard]] FITwinScheduleTimeline& Timeline();
@@ -125,7 +128,7 @@ public:
 							std::unordered_set<ITwinScene::ElemIdx>&& MeshElements);
 	void SetScheduleTimeRangeIsKnown();
 	void HideNonAnimatedDuplicates(FITwinSceneTile& SceneTile, FElementsGroup const& NonAnimatedDuplicates);
-	void OnDownloadProgressed(double PercentComplete);
+	void OnDownloadProgressed(double PercentComplete, bool bHasPlayableSchedule = false);
 	FITwinSchedulesImport& GetSchedulesApiReadyForUnitTesting();
 
 	static FTransform ComputeTransformFromFinalizedKeyframe(FITwinCoordConversions const& CoordConv,

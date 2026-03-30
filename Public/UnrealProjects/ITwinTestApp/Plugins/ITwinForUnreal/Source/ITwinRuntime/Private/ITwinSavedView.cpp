@@ -91,8 +91,11 @@ public:
 			return;
 		OutBlendTime = BlendTime;
 		TObjectIterator<APlayerController> Itr;
-		ensure(*Itr != nullptr);
+		if (!ensure(Itr))
+			return;
 		APlayerController* PlayerController = *Itr;
+		if (!ensure(PlayerController))
+			return;
 		Actor = Itr->GetWorld()->SpawnActor<ACameraActor>(ACameraActor::StaticClass(), Transform);
 		Actor->GetCameraComponent()->SetConstraintAspectRatio(false);
 		PlayerController->SetViewTargetWithBlend(Actor, BlendTime, VTBlend_Linear, 0, true);
@@ -102,8 +105,11 @@ public:
 	{
 		Actor->Destroy();
 		TObjectIterator<APlayerController> Itr;
-		ensure(*Itr != nullptr);
+		if (!ensure(Itr))
+			return;
 		APlayerController* PlayerController = *Itr;
+		if (!ensure(PlayerController))
+			return;
 		PlayerController->GetPawnOrSpectator()->SetActorLocation(Transform.GetLocation(),
 			false, nullptr, ETeleportType::TeleportPhysics);
 		FRotator Rot = Transform.Rotator();

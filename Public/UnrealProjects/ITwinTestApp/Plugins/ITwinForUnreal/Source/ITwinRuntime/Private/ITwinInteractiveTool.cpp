@@ -47,6 +47,17 @@ bool AITwinInteractiveTool::IsEnabled() const
 	}
 }
 
+/*static*/ AITwinInteractiveTool* AITwinInteractiveTool::GetActiveTool(UWorld* World)
+{
+	for (TActorIterator<AITwinInteractiveTool> It(World); It; ++It)
+	{
+		AITwinInteractiveTool* ItTool = *It;
+		if (ItTool->IsEnabled())
+			return ItTool;
+	}
+	return nullptr;
+}
+
 AITwinInteractiveTool::IActiveStateRecord::~IActiveStateRecord()
 {
 
@@ -85,6 +96,16 @@ bool AITwinInteractiveTool::StartInteractiveCreation()
 bool AITwinInteractiveTool::IsInteractiveCreationMode() const
 {
 	return IsInteractiveCreationModeImpl();
+}
+
+void AITwinInteractiveTool::AbortInteractiveCreation(bool bTriggeredFromITS)
+{
+	AbortInteractiveCreationImpl(bTriggeredFromITS);
+}
+
+void AITwinInteractiveTool::ValidateInteractiveCreation(bool bTriggeredFromITS)
+{
+	ValidateInteractiveCreationImpl(bTriggeredFromITS);
 }
 
 bool AITwinInteractiveTool::DoMouseClickAction()
@@ -140,9 +161,24 @@ bool AITwinInteractiveTool::IsPopulationTool() const
 	return IsPopulationToolImpl();
 }
 
+bool AITwinInteractiveTool::IsUsedOnCutoutPrimitive() const
+{
+	return IsUsedOnCutoutPrimitiveImpl();
+}
+
+void AITwinInteractiveTool::SetUsedOnCutoutPrimitive(bool bForCutout)
+{
+	SetUsedOnCutoutPrimitiveImpl(bForCutout);
+}
+
 bool AITwinInteractiveTool::IsCompatibleWithGizmo() const
 {
 	return IsCompatibleWithGizmoImpl();
+}
+
+bool AITwinInteractiveTool::ShowOnlyTranslationZGizmo() const
+{
+	return ShowOnlyTranslationZGizmoImpl();
 }
 
 void AITwinInteractiveTool::SetCustomPickingExtentInMeters(float PickingExtent)
@@ -178,4 +214,14 @@ FHitResult AITwinInteractiveTool::DoPickingAtMousePosition(FITwinPickingResult* 
 	{
 		return MoveTemp(PickingResult.HitResult);
 	}
+}
+
+void AITwinInteractiveTool::AbortInteractiveCreationImpl(bool /*bTriggeredFromITS*/)
+{
+
+}
+
+void AITwinInteractiveTool::ValidateInteractiveCreationImpl(bool /*bTriggeredFromITS*/)
+{
+
 }

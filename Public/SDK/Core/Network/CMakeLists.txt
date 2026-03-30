@@ -7,6 +7,7 @@ add_library(Network OBJECT
 		http.cpp
 		httpCprImpl.h
 		httpCprImpl.cpp
+		HttpError.h
 		HttpRequest.h
 		HttpRequest.cpp
 		IHttpRouter.h
@@ -14,9 +15,13 @@ add_library(Network OBJECT
 		HttpGetWithLink.h
 )
 target_compile_features(Network PRIVATE ${DefaultCXXSTD})
+if (WITH_HTTPCPR)
 target_link_libraries(Network PRIVATE 
 						cpr::cpr
 					 ) 
+target_compile_definitions(Network PUBLIC "-DWITH_HTTPCPR")
+endif()
+
 target_link_libraries(Network PUBLIC 
 						reflectcpp::reflectcpp
 						Json

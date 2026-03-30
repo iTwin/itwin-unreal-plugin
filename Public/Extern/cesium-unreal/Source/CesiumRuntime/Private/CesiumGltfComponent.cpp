@@ -18,6 +18,7 @@
 #include "CesiumTransforms.h"
 #include "Chaos/AABBTree.h"
 #include "Chaos/CollisionConvexMesh.h"
+#include "Chaos/Core.h"
 #include "Chaos/TriangleMeshImplicitObject.h"
 #include "CreateGltfOptions.h"
 #include "EncodedFeaturesMetadata.h"
@@ -1815,13 +1816,11 @@ static void loadPrimitive(
   LODResources.bHasReversedIndices = false;
   LODResources.bHasReversedDepthOnlyIndices = false;
 
-#if ENGINE_VERSION_5_5_OR_HIGHER
   if (isTriangles) {
     // UE 5.5 requires that we do this in order to avoid a crash when ray
     // tracing is enabled.
     RenderData->InitializeRayTracingRepresentationFromRenderingLODs();
   }
-#endif
 
   primitiveResult.meshIndex = options.pMeshOptions->meshIndex;
   primitiveResult.primitiveIndex = options.primitiveIndex;
@@ -3052,7 +3051,7 @@ static void loadPrimitiveGameThreadPart(
     const glm::dmat4x4& cesiumToUnrealTransform,
     const Cesium3DTilesSelection::Tile& tile,
     bool createNavCollision,
-    bool doubleSidedCollisions,
+    bool enableDoubleSidedCollisions,
     ACesium3DTileset* pTilesetActor,
     const std::vector<FTransform>& instanceTransforms,
     const TSharedPtr<FCesiumPrimitiveFeatures>& pInstanceFeatures) {
@@ -3184,12 +3183,6 @@ static void loadPrimitiveGameThreadPart(
                CesiumGltf::Material::AlphaMode::BLEND;
   };
 
-#if PLATFORM_MAC
-  // TODO: figure out why water material crashes mac
-  UMaterialInterface* pUserDesignatedMaterial =
-      is_in_blend_mode(loadResult) ? pGltf->BaseMaterialWithTranslucency
-                                   : pGltf->BaseMaterial;
-#else
   UMaterialInterface* pUserDesignatedMaterial;
   if (loadResult.onlyWater || !loadResult.onlyLand) {
     pUserDesignatedMaterial = pGltf->BaseMaterialWithWater;
@@ -3198,7 +3191,6 @@ static void loadPrimitiveGameThreadPart(
                                   ? pGltf->BaseMaterialWithTranslucency
                                   : pGltf->BaseMaterial;
   }
-#endif
 
   // Move this right now: CreateMaterial may need them!
   // "Safe" even though loadResult is still used later, because the methods used
@@ -3291,7 +3283,7 @@ static void loadPrimitiveGameThreadPart(
             NAME_None,
             RF_Transactional);
         pBaseAsMaterialInstance->AddAssetUserData(pCesiumData);
-        pCesiumData->PostEditChangeOwner();
+        pCesiumData->UpdateLayerNames();
       }
     }
 #endif
@@ -3463,7 +3455,7 @@ static void loadPrimitiveGameThreadPart(
         ECollisionTraceFlag::CTF_UseComplexAsSimple;
 
     if (loadResult.pCollisionMesh) {
-      pBodySetup->bDoubleSidedGeometry = doubleSidedCollisions;
+      pBodySetup->bDoubleSidedGeometry = enableDoubleSidedCollisions;
       pBodySetup->TriMeshGeometries.Add(loadResult.pCollisionMesh);
     }
 
@@ -3517,9 +3509,10 @@ UCesiumGltfComponent::CreateOffGameThread(
     UMaterialInterface* pBaseTranslucentMaterial,
     UMaterialInterface* pBaseWaterMaterial,
     FCustomDepthParameters CustomDepthParameters,
-    Cesium3DTilesSelection::Tile& tile,
+    // AdvViz: See comment on UCesiumGltfComponent::pTile
+    /*const*/ Cesium3DTilesSelection::Tile& tile,
     bool createNavCollision,
-    bool doubleSidedCollisions) {
+    bool enableDoubleSidedCollisions) {
   TRACE_CPUPROFILER_EVENT_SCOPE(Cesium::LoadModel)
 
   HalfConstructedReal* pReal =
@@ -3572,15 +3565,18 @@ UCesiumGltfComponent::CreateOffGameThread(
             cesiumToUnrealTransform,
             tile,
             createNavCollision,
-            doubleSidedCollisions,
+            enableDoubleSidedCollisions,
             pTilesetActor,
             node.InstanceTransforms,
             node.pInstanceFeatures);
       }
     }
   }
-  if (auto* Receiver = pTilesetActor->GetLifecycleEventReceiver())
+
+  if (ICesium3DTilesetLifecycleEventReceiver* Receiver =
+          pTilesetActor->GetLifecycleEventReceiver()) {
     Receiver->OnTileLoaded(*Gltf);
+  }
 
   Gltf->SetVisibility(false, true);
   Gltf->SetCollisionEnabled(ECollisionEnabled::NoCollision);
@@ -3589,7 +3585,8 @@ UCesiumGltfComponent::CreateOffGameThread(
 
 void UCesiumGltfComponent::OnVisibilityChanged() {
   USceneComponent::OnVisibilityChanged();
-  auto* pLifecycleEventReceiver = GetTilesetActor().GetLifecycleEventReceiver();
+  ICesium3DTilesetLifecycleEventReceiver* pLifecycleEventReceiver =
+      GetTilesetActor().GetLifecycleEventReceiver();
   if (pLifecycleEventReceiver)
     pLifecycleEventReceiver->OnTileVisibilityChanged(*this, GetVisibleFlag());
 }
@@ -3624,9 +3621,10 @@ UCesiumGltfComponent::UCesiumGltfComponent() : USceneComponent() {
 }
 
 const CesiumGltf::Model* UCesiumGltfComponent::GetGltfModel() const {
-  if (pTile)
+  if (pTile) {
     if (auto RenderContent = pTile->getContent().getRenderContent())
       return &RenderContent->getModel();
+  }
   return nullptr;
 }
 
@@ -3892,7 +3890,7 @@ static Chaos::FTriangleMeshImplicitObjectPtr BuildChaosTriangleMeshes(
   Chaos::TParticles<Chaos::FRealSingle, 3> vertices;
   vertices.AddParticles(vertexCount);
   for (uint32 i = 0; i < vertexCount; ++i) {
-    vertices.X(int32(i)) = positionBuffer.VertexPosition(i);
+    vertices.SetX(int32(i), positionBuffer.VertexPosition(i));
   }
 
   int32 triangleCount = indices.Num() / 3;
@@ -3922,5 +3920,7 @@ static Chaos::FTriangleMeshImplicitObjectPtr BuildChaosTriangleMeshes(
       MoveTemp(materials),
       MoveTemp(pFaceRemap),
       nullptr,
-      false);
+      // The value passed in for bInCullsBackFaceRaycast will be overridden by
+      // UBodySetup::bDoubleSidedGeometry, so it doesn't matter here.
+      /*bInCullsBackFaceRaycast*/ false);
 }

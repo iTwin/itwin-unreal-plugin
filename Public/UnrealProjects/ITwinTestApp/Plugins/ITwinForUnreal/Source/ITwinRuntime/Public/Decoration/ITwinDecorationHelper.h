@@ -14,6 +14,7 @@
 
 #include <ITwinLoadInfo.h>
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <optional>
@@ -21,6 +22,7 @@
 #include <ITwinRuntime/Private/Compil/BeforeNonUnrealIncludes.h>
 #	include <SDK/Core/Tools/Error.h>
 #	include <SDK/Core/Visualization/MaterialPersistence.h>
+#	include <SDK/Core/Visualization/ScenePersistence.h>
 #include <ITwinRuntime/Private/Compil/AfterNonUnrealIncludes.h>
 
 #include <ITwinDecorationHelper.generated.h>
@@ -53,6 +55,30 @@ struct ITwinSceneInfo
 	std::optional<FTransform> Offset;
 };
 
+USTRUCT(BlueprintType)
+struct FTwinSceneBasicInfo
+{
+	GENERATED_USTRUCT_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "iTwinInfo")
+		FString Id;
+
+	UPROPERTY(BlueprintReadOnly, Category = "iTwinInfo")
+		FString ITwinId;
+
+	UPROPERTY(BlueprintReadOnly, Category = "iTwinInfo", VisibleAnywhere)
+		FString DisplayName;
+};
+
+USTRUCT(BlueprintType)
+struct FTwinSceneBasicInfos
+{
+	GENERATED_USTRUCT_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "iTwinInfo")
+		TArray<FTwinSceneBasicInfo> Scenes;
+};
+
 UENUM(BlueprintType)
 enum class EITwinDecorationClientMode : uint8
 {
@@ -68,7 +94,7 @@ enum class EITwinDecorationClientMode : uint8
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnDecorationIOStartStop, bool, bStart);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnDecorationIODone, bool, bSuccess);
-
+DECLARE_DELEGATE_RetVal_OneParam(bool, FOnDownloadRequest, const FString&);
 UCLASS()
 class ITWINRUNTIME_API AITwinDecorationHelper : public AActor
 {
@@ -84,6 +110,23 @@ public:
 		virtual ~SaveLocker();
 
 	};
+
+	/// Can be used to avoid refreshing links in a given scope.
+	class [[nodiscard]] RefreshLinksDisabler
+	{
+	public:
+		RefreshLinksDisabler(AITwinDecorationHelper& InHelper);
+		~RefreshLinksDisabler();
+	private:
+		class FImpl;
+		TPimplPtr<FImpl> Impl;
+	};
+
+	/// Sets whether the Component Center is used (must be called before InitContentManager, as it does
+	/// condition some error messages when checking some paths that should exist if we don't use it).
+	static void SetUseComponentCenter(bool bComponentCenter);
+	/// Returns whether the Component Center is currently used.
+	static bool UseComponentCenter();
 
 	AITwinDecorationHelper();
 
@@ -109,6 +152,8 @@ public:
 
 	UPROPERTY(BlueprintAssignable)
 	FOnDecorationIODone OnAnnotationsLoaded;
+
+	FOnDownloadRequest OnDownloadRequest;
 
 	/** Delegate when decoration is fully loaded. */
 	FSimpleMulticastDelegate OnDecorationLoaded;
@@ -170,10 +215,19 @@ public:
 	void SaveScene(bool bPromptUser = true);
 
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
-	bool ShouldSaveScene(bool bPromptUser = true) const;
+	bool ShouldSaveScene() const;
 
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
 	void SaveSceneOnExit(bool bPromptUser = true);
+
+	struct FSaveRequestOptions
+	{
+		bool bPromptUser = true;
+		bool bUponExit = false;
+		bool bUponCustomMaterialsDeletion = false;
+		std::function<void()> OnSceneSavedCallback;
+	};
+	void SaveSceneWithOptions(FSaveRequestOptions const& Options);
 
 	//! Permanently deletes all material customizations for current model (cannot be undone!)
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
@@ -181,6 +235,7 @@ public:
 
 	AITwinPopulation* GetPopulation(FString assetPath, const AdvViz::SDK::RefID& groupId) const;
 	AITwinKeyframePath* CreateKeyframePath() const;
+	bool MountPak(const std::string & file, const std::string& id) const;
 	AITwinPopulation* CreatePopulation(FString assetPath, const AdvViz::SDK::RefID& groupId) const;
 	AITwinPopulation* GetOrCreatePopulation(FString assetPath, const AdvViz::SDK::RefID& groupId) const;
 	int32 GetPopulationInstanceCount(FString assetPath, const AdvViz::SDK::RefID& groupId) const;
@@ -195,10 +250,11 @@ public:
 
 	using ModelIdentifier = ITwin::ModelDecorationIdentifier;
 
-	ITwinSceneInfo GetSceneInfo(const ModelIdentifier& Key) const;
+	void GetSceneInfoThen(const ModelIdentifier& Key, std::function<void(ITwinSceneInfo)>&& Callback) const;
+	std::shared_ptr<AdvViz::SDK::ILink> GetRawSceneInfoSynchronous(const ModelIdentifier& Key) const;
 
-	inline ITwinSceneInfo GetSceneInfo(EITwinModelType ct, const FString& id) const {
-		return GetSceneInfo(std::make_pair(ct, id));
+	inline void GetSceneInfoThen(EITwinModelType ct, const FString& id, std::function<void(ITwinSceneInfo)>&& Callback) const {
+		GetSceneInfoThen(std::make_pair(ct, id), std::move(Callback));
 	}
 	void SetSceneInfo(const ModelIdentifier& Key, const ITwinSceneInfo&) const;
 
@@ -216,7 +272,7 @@ public:
 	std::vector<ITwin::ModelLink> GetLinkedElements() const;
 
 	[[nodiscard]] std::shared_ptr<SaveLocker> LockSave();
-	bool IsSaveLocked();
+	bool IsSaveLocked() const;
 
 	void OverrideOnSceneClose(bool bOverride) { bOverrideOnSceneClose_ = bOverride; }
 
@@ -229,7 +285,12 @@ public:
 	void SetDecoGeoreference(const FVector& latLongHeight);
 	AdvViz::expected<void, std::string> InitDecoGeoreference();
 
-	AdvViz::expected<std::vector<std::shared_ptr< AdvViz::SDK::IScenePersistence>>, int>  GetITwinScenes(const FString& itwinid);
+	AdvViz::expected<std::vector<std::shared_ptr< AdvViz::SDK::IScenePersistence>>, AdvViz::SDK::HttpError> GetITwinScenes(const FString& itwinid);
+
+	void AsyncGetITwinSceneInfos(const FString& itwinid,
+		std::function<void(AdvViz::expected<FTwinSceneBasicInfos, AdvViz::SDK::HttpError> const&)>&& Callback,
+		bool bExecuteCallbackInGameThread);
+
 
 	std::shared_ptr<AdvViz::SDK::IAnnotationsManager> GetAnnotationManager() const;
 
@@ -237,6 +298,11 @@ public:
 	std::string ExportHDRIAsJson(AdvViz::SDK::ITwinHDRISettings const& hdri) const;
 
 	bool ConvertHDRIJsonFileToKeyValueMap(std::string assetPath, AdvViz::SDK::KeyValueStringMap& keyValueMap) const;
+
+
+	//allow disable export of resources (IModels/RealityData) when saving the scene API. Scene API is not responsible for managing these resources in Itwin Engage and want to avoid sending them to the server when saving the scene 
+	static void EnableExportOfResourcesInSceneApI(bool bEnable);
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -250,17 +316,21 @@ private:
 	void InitContentManager();
 
 
+	static std::optional<bool> bHasComponentCenterOpt;
+
 	// Enabled/disables windows system FMessageDialog so that it can be replaced with an Unreal widget
 	bool bOverrideOnSceneClose_ = false;
 
 	class FImpl;
 	TPimplPtr<FImpl> Impl;
 
-	//save lock
+	// save lock
 	class SaveLockerImpl;
 
-	void Lock(SaveLockerImpl*);
-	void Unlock(SaveLockerImpl*);
+	void Lock(SaveLockerImpl&);
+	void Unlock(SaveLockerImpl const&);
 	
 
+public:
+	void SetReadOnlyMode(bool value);
 };

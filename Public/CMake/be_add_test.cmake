@@ -91,11 +91,15 @@ function (be_add_test testTarget)
 	if (BE_CODE_COVERAGE AND DEFINED funcArgs_COVERED_TARGETS AND ${isSafeTest})
 		set (jsonArgs "${jsonArgs},\
 \"coverageOutDir\":\"${beCodeCoverageOutDirBase}/${testTarget}\",\
-\"coverageToolExe\":\"${COVERAGE_TOOL_EXE}\"\
+\"coverageToolExe\":\"${BE_COVERAGE_TOOL_EXE}\"\
 ")
 		set (targetBinPaths "")
 		set (sourceDirs "")
 		foreach (target ${funcArgs_COVERED_TARGETS})
+			get_property (targetType TARGET ${target} PROPERTY TYPE)
+			if ("${targetType}" STREQUAL INTERFACE_LIBRARY)
+				continue ()
+			endif ()
 			list (APPEND targetBinPaths "$<TARGET_FILE:${target}>")
 			# Retrieve the source dir for the covered target.
 			# This will be added to the source filter for the coverage tool.
@@ -144,7 +148,7 @@ function (be_add_test testTarget)
 	)
 	set_target_properties (${runTestTarget} PROPERTIES EXCLUDE_FROM_ALL TRUE)
 	set_target_properties (${runTestTarget} PROPERTIES FOLDER UnitTests)
-	add_dependencies (${runTestTarget} ${testTarget})
+	add_dependencies (${runTestTarget} ${testTarget} PrepareTests)
 	# Update the dependency chain.
 	# For tests that currently fail on bbot, add them in the category "all" (so that they will be executed on the nightly build, but not on the check build).
 	# Other tests are considered "safe" and will be executed on both check and nightly builds.
@@ -161,23 +165,31 @@ add_custom_target (RunSafeTests ALL) # This target will be executed on the bbot 
 set_target_properties (RunSafeTests PROPERTIES FOLDER UnitTests)
 add_custom_target (RunAllTests ALL)	# This target will be executed on the bbot nighly build.
 set_target_properties (RunAllTests PROPERTIES FOLDER UnitTests)
-if (BE_CODE_COVERAGE)
-	# Coverage reports will be stored in a configuration-specific folder.
-	# If the folder is created by the test runner script, there is a risk that 2 tests try to
-	# create the folder simultaneously and thus fail.
-	# So, instead of handling this case in the test runner script, we ask our CopyAllLibs step
-	# to copy a dummy file to this folder, thus creating it if necessary.
-	set (beCodeCoverageOutDirBase "${CMAKE_BINARY_DIR}/CodeCoverage/${ConfigurationName}")
-	CopyAllLibs_CopyFileToDir ("${CMAKE_SOURCE_DIR}/cmake/Dummy.txt" "${beCodeCoverageOutDirBase}")
-	if (NO_DEBUG_SYMBOLS)
-		message (SEND_ERROR "NO_DEBUG_SYMBOLS is not compatible with BE_CODE_COVERAGE")
-	endif ()
 
-	find_program (COVERAGE_TOOL_EXE OpenCppCoverage HINTS "C:/Program Files/OpenCppCoverage")
-	if (COVERAGE_TOOL_EXE STREQUAL "COVERAGE_TOOL_EXE-NOTFOUND")
+# Coverage reports will be stored in a configuration-specific folder.
+# If the folder is created by the test runner script, there is a risk that 2 tests try to
+# create the folder simultaneously and thus fail.
+# So, instead of handling this case in the test runner script, we add a "PrepareTests" target that will create this folder.
+set (beCodeCoverageOutDirBase "${CMAKE_BINARY_DIR}/CodeCoverage/$(Configuration)")
+set (dummyOutput_PrepareTests "${CMAKE_BINARY_DIR}/PrepareTests/$(Configuration)/DummyCpp.cpp")
+add_custom_command (
+	OUTPUT "${dummyOutput_PrepareTests}"
+	COMMAND ${CMAKE_COMMAND} -E make_directory "${beCodeCoverageOutDirBase}"
+	COMMAND ${CMAKE_COMMAND} -E make_directory "${dummyOutput_PrepareTests}/.."
+	COMMAND ${CMAKE_COMMAND} -E touch "${dummyOutput_PrepareTests}"
+)
+add_library (PrepareTests
+	STATIC
+	"${dummyOutput_PrepareTests}"
+)
+set_target_properties (PrepareTests PROPERTIES FOLDER UnitTests)
+
+if (BE_CODE_COVERAGE)
+	find_program (BE_COVERAGE_TOOL_EXE OpenCppCoverage HINTS "$ENV{ProgramFiles}/OpenCppCoverage")
+	if (BE_COVERAGE_TOOL_EXE STREQUAL "BE_COVERAGE_TOOL_EXE-NOTFOUND")
 		message ( SEND_ERROR "OpenCppCoverage not found while being searched in: ${OpenCppCoverage_SearchDirs}" )
 	else ()
-		message ( "OpenCppCoverage found in: ${COVERAGE_TOOL_EXE}" )
+		message ( "OpenCppCoverage found in: ${BE_COVERAGE_TOOL_EXE}" )
 	endif ()
 endif ()
 
@@ -195,7 +207,7 @@ function (FinalizeTests)
 		# See comment inside be_add_test() for why we do this.
 		set (jsonArgs "{\
 \"outputDir\":\"${beCodeCoverageOutDirBase}/_Merged\",\
-\"coverageToolExe\":\"${COVERAGE_TOOL_EXE}\"\
+\"coverageToolExe\":\"${BE_COVERAGE_TOOL_EXE}\"\
 ")
 		get_property (beCoverageTestTargets GLOBAL PROPERTY "beCoverageTestTargets")
 		set (inputDirs "")
@@ -208,7 +220,7 @@ function (FinalizeTests)
 		set (jsonArgs "${jsonArgs},\"inputDirs\":${jsonList}")
 		set (jsonArgs "${jsonArgs}}") # Closing brace
 		add_custom_target (MergeCodeCoverageReports
-			"${PYTHON_INTERPRETER}" "${CMAKE_SOURCE_DIR}/MergeCodeCoverageReports.py" "${jsonArgs}"
+			"${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/Public/MergeCodeCoverageReports.py" "${jsonArgs}"
 			WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
 			VERBATIM
 		)

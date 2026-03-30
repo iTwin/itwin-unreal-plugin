@@ -51,6 +51,10 @@ public:
 	void SetTextColor(const FLinearColor& inColor);
 	UFUNCTION(BlueprintCallable, Category = "Interface")
 	FLinearColor GetTextColor();
+	UFUNCTION(BlueprintCallable, Category = "Interface")
+	void SetFontSize(int size);
+	UFUNCTION(BlueprintCallable, Category = "Interface")
+	void SetFontObject(const UObject* InFontObject);
 
 protected:
 	FVector2D pinPosition;

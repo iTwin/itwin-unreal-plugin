@@ -14,11 +14,11 @@ if (DEFINED ENV{UNREAL_ENGINE_ROOT} AND NOT UNREAL_ENGINE_ROOT)
 endif()
 
 if (NOT UNREAL_ENGINE_ROOT)
-  # On Windows and Mac, try to use the default UE 5.4 location
+  # On Windows and Mac, try to use the default UE 5.5 location
   if (WIN32)
-     set(DEFAULT_UNREAL_INSTALLATION "C:/Program Files/Epic Games/UE_5.4")
+     set(DEFAULT_UNREAL_INSTALLATION "C:/Program Files/Epic Games/UE_5.5")
   elseif(APPLE)
-    set(DEFAULT_UNREAL_INSTALLATION "/Users/Shared/Epic Games/UE_5.4")
+    set(DEFAULT_UNREAL_INSTALLATION "/Users/Shared/Epic Games/UE_5.5")
   endif()
 
   if (NOT EXISTS "${DEFAULT_UNREAL_INSTALLATION}")
@@ -63,10 +63,16 @@ endif()
 set(PRIVATE_CESIUM_SQLITE ON)
 
 set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreadedDLL)
+ if (CMAKE_VERSION VERSION_GREATER_EQUAL 3.31)
+	cmake_policy(SET CMP0177 OLD)
+endif()
 # AdvViz: The "../" below is causing policy warnings CMP0177, but it is necessary because we build out of source with symlinks...
 set(CMAKE_INSTALL_PREFIX ${CMAKE_CURRENT_LIST_DIR}/../Source/ThirdParty)
 # Don't: cmake_path(NORMAL_PATH CMAKE_INSTALL_PREFIX)
-set(CMAKE_INSTALL_LIBDIR ${CMAKE_INSTALL_PREFIX}/lib/${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}-$<IF:$<CONFIG:Debug>,Debug,Release>)
+
+# AdvViz: should be $<IF:$<CONFIG:Debug>,Debug,Release> instead of Release, but I had to disable vcpkg debug builds because of MFC
+# conflicts - er, is this really related? In any case I had to do that when I added back the Debug config in the ITwinForUnreal plugin...
+set(CMAKE_INSTALL_LIBDIR ${CMAKE_INSTALL_PREFIX}/lib/${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}-Release)
 set(CMAKE_INSTALL_INCLUDEDIR ${CMAKE_INSTALL_PREFIX}/include)
 
 # Always define NDEBUG, since Unreal does in debug anyway.
@@ -120,6 +126,7 @@ endif()
 set(CESIUM_EXCLUDE_INSTALL_HEADERS openssl)
 set(CESIUM_EXCLUDE_INSTALL_STATIC_LIBS openssl)
 # Skip including curl asset accessor as it causes issues on Android and iOS
+# AdvViz: and vcpkg's vs. UE's version can also cause conflicts, esp. since they're built with very different settings...
 set(CESIUM_DISABLE_CURL TRUE)
 
 if(CESIUM_UNREAL_NATIVE_DIRECTORY)
@@ -134,11 +141,6 @@ if(CESIUM_UNREAL_NATIVE_DIRECTORY)
   set(CESIUM_PACKAGES_TEST catch2)
   set(CESIUM_INSTALL_EXTERNALLY_BUILT_DEPENDENCIES ON)
   add_subdirectory("${CESIUM_UNREAL_NATIVE_DIRECTORY}" cesium-native)
-  # Don't build the cesium-native tests by default, unless explicitly required
-  # (an embedding project may want to execute them as part of its own build)
-  if (NOT CESIUM_TESTS_ENABLED)
-	set_target_properties(cesium-native-tests PROPERTIES EXCLUDE_FROM_ALL 1 EXCLUDE_FROM_DEFAULT_BUILD 1)
-  endif()
 else()
   find_package(cesium-native)
 endif()
@@ -169,7 +171,8 @@ install(DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/swl-variant/include/" DESTINATION $
 
 if(VCPKG_INSTALLED_DIR AND NOT CESIUM_INSTALL_EXTERNALLY_BUILT_DEPENDENCIES)
     set(CESIUM_VCPKG_DIR "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}")
-    set(CESIUM_VCPKG_LIBDIR "${CESIUM_VCPKG_DIR}/$<IF:$<CONFIG:Debug>,debug/lib,lib>")
+    # AdvViz: should be  "${CESIUM_VCPKG_DIR}/$<IF:$<CONFIG:Debug>,debug/lib,lib>" but I had to disable debug vcpkg builds because of MFC conflicts
+    set(CESIUM_VCPKG_LIBDIR "${CESIUM_VCPKG_DIR}/lib")
 
     message(STATUS "CESIUM_VCPKG_LIBDIR: ${CESIUM_VCPKG_LIBDIR}")
 

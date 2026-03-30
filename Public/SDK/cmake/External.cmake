@@ -38,8 +38,10 @@ if ( NOT DEFINED fmt_INCLUDE_DIR )
 endif ()
 include_directories(${fmt_INCLUDE_DIR})
 
-### =========== cpr =========== 
+### =========== cpr ===========
+if (WITH_HTTPCPR)
 find_package(cpr REQUIRED)
+endif()
 
 ### =========== libassert =========== 
 find_package(libassert CONFIG REQUIRED)

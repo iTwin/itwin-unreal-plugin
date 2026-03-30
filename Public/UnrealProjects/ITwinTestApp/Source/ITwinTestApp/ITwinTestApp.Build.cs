@@ -27,6 +27,7 @@ public class ITwinTestApp : ModuleRules
 			"ITwinRuntime",
 			"Json",
 			"WebBrowser",
+			"SDKCore"
         });
 		if (Target.Version.MinorVersion == 5) // ie Unreal 5.5
 		{

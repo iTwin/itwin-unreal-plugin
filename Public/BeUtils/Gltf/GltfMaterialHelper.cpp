@@ -15,7 +15,7 @@
 #include <SDK/Core/ITwinAPI/ITwinMaterial.inl>
 #include <SDK/Core/Tools/Assert.h>
 #include <SDK/Core/Tools/Log.h>
-#include <SDK/Core/Visualization/MaterialPersistence.h>
+#include <Core/Visualization/MaterialPersistence.h>
 
 #include <fstream>
 #include <iostream>

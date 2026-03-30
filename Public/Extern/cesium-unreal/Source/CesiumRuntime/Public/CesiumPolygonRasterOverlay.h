@@ -26,6 +26,11 @@ public:
   UCesiumPolygonRasterOverlay();
 
   /**
+   * Returns whether the given point should be excluded by current polygons.
+   */
+  bool ShouldExcludePoint(const FVector3d& WorldPosition) const;
+
+  /**
    * The polygons to rasterize for this overlay.
    */
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cesium")

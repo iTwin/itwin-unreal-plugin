@@ -9,6 +9,7 @@
 #include "../Visualization.h"
 #include "../ScenePersistenceAPI.h"
 #include <filesystem>
+#include <mutex>
 
 #include <catch2/catch_all.hpp>
 #include <httpmockserver/mock_server.h>
@@ -72,6 +73,7 @@ bool CompareLinks(const std::vector<std::shared_ptr<AdvViz::SDK::ILink>> & ll1, 
 	}
 	return true;
 }
+
 static void SetDefaultConfig()
 {
 	Config::SConfig config;
@@ -84,6 +86,8 @@ static void SetDefaultConfig()
 	CreateAdvVizLogChannels();
 }
 
+bool WaitForAsyncTask(std::atomic_bool& taskFinished, int maxSeconds);
+
 TEST_CASE("SceneAPI"){
 
 	SECTION("ScenePersistence") {
@@ -95,6 +99,8 @@ TEST_CASE("SceneAPI"){
 
 			REQUIRE(GetDefaultHttp().get() != nullptr);
 			std::vector<std::string> objects;
+			std::mutex objectsMutex;
+			bool bTestMultiPage = false;
 			auto respKeyPost = std::pair("POST", "/scenes");
 			mock->responseFct_[respKeyPost] = [] {
 				std::string s = "\
@@ -142,24 +148,81 @@ TEST_CASE("SceneAPI"){
 				return HTTPMock::Response2(200, s);
 				};
 			auto respKeyGetObj = std::pair("GET", "/scenes/995970f2-bdfb-4d6b-8224-a40e890859fb/objects");
-			mock->responseFct_[respKeyGetObj] = [&objects] {
+			mock->responseFctWithArgs_[respKeyGetObj] = [&objects, &objectsMutex, &bTestMultiPage]
+				(const std::vector<HTTPMock::UrlArg>& urlArguments)
+			{
+				std::unique_lock<std::mutex> lock(objectsMutex);
+				REQUIRE(!objects.empty());
 				std::string objectss;
-				for (auto a : objects)
+
+				size_t toSkip = 0;
+				for (auto const& arg : urlArguments)
 				{
-					objectss += a;
-					objectss += ",";
+					if (arg.hasValue && arg.key == "$skip")
+					{
+						toSkip = std::stoull(arg.value);
+						break;
+					}
 				}
+
+				if (bTestMultiPage)
+				{
+					REQUIRE(objects.size() > 6);
+					// Split the result in 2 pages
+					size_t iEnd = std::min(toSkip + 6, objects.size());
+					for (size_t i(toSkip); i < iEnd; ++i)
+					{
+						objectss += objects[i];
+						objectss += ",";
+					}
+				}
+				else
+				{
+					REQUIRE(toSkip == 0);
+					for (auto a : objects)
+					{
+						objectss += a;
+						objectss += ",";
+					}
+				}
+				// replace last coma
 				objectss[objectss.size() - 1] = ' ';
-				std::string s = "\
-				{\
-					\"objects\" : ["+objectss+"] \
-				}";
-				return HTTPMock::Response2(200, s);
+
+				auto const buildLinks = [=]() -> std::string
+				{
+					REQUIRE(GetDefaultHttp().get() != nullptr);
+					auto const baseUrl = GetDefaultHttp()->GetBaseUrlStr();
+					if (bTestMultiPage)
+					{
+						if (toSkip == 0)
+						{
+							// 1st page
+							return "\"self\": { \"href\": \"" + baseUrl + "/scenes/995970f2-bdfb-4d6b-8224-a40e890859fb/objects?iTwinId=eaa1a1d1-0e60-4894-92be-c393fba76ca6&$skip=0&$top=6\" }, " \
+								   "\"next\": { \"href\": \"" + baseUrl + "/scenes/995970f2-bdfb-4d6b-8224-a40e890859fb/objects?iTwinId=eaa1a1d1-0e60-4894-92be-c393fba76ca6&$skip=6&$top=6\" }";
+						}
+						else
+						{
+							// 2nd page
+							return "\"prev\": { \"href\": \"" + baseUrl + "/scenes/995970f2-bdfb-4d6b-8224-a40e890859fb/objects?iTwinId=eaa1a1d1-0e60-4894-92be-c393fba76ca6&$skip=0&$top=6\" }, " \
+								   "\"self\": { \"href\": \"" + baseUrl + "/scenes/995970f2-bdfb-4d6b-8224-a40e890859fb/objects?iTwinId=eaa1a1d1-0e60-4894-92be-c393fba76ca6&$skip=6&$top=6\" }";
+						}
+					}
+					else
+					{
+						return "\"self\": { \"href\": \"" + baseUrl + "/scenes/995970f2-bdfb-4d6b-8224-a40e890859fb/objects?iTwinId=eaa1a1d1-0e60-4894-92be-c393fba76ca6&$skip=0&$top=100\" }";
+					}
 				};
 
-			auto respKeyPostObj = std::pair("POST", "/scenes/995970f2-bdfb-4d6b-8224-a40e890859fb/objects");
-			mock->responseFctWithData_[respKeyPostObj] = [&objects]  (const std::string& data){
+				const std::string s = "{" \
+					"\"objects\" : [" +objectss +"], " \
+					"\"_links\" : {" + buildLinks() + "}" \
+				" }";
+				return HTTPMock::Response2(200, s);
+			};
 
+			auto respKeyPostObj = std::pair("POST", "/scenes/995970f2-bdfb-4d6b-8224-a40e890859fb/objects");
+			mock->responseFctWithData_[respKeyPostObj] = [&objects, &objectsMutex]  (const std::string& data){
+				std::unique_lock<std::mutex> lock(objectsMutex);
 				size_t ss = objects.size();
 				auto id = "995970f2-bdfb-4d6b-8224-" + std::to_string(ss);
 				std::string obj = "{ \"id\": \"" + id + "\",";
@@ -185,8 +248,17 @@ TEST_CASE("SceneAPI"){
 				return HTTPMock::Response2(204, "");
 				};
 
-			auto scene = ScenePersistenceAPI::New();
-			scene->Create("test auto", itwinID);
+			std::shared_ptr<ScenePersistenceAPI> scene(ScenePersistenceAPI::New());
+			std::atomic_bool asyncCreateSceneDone = false;
+			scene->AsyncCreate("test auto", itwinID,
+				[scene, &asyncCreateSceneDone](bool bSuccess) {
+					REQUIRE(bSuccess);
+					asyncCreateSceneDone = true;
+				}
+			);
+
+			// Make sure the scene is actually created before editing it.
+			REQUIRE(WaitForAsyncTask(asyncCreateSceneDone, 10));
 			REQUIRE(scene->GetId() == "995970f2-bdfb-4d6b-8224-a40e890859fb");
 
 			{
@@ -226,16 +298,49 @@ TEST_CASE("SceneAPI"){
 				nulink->SetType("timeline");
 				scene->AddLink(nulink);
 			}
-			scene->Save();
 
-			// create a decoration copy by fetching previous decoration from server
-			auto scene2 = ScenePersistenceAPI::New();
-			scene2->Get(itwinID,scene->GetId());
-			REQUIRE(scene2->GetId() == scene->GetId());
-			REQUIRE(CompareLinks(scene->GetLinks(), scene2->GetLinks()));
-			REQUIRE(scene->GetAtmosphere() == scene2->GetAtmosphere());
-			REQUIRE(scene->GetSceneSettings() == scene2->GetSceneSettings());
+			std::atomic_bool asyncSaveSceneDone = false;
+			scene->AsyncSave([&asyncSaveSceneDone](bool bSuccess)
+			{
+				REQUIRE(bSuccess);
+				asyncSaveSceneDone = true;
+			});
 
+			// Make sure the scene is saved before getting it.
+			REQUIRE(WaitForAsyncTask(asyncSaveSceneDone, 10));
+
+			// Run the tests in multi-page and single page mode:
+			for (int pageMode = 0; pageMode <2 ; ++pageMode)
+			{
+				// Reload scene from server
+				std::shared_ptr<ScenePersistenceAPI> scene2(ScenePersistenceAPI::New());
+				scene2->Get(itwinID, scene->GetId());
+				REQUIRE(scene2->GetId() == scene->GetId());
+				CHECK(CompareLinks(scene->GetLinks(), scene2->GetLinks()));
+				CHECK(scene->GetAtmosphere() == scene2->GetAtmosphere());
+				CHECK(scene->GetSceneSettings() == scene2->GetSceneSettings());
+
+				// Test asynchronous load as well
+				std::shared_ptr<ScenePersistenceAPI> scene3(ScenePersistenceAPI::New());
+				std::atomic_bool asyncGetSceneDone = false;
+				scene3->AsyncGet(itwinID, scene->GetId(),
+					[&asyncGetSceneDone, scene3, scene](AdvViz::expected<void, std::string> const& exp)
+				{
+					REQUIRE(exp);
+					REQUIRE(scene3->GetId() == scene->GetId());
+					CHECK(CompareLinks(scene->GetLinks(), scene3->GetLinks()));
+					CHECK(scene->GetAtmosphere() == scene3->GetAtmosphere());
+					CHECK(scene->GetSceneSettings() == scene3->GetSceneSettings());
+					asyncGetSceneDone = true;
+				});
+				REQUIRE(WaitForAsyncTask(asyncGetSceneDone, 10));
+
+				// Toggle multi-page mode
+				{
+					std::unique_lock<std::mutex> lock(objectsMutex);
+					bTestMultiPage = !bTestMultiPage;
+				}
+			}
 
 			// delete decoration on server
 			scene->Delete();

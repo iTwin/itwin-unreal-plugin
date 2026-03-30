@@ -34,7 +34,7 @@ public:
 
 
 private:
-	inline bool ShouldExcludePoint(FVector3f const& WorldPosition) const;
+	inline bool ShouldExcludePoint(FVector3d const& WorldPosition) const;
 
 private:
 	//! Whether to invert the effect specified by the clipping plane.
@@ -46,8 +46,8 @@ private:
 	// Same as in Synchro4D timelines, but without 'deferred' status.
 	struct FPlaneEquation
 	{
-		FVector3f PlaneOrientation = FVector3f::ZAxisVector;
-		float PlaneW = 0.f;
+		FVector3d PlaneOrientation = FVector3d::ZAxisVector;
+		double PlaneW = 0.;
 	};
 	FPlaneEquation PlaneEquation;
 	int32 PlaneIndex = -1;

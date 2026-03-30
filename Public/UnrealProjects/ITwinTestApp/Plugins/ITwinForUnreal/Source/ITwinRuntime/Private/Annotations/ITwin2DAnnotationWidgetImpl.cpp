@@ -86,6 +86,16 @@ FLinearColor UITwin2DAnnotationWidgetImpl::GetTextColor()
 	return Image->GetColorAndOpacity();
 }
 
+void UITwin2DAnnotationWidgetImpl::SetFontSize(int size)
+{
+	content->SetFont(FSlateFontInfo(content->GetFont().FontObject, size));
+}
+
+void UITwin2DAnnotationWidgetImpl::SetFontObject(const UObject* InFontObject)
+{
+	content->SetFont(FSlateFontInfo(InFontObject, content->GetFont().Size));
+}
+
 void UITwin2DAnnotationWidgetImpl::UpdateComponentsVisibility()
 {
 	if (bLabelOnly)

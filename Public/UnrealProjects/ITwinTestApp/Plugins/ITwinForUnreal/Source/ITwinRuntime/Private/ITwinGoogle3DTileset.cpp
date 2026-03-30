@@ -12,7 +12,8 @@
 #include <ITwinGeolocation.h>
 #include <ITwinSetupMaterials.h>
 #include <ITwinTilesetAccess.h>
-#include <Clipping/ITwinClippingCustomPrimitiveDataHelper.h>
+#include <ITwinUtilityLibrary.h>
+#include <Clipping/ITwinClipping3DTilesetHelper.h>
 #include <Decoration/ITwinDecorationHelper.h>
 
 #include <Kismet/GameplayStatics.h>
@@ -83,6 +84,8 @@ public:
 
 	virtual ITwin::ModelDecorationIdentifier GetDecorationKey() const override;
 	virtual AITwinDecorationHelper* GetDecorationHelper() const override;
+	virtual UITwinClipping3DTilesetHelper* GetClippingHelper() const override;
+	virtual FBox GetBoundingBox() const override;
 	virtual const ACesium3DTileset* GetTileset() const override;
 	virtual ACesium3DTileset* GetMutableTileset() const override;
 
@@ -98,7 +101,9 @@ public:
 	AITwinDecorationHelper* PersistenceMgr = nullptr;
 	bool bHasLoadedGeoLocationFromDeco = false;
 	bool bEnableGeoRefEdition = true; // Geo-location can be imposed by outside - when the loaded imodels/reality-data are geo-located
-	TStrongObjectPtr<UITwinClippingCustomPrimitiveDataHelper> ClippingHelper;
+	TStrongObjectPtr<UITwinClipping3DTilesetHelper> ClippingHelper;
+	std::optional<float> CustomCreditsFontScale;
+	bool bNeedsUpdateCreditsWidget = false;
 
 	FImpl(AITwinGoogle3DTileset& InOwner)
 		: Owner(InOwner)
@@ -110,6 +115,9 @@ public:
 	void OnSceneLoaded(bool bSuccess);
 	bool LoadGeoLocationFromDeco(std::array<double, 3> const& latLongHeight);
 	void SetGeoLocation(std::array<double, 3> const& latLongHeight);
+
+	// Credits display scale.
+	void SetCreditsWidgetDisplayScale(float InScale);
 };
 
 void AITwinGoogle3DTileset::FImpl::FindPersistenceMgr()
@@ -131,7 +139,7 @@ void AITwinGoogle3DTileset::FImpl::OnSceneLoaded(bool bSuccess)
 	{
 		FindPersistenceMgr();
 	}
-	if (bSuccess && PersistenceMgr && !bHasLoadedGeoLocationFromDeco)
+	if (bSuccess && IsValid(PersistenceMgr) && !bHasLoadedGeoLocationFromDeco)
 	{
 		// Load values from Persistent Scene.
 		auto const ss = PersistenceMgr->GetSceneSettings();
@@ -175,8 +183,10 @@ void AITwinGoogle3DTileset::FImpl::SetGeoLocation(std::array<double, 3> const& l
 
 	// Manage persistence
 	if (!PersistenceMgr)
+	{
 		FindPersistenceMgr();
-	if (PersistenceMgr)
+	}
+	if (IsValid(PersistenceMgr))
 	{
 		auto ss = PersistenceMgr->GetSceneSettings();
 		if (ss.geoLocation != latLongHeight)
@@ -187,6 +197,18 @@ void AITwinGoogle3DTileset::FImpl::SetGeoLocation(std::array<double, 3> const& l
 	}
 }
 
+void AITwinGoogle3DTileset::FImpl::SetCreditsWidgetDisplayScale(float InScale)
+{
+	if (!ensure(InScale > 0.f))
+	{
+		return;
+	}
+	if (fabs(InScale - CustomCreditsFontScale.value_or(1.0f)) > 1e-4)
+	{
+		CustomCreditsFontScale = InScale;
+		bNeedsUpdateCreditsWidget = true;
+	}
+}
 
 /*static*/
 void AITwinGoogle3DTileset::SetDefaultKey(FString const& DefaultGoogleKey, UWorld* World /*= nullptr*/)
@@ -259,7 +281,6 @@ bool AITwinGoogle3DTileset::RequestElevationtAtGeolocation(AdvViz::SDK::ITwinGeo
 	{
 		g_GoogleHttp = std::shared_ptr<Http>(Http::New());
 		g_GoogleHttp->SetBaseUrl("https://maps.googleapis.com/maps/api");
-		g_GoogleHttp->SetExecuteAsyncCallbackInGameThread(true); // mandatory here! (callbacks will access world/actors)
 	}
 	struct SElevationInfo
 	{
@@ -279,24 +300,37 @@ bool AITwinGoogle3DTileset::RequestElevationtAtGeolocation(AdvViz::SDK::ITwinGeo
 		GeolocationInfo.latitude, GeolocationInfo.longitude, ElevationtKey);
 
 	g_GoogleHttp->AsyncGetJson<SElevationResults>(dataOut,
-		[Callback = std::move(InCallback)](long status, SharedElevationResults ElevationResultsPtr)
+		[Callback = std::move(InCallback)](const AdvViz::SDK::Http::Response& r, AdvViz::expected<SharedElevationResults, std::string> &ElevationResultsPtr)
 	{
-		auto lock(ElevationResultsPtr->GetRAutoLock());
-		const SElevationResults& ElevationResults = lock.Get();
+			if (ElevationResultsPtr)
+			{
+				auto lock((*ElevationResultsPtr)->GetRAutoLock());
+				const SElevationResults& ElevationResults = lock.Get();
 
-		std::optional<double> elevation;
-		if (status >= 200 && status < 300 && !ElevationResults.results.empty())
-		{
-			elevation = ElevationResults.results[0].elevation;
-		}
-		Callback(elevation);
+				std::optional<double> elevation;
+				if (r.first >= 200 && r.first < 300 && !ElevationResults.results.empty())
+				{
+					elevation = ElevationResults.results[0].elevation;
+				}
+				Callback(elevation);
+			}
+			else
+			{
+				BE_LOGW("ITwinAdvViz", "Async Elevation request failed: " << ElevationResultsPtr.error());
+				Callback(std::nullopt);
+			}
 	},
-		relativeUrl);
+		relativeUrl,
+		/*headers*/ {},
+		false /*is full url*/,
+		Http::EAsyncCallbackExecutionMode::GameThread /* mandatory here! (callback will access world / actors) */
+	);
 	return true;
 }
 
 /*static*/
-AITwinGoogle3DTileset* AITwinGoogle3DTileset::MakeInstance(UWorld& World, bool bGeneratePhysicsMeshes /*= false*/)
+AITwinGoogle3DTileset* AITwinGoogle3DTileset::MakeInstance(UWorld& World,
+	bool bGeneratePhysicsMeshes /*= false*/, float DpiScaleForCredits /*= 1.0f*/)
 {
 	// Instantiate a Google 3D Tileset
 
@@ -353,13 +387,19 @@ AITwinGoogle3DTileset* AITwinGoogle3DTileset::MakeInstance(UWorld& World, bool b
 		}
 	}
 
+	const FTilesetAccess TilesetAccess(Tileset);
+
 	// Make use of our own materials (important for packaged version!)
-	ITwin::SetupMaterials(FTilesetAccess(Tileset));
+	ITwin::SetupMaterials(TilesetAccess);
 
 	// Instantiate a UCesiumPolygonRasterOverlay component, which can then be populated with polygons to
 	// enable cutout (ACesiumCartographicPolygon)
-	ITwin::InitCutoutOverlay(*Tileset);
+	TilesetAccess.InitCutoutOverlay();
 
+	if (DpiScaleForCredits > 0)
+	{
+		Tileset->SetCreditsWidgetDisplayScale(DpiScaleForCredits);
+	}
 	return Tileset;
 }
 
@@ -403,6 +443,22 @@ AITwinGoogle3DTileset::~AITwinGoogle3DTileset()
 	Impl->ClippingHelper.Reset();
 }
 
+void AITwinGoogle3DTileset::Tick(float DeltaTime)
+{
+	Super::Tick(DeltaTime);
+
+	// Update Credits widget font size if needed (AzDev#1988552).
+	if (Impl->bNeedsUpdateCreditsWidget)
+	{
+		ACesiumCreditSystem* MyCreditSystem = this->ResolveCreditSystem();
+		if (MyCreditSystem)
+		{
+			MyCreditSystem->SetCreditsWidgetDisplayScale(Impl->CustomCreditsFontScale.value_or(1.0f));
+			Impl->bNeedsUpdateCreditsWidget = false;
+		}
+	}
+}
+
 void AITwinGoogle3DTileset::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	Impl->ClippingHelper.Reset();
@@ -413,7 +469,7 @@ void AITwinGoogle3DTileset::SetActorHiddenInGame(bool bNewHidden)
 {
 	Super::SetActorHiddenInGame(bNewHidden);
 
-	if (Impl->PersistenceMgr)
+	if (IsValid(Impl->PersistenceMgr))
 	{
 		const bool bShow = !bNewHidden;
 		auto ss = Impl->PersistenceMgr->GetSceneSettings();
@@ -429,7 +485,7 @@ void AITwinGoogle3DTileset::SetTilesetQuality(float Value)
 {
 	ITwin::SetTilesetQuality(*this, Value);
 
-	if (Impl->PersistenceMgr)
+	if (IsValid(Impl->PersistenceMgr))
 	{
 		auto ss = Impl->PersistenceMgr->GetSceneSettings();
 		if (fabs(ss.qualityGoogleTiles - Value) > 1e-5)
@@ -477,7 +533,7 @@ void AITwinGoogle3DTileset::OnSceneLoaded(bool bSuccess)
 	Impl->OnSceneLoaded(bSuccess);
 }
 
-UITwinClippingCustomPrimitiveDataHelper* AITwinGoogle3DTileset::GetClippingHelper() const
+UITwinClipping3DTilesetHelper* AITwinGoogle3DTileset::GetClippingHelper() const
 {
 	return Impl->ClippingHelper.Get();
 }
@@ -485,9 +541,8 @@ UITwinClippingCustomPrimitiveDataHelper* AITwinGoogle3DTileset::GetClippingHelpe
 bool AITwinGoogle3DTileset::MakeClippingHelper()
 {
 	Impl->ClippingHelper =
-		TStrongObjectPtr<UITwinClippingCustomPrimitiveDataHelper>(NewObject<UITwinClippingCustomPrimitiveDataHelper>(this));
-	Impl->ClippingHelper->SetModelIdentifier(
-		std::make_pair(EITwinModelType::GlobalMapLayer, FString()));
+		TStrongObjectPtr<UITwinClipping3DTilesetHelper>(NewObject<UITwinClipping3DTilesetHelper>(this));
+	Impl->ClippingHelper->InitWith(FTilesetAccess(this));
 
 	// Connect mesh creation callback
 	this->SetLifecycleEventReceiver(Impl->ClippingHelper.Get());
@@ -521,6 +576,23 @@ AITwinDecorationHelper* AITwinGoogle3DTileset::FTilesetAccess::GetDecorationHelp
 	return nullptr;
 }
 
+UITwinClipping3DTilesetHelper* AITwinGoogle3DTileset::FTilesetAccess::GetClippingHelper() const
+{
+	if (!GoogleTileset.IsValid())
+		return nullptr;
+	return GoogleTileset->GetClippingHelper();
+}
+
+FBox AITwinGoogle3DTileset::FTilesetAccess::GetBoundingBox() const
+{
+	// The Google tileset is potentially infinite, but we can still approximate its bounding box from
+	// currently loaded tiles.
+	ACesium3DTileset* Tileset = GetMutableTileset();
+	if (!Tileset)
+		return {};
+	return UITwinUtilityLibrary::GetUnrealAxisAlignBoundingBox(Tileset);
+}
+
 const ACesium3DTileset* AITwinGoogle3DTileset::FTilesetAccess::GetTileset() const
 {
 	return GoogleTileset.Get();
@@ -533,4 +605,9 @@ ACesium3DTileset* AITwinGoogle3DTileset::FTilesetAccess::GetMutableTileset() con
 TUniquePtr<FITwinTilesetAccess> AITwinGoogle3DTileset::MakeTilesetAccess()
 {
 	return MakeUnique<FTilesetAccess>(this);
+}
+
+void AITwinGoogle3DTileset::SetCreditsWidgetDisplayScale(float InScale)
+{
+	Impl->SetCreditsWidgetDisplayScale(InScale);
 }

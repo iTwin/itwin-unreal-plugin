@@ -1,11 +1,11 @@
-// Copyright 2020-2024 CesiumGS, Inc. and Contributors
+// Copyright 2020-2025 CesiumGS, Inc. and Contributors
 
 #include "CesiumEditor.h"
-#include "Cesium3DTilesSelection/Tileset.h"
 #include "Cesium3DTileset.h"
 #include "Cesium3DTilesetCustomization.h"
 #include "CesiumCartographicPolygon.h"
 #include "CesiumCommands.h"
+#include "CesiumFeaturesMetadataViewer.h"
 #include "CesiumGeoreferenceCustomization.h"
 #include "CesiumGlobeAnchorCustomization.h"
 #include "CesiumIonPanel.h"
@@ -29,6 +29,10 @@
 #include "Styling/SlateStyle.h"
 #include "Styling/SlateStyleRegistry.h"
 
+THIRD_PARTY_INCLUDES_START
+#include <Cesium3DTilesSelection/Tileset.h>
+THIRD_PARTY_INCLUDES_END
+
 constexpr int MaximumOverlaysWithDefaultMaterial = 3;
 
 IMPLEMENT_MODULE(FCesiumEditorModule, CesiumEditor)
@@ -48,7 +52,7 @@ FString FCesiumEditorModule::InContent(
     const FString& RelativePath,
     const ANSICHAR* Extension) {
   static FString ContentDir = IPluginManager::Get()
-                                  .FindPlugin(TEXT("CesiumForUnreal"))
+                                  .FindPlugin(TEXT("ITwinForUnreal"))
                                   ->GetContentDir();
   return (ContentDir / RelativePath) + Extension;
 }
@@ -364,6 +368,11 @@ void FCesiumEditorModule::StartupModule() {
       OnCesiumRasterOverlayIonTroubleshooting.AddRaw(
           this,
           &FCesiumEditorModule::OnRasterOverlayIonTroubleshooting);
+
+  this->_featuresMetadataAddPropertiesSubscription =
+      OnCesiumFeaturesMetadataAddProperties.AddRaw(
+          this,
+          &FCesiumEditorModule::OnFeaturesMetadataAddProperties);
 }
 
 void FCesiumEditorModule::ShutdownModule() {
@@ -386,6 +395,12 @@ void FCesiumEditorModule::ShutdownModule() {
         this->_rasterOverlayIonTroubleshootingSubscription);
     this->_rasterOverlayIonTroubleshootingSubscription.Reset();
   }
+  if (this->_featuresMetadataAddPropertiesSubscription.IsValid()) {
+    OnCesiumFeaturesMetadataAddProperties.Remove(
+        this->_featuresMetadataAddPropertiesSubscription);
+    this->_featuresMetadataAddPropertiesSubscription.Reset();
+  }
+
   FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(TEXT("Cesium"));
   FCesiumCommands::Unregister();
   IModuleInterface::ShutdownModule();
@@ -475,6 +490,11 @@ void FCesiumEditorModule::OnTilesetIonTroubleshooting(
 void FCesiumEditorModule::OnRasterOverlayIonTroubleshooting(
     UCesiumRasterOverlay* pOverlay) {
   CesiumIonTokenTroubleshooting::Open(pOverlay, false);
+}
+
+void FCesiumEditorModule::OnFeaturesMetadataAddProperties(
+    ACesium3DTileset* pTileset) {
+  CesiumFeaturesMetadataViewer::Open(pTileset);
 }
 
 TSharedPtr<FSlateStyleSet> FCesiumEditorModule::GetStyle() { return StyleSet; }
@@ -701,6 +721,28 @@ AActor* SpawnActorWithClass(UClass* actorClass) {
 
   return NewActor;
 }
+
+/**
+ * Tries to spawn an actor with the given class, with all
+ * default parameters, in the current level of the edited world.
+ * Reselects the spawned actor to ensure that it is properly
+ * displayed in the editor viewport.
+ *
+ * @param actorClass The class
+ * @return The resulting actor, or `nullptr` if the actor
+ * could not be spawned.
+ */
+AActor* SpawnActorWithClassSelected(UClass* actorClass) {
+  AActor* pActor = SpawnActorWithClass(actorClass);
+  if (pActor && GEditor) {
+    GEditor->SelectActor(pActor, false, true);
+    GEditor->RedrawAllViewports();
+    GEditor->SelectActor(pActor, true, true);
+  }
+
+  return pActor;
+}
+
 } // namespace
 
 AActor* FCesiumEditorModule::GetCurrentLevelCesiumSunSky() {
@@ -728,7 +770,12 @@ AActor* FCesiumEditorModule::SpawnBlankTileset() {
 }
 
 AActor* FCesiumEditorModule::SpawnCartographicPolygon() {
-  return SpawnActorWithClass(ACesiumCartographicPolygon::StaticClass());
+  ACesiumCartographicPolygon* pActor = static_cast<ACesiumCartographicPolygon*>(
+      SpawnActorWithClassSelected(ACesiumCartographicPolygon::StaticClass()));
+  if (pActor) {
+    pActor->ResetSplineAndCenterInEditorViewport();
+  }
+  return pActor;
 }
 
 UClass* FCesiumEditorModule::GetDynamicPawnBlueprintClass() {
@@ -737,12 +784,12 @@ UClass* FCesiumEditorModule::GetDynamicPawnBlueprintClass() {
   if (!pResult) {
     pResult = LoadClass<AActor>(
         nullptr,
-        TEXT("/CesiumForUnreal/DynamicPawn.DynamicPawn_C"));
+        TEXT("/ITwinForUnreal/DynamicPawn.DynamicPawn_C"));
     if (!pResult) {
       UE_LOG(
           LogCesiumEditor,
           Warning,
-          TEXT("Could not load /CesiumForUnreal/DynamicPawn.DynamicPawn_C"));
+          TEXT("Could not load /ITwinForUnreal/DynamicPawn.DynamicPawn_C"));
     }
   }
 

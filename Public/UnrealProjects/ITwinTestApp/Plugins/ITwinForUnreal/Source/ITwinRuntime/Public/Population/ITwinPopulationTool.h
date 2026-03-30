@@ -6,7 +6,6 @@
 |
 +--------------------------------------------------------------------------------------*/
 
-
 #pragma once
 
 #include <Population/ITwinPopulationToolEnum.h>
@@ -16,13 +15,14 @@
 #include <Engine/HitResult.h>
 #include <Containers/Array.h>
 
-#include <BeUtils/SplineSampling/SplineSampling.h>
-#include <Components/SplineComponent.h>
+#include <ITwinRuntime/Private/Compil/BeforeNonUnrealIncludes.h>
+#	include <BeUtils/SplineSampling/SplineSampling.h>
+#include <ITwinRuntime/Private/Compil/AfterNonUnrealIncludes.h>
 
 #include "ITwinPopulationTool.generated.h"
 
 class UObject;
-class AStaticMeshActor;
+class USplineComponent;
 class AITwinPopulation;
 class AITwinDecorationHelper;
 class AITwinSplineHelper;
@@ -142,6 +142,10 @@ public:
 	/// Pre-load the given asset in a population.
 	AITwinPopulation* PreLoadPopulation(const FString& AssetPath);
 
+	/// Switch the tool usage to cutout mode on or off.
+	UFUNCTION(Category = "iTwin", BlueprintCallable)
+	void SetUsedOnCutout(bool bForCutout);
+
 	/// Returns whether some instances can be added - ie. there is one (or more) selected assets.
 	/// \param bOutAllowBrush Will be set to true if the paint brush is compatible with the selection.
 	bool IsAdditionOfInstancesAllowed(bool& bOutAllowBrush) const;
@@ -150,9 +154,6 @@ public:
 
 	bool GetForcePerpendicularToSurface() const;
 	void SetForcePerpendicularToSurface(bool b);
-
-	bool GetEnableOnRealityData() const;
-	void SetEnableOnRealityData(bool b);
 
 	bool GetIsEditingBrushSize() const;
 	void SetIsEditingBrushSize(bool b);
@@ -176,12 +177,26 @@ public:
 	bool GetRestrictPickingOnClippingPrimitives() const;
 	void RestrictPickingOnClippingPrimitives(bool bRestrictPickingOnClipping = true);
 
+	bool IsRotationCenterPickingMode() const;
+	void SetRotationCenterPickingMode(bool b);
+
 	/// Overridden from AITwinInteractiveTool
 	virtual TUniquePtr<ISelectionRecord> MakeSelectionRecord() const override;
 	virtual bool HasSameSelection(ISelectionRecord const& Selection) const override;
 	virtual bool RestoreSelection(ISelectionRecord const& Selection) override;
 	virtual TUniquePtr<IItemBackup> MakeSelectedItemBackup() const override;
 	virtual bool RestoreItem(IItemBackup const& ItemBackup) override;
+
+	/// Undo/Redo of brushing.
+	class ITWINRUNTIME_API IBrushUndoEntry
+	{
+	public:
+		virtual ~IBrushUndoEntry();
+		virtual void Undo(AITwinPopulationTool& Tool) = 0;
+		virtual void Redo(AITwinPopulationTool& Tool) = 0;
+		virtual FString GetDescription() const = 0;
+	};
+	TUniquePtr<IBrushUndoEntry> MakeBrushUndoEntry();
 
 protected:
 	/// Overridden from AActor
@@ -190,6 +205,8 @@ protected:
 
 	/// Overridden from AITwinInteractiveTool
 	virtual bool IsPopulationToolImpl() const override { return true; }
+	virtual void SetUsedOnCutoutPrimitiveImpl(bool bForCutout) override;
+	virtual bool IsUsedOnCutoutPrimitiveImpl() const override;
 	virtual void SetEnabledImpl(bool bValue) override;
 	virtual bool IsEnabledImpl() const override;
 	virtual bool DoMouseClickActionImpl() override;
@@ -202,6 +219,10 @@ protected:
 	virtual void ResetToDefaultImpl() override;
 	virtual bool StartInteractiveCreationImpl() override;
 	virtual bool IsInteractiveCreationModeImpl() const override;
+	virtual void AbortInteractiveCreationImpl(bool bTriggeredFromITS) override;
+	virtual void ValidateInteractiveCreationImpl(bool bTriggeredFromITS) override;
+	virtual bool ShowOnlyTranslationZGizmoImpl() const override;
+	virtual bool IsCompatibleWithGizmoImpl() const override;
 
 private:
 	class FImpl;

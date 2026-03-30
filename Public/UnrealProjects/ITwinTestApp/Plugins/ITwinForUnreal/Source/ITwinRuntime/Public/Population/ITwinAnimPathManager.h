@@ -11,6 +11,7 @@
 #include <ITwinRuntime/Private/Compil/BeforeNonUnrealIncludes.h>
 #	include <SDK/Core/Tools/Tools.h>
 #	include <SDK/Core/Visualization/Instance.h>
+#	include <SDK/Core/Visualization/PathAnimation.h>
 #include <ITwinRuntime/Private/Compil/AfterNonUnrealIncludes.h>
 
 #include <GameFramework/Actor.h>
@@ -20,14 +21,13 @@ class AITwinSplineHelper;
 class AITwinPopulation;
 namespace AdvViz::SDK
 {
-	class IAnimationPathInfo;
 	class IPathAnimator;
 }
 class BakedKeyFrames;
 
-typedef std::shared_ptr<AdvViz::SDK::IAnimationPathInfo> SharedPathInfo;
-typedef std::shared_ptr<AdvViz::SDK::IPathAnimator> SharedPathAnimator;
-typedef std::shared_ptr<AdvViz::SDK::IInstance> SharedInstance;
+typedef AdvViz::SDK::IAnimationPathInfoPtr SharedPathInfo;
+typedef AdvViz::SDK::IPathAnimatorPtr SharedPathAnimator;
+typedef AdvViz::SDK::IInstancePtr SharedInstance;
 
 class InstanceWithSplinePathExt : public AdvViz::SDK::Tools::Extension, public AdvViz::SDK::Tools::TypeId<InstanceWithSplinePathExt>, public std::enable_shared_from_this<InstanceWithSplinePathExt>
 {
@@ -64,8 +64,8 @@ public:
 
 	void MarkForUpdate(AITwinPopulation* Population, int32 InstanceIdx);
 
-	SharedPathInfo GetAnimPathInfo(AITwinPopulation* Population, int32 InstanceIdx);
-	SharedPathInfo AddNewAnimPathInfo(AITwinPopulation* Population, int32 InstanceIdx, const AITwinSplineHelper* AnimSpline);
+	AdvViz::SDK::IAnimationPathInfoPtr GetAnimPathInfo(AITwinPopulation* Population, int32 InstanceIdx);
+	AdvViz::SDK::IAnimationPathInfoPtr AddNewAnimPathInfo(AITwinPopulation* Population, int32 InstanceIdx, const AITwinSplineHelper* AnimSpline);
 	void RemoveAnimPathInfo(AITwinPopulation* Population, int32 InstanceIdx);
 
 	//AITwinSplineHelper* GetSpline(AITwinPopulation* Population, int32 InstanceIdx);

@@ -143,6 +143,7 @@ if useCoverage:
 			args['coverageToolExe'],
 			'--export_type', 'html:%s'%os.path.normpath(outDir).replace('/', '\\'),
 			'--export_type', 'binary:%s'%os.path.normpath(os.path.join(outDir, 'report.binary')).replace('/', '\\'),
+			'--export_type', 'cobertura:%s'%os.path.normpath(os.path.join(outDir, 'report.cobertura.xml')).replace('/', '\\'),
 			# Add the test executable in the covered module list, so that inline function calls are correctly counted.
 			'--modules', exePath.replace('/', '\\'),
 		]+['--sources=%s'%os.path.normpath(x).replace('/', '\\') for x in args.get('coverageSources', [])]

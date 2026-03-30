@@ -55,6 +55,12 @@ public:
 		VisibleAnywhere)
 	FString ScheduleName;
 
+	/// When both a Legacy and a NextGen schedules are available for this component's iModel actor,
+	/// we cannot use both so we have to choose.
+	UPROPERTY(Category = "Schedules Querying",
+		EditAnywhere)
+	bool bFavorNextGenSchedule = false;
+
 	/// Update the remote connection details with the current URL, authorization token, etc. from the outer
 	/// iTwin's ServerConnection data
 	UFUNCTION(Category = "Schedules Querying",
@@ -106,6 +112,12 @@ public:
 	UFUNCTION(Category = "Schedules Querying",
 		BlueprintCallable)
 	bool IsAvailable() const;
+
+	/// Returns true if a 4D Schedule is available as a "next-gen" schedule (version >= 10).
+	/// @see See also bFavorNextGenSchedule
+	UFUNCTION(Category = "Schedules Querying",
+		BlueprintCallable)
+	bool IsAvailableAsNextGenSchedule() const;
 
 	/// When IsAvailable() returns true, tells whether there has been an error to any request, ie.
 	/// a request that remained unsuccessful, even after the allocated amount of retries. Errors during
@@ -180,15 +192,7 @@ public:
 		EditAnywhere)
 	bool bStream4DFromAPIM = true;
 
-	/// Query all of the 4D Schedule's data at once as soon as the Schedule task list is known for an iModel.
-	/// This will avoid unpleasant transient display states when receiving new Cesium tiles (typically those
-	/// of finer LOD). Ignored when bDebugWithDummyTimelines is true.
-	/// DISCLAIMER: setting false here has not been tested for a very long time, because of the much better
-	/// performance of defaulting to 'true'. It is mostly kept in case incremental schedules updates in
-	/// the future requires us to revert back to false here (or more likely, switch to an hybrid mode with
-	/// initial pre-fetching + incremental refresh queries which may benefit a lot from the codepaths used
-	/// by the 'false' mode of this flag. Note that a preferred alternative for efficient schedules streaming
-	/// would be to integrate the 4D data directly into the "3D" Tiles to make them "4D Tiles".
+	/// DEPRECATED - leave "true".
 	UPROPERTY(Category = "Schedules Querying|Advanced", meta = (DisplayName = "Prefetch Whole Schedule"),
 		EditAnywhere)
 	bool bPrefetchAllElementAnimationBindings = true;
@@ -411,10 +415,8 @@ public:
 	#endif
 	void TickSchedules(float DeltaTime);
 	void OnVisibilityChanged(FITwinSceneTile& SceneTile, bool bVisible);
+	void OnQueryLoopStatusChange(bool bQueryLoopIsRunning, bool logFullScheduleStats = true);
 
-	// Must be marked UFUNCTION to be bound to a delegate...
-	UFUNCTION()
-	void OnQueryLoopStatusChange(bool bQueryLoopIsRunning);
 	UFUNCTION()
 	void LogStatisticsUponFullScheduleReceived(FDateTime StartTime, FDateTime EndTime);
 

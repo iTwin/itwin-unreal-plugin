@@ -15,10 +15,13 @@
 #include <Containers/Array.h>
 #include <Containers/Map.h>
 #include <GameFramework/Actor.h>
+#include <Misc/EnumRange.h>
 #include <Templates/PimplPtr.h>
 
-#include <glm/ext/matrix_double3x3.hpp>
-#include <glm/ext/vector_double3.hpp>
+#include <ITwinRuntime/Private/Compil/BeforeNonUnrealIncludes.h>
+	#include <glm/ext/matrix_double3x3.hpp>
+	#include <glm/ext/vector_double3.hpp>
+#include <ITwinRuntime/Private/Compil/AfterNonUnrealIncludes.h>
 
 #include <memory>
 #include <optional>
@@ -26,16 +29,17 @@
 #include "ITwinClippingTool.generated.h"
 
 
-class AStaticMeshActor;
 class UMaterialParameterCollection;
 class UMaterialParameterCollectionInstance;
 class ACesium3DTileset;
 class FITwinTilesetAccess;
 class UITwinClippingMPCHolder;
+class UCesiumPolygonRasterOverlay;
 
 class AITwinPopulation;
 class AITwinPopulationTool;
 enum class EITwinInstantiatedObjectType : uint8;
+enum class ETransformationMode : uint8;
 
 namespace AdvViz::SDK
 {
@@ -52,6 +56,8 @@ enum class EITwinClippingPrimitiveType : uint8
 
 	Count UMETA(Hidden)
 };
+ENUM_RANGE_BY_COUNT(EITwinClippingPrimitiveType, EITwinClippingPrimitiveType::Count);
+
 
 /// Clipping effects usually work both at the tileset level (tile exclusion) and the
 /// shader level (to clip more precisely inside a given tile).
@@ -116,17 +122,42 @@ public:
 	UPROPERTY()
 	FSplinePointMovedEvent SplinePointMovedEvent;
 
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FActivationEvent, bool, bActivated);
+	UPROPERTY()
+	FActivationEvent ActivationEvent;
+
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FInteractiveCreationAbortedEvent, bool, bTriggeredFromITS);
+	UPROPERTY()
+	FInteractiveCreationAbortedEvent InteractiveCreationAbortedEvent;
+
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FEffectModifiedEvent, EITwinClippingPrimitiveType, EffectType, int32, EffectIndex, bool, bTriggeredFromITS);
+	UPROPERTY()
+	FEffectModifiedEvent EffectModifiedEvent;
+
 
 	AITwinClippingTool();
+
+	virtual void Tick(float DeltaTime) override;
+
+	/// Connect the Population Tool (mandatory to manage box/plane effects).
+	void ConnectPopulationTool(AITwinPopulationTool* PopulationTool);
+
+	/// Connect the Spline Tool (mandatory to manage cutout polygon effects).
+	void ConnectSplineTool(class AITwinSplineTool* SplineTool);
 
 	/// Register tileset in the clipping system (for tile excluder mechanism).
 	void RegisterTileset(const FITwinTilesetAccess& TilesetAccess);
 
-	/// Pre-load populations used for cutout effects.
-	uint32 PreLoadClippingPrimitives(AITwinPopulationTool& PopulationTool);
+	void OnModelRemoved(const ITwin::ModelLink& ModelIdentifier);
 
 	/// Initiate the interactive creation of a new effect.
 	bool StartInteractiveEffectCreation(EITwinClippingPrimitiveType Type);
+
+	/// Abort current cutout effect creation, if any.
+	void AbortInteractiveCreation(bool bTriggeredFromITS);
+
+	/// Deactivate the cutout tool. This also aborts any cutout creation, if any.
+	void Deactivate();
 
 	/// For first prototype, the clipping primitives are created/modified from the population tool, as it
 	/// is already compatible with gizmo edition...
@@ -134,7 +165,7 @@ public:
 
 	/// Update the clipping information in all tile excluders matching the modified instance, as well as in
 	/// the material parameter collection.
-	void OnClippingInstanceModified(EITwinInstantiatedObjectType ObjectType, int32 InstanceIndex);
+	void OnClippingInstanceModified(EITwinInstantiatedObjectType ObjectType, int32 InstanceIndex, bool bTriggeredFromITS);
 
 	/// Called before some clipping instances are actually removed.
 	void BeforeRemoveClippingInstances(EITwinInstantiatedObjectType ObjectType, const TArray<int32>& InstanceIndices);
@@ -158,7 +189,10 @@ public:
 	void SetInvertEffect(EITwinClippingPrimitiveType Type, int32 PrimitiveIndex, bool bInvert);
 
 	/// Select the effect of given type and index.
-	void SelectEffect(EITwinClippingPrimitiveType Type, int32 PrimitiveIndex);
+	/// \param bEnterIsolationMode When true, we enter isolation mode, by hiding all the other proxies.
+	/// \return True if the effect could be selected.
+	bool SelectEffect(EITwinClippingPrimitiveType Type, int32 PrimitiveIndex,
+		bool bEnterIsolationMode = true);
 
 	/// Zoom in on the effect of given type and index.
 	void ZoomOnEffect(EITwinClippingPrimitiveType Type, int32 PrimitiveIndex);
@@ -167,7 +201,9 @@ public:
 	using FEffectIdentifier = std::pair<EITwinClippingPrimitiveType, int32>;
 	std::optional<FEffectIdentifier> GetSelectedEffect() const;
 	/// Reset current selection to none.
-	void DeSelectAll();
+	/// \param bExitIsolationMode When true, and if there was currently an isolation mode, we exit it by
+	/// restoring the normal visibility of effect proxies.
+	void DeSelectAll(bool bExitIsolationMode = true);
 
 	/// Return the index of the selected polygon point, if any (if a cutout polygon point is selected) and if
 	/// yes, fills its coordinates (latitude and longitude).
@@ -176,23 +212,41 @@ public:
 	/// Modify the location of the selected cutout polygon point, if any.
 	void SetPolygonPointLocation(int32 PolygonIndex, int32 PointIndex, double Latitude, double Longitude) const;
 
+	bool GetEffectTransform(EITwinClippingPrimitiveType EffectType, int32 Index,
+		FTransform& OutTransform, double& OutLatitude, double& OutLongitude, double& OutElevation) const;
+	bool GetSelectedEffectTransform(FTransform& OutTransform, double& OutLatitude, double& OutLongitude, double& OutElevation) const;
+	void SetEffectLocation(EITwinClippingPrimitiveType EffectType, int32 Index,
+		double InLatitude, double InLongitude, double InElevation,
+		bool bTriggeredFromITS) const;
+	void SetEffectRotation(EITwinClippingPrimitiveType EffectType, int32 Index,
+		double InRotX, double InRotY, double InRotZ,
+		bool bTriggeredFromITS) const;
+
+	bool RecenterPlaneProxy(int32 PlaneIndex);
+
 	/// Called when we activate/deactivate picking of clipping effects in the viewport.
 	void OnActivatePicking(bool bActivate);
 	/// Try to select a cut-out effect from a mouse click event.
 	bool DoMouseClickPicking(bool& bOutSelectionGizmoNeeded);
 
-	//! Change the view camera so that the edited primitives can be edited from top.
+	//! Change the view camera so that the cutout polygons can be edited from top.
+	//! If SpecificSpline is provided, only the corresponding polygon will be framed.
 	UFUNCTION(Category = "iTwinUX", BlueprintCallable)
-	void OnOverviewCamera();
+	void OnOverviewCamera(AITwinSplineHelper const* SpecificSpline = nullptr);
+
+	//! Set the transformation mode (for selection gizmo).
+	void SetTransformationMode(ETransformationMode Mode);
 
 	/// Return whether the given effect is enabled.
 	bool IsEffectEnabled(EITwinClippingPrimitiveType EffectType, int32 Index) const;
 	/// Switches the given effect on or off.
 	void EnableEffect(EITwinClippingPrimitiveType EffectType, int32 Index, bool bInEnabled);
+	/// Enable or disable all effects.
+	void EnableAllEffects(bool bInEnabled);
 
 	/// Return whether the given effect should influence the given model.
 	bool ShouldEffectInfluenceModel(EITwinClippingPrimitiveType EffectType, int32 EffectIndex,
-		const ITwin::ModelLink& ModelIndentifier) const;
+		const ITwin::ModelLink& ModelIdentifier) const;
 
 	/// Return whether the given effect should influence the given model type globally.
 	bool ShouldEffectInfluenceFullModelType(EITwinClippingPrimitiveType EffectType, int32 EffectIndex,
@@ -215,6 +269,13 @@ public:
 	UFUNCTION()
 	void OnSplineHelperRemoved(AITwinSplineHelper* SplineBeingRemoved);
 
+	UFUNCTION()
+	void OnItemCreationAbortedInTool(bool bTriggeredFromITS);
+
+	/// Returns whether a cutout effect is excluding (cutting) the given position, for the given type of layer.
+	bool ShouldCutOut(FVector const& AbsoluteWorldPosition, ITwin::ModelLink const& ModelIdentifier,
+		UCesiumPolygonRasterOverlay const* RasterOverlay) const;
+
 
 #if WITH_EDITOR
 
@@ -232,88 +293,8 @@ public:
 
 
 private:
-	/// Retrieve the MPC for clipping.
-	UMaterialParameterCollection* GetMPCClipping();
-	UMaterialParameterCollectionInstance* GetMPCCLippingInstance();
+	void BroadcastSelection();
 
-	/// Update the given tileset by activating the different clipping effects to it, and deactivating any
-	/// effect that should no longer affect it.
-	void UpdateTileset(FITwinTilesetAccess const& TilesetAccess,
-		std::optional<EITwinClippingPrimitiveType> const& SpecificPrimitiveType = std::nullopt);
-	/// Update clipping effects in all tilesets in the scene.
-	void UpdateAllTilesets(std::optional<EITwinClippingPrimitiveType> const& SpecificPrimitiveType = std::nullopt);
-
-	struct FTilesetUpdateInfo;
-	void UpdateTileset_Planes(ACesium3DTileset& Tileset, ITwin::ModelLink const& ModelIdentifier,
-		FTilesetUpdateInfo& UpdateInfo);
-	void UpdateTileset_Boxes(ACesium3DTileset& Tileset, ITwin::ModelLink const& ModelIdentifier,
-		FTilesetUpdateInfo& UpdateInfo);
-	void UpdateTileset_Polygons(FITwinTilesetAccess const& TilesetAccess,
-		FTilesetUpdateInfo& UpdateInfo);
-
-	bool UpdateClippingPrimitiveFromUEInstance(EITwinClippingPrimitiveType Type, int32 InstanceIndex);
-
-	FITwinClippingInfoBase& GetMutableClippingEffect(EITwinClippingPrimitiveType Type, int32 Index);
-
-	const FITwinClippingInfoBase& GetClippingEffect(EITwinClippingPrimitiveType Type, int32 Index) const;
-
-	template <typename Func>
-	void VisitClippingPrimitivesOfType(EITwinClippingPrimitiveType Type, Func const& Fun);
-
-	template <EITwinClippingPrimitiveType PrimitiveType>
-	bool TPreLoadClippingPrimitive(TWeakObjectPtr<AITwinPopulation>& ClippingPopulation,
-		AITwinPopulationTool& PopulationTool);
-
-	template <EITwinClippingPrimitiveType PrimitiveType>
-	bool TStartInteractivePrimitiveInstanceCreation();
-
-	template <typename PrimitiveInfo, EITwinClippingPrimitiveType PrimitiveType>
-	bool TAddClippingPrimitive(TArray<PrimitiveInfo>& ClippingInfos, int32 InstanceIndex);
-
-	template <typename PrimitiveInfo, EITwinClippingPrimitiveType PrimitiveType>
-	void TUpdateAllClippingPrimitives(TArray<PrimitiveInfo>& ClippingInfos);
-
-	inline
-	const TWeakObjectPtr<AITwinPopulation>& GetClippingEffectPopulation(EITwinClippingPrimitiveType Type) const;
-
-	/// Update the plane equation in all tile excluders matching the modified actor, and update it in the
-	/// material parameter collection.
-	bool UpdateClippingPlaneEquationFromUEInstance(int32 InstanceIndex);
-
-	/// Retrieve the plane equation from the given instance.
-	bool GetPlaneEquationFromUEInstance(FVector3f& OutPlaneOrientation, float& OutPlaneW, int32 InInstanceIndex) const;
-
-	void UpdateAllClippingPlanes();
-
-	/// Update the box 3D information in all tile excluders created for the clipping box, as well as in the
-	/// material parameter collection.
-	bool UpdateClippingBoxFromUEInstance(int32 InstanceIndex);
-
-	/// Retrieve the box 3D information from the given instance.
-	bool GetBoxTransformInfoFromUEInstance(glm::dmat3x3& OutMatrix, glm::dvec3& OutTranslation, int32 InInstanceIndex) const;
-
-	void UpdateAllClippingBoxes();
-
-	bool EncodeFlippingInMPC(EITwinClippingPrimitiveType Type);
-
-	template <typename PrimitiveInfo, EITwinClippingPrimitiveType PrimitiveType>
-	bool TEncodeFlippingInMPC(TArray<PrimitiveInfo> const& ClippingInfos);
-
-
-	void UpdatePolygonInfosFromScene();
-	bool RegisterCutoutSpline(AITwinSplineHelper* SplineHelper);
-
-	/// Change all effect helpers visibility in the viewport (without deactivating them).
-	/// This affects translucent boxes/planes as well as spline meshes displayed for cutout polygons.
-	void SetAllEffectHelpersVisibility(bool bVisibleInGame);
-	void HideAllEffectHelpers() { SetAllEffectHelpersVisibility(false); }
-	/// Show/Hide effect helpers for the given cutout type.
-	void SetEffectVisibility(EITwinClippingPrimitiveType EffectType, bool bVisibleInGame);
-
-	/// Update the instance properties to manage persistence.
-	void UpdateAVizInstanceProperties(EITwinClippingPrimitiveType Type, int32 InstanceIndex) const;
-	/// Apply properties from the loaded instance.
-	void UpdateClippingPropertiesFromAVizInstance(EITwinClippingPrimitiveType Type, int32 InstanceIndex);
 
 private:
 	UPROPERTY(Category = "iTwin",
@@ -321,17 +302,10 @@ private:
 	UITwinClippingMPCHolder* ClippingMPCHolder = nullptr;
 
 	UPROPERTY()
-	TArray<FITwinClippingPlaneInfo> ClippingPlaneInfos;
-	UPROPERTY()
 	TWeakObjectPtr<AITwinPopulation> ClippingPlanePopulation;
 
 	UPROPERTY()
-	TArray<FITwinClippingBoxInfo> ClippingBoxInfos;
-	UPROPERTY()
 	TWeakObjectPtr<AITwinPopulation> ClippingBoxPopulation;
-
-	UPROPERTY()
-	TArray<FITwinClippingCartographicPolygonInfo> ClippingPolygonInfos;
 
 	class FImpl;
 	TPimplPtr<FImpl> Impl;

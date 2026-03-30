@@ -63,6 +63,32 @@ void FITwinTracingHelper::AddIgnoredComponents(const TArray<UPrimitiveComponent*
 	Impl->QueryParams.AddIgnoredComponents(ComponentsToIgnore);
 }
 
+/*static*/
+bool FITwinTracingHelper::GetRayFromMousePosition(UWorld const* World,
+	FVector2D& MousePosition, FVector& OutTraceStart, FVector& OutTraceDirection,
+	std::optional<FVector2D> const& CustomMousePosition /*= std::nullopt*/)
+{
+	if (!World)
+		return false;
+	APlayerController* PlayerController = World->GetFirstPlayerController();
+	if (!PlayerController)
+		return false;
+	ULocalPlayer* LocalPlayer = PlayerController->GetLocalPlayer();
+	if (!LocalPlayer || !LocalPlayer->ViewportClient)
+		return false;
+	if (CustomMousePosition)
+		MousePosition = *CustomMousePosition;
+	else if (!LocalPlayer->ViewportClient->GetMousePosition(MousePosition))
+		return false;
+	FVector WorldLoc, WorldDir;
+	if (!PlayerController->DeprojectScreenPositionToWorld(MousePosition.X, MousePosition.Y,
+		WorldLoc, WorldDir))
+		return false;
+	OutTraceStart = WorldLoc;
+	OutTraceDirection = WorldDir;
+	return true;
+}
+
 ITwinElementID FITwinTracingHelper::VisitElementsUnderCursor(UWorld const* World,
 	FVector2D& MousePosition, FVector& OutTraceStart, FVector& OutTraceEnd,
 	std::function<void(FHitResult const&, std::unordered_set<ITwinElementID>&)>&& HitResultHandler,
@@ -70,28 +96,15 @@ ITwinElementID FITwinTracingHelper::VisitElementsUnderCursor(UWorld const* World
 	std::optional<float> const& CustomTraceExtentInMeters /*= std::nullopt*/,
 	std::optional<FVector2D> const& CustomMousePosition /*= std::nullopt*/)
 {
-	if (!World)
+	FVector TraceStart, TraceDirection;
+	if (!GetRayFromMousePosition(World, MousePosition, TraceStart, TraceDirection, CustomMousePosition))
+	{
 		return ITwin::NOT_ELEMENT;
-	APlayerController* PlayerController = World->GetFirstPlayerController();
-	if (!PlayerController)
-		return ITwin::NOT_ELEMENT;
-	ULocalPlayer* LocalPlayer = PlayerController->GetLocalPlayer();
-	if (!LocalPlayer || !LocalPlayer->ViewportClient)
-		return ITwin::NOT_ELEMENT;
-	if (CustomMousePosition)
-		MousePosition = *CustomMousePosition;
-	else if (!LocalPlayer->ViewportClient->GetMousePosition(MousePosition))
-		return ITwin::NOT_ELEMENT;
-	FVector WorldLoc, WorldDir;
-	if (!PlayerController->DeprojectScreenPositionToWorld(MousePosition.X, MousePosition.Y,
-		WorldLoc, WorldDir))
-		return ITwin::NOT_ELEMENT;
-
+	}
 	FVector::FReal const TraceExtentInMeters = static_cast<FVector::FReal>(
 		CustomTraceExtentInMeters.value_or(1e6f)); // 1.000 km by default
 	FVector::FReal const TraceExtent = TraceExtentInMeters * 100;
-	FVector const TraceStart = WorldLoc;
-	FVector const TraceEnd = WorldLoc + WorldDir * TraceExtent;
+	FVector const TraceEnd = TraceStart + TraceDirection * TraceExtent;
 
 	bool const bHasHits = Impl->LineTraceMulti(World, TraceStart, TraceEnd);
 
@@ -134,7 +147,7 @@ bool FITwinTracingHelper::PickVisibleElement(FHitResult const& HitResult, AITwin
 	FCesiumMetadataValue const* const ElemIdFound = Table.Find(ITwinCesium::Metada::ELEMENT_NAME);
 	if (ElemIdFound != nullptr)
 	{
-		EltID = ITwinElementID(FCesiumMetadataValueAccess::GetUnsignedInteger64(
+		EltID = ITwinElementID(CesiumMetadataValueAccess::GetUnsignedInteger64(
 			*ElemIdFound, ITwin::NOT_ELEMENT.value()));
 	}
 	OutEltID = EltID;

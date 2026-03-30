@@ -129,32 +129,45 @@ namespace
 		// on any tileset transformation change in the UI and put it on the iModel instead (or discard)
 		return IModel->GetTileset()->GetTransform();
 	}
+
+	inline TSoftObjectPtr<ACesiumGeoreference> GetGeoreferenceForIModel(const AITwinIModel* IModel)
+	{
+		const ACesium3DTileset* Tileset = IModel ? IModel->GetTileset() : nullptr;
+		if (Tileset)
+		{
+			return Tileset->GetGeoreference();
+		}
+		TObjectIterator<APlayerController> Itr;
+		if (!ensure(Itr))
+		{
+			return nullptr;
+		}
+		return Cast<ACesiumGeoreference>(UGameplayStatics::GetActorOfClass(
+				Itr->GetWorld(), ACesiumGeoreference::StaticClass()));
+	}
 }
 
 FTransform UITwinUtilityLibrary::GetEcefToUnrealTransform(const AITwinIModel* IModel,
 	FTransform& EcefToUntransformedIModelInUE)
 {
 	// [ECEF space]->[Unreal space].
-	TObjectIterator<APlayerController> Itr;
-	const ACesium3DTileset* Tileset = IModel ? IModel->GetTileset() : nullptr;
-	const auto Georeference = Tileset ? Tileset->GetGeoreference() :
-		Cast<ACesiumGeoreference>(UGameplayStatics::GetActorOfClass(
-			Itr->GetWorld(), ACesiumGeoreference::StaticClass()));
-	EcefToUntransformedIModelInUE = UKismetMathLibrary::Conv_MatrixToTransform(
-		Georeference->ComputeEarthCenteredEarthFixedToUnrealTransformation());
+	const auto Georeference = GetGeoreferenceForIModel(IModel);
+	EcefToUntransformedIModelInUE = Georeference
+		? UKismetMathLibrary::Conv_MatrixToTransform(
+			Georeference->ComputeEarthCenteredEarthFixedToUnrealTransformation())
+		: FTransform::Identity;
 	return EcefToUntransformedIModelInUE * IModelTilesetToUnreal(IModel);
 }
 
 FTransform UITwinUtilityLibrary::GetUnrealToEcefTransform(const AITwinIModel* IModel)
 {
-	TObjectIterator<APlayerController> Itr;
-	const ACesium3DTileset* Tileset = IModel ? IModel->GetTileset() : nullptr;
-	const auto Georeference = Tileset ? Tileset->GetGeoreference() :
-		Cast<ACesiumGeoreference>(UGameplayStatics::GetActorOfClass(
-			Itr->GetWorld(), ACesiumGeoreference::StaticClass()));
+	const auto Georeference = GetGeoreferenceForIModel(IModel);
+	const FTransform UnrealToECEF = Georeference
+		? UKismetMathLibrary::Conv_MatrixToTransform(
+			Georeference->ComputeUnrealToEarthCenteredEarthFixedTransformation())
+		: FTransform::Identity;
 	return UITwinUtilityLibrary::Inverse(IModelTilesetToUnreal(IModel))
-		* UKismetMathLibrary::Conv_MatrixToTransform(
-			Georeference->ComputeUnrealToEarthCenteredEarthFixedTransformation());
+		* UnrealToECEF;
 }
 
 FTransform UITwinUtilityLibrary::StandardizeAndFixAngles(FTransform Transform)
@@ -266,13 +279,15 @@ void UITwinUtilityLibrary::GetIModelBaseFromUnrealTransform(const AITwinIModel* 
 void UITwinUtilityLibrary::GetSavedViewFrustumFromUnrealTransform(const AITwinIModel* IModel, 
 	const FTransform& Transform, FSavedView& SavedView)
 {
-	//0. Get current camera positon/direction
+	//0. Get current camera position/direction
 	TObjectIterator<APlayerController> Itr;
-	ensure(*Itr != nullptr);
-	UWorld* World = IModel ? IModel->GetWorld() : Itr->GetWorld();
-	APlayerController const* PlayerController = *Itr;
-	if (!PlayerController)
+	if (!ensure(Itr))
 		return;
+	APlayerController const* PlayerController = *Itr;
+	if (!ensure(PlayerController))
+		return;
+	UWorld* World = IModel ? IModel->GetWorld() : PlayerController->GetWorld();
+
 	FVector CamPosition = Transform.GetTranslation();
 	FVector CamDir = Transform.GetUnitAxis(EAxis::X);
 	ULocalPlayer* LocalPlayer = PlayerController->GetLocalPlayer();
@@ -329,9 +344,10 @@ namespace
 	APawn const* GetPlayerControllerPawn()
 	{
 		TObjectIterator<APlayerController> Itr;
-		ensure(*Itr != nullptr);
+		if (!ensure(Itr))
+			return nullptr;
 		APlayerController const* Controller = *Itr;
-		APawn const* Pawn = Controller ? Controller->GetPawn() : nullptr;
+		APawn const* Pawn = ensure(Controller != nullptr) ? Controller->GetPawn() : nullptr;
 		return Pawn;
 	}
 }

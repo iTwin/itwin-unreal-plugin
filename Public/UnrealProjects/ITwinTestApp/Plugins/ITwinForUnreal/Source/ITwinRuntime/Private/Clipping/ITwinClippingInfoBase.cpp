@@ -9,6 +9,7 @@
 #include <Clipping/ITwinClippingInfoBase.h>
 
 #include <Clipping/ITwinTileExcluderBase.h>
+#include <ITwinTilesetAccess.h>
 
 #include <Compil/BeforeNonUnrealIncludes.h>
 #	include <BeHeaders/Compil/EnumSwitchCoverage.h>
@@ -114,7 +115,11 @@ bool FITwinClippingInfoBase::ShouldInfluenceFullModelType(EITwinModelType ModelT
 void FITwinClippingInfoBase::SetInfluenceFullModelType(EITwinModelType ModelType, bool bAll)
 {
 	FITwinClippingInfluenceInfo& InfluenceInfo = MutableInfluenceInfo(ModelType);
-	InfluenceInfo.bInfluenceAll = bAll;
+	if (InfluenceInfo.bInfluenceAll != bAll)
+	{
+		InfluenceInfo.bInfluenceAll = bAll;
+		InvalidateInfluenceBoundingBox();
+	}
 }
 
 void FITwinClippingInfoBase::SetInfluenceSpecificModel(const ITwin::ModelLink& ModelIdentifier,	bool bInfluence)
@@ -133,6 +138,7 @@ void FITwinClippingInfoBase::SetInfluenceSpecificModel(const ITwin::ModelLink& M
 	{
 		InfluenceInfo.SpecificIDs.Remove(ModelIdentifier.second);
 	}
+	InvalidateInfluenceBoundingBox();
 }
 
 void FITwinClippingInfoBase::SetInfluenceNone()
@@ -140,4 +146,42 @@ void FITwinClippingInfoBase::SetInfluenceNone()
 	MutableInfluenceInfo(EITwinModelType::IModel).SetInfluenceNone();
 	MutableInfluenceInfo(EITwinModelType::RealityData).SetInfluenceNone();
 	MutableInfluenceInfo(EITwinModelType::GlobalMapLayer).SetInfluenceNone();
+	InvalidateInfluenceBoundingBox();
+}
+
+FBox const& FITwinClippingInfoBase::GetInfluenceBoundingBox() const
+{
+	BE_ASSERT(!bNeedsUpdateBoundingBox);
+	return InfluenceBoundingBox;
+}
+
+void FITwinClippingInfoBase::InvalidateInfluenceBoundingBox()
+{
+	bNeedsUpdateBoundingBox = true;
+}
+
+void FITwinClippingInfoBase::UpdateInfluenceBoundingBox(UWorld* World)
+{
+	InfluenceBoundingBox.Init();
+	bool bSetInvalidBBox = false;
+	ITwin::IterateAllITwinTilesets([this, &bSetInvalidBBox](FITwinTilesetAccess const& TilesetAccess)
+	{
+		if (ShouldInfluenceModel(TilesetAccess.GetModelLink()))
+		{
+			FBox const TilesetBox = TilesetAccess.GetBoundingBox();
+			if (TilesetBox.IsValid)
+			{
+				InfluenceBoundingBox += TilesetBox;
+			}
+			else
+			{
+				// If the tileset bounding box is not valid, we set the influence box to invalid, which
+				// is equivalent to an infinite box.
+				bSetInvalidBBox = true;
+			}
+		}
+	}, World);
+	if (bSetInvalidBBox)
+		InfluenceBoundingBox.Init();
+	bNeedsUpdateBoundingBox = false;
 }

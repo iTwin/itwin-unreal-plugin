@@ -82,7 +82,7 @@ namespace AdvViz::SDK
 		bool isFullyLoaded = false;
 		std::string animationId_;
 		std::shared_ptr<Http> http_;
-		expected<void, std::string> Save(std::shared_ptr<Http>& http, const std::string& animationId, const std::string &animationKeyFramesInfoId)
+		expected<void, std::string> Save(const std::shared_ptr<Http>& http, const std::string& animationId, const std::string &animationKeyFramesInfoId)
 		{
 			animationId_ = animationId;
 			std::string url = "animations/" + animationId + "/animationKeyFramesChunks";
@@ -137,7 +137,7 @@ namespace AdvViz::SDK
 			return {};
 		}
 
-		void AsyncSave(std::shared_ptr<Http>& http, const std::string& animationId, const std::string& animationKeyFramesInfoId, const std::function<void(long httpResult)>& callbackfct)
+		void AsyncSave(const std::shared_ptr<Http>& http, const std::string& animationId, const std::string& animationKeyFramesInfoId, const std::function<void(long httpResult)>& callbackfct)
 		{
 			animationId_ = animationId;
 			std::string url = "animations/" + animationId + "/animationKeyFramesChunks";
@@ -221,9 +221,11 @@ namespace AdvViz::SDK
 
 			BE_ASSERT((bool)http_);
 			std::string url = "animations/" + animationId + "/animationKeyFramesChunks";
-			if (http_->DeleteJsonJBody(jout, url, jin) != 200)
-				return make_unexpected("AnimationKeyframeChunk::Delete failed");
-			
+			auto const httpCode = http_->DeleteJsonJBody(jout, url, jin);
+			if (httpCode != 200 && httpCode != 204)
+			{
+				return make_unexpected(std::string("AnimationKeyframeChunk::Delete failed - code: ") + std::to_string(httpCode));
+			}
 			SAnimationChunk tmp;
 			serverSideData_ = tmp;
 			return {};
@@ -263,12 +265,12 @@ namespace AdvViz::SDK
 
 	DEFINEFACTORYGLOBALS(AnimationKeyframeChunk);
 
-	expected<void, std::string> AnimationKeyframeChunk::Save(std::shared_ptr<Http>& http, const std::string& animationId, const std::string& animationKeyFramesInfoId)
+	expected<void, std::string> AnimationKeyframeChunk::Save(const std::shared_ptr<Http>& http, const std::string& animationId, const std::string& animationKeyFramesInfoId)
 	{
 		return GetImpl().Save(http, animationId, animationKeyFramesInfoId);
 	}
 
-	void AnimationKeyframeChunk::AsyncSave(std::shared_ptr<Http>& http, const std::string& animationId, const std::string& animationKeyFramesInfoId, const std::function<void(long httpResult)>& callbackfct)
+	void AnimationKeyframeChunk::AsyncSave(const std::shared_ptr<Http>& http, const std::string& animationId, const std::string& animationKeyFramesInfoId, const std::function<void(long httpResult)>& callbackfct)
 	{
 		return GetImpl().AsyncSave(http, animationId, animationKeyFramesInfoId, callbackfct);
 	}
@@ -466,7 +468,7 @@ namespace AdvViz::SDK
 			return {};
 		}
 
-		expected<void, std::string> Load(std::shared_ptr<Http>& http, const std::string& animationId, const std::string& infoId)
+		expected<void, std::string> Load(const std::shared_ptr<Http>& http, const std::string& animationId, const std::string& infoId)
 		{
 			animationId_ = animationId;
 			http_ = http;
@@ -480,7 +482,7 @@ namespace AdvViz::SDK
 			return LoadAllChunks();
 		}
 
-		expected<void, std::string> Save(std::shared_ptr<Http>& http, bool bChunks)
+		expected<void, std::string> Save(const std::shared_ptr<Http>& http, bool bChunks)
 		{
 			http_ = http;
 
@@ -541,7 +543,7 @@ namespace AdvViz::SDK
 			return {};
 		}
 
-		void AsyncSave(std::shared_ptr<Http>& http, const std::function<void(const IAnimationKeyframeInfo::Id& id)>& callBackfct)
+		void AsyncSave(const std::shared_ptr<Http>& http, const std::function<void(const IAnimationKeyframeInfo::Id& id)>& callBackfct)
 		{
 			http_ = http;
 
@@ -745,12 +747,12 @@ namespace AdvViz::SDK
 		return dummy;
 	}
 
-	expected<void, std::string> AnimationKeyframeInfo::Save(std::shared_ptr<Http>& http, bool bChunk)
+	expected<void, std::string> AnimationKeyframeInfo::Save(const std::shared_ptr<Http>& http, bool bChunk)
 	{
 		return GetImpl().Save(http, bChunk);
 	}
 
-	void AnimationKeyframeInfo::AsyncSave(std::shared_ptr<Http>& http, const std::function<void(const IAnimationKeyframeInfo::Id& id)> &callBackfct)
+	void AnimationKeyframeInfo::AsyncSave(const std::shared_ptr<Http>& http, const std::function<void(const IAnimationKeyframeInfo::Id& id)> &callBackfct)
 	{
 		return GetImpl().AsyncSave(http, callBackfct);
 	}
@@ -899,8 +901,12 @@ namespace AdvViz::SDK
 
 		BE_ASSERT((bool)impl.http_);
 		std::string url = "animations/" + impl.animationId_ + "/animationKeyFramesInfos";
-		if (impl.http_->DeleteJsonJBody(jout, url, jin) != 200)
-			return make_unexpected("AnimationKeyframeInfo::Delete failed");
+
+		auto const httpCode = impl.http_->DeleteJsonJBody(jout, url, jin);
+		if (httpCode != 200 && httpCode != 204)
+		{
+			return make_unexpected(std::string("AnimationKeyframeInfo::Delete failed - code: ") + std::to_string(httpCode));
+		}
 
 		return {};
 	}
@@ -941,7 +947,7 @@ namespace AdvViz::SDK
 	}
 
 
-	struct AnimationKeyframe::Impl
+	struct AnimationKeyframe::Impl : std::enable_shared_from_this<AnimationKeyframe::Impl>
 	{
 		struct SAnimation
 		{
@@ -950,13 +956,18 @@ namespace AdvViz::SDK
 			std::optional<std::string> id;
 		};
 
-		std::vector<IAnimationKeyframeInfoPtr> infos_;
-		std::unordered_map<IAnimationKeyframeInfo::Id, IAnimationKeyframeInfoPtr> infosMap_;
+		struct SThreadSafeData
+		{
+			std::vector<IAnimationKeyframeInfoPtr> infos_;
+			std::unordered_map<IAnimationKeyframeInfo::Id, IAnimationKeyframeInfoPtr> infosMap_;
+			std::vector<IAnimationKeyframeInfoPtr> toDeleteInfos_;
+			SAnimation serverSideData_;
+			std::shared_ptr<Tools::IGCSTransform> gcsTransform_;
+		};
+		Tools::RWLockableObject<SThreadSafeData> thdata_;
+
 		std::shared_ptr<Http> http_;
 		bool shouldSave_ = true;
-		std::vector<IAnimationKeyframeInfoPtr> toDeleteInfos_;
-		SAnimation serverSideData_;
-		std::shared_ptr<Tools::IGCSTransform> gcsTransform_;
 
 		IAnimationKeyframeInfoPtr AddAnimationInfo(const std::string& objectId, const std::string& animationId)
 		{
@@ -966,17 +977,23 @@ namespace AdvViz::SDK
 			BE_ASSERT(p2 != nullptr);
 			p2->GetImpl().animationId_ = animationId;
 			auto p3 = MakeSharedLockableDataPtr(p);
-			infos_.push_back(p3);
+			auto thdata = thdata_.GetAutoLock();
+			thdata->infos_.push_back(p3);
 			shouldSave_ = true;
 			return p3;
 		}
 
 		expected<void, std::string> LoadKeyFrameInfos()
 		{
-			if (!serverSideData_.id.has_value())
+			std::optional<std::string> id;
+			{
+				auto thdata = thdata_.GetRAutoLock();
+				id = thdata->serverSideData_.id;
+			}
+			if (!id.has_value())
 				return make_unexpected("this AnimationKeyframe has no valid id.");
-			
-			std::string animationId = serverSideData_.id.value();
+
+			std::string animationId = id.value();
 			std::string url = "animations/" + animationId + "/animationKeyFramesInfos";
 
 			auto ret = HttpGetWithLink<AnimationKeyframeInfo::Impl::SAnimationInfo>(http_, url, {},
@@ -989,8 +1006,9 @@ namespace AdvViz::SDK
 					p2->GetImpl().animationId_ = animationId;
 					p2->GetImpl().http_ = http_;
 					auto p3 = MakeSharedLockableDataPtr(p);
-					infos_.push_back(p3);
-					infosMap_[IAnimationKeyframeInfo::Id(*data.id)] = p3;
+					auto thdata = thdata_.GetAutoLock();
+					thdata->infos_.push_back(p3);
+					thdata->infosMap_[IAnimationKeyframeInfo::Id(*data.id)] = p3;
 					return {};
 				});
 			if (ret)
@@ -998,22 +1016,65 @@ namespace AdvViz::SDK
 			return ret;
 		}
 
-		expected<void, std::string> Save(std::shared_ptr<Http>& http, bool bInfos)
+		void AsyncLoadKeyFrameInfos(
+			const std::function<void(IAnimationKeyframeInfoPtr&)> &onCreateKeyFrameInfo,
+			const std::function<void(expected<void, std::string> const&)> &onFinish)
+		{
+			std::optional<std::string> id;
+			{
+				auto thdata = thdata_.GetRAutoLock();
+				id = thdata->serverSideData_.id;
+			}
+			if (!id.has_value())
+			{
+				onFinish(make_unexpected("this AnimationKeyframe has no valid id."));
+				return;
+			}
+			auto SThis(shared_from_this());
+			std::string animationId = id.value();
+			std::string url = "animations/" + animationId + "/animationKeyFramesInfos";
+
+			AsyncHttpGetWithLink<AnimationKeyframeInfo::Impl::SAnimationInfo>(http_, url, {},
+				[animationId, SThis, onCreateKeyFrameInfo](AnimationKeyframeInfo::Impl::SAnimationInfo& data) -> expected<void, std::string> {
+					auto p = IAnimationKeyframeInfo::New();
+					auto p2 = Tools::DynamicCast<AnimationKeyframeInfo>(p);
+					if (!p2)
+						return make_unexpected("IAnimationKeyframeInfo should be based on class AnimationKeyframeInfo.");
+					p2->GetImpl().serverSideData_ = data;
+					p2->GetImpl().animationId_ = animationId;
+					p2->GetImpl().http_ = SThis->http_;
+					auto p3 = MakeSharedLockableDataPtr(p);
+					{
+						auto thdata = SThis->thdata_.GetAutoLock();
+						thdata->infos_.push_back(p3);
+						thdata->infosMap_[IAnimationKeyframeInfo::Id(*data.id)] = p3;
+					}
+					onCreateKeyFrameInfo(p3);
+					return {};
+				},
+				onFinish);
+		}
+
+		expected<void, std::string> Save(std::shared_ptr<Http> const& http, bool bInfos)
 		{
 			http_ = http;
 
 			if (bInfos)
-				for (auto& i : infos_)
+			{
+				auto thdata = thdata_.GetAutoLock();
+				for (auto& i : thdata->infos_)
 				{
 					auto lock = i->GetAutoLock();
 					lock->Save(http_);
-					infosMap_[lock->GetId()] = i;
+					thdata->infosMap_[lock->GetId()] = i;
 				}
+			}
 
 			// delete infos
 			auto ret = [this, &http]() -> expected<void, std::string>
 				{
-					if (serverSideData_.id.has_value())
+					auto thdata = thdata_.GetAutoLock();
+					if (thdata->serverSideData_.id.has_value())
 					{
 						struct SJin {
 							std::vector<std::string> ids;
@@ -1021,19 +1082,24 @@ namespace AdvViz::SDK
 						SJin infosToDelete;
 						typedef SJin SJout;
 						SJout infosOut;
-						for (auto& c : toDeleteInfos_)
+						for (auto& c : thdata->toDeleteInfos_)
 						{
 							auto lock = c->GetAutoLock();
 							if (lock->GetId().IsValid())
 								infosToDelete.ids.push_back(static_cast<const std::string>(lock->GetId()));
 						}
 
-						std::string url = "animations/" + serverSideData_.id.value() + "/animationKeyFramesInfos";
+						std::string url = "animations/" + thdata->serverSideData_.id.value() + "/animationKeyFramesInfos";
 						if (!infosToDelete.ids.empty())
-							if (http->DeleteJsonJBody(infosOut, url, infosToDelete) != 200)
-								return make_unexpected(std::string("http failed: ") + url);
+						{
+							auto const httpCode = http->DeleteJsonJBody(infosOut, url, infosToDelete);
+							if (httpCode != 200 && httpCode != 204)
+							{
+								return make_unexpected(std::string("DeleteInfos failed: ") + url + " - code: " + std::to_string(httpCode));
+							}
+						}
 
-						toDeleteInfos_.clear();
+						thdata->toDeleteInfos_.clear();
 					}
 					return {};
 				}();
@@ -1043,17 +1109,18 @@ namespace AdvViz::SDK
 
 			if (shouldSave_)
 			{
+				auto thdata = thdata_.GetAutoLock();
 				long status = 0;
-				if (!serverSideData_.id.has_value())
+				if (!thdata->serverSideData_.id.has_value())
 				{
 					std::string url("animations");
 					SAnimation jout;
-					status = http->PostJsonJBody(jout, url, serverSideData_);
+					status = http->PostJsonJBody(jout, url, thdata->serverSideData_);
 					if (status == 201)
 					{
 						BE_ASSERT(jout.id.has_value());
 						if (jout.id)
-							serverSideData_.id = jout.id;
+							thdata->serverSideData_.id = jout.id;
 						else
 							return make_unexpected(std::string("Server returned no id value for AnimationKeyframe."));
 					}
@@ -1070,8 +1137,8 @@ namespace AdvViz::SDK
 					};
 					SJout jout;
 					std::string url("animations/");
-					url += serverSideData_.id.value();
-					status = http->PutJsonJBody(jout, url, serverSideData_);
+					url += thdata->serverSideData_.id.value();
+					status = http->PutJsonJBody(jout, url, thdata->serverSideData_);
 					if (status != 200)
 					{
 						return make_unexpected(fmt::format("http failed: {} with status {}", url, status));
@@ -1086,7 +1153,8 @@ namespace AdvViz::SDK
 		{
 			if (shouldSave_)
 				return true;
-			for (auto& i : infos_)
+			auto thdata = thdata_.GetRAutoLock();
+			for (auto& i : thdata->infos_)
 			{
 				if (i)
 				{
@@ -1107,12 +1175,14 @@ namespace AdvViz::SDK
 
 	std::shared_ptr<Tools::IGCSTransform> AnimationKeyframe::GetGCSTransform() const
 	{
-		return GetImpl().gcsTransform_;
+		auto thdata = GetImpl().thdata_.GetRAutoLock();
+		return thdata->gcsTransform_;
 	}
 
 	void AnimationKeyframe::SetGCSTransform(const std::shared_ptr<Tools::IGCSTransform>& t)
 	{
-		GetImpl().gcsTransform_ = t;
+		auto thdata = GetImpl().thdata_.GetAutoLock();
+		thdata->gcsTransform_ = t;
 	}
 
 	AnimationKeyframe::Impl& AnimationKeyframe::GetImpl()
@@ -1132,7 +1202,15 @@ namespace AdvViz::SDK
 		return GetImpl().LoadKeyFrameInfos();
 	}
 
-	expected<void, std::string> AnimationKeyframe::Save(std::shared_ptr<Http>& http, bool bInfos)
+	void AnimationKeyframe::AsyncLoadAnimationKeyFrameInfos(
+		const std::function<void(IAnimationKeyframeInfoPtr&)>& onCreateKeyFrameInfo,
+		const std::function<void(expected<void, std::string> const&)>& onFinish
+	)
+	{
+		GetImpl().AsyncLoadKeyFrameInfos(onCreateKeyFrameInfo, onFinish);
+	}
+
+	expected<void, std::string> AnimationKeyframe::Save(std::shared_ptr<Http> const& http, bool bInfos)
 	{
 		return GetImpl().Save(http, bInfos);
 	}
@@ -1145,9 +1223,9 @@ namespace AdvViz::SDK
 	const IAnimationKeyframe::Id& AnimationKeyframe::GetId() const
 	{
 		thread_local static IAnimationKeyframe::Id id;
-
-		if (GetImpl().serverSideData_.id)
-			id = IAnimationKeyframe::Id(*GetImpl().serverSideData_.id);
+		auto thdata = GetImpl().thdata_.GetRAutoLock();
+		if (thdata->serverSideData_.id)
+			id = IAnimationKeyframe::Id(*thdata->serverSideData_.id);
 		else
 			id.Reset();
 
@@ -1156,40 +1234,58 @@ namespace AdvViz::SDK
 
 	IAnimationKeyframeInfoPtr AnimationKeyframe::AddAnimationKeyframeInfo(const std::string& objectId)
 	{
-		BE_ASSERT(GetImpl().serverSideData_.id.has_value());
-		return GetImpl().AddAnimationInfo(objectId, GetImpl().serverSideData_.id.value());
+		std::optional<std::string> id;
+		{
+			auto thdata = GetImpl().thdata_.GetRAutoLock();
+			id = thdata->serverSideData_.id;
+		}
+		BE_ASSERT(id.has_value());
+		return GetImpl().AddAnimationInfo(objectId, id.value());
 	}
 
 	expected<IAnimationKeyframeInfoPtr, std::string> AnimationKeyframe::LoadKeyframesInfo(const IAnimationKeyframeInfo::Id& animationKeyframeInfoId)
 	{
+		std::optional<std::string> id;
+		{
+			auto thdata = GetImpl().thdata_.GetRAutoLock();
+			id = thdata->serverSideData_.id;
+		}
+
 		IAnimationKeyframeInfo* p(IAnimationKeyframeInfo::New());
 		auto p2 = Tools::DynamicCast<AnimationKeyframeInfo>(p);
 		if (!p2)
 			return make_unexpected("AnimationKeyframeInfo should be base class of IAnimationKeyframeInfo.");
-		if (!GetImpl().serverSideData_.id.has_value())
+		if (!id.has_value())
 			return make_unexpected("AnimationKeyframe has no valid id.");
 
-		auto ret = p2->GetImpl().Load(GetImpl().http_, GetImpl().serverSideData_.id.value(), (std::string)animationKeyframeInfoId);
+		auto ret = p2->GetImpl().Load(GetImpl().http_, id.value(), (std::string)animationKeyframeInfoId);
 		if (!ret)
 			return make_unexpected(std::string("LoadKeyframesInfo failed, previous error:") + ret.error());
 		auto p3 = MakeSharedLockableDataPtr(p);
-		GetImpl().infosMap_[animationKeyframeInfoId] = p3;
+		{
+			auto thdata = GetImpl().thdata_.GetAutoLock();
+			thdata->infosMap_[animationKeyframeInfoId] = p3;
+		}
 		return p3;
 	}
 
 	IAnimationKeyframeInfoPtr AnimationKeyframe::GetAnimationKeyframeInfo(const IAnimationKeyframeInfo::Id& animationKeyframeInfoId) const
 	{
-		auto it = GetImpl().infosMap_.find(animationKeyframeInfoId);
-		if (it != GetImpl().infosMap_.end())
-			return it->second;
+		{
+			auto thdata = GetImpl().thdata_.GetRAutoLock();
+			auto it = thdata->infosMap_.find(animationKeyframeInfoId);
+			if (it != thdata->infosMap_.end())
+				return it->second;
+		}
 		return IAnimationKeyframeInfoPtr();
 	}
 
 	std::vector<IAnimationKeyframeInfo::Id> AnimationKeyframe::GetAnimationKeyframeInfoIds() const
 	{
 		std::vector<IAnimationKeyframeInfo::Id> ret;
-		ret.reserve(GetImpl().infosMap_.size());
-		for (auto it : GetImpl().infosMap_)
+		auto thdata = GetImpl().thdata_.GetRAutoLock();
+		ret.reserve(thdata->infosMap_.size());
+		for (auto it : thdata->infosMap_)
 			ret.push_back(it.first);
 		return ret;
 	}
@@ -1212,10 +1308,16 @@ namespace AdvViz::SDK
 		};
 		SJout jout;
 
-		if (!impl.serverSideData_.id.has_value())
+		std::optional<std::string> id;
+		{
+			auto thdata = GetImpl().thdata_.GetRAutoLock();
+			id = thdata->serverSideData_.id;
+		}
+
+		if (!id.has_value())
 			return make_unexpected("IAnimationKeyframeInfo has no id.");
 
-		std::string url = "animations/" + impl.serverSideData_.id.value() + "/query/animationKeyFramesBBox";
+		std::string url = "animations/" + id.value() + "/query/animationKeyFramesBBox";
 		BE_ASSERT((bool)impl.http_);
 		if (impl.http_->PostJsonJBody(jout, url, jin) != 200)
 			return make_unexpected(std::string("query:") + url + " failed.");
@@ -1232,7 +1334,12 @@ namespace AdvViz::SDK
 			,const std::vector<BoundingBox>& boundingBoxes, const TimeRange& timeRange) const
 	{
 		auto& impl = GetImpl();
-		if (!impl.serverSideData_.id.has_value())
+		std::optional<std::string> id;
+		{
+			auto thdata = GetImpl().thdata_.GetRAutoLock();
+			id = thdata->serverSideData_.id;
+		}
+		if (!id.has_value())
 			return make_unexpected("IAnimationKeyframeInfo has no id.");
 
 		if (!dataPtr)
@@ -1253,7 +1360,7 @@ namespace AdvViz::SDK
 		//dataOut.reset(new Tools::RWLockableObject<SJout, std::shared_mutex>);
 		auto dataOut = MakeSharedLockableData<SJout>();
 
-		std::string url = "animations/" + impl.serverSideData_.id.value() + "/query/animationKeyFramesBBox";
+		std::string url = "animations/" + id.value() + "/query/animationKeyFramesBBox";
 		BE_ASSERT((bool)impl.http_);
 		impl.http_->AsyncPostJsonJBody(dataOut, [dataPtr, callbackfct](long httpCode, const TSharedLockableData<SJout>& joutPtr) {
 				auto unlockedJout = joutPtr->GetAutoLock();
@@ -1271,7 +1378,12 @@ namespace AdvViz::SDK
 	expected<void, std::string> AnimationKeyframe::Delete()
 	{
 		auto& impl = GetImpl();
-		if (!impl.serverSideData_.id.has_value())
+		std::optional<std::string> id;
+		{
+			auto thdata = GetImpl().thdata_.GetRAutoLock();
+			id = thdata->serverSideData_.id;
+		}
+		if (!id.has_value())
 			return make_unexpected("this AnimationKeyframe has no valid id.");
 
 		struct SJin {};
@@ -1282,9 +1394,12 @@ namespace AdvViz::SDK
 		SJout jout;
 
 		BE_ASSERT((bool)impl.http_);
-		std::string url = "animations/" + impl.serverSideData_.id.value();
-		if (impl.http_->DeleteJsonJBody(jout, url, jin, {}) != 200)
-			return make_unexpected(std::string("query:") + url + " failed.");
+		std::string url = "animations/" + id.value();
+		auto const httpCode = impl.http_->DeleteJsonJBody(jout, url, jin, {});
+		if (httpCode != 200 && httpCode != 204)
+		{
+			return make_unexpected(std::string("query: ") + url + " failed - code: " + std::to_string(httpCode));
+		}
 
 		return {};
 	}
@@ -1300,7 +1415,10 @@ namespace AdvViz::SDK
 			[&animationsKeyframe, http](AnimationKeyframe::Impl::SAnimation& data) -> expected<void, std::string> {
 				auto p = IAnimationKeyframe::New();
 				auto p2 = Tools::DynamicCast<AnimationKeyframe>(p);
-				p2->GetImpl().serverSideData_ = data;
+				{
+					auto thdata = p2->GetImpl().thdata_.GetAutoLock();
+					thdata->serverSideData_ = data;
+				}
 				p2->GetImpl().http_ = http;
 				auto p3 = MakeSharedLockableDataPtr(p);
 				animationsKeyframe.push_back(p3);
@@ -1310,10 +1428,37 @@ namespace AdvViz::SDK
 		return animationsKeyframe;
 	}
 
+	void AsyncGetITwinAnimationKeyframes(const std::string& itwinid,
+		 std::function<void(IAnimationKeyframePtr&)> onCreateAnimationsKeyframe,
+		 std::function<void(expected<void, std::string> const&)> onFinishCallback)
+	{
+		std::shared_ptr<Http> http = GetDefaultHttp();
+		if (!http)
+		{
+			onFinishCallback(make_unexpected("AsyncGetITwinAnimationKeyframes: error, no http"));
+			return;
+		}
+
+		AsyncHttpGetWithLink<AnimationKeyframe::Impl::SAnimation>(http, "animations?iTwinId=" + itwinid, {},
+			[onCreateAnimationsKeyframe, http](AnimationKeyframe::Impl::SAnimation& data) -> expected<void, std::string> {
+				auto p = IAnimationKeyframe::New();
+				auto p2 = Tools::DynamicCast<AnimationKeyframe>(p);
+				{
+					auto thdata = p2->GetImpl().thdata_.GetAutoLock();
+					thdata->serverSideData_ = data;
+				}
+				p2->GetImpl().http_ = http;
+				auto p3 = MakeSharedLockableDataPtr(p);
+				onCreateAnimationsKeyframe(p3);
+				return {};
+			},
+			onFinishCallback);
+	}
+
 	expected<IAnimationKeyframePtr, std::string> CreateAnimationKeyframe(const std::string& itwinid, const std::string& name)
 	{
 		IAnimationKeyframePtr animationKeyframe;
-		std::shared_ptr<Http>& http = GetDefaultHttp();
+		std::shared_ptr<Http> const& http = GetDefaultHttp();
 		if (!http)
 			return animationKeyframe;
 
@@ -1336,9 +1481,12 @@ namespace AdvViz::SDK
 			IAnimationKeyframe* p(IAnimationKeyframe::New());
 			auto p2 = Tools::DynamicCast<AnimationKeyframe>(p);
 			BE_ASSERT((bool)p2);
-			p2->GetImpl().serverSideData_.name = name;
-			p2->GetImpl().serverSideData_.itwinid = itwinid;
-			p2->GetImpl().serverSideData_.id = jout.id;
+			{
+				auto thdata = p2->GetImpl().thdata_.GetAutoLock();
+				thdata->serverSideData_.name = name;
+				thdata->serverSideData_.itwinid = itwinid;
+				thdata->serverSideData_.id = jout.id;
+			}
 			p2->GetImpl().http_ = http;
 			animationKeyframe = MakeSharedLockableDataPtr(p);
 		}

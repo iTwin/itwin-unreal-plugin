@@ -44,11 +44,11 @@ UJsonUtils::~UJsonUtils()
 FString UJsonUtils::ReadStringFromFile(FString filePath)
 {
 	if (!FPlatformFileManager::Get().GetPlatformFile().FileExists(*filePath))
-		return "";
-		FString retString = "";
-		if (!FFileHelper::LoadFileToString(retString, *filePath))
-			return "";
-			return retString;
+		return {};
+	FString retString;
+	if (!FFileHelper::LoadFileToString(retString, *filePath))
+		return {};
+	return retString;
 }
 
 bool UJsonUtils::WriteStringToFile(FString filePath, FString str)

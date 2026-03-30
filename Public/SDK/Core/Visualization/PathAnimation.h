@@ -8,11 +8,12 @@
 
 #pragma once
 
+#include <functional>
 #include <string>
 #include <set>
 #include "Core/Network/Network.h"
 #include "Core/Tools/Tools.h"
-#include <Core/Visualization/RefID.h>
+#include <Core/Visualization/SavableItem.h>
 
 namespace AdvViz::SDK
 {
@@ -24,9 +25,10 @@ namespace AdvViz::SDK
 
 	using namespace Tools;
 
-	class IAnimationPathInfo : public Tools::Factory<IAnimationPathInfo>, 
-		//public WithStrongTypeId<IAnimationPathInfo>, 
-		public Tools::ExtensionSupport
+	class IAnimationPathInfo : public Tools::Factory<IAnimationPathInfo>
+		//, public WithStrongTypeId<IAnimationPathInfo>
+		, public Tools::ExtensionSupport
+		, public ISavableItem
 	{
 	public:
 		struct SPathAnimationInfo
@@ -40,9 +42,6 @@ namespace AdvViz::SDK
 			std::optional<bool> hasLoop;
 			std::optional<bool> isEnabled;
 		};
-
-		virtual const RefID& GetId() const = 0;
-		virtual void SetId(const RefID& id) = 0;
 
 		virtual const RefID& GetSplineId() const = 0;
 		virtual void SetSplineId(const RefID& id) = 0;
@@ -65,9 +64,6 @@ namespace AdvViz::SDK
 		virtual void SetIsEnabled(bool b) = 0;
 		virtual bool IsEnabled() const = 0;
 
-		virtual void SetShouldSave(bool b) = 0;
-		virtual bool ShouldSave() const = 0;
-
 		virtual void SetServerSideData(const SPathAnimationInfo &data) = 0;
 		virtual const SPathAnimationInfo& GetServerSideData() const = 0;
 
@@ -80,16 +76,20 @@ namespace AdvViz::SDK
 	using IAnimationPathInfoPtr = TSharedLockableDataPtr<IAnimationPathInfo>;
 	using IAnimationPathInfoWPtr = TSharedLockableDataWPtr<IAnimationPathInfo>;
 
-	typedef std::shared_ptr<IAnimationPathInfo> SharedPathInfo;
-
-	class ADVVIZ_LINK  AnimationPathInfo : public IAnimationPathInfo, public Tools::TypeId<AnimationPathInfo>
+	class ADVVIZ_LINK AnimationPathInfo : public IAnimationPathInfo, public Tools::TypeId<AnimationPathInfo>
 	{
 	public:
 		AnimationPathInfo();
 		virtual ~AnimationPathInfo();
 
+		//------------------------------------------------------------------------------
+		 /// overridden from ISavableItem
 		const RefID& GetId() const override;
 		void SetId(const RefID& id) override;
+
+		ESaveStatus GetSaveStatus() const override;
+		void SetSaveStatus(ESaveStatus status) override;
+		//------------------------------------------------------------------------------
 
 		const RefID& GetSplineId() const override;
 		void SetSplineId(const RefID& id) override;
@@ -111,9 +111,6 @@ namespace AdvViz::SDK
 
 		void SetIsEnabled(bool b) override;
 		bool IsEnabled() const override;
-
-		void SetShouldSave(bool b) override;
-		bool ShouldSave() const override;
 
 		void SetServerSideData(const SPathAnimationInfo& data) override;
 		const SPathAnimationInfo& GetServerSideData() const override;
@@ -137,24 +134,24 @@ namespace AdvViz::SDK
 		virtual void SetSplinesManager(const std::shared_ptr<ISplinesManager>& splinesManager) = 0;
 
 		virtual size_t GetNumberOfPaths() const = 0;
-		virtual	SharedPathInfo FindAnimationPathInfoByDBId(const std::string& id) const = 0;
-		virtual SharedPathInfo AddAnimationPathInfo() = 0;
+		virtual	IAnimationPathInfoPtr FindAnimationPathInfoByDBId(const std::string& id) const = 0;
+		virtual IAnimationPathInfoPtr AddAnimationPathInfo() = 0;
 		virtual void RemoveAnimationPathInfo(const RefID& id) = 0;
-		virtual SharedPathInfo GetAnimationPathInfo(const RefID& id) const = 0;
+		virtual IAnimationPathInfoPtr GetAnimationPathInfo(const RefID& id) const = 0;
 		virtual void GetAnimationPathIds(std::set<AdvViz::SDK::RefID> &ids) const = 0;
 
 		virtual void LoadDataFromServer(const std::string& decorationId) = 0;
-		virtual void SaveDataOnServer(const std::string& decorationId) = 0;
+		virtual void AsyncLoadDataFromServer(const std::string& decorationId,
+			const std::function<void(IAnimationPathInfoPtr&)>& onPathLoaded,
+			const std::function<void(expected<void, std::string> const&)>& onComplete) = 0;
+		virtual void AsyncSaveDataOnServer(const std::string& decorationId, std::function<void(bool)>&& onDataSavedFunc) = 0;
 
 		virtual bool HasAnimPathsToSave() const = 0;
 	};
 	
-	using IPathAnimatorPtr = TSharedLockableDataPtr<IPathAnimator>;
-	using IPathAnimatorWPtr = TSharedLockableDataWPtr<IPathAnimator>;
+	typedef std::shared_ptr<IPathAnimator> IPathAnimatorPtr;
 
-	typedef std::shared_ptr<IPathAnimator> SharedPathAnimator;
-
-	class ADVVIZ_LINK  PathAnimator : public IPathAnimator, public Tools::TypeId<PathAnimator>
+	class ADVVIZ_LINK PathAnimator : public IPathAnimator, public Tools::TypeId<PathAnimator>
 	{
 	public:
 		PathAnimator();
@@ -163,14 +160,17 @@ namespace AdvViz::SDK
 		void SetSplinesManager(const std::shared_ptr<ISplinesManager>& splinesManager) override;
 
 		size_t GetNumberOfPaths() const override;
-		SharedPathInfo FindAnimationPathInfoByDBId(const std::string& id) const override;
-		SharedPathInfo AddAnimationPathInfo() override;
+		IAnimationPathInfoPtr FindAnimationPathInfoByDBId(const std::string& id) const override;
+		IAnimationPathInfoPtr AddAnimationPathInfo() override;
 		void RemoveAnimationPathInfo(const RefID& id) override;
-		SharedPathInfo GetAnimationPathInfo(const RefID& id) const override;
+		IAnimationPathInfoPtr GetAnimationPathInfo(const RefID& id) const override;
 		void GetAnimationPathIds(std::set<AdvViz::SDK::RefID>& ids) const override;
 
 		void LoadDataFromServer(const std::string& decorationId) override;
-		void SaveDataOnServer(const std::string& decorationId) override;
+		void AsyncLoadDataFromServer(const std::string& decorationId,
+			const std::function<void(IAnimationPathInfoPtr&)>& onPathLoaded,
+			const std::function<void(expected<void, std::string> const&)>& onComplete) override;
+		void AsyncSaveDataOnServer(const std::string& decorationId, std::function<void(bool)>&& onDataSavedFunc) override;
 
 		bool HasAnimPathsToSave() const override;
 
@@ -182,6 +182,6 @@ namespace AdvViz::SDK
 		Impl& GetImpl();
 		const Impl& GetImpl() const;
 	private:
-		const std::unique_ptr<Impl> impl_;
+		const std::shared_ptr<Impl> impl_;
 	};
 }

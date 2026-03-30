@@ -18,7 +18,8 @@
 #include <ITwinSceneMapping.h>
 #include <ITwinSynchro4DSchedules.h>
 #include <ITwinSynchro4DSchedulesInternals.h>
-#include <Clipping/ITwinClippingCustomPrimitiveDataHelper.h>
+#include <Clipping/ITwinClipping3DTilesetHelper.h>
+#include <Compil/IsUsingBentleyUnreal.h>
 #include <Material/ITwinMaterialParameters.inl>
 #include <Math/UEMathExts.h>
 
@@ -27,11 +28,17 @@
 #include <CesiumModelMetadata.h>
 #include <CesiumPrimitiveFeatures.h>
 
+#include <Cesium3DTilesSelection/GltfModifierVersionExtension.h>
 #include <Cesium3DTilesSelection/TileContent.h>
 #include <CesiumGltf/ExtensionKhrTextureTransform.h>
 #include <CesiumGltf/MeshPrimitive.h>
 #include <CesiumGltfContent/GltfUtilities.h>
 #include <CesiumGltfContent/SkirtMeshMetadata.h>
+
+#if BE_IS_USING_BENTLEY_UNREAL
+	#include <Chaos/TriangleMeshImplicitObject.h>
+	#include <PhysicsEngine/BodySetup.h>
+#endif
 
 #include <Components/StaticMeshComponent.h>
 #include <Engine/StaticMesh.h>
@@ -83,7 +90,7 @@ namespace
 	T FeatureIDToITwinID(const FCesiumPropertyTableProperty* pProperty, const int64 FeatureID)
 	{
 		return T(
-			FCesiumMetadataValueAccess::GetUnsignedInteger64(
+			CesiumMetadataValueAccess::GetUnsignedInteger64(
 				UCesiumPropertyTablePropertyBlueprintLibrary::GetValue(
 					*pProperty,
 					FeatureID),
@@ -137,11 +144,11 @@ void UITwinSceneMappingBuilder::OnTileMeshPrimitiveLoaded(ICesiumLoadedTilePrimi
 
 	auto& MeshComponent = TilePrim.GetMeshComponent();
 
-	auto* ClippingHelper = IModel->GetClippingHelper();
-	if (ClippingHelper)
+	auto const& ClippingHelperPtr = GetInternals(*IModel).ClippingHelper;
+	if (ClippingHelperPtr)
 	{
 		// Set Custom Primitive Data needed to activate clipping effects.
-		ClippingHelper->ApplyCPDFlagsToMeshComponent(MeshComponent);
+		ClippingHelperPtr->ApplyCPDFlagsToMeshComponent(MeshComponent);
 	}
 
 	const TObjectPtr<UStaticMesh> StaticMesh = CheckedGetStaticMesh(MeshComponent);
@@ -167,13 +174,6 @@ void UITwinSceneMappingBuilder::OnTileMeshPrimitiveLoaded(ICesiumLoadedTilePrimi
 	}
 #endif // DEBUG_ITWIN_MATERIAL_IDS
 
-	// Note: geoloc must have been set before, MeshComponent.GetComponentTransform depends on it!
-	// Note 2: despite GetComponentTransform's doc, tileset and iModel transforms are not accounted,
-	// I think this is because the component is not attached yet: when it happens (see
-	// "if (pGltf->GetAttachParent() == nullptr)" in ACesium3DTileset::showTilesToRender), the transform
-	// of the pGltf and all its children primitive components are updated with the right value...
-	auto const Transform = MeshComponent.GetComponentTransform();
-
 	// always look in 1st set (_FEATURE_ID_0)
 	const int64 FeatureIDSetIndex = ITwinCesium::Metada::ELEMENT_FEATURE_ID_SLOT;
 	const FCesiumPrimitiveFeatures& PrimitiveFeatures(TilePrim.GetPrimitiveFeatures());
@@ -194,7 +194,9 @@ void UITwinSceneMappingBuilder::OnTileMeshPrimitiveLoaded(ICesiumLoadedTilePrimi
 				MetaDataNames[i],
 				FeatureIDSetIndex);
 	}
-	if (pProperties[to_underlying(EITwinPropertyType::Element)] == nullptr)
+	const FCesiumPropertyTableProperty* pElementPropertyTable =
+		pProperties[to_underlying(EITwinPropertyType::Element)];
+	if (pElementPropertyTable == nullptr)
 	{
 		return;
 	}
@@ -231,6 +233,33 @@ void UITwinSceneMappingBuilder::OnTileMeshPrimitiveLoaded(ICesiumLoadedTilePrimi
 	// if no featureIDSet exists in features, FindValidProperty would have returned null...
 	const FCesiumFeatureIdSet& FeatureIdSet =
 		UCesiumPrimitiveFeaturesBlueprintLibrary::GetFeatureIDSets(PrimitiveFeatures)[FeatureIDSetIndex];
+#if BE_IS_USING_BENTLEY_UNREAL // using BeUE <=> CMake's BE_USE_OFFICIAL_UNREAL is OFF
+	for (auto const& pCollisionMesh : MeshComponent.GetBodySetup()->TriMeshGeometries)
+	{
+		pCollisionMesh->SetTriangleHitFilter(
+			[&SceneMapping, &FeatureIdSet, pElementPropertyTable, &ClippingHelperPtr, &MeshComponent]
+			(FVector const& /*Position*/, uint32/*FaceIndex*/,
+			 uint32 VertexIndex, uint32/*VertexIndexB*/, uint32/*VertexIndexC*/)
+			{
+#if 0 // Still needs testing...
+				FVector const WorldPosition = MeshComponent.GetComponentTransform().TransformPosition(Position);
+				if (ClippingHelperPtr && ClippingHelperPtr->ShouldCutOut(WorldPosition))
+					return false;
+#endif
+				const int64 FeatureID = UCesiumFeatureIdSetBlueprintLibrary::GetFeatureIDForVertex(
+					FeatureIdSet, static_cast<int64>(VertexIndex));
+				if (FeatureID < 0)
+					return true;
+				const ITwinFeatureID ITwinFeatID = ITwinFeatureID(FeatureID);
+				ITwinElementID ElementID = FeatureIDToITwinID<ITwinElementID>(pElementPropertyTable, FeatureID);
+				ensure(IsInGameThread());
+				ITwinScene::ElemIdx ElemRank;
+				if (!SceneMapping.GetElementForSLOW(ElementID, &ElemRank))
+					return true;
+				return SceneMapping.IsElementVisible(ElemRank);
+			});
+	}
+#endif // BE_IS_USING_BENTLEY_UNREAL
 
 	CesiumGltf::Model const* Gltf = LoadedTile.GetGltfModel();
 	if (!ensure(Gltf))
@@ -253,7 +282,6 @@ void UITwinSceneMappingBuilder::OnTileMeshPrimitiveLoaded(ICesiumLoadedTilePrimi
 		VertexEnd = SkirtMeshMetadata->noSkirtVerticesBegin +
 			SkirtMeshMetadata->noSkirtVerticesCount;
 	}
-	FVector const PositionScaleFactor = LoadedTile.GetGltfToUnrealLocalVertexPositionScaleFactor();
 	bool bHasAddedMaterialToSceneTile = false;
 	std::unordered_map<ITwinFeatureID, ITwinElementID> FeatureToElemID;
 	std::unordered_set<ITwinScene::ElemIdx> MeshElemSceneRanks;
@@ -285,8 +313,7 @@ void UITwinSceneMappingBuilder::OnTileMeshPrimitiveLoaded(ICesiumLoadedTilePrimi
 					SceneTile.MaxFeatureID = ITwinFeatID;
 				}
 				// fetch the ElementID corresponding to this feature
-				ElementID = FeatureIDToITwinID<ITwinElementID>(
-					pProperties[to_underlying(EITwinPropertyType::Element)], FeatureID);
+				ElementID = FeatureIDToITwinID<ITwinElementID>(pElementPropertyTable, FeatureID);
 				if (ElementID != ITwin::NOT_ELEMENT)
 				{
 					if (ElementID != LastElem) // thus skipping below code 99% of the time
@@ -337,22 +364,14 @@ void UITwinSceneMappingBuilder::OnTileMeshPrimitiveLoaded(ICesiumLoadedTilePrimi
 					pMaterialProp, FeatureID) : ITwin::NOT_MATERIAL;
 				if (MaterialID != ITwin::NOT_MATERIAL)
 				{
-					AddFeatureIfAbsent(MaterialID,
-						[&SceneTile](const ITwinMaterialID& Id) -> FITwinMaterialFeaturesInTile& {
-							return SceneTile.MaterialFeaturesSLOW(Id);
-						},
-						ITwinFeatID);
+					SceneTile.MaterialFeaturesSLOW(MaterialID).Features.insert(ITwinFeatID);
 				}
 				// Fetch the Model ID related to this feature.
 				ITwinElementID const modelID = FeatureIDToITwinID<ITwinElementID>(
 					pProperties[to_underlying(EITwinPropertyType::Model)], FeatureID);
 				if (modelID != ITwin::NOT_ELEMENT)
 				{
-					AddFeatureIfAbsent(modelID,
-						[&SceneTile](const ITwinElementID& Id) -> FITwinModelFeaturesInTile& {
-							return SceneTile.ModelFeaturesSLOW(Id);
-						},
-						ITwinFeatID);
+					SceneTile.ModelFeaturesSLOW(modelID).Features.insert(ITwinFeatID);
 				}
 				// Fetch the Category ID and CategoryPerModel ID related to this feature.
 				ITwinElementID categoryID = FeatureIDToITwinID<ITwinElementID>(
@@ -360,24 +379,15 @@ void UITwinSceneMappingBuilder::OnTileMeshPrimitiveLoaded(ICesiumLoadedTilePrimi
 				categoryID--;
 				if (categoryID != ITwin::NOT_ELEMENT)
 				{
-					AddFeatureIfAbsent(categoryID,
-						[&SceneTile](const ITwinElementID& Id) -> FITwinCategoryFeaturesInTile& {
-							return SceneTile.CategoryFeaturesSLOW(Id);
-						},
-						ITwinFeatID);
+					SceneTile.CategoryFeaturesSLOW(categoryID).Features.insert(ITwinFeatID);
 					if (modelID != ITwin::NOT_ELEMENT)
 					{
-						auto& features = SceneTile.CategoryPerModelFeaturesSLOW(categoryID, modelID).Features;
-						if (std::find(features.begin(), features.end(), ITwinFeatID) == features.end())
-						{
-							features.push_back(ITwinFeatID);
-						}
+						SceneTile.CategoryPerModelFeaturesSLOW(categoryID, modelID).Features.insert(ITwinFeatID);
 					}
 				}
 			}
 			LastElem = ElementID;
 		}
-		// update BBox with each new vertex position
 		if (LastElem != ITwin::NOT_ELEMENT)
 		{
 			// Almost always the same => optimize
@@ -391,9 +401,6 @@ void UITwinSceneMappingBuilder::OnTileMeshPrimitiveLoaded(ICesiumLoadedTilePrimi
 					pElemInTile->SceneRank = ElemRank;
 			}
 			pElemStruct->bHasMesh = true;
-			glm::vec3 const& Position = PositionView[VtxIndex];
-			pElemStruct->BBox += Transform.TransformPosition(
-				PositionScaleFactor * FVector(Position.x, Position.y, Position.z));
 		}
 	}
 	if (IModel->Synchro4DSchedules)
@@ -456,7 +463,8 @@ UMaterialInstanceDynamic* UITwinSceneMappingBuilder::CreateMaterial(ICesiumLoade
 		auto const MinTuneVer = GetInternals(*Sched).GetMinGltfTunerVersionForAnimation();
 		if (auto* Model = LoadedTile.GetGltfModel())
 		{
-			if (Model->version && (*Model->version) >= MinTuneVer)
+			auto const ModelVer = Cesium3DTilesSelection::GltfModifierVersionExtension::getVersion(*Model);
+			if (ModelVer && (*ModelVer) >= MinTuneVer)
 			{
 				SelectSchedulesBaseMaterial(TilePrim.GetMeshComponent(), pBaseMaterial,
 					LoadedTile.GetModelMetadata(), TilePrim.GetPrimitiveFeatures());

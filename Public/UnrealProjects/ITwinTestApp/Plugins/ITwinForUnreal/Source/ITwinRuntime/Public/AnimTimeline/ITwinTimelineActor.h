@@ -50,12 +50,18 @@ USTRUCT()
 struct FAtmoAnimSettings
 {
 	GENERATED_BODY()
-	//float sunPitch = 0.f;
-	//float sunAzimuth = 0.f;
-	//bool useHeliodon = true;
+	float sunPitch = 0.f;
+	float sunAzimuth = 0.f;
+	bool useHeliodon = true;
 	FDateTime heliodonDate;
 	float cloudCoverage = 0.f;
 	float fog = 0.f;
+	float heliodonLongitude = 0;
+	float heliodonLatitude = 0;
+	float HDRIZRotation = 0;
+	float sunIntensity = 0;
+	std::string HDRIImage;
+	float exposure = 0;
 };
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnTimelineLoaded);
@@ -79,6 +85,7 @@ public:
 	DECLARE_DELEGATE_OneParam(FSetAtmoSettingsDelegate, const FAtmoAnimSettings&);
 	FGetAtmoSettingsDelegate GetAtmoSettingsDelegate;
 	FSetAtmoSettingsDelegate SetAtmoSettingsDelegate;
+	bool isUsingHDRIAtmo = false;
 
 	DECLARE_DYNAMIC_MULTICAST_DELEGATE(FUpdateFromTimelineEvent);
 	UPROPERTY()
@@ -95,6 +102,8 @@ public:
 	// Edit level sequence
 	// Add a new clip
 	void AddClip();
+	// Create a copy of the given clip at the end of the sequence
+	void DuplicateClip(int clipIdx);
 	// Remove given clip (if clipIdx = -1, applies to the current clip)
 	void RemoveClip(int clipIdx);
 	// Moves a clip from one position in the sequence to another
@@ -131,6 +140,7 @@ public:
 	FString GetClipName(int clipIdx) const;
 	void GetClipsNames(TArray<FString>& vClipNames) const;
 	void GetClipsStartTimes(TArray<float>& vTimes, bool bAppendLastDuration = false) const;
+	void GetEnabledClipIndices(TArray<int>& vIndices) const;
 	float GetClipStartTime(int clipIdx) const;
 	int GetCurrentClipIndex() const;
 	bool SetCurrentClip(FString clipName, bool updateSceneFromTimeline = true);

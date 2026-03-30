@@ -16,7 +16,9 @@
 
 MODULE_EXPORT namespace AdvViz::SDK
 {
-	class ADVVIZ_LINK  LinkDS : public ILink, public Tools::Factory<LinkDS>
+	class AsyncRequestGroupCallback;
+
+	class ADVVIZ_LINK LinkDS final : public ILink, public Tools::Factory<LinkDS>
 	{
 	public:
 		LinkDS();
@@ -36,20 +38,24 @@ MODULE_EXPORT namespace AdvViz::SDK
 		void SetTransform(const dmat4x3&) override;
 
 		void SetGCS(const std::string&, const std::array<float, 3>&) override;
-		std::pair<std::string, std::array<float, 3>> GetGCS() const  override;
+		std::pair<std::string, std::array<float, 3>> GetGCS() const override;
 		bool HasGCS() const override;
 		bool HasName() const override;
 		bool HasVisibility() const override;
 		bool HasQuality() const override;
 		bool HasTransform() const override;
 
+		//------------------------------------------------------------------------------
+		/// overridden from ISavableItem
+		const RefID& GetId() const override;
+		void SetId(const RefID& id) override;
 
-		bool ShouldSave()const override;
-		void SetShouldSave(bool shouldSave) override;
+		ESaveStatus GetSaveStatus() const override;
+		void SetSaveStatus(ESaveStatus status) override;
+		//------------------------------------------------------------------------------
 
 		void Delete(bool value = true) override;
-		bool ShouldDelete() override;
-		const std::string& GetId() override;
+		bool ShouldDelete() const override;
 
 		std::uint64_t GetDynTypeId() const override { return TypeId<LinkDS>::GetTypeId(); }
 		bool IsTypeOf(std::uint64_t i) const override { return (i == TypeId<LinkDS>::GetTypeId()) || ILink::IsTypeOf(i); }
@@ -68,10 +74,12 @@ MODULE_EXPORT namespace AdvViz::SDK
 		//store data necessary for creation in the future
 		void PrepareCreation(const std::string& name, const std::string& itwinid) override;
 		/// Create new Scene on server
-		bool Create(
-			const std::string& name, const std::string& itwinid) override;
+		void AsyncCreate(
+			const std::string& name, const std::string& itwinid,
+			std::function<void(bool)>&& onCreationDoneFunc = {}) override;
 		/// Retrieve the Scene from server
 		bool Get(const std::string& itwinid, const std::string& id) override;
+		void AsyncGet(const std::string&, const std::string& id, std::function<void(expected<void, std::string> const&)> onFinish) override;
 		/// Delete the Scene on server
 		bool Delete() override;
 		/// Get Scene identifier
@@ -92,7 +100,7 @@ MODULE_EXPORT namespace AdvViz::SDK
 		ITwinAtmosphereSettings GetAtmosphere() const override;
 		void SetSceneSettings(const ITwinSceneSettings&) override;
 		ITwinSceneSettings GetSceneSettings() const override;
-		bool Save() override;
+		void AsyncSave(std::function<void(bool)>&& onDataSavedFunc = {}) override;
 		bool ShouldSave() const override;
 		void SetShouldSave(bool shouldSave) const override;
 
@@ -111,15 +119,18 @@ MODULE_EXPORT namespace AdvViz::SDK
 		bool ConvertHDRIJsonFileToKeyValueMap(std::filesystem::path const& jsonPath, KeyValueStringMap& outMap) const override;
 	protected:
 		class Impl;
-		const std::unique_ptr<Impl> impl_;
+		const std::shared_ptr<Impl> impl_;
 		Impl& GetImpl() const;
 
 
 		//links management
 		void LoadLinks();
-		void SaveLinks();
+		void AsyncLoadLinks(std::function<void(expected<void, std::string> const&)> onFinish);
+		void AsyncSaveLinks(std::shared_ptr<AsyncRequestGroupCallback> callbackPtr);
 	};
 
 	//global function to get all scenes from a Itwin
-	ADVVIZ_LINK std::vector<std::shared_ptr<IScenePersistence>> GetITwinScenesDS(const std::string& itwinid);
+	ADVVIZ_LINK AdvViz::expected<ScenePtrVector, HttpError> GetITwinScenesDS(const std::string& itwinid);
+	ADVVIZ_LINK void AsyncGetITwinSceneInfosDS(const std::string& itwinid,
+		std::function<void(AdvViz::expected<SceneInfoVec, HttpError>)>&& callback);
 }

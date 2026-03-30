@@ -8,14 +8,15 @@
 
 #include "ITwinSceneMapping.h"
 
+#include <Cesium3DTilesSelection/GltfModifierVersionExtension.h>
 #include <Cesium3DTilesSelection/Tile.h>
 #include <ITwinDynamicShadingProperty.h>
 #include <ITwinDynamicShadingProperty.inl>
 #include <ITwinExtractedMeshComponent.h>
+#include <Material/ITwinMaterialParameters.h>
+
 #include <Engine/StaticMesh.h> // FStaticMaterial
 #include <Materials/MaterialInstanceDynamic.h>
-
-#include <Material/ITwinMaterialParameters.h>
 
 
 namespace ITwin
@@ -617,10 +618,8 @@ void FITwinSceneTile::AddMaterial(UMaterialInstanceDynamic* MaterialInUse)
 	Materials.push_back(MaterialInUse);
 }
 
-void FITwinSceneTile::DrawTileBox(UWorld const* World) const
+FBox FITwinSceneTile::GetBoundingBoxOfGlTFMeshes() const
 {
-#if ENABLE_DRAW_DEBUG
-	// Display the bounding box of the tile
 	FBox Box;
 	for (auto const& gltfMeshData : GltfMeshes)
 	{
@@ -629,6 +628,14 @@ void FITwinSceneTile::DrawTileBox(UWorld const* World) const
 			Box += gltfMeshData.GetMeshComponent()->Bounds.GetBox();
 		}
 	}
+	return Box;
+}
+
+void FITwinSceneTile::DrawTileBox(UWorld const* World) const
+{
+#if ENABLE_DRAW_DEBUG
+	// Display the bounding box of the tile
+	const FBox Box = GetBoundingBoxOfGlTFMeshes();
 	FVector Center, Extent;
 	Box.GetCenterAndExtents(Center, Extent);
 
@@ -862,6 +869,7 @@ bool FITwinSceneTile::TPickSelectable(SelectableHelper const& PickHelper, Select
 	{
 		if (Opts.TestElementVisibility())
 		{
+			auto&& Feat_0 = FeaturesToSelect->Features.begin()->value();
 			// This used to be commented out as redundant with explicit (and much faster) tests made at the
 			// beginning of FITwinSceneMapping::PickVisibleElement on HiddenElementsFromSavedView,
 			// bHiddenConstructionData and ConstructionDataElements, BUT with all the other hiding reasons
@@ -871,13 +879,13 @@ bool FITwinSceneTile::TPickSelectable(SelectableHelper const& PickHelper, Select
 			// early tests like in PickVisibleElement!
 			if (SelectingAndHiding)
 			{
-				auto&& SelHide_BGRA = SelectingAndHiding->GetPixel(FeaturesToSelect->Features[0].value());
+				auto&& SelHide_BGRA = SelectingAndHiding->GetPixel(Feat_0);
 				if (SelHide_BGRA[3] == 0)
 					return false;
 			}
 			if (HighlightsAndOpacities)
 			{
-				auto&& S4D_BGRA = HighlightsAndOpacities->GetPixel(FeaturesToSelect->Features[0].value());
+				auto&& S4D_BGRA = HighlightsAndOpacities->GetPixel(Feat_0);
 				// Ignore masked Elements unless they are masked because they were extracted, and at least one
 				// of the extracted mesh parts is itself visible
 				if (S4D_BGRA[3] == 0)
@@ -1198,13 +1206,15 @@ FString FITwinSceneTile::GetIDString() const
 
 FString FITwinSceneTile::ToString() const
 {
+	auto const ModelVer = pCesiumTile->GetGltfModel()
+		? Cesium3DTilesSelection::GltfModifierVersionExtension::getVersion(*pCesiumTile->GetGltfModel())
+		: std::optional<int64_t>();
 	return FString::Printf(TEXT(
-		"Tile %s tuneVer#%d Viz:%d #Elems:%llu #Extr:%llu(%llu) #Feat:%u #Gltf:%llu #Mats:%llu\n\t" \
+		"Tile %s tuneVer#%llu Viz:%d #Elems:%llu #Extr:%llu(%llu) #Feat:%u #Gltf:%llu #Mats:%llu\n\t" \
 		"4D:%d #Tml:%llu Tex[HiO/CUT/SEL]:%d/%d/%d NeedSetup[HiO/CUT/SEL]:%d/%d/%d\n\t" \
 		"Selec:%s CurSVHidn:%llu CurCSTHidn:%llu"),
 		*GetIDString(),
-		(pCesiumTile->GetGltfModel() && pCesiumTile->GetGltfModel()->version)
-			? (*pCesiumTile->GetGltfModel()->version) : -1,
+		ModelVer ? (*ModelVer) : -1,
 		bVisible ? 1 : 0, ElementsFeatures.size(), ExtractedElements.size(),
 		[this]() { size_t Total = 0;
 			for (auto const& Extr : ExtractedElements) Total += Extr.Entities.size(); return Total; } (),

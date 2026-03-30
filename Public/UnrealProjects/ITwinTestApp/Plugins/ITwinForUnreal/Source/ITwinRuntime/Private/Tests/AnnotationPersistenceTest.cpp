@@ -25,6 +25,7 @@
 #	include <Core/ITwinAPI/ITwinAuthManager.h>
 #	include <Core/Network/http.h>
 #	include <Core/Visualization/AnnotationsManager.h>
+#	include <Core/Visualization/AsyncHelpers.h>
 #include <Compil/AfterNonUnrealIncludes.h>
 
 
@@ -55,7 +56,7 @@ public:
 		{
 			return ProcessAnnotationsTest(url, method, data, urlArguments, headers);
 		}
-		return Response(cpr::status::HTTP_NOT_FOUND,
+		return Response(MHD_HTTP_NOT_FOUND,
 			std::string("Page not found: ") + url);
 	}
 
@@ -74,7 +75,7 @@ private:
 		{{ "accept", "application/json" },								\
 		 { "Content-Type", "application/json; charset=UTF-8" },			\
 		 { "Authorization", "Bearer " ITWINTEST_ACCESS_TOKEN } });		\
-	if (HeaderStatus != cpr::status::HTTP_OK)							\
+	if (HeaderStatus != MHD_HTTP_OK)							\
 	{																	\
 		return Response(HeaderStatus, "Error in headers.");				\
 	}																	\
@@ -92,7 +93,7 @@ private:
 
 		if (method == "GET")
 		{
-			return Response(cpr::status::HTTP_OK,
+			return Response(MHD_HTTP_OK,
 				"{\"total_rows\":1,\"rows\":[{\"position\":[0.0,0.0,0.0],\"text\":\"Un \u00E9t\u00E9 h\u00E9lv\u00E8te\",\"colorTheme\":\"Dark\",\"displayMode\":\"Marker and label\",\"name\":\"\",\"id\":\"6908dd0d36638d1a3b3db1be\"}],\"_links\":{\"self\":\"https://itwindecoration-eus.bentley.com/advviz/v1/decorations/679d2cc2ba6b5b82ce6e1ec5/annotations?$skip=0\u0026$top=1000\"}}"
 			);
 		}
@@ -100,14 +101,14 @@ private:
 		{
 			if (data != "{\"annotations\":[{\"position\":[0.0,0.0,0.0],\"text\":\"Un \u00E9t\u00E9 h\u00E9lv\u00E8te\",\"name\":\"\",\"colorTheme\":\"Dark\",\"displayMode\":\"Marker and label\"}]}")
 			{
-				return Response(cpr::status::HTTP_EXPECTATION_FAILED, "Unexpected new annotation");
+				return Response(MHD_HTTP_EXPECTATION_FAILED, "Unexpected new annotation");
 			}
 			bHasAddedAnnotation = true;
-			return Response(cpr::status::HTTP_CREATED,
+			return Response(MHD_HTTP_CREATED,
 				"{\"ids\":[\"6908dd0d36638d1a3b3db1be\"]}"
 			);
 		}
-		return Response(cpr::status::HTTP_NOT_FOUND, "Page not found.");
+		return Response(MHD_HTTP_NOT_FOUND, "Page not found.");
 	}
 };
 
@@ -118,6 +119,46 @@ std::unique_ptr<httpmock::MockServer> FAnnotationPersistenceMockServer::MakeServ
 	return httpmock::getFirstRunningMockServer<FAnnotationPersistenceMockServer>(startPort, tryCount);
 }
 
+
+class FAnnotationIOAsyncCallback
+{
+public:
+	void OnRequestStarted()
+	{
+		NumRequestsStarted++;
+	}
+	void OnRequestDone()
+	{
+		NumRequestsDone++;
+	}
+
+	bool IsDone() const { return NumRequestsDone == NumRequestsStarted; }
+
+private:
+	uint32 NumRequestsStarted = 0;
+	uint32 NumRequestsDone = 0;
+};
+
+
+#if WITH_EDITOR
+extern UNREALED_API class UEditorEngine* GEditor;
+#endif
+
+namespace
+{
+	inline UWorld* GetTestWorld()
+	{
+#if WITH_EDITOR
+		return GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+#else
+		return AutomationCommon::GetAnyGameWorld();
+#endif
+	}
+
+	static const FString TextWithAccents = TEXT("Un \u00E9t\u00E9 h\u00E9lv\u00E8te");
+}
+
+using FAnnotationIOAsyncCallbackPtr = std::shared_ptr<FAnnotationIOAsyncCallback>;
 
 
 class FAnnotationPersistenceTestHelper : public FITwinAPITestHelperBase
@@ -130,6 +171,7 @@ public:
 
 	std::shared_ptr<AnnotationsManager> GetAnnotationsMngr() const { return AnnotationsMngr; }
 	std::shared_ptr<AdvViz::SDK::Http> GetHttp() const { return Http; }
+	FAnnotationIOAsyncCallbackPtr GetAsyncCallback() const { return AnnotAsyncCallback; }
 
 protected:
 	virtual bool DoInit(AdvViz::SDK::EITwinEnvironment) override;
@@ -140,6 +182,7 @@ private:
 
 	std::shared_ptr<AnnotationsManager> AnnotationsMngr;
 	std::shared_ptr<AdvViz::SDK::Http> Http;
+	FAnnotationIOAsyncCallbackPtr AnnotAsyncCallback;
 };
 
 /*static*/
@@ -160,15 +203,19 @@ bool FAnnotationPersistenceTestHelper::DoInit(AdvViz::SDK::EITwinEnvironment Env
 		return false;
 	}
 
-	AnnotationsMngr = std::make_shared<AnnotationsManager>();
+	ensure(IsInGameThread());
+	AdvViz::SDK::InitMainThreadId();
 
 	// Use our local mock server's URL
 	Http.reset(AdvViz::SDK::Http::New());
 	Http->SetBaseUrl(GetServerUrl().c_str());
 	Http->SetAccessToken(AdvViz::SDK::ITwinAuthManager::GetInstance(Env)->GetAccessToken());
+	AdvViz::SDK::SetSupportAsyncCallbacksInMainThread(Http->SupportsExecuteAsyncCallbackInMainThread());
 
+	AnnotationsMngr = std::make_shared<AnnotationsManager>();
 	AnnotationsMngr->SetHttp(Http);
 
+	AnnotAsyncCallback = std::make_shared<FAnnotationIOAsyncCallback>();
 	return true;
 }
 
@@ -182,9 +229,22 @@ FAnnotationPersistenceTestHelper::~FAnnotationPersistenceTestHelper()
 	Cleanup();
 }
 
-#if WITH_EDITOR
-extern UNREALED_API class UEditorEngine* GEditor;
-#endif
+
+DEFINE_LATENT_AUTOMATION_COMMAND_ONE_PARAMETER(FNUTWaitForAsyncAnnotationSaving, FAnnotationIOAsyncCallbackPtr, AnnotAsyncCallback);
+
+bool FNUTWaitForAsyncAnnotationSaving::Update()
+{
+	if (!AnnotAsyncCallback || AnnotAsyncCallback->IsDone())
+	{
+		check(FAnnotationPersistenceTestHelper::Instance().PostCondition());
+		return true;
+	}
+	else
+	{
+		return false;
+	}
+}
+
 
 IMPLEMENT_CUSTOM_SIMPLE_AUTOMATION_TEST(FAnnotationPersistenceTest, FAutomationTestBaseNoLogs, \
 	"Bentley.ITwinForUnreal.ITwinRuntime.AnnotationPersistence", \
@@ -203,21 +263,17 @@ bool FAnnotationPersistenceTest::RunTest(const FString& /*Parameters*/)
 
 	auto pAnnotationsMngr = Helper.GetAnnotationsMngr();
 	auto& AnnotationsMngr = *pAnnotationsMngr;
+	FAnnotationIOAsyncCallbackPtr AnnotAsyncCallback = Helper.GetAsyncCallback();
 
 	const std::string url = Helper.GetServerUrl();
 
-#if WITH_EDITOR
-	auto* const World = GEditor->GetEditorWorldContext().World();
-#else
-	auto* const World = AutomationCommon::GetAnyGameWorld();
-#endif
+	UWorld* const World = GetTestWorld();
 
 	SECTION("Add Annotation with unicode characters and Save")
 	{
 		UTEST_TRUE(TEXT("Check world"), World != nullptr);
 
-		// Add a new material definition
-		const FString TextWithAccents = TEXT("Un \u00E9t\u00E9 h\u00E9lv\u00E8te");
+		// Add a new annotation
 		AITwinAnnotation* Annot = World->SpawnActor<AITwinAnnotation>(AITwinAnnotation::StaticClass(), FVector::ZeroVector, FRotator::ZeroRotator);
 		UTEST_TRUE(TEXT("Spawn annotation"), Annot != nullptr);
 
@@ -225,24 +281,48 @@ bool FAnnotationPersistenceTest::RunTest(const FString& /*Parameters*/)
 		AnnotationsMngr.AddAnnotation(Annot->GetAVizAnnotation());
 		UTEST_TRUE(TEXT("DB Invalidation"), AnnotationsMngr.HasAnnotationToSave());
 
-		AnnotationsMngr.SaveDataOnServerDS(TEST_DECO_ID);
+		AnnotAsyncCallback->OnRequestStarted();
+		AnnotationsMngr.AsyncSaveDataOnServer(TEST_DECO_ID,
+			[AnnotAsyncCallback](bool) { AnnotAsyncCallback->OnRequestDone(); });
 		UTEST_FALSE(TEXT("DB up-to-date"), AnnotationsMngr.HasAnnotationToSave());
 
 		// create annotations copy by fetching previous annotations from server
 		auto AnnotationManager2 = std::make_shared<AdvViz::SDK::AnnotationsManager>();
 		AnnotationManager2->SetHttp(Helper.GetHttp());
-		AnnotationManager2->LoadDataFromServerDS(TEST_DECO_ID);
-		UTEST_FALSE(TEXT("DB up-to-date after loading"), AnnotationManager2->HasAnnotationToSave());
 
-		auto const& LoadedAnnotations = AnnotationManager2->GetAnnotations();
-		UTEST_TRUE(TEXT("Load annotations"), LoadedAnnotations.size() == 1);
-		AITwinAnnotation* LoadedAnnot = World->SpawnActor<AITwinAnnotation>(AITwinAnnotation::StaticClass(), FVector::ZeroVector, FRotator::ZeroRotator);
-		UTEST_TRUE(TEXT("Spawn annotation for load"), LoadedAnnot != nullptr);
-		LoadedAnnot->LoadAVizAnnotation(LoadedAnnotations[0]);
-		UTEST_TRUE(TEXT("Compare text"), LoadedAnnot->GetText().ToString() == TextWithAccents);
+		auto const ValidateLoadedAnnotations = [this, AnnotationManager2]()
+		{
+			auto const& LoadedAnnotations = AnnotationManager2->GetAnnotations();
+			UTEST_TRUE(TEXT("Load annotations"), LoadedAnnotations.size() == 1);
+
+			UWorld* const World = GetTestWorld();
+			UTEST_TRUE(TEXT("Check world"), World != nullptr);
+			AITwinAnnotation* LoadedAnnot = World->SpawnActor<AITwinAnnotation>(AITwinAnnotation::StaticClass(), FVector::ZeroVector, FRotator::ZeroRotator);
+			UTEST_TRUE(TEXT("Spawn annotation for load"), LoadedAnnot != nullptr);
+			LoadedAnnot->LoadAVizAnnotation(LoadedAnnotations[0]);
+			UTEST_TRUE(TEXT("Compare text"), LoadedAnnot->GetText().ToString() == TextWithAccents);
+
+			UTEST_FALSE(TEXT("DB up-to-date after loading"), AnnotationManager2->HasAnnotationToSave());
+			return true;
+		};
+
+		AnnotAsyncCallback->OnRequestStarted();
+		AnnotationManager2->AsyncLoadDataFromServer(TEST_DECO_ID,
+			[](AdvViz::SDK::AnnotationPtr&) {},
+			[this,
+			 ValidateLoad = std::move(ValidateLoadedAnnotations),
+			 AnnotAsyncCallback](AdvViz::expected<void, std::string> const&)
+		{
+			AsyncTask(ENamedThreads::GameThread,
+				[this, ValidateLoad = std::move(ValidateLoad), AnnotAsyncCallback]()
+			{
+				ValidateLoad();
+				AnnotAsyncCallback->OnRequestDone();
+			});
+		});
 	}
 
-	UTEST_TRUE("Post-Condition", Helper.PostCondition());
+	ADD_LATENT_AUTOMATION_COMMAND(FNUTWaitForAsyncAnnotationSaving(AnnotAsyncCallback));
 
 	return true;
 }

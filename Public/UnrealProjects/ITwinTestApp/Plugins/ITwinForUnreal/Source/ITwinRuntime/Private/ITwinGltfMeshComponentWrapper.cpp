@@ -203,7 +203,7 @@ FITwinGltfMeshComponentWrapper::EMetadataStatus FITwinGltfMeshComponentWrapper::
 		const ITwinElementID elementID = (FeatureID < 0)
 			? ITwin::NOT_ELEMENT
 			: ITwinElementID(
-				FCesiumMetadataValueAccess ::GetUnsignedInteger64(
+				CesiumMetadataValueAccess::GetUnsignedInteger64(
 					UCesiumPropertyTablePropertyBlueprintLibrary::GetValue(
 						ITWIN_ElementProperty,
 						FeatureID),
@@ -875,7 +875,7 @@ bool FITwinGltfMeshComponentWrapper::ExtractElement_SLOW(
 				vtxId0);
 		const ITwinElementID vtxElementID = (vtxFeatureID < 0)
 			? ITwin::NOT_ELEMENT
-			: ITwinElementID(FCesiumMetadataValueAccess::GetUnsignedInteger64(
+			: ITwinElementID(CesiumMetadataValueAccess::GetUnsignedInteger64(
 				UCesiumPropertyTablePropertyBlueprintLibrary::GetValue(
 					ITWIN_ElementProperty,
 					vtxFeatureID),

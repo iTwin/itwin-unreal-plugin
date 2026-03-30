@@ -1,0 +1,4 @@
+#pragma once
+
+#define BE_IS_USING_BENTLEY_UNREAL @BE_IS_USING_BENTLEY_UNREAL@
+

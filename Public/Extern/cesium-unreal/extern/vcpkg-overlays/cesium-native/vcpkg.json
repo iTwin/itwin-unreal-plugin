@@ -1,7 +1,6 @@
 {
   "name": "cesium-native",
-  "version-string": "0.52.0",
-  "port-version": 0,
+  "version-string": "0.57.0",
   "features": {
     "dependencies-only": {
       "description": "install port's dependencies without the port"
@@ -11,11 +10,10 @@
     "vcpkg-cmake",
     "vcpkg-cmake-config",
     "asyncplusplus",
-    "curl",
     "doctest",
     "expected-lite",
-    "fmt",
     "glm",
+    "ms-gsl",
     "rapidjson",
     "spdlog",
     "stb",
@@ -35,7 +33,8 @@
     "earcut-hpp",
     {
       "name": "cpp-httplib",
-      "default-features": false
+      "default-features": false,
+      "platform": "!wasm32"
     },
     "libmorton",
     "zstd",
@@ -45,14 +44,16 @@
       "features": [
         {
           "name": "jit",
-          "platform": "!ios"
+          "platform": "!ios&!wasm32"
         }
       ]
     },
     {
       "name": "asmjit",
-      "platform": "!ios"
-    }
+      "platform": "!ios&!wasm32"
+    },
+    "spz",
+    "zlib"
   ]
 }
 

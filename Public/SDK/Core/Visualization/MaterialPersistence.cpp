@@ -10,10 +10,13 @@
 
 #include "MaterialPersistence.h"
 
+#include "AsyncHttp.inl"
 #include "Core/ITwinAPI/ITwinMaterial.h"
 #include <Core/Json/Json.h>
 #include "Core/Network/HttpGetWithLink.h"
 #include "Config.h"
+#include <Core/Visualization/AsyncHelpers.h>
+#include <Core/Visualization/SavableItem.h>
 
 #include <fmt/format.h>
 
@@ -23,34 +26,56 @@
 
 namespace AdvViz::SDK
 {
-	class MaterialPersistenceManager::Impl
+	class MaterialPersistenceManager::Impl : public std::enable_shared_from_this<Impl>, public SavableItemWithoutID
 	{
 	public:
-		bool NeedUpdateDB() const;
+		Impl()
+		{
+			isThisValid_ = std::make_shared<std::atomic_bool>(true);
+
+			SetHttp(GetDefaultHttp());
+		}
+
+		~Impl()
+		{
+			*isThisValid_ = false;
+		}
+
+		std::shared_ptr<Http> const& GetHttp() const { return http_; }
+		void SetHttp(std::shared_ptr<Http> const& http) { http_ = http; }
 
 		void LoadDataFromServer(std::string const& decorationId, std::set<std::string> const& specificModels = {});
+		void AsyncLoadDataFromServer(std::string const& decorationId,
+			std::function<void(expected<void, std::string> const&)> const& callback,
+			std::set<std::string> const& specificModels /*= {}*/);
+
 		bool HasLoadedModel(std::string const& iModelId) const;
 		void SetLoadedModel(std::string const& iModelId, bool bLoaded);
 
-		void SaveDataOnServer(const std::string& decorationId);
+		void AsyncSaveDataOnServer(const std::string& decorationId, std::function<void(bool)>&& onDataSavedFunc = {});
 
 		size_t ListIModelsWithMaterialSettings(std::vector<std::string>& iModelIds) const;
 		bool HasMaterialDefinition(std::string const& iModelId, uint64_t materialId) const;
 		bool GetMaterialSettings(std::string const& iModelId, uint64_t materialId, ITwinMaterial& material) const;
 		void SetMaterialSettings(std::string const& iModelId, uint64_t materialId, ITwinMaterial const& material);
 
-		std::shared_ptr<Http>& GetHttp() { return http_; }
-		void SetHttp(const std::shared_ptr<Http>& http) { http_ = http; }
-
 		void SetMaterialLibraryDirectory(std::string const& materialLibraryDirectory);
 
 		void RequestDeleteITwinMaterialsInDB(std::optional<std::string> const& specificIModelID = std::nullopt);
 
-		std::optional<bool> UploadChannelTextureIfNeeded(ITwinChannelMap& texMap,
+		/// Start the (asynchronous) upload of given texture if needed.
+		/// Returns true if an upload request was actually started.
+		bool AsyncUploadChannelTextureIfNeeded(
+			std::shared_ptr<AsyncRequestGroupCallback> const& callbackPtr,
+			ITwinChannelMap& texMap,
 			std::string const& decorationId);
 
-		bool UploadTexuresIfNeeded(size_t& nUploaded, ITwinMaterial& material,
-			const std::string& decorationId);
+		/// Start the (asynchronous) upload of all textures needing it.
+		/// Returns the number of upload requests started.
+		size_t AsyncUploadTexuresIfNeeded(
+			std::shared_ptr<AsyncRequestGroupCallback> const& callbackPtr,
+			ITwinMaterial& material,
+			std::string const& decorationId);
 
 		void BuildDecorationFilesURL(std::string const& decorationId);
 
@@ -60,8 +85,16 @@ namespace AdvViz::SDK
 
 		void CopyPathsAndURLsFrom(Impl const& other);
 
-		PerIModelTextureSet const& GetDecorationTexturesByIModel() const { return perIModelTextures_; }
-		TextureUsageMap const& GetTextureUsageMap() const { return textureUsageMap_; }
+		PerIModelTextureSet const& GetDecorationTexturesByIModel() const { 
+			//TODO: check thread safety
+			auto thdata = thdata_.GetAutoLock();
+			return thdata->perIModelTextures_;
+		}
+		TextureUsageMap const& GetTextureUsageMap() const { 
+			//TODO: check thread safety
+			auto thdata = thdata_.GetAutoLock();
+			return thdata->textureUsageMap_;
+		}
 		TextureUsage GetTextureUsage(TextureKey const& textureKey) const;
 		void AddTextureUsage(TextureKey const& textureKey, EChannelType channel);
 
@@ -82,7 +115,8 @@ namespace AdvViz::SDK
 		std::string ExportAsJson(ITwinMaterial const& material, std::string const& iModelID, uint64_t materialId) const;
 		bool ConvertJsonFileToKeyValueMap(std::filesystem::path const& jsonPath,
 			std::filesystem::path const& textureDir,
-			KeyValueStringMap& outMap) const;
+			KeyValueStringMap& outMap,
+			bool bForceUseTexturesFromLocalDir = false) const;
 
 		bool RenameMaterialInJsonFile(std::filesystem::path const& jsonPath,
 			std::string const& newMaterialName, std::string& outError) const;
@@ -118,20 +152,15 @@ namespace AdvViz::SDK
 		{
 			std::vector<SJsonMaterialWithId> materials;
 		};
-		struct MaterialInfo
+		struct MaterialInfo : public SavableItemWithoutID
 		{
 			ITwinMaterial settings;
 			bool existsInDB = false; // to distinguish create vs update...
-			bool needUpdateDB = false;
 			bool needDeleteFromDB = false;
 		};
 		using IModelMaterialInfo = std::unordered_map<uint64_t, MaterialInfo>;
-		using Mutex = std::recursive_mutex;
-		using Lock = std::lock_guard<std::recursive_mutex>;
-
 		using IModelMaterialMap = std::unordered_map<std::string, IModelMaterialInfo>;
 
-		void InvalidateDB() { needUpdateDB_ = true; }
 
 		inline void MaterialToJson(ITwinMaterial const& material,
 			std::string const& iModelID, uint64_t matID,
@@ -144,20 +173,22 @@ namespace AdvViz::SDK
 			std::optional<ETextureSource> const& customTexSource = std::nullopt) const;
 		bool ConvertJsonToKeyValueMap(SJsonMaterialWithId const& jsonMat, KeyValueStringMap& outMap) const;
 
+		void AsyncSaveMaterials(const std::string& decorationId,
+			std::shared_ptr<IModelMaterialMap> dataIO,
+			std::function<void(bool)>&& onDataSavedFunc = {});
+		struct SThreadSafeData
+		{
+			IModelMaterialMap data_;
+			std::unordered_map<std::string, std::string> localToDecoTexId_;
+			PerIModelTextureSet perIModelTextures_;
+			TextureUsageMap textureUsageMap_;
+			std::unordered_set<std::string> loadedIModelIds_; // fully loaded model IDs.
+			std::set<std::string> iModelsForMaterialCollection_;
+			std::unordered_map<uint64_t, std::string> matIDToDisplayName_;
+		};
 
+		Tools::RWLockableObject<SThreadSafeData> thdata_;
 	private:
-		IModelMaterialMap data_;
-
-		std::unordered_map<std::string, std::string> localToDecoTexId_;
-
-		PerIModelTextureSet perIModelTextures_;
-		TextureUsageMap textureUsageMap_;
-
-		mutable Mutex dataMutex_;
-
-		mutable bool needUpdateDB_ = false;
-
-		std::unordered_set<std::string> loadedIModelIds_; // fully loaded model IDs.
 
 		std::shared_ptr<Http> http_;
 		std::string decorationBaseURL_;
@@ -165,8 +196,9 @@ namespace AdvViz::SDK
 		std::string materialLibraryURL_;
 
 		std::filesystem::path materialDirectory_;
-		std::set<std::string> iModelsForMaterialCollection_;
-		std::unordered_map<uint64_t, std::string> matIDToDisplayName_;
+
+
+		std::shared_ptr< std::atomic_bool > isThisValid_;
 	};
 
 
@@ -361,7 +393,7 @@ namespace AdvViz::SDK
 			else if (material.DefinesChannel(EChannelType::Color))
 				material.SetChannelIntensity(EChannelType::Color, 1.0);
 
-			materialInfo.needUpdateDB = false;
+			materialInfo.SetShouldSave(false);
 			materialInfo.existsInDB = true;
 		}
 	}
@@ -377,8 +409,8 @@ namespace AdvViz::SDK
 
 		if (specificModels.empty())
 		{
-			Lock lock(dataMutex_);
-			data_.clear();
+			auto thdata = thdata_.GetAutoLock();
+			thdata->data_.clear();
 		}
 
 		if (!GetHttp())
@@ -396,14 +428,15 @@ namespace AdvViz::SDK
 			{} /* extra headers*/,
 			[this, &dataIO](std::vector<SJsonMaterialWithId> const& rows) -> expected<void, std::string>
 		{
-			ParseJSONMaterials(rows, dataIO, perIModelTextures_, textureUsageMap_);
+			auto thdata = thdata_.GetAutoLock();
+			ParseJSONMaterials(rows, dataIO, thdata->perIModelTextures_, thdata->textureUsageMap_);
 			return {};
 		});
 
 		if (!ret)
-			{
+		{
 			BE_LOGW("ITwinDecoration", "Load material definitions failed. " << ret.error());
-			}
+		}
 
 		for (auto const& [iModelID, materialMap] : dataIO)
 		{
@@ -415,7 +448,8 @@ namespace AdvViz::SDK
 
 		// Transfer loaded material definitions to internal map.
 		{
-			Lock lock(dataMutex_);
+			auto thdata = thdata_.GetAutoLock();
+			auto& data_ = thdata->data_;
 			if (!specificModels.empty())
 			{
 				// Only replace materials for the selected iModel(s).
@@ -432,30 +466,116 @@ namespace AdvViz::SDK
 			else
 			{
 				data_.swap(dataIO);
-				needUpdateDB_ = false;
 			}
 		}
 	}
 
+	void MaterialPersistenceManager::Impl::AsyncLoadDataFromServer(std::string const& decorationId,
+		std::function<void(expected<void,std::string> const&)> const& onFinishCallback,
+		std::set<std::string> const& specificModels /*= {}*/)
+	{
+		if (decorationId.empty())
+		{
+			BE_ISSUE("decoration ID missing to load material definitions");
+			onFinishCallback(make_unexpected("decoration ID missing to load material definitions"));
+			return;
+		}
+
+		if (specificModels.empty())
+		{
+			auto thdata = thdata_.GetAutoLock();
+			thdata->data_.clear();
+		}
+
+		if (!GetHttp())
+		{
+			BE_ISSUE("No http support!");
+			onFinishCallback(make_unexpected("No http support!"));
+			return;
+		}
+
+		// Use a local map for loading, and replace it at the end.
+		auto dataIOPtr = MakeSharedLockableData<IModelMaterialMap>();
+		std::shared_ptr< MaterialPersistenceManager::Impl> SThis = shared_from_this();
+		std::shared_ptr<std::set<std::string>> SSpecificModels = std::make_shared<std::set<std::string>>(specificModels);
+
+		AsyncHttpGetWithLink_ByBatch<SJsonMaterialWithId>(GetHttp(),
+			"decorations/" + decorationId + "/materials",
+			{} /* extra headers*/,
+			[SThis, dataIOPtr, decorationId](std::vector<SJsonMaterialWithId> const& rows) -> expected<void, std::string>
+			{
+				auto thdata = SThis->thdata_.GetAutoLock();
+				auto dataIO = dataIOPtr->GetAutoLock();
+				SThis->ParseJSONMaterials(rows, dataIO, thdata->perIModelTextures_, thdata->textureUsageMap_);
+				return {};
+			},
+			[SThis, dataIOPtr, SSpecificModels, decorationId, onFinishCallback](expected<void, std::string> const& exp)
+			{
+				if (!exp)
+				{
+					BE_LOGW("ITwinDecoration", "Load material definitions failed. " << exp.error());
+					onFinishCallback(exp);
+					return;
+				}
+				auto dataIO = dataIOPtr->GetAutoLock();
+				for (auto const& [iModelID, materialMap] : *dataIO)
+				{
+					BE_LOGI("ITwinDecoration", "Loaded " << materialMap.size() << " material definition(s) for imodel " << iModelID);
+				}
+
+				// Update the URL used to access textures.
+				SThis->BuildDecorationFilesURL(decorationId);
+
+				// Transfer loaded material definitions to internal map.
+				{
+					auto thdata = SThis->thdata_.GetAutoLock();
+					auto& data_ = thdata->data_;
+					if (!SSpecificModels->empty())
+					{
+						// Only replace materials for the selected iModel(s).
+						for (std::string const& iModelId : *SSpecificModels)
+						{
+							data_.erase(iModelId);
+							auto const itLoadedMats = dataIO->find(iModelId);
+							if (itLoadedMats != dataIO->end())
+							{
+								data_[iModelId] = itLoadedMats->second;
+							}
+						}
+					}
+					else
+					{
+						data_.swap(dataIO);
+						SThis->SetShouldSave(false);
+					}
+				}
+
+				onFinishCallback(exp);
+			}
+			);
+
+	}
+
 	bool MaterialPersistenceManager::Impl::HasLoadedModel(std::string const& iModelId) const
 	{
-		Lock lock(dataMutex_);
-		return loadedIModelIds_.contains(iModelId);
+		auto thdata = thdata_.GetRAutoLock();
+		return thdata->loadedIModelIds_.contains(iModelId);
 	}
 
 	void MaterialPersistenceManager::Impl::SetLoadedModel(std::string const& iModelId, bool bLoaded)
 	{
-		Lock lock(dataMutex_);
+		auto thdata = thdata_.GetAutoLock();
 		if (bLoaded)
-			loadedIModelIds_.insert(iModelId);
+			thdata->loadedIModelIds_.insert(iModelId);
 		else
-			loadedIModelIds_.erase(iModelId);
+			thdata->loadedIModelIds_.erase(iModelId);
 	}
 
 	void MaterialPersistenceManager::Impl::RequestDeleteITwinMaterialsInDB(
 		std::optional<std::string> const& specificIModelID /*= std::nullopt*/)
 	{
-		Lock lock(dataMutex_);
+		auto thdata = thdata_.GetAutoLock();
+		auto& data_ = thdata->data_;	
 		bool needDeletion = false;
 		for (auto& [iModelID, materialMap] : data_)
 		{
@@ -466,7 +586,7 @@ namespace AdvViz::SDK
 				matInfo.needDeleteFromDB = true;
 				if (matInfo.existsInDB)
 				{
-					matInfo.needUpdateDB = true;
+					matInfo.InvalidateDB();
 					needDeletion = true;
 				}
 			}
@@ -477,26 +597,28 @@ namespace AdvViz::SDK
 		}
 	}
 
-	std::optional<bool> MaterialPersistenceManager::Impl::UploadChannelTextureIfNeeded(ITwinChannelMap& texMap,
+	bool MaterialPersistenceManager::Impl::AsyncUploadChannelTextureIfNeeded(
+		std::shared_ptr<AsyncRequestGroupCallback> const& callbackPtr,
+		ITwinChannelMap& texMap,
 		std::string const& decorationId)
 	{
 		if (texMap.eSource != ETextureSource::LocalDisk)
-			return std::nullopt;
+			return false;
 		if (!texMap.HasTexture())
-			return std::nullopt;
+			return false;
 
 		std::string const filePath = texMap.texture;
 
 		{
 			// See if this texture has been uploaded before (typically if a same texture is used in multiple
 			// materials).
-			Lock lock(dataMutex_);
-			auto itDecoId = localToDecoTexId_.find(filePath);
-			if (itDecoId != localToDecoTexId_.end())
+			auto thdata = thdata_.GetRAutoLock();
+			auto itDecoId = thdata->localToDecoTexId_.find(filePath);
+			if (itDecoId != thdata->localToDecoTexId_.end())
 			{
 				texMap.texture = itDecoId->second;
 				texMap.eSource = ETextureSource::Decoration;
-				return std::nullopt;
+				return false;
 			}
 		}
 
@@ -511,31 +633,42 @@ namespace AdvViz::SDK
 
 		BE_LOGI("ITwinDecoration", "Uploading texture " << filePath << " as " << basename << "...");
 
-		auto const r = GetHttp()->PostFile(
+		AsyncPostFile(GetHttp(), callbackPtr,
+			[this, &texMap, filePath, basename](const Http::Response& r)
+		{
+			// Note that texMap is still valid because it's owned by the shared dataIO wrapped in
+			// callbackPtr...
+			bool const uploaded = (r.first == 200 || r.first == 201 || r.first == 409);  //409 is Conflict, meaning the file is already uploaded.
+			if (uploaded)
+			{
+				// Replace the identifier in the channel.
+				texMap.texture = basename;
+				texMap.eSource = ETextureSource::Decoration;
+
+				auto thdata = thdata_.GetAutoLock();
+				thdata->localToDecoTexId_.emplace(filePath, basename);
+
+				BE_LOGI("ITwinDecoration", "Uploaded texture " << filePath);
+			}
+			else
+			{
+				BE_LOGE("ITwinDecoration", "Failed upload of texture " << filePath << " - error code: " << r.first);
+			}
+			return uploaded;
+		},
 			"decorations/" + decorationId + "/files",
-			"file", filePath, { { "filename", basename } });
-		bool const uploaded = (r.first == 200 || r.first == 201);
-		if (uploaded)
-		{
-			// Replace the identifier in the channel.
-			texMap.texture = basename;
-			texMap.eSource = ETextureSource::Decoration;
-
-			Lock lock(dataMutex_);
-			localToDecoTexId_.emplace(filePath, basename);
-
-			BE_LOGI("ITwinDecoration", "Uploaded texture " << filePath);
-		}
-		else
-		{
-			BE_LOGE("ITwinDecoration", "Failed upload of texture " << filePath << " - error code: " << r.first);
-		}
-		return uploaded;
+			"file",
+			filePath,
+			{ { "filename", basename } });
+		return true;
 	}
 
-	bool MaterialPersistenceManager::Impl::UploadTexuresIfNeeded(size_t& nUploaded, ITwinMaterial& material,
-		const std::string& decorationId)
+	size_t MaterialPersistenceManager::Impl::AsyncUploadTexuresIfNeeded(
+		std::shared_ptr<AsyncRequestGroupCallback> const& callbackPtr,
+		ITwinMaterial& material,
+		std::string const& decorationId)
 	{
+		size_t nUploadStarted = 0;
 		for (uint8_t chanIndex(0) ; chanIndex < (uint8_t)EChannelType::ENUM_END; ++chanIndex)
 		{
 			EChannelType const chan = static_cast<EChannelType>(chanIndex);
@@ -544,18 +677,14 @@ namespace AdvViz::SDK
 			{
 				// We need a mutable ITwinChannelMap here, as we may change the map's ID or source.
 				ITwinChannelMap& chanMapRef = material.GetMutableChannelMap(chan);
-				auto uploadOpt = UploadChannelTextureIfNeeded(
-					chanMapRef, decorationId);
-				if (uploadOpt)
+				if (AsyncUploadChannelTextureIfNeeded(
+					callbackPtr, chanMapRef, decorationId))
 				{
-					if (*uploadOpt)
-						nUploaded++;
-					else
-						return false;
+					nUploadStarted++;
 				}
 			}
 		}
-		return true;
+		return nUploadStarted;
 	}
 
 	void MaterialPersistenceManager::Impl::BuildDecorationFilesURL(const std::string& decorationId)
@@ -623,7 +752,7 @@ namespace AdvViz::SDK
 			BE_ASSERT(!decorationFilesRelativeURL_.empty());
 			relativeURL = decorationFilesRelativeURL_ + "?filename=";
 		}
-		relativeURL += AdvViz::SDK::EncodeForUrl(textureKey.id);
+		relativeURL += http_->EncodeForUrl(textureKey.id);
 		return relativeURL;
 	}
 
@@ -723,6 +852,8 @@ namespace AdvViz::SDK
 			jsonMat.uvRotationAngle = material.uvTransform.rotation;
 		}
 
+		auto& thdata = thdata_.GetRAutoLock();
+		auto const& matIDToDisplayName_ = thdata->matIDToDisplayName_;
 		jsonMat.displayName.reset();
 		if (!material.displayName.empty())
 		{
@@ -737,200 +868,275 @@ namespace AdvViz::SDK
 		}
 	}
 
-	void MaterialPersistenceManager::Impl::SaveDataOnServer(const std::string& decorationId)
+	void MaterialPersistenceManager::Impl::AsyncSaveDataOnServer(const std::string& decorationId,
+		std::function<void(bool)>&& onDataSavedFunc /*= {}*/)
+	{
+		std::function<void(bool)> onMaterialSavedFunc =
+			[isValidLambda = isThisValid_, this,
+			 callback = std::move(onDataSavedFunc)](bool bSuccess)
+		{
+			if (*isValidLambda && bSuccess)
+			{
+				// reset the global save status.
+				OnSaved();
+			}
+			if (callback)
+				callback(bSuccess);
+		};
+
+		bool const saveMaterialCollection = !materialDirectory_.empty();
+
+		// Make a copy of the data to save at current time.
+		std::shared_ptr<IModelMaterialMap> dataIO = std::make_shared<IModelMaterialMap>();
+		{	
+			auto thdata = thdata_.GetAutoLock();
+
+			for (auto& [iModelID, materialMap] : thdata->data_)
+			{
+				IModelMaterialInfo matsToSaveForIModel;
+				bool const saveIModelMaterials =
+					saveMaterialCollection && thdata->iModelsForMaterialCollection_.contains(iModelID);
+				for (auto& [matID, matInfo] : materialMap)
+				{
+					if (!matInfo.ShouldSave() && !saveIModelMaterials)
+						continue;
+					if (matInfo.ShouldSave())
+						matInfo.OnStartSave();
+					matsToSaveForIModel.emplace(matID, matInfo);
+				}
+				if (!matsToSaveForIModel.empty())
+				{
+					dataIO->emplace(iModelID, matsToSaveForIModel);
+				}
+			}
+		}
+
+
+		std::shared_ptr<AsyncRequestGroupCallback> onUploadFinished =
+			std::make_shared<AsyncRequestGroupCallback>(
+				[isValidLambda = isThisValid_, this, decorationId, dataIO,
+				 callback = std::move(onMaterialSavedFunc)](bool bSuccess) mutable
+		{
+			if (*isValidLambda)
+			{
+				if (bSuccess)
+					AsyncSaveMaterials(decorationId, dataIO, std::move(callback));
+				else if (callback)
+					callback(false);
+			}
+		}, isThisValid_);
+
+		OnStartSave();
+
+		// First upload textures if needed, and update texture identifiers accordingly.
+		for (auto& [iModelID, materialMap] : *dataIO)
+		{
+			for (auto& [matID, matInfo] : materialMap)
+			{
+				AsyncUploadTexuresIfNeeded(onUploadFinished, matInfo.settings, decorationId);
+			}
+		}
+
+		onUploadFinished->OnFirstLevelRequestsRegistered();
+	}
+
+	void MaterialPersistenceManager::Impl::AsyncSaveMaterials(const std::string& decorationId,
+		std::shared_ptr<IModelMaterialMap> dataIO,
+		std::function<void(bool)>&& onDataSavedFunc /*= {}*/)
 	{
 		struct SJsonMaterialIdVect { std::vector<std::string> ids; };
 		SJsonMaterialWithIdVec jInPost; // for creation
 		SJsonMaterialWithIdVec jInPut; // for update
 		SJsonMaterialIdVect jInDelete; // for deletion
 
+		using MaterialIdSet = std::unordered_set<uint64_t>;
+		using IModelMaterialIdMap = std::unordered_map<std::string, MaterialIdSet>;
+		IModelMaterialIdMap allMatIdsToCreate, allMatIdsToUpdate, allMatIdsToDelete;
+
 		SJsonMaterialWithIdVec jMaterialCollection;
 		bool const saveMaterialCollection = !materialDirectory_.empty();
 
-		// Make a copy of the data at current time.
-		IModelMaterialMap dataIO;
-		{
-			Lock lock(dataMutex_);
-			dataIO = data_;
-		}
-
-		// First upload textures if needed, and update texture identifiers accordingly.
-		size_t totalUploadedTextures(0);
-		bool failedUpload = false;
-		for (auto& [iModelID, materialMap] : dataIO)
-		{
-			for (auto& [matID, matInfo] : materialMap)
-			{
-				if (!matInfo.needUpdateDB)
-					continue;
-				ITwinMaterial& material(matInfo.settings);
-				size_t nUploaded(0);
-				bool uploadOk = UploadTexuresIfNeeded(nUploaded, material, decorationId);
-				totalUploadedTextures += nUploaded;
-				if (!uploadOk)
-				{
-					failedUpload = true;
-					break;
-				}
-			}
-			if (failedUpload)
-				break;
-		}
-		if (totalUploadedTextures > 0)
-		{
-			BE_LOGI("ITwinDecoration", "Uploaded " << totalUploadedTextures << " textures");
-		}
-		if (failedUpload)
-		{
-			BE_LOGE("ITwinDecoration", "Failed upload - abort material saving");
-			return;
-		}
+		std::shared_ptr<AsyncRequestGroupCallback> onMaterialsSaved =
+			std::make_shared<AsyncRequestGroupCallback>(
+				std::move(onDataSavedFunc), isThisValid_);
 
 		// Now that needed uploads have occurred, we can update the URL used to access those textures.
 		BuildDecorationFilesURL(decorationId);
 
+		auto thdata = thdata_.GetRAutoLock();
+		auto& iModelsForMaterialCollection_ = thdata->iModelsForMaterialCollection_;
+
 		// Sort materials for requests (addition/update)
 		SJsonMaterialWithId jsonMat;
-		for (auto const& [iModelID, materialMap] : dataIO)
+		for (auto const& [iModelID, materialMap] : *dataIO)
 		{
+			MaterialIdSet matIdsToCreate, matIdsToUpdate, matIdsToDelete;
 			bool const saveIModelMaterials =
 				saveMaterialCollection && iModelsForMaterialCollection_.contains(iModelID);
 			for (auto const& [matID, matInfo] : materialMap)
 			{
-				if (!matInfo.needUpdateDB && !saveIModelMaterials)
-					continue;
-
 				MaterialToJson(matInfo.settings, iModelID, matID, jsonMat);
 
 				if (saveIModelMaterials)
 				{
 					jMaterialCollection.materials.push_back(jsonMat);
-					if (!matInfo.needUpdateDB)
+					if (!matInfo.ShouldSave())
 						continue;
 				}
-
-				//if (!matInfo.needDeleteFromDB
-				//	&& !jsonMat.metallic && !jsonMat.roughness && !jsonMat.opacity)
-				//{
-				//	BE_LOGW("ITwinDecoration", "Skipping material " << matID << " during saving process (empty)");
-				//	continue;
-				//}
 
 				if (matInfo.needDeleteFromDB)
 				{
 					if (matInfo.existsInDB)
+					{
 						jInDelete.ids.push_back(jsonMat.id);
+						matIdsToDelete.insert(matID);
+					}
 				}
 				else if (matInfo.existsInDB)
 				{
 					jInPut.materials.push_back(jsonMat);
+					matIdsToUpdate.insert(matID);
 				}
 				else
 				{
 					jInPost.materials.push_back(jsonMat);
+					matIdsToCreate.insert(matID);
 				}
 			}
-		}
-		bool hasModifedFlags = false;
-		auto const UpdateDBFlagsOnSuccess = [&dataIO, &hasModifedFlags](bool forExistingInDB)
-		{
-			hasModifedFlags = true;
-			for (auto& [iModelID, materialMap] : dataIO)
+			if (!matIdsToCreate.empty())
 			{
-				for (auto& [matID, matInfo] : materialMap)
+				allMatIdsToCreate.emplace(iModelID, std::move(matIdsToCreate));
+			}
+			if (!matIdsToUpdate.empty())
+			{
+				allMatIdsToUpdate.emplace(iModelID, std::move(matIdsToUpdate));
+			}
+			if (!matIdsToDelete.empty())
+			{
+				allMatIdsToDelete.emplace(iModelID, std::move(matIdsToDelete));
+			}
+		}
+
+		auto const UpdateDBFlagsOnSuccess = [this](bool forExistingInDB, IModelMaterialIdMap const& modifiedMats)
+		{
+			auto thdata = thdata_.GetAutoLock();
+			for (auto const& [iModelID, modifiedMatIds] : modifiedMats)
+			{
+				auto& realMaterials = thdata->data_[iModelID];
+				for (auto matId : modifiedMatIds)
 				{
-					if (matInfo.existsInDB == forExistingInDB)
+					auto itMatInfo = realMaterials.find(matId);
+					if (itMatInfo != realMaterials.end())
 					{
-						matInfo.needUpdateDB = false;
-					}
-					if (!forExistingInDB)
-					{
-						// The material was successfully created in DB now
-						matInfo.existsInDB = true;
+						itMatInfo->second.OnSaved();
+
+						if (!forExistingInDB)
+						{
+							// The material was successfully created in DB now
+							itMatInfo->second.existsInDB = true;
+						}
 					}
 				}
 			}
 		};
 
-		bool saveOK = true;
-
 		// Delete material definitions if requested
 		if (!jInDelete.ids.empty())
 		{
-			bool deletionOK = false;
-			std::string jOutDelete;
-			long status = GetHttp()->DeleteJsonJBody(
-				jOutDelete,"decorations/"+ decorationId + "/materials", jInDelete);
-			if (status == 200 || status == 201)
+			AsyncDeleteJsonJBody<std::string>(GetHttp(), onMaterialsSaved,
+				[this,
+				 jInDelete,
+				 allMatIdsToDelete](long httpCode, const Tools::TSharedLockableData<std::string>& /*joutPtr*/)
 			{
-				BE_LOGI("ITwinDecoration", "Deleted " << jInDelete.ids.size() << " material definition(s). Http status: " << status);
-				deletionOK = true;
-
-				// Now remove all deleted entries
-				for (auto& [iModelID, materialMap] : dataIO)
+				const bool bSuccess = (httpCode == 200 || httpCode == 201 || httpCode == 204 /* No-Content*/);
+				if (bSuccess)
 				{
-					std::erase_if(materialMap, [](const auto& item)
+					BE_LOGI("ITwinDecoration", "Deleted " << jInDelete.ids.size()
+						<< " material definition(s). Http status: " << httpCode);
+					// Now remove all deleted entries in the manager map
+					auto thdata = thdata_.GetAutoLock();
+					for (auto const& [iModelID, deletedIds] : allMatIdsToDelete)
 					{
-						auto const& [matID, matInfo] = item;
-						return matInfo.needDeleteFromDB;
-					});
+						auto& realMaterials = thdata->data_[iModelID];
+						for (auto delId : deletedIds)
+						{
+							realMaterials.erase(delId);
+						}
+					}
 				}
-				hasModifedFlags = true; // we did modify more than flags in fact...
-			}
-			else
-			{
-				BE_LOGW("ITwinDecoration", "Deleting material definitions failed. Http status: " << status);
-			}
-			saveOK &= deletionOK;
+				else
+				{
+					BE_LOGW("ITwinDecoration", "Deleting material definitions failed. Http status: " << httpCode);
+				}
+				return bSuccess;
+			},
+				"decorations/"+ decorationId + "/materials",
+				jInDelete);
 		}
 
 		// Post (new materials)
 		if (!jInPost.materials.empty())
 		{
-			bool creationOK = false;
-			SJsonMaterialWithIdVec jOutPost;
-			long status = GetHttp()->PostJsonJBody(
-				jOutPost, "decorations/" + decorationId + "/materials", jInPost);
-
-			if (status == 200 || status == 201)
+			AsyncPostJsonJBody<SJsonMaterialWithIdVec>(GetHttp(), onMaterialsSaved,
+				[this, UpdateDBFlagsOnSuccess,
+				jInPost, allMatIdsToCreate](long httpCode, const Tools::TSharedLockableData<SJsonMaterialWithIdVec>& joutPtr)
 			{
-				if (jInPost.materials.size() == jOutPost.materials.size())
+				const bool bSuccess = (httpCode == 200 || httpCode == 201);
+				if (bSuccess)
 				{
-					BE_LOGI("ITwinDecoration", "Saved " << jInPost.materials.size() << " new material definition(s). Http status: " << status);
-					UpdateDBFlagsOnSuccess(false);
-					creationOK = true;
+					auto unlockedJout = joutPtr->GetAutoLock();
+					SJsonMaterialWithIdVec const& jOutPost = unlockedJout.Get();
+					if (jInPost.materials.size() == jOutPost.materials.size())
+					{
+						BE_LOGI("ITwinDecoration", "Saved " << jInPost.materials.size() << " new material definition(s). Http status: " << httpCode);
+						UpdateDBFlagsOnSuccess(false, allMatIdsToCreate);
+					}
+					else
+					{
+						BE_ISSUE("mismatch count while saving new material definitions",
+							jInPost.materials.size(), jOutPost.materials.size());
+					}
 				}
-			}
-			else
-			{
-				BE_LOGW("ITwinDecoration", "Saving new material definitions failed. Http status: " << status);
-			}
-			saveOK &= creationOK;
+				else
+				{
+					BE_LOGW("ITwinDecoration", "Saving new material definitions failed. Http status: " << httpCode);
+				}
+				return bSuccess;
+			},
+				"decorations/" + decorationId + "/materials",
+				jInPost);
 		}
 
 		// Put (updated materials)
 		if (!jInPut.materials.empty())
 		{
-			bool updateOK = false;
-			struct SJsonMaterialOutUpd { int64_t numUpdated = 0; };
-			SJsonMaterialOutUpd jOutPut;
-			long status = GetHttp()->PutJsonJBody(
-				jOutPut, "decorations/" + decorationId + "/materials", jInPut);
-
-			if (status == 200 || status == 201)
+			struct SJsonMaterialOutUpd
 			{
-				if (jInPut.materials.size() == static_cast<size_t>(jOutPut.numUpdated))
+				int64_t numUpdated = 0;
+			};
+			AsyncPutJsonJBody<SJsonMaterialOutUpd>(GetHttp(), onMaterialsSaved,
+				[this, UpdateDBFlagsOnSuccess,
+				jInPut, allMatIdsToUpdate](long httpCode, const Tools::TSharedLockableData<SJsonMaterialOutUpd>& joutPtr)
+			{
+				const bool bSuccess = (httpCode == 200 || httpCode == 201);
+				if (bSuccess)
 				{
-					BE_LOGI("ITwinDecoration", "Updated " << jInPut.materials.size() << " material definition(s). Http status: " << status);
-					UpdateDBFlagsOnSuccess(true);
-					updateOK = true;
+					auto unlockedJout = joutPtr->GetAutoLock();
+					SJsonMaterialOutUpd const& jOutPut = unlockedJout.Get();
+					if (jInPut.materials.size() == static_cast<size_t>(jOutPut.numUpdated))
+					{
+						BE_LOGI("ITwinDecoration", "Updated " << jInPut.materials.size() << " material definition(s). Http status: " << httpCode);
+						UpdateDBFlagsOnSuccess(true, allMatIdsToUpdate);
+					}
 				}
-			}
-			else
-			{
-				BE_LOGW("ITwinDecoration", "Updating material definitions failed. Http status: " << status);
-			}
-			saveOK &= updateOK;
+				else
+				{
+					BE_LOGW("ITwinDecoration", "Updating material definitions failed. Http status: " << httpCode);
+				}
+				return bSuccess;
+			},
+				"decorations/" + decorationId + "/materials",
+				jInPut);
 		}
 
 		if (!jMaterialCollection.materials.empty())
@@ -943,28 +1149,14 @@ namespace AdvViz::SDK
 			std::ofstream(materialsOutputPath) << rfl::json::write(jsonMats, YYJSON_WRITE_PRETTY);
 		}
 
-		if (hasModifedFlags)
-		{
-			// Copy back dataIO to data_
-			Lock lock(dataMutex_);
-			data_.swap(dataIO);
-		}
-
-		if (saveOK)
-		{
-			needUpdateDB_ = false;
-		}
-	}
-
-	bool MaterialPersistenceManager::Impl::NeedUpdateDB() const
-	{
-		return needUpdateDB_;
+		onMaterialsSaved->OnFirstLevelRequestsRegistered();
 	}
 
 	size_t MaterialPersistenceManager::Impl::ListIModelsWithMaterialSettings(std::vector<std::string>& iModelIds) const
 	{
 		iModelIds.clear();
-		Lock lock(dataMutex_);
+		auto thdata = thdata_.GetRAutoLock();
+		auto const& data_ = thdata->data_;
 		iModelIds.reserve(data_.size());
 		for (auto const& [iModelID, materialMap] : data_)
 		{
@@ -975,7 +1167,8 @@ namespace AdvViz::SDK
 
 	bool MaterialPersistenceManager::Impl::HasMaterialDefinition(std::string const& iModelId, uint64_t materialId) const
 	{
-		Lock lock(dataMutex_);
+		auto thdata = thdata_.GetRAutoLock();
+		auto const& data_ = thdata->data_;
 		auto itIModel = data_.find(iModelId);
 		if (itIModel == data_.end())
 			return false;
@@ -984,7 +1177,8 @@ namespace AdvViz::SDK
 
 	bool MaterialPersistenceManager::Impl::GetMaterialSettings(std::string const& iModelId, uint64_t materialId, ITwinMaterial& material) const
 	{
-		Lock lock(dataMutex_);
+		auto thdata = thdata_.GetRAutoLock();
+		auto const& data_ = thdata->data_;
 		auto itIModel = data_.find(iModelId);
 		if (itIModel == data_.end())
 			return false;
@@ -999,20 +1193,22 @@ namespace AdvViz::SDK
 
 	void MaterialPersistenceManager::Impl::SetMaterialSettings(std::string const& iModelId, uint64_t materialId, ITwinMaterial const& material)
 	{
-		Lock lock(dataMutex_);
-		IModelMaterialInfo& materialMap = data_[iModelId];
+		auto thdata = thdata_.GetAutoLock();
+		IModelMaterialInfo& materialMap = thdata->data_[iModelId];
 		MaterialInfo& materialInfo = materialMap[materialId];
 		ITwinMaterial& storedSettings = materialInfo.settings;
 		if (material != storedSettings)
 		{
 			storedSettings = material;
-			materialInfo.needUpdateDB = true;
+			materialInfo.InvalidateDB();
 			InvalidateDB();
 		}
 	}
 
 	TextureUsage MaterialPersistenceManager::Impl::GetTextureUsage(TextureKey const& textureKey) const
 	{
+		auto thdata = thdata_.GetRAutoLock();
+		auto const& textureUsageMap_ = thdata->textureUsageMap_;
 		return FindTextureUsage(textureUsageMap_, textureKey);
 	}
 
@@ -1020,6 +1216,8 @@ namespace AdvViz::SDK
 	{
 		if (!textureKey.id.empty() && textureKey.id != NONE_TEXTURE)
 		{
+			auto thdata = thdata_.GetAutoLock();
+			auto& textureUsageMap_ = thdata->textureUsageMap_;
 			textureUsageMap_[textureKey].AddChannel(channel);
 		}
 	}
@@ -1042,6 +1240,13 @@ namespace AdvViz::SDK
 		std::filesystem::path const& materialJsonPath, std::string const& iModelID,
 		std::unordered_map<uint64_t, std::string>& outMatIDToDisplayName)
 	{
+		auto thdata = thdata_.GetAutoLock();
+		auto& iModelsForMaterialCollection_ = thdata->iModelsForMaterialCollection_;
+		auto& matIDToDisplayName_ = thdata->matIDToDisplayName_;
+		auto& textureUsageMap_ = thdata->textureUsageMap_;
+		auto& perIModelTextures_ = thdata->perIModelTextures_;
+		auto& data_ = thdata->data_;
+
 		iModelsForMaterialCollection_.insert(iModelID);
 
 		std::error_code ec;
@@ -1084,7 +1289,6 @@ namespace AdvViz::SDK
 					imodelTextures.insert(texSet.begin(), texSet.end());
 				}
 
-				Lock lock(dataMutex_);
 				auto& imodelMats = data_[iModelID];
 				for (auto const& [matId, matInfo] : loadedMats)
 				{
@@ -1098,6 +1302,8 @@ namespace AdvViz::SDK
 	void MaterialPersistenceManager::Impl::AppendMaterialCollectionNames(
 		std::unordered_map<uint64_t, std::string> const& matIDToDisplayName)
 	{
+		auto thdata = thdata_.GetAutoLock();
+		auto& matIDToDisplayName_ = thdata->matIDToDisplayName_;
 		matIDToDisplayName_.insert(matIDToDisplayName.begin(), matIDToDisplayName.end());
 	}
 
@@ -1124,7 +1330,7 @@ namespace AdvViz::SDK
 			const int nValue = boolValue ? 1 : 0;
 			currentValue_ += std::to_string(nValue);
 		}
-		void operator()(const int& nValue) const
+		void operator()(const int64_t& nValue) const
 		{
 			currentValue_ += std::to_string(nValue);
 		}
@@ -1283,11 +1489,11 @@ namespace AdvViz::SDK
 		{
 			return false;
 		}
-		Lock lock(dataMutex_);
-		IModelMaterialInfo& iModelMats = data_[iModelId];
+		auto thdata = thdata_.GetAutoLock();
+		IModelMaterialInfo& iModelMats = thdata->data_[iModelId];
 		auto& matEntry = iModelMats[materialId];
 		matEntry.settings = material;
-		matEntry.needUpdateDB = false;
+		matEntry.SetShouldSave(false);
 		//matEntry.existsInDB = true;
 		return true;
 	}
@@ -1302,7 +1508,8 @@ namespace AdvViz::SDK
 
 	bool MaterialPersistenceManager::Impl::ConvertJsonFileToKeyValueMap(std::filesystem::path const& jsonPath,
 		std::filesystem::path const& textureDir,
-		KeyValueStringMap& outMap) const
+		KeyValueStringMap& outMap,
+		bool bForceUseTexturesFromLocalDir /*= false*/) const
 	{
 		SJsonMaterialWithId jsonMat;
 		std::ifstream ifs(jsonPath);
@@ -1329,17 +1536,39 @@ namespace AdvViz::SDK
 				return s;
 			};
 
+			[[maybe_unused]] std::error_code ec;
+
 			for (auto& [key, value] : outMap)
 			{
+				// Note about symbolic paths such as <MatLibrary>/Folder/name.ext: to simplify the
+				// implementation of the Component Center management, we enforce changing those paths to
+				// absolute paths using the texture directory where the json file was loaded (with the CC,
+				// both files (json and PNG) are downloaded in individual temporary directories)
+				// The drawback of doing this is that we will upload those textures in the decoration service
+				// while ideally we could prefer to avoid it, and instead download the corresponding
+				// material component from the Component Center if needed, when we load a scene referencing
+				// such a texture (it would necessitate more work to associate a material name to the CC
+				// identifier).
 				if (key.ends_with("Map")
 					&& !value.empty()
 					&& value != "\"\""
 					&& value != "\"0\""
-					&& !value.starts_with("\"<") /* avoid losing symbolic prefix such as <MatLibrary> */
+					&& (bForceUseTexturesFromLocalDir || !value.starts_with("\"<")) /* avoid losing symbolic prefix such as <MatLibrary> */
 					&& !value.ends_with("/0\""))
 				{
-					auto baseName = std::filesystem::path(trimPath(value)).filename();
-					value = quote + (textureDir / baseName).generic_string() + quote;
+					std::filesystem::path const texPathInFile = trimPath(value);
+					std::filesystem::path const baseName = texPathInFile.filename();
+					std::filesystem::path texPathToWrite = textureDir / baseName;
+					if (bForceUseTexturesFromLocalDir)
+					{
+						BE_ASSERT(std::filesystem::exists(texPathToWrite, ec));
+					}
+					else if (texPathInFile.is_relative()
+						&& std::filesystem::exists(textureDir / texPathInFile, ec))
+					{
+						texPathToWrite = textureDir / texPathInFile;
+					}
+					value = quote + texPathToWrite.generic_string() + quote;
 				}
 			}
 		}
@@ -1389,7 +1618,6 @@ namespace AdvViz::SDK
 	MaterialPersistenceManager::MaterialPersistenceManager()
 		: impl_(new Impl())
 	{
-		SetHttp(GetDefaultHttp());
 	}
 
 	MaterialPersistenceManager::~MaterialPersistenceManager()
@@ -1444,7 +1672,7 @@ namespace AdvViz::SDK
 
 	bool MaterialPersistenceManager::NeedUpdateDB() const
 	{
-		return GetImpl().NeedUpdateDB();
+		return GetImpl().ShouldSave();
 	}
 
 	bool MaterialPersistenceManager::HasLoadedModel(std::string const& iModelId) const
@@ -1463,9 +1691,17 @@ namespace AdvViz::SDK
 		GetImpl().LoadDataFromServer(decorationId, specificModels);
 	}
 
-	void MaterialPersistenceManager::SaveDataOnServer(const std::string& decorationId)
+	void MaterialPersistenceManager::AsyncLoadDataFromServer(
+		std::string const& decorationId,
+		std::function<void(expected<void, std::string> const&)> callback,
+		std::set<std::string> const& specificModels)
 	{
-		GetImpl().SaveDataOnServer(decorationId);
+		GetImpl().AsyncLoadDataFromServer(decorationId, callback, specificModels);
+	}
+
+	void MaterialPersistenceManager::AsyncSaveDataOnServer(const std::string& decorationId, std::function<void(bool)>&& onDataSavedFunc /*= {}*/)
+	{
+		GetImpl().AsyncSaveDataOnServer(decorationId, std::move(onDataSavedFunc));
 	}
 
 	void MaterialPersistenceManager::SetLocalMaterialDirectory(std::filesystem::path const& materialDirectory)
@@ -1563,9 +1799,10 @@ namespace AdvViz::SDK
 		return GetImpl().ExportAsJson(material, iModelID, materialId);
 	}
 	bool MaterialPersistenceManager::ConvertJsonFileToKeyValueMap(std::filesystem::path const& jsonPath,
-		std::filesystem::path const& textureDir, KeyValueStringMap& outMap) const
+		std::filesystem::path const& textureDir, KeyValueStringMap& outMap,
+		bool bForceUseTexturesFromLocalDir /*= false*/) const
 	{
-		return GetImpl().ConvertJsonFileToKeyValueMap(jsonPath, textureDir, outMap);
+		return GetImpl().ConvertJsonFileToKeyValueMap(jsonPath, textureDir, outMap, bForceUseTexturesFromLocalDir);
 	}
 
 	bool MaterialPersistenceManager::RenameMaterialInJsonFile(std::filesystem::path const& jsonPath,

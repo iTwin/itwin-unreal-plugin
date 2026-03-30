@@ -1,12 +1,23 @@
 # Due to Unreal and CMake having their own distinct configuration set,
 # we have to map Unreal configs to CMake configs (see be_add_unreal_project).
 # As a result, only a subset of CMake configs are supported.
-set (CMAKE_CONFIGURATION_TYPES UnrealDebug Release)
+# Debug is when building Unreal Engine from its sources
+# UnrealDebug = DebugGame allows to debug our code but UE is a Development
+# ie optimized build, hence stepping and debugging is very limited, even
+# if you have downloaded the PDBs from Epic Launcher.
+if (BE_USE_OFFICIAL_UNREAL) # no Debug config there!
+	set (CMAKE_CONFIGURATION_TYPES UnrealDebug Release)
+else()
+	set (CMAKE_CONFIGURATION_TYPES UnrealDebug Release Debug)
+endif()
 # Add string view definition to fix include problems in Visual Studio 17.11
-# Change some compiler/linker flags, applied to both our targets and the external (ceesium) targets.
+# Change some compiler/linker flags, applied to both our targets and the external (cesium) targets.
 # Enable debug info in Release config.
 if(WIN32)
 	add_definitions("-D_LEGACY_CODE_ASSUMES_STRING_VIEW_INCLUDES_XSTRING")
+	# /Zc:__cplusplus so that the macro __cplusplus is not the default 199711L, which can
+	# lead to trouble with async++ headers
+	set (CMAKE_CXX_FLAGS " ${CMAKE_CXX_FLAGS} /Zc:__cplusplus")
 	set (CMAKE_CXX_FLAGS_RELEASE " ${CMAKE_CXX_FLAGS_RELEASE} /Zi")
 	set (CMAKE_EXE_LINKER_FLAGS_RELEASE " ${CMAKE_EXE_LINKER_FLAGS_RELEASE} /DEBUG")
 	set (CMAKE_SHARED_LINKER_FLAGS_RELEASE " ${CMAKE_SHARED_LINKER_FLAGS_RELEASE} /DEBUG")
@@ -20,7 +31,9 @@ endif()
 set (CMAKE_COMPILE_WARNING_AS_ERROR ON)
 set (LINK_WARNING_AS_ERROR ON)
 # add configuration macros
-add_compile_definitions($<$<CONFIG:UnrealDebug>:UNREALDEBUG_CONFIG>
+add_compile_definitions(
+	$<$<CONFIG:Debug>:DEBUG_CONFIG>
+	$<$<CONFIG:UnrealDebug>:UNREALDEBUG_CONFIG>
 	$<$<CONFIG:Release>:RELEASE_CONFIG>
 )
 # Mute all useless "Up-to-date ..." messages produced by "cmake install".
@@ -69,7 +82,8 @@ set (CMAKE_CXX_STANDARD 20)
 # independently of the config (UnrealDebug, Release...).
 # So to allow building different configs, we have to set a different name for each config
 # (eg. MyLib.dll in Release, and MyLibd.dll in UnrealDebug).
-set (CMAKE_UNREALDEBUG_POSTFIX d)
+set (CMAKE_UNREALDEBUG_POSTFIX ud)
+set (CMAKE_DEBUG_POSTFIX d)
 set (CMAKE_MSVC_RUNTIME_LIBRARY MultiThreadedDLL)
 include_directories (
 	"${CMAKE_SOURCE_DIR}/Public"
@@ -92,11 +106,28 @@ set (ITwinForUnreal_PluginDef
 				BeHeaders
 				BeUtils
 				Boost
-				cpr::cpr
 				httpmockserver
 				libmicrohttpd
 				Visualization
+			PLUGIN_COVERED_MODULES
+				ITwinRuntime
 )
+
+get_property (extraFolders GLOBAL PROPERTY beExtraFoldersToSymlink)
+set (shaderTestDir "${CMAKE_BINARY_DIR}/GeneratedShaderTest" )
+if (NOT ${shaderTestDir} IN_LIST extraFolders)
+	list (APPEND extraFolders ${shaderTestDir})
+	set_property (GLOBAL PROPERTY beExtraFoldersToSymlink ${extraFolders})
+endif ()
+# Slightly adapt the GLSL shader code for use as a C++ fragment, for unit-testing the shader.
+# Despite enabling glm "swizzling" (legacy macro-style), I was unable to directly include it in a CPP file :/
+# (see ITwinRuntime/Private/Tests/GetPerFeatureValuesTest.ush.cpp)
+file(READ "${CMAKE_SOURCE_DIR}/Public/UnrealProjects/ITwinTestApp/Plugins/ITwinForUnreal/Shaders/ITwin/GetPerFeatureValues.ush" _shaderToTest)
+# The shader only uses 'x', 'y', 'z', 'w' and 'xyz' swizzle variants, so I defined 'float4' with 'xyz' and 'w' as members
+# Thus I just need to use component-wise accessors for 'x', 'y' and 'z':
+string(REGEX REPLACE "\\.([x-z])([^a-zA-Z_])" ".\\1()\\2" _shaderToTest "${_shaderToTest}")
+file(WRITE "${shaderTestDir}/GetPerFeatureValues.ush.inl" "${_shaderToTest}")
+
 if (BE_SECONDARY_APPS)
   # Generate ITwinTestAppConfig.h (storing the app ID) in ThirdParty dir, so that it's ignored by git.
   configure_file (Public/ITwinTestAppConfig/ITwinTestAppConfig.h.in

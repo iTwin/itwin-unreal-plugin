@@ -10,6 +10,7 @@
 
 #include <Compil/BeforeNonUnrealIncludes.h>
 #	include "SDK/Core/Tools/Log.h"
+#include <Core/Tools/Tools.h>
 #include <Compil/AfterNonUnrealIncludes.h>
 #include <optional>
 #include <Camera/CameraActor.h>
@@ -20,19 +21,24 @@
 #include <MovieSceneSpawnable.h>
 #include <Tracks/MovieSceneFloatTrack.h>
 #include <Tracks/MovieSceneDoubleTrack.h>
+#include <Tracks/MovieSceneBoolTrack.h>
+#include <Tracks/MovieSceneStringTrack.h>
 #include <Tracks/MovieScene3DTransformTrack.h>
 #include <Tracks/MovieSceneVectorTrack.h>
 #include <Tracks/MovieSceneCameraCutTrack.h>
 #include <Sections/MovieSceneFloatSection.h>
 #include <Sections/MovieSceneDoubleSection.h>
+#include <Sections/MovieSceneBoolSection.h>
+#include <Sections/MovieSceneStringSection.h>
 #include <Sections/MovieScene3DTransformSection.h>
 #include <Sections/MovieSceneVectorSection.h>
 #include <Sections/MovieSceneCameraCutSection.h>
 #include <Channels/MovieSceneChannelProxy.h>
 #include <Channels/MovieSceneFloatChannel.h>
 #include <Channels/MovieSceneDoubleChannel.h>
+#include <Channels/MovieSceneBoolChannel.h>
+#include <Channels/MovieSceneStringChannel.h>
 #include <Systems/MovieSceneQuaternionBlenderSystem.h>
-
 #include "AssetRegistry/AssetRegistryModule.h"
 #include <UObject/SavePackage.h>
 //#include "Package.h"
@@ -80,6 +86,23 @@ namespace {
 		using ValueType = float;
 	};
 
+	template<>
+	struct SequencerTypeTraits<bool>
+	{
+		using TrackType = UMovieSceneBoolTrack;
+		using SectionType = UMovieSceneBoolSection;
+		using ChannelType = FMovieSceneBoolChannel;
+		using ValueType = bool;
+	};
+	template<>
+	struct SequencerTypeTraits<std::string>
+	{
+		using TrackType = UMovieSceneStringTrack;
+		using SectionType = UMovieSceneStringSection;
+		using ChannelType = FMovieSceneStringChannel;
+		using ValueType = std::string;
+	};
+
 	FFrameNumber GetFrameNum(ULevelSequence* pLevelSeq, int iFrame)
 	{
 		return FFrameNumber(int(iFrame * pLevelSeq->MovieScene->GetTickResolution().AsDecimal() / pLevelSeq->MovieScene->GetDisplayRate().AsDecimal()));
@@ -105,26 +128,24 @@ namespace {
 		TRange<FFrameNumber> retRange = TRange<FFrameNumber>::Empty();
 		if (pSection == NULL)
 			return retRange;
-		for (int32 i(0); i < pSection->GetChannelProxy().NumChannels(); i++)
-		{
-			FMovieSceneChannel* pChannel = pSection->GetChannelProxy().GetChannel<FMovieSceneDoubleChannel>(i);
-			if (pChannel == nullptr)
-				pChannel = pSection->GetChannelProxy().GetChannel<FMovieSceneFloatChannel>(i);
-			if (pChannel == nullptr)
-				continue;
-			TArray<FFrameNumber> vKeyTimes;
-			TArray<FKeyHandle> vKeyHandles;
-			pChannel->GetKeys(TRange<FFrameNumber>::All(), &vKeyTimes, &vKeyHandles);
-			if (vKeyTimes.Num() == 0)
-				continue;
-			TRange<FFrameNumber> channelRange = TRange<FFrameNumber>(vKeyTimes[0], TRangeBound<FFrameNumber>::Inclusive(vKeyTimes.Last()));
-			ensure(pChannel->ComputeEffectiveRange() == channelRange);
-			if (retRange.IsEmpty())
-				retRange = channelRange;
-			else if (channelRange.GetLowerBoundValue() < retRange.GetLowerBoundValue())
-				retRange.SetLowerBoundValue(channelRange.GetLowerBoundValue());
-			else if (channelRange.GetUpperBoundValue() > retRange.GetUpperBoundValue())
-				retRange.SetUpperBoundValue(channelRange.GetUpperBoundValue());
+		for (const  auto & entries : pSection->GetChannelProxy().GetAllEntries())
+		{ 
+			for (auto pChannel : entries.GetChannels())
+			{
+				TArray<FFrameNumber> vKeyTimes;
+				TArray<FKeyHandle> vKeyHandles;
+				pChannel->GetKeys(TRange<FFrameNumber>::All(), &vKeyTimes, &vKeyHandles);
+				if (vKeyTimes.Num() == 0)
+					continue;
+				TRange<FFrameNumber> channelRange = TRange<FFrameNumber>(vKeyTimes[0], TRangeBound<FFrameNumber>::Inclusive(vKeyTimes.Last()));
+				ensure(pChannel->ComputeEffectiveRange() == channelRange);
+				if (retRange.IsEmpty())
+					retRange = channelRange;
+				else if (channelRange.GetLowerBoundValue() < retRange.GetLowerBoundValue())
+					retRange.SetLowerBoundValue(channelRange.GetLowerBoundValue());
+				else if (channelRange.GetUpperBoundValue() > retRange.GetUpperBoundValue())
+					retRange.SetUpperBoundValue(channelRange.GetUpperBoundValue());
+			 }
 		}
 		return retRange;
 	}
@@ -350,7 +371,6 @@ namespace {
 
 		return true;
 	}
-
 	template<class ChannelType, typename ValueType>
 	bool GetValueFromChannel(UMovieSceneSection* pSection, int iChannelIdx, FFrameNumber iFrameNum, ValueType& OutValue)
 	{
@@ -362,6 +382,36 @@ namespace {
 			return false;
 
 		return pChannel->Evaluate(iFrameNum, OutValue);
+	}
+	template<>
+	bool GetValueFromChannel<FMovieSceneStringChannel,FString>(UMovieSceneSection* pSection, int iChannelIdx, FFrameNumber iFrameNum, FString& OutValue)
+	{
+		if (pSection == nullptr)
+			return false;
+
+		auto pChannel = pSection->GetChannelProxy().GetChannel<FMovieSceneStringChannel>(iChannelIdx);
+		if (pChannel == nullptr)
+			return false;
+
+		return EvaluateChannel(pChannel, iFrameNum, OutValue);
+	}
+	template<>
+	bool GetValueFromChannel<FMovieSceneStringChannel, std::string>(UMovieSceneSection* pSection, int iChannelIdx, FFrameNumber iFrameNum, std::string& OutValue)
+	{
+		if (pSection == nullptr)
+			return false;
+
+		auto pChannel = pSection->GetChannelProxy().GetChannel<FMovieSceneStringChannel>(iChannelIdx);
+		if (pChannel == nullptr)
+			return false;
+		FString tempValue;
+		 if(EvaluateChannel(pChannel, iFrameNum, tempValue))
+		 {
+			 OutValue = TCHAR_TO_UTF8(*tempValue);
+			 return true;
+		 }
+		 return false;
+
 	}
 	
 	template<class ChannelType>
@@ -402,6 +452,49 @@ namespace {
 		case 1: pChannel->AddLinearKey(iFrameNum, Value); break;
 		default: pChannel->AddConstantKey(iFrameNum, Value); break;
 		}
+		pSection->Modify();
+
+		return true;
+	}
+
+	template<>
+	bool AddKeyFrameToChannel<FMovieSceneBoolChannel, bool>(UMovieSceneSection* pSection, int iChannelIdx, FFrameNumber iFrameNum, const bool& Value, int iKeyInterp)
+	{
+		if (pSection == nullptr)
+			return false;
+
+		auto pChannel = pSection->GetChannelProxy().GetChannel<FMovieSceneBoolChannel>(iChannelIdx);
+		if (pChannel == nullptr)
+			return false;
+
+		// if a key-frame already exists at the given time, delete it
+		TArray<FFrameNumber> vKeyTimes;
+		TArray<FKeyHandle> vKeyHandles;
+		pChannel->GetKeys(TRange<FFrameNumber>(iFrameNum, iFrameNum), &vKeyTimes, &vKeyHandles);
+		pChannel->DeleteKeys(vKeyHandles);
+
+		pChannel->AddKeys({ iFrameNum }, { Value });
+		pSection->Modify();
+
+		return true;
+	}
+	template<>
+	bool AddKeyFrameToChannel<FMovieSceneStringChannel, std::string>(UMovieSceneSection* pSection, int iChannelIdx, FFrameNumber iFrameNum, const std::string& Value, int iKeyInterp)
+	{
+		if (pSection == nullptr)
+			return false;
+
+		auto pChannel = pSection->GetChannelProxy().GetChannel<FMovieSceneStringChannel>(iChannelIdx);
+		if (pChannel == nullptr)
+			return false;
+
+		// if a key-frame already exists at the given time, delete it
+		TArray<FFrameNumber> vKeyTimes;
+		TArray<FKeyHandle> vKeyHandles;
+		pChannel->GetKeys(TRange<FFrameNumber>(iFrameNum, iFrameNum), &vKeyTimes, &vKeyHandles);
+		pChannel->DeleteKeys(vKeyHandles);
+		FString FStringValue(Value.c_str());
+		pChannel->AddKeys({ iFrameNum }, { FStringValue });
 		pSection->Modify();
 
 		return true;
@@ -1053,6 +1146,15 @@ bool USequencerHelper::GetDoubleValueAtTime(UMovieSceneTrack* pTrack, FString le
 	return GetTrackValueAtTime<double>(pTrack, levelSequencePath, fTime, OutValue);
 }
 
+bool USequencerHelper::GetStringValueAtTime(UMovieSceneTrack* pTrack, FString levelSequencePath, float fTime, std::string& OutValue)
+{
+	return GetTrackValueAtTime<std::string>(pTrack, levelSequencePath, fTime, OutValue);
+}
+bool USequencerHelper::GetBoolValueAtTime(UMovieSceneTrack* pTrack, FString levelSequencePath, float fTime, bool& OutValue)
+{
+	return GetTrackValueAtTime<bool>(pTrack, levelSequencePath, fTime, OutValue);
+}
+
 bool USequencerHelper::HasTransformKeyFrame(AActor* pActor, FString levelSequencePath, int iSectionIdx, FFrameNumber iFrameNum, bool& bOutSuccess, FString& outInfoMsg)
 {
 	FString fname = "ActorHasTransformKeyFrame";
@@ -1340,6 +1442,12 @@ bool USequencerHelper::AddNewClip(ACameraActor* pCameraActor, FString levelSeque
 		case ETrackType::TT_Float:
 			pTrack = CreateTrackForParameter<UMovieSceneFloatTrack>(pCameraActor, levelSequencePath, initialRange, Info.sName, bRes, outMsg);
 			break;
+		case ETrackType::TT_Bool:
+			pTrack = CreateTrackForParameter<UMovieSceneBoolTrack>(pCameraActor, levelSequencePath, initialRange, Info.sName, bRes, outMsg);
+			break;
+		case ETrackType::TT_String:
+			pTrack = CreateTrackForParameter<UMovieSceneStringTrack>(pCameraActor, levelSequencePath, initialRange, Info.sName, bRes, outMsg);
+			break;
 		default:
 			break;
 		}
@@ -1406,6 +1514,14 @@ float USequencerHelper::AddKeyFrame(TArray<TStrongObjectPtr<UMovieSceneTrack> >&
 			AddKeyFrameToTrack<double>(pTrack, iSectionIdx, iFrameNum, std::get<double>(Values[i].value()), iKeyInterp, bRes, outMsg);
 		else if (pTrack->GetClass()->GetFName().Compare(TEXT("MovieSceneFloatTrack")) == 0)
 			AddKeyFrameToTrack<float>(pTrack, iSectionIdx, iFrameNum, std::get<float>(Values[i].value()), iKeyInterp, bRes, outMsg);
+		else if (pTrack->GetClass()->GetFName().Compare(TEXT("MovieSceneBoolTrack")) == 0)
+			AddKeyFrameToTrack<bool>(pTrack, iSectionIdx, iFrameNum, std::get<bool>(Values[i].value()), iKeyInterp, bRes, outMsg);
+		else if (pTrack->GetClass()->GetFName().Compare(TEXT("MovieSceneStringTrack")) == 0)
+			AddKeyFrameToTrack<std::string>(pTrack, iSectionIdx, iFrameNum, std::get<std::string>(Values[i].value()), iKeyInterp, bRes, outMsg);
+		else
+		{
+			BE_ASSERT(false,"Unsupoorted type of track");
+		}
 	}
 
 	return fTime;
@@ -1434,6 +1550,14 @@ void USequencerHelper::RemoveKeyFrame(TArray<TStrongObjectPtr<UMovieSceneTrack> 
 			RemoveKeyFrameFromTrack<double>(pTrack, iSectionIdx, iFrameNum, bRes, outMsg);
 		else if (pTrack->GetClass()->GetFName().Compare(TEXT("MovieSceneFloatTrack")) == 0)
 			RemoveKeyFrameFromTrack<float>(pTrack, iSectionIdx, iFrameNum, bRes, outMsg);
+		else if (pTrack->GetClass()->GetFName().Compare(TEXT("MovieSceneBoolTrack")) == 0)
+			RemoveKeyFrameFromTrack<bool>(pTrack, iSectionIdx, iFrameNum, bRes, outMsg);
+		else if (pTrack->GetClass()->GetFName().Compare(TEXT("MovieSceneStringTrack")) == 0)
+			RemoveKeyFrameFromTrack<std::string>(pTrack, iSectionIdx, iFrameNum, bRes, outMsg);
+		else
+		{
+			BE_ASSERT(false, "Unsupoorted type of track");
+		}
 	}
 }
 
@@ -1480,6 +1604,14 @@ namespace {
 				ShiftSectionKFs<double>(pSection, KFRange, InDeltaFrameNum);
 			else if (pTrack->GetClass()->GetFName().Compare(TEXT("MovieSceneFloatTrack")) == 0)
 				ShiftSectionKFs<float>(pSection, KFRange, InDeltaFrameNum);
+			else if (pTrack->GetClass()->GetFName().Compare(TEXT("MovieSceneBoolTrack")) == 0)
+				ShiftSectionKFs<bool>(pSection, KFRange, InDeltaFrameNum);
+			else if (pTrack->GetClass()->GetFName().Compare(TEXT("MovieSceneStringTrack")) == 0)
+				ShiftSectionKFs<std::string>(pSection, KFRange, InDeltaFrameNum);
+			else
+			{
+				BE_ASSERT(false, "Unsupoorted type of track");
+			}
 		}
 	}
 }

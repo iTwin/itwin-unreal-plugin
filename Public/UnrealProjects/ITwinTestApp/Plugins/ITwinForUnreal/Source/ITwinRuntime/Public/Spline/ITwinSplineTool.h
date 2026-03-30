@@ -14,13 +14,10 @@
 #include <Math/MathFwd.h>
 #include <Spline/ITwinSplineEnums.h>
 #include <memory>
+#include <ITwinRuntime/Private/Compil/BeforeNonUnrealIncludes.h>
+#	include <SDK/Core/Visualization/SplinesManager.h>
+#include <ITwinRuntime/Private/Compil/AfterNonUnrealIncludes.h>
 #include "ITwinSplineTool.generated.h"
-
-namespace AdvViz::SDK
-{
-	class ISplinesManager;
-	class ISpline;
-}
 
 class AITwinPopulationTool;
 class AITwinSplineHelper;
@@ -128,11 +125,7 @@ public:
 	//! If bAutoSelectCutoutTarget is true, and the spline tool usage is Cutout, the cut-out target will be
 	//! determined by the layer intersected upon the first click.
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
-	void ToggleInteractiveCreationMode(bool bAutoSelectCutoutTarget = false);
-
-	//! Abort current interactive creation.
-	UFUNCTION(Category = "iTwin", BlueprintCallable)
-	void AbortInteractiveCreation();
+	void ToggleInteractiveCreationMode(bool bTriggeredFromITS = false, bool bAutoSelectCutoutTarget = false);
 
 	//! Returns the current spline tool destination usage.
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
@@ -157,6 +150,9 @@ public:
 	private:
 		const bool bAutomaticVisibility_Old;
 	};
+	//! Set whether the cutout target should be determined upon next click.
+	void SetAutoSelectCutoutTarget(bool bInAutoSelectCutoutTarget);
+
 	//! Returns whether the visibility of the splines in the viewport is automatically deduced from the
 	//! activation/deactivation of this tool.
 	static bool AutomaticSplineVisibility();
@@ -184,8 +180,9 @@ public:
 	void RefreshScene();
 
 	//! Change the view camera so that the edited splines can be edited from top.
+	//! If SpecificSpline is provided, only the corresponding polygon will be framed.
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
-	void OnOverviewCamera(bool bInUndoRedoContext = false);
+	void OnOverviewCamera(AITwinSplineHelper const* SpecificSpline = nullptr, bool bInUndoRedoContext = false);
 
 	//! Modify the view camera in an animated way.
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
@@ -195,7 +192,7 @@ public:
 	AITwinSplineHelper* AddSpline(FVector const& Position);
 
 	//! Adds a spline loaded from the decoration service.
-	bool LoadSpline(const std::shared_ptr<AdvViz::SDK::ISpline>& spline,
+	bool LoadSpline(const AdvViz::SDK::ISplinePtr& spline,
 		TilesetAccessArray&& InCutoutTargets = {});
 
 	//! Sets the AdvViz::SDK spline manager (which stores the data for splines and saves it on the decoration service).
@@ -238,6 +235,8 @@ public:
 protected:
 	virtual void SetEnabledImpl(bool bValue) override;
 	virtual bool IsEnabledImpl() const override;
+	virtual void SetUsedOnCutoutPrimitiveImpl(bool bForCutout) override;
+	virtual bool IsUsedOnCutoutPrimitiveImpl() const override;
 	virtual bool DoMouseClickActionImpl() override;
 	virtual bool HasSelectionImpl() const override;
 	virtual FTransform GetSelectionTransformImpl() const override;
@@ -246,6 +245,8 @@ protected:
 	virtual void ResetToDefaultImpl() override;
 	virtual bool StartInteractiveCreationImpl() override;
 	virtual bool IsInteractiveCreationModeImpl() const override;
+	virtual void AbortInteractiveCreationImpl(bool bTriggeredFromITS) override;
+	virtual void ValidateInteractiveCreationImpl(bool bTriggeredFromITS) override;
 
 private:
 	class FImpl;

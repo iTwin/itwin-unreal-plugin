@@ -84,7 +84,13 @@ namespace ITwin
 
 	FDateTime TimelineToSynchro(double Delta)
 	{
-		return GetBaseDate() + FTimespan::FromSeconds(Delta*100.0);
+		// Round to nearest second to avoid precision issues
+		const int64 TicksPerSecond = ETimespan::TicksPerSecond; // 10000000
+
+		int64 Ticks = (GetBaseDate() + FTimespan::FromSeconds(Delta * 100.0)).GetTicks();
+		Ticks = ((Ticks + ETimespan::TicksPerSecond / 2) / ETimespan::TicksPerSecond) * ETimespan::TicksPerSecond;
+
+		return FDateTime(Ticks);
 	}
 }
 
@@ -415,13 +421,15 @@ public:
 		AnimTracksInfo_.Add(USequencerHelper::FTrackInfo(TEXT("date_sun"), USequencerHelper::TT_Double));
 		AnimTracksInfo_.Add(USequencerHelper::FTrackInfo(TEXT("clouds"), USequencerHelper::TT_Float));
 		AnimTracksInfo_.Add(USequencerHelper::FTrackInfo(TEXT("fog"), USequencerHelper::TT_Float)); // = Fog
-		//std::optional<bool> UseHeliodon;
-		//std::optional<FDateTime> HeliodonDate;
-		//std::optional<float> HeliodonLong;
-		//std::optional<float> HeliodonLat;
-		//std::optional<float> WindOrientation;
-		//std::optional<float> WindForce;
-		//std::optional<float> Exposure;
+		AnimTracksInfo_.Add(USequencerHelper::FTrackInfo(TEXT("HeliodonLong"), USequencerHelper::TT_Float));
+		AnimTracksInfo_.Add(USequencerHelper::FTrackInfo(TEXT("HeliodonLat"), USequencerHelper::TT_Float)); 
+		AnimTracksInfo_.Add(USequencerHelper::FTrackInfo(TEXT("sunAzimuth"), USequencerHelper::TT_Float)); 
+		AnimTracksInfo_.Add(USequencerHelper::FTrackInfo(TEXT("sunPitch"), USequencerHelper::TT_Float)); 
+		AnimTracksInfo_.Add(USequencerHelper::FTrackInfo(TEXT("HDRIZRotation"), USequencerHelper::TT_Float));
+		AnimTracksInfo_.Add(USequencerHelper::FTrackInfo(TEXT("sunIntensity"), USequencerHelper::TT_Float));
+		AnimTracksInfo_.Add(USequencerHelper::FTrackInfo(TEXT("Exposure"), USequencerHelper::TT_Float));
+		AnimTracksInfo_.Add(USequencerHelper::FTrackInfo(TEXT("UseHeliodon"), USequencerHelper::TT_Bool));
+		AnimTracksInfo_.Add(USequencerHelper::FTrackInfo(TEXT("HRDIImage"), USequencerHelper::TT_String));
 	}
 
 	~FImpl()
@@ -494,6 +502,69 @@ public:
 				if (KF.atmo.has_value())
 				{
 					Out.Last() = std::make_optional(KF.atmo->fog);
+				}
+			}
+			else if (Track.sName.Compare(TEXT("sunAzimuth")) == 0)
+			{
+				if (KF.atmo.has_value())
+				{
+					Out.Last() = std::make_optional(KF.atmo->sunAzimuth.get());
+				}
+			}
+			else if (Track.sName.Compare(TEXT("sunPitch")) == 0)
+			{
+				if (KF.atmo.has_value())
+				{
+					Out.Last() = std::make_optional(KF.atmo->sunPitch.get());
+				}
+			}
+			else if (Track.sName.Compare(TEXT("HeliodonLong")) == 0)
+			{
+				if (KF.atmo.has_value())
+				{
+					Out.Last() = std::make_optional(KF.atmo->heliodonLongitude.get());
+				}
+			}
+			else if (Track.sName.Compare(TEXT("HeliodonLat")) == 0)
+			{
+				if (KF.atmo.has_value())
+				{
+					Out.Last() = std::make_optional(KF.atmo->heliodonLatitude.get());
+				}
+			}
+			else if (Track.sName.Compare(TEXT("HDRIZRotation")) == 0)
+			{
+				if (KF.atmo.has_value())
+				{
+					Out.Last() = std::make_optional(KF.atmo->HDRIZRotation.get());
+				}
+			}
+			else if (Track.sName.Compare(TEXT("sunIntensity")) == 0)
+			{
+				if (KF.atmo.has_value())
+				{
+					Out.Last() = std::make_optional(KF.atmo->sunIntensity.get());
+				}
+			}
+			else if (Track.sName.Compare(TEXT("UseHeliodon")) == 0)
+			{
+				if (KF.atmo.has_value())
+				{
+					Out.Last() = std::make_optional(KF.atmo->useHeliodon.get());
+				}
+			}
+			else if (Track.sName.Compare(TEXT("HRDIImage")) == 0)
+			{
+				if (KF.atmo.has_value())
+				{
+					Out.Last() = std::make_optional(KF.atmo->HDRIImage.get());
+				}
+			}
+			else if (Track.sName.Compare(TEXT("Exposure")) == 0)
+			{
+				if (KF.atmo.has_value())
+				{
+					Out.Last() = std::make_optional(KF.atmo->exposure.get());
 				}
 			}
 		}
@@ -607,8 +678,7 @@ public:
 		float fAccumTime(0.f);
 		for(size_t i(0); i < timeline_->GetClipCount(); i++)
 		{
-			auto clip = GetClip(i);
-			if (clip)
+			if (auto clip = GetClip(i))
 			{
 				vTimes.Add(fAccumTime);
 				if (clip->IsEnabled())
@@ -619,14 +689,35 @@ public:
 			vTimes.Add(fAccumTime); // append theoretical start time of the next clip
 	}
 
+	void GetEnabledClipIndices(TArray<int>& vIndices)
+	{
+		vIndices.Empty();
+		if (timeline_->GetClipCount() == 0)
+			return;
+
+		for (size_t i(0); i < timeline_->GetClipCount(); i++)
+		{
+			if (auto clip = GetClip(i))
+			{
+				if (clip->IsEnabled())
+					vIndices.Add(i);
+			}
+		}
+	}
+
+	FString GetNextFreeClipName()
+	{
+		FString sName;
+		do {
+			sName = FString::Printf(TEXT("Clip_%d"), ++nextFreeClipID_);
+		} while (GetClipIndex(sName) >= 0);
+		return sName;
+	}
+
 	std::shared_ptr<AdvViz::SDK::ITimelineClip> AppendClip(FString sName = FString())
 	{
 		if (sName.IsEmpty())
-		{
-			do {
-				sName = FString::Printf(TEXT("Clip_%d"), ++nextFreeClipID_);
-			} while (GetClipIndex(sName) >= 0);
-		}
+			sName = GetNextFreeClipName();
 		auto clip = timeline_->AddClip(TCHAR_TO_UTF8(*sName));
 		BE_ASSERT(clip);
 		auto clipdata = AdvViz::SDK::Tools::DynamicCast<ClipData>(clip.get());
@@ -636,6 +727,32 @@ public:
 		curClip_ = timeline_->GetClipCount() - 1;
 		curTime_ = 0.f;
 		return clip;
+	}
+
+	void DuplicateClip(int clipIdx)
+	{
+		if (clipIdx >= 0 && clipIdx < (int)timeline_->GetClipCount())
+		{
+			auto clip = GetClip(clipIdx);
+			FString sName = clip->GetNameU() + FString(TEXT("_copy"));
+			int ind(0);
+			FString sNewName = sName;
+			while (GetClipIndex(sNewName) >= 0)
+			{
+				sNewName = FString::Printf(TEXT("%s_%d"), *sName, ++ind);
+			}
+
+			int newClipIdx = timeline_->GetClipCount();
+			auto newClip = AppendClip(sNewName);
+			BE_ASSERT(newClip);
+			for (int i(0); i < clip->GetKeyframeCount(); ++i)
+			{
+				if (auto kf = clip->GetKeyframeByIndex(i))
+				{
+					AddOrUpdateKeyFrame((*kf)->GetData().time, newClipIdx, (*kf)->GetData());
+				}
+			}
+		}
 	}
 
 	void RemoveClip(int clipIdx)
@@ -652,13 +769,22 @@ public:
 			USequencerHelper::RemovePActorFromLevelSequence(clip->GetCamera(), levelSequencePath_, bRes, outMsg);
 			//clip->GetCamera()->Destroy();
 
-			timeline_->RemoveClip(curClip_);
+			timeline_->RemoveClip(clipIdx);
+
 			auto const count = (int)timeline_->GetClipCount();
-			curClip_ = (count > 0) ? 0 : -1;
+			
+			// adjust currently selected clip index if needed
+			if (curClip_ == clipIdx)
+				curClip_ = (count > 0) ? 0 : -1;
+			else if (curClip_ > clipIdx)
+				curClip_--;
+			
+			// "free" new clip name IDs if the deleted clip was the last one in the list
 			if (count >= 0 && clipIdx == count)
 			{
 				--nextFreeClipID_;
 			}
+			//nextFreeClipID_ = std::min(nextFreeClipID_, clipIdx); // always reuse indices of the deleted clips
 		}
 	}
 
@@ -818,6 +944,15 @@ public:
 			DateTimeToStr(data.heliodonDate, KF.atmo->time);
 			KF.atmo->cloudCoverage = data.cloudCoverage;
 			KF.atmo->fog = data.fog;
+			KF.atmo->sunAzimuth = data.sunAzimuth;
+			KF.atmo->sunPitch = data.sunPitch;
+			KF.atmo->heliodonLongitude = data.heliodonLongitude;
+			KF.atmo->heliodonLatitude = data.heliodonLatitude;
+			KF.atmo->HDRIZRotation = data.HDRIZRotation;
+			KF.atmo->HDRIImage = data.HDRIImage;
+			KF.atmo->sunIntensity = data.sunIntensity;
+			KF.atmo->useHeliodon = data.useHeliodon;
+			KF.atmo->exposure = data.exposure;
 		}
 
 		return AddOrUpdateKeyFrame(fTime, clipIdx, KF);
@@ -1010,6 +1145,76 @@ public:
 			float Value;
 			USequencerHelper::GetFloatValueAtTime(clip->GetTracks()[idx].Get(), levelSequencePath_, fTime, Value);
 			data.fog = Value;
+		}
+		idx = AnimTracksInfo_.IndexOfByKey(TEXT("sunAzimuth"));
+		if (idx != INDEX_NONE && idx < clip->GetTracks().Num())
+		{
+			float Value;
+			USequencerHelper::GetFloatValueAtTime(clip->GetTracks()[idx].Get(), levelSequencePath_, fTime, Value);
+			data.sunAzimuth = Value;
+		}
+		idx = AnimTracksInfo_.IndexOfByKey(TEXT("sunAzimuth"));
+		if (idx != INDEX_NONE && idx < clip->GetTracks().Num())
+		{
+			float Value;
+			USequencerHelper::GetFloatValueAtTime(clip->GetTracks()[idx].Get(), levelSequencePath_, fTime, Value);
+			data.sunAzimuth = Value;
+		}
+		idx = AnimTracksInfo_.IndexOfByKey(TEXT("sunPitch"));
+		if (idx != INDEX_NONE && idx < clip->GetTracks().Num())
+		{
+			float Value;
+			USequencerHelper::GetFloatValueAtTime(clip->GetTracks()[idx].Get(), levelSequencePath_, fTime, Value);
+			data.sunPitch = Value;
+		}
+		idx = AnimTracksInfo_.IndexOfByKey(TEXT("HeliodonLong"));
+		if (idx != INDEX_NONE && idx < clip->GetTracks().Num())
+		{
+			float Value;
+			USequencerHelper::GetFloatValueAtTime(clip->GetTracks()[idx].Get(), levelSequencePath_, fTime, Value);
+			data.heliodonLongitude = Value;
+		}
+		idx = AnimTracksInfo_.IndexOfByKey(TEXT("HeliodonLat"));
+		if (idx != INDEX_NONE && idx < clip->GetTracks().Num())
+		{
+			float Value;
+			USequencerHelper::GetFloatValueAtTime(clip->GetTracks()[idx].Get(), levelSequencePath_, fTime, Value);
+			data.heliodonLatitude = Value;
+		}
+		idx = AnimTracksInfo_.IndexOfByKey(TEXT("HDRIZRotation"));
+		if (idx != INDEX_NONE && idx < clip->GetTracks().Num())
+		{
+			float Value;
+			USequencerHelper::GetFloatValueAtTime(clip->GetTracks()[idx].Get(), levelSequencePath_, fTime, Value);
+			data.HDRIZRotation = Value;
+		}
+		idx = AnimTracksInfo_.IndexOfByKey(TEXT("sunIntensity"));
+		if (idx != INDEX_NONE && idx < clip->GetTracks().Num())
+		{
+			float Value;
+			USequencerHelper::GetFloatValueAtTime(clip->GetTracks()[idx].Get(), levelSequencePath_, fTime, Value);
+			data.sunIntensity = Value;
+		}
+		idx = AnimTracksInfo_.IndexOfByKey(TEXT("HRDIImage"));
+		if (idx != INDEX_NONE && idx < clip->GetTracks().Num())
+		{
+			std::string Value;
+			USequencerHelper::GetStringValueAtTime(clip->GetTracks()[idx].Get(), levelSequencePath_, fTime, Value);
+			data.HDRIImage = Value;
+		}
+		idx = AnimTracksInfo_.IndexOfByKey(TEXT("UseHeliodon"));
+		if (idx != INDEX_NONE && idx < clip->GetTracks().Num())
+		{
+			bool Value = true;
+			USequencerHelper::GetBoolValueAtTime(clip->GetTracks()[idx].Get(), levelSequencePath_, fTime, Value);
+			data.useHeliodon = Value;
+		}
+		idx = AnimTracksInfo_.IndexOfByKey(TEXT("Exposure"));
+		if (idx != INDEX_NONE && idx < clip->GetTracks().Num())
+		{
+			float Value;
+			USequencerHelper::GetFloatValueAtTime(clip->GetTracks()[idx].Get(), levelSequencePath_, fTime, Value);
+			data.exposure = Value;
 		}
 		Owner.SetAtmoSettingsDelegate.Execute(data);
 	}
@@ -1211,6 +1416,14 @@ void AITwinTimelineActor::AddClip()
 	//AddKeyFrame();
 }
 
+
+void AITwinTimelineActor::DuplicateClip(int clipIdx)
+{
+	if (!Impl->IsReady())
+		return;
+	Impl->DuplicateClip(clipIdx);
+}
+
 void AITwinTimelineActor::RemoveClip(int clipIdx)
 {
 	if (!Impl->IsReady())
@@ -1272,6 +1485,11 @@ void AITwinTimelineActor::GetClipsNames(TArray<FString>& vClipNames) const
 void AITwinTimelineActor::GetClipsStartTimes(TArray<float>& vTimes, bool bAppendLastDuration/* = false*/) const
 {
 	Impl->GetClipsStartTimes(vTimes, bAppendLastDuration);
+}
+
+void AITwinTimelineActor::GetEnabledClipIndices(TArray<int>& vIndices) const
+{
+	Impl->GetEnabledClipIndices(vIndices);
 }
 
 float AITwinTimelineActor::GetClipStartTime(int clipIdx) const

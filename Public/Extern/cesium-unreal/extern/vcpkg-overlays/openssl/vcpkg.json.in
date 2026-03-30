@@ -1,0 +1,5 @@
+{
+  "name": "openssl",
+  "version-string": "@BE_OPENSSL_VERSION_STRING@",
+  "port-version": 2
+}

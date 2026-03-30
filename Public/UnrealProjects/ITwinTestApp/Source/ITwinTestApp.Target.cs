@@ -14,7 +14,7 @@ public class ITwinTestAppTarget : TargetRules
 	public ITwinTestAppTarget(TargetInfo Target) : base(Target)
 	{
 		Type = TargetType.Game;
-		DefaultBuildSettings = BuildSettingsVersion.V4;
+		DefaultBuildSettings = BuildSettingsVersion.Latest;
 		IncludeOrderVersion = EngineIncludeOrderVersion.Latest;
 		bUseAdaptiveUnityBuild = false;
 	}

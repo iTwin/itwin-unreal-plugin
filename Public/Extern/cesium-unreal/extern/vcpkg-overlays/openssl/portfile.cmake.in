@@ -2,23 +2,38 @@
 # This is important for avoiding linker errors (multiply defined symbols) when
 # building and packaging Unreal Engine games that include cesium-native.
 #
-# The environment variable `UNREAL_ENGINE_ROOT` must be set to the root of the
-# Unreal Engine installation to use. It should use forward slashes even on Windows
-# and it should _not_ end with a slash.
-# For example: `C:/Program Files/Epic Games/UE_5.3`
-#
 # AdvViz: no longer rely on UNREAL_ENGINE_ROOT from the environment, to avoid
-# having vcpkg binary cache depend on Unreal installation root :-/
+# having vcpkg binary cache depend on Unreal installation root, especially since
+# gRPC depends on openssl and takes ages to build...
+#	=> query the UE root from Windows registry so that we only depend on the UE
+#		version used (official or custom build hash)
 
 set(VCPKG_POLICY_EMPTY_PACKAGE enabled)
 
-set(BE_UNREAL_ENGINE_DIR "@BE_UNREAL_ENGINE_DIR@")
-message(STATUS "Using Unreal Engine installation at ${BE_UNREAL_ENGINE_DIR}")
+set(BE_UNREAL_ROOT_REG_KEY "@BE_UNREAL_ROOT_REG_KEY@")
+set(BE_UNREAL_ROOT_REG_VALUE "@BE_UNREAL_ROOT_REG_VALUE@")
+
+# Code copied from Carrot.git/Public/CMake/detect_unreal_root.cmake:
+cmake_host_system_information(RESULT regResult QUERY WINDOWS_REGISTRY "${BE_UNREAL_ROOT_REG_KEY}"
+							  VALUE ${BE_UNREAL_ROOT_REG_VALUE} VIEW 64 ERROR_VARIABLE regErr)
+if (regErr)
+	message("Note: \"cannot find the file specified\" below would really mean the key or the value was not found.")
+	message(FATAL_ERROR "Reg key query for UE root dir failed with: ${regErr}")
+else()
+	message("Reg key query for UE install returned: ${regResult}")
+	if (EXISTS "${regResult}")
+		string(STRIP "${regResult}" REGISTERED_UE_ROOT)
+		string(REPLACE "\\" "/" REGISTERED_UE_ROOT "${REGISTERED_UE_ROOT}")
+	else()
+		message(FATAL_ERROR "Reg key query for UE install returned non-existent path: \"${regResult}\"")
+	endif()
+endif()
+message(STATUS "Using Unreal Engine installation at ${REGISTERED_UE_ROOT}")
 
 # Some old versions of UE used to have multiple versions of OpenSSL, with different versions used on different platforms.
-# That is no longer the case in UE 5.3, 5.4, and 5.5, but the below logic may need to change if that ever happens again.
-set(OPENSSL_VERSIONS_DIR "${BE_UNREAL_ENGINE_DIR}/Source/ThirdParty/OpenSSL")
-file(GLOB OPENSSL_POSSIBLE_ROOT_DIRS LIST_DIRECTORIES true "${OPENSSL_VERSIONS_DIR}/1.1.*")
+# That is no longer the case in UE 5.3 to 5.7, but the below logic may need to change if that ever happens again.
+set(OPENSSL_VERSIONS_DIR_GLOB "${REGISTERED_UE_ROOT}/Engine/Source/ThirdParty/OpenSSL/${VERSION}")
+file(GLOB OPENSSL_POSSIBLE_ROOT_DIRS LIST_DIRECTORIES true "${OPENSSL_VERSIONS_DIR_GLOB}")
 
 # Find the subdirectories, each of which should represent an OpenSSL version.
 set(OPENSSL_VERSION_DIRS "")
@@ -31,7 +46,7 @@ endforeach()
 # There should be exactly one version, otherwise we don't know what to do.
 list(LENGTH OPENSSL_VERSION_DIRS OPENSSL_VERSION_DIRS_LENGTH)
 if(NOT OPENSSL_VERSION_DIRS_LENGTH EQUAL 1)
-  message(FATAL_ERROR "Could not deduce the OpenSSL root directory because there is not exactly one directory matching `${OPENSSL_VERSIONS_DIR}/*`.")
+  message(FATAL_ERROR "Could not deduce the OpenSSL root directory because there is not exactly one directory matching `${OPENSSL_VERSIONS_DIR_GLOB}`.")
 endif()
 
 list(GET OPENSSL_VERSION_DIRS 0 OPENSSL_ROOT_DIR)

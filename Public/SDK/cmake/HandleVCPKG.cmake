@@ -1,5 +1,16 @@
-cmake_host_system_information(RESULT _hostname QUERY HOSTNAME)
-if(BE_FILL_SHARED_VCPKG_BINARY_CACHE)
+if(BE_REBUILD_ALL_VCPKG_FOR_MEND)
+	if (BE_FILL_SHARED_VCPKG_BINARY_CACHE)
+		message(FATAL_ERROR "Don't use both BE_FILL_SHARED_VCPKG_BINARY_CACHE and BE_REBUILD_ALL_VCPKG_FOR_MEND at the same time")
+	endif()
+	set(ENV{VCPKG_BINARY_SOURCES} "clear")
+	if (BE_VCPKG_FILTERED_BUILDTREES_RELPATH AND NOT BE_VCPKG_FILTERED_BUILDTREES_RELPATH STREQUAL BE_REBUILD_ALL_VCPKG_FOR_MEND)
+		message(FATAL_ERROR "Use either BE_VCPKG_FILTERED_BUILDTREES_RELPATH or BE_REBUILD_ALL_VCPKG_FOR_MEND, or pass the same value to both")
+	endif()
+	if (NOT BE_VCPKG_FILTERED_BUILDTREES_RELPATH)
+		set(BE_VCPKG_FILTERED_BUILDTREES_RELPATH "${BE_REBUILD_ALL_VCPKG_FOR_MEND}")
+	endif()
+	set(THIRDPARTYLIBS_CLEAN_BUILD_PRODUCTS_ASAP ON) # will clean 'buildtrees' and 'packages' (see below)
+elseif(BE_FILL_SHARED_VCPKG_BINARY_CACHE)
 	set(ENV{VCPKG_BINARY_SOURCES} "clear;files,V:\\vcpkg_cache,readwrite")
 	message("BE_FILL_SHARED_VCPKG_BINARY_CACHE is ON: vcpkg binary-caching setup as '$ENV{VCPKG_BINARY_SOURCES}'")
 elseif(BE_VCPKG_BINARY_CACHE)
@@ -59,7 +70,7 @@ else()
 	set(scriptLauncher)
 endif()
 # Differences can break binary caching, so enforce a specific commit:
-set(BE_VCPKG_REPO_HASH "c9122c23d24ffd5b64459406bdfa99f847f9f562")
+set(BE_VCPKG_REPO_HASH "7bd6dc58f13606130c660e0d6627ebc45d76d06b")
 if (NOT EXISTS "${VCPKG_ROOT}/${bootstrapVcpkgScript}")
 	execute_process(COMMAND ${GITCOMMAND}
 		clone https://github.com/Microsoft/vcpkg --revision=${BE_VCPKG_REPO_HASH} "${VCPKG_ROOT}")
@@ -78,6 +89,10 @@ else()
 				file (REMOVE "${VCPKG_ROOT}/vcpkg${CMAKE_HOST_EXECUTABLE_SUFFIX}")
 				execute_process(
 					COMMAND ${GITCOMMAND} fetch
+					WORKING_DIRECTORY "${VCPKG_ROOT}"
+					COMMAND_ERROR_IS_FATAL ANY
+				)
+				execute_process(
 					COMMAND ${GITCOMMAND} checkout ${BE_VCPKG_REPO_HASH}
 					WORKING_DIRECTORY "${VCPKG_ROOT}"
 					COMMAND_ERROR_IS_FATAL ANY

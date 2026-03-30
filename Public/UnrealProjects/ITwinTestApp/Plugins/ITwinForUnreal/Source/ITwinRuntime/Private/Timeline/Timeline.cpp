@@ -27,23 +27,49 @@
 
 namespace ITwin::Timeline {
 
-ElementTimelineEx& MainTimeline::ElementTimelineFor(FIModelElementsKey const ElementsKey,
-													FElementsGroup const& IModelElements)
+ElementTimelineEx& MainTimeline::ElementTimelineFor(FIModelElementsKey const& IModelElementsKey,
+	FElementsGroup const& IModelElements, int* pTimelineIndex /*= nullptr*/)
 {
 	int const Index = (int)GetContainer().size();
-	const auto ItAndFlag = ElementsKeyToTimeline.try_emplace(ElementsKey, Index);
+	const auto ItAndFlag = ElementsKeyToTimeline.try_emplace(IModelElementsKey, Index);
 	if (ItAndFlag.second) // was inserted
 	{
 		bHasNewOrModifiedTimeline_ = true;
 		auto&& ElementTimelinePtr = AddTimeline(
-			std::make_shared<ElementTimelineEx>(ElementsKey, IModelElements));
+			std::make_shared<ElementTimelineEx>(IModelElementsKey, IModelElements));
 		check(Index != (int)GetContainer().size());
+		if (pTimelineIndex) *pTimelineIndex = Index;
 		return *ElementTimelinePtr;
 	}
 	else
 	{
+		if (pTimelineIndex) *pTimelineIndex = ItAndFlag.first->second;
 		return *GetContainer()[ItAndFlag.first->second];
 	}
+}
+
+ElementTimelineEx* MainTimeline::GetElementTimelineFor(FIModelElementsKey const& IModelElementsKey,
+	int* pTimelineIndex/*= nullptr*/) const
+{
+	const auto It = ElementsKeyToTimeline.find(IModelElementsKey);
+	if (It == ElementsKeyToTimeline.end())
+		return nullptr;
+	else
+	{
+		if (pTimelineIndex)
+			*pTimelineIndex = It->second;
+		return GetContainer()[It->second].get();
+	}
+}
+
+void MainTimeline::ResetElementTimelineFor(int TimelineIndex, FIModelElementsKey const& NewIModelElementsKey)
+{
+	if (!ensure(TimelineIndex < GetContainer().size()))
+		return;
+	auto& ExistingTimeline = GetContainer()[TimelineIndex];
+	ensure(1 == ElementsKeyToTimeline.erase(ExistingTimeline->GetIModelElementsKey()));
+	*ExistingTimeline = FITwinElementTimeline(NewIModelElementsKey, std::move(ExistingTimeline->IModelElementsRef()));
+	ElementsKeyToTimeline[NewIModelElementsKey] = TimelineIndex;
 }
 
 void MainTimeline::OnElementsTimelineModified(ElementTimelineEx& ModifiedTimeline)
@@ -56,20 +82,6 @@ void MainTimeline::OnElementsTimelineModified(ElementTimelineEx& ModifiedTimelin
 	// Used to notify the animator's TickAnimation that something has changed (new or modified timeline) so
 	// that ApplyAnimation is called and not skipped (important when bPaused_)
 	bHasNewOrModifiedTimeline_ = true;
-}
-
-ElementTimelineEx* MainTimeline::GetElementTimelineFor(FIModelElementsKey const& ElementsKey,
-													   int* Index/*= nullptr*/) const
-{
-	const auto It = ElementsKeyToTimeline.find(ElementsKey);
-	if (It == ElementsKeyToTimeline.end())
-		return nullptr;
-	else
-	{
-		if (Index)
-			*Index = It->second;
-		return GetContainer()[It->second].get();
-	}
 }
 
 void MainTimeline::AddNonAnimatedDuplicate(ITwinElementID const Elem)
@@ -437,37 +449,6 @@ FString MainTimeline::ToCondensedJsonString() const
 FString MainTimeline::ToPrettyJsonString() const
 {
 	return ToJsonString<TPrettyJsonPrintPolicy<TCHAR>>();
-}
-
-/// Not using this at the moment because when doing "Stop", all animation properties are removed anyway.
-/// But in Pineapple ("iModel viewer") the default state is just the end state of the schedule, so that
-/// temporary and removed Elements are not visible for example: if FixColor was added because there is a
-/// requirement that the end state of the schedule should no longer show colors, then IMHO we should do it
-/// explicitly by resetting color textures (with or without alpha) like in FITwinSynchro4DAnimator::Stop(),
-/// rather than adding a keyframe to each and every timeline, which spoils the optimization in ApplyAnimation 
-/// (see comment about FixColor there). In fact the requirement is maybe only to keep the visible/hidden state
-/// of the schedule animation and reset all other properties?
-void MainTimeline::FixColor()
-{
-	for (const auto& ObjectTimeline : GetContainer())
-	{
-		// The color animation must be fixed if:
-		// - there is a color animation
-		// - and the color is enabled at the end of the animation
-		// - and the object is visible at the end of the animation
-		//   (no need to fix the color if the object is no longer visible anyway).
-		if (ObjectTimeline->Color.Values.empty() ||
-			!ObjectTimeline->Color.Values.rbegin()->bHasColor ||
-			(!ObjectTimeline->Visibility.Values.empty() &&
-				ObjectTimeline->Visibility.Values.rbegin()->Value == 0))
-			continue;
-		// Create an entry at the end of the entire timeline animation,
-		// with a disabled color overlay.
-		PropertyEntry<PColor> Entry;
-		Entry.Time = GetTimeRange().second;
-		Entry.bHasColor = ITwin::Flag::Absent;
-		ObjectTimeline->Color.Values.insert(Entry);
-	}
 }
 
 } // ns ITwin::Timeline

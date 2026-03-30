@@ -295,7 +295,7 @@ namespace AdvViz::SDK
 
 		http_.reset(Http::New());
 		http_->SetBaseUrl(Credentials::GetITwinIMSRootUrl(env_).c_str());
-		currentToken_.reset(new std::string);
+		currentToken_.reset(new ThreadSafeAccessToken);
 	}
 
 	ITwinAuthManager::~ITwinAuthManager()
@@ -317,10 +317,10 @@ namespace AdvViz::SDK
 	bool ITwinAuthManager::HasAccessToken() const
 	{
 		Lock lock(mutex_);
-		return !currentToken_->empty();
+		return !currentToken_->IsEmpty();
 	}
 
-	std::shared_ptr<std::string> ITwinAuthManager::GetAccessToken() const
+	std::shared_ptr<ThreadSafeAccessToken> ITwinAuthManager::GetAccessToken() const
 	{
 		Lock lock(mutex_);
 		return currentToken_;
@@ -330,7 +330,7 @@ namespace AdvViz::SDK
 	{
 		Lock lock(mutex_);
 		accessToken_ = accessToken;
-		*currentToken_ = GetCurrentAccessToken();
+		currentToken_->Set(GetCurrentAccessToken());
 	}
 
 	void ITwinAuthManager::SetOverrideAccessToken(std::string const& accessToken, EITwinAuthOverrideMode overrideMode)
@@ -343,7 +343,7 @@ namespace AdvViz::SDK
 			BE_ISSUE("inconsistent override mode (will revert to None)", (size_t)overrideMode);
 			overrideMode_ = EITwinAuthOverrideMode::None;
 		}
-		*currentToken_ = GetCurrentAccessToken();
+		currentToken_->Set(GetCurrentAccessToken());
 	}
 
 	void ITwinAuthManager::ResetOverrideAccessToken()
@@ -417,11 +417,11 @@ namespace AdvViz::SDK
 		return bHasRefreshToken;
 	}
 
-	void ITwinAuthManager::ResetRefreshToken()
+	bool ITwinAuthManager::ResetRefreshToken()
 	{
 		Lock lock(mutex_);
 		authInfo_.RefreshToken.clear();
-		SavePrivateData({});
+		return SavePrivateData({});
 	}
 
 	void ITwinAuthManager::SetAuthorizationInfo(
@@ -436,20 +436,17 @@ namespace AdvViz::SDK
 		bool const bSameRefreshToken = (authInfo_.RefreshToken == authInfo.RefreshToken);
 		authInfo_ = authInfo;
 
-		if (!bSameRefreshToken)
+		if (!bSameRefreshToken ||
+			(AuthContext == EAuthContext::Logout && authInfo_.RefreshToken.empty()))
 		{
 			// Save new information to enable refresh upon future sessions (if a new refresh token was
 			// retrieved) or avoid reusing an expired one if none was newly fetched.
 			SavePrivateData(authInfo_.RefreshToken);
 		}
 
-		if (AuthContext == EAuthContext::StdRequest
-			&& !accessToken.empty())
-		{
-			// Also save the access token to minimize the need for interactive login when we relaunch the
-			// same application/plugin before the expiration time of the token.
-			SaveAccessToken(accessToken);
-		}
+		// Also save the access token if applicable, to minimize the need for interactive login when we
+		// relaunch the same application/plugin before the expiration time of the token.
+		SaveAccessToken(accessToken, AuthContext);
 
 		ResetRefreshTicker();
 
@@ -604,7 +601,7 @@ namespace AdvViz::SDK
 		{
 			grantType = "client_credentials";
 			refreshParams = "";
-			clientSecretParams = std::string("&client_secret=") + AdvViz::SDK::EncodeForUrl(clientSecret_);
+			clientSecretParams = std::string("&client_secret=") + http_->EncodeForUrl(clientSecret_);
 		}
 		else
 		{
@@ -614,11 +611,11 @@ namespace AdvViz::SDK
 		const std::string redirectUri = Credentials::GetRedirectUri();
 		std::string const requestBody = std::string("grant_type=") + grantType
 			+ "&client_id=" + clientId
-			+ "&redirect_uri=" + AdvViz::SDK::EncodeForUrl(redirectUri)
+			+ "&redirect_uri=" + http_->EncodeForUrl(redirectUri)
 			+ refreshParams
 			+ codeParams
 			+ clientSecretParams
-			+ "&scope=" + AdvViz::SDK::EncodeForUrl(this->GetScope());
+			+ "&scope=" + http_->EncodeForUrl(this->GetScope());
 
 
 		using RequestPtr = HttpRequest::RequestPtr;
@@ -871,9 +868,12 @@ namespace AdvViz::SDK
 		return hasBoundAuthPort_.load();
 	}
 
-	bool ITwinAuthManager::SaveAccessToken(std::string const& accessToken) const
+	bool ITwinAuthManager::SaveAccessToken(std::string const& accessToken, EAuthContext authContext) const
 	{
+		static constexpr int keyIndexForStdToken = 1;
+
 		if (!accessToken.empty()
+			&& authContext == EAuthContext::StdRequest
 			&& authInfo_.ExpiresIn > 0
 			&& !authInfo_.CodeVerifier.empty()
 			&& !authInfo_.AuthorizationCode.empty()
@@ -888,8 +888,15 @@ namespace AdvViz::SDK
 				fmt::format("{} + {} + {} + {}",
 					accessToken, authInfo_.CodeVerifier, authInfo_.AuthorizationCode,
 					static_cast<int64_t>(ExpirationTime)),
-				1 /*keyIndex*/);
+				keyIndexForStdToken);
 		}
+
+		if (authContext == EAuthContext::Logout && accessToken.empty())
+		{
+			// Just delete the token cache file, if any
+			return SavePrivateData({}, keyIndexForStdToken);
+		}
+
 		return false;
 	}
 
@@ -972,6 +979,22 @@ namespace AdvViz::SDK
 		clientSecret_ = clientSecret;
 		grantType_ = EITwinAuthGrantType::ClientCredentials;
 		customScope_ = customScope;
+		return true;
+	}
+
+	bool ITwinAuthManager::Logout()
+	{
+		if (IsAuthorizationInProgress())
+		{
+			BE_LOGE("ITwinAPI", "Cannot log out while an authorization request is in progress");
+			return false;
+		}
+		if (GetOverrideMode() != EITwinAuthOverrideMode::None)
+		{
+			BE_LOGE("ITwinAPI", "The authorization token was overridden from outside - cannot log out");
+			return false;
+		}
+		SetAuthorizationInfo({}, {}, EAuthContext::Logout);
 		return true;
 	}
 }

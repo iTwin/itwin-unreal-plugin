@@ -69,7 +69,7 @@ struct FITwinInfo
 	UPROPERTY(BlueprintReadOnly, Category = "iTwinInfo")
 		FString Id;
 
-	UPROPERTY(BlueprintReadOnly, Category = "iTwinInfo")
+	UPROPERTY(BlueprintReadOnly, Category = "iTwinInfo", VisibleAnywhere)
 		FString DisplayName;
 
 	UPROPERTY(BlueprintReadOnly, Category = "iTwinInfo")
@@ -96,7 +96,7 @@ struct FIModelInfo
 	UPROPERTY(BlueprintReadOnly, Category = "iModelInfo")
 		FString Id;
 
-	UPROPERTY(BlueprintReadOnly, Category = "iModelInfo")
+	UPROPERTY(BlueprintReadOnly, Category = "iModelInfo", VisibleAnywhere)
 		FString DisplayName;
 
 	UPROPERTY(BlueprintReadOnly, Category = "iModelInfo")
@@ -123,7 +123,7 @@ struct FChangesetInfo
 	UPROPERTY(BlueprintReadOnly, Category = "ChangesetInfo")
 		FString Id;
 
-	UPROPERTY(BlueprintReadOnly, Category = "ChangesetInfo")
+	UPROPERTY(BlueprintReadOnly, Category = "ChangesetInfo", VisibleAnywhere)
 		FString DisplayName;
 
 	UPROPERTY(BlueprintReadOnly, Category = "ChangesetInfo")
@@ -150,7 +150,7 @@ struct FSavedViewInfo
 	UPROPERTY(BlueprintReadWrite, Category = "SavedViewInfo")
 		FString Id;
 
-	UPROPERTY(BlueprintReadWrite, Category = "SavedViewInfo")
+	UPROPERTY(BlueprintReadWrite, Category = "SavedViewInfo", VisibleAnywhere)
 		FString DisplayName;
 
 	UPROPERTY(BlueprintReadWrite, Category = "SavedViewInfo")
@@ -265,7 +265,7 @@ struct FSavedViewGroupInfo
 	UPROPERTY(BlueprintReadWrite, Category = "SavedViewGroup")
 		FString Id;
 
-	UPROPERTY(BlueprintReadWrite, Category = "SavedViewGroup")
+	UPROPERTY(BlueprintReadWrite, Category = "SavedViewGroup", VisibleAnywhere)
 		FString DisplayName;
 
 	UPROPERTY(BlueprintReadWrite, Category = "SavedViewGroup")
@@ -295,7 +295,7 @@ struct FITwinRealityDataInfo
 	UPROPERTY(BlueprintReadOnly, Category = "RealityData")
 		FString Id;
 
-	UPROPERTY(BlueprintReadOnly, Category = "RealityData")
+	UPROPERTY(BlueprintReadOnly, Category = "RealityData", VisibleAnywhere)
 		FString DisplayName;
 };
 

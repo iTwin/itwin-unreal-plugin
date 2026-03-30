@@ -14,7 +14,7 @@ public class ITwinTestAppEditorTarget : TargetRules
 	public ITwinTestAppEditorTarget( TargetInfo Target) : base(Target)
 	{
 		Type = TargetType.Editor;
-		DefaultBuildSettings = BuildSettingsVersion.V4;
+		DefaultBuildSettings = BuildSettingsVersion.Latest;
 		IncludeOrderVersion = EngineIncludeOrderVersion.Latest;
 		bUseAdaptiveUnityBuild = false;
 	}

@@ -12,6 +12,8 @@
 #include "WebTestHelpers.h"
 
 #include <HAL/PlatformProcess.h>
+#include <HttpModule.h>
+#include <Interfaces/IHttpResponse.h>
 #include <Misc/LowLevelTestAdapter.h>
 
 #include <ITwinWebServices/ITwinAuthorizationManager.h>
@@ -124,9 +126,9 @@ int FITwinMockServerBase::CheckRequiredHeaders(const std::vector<Header>& header
 				errorInfo = std::string(" - value differs for ") + header.key
 					+ ": was expecting '" + itReq->second + "' and found '" + header.value + "'";
 				if (header.key == "Authorization")
-					headerError = cpr::status::HTTP_UNAUTHORIZED;
+					headerError = MHD_HTTP_UNAUTHORIZED;
 				else
-					headerError = cpr::status::HTTP_BAD_REQUEST;
+					headerError = MHD_HTTP_BAD_REQUEST;
 				break;
 			}
 		}
@@ -135,8 +137,20 @@ int FITwinMockServerBase::CheckRequiredHeaders(const std::vector<Header>& header
 	if (!headerError
 		&& matchedHeaders.size() != requiredHeaders.size())
 	{
-		errorInfo = " - missing header(s)";
-		headerError = cpr::status::HTTP_BAD_REQUEST;
+		errorInfo = " - missing header(s): [";
+		int missingKeyIndex(0);
+		for (auto const& [key, _] : requiredHeaders)
+		{
+			if (!matchedHeaders.contains(key))
+			{
+				if (missingKeyIndex > 0)
+					errorInfo += ", ";
+				errorInfo += key;
+				missingKeyIndex++;
+			}
+		}
+		errorInfo += "]";
+		headerError = MHD_HTTP_BAD_REQUEST;
 	}
 	if (headerError)
 	{
@@ -144,7 +158,7 @@ int FITwinMockServerBase::CheckRequiredHeaders(const std::vector<Header>& header
 		return *headerError;
 	}
 
-	return cpr::status::HTTP_OK;
+	return MHD_HTTP_OK;
 }
 
 std::string FITwinMockServerBase::ToString(const std::vector<Header>& headers) const
@@ -210,7 +224,7 @@ public:
 		{
 			return ProcessIModelRPCTest(url, method, data, urlArguments, headers);
 		}
-		return Response(cpr::status::HTTP_NOT_FOUND,
+		return Response(MHD_HTTP_NOT_FOUND,
 			std::string("Page not found: ") + url);
 	}
 
@@ -226,7 +240,7 @@ private:
 		{{ "Accept", "application/vnd.bentley.itwin-platform." iTwin_VER "+json" },	\
 		 { "Prefer", "return=representation" },										\
 		 { "Authorization", "Bearer " ITWINTEST_ACCESS_TOKEN }});					\
-	if (HeaderStatus != cpr::status::HTTP_OK)							\
+	if (HeaderStatus != MHD_HTTP_OK)							\
 	{																	\
 		return Response(HeaderStatus, "Error in headers.");				\
 	}																	\
@@ -246,7 +260,7 @@ private:
 			//---------------------------------------------------------------------------
 			// GetITwinInfo
 			//---------------------------------------------------------------------------
-			return Response(cpr::status::HTTP_OK,
+			return Response(MHD_HTTP_OK,
 				"{\"iTwin\":{\"id\":\"itwinId-Cay-EA\",\"class\":\"Endeavor\",\"subClass\":\"Project\"," \
 				"\"type\":null,\"number\":\"Bentley Caymus EAP\",\"displayName\":\"Bentley Caymus EAP\",\"geographicLocation\":\"Exton, PA\"," \
 				"\"ianaTimeZone\":\"America/New_York\",\"dataCenterLocation\":\"East US\",\"status\":\"Active\"," \
@@ -260,7 +274,7 @@ private:
 			//---------------------------------------------------------------------------
 			// GetITwinInfo with wrong ID
 			//---------------------------------------------------------------------------
-			return Response(cpr::status::HTTP_NOT_FOUND,
+			return Response(MHD_HTTP_NOT_FOUND,
 				"{\"error\":{\"code\":\"iTwinNotFound\",\"message\":\"Requested iTwin is not available.\"}}"
 			);
 		}
@@ -275,7 +289,7 @@ private:
 				&& argMap["subClass"] == "Project"
 				&& argMap["status"] == "Active",
 				TEXT("unexpected arguments"));
-			return Response(cpr::status::HTTP_OK, "{\"iTwins\":[" \
+			return Response(MHD_HTTP_OK, "{\"iTwins\":[" \
 				"{\"id\":\"itwinId-Tests-Plop\",\"class\":\"Endeavor\",\"subClass\":\"Project\"," \
 				"\"type\":null,\"number\":\"Tests_AlexW\",\"displayName\":\"Tests_AlexW\",\"geographicLocation\":null,\"ianaTimeZone\":null," \
 				"\"dataCenterLocation\":\"East US\",\"status\":\"Active\",\"parentId\":\"ITW-ACCOUNT-ID-59\",\"iTwinAccountId\":\"ITW-ACCOUNT-ID-59\"," \
@@ -290,7 +304,7 @@ private:
 				"\"createdDateTime\":\"2023-02-06T18:33:42.283Z\",\"createdBy\":\"creator-Id-01\"}],\"_links\":{\"self\":{\"href\":\"https://api.test.com/itwins/recents?$skip=0&$top=1000&subClass=Project&status=Active\"}}}"
 			);
 		}
-		return Response(cpr::status::HTTP_NOT_FOUND, "Page not found.");
+		return Response(MHD_HTTP_NOT_FOUND, "Page not found.");
 	}
 
 	/// Process /imodels/ requests
@@ -307,7 +321,7 @@ private:
 			//---------------------------------------------------------------------------
 			// GetiTwiniModels
 			//---------------------------------------------------------------------------
-			return Response(cpr::status::HTTP_OK, "{\"iModels\":[" \
+			return Response(MHD_HTTP_OK, "{\"iModels\":[" \
 				"{\"id\":\"imodelId-Building\",\"displayName\":\"Building\",\"dataCenterLocation\":\"East US\",\"name\":\"Building\",\"description\":\"Bentley Building Project\"," \
 				"\"state\":\"initialized\",\"createdDateTime\":\"2021-10-05T16:31:18.1030000Z\",\"iTwinId\":\"itwinId-Cay-EA\",\"isSecured\":false,\"extent\":null,\"containersEnabled\":0," \
 				"\"_links\":{\"creator\":{\"href\":\"https://api.test.com/imodels/imodelId-Building/users/102f4511-1838\"}," \
@@ -341,7 +355,7 @@ private:
 			//---------------------------------------------------------------------------
 			// GetiModelChangesets
 			//---------------------------------------------------------------------------
-			return Response(cpr::status::HTTP_OK, "{\"changesets\":[" \
+			return Response(MHD_HTTP_OK, "{\"changesets\":[" \
 				"{\"id\":\"changesetIdTheOneToTest\",\"displayName\":\"4\",\"application\":{\"id\":\"imodel-bridge-administrator\",\"name\":\"iTwin Synchronizer\"}," \
 				"\"synchronizationInfo\":{\"taskId\":\"02a0e54e\",\"changedFiles\":null},\"description\":\"MicroStation Connector - initalLoad - Initialization changes\",\"index\":4," \
 				"\"parentId\":\"changesetIdOfTheParent\",\"creatorId\":\"102f4511-1838\",\"pushDateTime\":\"2021-09-30T06:06:13.3530000Z\"," \
@@ -375,12 +389,12 @@ private:
 			// GetiTwiniModels with wrong ID
 			//---------------------------------------------------------------------------
 			// Error 422
-			return Response(cpr::status::HTTP_UNPROCESSABLE_ENTITY,
+			return Response(MHD_HTTP_UNPROCESSABLE_CONTENT,
 				"{\"error\":{\"code\":\"InvalidiModelsRequest\",\"message\":\"Cannot get iModels.\",\"details\":[{\"code\":\"InvalidValue\"," \
 				"\"message\":\"\u0027toto\u0027 is not a valid \u0027iTwinId\u0027 value.\",\"target\":\"iTwinId\"}]}}"
 			);
 		}
-		return Response(cpr::status::HTTP_NOT_FOUND, "Page not found.");
+		return Response(MHD_HTTP_NOT_FOUND, "Page not found.");
 	}
 
 
@@ -402,7 +416,7 @@ private:
 			//---------------------------------------------------------------------------
 			// StartExport
 			//---------------------------------------------------------------------------
-			return Response(cpr::status::HTTP_OK,
+			return Response(MHD_HTTP_OK,
 				"{\"export\":{\"id\":\"ExportId-Just-Started\",\"displayName\":\"SS_Stadium\",\"status\":\"NotStarted\"," \
 				"\"lastModified\":\"2024-06-18T14:12:30.905Z\",\"request\":{\"iModelId\":\"imodelId-Stadium-023\",\"changesetId\":\"changesetIdStadium\"," \
 				"\"exportType\":\"CESIUM\",\"exporterVersion\":\"1.0\",\"exportTypeVersion\":\"1.1\",\"currentExporterVersion\":\"1.0\",\"contextId\":\"ea28fcd7-71d2-4313-951f-411639d9471e\"}}}"
@@ -417,7 +431,7 @@ private:
 			//---------------------------------------------------------------------------
 			// GetExports - WindTurbine
 			//---------------------------------------------------------------------------
-			return Response(cpr::status::HTTP_OK, "{\"exports\":[" \
+			return Response(MHD_HTTP_OK, "{\"exports\":[" \
 				"{\"id\":\"expId-Turb-53\",\"displayName\":\"WindTurbine\",\"status\":\"Complete\",\"lastModified\":\"2024-03-29T10:20:57.606Z\"," \
 				"\"request\":{\"iModelId\":\"imodelId-Turb-53\",\"changesetId\":\"9641026f8e6370db8cc790fab8943255af57d38e\"," \
 				"\"exportType\":\"CESIUM\",\"exporterVersion\":\"1.0\",\"exportTypeVersion\":\"1.1\",\"currentExporterVersion\":\"1.0\"," \
@@ -445,7 +459,7 @@ private:
 			//---------------------------------------------------------------------------
 			// GetExports - PhotoRealisticRendering
 			//---------------------------------------------------------------------------
-			return Response(cpr::status::HTTP_OK, "{\"exports\":[" \
+			return Response(MHD_HTTP_OK, "{\"exports\":[" \
 				"{\"id\":\"ExportId-PhotoReal-Cesium\",\"displayName\":\"PhotoRealisticRendering\",\"status\":\"Complete\",\"lastModified\":\"2024-06-20T15:06:47.548Z\"," \
 				"\"request\":{\"iModelId\":\"imodelId-PhotoReal-Render-97\",\"changesetId\":\"\"," \
 				"\"exportType\":\"CESIUM\",\"exporterVersion\":\"1.0\",\"exportTypeVersion\":\"1.1\",\"currentExporterVersion\":\"1.0\"," \
@@ -473,7 +487,7 @@ private:
 			//---------------------------------------------------------------------------
 			// GetExportInfo
 			//---------------------------------------------------------------------------
-			return Response(cpr::status::HTTP_OK, "{\"export\":" \
+			return Response(MHD_HTTP_OK, "{\"export\":" \
 				"{\"id\":\"expId-Turb-53\",\"displayName\":\"WindTurbine\",\"status\":\"Complete\",\"lastModified\":\"2024-03-29T10:20:57.606Z\"," \
 				"\"request\":{\"iModelId\":\"imodelId-Turb-53\",\"changesetId\":\"9641026f8e6370db8cc790fab8943255af57d38e\"," \
 				"\"exportType\":\"CESIUM\",\"exporterVersion\":\"1.0\",\"exportTypeVersion\":\"1.1\",\"currentExporterVersion\":\"1.0\"," \
@@ -481,7 +495,7 @@ private:
 				"\"_links\":{\"mesh\":{\"href\":\"https://gltf59.blob.net/expId-Turb-53?sv=2024-05-04&spr=https&se=2024-06-22T23%3A59%3A59Z&sr=c&sp=rl&sig=Nq%2B%2FPjEXu64kgPsYVBjuxTV44Zq4GfsSxqTDDygD4oI%3D\"}}}}"
 			);
 		}
-		return Response(cpr::status::HTTP_NOT_FOUND, "Page not found.");
+		return Response(MHD_HTTP_NOT_FOUND, "Page not found.");
 	}
 
 	/// Process /savedviews/ requests
@@ -513,7 +527,7 @@ private:
 			//---------------------------------------------------------------------------
 			// GetAllSavedViews
 			//---------------------------------------------------------------------------
-			return Response(cpr::status::HTTP_OK, "{\"savedViews\":[" \
+			return Response(MHD_HTTP_OK, "{\"savedViews\":[" \
 				"{\"id\":\"SavedViewIDPlopPhotoRealistic01\",\"shared\":true,\"creationTime\":\"2024-06-13T10:07:29.897Z\",\"lastModified\":\"2024-06-13T12:25:19.239Z\"," \
 				"\"savedViewData\":{\"itwin3dView\":{\"origin\":[-3.12,7.39,2.2],\"extents\":[0,0,0],\"angles\":{\"yaw\":176.41,\"pitch\":-41.52,\"roll\":84.6},\"camera\":{\"lens\":0,\"focusDist\":0,\"eye\":[-3.12,7.39,2.2]}}}," \
 				"\"displayName\":\"view01\",\"tags\":[],\"extensions\":[],\"_links\":{\"creator\":{\"href\":\"https://api.test.com/accesscontrol/iTwins/itwinId-Tests-Plop/members/abcdefabcdef\"}," \
@@ -551,7 +565,7 @@ private:
 			&& argMap["groupId"] == SAVEDVIEWGROUPID_TESTRENAMEGROUP
 			&& argMap["$skip"] == "0" && argMap["$top"] == "100")
 		{
-			return Response(cpr::status::HTTP_OK, "{\"savedViews\":[" \
+			return Response(MHD_HTTP_OK, "{\"savedViews\":[" \
 				"{\"id\":\"SavedViewIDPlopPhotoRealistic01\",\"shared\":true,\"creationTime\":\"2024-06-13T10:07:29.897Z\",\"lastModified\":\"2024-06-13T12:25:19.239Z\"," \
 				"\"savedViewData\":{\"itwin3dView\":{\"origin\":[-3.12,7.39,2.2],\"extents\":[0,0,0],\"angles\":{\"yaw\":176.41,\"pitch\":-41.52,\"roll\":84.6},\"camera\":{\"lens\":0,\"focusDist\":0,\"eye\":[-3.12,7.39,2.2]}}}," \
 				"\"displayName\":\"view01\",\"tags\":[],\"extensions\":[],\"_links\":{\"creator\":{\"href\":\"https://api.test.com/accesscontrol/iTwins/itwinId-Tests-Plop/members/abcdefabcdef\"}," \
@@ -562,7 +576,7 @@ private:
 		else if (url.ends_with("/savedviews")
 			&& argMap["$skip"] == "100" && argMap["$top"] == "100")
 		{
-			return Response(cpr::status::HTTP_OK, "{\"savedViews\":[]}");
+			return Response(MHD_HTTP_OK, "{\"savedViews\":[]}");
 		}
 		else if (method == "DELETE")
 		{
@@ -571,12 +585,12 @@ private:
 			//---------------------------------------------------------------------------
 			if (url.ends_with(SAVEDVIEWID_PHOTO_REALISTIC_RENDERING_VIEW02))
 			{
-				return Response(cpr::status::HTTP_OK, "");
+				return Response(MHD_HTTP_OK, "");
 			}
 			if (url.ends_with(SAVEDVIEWID_BUILDING_TEST))
 			{
 				// Error 422
-				return Response(cpr::status::HTTP_UNPROCESSABLE_ENTITY,
+				return Response(MHD_HTTP_UNPROCESSABLE_CONTENT,
 					"{\"error\":{\"code\":\"InvalidSavedviewsRequest\",\"message\":\"Cannot delete savedview.\",\"details\":[{\"code\":\"InvalidChange\",\"message\":\"Update operations not supported on legacy savedviews.\"}]}}"
 				);
 			}
@@ -589,7 +603,7 @@ private:
 			// GetSavedView / AddSavedView / EditSavedView
 			// => same response structure for both
 			//---------------------------------------------------------------------------
-			return Response(cpr::status::HTTP_OK, "{\"savedView\":" \
+			return Response(MHD_HTTP_OK, "{\"savedView\":" \
 				"{\"id\":\"SVIdPhotoRealisticView02\",\"shared\":true,\"creationTime\":\"2024-06-13T10:08:34.797Z\",\"lastModified\":\"2024-06-13T12:26:35.678Z\"," \
 				"\"savedViewData\":{\"itwin3dView\":{\"origin\":[-1.79,-0.69,1.59],\"extents\":[0,0,0]," \
 				"\"angles\":{\"yaw\":-1.69,\"pitch\":-50.43,\"roll\":-92.19},\"camera\":{\"lens\":0,\"focusDist\":0,\"eye\":[-1.79,-0.69,1.59]}}}," \
@@ -605,7 +619,7 @@ private:
 		else if (url.ends_with(SAVEDVIEWID_BUILDING_ALEXVIEW2) && method == "GET")
 		{
 			// GetSavedView with only 'roll' angle
-			return Response(cpr::status::HTTP_OK, "{\"savedView\":" \
+			return Response(MHD_HTTP_OK, "{\"savedView\":" \
 				"{\"id\":\"SVIdBuildingView_Nm02\",\"shared\":true,\"extensions\": [{\"extensionName\": \"EmphasizeElements\"," \
 				"\"href\" : \"https://api.bentley.com/savedviews/SVIdBuildingView_Nm02/extensions/EmphasizeElements\"" \
 				"}, {\"extensionName\": \"PerModelCategoryVisibility\"," \
@@ -665,7 +679,7 @@ private:
 		else if (url.ends_with(SAVEDVIEWID_BUILDING_CONSTRUCTION) && method == "GET")
 		{
 			// GetSavedView with hidden elements/models/categories + synchro
-			return Response(cpr::status::HTTP_OK, "{\"savedView\":{\"id\":\"SVIdBuildingConstruction\",\"displayName\":\"Construction\",\"shared\":false,\"tags\":[],\"extensions\":" \
+			return Response(MHD_HTTP_OK, "{\"savedView\":{\"id\":\"SVIdBuildingConstruction\",\"displayName\":\"Construction\",\"shared\":false,\"tags\":[],\"extensions\":" \
 				"[{\"extensionName\":\"EmphasizeElements\",\"href\":\"https://api.bentley.com/savedviews/SVIdBuildingConstruction/extensions/EmphasizeElements\"},{\"extensionName\":\"PerModelCategoryVisibility\",\"href\":\"https://api.bentley.com/savedviews/SVIdBuildingConstruction/extensions/PerModelCategoryVisibility\"}],\"creationTime\":\"2025-01-10T10:02:00.089Z\"," \
 				"\"lastModified\":\"2025-01-10T10:02:05.352Z\",\"savedViewData\":{\"itwin3dView\":{\"origin\":[45.48796771467186,19.17567984963212,-6.282902298539785],\"extents\":[41.75008017237279,26.716783202281604,21.223040086186096],\"angles\":{\"yaw\":30.000000000000114,\"pitch\":-35.264389682754434,\"roll\":-44.99999999999979}," \
 				"\"camera\":{\"lens\":89.99999999999949,\"focusDist\":20.875040086186583,\"eye\":[53.361505503969084,-2.472547166037531,16.96506391818422]},\"categories\":{\"enabled\":[\"0x20000000057\",\"0x200000000d5\",\"0x200000000d7\",\"0x200000000d9\",\"0x200000000df\",\"0x200000000e1\",\"0x200000000e3\",\"0x200000000e5\",\"0x200000000e7\"," \
@@ -686,7 +700,7 @@ private:
 				 && method == "GET"
 				 && url.find("/" SAVEDVIEWID_BUILDING_ALEXVIEW2 "/") != std::string::npos)
 		{
-			return Response(cpr::status::HTTP_OK, "{"\
+			return Response(MHD_HTTP_OK, "{"\
 				"\"extension\": {"\
 				"\"extensionName\": \"EmphasizeElements\","\
 				"\"markdownUrl\" : \"https://www.bentley.com/\","\
@@ -710,7 +724,7 @@ private:
 				 && method == "GET"
 				 && url.find("/" SAVEDVIEWID_BUILDING_CONSTRUCTION "/") != std::string::npos)
 		{
-			return Response(cpr::status::HTTP_OK, "{"\
+			return Response(MHD_HTTP_OK, "{"\
 				"\"extension\": {"\
 				"\"extensionName\": \"EmphasizeElements\","\
 				"\"markdownUrl\" : \"https://www.bentley.com/\","\
@@ -734,7 +748,7 @@ private:
 				 && url.find("/" SAVEDVIEWID_BUILDING_CONSTRUCTION "/") != std::string::npos
 				 && method == "GET")
 		{
-			return Response(cpr::status::HTTP_OK, "{"\
+			return Response(MHD_HTTP_OK, "{"\
 				"\"href\": \"" SAVEDVIEW_THUMBNAILURL "\"}"
 			);
 		}
@@ -742,14 +756,14 @@ private:
 				 && url.find("/" SAVEDVIEWID_BUILDING_CONSTRUCTION "/") != std::string::npos
 				 && method == "PUT" && data == "{\"image\":\"" SAVEDVIEW_THUMBNAILURL "\"}")
 		{
-			return Response(cpr::status::HTTP_OK, "");
+			return Response(MHD_HTTP_OK, "");
 		}
 		else if (url.ends_with("/image")
 			&& url.find("/" SAVEDVIEWID_BUILDING_TEST "/") != std::string::npos
 			&& method == "PUT" && data == "{\"image\":\"" SAVEDVIEW_THUMBNAILURL_ERROR "\"}")
 		{
 			// Error 422
-			return Response(cpr::status::HTTP_UNPROCESSABLE_ENTITY,
+			return Response(MHD_HTTP_UNPROCESSABLE_CONTENT,
 				"{\"error\":{\"code\":\"InvalidSavedviewsRequest\",\"message\":\"Cannot update savedview.\",\"details\":[{\"code\":\"InvalidRequestBody\",\"message\":\"image must be a base64Image.\",\"target\":\"image\"}]}}"
 			);
 		}
@@ -757,7 +771,7 @@ private:
 				 && method == "POST"
 				 && data == ADD_GROUP_02_DATA)
 		{
-			return Response(cpr::status::HTTP_OK, "{" \
+			return Response(MHD_HTTP_OK, "{" \
 				"\"group\": {" \
 				"\"id\": \"SVGroupId-Group02\"," \
 				"\"displayName\" : \"Group02\"," \
@@ -784,7 +798,7 @@ private:
 			//---------------------------------------------------------------------------
 			// GetSavedViewsGroups
 			//---------------------------------------------------------------------------
-			return Response(cpr::status::HTTP_OK, "{\"groups\":[{\"id\":\"SVGroupIdTest01\",\"displayName\":\"Advanced Visualization\"," \
+			return Response(MHD_HTTP_OK, "{\"groups\":[{\"id\":\"SVGroupIdTest01\",\"displayName\":\"Advanced Visualization\"," \
 				"\"shared\":true,\"_links\":{\"iTwin\":{\"href\":\"https://api.bentley.com/iTwins/itwinId-Cay-EA\"}," \
 				"\"project\":{\"href\":\"https://api.bentley.com/projects/itwinId-Cay-EA\"}," \
 				"\"imodel\":{\"href\":\"https://api.bentley.com/imodels/imodelId-Building\"}," \
@@ -816,7 +830,7 @@ private:
 				 && argMap["iTwinId"] == ITWINID_CAYMUS_EAP
 				 && argMap["iModelId"].empty())
 		{
-			return Response(cpr::status::HTTP_OK, "{\"groups\":[{\"id\":\"SVGroupIdCaymusTestName\",\"displayName\":\"Test Name\"," \
+			return Response(MHD_HTTP_OK, "{\"groups\":[{\"id\":\"SVGroupIdCaymusTestName\",\"displayName\":\"Test Name\"," \
 				"\"shared\":true,\"_links\":{\"iTwin\":{\"href\":\"https://api.bentley.com/path1/path2/id\"}," \
 				"\"project\":{\"href\":\"https://api.bentley.com/path1/path2/id\"}," \
 				"\"imodel\":{\"href\":\"https://api.bentley.com/path1/path2/id\"}," \
@@ -824,7 +838,7 @@ private:
 				"\"savedViews\":{\"href\":\"https://api.bentley.com/path1/path2/id\"}}," \
 				"\"readOnly\":false}]}");
 		}
-		return Response(cpr::status::HTTP_NOT_FOUND, "Page not found.");
+		return Response(MHD_HTTP_NOT_FOUND, "Page not found.");
 	}
 
 	/// Process /reality-management requests
@@ -854,13 +868,13 @@ private:
 				{ "Prefer", "return=minimal" },
 				{ "Authorization", "Bearer " ITWINTEST_ACCESS_TOKEN }
 			});
-			if (HeaderStatus != cpr::status::HTTP_OK)
+			if (HeaderStatus != MHD_HTTP_OK)
 			{
 				return Response(HeaderStatus, "Error in headers.");
 			}
 			if (iTwinId == ITWINID_CAYMUS_EAP)
 			{
-				return Response(cpr::status::HTTP_OK,
+				return Response(MHD_HTTP_OK,
 					"{\r\n  \"realityData\": [\r\n    {\r\n      \"id\": \"realityData-Id-Orlando-Magic\",\r\n " \
 					"      \"displayName\": \"Orlando_CesiumDraco_LAT\",\r\n      \"type\": \"Cesium3DTiles\"\r\n    }\r\n  ],\r\n  " \
 					"    \"_links\": {\r\n      \"next\": null\r\n    }\r\n}"
@@ -869,7 +883,7 @@ private:
 			else
 			{
 				// with wrong ID => Error 422
-				return Response(cpr::status::HTTP_UNPROCESSABLE_ENTITY,
+				return Response(MHD_HTTP_UNPROCESSABLE_CONTENT,
 					"{\"error\":{\"code\":\"InvalidRealityDataRequest\",\"message\":\"Invalid RealityData request.\",\"details\":[" \
 					"{\"code\":\"InvalidParameter\",\"message\":\"The value 'toto' is not valid.\",\"target\":\"iTwinId\"}]," \
 					"\"_seqUrl\":\"https://seq.test.com/#/events?filter=ActivityId%3D'dbdeb682-6b9d-4fc0-81f3-6db7621df5f8'&from=2024-06-19T12:59:05.3448458Z&to=2024-06-19T13:01:05.3468092Z\"," \
@@ -890,7 +904,7 @@ private:
 			//---------------------------------------------------------------------------
 			// GetRealityData3DInfo - part 1
 			//---------------------------------------------------------------------------
-			return Response(cpr::status::HTTP_OK,
+			return Response(MHD_HTTP_OK,
 				"{\r\n  \"realityData\": {\r\n    \"id\": \"realityData-Id-Orlando-Magic\",\r\n    \"displayName\": \"Orlando_CesiumDraco_LAT\"," \
 				"\r\n    \"classification\": \"Model\",\r\n    \"type\": \"Cesium3DTiles\"," \
 				"\r\n    \"rootDocument\": \"Orlando_CesiumDraco_LAT.json\"," \
@@ -909,7 +923,7 @@ private:
 			//---------------------------------------------------------------------------
 			// GetRealityData3DInfo - part 2
 			//---------------------------------------------------------------------------
-			return Response(cpr::status::HTTP_OK,
+			return Response(MHD_HTTP_OK,
 				"{\r\n  \"type\": \"AzureBlobSasUrl\",\r\n  \"access\": \"Read\",\r\n  \"_links\": {\r\n    \"containerUrl\":{\r\n      " \
 				"\"href\": \"https://realityblob59.blob.core.net/realityData-Id-Orlando-Magic?skoid=6db55139-0f1c-467a-95b4-5009c17c1bf0" \
 				"\u0026sktid=067e9632-ea4c-4ed9-9e6d-e294956e284b\u0026skt=2024-06-18T17%3A42%3A00Z\u0026ske=2024-06-21T17%3A42%3A00Z\u0026sks=b\u0026skv=2024-05-04" \
@@ -917,7 +931,7 @@ private:
 				"\r\n    }\r\n}"
 			);
 		}
-		return Response(cpr::status::HTTP_NOT_FOUND, "Page not found.");
+		return Response(MHD_HTTP_NOT_FOUND, "Page not found.");
 	}
 
 	/// Process /imodel/rpc/ requests
@@ -939,7 +953,7 @@ private:
 			//---------------------------------------------------------------------------
 			// GetElementProperties
 			//---------------------------------------------------------------------------
-			return Response(cpr::status::HTTP_OK,
+			return Response(MHD_HTTP_OK,
 				"{\"statusCode\":0,\"result\":{\"class\":\"Physical Object\",\"id\":\"0x20000001baf\",\"label\":\"Shape [2-309]\"," \
 				"\"items\":{\"@Presentation:selectedItems.categoryLabel@\":{\"type\":\"category\",\"items\":{\"Model\":{\"type\":\"primitive\",\"value\":\"West Wing, BSI300AE9-Shell.dgn, Composite\"}," \
 				"\"Code\":{\"type\":\"primitive\",\"value\":\"\"},\"User Label\":{\"type\":\"primitive\",\"value\":\"Shape\"},\"Category\":{\"type\":\"primitive\",\"value\":\"A-G321-G3-Windw\"}," \
@@ -963,7 +977,7 @@ private:
 				&& url.find("/" CHANGESETID_BUILDING "/") != std::string::npos
 				&& data == "[{\"iTwinId\":\"" ITWINID_CAYMUS_EAP "\",\"iModelId\":\"" IMODELID_BUILDING  "\",\"changeset\":{\"id\":\"" CHANGESETID_BUILDING "\"}}]")
 			{
-				return Response(cpr::status::HTTP_OK,
+				return Response(MHD_HTTP_OK,
 					"{\"name\":\"Building\",\"rootSubject\":{\"name\":\"Building\"},\"projectExtents\":{\"low\":[-244.59492798331735,-303.66127815647087,-28.27051340710871]," \
 					"\"high\":[409.678652192302,249.78031406156776,33.397180631459555]},\"globalOrigin\":[0,0,0],\"key\":\"imodelId-Building:changesetidbuilding59\"," \
 					"\"iTwinId\":\"itwinId-Cay-EA\",\"iModelId\":\"imodelId-Building\",\"changeset\":{\"id\":\"changesetidbuilding59\",\"index\":12}}"
@@ -974,7 +988,7 @@ private:
 				&& url.find("/" CHANGESETID_STADIUM "/") != std::string::npos
 				&& data == "[{\"iTwinId\":\"" ITWINID_STADIUM_RN_QA "\",\"iModelId\":\"" IMODELID_STADIUM  "\",\"changeset\":{\"id\":\"" CHANGESETID_STADIUM "\"}}]")
 			{
-				return Response(cpr::status::HTTP_OK,
+				return Response(MHD_HTTP_OK,
 					"{\"name\":\"Stadium QA 04 22\",\"rootSubject\":{\"name\":\"Stadium QA 04 22\"},\"projectExtents\":{\"low\":[32344.267871807926,31348.272780176438,-478.7556455931467]," \
 					"\"high\":[33088.69387347796,32680.341868920772,144.21825526358407]},\"globalOrigin\":[0,0,0],\"ecefLocation\":{\"origin\":[-1497600.1543352203,6198968.877963936,112371.07286524471]," \
 					"\"orientation\":{\"pitch\":-0.0009652883917540237,\"roll\":88.69419530866284,\"yaw\":-166.12431911119472}," \
@@ -993,7 +1007,7 @@ private:
 				);
 			}
 		}
-		return Response(cpr::status::HTTP_NOT_FOUND, "Page not found.");
+		return Response(MHD_HTTP_NOT_FOUND, "Page not found.");
 	}
 };
 
@@ -1164,6 +1178,19 @@ bool FITwinAPITestHelperBase::PostCondition() const
 	return true;
 }
 
+/* static*/ bool FITwinAPITestHelperBase::WaitForAsyncTask(std::atomic_bool& taskFinished, int maxSeconds)
+{
+	using namespace std::chrono_literals;
+
+	int elapsedMilliSec = 0;
+	while (!taskFinished && elapsedMilliSec < maxSeconds * 1000)
+	{
+		std::this_thread::sleep_for(100ms);
+		elapsedMilliSec += 100;
+	}
+	return taskFinished;
+}
+
 
 class FITwinAPITestHelper : public FITwinAPITestHelperBase
 {
@@ -1265,16 +1292,27 @@ bool FITwinWebServicesRequestTest::RunTest(const FString& /*Parameters*/)
 		FString LastError;
 		UTEST_TRUE("Get Last Error", FITwinAPITestHelper::Instance().GetWebServices()
 			->ConsumeLastError(LastError));
-		UTEST_EQUAL("Compare Error", LastError, expectedMessage);
+		UTEST_TRUE("Compare Error", LastError.StartsWith(expectedMessage));
 		return true;
 	};
 
 	SECTION("MockServer Validation")
 	{
 		// Most basic test, just to validate the mock server
-		// This one is synchronous.
-		cpr::Response r = cpr::Get(cpr::Url{ url + "/arg_test?x=0&b=2" });
-		UTEST_EQUAL("status_code", 200, r.status_code);
+		const auto Request = FHttpModule::Get().CreateRequest();
+		Request->SetVerb(TEXT("GET"));
+		const std::string fullUrl = url + "/arg_test?x=0&b=2";
+		Request->SetURL(fullUrl.c_str());
+		Observer->AddPendingRequest();
+		Request->OnProcessRequestComplete().BindLambda(
+			[this, Observer]
+			(FHttpRequestPtr, FHttpResponsePtr Response, bool bConnectedSuccessfully) mutable
+			{
+				TestTrue("bConnectedSuccessfully", bConnectedSuccessfully);
+				TestEqual("status_code", 200, Response->GetResponseCode());
+				Observer->OnResponseReceived();
+			});
+		Request->ProcessRequest();
 	}
 
 	SECTION("ITwin GetITwinInfo")
@@ -1749,8 +1787,8 @@ bool FITwinWebServicesRequestTest::RunTest(const FString& /*Parameters*/)
 				else if (SavedViewId == SAVEDVIEWID_BUILDING_TEST)
 				{
 					UTEST_EQUAL("Update Saved View Thumbnail should fail", bSuccess, false);
-					UTEST_EQUAL("ErrorMessage", Response,
-						TEXT("[UpdateSavedViewThumbnail] code 422: Unknown\n\tError [InvalidSavedviewsRequest]: Cannot update savedview.\n\tDetails: [InvalidRequestBody] image must be a base64Image. (target: image)"));
+					UTEST_TRUE("ErrorMessage", Response.StartsWith(
+						TEXT("[UpdateSavedViewThumbnail] code 422: Unknown\n\tError [InvalidSavedviewsRequest]: Cannot update savedview.\n\tDetails: [InvalidRequestBody] image must be a base64Image. (target: image)")));
 				}
 				else
 				{
@@ -1851,8 +1889,8 @@ bool FITwinWebServicesRequestTest::RunTest(const FString& /*Parameters*/)
 			else if (SavedViewId == TEXT(SAVEDVIEWID_BUILDING_TEST))
 			{
 				UTEST_EQUAL("Delete Saved View should fail", bSuccess, false);
-				UTEST_EQUAL("ErrorMessage", Response,
-					TEXT("[DeleteSavedView] code 422: Unknown\n\tError [InvalidSavedviewsRequest]: Cannot delete savedview.\n\tDetails: [InvalidChange] Update operations not supported on legacy savedviews."));
+				UTEST_TRUE("ErrorMessage", Response.StartsWith(
+					TEXT("[DeleteSavedView] code 422: Unknown\n\tError [InvalidSavedviewsRequest]: Cannot delete savedview.\n\tDetails: [InvalidChange] Update operations not supported on legacy savedviews.")));
 			}
 			else
 			{

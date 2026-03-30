@@ -28,11 +28,11 @@ namespace ITwinServerEnvironment
 	{
 		switch (value)
 		{
-		case EITwinEnvironment::Prod: return "";
-		case EITwinEnvironment::QA: return "qa-";
-		case EITwinEnvironment::Dev: return "dev-";
+		case EITwinEnvironment::Prod: return TEXT("");
+		case EITwinEnvironment::QA: return TEXT("qa-");
+		case EITwinEnvironment::Dev: return TEXT("dev-");
 		}
 		check(false);
-		return "";
+		return {};
 	}
 }

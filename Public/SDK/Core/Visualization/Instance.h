@@ -20,21 +20,19 @@
 #include <Core/Tools/Tools.h>
 #include <Core/Tools/Types.h>
 #include <Core/Visualization/InstancesGroup.h>
+#include <Core/Visualization/SavableItem.h>
 
 MODULE_EXPORT namespace AdvViz::SDK
 {
-	class IInstance : public Tools::Factory<IInstance>, public Tools::ExtensionSupport
+	class IInstance : public Tools::Factory<IInstance>, public ISavableItem, public Tools::ExtensionSupport
 	{
 	public:
-		// Database id
-		virtual const std::string& GetId() const = 0;
-		virtual void SetId(const std::string& id) = 0;
+		// Unique id (at runtime), and possibly holds data base identifier.
+		inline const RefID& GetRefId() const { return GetId(); }
+		inline void SetRefId(const RefID& id) { SetId(id); }
 
-		virtual const RefID& GetRefId() const = 0;
-		virtual void SetRefId(const RefID& id) = 0;
-
-		virtual const std::shared_ptr<IInstancesGroup>& GetGroup() const = 0;
-		virtual void SetGroup(const std::shared_ptr<IInstancesGroup>& group) = 0;
+		virtual const IInstancesGroupPtr& GetGroup() const = 0;
+		virtual void SetGroup(const IInstancesGroupPtr& group) = 0;
 
 		// Animation id can correspond to key frame animation or path animation
 		virtual const std::string& GetAnimId() const = 0;
@@ -56,24 +54,26 @@ MODULE_EXPORT namespace AdvViz::SDK
 		virtual std::optional<float3> GetColorShift() const = 0;
 		virtual void SetColorShift(const float3& color) = 0;
 
-		virtual bool ShouldSave() const = 0;
-		virtual void SetShouldSave(bool value) = 0;
-
 		virtual expected<void, std::string> Update() = 0;
+
+		virtual void OnIndexChanged(const int32_t newIndex) = 0;
 	};
 
 	class ADVVIZ_LINK Instance : public IInstance, Tools::TypeId<Instance>
 	{
 	public:
-		const std::string& GetId() const override;
-		void SetId(const std::string& id) override;
+		/// overridden from ISavableItem
+		const RefID& GetId() const override;
+		void SetId(const RefID& id) override;
 
-		const RefID& GetRefId() const override;
-		void SetRefId(const RefID& id) override;
+		ESaveStatus GetSaveStatus() const override;
+		void SetSaveStatus(ESaveStatus status) override;
+
+		/// overridden from IInstance
 		void RemoveAnimPathId() override;
 
-		const std::shared_ptr<IInstancesGroup>& GetGroup() const override;
-		void SetGroup(const std::shared_ptr<IInstancesGroup>& group) override;
+		const IInstancesGroupPtr& GetGroup() const override;
+		void SetGroup(const IInstancesGroupPtr& group) override;
 
 		const std::string& GetAnimId() const override;
 		void SetAnimId(const std::string& id) override;
@@ -93,10 +93,9 @@ MODULE_EXPORT namespace AdvViz::SDK
 		std::optional<float3> GetColorShift() const override;
 		void SetColorShift(const float3& color) override;
 
-		bool ShouldSave() const override;
-		void SetShouldSave(bool value) override;
+		expected<void, std::string> Update() override;
 
-		virtual expected<void, std::string> Update() override;
+		void OnIndexChanged(const int32_t newIndex) override;
 
 		using Tools::TypeId<Instance>::GetTypeId;
 		std::uint64_t GetDynTypeId() const override { return GetTypeId(); }
@@ -111,7 +110,7 @@ MODULE_EXPORT namespace AdvViz::SDK
 		Impl& GetImpl();
 	};
 
-	typedef std::shared_ptr<IInstance> IInstancePtr;
-	typedef std::weak_ptr<IInstance> IInstanceWPtr;
+	using IInstancePtr = TSharedLockableDataPtr<IInstance>;
+	using IInstanceWPtr = TSharedLockableDataWPtr<IInstance>;	
 	typedef std::vector<IInstancePtr> SharedInstVect;
 }

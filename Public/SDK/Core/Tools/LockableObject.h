@@ -9,7 +9,8 @@
 #pragma once
 #include <memory>
 #include <mutex>
-#include <shared_mutex>
+
+#include "SharedRecursiveMutex.h"
 
 namespace AdvViz::SDK::Tools
 {
@@ -21,6 +22,7 @@ namespace AdvViz::SDK::Tools
 	 *     //or AutoLockObject<decltype(objects)> objects_withlock(updatedObjs);
 	 *     //or auto objects_withlock(updatedObjs.GetAutoLock());
 	 *     objects_withlock.Get().DoSomeWork();
+	 *     //or objects_withlock->DoSomeWork();
 	 * }
 	 * @endcode
 	 */
@@ -33,22 +35,34 @@ namespace AdvViz::SDK::Tools
 			obj_ = &lockable_.Lock();
 		}
 
-		AutoLockObject(const AutoLockObject<TLockableObject> &&p)
+		AutoLockObject(AutoLockObject<TLockableObject> &&p)
 		: obj_(p.obj_)
 		, lockable_(p.lockable_)
-		{}
+		{
+			p.obj_ = nullptr; // Mark moved-from state
+		}
 
-		~AutoLockObject() { lockable_.Unlock(); }
+		~AutoLockObject() 
+		{ 
+			if (obj_) // Only unlock if not moved-from
+				lockable_.Unlock(); 
+		}
 
-		typename TLockableObject::subtype& Get() { return *obj_; }
-		typename TLockableObject::subtype* GetPtr() { return obj_; }
-		const typename TLockableObject::subtype& Get() const { return *obj_; }
-		const typename TLockableObject::subtype* GetPtr() const { return obj_; }
+		typename TLockableObject::subtype& Get() & { return *obj_; }
+		typename TLockableObject::subtype* GetPtr() & { return obj_; }
+		const typename TLockableObject::subtype& Get() const & { return *obj_; }
+		const typename TLockableObject::subtype* GetPtr() const & { return obj_; }
 
-		operator typename TLockableObject::subtype &() { return *obj_; }
+		// Only allow operator-> on lvalues, not temporaries
+		typename TLockableObject::subtype* operator->() & { return obj_; }
+		typename TLockableObject::subtype* operator->() && = delete;  // Prevent: GetAutoLock()->Method()
 
-		typename TLockableObject::subtype& operator*() { return *obj_; }
-		typename TLockableObject::subtype* operator->() { return obj_; }
+		typename TLockableObject::subtype& operator*() & { return *obj_; }
+		typename TLockableObject::subtype& operator*() && = delete;   // Prevent: *GetAutoLock()
+
+		// Implicit conversion only for lvalues
+		operator typename TLockableObject::subtype &() & { return *obj_; }
+		operator typename TLockableObject::subtype &() && = delete;
 
 		//non-copyable
 		AutoLockObject(const AutoLockObject&) = delete;
@@ -159,6 +173,7 @@ namespace AdvViz::SDK::Tools
 
 		~RAutoLockObject() { lockable_.UnlockShared(); }
 		const typename TLockableObject::subtype& Get() const { return *obj_; }
+		const typename TLockableObject::subtype* GetPtr() const& { return obj_; }
 		operator const typename TLockableObject::subtype& () { return *obj_; }
 
 		const typename TLockableObject::subtype& operator*() const { return *obj_; }
@@ -173,10 +188,12 @@ namespace AdvViz::SDK::Tools
 		TLockableObject& lockable_;
 	};
 
+	typedef ::AdvViz::SDK::Tools::SharedRecursiveMutex TSharedRecursiveMutex;
+
 	/** Can be used with RW lock access,
 	 * requires a mutex that has lock_shared method.
 	 */
-	template<typename Type, typename SharedMutex = std::shared_mutex>
+	template<typename Type, typename SharedMutex = TSharedRecursiveMutex>
 	class RWLockableObject : public LockableObject<Type, SharedMutex>
 	{
 	public:
@@ -233,7 +250,7 @@ namespace AdvViz::SDK::Tools
 	};
 
 	// specialized version to hold pointer instead of object (usefull when you need to safely store interfaces)
-	template<typename Type, typename Mutex = std::shared_mutex>
+	template<typename Type, typename Mutex = TSharedRecursiveMutex>
 	class RWLockablePtrObject : public RWLockableObject<std::unique_ptr<Type>, Mutex>
 	{
 	public:
@@ -259,9 +276,9 @@ namespace AdvViz::SDK::Tools
 		AutoLock GetAutoLock() {return AutoLock(*this);}
 	};
 
-	template<typename Type, typename Mutex = std::shared_mutex>
+	template<typename Type, typename Mutex = TSharedRecursiveMutex>
 	using TSharedLockableDataWPtr = std::weak_ptr<RWLockablePtrObject<Type, Mutex>>;
-	template<typename Type, typename Mutex = std::shared_mutex>
+	template<typename Type, typename Mutex = TSharedRecursiveMutex>
 	using TSharedLockableDataPtr = std::shared_ptr<RWLockablePtrObject<Type, Mutex>>;
 
 	template<typename Type>
@@ -270,9 +287,9 @@ namespace AdvViz::SDK::Tools
 		return std::make_shared<RWLockablePtrObject<Type>>(p);
 	}
 
-	template<typename Type, typename Mutex = std::shared_mutex>
+	template<typename Type, typename Mutex = TSharedRecursiveMutex>
 	using TSharedLockableDataWeak = std::weak_ptr<RWLockableObject<Type, Mutex>>;
-	template<typename Type, typename Mutex = std::shared_mutex>
+	template<typename Type, typename Mutex = TSharedRecursiveMutex>
 	using TSharedLockableData = std::shared_ptr<RWLockableObject<Type, Mutex>>;
 
 	template<typename Type, typename... Args>
@@ -280,6 +297,9 @@ namespace AdvViz::SDK::Tools
 	{
 		return std::make_shared<RWLockableObject<Type>>(std::forward<Args>(args)...);
 	}
+
+	template<typename Type, typename Mutex = TSharedRecursiveMutex>
+	using TLockableRWData = RWLockablePtrObject<Type, Mutex>;
 
 }
 

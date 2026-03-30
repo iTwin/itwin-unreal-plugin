@@ -9,6 +9,7 @@
 #pragma once
 
 #include <Cesium3DTilesSelection/Tile.h>
+#include <Clipping/ITwinClipping3DTilesetHelper.h>
 #include <ITwinSceneMapping.h>
 #include <Timeline/TimelineFwd.h>
 
@@ -52,6 +53,8 @@ class FITwinIModelInternals
 public:
 	AITwinIModel& Owner;
 	FITwinSceneMapping SceneMapping;
+	/// helper to activate clipping effects in the mesh components.
+	TStrongObjectPtr<UITwinClipping3DTilesetHelper> ClippingHelper;
 	std::shared_ptr<FIModelUninitializer> Uniniter;
 	std::unordered_set<ITwinScene::TileIdx> TilesPendingRenderReadiness;
 	double LastScheduleDownloadProgressLogged = -100.;
@@ -95,7 +98,13 @@ public:
 									std::vector<ITwinElementID> const* OnlyForElements = nullptr);
 	void OnVisibilityChanged(ITwin::CesiumTileID const& TileID, bool visible);
 	void SetNeedForcedShadowUpdate() const;
-	void OnScheduleDownloadProgressed(double PercentComplete);
+
+	enum class E4DScheduleStatus
+	{
+		Unknown, Loading, Finished, NoneOrEmpty
+	};
+	void Update4DScheduleDownloadStatus(E4DScheduleStatus Sched4DStatus, double PercentComplete = 0.);
+	bool AreSynchro4DSchedulesMetadataLoaded() const;
 	void LogScheduleDownloadProgressed();
 
 	bool OnClickedElement(ITwinElementID const Element, FHitResult const& HitResult,

@@ -14,11 +14,16 @@
 #include <ITwinRealityData.h>
 
 #include "ITwinTilesetAccess.inl"
+#include <Clipping/ITwinClipping3DTilesetHelper.h>
 #include <Decoration/ITwinDecorationHelper.h>
 #include <Math/UEMathExts.h>
 #include <CesiumPolygonRasterOverlay.h>
 
 #include <EngineUtils.h> // for TActorIterator<>
+
+#include <Compil/BeforeNonUnrealIncludes.h>
+#	include <BeHeaders/Compil/EnumSwitchCoverage.h>
+#include <Compil/AfterNonUnrealIncludes.h>
 
 namespace ITwin
 {
@@ -63,10 +68,12 @@ namespace ITwin
 		return Tileset.FindComponentByClass<UCesiumPolygonRasterOverlay>();
 	}
 
-	void InitCutoutOverlay(ACesium3DTileset& Tileset)
+	//! Adds support for cut-out polygons to the given tileset.
+	static UCesiumPolygonRasterOverlay* InitCutoutOverlay(ACesium3DTileset& Tileset)
 	{
-		if (GetCutoutOverlay(Tileset) != nullptr)
-			return;
+		UCesiumPolygonRasterOverlay* ExistingOverlay = GetCutoutOverlay(Tileset);
+		if (ExistingOverlay != nullptr)
+			return ExistingOverlay;
 
 		// Instantiate a UCesiumPolygonRasterOverlay component, which can then be populated with
 		// polygons to enable cutout (ACesiumCartographicPolygon)
@@ -77,10 +84,13 @@ namespace ITwin
 		RasterOverlay->OnComponentCreated();
 		Tileset.AddInstanceComponent(RasterOverlay);
 		RasterOverlay->RegisterComponent();
+		return RasterOverlay;
 	}
 
+	using VisitTilesetUPtrFunction = TFunction<void(TilesetAccessUPtr&&)>;
+
 	template <class TITwinTilesetOwner>
-	inline void TIterateAllITwinTilesets(VisitTilesetFunction const& VisitFunc, UWorld* World)
+	inline void TIterateAllITwinTilesetPtrs(VisitTilesetUPtrFunction const& VisitFunc, UWorld* World)
 	{
 		using ITwinActorIterator = TActorIterator<TITwinTilesetOwner>;
 		for (ITwinActorIterator ITwinActorIter(World); ITwinActorIter; ++ITwinActorIter)
@@ -88,9 +98,19 @@ namespace ITwin
 			auto TilesetAccess = (*ITwinActorIter)->MakeTilesetAccess();
 			if (TilesetAccess)
 			{
-				VisitFunc(*TilesetAccess);
+				VisitFunc(std::move(TilesetAccess));
 			}
 		}
+	}
+
+	template <class TITwinTilesetOwner>
+	inline void TIterateAllITwinTilesets(VisitTilesetFunction const& VisitFunc, UWorld* World)
+	{
+		TIterateAllITwinTilesetPtrs<TITwinTilesetOwner>([&VisitFunc](TilesetAccessUPtr&& AccessUPtr)
+		{
+			if (ensure(AccessUPtr))
+				VisitFunc(*AccessUPtr);
+		}, World);
 	}
 
 	void IterateAllITwinTilesets(VisitTilesetFunction const& VisitFunc, UWorld* World)
@@ -100,6 +120,34 @@ namespace ITwin
 		TIterateAllITwinTilesets<AITwinIModel>(VisitFunc, World);
 		TIterateAllITwinTilesets<AITwinRealityData>(VisitFunc, World);
 		TIterateAllITwinTilesets<AITwinGoogle3DTileset>(VisitFunc, World);
+	}
+
+	void GatherTilesetsOfModelType(TilesetAccessUPtrArray& OutTilesets, EITwinModelType ModelType, UWorld* World)
+	{
+		if (!ensure(World))
+			return;
+		auto const RecordTarget = [&OutTilesets](TilesetAccessUPtr&& AccessUPtr)
+		{
+			if (ensure(AccessUPtr))
+				OutTilesets.Push(std::move(AccessUPtr));
+		};
+		switch (ModelType)
+		{
+		case EITwinModelType::IModel:
+			TIterateAllITwinTilesetPtrs<AITwinIModel>(RecordTarget, World);
+			break;
+		case EITwinModelType::RealityData:
+			TIterateAllITwinTilesetPtrs<AITwinRealityData>(RecordTarget, World);
+			break;
+		case EITwinModelType::GlobalMapLayer:
+			TIterateAllITwinTilesetPtrs<AITwinGoogle3DTileset>(RecordTarget, World);
+			break;
+
+			BE_UNCOVERED_ENUM_ASSERT_AND_BREAK(
+		case EITwinModelType::AnimationKeyframe:
+		case EITwinModelType::Scene:
+		case EITwinModelType::Invalid:);
+		}
 	}
 
 	TUniquePtr<FITwinTilesetAccess> GetTilesetAccess(AActor* Actor)
@@ -126,6 +174,39 @@ namespace ITwin
 		}
 		return {};
 	}
+
+
+	template <class TITwinTilesetOwner>
+	TilesetAccessUPtr TGetTilesetAccessFromModelLinkImpl(const ModelLink& ModelLink, UWorld* World)
+	{
+		using ITwinActorIterator = TActorIterator<TITwinTilesetOwner>;
+		for (ITwinActorIterator ITwinActorIter(World); ITwinActorIter; ++ITwinActorIter)
+		{
+			if ((*ITwinActorIter)->GetModelLink() == ModelLink)
+			{
+				return (*ITwinActorIter)->MakeTilesetAccess();
+			}
+		}
+		return {};
+	}
+
+	TilesetAccessUPtr GetTilesetAccessFromModelLink(const ModelLink& ModelLink, UWorld* World)
+	{
+		switch (ModelLink.first)
+		{
+		case EITwinModelType::IModel:
+			return TGetTilesetAccessFromModelLinkImpl<AITwinIModel>(ModelLink, World);
+		case EITwinModelType::RealityData:
+			return TGetTilesetAccessFromModelLinkImpl<AITwinRealityData>(ModelLink, World);
+		case EITwinModelType::GlobalMapLayer:
+			return TGetTilesetAccessFromModelLinkImpl<AITwinGoogle3DTileset>(ModelLink, World);
+			BE_UNCOVERED_ENUM_ASSERT_AND_BREAK(
+		case EITwinModelType::AnimationKeyframe:
+		case EITwinModelType::Scene:
+		case EITwinModelType::Invalid:);
+		}
+		return {};
+	}
 }
 
 
@@ -137,6 +218,11 @@ FITwinTilesetAccess::FITwinTilesetAccess(AActor* TilesetOwnerActor)
 FITwinTilesetAccess::~FITwinTilesetAccess()
 {
 
+}
+
+EITwinModelType FITwinTilesetAccess::GetModelType() const
+{
+	return GetDecorationKey().first;
 }
 
 const ACesium3DTileset* FITwinTilesetAccess::GetTileset() const
@@ -167,12 +253,17 @@ void FITwinTilesetAccess::HideTileset(bool bHide) const
 	if (DecoHelper)
 	{
 		auto const DecoKey = GetDecorationKey();
-		ITwinSceneInfo SceneInfo = DecoHelper->GetSceneInfo(DecoKey);
-		if (!SceneInfo.Visibility.has_value() || *SceneInfo.Visibility != !bHide)
+		DecoHelper->GetSceneInfoThen(DecoKey,
+			[bHide, DecoHelper, DecoKey](ITwinSceneInfo SceneInfo)
 		{
-			SceneInfo.Visibility = !bHide;
-			DecoHelper->SetSceneInfo(DecoKey, SceneInfo);
-		}
+			if (!::IsValid(DecoHelper))
+				return;
+			if (!SceneInfo.Visibility.has_value() || *SceneInfo.Visibility != !bHide)
+			{
+				SceneInfo.Visibility = !bHide;
+				DecoHelper->SetSceneInfo(DecoKey, SceneInfo);
+			}
+		});
 	}
 }
 
@@ -209,12 +300,17 @@ void FITwinTilesetAccess::SetTilesetQuality(float Value) const
 	if (DecoHelper)
 	{
 		auto const DecoKey = GetDecorationKey();
-		ITwinSceneInfo SceneInfo = DecoHelper->GetSceneInfo(DecoKey);
-		if (!SceneInfo.Quality.has_value() || fabs(*SceneInfo.Quality - Value) > 1e-5)
+		DecoHelper->GetSceneInfoThen(DecoKey,
+			[Value, DecoHelper, DecoKey](ITwinSceneInfo SceneInfo)
 		{
-			SceneInfo.Quality = Value;
-			DecoHelper->SetSceneInfo(DecoKey, SceneInfo);
-		}
+			if (!::IsValid(DecoHelper))
+				return;
+			if (!SceneInfo.Quality.has_value() || fabs(*SceneInfo.Quality - Value) > 1e-5)
+			{
+				SceneInfo.Quality = Value;
+				DecoHelper->SetSceneInfo(DecoKey, SceneInfo);
+			}
+		});
 	}
 }
 
@@ -237,15 +333,21 @@ void FITwinTilesetAccess::SetModelOffset(const FVector& Pos, const FVector& Rot)
 	//OnIModelOffsetChanged();
 
 	AITwinDecorationHelper* DecoHelper = GetDecorationHelper();
-	if (DecoHelper)
+	if (::IsValid(DecoHelper))
 	{
 		auto const DecoKey = GetDecorationKey();
-		ITwinSceneInfo SceneInfo = DecoHelper->GetSceneInfo(DecoKey);
-		if (!SceneInfo.Offset.has_value() || !SceneInfo.Offset->Equals(TilesetOwner->GetTransform()))
+		auto const TilesetTsf = TilesetOwner->GetTransform();
+		DecoHelper->GetSceneInfoThen(DecoKey,
+			[TilesetTsf, DecoHelper, DecoKey](ITwinSceneInfo SceneInfo)
 		{
-			SceneInfo.Offset = TilesetOwner->GetTransform();
-			DecoHelper->SetSceneInfo(DecoKey, SceneInfo);
-		}
+			if (!::IsValid(DecoHelper))
+				return;
+			if (!SceneInfo.Offset.has_value() || !SceneInfo.Offset->Equals(TilesetTsf))
+			{
+				SceneInfo.Offset = TilesetTsf;
+				DecoHelper->SetSceneInfo(DecoKey, SceneInfo);
+			}
+		});
 	}
 }
 
@@ -288,4 +390,21 @@ void FITwinTilesetAccess::RefreshTileset() const
 	ACesium3DTileset* Tileset = GetMutableTileset();
 	if (Tileset)
 		Tileset->RefreshTileset();
+}
+
+void FITwinTilesetAccess::InitCutoutOverlay() const
+{
+	UITwinClipping3DTilesetHelper* ClippingHelper = GetClippingHelper();
+	UCesiumPolygonRasterOverlay* CutoutOverlay = nullptr;
+	ACesium3DTileset* Tileset = GetMutableTileset();
+	if (Tileset)
+	{
+		CutoutOverlay = ITwin::InitCutoutOverlay(*Tileset);
+	}
+	// Update the clipping helper with the created overlay, so that it can perform cut-out operations on it
+	// when needed.
+	if (ClippingHelper)
+	{
+		ClippingHelper->SetCutoutOverlay(CutoutOverlay);
+	}
 }

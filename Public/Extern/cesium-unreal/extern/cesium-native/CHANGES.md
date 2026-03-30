@@ -1,5 +1,96 @@
 # Change Log
 
+### v0.57.0 - 2026-02-02
+
+##### Additions :tada:
+
+- Added an overload for `AsyncSystem::all` that supports multiple futures that resolve to different types. Futures that resolve to `void` are currently unsupported by this overload.
+
+##### Fixes :wrench:
+
+- Fixed a bug in `Tileset::loadMetadata` that did not account for cases where the root tile could be `nullptr`, e.g., after attempting to load a tileset from an invalid URL.
+- Fixed a bug that could cause an assertion failure or crash when destroying a `Cesium3DTilesSelection::Tileset` very soon after creating it using the constructor taking a custom `TilesetContentLoader` or `TilesetContentLoaderFactory`.
+
+### v0.56.0 - 2026-01-05
+
+##### Breaking Changes :mega:
+
+- `CesiumIonClient::Connection::authorize` now returns a `CesiumUtility::Result<Connection>`. This removes the previous behavior of throwing an exception when authorization failed.
+- `SharedAssetDepot` will no longer cache asset loads that fail with an exception / `Future` rejection, allowing them to be retried. Other types of load failures are cached as before.
+
+##### Additions :tada:
+
+- Added `bool` and `std::string_view` overloads for `PropertyArrayCopy`.
+- Added support for the `KHR_gaussian_splatting` extension.
+  - SPZ payloads for `KHR_gaussian_splatting` using the `KHR_gaussian_splatting_compression_spz_2` extension will now be decoded.
+- Added two new constructors to `CesiumIonClient::Connection` to:
+  - Accommodate new Cesium ion token refresh requirements. The extra parameters allow the login token to be refreshed when it expires and the refresh token is still valid.
+  - Access a self-hosted Cesium ion server configured for Single User authentication.
+- Warnings-as-errors are now enabled by setting the `COMPILE_WARNING_AS_ERROR` target property on each Cesium Native library, instead of by manuallying setting compiler flags. This means that if we supply the `--compile-no-warning-as-error` option to the cmake configure command, warnings will no longer cause the build to fail.
+- Added `JwtTokenUtility` to the `CesiumClientCommon` library.
+
+##### Fixes :wrench:
+
+- `CesiumRasterOverlays::WebMapServiceRasterOverlay` will no longer attempt to add a default `styles` parameter to the URL if the user has already specified one.
+- Fixed a bug in `JsonHelpers::GetInt64OrDefault` and `GetUint64OrDefault` that made them return the default for a value larger than the maximum value of a 32-bit integer.
+
+### v0.55.0 - 2025-12-01
+
+##### Breaking Changes :mega:
+
+- `RasterOverlay::createTileProvider` now receives a reference to `CreateRasterOverlayTileProviderParameters` instead of a large number of individual parameters.
+- The constructor parameters for `RasterOverlayTileProvider` and `QuadtreeRasterOverlayTileProvider` have changed.
+- The `getCredit` method has been removed from `RasterOverlayCreditProvider`. Use `getCredits` instead.
+- Renamed `CesiumRasterOverlays::TileProviderAndTile` to `RasterOverlayTileLoadResult`. It now holds a pointer to the `ActivatedRasterOverlay` instead of the `RasterOverlayTileProvider`.
+- Custom functions registered with `GltfConverter` can no longer expect that external data in the glTF will be automatically loaded by the caller. If they want external data in the glTF to be loaded as well, they should use `GltfReader::readGltfAndExternalData`.
+
+##### Additions :tada:
+
+- Added the concept of a `CreditSource`. Every `Credit` in a `CreditSystem` has a source, and these can be mapped back to `Tileset` and `RasterOverlayTileProvider` (via their `getCreditSource` methods) in order to determine which dataset created which credits.
+- Added `TilesetViewGroup::isCreditReferenced`, which can be used to determine if a particular view group references a particular `Credit`.
+- Added `CreditReferencer::isCreditReferenced`, which can be used to determine if the referencer is currently referencing a particular `Credit`.
+- `CreditSystem::getSnapshot` now takes an optional parameter specifying if and how to filter `Credits` with identical HTML strings.
+- Added `Cesium3DTilesSelection::Tileset::waitForAllLoadsToComplete`.
+- Added `CesiumGltfReader::readGltfAndExternalData`. It reads any external data before doing any postprocessing, such as decoding Draco and meshopt.
+
+##### Fixes :wrench:
+
+- The cmake install process previously didn't install `zlib`, which is required by `libcurl`.
+- Fixed a bug that could cause an `ActivatedRasterOverlay` to be destroyed before the last `RasterOverlayTile` it created, leading to a crash.
+
+### v0.54.0 - 2025-11-17
+
+##### Additions :tada:
+
+- Cesium Native can now be built with Emscripten.
+
+### v0.53.0 - 2025-11-03
+
+##### Breaking Changes :mega:
+
+- Upgraded vcpkg to `2025.09.17`. This was previously done in v0.52.0 and reverted in v0.52.1.
+- Removed `refreshTileProviderWithNewKey` from `BingMapsRasterOverlay` and `refreshTileProviderWithNewUrlAndHeaders` from `TileMapServiceRasterOverlay`. These were no longer used after the raster overlay refactor in `v0.52.0`.
+
+##### Additions :tada:
+
+- Added `AzureMapsRasterOverlay`.
+- Added `Uri::ensureTrailingSlash`, which is helpful when the `Uri` represents a base URL.
+- Added `GltfModifier`, which can be used to modify tile glTFs as they load, as well as apply new modifications to them later.
+
+##### Fixes :wrench:
+
+- Fixed a bug in `GoogleMapTilesRasterOverlay` that tried to parse credits from an erroneous viewport service response.
+- Fixed issues with `GeoJsonRasterOverlay` with certain types of data.
+  - Polygons with holes should now display correctly.
+  - Using a GeoJSON file with data on either side of the antimeridian should now display correctly instead of causing the entire overlay to disappear.
+- Fixed a bug with credits not showing on-screen when `showCreditsOnScreen` was enabled on `GoogleMapTilesRasterOverlay`.
+
+### v0.52.1 - 2025-10-01
+
+##### Breaking Changes :mega:
+
+- Reverted vcpkg update that could interfere with builds on headless macOS.
+
 ### v0.52.0 - 2025-10-01
 
 ##### Breaking Changes :mega:
@@ -19,6 +110,7 @@
 - Removed `getOverlays`, `getTileProviders`, and `getPlaceholderTileProviders` from `RasterOverlayCollection`. Use `getActivatedOverlays` instead.
 - `SharedAssetDepot` now uses a templatized "context" instead of separate `AsyncSystem` and `IAssetAccessor` parameters. It defaults to `SharedAssetContext`.
 - Removed `RasterOverlay::getCredits`, which was not actually used anywhere. Use `RasterOverlayTileProvider::addCredits` instead.
+- Upgraded vcpkg to `2025.09.17`.
 
 ##### Additions :tada:
 

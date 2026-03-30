@@ -1,5 +1,7 @@
 #include "TilesetContentManager.h"
 
+#include <Cesium3DTilesSelection/GltfModifier.h>
+#include <Cesium3DTilesSelection/GltfModifierVersionExtension.h>
 #include <Cesium3DTilesSelection/RasterMappedTo3DTile.h>
 #include <Cesium3DTilesSelection/Tile.h>
 #include <Cesium3DTilesSelection/TileContent.h>
@@ -18,6 +20,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -150,6 +153,21 @@ void Tile::createChildTiles(std::vector<Tile>&& children) {
   }
 }
 
+void Tile::updateBoundingVolume(const BoundingVolume& value) noexcept {
+  if (!_initialBoundingVolume) {
+    // Store the initial bounding volume, so that it can be restored if needed
+    // (typically for upsampling, where the updated volume can be empty...)
+    _initialBoundingVolume = this->_boundingVolume;
+  }
+  setBoundingVolume(value);
+}
+
+void Tile::restoreInitialBoundingVolume() noexcept {
+  if (_initialBoundingVolume) {
+    setBoundingVolume(*_initialBoundingVolume);
+  }
+}
+
 double Tile::getNonZeroGeometricError() const noexcept {
   double geometricError = this->getGeometricError();
   if (geometricError > Math::Epsilon5) {
@@ -212,7 +230,7 @@ int64_t Tile::computeByteSize() const noexcept {
   return bytes;
 }
 
-bool Tile::isRenderable(std::optional<int> modelVersion) const noexcept {
+bool Tile::isRenderable() const noexcept {
   if (getState() == TileLoadState::Failed) {
     // Explicitly treat failed tiles as "renderable" - we just treat them like
     // empty tiles.
@@ -221,11 +239,6 @@ bool Tile::isRenderable(std::optional<int> modelVersion) const noexcept {
 
   if (getState() == TileLoadState::Done) {
     if (!_renderEngineReadiness)
-      return false;
-    auto* renderContent = getContent().getRenderContent();
-    if (renderContent && modelVersion &&
-        // compares optional values if both have one:
-        modelVersion != renderContent->getModel().version)
       return false;
     // An unconditionally-refined tile is never renderable... UNLESS it has no
     // children, in which case waiting longer will be futile.
@@ -238,6 +251,7 @@ bool Tile::isRenderable(std::optional<int> modelVersion) const noexcept {
           });
     }
   }
+
   return false;
 }
 
@@ -282,41 +296,33 @@ bool anyRasterOverlaysNeedLoading(const Tile& tile) noexcept {
 } // namespace
 
 bool Tile::needsWorkerThreadLoading(
-    std::optional<int> modelVersion) const noexcept {
-  TileLoadState state = this->getState();
-  // Test if worker-thread phase of glTF modifier should be started.
-  if (modelVersion && state == TileLoadState::Done) {
-    const auto* renderContent = getContent().getRenderContent();
-    if (renderContent &&
-        renderContent->getGltfModifierState() == GltfModifier::State::Idle) {
-      // Need to account for the modified model's version too in case
-      // finishLoading hasn't yet been called
-      std::optional<int> latestVersion =
-          renderContent->getModifiedModel()
-              ? renderContent->getModifiedModel()->version
-              : std::nullopt;
-      if (!latestVersion)
-        latestVersion = renderContent->getModel().version;
-      if (!latestVersion || latestVersion != modelVersion)
-        return true;
-    }
-  }
-  return state == TileLoadState::Unloaded ||
-         state == TileLoadState::FailedTemporarily ||
-         anyRasterOverlaysNeedLoading(*this);
+    const GltfModifier* pModifier) const noexcept {
+  if (this->getState() == TileLoadState::Unloaded ||
+      this->getState() == TileLoadState::FailedTemporarily)
+    return true;
+
+  if (pModifier && pModifier->needsWorkerThreadModification(*this))
+    return true;
+
+  if (anyRasterOverlaysNeedLoading(*this))
+    return true;
+
+  return false;
 }
 
 bool Tile::needsMainThreadLoading(
-    std::optional<int> modelVersion) const noexcept {
-  TileLoadState state = this->getState();
-  // Test if main-thread phase of glTF modifier should be performed.
-  if (modelVersion && state == TileLoadState::Done) {
-    const auto* renderContent = getContent().getRenderContent();
-    if (renderContent && renderContent->getGltfModifierState() ==
-                             GltfModifier::State::WorkerDone)
-      return true;
-  }
-  return state == TileLoadState::ContentLoaded && this->isRenderContent();
+    const GltfModifier* pModifier) const noexcept {
+  // Only render content needs main thread loading.
+  if (!this->isRenderContent())
+    return false;
+
+  if (this->getState() == TileLoadState::ContentLoaded)
+    return true;
+
+  if (pModifier && pModifier->needsMainThreadModification(*this))
+    return true;
+
+  return false;
 }
 
 void Tile::setParent(Tile* pParent) noexcept {

@@ -32,6 +32,8 @@
 		,"generator": "Visual Studio 17 2022"
 		,"binaryDir": "${sourceDir}/../build/${presetName}"
 		,"architecture": "x64"
+		// TODO_GCO: revert the commit containing this: the Debug configuration (for UE from source) was made to use release vcpkg builds because of MFC libraries conflicts
+		// to be investigated better in order to reallow setting CESIUM_VCPKG_RELEASE_ONLY to OFF(?)
 		// Does not work as expected (see Public/Extern/cesium-unreal/extern/vcpkg-overlays/triplets/shared/common.cmake)
 		//,"environment": {
 		//	"CESIUM_VCPKG_RELEASE_ONLY": "ON"

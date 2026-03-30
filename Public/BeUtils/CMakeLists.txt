@@ -12,6 +12,8 @@ add_library (BeUtils
 	Gltf/GltfMaterialHelper.h
 	Gltf/GltfMaterialTuner.cpp
 	Gltf/GltfMaterialTuner.h
+	Gltf/GltfTextureHelper.cpp
+	Gltf/GltfTextureHelper.h
 	Misc/MiscUtils.cpp
 	Misc/MiscUtils.h
 	Misc/Random.h
@@ -41,6 +43,7 @@ if (MSVC)
 endif ()
 target_include_directories (BeUtils PUBLIC
 	"${CMAKE_BINARY_DIR}/Public/CesiumDependencies/Source/ThirdParty/include"
+	"${CMAKE_SOURCE_DIR}/Public/SDK"
 )
 target_link_libraries (BeUtils PRIVATE
 	Cesium3DTilesSelection

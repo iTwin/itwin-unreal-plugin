@@ -10,13 +10,116 @@
 #include "Config.h"
 #include "Core/Singleton/singleton.h"
 #include "Core/Network/HttpGetWithLink.h"
+#include "AsyncHelpers.h"
+#include "AsyncHttp.inl"
 #include <regex>
 #include <chrono>
 
 namespace AdvViz::SDK {
 
+	static std::string SceneAPIGuidtoDSID(const std::string& guid)
+	{
+		if (guid.size() < 28)
+		{
+			BE_ISSUE("Unexpected size from SceneAPI Guid", guid);
+			return "";
+		}
+		return guid.substr(0, 8) + guid.substr(9, 4) + guid.substr(14, 4) + guid.substr(19, 4) + guid.substr(24, 4);
+	}
 
-	struct LinkAPI::Impl
+
+	namespace SceneAPIDetails
+	{
+		struct JsonVector
+		{
+			double x = 0.0;
+			double y = 0.0;
+			double z = 0.0;
+		};
+		struct SJsonCamera
+		{
+			JsonVector up;
+			JsonVector direction;
+			JsonVector position;
+			bool isOrthographic = false;
+			double aspectRatio = 1.0;
+			double far = 10000000000;
+			double near = 0.1;
+			std::optional< std::array<double, 16> > ecefTransform;
+		};
+		struct SJsonScheduleSimulation
+		{
+			std::string timelineId;
+			int64_t timePoint;
+		};
+		struct SJSonAtmosphere
+		{
+			double sunAzimuth = 0;
+			double sunPitch = 0;
+			double heliodonLongitude = 0;
+			double heliodonLatitude = 0;
+			std::string heliodonDate;
+			double weather = 0;
+			double windOrientation = 0;
+			double windForce = 0;
+			double fog = 0;
+			double exposure = 0;
+			bool useHeliodon = true;
+			std::optional<std::string> HDRIImage;
+			std::optional<double> HDRIZRotation;
+			std::optional<double> sunIntensity;
+		};
+		struct SJsonSettings
+		{
+			SJSonAtmosphere atmosphere;
+		};
+		struct SJsonFrameData
+		{
+			SJsonCamera camera;
+			std::optional <SJsonSettings> settings;
+			std::optional<SJsonScheduleSimulation> schedule;
+		};
+		struct SJsonFrameCameraData
+		{
+			std::vector<double> input;
+			std::vector<SJsonFrameData> output;
+			std::optional< std::string> name;
+		};
+		struct Data {
+			std::optional<bool> visible; //obsolete
+			rfl::Rename<"class", std::optional<std::string>> type;
+			std::optional<std::string> repositoryId;
+			std::optional<std::string> id;
+			std::optional<std::string> name;
+			std::optional<double> quality;
+			std::optional< std::array<double, 16> > ecefTransform;
+			std::optional< std::vector<double> > adjustment;
+			std::optional<SJSonAtmosphere> atmosphere;
+			std::optional<std::string> decorationId;
+			std::optional<std::vector<std::string>> animations;
+			std::optional< std::vector<double>> input;
+			std::optional< std::vector<SJsonFrameData>> output;
+		};
+		struct JsonObjectWithId
+		{
+			std::string id;
+			std::string kind;
+			std::optional<Data> data;
+			std::optional<std::string> displayName;
+			std::optional<std::string> relatedId;
+			std::optional<bool> visible;
+		};
+		using SceneAPILinks = ITwinAPI::SLinks;
+		struct SJsonOut
+		{
+			std::optional<std::vector<JsonObjectWithId>> objects;
+			std::optional<SceneAPILinks> _links;
+		};
+	}
+
+
+
+	struct LinkAPI::Impl final : SavableItemWithID
 	{
 		struct SJSonGCS
 		{
@@ -32,62 +135,97 @@ namespace AdvViz::SDK {
 			std::optional<bool> visibility;
 			std::optional<double> quality;
 			std::optional< std::array<double, 12> > transform;
-
 		};
-		struct LinkWithId
-		{
-			std::string type;
-			std::string ref;
-			std::optional < std::string>  name;
-			std::optional<SJSonGCS> gcs;
-			std::optional<bool> visibility;
-			std::optional<double> quality;
-			std::optional< std::array<double, 12> > transform;
-			std::string id;
 
-		};
-		bool shoudSave_ = false;
 		bool shouldDelete_ = false;
 		Link link_;
-		std::string id_;
-		void FromLinkWithId(const LinkWithId& value)
-		{
-			link_.type = value.type;
-			link_.ref = value.ref;
-			link_.name = value.name;
-			link_.gcs = value.gcs;
-			link_.visibility = value.visibility;
-			link_.quality = value.quality;
-			link_.transform = value.transform;
-			id_ = value.id;
-		}
-		LinkWithId ToLinkWithId() const
-		{
-			LinkWithId value;
-			value.type = link_.type;
-			value.ref = link_.ref;
-			value.name = link_.name;
-			value.gcs = link_.gcs;
-			value.visibility = link_.visibility;
-			value.quality = link_.quality;
-			value.transform = link_.transform;
-			value.id = id_;
-			return value;
-		}
 		std::string sublinkId_ = "";
 		std::shared_ptr<AdvViz::SDK::LinkAPI> parentLink_;
-		int idx_ = -1; //clips needs index
 
+
+		void SetType(const std::string& value)
+		{
+			if (link_.type != value)
+			{
+				link_.type = value;
+				InvalidateDB();
+			}
+		}
+
+		void SetRef(const std::string& value)
+		{
+			if (link_.ref != value)
+			{
+				link_.ref = value;
+				InvalidateDB();
+			}
+		}
+
+		void SetName(const std::string& value)
+		{
+			if (!link_.name.has_value() || link_.name.value() != value)
+			{
+				link_.name = value;
+				InvalidateDB();
+			}
+		}
+
+		void SetGCS(const std::string& v1, const std::array<float, 3>& v2)
+		{
+			SJSonGCS value{ .wkt = v1, .center = v2 };
+			if (!link_.gcs.has_value() || value.wkt != link_.gcs->wkt || value.center != link_.gcs->center)
+			{
+				link_.gcs = value;
+				InvalidateDB();
+			}
+		}
+
+		void SetVisibility(bool v)
+		{
+			if (!link_.visibility.has_value() || link_.visibility.value() != v)
+			{
+				link_.visibility = v;
+				InvalidateDB();
+			}
+		}
+
+		void SetQuality(double v)
+		{
+			if (!link_.quality.has_value() || link_.quality.value() != v)
+			{
+				link_.quality = v;
+				InvalidateDB();
+			}
+		}
+
+		void SetTransform(const dmat4x3& v)
+		{
+			if (!link_.transform.has_value() || link_.transform.value() != v)
+			{
+				link_.transform = v;
+				InvalidateDB();
+			}
+		}
+
+		void Delete(bool value)
+		{
+			shouldDelete_ = value;
+			if (value)
+				InvalidateDB();
+		}
 	};
 
 	class Credential
 	{
 	public:
 		std::shared_ptr<AdvViz::SDK::Http> Http_;
-		std::shared_ptr<AdvViz::SDK::Http>& GetHttp() { return Http_; }
+		std::shared_ptr<AdvViz::SDK::Http> const& GetHttp() { return Http_; }
+
+
 		Credential()
 		{
 		}
+
 		void SetDefaultHttp(const std::shared_ptr<AdvViz::SDK::Http>& http)
 		{
 			Http_.reset(AdvViz::SDK::Http::New());
@@ -122,39 +260,31 @@ namespace AdvViz::SDK {
 		}
 
 		Config::SConfig curstomServerConfig;
-	private:
 
+	private:
 		std::string envPrefix;
 		static std::string server;
 	};
-	std::string  Credential::server = "api.bentley.com";
+	std::string Credential::server = "api.bentley.com";
 	static Credential creds;
+	static bool enableExportOfResources = true;
+
 	namespace
 	{
-		static dmat4x3 Identity34 = { 1.0,0,0,0,1.0,0,0,0,1.0,0,0,0 };
+		static dmat4x3 Identity34 = { 1., 0., 0.,
+									  0., 1., 0.,
+									  0., 0., 1.,
+									  0., 0., 0. };
 	}
-	class ScenePersistenceAPI::Impl
+
+
+	class ScenePersistenceAPI::Impl : public std::enable_shared_from_this<ScenePersistenceAPI::Impl>
 	{
 	public:
 		struct SJsonInEmpty {};
 
-		struct SJSonAtmosphere
-		{
-			double sunAzimuth = 0;
-			double sunPitch = 0;
-			double heliodonLongitude = 0;
-			double heliodonLatitude = 0;
-			std::string heliodonDate;
-			double weather = 0;
-			double windOrientation = 0;
-			double windForce = 0;
-			double fog = 0;
-			double exposure = 0;
-			bool useHeliodon = true;
-			std::optional<std::string> HDRIImage;
-			std::optional<double> HDRIZRotation;
-			std::optional<double> sunIntensity;
-		};
+		using SJSonAtmosphere = SceneAPIDetails::SJSonAtmosphere;
+
 		struct SJSonSceneSettings
 		{
 			bool displayGoogleTiles = true;
@@ -181,124 +311,282 @@ namespace AdvViz::SDK {
 			double		rotation;
 		};
 	public:
-		std::string id_;
-		SJsonScene jsonScene_;
-		SJSonAtmosphere jsonAtmo_;
-		SJSonSceneSettings jsonSS_;
-		bool shoudSave_ = false;
-		std::vector<std::shared_ptr<AdvViz::SDK::LinkAPI>> links_;
+		struct SThreadSafeData : public SavableItemWithID
+		{
+			SJsonScene jsonScene_;
+			SJSonAtmosphere jsonAtmo_;
+			SJSonSceneSettings jsonSS_;
+			LinkAPIPtrVec links_;
+		};
+		Tools::RWLockableObject<SThreadSafeData> thdata_;
+
+
 		std::shared_ptr<AdvViz::SDK::ITimeline> timeline_;
 		std::shared_ptr<Http> http_;
+		std::shared_ptr< std::atomic_bool > isThisValid_;
 
-		std::shared_ptr<Http>& GetHttp() { 
+		Impl()
+		{
+			isThisValid_ = std::make_shared<std::atomic_bool>(true);
+		}
+
+		~Impl()
+		{
+			*isThisValid_ = false;
+		}
+
+		bool AddLink(const std::shared_ptr<AdvViz::SDK::LinkAPI > &newlink)
+		{
+			auto thdata = thdata_.GetAutoLock();
+			std::string id = newlink->GetImpl().GetDBIdentifier();
+			if (id.empty())
+			{
+				thdata->links_.push_back(newlink);
+				return true;;
+			}
+			for (auto& link : thdata->links_)
+			{
+				if (link->GetImpl().GetDBIdentifier() == id)
+				{
+					if (link->ShouldSave())
+					{
+						return true;
+					}
+					else
+					{
+						link = newlink;
+						return false;
+					}
+				}
+			}
+
+			thdata->links_.push_back(newlink);
+			return true;
+		}
+
+
+		std::shared_ptr<Http> const& GetHttp() const
+		{
 			if (http_)
 				return http_;
 			if (!creds.Http_)
 				creds.SetDefaultHttp(GetDefaultHttp());
 			return creds.GetHttp();
 		}
-		void SetHttp(const std::shared_ptr<Http>& http) { http_ = http; }
-
-		bool Create(
-			const std::string& name, const std::string& itwinid, bool keepCurrentValues = false)
+		void SetHttp(const std::shared_ptr<Http>& http)
 		{
-			struct SJsonIn { std::string displayName;};
-			SJsonIn jIn{ name };
-			struct SJsonOutData { std::string displayName; std::string id;};
-			struct SJsonOut { SJsonOutData scene; };
-			SJsonOut jOut;
-
-			long status = GetHttp()->PostJsonJBody(jOut,"scenes?iTwinId="+itwinid, jIn);
-			if (status == 200 || status == 201)
-			{
-				if (!keepCurrentValues)
-				{
-					jsonScene_.itwinid = itwinid;
-					jsonScene_.name = jOut.scene.displayName;
-				}
-				id_ = jOut.scene.id;
-				BE_LOGI("ITwinScene", "Created Scene in Scene API for itwin " << itwinid
-					<< " (ID: " << id_ << ")");
-
-
-				//add atmo and scene settings lnks
-				std::shared_ptr<AdvViz::SDK::LinkAPI> link(AdvViz::SDK::LinkAPI::New());
-				link->GetImpl().link_.type = "atmosphere";
-				links_.push_back(link);
-				std::shared_ptr<AdvViz::SDK::LinkAPI> link2(AdvViz::SDK::LinkAPI::New());
-				link2->GetImpl().link_.type = "SceneSettings";
-				links_.push_back(link2);
-				return true;
-			}
-			else
-			{
-				BE_LOGW("ITwinScene", "Could not create Scene in Scene API for itwin " << itwinid
-					<< ". Http status: " << status);
-				return false;
-			}
-
-
-
+			http_ = http;
 		}
-		bool Save()
+
+		void AsyncCreate(
+			const std::string& name,
+			const std::string& itwinid,
+			std::function<void(bool)>&& onCreationDoneFunc,
+			bool keepCurrentValues = false)
 		{
+			auto thdata = thdata_.GetAutoLock();
+			struct SJsonIn
+			{
+				std::string displayName;
+			};
+			SJsonIn const jIn{ name };
+
+			struct SJsonOutData
+			{
+				std::string displayName;
+				std::string id;
+			};
+			struct SJsonOut
+			{
+				SJsonOutData scene;
+			};
+
+			std::shared_ptr<AsyncRequestGroupCallback> callbackPtr =
+				std::make_shared<AsyncRequestGroupCallback>(
+					std::move(onCreationDoneFunc), isThisValid_);
+
+			AsyncPostJsonJBody<SJsonOut>(GetHttp(), callbackPtr,
+				[this, itwinid, keepCurrentValues](long httpCode,
+												   const Tools::TSharedLockableData<SJsonOut>& joutPtr)
+			{
+				const bool bSuccess = (httpCode == 200 || httpCode == 201);
+				if (bSuccess)
+				{
+					auto unlockedJout = joutPtr->GetAutoLock();
+					auto thdata = thdata_.GetAutoLock();
+					SJsonOut const& jOut = unlockedJout.Get();
+					if (!keepCurrentValues)
+					{
+						thdata->jsonScene_.itwinid = itwinid;
+						thdata->jsonScene_.name = jOut.scene.displayName;
+					}
+					// Update DB identifier now that the scene has been created.
+					thdata->SetDBIdentifier(jOut.scene.id);
+
+					BE_LOGI("ITwinScene", "Created scene in Scene API for itwin " << itwinid
+						<< " (ID: " << thdata->GetDBIdentifier() << ")");
+
+					//add atmo and scene settings links
+					std::shared_ptr<AdvViz::SDK::LinkAPI> link(AdvViz::SDK::LinkAPI::New());
+					link->GetImpl().link_.type = "atmosphere";
+					thdata->links_.push_back(link);
+					std::shared_ptr<AdvViz::SDK::LinkAPI> link2(AdvViz::SDK::LinkAPI::New());
+					link2->GetImpl().link_.type = "SceneSettings";
+					thdata->links_.push_back(link2);
+				}
+				else
+				{
+					BE_LOGW("ITwinScene", "Could not create scene in Scene API for itwin " << itwinid
+						<< ". Http status: " << httpCode);
+				}
+				return bSuccess;
+			},
+				"scenes?iTwinId="+itwinid,
+				jIn);
+
+			callbackPtr->OnFirstLevelRequestsRegistered();
+		}
+
+		void AsyncSave(std::shared_ptr<AsyncRequestGroupCallback> callbackPtr)
+		{
+			auto thdata = thdata_.GetAutoLock();
+
+			if (!thdata->HasDBIdentifier())
+			{
+				BE_LOGE("ITwinScene", "Cannot save scene with no ID!"
+					<< " (from itwin " << thdata->jsonScene_.itwinid << ")");
+				return;
+			}
+			thdata->OnStartSave();
+
 			struct SJsonIn { std::string displayName; };
 			SJsonIn jIn;
-			jIn.displayName = jsonScene_.name;
-			struct SJsonOutData { std::string displayName; std::string id; std::string iTwinId; };
-			struct SJsonOut { SJsonOutData scene; };
-			SJsonOut jOut;
-			long status = GetHttp()->PatchJsonJBody(jOut, "scenes/" + id_ + "?iTwinId=" + jsonScene_.itwinid , jIn);
-			if (status == 200)
+			jIn.displayName = thdata->jsonScene_.name;
+			struct SJsonOutData
 			{
-				BE_LOGI("ITwinScene", "Save Scene in Scene API with ID " << id_ <<" itwin " << jsonScene_.itwinid);
-				return true;
-			}
-			else
+				std::string displayName;
+				std::string id;
+				std::string iTwinId;
+			};
+			struct SJsonOut
 			{
-				BE_LOGW("ITwinScene", "Save Scene in Scene API failedwith ID " << id_ << " itwin " << jsonScene_.itwinid<< " Http status : " << status);
-				return false;
-			}
+				SJsonOutData scene;
+			};
+			AsyncPatchJsonJBody<SJsonOut>(GetHttp(), callbackPtr,
+				[this](long httpCode, const Tools::TSharedLockableData<SJsonOut>& /*joutPtr*/)
+			{
+				auto thdata = thdata_.GetAutoLock();
+				const bool bSuccess = (httpCode == 200);
+				if (bSuccess)
+				{
+					BE_LOGI("ITwinScene", "Saved scene in Scene API with ID " << thdata->GetDBIdentifier()
+						<< " itwin " << thdata->jsonScene_.itwinid);
+					thdata->OnSaved();
+				}
+				else
+				{
+					BE_LOGW("ITwinScene", "Failed saving scene with ID " << thdata->GetDBIdentifier()
+						<< " in Scene API from itwin " << thdata->jsonScene_.itwinid
+						<< " Http status: " << httpCode);
+				}
+				return bSuccess;
+			},
+				"scenes/" + thdata->GetDBIdentifier() + "?iTwinId=" + thdata->jsonScene_.itwinid,
+				jIn);
 		}
+
 		bool Get(const std::string& itwinid, const std::string& id)
 		{
-			struct SJsonOutData {
-				std::string displayName;	std::string id; std::string iTwinId; std::optional<std::string> lastModified;
+			auto thdata = thdata_.GetAutoLock();
+			struct SJsonOutData
+			{
+				std::string displayName;
+				std::string id;
+				std::string iTwinId;
+				std::optional<std::string> lastModified;
 			};
 			struct SJsonOut { SJsonOutData scene; };
 			SJsonOut jOut;
 			long status = GetHttp()->GetJson(jOut, "scenes/" + id + "?iTwinId=" + itwinid);
 			if (status == 200)
 			{
-				jsonScene_.itwinid = jOut.scene.iTwinId;
-				jsonScene_.name = jOut.scene.displayName;
-				id_ = jOut.scene.id;
+				thdata->jsonScene_.itwinid = jOut.scene.iTwinId;
+				thdata->jsonScene_.name = jOut.scene.displayName;
+				thdata->SetDBIdentifier(jOut.scene.id);
 				if (jOut.scene.lastModified)
-					jsonScene_.lastModified = *jOut.scene.lastModified;
-				BE_LOGI("ITwinScene", "Loaded Scene in Scene API with ID " << id_ << "from itwin "<< itwinid);
+					thdata->jsonScene_.lastModified = *jOut.scene.lastModified;
+				BE_LOGI("ITwinScene", "Loaded Scene in Scene API with ID " << thdata->GetDBIdentifier() << " from itwin "<< itwinid);
 				return true;
 			}
 			else
 			{
-				BE_LOGW("ITwinScene", "Load Scene in Scene API failed. Http status: " << status);
+				BE_LOGW("ITwinScene", "Load scene in Scene API failed. Http status: " << status);
 				return false;
 			}
 		}
 
+		void AsyncGet(const std::string& itwinid, const std::string& id,
+			std::function<void(expected<void, std::string> const&)> onFinishCallback)
+		{
+			auto SThis = shared_from_this();
+			struct SJsonOutData {
+				std::string displayName;	std::string id; std::string iTwinId; std::optional<std::string> lastModified;
+			};
+			struct SJsonOut { SJsonOutData scene; };
+			typedef Tools::TSharedLockableDataPtr<SJsonOut> TJsonOutPtr;
+			TJsonOutPtr jOut = MakeSharedLockableDataPtr<SJsonOut>(new SJsonOut());
+			GetHttp()->AsyncGetJson(jOut, 
+				[SThis, onFinishCallback](const Http::Response &,expected<TJsonOutPtr, std::string>& exp1) {
+					expected<void, std::string> exp;
+					if (exp1)
+					{
+						{
+							auto jOut = (*exp1)->GetAutoLock();
+							auto thdata = SThis->thdata_.GetAutoLock();
+							thdata->jsonScene_.itwinid = jOut->scene.iTwinId;
+							thdata->jsonScene_.name = jOut->scene.displayName;
+							thdata->SetDBIdentifier(jOut->scene.id);
+							if (jOut->scene.lastModified)
+								thdata->jsonScene_.lastModified = *jOut->scene.lastModified;
+						}
+						onFinishCallback(exp);
+					}
+					else
+					{
+						exp = make_unexpected(exp1.error());
+						onFinishCallback(exp);
+					}
+				},
+				"scenes/" + id + "?iTwinId=" + itwinid);
+		}
+
+		/// Load links from server (synchronous version).
+		void LoadLinks();
+
+		/// Load links from server (asynchronous version).
+		void AsyncLoadLinks(std::function<void(expected<void, std::string> const&)> inCallback);
+
 		bool Delete()
 		{
-			std::string s("scenes/" + id_ + "?iTwinId=" + jsonScene_.itwinid);
-			auto status = GetHttp()->Delete(s, {});
-			if (status.first != 204)
+			auto thdata = thdata_.GetAutoLock();
+			if (!thdata->HasDBIdentifier())
 			{
-				BE_LOGW("ITwinScene", "Delete Scene in Scene API failed. Http status: " << status.first);
+				BE_LOGE("ITwinScene", "Cannot delete scene with no ID!"
+					<< " (from itwin " << thdata->jsonScene_.itwinid << ")");
+				return false;
+			}
+			std::string s("scenes/" + thdata->GetDBIdentifier() + "?iTwinId=" + thdata->jsonScene_.itwinid);
+			auto status = GetHttp()->Delete(s, {});
+			if (status.first != 200 && status.first != 204)
+			{
+				BE_LOGW("ITwinScene", "Delete scene in Scene API failed. Http status: " << status.first);
 				return false;
 			}
 			else
 			{
-				BE_LOGI("ITwinScene", "Deleted Scene in Scene API with ID " << id_);
-				id_ = "";
-				jsonScene_ = SJsonScene();
+				BE_LOGI("ITwinScene", "Deleted scene in Scene API with ID " << thdata->GetDBIdentifier());
+				thdata->SetDBIdentifier("");
+				thdata->jsonScene_ = SJsonScene();
 				return true;
 			}
 		}
@@ -337,8 +625,607 @@ namespace AdvViz::SDK {
 
 			return true;
 		}
+
+	private:
+		bool StartLoadingLinks(std::function<void(expected<void, std::string> const&)> const& callback);
+		expected<void, HttpError> HandleLoadLinksResponse(std::vector<SceneAPIDetails::JsonObjectWithId> const& objects);
+		void OnLoadLinksFinished(expected<void, HttpError> const& exp);
+
+		struct SLinkData
+		{
+			std::string ref;
+			std::vector<double> adjusts;
+			std::string id;
+		};
+		/// For multi-page loading of links
+		struct SLoadedLinksData
+		{
+			bool isLoading = false;
+
+			bool atmosphereFound = false;
+			bool sceneSettingsFound = false;
+			bool timelineFound = false;
+			std::vector<SLinkData> sublinks;
+			std::vector<std::string> animations;
+			std::map<std::string, SceneAPIDetails::SJsonFrameCameraData> cameraDatas;
+
+			std::function<void(expected<void, std::string> const&)> onFinished;
+
+			// Only one request can should be active at the same time: if we request a refresh while the
+			// previous request is running, we'll just restart a request when the current one completes.
+			bool shouldRelaunchRequest = false;
+			std::function<void(expected<void, std::string> const&)> onFinished_NextRequest;
+
+			bool StartLoading(std::function<void(expected<void, std::string> const&)> const& onFinishedCallback)
+			{
+				if (isLoading && onFinishedCallback)
+				{
+					// Previous asynchronous request still in progress, and we should not mix them...
+					shouldRelaunchRequest = true;
+					onFinished_NextRequest = onFinishedCallback;
+					return false;
+				}
+				BE_ASSERT(!isLoading, "multi-page loading of links already in progress!");
+				isLoading = true;
+				shouldRelaunchRequest = false;
+				onFinished = onFinishedCallback;
+
+				atmosphereFound = false;
+				sceneSettingsFound = false;
+				timelineFound = false;
+				sublinks.clear();
+				animations.clear();
+				cameraDatas.clear();
+				return true;
+			}
+			void OnLoadingFinished() {
+				BE_ASSERT(isLoading, "multi-page loading of links not started!");
+				isLoading = false;
+			}
+		};
+		Tools::RWLockableObject<SLoadedLinksData> thLoadedLinksData_;
 	};
-	static bool postRequiresObjectsArray = true;
+
+	bool ScenePersistenceAPI::Impl::StartLoadingLinks(std::function<void(expected<void, std::string> const&)> const& callback)
+	{
+		auto thLoadedLinksData = thLoadedLinksData_.GetAutoLock();
+		return thLoadedLinksData->StartLoading(callback);
+	}
+
+	expected<void, HttpError> ScenePersistenceAPI::Impl::HandleLoadLinksResponse(
+		std::vector<SceneAPIDetails::JsonObjectWithId> const& objects)
+	{
+		using namespace SceneAPIDetails;
+
+		auto thLoadedLinksData = thLoadedLinksData_.GetAutoLock();
+		if (!thLoadedLinksData->isLoading)
+		{
+			BE_ISSUE("internal error: loading links has not started");
+			return make_unexpected(HttpError{
+				.message = "Internal error while loading links",
+				.httpCode = -501
+				});
+		}
+
+		for (auto const& row : objects)
+		{
+			std::shared_ptr<LinkAPI> link(LinkAPI::New());
+			link->GetImpl().SetDBIdentifier(row.id);
+			if (row.kind == "RepositoryResource")
+			{
+				std::string& linkType = link->GetImpl().link_.type;
+				std::optional<std::string> ttype;
+				if (row.data)
+				{
+					ttype = row.data->type.get();
+				}
+				if (ttype.has_value())
+				{
+					if (*ttype == "iModels")
+						linkType = "iModel";
+					else if (*ttype == "RealityData")
+						linkType = "RealityData";
+				}
+				link->SetType(linkType.empty() ? "iModel" : linkType); // check row class
+				if (row.visible)
+				{
+					link->GetImpl().link_.visibility = *row.visible;
+				}
+				else if (row.data && row.data->visible)
+					link->GetImpl().link_.visibility = *row.data->visible;
+				if (row.data && row.data->id)
+					link->GetImpl().link_.ref = *row.data->id;
+
+				AddLink(link);
+			}
+			else if (row.kind == "View3d")
+			{
+				link->GetImpl().link_.type = "camera";
+				if (row.data && row.data->name)
+					link->GetImpl().link_.ref = *row.data->name;
+				else if (row.displayName)
+					link->GetImpl().link_.ref = *row.displayName;
+				else
+					link->GetImpl().link_.ref = "Home Camera";
+				if (row.data && row.data->ecefTransform)
+					link->GetImpl().link_.transform = Identity34;
+				std::memcpy(link->GetImpl().link_.transform->data(), row.data->ecefTransform->data(), 12 * sizeof(double));
+				AddLink(link);
+			}
+			else if (row.kind == "UnrealAtmosphericStyling")
+			{
+				link->GetImpl().link_.type = "atmosphere";
+				if (row.data && row.data->atmosphere)
+				{
+					auto thdata = thdata_.GetAutoLock();
+					thdata->jsonAtmo_ = *row.data->atmosphere;
+				}
+				AddLink(link);
+
+				thLoadedLinksData->atmosphereFound = true;
+			}
+			else if (row.kind == "GoogleTilesStyling")
+			{
+				link->GetImpl().link_.type = "SceneSettings"; // check row class
+				if (row.data && row.data->quality)
+				{
+					auto thdata = thdata_.GetAutoLock();
+					thdata->jsonSS_.qualityGoogleTiles = *row.data->quality * 100;
+				}
+				if (row.data && row.data->adjustment)
+				{
+					auto& sldata = *row.data->adjustment;
+					int geolocid = -4;
+					int qualityId = -1;
+					if (sldata.size() == 1)
+					{
+						qualityId = 0;
+					}
+					else if (sldata.size() == 3)
+					{
+						geolocid = 0;
+					}
+					else if (sldata.size() == 4)
+					{
+						qualityId = 0;
+						geolocid = 1;
+					}
+					if (qualityId >= 0)
+					{
+						auto thdata = thdata_.GetAutoLock();
+						if (sldata[qualityId] < -1e-7)
+						{
+							thdata->jsonSS_.qualityGoogleTiles = -sldata[qualityId];
+							thdata->jsonSS_.displayGoogleTiles = false;
+						}
+						else
+						{
+							thdata->jsonSS_.qualityGoogleTiles = sldata[qualityId];
+							thdata->jsonSS_.displayGoogleTiles = true;
+						}
+					}
+					if (geolocid >= 0)
+					{
+						auto thdata = thdata_.GetAutoLock();
+						thdata->jsonSS_.geoLocation = std::array<double, 3>();
+						(*thdata->jsonSS_.geoLocation)[0] = sldata[geolocid];
+						(*thdata->jsonSS_.geoLocation)[1] = sldata[geolocid + 1];
+						(*thdata->jsonSS_.geoLocation)[2] = sldata[geolocid + 2];
+					}
+				}
+				AddLink(link);
+				thLoadedLinksData->sceneSettingsFound = true;
+			}
+			else if (row.kind == "MaterialDecoration")
+			{
+				if (row.displayName)
+					link->GetImpl().link_.type = *row.displayName;
+				else
+					link->GetImpl().link_.type = "decoration";
+				if (row.data && row.data->id)
+					link->GetImpl().link_.ref = *row.data->id;
+				if (row.data && row.data->decorationId)
+				{
+					link->GetImpl().link_.ref = SceneAPIGuidtoDSID(*row.data->decorationId);
+					AddLink(link);
+				}
+			}
+			else if (row.kind == "iModelVisibility")
+			{
+				if (row.displayName && *row.displayName != "adjustment")
+				{
+					continue;
+				}
+				else if (row.data && row.data->id && row.data->adjustment)
+				{
+					SLinkData sl;
+					sl.id = row.id;
+					sl.ref = *row.data->id;
+					sl.adjusts = *row.data->adjustment;
+					thLoadedLinksData->sublinks.push_back(sl);
+				}
+				else if (row.relatedId && row.data && row.data->adjustment)
+				{
+					SLinkData sl;
+					sl.id = row.id;
+					sl.ref = *row.relatedId;
+					sl.adjusts = *row.data->adjustment;
+					thLoadedLinksData->sublinks.push_back(sl);
+				}
+			}
+			else if (row.kind == "Movie")
+			{
+				link->GetImpl().link_.type = "timeline";
+				if (row.data && row.data->animations)
+				{
+					thLoadedLinksData->animations = *row.data->animations;
+				}
+				AddLink(link);
+				thLoadedLinksData->timelineFound = true;
+			}
+			else if (row.kind == "CameraAnimation")
+			{
+				if (row.data && row.data->input && row.data->output)
+				{
+					SJsonFrameCameraData data;
+					data.input = *row.data->input;
+					data.output = *row.data->output;
+					if (row.displayName)
+						data.name = *row.displayName;
+					thLoadedLinksData->cameraDatas[row.id] = data;
+				}
+			}
+		}
+		return {};
+	}
+
+	void ScenePersistenceAPI::Impl::OnLoadLinksFinished(expected<void, HttpError> const& exp)
+	{
+		auto thLoadedLinksData = thLoadedLinksData_.GetAutoLock();
+		if (!thLoadedLinksData->isLoading)
+		{
+			BE_ISSUE("internal error: loading links has not started");
+			return;
+		}
+
+		if (exp)
+		{
+			{
+				auto thdata = thdata_.GetRAutoLock();
+				for (auto sldata : thLoadedLinksData->sublinks)
+				{
+					for (auto mainlink : thdata->links_)
+					{
+						if (sldata.ref == mainlink->GetImpl().GetDBIdentifier())
+						{
+							mainlink->GetImpl().sublinkId_ = sldata.id;
+							int qualityId = -1;
+							int geolocid = -4;
+							if (sldata.adjusts.size() == 1)
+							{
+								qualityId = 0;
+							}
+							else if (sldata.adjusts.size() == 3)
+							{
+								geolocid = 0;
+							}
+							else if (sldata.adjusts.size() == 4)
+							{
+								qualityId = 0;
+								geolocid = 1;
+							}
+							else  if (sldata.adjusts.size() == 13)
+							{
+								qualityId = 12;
+							}
+							else if (sldata.adjusts.size() == 5)
+							{
+								geolocid = 12;
+							}
+							else  if (sldata.adjusts.size() == 16)
+							{
+								qualityId = 12;
+								geolocid = 13;
+							}
+
+							if (qualityId >= 0)
+							{
+								if (sldata.adjusts[qualityId] < -1e-7)
+								{
+									mainlink->GetImpl().link_.quality = -sldata.adjusts[qualityId];
+									mainlink->GetImpl().link_.visibility = false;
+								}
+								else
+								{
+									mainlink->GetImpl().link_.quality = sldata.adjusts[qualityId];
+									mainlink->GetImpl().link_.visibility = true;
+								}
+							}
+
+							if (sldata.adjusts.size() > 11)
+							{
+								mainlink->GetImpl().link_.transform = std::array<double, 12>();
+								for (int i = 0; i < 12; ++i)
+								{
+									(*mainlink->GetImpl().link_.transform)[i] = sldata.adjusts[i];
+								}
+							}
+
+							break;
+						}
+					}
+				}
+				BE_LOGI("ITwinScene", "Found " << thdata->links_.size() << " Link(s) for scene " << thdata->GetDBIdentifier());
+			}
+
+			bool atmosphereFound = thLoadedLinksData->atmosphereFound;
+			if (!atmosphereFound)
+			{
+				{
+					auto thdata = thdata_.GetRAutoLock();
+					for (auto link : thdata->links_)
+					{
+						if (link->GetImpl().link_.type == "atmosphere")
+						{
+							atmosphereFound = true;
+							break;
+						}
+					}
+				}
+				if (!atmosphereFound)
+				{
+					std::shared_ptr<AdvViz::SDK::LinkAPI> link(AdvViz::SDK::LinkAPI::New());
+					link->GetImpl().link_.type = "atmosphere";
+					AddLink(link);
+					{
+						auto thdata = thdata_.GetAutoLock();
+						thdata->jsonAtmo_.heliodonDate = "2024-06-16T18:00:00Z";
+						thdata->jsonAtmo_.useHeliodon = true;
+						thdata->jsonAtmo_.heliodonLongitude = -77.90736389160156;
+						thdata->jsonAtmo_.heliodonLatitude = 35.857818603515625;
+						thdata->jsonAtmo_.sunPitch = -10;
+					}
+				}
+			}
+
+			bool sceneSettingsFound = thLoadedLinksData->sceneSettingsFound;
+			if (!sceneSettingsFound)
+			{
+				{
+					auto thdata = thdata_.GetRAutoLock();
+					for (auto link : thdata->links_)
+					{
+						if (link->GetImpl().link_.type == "SceneSettings")
+						{
+							sceneSettingsFound = true;
+							break;
+						}
+					}
+				}
+				if (!sceneSettingsFound)
+				{
+					std::shared_ptr<AdvViz::SDK::LinkAPI> link(AdvViz::SDK::LinkAPI::New());
+					link->GetImpl().link_.type = "SceneSettings";
+					AddLink(link);
+					{
+						auto thdata = thdata_.GetAutoLock();
+						thdata->jsonSS_.displayGoogleTiles = true;
+						thdata->jsonSS_.qualityGoogleTiles = 0.3;
+					}
+				}
+			}
+
+			bool timelineFound = thLoadedLinksData->timelineFound;
+			if (!timelineFound)
+			{
+				{
+					auto thdata = thdata_.GetRAutoLock();
+					for (auto link : thdata->links_)
+					{
+						if (link->GetImpl().link_.type == "timeline")
+						{
+							timelineFound = true;
+							break;
+						}
+					}
+				}
+				if (!timelineFound)
+				{
+					std::shared_ptr<AdvViz::SDK::LinkAPI> link(AdvViz::SDK::LinkAPI::New());
+					link->GetImpl().link_.type = "timeline";
+					AddLink(link);
+				}
+			}
+			else //build timeline
+			{
+				auto tl = timeline_;
+				if (!tl)
+				{
+					timeline_ = std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New());
+					tl = timeline_;
+				}
+
+				for (auto id : thLoadedLinksData->animations)
+				{
+					auto scam = thLoadedLinksData->cameraDatas.find(id);
+					if (scam != thLoadedLinksData->cameraDatas.end())
+					{
+						std::string name;
+						if (scam->second.name)
+							name = *scam->second.name;
+						else
+							name = "unamed clip " + std::to_string(tl->GetClipCount());
+						std::shared_ptr<ITimelineClip> clipp;
+						for (size_t i(0); i < tl->GetClipCount(); i++)
+						{
+							auto clip = tl->GetClipByIndex(i);
+							if (!clip)
+								continue;
+							if ((*clip)->GetDBIdentifier() == scam->first)
+							{
+								clipp = *clip;
+								break;
+							}
+						}
+						if (!clipp)
+							clipp = tl->AddClip(name);
+						clipp->SetDBIdentifier(scam->first);
+						auto maxid = std::min(scam->second.input.size(), scam->second.output.size());
+						for (auto i = 0; i < maxid; ++i)
+						{
+							auto& output = scam->second.output[i];
+							ITimelineKeyframe::KeyframeData kd;
+							kd.time = scam->second.input[i];
+
+							if (output.settings)
+							{
+								kd.atmo = ITimelineKeyframe::AtmoData();
+								kd.atmo->time = output.settings->atmosphere.heliodonDate;
+								kd.atmo->cloudCoverage = (float)output.settings->atmosphere.weather;
+								kd.atmo->fog = (float)output.settings->atmosphere.fog;
+								kd.atmo->sunPitch = output.settings->atmosphere.sunPitch;
+								kd.atmo->sunAzimuth = output.settings->atmosphere.sunAzimuth;
+								if (output.settings->atmosphere.sunIntensity)
+									kd.atmo->sunIntensity = *output.settings->atmosphere.sunIntensity;
+								if (output.settings->atmosphere.HDRIZRotation)
+									kd.atmo->HDRIZRotation = *output.settings->atmosphere.HDRIZRotation;
+								kd.atmo->heliodonLatitude = output.settings->atmosphere.heliodonLatitude;
+								kd.atmo->heliodonLongitude = output.settings->atmosphere.heliodonLongitude;
+								kd.atmo->useHeliodon = output.settings->atmosphere.useHeliodon;
+								if (output.settings->atmosphere.HDRIImage)
+									kd.atmo->HDRIImage = *output.settings->atmosphere.HDRIImage;
+								kd.atmo->exposure = output.settings->atmosphere.exposure;
+
+							}
+
+							if (output.schedule)
+							{
+								std::chrono::sys_time<std::chrono::milliseconds> datetime{ std::chrono::milliseconds{ output.schedule->timePoint } };
+								kd.synchro = ITimelineKeyframe::SynchroData();
+								kd.synchro->date = std::format("{:%FT%T}Z", datetime);
+								kd.synchro->scheduleId = output.schedule->timelineId;
+							}
+							else if (output.settings)
+							{
+								kd.synchro = ITimelineKeyframe::SynchroData();
+								kd.synchro->date = kd.atmo->time;
+							}
+							kd.camera = ITimelineKeyframe::CameraData();
+							if (output.camera.ecefTransform && output.camera.ecefTransform->size() >= 12)
+							{
+								std::memcpy(kd.camera->transform.data(), output.camera.ecefTransform->data(), 12 * sizeof(double));
+							}
+							else
+							{
+								kd.camera->isPause = true;
+							}
+							auto kfResult = clipp->AddKeyframe(kd);
+							if (kfResult)
+							{
+								(*kfResult)->SetShouldSave(false);
+							}
+						}
+						clipp->SetShouldSave(false);
+					}
+				}
+				// A timeline just loaded is up-to-date.
+				tl->SetShouldSave(false);
+			}
+
+			if (thLoadedLinksData->onFinished)
+			{
+				thLoadedLinksData->onFinished({});
+			}
+		}
+		else
+		{
+			BE_LOGW("ITwinScene", "Load Links error: " << exp.error().message
+				<< " (status: " << exp.error().httpCode << ")");
+
+			if (thLoadedLinksData->onFinished)
+			{
+				thLoadedLinksData->onFinished(make_unexpected(exp.error().message));
+			}
+		}
+		thLoadedLinksData->OnLoadingFinished();
+
+		// Start a new request if needed (ie. if we requested a new refresh while another one was running).
+		if (thLoadedLinksData->shouldRelaunchRequest)
+		{
+			AsyncLoadLinks(thLoadedLinksData->onFinished_NextRequest);
+			thLoadedLinksData->shouldRelaunchRequest = false;
+			thLoadedLinksData->onFinished_NextRequest = {};
+		}
+	}
+
+	void ScenePersistenceAPI::Impl::LoadLinks()
+	{
+		using namespace SceneAPIDetails;
+
+		std::shared_ptr<Http> const& http = GetHttp();
+		if (!http)
+		{
+			return;
+		}
+		auto thdata = thdata_.GetRAutoLock();
+		if (!thdata->HasDBIdentifier())
+		{
+			BE_ISSUE("missing DB identifier - cannot fetch links");
+			return;
+		}
+		// Synchronous, with multi-page support
+		StartLoadingLinks({});
+		auto exp = ITwinAPI::GetPagedDataVector<"objects", JsonObjectWithId>(http,
+			"scenes/" + thdata->GetDBIdentifier() + "/objects?iTwinId=" + thdata->jsonScene_.itwinid,
+			{} /*headers*/,
+			[this](std::vector<JsonObjectWithId> const& objects) { return HandleLoadLinksResponse(objects); }
+		);
+		OnLoadLinksFinished(exp);
+	}
+
+	void ScenePersistenceAPI::Impl::AsyncLoadLinks(std::function<void(expected<void, std::string> const&)> inCallback)
+	{
+		using namespace SceneAPIDetails;
+
+		std::shared_ptr<Http> const& http = GetHttp();
+		if (!http)
+		{
+			if (inCallback)
+			{
+				inCallback(make_unexpected("No Http support to retrieve links"));
+			}
+			return;
+		}
+		auto thdata = thdata_.GetRAutoLock();
+		if (!thdata->HasDBIdentifier())
+		{
+			BE_ISSUE("missing DB identifier - cannot fetch links");
+			if (inCallback)
+			{
+				inCallback(make_unexpected("Unknown scene ID - cannot retrieve links"));
+			}
+			return;
+		}
+		auto SThis = shared_from_this();
+
+		// Synchronous, with multi-page support
+		if (!StartLoadingLinks(inCallback))
+		{
+			// Another request is in progress => we will start a ne one when it is completed.
+			return;
+		}
+		ITwinAPI::AsyncGetPagedDataVector<"objects", JsonObjectWithId>(http,
+			"scenes/" + thdata->GetDBIdentifier() + "/objects?iTwinId=" + thdata->jsonScene_.itwinid,
+			{} /*headers*/,
+			[SThis](std::vector<SceneAPIDetails::JsonObjectWithId> const& objects) ->expected<void, HttpError>
+		{
+			return SThis->HandleLoadLinksResponse(objects);
+		},
+			[SThis](expected<void, HttpError> const& exp)
+		{
+			SThis->OnLoadLinksFinished(exp);
+		});
+	}
 
 	static std::string DSIDtoSceneAPIGuid(const std::string& dsi)
 	{
@@ -349,16 +1236,7 @@ namespace AdvViz::SDK {
 		}
 		return dsi.substr(0, 8) + "-" + dsi.substr(8, 4) + "-" + dsi.substr(12, 4) + "-" + dsi.substr(16, 4) + "-" + dsi.substr(20, 4) + "00000000";
 	}
-	static std::string SceneAPIGuidtoDSID(const std::string& guid)
-	{
 
-		if (guid.size() < 28)
-		{
-			BE_ISSUE("Unexpected size from SceneAPI Guid", guid);
-			return "";
-		}
-		return guid.substr(0, 8) + guid.substr(9, 4) + guid.substr(14, 4) + guid.substr(19, 4) + guid.substr(24, 4);
-	}
 	template<>
 	Tools::Factory<ScenePersistenceAPI>::Globals::Globals()
 	{
@@ -390,9 +1268,10 @@ namespace AdvViz::SDK {
 		GetImpl().SetHttp(http);
 	}
 
-	bool ScenePersistenceAPI::Create(const std::string& name, const std::string& itwinid)
+	void ScenePersistenceAPI::AsyncCreate(const std::string& name, const std::string& itwinid,
+		std::function<void(bool)>&& onCreationDoneFunc /*= {}*/)
 	{
-		return GetImpl().Create(name, itwinid, false);
+		GetImpl().AsyncCreate(name, itwinid, std::move(onCreationDoneFunc), false);
 	}
 
 	bool ScenePersistenceAPI::Get(const std::string& itwinId, const std::string& id)
@@ -402,6 +1281,24 @@ namespace AdvViz::SDK {
 		return res;
 	}
 
+	void ScenePersistenceAPI::AsyncGet(const std::string& itwinid, const std::string& id,
+		std::function<void(expected<void, std::string> const&)> onFinish)
+	{
+		auto implPtr = GetImpl().shared_from_this();
+		GetImpl().AsyncGet(itwinid, id,
+			[implPtr, onFinish](expected<void, std::string> const& exp)
+			{
+				if (exp)
+				{
+					implPtr->AsyncLoadLinks(onFinish);
+				}
+				else
+				{
+					onFinish(exp);
+				}
+			});
+	}
+	
 	bool ScenePersistenceAPI::Delete()
 	{
 		return GetImpl().Delete();
@@ -409,24 +1306,27 @@ namespace AdvViz::SDK {
 
 	const std::string& ScenePersistenceAPI::GetId() const
 	{
-		return GetImpl().id_;
+		auto thdata = GetImpl().thdata_.GetRAutoLock();
+		return thdata->GetDBIdentifier();
 	}
 
 	const std::string& ScenePersistenceAPI::GetName() const
 	{
-		return GetImpl().jsonScene_.name;
-
+		auto thdata = GetImpl().thdata_.GetRAutoLock();
+		return thdata->jsonScene_.name;
 	}
 
 	std::string ScenePersistenceAPI::GetLastModified() const
 	{
-		return GetImpl().jsonScene_.lastModified;
+		auto thdata = GetImpl().thdata_.GetRAutoLock();
+		return thdata->jsonScene_.lastModified;
 	}
 
 
 	const std::string& ScenePersistenceAPI::GetITwinId() const
 	{
-		return GetImpl().jsonScene_.itwinid;
+		auto thdata = GetImpl().thdata_.GetRAutoLock();
+		return thdata->jsonScene_.itwinid;
 	}
 
 	ScenePersistenceAPI::~ScenePersistenceAPI()
@@ -443,9 +1343,12 @@ namespace AdvViz::SDK {
 
 	void ScenePersistenceAPI::SetAtmosphere(const ITwinAtmosphereSettings& atmo)
 	{
-		auto& jsonatmo = GetImpl().jsonAtmo_;
-		jsonatmo.sunAzimuth = atmo.sunAzimuth;
-		jsonatmo.sunPitch = atmo.sunPitch;
+		auto thdata = GetImpl().thdata_.GetAutoLock();
+		auto& jsonatmo = thdata->jsonAtmo_;
+		jsonatmo.sunAzimuth = std::fmod(atmo.sunAzimuth,360);
+		jsonatmo.sunPitch = std::fmod(atmo.sunPitch, 360);
+		if(jsonatmo.sunPitch >180)
+			jsonatmo.sunPitch-=360;
 		jsonatmo.heliodonLongitude = atmo.heliodonLongitude;
 		jsonatmo.heliodonLatitude = atmo.heliodonLatitude;
 		jsonatmo.heliodonDate = atmo.heliodonDate;
@@ -459,13 +1362,14 @@ namespace AdvViz::SDK {
 		jsonatmo.HDRIZRotation = atmo.HDRIZRotation;
 		jsonatmo.sunIntensity = atmo.sunIntensity;
 		//wait until scene API support those values 
-		GetImpl().shoudSave_ = true;
+		thdata->InvalidateDB();
 	}
 
 	AdvViz::SDK::ITwinAtmosphereSettings ScenePersistenceAPI::GetAtmosphere() const
 	{
+		auto thdata = GetImpl().thdata_.GetRAutoLock();
 		AdvViz::SDK::ITwinAtmosphereSettings atmo;
-		const auto& jsonatmo = GetImpl().jsonAtmo_;
+		const auto& jsonatmo = thdata->jsonAtmo_;
 		atmo.sunAzimuth = jsonatmo.sunAzimuth;
 		atmo.sunPitch = jsonatmo.sunPitch;
 		atmo.heliodonLongitude = jsonatmo.heliodonLongitude;
@@ -485,16 +1389,18 @@ namespace AdvViz::SDK {
 
 	void ScenePersistenceAPI::SetSceneSettings(const ITwinSceneSettings& ss)
 	{
-		auto& jsonss = GetImpl().jsonSS_;
+		auto thdata = GetImpl().thdata_.GetAutoLock();
+		auto& jsonss = thdata->jsonSS_;
 		jsonss.displayGoogleTiles = ss.displayGoogleTiles;
 		jsonss.qualityGoogleTiles = ss.qualityGoogleTiles;
 		jsonss.geoLocation = ss.geoLocation;
-		GetImpl().shoudSave_ = true;
+		thdata->InvalidateDB();
 	}
 
 	AdvViz::SDK::ITwinSceneSettings ScenePersistenceAPI::GetSceneSettings() const
 	{
-		const auto& jsonss = GetImpl().jsonSS_;
+		auto thdata = GetImpl().thdata_.GetRAutoLock();
+		const auto& jsonss = thdata->jsonSS_;
 		AdvViz::SDK::ITwinSceneSettings ss;
 		ss.displayGoogleTiles = jsonss.displayGoogleTiles;
 		ss.qualityGoogleTiles = jsonss.qualityGoogleTiles;
@@ -504,679 +1410,373 @@ namespace AdvViz::SDK {
 
 	bool ScenePersistenceAPI::ShouldSave() const
 	{
-		if (GetImpl().shoudSave_) return true;
-		for (auto link : GetImpl().links_)
+		auto thdata = GetImpl().thdata_.GetRAutoLock();
+		if (thdata->ShouldSave())
+			return true;
+		for (auto link : thdata->links_)
 		{
-			if (link->GetImpl().shoudSave_)
+			if (link->ShouldSave())
 				return true;
 		}
 		return false;
 	}
 
-	bool ScenePersistenceAPI::Save()
+	void ScenePersistenceAPI::AsyncSave(std::function<void(bool)>&& onDataSavedFunc /*= {}*/)
 	{
-		if (GetImpl().id_.empty() && !GetImpl().jsonScene_.name.empty() && !GetImpl().jsonScene_.itwinid.empty())
+		std::function<void(bool)> onSceneSavedFunc = [onSaveCallback = std::move(onDataSavedFunc)](bool bSuccess)
 		{
-			if (!GetImpl().Create(GetImpl().jsonScene_.name, GetImpl().jsonScene_.itwinid, true))
-				return false;
-
-		}
-		if (ShouldSave())
-		{
-			bool res = GetImpl().Save();
-			SaveLinks();
-			GetImpl().shoudSave_ = false;
 			BE_LOGI("ITwinScene", "Save Scene end");
+			if (onSaveCallback)
+				onSaveCallback(bSuccess);
+		};
 
-			return res;
+		std::shared_ptr<AsyncRequestGroupCallback> callbackPtr =
+			std::make_shared<AsyncRequestGroupCallback>(
+				std::move(onSceneSavedFunc), GetImpl().isThisValid_);
+
+		auto actualSaveFunc = [this, callbackPtr](bool bCreationSuccess)
+		{
+			if (callbackPtr->IsValid() && bCreationSuccess && ShouldSave())
+			{
+				GetImpl().AsyncSave(callbackPtr);
+				AsyncSaveLinks(callbackPtr);
+
+				callbackPtr->OnFirstLevelRequestsRegistered();
+			}
+		};
+
+		bool hasDBId(false);
+		std::string name;
+		std::string itwinid;
+		{
+			auto thdata = GetImpl().thdata_.GetRAutoLock();
+			hasDBId = thdata->HasDBIdentifier();
+			name = thdata->jsonScene_.name;
+			itwinid = thdata->jsonScene_.itwinid;	
 		}
-		return true;
+
+		if (!hasDBId && !name.empty() && !itwinid.empty())
+		{
+			GetImpl().AsyncCreate(name, itwinid, std::move(actualSaveFunc), true);
+		}
+		else
+		{
+			actualSaveFunc(true);
+		}
 	}
 
 	void ScenePersistenceAPI::SetShouldSave(bool shouldSave) const
 	{
-		GetImpl().shoudSave_ = shouldSave;
+		auto thdata = GetImpl().thdata_.GetAutoLock();
+		thdata->SetShouldSave(shouldSave);
 	}
 
 	void ScenePersistenceAPI::PrepareCreation(const std::string& name, const std::string& itwinid)
 	{
-		GetImpl().jsonScene_.name = name;
-		GetImpl().jsonScene_.itwinid = itwinid;
-		SetAtmosphere(ITwinAtmosphereSettings());
+		auto thdata = GetImpl().thdata_.GetAutoLock();
+		thdata->jsonScene_.name = name;
+		thdata->jsonScene_.itwinid = itwinid;
+		ITwinAtmosphereSettings defaultAtmo;
+		defaultAtmo.heliodonDate = "2024-06-16T18:00:00Z";
+		defaultAtmo.useHeliodon = true;
+		defaultAtmo.heliodonLongitude = -77.90736389160156;
+		defaultAtmo.heliodonLatitude= 35.857818603515625;
+		SetAtmosphere(defaultAtmo);
 		SetSceneSettings(ITwinSceneSettings());
-		GetImpl().shoudSave_ = false;
+		SetShouldSave(false);
 	}
 
 	std::vector<std::shared_ptr<AdvViz::SDK::ILink>> ScenePersistenceAPI::GetLinks() const
 	{
 		std::vector<std::shared_ptr<AdvViz::SDK::ILink>> res;
-		for (auto l : GetImpl().links_)
+		auto thdata = GetImpl().thdata_.GetRAutoLock();
+		for (auto l : thdata->links_)
 			res.push_back(l);
 		return res;
-
-
 	}
+
 
 	void ScenePersistenceAPI::LoadLinks()
 	{
-		std::shared_ptr<Http>& http = GetImpl().GetHttp();
-		if (!http)
-			return;
-		struct JsonVector
-		{
-			double x = 0.0;
-			double y = 0.0;
-			double z = 0.0;
-		};
-		struct SJsonCamera
-		{
-			JsonVector up;
-			JsonVector direction;
-			JsonVector position;
-			bool isOrthographic = false;
-			double aspectRatio = 1.0;
-			double far = 10000000000;
-			double near = 0.1;
-			std::optional< std::array<double, 16> > ecefTransform;
-		};
-		struct SJsonScheduleSimulation
-		{
-			std::string timelineId;
-			int64_t timePoint;
-		};
-		struct SJsonSettings
-		{
-			Impl::SJSonAtmosphere atmosphere;
-		};
-		struct SJsonFrameData
-		{
-			SJsonCamera camera;
-			std::optional <SJsonSettings> settings;
-			std::optional<SJsonScheduleSimulation> schedule;
-		};
-		struct SJsonFrameCameraData
-		{
-			std::vector<double> input;
-			std::vector<SJsonFrameData> output;
-			std::optional< std::string> name;
-		};
-		struct Data {
-			std::optional<bool> visible; //obsolete
-			rfl::Rename<"class", std::optional<std::string>> type;
-			std::optional<std::string> repositoryId;
-			std::optional<std::string> id;
-			std::optional<std::string> name;
-			std::optional<double> quality;
-			std::optional< std::array<double, 16> > ecefTransform;
-			std::optional< std::vector<double> > adjustment;
-			std::optional<Impl::SJSonAtmosphere> atmosphere;
-			std::optional<std::string> decorationId;
-			std::optional<std::vector<std::string>> animations;
-			std::optional< std::vector<double>> input;
-			std::optional< std::vector<SJsonFrameData>> output;
-		};
-		struct JsonObjectWithId
-		{
-			std::string id;
-			std::string kind;
-			std::optional<Data> data;
-			std::optional<std::string> displayName;
-			std::optional<std::string> relatedId;
-			std::optional<bool> visible;
-		};
-		struct SceneAPIUrl
-		{
-			std::string href;
-		};
-		struct SceneAPILinks
-		{
-			std::optional<SceneAPIUrl> prev;
-			std::optional<SceneAPIUrl> self;
-			std::optional<SceneAPIUrl> next;
-		};
-		struct SJsonOut
-		{
-			std::optional<std::vector<JsonObjectWithId>> objects;
-			std::optional<SceneAPILinks> _links;
-		};
-
-		SJsonOut jOut;
-		long status = http->GetJson(jOut, "scenes/" + GetId() + "/objects?iTwinId=" + GetImpl().jsonScene_.itwinid, { });
-		bool continueLoading = true;
-		bool atmosphereFound = false;
-		bool sceneSettingsFound = false;
-		bool timelineFound = false;
-		struct SLinkData
-		{
-			std::string ref;
-			std::vector<double> adjusts;
-			std::string id;
-		};
-		std::vector<SLinkData> sublinks;
-		std::vector<std::string> animations;
-		std::map<std::string, SJsonFrameCameraData> cameraDatas;
-
-		while (continueLoading)
-		{
-			if (status != 200 && status != 201)
-			{
-				continueLoading = false;
-			}
-			if (jOut.objects)
-			{
-				for (auto& row : *jOut.objects)
-				{
-					std::shared_ptr<AdvViz::SDK::LinkAPI> link(AdvViz::SDK::LinkAPI::New());
-					link->GetImpl().id_ = row.id;
-					if (row.kind == "RepositoryResource")
-					{
-						std::optional<std::string> ttype = row.data->type.get();
-						std::string& linkType = link->GetImpl().link_.type;
-						if (row.data && ttype.has_value())
-						{
-							if (*ttype == "iModels")
-								linkType = "iModel";
-							if (*ttype == "RealityData")
-							{
-								linkType = "RealityData";
-								link->GetImpl().shoudSave_ = true;
-							}
-						}
-						link->SetType(linkType.empty()? "iModel" : linkType); // check row class
-						if (row.visible)
-						{
-							link->GetImpl().link_.visibility = *row.visible;
-						}
-						else if (row.data && row.data->visible)
-							link->GetImpl().link_.visibility = *row.data->visible;
-						if (row.data && row.data->id)
-							link->GetImpl().link_.ref = *row.data->id;
-						GetImpl().links_.push_back(link);
-					}
-					else if (row.kind == "View3d")
-					{
-						link->GetImpl().link_.type = "camera";
-						if (row.data && row.data->name)
-							link->GetImpl().link_.ref = *row.data->name;
-						else if (row.displayName)
-							link->GetImpl().link_.ref = *row.displayName;
-						else
-							link->GetImpl().link_.ref = "Home Camera";
-						if (row.data && row.data->ecefTransform)
-							link->GetImpl().link_.transform = Identity34;
-						std::memcpy(link->GetImpl().link_.transform->data(), row.data->ecefTransform->data(), 12 * sizeof(double));
-						GetImpl().links_.push_back(link);
-					}
-					else if (row.kind == "UnrealAtmosphericStyling")
-					{
-						link->GetImpl().link_.type = "atmosphere";
-						if (row.data && row.data->atmosphere)
-						{
-							GetImpl().jsonAtmo_ = *row.data->atmosphere;
-						}
-						GetImpl().links_.push_back(link);
-
-						atmosphereFound = true;
-					}
-					else if (row.kind == "GoogleTilesStyling")
-					{
-						link->GetImpl().link_.type = "SceneSettings"; // check row class
-						if (row.data && row.data->quality)
-						{
-							GetImpl().jsonSS_.qualityGoogleTiles = *row.data->quality * 100;
-						}
-						if (row.data && row.data->adjustment)
-						{
-							auto& sldata = *row.data->adjustment;
-							int geolocid = -4;
-							int qualityId = -1;
-							if (sldata.size() == 1)
-							{
-								qualityId = 0;
-							}
-							else if (sldata.size() == 3)
-							{
-								geolocid = 0;
-							}
-							else if (sldata.size() == 4)
-							{
-								qualityId = 0;
-								geolocid = 1;
-							}
-							if (qualityId >= 0)
-							{
-								if (sldata[qualityId] < -1e-7)
-								{
-									GetImpl().jsonSS_.qualityGoogleTiles = -sldata[qualityId];
-									GetImpl().jsonSS_.displayGoogleTiles = false;
-								}
-								else
-								{
-									GetImpl().jsonSS_.qualityGoogleTiles = sldata[qualityId];
-									GetImpl().jsonSS_.displayGoogleTiles = true;
-								}
-							}
-							if (geolocid >= 0)
-							{
-								GetImpl().jsonSS_.geoLocation = std::array<double, 3>();
-								(*GetImpl().jsonSS_.geoLocation)[0] = sldata[geolocid];
-								(*GetImpl().jsonSS_.geoLocation)[1] = sldata[geolocid + 1];
-								(*GetImpl().jsonSS_.geoLocation)[2] = sldata[geolocid + 2];
-							}
-						}
-						GetImpl().links_.push_back(link);
-						sceneSettingsFound = true;
-					}
-					else if (row.kind == "MaterialDecoration")
-					{
-						if (row.displayName)
-							link->GetImpl().link_.type = *row.displayName;
-						else
-							link->GetImpl().link_.type = "decoration";
-						if (row.data && row.data->id)
-							link->GetImpl().link_.ref = *row.data->id;
-						if (row.data && row.data->decorationId)
-						{
-							link->GetImpl().link_.ref = SceneAPIGuidtoDSID(*row.data->decorationId);
-							GetImpl().links_.push_back(link);
-						}
-					}
-					else if (row.kind == "iModelVisibility")
-					{
-						if (row.data && row.data->id && row.data->adjustment)
-						{
-							SLinkData sl;
-							sl.id = row.id;
-							sl.ref = *row.data->id;
-							sl.adjusts = *row.data->adjustment;
-							sublinks.push_back(sl);
-						}
-						else if (row.relatedId && row.data && row.data->adjustment)
-						{
-							SLinkData sl;
-							sl.id = row.id;
-							sl.ref = *row.relatedId;
-							sl.adjusts = *row.data->adjustment;
-							sublinks.push_back(sl);
-						}
-					}
-					else if (row.kind == "Movie")
-					{
-						link->GetImpl().link_.type = "timeline";
-						if (row.data && row.data->animations)
-						{
-							animations = *row.data->animations;
-						}
-						GetImpl().links_.push_back(link);
-						timelineFound = true;
-					}
-					else if (row.kind == "CameraAnimation")
-					{
-						if (row.data && row.data->input && row.data->output)
-						{
-							SJsonFrameCameraData data;
-							data.input = *row.data->input;
-							data.output = *row.data->output;
-							if (row.displayName)
-								data.name = *row.displayName;
-							cameraDatas[row.id] = data;
-						}
-					}
-
-				}
-				jOut.objects->clear();
-			}
-			if (jOut._links.has_value() && jOut._links->next.has_value() && !jOut._links->next->href.empty())
-			{
-				// Quick workaround for a bug in Decoration Service sometimes providing bad URLs with http
-				// instead of https protocol! (issue found for instances, which was causing bug #1609088).
-				std::string const nextUrl = rfl::internal::strings::replace_all(
-					jOut._links->next->href,
-					"http://", "https://");
-				{
-				}
-			}
-			else
-			{
-				continueLoading = false;
-			}
-
-		}
-		for (auto sldata : sublinks)
-		{
-			for (auto mainlink : GetImpl().links_)
-			{
-				if (sldata.ref == mainlink->GetImpl().id_)
-				{
-					mainlink->GetImpl().sublinkId_ = sldata.id;
-					int qualityId = -1;
-					int geolocid = -4;
-					if (sldata.adjusts.size() == 1)
-					{
-						qualityId = 0;
-					}
-					else if (sldata.adjusts.size() == 3)
-					{
-						geolocid = 0;
-					}
-					else if (sldata.adjusts.size() == 4)
-					{
-						qualityId = 0;
-						geolocid = 1;
-					}
-					else  if (sldata.adjusts.size() == 13)
-					{
-						qualityId = 12;
-					}
-					else if (sldata.adjusts.size() == 5)
-					{
-						geolocid = 12;
-					}
-					else  if (sldata.adjusts.size() == 16)
-					{
-						qualityId = 12;
-						geolocid = 13;
-					}
-
-					if (qualityId >= 0)
-					{
-						if (sldata.adjusts[qualityId] < -1e-7)
-						{
-							mainlink->GetImpl().link_.quality = -sldata.adjusts[qualityId];
-							mainlink->GetImpl().link_.visibility = false;
-						}
-						else
-						{
-							mainlink->GetImpl().link_.quality = sldata.adjusts[qualityId];
-							mainlink->GetImpl().link_.visibility = true;
-						}
-					}
-
-					if (sldata.adjusts.size() > 11)
-					{
-						mainlink->GetImpl().link_.transform = std::array<double, 12>();
-						for (int i = 0; i < 12; ++i)
-						{
-							(*mainlink->GetImpl().link_.transform)[i] = sldata.adjusts[i];
-						}
-					}
-
-					break;
-				}
-			}
-		}
-		BE_LOGI("ITwinScene", "Found " << GetImpl().links_.size() << " Link(s) for scene " << GetId());
-		if (!atmosphereFound)
-		{
-			std::shared_ptr<AdvViz::SDK::LinkAPI> link(AdvViz::SDK::LinkAPI::New());
-			link->GetImpl().link_.type = "atmosphere";
-			GetImpl().links_.push_back(link);
-		}
-		if (!sceneSettingsFound)
-		{
-			std::shared_ptr<AdvViz::SDK::LinkAPI> link(AdvViz::SDK::LinkAPI::New());
-			link->GetImpl().link_.type = "SceneSettings";
-			GetImpl().links_.push_back(link);
-		}
-		if (!timelineFound)
-		{
-			std::shared_ptr<AdvViz::SDK::LinkAPI> link(AdvViz::SDK::LinkAPI::New());
-			link->GetImpl().link_.type = "timeline";
-			GetImpl().links_.push_back(link);
-		}
-		else //build timeline
-		{
-			auto tl = GetTimeline();
-			if (!tl)
-			{
-				GetImpl().timeline_ = std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New());
-				tl = GetTimeline();
-			}
-
-			for (auto id : animations)
-			{
-				auto scam = cameraDatas.find(id);
-				if (scam != cameraDatas.end())
-				{
-					
-					std::string name = "unamed clip " + std::to_string(tl->GetClipCount());
-					if (scam->second.name)
-						name = *scam->second.name;
-					auto clipp = tl->AddClip(name);
-					clipp->SetId(ITimelineClip::Id(scam->first));
-					auto maxid = std::min(scam->second.input.size(), scam->second.output.size());
-					for (auto i=0; i<maxid;++i)
-					{
-						auto& output = scam->second.output[i];
-						ITimelineKeyframe::KeyframeData kd;
-						kd.time = scam->second.input[i];
-
-						if (output.settings)
-						{
-							kd.atmo = ITimelineKeyframe::AtmoData();
-							kd.atmo->time = output.settings->atmosphere.heliodonDate;
-							kd.atmo->cloudCoverage = (float)output.settings->atmosphere.weather;
-							kd.atmo->fog = (float)output.settings->atmosphere.fog;
-						}
-
-						if (output.schedule)
-						{
-							time_t datetime(output.schedule->timePoint);
-							kd.synchro = ITimelineKeyframe::SynchroData();
-							kd.synchro->date = std::format("%FT%TZ", datetime);
-							kd.synchro->scheduleId = output.schedule->timelineId;
-						}
-						else if (output.settings)
-						{
-							kd.synchro = ITimelineKeyframe::SynchroData();
-							kd.synchro->date = kd.atmo->time;
-						}
-						kd.camera = ITimelineKeyframe::CameraData();
-						if(output.camera.ecefTransform && output.camera.ecefTransform->size()>= 12 )
-						{ 
-							std::memcpy(kd.camera->transform.data(), output.camera.ecefTransform->data(), 12 * sizeof(double));
-						}
-						else
-						{
-							kd.camera->isPause = true;
-						}
-						clipp->AddKeyframe(kd);
-
-					}
-				}
-			}
-		}
-
+		GetImpl().LoadLinks();
 	}
 
 	void ScenePersistenceAPI::AddLink(std::shared_ptr<ILink> v)
 	{
 		auto rv = std::dynamic_pointer_cast<LinkAPI>(v);
-		GetImpl().links_.push_back(rv);
-		GetImpl().shoudSave_ = true;
+
+		GetImpl().AddLink(rv);
+
+		auto thdata = GetImpl().thdata_.GetAutoLock();
+		thdata->InvalidateDB();
 	}
 
-	void ScenePersistenceAPI::SaveLinks()
+
+	void ScenePersistenceAPI::OnLinkSaved(LinkAPIPtr link, std::string const& idOnServer)
+	{
+		RefID linkId = link->GetId();
+		linkId.SetDBIdentifier(idOnServer);
+		if (link->GetSaveStatus() == ESaveStatus::InProgress)
+		{
+			// Update link ID now that it contains the DB identifier.
+			link->SetId(linkId);
+			BE_LOGI("ITwinScene", "Add Link for scene " << GetId() << " new link " << (*link));
+			if (link->GetImpl().parentLink_)
+			{
+				link->GetImpl().parentLink_->GetImpl().sublinkId_ = linkId.GetDBIdentifier();
+			}
+			link->OnSaved();
+		}
+	}
+
+	void ScenePersistenceAPI::AsyncSaveLinksVec(LinkAPIPtrVec links,
+		[[maybe_unused]] bool bSubLink,
+		std::shared_ptr<AsyncRequestGroupCallback> callbackPtr_global,
+		std::function<void(bool)>&& onLinksSavedFunc)
+	{
+		std::shared_ptr<Http> const& http = GetImpl().GetHttp();
+
+		// This whole set of requests will count for one
+		callbackPtr_global->AddRequestToWait();
+
+		std::function<void(bool)> onLinksVecSavedFunc =
+			[onLinksSavedFunc = std::move(onLinksSavedFunc),
+			 callbackPtr_global](bool bSuccess)
+		{
+			if (!callbackPtr_global->IsValid())
+				return;
+
+			if (onLinksSavedFunc)
+				onLinksSavedFunc(bSuccess);
+
+			callbackPtr_global->OnRequestDone(bSuccess);
+		};
+
+		// Use a distinct callback to handle the termination of the saving of this individual vector of
+		// links.
+		std::shared_ptr<AsyncRequestGroupCallback> callbackPtr =
+			std::make_shared<AsyncRequestGroupCallback>(
+				std::move(onLinksVecSavedFunc), GetImpl().isThisValid_);
+
+		auto thdata = GetImpl().thdata_.GetRAutoLock();
+		const std::string sceneId = thdata->GetDBIdentifier();
+		const std::string itwinid = thdata->jsonScene_.itwinid;
+
+		for (auto link : links)
+		{
+			// RealityData and iModel links are saved separately, in Itwin Engage TS. We don't want to save them here as well.
+			if (!enableExportOfResources &&(link->GetType() == "RealityData" || link->GetType() == "iModel"))
+			{
+				continue;
+			}
+			RefID const linkId = link->GetId();
+			BE_ASSERT(bSubLink || !link->GetImpl().parentLink_);
+			if (!linkId.HasDBIdentifier() && !link->ShouldDelete())
+			{
+				// New link - use POST request
+				link->OnStartSave();
+
+				struct SJsonO2
+				{
+					std::string id;
+				};
+
+				if (link->GetImpl().parentLink_)
+				{
+					if (!link->GetImpl().parentLink_->HasDBIdentifier())
+					{
+						continue; //parent post failed, do not post child
+					}
+					link->SetRef(link->GetImpl().parentLink_->GetDBIdentifier());
+				}
+				const Http::BodyParams bodyParams(GenerateBody(link, false));
+
+				struct SJsonOut
+				{
+					std::vector<SJsonO2> objects;
+				};
+				AsyncPostJson<SJsonOut>(http, callbackPtr,
+					[this, link, callbackPtr, sceneId, itwinid](long httpCode, const Tools::TSharedLockableData<SJsonOut>& joutPtr)
+				{
+					auto thdata = GetImpl().thdata_.GetRAutoLock();
+					auto unlockedJout = joutPtr->GetAutoLock();
+					SJsonOut const& jOut = unlockedJout.Get();
+
+					bool bSuccess = (httpCode == 200 || httpCode == 201) && jOut.objects.size() == 1;
+					if (bSuccess)
+					{
+						OnLinkSaved(link, jOut.objects[0].id);
+					}
+					else
+					{
+						BE_LOGW("ITwinScene", "Add Link for scene " << sceneId << " failed. Http status: " << httpCode
+							<< " with link " << (*link));
+					}
+					return bSuccess;
+				},
+					"scenes/" + sceneId + "/objects?iTwinId=" + itwinid,
+					bodyParams);
+			}
+			else if (link->ShouldDelete() && linkId.HasDBIdentifier())
+			{
+				if (link->GetImpl().parentLink_)
+				{
+					if (link->GetImpl().parentLink_->HasDBIdentifier())
+					{
+						continue; //parent delete failed, do not delete child
+					}
+				}
+				Impl::SJsonInEmpty Jin;
+				std::string url("scenes/" + sceneId + "/objects/" + linkId.GetDBIdentifier() + "?iTwinId=" + itwinid);
+				AsyncDeleteJsonNoOutput(http, callbackPtr,
+					[this, link, sceneId](long httpCode)
+				{
+					RefID linkId = link->GetId();
+					const bool bSuccess = (httpCode == 200 || httpCode == 204 /* No-Content*/);
+					if (bSuccess)
+					{
+						BE_LOGI("ITwinScene", "Deleted Link with scene ID " << sceneId << " link " << (*link));
+						linkId.SetDBIdentifier(""); // reset DB identifier to notify deletion
+						link->SetId(linkId);
+					}
+					else
+					{
+						BE_LOGW("ITwinScene", "Delete Link failed. Http status: " << httpCode
+							<< " scene id: " << sceneId << " link " << (*link));
+					}
+					return bSuccess;
+				},
+					url, Jin);
+			}
+			else if (linkId.HasDBIdentifier() && !link->ShouldDelete())
+			{
+				// Update link existing on the server (using PATCH request).
+				// Note that we don't test ShouldSave here, to avoid missing the saving of "dummy" links.
+
+				link->OnStartSave();
+
+				struct SJsonO2
+				{
+					std::string id;
+				};
+				struct SJsonOut
+				{
+					SJsonO2 object;
+				};
+				SJsonOut jOut;
+				if (link->GetImpl().parentLink_
+					&& link->GetImpl().parentLink_->HasDBIdentifier())
+				{
+					link->SetRef(link->GetImpl().parentLink_->GetDBIdentifier());
+				}
+				const Http::BodyParams bodyParams(GenerateBody(link, true));
+				AsyncPatchJson<SJsonOut>(http, callbackPtr,
+					[this, link, callbackPtr, sceneId, itwinid](long httpCode, const Tools::TSharedLockableData<SJsonOut>& /*joutPtr*/)
+				{
+					RefID linkId = link->GetId();
+					bool bSuccess = (httpCode == 200);
+					if (bSuccess)
+					{
+						BE_LOGI("ITwinScene", "Update Link for scene " << sceneId
+							<< " with link " << (*link));
+						link->OnSaved();
+					}
+					else
+					{
+						BE_LOGW("ITwinScene", "Update Link for scene " << sceneId << " failed. Http status: " << httpCode
+							<< " with link " << (*link));
+					}
+					return bSuccess;
+				},
+					"scenes/" + sceneId + "/objects/" + linkId.GetDBIdentifier() + "?iTwinId=" + itwinid,
+					bodyParams);
+			}
+			//else nothing to do, id is empty so the link is not on the server
+		}
+
+		callbackPtr->OnFirstLevelRequestsRegistered();
+	}
+
+	void ScenePersistenceAPI::AsyncSaveLinks(std::shared_ptr<AsyncRequestGroupCallback> callbackPtr)
 	{
 		auto sublinks = GenerateSubLinks();
 		auto prelinks = GeneratePreLinks();
-		std::shared_ptr<Http>& http = GetImpl().GetHttp();
-		auto doforLink = [this, &http](std::vector<std::shared_ptr<AdvViz::SDK::LinkAPI>>& links) {
-			for (auto link : links)
+
+		// The order matters: pre-links must be saved before main links, which themselves must be saved
+		// before sub-links!
+
+		// 1. Pre-links (for timeline)
+		AsyncSaveLinksVec(prelinks, false, callbackPtr,
+			[prelinks, sublinks, this, callbackPtr](bool bSuccess)
+		{
+			if (!callbackPtr->IsValid())
+				return;
+			auto tl = GetTimeline();
+			for (auto link : prelinks)
 			{
-				if (link->GetImpl().id_.empty() && !link->GetImpl().shouldDelete_)
+				auto clipp = tl->GetClipByRefID(link->GetImpl().GetId());
+				if (!clipp)
+					continue;
+				if (link->HasDBIdentifier())
 				{
-
-					struct SJsonO2
+					clipp->SetDBIdentifier(link->GetDBIdentifier());
+					if (!link->ShouldSave())
 					{
-						std::string id;
-					};
-
-					if (link->GetImpl().parentLink_)
-					{
-						if (link->GetImpl().parentLink_->GetId().empty())
-						{
-							continue; //parent post failed, do not post child
-						}
-						link->SetRef(link->GetImpl().parentLink_->GetId());
-					}
-					const Http::BodyParams bodyParams(GenerateBody(link, false));
-
-					if (postRequiresObjectsArray)
-					{
-						struct SJsonOut
-						{
-							std::vector<SJsonO2> objects;
-						};
-						SJsonOut jOut;
-						long status = http->PostJson(jOut, "scenes/" + GetId() + "/objects?iTwinId=" + GetImpl().jsonScene_.itwinid, bodyParams);
-
-						if ((status == 200 || status == 201) && jOut.objects.size() == 1)
-						{
-							link->GetImpl().id_ = jOut.objects[0].id;
-							BE_LOGI("ITwinScene", "Add Link for scene " << GetId()\
-								<< " new link Id " << link->GetImpl().id_ << " type : " << link->GetType() << " ref : " << link->GetRef());
-							link->GetImpl().shoudSave_ = false;
-							if (link->GetImpl().parentLink_)
-							{
-								link->GetImpl().parentLink_->GetImpl().sublinkId_ = link->GetImpl().id_;
-							}
-						}
-						else
-						{
-							BE_LOGW("ITwinScene", "Add Link for scene " << GetId() << " failed. Http status : " << status  \
-								<< " with link Id " << link->GetImpl().id_ << " type : " << link->GetType() << " ref : " << link->GetRef());
-						}
-					}
-					else
-					{
-						struct SJsonOut
-						{
-							SJsonO2 object;
-						};
-						SJsonOut jOut;
-						long status = http->PostJson(jOut, "scenes/" + GetId() + "/objects?iTwinId=" + GetImpl().jsonScene_.itwinid, bodyParams);
-
-						if (status == 200 || status == 201)
-						{
-							link->GetImpl().id_ = jOut.object.id;
-							BE_LOGI("ITwinScene", "Add Link for scene " << GetId()\
-								<< " new link Id " << link->GetImpl().id_ << " type : " << link->GetType() << " ref : " << link->GetRef());
-							link->GetImpl().shoudSave_ = false;
-							if (link->GetImpl().parentLink_)
-							{
-								link->GetImpl().parentLink_->GetImpl().sublinkId_ = link->GetImpl().id_;
-							}
-						}
-						else
-						{
-							BE_LOGW("ITwinScene", "Add Link for scene " << GetId() << " failed. Http status : " << status  \
-								<< " with link Id " << link->GetImpl().id_ << " type : " << link->GetType() << " ref : " << link->GetRef());
-						}
-					}
-
-				}
-				else if (link->GetImpl().shouldDelete_ && !link->GetImpl().id_.empty())
-				{
-					if (link->GetImpl().parentLink_)
-					{
-						if (!link->GetImpl().parentLink_->GetId().empty())
-						{
-							continue; //parent delete failed, do not delete child
-						}
-					}
-					struct SJsonOutEmpty {};
-					struct SJsonInEmpty {};
-					SJsonOutEmpty jOut;
-					SJsonInEmpty Jin;
-					std::string url("scenes/" + GetId() + "/objects/" + link->GetImpl().id_ +"?iTwinId="+ GetImpl().jsonScene_.itwinid);
-					auto status = http->DeleteJsonJBody(jOut, url, Jin);
-					if (status != 200)
-					{
-						BE_LOGW("ITwinScene", "Delete Link failed. Http status: " << status << " sceneid " << GetId() << " link ID " << link->GetImpl().id_ \
-							<< " type : " << link->GetType() << " ref : " << link->GetRef());
-					}
-					else
-					{
-						BE_LOGI("ITwinScene", "Deleted Link with scene ID " << GetId() << " link ID " << link->GetImpl().id_ \
-							<< " type : " << link->GetType() << " ref : " << link->GetRef());
-						link->GetImpl().id_.clear();
+						clipp->OnSaved();
+						// For SceneAPI, keyframes are saved together with clips
+						clipp->OnKeyframesSaved();
 					}
 				}
-				else if (!link->GetImpl().id_.empty() && !link->GetImpl().shouldDelete_)
-				{
-
-					struct SJsonO2
-					{
-						std::string id;
-					};
-					struct SJsonOut
-					{
-						SJsonO2 object;
-					};
-					SJsonOut jOut;
-					if (link->GetImpl().parentLink_)
-					{
-						link->SetRef(link->GetImpl().parentLink_->GetId());
-					}
-					const Http::BodyParams bodyParams(GenerateBody(link, true));
-					auto status = http->PatchJson(jOut, "scenes/" + GetId() + "/objects/" + link->GetId() + "?iTwinId=" + GetImpl().jsonScene_.itwinid, bodyParams);
-					if (status == 200)
-					{
-						BE_LOGI("ITwinScene", "Update Link for scene " << GetId() << " with link Id " << link->GetImpl().id_ << " type : " << link->GetType() << " ref : " << link->GetRef());
-						link->GetImpl().shoudSave_ = false;
-					}
-					else
-					{
-						BE_LOGW("ITwinScene", "Update Link  for scene " << GetId() << " failed. Http status : " << status \
-							<< " with link Id " << link->GetImpl().id_ << " type : " << link->GetType() << " ref : " << link->GetRef());
-					}
-
-				}
-				//else nothing to do, id is empty so the link is not on the server
 			}
-
-			std::erase_if(links, [](const std::shared_ptr<LinkAPI>& l)
+			if (tl)
+			{
+				bool bDeleteSuccess = true;
+				for (auto clipp : tl->GetObsoleteClips())
 				{
-					return l->GetImpl().shouldDelete_ && l->GetImpl().id_.empty();
+					bool deletionFailed = false;
+					for (auto link : prelinks)
+					{
+						if (clipp->GetId() == link->GetId())
+						{
+							deletionFailed = true;
+							break;
+						}
+					}
+					if (deletionFailed)
+					{
+						bDeleteSuccess = false;
+					}
+					else
+					{
+						tl->RemoveObsoleteClip(clipp);
+					}
+				}
+				if (bSuccess && bDeleteSuccess)
+				{
+					tl->OnSaved();
+				}
+			}
+		
+
+			// 2. Main links (must be saved *after* pre-links).
+			auto thdata = GetImpl().thdata_.GetRAutoLock();
+			AsyncSaveLinksVec(thdata->links_, false, callbackPtr,
+				[sublinks, this, callbackPtr](bool /*bSuccess*/)
+			{
+				if (!callbackPtr->IsValid())
+					return;
+
+				// Actually remove links which were deleted on the server
+				auto thdata = GetImpl().thdata_.GetAutoLock();
+				std::erase_if(thdata->links_, [](const std::shared_ptr<LinkAPI>& l)
+				{
+					return l->ShouldDelete() && !l->HasDBIdentifier();
 				});
-			};
-		//for timeline
-		doforLink(prelinks);
-		auto tl = GetTimeline();
-		for (auto link : prelinks)
-		{
-			auto clipp = tl->GetClipByIndex(link->GetImpl().idx_);
-			if (!clipp)
-				continue;
-			if (!link->GetId().empty())
-			{
-				(*clipp)->SetId(ITimelineClip::Id(link->GetId()));
-				(*clipp)->SetShouldSave(link->ShouldSave());
 
-			}
-		}
-		if (tl)
-		{
-			for (auto clipp : tl->GetObsoleteClips())
-			{
-				bool deletionFailed = false;
-				for (auto link : prelinks)
-				{
-					if (clipp->GetId() == link->GetId())
-					{
-						deletionFailed = true;
-						break;
-					}
-				}
-				if (!deletionFailed)
-				{
-					tl->RemoveObsoleteClip(clipp);
-				}
-			}
-		}
-		doforLink(GetImpl().links_);
-		doforLink(sublinks);
+				// 3. Sub-links (must be saved *after* the main links).
+				AsyncSaveLinksVec(sublinks, true, callbackPtr, {});
+			});
+		});
 	}
 
 	std::shared_ptr<AdvViz::SDK::ILink> ScenePersistenceAPI::MakeLink()
@@ -1187,27 +1787,25 @@ namespace AdvViz::SDK {
 	template <typename T>
 	std::string ToPostString(const T& t)
 	{
-		if (postRequiresObjectsArray)
+		struct SJSONObjects
 		{
-			struct SJSONObjects
-			{
-				std::vector<T> objects;
-			};
-			SJSONObjects jobs;
-			jobs.objects.push_back(t);
-			return Json::ToString(jobs);
-		}
-		else
-		{
-			return Json::ToString(t);
-		}
+			std::vector<T> objects;
+		};
+		SJSONObjects jobs;
+		jobs.objects.push_back(t);
+		return Json::ToString(jobs);
 	}
 
-	std::string ScenePersistenceAPI::GenerateBody(const std::shared_ptr<LinkAPI>& link, bool forPatch)
+	std::string ScenePersistenceAPI::GenerateBody(const std::shared_ptr<LinkAPI>& link, bool forPatch,bool ignoreTimelineID)
 	{
-
 		if (link->GetType() == "RealityData" || link->GetType() == "iModel")
 		{
+			std::string itwinid;
+			{
+				auto thdata = GetImpl().thdata_.GetRAutoLock();
+				itwinid = thdata->jsonScene_.itwinid;
+			}
+
 			struct SJsonInData
 			{
 				std::string id;
@@ -1232,8 +1830,8 @@ namespace AdvViz::SDK {
 					Jin.visible = true;
 				}
 				Jin.data.id = link->GetRef();
-				Jin.data.iTwinId = GetImpl().jsonScene_.itwinid;
-
+				Jin.data.iTwinId = itwinid;
+				
 				if (link->GetType() == "iModel")
 				{
 					Jin.data.repositoryId = "iModels";
@@ -1267,7 +1865,7 @@ namespace AdvViz::SDK {
 					Jin.visible = true;
 				}
 				Jin.data.id = link->GetRef();
-				Jin.data.iTwinId = GetImpl().jsonScene_.itwinid;
+				Jin.data.iTwinId = itwinid;
 				if (link->GetType() == "iModel")
 				{
 					Jin.data.repositoryId = "iModels";
@@ -1352,7 +1950,10 @@ namespace AdvViz::SDK {
 					SJsonInData data;
 				};
 				SJsonIn Jin;
-				Jin.data.atmosphere = GetImpl().jsonAtmo_;
+				{
+					auto thdata = GetImpl().thdata_.GetRAutoLock();
+					Jin.data.atmosphere = thdata->jsonAtmo_;
+				}
 				return Json::ToString(Jin);
 			}
 			else
@@ -1364,7 +1965,10 @@ namespace AdvViz::SDK {
 					SJsonInData data;
 				};
 				SJsonIn Jin;
-				Jin.data.atmosphere = GetImpl().jsonAtmo_;
+				{
+					auto thdata = GetImpl().thdata_.GetRAutoLock();
+					Jin.data.atmosphere = thdata->jsonAtmo_;
+				}
 				return ToPostString(Jin);
 			}
 		}
@@ -1375,24 +1979,25 @@ namespace AdvViz::SDK {
 				double quality;
 				std::vector<double> adjustment;
 			};
+			auto thdata = GetImpl().thdata_.GetRAutoLock();
 			SJsonInData inData;
-			inData.quality = GetImpl().jsonSS_.qualityGoogleTiles / 100;
-			double ql = GetImpl().jsonSS_.qualityGoogleTiles;
+			inData.quality = thdata->jsonSS_.qualityGoogleTiles / 100;
+			double ql = thdata->jsonSS_.qualityGoogleTiles;
 			if (fabs(ql) < 1e-6)
 			{
 				ql = 1e-6;
 			}
-			if (!GetImpl().jsonSS_.displayGoogleTiles)
+			if (!thdata->jsonSS_.displayGoogleTiles)
 			{
 				ql = -ql;
 			}
 			inData.adjustment.push_back(ql);
 
-			if (GetImpl().jsonSS_.geoLocation)
+			if (thdata->jsonSS_.geoLocation)
 			{
-				inData.adjustment.push_back((*GetImpl().jsonSS_.geoLocation)[0]);
-				inData.adjustment.push_back((*GetImpl().jsonSS_.geoLocation)[1]);
-				inData.adjustment.push_back((*GetImpl().jsonSS_.geoLocation)[2]);
+				inData.adjustment.push_back((*thdata->jsonSS_.geoLocation)[0]);
+				inData.adjustment.push_back((*thdata->jsonSS_.geoLocation)[1]);
+				inData.adjustment.push_back((*thdata->jsonSS_.geoLocation)[2]);
 			}
 
 			if (forPatch)
@@ -1434,9 +2039,8 @@ namespace AdvViz::SDK {
 					auto clipp = tl->GetClipByIndex(i);
 					if (!clipp)
 						continue;
-					std::string id = static_cast<const std::string>((*clipp)->GetId());
-					if (!id.empty())
-						inData.animations.push_back(id);
+					if ((*clipp)->HasDBIdentifier())
+						inData.animations.push_back((*clipp)->GetDBIdentifier());
 				}
 
 			}
@@ -1467,7 +2071,7 @@ namespace AdvViz::SDK {
 		else if (link->GetType() == "clip")
 		{
 			auto tl = GetTimeline();
-			auto clipp = tl->GetClipByIndex(link->GetImpl().idx_);
+			auto clipp = tl->GetClipByRefID(link->GetImpl().GetId());
 			if (!clipp)
 				return "";
 			struct JsonVector
@@ -1509,9 +2113,9 @@ namespace AdvViz::SDK {
 			};
 			SJsonInData inData;
 
-			for (size_t idx(0); idx < (*clipp)->GetKeyframeCount(); ++idx)
+			for (size_t idx(0); idx < clipp->GetKeyframeCount(); ++idx)
 			{
-				auto kf = (*clipp)->GetKeyframeByIndex(idx);
+				auto kf = clipp->GetKeyframeByIndex(idx);
 				if (!*kf) continue;
 				auto kdata = (*kf)->GetData();
 				if (!kdata.camera)
@@ -1532,6 +2136,17 @@ namespace AdvViz::SDK {
 					o.settings->atmosphere.fog = kdata.atmo->fog;
 					o.settings->atmosphere.weather = kdata.atmo->cloudCoverage;
 					o.settings->atmosphere.heliodonDate = kdata.atmo->time;
+					o.settings->atmosphere.heliodonLatitude = kdata.atmo->heliodonLatitude.get();
+					o.settings->atmosphere.heliodonLongitude = kdata.atmo->heliodonLongitude.get();
+					o.settings->atmosphere.sunAzimuth = kdata.atmo->sunAzimuth.get();
+					o.settings->atmosphere.sunPitch = kdata.atmo->sunPitch.get();
+					if(o.settings->atmosphere.sunPitch>180)
+						o.settings->atmosphere.sunPitch -= 360;
+					o.settings->atmosphere.HDRIZRotation = kdata.atmo->HDRIZRotation.get();
+					o.settings->atmosphere.sunIntensity = kdata.atmo->sunIntensity.get();
+					o.settings->atmosphere.HDRIImage = kdata.atmo->HDRIImage.get();
+					o.settings->atmosphere.useHeliodon = kdata.atmo->useHeliodon.get();
+					o.settings->atmosphere.exposure = kdata.atmo->exposure.get();
 				}
 				if (kdata.synchro && !kdata.synchro->date.empty() && !kdata.synchro->scheduleId().empty())
 				{
@@ -1546,7 +2161,10 @@ namespace AdvViz::SDK {
 					{
 						o.schedule = SJsonScheduleSimulation();
 						o.schedule->timePoint = tp.time_since_epoch().count();
-						o.schedule->timelineId = kdata.synchro->scheduleId();
+						if(ignoreTimelineID)
+							o.schedule->timelineId ="0x30";
+						else
+							o.schedule->timelineId = kdata.synchro->scheduleId();
 					}
 
 				}
@@ -1563,7 +2181,7 @@ namespace AdvViz::SDK {
 				};
 				SJsonIn Jin;
 				Jin.data = inData;
-				Jin.displayName = (*clipp)->GetName();
+				Jin.displayName = clipp->GetName();
 				return Json::ToString(Jin);
 			}
 			else
@@ -1577,7 +2195,7 @@ namespace AdvViz::SDK {
 				};
 				SJsonIn Jin;
 				Jin.data = inData;
-				Jin.displayName = (*clipp)->GetName();
+				Jin.displayName = clipp->GetName();
 				return ToPostString(Jin);
 			}
 		}
@@ -1686,12 +2304,16 @@ namespace AdvViz::SDK {
 		return "";
 	}
 
-	std::vector<std::shared_ptr<AdvViz::SDK::LinkAPI>> ScenePersistenceAPI::GenerateSubLinks()
+	ScenePersistenceAPI::LinkAPIPtrVec ScenePersistenceAPI::GenerateSubLinks()
 	{
-		std::vector<std::shared_ptr<AdvViz::SDK::LinkAPI>> res;
-		for (auto link : GetImpl().links_)
+		auto thdata = GetImpl().thdata_.GetRAutoLock();
+		LinkAPIPtrVec res;
+		for (auto link : thdata->links_)
 		{
-			if (link->GetType() == "RealityData" || link->GetType() == "iModel")
+			BE_ASSERT(!link->GetImpl().parentLink_, "main links should not have parents");
+
+			//disable saving of adjustments if they are currently saved in Itwin Engage Typescript.
+			if (enableExportOfResources && (link->GetType() == "RealityData" || link->GetType() == "iModel"))
 			{
 				if (link->HasTransform() || link->HasQuality())
 				{
@@ -1709,11 +2331,11 @@ namespace AdvViz::SDK {
 						nulink->SetVisibility(link->GetVisibility());
 					}
 					nulink->SetType("adjustment");
-					nulink->SetRef(link->GetId());
+					nulink->SetRef(link->GetDBIdentifier());
 					nulink->SetShouldSave(link->ShouldSave());
 					nulink->Delete(link->ShouldDelete());
 					nulink->GetImpl().parentLink_ = link;
-					nulink->GetImpl().id_ = link->GetImpl().sublinkId_;
+					nulink->GetImpl().SetDBIdentifier(link->GetImpl().sublinkId_);
 					res.push_back(nulink);
 				}
 			}
@@ -1731,23 +2353,25 @@ namespace AdvViz::SDK {
 		return GetImpl().timeline_;
 	}
 
-	std::vector<std::shared_ptr<AdvViz::SDK::LinkAPI>> ScenePersistenceAPI::GeneratePreLinks()
+	ScenePersistenceAPI::LinkAPIPtrVec ScenePersistenceAPI::GeneratePreLinks()
 	{
-		std::vector<std::shared_ptr<AdvViz::SDK::LinkAPI>> res;
+		LinkAPIPtrVec res;
 		auto timeline = GetTimeline();
 		if (!timeline)
 			return res;
+		timeline->OnStartSave();
 		for (size_t i(0); i < timeline->GetClipCount(); i++)
 		{
 			auto clipp = timeline->GetClipByIndex(i);
 			if (!clipp)
 				continue;
-
+			(*clipp)->OnStartSave();
+			// Here keyframes will be saved together with clips:
+			(*clipp)->OnStartSaveKeyframes();
 			std::shared_ptr<AdvViz::SDK::LinkAPI> nulink(AdvViz::SDK::LinkAPI::New());
 			nulink->SetType("clip");
 			nulink->SetName((*clipp)->GetName());
-			nulink->GetImpl().idx_ = (int)i;
-			nulink->GetImpl().id_ = static_cast<const std::string>((*clipp)->GetId());
+			nulink->SetId((*clipp)->GetId());
 			nulink->SetShouldSave(true);
 			res.push_back(nulink);
 		}
@@ -1756,7 +2380,7 @@ namespace AdvViz::SDK {
 			std::shared_ptr<AdvViz::SDK::LinkAPI> nulink(AdvViz::SDK::LinkAPI::New());
 			nulink->SetType("clip");
 			nulink->SetName(clipp->GetName());
-			nulink->GetImpl().id_ = static_cast<const std::string>(clipp->GetId());
+			nulink->SetId(clipp->GetId());
 			nulink->Delete(true);
 			res.push_back(nulink);
 		}
@@ -1778,88 +2402,120 @@ namespace AdvViz::SDK {
 		return GetImpl().ConvertHDRIJsonFileToKeyValueMap(jsonPath, outMap);
 	}
 
-	AdvViz::expected<std::vector<std::shared_ptr<IScenePersistence>>, int> GetITwinScenesAPI(
-		const std::string& itwinid)
+	void ScenePersistenceAPI::AsyncRefreshLinks(std::function<void(expected<void, std::string> const&)> callback)
 	{
-		std::vector<std::shared_ptr<IScenePersistence>> scenes;
+		auto thdata = GetImpl().thdata_.GetRAutoLock();
+		if (thdata->HasDBIdentifier())
+		{
+			GetImpl().AsyncLoadLinks(callback);
+		}
+		else if (callback)
+		{
+			callback(make_unexpected("No ID set"));
+		}
+	}
 
-		std::shared_ptr<Http> http = creds.GetHttp();
-		if (!http)
-			return scenes;
+	void ScenePersistenceAPI::EnableExportOfResources(bool bEnable)
+	{
+		enableExportOfResources = bEnable;
+	}
 
-
+	namespace
+	{
 		struct JsonSceneWithId
 		{
 			std::string displayName;
 			std::string iTwinId;
 			std::string id;
 		};
-		struct SceneAPIUrl
-		{
-			std::string href;
-		};
-		struct SceneAPILinks
-		{
-			std::optional<SceneAPIUrl> prev;
-			std::optional<SceneAPIUrl> self;
-			std::optional<SceneAPIUrl> next;
-		};
-		struct SJsonOut
-		{
-			std::optional<std::vector<JsonSceneWithId>> scenes;
-			std::optional<SceneAPILinks> _links;
-		};
+	}
 
-		SJsonOut jOut;
-		long status = http->GetJson(jOut, "scenes?iTwinId=" + itwinid, {});
-		bool continueLoading = true;
-		while (continueLoading)
+	AdvViz::expected<ScenePtrVector, HttpError> GetITwinScenesAPI(
+		const std::string& itwinid)
+	{
+		std::shared_ptr<Http> const& http = creds.GetHttp();
+		if (!http)
 		{
-			if (status != 200 && status != 201)
+			return make_unexpected(HttpError{
+				.message = "No Http support to retrieve scenes",
+				.httpCode = -2});
+		}
+		ScenePtrVector scenes;
+		auto ret = ITwinAPI::GetPagedData<"scenes", JsonSceneWithId>(http,
+			"scenes?iTwinId=" + itwinid,
+			{} /* extra headers*/,
+			[&scenes, itwinid](JsonSceneWithId const& row) -> expected<void, HttpError>
+		{
+			std::shared_ptr<ScenePersistenceAPI> scene(ScenePersistenceAPI::New());
+			if (scene->Get(itwinid, row.id))
 			{
-				continueLoading = false;
-				return AdvViz::make_unexpected(status);
+				scenes.push_back(scene);
 			}
-			if (jOut.scenes)
+			return {};
+		});
+		if (!ret)
+		{
+			return make_unexpected(ret.error());
+		}
+		return scenes;
+	}
+
+	void AsyncGetITwinSceneInfosAPI(const std::string& itwinid,
+		std::function<void(expected<SceneInfoVec, HttpError>)>&& inCallback,
+		Http::EAsyncCallbackExecutionMode asyncCBExecMode /*= Default*/)
+	{
+		std::shared_ptr<Http> http = creds.GetHttp();
+		if (!http)
+		{
+			inCallback(make_unexpected(HttpError{
+					.message = "No Http support to retrieve scene infos",
+					.httpCode = -2
+				})
+			);
+			return;
+		}
+
+		std::shared_ptr<std::mutex> scenesMutex = std::make_shared<std::mutex>();
+		std::shared_ptr<SceneInfoVec> sceneInfos = std::make_shared<SceneInfoVec>();
+
+		ITwinAPI::AsyncGetPagedDataVector<"scenes", JsonSceneWithId>(http,
+			"scenes?iTwinId=" + itwinid,
+			{} /*headers*/,
+			/* Receive-Vector callback */
+			[scenesMutex, sceneInfos](std::vector<JsonSceneWithId> const& rows) -> expected<void, HttpError>
+		{
+			std::lock_guard<std::mutex> lock(*scenesMutex);
+
+			sceneInfos->reserve(sceneInfos->size() + rows.size());
+			for (JsonSceneWithId const& row : rows)
 			{
-				for (auto& row : *jOut.scenes)
-				{
-					std::shared_ptr<ScenePersistenceAPI> scene(ScenePersistenceAPI::New());
-					if (scene->Get(itwinid, row.id))
-						scenes.push_back(scene);
-				}
-
-
-				jOut.scenes->clear();
+				sceneInfos->emplace_back(SceneInfo{
+					.id = row.id,
+					.iTwinId = row.iTwinId,
+					.displayName = row.displayName
+				});
 			}
-			if (jOut._links.has_value() && jOut._links->next.has_value() && !jOut._links->next->href.empty())
+			return {};
+		},
+			/* OnFinish callback */
+			[itwinid, callback = std::move(inCallback), scenesMutex, sceneInfos](expected<void, HttpError> const& exp)
+		{
+			if (exp)
 			{
-				// Quick workaround for a bug in Decoration Service sometimes providing bad URLs with http
-				// instead of https protocol! (issue found for instances, which was causing bug #1609088).
-				std::string const nextUrl = rfl::internal::strings::replace_all(
-					jOut._links->next->href,
-					"http://", "https://");
-				{
-				}
+				std::lock_guard<std::mutex> lock(*scenesMutex);
+				BE_LOGI("ITwinScene", "[SceneAPI] Found " << sceneInfos->size() << " Scenes(s) for iTwin " << itwinid);
+				callback(*sceneInfos);
 			}
 			else
 			{
-				continueLoading = false;
+				BE_LOGW("ITwinScene", "Fetching scene infos from SceneAPI failed for iTwin " << itwinid
+					<< ". " << exp.error().message
+					<< " (status: " << exp.error().httpCode << ")");
+				callback(make_unexpected(exp.error()));
 			}
-		}
-
-		//if (ret)
-		//{
-		//	BE_LOGI("ITwinScene", "Found " << scenes.size() << " API Scenes(s) for iTwin " << itwinid);
-		//		}
-		//else
-		//{
-		//	BE_LOGW("ITwinScene", "Loading scenes failed for iTwin " << itwinid << ". " << ret.error());
-		//}
-
-		return scenes;
-; 	}
-
+		},
+			asyncCBExecMode);
+	}
 
 	LinkAPI::Impl& LinkAPI::GetImpl() const
 	{
@@ -1874,7 +2530,6 @@ namespace AdvViz::SDK {
 	const std::string& LinkAPI::GetRef() const
 	{
 		return GetImpl().link_.ref;
-
 	}
 
 	std::string LinkAPI::GetName() const
@@ -1898,16 +2553,12 @@ namespace AdvViz::SDK {
 
 	bool LinkAPI::GetVisibility() const
 	{
-		if (GetImpl().link_.visibility.has_value())
-			return GetImpl().link_.visibility.value();
-		return true;
+		return GetImpl().link_.visibility.value_or(true);
 	}
 
 	double LinkAPI::GetQuality() const
 	{
-		if (GetImpl().link_.quality.has_value())
-			return GetImpl().link_.quality.value();
-		return 1.0;
+		return GetImpl().link_.quality.value_or(1.0);
 	}
 
 	dmat3x4 LinkAPI::GetTransform() const
@@ -1917,54 +2568,43 @@ namespace AdvViz::SDK {
 			dmat3x4 mat;
 			std::memcpy(&mat[0], GetImpl().link_.transform->data(), 12 * sizeof(double));
 			return mat;
-
 		}
 		return Identity34;
 	}
 
 	void LinkAPI::SetType(const std::string& value)
 	{
-		GetImpl().shoudSave_ = GetImpl().shoudSave_ || GetImpl().link_.type != value;
-		GetImpl().link_.type = value;
+		GetImpl().SetType(value);
 	}
 
 	void LinkAPI::SetRef(const std::string& value)
 	{
-		GetImpl().shoudSave_ = GetImpl().shoudSave_ || GetImpl().link_.ref != value;
-		GetImpl().link_.ref = value;
+		GetImpl().SetRef(value);
 	}
 
 	void LinkAPI::SetName(const std::string& value)
 	{
-		GetImpl().shoudSave_ = GetImpl().shoudSave_ || !GetImpl().link_.name.has_value() || GetImpl().link_.name != value;
-		GetImpl().link_.name = value;
+		GetImpl().SetName(value);
 	}
 
 	void LinkAPI::SetGCS(const std::string& v1, const std::array<float, 3>& v2)
 	{
-		Impl::SJSonGCS value{ .wkt = v1, .center = v2 };
-
-		GetImpl().shoudSave_ = GetImpl().shoudSave_ || !GetImpl().link_.gcs.has_value() || value.wkt != GetImpl().link_.gcs->wkt || value.center != GetImpl().link_.gcs->center;
-		GetImpl().link_.gcs = value;
-
+		GetImpl().SetGCS(v1, v2);
 	}
 
 	void LinkAPI::SetVisibility(bool v)
 	{
-		GetImpl().shoudSave_ = GetImpl().shoudSave_ || !GetImpl().link_.visibility.has_value() || GetImpl().link_.visibility != v;
-		GetImpl().link_.visibility = v;
+		GetImpl().SetVisibility(v);
 	}
 
 	void LinkAPI::SetQuality(double v)
 	{
-		GetImpl().shoudSave_ = GetImpl().shoudSave_ || !GetImpl().link_.quality.has_value() || GetImpl().link_.quality != v;
-		GetImpl().link_.quality = v;
+		GetImpl().SetQuality(v);
 	}
 
 	void LinkAPI::SetTransform(const dmat4x3& v)
 	{
-		GetImpl().shoudSave_ = GetImpl().shoudSave_ || !GetImpl().link_.transform.has_value() || v != *GetImpl().link_.transform;
-		GetImpl().link_.transform = v;
+		GetImpl().SetTransform(v);
 	}
 
 	bool LinkAPI::HasName() const
@@ -1990,7 +2630,6 @@ namespace AdvViz::SDK {
 	bool LinkAPI::HasTransform() const
 	{
 		return GetImpl().link_.transform.has_value();
-
 	}
 
 
@@ -2001,31 +2640,33 @@ namespace AdvViz::SDK {
 
 	LinkAPI::~LinkAPI() {}
 
-	bool LinkAPI::ShouldSave() const
+
+	const RefID& LinkAPI::GetId() const
 	{
-		return GetImpl().shoudSave_;
+		return GetImpl().GetId();
+	}
+	void LinkAPI::SetId(const RefID& id)
+	{
+		GetImpl().SetId(id);
 	}
 
-	void LinkAPI::SetShouldSave(bool shouldSave)
+	ESaveStatus LinkAPI::GetSaveStatus() const
 	{
-		GetImpl().shoudSave_ = shouldSave;
+		return GetImpl().GetSaveStatus();
+	}
+	void LinkAPI::SetSaveStatus(ESaveStatus status)
+	{
+		GetImpl().SetSaveStatus(status);
 	}
 
 	void LinkAPI::Delete(bool value)
 	{
-		GetImpl().shouldDelete_ = value;
-		if (value)
-			GetImpl().shoudSave_ = true;
+		GetImpl().Delete(value);
 	}
 
-	bool LinkAPI::ShouldDelete()
+	bool LinkAPI::ShouldDelete() const
 	{
 		return GetImpl().shouldDelete_;
-	}
-
-	const std::string& LinkAPI::GetId()
-	{
-		return GetImpl().id_;
 	}
 
 	void SetSceneAPIConfig(const Config::SConfig& c)

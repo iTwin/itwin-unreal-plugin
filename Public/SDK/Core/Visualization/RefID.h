@@ -75,6 +75,13 @@ MODULE_EXPORT namespace AdvViz::SDK
 		// Only useful when dealing with cross-lang conversions.
 		static RefID FromUInt64(uint64_t id) { return RefID(id); }
 
+		// move constructible and assignable
+		RefID(RefID&&) noexcept = default;
+		RefID& operator=(RefID&&) noexcept = default;
+
+		RefID(const RefID&) noexcept = default;
+		RefID& operator=(const RefID&) noexcept = default;
+
 	private:
 		static uint64_t NextID();
 

@@ -78,3 +78,21 @@ void UCesiumPolygonRasterOverlay::OnRemove(
     this->_pExcluder.reset();
   }
 }
+
+bool UCesiumPolygonRasterOverlay::ShouldExcludePoint(
+    const FVector3d& WorldPosition) const {
+  if (this->_pExcluder) {
+    ACesium3DTileset* pTileset = this->GetOwner<ACesium3DTileset>();
+    FTransform const worldToTileset =
+        pTileset ? pTileset->GetActorTransform().Inverse()
+                 : FTransform::Identity;
+    const FVector unrealPosition =
+        worldToTileset.TransformPosition(WorldPosition);
+    const FVector ecefLocation =
+        pTileset->ResolveGeoreference()
+            ->TransformUnrealPositionToEarthCenteredEarthFixed(unrealPosition);
+    return this->_pExcluder->shouldExcludePoint(
+        glm::dvec3(ecefLocation.X, ecefLocation.Y, ecefLocation.Z));
+  }
+  return false;
+}

@@ -25,8 +25,13 @@ void FITwinClippingBoxInfo::DoSetInvertEffect(bool bInvert)
 	BoxProperties->bInvertEffect = bInvert;
 }
 
-void FITwinClippingBoxInfo::CalcBoxBounds(glm::dmat3x3 const& BoxMatrix, glm::dvec3 const& BoxTranslation)
+void FITwinClippingBoxInfo::UpdateBoxProperties(glm::dmat3x3 const& BoxMatrix, glm::dvec3 const& BoxTranslation)
 {
+	// Store inverse matrix and translation
+	BoxProperties->BoxInvMatrix = glm::inverse(BoxMatrix);
+	BoxProperties->BoxTranslation = BoxTranslation;
+
+	// Calculate bounds
 	std::array<glm::dvec3, 8> BoxVertices;
 	BoxVertices[0] = BoxTranslation + (BoxMatrix * glm::dvec3(-0.5, -0.5, -0.5));
 	BoxVertices[1] = BoxTranslation + (BoxMatrix * glm::dvec3(-0.5, -0.5, 0.5));

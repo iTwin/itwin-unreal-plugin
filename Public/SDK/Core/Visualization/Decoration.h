@@ -23,8 +23,9 @@ namespace AdvViz::SDK
 	{
 	public:
 		/// Create new decoration on server
-		virtual void Create(
-			const std::string& name, const std::string& itwinid) = 0;
+		virtual void AsyncCreate(
+			const std::string& name, const std::string& itwinid,
+			std::function<void(bool)>&& onCreationDoneFunc = {}) = 0;
 		/// Retrieve the decoration from server
 		virtual void Get(const std::string& id) = 0;
 		/// Delete the decoration on server
@@ -38,15 +39,16 @@ namespace AdvViz::SDK
 		/// Set Geo Coordinate System
 		virtual void SetGCS(const GCS& v) = 0;
 		/// Get Geo Coordinate System
-		virtual const std::optional<GCS>& GetGCS()const = 0;
+		virtual const std::optional<GCS>& GetGCS() const = 0;
 	};
 
-	class ADVVIZ_LINK  Decoration : public IDecoration, Tools::TypeId<Decoration>
+	class ADVVIZ_LINK Decoration : public IDecoration, Tools::TypeId<Decoration>
 	{
 	public:
 		/// Create new decoration on server
-		void Create(
-			const std::string& name, const std::string& itwinid) override;
+		void AsyncCreate(
+			const std::string& name, const std::string& itwinid,
+			std::function<void(bool)>&& onCreationDoneFunc = {}) override;
 		/// Retrieve the decoration from server
 		void Get(const std::string& id) override;
 		/// Delete the decoration on server
@@ -57,7 +59,7 @@ namespace AdvViz::SDK
 		/// Set Geo Coordinate System
 		void SetGCS(const GCS& v) override;
 		/// Get Geo Coordinate System
-		const std::optional<GCS>& GetGCS()const override;
+		const std::optional<GCS>& GetGCS() const override;
 
 		virtual void SetGCSTransform(const Tools::IGCSTransformPtr& transform) override;
 		virtual const Tools::IGCSTransformPtr& GetGCSTransform() const override;

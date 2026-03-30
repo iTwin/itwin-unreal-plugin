@@ -1,0 +1,11 @@
+--- a/CMakeLists.txt	2026-03-21 21:34:23.421253100 +0100
++++ b/CMakeLists.txt	2026-03-21 21:34:29.968308700 +0100
+@@ -150,7 +150,7 @@
+     zutil.c)
+ 
+ if(WIN32)
+-    set(zlib_static_suffix "s")
++    set(zlib_static_suffix "lib")
+     set(CMAKE_DEBUG_POSTFIX "d")
+ endif(WIN32)
+ 

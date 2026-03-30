@@ -6,12 +6,14 @@
 |
 +--------------------------------------------------------------------------------------*/
 
-
 #include <Material/ITwinMaterialDefaultTexturesHolder.h>
-#include <Core/ITwinAPI/ITwinMaterial.h>
 #include <Engine/Texture2D.h>
 #include <UObject/ConstructorHelpers.h>
-#include <Core/Tools/Assert.h>
+
+#include <Compil/BeforeNonUnrealIncludes.h>
+	#include <Core/ITwinAPI/ITwinMaterial.h>
+	#include <Core/Tools/Assert.h>
+#include <Compil/AfterNonUnrealIncludes.h>
 
 UITwinMaterialDefaultTexturesHolder::UITwinMaterialDefaultTexturesHolder()
 {

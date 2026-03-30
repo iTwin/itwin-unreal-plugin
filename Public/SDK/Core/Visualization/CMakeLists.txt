@@ -18,10 +18,14 @@ add_library(Visualization ${libtype}
 		InstancesManager.cpp
 		AnnotationsManager.h
 		AnnotationsManager.cpp
+		AsyncHelpers.cpp
+		AsyncHelpers.h
+		AsyncHttp.inl
 		MaterialPersistence.cpp
 		MaterialPersistence.h
 		ScenePersistenceDS.cpp
 		ScenePersistenceDS.h
+		ScenePersistence.cpp
 		ScenePersistence.h
 		ScenePersistenceAPI.cpp
 		ScenePersistenceAPI.h
@@ -41,6 +45,11 @@ add_library(Visualization ${libtype}
 		PathAnimation.cpp 
 		RefID.h
 		RefID.cpp
+		SavableItem.h
+		SavableItemManager.cpp
+		SavableItemManager.inl
+		SavableItemManager.h
+		SaveStatus.h
 )
 target_compile_features(Visualization PRIVATE ${DefaultCXXSTD})
 target_link_libraries(Visualization PUBLIC
@@ -66,6 +75,8 @@ if(SDK_ADDUNITTEST)
 		Tests/Mock.h
 		Tests/RefIDTest.cpp
 		Tests/AnnotationTest.cpp
+		Tests/InstancesTest.cpp
+		Tests/SplinesTest.cpp
 	)
 	target_compile_features(VisualizationTest PRIVATE ${DefaultCXXSTD})
 	target_compile_definitions(VisualizationTest PRIVATE "CMAKE_SOURCE_DIR=\"${CMAKE_SOURCE_DIR}\"")

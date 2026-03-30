@@ -99,11 +99,10 @@ public:
 	///		constructed tuner. Useful for unit tests.
 	GltfTuner(bool const bTuneWithoutRules = false);
 	~GltfTuner();
-	virtual bool apply(const CesiumGltf::Model& model, const glm::dmat4& tileTransform,
-		const glm::dvec4& rootTranslation, CesiumGltf::Model& tunedModel) override;
-	virtual void parseTilesetJson(const rapidjson::Document& tilesetJson) override;
-	int SetMaterialRules(Rules&& rules);
-	int SetAnim4DRules(Rules&& rules);
+	CesiumAsync::Future<std::optional<Cesium3DTilesSelection::GltfModifierOutput>> apply(
+		Cesium3DTilesSelection::GltfModifierInput&& input) override;
+	int64_t SetMaterialRules(Rules&& rules);
+	int64_t SetAnim4DRules(Rules&& rules);
 
 	bool HasITwinMaterialInfo() const;
 	std::vector<ITwinMaterialInfo> GetITwinMaterialInfo() const;
@@ -111,7 +110,17 @@ public:
 
 	void SetMaterialHelper(std::shared_ptr<GltfMaterialHelper> const& matHelper);
 
+	bool applyForUnitTest(const CesiumGltf::Model& model, const glm::dmat4& tileTransform,
+		CesiumGltf::Model& tunedModel);
+
 private:
+	CesiumAsync::Future<void> onRegister(
+		const CesiumAsync::AsyncSystem& asyncSystem,
+		const std::shared_ptr<CesiumAsync::IAssetAccessor>& pAssetAccessor,
+		const std::shared_ptr<spdlog::logger>& pLogger,
+		const Cesium3DTilesSelection::TilesetMetadata& tilesetMetadata,
+		const Cesium3DTilesSelection::Tile& rootTile) override;
+
 	struct Impl;
 	const std::unique_ptr<Impl> impl_;
 

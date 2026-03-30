@@ -15,7 +15,7 @@
 #include <ITwinIModel.h>
 #include <ITwinTilesetAccess.h>
 #include <ITwinTilesetAccess.inl>
-#include <Clipping/ITwinClippingCustomPrimitiveDataHelper.h>
+#include <Clipping/ITwinClipping3DTilesetHelper.h>
 
 #include <Dom/JsonObject.h>
 #include <Dom/JsonValue.h>
@@ -40,6 +40,8 @@ public:
 
 	virtual ITwin::ModelDecorationIdentifier GetDecorationKey() const override;
 	virtual AITwinDecorationHelper* GetDecorationHelper() const override;
+	virtual UITwinClipping3DTilesetHelper* GetClippingHelper() const override;
+	virtual FBox GetBoundingBox() const override;
 
 private:
 	TWeakObjectPtr<AITwinRealityData> RealityData;
@@ -54,7 +56,7 @@ public:
 	double Longitude = 0;
 	AITwinDecorationHelper* DecorationPersistenceMgr = nullptr;
 	uint32 TilesetLoadedCount = 0;
-	TStrongObjectPtr<UITwinClippingCustomPrimitiveDataHelper> ClippingHelper;
+	TStrongObjectPtr<UITwinClipping3DTilesetHelper> ClippingHelper;
 
 	FImpl(AITwinRealityData& InOwner)
 		: Owner(InOwner)
@@ -173,6 +175,7 @@ void AITwinRealityData::OnRealityData3DInfoRetrieved(bool bSuccess, FITwinRealit
 		}
 #endif
 	}
+	OnRealityDataInfoLoaded.Broadcast(bSuccess, RealityDataId);
 }
 
 bool AITwinRealityData::HasRealityDataIdentifiers() const
@@ -188,10 +191,16 @@ void AITwinRealityData::OnSceneLoaded(bool success)
 void AITwinRealityData::UpdateRealityData()
 {
 	if (HasTileset())
+	{
+		if (ensure(!RealityDataId.IsEmpty()))
+		{
+			OnRealityDataInfoLoaded.Broadcast(true, RealityDataId);
+		}
 		return;
+	}
 	if (CheckServerConnection() != AdvViz::SDK::EITwinAuthStatus::Success)
 	{
-		// No authorization yet: postpone the actual update (see OnAuthorizationDone)
+		// No authorization yet: postpone the actual update (see UpdateOnSuccessfulAuthorization)
 		return;
 	}
 	if (WebServices && HasRealityDataIdentifiers())
@@ -248,6 +257,23 @@ AITwinDecorationHelper* AITwinRealityData::FTilesetAccess::GetDecorationHelper()
 		RealityData->Impl->FindPersistenceMgr();
 	}
 	return RealityData->Impl->DecorationPersistenceMgr;
+}
+
+UITwinClipping3DTilesetHelper* AITwinRealityData::FTilesetAccess::GetClippingHelper() const
+{
+	if (!RealityData.IsValid())
+		return nullptr;
+	return RealityData->GetClippingHelper();
+}
+
+FBox AITwinRealityData::FTilesetAccess::GetBoundingBox() const
+{
+	if (!RealityData.IsValid())
+		return {};
+	FBox BoundingBox;
+	if (!RealityData->GetBoundingBox(BoundingBox, /*bClampOutlandishValues*/true))
+		return {};
+	return BoundingBox;
 }
 
 TUniquePtr<FITwinTilesetAccess> AITwinRealityData::MakeTilesetAccess()
@@ -341,7 +367,7 @@ void AITwinRealityData::Destroyed()
 		GetWorld()->DestroyActor(Child);
 }
 
-UITwinClippingCustomPrimitiveDataHelper* AITwinRealityData::GetClippingHelper() const
+UITwinClipping3DTilesetHelper* AITwinRealityData::GetClippingHelper() const
 {
 	return Impl->ClippingHelper.Get();
 }
@@ -352,9 +378,8 @@ bool AITwinRealityData::MakeClippingHelper()
 		return false;
 
 	Impl->ClippingHelper =
-		TStrongObjectPtr<UITwinClippingCustomPrimitiveDataHelper>(NewObject<UITwinClippingCustomPrimitiveDataHelper>(this));
-	Impl->ClippingHelper->SetModelIdentifier(
-		std::make_pair(EITwinModelType::RealityData, RealityDataId));
+		TStrongObjectPtr<UITwinClipping3DTilesetHelper>(NewObject<UITwinClipping3DTilesetHelper>(this));
+	Impl->ClippingHelper->InitWith(FTilesetAccess(this));
 
 	ACesium3DTileset* Tileset = GetMutableTileset();
 	if (Tileset)
@@ -398,22 +423,24 @@ FBox GetUnrealAxisAlignBoundingBox(ACesium3DTileset* Tileset)
 	return box;
 }
 
-void AITwinRealityData::ZoomOnRealityData()
+bool AITwinRealityData::GetBoundingBox(FBox& OutBox, bool bClampOutlandishValues)
 {
 	ACesium3DTileset* Tileset = GetMutableTileset();
-	if (Tileset)
+	if (!Tileset)
+		return false;
+
+	FBox TilesetBBox = UITwinUtilityLibrary::GetUnrealAxisAlignBoundingBox(Tileset);
+	if (!TilesetBBox.IsValid)
+		return false;
+	OutBox = TilesetBBox;
+	if (bClampOutlandishValues)
 	{
-		FBox TilesetBBox = UITwinUtilityLibrary::GetUnrealAxisAlignBoundingBox(Tileset);
 		// hack around extravagant project extents: limit half size to 10km: it looks big but there is a x0.2
 		// empirical ratio in FImpl::ZoomOn already...
 		double const MaxHalfSize = 10'000 * 100;
 		FVector Ctr, HalfSize;
 		TilesetBBox.GetCenterAndExtents(Ctr, HalfSize);
-		if (TilesetBBox.IsValid && HalfSize.GetAbsMax() < MaxHalfSize)
-		{
-			UITwinUtilityLibrary::ZoomOn(TilesetBBox, GetWorld());
-		}
-		else
+		if (HalfSize.GetAbsMax() > MaxHalfSize)
 		{
 			double Ratio = MaxHalfSize;
 			if (std::abs(HalfSize.X) >= MaxHalfSize)
@@ -422,9 +449,18 @@ void AITwinRealityData::ZoomOnRealityData()
 				Ratio /= std::abs(HalfSize.Y);
 			else
 				Ratio /= std::abs(HalfSize.Z);
-			UITwinUtilityLibrary::ZoomOn(FBox(Ctr - Ratio * HalfSize, Ctr + Ratio * HalfSize), GetWorld());
+			OutBox = FBox(Ctr - Ratio * HalfSize, Ctr + Ratio * HalfSize);
 		}
 	}
+	return true;
+}
+
+void AITwinRealityData::ZoomOnRealityData()
+{
+	FBox BoundingBox;
+	if (!GetBoundingBox(BoundingBox, /*bClampOutlandishValues*/true))
+		return;
+	UITwinUtilityLibrary::ZoomOn(BoundingBox, GetWorld());
 }
 
 static FAutoConsoleCommandWithWorldAndArgs FCmd_ZoomOnRealityData(

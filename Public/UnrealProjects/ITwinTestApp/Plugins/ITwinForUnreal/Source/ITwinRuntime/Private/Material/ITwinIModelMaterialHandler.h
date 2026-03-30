@@ -16,6 +16,8 @@
 #include <Material/ITwinMaterialLoadingUtils.h>
 #include <MaterialPrediction/ITwinMaterialPredictionStatus.h>
 
+#include <Misc/Optional.h>
+
 #include <functional>
 #include <memory>
 #include <optional>
@@ -144,24 +146,36 @@ public:
 	// Load properties from the Material Library
 	//-----------------------------------------------------------------------------------
 
+	struct LoadOptions
+	{
+		/// Optional path to a directory from where textures should be loaded (overriding paths read from the
+		/// JSON file - keeping only the basename). This option was introduced for the Component Center.
+		TOptional<FString> CustomTextureDir = {};
+		/// If true, enforce a full invalidation of the material.
+		bool bForceRefreshAllParameters = false;
+		/// Can be provided to customize the material after reading its properties (introduced to adjust the
+		/// material previews).
+		std::function<void(AdvViz::SDK::ITwinMaterial&)> CustomizeMaterialFunc = {};
+	};
+
 	//! Load a material from an asset file (expecting an asset of class #UITwinMaterialDataAsset).
 	bool LoadMaterialFromAssetFile(uint64_t MaterialId, FString const& AssetFilePath,
-		AITwinIModel& IModel);
+		AITwinIModel& IModel,
+		LoadOptions const& Options = {});
 
 	bool LoadMaterialFromAssetFile(uint64_t MaterialId,
 		FMaterialAssetInfo const& MaterialAssetInfo,
 		FString const& IModelId,
 		FITwinSceneMapping& SceneMapping,
 		UITwinMaterialDefaultTexturesHolder const& DefaultTexturesHolder,
-		bool bForceRefreshAllParameters = false,
-		std::function<void(AdvViz::SDK::ITwinMaterial&)> const& CustomizeMaterialFunc = {});
+		LoadOptions const& Options = {});
 
 	bool LoadMaterialWithoutRetuning(AdvViz::SDK::ITwinMaterial& OutNewMaterial,
 		uint64_t MaterialId,
 		FMaterialAssetInfo const& MaterialAssetInfo,
 		FString const& IModelId,
 		BeUtils::WLock const& Lock,
-		bool bForceRefreshAllParameters = false);
+		LoadOptions const& Options = {});
 
 
 	//-----------------------------------------------------------------------------------

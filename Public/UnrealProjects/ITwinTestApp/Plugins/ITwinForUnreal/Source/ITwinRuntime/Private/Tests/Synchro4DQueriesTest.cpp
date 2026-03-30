@@ -352,32 +352,31 @@ namespace TestSynchro4DQueries
 {
 	void MakeDummySchedule(FITwinSynchro4DSchedulesInternals& Internals)
 	{
-		Internals.MutateSchedules([](std::vector<FITwinSchedule>& Schedules)
+		Internals.MutateSchedules([](std::optional<FITwinSchedule>& Schedule)
 			{
-				check(Schedules.empty());
-				Schedules.resize(1);
-				FITwinSchedule& Sched = Schedules.back();
-				Sched.Id = TEXT("<SchedId>");
-				Sched.Name = TEXT("<SchedName>");
+				check(!Schedule);
+				Schedule.emplace();
+				Schedule->Id = TEXT("<SchedId>");
+				Schedule->Name = TEXT("<SchedName>");
 				FAnimationBinding Binding;
 				Binding.AnimatedEntities = ITwinElementID(42);
 				Binding.TaskId = TEXT("<TaskId>");
 				Binding.TaskInVec = 0;
-				Sched.Tasks.push_back(FScheduleTask{ {}, TEXT("<TaskId>"), TEXT("<TaskName>"),
+				Schedule->Tasks.push_back(FScheduleTask{ {}, TEXT("<TaskId>"), TEXT("<TaskName>"),
 													 FTimeRangeInSeconds{0., 12.} });
-				Sched.KnownTasks[Binding.TaskId] = 0;
+				Schedule->KnownTasks[Binding.TaskId] = 0;
 				Binding.AppearanceProfileId = TEXT("<AppearanceProfileId>");
 				Binding.AppearanceProfileInVec = 0;
-				check(Sched.AppearanceProfiles.empty());
-				Sched.AppearanceProfiles.resize(1);
-				Sched.KnownAppearanceProfiles[Binding.AppearanceProfileId] = 0;
+				check(Schedule->AppearanceProfiles.empty());
+				Schedule->AppearanceProfiles.resize(1);
+				Schedule->KnownAppearanceProfiles[Binding.AppearanceProfileId] = 0;
 				//Sched.AnimBindingsFullyKnownForElem[std::get<ITwinElementID>(Binding.AnimatedEntities)]
 				//	= true;
 				//Binding.TransfoAssignmentId = TEXT("<TransformListId>");
 				//Binding.TransfoAssignmentInVec = 0;
 				//Sched.TransfoAssignments.push_back(FTransformAssignment{...});
-				Sched.KnownAnimationBindings[Binding] = 0;
-				Sched.AnimationBindings.emplace_back(std::move(Binding));
+				Schedule->KnownAnimationBindings[Binding] = 0;
+				Schedule->AnimationBindings.emplace_back(std::move(Binding));
 			});
 	}
 }

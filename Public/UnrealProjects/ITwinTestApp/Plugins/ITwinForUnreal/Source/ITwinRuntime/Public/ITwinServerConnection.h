@@ -18,6 +18,12 @@
 #include <memory>
 #include <ITwinServerConnection.generated.h>
 
+namespace AdvViz::SDK
+{
+	class ThreadSafeAccessToken;
+}
+
+
 UENUM()
 enum class EITwinEnvironment : uint8
 {
@@ -72,7 +78,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "iTwin")
 	FString GetAccessToken() const;
 
-	std::shared_ptr<std::string> GetAccessTokenPtr() const;
+	std::shared_ptr<AdvViz::SDK::ThreadSafeAccessToken> GetAccessTokenPtr() const;
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin")
 	bool HasAccessToken() const { return !GetAccessToken().IsEmpty(); }
@@ -100,6 +106,12 @@ public:
 	//! Sets the port for the redirect Uri used in authorization process (the default port is 3000).
 	UFUNCTION(BlueprintCallable, Category = "iTwin")
 	static void SetAuthRedirectUriPort(int Port);
+	//! Resets the current authorization, if any, as well as the cache, so that the next session displays the
+	//! login prompt.
+	UFUNCTION(Category = "iTwin",
+		CallInEditor,
+		BlueprintCallable)
+	static void Logout();
 };
 
 DECLARE_LOG_CATEGORY_EXTERN(LogITwinHttp, Log, All);

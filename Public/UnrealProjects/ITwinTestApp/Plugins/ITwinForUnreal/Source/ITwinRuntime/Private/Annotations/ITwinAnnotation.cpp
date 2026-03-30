@@ -18,6 +18,10 @@
 #	include <Core/Visualization/AnnotationsManager.h>
 #include <Compil/AfterNonUnrealIncludes.h>
 
+namespace
+{
+	static TObjectPtr<const UObject> CustomFontObject;
+}
 
 template <typename ObjClass>
 static ObjClass* LoadObjFromPath(const FName& Path)
@@ -41,6 +45,11 @@ static UMaterial* LoadMaterialFromPath(const FName& Path)
 	bVRMode = true;
 }
 
+/*static*/ void AITwinAnnotation::SetCustomFontObject(const UObject* InFontObject)
+{
+	CustomFontObject = InFontObject;
+}
+
 AITwinAnnotation::AITwinAnnotation()
 {
 	PrimaryActorTick.bCanEverTick = true;
@@ -58,6 +67,8 @@ void AITwinAnnotation::BeginPlay()
 	SetTickGroup(ETickingGroup::TG_PostUpdateWork);
 	SetColorTheme(colorTheme);
 	SetMode(mode);
+	SetFontSize(_fontSize);
+		
 	//hiding annotations if in VR mode
 	if (AITwinAnnotation::VRMode()) {
 		SetVisibility(false);
@@ -71,6 +82,10 @@ void AITwinAnnotation::BuildWidget()
 	if (onScreen)
 	{
 		onScreen->AddToViewport();
+		if (CustomFontObject)
+		{
+			onScreen->SetFontObject(CustomFontObject);
+		}
 		onScreen->SetText(content);
 	}
 }
@@ -85,35 +100,40 @@ bool AITwinAnnotation::Destroy(bool bNetForce, bool bShouldModifyLevel)
 	return Super::Destroy(bNetForce, bShouldModifyLevel);
 }
 
-std::shared_ptr<AdvViz::SDK::Annotation> AITwinAnnotation::GetAVizAnnotation() const
+AdvViz::SDK::AnnotationPtr AITwinAnnotation::GetAVizAnnotation() const
 {
-	if (!aVizAnnotation)
+	if (!aVizAnnotationPtr)
 	{
 		auto position = GetActorLocation();
-		AdvViz::SDK::Annotation annot = {
-			{position.X, position.Y, position.Z},
-			TCHAR_TO_UTF8(*GetText().ToString()),
-			TCHAR_TO_UTF8(*GetName()),
-			ColorThemeToString(GetColorTheme()),
-			DisplayModeToString(GetDisplayMode())
-		};
-		aVizAnnotation = std::make_shared<AdvViz::SDK::Annotation>(annot);
+
+		AdvViz::SDK::Annotation* annot = new AdvViz::SDK::Annotation();
+		annot->position = {position.X, position.Y, position.Z};
+		annot->text = TCHAR_TO_UTF8(*GetText().ToString());
+		annot->fontSize = GetFontSize() == 14 ? std::nullopt : std::optional<int>(GetFontSize());
+		annot->name = TCHAR_TO_UTF8(*GetName());
+		annot->colorTheme = ColorThemeToString(GetColorTheme());
+		annot->displayMode = DisplayModeToString(GetDisplayMode(), bVisible);
+
+		aVizAnnotationPtr = AdvViz::SDK::MakeSharedLockableDataPtr<AdvViz::SDK::Annotation>(annot);
 	}
-	return aVizAnnotation;
+	return aVizAnnotationPtr;
 }
 
-void AITwinAnnotation::LoadAVizAnnotation(const std::shared_ptr<AdvViz::SDK::Annotation>&annotation)
+void AITwinAnnotation::LoadAVizAnnotation(const AdvViz::SDK::AnnotationPtr&annotationPtr)
 {
+	auto annotation = annotationPtr->GetAutoLock();
 	SetText(FText::FromString(UTF8_TO_TCHAR(annotation->text.c_str())));
+	SetFontSize(annotation->fontSize.value_or(14));
 	SetName(UTF8_TO_TCHAR(annotation->name.value_or("").c_str()));
 	SetColorTheme(ColorThemeToEnum(annotation->colorTheme.value_or("Dark")));
 	SetMode(DisplayModeToEnum(annotation->displayMode.value_or("Marker and label")));
-	SetAVizAnnotation(annotation);// set annotation at the end to avoid Should save from changing
+	SetVisibility(!(annotation->displayMode.value_or("Marker and label").ends_with(";Hidden")));
+	SetAVizAnnotation(annotationPtr);// set annotation at the end to avoid Should save from changing
 }
 
-void AITwinAnnotation::SetAVizAnnotation(const std::shared_ptr<AdvViz::SDK::Annotation>& annotation)
+void AITwinAnnotation::SetAVizAnnotation(const AdvViz::SDK::AnnotationPtr& annotation)
 {
-	aVizAnnotation = annotation;
+	aVizAnnotationPtr = annotation;
 }
 
 const FText& AITwinAnnotation::GetText() const
@@ -123,22 +143,33 @@ const FText& AITwinAnnotation::GetText() const
 
 void AITwinAnnotation::SetText(const FText& text)
 {
-	if (content.ToString() != text.ToString() && aVizAnnotation)
+	if (content.ToString() != text.ToString() && aVizAnnotationPtr)
 	{
+		auto aVizAnnotation = aVizAnnotationPtr->GetAutoLock();
 		aVizAnnotation->text = std::string(reinterpret_cast<const char*>(StringCast<UTF8CHAR>(*text.ToString()).Get()));
 		aVizAnnotation->SetShouldSave(true);
 	}
 	content = text;
-	onScreen->SetText(text);
+	UpdateDisplay();
 	OnTextChanged.Broadcast(this, text);
 }
 
 void AITwinAnnotation::SetVisibility(bool InBVisible)
 {
-	if (AITwinAnnotation::VRMode() && InBVisible)
+	if (AITwinAnnotation::VRMode() && InBVisible || !onScreen)
 		return;
+	if (aVizAnnotationPtr)
+	{
+		auto aVizAnnotation = aVizAnnotationPtr->GetAutoLock();
+		std::string displayMode = DisplayModeToString(mode, InBVisible);
+		if (aVizAnnotation->displayMode.value_or("Marker and label") != displayMode)
+		{
+			aVizAnnotation->displayMode = displayMode;
+			aVizAnnotation->SetShouldSave(true);
+		}
+	}
 	bVisible = InBVisible;
-	onScreen->SetVisibility(bVisible ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
+	UpdateDisplay();
 }
 
 bool AITwinAnnotation::Is2DMode() const
@@ -151,22 +182,28 @@ bool AITwinAnnotation::Is2DMode() const
 void AITwinAnnotation::SetMode(EITwinAnnotationMode inMode)
 {
 	bool bWas2d = Is2DMode();
-	if (aVizAnnotation && (aVizAnnotation->displayMode.value_or("Marker and label") != DisplayModeToString(inMode)))
+	if (aVizAnnotationPtr)
 	{
-		aVizAnnotation->displayMode = DisplayModeToString(inMode);
-		aVizAnnotation->SetShouldSave(true);
+		auto aVizAnnotation = aVizAnnotationPtr->GetAutoLock();
+		std::string displayMode = DisplayModeToString(inMode, bVisible);
+		if (aVizAnnotation->displayMode.value_or("Marker and label") != displayMode)
+		{
+			aVizAnnotation->displayMode = displayMode;
+			aVizAnnotation->SetShouldSave(true);
+		}
 	}
 	mode = inMode;
-	if (Is2DMode())
-	{
-		//textRender->SetVisibility(false, true);
-		onScreen->SetVisibility(ESlateVisibility::HitTestInvisible);
-		onScreen->SetLabelOnly(mode == EITwinAnnotationMode::LabelOnly);
-	}
-	else if (!Is2DMode())
-	{
-		onScreen->SetVisibility(ESlateVisibility::Hidden);
-	}
+	UpdateDisplay();
+}
+
+void AITwinAnnotation::SetModeFromIndex(int inMode)
+{
+	if (inMode < 0 || inMode >= 2)
+		return;
+	if (inMode == 0)
+		SetMode(EITwinAnnotationMode::BasicWidget);
+	else if (inMode == 1)
+		SetMode(EITwinAnnotationMode::LabelOnly);
 }
 
 EITwinAnnotationMode AITwinAnnotation::GetDisplayMode() const
@@ -174,51 +211,42 @@ EITwinAnnotationMode AITwinAnnotation::GetDisplayMode() const
 	return mode;
 }
 
+int AITwinAnnotation::GetDisplayModeIndex() const
+{
+	return mode == EITwinAnnotationMode::LabelOnly ? 1 : 0;
+}
+
 void AITwinAnnotation::SetColorTheme(EITwinAnnotationColor color)
 {
-	if (aVizAnnotation && (aVizAnnotation->colorTheme.value_or("Dark") != ColorThemeToString(color)))
+	if (aVizAnnotationPtr)
 	{
-		aVizAnnotation->colorTheme = ColorThemeToString(color);
-		aVizAnnotation->SetShouldSave(true);
+		auto aVizAnnotation = aVizAnnotationPtr->GetAutoLock();
+		if (aVizAnnotation->colorTheme.value_or("Dark") != ColorThemeToString(color))
+		{
+			aVizAnnotation->colorTheme = ColorThemeToString(color);
+			aVizAnnotation->SetShouldSave(true);
+		}
 	}
 	colorTheme = color;
-	if (colorTheme == EITwinAnnotationColor::Dark) {
-		onScreen->SetBackgroundColor(FLinearColor(0.067f, 0.071f, 0.075f, 1.0f));
-		onScreen->SetTextColor(FLinearColor(1.0f, 1.0f, 1.0f, 1.0f));
-	} else if (colorTheme == EITwinAnnotationColor::Blue) {
-		onScreen->SetBackgroundColor(FLinearColor(0.002f, 0.162f, 0.724));
-		onScreen->SetTextColor(FLinearColor(1.0f, 1.0f, 1.0f, 1.0f));
-	}
-	else if (colorTheme == EITwinAnnotationColor::Green)
-	{
-		onScreen->SetBackgroundColor(FLinearColor(0.016f, 0.231f, 0.001));
-		onScreen->SetTextColor(FLinearColor(1.0f, 1.0f, 1.0f, 1.0f));
-	}
-	else if (colorTheme == EITwinAnnotationColor::Orange)
-	{
-		onScreen->SetBackgroundColor(FLinearColor(0.323143f, 0.138432f, 0.000911f));
-		onScreen->SetTextColor(FLinearColor(1.0f, 1.0f, 1.0f, 1.0f));
-	}
-	else if (colorTheme == EITwinAnnotationColor::Red)
-	{
-		onScreen->SetBackgroundColor(FLinearColor(0.737911f, 0.01096f, 0.052861f));
-		onScreen->SetTextColor(FLinearColor(1.0f, 1.0f, 1.0f, 1.0f));
-	}
-	else if (colorTheme == EITwinAnnotationColor::White)
-	{
-		onScreen->SetBackgroundColor(FLinearColor(1.0f, 1.0f, 1.0f));
-		onScreen->SetTextColor(FLinearColor(0.0f, 0.0f, 0.0f, 1.0f));
-	}
-	else if (colorTheme == EITwinAnnotationColor::None)
-	{
-		onScreen->SetBackgroundColor(FLinearColor(1.0f, 1.0f, 1.0f, 0.0f));
-		onScreen->SetTextColor(FLinearColor(1.0f, 1.0f, 1.0f, 1.0f));
-	}
+	UpdateDisplay();
+}
+
+void AITwinAnnotation::SetColorThemeFromIndex(int color)
+{
+	color += 1; // to skip undefined
+	if (color <= 0 || color >= static_cast<int>(EITwinAnnotationColor::Count))
+		return;
+	SetColorTheme(static_cast<EITwinAnnotationColor>(color));
 }
 
 EITwinAnnotationColor AITwinAnnotation::GetColorTheme() const
 {
 	return colorTheme;
+}
+
+int AITwinAnnotation::GetColorThemeIndex() const
+{
+	return (int) colorTheme - 1; // -1 to ignore undefined
 }
 
 void AITwinAnnotation::OnModeChanged()
@@ -227,8 +255,9 @@ void AITwinAnnotation::OnModeChanged()
 void AITwinAnnotation::Relocate(FVector position, FRotator rotation)
 {
 	SetActorLocationAndRotation(position, rotation);
-	if (aVizAnnotation)
+	if (aVizAnnotationPtr)
 	{
+		auto aVizAnnotation = aVizAnnotationPtr->GetAutoLock();
 		aVizAnnotation->position = {position.X, position.Y, position.Z};
 		aVizAnnotation->SetShouldSave(true);
 	}
@@ -263,10 +292,14 @@ FLinearColor AITwinAnnotation::GetTextColor() const
 void AITwinAnnotation::SetName(FString newName)
 {
 	name = newName;
-	if (aVizAnnotation && (aVizAnnotation->name != TCHAR_TO_UTF8(*newName)))
+	if (aVizAnnotationPtr)
 	{
-		aVizAnnotation->name = TCHAR_TO_UTF8(*newName);
-		aVizAnnotation->SetShouldSave(true);
+		auto aVizAnnotation = aVizAnnotationPtr->GetAutoLock();
+		if (aVizAnnotation->name != TCHAR_TO_UTF8(*newName))
+		{
+			aVizAnnotation->name = TCHAR_TO_UTF8(*newName);
+			aVizAnnotation->SetShouldSave(true);
+		}
 	}
 }
 
@@ -275,10 +308,63 @@ FString AITwinAnnotation::GetName() const
 	return name;
 }
 
+void AITwinAnnotation::SetFontSize(int size)
+{
+	_fontSize = size;
+	if (Is2DMode())
+	{
+		if (aVizAnnotationPtr)
+		{
+			auto aVizAnnotation = aVizAnnotationPtr->GetAutoLock();
+			if (aVizAnnotation->fontSize.value_or(14) != size)
+			{
+				if (size == 14)
+					aVizAnnotation->fontSize.reset();
+				else
+					aVizAnnotation->fontSize = size;
+				aVizAnnotation->SetShouldSave(true);
+			}
+		}
+		UpdateDisplay();
+	}
+}
+
+int AITwinAnnotation::GetFontSize() const
+{
+	return _fontSize;
+}
+
+bool AITwinAnnotation::GetVisibility() const
+{
+	return bVisible;
+}
+
 void AITwinAnnotation::SetShouldSave(bool shouldSave)
 {
-	if (aVizAnnotation)
+	if (aVizAnnotationPtr)
+	{
+		auto aVizAnnotation = aVizAnnotationPtr->GetAutoLock();
 		aVizAnnotation->SetShouldSave(shouldSave);
+	}
+}
+
+void AITwinAnnotation::SetId(int inId)
+{
+	BE_ASSERT(inId >= 0, "keep negative values for actions over 'all'");
+	id = inId;
+}
+
+void AITwinAnnotation::UpdateDisplay()
+{
+	if (!onScreen)
+		return;
+	
+	onScreen->SetText(content);
+	onScreen->SetLabelOnly(mode == EITwinAnnotationMode::LabelOnly);
+	onScreen->SetBackgroundColor(ColorThemeToBackgroundColor(colorTheme));
+	onScreen->SetTextColor(colorTheme == EITwinAnnotationColor::White ? FLinearColor(0.0f, 0.0f, 0.0f, 1.0f) : FLinearColor(1.0f, 1.0f, 1.0f, 1.0f));
+	onScreen->SetFontSize(_fontSize);
+	onScreen->SetVisibility(bVisible ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
 }
 
 bool AITwinAnnotation::CalculatePinPosition(FVector2D& out)
@@ -332,12 +418,12 @@ std::string AITwinAnnotation::ColorThemeToString(EITwinAnnotationColor color)
 		return "Dark";
 }
 
-std::string AITwinAnnotation::DisplayModeToString(EITwinAnnotationMode mode)
+std::string AITwinAnnotation::DisplayModeToString(EITwinAnnotationMode mode, bool visibility)
 {
 	if (mode == EITwinAnnotationMode::LabelOnly)
-		return "Label only";
+		return visibility ? "Label only" : "Label only;Hidden";
 	else
-		return "Marker and label";
+		return visibility ? "Marker and label" : "Marker and label;Hidden";
 }
 
 EITwinAnnotationColor AITwinAnnotation::ColorThemeToEnum(const std::string& color)
@@ -352,8 +438,16 @@ EITwinAnnotationColor AITwinAnnotation::ColorThemeToEnum(const std::string& colo
 
 EITwinAnnotationMode AITwinAnnotation::DisplayModeToEnum(const std::string& mode)
 {
-	if (mode == "Label only")
+	if (mode.starts_with("Label only"))
 		return EITwinAnnotationMode::LabelOnly;
 	else
 		return EITwinAnnotationMode::BasicWidget;
+}
+
+FLinearColor AITwinAnnotation::ColorThemeToBackgroundColor(EITwinAnnotationColor color)
+{
+	if (backgroundColors.find(color) != backgroundColors.end())
+		return backgroundColors.at(color);
+	else
+		return FLinearColor(0.067f, 0.071f, 0.075f, 1.0f);
 }

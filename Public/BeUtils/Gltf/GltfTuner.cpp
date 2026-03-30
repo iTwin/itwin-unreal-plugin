@@ -7,16 +7,18 @@
 +--------------------------------------------------------------------------------------*/
 
 #include <BeUtils/Gltf/GltfTuner.h>
-
 #include "GltfMaterialTuner.h"
-#include <CesiumGltf/ExtensionModelExtStructuralMetadata.h>
-#include <CesiumGltf/AccessorView.h>
+
 #include <boost/pfr/functors.hpp>
-#include <CesiumGltf/ExtensionExtMeshFeatures.h>
 #include <boost/mpl/set.hpp>
 #include <boost/mpl/front.hpp>
 #include <BeUtils/Gltf/GltfBuilder.h>
 #include <BeUtils/Misc/RWLock.h>
+#include <Cesium3DTilesSelection/GltfModifierVersionExtension.h>
+#include <CesiumGltf/AccessorView.h>
+#include <CesiumGltf/ExtensionExtMeshFeatures.h>
+#include <CesiumGltf/ExtensionModelExtStructuralMetadata.h>
+#include <glm/gtc/matrix_access.hpp>
 #include <rapidjson/document.h>
 #include <SDK/Core/Tools/Assert.h>
 
@@ -120,21 +122,37 @@ inline bool MaterialUsingTextures(CesiumGltf::Material const& material)
 	return false;
 }
 
+inline bool MaterialWithOnlyMetallicRoughnessTexture(CesiumGltf::Material const& material)
+{
+	if (material.pbrMetallicRoughness &&
+		material.pbrMetallicRoughness->metallicRoughnessTexture)
+	{
+		return !(material.pbrMetallicRoughness->baseColorTexture
+			|| material.normalTexture
+			|| material.occlusionTexture
+			|| material.emissiveTexture);
+	}
+	else
+	{
+		return false;
+	}
+}
+
 /// These versions are only compared to other GltfTunerVersions (or the derived GltfTunerRulesEx) versions,
-/// not to actual tuner versions, so they don't really need to be initialized to -1 like the tuner's version.
-/// But to avoid confusion, I think it's better to have the same initial value.
+/// not to actual tuner versions, so it's OK to initialize to -1 whereas the initial tuner version is "nil"
+/// because it is an optional.
 struct GltfTunerVersions
 {
 	//! Used to detect if we should recompute material-related derived data.
-	int materialRulesVersion_ = -1;
+	int64_t materialRulesVersion_ = -1;
 	//! Used to detect if we should recompute 4D animation related derived data.
-	int anim4DRulesVersion_ = -1;
+	int64_t anim4DRulesVersion_ = -1;
 };
 
 //! Rules with additional precomputed derived data.
 struct GltfTunerRulesEx : public GltfTunerVersions
 {
-	int version_ = -1;
+	int64_t version_ = -1;
 	GltfTuner::Rules tuningRules_;
 	//! Maps each element ID to the index of its containing group.
 	std::unordered_map<uint64_t, std::pair<size_t, size_t>> elementToGroups_;
@@ -359,12 +377,32 @@ public:
 				primitive.SetIndices(cluster.indices_, true);
 				primitive.SetPositions(cluster.positions_);
 				if (!cluster.normals_.empty())
+				{
 					primitive.SetNormals(cluster.normals_);
-				if (!cluster.uvs_.empty())
+				}
+				const bool needUVsForCustomMaterial =
+					matInfo.hasCustomDefinition_ && MaterialUsingTextures(gltfMaterials[materialId]);
+				const bool hasSourceUVs = !cluster.uvs_.empty();
+				bool useSourceUVs = hasSourceUVs;
+				// The Mesh Export Service may export UVs just to handle a metallic/roughness texture
+				// (see TilesetOublisher/tiler/CesiumTileWriter.cpp, in method
+				// CesiumTileWriter<Traits>::ApplyMaterialMetallicRoughness: if no UVs were found for another
+				// texture, the MES does fill those UVs at slot #0...)
+				// In such case, the UVs should *not* be used for our custom textures, as they usually result
+				// in large surfaces sharing the same UV - since metallic/roughness is often constant over a
+				// full material!
+				if (hasSourceUVs && needUVsForCustomMaterial
+					&& clusterId.material_ >= 0
+					&& clusterId.material_ < (int32_t)gltfMaterials.size()
+					&& MaterialWithOnlyMetallicRoughnessTexture(gltfMaterials[clusterId.material_]))
+				{
+					useSourceUVs = false;
+				}
+				if (useSourceUVs)
 				{
 					primitive.SetUVs(cluster.uvs_);
 				}
-				else if (matInfo.hasCustomDefinition_ && MaterialUsingTextures(gltfMaterials[materialId]))
+				else if (needUVsForCustomMaterial)
 				{
 					// Quick fix for models not using texture originally: they are exported without UVs by
 					// the Mesh Export Service (MES), but we do need UVs to map textures added by the user
@@ -697,6 +735,7 @@ struct GltfTuner::Impl : public GltfTunerVersions
 
 	std::vector<ITwinMaterialInfo> itwinMaterials_;
 	std::shared_ptr<GltfMaterialHelper> materialHelper_;
+	glm::dvec4 rootTranslation_ = glm::dvec4(0., 0., 0., 1.);
 
 	void UpdateRulesIfNeeded(Cesium3DTilesSelection::GltfModifier const& tuner);
 };
@@ -778,32 +817,115 @@ void GltfTuner::Impl::UpdateRulesIfNeeded(Cesium3DTilesSelection::GltfModifier c
 	}
 }
 
-bool GltfTuner::apply(const CesiumGltf::Model& model, const glm::dmat4& tileTransform,
-	const glm::dvec4& rootTranslation, CesiumGltf::Model& tunedModel)
+CesiumAsync::Future<void> GltfTuner::onRegister(
+	const CesiumAsync::AsyncSystem& asyncSystem,
+	const std::shared_ptr<CesiumAsync::IAssetAccessor>& /*pAssetAccessor*/,
+	const std::shared_ptr<spdlog::logger>& /*pLogger*/,
+	const Cesium3DTilesSelection::TilesetMetadata& tilesetMetadata,
+	const Cesium3DTilesSelection::Tile& rootTile)
+{
+	impl_->rootTranslation_ = glm::column(rootTile.getTransform(), 3);
+	const auto iTwinMatsIt = tilesetMetadata.asset.extras.find("iTwinMaterials");
+	if (tilesetMetadata.asset.extras.end() != iTwinMatsIt
+		&& iTwinMatsIt->second.isArray())
+	{
+		std::vector<ITwinMaterialInfo> itwinMaterials;
+		itwinMaterials.reserve(iTwinMatsIt->second.getArray().size());
+		for (auto&& mat : iTwinMatsIt->second.getArray())
+		{
+			if (!mat.isObject())
+			{
+				continue;
+			}
+			auto&& matIt = mat.getObject();
+			auto idIt = matIt.find("id");
+			auto nameIt = matIt.find("name");
+			if (idIt == matIt.end() || nameIt == matIt.end())
+			{
+				// Invalid material description
+				continue;
+			}
+			ITwinMaterialInfo& matInfo = itwinMaterials.emplace_back();
+			if (idIt->second.isString()) // convert from hexadecimal
+			{
+				char* pLastUsed;
+				matInfo.id = std::strtoull(idIt->second.getString().c_str(), &pLastUsed, 16);
+			}
+			else
+			{
+				auto&& optNum = idIt->second.getSafeNumber<uint64_t>();
+				if (optNum)
+					matInfo.id = *optNum;
+				else
+					matInfo.id = 0;
+			}
+			matInfo.name = nameIt->second.getString(); // UTF-8 encoded
+		}
+		{
+			BeUtils::WLock wlock(impl_->mutex_);
+			impl_->itwinMaterials_ = itwinMaterials;
+		}
+		if (onMaterialInfoParsed_)
+		{
+			// Perform custom operation once all material IDs are read.
+			onMaterialInfoParsed_(itwinMaterials);
+		}
+	}
+	return asyncSystem.createResolvedFuture();
+}
+
+CesiumAsync::Future<std::optional<Cesium3DTilesSelection::GltfModifierOutput>> GltfTuner::apply(
+	Cesium3DTilesSelection::GltfModifierInput&& input)
 {
 	impl_->UpdateRulesIfNeeded(*this);
 	// Avoid numeric issues when computing fast UVs from positions, by compensating the (usually huge)
 	// translation of the model.
-	glm::dmat4x4 const tileTransform_shifted = tileTransform - glm::dmat4x4(
+	glm::dmat4x4 const tileTransform_shifted = input.tileTransform - glm::dmat4x4(
 		glm::dvec4(0.),
 		glm::dvec4(0.),
 		glm::dvec4(0.),
-		rootTranslation);
+		impl_->rootTranslation_);
 	// Need to lock also during GltfTunerHelper::Tune(..), because several background cesium threads can call
 	// GltfTuner::apply(..) at the same time! But here we only need a shared_lock, whereas UpdateRulesIfNeeded
 	// of course requires a unique_lock.
 	BeUtils::RLock rlock(impl_->mutex_);
-	if (getCurrentVersion() && model.version < (*getCurrentVersion()))
+	if (getCurrentVersion()
+		&& Cesium3DTilesSelection::GltfModifierVersionExtension::getVersion(input.previousModel)
+			!= (*getCurrentVersion()))
+	{
+		return input.asyncSystem.runInWorkerThread(
+			[this, tileTransform_shifted, previousModel=std::move(input.previousModel)]()
+			-> std::optional<Cesium3DTilesSelection::GltfModifierOutput>
+			{
+				return Cesium3DTilesSelection::GltfModifierOutput{
+					GltfTunerHelper(previousModel, impl_->rulesEx_, impl_->materialHelper_,
+									tileTransform_shifted)
+						.Tune()
+				};
+			});
+	}
+	return input.asyncSystem.createResolvedFuture(std::optional<Cesium3DTilesSelection::GltfModifierOutput>{});
+}
+
+bool GltfTuner::applyForUnitTest(const CesiumGltf::Model& model, const glm::dmat4& tileTransform,
+								 CesiumGltf::Model& tunedModel)
+{
+	impl_->UpdateRulesIfNeeded(*this);
+	glm::dmat4x4 const tileTransform_shifted = tileTransform - glm::dmat4x4(
+		glm::dvec4(0.), glm::dvec4(0.), glm::dvec4(0.), impl_->rootTranslation_);
+	BeUtils::RLock rlock(impl_->mutex_);
+	if (getCurrentVersion()
+		&& Cesium3DTilesSelection::GltfModifierVersionExtension::getVersion(model) < (*getCurrentVersion()))
 	{
 		tunedModel = std::move(
 			GltfTunerHelper(model, impl_->rulesEx_, impl_->materialHelper_, tileTransform_shifted).Tune());
-		tunedModel.version = *getCurrentVersion();
+		Cesium3DTilesSelection::GltfModifierVersionExtension::setVersion(tunedModel, *getCurrentVersion());
 		return true;
 	}
 	return false;
 }
 
-int GltfTuner::SetMaterialRules(Rules&& tuningRules)
+int64_t GltfTuner::SetMaterialRules(Rules&& tuningRules)
 {
 	// Here we do not test if the new rules actually differ from the current ones.
 	// For now we assume it is the responsibility of the caller to call this only when needed.
@@ -813,7 +935,7 @@ int GltfTuner::SetMaterialRules(Rules&& tuningRules)
 		&& impl_->rulesEx_.tuningRules_.materialGroups_.empty()
 		&& impl_->rulesEx_.tuningRules_.itwinMatIDsToSplit_.empty())
 	{
-		return getCurrentVersion() ? (*getCurrentVersion()) : -1;
+		return getCurrentVersion() ? (*getCurrentVersion()) : std::numeric_limits<int64_t>::max();
 	}
 	impl_->nextTuningRules_.materialGroups_ = std::move(tuningRules.materialGroups_);
 	impl_->nextTuningRules_.itwinMatIDsToSplit_ = std::move(tuningRules.itwinMatIDsToSplit_);
@@ -822,7 +944,7 @@ int GltfTuner::SetMaterialRules(Rules&& tuningRules)
 	return *getCurrentVersion();
 }
 
-int GltfTuner::SetAnim4DRules(Rules&& tuningRules)
+int64_t GltfTuner::SetAnim4DRules(Rules&& tuningRules)
 {
 	// Here we do not test if the new rules actually differ from the current ones.
 	// For now we assume it is the responsibility of the caller to call this only when needed.
@@ -830,90 +952,12 @@ int GltfTuner::SetAnim4DRules(Rules&& tuningRules)
 	// Optimize when resetting this type of rules several times
 	if (tuningRules.anim4DGroups_.empty() && impl_->rulesEx_.tuningRules_.anim4DGroups_.empty())
 	{
-		return getCurrentVersion() ? (*getCurrentVersion()) : -1;
+		return getCurrentVersion() ? (*getCurrentVersion()) : std::numeric_limits<int64_t>::max();
 	}
 	impl_->nextTuningRules_.anim4DGroups_ = std::move(tuningRules.anim4DGroups_);
 	++impl_->anim4DRulesVersion_;
 	trigger();
 	return *getCurrentVersion();
-}
-
-
-namespace Detail
-{
-	inline uint64_t ToUint64(const rapidjson::Value& jsonVal)
-	{
-		if (jsonVal.IsString())
-		{
-			// convert from hexadecimal
-			char* pLastUsed;
-			return std::strtoull(jsonVal.GetString(), &pLastUsed, 16);
-		}
-		else if (jsonVal.IsUint64())
-		{
-			return jsonVal.GetUint64();
-		}
-		else if (jsonVal.IsInt64())
-		{
-			return static_cast<uint64_t>(jsonVal.GetInt64());
-		}
-		else if (jsonVal.IsUint())
-		{
-			return jsonVal.GetUint();
-		}
-		else if (jsonVal.IsInt())
-		{
-			return static_cast<uint64_t>(jsonVal.GetInt());
-		}
-		return 0;
-	}
-}
-
-void GltfTuner::parseTilesetJson(const rapidjson::Document& tilesetJson)
-{
-	// Detect and parse property "iTwinMaterials", if any
-	// This can be added by the Mesh-Export Service for Cesium tilesets.
-	const auto assetIt = tilesetJson.FindMember("asset");
-	if (assetIt == tilesetJson.MemberEnd())
-		return;
-	const rapidjson::Value& assetJson = assetIt->value;
-	const auto extrasIt = assetJson.FindMember("extras");
-	if (extrasIt == assetJson.MemberEnd())
-		return;
-	const rapidjson::Value& extrasJson = extrasIt->value;
-	const auto itwinMatsIt = extrasJson.FindMember("iTwinMaterials");
-	if (itwinMatsIt == extrasJson.MemberEnd())
-		return;
-	const rapidjson::Value& itwinMatsJson = itwinMatsIt->value;
-	if (!itwinMatsJson.IsArray())
-		return;
-
-	std::vector<ITwinMaterialInfo> itwinMaterials;
-	itwinMaterials.reserve(itwinMatsJson.Size());
-	for (auto matIt = itwinMatsJson.Begin();
-		matIt != itwinMatsJson.End();
-		++matIt)
-	{
-		auto idIt = matIt->FindMember("id");
-		auto nameIt = matIt->FindMember("name");
-		if (idIt == matIt->MemberEnd() || nameIt == matIt->MemberEnd())
-		{
-			// Invalid material description
-			continue;
-		}
-		ITwinMaterialInfo& matInfo = itwinMaterials.emplace_back();
-		matInfo.id = Detail::ToUint64(idIt->value);
-		matInfo.name = nameIt->value.GetString(); // UTF-8 encoded
-	}
-	{
-		BeUtils::WLock wlock(impl_->mutex_);
-		impl_->itwinMaterials_ = itwinMaterials;
-	}
-	if (onMaterialInfoParsed_)
-	{
-		// Perform custom operation once all material IDs are read.
-		onMaterialInfoParsed_(itwinMaterials);
-	}
 }
 
 bool GltfTuner::HasITwinMaterialInfo() const

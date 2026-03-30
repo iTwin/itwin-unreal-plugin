@@ -30,9 +30,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "ITwinContent")
 	FString GetContentRootPath() const;
 	UFUNCTION(BlueprintCallable, Category = "ITwinContent")
-	void MountPak(const FString& path);
+	void MountPak(const FString& path, const FString& id = TEXT(""));
 	UFUNCTION(BlueprintCallable, Category = "ITwinContent")
 	void LoadContentJsonFile();
+	
+	FString ShouldDownloadComponent(const FString& path) const;
+	FString SanitizePath(const FString& path) const;
+	FString HasComponentIDInPath(const FString& path) const;
+	bool DownloadedComponent(const FString& componentId) const;
 
 	void InitializePakPlatformFile();
 	void DeinitializePakPlatformFile();
@@ -44,13 +49,14 @@ public:
 		std::uint32_t chunkId;
 		std::string path;
 	};
-
+	class AITwinDecorationHelper* DecorationHelperPtr = nullptr;
 protected:
 	FString ContentRootPath;
 	std::map<FString, SContentInfo> ContentInfoMap;
 	std::set<FString> MountedPaks;
 	class FPakPlatformFile* PakPlatformFile = nullptr;
 	class IPlatformFile* PlatformFileRef = nullptr;
+	std::set<FString> DownloadedComponents;
 
 };
 

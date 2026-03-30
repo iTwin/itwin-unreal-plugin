@@ -14,6 +14,7 @@
 
 namespace AdvViz::SDK
 {
+#ifdef WITH_HTTPCPR
 	namespace Impl
 	{
 		class HttpCpr : public Http, Tools::TypeId<HttpCpr>
@@ -25,24 +26,44 @@ namespace AdvViz::SDK
 			Http::Response DoPut(const std::string& url, const BodyParams& body = {}, const Headers& headers = {}) override;
 			Http::Response DoPutBinaryFile(const std::string& url, const std::string& filePath, const Headers& headers = {}) override;
 			Http::Response DoPatch(const std::string& url, const BodyParams& body = {}, const Headers& headers = {}) override;
+			void DoAsyncPatch(std::function<void(const Response&)> callback, const std::string& url,
+				const BodyParams& body, const Headers& headers, EAsyncCallbackExecutionMode asyncCBExecMode) override;
 			Http::Response DoPost(const std::string& url, const BodyParams& body = {}, const Headers& headers = {}) override;
-			void DoAsyncPost(std::function<void(const Response&)> callback, const std::string& url, const BodyParams& body = {}, const Headers& headers = {}) override;
-			void DoAsyncPut(std::function<void(const Response&)> callback, const std::string& url, const BodyParams& body = {}, const Headers& headers = {});
+			void DoAsyncPost(std::function<void(const Response&)> callback, const std::string& url,
+				const BodyParams& body, const Headers& headers, EAsyncCallbackExecutionMode asyncCBExecMode) override;
+			void DoAsyncPut(std::function<void(const Response&)> callback, const std::string& url,
+				const BodyParams& body, const Headers& headers, EAsyncCallbackExecutionMode asyncCBExecMode) override;
 			Http::Response DoPostFile(const std::string& url, const std::string& fileParamName, const std::string& filePath,
 				const KeyValueVector& extraParams = {}, const Headers& h = {}) override;
+			void DoAsyncPostFile(std::function<void(const Response&)> callback, const std::string& url,
+				const std::string& fileParamName, const std::string& filePath,
+				const KeyValueVector& extraParams = {}, const Headers& h = {},
+				EAsyncCallbackExecutionMode asyncCBExecMode = EAsyncCallbackExecutionMode::Default) override;
 			Http::Response DoGet(const std::string& url, const Headers& headers = {}, bool isFullUrl = false) override;
-			void DoAsyncGet(std::function<void(const Response&)> callback, const std::string& url, const Headers& headers = {}, bool isFullUrl = false) override;
+			void DoAsyncGet(std::function<void(const Response&)> callback, const std::string& url,
+				const Headers& headers = {}, bool isFullUrl = false,
+				EAsyncCallbackExecutionMode asyncCBExecMode = EAsyncCallbackExecutionMode::Default) override;
 			Http::Response DoDelete(const std::string& url, const BodyParams& body = {}, const Headers& headers = {}) override;
+			void DoAsyncDelete(std::function<void(const Response&)> callback, const std::string& url,
+				const BodyParams& body = {}, const Headers& headers = {},
+				EAsyncCallbackExecutionMode asyncCBExecMode = EAsyncCallbackExecutionMode::Default) override;
 
 			using Tools::TypeId<HttpCpr>::GetTypeId;
 			std::uint64_t GetDynTypeId() const override { return GetTypeId(); }
 			bool IsTypeOf(std::uint64_t i) const override { return (i == GetTypeId()) || Http::IsTypeOf(i); }
+
+			std::string EncodeForUrl(const std::string& str) const override;
+
+			bool SupportsExecuteAsyncCallbackInMainThread() const override { return false; }
 
 		private:
 			std::unique_ptr<cpr::Authentication> auth_;
 
 			std::string GetBaseUrlStr() const;
 
+			
+
 		};
 	};
+#endif
 }

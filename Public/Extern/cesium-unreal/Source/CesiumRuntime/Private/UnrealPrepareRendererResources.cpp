@@ -89,7 +89,7 @@ void* UnrealPrepareRendererResources::prepareInMainThread(
         this->_pActor->GetCustomDepthParameters(),
         tile,
         this->_pActor->GetCreateNavCollision(),
-        this->_pActor->GetDoubleSidedCollisions());
+        this->_pActor->GetEnableDoubleSidedCollisions());
   }
   // UE_LOG(LogCesium, VeryVerbose, TEXT("No content for tile"));
   return nullptr;
@@ -107,7 +107,8 @@ void UnrealPrepareRendererResources::free(
   } else if (pMainThreadResult) {
     UCesiumGltfComponent* pGltf =
         reinterpret_cast<UCesiumGltfComponent*>(pMainThreadResult);
-    if (auto* Receiver = this->_pActor->GetLifecycleEventReceiver()) {
+    if (ICesium3DTilesetLifecycleEventReceiver* Receiver =
+            this->_pActor->GetLifecycleEventReceiver()) {
       Receiver->OnTileUnloading(*pGltf);
     }
     CesiumLifetime::destroyComponentRecursively(pGltf);

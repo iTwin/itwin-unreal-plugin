@@ -13,10 +13,10 @@ void UITwinPlaneTileExcluder::SetInvertEffect(bool bInvert)
 	bInvertEffect = bInvert;
 }
 
-inline bool UITwinPlaneTileExcluder::ShouldExcludePoint(FVector3f const& WorldPosition) const
+inline bool UITwinPlaneTileExcluder::ShouldExcludePoint(FVector3d const& WorldPosition) const
 {
-	const float Value = glm::step(PlaneEquation.PlaneOrientation.Dot(WorldPosition) - PlaneEquation.PlaneW, 0.f);
-	return ShouldInvertEffect() ? (Value > 0.5f) : (Value < 0.5f);
+	const double Value = glm::step(PlaneEquation.PlaneOrientation.Dot(WorldPosition) - PlaneEquation.PlaneW, 0.);
+	return ShouldInvertEffect() ? (Value > 0.5) : (Value < 0.5);
 }
 
 bool UITwinPlaneTileExcluder::ShouldExclude_Implementation(const UCesiumTile* TileObject)
@@ -25,7 +25,7 @@ bool UITwinPlaneTileExcluder::ShouldExclude_Implementation(const UCesiumTile* Ti
 	TileObject->Bounds.GetBox().GetVertices(BoxVertices);
 	for (int i=0; i<8; i++)
 	{
-		if (!ShouldExcludePoint(FVector3f(BoxVertices[i])))
+		if (!ShouldExcludePoint(BoxVertices[i]))
 		{
 			return false;
 		}

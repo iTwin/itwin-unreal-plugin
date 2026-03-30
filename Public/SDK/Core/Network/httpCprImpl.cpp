@@ -6,42 +6,49 @@
 |
 +--------------------------------------------------------------------------------------*/
 
-
-
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 
-#include <cpr/cpr.h>
 #include "http.h"
-#include "httpCprImpl.h"
+#include "Assert.h"
 #include "../Singleton/singleton.h"
+
+#ifdef WITH_HTTPCPR
+#include <cpr/cpr.h>
+#include "httpCprImpl.h"
+#endif 
 
 namespace AdvViz::SDK
 {
 	template<>
-	 Tools::Factory<Http>::Globals::Globals()
+	Tools::Factory<Http>::Globals::Globals()
 	{
+#ifdef WITH_HTTPCPR
 		newFct_ = []() { return static_cast<Http*>(new Impl::HttpCpr()); };
+#else
+#pragma warning(push)
+#pragma warning(disable: 4702) // unreachable code
+		newFct_ = []() -> Http* { 
+			BE_PANIC("No http implementation!");
+			return nullptr;
+		};
+#pragma warning(pop)
+#endif
 	}
 
 	template<>
-	 Tools::Factory<Http>::Globals& Tools::Factory<Http>::GetGlobals()
+	Tools::Factory<Http>::Globals& Tools::Factory<Http>::GetGlobals()
 	{
 		return singleton<Tools::Factory<Http>::Globals>();
 	}
-	 std::string EncodeForUrl(const std::string & str)
-	{
-		const auto encoded_value = curl_easy_escape(nullptr, str.c_str(), static_cast<int>(str.length()));
-		std::string result(encoded_value);
-		curl_free(encoded_value);
-		return result;
-	}
-
 }
 
+
+#ifdef WITH_HTTPCPR
+
 extern "C" {
-	CURLcode Curl_base64_decode(const char* src, unsigned char** outptr, size_t* outlen);
+	CURLcode curlx_base64_decode(const char* src, unsigned char** outptr, size_t* outlen);
 }
 
 namespace AdvViz::SDK::Impl
@@ -56,7 +63,7 @@ namespace AdvViz::SDK::Impl
 	{
 		unsigned char* buf = nullptr;
 		size_t bufLen = 0;
-		CURLcode const res = Curl_base64_decode(src.c_str(), &buf, &bufLen);
+		CURLcode const res = curlx_base64_decode(src.c_str(), &buf, &bufLen);
 		bool const bSuccess = res == CURLE_OK && buf && bufLen > 0;
 		if (bSuccess)
 		{
@@ -136,6 +143,21 @@ namespace AdvViz::SDK::Impl
 		return Response(r.status_code, std::move(r.text));
 	}
 
+	void HttpCpr::DoAsyncPatch(std::function<void(const Response&)> callback, const std::string& url,
+		const BodyParams& body, const Headers& headers, EAsyncCallbackExecutionMode /*asyncCBExecMode*/)
+	{
+		cpr::Header h;
+		for (auto& i : headers)
+			h[i.first] = i.second;
+		cpr::PatchCallback([callback](cpr::Response r) {
+			Response resp(r.status_code, std::move(r.text));
+			callback(resp);
+		}
+			, cpr::Url{ GetBaseUrlStr() + '/' + url }
+			, cpr::Body{ body.str() }
+		, h);
+	}
+
 	Http::Response HttpCpr::DoPost(const std::string& url,
 								   const BodyParams& body /*= {} */,
 								   const Headers& headers /*= {} */)
@@ -158,12 +180,12 @@ namespace AdvViz::SDK::Impl
 		return Response(r.status_code, std::move(r.text));
 	}
 
-	void HttpCpr::DoAsyncPost(std::function<void(const Response&)> callback, const std::string& url, const BodyParams& body, const Headers& headers)
+	void HttpCpr::DoAsyncPost(std::function<void(const Response&)> callback, const std::string& url,
+		const BodyParams& body, const Headers& headers, EAsyncCallbackExecutionMode /*asyncCBExecMode*/)
 	{
 		cpr::Header h;
 		for (auto& i : headers)
 			h[i.first] = i.second;
-		cpr::Response r;
 		cpr::PostCallback([callback](cpr::Response r) {
 			Response resp(r.status_code, std::move(r.text));
 			callback(resp);
@@ -173,12 +195,12 @@ namespace AdvViz::SDK::Impl
 		, h);
 	}
 
-	void HttpCpr::DoAsyncPut(std::function<void(const Response&)> callback, const std::string& url, const BodyParams& body, const Headers& headers)
+	void HttpCpr::DoAsyncPut(std::function<void(const Response&)> callback, const std::string& url,
+		const BodyParams& body, const Headers& headers, EAsyncCallbackExecutionMode /*asyncCBExecMode*/)
 	{
 		cpr::Header h;
 		for (auto& i : headers)
 			h[i.first] = i.second;
-		cpr::Response r;
 		cpr::PutCallback([callback](cpr::Response r) {
 			Response resp(r.status_code, std::move(r.text));
 			callback(resp);
@@ -215,10 +237,38 @@ namespace AdvViz::SDK::Impl
 		return Response(r.status_code, std::move(r.text));
 	}
 
+	void HttpCpr::DoAsyncPostFile(std::function<void(const Response&)> callback, const std::string& url,
+		const std::string& fileParamName, const std::string& filePath,
+		const KeyValueVector& extraParams /*= {}*/, const Headers& headers /*= {}*/,
+		EAsyncCallbackExecutionMode /*asyncCBExecMode*/ /*= Default */)
+	{
+		cpr::Header h;
+		for (auto& i : headers)
+			h[i.first] = i.second;
+		cpr::Multipart multipart({});
+		multipart.parts.reserve(1 + extraParams.size());
+		for (auto& i : extraParams)
+			multipart.parts.emplace_back(i.first, i.second);
+		multipart.parts.emplace_back(fileParamName, cpr::File{ filePath });
+
+		cpr::PostCallback(
+			[callback](cpr::Response r) {
+			Response resp(r.status_code, std::move(r.text));
+			callback(resp);
+		}
+			, cpr::Url{ GetBaseUrlStr() + '/' + url }
+			, multipart
+			, h
+		);
+	}
+
 	Http::Response HttpCpr::DoGet(const std::string& url,
 								  const Headers& headers /*= {} */,
 								  bool isFullUrl /*= false*/)
 	{
+		if (!isFullUrl && (url.starts_with("http:") || url.starts_with("https:")))
+			isFullUrl = true;
+
 		cpr::Header h;
 		for (auto& i : headers)
 			h[i.first] = i.second;
@@ -236,12 +286,16 @@ namespace AdvViz::SDK::Impl
 	}
 
 
-	void HttpCpr::DoAsyncGet(std::function<void(const Response&)> callback, const std::string& url, const Headers& headers, bool isFullUrl)
+	void HttpCpr::DoAsyncGet(std::function<void(const Response&)> callback, const std::string& url,
+		const Headers& headers /*= {}*/,
+		bool isFullUrl /*= false*/,
+		EAsyncCallbackExecutionMode asyncCBExecMode /*= Default */)
 	{
+		if (!isFullUrl && (url.starts_with("http:") || url.starts_with("https:")))
+			isFullUrl = true;
 		cpr::Header h;
 		for (auto& i : headers)
 			h[i.first] = i.second;
-		cpr::Response r;
 		cpr::GetCallback([callback](cpr::Response r) {
 				Response resp(r.status_code, std::move(r.text));
 				callback(resp);
@@ -273,10 +327,37 @@ namespace AdvViz::SDK::Impl
 		return Response(r.status_code, std::move(r.text));
 	}
 
+	void HttpCpr::DoAsyncDelete(std::function<void(const Response&)> callback,
+								const std::string& url,
+								const BodyParams& body /*= {}*/,
+								const Headers& headers /*= {}*/,
+								EAsyncCallbackExecutionMode /*asyncCBExecMode*/ /*= Default */)
+	{
+		cpr::Header h;
+		for (auto& i : headers)
+			h[i.first] = i.second;
+		cpr::DeleteCallback([callback](cpr::Response r) {
+				Response resp(r.status_code, std::move(r.text));
+				callback(resp);
+			},
+			cpr::Url{ GetBaseUrlStr() + '/' + url },
+			cpr::Body{ body.str() },
+			h);
+	}
+
 	std::string HttpCpr::GetBaseUrlStr() const
 	{
 		return baseUrl_;
 	}
 
+	std::string HttpCpr::EncodeForUrl(const std::string& str) const
+	{
+		const auto encoded_value = curl_easy_escape(nullptr, str.c_str(), static_cast<int>(str.length()));
+		std::string result(encoded_value);
+		curl_free(encoded_value);
+		return result;
+	}
+
 }
 
+#endif

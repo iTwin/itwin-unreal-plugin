@@ -175,21 +175,33 @@ namespace AdvViz::SDK::Tools
 
 	void CreateAdvVizLogChannels()
 	{
-		CreateLogChannel("ITwinAdvViz", Level::info);
-		CreateLogChannel("ITwinAPI", Level::info);
-		CreateLogChannel("ITwinScene", Level::info);
-		CreateLogChannel("ITwinDecoration", Level::info);
-		CreateLogChannel("ITwinMaterial", Level::info);
-		CreateLogChannel("ITwinQuery", Level::info);
-		CreateLogChannel("ITwin4DImp", Level::info);
-		CreateLogChannel("ITwinRender", Level::info);
-		CreateLogChannel("App", Level::info);
-		CreateLogChannel("AppUI", Level::info);
-		CreateLogChannel("Timeline", Level::info);
-		CreateLogChannel("http", Level::info);
-		CreateLogChannel("json", Level::info);
-		CreateLogChannel("keyframeAnim", Level::info);
-		CreateLogChannel("FITwinHDRILibrary", Level::info);
+#if defined(DEBUG_CONFIG) || defined(UNREALDEBUG_CONFIG) || defined(RELWITHDEBINFO_CONFIG)
+		const Level level = Level::debug;
+#else
+		Level level = Level::info;
+		std::filesystem::path tmpPath = std::filesystem::temp_directory_path();
+		tmpPath = tmpPath / "ITwinAdvViz" / "Logs" / "debuglevel.on";
+		std::error_code ec;
+		if (std::filesystem::exists(tmpPath, ec))
+		{
+			level = Level::debug;
+		}
+#endif
+		CreateLogChannel("ITwinAdvViz", level);
+		CreateLogChannel("ITwinAPI", level);
+		CreateLogChannel("ITwinScene", level);
+		CreateLogChannel("ITwinDecoration", level);
+		CreateLogChannel("ITwinMaterial", level);
+		CreateLogChannel("ITwinQuery", level);
+		CreateLogChannel("ITwin4DImp", level);
+		CreateLogChannel("ITwinRender", level);
+		CreateLogChannel("App", level);
+		CreateLogChannel("AppUI", level);
+		CreateLogChannel("Timeline", level);
+		CreateLogChannel("http", level);
+		CreateLogChannel("json", level);
+		CreateLogChannel("keyframeAnim", level);
+		CreateLogChannel("FITwinHDRILibrary", level);
 	}
 }
 

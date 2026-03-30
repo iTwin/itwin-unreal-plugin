@@ -828,15 +828,18 @@ private:
   bool CreatePhysicsMeshes = true;
 
   /**
-   * Whether to enable doubled-sided collisions (both "front" and "back" faces)
-   * on the physics meshes created when CreatePhysicsMeshes is true.
+   * Whether to enable doubled-sided collisions (both front-facing and
+   * back-facing) on created physics meshes.
+   *
+   * Only relevant when CreatePhysicsMeshes is true.
    */
   UPROPERTY(
       EditAnywhere,
-      BlueprintGetter = GetDoubleSidedCollisions,
-      BlueprintSetter = SetDoubleSidedCollisions,
-      Category = "Cesium|Physics")
-  bool DoubleSidedCollisions = false;
+      BlueprintGetter = GetEnableDoubleSidedCollisions,
+      BlueprintSetter = SetEnableDoubleSidedCollisions,
+      Category = "Cesium|Physics",
+      meta = (EditCondition = "CreatePhysicsMeshes"))
+  bool EnableDoubleSidedCollisions = false;
 
   /**
    * Whether to generate navigation collisions for this tileset.
@@ -1135,10 +1138,12 @@ public:
   void SetCreatePhysicsMeshes(bool bCreatePhysicsMeshes);
 
   UFUNCTION(BlueprintGetter, Category = "Cesium|Physics")
-  bool GetDoubleSidedCollisions() const { return DoubleSidedCollisions; }
+  bool GetEnableDoubleSidedCollisions() const {
+    return EnableDoubleSidedCollisions;
+  }
 
   UFUNCTION(BlueprintSetter, Category = "Cesium|Physics")
-  void SetDoubleSidedCollisions(bool bCreatePhysicsMeshes);
+  void SetEnableDoubleSidedCollisions(bool bEnableDoubleSidedCollisions);
 
   UFUNCTION(BlueprintGetter, Category = "Cesium|Navigation")
   bool GetCreateNavCollision() const { return CreateNavCollision; }
@@ -1257,7 +1262,6 @@ public:
       FPropertyChangedChainEvent& PropertyChangedChainEvent) override;
   virtual void PostEditUndo() override;
   virtual void PostEditImport() override;
-  virtual bool CanEditChange(const FProperty* InProperty) const override;
 #endif
 
 protected:
@@ -1305,24 +1309,39 @@ public:
   void UpdateTransformFromCesium();
 
   /**
+   * Gets the glTF modifier, an optional extension class that can edit
+   * each tile's glTF model after it has been loaded, before it can be
+   * displayed.
+   */
+  const std::shared_ptr<Cesium3DTilesSelection::GltfModifier>&
+  GetGltfModifier() const;
+
+  /**
    * Sets the glTF modifier, an optional extension class that can edit
    * each tile's glTF model after it has been loaded, before it can be
-   * displayed. Can only be called in the same engine tick after the tileset
-   * actor was spawned, or {@link RefreshTileset} was called.
+   * displayed.
+   *
+   * Setting this property will refresh the tileset.
    */
   void SetGltfModifier(
-      const std::shared_ptr<Cesium3DTilesSelection::GltfModifier>& InModifier);
+      const std::shared_ptr<Cesium3DTilesSelection::GltfModifier>& Modifier);
 
-  /** Gets the optional receiver of events related to tile components' lifecycle
+  /**
+   * Gets the optional receiver of events related to the lifecycle of tiles
+   * created by this tileset.
    */
   ICesium3DTilesetLifecycleEventReceiver* GetLifecycleEventReceiver();
 
-  /** Sets a receiver of events related to tile components' lifecycle,
-   * like tile primitive and material creation, tile finishing its loading cycle
-   * or about to unload, etc. It must implement
-   * {@link ICesium3DTilesetLifecycleEventReceiver}, otherwise it will be as if
-   * nullptr were passed. */
-  void SetLifecycleEventReceiver(UObject* InEventReceiver);
+  /**
+   * Sets a receiver of events related to the lifecycle of tiles
+   * created by this tileset.
+   *
+   * The receiver will be notified of events such as tile load, unload, show,
+   * and hide. The provided instance _must_ implement @ref
+   * ICesium3DTilesetLifecycleEventReceiver, otherwise it will be as if nullptr
+   * were passed.
+   */
+  void SetLifecycleEventReceiver(UObject* EventReceiver);
 
 private:
   /**
@@ -1387,6 +1406,7 @@ private:
 
 private:
   TUniquePtr<Cesium3DTilesSelection::Tileset> _pTileset;
+  bool _destroyOnNextTick;
 
 #ifdef CESIUM_DEBUG_TILE_STATES
   TUniquePtr<Cesium3DTilesSelection::DebugTileStateDatabase> _pStateDebug;
@@ -1437,6 +1457,8 @@ private:
 
   int32 _tilesetsBeingDestroyed;
 
+  std::shared_ptr<Cesium3DTilesSelection::GltfModifier> _pGltfModifier;
+
   // Make this visible to the garbage collector, but don't save/load/copy it.
   // Use UObject instead of TScriptInterface as suggested by
   // https://www.stevestreeting.com/2020/11/02/ue4-c-interfaces-hints-n-tips/,
@@ -1445,8 +1467,6 @@ private:
   // it's best being prepared for the future.
   UPROPERTY(Transient, DuplicateTransient, TextExportTransient)
   UObject* _pLifecycleEventReceiver;
-
-  std::shared_ptr<Cesium3DTilesSelection::GltfModifier> _gltfModifier;
 
   friend class UnrealPrepareRendererResources;
   friend class UCesiumGltfPointsComponent;

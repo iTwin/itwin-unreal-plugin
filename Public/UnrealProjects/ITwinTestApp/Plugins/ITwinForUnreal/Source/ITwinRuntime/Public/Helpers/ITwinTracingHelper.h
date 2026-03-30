@@ -26,6 +26,14 @@ class UPrimitiveComponent;
 class FITwinTracingHelper
 {
 public:
+	/// Computes tracing start and direction from current mouse position (or a custom one, if
+	/// CustomMousePosition is provided).
+	static bool GetRayFromMousePosition(UWorld const* World,
+		FVector2D& OutMousePosition,
+		FVector& OutTraceStart,
+		FVector& OutTraceDirection,
+		std::optional<FVector2D> const& CustomMousePosition = std::nullopt);
+
 	FITwinTracingHelper();
 
 	/// Add actors to ignore in intersection tests.

@@ -18,15 +18,14 @@
 #include <UObject/ObjectMacros.h>
 #include <Templates/Function.h>
 
+#include <ITwinRuntime/Private/Compil/BeforeNonUnrealIncludes.h>
+#	include <SDK/Core/Visualization/Spline.h>
+#include <ITwinRuntime/Private/Compil/AfterNonUnrealIncludes.h>
+
 #include <memory>
 #include <set>
 #include "ITwinSplineHelper.generated.h"
 
-namespace AdvViz::SDK
-{
-	class ISpline;
-	class RefID;
-}
 
 class USceneComponent;
 class USplineComponent;
@@ -57,16 +56,17 @@ public:
 
 	AITwinSplineHelper();
 
+	virtual void SetActorHiddenInGame(bool bNewHidden) override;
 	virtual void Tick(float DeltaTime) override;
 
 	//! Returns the USplineMeshComponent of this spline helper.
 	USplineComponent* GetSplineComponent() const { return SplineComponent.Get(); }
 
 	//! Returns the AdvViz::SDK::ISpline of this spline helper.
-	std::shared_ptr<AdvViz::SDK::ISpline> GetAVizSpline() const;
+	AdvViz::SDK::ISplinePtr GetAVizSpline() const;
 
 	//! Sets the AdvViz::SDK::ISpline of this spline helper.
-	void SetAVizSpline(std::shared_ptr<AdvViz::SDK::ISpline> const& Spline);
+	void SetAVizSpline(AdvViz::SDK::ISplinePtr const& Spline);
 
 	//! Returns the identifier of the underlying AdvViz::SDK::ISpline, if any.
 	AdvViz::SDK::RefID GetAVizSplineId() const;
@@ -83,7 +83,7 @@ public:
 	//! Initializes the current spline helper, and does an automatic transfer/update of the data from the
 	//! USplineMeshComponent to the AdvViz::SDK::ISpline, or vice-versa depending on which one contains
 	//! points.
-	void Initialize(USplineComponent* splineComp, std::shared_ptr<AdvViz::SDK::ISpline> spline);
+	void Initialize(USplineComponent* splineComp, AdvViz::SDK::ISplinePtr spline);
 
 	//! Returns the spline's usage.
 	EITwinSplineUsage GetUsage() const;
@@ -191,6 +191,15 @@ public:
 	//! Set whether we invert this cut-out polygon effect in the given tileset.
 	void InvertCutoutEffect(FITwinTilesetAccess const& TilesetAccess, bool bInvert);
 
+	//! Select/deselect this spline.
+	void SetSelected(bool bSelected);
+	//! Returns whether this spline is selected.
+	bool IsSelected() const;
+
+	//! Set the selected point (use -1 to reset selection to none).
+	void SetSelectedPointIndex(int32 PointIndex);
+	//! Returns the index of the selected control point, if any, or -1 if none is selected.
+	int32 GetSelectedPointIndex() const;
 
 	//! The globe anchor is a constraint ensuring that the spline helper is correctly
 	//! placed on the earth surface.

@@ -29,6 +29,8 @@ public class ITwinRuntime : ModuleRules
 		});
 		PrivateDependencyModuleNames.AddRange(new string[]{
 			"CesiumRuntime",
+			"Chaos",
+			"CinematicCamera",
 			"CoreUObject",
 			"DeveloperSettings",
 			"Engine",
@@ -37,6 +39,10 @@ public class ITwinRuntime : ModuleRules
 			"HTTPServer",
 			"Json",
 			"JsonUtilities",
+			"LevelSequence",
+			"MovieScene",
+			"MovieSceneTracks",
+			"PakFile",
 			"RenderCore",
 			"RHI",
 			"SDKCore",
@@ -44,12 +50,7 @@ public class ITwinRuntime : ModuleRules
 			"SlateCore",
             "UMG",
             "UE5Coro",
-			"LevelSequence",
-			"CinematicCamera",
-			"MovieScene",
-			"MovieSceneTracks",
-            "PakFile"
-        });
+		});
 		if (Target.Version.MinorVersion == 5) // ie Unreal 5.5
 		{
 			PrivateDependencyModuleNames.Add("PlatformCryptoOpenSSL");
@@ -64,8 +65,8 @@ public class ITwinRuntime : ModuleRules
 		}
 		if (Target.Configuration != UnrealTargetConfiguration.Shipping)
 		{
-            PrivateDependencyModuleNames.Add("CQTest");
-        }
+			PrivateDependencyModuleNames.Add("CQTest");
+		}
 		if (Target.bBuildEditor)
 		{
 			PrivateDependencyModuleNames.AddRange(new string[]{
@@ -78,8 +79,7 @@ public class ITwinRuntime : ModuleRules
 		string libFolder = "UnrealDebug";
 		string libExtension = ".lib";
 		string libPrefix = "";
-		string libSuffix = "d";
-
+		string libSuffix = "ud";
 		if (Target.Platform == UnrealTargetPlatform.Mac)
 		{
 			libExtension = ".a";
@@ -91,11 +91,13 @@ public class ITwinRuntime : ModuleRules
 			libFolder = "Release";
 			libSuffix = "";
 		}
-
+		else if (Target.Configuration == UnrealTargetConfiguration.Debug)
+		{
+			libFolder = "Debug";
+			libSuffix = "d";
+		}
 		PublicAdditionalLibraries.AddRange(new string[]{
 			Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, libPrefix + "BeUtils" + libSuffix + libExtension),
-			Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, libPrefix + "cpr" + libExtension),
-			Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, "libcurl" + libExtension),
 			Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, libPrefix + "yyjson" + libExtension),
 		});
 		if (Target.Configuration != UnrealTargetConfiguration.Shipping)
@@ -104,14 +106,6 @@ public class ITwinRuntime : ModuleRules
 				Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, libPrefix + "httpmockserver" + libSuffix + libExtension),
 				Path.Combine(ModuleDirectory, "../ThirdParty/Lib", libFolder, "libmicrohttpd" + libExtension),
 			});
-		}
-		if (Target.Platform == UnrealTargetPlatform.Win64)
-		{
-			PublicSystemLibraries.Add("crypt32.lib"); // for curl
-		}
-		else
-		{
-			PublicFrameworks.AddRange(new string[] { "SystemConfiguration" }); //for curl
 		}
 	}
 }

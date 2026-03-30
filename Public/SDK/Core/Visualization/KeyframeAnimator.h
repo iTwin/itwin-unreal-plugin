@@ -16,6 +16,7 @@ namespace AdvViz::SDK
 {
 	class IInstancesManager;
 	class IInstancesGroup;
+	using IInstancesGroupPtr = TSharedLockableDataPtr<IInstancesGroup>;
 
 	class IKeyframeAnimator : public Tools::CommonInterfaceClass<IKeyframeAnimator>
 	{
@@ -27,7 +28,7 @@ namespace AdvViz::SDK
 			unsigned itemsHidden;
 			std::vector<unsigned> numberPerBbox;
 		};
-		virtual expected<void, std::string> AssociateInstances(const std::shared_ptr<IInstancesGroup>& gp) = 0;
+		virtual expected<void, std::string> AssociateInstances(const IInstancesGroupPtr& gpPtr) = 0;
 		virtual expected<void, std::string> Process(float time, const std::vector<AdvViz::SDK::BoundingBox>& boundingBoxes, bool cameraMoved) = 0;
 		virtual void SetAnimation(const IAnimationKeyframePtr& animationKeyframe) = 0;
 		virtual IAnimationKeyframePtr GetAnimation() const = 0;
@@ -41,7 +42,7 @@ namespace AdvViz::SDK
 	{
 	public:
 		KeyframeAnimator();
-		expected<void, std::string> AssociateInstances(const std::shared_ptr<IInstancesGroup>& gp) override;
+		expected<void, std::string> AssociateInstances(const IInstancesGroupPtr& gpPtr) override;
 		expected<void, std::string> Process(float time, const std::vector<AdvViz::SDK::BoundingBox>& boundingBoxes, bool cameraMoved) override;
 		void SetAnimation(const IAnimationKeyframePtr& animationKeyframe) override;
 		IAnimationKeyframePtr GetAnimation() const override;

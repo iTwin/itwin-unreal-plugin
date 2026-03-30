@@ -281,13 +281,20 @@ namespace AdvViz::SDK
 	ITwinWebServices::ITwinWebServices()
 	{
 		impl_ = std::make_unique<Impl>(*this);
-
-		http_.reset(Http::New());
-		http_->SetBaseUrl(GetAPIRootURL().c_str());
 	}
 
 	ITwinWebServices::~ITwinWebServices()
 	{
+	}
+
+	std::shared_ptr<Http>& ITwinWebServices::GetHttp()
+	{
+		if (!http_)
+		{
+			http_.reset(Http::New());
+			http_->SetBaseUrl(GetAPIRootURL().c_str());
+		}
+		return http_;
 	}
 
 	template <typename Func>
@@ -302,7 +309,7 @@ namespace AdvViz::SDK
 		// Update base URL if needed
 		if (baseUrl_new != baseUrl_old)
 		{
-			http_->SetBaseUrl(baseUrl_new.c_str());
+			GetHttp()->SetBaseUrl(baseUrl_new.c_str());
 		}
 	}
 
@@ -325,7 +332,7 @@ namespace AdvViz::SDK
 			auto token = authMngr->GetAccessToken();
 			if (token)
 			{
-				return *token;
+				return token->Get()->c_str();
 			}
 		}
 		return {};
@@ -571,6 +578,42 @@ namespace AdvViz::SDK
 					requestError += GetErrorDescriptionFromJson(response.second,
 						requestError.empty() ? "" : "\t");
 				}
+				// Error 429 "Too Many Requests" means the user has reached rate limits:
+				// handle the Retry-After response header:
+				if (response.first == 429)
+				{
+					bool canRetry = false;
+					if (response.headers_)
+					{
+						static const char RetryAfter[] = "retry-after";
+						auto RetryIt = std::find_if(response.headers_->begin(), response.headers_->end(),
+							[&](auto&& header) {
+								return _strnicmp(header.first.c_str(), &RetryAfter[0], _countof(RetryAfter)) == 0;
+							});
+						if (RetryIt != response.headers_->end())
+						{
+							auto retryAfter = strtol(RetryIt->second.c_str(), nullptr, 0);
+							if (retryAfter)
+							{
+								retryInfo.first = static_cast<float>(retryAfter);
+								canRetry = true;
+								requestError += fmt::format(" - will retry after {}s", retryAfter);
+							}
+						}
+					}
+					if (!canRetry)
+						retryInfo = std::make_pair(0.f, 0); // no retry unless we found the Retry-After header
+				}
+				// Log all response headers in case of request error: for 429 "Too Many Requests" for example,
+				// response headers have detailed information. See:
+				// https://developer.bentley.com/apis/overview/rate-limits/#rate-limited-by-the-itwin-platform
+				if (response.headers_)
+				{
+					for (auto&& Header : (*response.headers_))
+					{
+						requestError += fmt::format(" - {}: {}", Header.first, Header.second);
+					}
+				}
 				// store error and launch retry (through CleanUpGuard above)
 				return;
 			}
@@ -602,7 +645,7 @@ namespace AdvViz::SDK
 				return;
 			setErrorGuard.release();
 		});
-		request->Process(*owner_.http_, requestInfo.UrlSuffix,
+		request->Process(*owner_.GetHttp(), requestInfo.UrlSuffix,
 			{ requestInfo.ContentString.str(), requestInfo.ContentString.GetEncoding() },
 			headers,
 			requestInfo.isFullUrl);
@@ -1371,7 +1414,7 @@ namespace AdvViz::SDK
 					const std::string_view base64Chunk = "base64,";
 					auto const startPos = thumbnailURL.find(base64Chunk);
 					bResult = (startPos != std::string::npos)
-						&& http_->DecodeBase64(thumbnailURL.substr(startPos + base64Chunk.size()), buffer);
+						&& GetHttp()->DecodeBase64(thumbnailURL.substr(startPos + base64Chunk.size()), buffer);
 					if (!bResult)
 					{
 						BE_LOGE("ITwinAPI", "[SavedView] Failed decoding thumbnail from " << thumbnailURL);
@@ -1910,7 +1953,7 @@ namespace AdvViz::SDK
 			{
 				error_ << "unhandled boolean" << std::endl;
 			}
-			void operator()(const int& nValue) const
+			void operator()(const int64_t& nValue) const
 			{
 				error_ << "unhandled integer: " << nValue << std::endl;
 			}
@@ -2701,7 +2744,7 @@ namespace AdvViz::SDK
 				}
 			}
 
-			void operator()(const int& nValue) const
+			void operator()(const int64_t& nValue) const
 			{
 				OnFloatingValue(static_cast<double>(nValue));
 			}
@@ -2767,7 +2810,7 @@ namespace AdvViz::SDK
 			}
 
 			void operator()(const bool& boolValue) const { Super::operator()(boolValue); }
-			void operator()(const int& nValue) const { Super::operator()(nValue); }
+			void operator()(const int64_t& nValue) const { Super::operator()(nValue); }
 			void operator()(const double& dValue) const { Super::operator()(dValue); }
 			void operator()(const std::string& strValue) const { Super::operator()(strValue); }
 			void operator()(const rfl::Generic::Array& rflArray) const { Super::operator()(rflArray); }

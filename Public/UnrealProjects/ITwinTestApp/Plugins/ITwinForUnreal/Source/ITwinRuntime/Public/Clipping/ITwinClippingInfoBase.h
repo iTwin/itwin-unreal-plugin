@@ -63,6 +63,14 @@ struct FITwinClippingInfoBase
 	//! Make the effect apply to none.
 	void SetInfluenceNone();
 
+	//! Get the bounds of the area influenced by this clipping primitive, in world coordinates.
+	//! An invalid box will be returned if the cutout influences the Google tileset (which is infinite), or
+	//! if it influences nothing.
+	FBox const& GetInfluenceBoundingBox() const;
+
+	void InvalidateInfluenceBoundingBox();
+	void UpdateInfluenceBoundingBox(class UWorld* World);
+
 protected:
 	virtual void DoSetInvertEffect(bool bInvert);
 	virtual void DoSetEnabled(bool bInEnabled);
@@ -93,6 +101,11 @@ private:
 	// Global Map Layers is the generic term for tilesets such as the Google tileset.
 	UPROPERTY()
 	FITwinClippingInfluenceInfo GlobalMapLayersInfluenceInfo;
+
+	/// Bounding box of the zone influenced by this clipping primitive, in world coordinates.
+	/// Beware it will need to be updated if the corresponding layer is moved/transformed.
+	FBox InfluenceBoundingBox;
+	bool bNeedsUpdateBoundingBox = true;
 
 	friend class AITwinClippingTool;
 };

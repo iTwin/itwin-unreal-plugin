@@ -24,7 +24,10 @@
 
 MODULE_EXPORT namespace AdvViz::SDK
 {	
+	using namespace Tools;
 	class IInstance;
+	using IInstanceWPtr = TSharedLockableDataWPtr<IInstance>;
+
 	class IInstancesGroup : public Tools::ExtensionSupport, public Tools::Factory<IInstancesGroup>
 	{
 	public:
@@ -47,12 +50,11 @@ MODULE_EXPORT namespace AdvViz::SDK
 		// Returns linked spline ID, if any.
 		virtual const std::optional<RefID>& GetLinkedSplineId() const = 0;
 
-		typedef std::set<std::weak_ptr<IInstance>, std::owner_less<std::weak_ptr<IInstance>>> InstanceList;
+		typedef std::set<IInstanceWPtr, std::owner_less<IInstanceWPtr>> InstanceList;
 
 		virtual InstanceList GetInstances() = 0;
-		virtual void AddInstance(const std::weak_ptr<IInstance>& inst) = 0;
-		virtual void RemoveInstance(const std::weak_ptr<IInstance>& inst) = 0;
-
+		virtual void AddInstance(const IInstanceWPtr& inst) = 0;
+		virtual void RemoveInstance(const IInstanceWPtr& inst) = 0;
 	};
 	
 	class ADVVIZ_LINK InstancesGroup : public IInstancesGroup, Tools::TypeId<InstancesGroup>
@@ -85,8 +87,8 @@ MODULE_EXPORT namespace AdvViz::SDK
 		bool IsTypeOf(std::uint64_t i) const override { return (i == GetTypeId()) || IInstancesGroup::IsTypeOf(i); }
 
 		InstanceList GetInstances() override;
-		void AddInstance(const std::weak_ptr<IInstance>& inst) override;
-		void RemoveInstance(const std::weak_ptr<IInstance>& inst) override;
+		void AddInstance(const IInstanceWPtr& inst) override;
+		void RemoveInstance(const IInstanceWPtr& inst) override;
 
 	protected:
 		class Impl;
@@ -95,8 +97,8 @@ MODULE_EXPORT namespace AdvViz::SDK
 		const Impl& GetImpl() const;
 	};
 
-	typedef std::shared_ptr<IInstancesGroup> IInstancesGroupPtr;
-	typedef std::vector<IInstancesGroupPtr> SharedInstGroupVect;
+	using IInstancesGroupPtr = TSharedLockableDataPtr<IInstancesGroup>;
+	typedef std::unordered_map<std::string, IInstancesGroupPtr> SharedInstGroupNameMap;
 	typedef std::map<RefID, IInstancesGroupPtr> SharedInstGroupMap;
 
 	

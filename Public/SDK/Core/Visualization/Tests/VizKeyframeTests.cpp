@@ -24,7 +24,8 @@ TEST_CASE("SaveKeyframeAnimation"){
 	REQUIRE(mock != nullptr);
 
 	using RequestKey = HTTPMock::RequestKey;
-	std::shared_ptr<std::string> p = std::make_shared<std::string>("abcd");
+	std::shared_ptr<ThreadSafeAccessToken> p = std::make_shared<ThreadSafeAccessToken>();
+	p->Set("abcd");
 	GetDefaultHttp()->SetAccessToken(p);
 
 	IAnimationKeyframe* animKeyFrame = nullptr;
@@ -120,7 +121,8 @@ TEST_CASE("SaveKeyframeAnimation"){
 						};
 					auto ret4 = keyframeInfo->Save(GetDefaultHttp());
 					REQUIRE((bool)ret4 == true);
-					REQUIRE(keyframeChunkPtr2->GetAutoLock()->GetId() == "67a0e124f9f9158c2e60dbbb");
+					auto keyframeInfoLocked2 = keyframeChunkPtr2->GetAutoLock();
+					REQUIRE(keyframeInfoLocked2->GetId() == "67a0e124f9f9158c2e60dbbb");
 
 					mock->responseFct_.erase(respKey1);
 				}
@@ -139,7 +141,8 @@ TEST_CASE("LoadKeyframeAnimation") {
 	HTTPMock* mock = GetHttpMock();
 	REQUIRE(mock != nullptr);
 
-	std::shared_ptr<std::string> p = std::make_shared<std::string>("abcd");
+	std::shared_ptr<ThreadSafeAccessToken> p = std::make_shared<ThreadSafeAccessToken>();
+	p->Set("abcd");
 	GetDefaultHttp()->SetAccessToken(p);
 
 	using RequestKey = HTTPMock::RequestKey;
@@ -198,8 +201,10 @@ TEST_CASE("LoadKeyframeAnimation") {
 					auto keyframeInfoLocked = keyframeInfoPtr->GetAutoLock();
 					IAnimationKeyframeInfo* keyframesInfo = keyframeInfoLocked.GetPtr();
 					CHECK(keyframesInfo->GetChunkCount() == 2);
-					CHECK(keyframesInfo->GetChunk(0)->GetAutoLock()->GetId() == "aaaabbbb");
-					CHECK(keyframesInfo->GetChunk(1)->GetAutoLock()->GetId() == "ccccdddd");
+					auto lockChunck0 = keyframesInfo->GetChunk(0)->GetAutoLock();
+					auto lockChunck1 = keyframesInfo->GetChunk(1)->GetAutoLock();
+					CHECK(lockChunck0->GetId() == "aaaabbbb");
+					CHECK(lockChunck1->GetId() == "ccccdddd");
 
 					auto keyframeChunkLocked = keyframesInfo->GetChunk(0)->GetAutoLock();
 					IAnimationKeyframeChunk* chuck = keyframeChunkLocked.GetPtr();

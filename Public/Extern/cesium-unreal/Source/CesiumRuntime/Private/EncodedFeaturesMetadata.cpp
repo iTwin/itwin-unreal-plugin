@@ -722,9 +722,7 @@ EncodedPropertyTexture encodePropertyTextureAnyThreadPart(
               property);
     }
 
-    if (pDescription->bHasKhrTextureTransform) {
-      encodedProperty.textureTransform = property.getTextureTransform();
-    }
+    encodedProperty.textureTransform = property.getTextureTransform();
   }
 
   return encodedPropertyTexture;

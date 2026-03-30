@@ -11,6 +11,7 @@
 
 #ifndef SDK_CPPMODULES
 #	include <filesystem>
+#	include <functional>
 #	include <map>
 #	include <memory>
 #	include <optional>
@@ -26,6 +27,8 @@
 #include "../AdvVizLinkType.h"
 #include "TextureKey.h"
 #include "TextureUsage.h"
+
+#include "Core/Tools/Tools.h"
 
 MODULE_EXPORT namespace AdvViz::SDK 
 {
@@ -49,9 +52,12 @@ MODULE_EXPORT namespace AdvViz::SDK
 		/// Load the data from the server
 		void LoadDataFromServer(std::string const& decorationId,
 			std::set<std::string> const& specificModels = {});
+		void AsyncLoadDataFromServer(std::string const& decorationId,
+			std::function<void(expected<void, std::string> const&)> onFinishCallback,
+			std::set<std::string> const& specificModels = {});
 
 		/// Save the data on the server
-		void SaveDataOnServer(const std::string& decorationId);
+		void AsyncSaveDataOnServer(const std::string& decorationId, std::function<void(bool)>&& onDataSavedFunc = {});
 
 		/// Fills the list of iModel IDs for which some material customizations are known.
 		size_t ListIModelsWithMaterialSettings(std::vector<std::string>& iModelIds) const;
@@ -131,14 +137,15 @@ MODULE_EXPORT namespace AdvViz::SDK
 		std::string ExportAsJson(ITwinMaterial const& material, std::string const& iModelID, uint64_t materialId) const;
 
 		bool ConvertJsonFileToKeyValueMap(std::filesystem::path const& jsonPath,
-			std::filesystem::path const& textureDir, KeyValueStringMap& outMap) const;
+			std::filesystem::path const& textureDir, KeyValueStringMap& outMap,
+			bool bForceUseTexturesFromLocalDir = false) const;
 
 		bool RenameMaterialInJsonFile(std::filesystem::path const& jsonPath,
 			std::string const& newMaterialName, std::string& outError) const;
 
 	private:
 		class Impl;
-		const std::unique_ptr<Impl> impl_;
+		const std::shared_ptr<Impl> impl_;
 		Impl& GetImpl();
 		Impl const& GetImpl() const;
 	};

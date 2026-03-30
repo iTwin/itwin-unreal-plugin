@@ -11,15 +11,17 @@
 #include "Core/Network/Network.h"
 #include "Core/Tools/Tools.h"
 #include "Core/ITwinAPI/ITwinScene.h"
+#include "Core/Visualization/SavableItem.h"
 #include "Core/Visualization/Timeline.h"
 #include "Core/Tools/Types.h"
 #include "MaterialPersistence.h"
+#include <functional>
+#include <iosfwd>
 
 MODULE_EXPORT namespace AdvViz::SDK
 {
-	class ADVVIZ_LINK  ILink : public Tools::ExtensionSupport, public Tools::TypeId<ILink>, public Tools::IDynType
+	class ADVVIZ_LINK ILink : public Tools::ExtensionSupport, public Tools::TypeId<ILink>, public Tools::IDynType, public ISavableItem
 	{
-
 	public:
 		virtual ~ILink() {}
 		virtual const std::string& GetType() const = 0;
@@ -44,15 +46,15 @@ MODULE_EXPORT namespace AdvViz::SDK
 		virtual bool HasQuality() const = 0;
 		virtual bool HasTransform() const = 0;
 		virtual void Delete(bool value = true) = 0;
-		virtual bool ShouldDelete() = 0;
-		virtual const std::string& GetId() = 0;
-		virtual bool ShouldSave()const = 0;
-		virtual void SetShouldSave(bool shouldSave) = 0;
-
+		virtual bool ShouldDelete() const = 0;
 
 		std::uint64_t GetDynTypeId() const override { return GetTypeId(); }
 		bool IsTypeOf(std::uint64_t i) const override { return (i == GetTypeId()); }
 	};
+
+	ADVVIZ_LINK std::ostream& operator<< (std::ostream& os, ILink const& link);
+
+
 	class IScenePersistence : public Tools::ExtensionSupport, public Tools::TypeId<IScenePersistence>, public Tools::IDynType
 	{
 	public:
@@ -61,10 +63,13 @@ MODULE_EXPORT namespace AdvViz::SDK
 		virtual void PrepareCreation(const std::string& name, const std::string& itwinid) = 0;
 
 		/// Create new Scene on server
-		virtual bool Create(
-			const std::string& name, const std::string& itwinid) = 0;
+		virtual void AsyncCreate(
+			const std::string& name, const std::string& itwinid,
+			std::function<void(bool)>&& onCreationDoneFunc = {}) = 0;
 		/// Retrieve the Scene from server
 		virtual bool Get(const std::string& itwinid, const std::string& id) = 0;
+		virtual void AsyncGet(const std::string&, const std::string& id, std::function<void(expected<void, std::string> const&)> onFinish) = 0;
+
 		/// Delete the Scene on server
 		virtual bool Delete() = 0;
 		/// Get scene identifiers
@@ -79,8 +84,8 @@ MODULE_EXPORT namespace AdvViz::SDK
 		virtual void SetSceneSettings(const ITwinSceneSettings&) = 0;
 		virtual ITwinSceneSettings GetSceneSettings() const = 0;
 
-		/// save to the decoration server
-		virtual bool Save() = 0;
+		/// save to the cloud (decoration server or iTwin SceneAPI)
+		virtual void AsyncSave(std::function<void(bool)>&& onDataSavedFunc = {}) = 0;
 		virtual bool ShouldSave() const = 0;
 		virtual void SetShouldSave(bool shouldSave) const = 0;
 		//links management
@@ -100,7 +105,25 @@ MODULE_EXPORT namespace AdvViz::SDK
 		virtual std::string ExportHDRIAsJson(ITwinHDRISettings const& hdri) const = 0;
 
 		virtual bool ConvertHDRIJsonFileToKeyValueMap(std::filesystem::path const& jsonPath, KeyValueStringMap& outMap) const = 0;
+
+		// Reload links from distant database if needed
+		virtual void AsyncRefreshLinks(std::function<void(expected<void, std::string> const&)> callback) {
+			if (callback)
+			{
+				callback(make_unexpected<std::string>("Not implemented"));
+			}
+		}
 	};
+
+	struct SceneInfo
+	{
+		std::string id;
+		std::string iTwinId;
+		std::string displayName;
+	};
+	using SceneInfoVec = std::vector<SceneInfo>;
+
+	using ScenePtrVector = std::vector<std::shared_ptr<IScenePersistence>>;
 
 #define ITWIN_DEFAULT_SCENE_NAME "default scene"
 

@@ -30,6 +30,7 @@
 #include <DrawDebugHelpers.h>
 #include <EngineUtils.h>
 #include <Engine/World.h>
+#include <Framework/Application/SlateApplication.h>
 #include <GameFramework/Pawn.h>
 #include <GameFramework/PlayerController.h>
 #include <Kismet/KismetSystemLibrary.h>
@@ -44,6 +45,15 @@
 #	include <SDK/Core/Visualization/SplinesManager.h>
 #include <Compil/AfterNonUnrealIncludes.h>
 
+
+namespace ITwin
+{
+	extern int32 GetLinkedTilesets(
+		AITwinSplineTool::TilesetAccessArray& OutArray,
+		AdvViz::SDK::ISplinePtr const& Spline,
+		const UWorld* World);
+}
+
 class AITwinSplineTool::FImpl
 {
 public:
@@ -52,7 +62,6 @@ public:
 	bool bIsEnabled = false; // boolean used to switch on or off the spline tool
 
 	AITwinSplineHelper* selectedSplineHelper = nullptr;
-	int32 selectedPointIndex = -1;
 	bool duplicateWhenMovingPoint = false;
 	EITwinSplineToolMode ToolMode = EITwinSplineToolMode::Undefined;
 	EITwinSplineUsage ToolUsage = EITwinSplineUsage::Undefined;
@@ -78,7 +87,7 @@ public:
 
 	// Implementation of AITwinSplineTool functions
 	AITwinSplineHelper* GetSelectedSpline() const;
-	void SetSelectedSpline(AITwinSplineHelper* splineHelper);
+	void SetSelectedSpline(AITwinSplineHelper* splineHelper, bool bHasJustDeletedSelectedSpline = false);
 	void SetSelectedPointIndex(int32 pointIndex);
 	int32 GetSelectedPointIndex() const;
 	bool HasSelection() const;
@@ -104,20 +113,26 @@ public:
 
 	AITwinSplineHelper* AddSpline(FVector const& Position);
 
-	bool LoadSpline(AdvViz::SDK::SharedSpline const& Spline);
+	bool LoadSpline(AdvViz::SDK::ISplinePtr const& Spline);
 
 
-	bool GetSplineReferencePosition(FVector& RefLocation, FBox& OutBox) const;
-	bool GetOverviewCameraReferencePosition(FVector& RefLocation, FBox& OutBox) const;
+	bool GetSplineReferencePosition(FVector& RefLocation, FBox& OutBox,
+		AITwinSplineHelper const* SpecificSpline = nullptr) const;
+	bool GetOverviewCameraReferencePosition(FVector& RefLocation, FBox& OutBox,
+		AITwinSplineHelper const* SpecificSpline = nullptr) const;
 
 	EITwinSplineToolMode GetMode() const { return ToolMode; }
 	void SetMode(EITwinSplineToolMode NewMode) { ToolMode = NewMode; }
 
 	//! Toggle interactive creation mode on/off. If the creation is toggled on for cut-out usage and
-	//! bAutoSelectCutoutTarget is true, the cut-out target will be determined by the layer intersected
+	//! \param bTriggeredFromITS Whether the event was triggered from iTwinStudio (as opposed to Unreal)
+	//! \param bAutoSelectCutoutTarget If true, the cut-out target will be determined by the layer intersected
 	//! upon the first click.
-	void ToggleInteractiveCreationMode(bool bInAutoSelectCutoutTarget = false);
-	void AbortInteractiveCreation();
+	//! Returns true if a new spline was finalized.
+	bool ToggleInteractiveCreationMode(bool bTriggeredFromITS, bool bInAutoSelectCutoutTarget = false);
+	void AbortInteractiveCreation(bool bTriggeredFromITS);
+
+	void SetAutoSelectCutoutTarget(bool bInAutoSelectCutoutTarget);
 
 	EITwinSplineUsage GetUsage() const { return ToolUsage; }
 	void SetUsage(EITwinSplineUsage NewUsage) { ToolUsage = NewUsage; }
@@ -141,7 +156,7 @@ private:
 	void ForEachTargetTileset(TFunc const& Func) const;
 
 	AITwinSplineHelper* CreateSpline(EITwinSplineUsage SplineUsage,
-		std::optional<FVector> const& PositionOpt, AdvViz::SDK::SharedSpline const& LoadedSpline);
+		std::optional<FVector> const& PositionOpt, AdvViz::SDK::ISplinePtr const& LoadedSpline);
 
 	void RemoveCartographicPolygon(ACesiumCartographicPolygon* Polygon);
 };
@@ -158,26 +173,87 @@ AITwinSplineHelper* AITwinSplineTool::FImpl::GetSelectedSpline() const
 	return selectedSplineHelper;
 }
 
-void AITwinSplineTool::FImpl::SetSelectedSpline(AITwinSplineHelper* splineHelper)
+void AITwinSplineTool::FImpl::SetSelectedSpline(AITwinSplineHelper* splineHelper,
+	bool bHasJustDeletedSelectedSpline /*= false*/)
 {
-	selectedSplineHelper = splineHelper;
-	selectedPointIndex = -1;
+	AITwinSplineHelper* const previouslySelected = selectedSplineHelper;
+	const bool bChangeSelection = (selectedSplineHelper != splineHelper);
+	if (bChangeSelection)
+	{
+		// Only one spline selected at a time.
+		if (selectedSplineHelper && !bHasJustDeletedSelectedSpline)
+		{
+			selectedSplineHelper->SetSelected(false);
+		}
+		selectedSplineHelper = splineHelper;
+		if (selectedSplineHelper)
+		{
+			selectedSplineHelper->SetSelected(true);
+		}
+	}
+	if (selectedSplineHelper)
+	{
+		if (bAutoSelectCutoutTarget && bChangeSelection)
+		{
+			// Gather the tilesets influenced by this cutout polygon.
+			AITwinSplineTool::TilesetAccessArray Targets;
+			ITwin::GetLinkedTilesets(Targets, selectedSplineHelper->GetAVizSpline(), owner.GetWorld());
+			owner.SetCutoutTargets(std::move(Targets));
+		}
+		selectedSplineHelper->SetSelectedPointIndex(-1);
+	}
 
-	owner.SplineSelectionEvent.Broadcast();
-	owner.SplineEditionEvent.Broadcast();
+	if (bChangeSelection)
+	{
+		// AzDev#1967146: when a polygon is selected, the other ones are all hidden:
+		if (selectedSplineHelper)
+		{
+			for (TActorIterator<AITwinSplineHelper> SplineIter(owner.GetWorld()); SplineIter; ++SplineIter)
+			{
+				if ((*SplineIter)->GetUsage() == this->GetUsage())
+					SplineIter->SetActorHiddenInGame(!SplineIter->IsSelected());
+			}
+		}
+		else
+		{
+			// Restore visibility
+			bool bShowProxies = IsEnabled();
+			if (previouslySelected && !bHasJustDeletedSelectedSpline)
+			{
+				bShowProxies = !previouslySelected->IsHidden();
+			}
+			for (TActorIterator<AITwinSplineHelper> SplineIter(owner.GetWorld()); SplineIter; ++SplineIter)
+			{
+				if (bHasJustDeletedSelectedSpline && previouslySelected == (*SplineIter))
+					continue;
+				if ((*SplineIter)->GetUsage() == this->GetUsage())
+					SplineIter->SetActorHiddenInGame(!bShowProxies);
+			}
+		}
+	}
+
+	// NB. Deletion event will be triggered differently.
+	if (!bHasJustDeletedSelectedSpline)
+	{
+		owner.SplineSelectionEvent.Broadcast();
+		owner.SplineEditionEvent.Broadcast();
+	}
 }
 
-void AITwinSplineTool::FImpl::SetSelectedPointIndex(int32 pointIndex)
+void AITwinSplineTool::FImpl::SetSelectedPointIndex(int32 PointIndex)
 {
-	selectedPointIndex = pointIndex;
+	if (selectedSplineHelper)
+	{
+		selectedSplineHelper->SetSelectedPointIndex(PointIndex);
 
-	owner.SplineEditionEvent.Broadcast();
+		owner.SplineEditionEvent.Broadcast();
+	}
 }
 
 int32 AITwinSplineTool::FImpl::GetSelectedPointIndex() const
 {
 	if (selectedSplineHelper)
-		return selectedPointIndex;
+		return selectedSplineHelper->GetSelectedPointIndex();
 	else
 		return INDEX_NONE;
 }
@@ -198,7 +274,8 @@ void AITwinSplineTool::FImpl::DeleteSelection()
 		bPreventDeletion = true;
 
 		BE_LOGI("ITwinAdvViz", "[SplineTool] Deleting selection (selected point: "
-			<< selectedPointIndex << " / total number of points: " << selectedSplineHelper->GetNumberOfSplinePoints()
+			<< GetSelectedPointIndex() << " / total number of points: "
+			<< selectedSplineHelper->GetNumberOfSplinePoints()
 			<< ")");
 
 		if (CanDeletePoint())
@@ -241,8 +318,7 @@ void AITwinSplineTool::FImpl::DeleteSpline(AITwinSplineHelper* SplineHelper)
 	SplineHelper->Destroy();
 	if (bIsSelectedSpline)
 	{
-		selectedSplineHelper = nullptr;
-		selectedPointIndex = -1;
+		SetSelectedSpline(nullptr, /*bHasJustDeletedSelectedSpline*/true);
 	}
 
 	owner.SplineRemovedEvent.Broadcast();
@@ -259,7 +335,7 @@ void AITwinSplineTool::FImpl::DeleteSelectedSpline()
 
 bool AITwinSplineTool::FImpl::HasSelectedPoint() const
 {
-	return HasSelection() && selectedPointIndex >= 0;
+	return HasSelection() && GetSelectedPointIndex() >= 0;
 }
 
 bool AITwinSplineTool::FImpl::CanDeletePoint() const
@@ -273,6 +349,7 @@ void AITwinSplineTool::FImpl::DeleteSelectedPoint()
 {
 	if (CanDeletePoint())
 	{
+		int32 selectedPointIndex = GetSelectedPointIndex();
 		selectedSplineHelper->DeletePoint(selectedPointIndex);
 
 		// Select the next point in the spline (most of the time, we can just keep current index unchanged,
@@ -291,7 +368,7 @@ void AITwinSplineTool::FImpl::DeleteSelectedPoint()
 		else
 		{
 			// Should not happen as we enforce keeping at least 3 points...
-			selectedPointIndex = -1;
+			SetSelectedPointIndex(-1);
 
 			owner.SplinePointRemovedEvent.Broadcast();
 			owner.SplineEditionEvent.Broadcast();
@@ -304,7 +381,7 @@ void AITwinSplineTool::FImpl::DuplicateSelectedPoint()
 {
 	if (HasSelectedPoint())
 	{
-		selectedSplineHelper->DuplicatePoint(selectedPointIndex);
+		selectedSplineHelper->DuplicatePoint(GetSelectedPointIndex());
 	}
 }
 
@@ -317,6 +394,7 @@ FTransform AITwinSplineTool::FImpl::GetSelectionTransform() const
 {
 	if (IsValid(selectedSplineHelper))
 	{
+		const int32 selectedPointIndex = GetSelectedPointIndex();
 		if (selectedPointIndex >= 0 &&
 			selectedPointIndex < selectedSplineHelper->GetNumberOfSplinePoints())
 		{
@@ -338,8 +416,11 @@ void AITwinSplineTool::FImpl::SetSelectionTransform(const FTransform& transform)
 {
 	if (IsValid(selectedSplineHelper))
 	{
-		if (selectedPointIndex >= 0)
+		if (HasSelectedPoint())
 		{
+			const int32 selectedPointIndex_Cur = GetSelectedPointIndex();
+			int32 selectedPointIndex = selectedPointIndex_Cur;
+
 			FVector position = transform.GetLocation();
 
 			if (selectedSplineHelper->GetLocationAtSplinePoint(selectedPointIndex) !=
@@ -352,6 +433,12 @@ void AITwinSplineTool::FImpl::SetSelectionTransform(const FTransform& transform)
 				}
 
 				selectedSplineHelper->SetLocationAtSplinePoint(selectedPointIndex, position);
+			}
+
+			// DuplicatePoint can modify selectedPointIndex...
+			if (selectedPointIndex != selectedPointIndex_Cur)
+			{
+				SetSelectedPointIndex(selectedPointIndex);
 			}
 		}
 		else
@@ -486,9 +573,13 @@ bool AITwinSplineTool::FImpl::DoMouseClickAction()
 				{
 					// Determine the cut-out target from the hit layer.
 					TilesetAccessArray Targets;
-					auto TilesetAccess = ITwin::GetTilesetAccess(hitActor);
-					if (TilesetAccess)
-						Targets.Push(std::move(TilesetAccess));
+					auto HitTileset = ITwin::GetTilesetAccess(hitActor);
+					if (HitTileset)
+					{
+						// Currently, cutout influences work per layer type, so if we hit an iModel, we
+						// should target *all* iModels in scene:
+						ITwin::GatherTilesetsOfModelType(Targets, HitTileset->GetModelType(), owner.GetWorld());
+					}
 					owner.SetCutoutTargets(std::move(Targets));
 
 					BuildListOfActorsToExclude();
@@ -517,7 +608,7 @@ bool AITwinSplineTool::FImpl::DoMouseClickAction()
 					(PointIndex == 0 || PointIndex == NumPoints - 2))
 				{
 					bStopDrawing = true;
-					ToggleInteractiveCreationMode();
+					ToggleInteractiveCreationMode(/*bTriggeredFromITS*/false);
 				}
 			}
 
@@ -533,13 +624,16 @@ bool AITwinSplineTool::FImpl::DoMouseClickAction()
 	}
 	else
 	{
-		SetSelectedSpline(nullptr);
 		if (hitActor && hitActor->IsA(AITwinSplineHelper::StaticClass()))
 		{
 			AITwinSplineHelper* splineHelper = Cast<AITwinSplineHelper>(hitActor);
+
+			// AzDev#1967146: point selection/insertion is now only possible for the selected polygon.
+			const bool bAllowPointSelectionOrInsertion = (splineHelper == GetSelectedSpline());
+
 			SetSelectedSpline(splineHelper);
 
-			if (hitResult.GetComponent())
+			if (bAllowPointSelectionOrInsertion && hitResult.GetComponent())
 			{
 				// NB test USplineMeshComponent *before* UStaticMeshComponent, as USplineMeshComponent
 				// inherits UStaticMeshComponent...
@@ -555,7 +649,7 @@ bool AITwinSplineTool::FImpl::DoMouseClickAction()
 						{
 							SetSelectedPointIndex(NewPointIndex);
 							owner.SplinePointSelectedEvent.Broadcast();
-							owner.InteractiveCreationCompletedEvent.Broadcast();
+							owner.InteractiveCreationCompletedEvent.Broadcast(/*bTriggeredFromITS*/false);
 						}
 					}
 				}
@@ -575,10 +669,11 @@ bool AITwinSplineTool::FImpl::DoMouseClickAction()
 		}
 		// Test if the line intersects the interior of one of the splines.
 		// We use a coarse approximation (polygon composed of the control points), which is correct for
-		// cartographic polygons...
+		// cartographic polygons...)
 		for (TActorIterator<AITwinSplineHelper> SplineIter(owner.GetWorld()); SplineIter; ++SplineIter)
 		{
-			if (SplineIter->GetUsage() == this->GetUsage())
+			if (SplineIter->GetUsage() == this->GetUsage()
+				&& !SplineIter->IsHidden())
 			{
 				if (SplineIter->DoesLineIntersectSplinePolygon(PickingResult.TraceStart, PickingResult.TraceEnd))
 				{
@@ -587,6 +682,8 @@ bool AITwinSplineTool::FImpl::DoMouseClickAction()
 				}
 			}
 		}
+		// No spline selected => reset selection.
+		SetSelectedSpline(nullptr);
 	}
 	return false;
 }
@@ -618,12 +715,18 @@ bool AITwinSplineTool::FImpl::ActionOnTick(float DeltaTime)
 				&& HitResult.GetComponent()
 				&& HitResult.GetComponent()->IsA(USplineMeshComponent::StaticClass()))
 			{
-				HitSegmentIndex = Cast<AITwinSplineHelper>(HitActor)->FindSegmentIndexFromSplineComponent(
-					Cast<USplineMeshComponent>(HitResult.GetComponent()));
+				// AzDev#1967146: point insertion is now only possible for the selected polygon.
+				AITwinSplineHelper const* SplineHelper = Cast<AITwinSplineHelper const>(HitActor);
+				if (SplineHelper->IsSelected())
+				{
+					HitSegmentIndex = SplineHelper->FindSegmentIndexFromSplineComponent(
+						Cast<USplineMeshComponent>(HitResult.GetComponent()));
+				}
 			}
 			APlayerController* PlayerController = owner.GetWorld()->GetFirstPlayerController();
 			if (PlayerController)
 			{
+				auto const OldCursor(PlayerController->CurrentMouseCursor);
 				if (HitSegmentIndex != INDEX_NONE)
 				{
 					PlayerController->CurrentMouseCursor = EMouseCursor::Crosshairs;
@@ -631,6 +734,14 @@ bool AITwinSplineTool::FImpl::ActionOnTick(float DeltaTime)
 				else
 				{
 					PlayerController->CurrentMouseCursor = PlayerController->DefaultMouseCursor;
+				}
+				if (OldCursor != PlayerController->CurrentMouseCursor)
+				{
+					// Quick fix to make the new cursor appear.
+					// from https://forums.unrealengine.com/t/mouse-cursor-not-changing-until-moved/290523/25
+					auto& App = FSlateApplication::Get();
+					App.SetAllUserFocusToGameViewport();
+					App.QueryCursor();
 				}
 			}
 		}
@@ -657,34 +768,60 @@ bool AITwinSplineTool::FImpl::ActionOnTick(float DeltaTime)
 
 namespace ITwin
 {
-	bool RemoveCutoutPolygon(FITwinTilesetAccess const& TilesetAccess, ACesiumCartographicPolygon* Polygon)
+	// Deactivate a given polygon, either by deactivating the raster overlay if it contains just this
+	// polygon and bForceRemoveIt is false, or by removing it.
+	bool DeactivateCutoutPolygon(FITwinTilesetAccess const& TilesetAccess,
+		ACesiumCartographicPolygon* Polygon,
+		bool bForceRemoveIt)
 	{
+		if (!ensure(Polygon))
+			return false;
 		if (!TilesetAccess.HasTileset())
 			return false;
 		ACesium3DTileset& Tileset = *TilesetAccess.GetMutableTileset();
 		bool bRemoved = false;
+		bool bDeactivated = false;
 		UCesiumPolygonRasterOverlay* RasterOverlay = GetCutoutOverlay(Tileset);
 		if (RasterOverlay)
 		{
 			const int32 index = RasterOverlay->Polygons.Find(Polygon);
 			if (index != INDEX_NONE)
 			{
-				RasterOverlay->Polygons.RemoveAt(index);
-				if (RasterOverlay->InvertSelection &&
-					RasterOverlay->Polygons.IsEmpty())
+				if (bForceRemoveIt || RasterOverlay->Polygons.Num() > 1)
 				{
-					// If no more polygons are left in an inverted raster overlay, one should totally disable
-					// it or the tileset will be totally invisible!
-					RasterOverlay->ExcludeSelectedTiles = false;
+					RasterOverlay->Polygons.RemoveAt(index);
+					bRemoved = true;
+
+					if (RasterOverlay->InvertSelection &&
+						RasterOverlay->Polygons.IsEmpty())
+					{
+						// If no more polygons are left in an inverted raster overlay, one should totally
+						// disable it or the tileset will be totally invisible (all tiles being excluded...)
+						RasterOverlay->ExcludeSelectedTiles = false;
+					}
 				}
-				bRemoved = true;
+				else
+				{
+					// Optimization: instead of removing the polygon, which implies to refresh the whole
+					// tileset, just deactivate the overlay.
+					// This improves usual cases for AzDev#1995643 - however, as soon as a tileset has more
+					// than one cutout polygon, we can no longer do this because a Cesium raster overlay
+					// bakes all polygon effects in one texture (one texture per tile of course).
+					RasterOverlay->Deactivate();
+					bDeactivated = true;
+				}
 			}
 		}
 		if (bRemoved)
 		{
 			TilesetAccess.RefreshTileset();
 		}
-		return bRemoved;
+		return bRemoved || bDeactivated;
+	}
+
+	bool RemoveCutoutPolygon(FITwinTilesetAccess const& TilesetAccess, ACesiumCartographicPolygon* Polygon)
+	{
+		return DeactivateCutoutPolygon(TilesetAccess, Polygon, true /*bForceRemoveIt*/);
 	}
 
 	inline bool AddCutoutPolygonToOverlay(UCesiumPolygonRasterOverlay& RasterOverlay, ACesiumCartographicPolygon* Polygon)
@@ -703,6 +840,8 @@ namespace ITwin
 
 	bool AddCutoutPolygon(FITwinTilesetAccess const& TilesetAccess, ACesiumCartographicPolygon* Polygon)
 	{
+		if (!ensure(Polygon))
+			return false;
 		ACesium3DTileset* Tileset = TilesetAccess.GetMutableTileset();
 		if (!Tileset)
 			return false;
@@ -710,18 +849,38 @@ namespace ITwin
 		UCesiumPolygonRasterOverlay* RasterOverlay = GetCutoutOverlay(*Tileset);
 		if (!RasterOverlay)
 		{
-			InitCutoutOverlay(*Tileset);
+			TilesetAccess.InitCutoutOverlay();
 			RasterOverlay = GetCutoutOverlay(*Tileset);
 		}
 		if (ensure(RasterOverlay))
 		{
 			bAdded = AddCutoutPolygonToOverlay(*RasterOverlay, Polygon);
+
+			// Reactivate the raster overlay if needed (cf optimized case in #DeactivateCutoutPolygon).
+			if (RasterOverlay->Polygons.Num() > 0 && !RasterOverlay->IsActive())
+			{
+				RasterOverlay->Activate(true);
+			}
 		}
 		if (bAdded)
 		{
 			TilesetAccess.RefreshTileset();
 		}
 		return bAdded;
+	}
+
+	bool ActivateCutoutPolygon(FITwinTilesetAccess const& TilesetAccess, ACesiumCartographicPolygon* Polygon, bool bActivate)
+	{
+		if (bActivate)
+		{
+			return AddCutoutPolygon(TilesetAccess, Polygon);
+		}
+		else
+		{
+			// Optimization: if the raster overlay contains just this polygon, deactivate the overlay instead
+			// of refreshing the whole tileset:
+			return DeactivateCutoutPolygon(TilesetAccess, Polygon, false /*bForceRemoveIt*/);
+		}
 	}
 
 	void InvertCutoutPolygonEffect(FITwinTilesetAccess const& TilesetAccess, ACesiumCartographicPolygon* Polygon, bool bInvertEffect)
@@ -735,7 +894,7 @@ namespace ITwin
 		UCesiumPolygonRasterOverlay* RasterOverlay = GetCutoutOverlay(*Tileset);
 		if (!RasterOverlay)
 		{
-			InitCutoutOverlay(*Tileset);
+			TilesetAccess.InitCutoutOverlay();
 			RasterOverlay = GetCutoutOverlay(*Tileset);
 			if (ensure(RasterOverlay))
 			{
@@ -779,7 +938,7 @@ namespace
 			TSoftObjectPtr<ACesiumGeoreference> const InGeoreference,
 			EITwinSplineToolMode InToolMode,
 			std::optional<FVector> const& InPositionOpt,
-			AdvViz::SDK::SharedSpline const& InLoadedSpline,
+			AdvViz::SDK::ISplinePtr const& InLoadedSpline,
 			EITwinSplineUsage const InUsage);
 
 		virtual USplineComponent* GetSplineComponent(UWorld& World,
@@ -791,7 +950,7 @@ namespace
 		TSoftObjectPtr<ACesiumGeoreference> const Georeference;
 		EITwinSplineToolMode const ToolMode;
 		std::optional<FVector> const PositionOpt;
-		AdvViz::SDK::SharedSpline const LoadedSpline;
+		AdvViz::SDK::ISplinePtr const LoadedSpline;
 		EITwinSplineUsage const SplineUsage;
 
 		EITwinTangentMode TangentMode = EITwinTangentMode::Custom;
@@ -801,7 +960,7 @@ namespace
 		TSoftObjectPtr<ACesiumGeoreference> const InGeoreference,
 		EITwinSplineToolMode InToolMode,
 		std::optional<FVector> const& InPositionOpt,
-		AdvViz::SDK::SharedSpline const& InLoadedSpline,
+		AdvViz::SDK::ISplinePtr const& InLoadedSpline,
 		EITwinSplineUsage const InUsage)
 		: Georeference(InGeoreference)
 		, ToolMode(InToolMode)
@@ -879,12 +1038,13 @@ namespace
 			SplineHelper->SetCartographicPolygonForGeoref(CartographicPolygon, Georeference);
 		}
 
-		AdvViz::SDK::SharedSpline Spline = LoadedSpline;
+		AdvViz::SDK::ISplinePtr Spline = LoadedSpline;
 		if (!Spline)
 		{
 			// Instantiate the AdvViz spline for this new polygon.
 			Spline = SplineManager.AddSpline();
-			Spline->SetUsage(static_cast<AdvViz::SDK::ESplineUsage>(SplineUsage));
+			auto spline = Spline->GetAutoLock();
+			spline->SetUsage(static_cast<AdvViz::SDK::ESplineUsage>(SplineUsage));
 
 			std::vector<AdvViz::SDK::SplineLinkedModel> AdvVizLinkedModels;
 			for (auto const& LinkedModel : LinkedModels)
@@ -894,7 +1054,7 @@ namespace
 					TCHAR_TO_UTF8(*LinkedModel.second)
 				});
 			}
-			Spline->SetLinkedModels(AdvVizLinkedModels);
+			spline->SetLinkedModels(AdvVizLinkedModels);
 		}
 		SplineHelper->Initialize(SplineComp, Spline);
 
@@ -937,7 +1097,7 @@ namespace
 			TArray<FTilesetData> const& InTilesetData,
 			EITwinSplineToolMode InToolMode,
 			std::optional<FVector> const& InPositionOpt,
-			AdvViz::SDK::SharedSpline const& InSpline);
+			AdvViz::SDK::ISplinePtr const& InSpline);
 
 	protected:
 		virtual USplineComponent* GetSplineComponent(UWorld& World,
@@ -997,7 +1157,7 @@ namespace
 	FCutoutPolygonMaker::FCutoutPolygonMaker(TArray<FTilesetData> const& InTilesetData,
 		EITwinSplineToolMode InToolMode,
 		std::optional<FVector> const& InPositionOpt,
-		AdvViz::SDK::SharedSpline const& InSpline)
+		AdvViz::SDK::ISplinePtr const& InSpline)
 		: ISplineHelperMaker(GetFirstGeoRef(InTilesetData), InToolMode, InPositionOpt, InSpline,
 			EITwinSplineUsage::MapCutout)
 		, TilesetData(InTilesetData)
@@ -1077,7 +1237,7 @@ namespace
 			TSoftObjectPtr<ACesiumGeoreference> const InGeoreference,
 			EITwinSplineToolMode InToolMode,
 			std::optional<FVector> const& InPositionOpt,
-			AdvViz::SDK::SharedSpline const& InLoadedSpline,
+			AdvViz::SDK::ISplinePtr const& InLoadedSpline,
 			EITwinSplineUsage const InUsage);
 
 	protected:
@@ -1092,7 +1252,7 @@ namespace
 		TSoftObjectPtr<ACesiumGeoreference> const InGeoreference,
 		EITwinSplineToolMode InToolMode,
 		std::optional<FVector> const& InPositionOpt,
-		AdvViz::SDK::SharedSpline const& InLoadedSpline,
+		AdvViz::SDK::ISplinePtr const& InLoadedSpline,
 		EITwinSplineUsage const InUsage)
 		: ISplineHelperMaker(InGeoreference, InToolMode, InPositionOpt, InLoadedSpline, InUsage)
 	{
@@ -1114,7 +1274,7 @@ void AITwinSplineTool::FImpl::ForEachTargetTileset(TFunc const& Func) const
 }
 
 AITwinSplineHelper* AITwinSplineTool::FImpl::CreateSpline(EITwinSplineUsage SplineUsage,
-	std::optional<FVector> const& PositionOpt, AdvViz::SDK::SharedSpline const& LoadedSpline)
+	std::optional<FVector> const& PositionOpt, AdvViz::SDK::ISplinePtr const& LoadedSpline)
 {
 	if ((!PositionOpt) == (!LoadedSpline))
 	{
@@ -1144,7 +1304,7 @@ AITwinSplineHelper* AITwinSplineTool::FImpl::CreateSpline(EITwinSplineUsage Spli
 			if (TilesetAccess.HasTileset())
 			{
 				ACesium3DTileset& Tileset = *TilesetAccess.GetMutableTileset();
-				ITwin::InitCutoutOverlay(Tileset);
+				TilesetAccess.InitCutoutOverlay();
 				auto* RasterOverlay = ITwin::GetCutoutOverlay(Tileset);
 				if (ensure(RasterOverlay))
 				{
@@ -1193,14 +1353,15 @@ AITwinSplineHelper* AITwinSplineTool::FImpl::AddSpline(FVector const& Position)
 	return CreateSpline(ToolUsage, Position, {});
 }
 
-bool AITwinSplineTool::FImpl::LoadSpline(const AdvViz::SDK::SharedSpline& Spline)
+bool AITwinSplineTool::FImpl::LoadSpline(const AdvViz::SDK::ISplinePtr& Spline)
 {
 	if (!Spline)
 	{
 		ensureMsgf(false, TEXT("no spline in input!"));
 		return false;
 	}
-	return CreateSpline(static_cast<EITwinSplineUsage>(Spline->GetUsage()), {}, Spline) != nullptr;
+	auto const spline = Spline->GetRAutoLock();
+	return CreateSpline(static_cast<EITwinSplineUsage>(spline->GetUsage()), {}, Spline) != nullptr;
 }
 
 void AITwinSplineTool::FImpl::RemoveCartographicPolygon(ACesiumCartographicPolygon* Polygon)
@@ -1220,7 +1381,8 @@ bool AITwinSplineTool::FImpl::GetInvertSelectedSplineEffect() const
 	auto const AvizSpline = selectedSplineHelper->GetAVizSpline();
 	if (!AvizSpline)
 		return false;
-	return AvizSpline->GetInvertEffect();
+	auto spline = AvizSpline->GetAutoLock();
+	return spline->GetInvertEffect();
 }
 
 void AITwinSplineTool::FImpl::SetInvertSelectedSplineEffect(bool bInvertEffect)
@@ -1228,9 +1390,12 @@ void AITwinSplineTool::FImpl::SetInvertSelectedSplineEffect(bool bInvertEffect)
 	if (!selectedSplineHelper)
 		return;
 	auto const AVizSpline = selectedSplineHelper->GetAVizSpline();
-	if (!AVizSpline || AVizSpline->GetInvertEffect() == bInvertEffect)
+	if (!AVizSpline)
 		return;
-	if (AVizSpline->GetUsage() == AdvViz::SDK::ESplineUsage::MapCutout)
+	auto spline = AVizSpline->GetAutoLock();
+	if (spline->GetInvertEffect() == bInvertEffect)
+		return;
+	if (spline->GetUsage() == AdvViz::SDK::ESplineUsage::MapCutout)
 	{
 		ForEachTargetTileset([this, bInvertEffect](FITwinTilesetAccess const& TilesetAccess)
 		{
@@ -1238,23 +1403,29 @@ void AITwinSplineTool::FImpl::SetInvertSelectedSplineEffect(bool bInvertEffect)
 		});
 	}
 	// Notify persistence manager.
-	AVizSpline->SetInvertEffect(bInvertEffect);
+	spline->SetInvertEffect(bInvertEffect);
 }
 
-bool AITwinSplineTool::FImpl::GetSplineReferencePosition(FVector& RefLocation, FBox& OutBox) const
+bool AITwinSplineTool::FImpl::GetSplineReferencePosition(FVector& RefLocation, FBox& OutBox,
+	AITwinSplineHelper const* SpecificSpline /*= nullptr*/) const
 {
-	if (HasSelection())
+	AITwinSplineHelper const* SplineToFrame = SpecificSpline ? SpecificSpline
+		: (HasSelection() ? selectedSplineHelper : nullptr);
+	if (SplineToFrame)
 	{
-		RefLocation = selectedSplineHelper->GetActorLocation();
-		return selectedSplineHelper->IncludeInWorldBox(OutBox);
+		RefLocation = SplineToFrame->GetActorLocation();
+		return SplineToFrame->IncludeInWorldBox(OutBox);
 	}
 	else
 	{
 		int NumValidSplines = 0;
 		for (TActorIterator<AITwinSplineHelper> SplineIter(owner.GetWorld()); SplineIter; ++SplineIter)
 		{
-			if (SplineIter->IncludeInWorldBox(OutBox))
+			if (SplineIter->GetUsage() == this->GetUsage()
+				&& SplineIter->IncludeInWorldBox(OutBox))
+			{
 				NumValidSplines++;
+			}
 		}
 		if (NumValidSplines > 0)
 		{
@@ -1264,37 +1435,99 @@ bool AITwinSplineTool::FImpl::GetSplineReferencePosition(FVector& RefLocation, F
 	}
 }
 
-
-bool AITwinSplineTool::FImpl::GetOverviewCameraReferencePosition(FVector& RefLocation, FBox& OutBox) const
+namespace ITwin
 {
-	if (GetSplineReferencePosition(RefLocation, OutBox))
+	ITWINRUNTIME_API TOptional<FVector> GetNewObjectDefaultPosition(const UObject* WorldContextObject,
+		EITwinSplineUsage SplineUsage,
+		FHitResult& OutHitResult);
+}
+
+bool AITwinSplineTool::FImpl::GetOverviewCameraReferencePosition(FVector& RefLocation, FBox& OutBox,
+	AITwinSplineHelper const* SpecificSpline /*= nullptr*/) const
+{
+	// First use existing splines as reference, if any.
+	if (GetSplineReferencePosition(RefLocation, OutBox, SpecificSpline))
 	{
 		return true;
 	}
 
-	// For the first created polygon, try to take the existing iModels as reference.
+	// Launch a ray to determine a reference position depending on what the user sees.
+	FHitResult HitResult;
+	TOptional<FVector> SplineRefPos = ITwin::GetNewObjectDefaultPosition(&owner, GetUsage(), HitResult);
+
+	// If there are no cutout polygons yet, use the bounding box enclosing all the existing iModels
+	// in scene (this could end in a very distant camera in some cases - see AzDev#1943798).
 	FBox AllIModelsBox;
 	for (TActorIterator<AITwinIModel> IModelIter(owner.GetWorld()); IModelIter; ++IModelIter)
 	{
 		FBox IModelBBox;
-		if (IModelIter->GetBoundingBox(IModelBBox, /*bClampOutlandishValues*/true))
+		// To avoid using a much too large bounding box, we only consider the glTF meshes currently
+		// allocated.
+		if (IModelIter->GetBoundingBox(IModelBBox, true, AITwinIModel::EBBoxMethod::UnrealMeshes))
 		{
 			AllIModelsBox += IModelBBox;
 		}
 	}
 	if (AllIModelsBox.IsValid)
 	{
-		RefLocation = AllIModelsBox.GetCenter();
-		RefLocation.Z = AllIModelsBox.Max.Z;
-		OutBox = AllIModelsBox;
+#if ENABLE_DRAW_DEBUG
+		FVector Center, Extent;
+		AllIModelsBox.GetCenterAndExtents(Center, Extent);
+		DrawDebugBox(owner.GetWorld(), Center, Extent, FColor::Green, /*bool bPersistent =*/ false,
+			/*float LifeTime =*/ 20.f);
+#endif
+
+		// If possible, use the impact under mouse location as reference point to avoid moving too far away.
+		if (SplineRefPos && AllIModelsBox.IsInside(*SplineRefPos))
+		{
+			RefLocation = *SplineRefPos;
+		}
+		else
+		{
+			RefLocation = AllIModelsBox.GetCenter();
+			RefLocation.Z = AllIModelsBox.Max.Z;
+		}
+
+		// To avoid moving the camera too far away in many cases, we arbitrarily reduce the box.
+		auto Ext = 0.5f * AllIModelsBox.GetExtent();
+		OutBox = FBox();
+		OutBox += (RefLocation + Ext);
+		OutBox += (RefLocation - Ext);
+
+#if ENABLE_DRAW_DEBUG
+		OutBox.GetCenterAndExtents(Center, Extent);
+		DrawDebugBox(owner.GetWorld(), Center, Extent, FColor::Blue, /*bool bPersistent =*/ false,
+			/*float LifeTime =*/ 20.f);
+#endif
 		return true;
 	}
 
-	// If the scene only contains a Google tileset or reality data, don't try to move the camera.
+	// If no iModel is loaded, use previous impact as reference position, and use a default extent.
+	if (SplineRefPos)
+	{
+		RefLocation = *SplineRefPos;
+		OutBox = FBox();
+		OutBox += RefLocation;
+		const float dRefExtent = 1000.f;
+		OutBox += RefLocation + (dRefExtent * FVector::XAxisVector);
+		OutBox += RefLocation - (dRefExtent * FVector::XAxisVector);
+		OutBox += RefLocation + (dRefExtent * FVector::YAxisVector);
+		OutBox += RefLocation - (dRefExtent * FVector::YAxisVector);
+		OutBox += RefLocation + (dRefExtent * FVector::ZAxisVector);
+		OutBox += RefLocation - (dRefExtent * FVector::ZAxisVector);
+		return true;
+	}
+
+	// No reference position found - don't try to move the camera.
 	return false;
 }
 
-void AITwinSplineTool::FImpl::ToggleInteractiveCreationMode(bool bInAutoSelectCutoutTarget /*= false*/)
+void AITwinSplineTool::FImpl::SetAutoSelectCutoutTarget(bool bInAutoSelectCutoutTarget)
+{
+	bAutoSelectCutoutTarget = bInAutoSelectCutoutTarget;
+}
+
+bool AITwinSplineTool::FImpl::ToggleInteractiveCreationMode(bool bTriggeredFromITS, bool bInAutoSelectCutoutTarget /*= false*/)
 {
 	const EITwinSplineToolMode PreviousMode = ToolMode;
 
@@ -1319,12 +1552,17 @@ void AITwinSplineTool::FImpl::ToggleInteractiveCreationMode(bool bInAutoSelectCu
 
 	if (bHasNewSpline)
 	{
+		// Deselect point so that the new polygon appears as "globally" selected once created.
+		// (AzDev#1943807)
+		SetSelectedPointIndex(-1);
+
 		// End of the creation of a spline in interactive mode => refresh scene and broadcast creation event.
 		RefreshScene(NewSpline.Get());
 
 		owner.SplineAddedEvent.Broadcast(NewSpline.Get());
 		owner.SplineEditionEvent.Broadcast();
-		owner.InteractiveCreationCompletedEvent.Broadcast();
+		owner.InteractiveCreationCompletedEvent.Broadcast(bTriggeredFromITS);
+		owner.SplineSelectionEvent.Broadcast();
 	}
 
 	ActorsExcludedFromPicking.Reset();
@@ -1341,16 +1579,32 @@ void AITwinSplineTool::FImpl::ToggleInteractiveCreationMode(bool bInAutoSelectCu
 		// Avoid conflict with slightly similar feature...
 		EnableDuplicationWhenMovingPoint(false);
 
-		bAutoSelectCutoutTarget = bInAutoSelectCutoutTarget;
+		SetAutoSelectCutoutTarget(bInAutoSelectCutoutTarget);
 	}
+
+	return bHasNewSpline;
 }
 
-void AITwinSplineTool::FImpl::AbortInteractiveCreation()
+void AITwinSplineTool::FImpl::AbortInteractiveCreation(bool bTriggeredFromITS)
 {
 	if (ToolMode != EITwinSplineToolMode::InteractiveCreation)
 		return;
 	DeleteSelectedSpline();
 	SetMode(EITwinSplineToolMode::Undefined);
+
+	// AzDev#1968067:
+	// When the event is triggered from Unreal (ie. bTriggeredFromITS is false) through the escape key, we
+	// prefer to keep the drawing mode active, so we won't notify iTwin Studio here, and we toggle the
+	// creation mode on at once:
+	const bool bTriggeredFromUnreal = !bTriggeredFromITS;
+	if (bTriggeredFromUnreal)
+	{
+		ToggleInteractiveCreationMode(bTriggeredFromITS, true);
+	}
+	else
+	{
+		owner.InteractiveCreationAbortedEvent.Broadcast(bTriggeredFromITS);
+	}
 }
 
 void AITwinSplineTool::FImpl::RefreshScene(AITwinSplineHelper const* TargetSpline /*= nullptr*/)
@@ -1574,12 +1828,29 @@ bool AITwinSplineTool::DoMouseClickActionImpl()
 	return Impl->DoMouseClickAction();
 }
 
+void AITwinSplineTool::SetUsedOnCutoutPrimitiveImpl(bool bForCutout)
+{
+	if (bForCutout)
+	{
+		SetUsage(EITwinSplineUsage::MapCutout);
+	}
+	else if (GetUsage() == EITwinSplineUsage::MapCutout)
+	{
+		SetUsage(EITwinSplineUsage::Undefined);
+	}
+}
+
+bool AITwinSplineTool::IsUsedOnCutoutPrimitiveImpl() const
+{
+	return GetUsage() == EITwinSplineUsage::MapCutout;
+}
+
 AITwinSplineHelper* AITwinSplineTool::AddSpline(FVector const& Position)
 {
 	return Impl->AddSpline(Position);
 }
 
-bool AITwinSplineTool::LoadSpline(const std::shared_ptr<AdvViz::SDK::ISpline>& spline,
+bool AITwinSplineTool::LoadSpline(const AdvViz::SDK::ISplinePtr& spline,
 	TilesetAccessArray&& InCutoutTargets /*= {}*/)
 {
 	Be::CleanUpGuard restoreGuard([this, bIsLoadingSplineOld = Impl->bIsLoadingSpline]
@@ -1611,22 +1882,26 @@ void AITwinSplineTool::SetMode(EITwinSplineToolMode NewMode)
 	Impl->SetMode(NewMode);
 }
 
-void AITwinSplineTool::ToggleInteractiveCreationMode(bool bAutoSelectCutoutTarget /*= false*/)
+void AITwinSplineTool::ToggleInteractiveCreationMode(bool bTriggeredFromITS, bool bAutoSelectCutoutTarget /*= false*/)
 {
-	Impl->ToggleInteractiveCreationMode(bAutoSelectCutoutTarget);
+	Impl->ToggleInteractiveCreationMode(bTriggeredFromITS, bAutoSelectCutoutTarget);
 }
 
 bool AITwinSplineTool::StartInteractiveCreationImpl()
 {
+	// Consider the event comes from iTwin Studio, since the interactive creation is triggered from ITS.
+	constexpr bool bTriggeredFromITS = true;
+
 	if (GetMode() == EITwinSplineToolMode::InteractiveCreation)
 	{
 		// Abort previous creation.
-		Impl->AbortInteractiveCreation();
+		// Consider the event comes from iTwin Studio, since the interactive creation is triggered from ITS.
+		Impl->AbortInteractiveCreation(bTriggeredFromITS);
 	}
 	const bool bAutoSelectCutoutTarget = GetUsage() == EITwinSplineUsage::MapCutout
 		&& CutoutTargets.IsEmpty();
 
-	Impl->ToggleInteractiveCreationMode(bAutoSelectCutoutTarget);
+	Impl->ToggleInteractiveCreationMode(bTriggeredFromITS, bAutoSelectCutoutTarget);
 	return IsInteractiveCreationModeImpl();
 }
 
@@ -1635,9 +1910,22 @@ bool AITwinSplineTool::IsInteractiveCreationModeImpl() const
 	return GetMode() == EITwinSplineToolMode::InteractiveCreation;
 }
 
-void AITwinSplineTool::AbortInteractiveCreation()
+void AITwinSplineTool::AbortInteractiveCreationImpl(bool bTriggeredFromITS)
 {
-	Impl->AbortInteractiveCreation();
+	Impl->AbortInteractiveCreation(bTriggeredFromITS);
+}
+
+void AITwinSplineTool::ValidateInteractiveCreationImpl(bool bTriggeredFromITS)
+{
+	if (!ensure(GetMode() == EITwinSplineToolMode::InteractiveCreation))
+		return;
+	const bool bHasNewSpline = Impl->ToggleInteractiveCreationMode(bTriggeredFromITS);
+	if (!bHasNewSpline)
+	{
+		// No polygon could be created (probably not enough points) => just broadcast the cancelation of the
+		// interactive creation.
+		InteractiveCreationAbortedEvent.Broadcast(bTriggeredFromITS);
+	}
 }
 
 EITwinSplineUsage AITwinSplineTool::GetUsage() const
@@ -1672,7 +1960,7 @@ void AITwinSplineTool::SetCutoutTargets(TilesetAccessArray&& CutoutTargetAccesse
 
 				// Create the cut-out overlay now, to avoid letting the iModel or reality data disappear when
 				// we start drawing the first cut-out polygon.
-				ITwin::InitCutoutOverlay(*Tileset);
+				TilesetAccess->InitCutoutOverlay();
 			}
 		}
 	}
@@ -1681,6 +1969,11 @@ void AITwinSplineTool::SetCutoutTargets(TilesetAccessArray&& CutoutTargetAccesse
 AITwinSplineTool::TilesetAccessArray const& AITwinSplineTool::GetCutoutTargets() const
 {
 	return this->CutoutTargets;
+}
+
+void AITwinSplineTool::SetAutoSelectCutoutTarget(bool bInAutoSelectCutoutTarget)
+{
+	Impl->SetAutoSelectCutoutTarget(bInAutoSelectCutoutTarget);
 }
 
 AITwinSplineTool::FAutomaticVisibilityDisabler::FAutomaticVisibilityDisabler()
@@ -1729,12 +2022,13 @@ void AITwinSplineTool::RefreshScene()
 	Impl->RefreshScene();
 }
 
-void AITwinSplineTool::OnOverviewCamera(bool bInUndoRedoContext /*= false*/)
+void AITwinSplineTool::OnOverviewCamera(
+	AITwinSplineHelper const* SpecificSpline /*= nullptr*/, bool bInUndoRedoContext /*= false*/)
 {
 	// Compute a top view camera transformation, centered on current spline
 	FVector RefLocation = FVector::ZeroVector;
 	FBox BBox;
-	if (!Impl->GetOverviewCameraReferencePosition(RefLocation, BBox))
+	if (!Impl->GetOverviewCameraReferencePosition(RefLocation, BBox, SpecificSpline))
 	{
 		return;
 	}
@@ -1936,13 +2230,6 @@ bool AITwinSplineTool::RestoreSelection(ISelectionRecord const& Selection)
 	}
 }
 
-namespace ITwin
-{
-	extern int32 GetLinkedTilesets(
-		AITwinSplineTool::TilesetAccessArray& OutArray,
-		std::shared_ptr<AdvViz::SDK::ISpline> const& Spline,
-		const UWorld* World);
-}
 
 namespace
 {
@@ -1955,26 +2242,36 @@ namespace
 			auto const AVizSpline = InSpline.GetAVizSpline();
 			if (AVizSpline)
 			{
-				AVizSplineBackup = AVizSpline->Clone();
-				ensure(AVizSplineBackup->GetId() == AVizSpline->GetId());
-				ensure(AVizSplineBackup->GetId().IsValid());
+				auto spline = AVizSpline->GetRAutoLock();
+				AVizSplineBackup = spline->Clone();
+				auto splineBackup = AVizSplineBackup->GetRAutoLock();
+				ensure(splineBackup->GetId() == spline->GetId());
+				ensure(splineBackup->GetId().IsValid());
 			}
 		}
 
 		virtual FString GetGenericName() const override
 		{
 			FString ItemName;
-			if (AVizSplineBackup && AVizSplineBackup->GetUsage() == AdvViz::SDK::ESplineUsage::MapCutout)
-				ItemName = TEXT("polygon");
+			if (AVizSplineBackup)
+			{
+				auto splineBackup = AVizSplineBackup->GetRAutoLock();
+				if (splineBackup->GetUsage() == AdvViz::SDK::ESplineUsage::MapCutout)
+					ItemName = TEXT("polygon");
+				else
+					ItemName = TEXT("spline");
+			}
 			else
+			{
 				ItemName = TEXT("spline");
+			}
 			if (bIsPointDeletion)
 				ItemName += TEXT(" point");
 			return ItemName;
 		}
 
 		const bool bIsPointDeletion;
-		std::shared_ptr<AdvViz::SDK::ISpline> AVizSplineBackup;
+		AdvViz::SDK::ISplinePtr AVizSplineBackup;
 	};
 }
 
@@ -1995,15 +2292,16 @@ bool AITwinSplineTool::RestoreItem(IItemBackup const& ItemBackup)
 	{
 		// Depending on whether we deleted a point or a full spline, we may have to instantiate a new spline
 		// here.
+		auto splineBackup = SplineBackup->AVizSplineBackup->GetRAutoLock();
 		AITwinSplineHelper* ExistingSpline = FindSplineByRefID(GetWorld(),
-			SplineBackup->AVizSplineBackup->GetId());
+			splineBackup->GetId());
 		ensure((ExistingSpline != nullptr) == SplineBackup->bIsPointDeletion);
 
 		bool bRestored = false;
 		if (ExistingSpline)
 		{
-			ExistingSpline->SetAVizSpline(SplineBackup->AVizSplineBackup->Clone());
-			ensure(ExistingSpline->GetAVizSplineId() == SplineBackup->AVizSplineBackup->GetId());
+			ExistingSpline->SetAVizSpline(splineBackup->Clone());
+			ensure(ExistingSpline->GetAVizSplineId() == splineBackup->GetId());
 			bRestored = true;
 		}
 		else if (!SplineBackup->bIsPointDeletion)
@@ -2011,7 +2309,7 @@ bool AITwinSplineTool::RestoreItem(IItemBackup const& ItemBackup)
 			// Recreate spline helper from the backup.
 			TilesetAccessArray LinkedTilesets;
 			ITwin::GetLinkedTilesets(LinkedTilesets, SplineBackup->AVizSplineBackup, GetWorld());
-			AdvViz::SDK::SharedSpline const RestoredSpline = SplineBackup->AVizSplineBackup->Clone();
+			AdvViz::SDK::ISplinePtr const RestoredSpline = splineBackup->Clone();
 			bRestored = LoadSpline(RestoredSpline, std::move(LinkedTilesets));
 			// Notify the manager
 			if (Impl->splinesManager)
@@ -2048,6 +2346,8 @@ namespace ITwin
 				SplineTool->SetUsage(Usage);
 			}
 			SplineTool->SetCutoutTargets(std::move(CutoutTargets));
+			SplineTool->SetAutoSelectCutoutTarget(bAutomaticCutoutTarget);
+
 			// Connect the spline tool to the population tool if applicable.
 			SplineTool->SetPopulationTool(Cast<AITwinPopulationTool>(WorldContextObject));
 

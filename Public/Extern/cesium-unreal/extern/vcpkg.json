@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
   "name": "cesium-unreal",
-  "version": "2.20.0",
+  "version": "2.23.0",
   "default-features": [
     "cesium-native-port"
   ],
@@ -30,8 +30,8 @@
     "cesium-native",
     {
       "name": "cpp-httplib",
-      "default-features": false
+      "default-features": false,
+      "platform": "!wasm32"
     }
   ]
 }
-

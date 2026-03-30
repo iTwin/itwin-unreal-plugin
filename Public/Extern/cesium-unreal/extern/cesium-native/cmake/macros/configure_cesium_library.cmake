@@ -1,21 +1,29 @@
 function(configure_cesium_library targetName)
 
     if (CMAKE_VERSION VERSION_GREATER_EQUAL 3.31)
-        # AdvViz: suppress many warnings about 'install()' paths in cesium-native, not our concern (hopefully),
-        # so reduce output flooding. Placing it directly in this function was the only way to make it work!
+        # AdvViz: suppress many warnings about 'install()' paths in cesium-native, see comment about it
+        # in cesium-unreal/extern's CMakeLists. Had to repeat it in this function even if it's already set earlier
+        # and in particular already repeated after each "project(..)" call AFAIK...
         cmake_policy(SET CMP0177 OLD)
     endif()
 
     if (MSVC)
-        target_compile_options(${targetName} PRIVATE /W4 /WX /wd4201 /bigobj /w45038 /w44254 /w44242 /w44191 /w45220)
+        target_compile_options(${targetName} PRIVATE /W4 /wd4201 /bigobj /w45038 /w44254 /w44242 /w44191 /w45220)
+        if (CMAKE_VERSION VERSION_LESS 3.24)
+            target_compile_options(${targetName} PRIVATE /WX)
+        endif()
     else()
-        target_compile_options(${targetName} PRIVATE -Werror -Wall -Wextra -Wconversion -Wpedantic -Wshadow -Wsign-conversion -Wno-unknown-pragmas)
+        if (CMAKE_VERSION VERSION_LESS 3.24)
+            target_compile_options(${targetName} PRIVATE -Werror)
+        endif()
+        target_compile_options(${targetName} PRIVATE -Wall -Wextra -Wconversion -Wpedantic -Wshadow -Wsign-conversion -Wno-unknown-pragmas)
     endif()
 
     set_target_properties(${targetName} PROPERTIES
         CXX_STANDARD 20
         CXX_STANDARD_REQUIRED YES
         CXX_EXTENSIONS NO
+        COMPILE_WARNING_AS_ERROR YES
     )
 
     if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 13)
@@ -88,7 +96,7 @@ function(configure_cesium_library targetName)
 
         if(CESIUM_INSTALL_STATIC_LIBS)
             install(TARGETS ${targetName}
-                CONFIGURATIONS Release RelWithDebInfo UnrealDebug
+                CONFIGURATIONS Release RelWithDebInfo UnrealDebug Debug
                 LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/lib
             )
             install(TARGETS ${targetName}

@@ -37,6 +37,8 @@ MODULE_EXPORT namespace AdvViz::SDK
 		ITwinWebServices();
 		~ITwinWebServices();
 
+		std::shared_ptr<Http>& GetHttp();
+
 		EITwinEnvironment GetEnvironment() const { return env_; }
 		void SetEnvironment(EITwinEnvironment env);
 

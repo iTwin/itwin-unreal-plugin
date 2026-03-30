@@ -44,13 +44,13 @@
 #	include <BeUtils/Gltf/GltfMaterialTuner.h>
 #	include <BeUtils/Gltf/GltfTuner.h>
 #	include <BeUtils/Misc/MiscUtils.h>
-#	include <Core/ITwinAPI/ITwinMaterial.h>
-#	include <Core/ITwinAPI/ITwinMaterial.inl>
-#	include <Core/ITwinAPI/ITwinMaterialPrediction.h>
-#	include <Core/ITwinAPI/ITwinTypes.h>
-#	include <Core/Tools/Assert.h>
-#	include <Core/Tools/Log.h>
-#	include <Core/Visualization/MaterialPersistence.h>
+#	include <SDK/Core/ITwinAPI/ITwinMaterial.h>
+#	include <SDK/Core/ITwinAPI/ITwinMaterial.inl>
+#	include <SDK/Core/ITwinAPI/ITwinMaterialPrediction.h>
+#	include <SDK/Core/ITwinAPI/ITwinTypes.h>
+#	include <SDK/Core/Tools/Assert.h>
+#	include <SDK/Core/Tools/Log.h>
+#	include <SDK/Core/Visualization/MaterialPersistence.h>
 #include <Compil/AfterNonUnrealIncludes.h>
 
 // We no longer change the material names in the iModel's material list.
@@ -134,7 +134,7 @@ void FITwinIModelMaterialHandler::Initialize(std::shared_ptr<BeUtils::GltfTuner>
 			{
 				return FString::Printf(TEXT("0x%I64x"), V.id);
 			});
-			if (bAttachedToImodel)
+			if (bAttachedToImodel && !MaterialIds.IsEmpty())
 			{
 				IModelPtr->GetMutableWebServices()->GetMaterialListProperties(
 					IModelPtr->ITwinId, IModelPtr->IModelId, IModelPtr->GetSelectedChangeset(),
@@ -282,12 +282,10 @@ void FITwinIModelMaterialHandler::OnTextureDataRetrieved(std::string const& text
 
 		AdvViz::SDK::TextureUsageMap usageMap;
 		auto const& MaterialPersistenceMngr = GetPersistenceManager();
-		if (ensure(MaterialPersistenceMngr))
-		{
-			usageMap.emplace(texKey, MaterialPersistenceMngr->GetTextureUsage(texKey));
-		}
+		usageMap.emplace(texKey, // DONOTForget: do NOT pick this into Carrot1
+			MaterialPersistenceMngr ? MaterialPersistenceMngr->GetTextureUsage(texKey)
+									: AdvViz::SDK::TextureUsage{ 1 });
 		BE_ASSERT(AdvViz::SDK::FindTextureUsage(usageMap, texKey).flags_ != 0);
-
 		ITwin::ResolveITwinTextures(texturesToResolve, usageMap, GltfMatHelper, texturePath.parent_path());
 	}
 }
@@ -1232,13 +1230,15 @@ namespace
 		{
 			GltfMatHelper.SetMaterialKind(MaterialId, this->NewValue, bModifiedValue);
 
-			// When turning a material to glass, ensure we have some transparency
+			// When turning a material to glass, ensure we have some transparency:
+			// Set opacity to 10% at most.
+			static constexpr double DefaultGlassOpacity = 0.1;
 			if (bModifiedValue
 				&& this->NewValue == AdvViz::SDK::EMaterialKind::Glass
-				&& std::fabs(GltfMatHelper.GetChannelIntensity(MaterialId, AdvViz::SDK::EChannelType::Opacity) - 1.0) < 1e-4)
+				&& GltfMatHelper.GetChannelIntensity(MaterialId, AdvViz::SDK::EChannelType::Opacity) > DefaultGlassOpacity)
 			{
 				bool bSubValueModified(false);
-				GltfMatHelper.SetChannelIntensity(MaterialId, AdvViz::SDK::EChannelType::Opacity, 0.5, bSubValueModified);
+				GltfMatHelper.SetChannelIntensity(MaterialId, AdvViz::SDK::EChannelType::Opacity, DefaultGlassOpacity, bSubValueModified);
 				// Also set a default metallic factor
 				GltfMatHelper.SetChannelIntensity(MaterialId, AdvViz::SDK::EChannelType::Metallic, 0.5, bSubValueModified);
 			}
@@ -1465,7 +1465,7 @@ bool FITwinIModelMaterialHandler::LoadMaterialWithoutRetuning(
 	FMaterialAssetInfo const& MaterialAssetInfo,
 	FString const& IModelId,
 	BeUtils::WLock const& Lock,
-	bool bForceRefreshAllParameters /*= false*/)
+	LoadOptions const& Options /*= {}*/)
 {
 	using namespace AdvViz::SDK;
 	using EITwinChannelType = AdvViz::SDK::EChannelType;
@@ -1499,7 +1499,7 @@ bool FITwinIModelMaterialHandler::LoadMaterialWithoutRetuning(
 		{
 			// This is the path to a material file.
 			bValidMaterial = FITwinMaterialLibrary::LoadMaterialFromAssetPath(AssetInfo, NewMaterial,
-				NewTextures, NewTextureUsageMap, TexSource, MatIOMngr);
+				NewTextures, NewTextureUsageMap, TexSource, MatIOMngr, Options.CustomTextureDir);
 		}
 		else if constexpr (std::is_same_v<T, ITwin::FMaterialPtr>)
 		{
@@ -1540,7 +1540,7 @@ bool FITwinIModelMaterialHandler::LoadMaterialWithoutRetuning(
 				.eSource = ETextureSource::Library
 			});
 	}
-	if (bForceRefreshAllParameters)
+	if (Options.bForceRefreshAllParameters)
 	{
 		// Set NONE_TEXTURE in all unused slot, to enforce material update in UE (typically for the material
 		// preview...)
@@ -1589,8 +1589,7 @@ bool FITwinIModelMaterialHandler::LoadMaterialFromAssetFile(uint64_t MaterialId,
 	FString const& IModelId,
 	FITwinSceneMapping& SceneMapping,
 	UITwinMaterialDefaultTexturesHolder const& DefaultTexturesHolder,
-	bool bForceRefreshAllParameters /*= false*/,
-	std::function<void(AdvViz::SDK::ITwinMaterial&)> const& CustomizeMaterialFunc /*= {}*/)
+	LoadOptions const& Options /*= {}*/)
 {
 	using namespace AdvViz::SDK;
 	using EITwinChannelType = AdvViz::SDK::EChannelType;
@@ -1618,16 +1617,16 @@ bool FITwinIModelMaterialHandler::LoadMaterialFromAssetFile(uint64_t MaterialId,
 
 		// Actually load the material.
 		if (!LoadMaterialWithoutRetuning(NewMaterial, MaterialId, MaterialAssetInfo, IModelId,
-										 Lock, bForceRefreshAllParameters))
+										 Lock, Options))
 		{
 			return false;
 		}
 	}
 
-	if (CustomizeMaterialFunc)
+	if (Options.CustomizeMaterialFunc)
 	{
 		// Introduced to adjust the material previews...
-		CustomizeMaterialFunc(NewMaterial);
+		Options.CustomizeMaterialFunc(NewMaterial);
 	}
 
 	if (CurMaterial == NewMaterial)
@@ -1746,7 +1745,7 @@ bool FITwinIModelMaterialHandler::LoadMaterialFromAssetFile(uint64_t MaterialId,
 		{
 			EITwinChannelType const Channel = static_cast<EITwinChannelType>(i);
 			if (newIntensities[i].bHasChanged ||
-				(bForceRefreshAllParameters && newIntensities[i].bHasNonDefaultValue))
+				(Options.bForceRefreshAllParameters && newIntensities[i].bHasNonDefaultValue))
 			{
 				SceneMapping.SetITwinMaterialChannelIntensity(MaterialId, Channel, newIntensities[i].Value);
 			}
@@ -1772,11 +1771,12 @@ bool FITwinIModelMaterialHandler::LoadMaterialFromAssetFile(uint64_t MaterialId,
 }
 
 bool FITwinIModelMaterialHandler::LoadMaterialFromAssetFile(uint64_t MaterialId, FString const& AssetFilePath,
-	AITwinIModel& IModel)
+	AITwinIModel& IModel, LoadOptions const& Options /*= {}*/)
 {
 	return LoadMaterialFromAssetFile(MaterialId, AssetFilePath, IModel.IModelId,
 		GetInternals(IModel).SceneMapping,
-		IModel.GetDefaultTexturesHolder());
+		IModel.GetDefaultTexturesHolder(),
+		Options);
 }
 
 /*** Material persistence ***/
@@ -1955,13 +1955,16 @@ namespace ITwin
 		return MaterialHandler->LoadMaterialFromAssetFile(MaterialId, MaterialAssetInfo,
 			IModelId, SceneMapping,
 			*DefaultTexturesHolder,
-			true /*bForceRefreshAllParameters*/,
-			[](ITwinMaterial& NewMat) {
-				// Reduce normal mapping effect.
-				if (NewMat.DefinesChannel(AdvViz::SDK::EChannelType::Normal))
-				{
-					NewMat.SetChannelIntensity(AdvViz::SDK::EChannelType::Normal,
-						std::min(0.5, NewMat.GetChannelIntensityOpt(AdvViz::SDK::EChannelType::Normal).value_or(0.0)));
+			FITwinIModelMaterialHandler::LoadOptions
+			{
+				.bForceRefreshAllParameters = true,
+				.CustomizeMaterialFunc = [](ITwinMaterial& NewMat) {
+					// Reduce normal mapping effect.
+					if (NewMat.DefinesChannel(AdvViz::SDK::EChannelType::Normal))
+					{
+						NewMat.SetChannelIntensity(AdvViz::SDK::EChannelType::Normal,
+							std::min(0.5, NewMat.GetChannelIntensityOpt(AdvViz::SDK::EChannelType::Normal).value_or(0.0)));
+					}
 				}
 			}
 		);

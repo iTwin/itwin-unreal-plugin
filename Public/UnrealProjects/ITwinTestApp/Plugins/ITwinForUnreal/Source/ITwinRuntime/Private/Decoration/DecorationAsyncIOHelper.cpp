@@ -34,6 +34,7 @@
 #include <Engine/World.h>
 
 #include <ITwinRuntime/Private/Compil/BeforeNonUnrealIncludes.h>
+#	include <SDK/Core/Visualization/AsyncHelpers.h>
 #	include <SDK/Core/Visualization/Config.h>
 #	include <SDK/Core/Visualization/MaterialPersistence.h>
 #	include "SDK/Core/Visualization/Timeline.h"
@@ -44,12 +45,12 @@
 #	include <SDK/Core/Visualization/PathAnimation.h>
 #	include <BeUtils/Gltf/GltfMaterialHelper.h>
 #	include <BeUtils/Gltf/GltfMaterialTuner.h>
+#	include <BeUtils/Gltf/GltfTextureHelper.h>
 #	include <BeUtils/Misc/RWLock.h>
 #	include <numbers>
 #include <ITwinRuntime/Private/Compil/AfterNonUnrealIncludes.h>
 
 
-static bool bDefaultUseOfDecorationService = true;
 static std::string defaultSceneName = ITWIN_DEFAULT_SCENE_NAME;
 namespace ITwin
 {
@@ -65,35 +66,21 @@ namespace ITwin
 		{
 			return false;
 		}
-
-		std::vector<CesiumAsync::IAssetAccessor::THeader> const tHeaders =
-		{
-			{
-				"Authorization",
-				std::string("Bearer ") + *AdvViz::SDK::GetDefaultHttp()->GetAccessToken()
-			}
-		};
-
-		// This call should be very fast, as the image, if available, is already in Cesium cache.
-		// And since we test TexAccess.cesiumImage before coming here, we *know* that the image is indeed
-		// available.
-		const std::shared_ptr<CesiumAsync::IAssetAccessor>& pAssetAccessor = getAssetAccessor();
-		const CesiumAsync::AsyncSystem& asyncSystem = getAsyncSystem();
 		const std::string textureURI = AITwinIModel::GetMaterialPersistenceManager()
 			->GetTextureURL(texKey.id, ETextureSource::Decoration);
-		pAssetAccessor
-			->get(asyncSystem, textureURI, tHeaders)
-			.thenImmediately([&Buffer](
-				std::shared_ptr<CesiumAsync::IAssetRequest>&& pRequest) {
-			const CesiumAsync::IAssetResponse* pResponse = pRequest->response();
-			if (pResponse) {
+		return BeUtils::DownloadTexture(textureURI,
+			AdvViz::SDK::GetDefaultHttp()->GetAccessToken()->Get(),
+			getAssetAccessor(),
+			getAsyncSystem(),
+			[&Buffer](std::vector<uint8_t> const& TexBuffer)
+		{
+			if (!TexBuffer.empty()) {
 				Buffer.Append(
-					reinterpret_cast<const uint8*>(pResponse->data().data()),
-					pResponse->data().size());
+					reinterpret_cast<const uint8*>(TexBuffer.data()),
+					TexBuffer.size());
 			}
-		}).wait();
-
-		return !Buffer.IsEmpty();
+			return !Buffer.IsEmpty();
+		});
 	}
 
 	ITWINRUNTIME_API bool LoadTextureBuffer(AdvViz::SDK::TextureKey const& texKey,
@@ -180,7 +167,8 @@ namespace ITwin
 
 FDecorationAsyncIOHelper::~FDecorationAsyncIOHelper()
 {
-
+	*shouldStop = true;
+	*isThisValid = false;
 }
 
 void FDecorationAsyncIOHelper::SetLoadedITwinId(const FString& ITwinId)
@@ -285,13 +273,17 @@ void FDecorationAsyncIOHelper::InitDecorationServiceConnection(const UWorld* Wor
 			GetDefaultHttp()->SetAccessToken(ServerConnection->GetAccessTokenPtr());
 		}
 		ScenePersistenceAPI::SetDefaultHttp(GetDefaultHttp());
-		if (ServerConnection && ServerConnection->SceneService != EITwinSceneService::Invalid)
+		if( InitConnexionService != EITwinSceneService::Invalid)
 		{
-			bDefaultUseOfDecorationService = ServerConnection->SceneService == EITwinSceneService::DecorationService;
+			bUseDecorationService = ServerConnection->SceneService == EITwinSceneService::DecorationService;
+		}
+		else if (ServerConnection && ServerConnection->SceneService != EITwinSceneService::Invalid)
+		{
+			bUseDecorationService = ServerConnection->SceneService == EITwinSceneService::DecorationService;
 		}
 		else
 		{
-			bDefaultUseOfDecorationService = Env == EITwinEnvironment::Prod;
+			bUseDecorationService = false;
 		}
 
 		// We may customize the activation of the Decoration Service for scene persistence from the
@@ -304,7 +296,7 @@ void FDecorationAsyncIOHelper::InitDecorationServiceConnection(const UWorld* Wor
 			{
 				EnvStr.RightChopInline(Index + 1);
 			}
-			bDefaultUseOfDecorationService = DecoSettings->CustomEnvsWithScenePersistenceDS.Contains(*EnvStr);
+			bUseDecorationService = DecoSettings->CustomEnvsWithScenePersistenceDS.Contains(*EnvStr);
 		}
 
 		// Connect the retrieval of cesium textures for Unreal packaged assets or decoration service.
@@ -323,15 +315,19 @@ void FDecorationAsyncIOHelper::InitDecorationService(UWorld* WorldContextObject)
 		return;
 	}
 	InitDecorationServiceConnection(WorldContextObject);
-	bUseDecorationService = bDefaultUseOfDecorationService;
 
 	decoration.reset(IDecoration::New());
 	decorationITwin = std::make_shared<FString>();
 
+	IInstance::SetNewFct([]() {
+		return static_cast<IInstance*>(new FITwinInstance());
+		});
+
 	instancesManager_.reset(IInstancesManager::New());
 
-	staticInstancesGroup.reset(IInstancesGroup::New());
-	staticInstancesGroup->SetName("staticInstances");
+	IInstancesGroup* p = IInstancesGroup::New();
+	p->SetName("staticInstances");
+	staticInstancesGroup = AdvViz::SDK::Tools::MakeSharedLockableDataPtr<IInstancesGroup>(p);
 	instancesManager_->AddInstancesGroup(staticInstancesGroup);
 
 	// Material persistence is managed by the decoration service, except for the (packaged) Material Library
@@ -479,16 +475,49 @@ AdvViz::expected<void, std::string> FDecorationAsyncIOHelper::InitDecoGeoreferen
 	return {};
 }
 
-bool FDecorationAsyncIOHelper::LoadITwinDecoration()
+
+void FDecorationAsyncIOHelper::AsyncRefreshLinks(LoadCallback&& InCallback)
 {
+	if (scene)
+	{
+		auto SThis = shared_from_this();
+		scene->AsyncRefreshLinks([SThis, Callback = std::move(InCallback)](AdvViz::expected<void, std::string> const& exp)
+		{
+			SThis->PostLoadSceneFromServer();
+			if (Callback)
+				Callback(exp);
+		});
+	}
+	else if (InCallback)
+	{
+		AdvViz::expected<void, std::string> ret;
+		if (scene)
+		{
+			// No error here: the refresh has been skipped to optimize scene loading.
+		}
+		else
+		{
+			ret = AdvViz::make_unexpected("Refresh links error: scene not set");
+		}
+		InCallback(ret);
+	}
+}
+
+bool FDecorationAsyncIOHelper::LoadITwinDecoration(std::string& OutError)
+{
+	static std::mutex loadDecorationMutex;
+	std::lock_guard<std::mutex> lock(loadDecorationMutex);
 	if (!decoration)
 	{
 		ensureMsgf(false, TEXT("InitDecorationService must be called before, in game thread"));
+		OutError = "missing initialization";
 		return false;
 	}
 	if (LoadedITwinId.IsEmpty())
+	{
+		OutError = "missing iTwin ID";
 		return false;
-
+	}
 	if (decoration
 		&& !decoration->GetId().empty()
 		&& decorationITwin
@@ -510,12 +539,12 @@ bool FDecorationAsyncIOHelper::LoadITwinDecoration()
 			{
 				const char* unrealCrsWkt = "ENGCRS[\"Local Unreal 3D Cartesian CRS (cm)\","
 					"DATUM[\"Local Datum\","
-					"ELLIPSOID[\"Unit Sphere\", 1, 0, LENGTHUNIT[\"centimetre\", 0.01]]],"
+					"ELLIPSOID[\"Unit Sphere\", 1, 0, LENGTHUNIT[\"centimeter\", 0.01]]],"
 					"CS[Cartesian, 3],"
 					"AXIS[\"X\", forward],"
 					"AXIS[\"Y\", right],"
 					"AXIS[\"Z\", up],"
-					"LENGTHUNIT[\"centimetre\", 0.01]]";
+					"LENGTHUNIT[\"centimeter\", 0.01]]";
 				AdvViz::SDK::GCS gcs;
 				gcs.wkt = unrealCrsWkt;
 				decoration->SetGCS(gcs);
@@ -530,7 +559,9 @@ bool FDecorationAsyncIOHelper::LoadITwinDecoration()
 	//else keep new default decoration and do not load a old one
 	std::string itwinid = TCHAR_TO_UTF8(*(LoadedITwinId));
 	if (decoration->GetId().empty())
+	{
 		return false;
+	}
 	*decorationITwin = LoadedITwinId;
 	BE_LOGI("ITwinDecoration", "Selected decoration " << decoration->GetId() << " for itwin " << itwinid);
 	AdvViz::SDK::Tools::GetCrashInfo()->AddInfo("decorationId", (std::string)decoration->GetId());
@@ -538,29 +569,56 @@ bool FDecorationAsyncIOHelper::LoadITwinDecoration()
 	return true;
 }
 
-bool FDecorationAsyncIOHelper::LoadPopulationsFromServer()
+bool FDecorationAsyncIOHelper::LoadDecorationOrFinish(std::function<void(AdvViz::expected<void, std::string> const&)> const& OnFinishCallback)
+{
+	std::string LoadDecoError;
+	if (!LoadITwinDecoration(LoadDecoError))
+	{
+		// When we load a new scene, it is normal not to have any decoration: this should not end in an error
+		// in the logs.
+		if (LoadDecoError.empty())
+		{
+			OnFinishCallback(AdvViz::make_unexpected(""));
+		}
+		else
+		{
+			OnFinishCallback(AdvViz::make_unexpected("Failed to load iTwin decoration: " + LoadDecoError));
+		}
+		return false;
+	}
+	return true;
+}
+
+
+void FDecorationAsyncIOHelper::AsyncLoadPopulations(LoadCallback OnFinishCallback)
 {
 	if (!instancesManager_)
 	{
 		ensureMsgf(false, TEXT("InitDecorationService must be called before, in game thread"));
-		return false;
+		OnFinishCallback(AdvViz::make_unexpected("Missing initialization (no instance manager)"));
+		return;
 	}
 
-	LoadAnimationKeyframesFromServer();
-	
-	if (!LoadITwinDecoration())
-	{
-		return false;
-	}
-	
-	AdvViz::SDK::IInstance::SetNewFct([]() {
-		return static_cast<AdvViz::SDK::IInstance*>(new FITwinInstance());
-		});
+	AdvViz::SDK::Tools::TaskFinishMonitor<AdvViz::expected<void, std::string>> taskFinishMonitor(OnFinishCallback);
+	auto SThis = shared_from_this();
+	AsyncLoadAnimationKeyframes([SThis, OnFinishCallback](AdvViz::expected<void, std::string> const& exp) {
+		if (!exp)
+		{
+			OnFinishCallback(exp);
+			return;
+		}
+		if (!SThis->LoadDecorationOrFinish(OnFinishCallback))
+		{
+			return;
+		}
 
-	instancesManager_->LoadDataFromServer(decoration->GetId(), staticInstancesGroup);
-	
-
-	return true;
+		// Warning: callbacks are not run in game thread!
+		SThis->instancesManager_->AsyncLoadDataFromServer(SThis->decoration->GetId(),
+			[](AdvViz::SDK::IInstancePtr&) {},
+			[](AdvViz::SDK::IInstancesGroupPtr&) {},
+			OnFinishCallback,
+			SThis->staticInstancesGroup);
+	});
 }
 
 static const FVector g_basedPos(-14.98, 221.96, -30.0);
@@ -727,103 +785,110 @@ void GeneratePaths(const std::string& itwinid, auto& animationKeyframes)
 #endif
 }
 
-bool FDecorationAsyncIOHelper::LoadAnimationKeyframesFromServer()
+void FDecorationAsyncIOHelper::AsyncLoadAnimationKeyframes(const LoadCallback &onFinish)
 {
 	using namespace AdvViz::SDK;
-	std::string itwinid = TCHAR_TO_UTF8(*(LoadedITwinId));
-	auto animationKeyframesVec = GetITwinAnimationKeyframes(itwinid);
-	for (auto& it : animationKeyframesVec)
-	{
-		auto lock(it->GetAutoLock());
-		IAnimationKeyframe& p = lock.Get();
-		p.LoadAnimationKeyFrameInfos();
-		animationKeyframes.insert(std::make_pair(p.GetId(), it));
-	}
+	animationKeyframesPtr = Tools::MakeSharedLockableDataPtr<std::map<AdvViz::SDK::IAnimationKeyframe::Id, AdvViz::SDK::IAnimationKeyframePtr>>(
+		new std::map<AdvViz::SDK::IAnimationKeyframe::Id, AdvViz::SDK::IAnimationKeyframePtr>());
+	
+	decltype(animationKeyframesPtr) animationKeyframesPtrLocal = animationKeyframesPtr;
+	auto finishMonitorPtr = std::make_shared<Tools::TaskFinishMonitor<AdvViz::expected<void, std::string>>>(onFinish);
 
-	if (!animationKeyframes.empty() && !LoadITwinDecoration()) //we need a decoration
-		SaveDecorationToServer();
+	std::string itwinid = TCHAR_TO_UTF8(*(LoadedITwinId));
+	finishMonitorPtr->AddTask();
+	AsyncGetITwinAnimationKeyframes(itwinid,
+		[animationKeyframesPtrLocal, finishMonitorPtr](IAnimationKeyframePtr& p)
+		{
+			auto animationKeyframe(p->GetAutoLock());
+			finishMonitorPtr->AddTask();
+			animationKeyframe->AsyncLoadAnimationKeyFrameInfos(
+				[](IAnimationKeyframeInfoPtr&p) {},
+				[finishMonitorPtr](AdvViz::expected<void, std::string> const& ret) {
+					finishMonitorPtr->TaskFinished(ret);
+				});
+			auto lockAnimationKeyframesPtrLocal = animationKeyframesPtrLocal->GetAutoLock();
+			auto lockInfo(p->GetRAutoLock());
+			lockAnimationKeyframesPtrLocal->insert(std::make_pair(lockInfo->GetId(), p));
+		},
+		[finishMonitorPtr](AdvViz::expected<void, std::string> const& ret)
+		{
+			finishMonitorPtr->TaskFinished(ret);
+		}
+	);
 
 #if 0 //D-O-NOTC
-// Temporary
-// create animation test
+	// Temporary
+	// create animation test
 	if (animationKeyframes.empty())
 		GeneratePaths(itwinid, animationKeyframes);
 #endif
-
-	return true;
 }
 
-bool FDecorationAsyncIOHelper::LoadCustomMaterials(
-	TMap<FString, TWeakObjectPtr<AITwinIModel>> const& idToIModel,
+void FDecorationAsyncIOHelper::AsyncLoadMaterials(
+	TMap<FString, TWeakObjectPtr<AITwinIModel>> && idToIModel,
+	LoadCallback OnFinishCallback,
 	std::set<std::string> const& specificModels /*= {}*/)
 {
 	if (!materialPersistenceMngr)
 	{
 		ensureMsgf(false, TEXT("InitDecorationService must be called before, in game thread"));
-		return false;
+		OnFinishCallback(AdvViz::make_unexpected("Missing initialization (no material manager)"));
+		return;
 	}
 
 	for (auto const& [strIModelId, _] : idToIModel)
 	{
 		std::string const iModelId = TCHAR_TO_UTF8(*strIModelId);
-
 		materialPersistenceMngr->SetLoadedModel(iModelId, false);
 	}
 
 	// Load material customizations from the Decoration Service
-	if (!LoadITwinDecoration())
+	if (!LoadDecorationOrFinish(OnFinishCallback))
 	{
-		return false;
+		return;
 	}
 
-	materialPersistenceMngr->LoadDataFromServer(decoration->GetId(), specificModels);
+	auto materialPersistenceMngrPtr = materialPersistenceMngr;
 
-	std::map<std::string, AITwinIModel::GltfMaterialHelperPtr> imodelToMatHelper;
-	for (auto const& [strIModelId, pImodel] : idToIModel)
-	{
-		if (pImodel.IsValid())
+	materialPersistenceMngr->AsyncLoadDataFromServer(decoration->GetId(), 
+		[OnFinishCallback, materialPersistenceMngrPtr, idToIModel = std::move(idToIModel)](AdvViz::expected<void, std::string> const& exp)
 		{
-			imodelToMatHelper.emplace(TCHAR_TO_UTF8(*strIModelId), pImodel->GetGltfMaterialHelper());
-		}
-	}
+			if (!exp)
+			{
+				OnFinishCallback(exp);
+				return;
+			}
+			std::map<std::string, AITwinIModel::GltfMaterialHelperPtr> imodelToMatHelper;
+			for (auto const& [strIModelId, pImodel] : idToIModel)
+			{
+				if (pImodel.IsValid())
+				{
+					imodelToMatHelper.emplace(TCHAR_TO_UTF8(*strIModelId), pImodel->GetGltfMaterialHelper());
+				}
+			}
 
-	if (!ITwin::ResolveDecorationTextures(*materialPersistenceMngr,
-		materialPersistenceMngr->GetDecorationTexturesByIModel(),
-		materialPersistenceMngr->GetTextureUsageMap(),
-		imodelToMatHelper))
-	{
-		return false;
-	}
+			if (!ITwin::ResolveDecorationTextures(*materialPersistenceMngrPtr,
+				materialPersistenceMngrPtr->GetDecorationTexturesByIModel(),
+				materialPersistenceMngrPtr->GetTextureUsageMap(),
+				imodelToMatHelper))
+			{
+				OnFinishCallback(AdvViz::make_unexpected("Failed to resolve decoration textures"));
+				return;
+			}
 
-	// Mark iModels just loaded in the manager, now that the *whole* process (including texture resolution)
-	// is done.
-	for (auto const& [iModelId, _] : imodelToMatHelper)
-	{
-		materialPersistenceMngr->SetLoadedModel(iModelId, true);
-	}
-	return true;
+			// Mark iModels just loaded in the manager, now that the *whole* process (including texture resolution)
+			// is done.
+			for (auto const& [iModelId, _] : imodelToMatHelper)
+			{
+				materialPersistenceMngrPtr->SetLoadedModel(iModelId, true);
+			}
+
+			OnFinishCallback(exp);
+		}, specificModels);
 }
 
 namespace Detail
 {
-
-inline CesiumAsync::HttpHeaders GetHeadersForSource(AdvViz::SDK::ETextureSource TexSource)
-{
-	if (TexSource == AdvViz::SDK::ETextureSource::Decoration)
-	{
-		return {
-			{
-				"Authorization",
-				std::string("Bearer ") + *AdvViz::SDK::GetDefaultHttp()->GetAccessToken()
-			}
-		};
-	}
-	else
-	{
-		// No extra headers required for local textures
-		return {};
-	}
-}
 
 // Scoped W-Lock doing nothing if a lock is provided from outside
 struct [[nodiscard]] OptionalWLock
@@ -859,96 +924,14 @@ void ResolveTexturesMatchingSource(
 	std::map<std::string, AITwinIModel::GltfMaterialHelperPtr> const& imodelToMatHelper,
 	BeUtils::WLock const* pLock = nullptr)
 {
-	BE_ASSERT(TexSource == AdvViz::SDK::ETextureSource::Decoration
-		|| TexSource == AdvViz::SDK::ETextureSource::Library);
-
-	// Download decoration textures if needed.
-
-	CesiumGltfReader::GltfReaderResult gltfResult;
-	auto& model = gltfResult.model.emplace();
-	auto& images = model.images;
-	images.reserve(perModelTextures.size() * 5);
-
-	struct LoadedImageInfo
+	if (!ensure(AdvViz::SDK::GetDefaultHttp()->GetAccessToken()))
 	{
-		size_t imgIndex = 0;
-		AdvViz::SDK::TextureKey texKey;
-	};
-	struct IModelImageVec
-	{
-		std::shared_ptr<BeUtils::GltfMaterialHelper> matHelper;
-		std::vector<LoadedImageInfo> imageInfos;
-	};
-	std::vector<IModelImageVec> imageCorresp;
-	imageCorresp.reserve(perModelTextures.size());
-
-	size_t gltfImageIndex = 0;
-	for (auto const& [imodelid, textureSet] : perModelTextures)
-	{
-		auto itMatHelper = imodelToMatHelper.find(imodelid);
-		if (itMatHelper == imodelToMatHelper.end())
-			continue;
-		auto glTFMatHelper = itMatHelper->second;
-		if (!glTFMatHelper)
-			continue;
-
-		IModelImageVec& imodelImgs = imageCorresp.emplace_back();
-		imodelImgs.matHelper = glTFMatHelper;
-		imodelImgs.imageInfos.reserve(textureSet.size());
-
-		// Download (or read from sqlite cache) all decoration textures used by this model
-		for (auto const& texKey : textureSet)
-		{
-			if (texKey.eSource == TexSource)
-			{
-				imodelImgs.imageInfos.push_back({ gltfImageIndex, texKey });
-				auto& gltfImage = images.emplace_back();
-				gltfImageIndex++;
-				gltfImage.uri = matPersistenceMngr.GetRelativeURL(texKey);
-			}
-		}
-	}
-
-	if (gltfImageIndex == 0)
-	{
-		// Nothing to do.
 		return;
 	}
-
-	// Actually download textures. Note that we use Cesium's sqlite caching system, so this should be fast
-	// except for the very first time).
-	const std::shared_ptr<CesiumAsync::IAssetAccessor>& pAssetAccessor = getAssetAccessor();
-	const CesiumAsync::AsyncSystem& asyncSystem = getAsyncSystem();
-
-	std::string const baseUrl = matPersistenceMngr.GetBaseURL(TexSource);
-
-	// We restrict the formats to JPG and PNG, so we can leave the default options (no need to setup
-	// Ktx2TranscodeTargets...)
-	CesiumGltfReader::GltfReaderOptions gltfOptions;
-	CesiumGltfReader::GltfReader::resolveExternalData(
-		asyncSystem,
-		baseUrl,
-		GetHeadersForSource(TexSource),
-		pAssetAccessor,
-		gltfOptions,
-		std::move(gltfResult))
-		.thenImmediately([imageCorresp, pLock, &textureUsageMap](CesiumGltfReader::GltfReaderResult&& result)
-	{
-		auto& cesiumImages = result.model->images;
-		// Dispatch the downloaded images to the appropriate material helper
-		for (IModelImageVec const& imodelImgs : imageCorresp)
-		{
-			OptionalWLock OptLock(*imodelImgs.matHelper, pLock);
-			auto const& lock = OptLock.GetLock();
-			for (LoadedImageInfo const& info : imodelImgs.imageInfos)
-			{
-				imodelImgs.matHelper->StoreCesiumImage(info.texKey,
-					std::move(cesiumImages[info.imgIndex]),
-					textureUsageMap,
-					lock);
-			}
-		}
-	}).wait();
+	return BeUtils::ResolveTexturesMatchingSource(
+		TexSource, matPersistenceMngr, perModelTextures, textureUsageMap, imodelToMatHelper,
+		AdvViz::SDK::GetDefaultHttp()->GetAccessToken()->Get(),
+		getAssetAccessor(), getAsyncSystem(), pLock);
 }
 
 void ResolveTexturesLocatedOnDisk(
@@ -1097,68 +1080,210 @@ void ITwin::ResolveITwinTextures(
 	Detail::ResolveTexturesLocatedOnDisk(iTwinTextures, textureUsageMap, GltfMatHelper, textureDir);
 }
 
-bool FDecorationAsyncIOHelper::SaveDecorationToServer()
+namespace
 {
-	bool const saveInstances = instancesManager_	&& instancesManager_->HasInstancesToSave();
-	bool const saveMaterials = materialPersistenceMngr && materialPersistenceMngr->NeedUpdateDB();
-	bool const saveSplines = splinesManager && splinesManager->HasSplinesToSave();
-	bool const saveAnnotations = annotationsManager && annotationsManager->HasAnnotationToSave();
-	bool const saveAnimPaths = pathAnimator && pathAnimator->HasAnimPathsToSave();
-	if (!saveInstances && !saveMaterials && !saveSplines && !saveAnnotations && !saveAnimPaths)
+	template <class TManager>
+	inline void TAsyncSaveDecorationPart(
+		std::shared_ptr<TManager> const& Manager,
+		std::string const& DecorationId,
+		std::shared_ptr<AdvViz::SDK::AsyncRequestGroupCallback> CallbackPtr)
 	{
-		return false;
-	}
-	if (LoadedITwinId.IsEmpty() || !decoration)
-	{
-		return false;
-	}
-	std::string const itwinid = TCHAR_TO_UTF8(*(LoadedITwinId));
+		CallbackPtr->AddRequestToWait();
 
-	if (decoration->GetId().empty())
-	{
-		decoration->Create("Decoration", itwinid);
+		Manager->AsyncSaveDataOnServer(DecorationId,
+			[CallbackPtr](bool bSuccess) { CallbackPtr->OnRequestDone(bSuccess); });
 	}
 
-	if (*shouldStop)
+	// Save a first data type if needed, and *then* save something else (depending on 1st one)
+	template <class TManager>
+	inline void TAsyncSaveDecorationPartThen(
+		std::shared_ptr<TManager> const& Manager,
+		bool bNeedSave,
+		std::string const& DecorationId,
+		std::shared_ptr<AdvViz::SDK::AsyncRequestGroupCallback> CallbackPtr,
+		std::function<void(bool)>&& OnDataSavedFunc)
 	{
-		BE_LOGI("ITwinDecoration", "aborted save decoration task for itwin " << itwinid);
-		return false;
+		if (bNeedSave)
+		{
+			CallbackPtr->AddRequestToWait();
+			Manager->AsyncSaveDataOnServer(DecorationId,
+				[CallbackPtr, NextSaveFunc = std::move(OnDataSavedFunc)](bool bSuccess)
+			{
+				if (!CallbackPtr->IsValid())
+					return;
+				NextSaveFunc(bSuccess);
+				CallbackPtr->OnRequestDone(bSuccess);
+			});
+		}
+		else
+		{
+			// Directly save next data type.
+			OnDataSavedFunc(true);
+		}
 	}
 
-	if (!decoration->GetId().empty())
-	{
-		BE_LOGI("ITwinDecoration", "Saving decoration " << decoration->GetId()
-			<< " for itwin " << itwinid << "...");
-
-		// Splines should now be saved *before* instances, as some instance groups may reference the spline
-		// they were created from, and thus they need to know their identifier on the server to save the
-		// information correctly.
-		// For the same reason, animation paths should be saved *after* the splines and *before* the instances.
-		if (saveSplines)
-			splinesManager->SaveDataOnServer(decoration->GetId());
-		if (saveAnimPaths)
-			pathAnimator->SaveDataOnServer(decoration->GetId());
-		if (saveInstances)
-			instancesManager_->SaveDataOnServer(decoration->GetId());
-		if (saveMaterials)
-			materialPersistenceMngr->SaveDataOnServer(decoration->GetId());
-		if (saveAnnotations)
-			annotationsManager->SaveDataOnServerDS(decoration->GetId());
-		return true;
-	}
-	return false;
 }
 
-bool FDecorationAsyncIOHelper::LoadSceneFromServer()
+struct FDecorationAsyncIOHelper::SDecorationPartsToSave
+{
+	bool bSaveInstances = false;
+	bool bSaveMaterials = false;
+	bool bSaveSplines = false;
+	bool bSaveAnnotations = false;
+	bool bSaveAnimPaths = false;
+
+	inline bool IsEmpty() const {
+		return !bSaveInstances
+			&& !bSaveMaterials
+			&& !bSaveSplines
+			&& !bSaveAnnotations
+			&& !bSaveAnimPaths;
+	}
+};
+
+FDecorationAsyncIOHelper::SDecorationPartsToSave
+FDecorationAsyncIOHelper::GetDecorationPartsToSave() const
+{
+	return SDecorationPartsToSave {
+		.bSaveInstances = instancesManager_ && instancesManager_->HasInstancesToSave(),
+		.bSaveMaterials = materialPersistenceMngr && materialPersistenceMngr->NeedUpdateDB(),
+		.bSaveSplines = splinesManager && splinesManager->HasSplinesToSave(),
+		.bSaveAnnotations = annotationsManager && annotationsManager->HasAnnotationToSave(),
+		.bSaveAnimPaths = pathAnimator && pathAnimator->HasAnimPathsToSave()
+	};
+}
+
+bool FDecorationAsyncIOHelper::AsyncCreateDecorationThen(
+	std::shared_ptr<AdvViz::SDK::AsyncRequestGroupCallback> CallbackPtr,
+	std::function<void(bool)>&& OnDecorationCreatedFunc)
+{
+	if (LoadedITwinId.IsEmpty() || !decoration)
+	{
+		OnDecorationCreatedFunc(false);
+		return false;
+	}
+	std::string const ITwinid = TCHAR_TO_UTF8(*(LoadedITwinId));
+
+	// Create decoration if needed (asynchronous)
+	if (decoration->GetId().empty())
+	{
+		CallbackPtr->AddRequestToWait();
+		decoration->AsyncCreate("Decoration", ITwinid,
+			[ptrStop = this->shouldStop, this,
+			 ITwinid, CallbackPtr,
+			 NextSaveFunc = std::move(OnDecorationCreatedFunc)](bool bSuccess)
+		{
+			if (!CallbackPtr->IsValid())
+				return;
+
+			if (*ptrStop)
+			{
+				BE_LOGI("ITwinDecoration", "aborted save decoration task for iTwin " << ITwinid);
+				return;
+			}
+
+			if (decoration->GetId().empty())
+			{
+				BE_LOGE("ITwinDecoration", "No decoration created for iTwin " << ITwinid);
+				bSuccess = false;
+			}
+
+			NextSaveFunc(bSuccess);
+
+			CallbackPtr->OnRequestDone(bSuccess);
+		});
+	}
+	else
+	{
+		// Decoration already existing => save decoration data at once.
+		OnDecorationCreatedFunc(true);
+	}
+	return true;
+}
+
+bool FDecorationAsyncIOHelper::AsyncSaveDecorationToServer(
+	std::shared_ptr<AdvViz::SDK::AsyncRequestGroupCallback> CallbackPtr)
+{
+	SDecorationPartsToSave const PartsToSave = GetDecorationPartsToSave();
+	if (PartsToSave.IsEmpty())
+	{
+		// Nothing to save.
+		return false;
+	}
+	return AsyncCreateDecorationThen(CallbackPtr,
+		[=,this, ptrStop = this->shouldStop](bool bSuccess)
+	{
+		if (*ptrStop || !CallbackPtr->IsValid())
+			return;
+		if (bSuccess)
+			DoAsyncSaveDecorationToServer(PartsToSave, CallbackPtr);
+	});
+}
+
+bool FDecorationAsyncIOHelper::DoAsyncSaveDecorationToServer(
+	SDecorationPartsToSave const& WhatToSave,
+	std::shared_ptr<AdvViz::SDK::AsyncRequestGroupCallback> CallbackPtr)
+{
+	if (!decoration)
+	{
+		BE_ISSUE("no decoration");
+		return false;
+	}
+
+	std::string const DecorationId = decoration->GetId();
+	std::string const ITwinid = TCHAR_TO_UTF8(*(LoadedITwinId));
+
+	BE_LOGI("ITwinDecoration", "Saving decoration " << DecorationId
+		<< " for itwin " << ITwinid << "...");
+
+	using namespace AdvViz::SDK;
+
+	// Splines should now be saved *before* instances, as some instance groups may reference the spline
+	// they were created from, and thus they need to know their identifier on the server to save the
+	// information correctly.
+	// For the same reason, animation paths should be saved *after* the splines and *before* the instances.
+	TAsyncSaveDecorationPartThen(splinesManager, WhatToSave.bSaveSplines, DecorationId, CallbackPtr,
+		[=, this, ptrStop = this->shouldStop](bool bSuccess) {
+		if (*ptrStop)
+			return;
+		TAsyncSaveDecorationPartThen(pathAnimator, WhatToSave.bSaveAnimPaths, DecorationId, CallbackPtr,
+			[=, this, ptrStop = this->shouldStop](bool bSuccess) {
+			if (*ptrStop)
+				return;
+			TAsyncSaveDecorationPartThen(instancesManager_, WhatToSave.bSaveInstances, DecorationId, CallbackPtr,
+				[](bool /*bSuccess*/) {});
+			});
+		}
+	);
+
+	// the other data types (materials, annotations), are totally independent one another.
+
+	if (WhatToSave.bSaveMaterials)
+	{
+		TAsyncSaveDecorationPart(materialPersistenceMngr, DecorationId, CallbackPtr);
+	}
+
+	if (WhatToSave.bSaveAnnotations)
+	{
+		TAsyncSaveDecorationPart(annotationsManager, DecorationId, CallbackPtr);
+	}
+
+	return true;
+}
+
+void FDecorationAsyncIOHelper::AsyncLoadScene(CallbackWithBool onFinishcallback)
 {
 	if (!scene)
 	{
 		ensureMsgf(false, TEXT("InitDecorationService must be called before, in game thread"));
-		return false;
+		onFinishcallback(AdvViz::make_unexpected("InitDecorationService must be called before, in game thread"));
+		return;
 	}
 	if (LoadedITwinId.IsEmpty())
-		return false;
-
+	{
+		onFinishcallback(AdvViz::make_unexpected("LoadScene: LoadedITwinId.IsEmpty"));
+		return;
+	}
 	std::string const itwinid = TCHAR_TO_UTF8(*(LoadedITwinId));
 
 	if (scene
@@ -1166,339 +1291,189 @@ bool FDecorationAsyncIOHelper::LoadSceneFromServer()
 		&& scene->GetITwinId() == itwinid)
 	{
 		// scene already loaded for current iTwin => nothing to do.
-		return true;
+		onFinishcallback(true);
+		return;
 	}
+	auto SThis = shared_from_this();
 	using namespace AdvViz::SDK;
-	if (!bUseDecorationService)
-	{
-		auto scenes2res = GetITwinScenesAPI(itwinid);
-		if (!scenes2res)
-		{
-			int status = scenes2res.error();
-			if (status == 404 || status == 400)
+	// Optimization for the (probably nominal) case when user wants to load an existing scene:
+	// In this case, we first try to simply retrieve this scene from the server.
+	// If it succeeds, we can skip retrieving the entire list of scenes for this iTwin, which can be quite slow (depends on how many scenes exist).
+		scene->AsyncGet(itwinid, TCHAR_TO_UTF8(*(LoadedSceneID)),
+			[SThis, itwinid, onFinishcallback](AdvViz::expected<void, std::string> const& exp1)
 			{
-				//FMessageDialog::Open(EAppMsgCategory::Error, EAppMsgType::Ok,
-				//	FText::FromString("You don't seem to have access to scene API for this ITwin. You will not be able to save the scene."),
-				//	FText::FromString(""));
-				BE_LOGE("ITwinScene", "No access to empty scene, Create empty scene");
-				scene->PrepareCreation(defaultSceneName, itwinid);
-				scene->SetTimeline(std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New()));
-				return false;
-			}
-		}
-		else
-		{
-			std::vector<std::shared_ptr<IScenePersistence>> scenes2 = *scenes2res;
-			if (scenes2.empty())
-			{
-				if (!LoadedSceneID.IsEmpty())
+				bool bIsLoadExistingSceneOK = !SThis->LoadedSceneID.IsEmpty() && !SThis->bSceneIdIsForNewScene && (bool)exp1;
+
+				if (!bIsLoadExistingSceneOK)
 				{
-					std::string const sceneid = TCHAR_TO_UTF8(*(LoadedSceneID));
-					if (bSceneIdIsForNewScene)
+					auto scenes2res = SThis->GetITwinScenes(UTF8_TO_TCHAR(itwinid.c_str()));
+					if (!scenes2res)
 					{
-						scene->PrepareCreation(sceneid, itwinid);
+						int status = scenes2res.error().httpCode;
+						if (status == 404 || status == 400)
+						{
+							//FMessageDialog::Open(EAppMsgCategory::Error, EAppMsgType::Ok,
+							//	FText::FromString("You don't seem to have access to scene API for this ITwin. You will not be able to save the scene."),
+							//	FText::FromString(""));
+							BE_LOGE("ITwinScene", "No access to empty scene, Create empty scene");
+							SThis->scene->PrepareCreation(defaultSceneName, itwinid);
+							SThis->scene->SetTimeline(std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New()));
+							onFinishcallback(AdvViz::make_unexpected("No access to scene API for this ITwin"));
+							return;
+						}
 					}
 					else
 					{
-						//FMessageDialog::Open(EAppMsgCategory::Error, EAppMsgType::Ok,
-						//	FText::FromString("Cannot find scene with ID " + LoadedSceneID + ", Create empty scene"),
-						//	FText::FromString(""));
-						BE_LOGE("ITwinScene", "Cannot find scene with ID " + sceneid + ", Create empty scene");
-
-						scene->PrepareCreation(defaultSceneName, itwinid);
-					}
-					scene->SetTimeline(std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New()));
-				}
-				else
-				{
-					std::vector<std::shared_ptr<IScenePersistence>> scenes = GetITwinScenesDS(itwinid);
-					if (!scenes.empty())
-					{
-						bool sceneInited = false;
-						for (auto s : scenes)
+						std::vector<std::shared_ptr<IScenePersistence>> scenes2 = *scenes2res;
+						if (scenes2.empty())
 						{
-							if (s->GetName() != "sub scene")
+							if (!SThis->LoadedSceneID.IsEmpty())
 							{
-								if (FMessageDialog::Open(EAppMsgCategory::Error, EAppMsgType::YesNo,
-									FText::FromString("You have a scene in Decoration Service and no scene in SceneAPI , would you like to transfer it to Scene API service? "),
-									FText::FromString("")) != EAppReturnType::Yes)
+								std::string const sceneid = TCHAR_TO_UTF8(*(SThis->LoadedSceneID));
+								if (SThis->bSceneIdIsForNewScene)
 								{
-									scene->PrepareCreation(defaultSceneName, itwinid);
-									scene->SetTimeline(std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New()));
+									SThis->scene->PrepareCreation(sceneid, itwinid);
 								}
 								else
 								{
-									scene->PrepareCreation(defaultSceneName, itwinid);
-									scene->SetAtmosphere(s->GetAtmosphere());
-									scene->SetSceneSettings(s->GetSceneSettings());
-									for (auto link : s->GetLinks())
-									{
-										auto nulink = scene->MakeLink();
-										nulink->SetType(link->GetType());
-										nulink->SetRef(link->GetRef());
-										if (link->HasVisibility())
-											nulink->SetVisibility(link->GetVisibility());
-										if (link->HasGCS())
-										{
-											auto gcs = link->GetGCS();
-											nulink->SetGCS(gcs.first, gcs.second);
-										}
-										if (link->HasQuality())
-											nulink->SetQuality(link->GetQuality());
-										if (link->HasTransform())
-											nulink->SetTransform(link->GetTransform());
-										if (link->HasName())
-											nulink->SetName(link->GetName());
-										scene->AddLink(nulink);
-									}
-									auto tmInfo = GetSceneTimelines(s->GetId());
-									if (tmInfo && !(*tmInfo).empty())
-									{
-										auto timeline = std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New());
-										auto timelineId = (*tmInfo)[0].id;
-										auto ret = timeline->Load(s->GetId(), timelineId);
-										if (!ret)
-										{
-											BE_LOGE("Timeline", "Load failed, id:" << (std::string&)timelineId << " error:" << ret.error());
-											timeline = std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New());
-										}
-										//remove ids 
-										for (size_t i(0); i < timeline->GetClipCount(); i++)
-										{
-											auto clipp = timeline->GetClipByIndex(i);
-											if (!clipp)
-												continue;
-											(*clipp)->SetId(ITimelineClip::Id(std::string()));
-										}
-										scene->SetTimeline(timeline);
-									}
-									else
-									{
-										scene->SetTimeline(std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New()));
-									}
+									//FMessageDialog::Open(EAppMsgCategory::Error, EAppMsgType::Ok,
+									//	FText::FromString("Cannot find scene with ID " + LoadedSceneID + ", Create empty scene"),
+									//	FText::FromString(""));
+									BE_LOGE("ITwinScene", "Cannot find scene with ID " + sceneid + ", Create empty scene");
 
-									PostLoadSceneFromServer();
+									SThis->scene->PrepareCreation(defaultSceneName, itwinid);
 								}
-								sceneInited = true;
-								break;
-
+								SThis->scene->SetTimeline(std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New()));
 							}
-						}
-						if (!sceneInited)
-						{
-							scene->PrepareCreation(defaultSceneName, itwinid);
-							scene->SetTimeline(std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New()));
+							else
+							{
+								SThis->scene->PrepareCreation(defaultSceneName, itwinid);
+								SThis->scene->SetTimeline(std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New()));
+							}
+							onFinishcallback(false);
+							return;
 						}
 						else
 						{
-							return true;
-						}
-
-					}
-					else
-					{
-						scene->PrepareCreation(defaultSceneName, itwinid);
-						scene->SetTimeline(std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New()));
-					}
-				}
-				return false;
-			}
-			else
-			{
-				if (!LoadedSceneID.IsEmpty())
-				{
-					std::string const sceneid = TCHAR_TO_UTF8(*(LoadedSceneID));
-					if (bSceneIdIsForNewScene)
-					{
-						scene->PrepareCreation(sceneid, itwinid);
-						scene->SetTimeline(std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New()));
-						return false;
-					}
-					else
-					{
-						bool found = false;
-						for (auto scen : scenes2)
-						{
-							if (scen->GetId() == sceneid)
+							if (!SThis->LoadedSceneID.IsEmpty())
 							{
-								scene = scen;
-								found = true; 
-								break;
+								std::string const sceneid = TCHAR_TO_UTF8(*(SThis->LoadedSceneID));
+								if (SThis->bSceneIdIsForNewScene)
+								{
+									SThis->scene->PrepareCreation(sceneid, itwinid);
+									SThis->scene->SetTimeline(std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New()));
+									onFinishcallback(false);
+									return;
+								}
+								else
+								{
+									bool found = false;
+									for (auto scen : scenes2)
+									{
+										if (scen->GetId() == sceneid)
+										{
+											SThis->scene = scen;
+											found = true;
+											break;
+										}
+									}
+									if (!found)
+									{
+										FMessageDialog::Open(EAppMsgCategory::Error, EAppMsgType::Ok,
+											FText::FromString("Cannot find scene with ID " + SThis->LoadedSceneID + ", first scene found loaded"),
+											FText::FromString(""));
+										BE_LOGE("ITwinScene", "Cannot find scene with ID " + sceneid + ", first scene found loaded");
+										SThis->scene = scenes2[0];
+									}
+								}
+							}
+							else
+							{
+								bool found = false;
+								//take default scene and not a dev scene by default
+								for (auto sc : scenes2)
+								{
+									if (sc->GetName() == defaultSceneName)
+									{
+										SThis->scene = sc;
+										found = true;
+									}
+								}
+								if (!found)
+									SThis->scene = scenes2[0];
 							}
 						}
-						if (!found)
-						{
-							FMessageDialog::Open(EAppMsgCategory::Error, EAppMsgType::Ok,
-								FText::FromString("Cannot find scene with ID " + LoadedSceneID + ", first scene found loaded"),
-								FText::FromString(""));
-							BE_LOGE("ITwinScene", "Cannot find scene with ID " + sceneid + ", first scene found loaded");
-							scene = scenes2[0];
-						}
-
 					}
-
 				}
-				else
+				SThis->PostLoadSceneFromServer();
+
+				if (SThis->bUseDecorationService)
 				{
-					bool found = false;
-					//take default scene and not a dev scene by default
-					for (auto sc : scenes2)
+					std::string sceneId = SThis->scene->GetId();
+					// Load or create timeline
+					auto tmInfo = GetSceneTimelines(sceneId);
+					if (tmInfo && !(*tmInfo).empty())
 					{
-						if (sc->GetName() == defaultSceneName)
+						auto timeline = std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New());
+						auto timelineId = (*tmInfo)[0].id;
+						auto ret = timeline->Load(sceneId, timelineId);
+						if (!ret)
 						{
-							scene =sc;
-							found = true;
+							BE_LOGE("Timeline", "Load failed, id:" << (std::string&)timelineId << " error:" << ret.error());
 						}
-					}
-					if(!found)
-						scene = scenes2[0];
-				}
-				PostLoadSceneFromServer();
-			}
-		}
-	}
-	if (bUseDecorationService)
-	{
-		std::vector<std::shared_ptr<IScenePersistence>> scenes = GetITwinScenesDS(itwinid);
-		if (scenes.empty())
-		{
-			if (!LoadedSceneID.IsEmpty())
-			{
-				std::string const sceneid = TCHAR_TO_UTF8(*(LoadedSceneID));
-				if (bSceneIdIsForNewScene)
-				{
-					scene->PrepareCreation(sceneid, itwinid);
-				}
-				else
-				{
-					/*FMessageDialog::Open(EAppMsgCategory::Error, EAppMsgType::Ok,
-						FText::FromString("Cannot find scene with ID " + LoadedSceneID + ", Create empty scene"),
-						FText::FromString(""));*/
-					BE_LOGE("ITwinScene", "Cannot find scene with ID " + sceneid + ", Create empty scene");
-						scene->PrepareCreation(defaultSceneName, itwinid);
-				}
-				scene->SetTimeline(std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New()));
-			}
-			else
-			{
-
-				scene->PrepareCreation(defaultSceneName, itwinid);
-				scene->SetTimeline(std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New()));
-			}
-			return false;
-		}
-		else
-		{
-			if (!LoadedSceneID.IsEmpty())
-			{
-				std::string const sceneid = TCHAR_TO_UTF8(*(LoadedSceneID));
-				if (bSceneIdIsForNewScene)
-				{
-					scene->PrepareCreation(sceneid, itwinid);
-					scene->SetTimeline(std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New()));
-					return false;
-				}
-				else
-				{
-					bool found = false;
-					for (auto scen : scenes)
-					{
-						if (scen->GetId() == sceneid)
+						else
 						{
-							scene = scen;
-							found = true;
-							break;
+							SThis->scene->SetTimeline(timeline);
 						}
 					}
-					if (!found)
+					if (!SThis->scene->GetTimeline())
 					{
-						FMessageDialog::Open(EAppMsgCategory::Error, EAppMsgType::Ok,
-							FText::FromString("Cannot find scene with ID " + LoadedSceneID + ", first scene found loaded"),
-							FText::FromString(""));
-						BE_LOGE("ITwinScene", "Cannot find scene with ID " + sceneid + ", first scene found loaded");
-						scene = scenes[0];
+						std::string sceneName = "myscene";
+						auto ret = AdvViz::SDK::AddSceneTimeline(sceneId, sceneName);
+						if (!ret)
+						{
+							BE_LOGE("Timeline", "AddSceneTimeline failed, error:" << ret.error());
+						}
+						else
+						{
+							auto timeline = std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New());
+							auto timelineId = *ret;
+							auto ret2 = timeline->Load(sceneId, timelineId);
+							if (!ret2)
+							{
+								BE_LOGE("Timeline", "Load failed, id:" << (std::string&)timelineId << "error:" << ret2.error());
+							}
+							else
+							{
+								SThis->scene->SetTimeline(timeline);
+							}
+						}
 					}
 				}
-			}
-			else
-			{
-				bool found = false;
-				//take default scene and not a dev scene by default
-				for (auto sc : scenes)
-				{
-					if (sc->GetName() == defaultSceneName)
-					{
-						scene = sc;
-						found = true;
-					}
-				}
-				if (!found)
-					scene = scenes[0];
-			}
-				
-			std::string sceneId = scene->GetId();
-			PostLoadSceneFromServer();
-			// Load or create timeline
-			auto tmInfo = GetSceneTimelines(sceneId);
-			if (tmInfo && !(*tmInfo).empty())
-			{
-				auto timeline = std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New());
-				auto timelineId = (*tmInfo)[0].id;
-				auto ret = timeline->Load(sceneId, timelineId);
-				if (!ret)
-				{
-					BE_LOGE("Timeline", "Load failed, id:" << (std::string&)timelineId << " error:" << ret.error());
-				}
-				else
-				{
-					scene->SetTimeline(timeline);
-				}
-			}
-			if (!scene->GetTimeline())
-			{
-				std::string sceneName = "myscene";
-				auto ret = AdvViz::SDK::AddSceneTimeline(sceneId, sceneName);
-				if (!ret)
-				{
-					BE_LOGE("Timeline", "AddSceneTimeline failed, error:" << ret.error());
-				}
-				else
-				{
-					auto timeline = std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New());
-					auto timelineId = *ret;
-					auto ret2 = timeline->Load(sceneId, timelineId);
-					if (!ret2)
-					{
-						BE_LOGE("Timeline", "Load failed, id:" << (std::string&)timelineId << "error:" << ret2.error());
-					}
-					else
-					{
-						scene->SetTimeline(timeline);
-					}
-				}
-			}
-		}
-	}
-	if (!scene->GetTimeline())
-		scene->SetTimeline(std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New()));
-	return true;
+				if (!SThis->scene->GetTimeline())
+					SThis->scene->SetTimeline(std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New()));
+
+				onFinishcallback(true);
+			});
 }
 
 void FDecorationAsyncIOHelper::PostLoadSceneFromServer()
 {
-	links.clear();
+	auto linkslock = links.GetAutoLock();
+	linkslock->clear();
 	for (auto l : scene->GetLinks())
 	{
 		ITwin::ModelLink key;
 		if (!ITwin::GetModelType(l->GetType(), key.first))
 			continue;
 		key.second = UTF8_TO_TCHAR(l->GetRef().c_str());
-		links[key] = l;
+		(*linkslock)[key] = l;
 		
 	}
 }
 
-bool FDecorationAsyncIOHelper::SaveSceneToServer()
+bool FDecorationAsyncIOHelper::AsyncSaveSceneToServer(
+	std::shared_ptr<AdvViz::SDK::AsyncRequestGroupCallback> CallbackPtr)
 {
 	if (LoadedITwinId.IsEmpty() || !scene)
 	{
@@ -1514,90 +1489,135 @@ bool FDecorationAsyncIOHelper::SaveSceneToServer()
 		scene->AddLink(nulink);
 		decorationIsLinked = true;
 	}
-	if (scene->ShouldSave()|| scene->GetId().empty())
+	if (scene->ShouldSave() || scene->GetId().empty())
 	{
-		scene->SetShouldSave(true);
-		if (!scene->Save())
-		{
-			FMessageDialog::Open(EAppMsgCategory::Error, EAppMsgType::Ok,
-				FText::FromString("The Scene failed to save"),
-				FText::FromString(""));
-			BE_LOGE("ITwinScene", "The Scene failed to save");
-		}
-		const auto count = std::erase_if(links, [](const auto& item) {
-			auto const& [key, value] = item;
-			return value->GetId().empty() && value->ShouldDelete();
-			});
-	}
+		CallbackPtr->AddRequestToWait();
 
-	// save timeline
-	if (bUseDecorationService)
-	{
-		if (scene->GetTimeline())
+		scene->SetShouldSave(true);
+		scene->AsyncSave([this, CallbackPtr](bool bSuccess)
 		{
-			scene->GetTimeline()->Save(scene->GetId());
-		}
+			if (!CallbackPtr->IsValid())
+				return;
+			BE_ASSERT(IsInGameThread());
+			if (!bSuccess)
+			{
+				FMessageDialog::Open(EAppMsgCategory::Error, EAppMsgType::Ok,
+					FText::FromString("The Scene failed to save"),
+					FText::FromString(""));
+				BE_LOGE("ITwinScene", "The Scene failed to save");
+			}
+			// Clean links actually removed on the server
+			auto linkslock = links.GetAutoLock();
+			const auto count = std::erase_if(*linkslock, [](const auto& item) {
+				auto const& [key, value] = item;
+				return !value->HasDBIdentifier() && value->ShouldDelete();
+			});
+			CallbackPtr->OnRequestDone(bSuccess);
+		});
 	}
 
 	return true;
 }
 
-bool FDecorationAsyncIOHelper::LoadAnnotationsFromServer()
+bool FDecorationAsyncIOHelper::AsyncSave(std::function<void(bool)>&& onDataSavedFunc /*= {}*/)
+{
+	using namespace AdvViz::SDK;
+
+	std::shared_ptr<AsyncRequestGroupCallback> CallbackPtr =
+		std::make_shared<AsyncRequestGroupCallback>(
+			std::move(onDataSavedFunc), isThisValid);
+
+	bool bRequestStarted = false;
+	// If the decoration does not exist yet but is to be created now, we should ensure we link it to the
+	// scene, and thus the saving of the scene must be started only *after* the decoration has been created:
+	if (!decorationIsLinked && decoration && decoration->GetId().empty()
+		&& !GetDecorationPartsToSave().IsEmpty())
+	{
+		bRequestStarted = AsyncCreateDecorationThen(CallbackPtr,
+			[=, this, ptrStop = this->shouldStop,
+			PartsToSave = GetDecorationPartsToSave()](bool bSuccess)
+		{
+			if (bSuccess && !*ptrStop)
+			{
+				DoAsyncSaveDecorationToServer(PartsToSave, CallbackPtr);
+				AsyncSaveSceneToServer(CallbackPtr);
+			}
+		});
+	}
+	else
+	{
+		bRequestStarted |= AsyncSaveDecorationToServer(CallbackPtr);
+		bRequestStarted |= AsyncSaveSceneToServer(CallbackPtr);
+	}
+
+	CallbackPtr->OnFirstLevelRequestsRegistered();
+	return bRequestStarted;
+}
+
+void FDecorationAsyncIOHelper::AsyncLoadAnnotations(LoadCallback Callback)
 {
 	if (!annotationsManager)
 	{
 		ensureMsgf(false, TEXT("InitDecorationService must be called before, in game thread"));
-		return false;
+		Callback(AdvViz::make_unexpected("Missing initialization (no annotation manager)"));
+		return;
 	}
-	if (!LoadITwinDecoration())
+	if (!LoadDecorationOrFinish(Callback))
 	{
-		return false;
+		return;
 	}
-	annotationsManager->LoadDataFromServerDS(decoration->GetId());
-	return true;
-
+	annotationsManager->AsyncLoadDataFromServer(decoration->GetId(),
+		[](AdvViz::SDK::AnnotationPtr&){},
+		Callback);
 }
 
-bool FDecorationAsyncIOHelper::LoadSplinesFromServer()
+void FDecorationAsyncIOHelper::AsyncLoadSplines(LoadCallback Callback)
 {
 	if (!splinesManager)
 	{
 		ensureMsgf(false, TEXT("InitDecorationService must be called before, in game thread"));
-		return false;
+		Callback(AdvViz::make_unexpected("Missing initialization (no spline manager)"));
+		return;
 	}
-	if (!LoadITwinDecoration())
+	if (!LoadDecorationOrFinish(Callback))
 	{
-		return false;
+		return;
 	}
-	splinesManager->LoadDataFromServer(decoration->GetId());
-	return true;
+	splinesManager->AsyncLoadDataFromServer(decoration->GetId(),
+		[](AdvViz::SDK::ISplinePtr&) {},
+		[](AdvViz::SDK::ISplinePointPtr&) {},
+		Callback);
 }
 
-bool FDecorationAsyncIOHelper::LoadPathAnimationFromServer()
+void FDecorationAsyncIOHelper::AsyncLoadPathAnimations(LoadCallback Callback)
 {
 	if (!pathAnimator)
 	{
 		ensureMsgf(false, TEXT("InitDecorationService must be called before, in game thread"));
-		return false;
+		Callback(AdvViz::make_unexpected("Missing initialization (no path animator)"));
+		return;
 	}
-	if (!LoadITwinDecoration())
+	if (!LoadDecorationOrFinish(Callback))
 	{
-		return false;
+		return;
 	}
-	pathAnimator->LoadDataFromServer(decoration->GetId());
-	return true;
+	pathAnimator->AsyncLoadDataFromServer(decoration->GetId(),
+		[](AdvViz::SDK::IAnimationPathInfoPtr&) {},
+		Callback);
 }
 
 FDecorationAsyncIOHelper::LinkSharedPtr FDecorationAsyncIOHelper::CreateLink(ModelIdentifier const& Key)
 {
-	auto iter = links.find(Key);
-	if (iter == links.end())
+	BE_LOGI("ITwinScene", "CreateLink for model " << TCHAR_TO_UTF8(*Key.second));
+	auto linkslock = links.GetAutoLock();
+	auto iter = linkslock->find(Key);
+	if (iter == linkslock->end())
 	{
 		auto link = scene->MakeLink();
 		link->SetType(ITwin::ModelTypeToString(Key.first));
 		link->SetRef(TCHAR_TO_UTF8(*Key.second));
 		scene->AddLink(link);
-		links[Key] = link;
+		(*linkslock)[Key] = link;
 		return link;
 	}
 	else
@@ -1605,6 +1625,23 @@ FDecorationAsyncIOHelper::LinkSharedPtr FDecorationAsyncIOHelper::CreateLink(Mod
 		return iter->second;
 	}
 }
+
+void FDecorationAsyncIOHelper::CreateLinkIfNeeded(ModelIdentifier const& Key,
+	std::function<void(LinkSharedPtr)> const& linkInitor)
+{
+	auto linkslock = links.GetRAutoLock();
+	auto iter = linkslock->find(Key);
+	if (iter == linkslock->end())
+	{
+		auto sp = CreateLink(Key);
+		if (sp && linkInitor)
+		{
+			linkInitor(sp);
+		}
+	}
+
+}
+
 
 std::shared_ptr<AdvViz::SDK::ISplinesManager> const& FDecorationAsyncIOHelper::GetSplinesManager()
 {
@@ -1616,9 +1653,8 @@ std::shared_ptr<AdvViz::SDK::IPathAnimator> const& FDecorationAsyncIOHelper::Get
 	return pathAnimator;
 }
 
-AdvViz::expected<std::vector<std::shared_ptr<AdvViz::SDK::IScenePersistence>>, int> FDecorationAsyncIOHelper::GetITwinScenes(const FString& iTwinid)
+AdvViz::expected<AdvViz::SDK::ScenePtrVector, AdvViz::SDK::HttpError> FDecorationAsyncIOHelper::GetITwinScenes(const FString& iTwinid)
 {
-
 	std::string itwinid = TCHAR_TO_UTF8(*(iTwinid));
 	if (bUseDecorationService)
 	{
@@ -1627,6 +1663,39 @@ AdvViz::expected<std::vector<std::shared_ptr<AdvViz::SDK::IScenePersistence>>, i
 	else
 	{
 		return AdvViz::SDK::GetITwinScenesAPI(itwinid);
+	}
+}
+
+void FDecorationAsyncIOHelper::AsyncGetITwinSceneInfos(const FString& ITwinid,
+	std::function<void(AdvViz::expected<SceneInfoVec, AdvViz::SDK::HttpError> const&)>&& InCallback,
+	bool bExecuteCallbackInGameThread)
+{
+	const std::string itwinid = TCHAR_TO_UTF8(*ITwinid);
+	if (bUseDecorationService)
+	{
+		AdvViz::SDK::AsyncGetITwinSceneInfosDS(itwinid,
+			[bExecuteCallbackInGameThread, Callback = std::move(InCallback)](AdvViz::expected<SceneInfoVec, AdvViz::SDK::HttpError> const& ret)
+		{
+			if (bExecuteCallbackInGameThread && !IsInGameThread())
+			{
+				AsyncTask(ENamedThreads::GameThread,
+					[CallbackGT = std::move(Callback), ret]()
+				{
+					CallbackGT(ret);
+				});
+			}
+			else
+			{
+				Callback(ret);
+			}
+		});
+	}
+	else
+	{
+		AdvViz::SDK::Http::EAsyncCallbackExecutionMode AsyncCBExecMode =
+			bExecuteCallbackInGameThread ? AdvViz::SDK::Http::EAsyncCallbackExecutionMode::GameThread
+			: AdvViz::SDK::Http::EAsyncCallbackExecutionMode::Default;
+		AdvViz::SDK::AsyncGetITwinSceneInfosAPI(itwinid, std::move(InCallback), AsyncCBExecMode);
 	}
 }
 

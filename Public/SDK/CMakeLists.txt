@@ -1,18 +1,26 @@
 cmake_minimum_required(VERSION 3.18)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/../CMake")
-include(cmake/HandleVCPKG.cmake)
+# Including this twice is a problem: will delete buildtrees when using BE_REBUILD_ALL_VCPKG_FOR_MEND
+# after vcpkg has rebuilt everything from scratch but before we've had a chance to use be_vcpkg_buildtrees_for_mend
+if (NOT HAS_INCLUDED_HANDLEVCPKG)
+	include(cmake/HandleVCPKG.cmake)
+	set(HAS_INCLUDED_HANDLEVCPKG ON)
+endif()
 
 option(SDK_ADDUNITTEST "Generate Unit tests for SDK" ON)
 option(SINGLETONDLL "Use singleton dll if you need to link the static sdk several times." OFF)
 
+option(WITH_HTTPCPR "Use CPR library" ON)
+
 if("${VIZSDK_BUILD_CONTEXT}" STREQUAL "Unreal")
 	message("Using Unreal build configuration")
 	if(WIN32)
-		set (CMAKE_CONFIGURATION_TYPES UnrealDebug Release)
+		set (CMAKE_CONFIGURATION_TYPES Debug UnrealDebug Release)
 		include(cmake/CustomConfig.cmake)
 	endif()
 	set(SINGLETONDLL ON)
+	set(WITH_HTTPCPR OFF)
 endif()
 
 if(WIN32)
@@ -22,7 +30,7 @@ if(WIN32)
 	SET(CMAKE_SHARED_LINKER_FLAGS_DEBUG "${CMAKE_SHARED_LINKER_FLAGS_DEBUG} /debug /INCREMENTAL" )
 
 	SET(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /MP")
-	SET(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /MP") 
+	SET(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /MP")
 endif()
 
 if (ADVVIZDLL)
@@ -46,14 +54,17 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 project(AdvVizSDK CXX)
 
 if("${VIZSDK_BUILD_CONTEXT}" STREQUAL "Unreal")
-add_compile_definitions($<$<CONFIG:UnrealDebug>:UNREALDEBUG_CONFIG>
-	$<$<CONFIG:Release>:RELEASE_CONFIG>
-)
+	add_compile_definitions(
+		$<$<CONFIG:Debug>:DEBUG_CONFIG>
+		$<$<CONFIG:UnrealDebug>:UNREALDEBUG_CONFIG>
+		$<$<CONFIG:Release>:RELEASE_CONFIG>
+	)
 else()
-add_compile_definitions($<$<CONFIG:Debug>:DEBUG_CONFIG>
-	$<$<CONFIG:Release>:RELEASE_CONFIG>
-	$<$<CONFIG:RelWithDebInfo>:RELWITHDEBINFO_CONFIG>
-)
+	add_compile_definitions(
+		$<$<CONFIG:Debug>:DEBUG_CONFIG>
+		$<$<CONFIG:Release>:RELEASE_CONFIG>
+		$<$<CONFIG:RelWithDebInfo>:RELWITHDEBINFO_CONFIG>
+	)
 endif()
 
 include(cmake/External.cmake)

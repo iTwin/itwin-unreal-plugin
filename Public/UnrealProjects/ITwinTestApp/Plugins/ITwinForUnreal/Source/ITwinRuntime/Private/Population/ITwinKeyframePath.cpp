@@ -9,6 +9,8 @@
 
 #include <Population/ITwinKeyframePath.h>
 
+#include <Helpers/ITwinMathUtils.h>
+
 #include <Engine/GameViewportClient.h>
 #include <Engine/Level.h>
 #include <Engine/LevelBounds.h>
@@ -16,7 +18,6 @@
 #include <Engine/World.h>
 #include <Engine/Engine.h>
 #include "DrawDebugHelpers.h"
-#include "Math/Plane.h"
 #include "Kismet/GameplayStatics.h"
 #include <SceneView.h>
 #include <UnrealClient.h>
@@ -139,14 +140,6 @@ FBox CalculateLevelBounds(ULevel* InLevel)
 	return LevelBbox;
 }
 
-inline double RayPlaneIntersection(const FVector& RayOrigin, const FVector& RayDirection, const FPlane& Plane)
-{
-	const FVector PlaneNormal = FVector(Plane.X, Plane.Y, Plane.Z);
-	const FVector PlaneOrigin = PlaneNormal * Plane.W;
-	const double Distance = FVector::DotProduct((PlaneOrigin - RayOrigin), PlaneNormal) / FVector::DotProduct(RayDirection, PlaneNormal);
-	return Distance;
-}
-
 inline void GetNearVertices(const FMatrix& FrustumToWorld, std::array<FVector, 5> &Vertices)
 {
 	int counter = 0;
@@ -193,18 +186,6 @@ inline FVector4 GetMainAxis(const FVector4& v)
 	}
 	return ret;
 }
-
-template<typename T>
-inline UE::Math::TVector<T> RayPlaneIntersection(const UE::Math::TVector<T>& RayOrigin, const UE::Math::TVector<T>& RayDirection, const UE::Math::TPlane<T>& Plane, T &Distance)
-{
-	using TVector = UE::Math::TVector<T>;
-	const TVector PlaneNormal = TVector(Plane.X, Plane.Y, Plane.Z);
-	const TVector PlaneOrigin = PlaneNormal * Plane.W;
-
-	Distance = TVector::DotProduct((PlaneOrigin - RayOrigin), PlaneNormal) / TVector::DotProduct(RayDirection, PlaneNormal);
-	return RayOrigin + RayDirection * Distance;
-}
-
 
 void AITwinKeyframePath::Tick(float DeltaTime)
 {
@@ -279,10 +260,14 @@ void AITwinKeyframePath::Tick(float DeltaTime)
 				for (int i = 0; i < 5; ++i)
 				{
 					box += previousPos[i];
-					double distance = 0.0f;
-					FVector v = RayPlaneIntersection(FVector(viewLoc), Directions[i], plane, distance);
-					if (distance < 0.0f || distance > 1e10f)
-						v = FVector(viewLoc) + Directions[i] * d * 100.f; 
+					double distance = 0.;
+					FVector v = FVector::ZeroVector;
+					const bool bIntersects = ITwin::RayPlaneIntersection(FVector(viewLoc), Directions[i], plane,
+																		 v, distance);
+					if (!bIntersects || distance > 1e10f)
+					{
+						v = FVector(viewLoc) + Directions[i] * d * 100.f;
+					}
 					box += v;
 					if (CameraFreeze && DisplayBBox)
 						DrawDebugLine(GetWorld(), previousPos[i], v, FColor::Green, false, -1.f, 0, 100.f);

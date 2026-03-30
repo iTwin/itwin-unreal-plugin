@@ -9,14 +9,4 @@
 		,"stduuid"
 		,"reflectcpp"
 	]
-	,"overrides": [
-		{
-			"name": "libassert",
-			"version": "2.1.5"
-		},
-		{
-			"name": "reflectcpp",
-			"version": "0.17.0"
-		}
-	]
 }

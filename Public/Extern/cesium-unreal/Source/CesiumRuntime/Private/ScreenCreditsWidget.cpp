@@ -163,6 +163,7 @@ UScreenCreditsWidget::UScreenCreditsWidget(
   static ConstructorHelpers::FObjectFinder<UFont> RobotoFontObj(
       *UWidget::GetDefaultFontName());
   _font = FSlateFontInfo(RobotoFontObj.Object, 8);
+  _defaultFontSize = _font.Size;
 }
 
 UScreenCreditsWidget::~UScreenCreditsWidget() {
@@ -221,8 +222,8 @@ void UScreenCreditsWidget::HandleImageRequest(
     texture->UpdateResource();
     _textures.Add(texture);
     FTexturePlatformData* pPlatformData = texture->GetPlatformData();
-    int32 SizeX = pPlatformData->SizeX;
-    int32 SizeY = pPlatformData->SizeY;
+    int32 SizeX = FMath::RoundToInt32(_displayScale * pPlatformData->SizeX);
+    int32 SizeY = FMath::RoundToInt32(_displayScale * pPlatformData->SizeY);
     _creditImages[id] = new FSlateImageBrush(texture, FVector2D(SizeX, SizeY));
   }
   // Only update credits after all of the images are done loading.
@@ -243,8 +244,8 @@ std::string UScreenCreditsWidget::LoadImage(const std::string& url) {
       texture->UpdateResource();
       _textures.Add(texture);
       FTexturePlatformData* pPlatformData = texture->GetPlatformData();
-      int32 SizeX = pPlatformData->SizeX;
-      int32 SizeY = pPlatformData->SizeY;
+      int32 SizeX = FMath::RoundToInt32(_displayScale * pPlatformData->SizeX);
+      int32 SizeY = FMath::RoundToInt32(_displayScale * pPlatformData->SizeY);
       _creditImages.Add(new FSlateImageBrush(texture, FVector2D(SizeX, SizeY)));
     }
   } else {
@@ -278,5 +279,29 @@ void UScreenCreditsWidget::SetCredits(
   }
   if (RichTextOnScreen) {
     RichTextOnScreen->SetText(FText::FromString(InOnScreenCredits));
+  }
+}
+
+void UScreenCreditsWidget::SetDisplayScale(float InScale) {
+  _displayScale = InScale;
+  const float NewFontSize = FMath::RoundToFloat(InScale * _defaultFontSize);
+  if (ensure(NewFontSize >= 1.0f) && fabs(_font.Size - NewFontSize) > 0.5f) {
+    _font.Size = NewFontSize;
+    if (RichTextOnScreen) {
+      RichTextOnScreen->SetDefaultFont(_font);
+    }
+    if (RichTextPopup) {
+      RichTextPopup->SetDefaultFont(_font);
+    }
+  }
+  if (_numImagesLoading == 0 && ensure(_textures.Num() == _creditImages.Num())) {
+    for (int32 i(0); i<_creditImages.Num(); ++i) {
+      if (_creditImages[i] && _textures[i]) {
+        FTexturePlatformData const* pPlatformData = _textures[i]->GetPlatformData();
+        int32 SizeX = FMath::RoundToInt32(_displayScale * pPlatformData->SizeX);
+        int32 SizeY = FMath::RoundToInt32(_displayScale * pPlatformData->SizeY);
+        _creditImages[i]->SetImageSize(FVector2D(SizeX, SizeY));
+      }
+    }
   }
 }

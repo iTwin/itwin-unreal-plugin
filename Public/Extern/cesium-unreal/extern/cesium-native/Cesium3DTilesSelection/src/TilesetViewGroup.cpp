@@ -45,7 +45,7 @@ ViewUpdateResult& TilesetViewGroup::getViewUpdateResult() {
 
 void TilesetViewGroup::addToLoadQueue(
     const TileLoadTask& task,
-    std::optional<int> modelVersion) {
+    const std::shared_ptr<GltfModifier>& pModifier) {
   Tile* pTile = task.pTile;
   CESIUM_ASSERT(pTile != nullptr);
 
@@ -63,9 +63,9 @@ void TilesetViewGroup::addToLoadQueue(
           [&](const TileLoadTask& task) { return task.pTile == pTile; }) ==
       this->_mainThreadLoadQueue.end());
 
-  if (pTile->needsWorkerThreadLoading(modelVersion)) {
+  if (pTile->needsWorkerThreadLoading(pModifier.get())) {
     this->_workerThreadLoadQueue.emplace_back(task);
-  } else if (pTile->needsMainThreadLoading(modelVersion)) {
+  } else if (pTile->needsMainThreadLoading(pModifier.get())) {
     this->_mainThreadLoadQueue.emplace_back(task);
   } else if (
       pTile->getState() == TileLoadState::ContentLoading ||
@@ -257,6 +257,11 @@ const Tile* TilesetViewGroup::getNextTileToLoadInMainThread() {
   Tile* pResult = this->_mainThreadLoadQueue.back().pTile;
   this->_mainThreadLoadQueue.pop_back();
   return pResult;
+}
+
+bool TilesetViewGroup::isCreditReferenced(
+    CesiumUtility::Credit credit) const noexcept {
+  return this->_previousFrameCredits.isCreditReferenced(credit);
 }
 
 } // namespace Cesium3DTilesSelection
