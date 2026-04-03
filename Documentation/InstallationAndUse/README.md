@@ -20,7 +20,7 @@ Before you install the plugin, you need to create and configure your iTwin Platf
 2. Go to [My Models](https://developer.bentley.com/my-imodels/) and create a new iModel.<br>
 3. Go to [My Apps](https://developer.bentley.com/my-apps/) and [register a new iTwin App](https://developer.bentley.com/tutorials/quickstart-web-and-service-apps/#12-register-your-application):
    - Application type: Native
-   - Redirect URIs: http://localhost:3000/signin-callback
+   - Redirect URIs: http://127.0.0.1:3000/signin-callback
 
 ### <a id="install-plugin"></a> Step 2: Installing the precompiled iTwin plugin for Unreal
 
