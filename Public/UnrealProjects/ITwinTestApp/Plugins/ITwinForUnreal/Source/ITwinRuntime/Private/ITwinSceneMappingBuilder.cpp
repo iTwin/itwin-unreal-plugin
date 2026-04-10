@@ -180,7 +180,7 @@ void UITwinSceneMappingBuilder::OnTileMeshPrimitiveLoaded(ICesiumLoadedTilePrimi
 	constexpr int MetaDataNamesCount = 4;
 	static const std::array<FString, MetaDataNamesCount> MetaDataNames = {
 		ITwinCesium::Metada::ELEMENT_NAME,
-		ITwinCesium::Metada::SUBCATEGORY_NAME,
+		ITwinCesium::Metada::CATEGORY_NAME,
 		ITwinCesium::Metada::MODEL_NAME,
 		ITwinCesium::Metada::GEOMETRYCLASS_NAME
 	};
@@ -199,6 +199,18 @@ void UITwinSceneMappingBuilder::OnTileMeshPrimitiveLoaded(ICesiumLoadedTilePrimi
 	if (pElementPropertyTable == nullptr)
 	{
 		return;
+	}
+	bool bUseSubcategory = false;
+	if (!pProperties[to_underlying(EITwinPropertyType::Category)])
+	{
+		// Try again with subcategory slot if category slot returns null property
+		pProperties[to_underlying(EITwinPropertyType::Category)] =
+			FITwinMetadataPropertyAccess::FindValidProperty(
+				PrimitiveFeatures,
+				LoadedTile.GetModelMetadata(),
+				ITwinCesium::Metada::SUBCATEGORY_NAME,
+				FeatureIDSetIndex);
+		bUseSubcategory = true;
 	}
 	// Get index of UV layer into which Feature IDs were baked (formerly in FITwinGltfMeshComponentWrapper's
 	// constructor)
@@ -238,14 +250,12 @@ void UITwinSceneMappingBuilder::OnTileMeshPrimitiveLoaded(ICesiumLoadedTilePrimi
 	{
 		pCollisionMesh->SetTriangleHitFilter(
 			[&SceneMapping, &FeatureIdSet, pElementPropertyTable, &ClippingHelperPtr, &MeshComponent]
-			(FVector const& /*Position*/, uint32/*FaceIndex*/,
+			(FVector const& Position, uint32/*FaceIndex*/,
 			 uint32 VertexIndex, uint32/*VertexIndexB*/, uint32/*VertexIndexC*/)
 			{
-#if 0 // Still needs testing...
 				FVector const WorldPosition = MeshComponent.GetComponentTransform().TransformPosition(Position);
 				if (ClippingHelperPtr && ClippingHelperPtr->ShouldCutOut(WorldPosition))
 					return false;
-#endif
 				const int64 FeatureID = UCesiumFeatureIdSetBlueprintLibrary::GetFeatureIDForVertex(
 					FeatureIdSet, static_cast<int64>(VertexIndex));
 				if (FeatureID < 0)
@@ -256,7 +266,7 @@ void UITwinSceneMappingBuilder::OnTileMeshPrimitiveLoaded(ICesiumLoadedTilePrimi
 				ITwinScene::ElemIdx ElemRank;
 				if (!SceneMapping.GetElementForSLOW(ElementID, &ElemRank))
 					return true;
-				return SceneMapping.IsElementVisible(ElemRank);
+				return SceneMapping.IsElementVisible(ElemRank, WorldPosition);
 			});
 	}
 #endif // BE_IS_USING_BENTLEY_UNREAL
@@ -321,7 +331,8 @@ void UITwinSceneMappingBuilder::OnTileMeshPrimitiveLoaded(ICesiumLoadedTilePrimi
 						// fetch the CategoryID and ModelID corresponding to this feature
 						ITwinElementID CategoryID = FeatureIDToITwinID<ITwinElementID>(
 							pProperties[to_underlying(EITwinPropertyType::Category)], FeatureID);
-						CategoryID--;
+						if (bUseSubcategory)
+							CategoryID--;
 						ITwinElementID const ModelID = FeatureIDToITwinID<ITwinElementID>(
 							pProperties[to_underlying(EITwinPropertyType::Model)], FeatureID);
 						SceneMapping.CategoryIDToElementIDs[CategoryID].insert(ElementID);
@@ -376,7 +387,8 @@ void UITwinSceneMappingBuilder::OnTileMeshPrimitiveLoaded(ICesiumLoadedTilePrimi
 				// Fetch the Category ID and CategoryPerModel ID related to this feature.
 				ITwinElementID categoryID = FeatureIDToITwinID<ITwinElementID>(
 					pProperties[to_underlying(EITwinPropertyType::Category)], FeatureID);
-				categoryID--;
+				if (bUseSubcategory)
+					categoryID--;
 				if (categoryID != ITwin::NOT_ELEMENT)
 				{
 					SceneTile.CategoryFeaturesSLOW(categoryID).Features.insert(ITwinFeatID);
@@ -456,7 +468,6 @@ UMaterialInstanceDynamic* UITwinSceneMappingBuilder::CreateMaterial(ICesiumLoade
 {
 	auto const* Sched = IModel->Synchro4DSchedules;
 	if (IsValid(Sched) && IsValid(Sched->BaseMaterialTranslucent)
-		&& Sched->bUseGltfTunerInsteadOfMeshExtraction
 		&& !(Sched->bDisableVisibilities || Sched->bDisablePartialVisibilities))
 	{
 		auto const& LoadedTile = TilePrim.GetLoadedTile();

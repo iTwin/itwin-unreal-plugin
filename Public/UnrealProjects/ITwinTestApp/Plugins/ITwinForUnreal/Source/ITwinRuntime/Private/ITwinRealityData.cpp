@@ -57,6 +57,7 @@ public:
 	AITwinDecorationHelper* DecorationPersistenceMgr = nullptr;
 	uint32 TilesetLoadedCount = 0;
 	TStrongObjectPtr<UITwinClipping3DTilesetHelper> ClippingHelper;
+	FString ITwinIdForGetDataInfo, RealityIdForGetDataInfo;
 
 	FImpl(AITwinRealityData& InOwner)
 		: Owner(InOwner)
@@ -65,6 +66,14 @@ public:
 
 	void OnRealityData3DInfoRetrieved(FITwinRealityData3DInfo const& Info)
 	{
+		if (Owner.ITwinId != ITwinIdForGetDataInfo || Owner.RealityDataId != RealityIdForGetDataInfo)
+			return;
+		ITwinIdForGetDataInfo = {};
+		RealityIdForGetDataInfo = {};
+		// Protection added following https://github.com/iTwin/itwin-unreal-plugin/issues/93,
+		// but should now be handled by the test of ITwinIdForGetDataInfo and RealityIdForGetDataInfo
+		// added before WebServices->GetRealityData3DInfo in UpdateRealityData:
+		DestroyTileset();
 		// *before* SpawnActor otherwise Cesium will create its own default georef
 		auto&& Geoloc = FITwinGeolocation::Get(*Owner.GetWorld());
 		FActorSpawnParameters SpawnParams;
@@ -178,6 +187,15 @@ void AITwinRealityData::OnRealityData3DInfoRetrieved(bool bSuccess, FITwinRealit
 	OnRealityDataInfoLoaded.Broadcast(bSuccess, RealityDataId);
 }
 
+void AITwinRealityData::SetRealityData3DInfo(FITwinRealityData3DInfo const& Info)
+{
+	if (!ensure(HasRealityDataIdentifiers()))
+		return;
+	Impl->ITwinIdForGetDataInfo = ITwinId;
+	Impl->RealityIdForGetDataInfo = RealityDataId;
+	OnRealityData3DInfoRetrieved(true, Info);
+}
+
 bool AITwinRealityData::HasRealityDataIdentifiers() const
 {
 	return !RealityDataId.IsEmpty() && !ITwinId.IsEmpty();
@@ -205,7 +223,15 @@ void AITwinRealityData::UpdateRealityData()
 	}
 	if (WebServices && HasRealityDataIdentifiers())
 	{
-		WebServices->GetRealityData3DInfo(ITwinId, RealityDataId);
+		// Note that we may have several such calls emitted, and thus several replies received in succession,
+		// eg. when loading a project which default map includes this actor: this method is called both
+		// from the OnAuthorizationDone code path (first), but then also from PostLoad!
+		if (ITwinId != Impl->ITwinIdForGetDataInfo || RealityDataId != Impl->RealityIdForGetDataInfo)
+		{
+			Impl->ITwinIdForGetDataInfo = ITwinId;
+			Impl->RealityIdForGetDataInfo = RealityDataId;
+			WebServices->GetRealityData3DInfo(ITwinId, RealityDataId);
+		}
 	}
 }
 
@@ -388,39 +414,6 @@ bool AITwinRealityData::MakeClippingHelper()
 		Tileset->SetLifecycleEventReceiver(Impl->ClippingHelper.Get());
 	}
 	return true;
-}
-
-CesiumGeometry::OrientedBoundingBox GetOrientedBoundingBox(ACesium3DTileset* Tileset)
-{
-	const Cesium3DTilesSelection::Tile* pRootTile = Tileset->GetTileset()->getRootTile();
-	const ACesiumGeoreference* pGeoreference = Tileset->ResolveGeoreference();
-
-	if (pRootTile && pGeoreference) {
-		return Cesium3DTilesSelection::getOrientedBoundingBoxFromBoundingVolume(
-			pRootTile->getBoundingVolume(),
-			pGeoreference->GetEllipsoid()->GetNativeEllipsoid());
-	}
-	return CesiumGeometry::OrientedBoundingBox(glm::dvec3(0, 0, 0), glm::dmat3(1));
-}
-
-
-FBox GetUnrealAxisAlignBoundingBox(ACesium3DTileset* Tileset)
-{
-	const ACesiumGeoreference* pGeoreference = Tileset->ResolveGeoreference();
-	CesiumGeometry::OrientedBoundingBox obb = GetOrientedBoundingBox(Tileset);
-
-	std::array<glm::dvec3, 8> corners = { glm::dvec3(1.,1.,1.),  glm::dvec3(-1.,1.,1.),  glm::dvec3(-1.,-1.,1.),  glm::dvec3(1.,-1.,1.),
-										 glm::dvec3(1.,1.,-1.), glm::dvec3(-1.,1.,-1.), glm::dvec3(-1.,-1.,-1.), glm::dvec3(1.,-1.,-1.)
-	};
-
-	FBox box;
-	for (const glm::dvec3& corner : corners) {
-		glm::dvec3 cornerPos = obb.getCenter() + obb.getHalfAxes() * corner;
-		FVector cornerPos2(cornerPos.x, cornerPos.y, cornerPos.z);
-		box += pGeoreference->TransformEarthCenteredEarthFixedPositionToUnreal(
-			cornerPos2);
-	}
-	return box;
 }
 
 bool AITwinRealityData::GetBoundingBox(FBox& OutBox, bool bClampOutlandishValues)

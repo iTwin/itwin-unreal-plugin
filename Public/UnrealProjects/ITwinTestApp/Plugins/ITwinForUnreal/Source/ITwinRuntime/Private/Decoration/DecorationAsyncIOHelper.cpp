@@ -43,6 +43,7 @@
 #	include <SDK/Core/Visualization/SplinesManager.h>
 #	include <SDK/Core/Visualization/KeyframeAnimation.h>
 #	include <SDK/Core/Visualization/PathAnimation.h>
+#	include <BeHeaders/Util/CleanUpGuard.h>
 #	include <BeUtils/Gltf/GltfMaterialHelper.h>
 #	include <BeUtils/Gltf/GltfMaterialTuner.h>
 #	include <BeUtils/Gltf/GltfTextureHelper.h>
@@ -306,6 +307,24 @@ void FDecorationAsyncIOHelper::InitDecorationServiceConnection(const UWorld* Wor
 	}
 }
 
+void FDecorationAsyncIOHelper::InitDefaultInstancesGroup(AdvViz::SDK::IInstancesGroupPtr const& defaultGroupPtr)
+{
+	using namespace AdvViz::SDK;
+	if (defaultGroupPtr)
+	{
+		staticInstancesGroup = defaultGroupPtr;
+	}
+	else
+	{
+		// Create a default group for static instances (i.e. not linked to splines or animation paths).
+		// This group will be used by default for all instances created without specifying a group.
+		IInstancesGroup* p = IInstancesGroup::New();
+		p->SetName(InstancesManager::DEFAULT_GROUP_NAME);
+		staticInstancesGroup = AdvViz::SDK::Tools::MakeSharedLockableDataPtr<IInstancesGroup>(p);
+		instancesManager_->AddInstancesGroup(staticInstancesGroup);
+	}
+}
+
 void FDecorationAsyncIOHelper::InitDecorationService(UWorld* WorldContextObject)
 {
 	using namespace AdvViz::SDK;
@@ -324,11 +343,6 @@ void FDecorationAsyncIOHelper::InitDecorationService(UWorld* WorldContextObject)
 		});
 
 	instancesManager_.reset(IInstancesManager::New());
-
-	IInstancesGroup* p = IInstancesGroup::New();
-	p->SetName("staticInstances");
-	staticInstancesGroup = AdvViz::SDK::Tools::MakeSharedLockableDataPtr<IInstancesGroup>(p);
-	instancesManager_->AddInstancesGroup(staticInstancesGroup);
 
 	// Material persistence is managed by the decoration service, except for the (packaged) Material Library
 	materialPersistenceMngr = std::make_shared<MaterialPersistenceManager>();
@@ -601,7 +615,15 @@ void FDecorationAsyncIOHelper::AsyncLoadPopulations(LoadCallback OnFinishCallbac
 
 	AdvViz::SDK::Tools::TaskFinishMonitor<AdvViz::expected<void, std::string>> taskFinishMonitor(OnFinishCallback);
 	auto SThis = shared_from_this();
-	AsyncLoadAnimationKeyframes([SThis, OnFinishCallback](AdvViz::expected<void, std::string> const& exp) {
+	AsyncLoadAnimationKeyframes([SThis, OnFinishCallback](AdvViz::expected<void, std::string> const& exp) 
+	{
+		// Make sure the default instances group is initialized even if loading decoration or populations
+		// fails.
+		Be::CleanUpGuard DefaultGroupGuard([SThis]
+		{
+			SThis->InitDefaultInstancesGroup({});
+		});
+
 		if (!exp)
 		{
 			OnFinishCallback(exp);
@@ -612,12 +634,17 @@ void FDecorationAsyncIOHelper::AsyncLoadPopulations(LoadCallback OnFinishCallbac
 			return;
 		}
 
+		DefaultGroupGuard.release();
+
 		// Warning: callbacks are not run in game thread!
 		SThis->instancesManager_->AsyncLoadDataFromServer(SThis->decoration->GetId(),
 			[](AdvViz::SDK::IInstancePtr&) {},
 			[](AdvViz::SDK::IInstancesGroupPtr&) {},
 			OnFinishCallback,
-			SThis->staticInstancesGroup);
+			[SThis](AdvViz::SDK::IInstancesGroupPtr const& defaultGroupPtr) {
+				SThis->InitDefaultInstancesGroup(defaultGroupPtr);
+			}
+		);
 	});
 }
 
@@ -849,9 +876,10 @@ void FDecorationAsyncIOHelper::AsyncLoadMaterials(
 	}
 
 	auto materialPersistenceMngrPtr = materialPersistenceMngr;
-
 	materialPersistenceMngr->AsyncLoadDataFromServer(decoration->GetId(), 
-		[OnFinishCallback, materialPersistenceMngrPtr, idToIModel = std::move(idToIModel)](AdvViz::expected<void, std::string> const& exp)
+		[OnFinishCallback,
+		 materialPersistenceMngrPtr,
+		 idToIModel = std::move(idToIModel)](AdvViz::expected<void, std::string> const& exp, AdvViz::SDK::TextureUsageMap const& TextureUsageMap)
 		{
 			if (!exp)
 			{
@@ -863,13 +891,19 @@ void FDecorationAsyncIOHelper::AsyncLoadMaterials(
 			{
 				if (pImodel.IsValid())
 				{
-					imodelToMatHelper.emplace(TCHAR_TO_UTF8(*strIModelId), pImodel->GetGltfMaterialHelper());
+					auto MaterialHelperPtr = pImodel->GetGltfMaterialHelper();
+					if (ensure(MaterialHelperPtr))
+					{
+						// Dispatch texture usage for the imodel.
+						BeUtils::WLock Lock(MaterialHelperPtr->GetMutex());
+						MaterialHelperPtr->AppendTextureUsageMap(TextureUsageMap, Lock);
+					}
+					imodelToMatHelper.emplace(TCHAR_TO_UTF8(*strIModelId), MaterialHelperPtr);
 				}
 			}
 
 			if (!ITwin::ResolveDecorationTextures(*materialPersistenceMngrPtr,
 				materialPersistenceMngrPtr->GetDecorationTexturesByIModel(),
-				materialPersistenceMngrPtr->GetTextureUsageMap(),
 				imodelToMatHelper))
 			{
 				OnFinishCallback(AdvViz::make_unexpected("Failed to resolve decoration textures"));
@@ -920,7 +954,6 @@ void ResolveTexturesMatchingSource(
 	AdvViz::SDK::ETextureSource TexSource,
 	AdvViz::SDK::MaterialPersistenceManager& matPersistenceMngr,
 	AdvViz::SDK::PerIModelTextureSet const& perModelTextures,
-	AdvViz::SDK::TextureUsageMap const& textureUsageMap,
 	std::map<std::string, AITwinIModel::GltfMaterialHelperPtr> const& imodelToMatHelper,
 	BeUtils::WLock const* pLock = nullptr)
 {
@@ -929,14 +962,13 @@ void ResolveTexturesMatchingSource(
 		return;
 	}
 	return BeUtils::ResolveTexturesMatchingSource(
-		TexSource, matPersistenceMngr, perModelTextures, textureUsageMap, imodelToMatHelper,
+		TexSource, matPersistenceMngr, perModelTextures, imodelToMatHelper,
 		AdvViz::SDK::GetDefaultHttp()->GetAccessToken()->Get(),
 		getAssetAccessor(), getAsyncSystem(), pLock);
 }
 
 void ResolveTexturesLocatedOnDisk(
 	std::unordered_map<AdvViz::SDK::TextureKey, std::string> const& LocalTextures,
-	AdvViz::SDK::TextureUsageMap const& textureUsageMap,
 	AITwinIModel::GltfMaterialHelperPtr gltfMatHelper,
 	std::filesystem::path const& textureDir,
 	BeUtils::WLock const* pLock = nullptr)
@@ -987,7 +1019,6 @@ void ResolveTexturesLocatedOnDisk(
 				pathOnDiskOpt = texPath;
 			gltfMatHelper->StoreCesiumImage(texKey,
 				std::move(cesiumImages[imgIndex]),
-				textureUsageMap,
 				lock,
 				std::nullopt,
 				pathOnDiskOpt);
@@ -1001,7 +1032,6 @@ void ResolveTexturesLocatedOnDisk(
 bool ITwin::ResolveDecorationTextures(
 	AdvViz::SDK::MaterialPersistenceManager& matPersistenceMngr,
 	AdvViz::SDK::PerIModelTextureSet const& perModelTextures,
-	AdvViz::SDK::TextureUsageMap const& textureUsageMap,
 	std::map<std::string, AITwinIModel::GltfMaterialHelperPtr> const& imodelToMatHelper,
 	bool bResolveLocalDiskTextures /*= false*/,
 	BeUtils::WLock const* pLock /*= nullptr*/)
@@ -1012,8 +1042,9 @@ bool ITwin::ResolveDecorationTextures(
 	// Uri::resolve("", "https://toto.com", true) should really be just "toto.com" as it is now...)
 	Detail::ResolveTexturesMatchingSource(AdvViz::SDK::ETextureSource::Decoration,
 		matPersistenceMngr,
-		perModelTextures, textureUsageMap,
-		imodelToMatHelper, pLock);
+		perModelTextures,
+		imodelToMatHelper,
+		pLock);
 
 	// For the Material Library (local files which are packaged in Carrot context), we no longer use
 	// #resolveExternalData - also since v2.14.1, which broke this case as well, but only in packaged mode.
@@ -1042,12 +1073,12 @@ bool ITwin::ResolveDecorationTextures(
 				LocalDiskTexMap.emplace(texKey, texKey.id);
 			}
 		}
-		Detail::ResolveTexturesLocatedOnDisk(MatLibraryTexMap, textureUsageMap, glTFMatHelper,
+		Detail::ResolveTexturesLocatedOnDisk(MatLibraryTexMap, glTFMatHelper,
 			MatLibraryDir, pLock);
 
 		if (bResolveLocalDiskTextures)
 		{
-			Detail::ResolveTexturesLocatedOnDisk(LocalDiskTexMap, textureUsageMap, glTFMatHelper,
+			Detail::ResolveTexturesLocatedOnDisk(LocalDiskTexMap, glTFMatHelper,
 				{}, pLock);
 		}
 	}
@@ -1073,11 +1104,10 @@ UTexture2D* ITwin::ResolveAsUnrealTexture(
 
 void ITwin::ResolveITwinTextures(
 	std::unordered_map<AdvViz::SDK::TextureKey, std::string> const& iTwinTextures,
-	AdvViz::SDK::TextureUsageMap const& textureUsageMap,
 	AITwinIModel::GltfMaterialHelperPtr GltfMatHelper,
 	std::filesystem::path const& textureDir)
 {
-	Detail::ResolveTexturesLocatedOnDisk(iTwinTextures, textureUsageMap, GltfMatHelper, textureDir);
+	Detail::ResolveTexturesLocatedOnDisk(iTwinTextures, GltfMatHelper, textureDir);
 }
 
 namespace

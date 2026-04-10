@@ -14,6 +14,7 @@
 #include "CesiumRuntime.h"
 #include "Containers/Map.h"
 #include "EncodedMetadataConversions.h"
+#include "MaterialTypes.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "PixelFormat.h"
 #include "TextureResource.h"
@@ -27,7 +28,6 @@
 using namespace CesiumTextureUtility;
 
 namespace EncodedFeaturesMetadata {
-
 FString getNameForFeatureIDSet(
     const FCesiumFeatureIdSet& featureIDSet,
     int32& FeatureIdTextureCounter) {
@@ -897,6 +897,15 @@ void destroyEncodedModelMetadata(EncodedModelMetadata& encodedMetadata) {
   }
 }
 
+FString getNameForStatistic(
+    const FString& classId,
+    const FString& propertyId,
+    ECesiumMetadataStatisticSemantic semantic) {
+  FString sourceName = classId.Len() ? classId + "_" + propertyId : propertyId;
+  return createHlslSafeName(sourceName) +
+         MaterialPropertyStatisticSuffixes[semantic];
+}
+
 // The result should be a safe hlsl identifier, but any name clashes
 // after fixing safety will not be automatically handled.
 FString createHlslSafeName(const FString& rawName) {
@@ -973,17 +982,42 @@ bool isSupportedPropertyTextureProperty(
   return byteSize > 0 && byteSize <= 4;
 }
 
+bool isSupportedPropertyAttributeProperty(
+    const FCesiumMetadataPropertyDetails& PropertyDetails) {
+  if (PropertyDetails.bIsArray) {
+    // Only types corresponding to glTF accessors are allowed.
+    return false;
+  }
+
+  if (PropertyDetails.Type == ECesiumMetadataType::Mat2 ||
+      PropertyDetails.Type == ECesiumMetadataType::Mat3 ||
+      PropertyDetails.Type == ECesiumMetadataType::Mat4) {
+    // Matrix attributes are not (yet) supported.
+    return false;
+  }
+
+  switch (PropertyDetails.ComponentType) {
+  case ECesiumMetadataComponentType::Uint8:
+  case ECesiumMetadataComponentType::Int8:
+  case ECesiumMetadataComponentType::Uint16:
+  case ECesiumMetadataComponentType::Int16:
+  case ECesiumMetadataComponentType::Uint32:
+  case ECesiumMetadataComponentType::Float32:
+    return true;
+  default:
+    return false;
+  }
+}
+
 void SetPropertyParameterValue(
     UMaterialInstanceDynamic* pMaterial,
-    EMaterialParameterAssociation association,
-    int32 index,
-    const FString& name,
+    const FMaterialParameterInfo& info,
     ECesiumEncodedMetadataType type,
     const FCesiumMetadataValue& value,
     float defaultValue) {
   if (type == ECesiumEncodedMetadataType::Scalar) {
     pMaterial->SetScalarParameterValueByInfo(
-        FMaterialParameterInfo(FName(name), association, index),
+        info,
         UCesiumMetadataValueBlueprintLibrary::GetFloat(value, defaultValue));
   } else if (
       type == ECesiumEncodedMetadataType::Vec2 ||
@@ -994,7 +1028,7 @@ void SetPropertyParameterValue(
         FVector4(defaultValue, defaultValue, defaultValue, defaultValue));
 
     pMaterial->SetVectorParameterValueByInfo(
-        FMaterialParameterInfo(FName(name), association, index),
+        info,
         FLinearColor(
             static_cast<float>(vector4Value.X),
             static_cast<float>(vector4Value.Y),
@@ -1090,9 +1124,7 @@ void SetPropertyTableParameterValues(
       FString parameterName = fullPropertyName + MaterialPropertyOffsetSuffix;
       SetPropertyParameterValue(
           pMaterial,
-          association,
-          index,
-          parameterName,
+          FMaterialParameterInfo{FName(parameterName), association, index},
           encodedProperty.type,
           encodedProperty.offset,
           0.0f);
@@ -1102,9 +1134,7 @@ void SetPropertyTableParameterValues(
       FString parameterName = fullPropertyName + MaterialPropertyScaleSuffix;
       SetPropertyParameterValue(
           pMaterial,
-          association,
-          index,
-          parameterName,
+          FMaterialParameterInfo{FName(parameterName), association, index},
           encodedProperty.type,
           encodedProperty.scale,
           1.0f);
@@ -1115,9 +1145,7 @@ void SetPropertyTableParameterValues(
       FString parameterName = fullPropertyName + MaterialPropertyNoDataSuffix;
       SetPropertyParameterValue(
           pMaterial,
-          association,
-          index,
-          parameterName,
+          FMaterialParameterInfo{FName(parameterName), association, index},
           encodedProperty.type,
           encodedProperty.noData,
           0.0f);
@@ -1129,9 +1157,7 @@ void SetPropertyTableParameterValues(
           fullPropertyName + MaterialPropertyDefaultValueSuffix;
       SetPropertyParameterValue(
           pMaterial,
-          association,
-          index,
-          parameterName,
+          FMaterialParameterInfo{FName(parameterName), association, index},
           encodedProperty.type,
           encodedProperty.defaultValue,
           0.0f);
@@ -1177,9 +1203,7 @@ void SetPropertyTextureParameterValues(
       FString parameterName = fullPropertyName + MaterialPropertyOffsetSuffix;
       SetPropertyParameterValue(
           pMaterial,
-          association,
-          index,
-          parameterName,
+          FMaterialParameterInfo{FName(parameterName), association, index},
           encodedProperty.type,
           encodedProperty.offset,
           0.0f);
@@ -1189,9 +1213,7 @@ void SetPropertyTextureParameterValues(
       FString parameterName = fullPropertyName + MaterialPropertyScaleSuffix;
       SetPropertyParameterValue(
           pMaterial,
-          association,
-          index,
-          parameterName,
+          FMaterialParameterInfo{FName(parameterName), association, index},
           encodedProperty.type,
           encodedProperty.scale,
           1.0f);
@@ -1202,9 +1224,7 @@ void SetPropertyTextureParameterValues(
       FString parameterName = fullPropertyName + MaterialPropertyNoDataSuffix;
       SetPropertyParameterValue(
           pMaterial,
-          association,
-          index,
-          parameterName,
+          FMaterialParameterInfo{FName(parameterName), association, index},
           encodedProperty.type,
           encodedProperty.noData,
           0.0f);
@@ -1216,9 +1236,7 @@ void SetPropertyTextureParameterValues(
           fullPropertyName + MaterialPropertyDefaultValueSuffix;
       SetPropertyParameterValue(
           pMaterial,
-          association,
-          index,
-          parameterName,
+          FMaterialParameterInfo{FName(parameterName), association, index},
           encodedProperty.type,
           encodedProperty.defaultValue,
           0.0f);

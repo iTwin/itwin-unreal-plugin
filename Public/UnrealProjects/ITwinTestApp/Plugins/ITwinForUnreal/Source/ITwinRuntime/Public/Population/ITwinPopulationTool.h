@@ -41,6 +41,17 @@ private:
 	USplineComponent const& UESpline;
 };
 
+/// Can be used to customize the effect of the gizmo on the selected instance.
+class IITwinPopulationInstanceTransformProxy
+{
+public:
+	virtual ~IITwinPopulationInstanceTransformProxy() = default;
+	virtual FTransform GetTransform() const = 0;
+	virtual void OnTransformModificationStarted(ETransformationMode) = 0;
+	virtual void SetTransform(const FTransform& Transform) = 0;
+};
+
+using IITwinPopulationInstanceTransformProxyPtr = TSharedPtr<IITwinPopulationInstanceTransformProxy>;
 
 UCLASS()
 class ITWINRUNTIME_API AITwinPopulationTool : public AITwinInteractiveTool
@@ -146,6 +157,8 @@ public:
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
 	void SetUsedOnCutout(bool bForCutout);
 
+	void SetInstanceTransformProxy(IITwinPopulationInstanceTransformProxyPtr InTransformProxy);
+
 	/// Returns whether some instances can be added - ie. there is one (or more) selected assets.
 	/// \param bOutAllowBrush Will be set to true if the paint brush is compatible with the selection.
 	bool IsAdditionOfInstancesAllowed(bool& bOutAllowBrush) const;
@@ -177,10 +190,9 @@ public:
 	bool GetRestrictPickingOnClippingPrimitives() const;
 	void RestrictPickingOnClippingPrimitives(bool bRestrictPickingOnClipping = true);
 
-	bool IsRotationCenterPickingMode() const;
-	void SetRotationCenterPickingMode(bool b);
-
 	/// Overridden from AITwinInteractiveTool
+	virtual TUniquePtr<IActiveStateRecord> MakeStateRecord() const override;
+	virtual bool RestoreState(IActiveStateRecord const& State) override;
 	virtual TUniquePtr<ISelectionRecord> MakeSelectionRecord() const override;
 	virtual bool HasSameSelection(ISelectionRecord const& Selection) const override;
 	virtual bool RestoreSelection(ISelectionRecord const& Selection) override;
@@ -197,6 +209,8 @@ public:
 		virtual FString GetDescription() const = 0;
 	};
 	TUniquePtr<IBrushUndoEntry> MakeBrushUndoEntry();
+
+	virtual TSharedPtr<FToolDisabler> MakeToolDisabler() override;
 
 protected:
 	/// Overridden from AActor
@@ -222,7 +236,6 @@ protected:
 	virtual void AbortInteractiveCreationImpl(bool bTriggeredFromITS) override;
 	virtual void ValidateInteractiveCreationImpl(bool bTriggeredFromITS) override;
 	virtual bool ShowOnlyTranslationZGizmoImpl() const override;
-	virtual bool IsCompatibleWithGizmoImpl() const override;
 
 private:
 	class FImpl;

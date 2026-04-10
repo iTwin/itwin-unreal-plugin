@@ -10,7 +10,7 @@ endif()
 
 option(SDK_ADDUNITTEST "Generate Unit tests for SDK" ON)
 option(SINGLETONDLL "Use singleton dll if you need to link the static sdk several times." OFF)
-
+option (BE_CODE_COVERAGE "Measure code coverage when running unit tests" OFF)
 option(WITH_HTTPCPR "Use CPR library" ON)
 
 if("${VIZSDK_BUILD_CONTEXT}" STREQUAL "Unreal")
@@ -70,4 +70,44 @@ endif()
 include(cmake/External.cmake)
 
 include (be_setup_native_lib_flags)
+include (be_coverage)
+if (BE_CODE_COVERAGE)
+	find_package (Python3 REQUIRED COMPONENTS Interpreter)
+	# A rather recent version of python is needed, eg. for pathlib.Path.readlink() etc.
+	set (beRequiredPythonVersion "3.9")
+	if("${Python3_VERSION}" VERSION_LESS "${beRequiredPythonVersion}")
+		message (FATAL_ERROR "Python version required is ${beRequiredPythonVersion}, but found ${Python3_VERSION}.")
+	endif ()
+endif ()
+
+function (be_add_test target)
+	# When code coverage is enabled, we have to filter the stdout and exit code of OpenCppCoverage.
+	# We use FixStdoutForVS.py to do this.
+	# Since add_test() does not support redirection, we use a cmd file.
+	# It also allows us to create the test output folder before running the test (needed also when coverage is disabled).
+	set (cmdFile "${CMAKE_CURRENT_BINARY_DIR}/RunTests_${target}_$<CONFIG>.cmd")
+	set (testOutDir "${CMAKE_BINARY_DIR}/Testing/$<CONFIG>")
+	set (runCommand "\"$<TARGET_FILE:${target}>\" --reporter \"JUnit::out=${testOutDir}/${target}.result.xml\" --reporter console")
+	if (BE_CODE_COVERAGE)
+		set (runCommand "\
+\"${BE_COVERAGE_TOOL_EXE}\"\
+ --export_type \"html:${CMAKE_BINARY_DIR}/CodeCoverage/$<CONFIG>/${target}\"\
+ --export_type \"cobertura:${CMAKE_BINARY_DIR}/CodeCoverage/$<CONFIG>/${target}/report.cobertura.xml\"\
+ --modules \"$<SHELL_PATH:$<TARGET_FILE_DIR:${target}>>\"\
+ --sources \"$<SHELL_PATH:${CMAKE_CURRENT_FUNCTION_LIST_DIR}>\"\
+ -- ${runCommand}\
+ 2>&1 | \"${Python3_EXECUTABLE}\" \"${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../CMake/FixStdoutForVS.py\"\
+"
+	)
+	endif ()
+	file (GENERATE OUTPUT "${cmdFile}" CONTENT "\
+\"${CMAKE_COMMAND}\" -E make_directory \"${testOutDir}\"
+${runCommand}\
+"
+	)
+	add_test(NAME ${target} COMMAND "${cmdFile}")
+endfunction ()
+
+add_custom_target (RunSdkTests "${CMAKE_CTEST_COMMAND}" -C $<CONFIG> -V)
+set_target_properties (RunSdkTests PROPERTIES FOLDER "SDK")
 add_subdirectory(Core)

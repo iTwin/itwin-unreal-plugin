@@ -270,7 +270,13 @@ public:
 	void OnSplineHelperRemoved(AITwinSplineHelper* SplineBeingRemoved);
 
 	UFUNCTION()
+	void OnPopulationsLoaded(bool bSuccess);
+
+	UFUNCTION()
 	void OnItemCreationAbortedInTool(bool bTriggeredFromITS);
+
+	UFUNCTION()
+	void OnCutoutCreationCompleted(bool bTriggeredFromITS);
 
 	/// Returns whether a cutout effect is excluding (cutting) the given position, for the given type of layer.
 	bool ShouldCutOut(FVector const& AbsoluteWorldPosition, ITwin::ModelLink const& ModelIdentifier,

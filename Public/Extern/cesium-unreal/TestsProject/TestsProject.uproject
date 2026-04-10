@@ -16,7 +16,7 @@
 			"Enabled": true
 		},
 		{
-			"Name": "CesiumForUnreal",
+			"Name": "ITwinForUnreal",
 			"Enabled": true,
 			"MarketplaceURL": "com.epicgames.launcher://ue/marketplace/content/87b0d05800a545d49bf858ef3458c4f7",
 			"SupportedTargetPlatforms": [

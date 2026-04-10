@@ -22,12 +22,13 @@ MODULE_EXPORT namespace AdvViz::SDK
 	{
 	public:
 		/// Load the data from the server
-		virtual void LoadDataFromServer(const std::string& decorationId, const IInstancesGroupPtr& defaultGroup = {}) = 0;
+		virtual void LoadDataFromServer(const std::string& decorationId,
+			const std::function<void(IInstancesGroupPtr const&)>& setDefaultGroupfct = {}) = 0;
 		virtual void AsyncLoadDataFromServer(const std::string& decorationId,
 			const std::function<void(IInstancePtr&)>& OnCreatedInstancefct,
 			const std::function<void(IInstancesGroupPtr&)>& OnCreatedGroupfct,
 			const std::function<void(expected<void, std::string> const&)>& OnLoadFinishedfct,
-			const IInstancesGroupPtr& defaultGroup) = 0;
+			const std::function<void(IInstancesGroupPtr const&)>& setDefaultGroupfct = {}) = 0;
 
 		/// Save the data on the server
 		virtual void AsyncSaveDataOnServer(const std::string& decorationId, std::function<void(bool)>&& onDataSavedFunc = {}) = 0;
@@ -68,13 +69,16 @@ MODULE_EXPORT namespace AdvViz::SDK
 	class ADVVIZ_LINK InstancesManager : public IInstancesManager, Tools::TypeId<InstancesManager>
 	{
 	public:
+		inline static const std::string DEFAULT_GROUP_NAME = "staticInstances";
+
 		/// Load the data from the server
-		void LoadDataFromServer(const std::string& decorationId, const IInstancesGroupPtr& defaultGroup = {}) override;
+		void LoadDataFromServer(const std::string& decorationId,
+			const std::function<void(IInstancesGroupPtr const&)>& setDefaultGroupfct = {}) override;
 		void AsyncLoadDataFromServer(const std::string& decorationId, 
 			const std::function<void(IInstancePtr&)>& OnCreatedInstancefct,
 			const std::function<void(IInstancesGroupPtr&)>& OnCreatedGroupfct,
 			const std::function<void(expected<void, std::string> const&)>& OnLoadFinishedfct,
-			const IInstancesGroupPtr& defaultGroup);
+			const std::function<void(IInstancesGroupPtr const&)>& setDefaultGroupfct = {}) override;
 		/// Save the data on the server
 		void AsyncSaveDataOnServer(const std::string& decorationId, std::function<void(bool)>&& onDataSavedFunc = {}) override;
 

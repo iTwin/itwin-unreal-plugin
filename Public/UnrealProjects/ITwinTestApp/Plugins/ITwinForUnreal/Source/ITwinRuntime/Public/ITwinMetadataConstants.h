@@ -21,6 +21,7 @@ namespace ITwinCesium::Metada
 
 	static const FString ELEMENT_NAME		= TEXT("element");
 	static const FString MODEL_NAME			= TEXT("model");
+	static const FString CATEGORY_NAME		= TEXT("category");
 	static const FString SUBCATEGORY_NAME	= TEXT("subcategory");
 	static const FString GEOMETRYCLASS_NAME = TEXT("geometryClass");
 

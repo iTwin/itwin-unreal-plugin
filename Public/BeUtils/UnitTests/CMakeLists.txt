@@ -15,6 +15,7 @@ target_link_libraries (BeUtils_UnitTests
 	CesiumGltfWriter
 )
 be_add_test (BeUtils_UnitTests
+	CATCH2
 	COVERED_TARGETS BeUtils
 )
 add_custom_command(TARGET BeUtils_UnitTests POST_BUILD

@@ -43,7 +43,6 @@ namespace BeUtils
 		AdvViz::SDK::ETextureSource TexSource,
 		AdvViz::SDK::MaterialPersistenceManager& matPersistenceMngr,
 		AdvViz::SDK::PerIModelTextureSet const& perModelTextures,
-		AdvViz::SDK::TextureUsageMap const& textureUsageMap,
 		std::map<std::string, GltfMaterialHelperPtr> const& imodelToMatHelper,
 		std::shared_ptr<std::string const> const& accessToken,
 		std::shared_ptr<CesiumAsync::IAssetAccessor> const& pAssetAccessor,

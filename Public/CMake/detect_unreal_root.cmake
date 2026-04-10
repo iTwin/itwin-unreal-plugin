@@ -48,12 +48,14 @@ include (be_file_utils)
 
 set(BE_CURRENT_UE_VERSION_BASED_ON "UE_5.6")
 set(BE_OPENSSL_VERSION_STRING_OFFICIAL_BASED_ON "1.1.1t")
+set(BE_TINYXML2_VERSION_STRING_OFFICIAL_BASED_ON "9.0.0")
 # Current build hash of Bentley's fork of Unreal: we can't just put any string in InstalledBuild.txt
 # because UnrealVersionSelector.exe will use the build hash nonetheless to write in the Windows registry.
 # Note: if the folder has already been registered, the build hash it is associated with is NOT updated
 # when calling UnrealVersionSelector.exe in rsync_be_unreal again when 'incrementing' the build hash...
 set(BE_CURRENT_BE_UE_VERSION "A5DAEB5B-4462-EC2C-0618-E5A4B687C453")
 set(BE_OPENSSL_VERSION_STRING_BEUE "1.1.1zd")
+set(BE_TINYXML2_VERSION_STRING_BEUE "9.0.0")
 # List all previous versions here separated by semi-colons, in reverse chronological order... :-o
 # Was used for when we just switched version (for a source build), so it is not yet registered...
 # REMOVED - blame here - too hacky (would be needed too in cesium-unreal/extern/vcpkg-overlays/openssl/portfile.cmake.in ... :/)
@@ -70,6 +72,7 @@ if (BE_USE_OFFICIAL_UNREAL)
 	set(BE_UNREAL_ROOT_REG_KEY "HKEY_LOCAL_MACHINE/SOFTWARE/EpicGames/Unreal Engine/${ueOfficialRegValue}")
 	set(BE_UNREAL_ROOT_REG_VALUE "InstalledDirectory")
 	set(BE_OPENSSL_VERSION_STRING "${BE_OPENSSL_VERSION_STRING_OFFICIAL_BASED_ON}")
+	set(BE_TINYXML2_VERSION_STRING "${BE_TINYXML2_VERSION_STRING_OFFICIAL_BASED_ON}")
 else()
 	set(BE_IS_USING_BENTLEY_UNREAL 1) # written in a .h
 	if (BE_RSYNC_CREDENTIALS_FILE)
@@ -82,7 +85,9 @@ else()
 	set(BE_UNREAL_ROOT_REG_VALUE "{${BE_UNREAL_VERSION_USED}}")
 	# Used in cesium-unreal's overlay port of openssl that points at UE's version: don't forget to increment the port-version
 	# (to rebuild dependees like s2geometry and gRPC ^^) whenever changes are made on BeUE's openssl 1.1.1 to fix CVEs... :-°
+	# (only for header changes actually, since those are all static libs)
 	set(BE_OPENSSL_VERSION_STRING "${BE_OPENSSL_VERSION_STRING_BEUE}")
+	set(BE_TINYXML2_VERSION_STRING "${BE_TINYXML2_VERSION_STRING_BEUE}")
 endif()
 cmake_host_system_information(RESULT regResult QUERY WINDOWS_REGISTRY "${BE_UNREAL_ROOT_REG_KEY}"
 							  VALUE ${BE_UNREAL_ROOT_REG_VALUE} VIEW 64 ERROR_VARIABLE regErr)

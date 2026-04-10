@@ -14,10 +14,11 @@
 #include <ITwinIModel.h>
 #include <ITwinIModelInternals.h>
 #include <ITwinSceneMapping.h>
-#include <ITwinExtractedMeshComponent.h>
 #include <Timeline/Timeline.h>
 #include <Timeline/TimeInSeconds.h>
 #include <Timeline/SchedulesConstants.h>
+
+#include <Components/StaticMeshComponent.h>
 #include <Engine/Engine.h>
 
 #include <GameFramework/GameUserSettings.h>
@@ -42,7 +43,6 @@ public:
 	FITwinIModelInternals& Internals;
 	std::function<FBox(FElementsGroup const&)> const GroupBBoxGetter;
 	std::function<FBox const& (ITwinElementID const&)> const BBoxGetter;
-	bool const bUseGltfTunerInsteadOfMeshExtr;
 
 	FIModelInvariants(AITwinIModel& IModel)
 		: Internals(GetInternals(IModel))
@@ -50,7 +50,6 @@ public:
 																			std::placeholders::_1))
 		, BBoxGetter(std::bind(&FITwinSceneMapping::GetBoundingBox, &Internals.SceneMapping,
 																	std::placeholders::_1))
-		, bUseGltfTunerInsteadOfMeshExtr(IModel.Synchro4DSchedules->bUseGltfTunerInsteadOfMeshExtraction)
 	{
 	}
 };
@@ -213,18 +212,15 @@ void FITwinSynchro4DAnimator::FImpl::StopAnimationInTiles(FITwinSceneTile* OnlyT
 		return;
 	auto&& SchedInternals = GetInternals(Owner.Owner);
 	auto const& NonAnimatedDuplicates = SchedInternals.GetTimeline().GetNonAnimatedDuplicates();
-	bool const bResetForcedOpa = !Owner.Owner.bUseGltfTunerInsteadOfMeshExtraction;
-	auto const& StopAnimForTile = [&SchedInternals, &NonAnimatedDuplicates, bResetForcedOpa]
+	auto const& StopAnimForTile = [&SchedInternals, &NonAnimatedDuplicates]
 		(FITwinSceneTile& SceneTile)
 		{
 			if (SceneTile.HighlightsAndOpacities)
 				SceneTile.HighlightsAndOpacities->FillWith(S4D_MAT_BGRA_DISABLED(255));
 			if (SceneTile.CuttingPlanes)
 				SceneTile.CuttingPlanes->FillWith(S4D_CLIPPING_DISABLED);
-			SceneTile.ForEachExtractedEntity([bResetForcedOpa](FITwinExtractedEntity& Extracted)
+			SceneTile.ForEachExtractedEntity([](FITwinExtractedEntity& Extracted)
 				{
-					if (bResetForcedOpa)
-						Extracted.SetForcedOpacity(1.f);
 					if (Extracted.TransformableMeshComponent.IsValid())
 						Extracted.TransformableMeshComponent->SetWorldTransform(Extracted.OriginalTransform, false,
 							nullptr, ETeleportType::TeleportPhysics);
@@ -284,8 +280,7 @@ void FITwinSynchro4DAnimator::OnFadeOutNonAnimatedElements()
 	auto const& NonAnimatedDuplicates = Timeline.GetNonAnimatedDuplicates();
 	IModelInternals.SceneMapping.ForEachKnownTile(
 		[&IModelInternals, &FillColor, &SchedInternals, &NonAnimatedDuplicates,
-			bNeedHideNonAnimDupl = (!Owner.bMaskOutNonAnimatedElements),
-			bUseGltfTunerInsteadOfMeshExtraction = Owner.bUseGltfTunerInsteadOfMeshExtraction]
+			bNeedHideNonAnimDupl = (!Owner.bMaskOutNonAnimatedElements)]
 		(FITwinSceneTile& SceneTile)
 	{
 		bool bJustCreatedOpaTex = false;
@@ -307,22 +302,6 @@ void FITwinSynchro4DAnimator::OnFadeOutNonAnimatedElements()
 					SceneTile.HighlightsAndOpacities->SetPixels(ElementFeatures.Features, FillColor);
 				}
 			});
-		// SceneTile.ExtractedElements share the textures: just set opacity (ExtractedElements may soon
-		// originate from material mapping, and not just scheduling? Hence not even testing
-		// HighlightsAndOpacities here)
-		if (!bUseGltfTunerInsteadOfMeshExtraction)
-		{
-			SceneTile.ForEachExtractedEntity(
-				[&IModelInternals, &FillColor, &SceneTile](FITwinExtractedEntity& ExtractedElement)
-				{
-					// Safe to use ElementForSLOW here: we are in game thread
-					if (IModelInternals.SceneMapping.ElementForSLOW(ExtractedElement.ElementID)
-						.AnimationKeys.empty())
-					{
-						ExtractedElement.SetForcedOpacity(FillColor[3] / 255.f);
-					}
-				});
-		}
 		if (bNeedHideNonAnimDupl)
 			SchedInternals.HideNonAnimatedDuplicates(SceneTile, NonAnimatedDuplicates);
 	});
@@ -440,22 +419,9 @@ namespace Detail
 	{
 		if (!ExtractedEntity.IsValid()) // checks both Material and MeshComponent
 			return;
-		// Tuned meshes can contain both visible and hidden Elements!
-		if (!State.IModelInvariants.bUseGltfTunerInsteadOfMeshExtr)
-			ExtractedEntity.SetHidden(State.bFullyHidden);
 		if (State.bFullyHidden)
 			return;
 
-		// Tuned meshes can contain Elements of varied translucencies, in fact all translucent,
-		// non-3D-transformed meshes may be merged together
-		if (!State.IModelInvariants.bUseGltfTunerInsteadOfMeshExtr)
-		{
-			// Note: color and cutting plane need no processing here, as long as the extracted elements
-			// use the same material and textures as the batched meshes. Alpha must be set on the material
-			// parameter that is used to override the texture look-up for extracted elements, though:
-			//State.EnsureBGRA(); NOT needed, the single float value is exactly what we need!
-			ExtractedEntity.SetForcedOpacity(State.Props.Visibility.value_or(1.f).Value);
-		}
 	#if SYNCHRO4D_ENABLE_TRANSFORMATIONS()
 		if (State.Props.Transform)
 		{
@@ -473,11 +439,6 @@ namespace Detail
 				ExtractedEntity.OriginalTransform, false, nullptr, ETeleportType::TeleportPhysics);
 		}
 	#endif // SYNCHRO4D_ENABLE_TRANSFORMATIONS()
-		if (!State.IModelInvariants.bUseGltfTunerInsteadOfMeshExtr)
-		{
-			FITwinSceneMapping::SetupHighlightsOpacities(SceneTile, ExtractedEntity);
-			FITwinSceneMapping::SetupCuttingPlanes(SceneTile, ExtractedEntity);
-		}
 	}
 
 	static void UpdateBatchedElement(FStateToApply& State, FITwinSceneTile& SceneTile,
@@ -493,15 +454,7 @@ namespace Detail
 			if (SceneTile.HighlightsAndOpacities)
 			{
 				State.EnsureBGRA();
-				std::array<uint8, 4> PixelValue = *State.AsBGRA;
-				if (ElementFeaturesInTile.bIsElementExtracted)
-				{
-					// Ensure the parts that were extracted are made invisible in the original mesh
-					// (alpha is already zeroed in FITwinSceneMapping::OnElementsTimelineModified,
-					// but here we still need to set the BGR part for the extracted mesh coloring)
-					PixelValue[3] = 0;
-				}
-				SceneTile.HighlightsAndOpacities->SetPixels(ElementFeaturesInTile.Features, PixelValue);
+				SceneTile.HighlightsAndOpacities->SetPixels(ElementFeaturesInTile.Features, *State.AsBGRA);
 			}
 			if (SceneTile.CuttingPlanes)
 			{
@@ -738,12 +691,6 @@ void FITwinSynchro4DAnimator::FImpl::ApplyTimeline(FITwinElementTimeline& Timeli
 		}
 	}
 	FTimelineToScene* TimelineOptim = static_cast<FTimelineToScene*>(Timeline.ExtraData);
-	bool const bStateToApplyNeedsExtraction = (bNeedTranslucentMat || bNeedTransformable);
-	if (bStateToApplyNeedsExtraction && !Schedules.bUseGltfTunerInsteadOfMeshExtraction)
-	{
-		IModelInvariants->Internals.SceneMapping.CheckAndExtractElements(*TimelineOptim, bOnlyVisibleTiles,
-																		 OnlySceneTile);
-	}
 	if (State.ClippingPlane)
 	{
 		// Case of a non-interpolated keyframe, need to call "finalizers" now: it should rather be
@@ -797,9 +744,7 @@ void FITwinSynchro4DAnimator::FImpl::ApplyTimeline(FITwinElementTimeline& Timeli
 			FITwinElementFeaturesInTile& ElementInTile = SceneTile.ElementFeatures(*It);
 			::Detail::UpdateBatchedElement(StateToApply, SceneTile, ElementInTile);
 		}
-		bool const bHasExtractions =
-			/*bStateToApplyNeedsExtraction <== no, update already extracted entities!!
-			&&*/ (NO_EXTRACTION != TileOptim.FirstExtract);
+		bool const bHasExtractions = (NO_EXTRACTION != TileOptim.FirstExtract);
 		if (bHasExtractions)
 		{
 			auto const ExtrStart = TimelineOptim->Extracts.begin() + TileOptim.FirstExtract;

@@ -65,37 +65,16 @@ namespace ITwin
 		}
 	}
 
-	bool GetRayToTraceFromScreenCenter(const UObject* WorldContextObject,
-		FVector& OutTraceStart,
-		FVector& OutTraceDir)
-	{
-		OutTraceStart = FVector::ZeroVector;
-		OutTraceDir = FVector::XAxisVector;
-		UWorld const* World = WorldContextObject ? WorldContextObject->GetWorld() : nullptr;
-		if (!ensure(World))
-			return false;
-		APlayerController const* PlayerController = World->GetFirstPlayerController();
-		if (!PlayerController)
-			return false;
-
-		int32 Width(0), Height(0);
-		PlayerController->GetViewportSize(Width, Height);
-		if (Width <= 0 || Height <= 0)
-			return false;
-		FVector2D const ScreenPos(Width * 0.5, Height * 0.5);
-		return UGameplayStatics::DeprojectScreenToWorld(PlayerController, ScreenPos, OutTraceStart, OutTraceDir);
-	}
-
 	ITWINRUNTIME_API TOptional<FVector> GetNewObjectDefaultPosition(const UObject* WorldContextObject,
 																	EITwinSplineUsage SplineUsage,
 																	FHitResult& OutHitResult)
 	{
-		FVector TraceStart, TraceDir;
-		if (!GetRayToTraceFromScreenCenter(WorldContextObject, TraceStart, TraceDir))
+		FITwinRayTraceInput TraceInput;
+		if (!FITwinTracingHelper::GetRayToTraceFromScreenCenter(WorldContextObject, TraceInput))
 		{
 			return {};
 		}
-		FVector Default3DPos = TraceStart + (TraceDir * 2 * 1e4f); // default position
+		FVector Default3DPos = TraceInput.TraceStart + (TraceInput.TraceDirection * 2 * 1e4f); // default position
 
 		// For cutout polygon, we will create the spline slightly above the hit impact, so that the polygon
 		// remains visible.
@@ -103,14 +82,18 @@ namespace ITwin
 
 		// Make an intersection test to adjust the position on the tileset
 		FHitResult HitResult;
-		FVector TraceEnd = TraceStart + TraceDir * 1e8f;
+		FVector TraceEnd = TraceInput.TraceStart + (TraceInput.TraceDirection * 1e8f);
 		if (UKismetSystemLibrary::LineTraceSingle(
-			WorldContextObject, TraceStart, TraceEnd, ETraceTypeQuery::TraceTypeQuery1, true,
+			WorldContextObject,
+			TraceInput.TraceStart,
+			TraceEnd,
+			ETraceTypeQuery::TraceTypeQuery1,
+			true,
 			{} /*ActorsToIgnore*/, EDrawDebugTrace::None, HitResult, true))
 		{
 			if (HitResult.Distance > 0.f)
 			{
-				Default3DPos = TraceStart + (TraceDir * HitResult.Distance * DistFactor);
+				Default3DPos = TraceInput.TraceStart + (TraceInput.TraceDirection * HitResult.Distance * DistFactor);
 			}
 			else
 			{
@@ -323,8 +306,10 @@ public:
 	bool savedTransformChanged = true;
 	float savedAngleZ = 0.f;
 	std::map<FString, bool> usedAssets;
-	std::vector<AITwinPopulation*> editedPopulations;
-	TArray<AActor*> allPopulations;
+	std::vector<AITwinPopulation*> EditedPopulations;
+	mutable bool bNeedsUpdateEditedPopulations = false;
+	TArray<AActor*> AllPopulations;
+	mutable bool bNeedsUpdateAllPopulations = false;
 	AdvViz::SDK::RefID instanceGroupId = AdvViz::SDK::RefID::Invalid(); // destination group for instances
 	std::map<AITwinSplineHelper const*, AdvViz::SDK::RefID> splineToGroupId;
 
@@ -338,7 +323,8 @@ public:
 	TWeakObjectPtr<AActor> LastHitActor_InteractivePlacement;
 
 	bool bEnabledForCutout = false;
-	bool bIsRotationCenterPickingMode = false;
+
+	IITwinPopulationInstanceTransformProxyPtr TransformProxy;
 
 
 	FImpl(AITwinPopulationTool& inOwner);
@@ -412,6 +398,13 @@ public:
 	/// Try to add one instance, using the center of the view as reference position.
 	bool AddSingleInstanceAtViewCenter(bool bStartingInteractiveCreation);
 
+	void InvalidatePopulations() {
+		bNeedsUpdateAllPopulations = true;
+		bNeedsUpdateEditedPopulations = !EditedPopulations.empty();
+	}
+	inline TArray<AActor*> const& GetAllPopulations() const;
+	inline std::vector<AITwinPopulation*> const& GetEditedPopulations(bool bForceUpdateArray = false);
+
 	size_t CollectEditedPopulations();
 	void UpdatePopulationsCollisionType() const;
 	void UpdatePopulationsArray();
@@ -420,13 +413,10 @@ public:
 
 	void RestrictPickingOnClippingPrimitives(bool bInRestrictPickingOnClipping = true);
 	bool ShowOnlyTranslationZGizmo() const;
-	bool IsCompatibleWithGizmo() const;
-
-	bool IsRotationCenterPickingMode() const { return bIsRotationCenterPickingMode; }
-	void SetRotationCenterPickingMode(bool b) { bIsRotationCenterPickingMode = b; }
 
 	AITwinPopulation* PreLoadPopulation(const FString& AssetPath);
 	void SetUsedOnCutout(bool bForCutout);
+	void SetInstanceTransformProxy(IITwinPopulationInstanceTransformProxyPtr InTransformProxy);
 
 	void UpdateGroupId(AITwinSplineHelper const* CurSpline);
 
@@ -438,6 +428,24 @@ public:
 AITwinPopulationTool::FImpl::FImpl(AITwinPopulationTool& inOwner)
 	: owner(inOwner)
 {
+}
+
+inline TArray<AActor*> const& AITwinPopulationTool::FImpl::GetAllPopulations() const
+{
+	if (bNeedsUpdateAllPopulations)
+	{
+		const_cast<FImpl*>(this)->UpdatePopulationsArray();
+	}
+	return AllPopulations;
+}
+
+inline std::vector<AITwinPopulation*> const& AITwinPopulationTool::FImpl::GetEditedPopulations(bool bForceUpdateArray /*= false*/)
+{
+	if (bForceUpdateArray || bNeedsUpdateEditedPopulations)
+	{
+		CollectEditedPopulations();
+	}
+	return EditedPopulations;
 }
 
 void AITwinPopulationTool::FImpl::SetMode(EPopulationToolMode mode)
@@ -494,6 +502,12 @@ void AITwinPopulationTool::FImpl::SetSelectedPopulation(AITwinPopulation* popula
 
 void AITwinPopulationTool::FImpl::SetSelectedInstanceIndex(int32 instanceIndex)
 {
+	if (TransformProxy && instanceIndex != selectedInstanceIndex)
+	{
+		// Reset transformation proxy whenever the selected instance is changed.
+		SetInstanceTransformProxy({});
+	}
+
 	selectedInstanceIndex = instanceIndex;
 
 	if (selectedPopulation)
@@ -512,6 +526,8 @@ void AITwinPopulationTool::FImpl::DeleteSelectedInstance()
 	if (selectedPopulation)
 	{
 		DeleteInstanceFromPopulation(selectedPopulation, selectedInstanceIndex);
+		// Reset transformation proxy as the selection has been reset.
+		SetInstanceTransformProxy({});
 		owner.SelectionChangedEvent.Broadcast();
 	}
 }
@@ -521,17 +537,6 @@ bool AITwinPopulationTool::FImpl::ShowOnlyTranslationZGizmo() const
 	// Cut-out plane can only be moved along Z axis.
 	return selectedPopulation
 		&& selectedPopulation->GetObjectType() == EITwinInstantiatedObjectType::ClippingPlane;
-}
-
-bool AITwinPopulationTool::FImpl::IsCompatibleWithGizmo() const
-{
-	if (transformationMode == ETransformationMode::Rotate
-		&& selectedPopulation
-		&& selectedPopulation->GetObjectType() == EITwinInstantiatedObjectType::ClippingPlane)
-	{
-		return !bIsRotationCenterPickingMode;
-	}
-	return true;
 }
 
 bool AITwinPopulationTool::FImpl::IsPopulationModeActivated() const
@@ -554,10 +559,8 @@ bool AITwinPopulationTool::FImpl::StartBrushingInstances()
 	BrushRemovedInstancesInfo.clear();
 	StartBrushing(owner.GetGameTimeSinceCreation());
 
-	if (editedPopulations.empty())
-	{
-		CollectEditedPopulations();
-	}
+	const bool bForceUpdateEditedPopulations = EditedPopulations.empty();
+	GetEditedPopulations(bForceUpdateEditedPopulations);
 	return true;
 }
 
@@ -605,7 +608,14 @@ FTransform AITwinPopulationTool::FImpl::GetSelectionTransform() const
 {
 	if (HasSelectedInstance())
 	{
-		return selectedPopulation->GetInstanceTransform(selectedInstanceIndex);
+		if (TransformProxy)
+		{
+			return TransformProxy->GetTransform();
+		}
+		else
+		{
+			return selectedPopulation->GetInstanceTransform(selectedInstanceIndex);
+		}
 	}
 
 	return FTransform();
@@ -625,6 +635,10 @@ void AITwinPopulationTool::FImpl::OnSelectionTransformStarted(bool bForInteracti
 		BE_ISSUE("missing call to OnSelectionTransformCompleted?");
 		InteractiveTransformationScope.reset();
 	}
+	if (TransformProxy)
+	{
+		TransformProxy->OnTransformModificationStarted(transformationMode);
+	}
 	if (selectedPopulation)
 	{
 		// Optimization: suspend automatic tree rebuild for the edited population.
@@ -638,14 +652,21 @@ void AITwinPopulationTool::FImpl::OnSelectionTransformCompleted(bool /*bForInter
 	InteractiveTransformationScope.reset();
 }
 
-void AITwinPopulationTool::FImpl::SetSelectionTransform(const FTransform& transform)
+void AITwinPopulationTool::FImpl::SetSelectionTransform(const FTransform& Transform)
 {
 	if (HasSelectedInstance())
 	{
-		selectedPopulation->SetInstanceTransform(selectedInstanceIndex, transform);
+		if (TransformProxy)
+		{
+			TransformProxy->SetTransform(Transform);
+		}
+		else
+		{
+			selectedPopulation->SetInstanceTransform(selectedInstanceIndex, Transform);
+		}
 		if (!selectedPopulation->IsRotationVariationEnabled())
 		{
-			savedTransform = transform;
+			savedTransform = Transform;
 			savedTransformChanged = true;
 		}
 	}
@@ -714,7 +735,7 @@ void AITwinPopulationTool::FImpl::ResetToDefault()
 	toolMode = EPopulationToolMode::Select;
 	transformationMode = ETransformationMode::Move;
 	usedAssets.clear();
-	editedPopulations.clear();
+	EditedPopulations.clear();
 }
 
 void AITwinPopulationTool::FImpl::SetDecorationHelper(AITwinDecorationHelper* decoHelper)
@@ -788,7 +809,7 @@ bool AITwinPopulationTool::FImpl::DragActorInLevel(const FVector2D& screenPositi
 		traceEnd = traceStart + traceDir * 1e8f;
 
 		FITwinTracingHelper TracingHelper;
-		TracingHelper.AddIgnoredActors(allPopulations);
+		TracingHelper.AddIgnoredActors(GetAllPopulations());
 		TracingHelper.FindNearestImpact(HitResult, World, traceStart, traceEnd);
 
 		FTransform instTransform;
@@ -831,13 +852,13 @@ void AITwinPopulationTool::FImpl::SetUsedAsset(const FString& assetPath, bool b)
 
 	// Empty the vector of edited populations so that it is updated the next time
 	// instances will be added.
-	editedPopulations.clear();
+	EditedPopulations.clear();
 }
 
 void AITwinPopulationTool::FImpl::ClearUsedAssets()
 {
 	usedAssets.clear();
-	editedPopulations.clear();
+	EditedPopulations.clear();
 }
 
 bool AITwinPopulationTool::FImpl::IsAdditionOfInstancesAllowed(bool& bOutAllowBrush) const
@@ -921,7 +942,8 @@ void AITwinPopulationTool::FImpl::FinalizeInteractiveCreation(const FHitResult* 
 		FinalTransform = selectedPopulation->GetInstanceTransform(selectedInstanceIndex);
 	}
 	AActor* HitActor = HitResult ? HitResult->GetActor() : LastHitActor_InteractivePlacement.Get();
-	if (HitActor && selectedPopulation->IsClippingPrimitive())
+	const bool bCutoutCreated = HitActor && selectedPopulation->IsClippingPrimitive();
+	if (bCutoutCreated)
 	{
 		// Configure initial cutout properties, depending on the hit layer (encoding them in the AdvViz
 		// instance).
@@ -933,7 +955,13 @@ void AITwinPopulationTool::FImpl::FinalizeInteractiveCreation(const FHitResult* 
 	}
 	selectedPopulation->FinalizeAddedInstance(selectedInstanceIndex, &FinalTransform);
 	OnSelectionTransformCompleted(/*bForInteractivePopulation*/true);
+
 	owner.InteractiveCreationCompletedEvent.Broadcast(bTriggeredFromITS);
+	if (bCutoutCreated)
+	{
+		owner.InteractiveCutoutCreationCompletedEvent.Broadcast(bTriggeredFromITS);
+	}
+
 	bInteractivePlacement = false;
 }
 
@@ -956,6 +984,9 @@ bool AITwinPopulationTool::FImpl::DoMouseClickAction()
 
 	bool bRelevantAction = false;
 	TArray<const AActor*> ActorsToIgnore;
+
+	TArray<AActor*> const& AllPopulationActors = GetAllPopulations();
+
 	const bool bFinalizingInteractivePlacement = bInteractivePlacement && HasSelectedInstance();
 	if (bFinalizingInteractivePlacement)
 	{
@@ -963,9 +994,9 @@ bool AITwinPopulationTool::FImpl::DoMouseClickAction()
 		// populations (including the one being selected, which would much probably be hit as the selected
 		// instance is following the mouse...), as done in FImpl::Tick (see #LineTraceFromMousePos).
 		//
-		// Due to constness considerations we cannot just write ActorsToIgnore = allPopulations...
-		ActorsToIgnore.Reserve(allPopulations.Num());
-		for (auto PopulationActor : allPopulations)
+		// Due to constness considerations we cannot just write ActorsToIgnore = AllPopulationActors...
+		ActorsToIgnore.Reserve(AllPopulationActors.Num());
+		for (auto PopulationActor : AllPopulationActors)
 			ActorsToIgnore.Push(PopulationActor);
 	}
 	else if (bRestrictPickingOnClipping)
@@ -989,7 +1020,7 @@ bool AITwinPopulationTool::FImpl::DoMouseClickAction()
 		//
 		// Note that this fix is generic: if we allow the user to hide populations by hand in the future, it
 		// will be useful as well.
-		for (auto PopulationActor : allPopulations)
+		for (auto PopulationActor : AllPopulationActors)
 		{
 			if (Cast<AITwinPopulation const>(PopulationActor)->IsHiddenInGame())
 				ActorsToIgnore.Push(PopulationActor);
@@ -1087,7 +1118,8 @@ void AITwinPopulationTool::FImpl::Tick(float DeltaTime)
 		// Add/remove instances in the brush zone.
 		if (hitResult.GetActor() && IsBrushing())
 		{
-			if (!editedPopulations.empty() && toolMode == EPopulationToolMode::InstantiateN)
+			auto const& EditedPopulationsActors = GetEditedPopulations();
+			if (!EditedPopulationsActors.empty() && toolMode == EPopulationToolMode::InstantiateN)
 			{
 				float currentTime = owner.GetGameTimeSinceCreation();
 				float brushDeltaTime = currentTime - BrushLastTime;
@@ -1098,7 +1130,7 @@ void AITwinPopulationTool::FImpl::Tick(float DeltaTime)
 
 				if (traceCountInt > 0)
 				{
-					MultiLineTraceFromMousePos(traceCountInt, editedPopulations);
+					MultiLineTraceFromMousePos(traceCountInt, EditedPopulationsActors);
 
 					BrushLastTime = currentTime;
 					BrushLastPos = GetBrushPosition();
@@ -1278,7 +1310,7 @@ FHitResult AITwinPopulationTool::FImpl::LineTraceFromMousePos()
 		// browser, collisions may be enabled depending on the current mode. Existing populations
 		// must be explicitly ignored here so that the brush sphere is placed like when painting
 		// instances (it avoids rapid jumps).
-		actorsToIgnore = allPopulations;
+		actorsToIgnore = GetAllPopulations();
 	}
 
 	FITwinTracingHelper TracingHelper;
@@ -1290,16 +1322,16 @@ FHitResult AITwinPopulationTool::FImpl::LineTraceFromMousePos()
 
 FVector AITwinPopulationTool::FImpl::LineTraceToSetBrushSize()
 {
-	FVector TraceStart, TraceDir;
-	if (!ITwin::GetRayToTraceFromScreenCenter(&owner, TraceStart, TraceDir))
+	FITwinTracingHelper TracingHelper;
+	FITwinRayTraceInput TraceInput;
+	if (!TracingHelper.GetRayToTraceFromScreenCenter(&owner, TraceInput))
 	{
 		return FVector::ZeroVector;
 	}
-	const FVector TraceEnd = TraceStart + TraceDir * 1e8f;
+	const FVector TraceEnd = TraceInput.TraceStart + (TraceInput.TraceDirection * 1e8f);
 
 	FHitResult HitResult;
-	FITwinTracingHelper TracingHelper;
-	TracingHelper.FindNearestImpact(HitResult, owner.GetWorld(), TraceStart, TraceEnd);
+	TracingHelper.FindNearestImpact(HitResult, owner.GetWorld(), TraceInput.TraceStart, TraceEnd);
 
 	if (HitResult.HasValidHitObjectHandle() && HitResult.GetActor())
 	{
@@ -1307,7 +1339,7 @@ FVector AITwinPopulationTool::FImpl::LineTraceToSetBrushSize()
 	}
 	else
 	{
-		return TraceStart + TraceDir * 1e4f;
+		return TraceInput.TraceStart + (TraceInput.TraceDirection * 1e4f);
 	}
 }
 
@@ -1462,27 +1494,25 @@ bool AITwinPopulationTool::FImpl::AddSingleInstanceFromHitResult(const FHitResul
 	FCreatedInstance* OutCreatedInstance /*= nullptr*/,
 	bool bStartingInteractiveCreation /*= false*/)
 {
-	if (editedPopulations.empty())
-	{
-		CollectEditedPopulations();
-	}
+	const bool bForceUpdateEditedPopulations = EditedPopulations.empty();
+	auto const& EditedPopulationsActors = GetEditedPopulations(bForceUpdateEditedPopulations);
 
-	if (!editedPopulations.empty())
+	if (!EditedPopulationsActors.empty())
 	{
-		int32 popIndex = editedPopulations.size() > 1 ?
-			FMath::RandRange((int32)0, (int32)editedPopulations.size() - 1) : 0;
+		int32 popIndex = EditedPopulationsActors.size() > 1 ?
+			FMath::RandRange((int32)0, (int32)EditedPopulationsActors.size() - 1) : 0;
 		FTransform tm;
 		bool const bRequiresValidHit = !bStartingInteractiveCreation;
-		if (ComputeTransformFromHitResult(hitResult, tm, editedPopulations[popIndex],
+		if (ComputeTransformFromHitResult(hitResult, tm, EditedPopulationsActors[popIndex],
 										  false/*bIsDraggingInstance*/,
 										  bRequiresValidHit))
 		{
-			const int32 InstIndex = editedPopulations[popIndex]->AddInstance(tm, bInteractivePlacement);
+			const int32 InstIndex = EditedPopulationsActors[popIndex]->AddInstance(tm, bInteractivePlacement);
 
 			if (bInteractivePlacement)
 			{
 				// Select the new instance to adjust its position interactively.
-				SetSelectedPopulation(editedPopulations[popIndex]);
+				SetSelectedPopulation(EditedPopulationsActors[popIndex]);
 				SetSelectedInstanceIndex(InstIndex);
 				// Disable automatic UE tree rebuild for this population as long as the position is not
 				// validated.
@@ -1490,7 +1520,7 @@ bool AITwinPopulationTool::FImpl::AddSingleInstanceFromHitResult(const FHitResul
 			}
 			if (OutCreatedInstance)
 			{
-				OutCreatedInstance->Population = editedPopulations[popIndex];
+				OutCreatedInstance->Population = EditedPopulationsActors[popIndex];
 				OutCreatedInstance->NewInstanceIndex = InstIndex;
 			}
 			return true;
@@ -1520,7 +1550,7 @@ size_t AITwinPopulationTool::FImpl::CollectEditedPopulations()
 		instanceGroupId = decorationHelper->GetStaticInstancesGroupId();
 	}
 
-	editedPopulations.clear();
+	EditedPopulations.clear();
 
 	for (auto& asset : usedAssets)
 	{
@@ -1528,11 +1558,11 @@ size_t AITwinPopulationTool::FImpl::CollectEditedPopulations()
 		{
 			AITwinPopulation* population = decorationHelper->GetOrCreatePopulation(asset.first, instanceGroupId);
 			if (population)
-				editedPopulations.push_back(population);
+				EditedPopulations.push_back(population);
 		}
 	}
 
-	return editedPopulations.size();
+	return EditedPopulations.size();
 }
 
 
@@ -1547,7 +1577,7 @@ void AITwinPopulationTool::FImpl::UpdatePopulationsCollisionType() const
 		collisionType = ECollisionEnabled::QueryOnly;
 	}
 
-	for (auto actor : allPopulations)
+	for (auto actor : GetAllPopulations())
 	{
 		Cast<AITwinPopulation>(actor)->SetCollisionEnabled(collisionType);
 	}
@@ -1561,7 +1591,7 @@ void AITwinPopulationTool::FImpl::RestrictPickingOnClippingPrimitives(bool bInRe
 	{
 		// Make sure all clipping primitives can be picked.
 		UpdatePopulationsArray();
-		for (auto actor : allPopulations)
+		for (auto actor : GetAllPopulations())
 		{
 			AITwinPopulation* Population = Cast<AITwinPopulation>(actor);
 			if (Population->IsClippingPrimitive())
@@ -1588,12 +1618,18 @@ void AITwinPopulationTool::FImpl::SetUsedOnCutout(bool bForCutout)
 	bEnabledForCutout = bForCutout;
 }
 
+void AITwinPopulationTool::FImpl::SetInstanceTransformProxy(IITwinPopulationInstanceTransformProxyPtr InTransformProxy)
+{
+	TransformProxy = InTransformProxy;
+}
+
 
 void AITwinPopulationTool::FImpl::UpdatePopulationsArray()
 {
-	allPopulations.Empty();
+	AllPopulations.Empty();
 	UGameplayStatics::GetAllActorsOfClass(
-		owner.GetWorld(), AITwinPopulation::StaticClass(), allPopulations);
+		owner.GetWorld(), AITwinPopulation::StaticClass(), AllPopulations);
+	bNeedsUpdateAllPopulations = false;
 }
 
 void AITwinPopulationTool::FImpl::StartDragging(AITwinPopulation* population)
@@ -1624,6 +1660,7 @@ void AITwinPopulationTool::FImpl::DeleteInstanceFromPopulation(
 		if (population->GetNumberOfInstances() == 0)
 		{
 			population->Destroy();
+			InvalidatePopulations();
 		}
 		population = nullptr;
 		instanceIndex = INDEX_NONE;
@@ -1681,11 +1718,14 @@ uint32 AITwinPopulationTool::FImpl::PopulateSpline(AITwinSplineHelper const& Tar
 		return 0;
 
 	UpdateGroupId(&TargetSpline);
-	if (editedPopulations.empty() && !CollectEditedPopulations())
+
+	const bool bForceUpdateEditedPopulations = EditedPopulations.empty();
+	auto const& EditedPopulationsActors = GetEditedPopulations(bForceUpdateEditedPopulations);
+	if (EditedPopulationsActors.empty())
 		return 0;
 
 	// First remove all instances populated on this spline.
-	for (AITwinPopulation* Population : editedPopulations)
+	for (AITwinPopulation* Population : EditedPopulationsActors)
 	{
 		Population->RemoveAllInstances();
 	}
@@ -1716,12 +1756,12 @@ uint32 AITwinPopulationTool::FImpl::PopulateSpline(AITwinSplineHelper const& Tar
 	SamplingBox.max[2] = BoundsMax.Z;
 
 	glm::dvec3 AccumBBoxDims(0.0);
-	for (AITwinPopulation const* Population : editedPopulations)
+	for (AITwinPopulation const* Population : EditedPopulationsActors)
 	{
 		const FVector BoxSize = Population->GetMasterMeshBounds().GetBox().GetSize();
 		AccumBBoxDims += glm::dvec3(BoxSize.X, BoxSize.Y, BoxSize.Z);
 	}
-	glm::dvec3 const AverageInstanceDims = AccumBBoxDims / (double)editedPopulations.size();
+	glm::dvec3 const AverageInstanceDims = AccumBBoxDims / (double)EditedPopulationsActors.size();
 
 	std::vector<glm::dvec3> Positions;
 	BeUtils::SampleSpline(Curve, IdentityTsf, SamplingBox, AverageInstanceDims, SamplingParams, Positions);
@@ -1736,7 +1776,7 @@ uint32 AITwinPopulationTool::FImpl::PopulateSpline(AITwinSplineHelper const& Tar
 	FVector const TraceDir = FVector::DownVector;
 	FITwinTracingHelper TracingHelper;
 	UpdatePopulationsArray();
-	TracingHelper.AddIgnoredActors(allPopulations);
+	TracingHelper.AddIgnoredActors(GetAllPopulations());
 	for (glm::dvec3 const& SplinePos : Positions)
 	{
 		// Project spline position onto ground
@@ -1746,9 +1786,9 @@ uint32 AITwinPopulationTool::FImpl::PopulateSpline(AITwinSplineHelper const& Tar
 		if (!TracingHelper.FindNearestImpact(HitResult, World, TraceStart, TraceEnd))
 			continue;
 
-		int32 popIndex = editedPopulations.size() > 1 ?
-			FMath::RandRange((int32)0, (int32)editedPopulations.size() - 1) : 0;
-		AITwinPopulation* Population = editedPopulations[popIndex];
+		int32 popIndex = EditedPopulationsActors.size() > 1 ?
+			FMath::RandRange((int32)0, (int32)EditedPopulationsActors.size() - 1) : 0;
+		AITwinPopulation* Population = EditedPopulationsActors[popIndex];
 
 		FTransform InstTransform;
 		if (ComputeTransformFromHitResult(HitResult, InstTransform, Population))
@@ -1939,6 +1979,47 @@ namespace
 
 		AdvViz::SDK::RefID InstanceID = AdvViz::SDK::RefID::Invalid();
 	};
+
+	class FPopulationStateRecord : public AITwinInteractiveTool::IActiveStateRecord
+	{
+	public:
+		FPopulationStateRecord(AITwinPopulationTool const& InTool,
+							   std::map<FString, bool> const& InUsedAssets)
+			: bEnabled(InTool.IsEnabled())
+			, bEnabledForCutout(InTool.IsUsedOnCutoutPrimitive())
+			, toolMode(InTool.GetMode())
+			, transformationMode(InTool.GetTransformationMode())
+			, usedAssets(InUsedAssets)
+		{}
+
+		bool const bEnabled = false;
+		bool const bEnabledForCutout = false;
+		EPopulationToolMode const toolMode = EPopulationToolMode::Select;
+		ETransformationMode const transformationMode = ETransformationMode::Move;
+		std::map<FString, bool> const usedAssets;
+	};
+}
+
+TUniquePtr<AITwinInteractiveTool::IActiveStateRecord> AITwinPopulationTool::MakeStateRecord() const
+{
+	return MakeUnique<FPopulationStateRecord>(*this, Impl->usedAssets);
+}
+
+bool AITwinPopulationTool::RestoreState(IActiveStateRecord const& State)
+{
+	FPopulationStateRecord const* PopulationState = static_cast<FPopulationStateRecord const*>(&State);
+
+	if (PopulationState->bEnabled != IsEnabled())
+	{
+		SetEnabled(PopulationState->bEnabled);
+	}
+	Impl->bEnabledForCutout = PopulationState->bEnabledForCutout;
+	Impl->toolMode = PopulationState->toolMode;
+	Impl->transformationMode = PopulationState->transformationMode;
+	Impl->usedAssets = PopulationState->usedAssets;
+	Impl->UpdatePopulationsArray();
+	Impl->CollectEditedPopulations();
+	return IsEnabled();
 }
 
 TUniquePtr<AITwinInteractiveTool::ISelectionRecord> AITwinPopulationTool::MakeSelectionRecord() const
@@ -2254,6 +2335,11 @@ void AITwinPopulationTool::SetUsedOnCutout(bool bForCutout)
 	Impl->SetUsedOnCutout(bForCutout);
 }
 
+void AITwinPopulationTool::SetInstanceTransformProxy(IITwinPopulationInstanceTransformProxyPtr InTransformProxy)
+{
+	Impl->SetInstanceTransformProxy(InTransformProxy);
+}
+
 bool AITwinPopulationTool::IsAdditionOfInstancesAllowed(bool& bOutAllowBrush) const
 {
 	return Impl->IsAdditionOfInstancesAllowed(bOutAllowBrush);
@@ -2407,17 +2493,50 @@ bool AITwinPopulationTool::ShowOnlyTranslationZGizmoImpl() const
 	return Impl->ShowOnlyTranslationZGizmo();
 }
 
-bool AITwinPopulationTool::IsCompatibleWithGizmoImpl() const
+namespace
 {
-	return Impl->IsCompatibleWithGizmo();
+	class [[nodiscard]] FPopulationToolDisabler : public AITwinInteractiveTool::FToolDisabler
+	{
+		using Super = AITwinInteractiveTool::FToolDisabler;
+	public:
+		FPopulationToolDisabler(AITwinInteractiveTool* InTool);
+		virtual ~FPopulationToolDisabler();
+	private:
+		TArray<TWeakObjectPtr<AITwinPopulation>> HiddenPopulations;
+	};
+
+	FPopulationToolDisabler::FPopulationToolDisabler(AITwinInteractiveTool* InTool)
+		: Super(InTool)
+	{
+		if (InTool && InTool->GetWorld())
+		{
+			// Hide cutout primitives.
+			for (TActorIterator<AITwinPopulation> PopIter(InTool->GetWorld()); PopIter; ++PopIter)
+			{
+				AITwinPopulation* Population = *PopIter;
+				if (Population->IsClippingPrimitive() && !Population->IsHiddenInGame())
+				{
+					Population->SetHiddenInGame(true);
+					HiddenPopulations.Add(Population);
+				}
+			}
+		}
+	}
+
+	FPopulationToolDisabler::~FPopulationToolDisabler()
+	{
+		// Restore hidden state of cutout primitives.
+		for (TWeakObjectPtr<AITwinPopulation> const& PopulationPtr : HiddenPopulations)
+		{
+			if (PopulationPtr.IsValid())
+			{
+				PopulationPtr->SetHiddenInGame(false);
+			}
+		}
+	}
 }
 
-bool AITwinPopulationTool::IsRotationCenterPickingMode() const
+TSharedPtr<AITwinInteractiveTool::FToolDisabler> AITwinPopulationTool::MakeToolDisabler()
 {
-	return Impl->IsRotationCenterPickingMode();
-}
-
-void AITwinPopulationTool::SetRotationCenterPickingMode(bool b)
-{
-	Impl->SetRotationCenterPickingMode(b);
+	return MakeShared<FPopulationToolDisabler>(this);
 }

@@ -162,11 +162,9 @@ public:
 
 	void ListITwinTexturesToDownload(std::vector<std::string>& missingTextureIds, WLock const&);
 	void ListITwinTexturesToResolve(std::unordered_map<AdvViz::SDK::TextureKey, std::string>& itwinTextures,
-		AdvViz::SDK::TextureUsageMap& usageMap,
 		RWLockBase const&) const;
 	void AppendITwinTexturesToResolveFromMaterial(
 		std::unordered_map<AdvViz::SDK::TextureKey, std::string>& itwinTextures,
-		AdvViz::SDK::TextureUsageMap& usageMap,
 		uint64_t matID,
 		RWLockBase const&) const;
 
@@ -188,9 +186,10 @@ public:
 		bool HasValidCesiumImage(bool bRequirePixelData) const;
 	};
 
+	inline static const std::string CESIUM_FORMATTED_TEX_PREFIX = "csfmt_";
+
 	TextureAccess StoreCesiumImage(TextureKey const& textureKey,
 		CesiumGltf::Image&& cesiumImage,
-		AdvViz::SDK::TextureUsageMap const& textureUsageMap,
 		WLock const&,
 		std::optional<bool> const& needTranslucency = std::nullopt,
 		std::optional<std::filesystem::path> const& pathOnDisk = std::nullopt);
@@ -222,6 +221,13 @@ public:
 		AdvViz::SDK::TextureUsage const& textureUsage,
 		WLock const& lock,
 		std::optional<uint64_t> const& matIdForLogs = std::nullopt);
+
+	AdvViz::SDK::TextureUsage GetTextureUsage(AdvViz::SDK::TextureKey const& textureKey) const;
+	void AddTextureUsage(AdvViz::SDK::TextureKey const& textureKey,
+		AdvViz::SDK::EChannelType channel,
+		WLock const& lock);
+	void AppendTextureUsageMap(AdvViz::SDK::TextureUsageMap const& usageMap,
+		WLock const& lock);
 
 	//! Creates a new texture from the given path, if it has not yet been registered ; else return the
 	//! existing texture ID.
@@ -294,6 +300,7 @@ private:
 		}
 	};
 	std::unordered_map<TextureKey, TextureData> textureDataMap_;
+	AdvViz::SDK::TextureUsageMap textureUsageMap_;
 	std::filesystem::path textureDir_; // directory where we download textures
 	mutable std::optional<bool> hasValidTextureDir_;
 

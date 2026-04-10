@@ -50,17 +50,23 @@
 // Between iTwin Engage LA and GA, we made an attempt to let the user pick the rotation center for cutout
 // planes, but we abandoned the idea (lack of feedback for the user, and possibility to get the same with
 // the recenter icon, in a much clearer way...)
-#define HAS_ROTATION_CENTER_PICKING_MODE() 0
+// Blame here to recover the removed code, if you want to give it another try...)
+//#define HAS_ROTATION_CENTER_PICKING_MODE() 0
+
+// Tentative we made to automatically recenter and resize the cutting planes.
+// Abandoned as it was not intuitive for the user (blame here if you want to try again...)
+//#define AUTOMATIC_CUTTING_PLANE_RECENTERING() 0
 
 namespace ITwin
 {
 	int32 GetLinkedTilesets(AITwinSplineTool::TilesetAccessArray& OutArray,
 		AdvViz::SDK::ISplinePtr const& Spline, const UWorld* World);
-	bool GetRayToTraceFromScreenCenter(const UObject* WorldContextObject, FVector& OutTraceStart, FVector& OutTraceDir);
 }
 
 namespace ITwinClippingDetails
 {
+	constexpr double PLANE_TO_UNREAL = 0.01; // because the imported geometry is exactly 1 meter.
+
 	/// Miscellaneous info about the camera view, that we can use to adapt the clipping plane proxy scale, so
 	/// that the gizmo is always visible and usable, even when the plane is very far from the camera.
 	struct FCameraViewInfo
@@ -123,6 +129,8 @@ public:
 	TWeakObjectPtr<AITwinPopulationTool> PopulationTool;
 	TWeakObjectPtr<AITwinSplineTool> SplineTool;
 
+	IITwinPopulationInstanceTransformProxyPtr PlaneTransformProxy;
+
 	// Store whether the removal event was initiated by Unreal (delete key in 3D viewport) or iTwin Studio
 	// (trash icon in Cutout Property Page).
 	enum class ERemovalInitiator : uint8_t
@@ -136,13 +144,6 @@ public:
 	/// transformation mode of the population tool for another purpose (3D Object edition), and we want to
 	/// be able to restore the right mode when enabling the cutout tool again.
 	std::optional<ETransformationMode> TransformationModeOpt;
-
-#if !HAS_ROTATION_CENTER_PICKING_MODE()
-	const
-#endif
-	/// When entering rotation mode for an (infinite) cutout plane, the user should first pick the exact
-	/// rotation center.
-	bool bIsRotationCenterPickingMode = false;
 
 	/// Additional information about the camera view and selection when entering interactive transformation.
 	using FCameraViewInfo = ITwinClippingDetails::FCameraViewInfo;
@@ -207,7 +208,8 @@ public:
 	AITwinPopulation const* GetSelectedPopulation(int32& OutSelectedInstanceIndex) const;
 
 	/// Select a cutout primitive in Population Tool, or reset selection if Population is null.
-	void SelectPopulationInstance(AITwinPopulation* Population,	int32 InstanceIndex, UWorld* World);
+	void SelectPopulationInstance(AITwinPopulation* Population, int32 InstanceIndex,
+		EITwinClippingPrimitiveType Type);
 
 	/// Deletes the selected instance, if any.
 	void DeleteSelectedPopulationInstance();
@@ -222,10 +224,6 @@ public:
 	bool IsRotationMode() const {
 		return TransformationModeOpt && TransformationModeOpt.value() == ETransformationMode::Rotate;
 	}
-
-
-	void SetRotationCenterPickingMode(bool b);
-	void QuitRotationCenterPickingMode() { SetRotationCenterPickingMode(false); }
 
 	struct [[nodiscard]] FScopedRemovalContext
 	{
@@ -338,11 +336,24 @@ public:
 		bool bTriggeredFromITS,
 		bool bOnlyModifyProxy = false) const;
 
+	std::optional<FVector> GetPointOnPlaneAtRayIntersection(int32 PlaneIndex,
+		FITwinRayTraceInput const& TraceInput,
+		bool bClampToInfluenceBounds);
+
+	std::optional<FVector> ProjectPredefinedScreenPositionOnPlane(int32 PlaneIndex,
+		bool bClampToInfluenceBounds);
+
 	bool RecenterPlaneProxyAtRayIntersection(int32 PlaneIndex,
-		FVector const& TraceStart,
-		FVector const& TraceDir,
+		FITwinRayTraceInput const& TraceInput,
 		bool bClampToInfluenceBounds);
 	bool RecenterPlaneProxyFromPicking(int32 PlaneIndex);
+
+	bool UpdateClippingPlaneTransformFromBoundingBox(int32 PlaneIndex, bool bForceResetGizmoProxy = false);
+	bool FindVisiblePointOnPlane(int32 PlaneIndex, std::optional<FVector> const& CurrentGizmoPositionOpt,
+		FVector& OutPosition, bool& bOutIsCenter);
+	void ConfigurePlaneProxyForGizmo(int32 PlaneIndex);
+	void OnPlaneSelectionChanged(int32 PlaneIndex);
+	void OnCutoutCreationCompleted(bool bTriggeredFromITS);
 
 	void InvalidateBoundingBoxOfClippingPlanes(ITwin::ModelLink const& ModelLink);
 
@@ -401,14 +412,20 @@ AITwinPopulation const* AITwinClippingTool::FImpl::GetSelectedPopulation(int32& 
 
 void AITwinClippingTool::FImpl::SelectPopulationInstance(AITwinPopulation* Population,
 	int32 InstanceIndex,
-	UWorld* World)
+	EITwinClippingPrimitiveType Type)
 {
 	bool const bUpdateTransformationMode = (Population != nullptr);
-	auto const PopTool = ActivatePopulationTool(World, bUpdateTransformationMode);
+	auto const PopTool = ActivatePopulationTool(Owner.GetWorld(), bUpdateTransformationMode);
 	if (PopTool.IsValid())
 	{
 		PopTool->SetSelectedPopulation(Population);
 		PopTool->SetSelectedInstanceIndex(InstanceIndex);
+
+		if (Type == EITwinClippingPrimitiveType::Plane)
+		{
+			OnPlaneSelectionChanged(InstanceIndex);
+		}
+
 		PopTool->SelectionChangedEvent.Broadcast();
 	}
 }
@@ -473,42 +490,6 @@ void AITwinClippingTool::FImpl::SetTransformationMode(ETransformationMode Mode)
 	{
 		PopulationTool->SetTransformationMode(Mode);
 	}
-
-	bool bEnterCenterPickingMode = false;
-#if HAS_ROTATION_CENTER_PICKING_MODE()
-	// For cutout plane, the rotation center needs to be chosen before enabling the rotation gizmo.
-	if (Mode == ETransformationMode::Rotate)
-	{
-		int32 Index(INDEX_NONE);
-		auto const SelectedPopulation = GetSelectedPopulation(Index);
-		if (SelectedPopulation
-			&& SelectedPopulation->GetObjectType() == EITwinInstantiatedObjectType::ClippingPlane)
-		{
-			bEnterCenterPickingMode = true;
-		}
-	}
-	if (bEnterCenterPickingMode)
-	{
-		SetRotationCenterPickingMode(true);
-	}
-	else if (this->bIsRotationCenterPickingMode)
-	{
-		SetRotationCenterPickingMode(false);
-	}
-#endif // HAS_ROTATION_CENTER_PICKING_MODE
-}
-
-void AITwinClippingTool::FImpl::SetRotationCenterPickingMode(bool b)
-{
-#if HAS_ROTATION_CENTER_PICKING_MODE()
-	bIsRotationCenterPickingMode = b;
-#endif
-
-	// Propagate the option to the population tool (for the display of the gizmo)
-	if (PopulationTool.IsValid())
-	{
-		PopulationTool->SetRotationCenterPickingMode(bIsRotationCenterPickingMode);
-	}
 }
 
 
@@ -528,9 +509,18 @@ void AITwinClippingTool::ConnectPopulationTool(AITwinPopulationTool* PopulationT
 	Impl->PopulationTool = PopulationTool;
 	if (PopulationTool)
 	{
-		Impl->PreLoadClippingPrimitives(*PopulationTool);
-
 		PopulationTool->InteractiveCreationAbortedEvent.AddUniqueDynamic(this, &AITwinClippingTool::OnItemCreationAbortedInTool);
+
+		PopulationTool->InteractiveCutoutCreationCompletedEvent.AddUniqueDynamic(this, &AITwinClippingTool::OnCutoutCreationCompleted);
+	}
+}
+
+void AITwinClippingTool::OnPopulationsLoaded(bool bSuccess)
+{
+	if (Impl->PopulationTool.IsValid())
+	{
+		// Pre-load cube and plane primitives if needed (ie. if they were not loaded from the scene).
+		Impl->PreLoadClippingPrimitives(*Impl->PopulationTool);
 	}
 }
 
@@ -1533,6 +1523,11 @@ void AITwinClippingTool::OnItemCreationAbortedInTool(bool bTriggeredFromITS)
 	InteractiveCreationAbortedEvent.Broadcast(bTriggeredFromITS);
 }
 
+void AITwinClippingTool::OnCutoutCreationCompleted(bool bTriggeredFromITS)
+{
+	Impl->OnCutoutCreationCompleted(bTriggeredFromITS);
+}
+
 inline
 int32 AITwinClippingTool::FImpl::NumEffects(EITwinClippingPrimitiveType Type) const
 {
@@ -1630,8 +1625,52 @@ bool AITwinClippingTool::FImpl::RemoveEffect(EITwinClippingPrimitiveType Type, i
 	return bRemoved;
 }
 
+namespace
+{
+	struct [[nodiscard]] FPopulationToolAutoRestore
+	{
+		FPopulationToolAutoRestore(TWeakObjectPtr<AITwinPopulationTool>& InPopulationTool,
+								   bool bAutoRestore = true)
+			: PopulationTool(InPopulationTool)
+		{
+			if (bAutoRestore
+				&& PopulationTool.IsValid()
+				&& PopulationTool->IsEnabled()
+				&& !PopulationTool->IsUsedOnCutoutPrimitive())
+			{
+				PopToolStateRecord = PopulationTool->MakeStateRecord();
+				if (PopulationTool->HasSelection())
+					PopToolSelectionRecord = PopulationTool->MakeSelectionRecord();
+			}
+		}
+
+		~FPopulationToolAutoRestore()
+		{
+			if (PopToolStateRecord && PopulationTool.IsValid())
+			{
+				PopulationTool->RestoreState(*PopToolStateRecord);
+
+				if (PopToolSelectionRecord
+					&& PopulationTool->RestoreSelection(*PopToolSelectionRecord))
+				{
+					PopulationTool->SelectionChangedEvent.Broadcast();
+				}
+			}
+		}
+
+	private:
+		TWeakObjectPtr<AITwinPopulationTool>& PopulationTool;
+		TUniquePtr<AITwinInteractiveTool::IActiveStateRecord> PopToolStateRecord;
+		TUniquePtr<AITwinInteractiveTool::ISelectionRecord> PopToolSelectionRecord;
+	};
+}
+
 bool AITwinClippingTool::RemoveEffect(EITwinClippingPrimitiveType Type, int32 PrimitiveIndex, bool bTriggeredFromITS)
 {
+	// Removing an effect from the list panel should not deactivate the 3D Objects tool.
+	// See AzDev#2030933 for more details.
+	FPopulationToolAutoRestore AutoRestore(Impl->PopulationTool, /*bAutoRestore=*/bTriggeredFromITS);
+
 	const bool bRemoved = Impl->RemoveEffect(Type, PrimitiveIndex, bTriggeredFromITS);
 	if (bRemoved)
 	{
@@ -1761,13 +1800,7 @@ bool AITwinClippingTool::FImpl::SelectEffect(EITwinClippingPrimitiveType Type, i
 		auto const& Population = GetClippingEffectPopulation(Type);
 		if (Population.IsValid())
 		{
-			if (Type == EITwinClippingPrimitiveType::Plane && IsRotationMode()
-				&& bEnterIsolationMode)
-			{
-				SetRotationCenterPickingMode(true);
-			}
-
-			SelectPopulationInstance(Population.Get(), PrimitiveIndex, Owner.GetWorld());
+			SelectPopulationInstance(Population.Get(), PrimitiveIndex, Type);
 
 			bHasSetSelection = (Population->GetSelectedInstanceIndex() == PrimitiveIndex);
 		}
@@ -1856,7 +1889,7 @@ void AITwinClippingTool::DeSelectAll(bool bExitIsolationMode /*= true*/)
 		if (CurrentSelection->first == EITwinClippingPrimitiveType::Box
 			|| CurrentSelection->first == EITwinClippingPrimitiveType::Plane)
 		{
-			Impl->SelectPopulationInstance(nullptr, INDEX_NONE, GetWorld());
+			Impl->SelectPopulationInstance(nullptr, INDEX_NONE, CurrentSelection->first);
 		}
 		else
 		{
@@ -2138,6 +2171,12 @@ void AITwinClippingTool::SetEffectRotation(EITwinClippingPrimitiveType Type, int
 		FVector Rot(InRotX, InRotY, InRotZ);
 		NewTransform.SetRotation(FQuat::MakeFromEuler(Rot));
 	}, Type, PrimitiveIndex, bTriggeredFromITS);
+
+	if (Type == EITwinClippingPrimitiveType::Plane)
+	{
+		// Ensure we reset the gizmo proxy to match the new orientation.
+		Impl->UpdateClippingPlaneTransformFromBoundingBox(PrimitiveIndex, true);
+	}
 }
 
 
@@ -2157,7 +2196,6 @@ namespace ITwinClippingDetails
 		{
 			// Limit plane size to the half of the max dimension of the influence bounding box, to avoid too
 			// big planes when the camera is far from the plane.
-			constexpr double PLANE_TO_UNREAL = 0.01; // because the imported geometry is exactly 1 meter.
 			return FMath::Min(PlaneWorldScale, InfluenceBoundingBox.GetSize().GetMax() * PLANE_TO_UNREAL * 0.75);
 		}
 		else
@@ -2252,27 +2290,27 @@ namespace ITwinClippingDetails
 
 }
 
-bool AITwinClippingTool::FImpl::RecenterPlaneProxyAtRayIntersection(int32 PlaneIndex,
-	FVector const& TraceStart, FVector const& TraceDir,
+std::optional<FVector> AITwinClippingTool::FImpl::GetPointOnPlaneAtRayIntersection(int32 PlaneIndex,
+	FITwinRayTraceInput const& TraceInput,
 	bool bClampToInfluenceBounds)
 {
 	using namespace ITwinClippingDetails;
 	if (!ensure(PlaneIndex >= 0 && PlaneIndex < NumEffects(EITwinClippingPrimitiveType::Plane)))
 	{
-		return false;
+		return {};
 	}
 	FVector PlaneOrientation = FVector::ZAxisVector;
 	FVector::FReal PlaneW(0.);
 	if (!GetPlaneEquationFromUEInstance(PlaneOrientation, PlaneW, PlaneIndex))
 	{
-		return false;
+		return {};
 	}
 	FPlane const Plane(PlaneOrientation, PlaneW);
 
 	// Try to intersect the infinite plane defined by the cutout with the ray.
 	FVector HitPoint;
 	double Distance(0.);
-	if (ITwin::RayPlaneIntersection(TraceStart, TraceDir, Plane, HitPoint, Distance))
+	if (ITwin::RayPlaneIntersection(TraceInput.TraceStart, TraceInput.TraceDirection, Plane, HitPoint, Distance))
 	{
 		std::optional<FVector> ClampedLocationOpt;
 
@@ -2280,11 +2318,7 @@ bool AITwinClippingTool::FImpl::RecenterPlaneProxyAtRayIntersection(int32 PlaneI
 		{
 			FITwinClippingPlaneInfo& PlaneInfo = ClippingPlaneInfos[PlaneIndex];
 			// Retrieve the influence bounds of the plane, to limit the re-centering within these bounds.
-			if (PlaneInfo.bNeedsUpdateBoundingBox)
-			{
-				PlaneInfo.UpdateInfluenceBoundingBox(Owner.GetWorld());
-			}
-			FBox InfluenceBoundingBox = PlaneInfo.GetInfluenceBoundingBox();
+			FBox InfluenceBoundingBox = PlaneInfo.GetUpToDateInfluenceBoundingBox(Owner.GetWorld());
 			if (InfluenceBoundingBox.IsValid)
 			{
 				// Try to shrink the influence box by the current plane box, to avoid snapping on the edge
@@ -2316,17 +2350,29 @@ bool AITwinClippingTool::FImpl::RecenterPlaneProxyAtRayIntersection(int32 PlaneI
 			const double SnapGridSize = GetSnapGridSize(InfluenceBoundingBox);
 			FVector const ClosestPoint = SnapLocationToGrid(ClosestPointOnOrInsideBox, InfluenceBoundingBox, SnapGridSize);
 
-			FVector Dir_Closest = ClosestPoint - TraceStart;
+			FVector Dir_Closest = ClosestPoint - TraceInput.TraceStart;
 			FVector HitPoint_Closest;
 			double Distance_Closest(0.);
 			if (Dir_Closest.Normalize()
-				&& ITwin::RayPlaneIntersection(TraceStart, Dir_Closest, Plane, HitPoint_Closest, Distance_Closest))
+				&& ITwin::RayPlaneIntersection(TraceInput.TraceStart, Dir_Closest, Plane, HitPoint_Closest, Distance_Closest))
 			{
 				ClampedLocationOpt = HitPoint_Closest;
 			}
 		}
+		return ClampedLocationOpt.value_or(HitPoint);
+	}
+	return {};
+}
 
-		const FVector FinalPlaneLocation = ClampedLocationOpt.value_or(HitPoint);
+bool AITwinClippingTool::FImpl::RecenterPlaneProxyAtRayIntersection(int32 PlaneIndex,
+	FITwinRayTraceInput const& TraceInput,
+	bool bClampToInfluenceBounds)
+{
+	std::optional<FVector> PointOnPlane = GetPointOnPlaneAtRayIntersection(PlaneIndex,
+		TraceInput, bClampToInfluenceBounds);
+	if (PointOnPlane)
+	{
+		const FVector& FinalPlaneLocation = PointOnPlane.value();
 		// Move the center of the plane to the intersected point. This does not change the plane equation, so
 		// we should not invalidate DB nor recompute the plane effect: only modify the proxy transform.
 		ModifyEffectTransformation(
@@ -2347,28 +2393,464 @@ bool AITwinClippingTool::FImpl::RecenterPlaneProxyAtRayIntersection(int32 PlaneI
 	}
 }
 
+std::optional<FVector> AITwinClippingTool::FImpl::ProjectPredefinedScreenPositionOnPlane(int32 PlaneIndex,
+	bool bClampToInfluenceBounds)
+{
+	// Build rays starting from predefined positions on the screen, and try to intersect the infinite plane
+	// defined by the cutout.
+	static const TArray<FVector2d> PredefinedRatios = {
+		FVector2d(1./2., 2./3.), // middle of the bottom half of the screen
+		FVector2d(1./3., 2./3.), // left part of the bottom half of the screen
+		FVector2d(2./3., 2./3.), // right part of the bottom half of the screen
+		FVector2d(1./2., 1./2.), // center of the screen
+		FVector2d(1./2., 1./3.), // middle of the top half of the screen
+		FVector2d(1./3., 1./3.), // left part of the top half of the screen
+		FVector2d(2./3., 1./3.)  // right part of the top half of the screen
+	};
+	TArray<FITwinRayTraceInput> TraceInputs;
+	FITwinTracingHelper::GetRayTraceInputsFromScreenRatios(&Owner,
+		PredefinedRatios, TraceInputs);
+	std::optional<FVector> FirstValidHit;
+	for (FITwinRayTraceInput const& TraceInput : TraceInputs)
+	{
+		FirstValidHit = GetPointOnPlaneAtRayIntersection(PlaneIndex, TraceInput, bClampToInfluenceBounds);
+		if (FirstValidHit)
+		{
+			break;
+		}
+	}
+	return FirstValidHit;
+}
+
+namespace
+{
+	class FPlaneTransformProxy : public IITwinPopulationInstanceTransformProxy
+	{
+	public:
+		FPlaneTransformProxy(TWeakObjectPtr<AITwinPopulation> InPlanePopulation, int32 InPlaneIndex, FVector const& InOffset)
+			: PlanePopulation(InPlanePopulation)
+			, PlaneIndex(InPlaneIndex)
+			, Offset(InOffset)
+		{
+		}
+		virtual FTransform GetTransform() const override
+		{
+			FTransform GizmoTsf;
+			if (PlanePopulation.IsValid()
+				&& ensure(PlaneIndex >= 0 && PlaneIndex < PlanePopulation->GetNumberOfInstances()))
+			{
+				GizmoTsf = PlanePopulation->GetInstanceTransform(PlaneIndex);
+				GizmoTsf.SetLocation(GizmoTsf.GetLocation() + Offset);
+			}
+			else
+			{
+				GizmoTsf = FTransform::Identity;
+			}
+			return GizmoTsf;
+		}
+
+		virtual void OnTransformModificationStarted(ETransformationMode TransformationMode) override
+		{
+			if (TransformationMode == ETransformationMode::Rotate)
+			{
+				// For the rotation mode, we will move the plane proxy at the gizmo position (there is no
+				// handling of both a position and a pivot offset in our instances.
+				// This is not ideal visually (as the plane will exit the influence bounds quite abruptly).
+				if (PlanePopulation.IsValid()
+					&& ensure(PlaneIndex >= 0 && PlaneIndex < PlanePopulation->GetNumberOfInstances()))
+				{
+					PlanePopulation->SetInstanceTransform(PlaneIndex, GetTransform());
+					Offset = FVector::ZeroVector;
+				}
+			}
+		}
+
+		virtual void SetTransform(const FTransform& Transform) override
+		{
+			if (PlanePopulation.IsValid()
+				&& ensure(PlaneIndex >= 0 && PlaneIndex < PlanePopulation->GetNumberOfInstances()))
+			{
+				FTransform PlaneTsf = Transform;
+				PlaneTsf.SetLocation(PlaneTsf.GetLocation() - Offset);
+				PlanePopulation->SetInstanceTransform(PlaneIndex, PlaneTsf);
+			}
+		}
+
+		TWeakObjectPtr<AITwinPopulation> PlanePopulation;
+		int32 const PlaneIndex;
+		FVector Offset;
+	};
+}
+
+bool AITwinClippingTool::FImpl::UpdateClippingPlaneTransformFromBoundingBox(int32 PlaneIndex,
+	bool bForceResetGizmoProxy /*= false*/)
+{
+	using namespace ITwinClippingDetails;
+
+	if (bForceResetGizmoProxy)
+	{
+		ConfigurePlaneProxyForGizmo(INDEX_NONE);
+	}
+
+	if (!ensure(PlaneIndex >= 0 && PlaneIndex < NumEffects(EITwinClippingPrimitiveType::Plane)))
+	{
+		return false;
+	}
+	FVector PlaneOrientation = FVector::ZAxisVector;
+	FVector::FReal PlaneW(0.);
+	if (!GetPlaneEquationFromUEInstance(PlaneOrientation, PlaneW, PlaneIndex))
+	{
+		return false;
+	}
+	CesiumGeometry::Plane const Plane(
+		glm::dvec3(PlaneOrientation.X, PlaneOrientation.Y, PlaneOrientation.Z),
+		-PlaneW
+	);
+
+	FITwinClippingPlaneInfo& PlaneInfo = ClippingPlaneInfos[PlaneIndex];
+	FBox const& BoundingBox = PlaneInfo.GetUpToDateInfluenceBoundingBox(Owner.GetWorld());
+	if (!BoundingBox.IsValid)
+	{
+		return false;
+	}
+
+	auto const& PlanePopulation = GetClippingEffectPopulation(EITwinClippingPrimitiveType::Plane);
+	FQuat PlaneRotation = PlanePopulation->GetInstanceTransform(PlaneIndex).GetRotation();
+	PlaneRotation.Normalize();
+	FVector const EulerAngles = PlaneRotation.Euler();
+	double AngleX = FMath::DegreesToRadians(EulerAngles.X);
+	double AngleY = FMath::DegreesToRadians(EulerAngles.Y);
+	double AngleZ = FMath::DegreesToRadians(EulerAngles.Z);
+
+	FVector const BoxCenter = BoundingBox.GetCenter();
+	FVector const BoxSize = BoundingBox.GetSize();
+
+	FVector const AbsOrientation = PlaneOrientation.GetAbs();
+
+	FVector NewScale(1., 1., 0.1);
+	if (AbsOrientation.Z >= AbsOrientation.X && AbsOrientation.Z >= AbsOrientation.Y)
+	{
+		NewScale.X = (BoxSize.X * FMath::Abs(FMath::Cos(AngleZ)))
+				   + (BoxSize.Y * FMath::Abs(FMath::Sin(AngleZ)));
+		NewScale.Y = (BoxSize.Y * FMath::Abs(FMath::Cos(AngleZ)))
+				   + (BoxSize.X * FMath::Abs(FMath::Sin(AngleZ)));
+	}
+	else if (AbsOrientation.Y >= AbsOrientation.X && AbsOrientation.Y >= AbsOrientation.Z)
+	{
+		NewScale.X = (BoxSize.X * FMath::Abs(FMath::Cos(AngleY)))
+				   + (BoxSize.Z * FMath::Abs(FMath::Sin(AngleY)));
+		NewScale.Y = (BoxSize.Z * FMath::Abs(FMath::Cos(AngleY)))
+				   + (BoxSize.X * FMath::Abs(FMath::Sin(AngleY)));
+	}
+	else
+	{
+		NewScale.X = (BoxSize.Z * FMath::Abs(FMath::Cos(AngleX)))
+				   + (BoxSize.Y * FMath::Abs(FMath::Sin(AngleX)));
+		NewScale.Y = (BoxSize.Y * FMath::Abs(FMath::Cos(AngleX)))
+				   + (BoxSize.Z * FMath::Abs(FMath::Sin(AngleX)));
+	}
+	NewScale.X *= PLANE_TO_UNREAL;
+	NewScale.Y *= PLANE_TO_UNREAL;
+
+	// Move the center of the plane to the intersected point. This does not change the plane equation, so
+	// we should not invalidate DB nor recompute the plane effect: only modify the proxy transform.
+	glm::dvec3 const ProjCenter = Plane.projectPointOntoPlane(glm::dvec3(BoxCenter.X, BoxCenter.Y, BoxCenter.Z));
+	FVector const ProjectedCenter(ProjCenter.x, ProjCenter.y, ProjCenter.z);
+
+	ModifyEffectTransformation(
+		[&NewScale, &ProjectedCenter](FTransform& NewTransform, ACesiumGeoreference const* /*GeoRef*/)
+	{
+		NewTransform.SetLocation(ProjectedCenter);
+		NewTransform.SetScale3D(NewScale);
+	},
+		EITwinClippingPrimitiveType::Plane,
+		PlaneIndex,
+		false /*bTriggeredFromITS*/,
+		true /*bOnlyModifyProxy*/);
+
+	if (PlaneIndex == PlanePopulation->GetSelectedInstanceIndex()
+		&& !PlanePopulation->IsBeingInteractivelyTransformed())
+	{
+		ConfigurePlaneProxyForGizmo(PlaneIndex);
+	}
+	return true;
+}
+
+void AITwinClippingTool::FImpl::ConfigurePlaneProxyForGizmo(int32 PlaneIndex)
+{
+	std::optional<FVector> CurrentGizmoPositionOpt;
+	if (PlaneTransformProxy)
+	{
+		CurrentGizmoPositionOpt = PlaneTransformProxy->GetTransform().GetLocation();
+	}
+	PlaneTransformProxy.Reset();
+
+	FVector VisiblePosition;
+	bool bVisibleCenter(false);
+	if (PlaneIndex != INDEX_NONE
+		&& FindVisiblePointOnPlane(PlaneIndex, CurrentGizmoPositionOpt, VisiblePosition, bVisibleCenter))
+	{
+		if (!bVisibleCenter)
+		{
+			// If the center is not visible, we will shift the gizmo position to a visible point.
+			auto const& PlanePopulation = GetClippingEffectPopulation(EITwinClippingPrimitiveType::Plane);
+			ensure(PlanePopulation.IsValid()); // guaranteed by #FindVisiblePointOnPlane
+			FVector const Offset = VisiblePosition - PlanePopulation->GetInstanceTransform(PlaneIndex).GetLocation();
+			PlaneTransformProxy = MakeShared<FPlaneTransformProxy>(
+				PlanePopulation, PlaneIndex, Offset);
+		}
+	}
+	if (PopulationTool.IsValid())
+	{
+		PopulationTool->SetInstanceTransformProxy(PlaneTransformProxy);
+	}
+}
+
+void AITwinClippingTool::FImpl::OnPlaneSelectionChanged(int32 PlaneIndex)
+{
+	// First disable previous plane proxy offset.
+	ConfigurePlaneProxyForGizmo(INDEX_NONE);
+
+	if (PlaneIndex != INDEX_NONE)
+	{
+		// Update the plane proxy position and the proxy offset (if needed).
+		UpdateClippingPlaneTransformFromBoundingBox(PlaneIndex);
+	}
+}
+
+
+void AITwinClippingTool::FImpl::OnCutoutCreationCompleted(bool bTriggeredFromITS)
+{
+	if (ensure(PopulationTool.IsValid() && PopulationTool->HasSelection()))
+	{
+		if (PopulationTool->GetSelectedPopulation()->GetObjectType() == EITwinInstantiatedObjectType::ClippingPlane)
+		{
+			// Finalize the plane proxy and gizmo.
+			OnPlaneSelectionChanged(PopulationTool->GetSelectedInstanceIndex());
+		}
+	}
+}
+
+bool AITwinClippingTool::FImpl::FindVisiblePointOnPlane(int32 PlaneIndex,
+	std::optional<FVector> const& CurrentGizmoPositionOpt,
+	FVector& OutPosition,
+	bool& bOutIsCenter)
+{
+	if (!ensure(PlaneIndex >= 0 && PlaneIndex < NumEffects(EITwinClippingPrimitiveType::Plane)))
+	{
+		return false;
+	}
+	FVector PlaneOrientation = FVector::ZAxisVector;
+	FVector::FReal PlaneW(0.);
+	if (!GetPlaneEquationFromUEInstance(PlaneOrientation, PlaneW, PlaneIndex))
+	{
+		return false;
+	}
+	CesiumGeometry::Plane const Plane(
+		glm::dvec3(PlaneOrientation.X, PlaneOrientation.Y, PlaneOrientation.Z),
+		-PlaneW
+	);
+
+	auto const& PlanePopulation = GetClippingEffectPopulation(EITwinClippingPrimitiveType::Plane);
+	FBox const PlaneBox = PlanePopulation->GetInstanceBoundingBox(PlaneIndex);
+
+	// Get player controller and viewport
+	UWorld const* World = Owner.GetWorld();
+	if (!World)
+		return false;
+	APlayerController const* PC = World->GetFirstPlayerController();
+	if (!PC)
+		return false;
+
+	int32 SizeX = 0, SizeY = 0;
+	PC->GetViewportSize(SizeX, SizeY);
+	if (SizeX <= 0 || SizeY <= 0)
+		return false;
+
+	// Helper lambda: test if a world point is visible in the camera frustum
+	auto IsPointVisible = [&](const FVector& WorldPoint, FIntPoint& Sign2D, FVector2d& ScreenRatio) -> bool
+	{
+		FVector2D ScreenPos;
+		bool bProjected = PC->ProjectWorldLocationToScreen(WorldPoint, ScreenPos, false);
+		if (bProjected)
+		{
+			ScreenRatio.X = ScreenPos.X / SizeX;
+			ScreenRatio.Y = ScreenPos.Y / SizeY;
+			Sign2D.X = (ScreenPos.X < 0 ? -1 : (ScreenPos.X >= SizeX ? 1 : 0));
+			Sign2D.Y = (ScreenPos.Y < 0 ? -1 : (ScreenPos.Y >= SizeY ? 1 : 0));
+		}
+		else
+		{
+			Sign2D = FIntPoint(-1, -1);
+		}
+		return bProjected &&
+			ScreenPos.X >= 0 && ScreenPos.X < SizeX &&
+			ScreenPos.Y >= 0 && ScreenPos.Y < SizeY;
+	};
+
+	// If we had already applied an offset to the plane proxy to make it visible, let's first test if the
+	// current gizmo position is still visible, to avoid moving it too frequently, which is disturbing.
+	FIntPoint CurrentSign2D(0, 0);
+	FVector2d CurrentScreenRatio(0, 0);
+	bool bStillValidPosition = CurrentGizmoPositionOpt
+		&& IsPointVisible(*CurrentGizmoPositionOpt, CurrentSign2D, CurrentScreenRatio);
+	if (bStillValidPosition
+		&& CurrentScreenRatio.GetMin() >= 0.2
+		&& CurrentScreenRatio.GetMax() <= 0.8)
+	{
+		bOutIsCenter = false;
+		OutPosition = *CurrentGizmoPositionOpt;
+		return true;
+	}
+
+	auto SelectFinalPosition = [&](const FVector& InProjectedPos, FVector2d const& InScreenRatio) -> FVector
+	{
+		if (bStillValidPosition)
+		{
+			// If the current gizmo position is still valid, we will only change it if the new projected
+			// position is significantly more centered on the screen than the current position, to avoid
+			// too much movements of the gizmo.
+			const double CurrentDistanceToCenter = FVector2D(CurrentScreenRatio - FVector2d(0.5, 0.5)).Size();
+			const double NewDistanceToCenter = FVector2D(InScreenRatio - FVector2d(0.5, 0.5)).Size();
+			if (NewDistanceToCenter < CurrentDistanceToCenter * 0.7)
+			{
+				return InProjectedPos;
+			}
+			else
+			{
+				bOutIsCenter = false;
+				return *CurrentGizmoPositionOpt;
+			}
+		}
+		else
+		{
+			// If the current gizmo position is not valid, we can directly use the new projected position.
+			return InProjectedPos;
+		}
+	};
+
+	TArray<std::pair<FBox, uint32>> BoxesToTest;
+	BoxesToTest.Reserve(64);
+	BoxesToTest.Add(std::make_pair(PlaneBox, 0));
+	bOutIsCenter = true;
+	while (BoxesToTest.Num() > 0)
+	{
+		auto const BoxAndLevel = BoxesToTest.Pop();
+		FBox const& Box = BoxAndLevel.first;
+		FVector const BoxCenter = Box.GetCenter();
+		glm::dvec3 const Projected = Plane.projectPointOntoPlane(glm::dvec3(BoxCenter.X, BoxCenter.Y, BoxCenter.Z));
+		FVector const ProjectedCenter(Projected.x, Projected.y, Projected.z);
+		FIntPoint SignCenter(0, 0);
+		FVector2d ScreenRatio(0, 0);
+		if (IsPointVisible(ProjectedCenter, SignCenter, ScreenRatio))
+		{
+			// The plane center corresponds to the very first tested point, with level 0.
+			bOutIsCenter = (BoxAndLevel.second == 0);
+			OutPosition = SelectFinalPosition(ProjectedCenter, ScreenRatio);
+			return true;
+		}
+		else
+		{
+			// Before subdividing the bounding box, try to project the center of the screen on the plane.
+			// This will usually work when we are close to the plane.
+			if (BoxAndLevel.second == 0)
+			{
+				auto ProjectedScreenCenter = ProjectPredefinedScreenPositionOnPlane(PlaneIndex, false);
+				if (ProjectedScreenCenter
+					&& PlaneBox.IsInsideOrOn(*ProjectedScreenCenter))
+				{
+					bOutIsCenter = false;
+					OutPosition = *ProjectedScreenCenter;
+					return true;
+				}
+			}
+
+			if (BoxAndLevel.second >= 4)
+			{
+				// We already split the box 4 times (so we are testing boxes that are at most 1/16th of the
+				// original box), we can consider that there is no visible point in this box to avoid too much
+				// iterations.
+				continue;
+			}
+
+			FVector BoxVertices[8];
+			FIntPoint BoxVerticesSign[8];
+			bool bHasVisibleCorner = false;
+			Box.GetVertices(BoxVertices);
+			for (int32 i(0); i<8; ++i)
+			{
+				bool bVisible = IsPointVisible(BoxVertices[i], BoxVerticesSign[i], ScreenRatio);
+				if (bVisible)
+				{
+					bHasVisibleCorner = true;
+					break;
+				}
+			}
+			if (!bHasVisibleCorner)
+			{
+				// If all corners are outside of the screen in the same direction, we can consider that there
+				// is no visible point in this box, to avoid too much iterations when the plane is almost
+				// edge-on.
+				bool bAllSameSign = true;
+				for (int i(1); i < 8; ++i)
+				{
+					if (BoxVerticesSign[i] != BoxVerticesSign[0])
+					{
+						bAllSameSign = false;
+						break;
+					}
+				}
+				if (bAllSameSign)
+					continue;
+			}
+			// Subdivide the box in 8 smaller boxes and test them.
+			FVector const& Min = Box.Min;
+			FVector const& Max = Box.Max;
+			FVector const& Mid = BoxCenter;
+			uint32 const NextLevel = BoxAndLevel.second + 1;
+			BoxesToTest.Add(std::make_pair(
+				FBox(FVector(Min.X, Min.Y, Min.Z), FVector(Mid.X, Mid.Y, Mid.Z)), NextLevel));
+			BoxesToTest.Add(std::make_pair(
+				FBox(FVector(Mid.X, Min.Y, Min.Z), FVector(Max.X, Mid.Y, Mid.Z)), NextLevel));
+			BoxesToTest.Add(std::make_pair(
+				FBox(FVector(Mid.X, Mid.Y, Min.Z), FVector(Max.X, Max.Y, Mid.Z)), NextLevel));
+			BoxesToTest.Add(std::make_pair(
+				FBox(FVector(Min.X, Mid.Y, Min.Z), FVector(Mid.X, Max.Y, Mid.Z)), NextLevel));
+			BoxesToTest.Add(std::make_pair(
+				FBox(FVector(Min.X, Min.Y, Mid.Z), FVector(Mid.X, Mid.Y, Max.Z)), NextLevel));
+			BoxesToTest.Add(std::make_pair(
+				FBox(FVector(Mid.X, Min.Y, Mid.Z), FVector(Max.X, Mid.Y, Max.Z)), NextLevel));
+			BoxesToTest.Add(std::make_pair(
+				FBox(FVector(Mid.X, Mid.Y, Mid.Z), FVector(Max.X, Max.Y, Max.Z)), NextLevel));
+			BoxesToTest.Add(std::make_pair(
+				FBox(FVector(Min.X, Mid.Y, Mid.Z), FVector(Mid.X, Max.Y, Max.Z)), NextLevel));
+		}
+	}
+	return false;
+}
+
 bool AITwinClippingTool::RecenterPlaneProxy(int32 PlaneIndex)
 {
 	// Build a ray starting from the center of the screen, and try to intersect the infinite plane defined by
 	// the cutout.
-	FVector TraceStart, TraceDir;
-	if (!ITwin::GetRayToTraceFromScreenCenter(this, TraceStart, TraceDir))
+	FITwinRayTraceInput TraceInput;
+	if (!FITwinTracingHelper::GetRayToTraceFromScreenCenter(this, TraceInput))
 	{
 		return false;
 	}
-	return Impl->RecenterPlaneProxyAtRayIntersection(PlaneIndex, TraceStart, TraceDir, true);
+	return Impl->RecenterPlaneProxyAtRayIntersection(PlaneIndex, TraceInput, true);
 }
 
 bool AITwinClippingTool::FImpl::RecenterPlaneProxyFromPicking(int32 PlaneIndex)
 {
-	FVector TraceStart, TraceDir;
+	FITwinRayTraceInput TraceInput;
 	FVector2D MousePosition;
 	if (!FITwinTracingHelper::GetRayFromMousePosition(Owner.GetWorld(),
-		MousePosition, TraceStart, TraceDir))
+		MousePosition, TraceInput))
 	{
 		return false;
 	}
-	return RecenterPlaneProxyAtRayIntersection(PlaneIndex, TraceStart, TraceDir, false);
+	return RecenterPlaneProxyAtRayIntersection(PlaneIndex, TraceInput, false);
 }
 
 void AITwinClippingTool::FImpl::InvalidateBoundingBoxOfClippingPlanes(ITwin::ModelLink const& ModelLink)
@@ -2386,6 +2868,8 @@ void AITwinClippingTool::FImpl::InvalidateBoundingBoxOfClippingPlanes(ITwin::Mod
 
 void AITwinClippingTool::FImpl::Tick(float DeltaTime)
 {
+	using namespace ITwinClippingDetails;
+
 	const int32 NumPlanes = NumEffects(EITwinClippingPrimitiveType::Plane);
 	if (NumPlanes <= 0)
 	{
@@ -2397,14 +2881,6 @@ void AITwinClippingTool::FImpl::Tick(float DeltaTime)
 		return;
 	}
 
-	// Build a ray starting from the center of the screen, and try to intersect the infinite plane defined by
-	// each cutout.
-	FVector TraceStart, TraceDir;
-	if (!ITwin::GetRayToTraceFromScreenCenter(&Owner, TraceStart, TraceDir))
-	{
-		return;
-	}
-	using namespace ITwinClippingDetails;
 	auto const ViewInfoOpt = GetCameraViewInfo(Owner.GetWorld());
 
 	if (PlanePopulation->IsBeingInteractivelyTransformed())
@@ -2417,6 +2893,15 @@ void AITwinClippingTool::FImpl::Tick(float DeltaTime)
 		{
 			LastSelectedPlaneIndex = PlanePopulation->GetSelectedInstanceIndex();
 			LastViewInfo = ViewInfoOpt;
+		}
+		if (IsRotationMode()
+			&& ensure(LastSelectedPlaneIndex.value() != INDEX_NONE)
+			&& !PlaneTransformProxy)
+		{
+			// Now that we adapt the scale to the rotation of the plane, let's do it during manual edition
+			// as well, to avoid unexpected jumps when the user stops manipulating the gizmo *and* moves the
+			// camera.
+			UpdateClippingPlaneTransformFromBoundingBox(*LastSelectedPlaneIndex);
 		}
 		return;
 	}
@@ -2440,15 +2925,9 @@ void AITwinClippingTool::FImpl::Tick(float DeltaTime)
 
 	for (int32 PlaneIndex = 0; PlaneIndex < NumPlanes; ++PlaneIndex)
 	{
-		bool const bRecentered = RecenterPlaneProxyAtRayIntersection(PlaneIndex, TraceStart, TraceDir, true);
-
-		if (bRecentered && ViewInfoOpt)
-		{
-			FITwinClippingPlaneInfo const& PlaneInfo = ClippingPlaneInfos[PlaneIndex];
-			ensure(!PlaneInfo.bNeedsUpdateBoundingBox);
-			UpdateClippingPlaneScale(*PlanePopulation, PlaneIndex, *ViewInfoOpt,
-				PlaneInfo.GetInfluenceBoundingBox());
-		}
+		// Do like in iTwin Design Review: size depending on the influence bounding box, and gizmo positioned
+		// at a visible place, if possible.
+		UpdateClippingPlaneTransformFromBoundingBox(PlaneIndex);
 	}
 
 	LastSelectedPlaneIndex = PlanePopulation->GetSelectedInstanceIndex();
@@ -2479,11 +2958,7 @@ void AITwinClippingTool::FImpl::ZoomOnEffect(EITwinClippingPrimitiveType Type, i
 		// The position of the (infinite) planes is not relevant (and changes with the camera view).
 		// So instead of working on the instance, we will use the influenced bounding box.
 		FITwinClippingPlaneInfo& PlaneInfo = ClippingPlaneInfos[PrimitiveIndex];
-		if (PlaneInfo.bNeedsUpdateBoundingBox)
-		{
-			PlaneInfo.UpdateInfluenceBoundingBox(Owner.GetWorld());
-		}
-		FocusBBox = PlaneInfo.GetInfluenceBoundingBox();
+		FocusBBox = PlaneInfo.GetUpToDateInfluenceBoundingBox(Owner.GetWorld());
 		if (!FocusBBox.IsValid)
 		{
 			// If influence has no bounds (case of Google tilesets), we will just zoom on the plane proxy
@@ -2645,27 +3120,6 @@ bool AITwinClippingTool::DoMouseClickPicking(bool& bOutSelectionGizmoNeeded)
 
 	auto const OldSelection = GetSelectedEffect();
 
-	// Handle rotation center picking (for cutout planes).
-	if (Impl->bIsRotationCenterPickingMode)
-	{
-		if (OldSelection && OldSelection->first == EITwinClippingPrimitiveType::Plane)
-		{
-			if (Impl->RecenterPlaneProxyFromPicking(OldSelection->second))
-			{
-				// The plane rotation center is now selected => exit center picking mode in order to activate
-				// the rotation gizmo.
-				Impl->QuitRotationCenterPickingMode();
-				bOutSelectionGizmoNeeded = bRelevantAction = true;
-				return true;
-			}
-		}
-		else
-		{
-			// No plane selected => quit plane center picking mode.
-			Impl->QuitRotationCenterPickingMode();
-		}
-	}
-
 	// Test population then cut-out splines.
 
 	// Note that we can only have one active tool at a time, but we don't want the cutout splines to be
@@ -2712,20 +3166,22 @@ bool AITwinClippingTool::DoMouseClickPicking(bool& bOutSelectionGizmoNeeded)
 		{
 			Impl->ShowOnlyProxiesOfType(NewSelection->first, true);
 		}
-		// If the selected tool is Rotate, and we select a different plane, let's enter rotation center
-		// picking mode again:
+		// Update the offset of the plane gizmo if applicable.
 		if (NewSelection != OldSelection
-			&& NewSelection->first == EITwinClippingPrimitiveType::Plane
-			&& Impl->IsRotationMode())
+			&& NewSelection->first == EITwinClippingPrimitiveType::Plane)
 		{
-			Impl->SetRotationCenterPickingMode(true);
-			bOutSelectionGizmoNeeded = true;
+			Impl->OnPlaneSelectionChanged(NewSelection->second);
 		}
 	}
 	else if (OldSelection)
 	{
 		// End of isolation mode.
 		Impl->SetAllEffectProxiesVisibility(true);
+
+		if (OldSelection->first == EITwinClippingPrimitiveType::Plane)
+		{
+			Impl->OnPlaneSelectionChanged(INDEX_NONE);
+		}
 	}
 
 	// Notify new selection. If nothing is selected, notify it as well (using -1 as index).

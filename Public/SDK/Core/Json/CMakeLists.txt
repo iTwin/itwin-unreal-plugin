@@ -11,8 +11,6 @@ if(SDK_ADDUNITTEST)
 	target_compile_features(JsonTest PRIVATE ${DefaultCXXSTD})	
 	set_target_properties(JsonTest PROPERTIES FOLDER "SDK/Core/Tests")
 
-	#add_test(NAME JsonTest COMMAND JsonTest)
-
 	target_link_libraries(JsonTest PRIVATE 
 							Json
 							Catch2::Catch2WithMain
@@ -33,8 +31,5 @@ if(SDK_ADDUNITTEST)
 	if (MSVC)
 		target_compile_options(JsonTest PRIVATE "/Zc:preprocessor")
 	endif()
-
-	include(CTest)
-	include(Catch)
-	catch_discover_tests(JsonTest)
+	be_add_test (JsonTest)
 endif()

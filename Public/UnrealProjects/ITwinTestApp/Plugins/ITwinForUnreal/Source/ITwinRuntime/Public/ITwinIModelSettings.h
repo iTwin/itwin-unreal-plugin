@@ -155,17 +155,8 @@ public:
 		BlueprintReadOnly,
 		Category = "iTwin")
 	int Synchro4DQueriesBindingsPagination = 50000;
-	
-	/// Use glTF tuning for animation of translucent or transformed Elements
-	UPROPERTY(
-		Config,
-		EditAnywhere,
-		BlueprintReadOnly,
-		Category = "iTwin")
-	bool bSynchro4DUseGltfTunerInsteadOfMeshExtraction = true;
 
-	/// Defines grouping of translucency-needing Elements when using
-	/// bSynchro4DUseGltfTunerInsteadOfMeshExtraction
+	/// Defines grouping of translucency-needing Elements
 	UPROPERTY(
 		Config,
 		EditAnywhere,

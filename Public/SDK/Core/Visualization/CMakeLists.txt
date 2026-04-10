@@ -83,8 +83,6 @@ if(SDK_ADDUNITTEST)
 
 	set_target_properties(VisualizationTest PROPERTIES FOLDER "SDK/Core/Tests")
 
-	#add_test(NAME VisualizationTest COMMAND VisualizationTest)
-
 	if (MSVC AND DEFINED fmt_LIB_DIR ) # quick fix for link error when embedded in Unreal
 		set ( fmt_lib "${fmt_LIB_DIR}fmt.lib" )
 	else ()
@@ -113,8 +111,5 @@ if(SDK_ADDUNITTEST)
 	if (MSVC)
 		target_compile_options(VisualizationTest PRIVATE "/Zc:preprocessor")
 	endif()
-
-	include(CTest)
-	include(Catch)
-	catch_discover_tests(VisualizationTest)
+	be_add_test (VisualizationTest)
 endif()

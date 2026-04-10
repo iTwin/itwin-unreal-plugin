@@ -23,6 +23,7 @@ class FTransformKey;
 class FAnimation3DPath;
 class FAppearanceProfile;
 class FActiveAppearance;
+class FPathAssignment;
 class FSimpleAppearance;
 class FTransformAssignment;
 struct FITwinCoordConversions;
@@ -74,16 +75,14 @@ PTransform const& AddStaticTransformToTimeline(FITwinElementTimeline& ElementTim
 	FTaskDependenciesData const& TaskDeps);
 
 bool GetLast3DPathTransformKeyframeToApply(FTimeRangeInSeconds const& TaskTimes,
-	std::variant<EAnchorPoint, FVector> const& TransformAnchor, std::vector<FTransformKey> const& Keyframes,
-	FITwinCoordConversions const& CoordConv, bool const b3DPathReverseDirection,
-	F3DPathKFData& KeyframeToApply);
+	FPathAssignment const& PathAssignment, std::vector<FTransformKey> const& Keyframes,
+	FITwinCoordConversions const& CoordConv, F3DPathKFData& KeyframeToApply);
 
 /// \return Whether pOnlyGetSingleKeyframe was non-null AND data for a keyframe was indeed extracted into it
 bool Add3DPathTransformToTimeline(
 	FITwinElementTimeline* ElementTimeline, FTimeRangeInSeconds const& TaskTimes,
-	std::variant<EAnchorPoint, FVector> const& TransformAnchor,
-	std::vector<FTransformKey> const& Keyframes, FITwinCoordConversions const& CoordConv,
-	bool const b3DPathReverseDirection, FTaskDependenciesData const& TaskDeps,
+	FPathAssignment const& PathAssignment, std::vector<FTransformKey> const& Keyframes,
+	FITwinCoordConversions const& CoordConv, FTaskDependenciesData const& TaskDeps,
 	F3DPathKFData* pOnlyGetSingleKeyframe = nullptr);
 
 void HandleFallbackTransfoOutsideTaskIfNeeded(FITwinElementTimeline& ElementTimeline,

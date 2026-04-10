@@ -51,9 +51,10 @@ MODULE_EXPORT namespace AdvViz::SDK
 
 		/// Load the data from the server
 		void LoadDataFromServer(std::string const& decorationId,
+			TextureUsageMap& outTextureUsageMap,
 			std::set<std::string> const& specificModels = {});
 		void AsyncLoadDataFromServer(std::string const& decorationId,
-			std::function<void(expected<void, std::string> const&)> onFinishCallback,
+			std::function<void(expected<void, std::string> const&, TextureUsageMap const&)> onFinishCallback,
 			std::set<std::string> const& specificModels = {});
 
 		/// Save the data on the server
@@ -64,10 +65,6 @@ MODULE_EXPORT namespace AdvViz::SDK
 
 		/// Get map iModelID -> TextureSet.
 		PerIModelTextureSet const& GetDecorationTexturesByIModel() const;
-
-		TextureUsageMap const& GetTextureUsageMap() const;
-		TextureUsage GetTextureUsage(TextureKey const& textureKey) const;
-		void AddTextureUsage(TextureKey const& textureKey, EChannelType channel);
 
 		/// Returns whether the given iModel was totally loaded from the decoration service (including
 		/// textures), and thus can be used to customize the model.
@@ -119,7 +116,9 @@ MODULE_EXPORT namespace AdvViz::SDK
 
 		/// Load a collection of materials, and assign it the given iModel ID.
 		/// \return The number of loaded materials.
-		size_t LoadMaterialCollection(std::filesystem::path const& materialJsonPath, std::string const& iModelID,
+		size_t LoadMaterialCollection(std::filesystem::path const& materialJsonPath,
+			std::string const& iModelID,
+			TextureUsageMap& outTextureUsageMap,
 			std::unordered_map<uint64_t, std::string>& matIDToDisplayName);
 
 		void AppendMaterialCollectionNames(std::unordered_map<uint64_t, std::string> const& matIDToDisplayName);

@@ -88,6 +88,27 @@ bool AITwinInteractiveTool::MakeActiveTool(IActiveStateRecord const& State)
 	return this->IsEnabled();
 }
 
+
+AITwinInteractiveTool::FToolDisabler::FToolDisabler(AITwinInteractiveTool* InTool)
+	: Tool(InTool)
+	, bEnabledBackup(InTool ? InTool->IsEnabled() : false)
+{
+	if (ensure(Tool.IsValid()))
+		Tool->SetEnabled(false);
+}
+
+AITwinInteractiveTool::FToolDisabler::~FToolDisabler()
+{
+	if (Tool.IsValid())
+		Tool->SetEnabled(bEnabledBackup);
+}
+
+TSharedPtr<AITwinInteractiveTool::FToolDisabler> AITwinInteractiveTool::MakeToolDisabler()
+{
+	return MakeShared<FToolDisabler>(this);
+}
+
+
 bool AITwinInteractiveTool::StartInteractiveCreation()
 {
 	return StartInteractiveCreationImpl();

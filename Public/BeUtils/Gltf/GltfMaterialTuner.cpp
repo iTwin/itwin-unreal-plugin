@@ -732,20 +732,23 @@ namespace BeUtils
 		AdvViz::SDK::ITwinChannelMap const& colorTex,
 		AdvViz::SDK::ITwinChannelMap const& alphaTex)
 	{
-		return colorTex.texture + "-A-" + alphaTex.texture;
+		return GltfMaterialHelper::CESIUM_FORMATTED_TEX_PREFIX
+			+ colorTex.texture + "-A-" + alphaTex.texture;
 	}
 
 	inline std::string GetMetallicRoughnessMergedTexId(
 		AdvViz::SDK::ITwinChannelMap const& metallicTex,
 		AdvViz::SDK::ITwinChannelMap const& roughnessTex)
 	{
-		return metallicTex.texture + "-R-" + roughnessTex.texture;
+		return GltfMaterialHelper::CESIUM_FORMATTED_TEX_PREFIX
+			+ metallicTex.texture + "-R-" + roughnessTex.texture;
 	}
 
 	inline std::string GetAOFormattedTexId(
 		AdvViz::SDK::ITwinChannelMap const& occlusionTex)
 	{
-		return occlusionTex.texture + "-AO";
+		return  GltfMaterialHelper::CESIUM_FORMATTED_TEX_PREFIX
+			+ occlusionTex.texture + "-AO";
 	}
 
 
@@ -1233,7 +1236,6 @@ namespace BeUtils
 			}
 			texAccess = materialHelper_->StoreCesiumImage(mergedTexKey,
 				std::move(mergeResult->cesiumImage),
-				AdvViz::SDK::TextureUsageMap{},
 				lock,
 				needTranslucentMat,
 				mergeResult->filePath);
@@ -1325,11 +1327,8 @@ namespace BeUtils
 					CesiumGltf::Image cesiumImg;
 					cesiumImg.pAsset = *imgResult;
 					AdvViz::SDK::TextureKey const texKey = { chanTex.texture, chanTex.eSource };
-					AdvViz::SDK::TextureUsageMap usageMap;
-					usageMap[texKey].AddChannel(channelJustEdited);
 					materialHelper_->StoreCesiumImage({ chanTex.texture, chanTex.eSource },
 						std::move(cesiumImg),
-						usageMap,
 						lock);
 				}
 				else

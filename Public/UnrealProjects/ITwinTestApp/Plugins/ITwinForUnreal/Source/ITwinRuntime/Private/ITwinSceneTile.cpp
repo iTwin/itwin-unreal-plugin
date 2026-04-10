@@ -12,9 +12,9 @@
 #include <Cesium3DTilesSelection/Tile.h>
 #include <ITwinDynamicShadingProperty.h>
 #include <ITwinDynamicShadingProperty.inl>
-#include <ITwinExtractedMeshComponent.h>
 #include <Material/ITwinMaterialParameters.h>
 
+#include <Components/StaticMeshComponent.h>
 #include <Engine/StaticMesh.h> // FStaticMaterial
 #include <Materials/MaterialInstanceDynamic.h>
 
@@ -124,14 +124,6 @@ void FITwinExtractedElement::Unload()
 //---------------------------------------------------------------------------------------
 // struct FITwinExtractedEntity
 //---------------------------------------------------------------------------------------
-
-void FITwinExtractedEntity::SetHidden(bool bHidden)
-{
-	if (ExtractedMeshComponent.IsValid())
-	{
-		ExtractedMeshComponent->SetFullyHidden(bHidden);
-	}
-}
 
 namespace ITwin
 {
@@ -697,22 +689,6 @@ public:
 		SceneTile.TResetSelection(*this, TextureNeeds);
 	}
 
-	bool HasVisibleExtractedItem(FITwinElementFeaturesInTile const& FeaturesToSelect) const
-	{
-		if (ITwinTile::NOT_EXTR != FeaturesToSelect.ExtractedRank)
-		{
-			FITwinExtractedElement& Extracted = SceneTile.ExtractedElement(FeaturesToSelect.ExtractedRank);
-			for (auto&& Entry : Extracted.Entities)
-			{
-				if (Entry.ExtractedMeshComponent.IsValid() && Entry.ExtractedMeshComponent->IsVisible())
-				{
-					return true;
-				}
-			}
-		}
-		return false;
-	}
-
 private:
 	FITwinSceneTile& SceneTile;
 };
@@ -761,12 +737,6 @@ public:
 	void ResetSelection(FTextureNeeds& TextureNeeds) const
 	{
 		SceneTile.TResetSelection(*this, TextureNeeds);
-	}
-
-	bool HasVisibleExtractedItem(FITwinMaterialFeaturesInTile const& /*FeaturesToSelect*/) const
-	{
-		// TODO_JDE material selection vs extraction...
-		return false;
 	}
 
 private:
@@ -886,13 +856,19 @@ bool FITwinSceneTile::TPickSelectable(SelectableHelper const& PickHelper, Select
 			if (HighlightsAndOpacities)
 			{
 				auto&& S4D_BGRA = HighlightsAndOpacities->GetPixel(Feat_0);
-				// Ignore masked Elements unless they are masked because they were extracted, and at least one
-				// of the extracted mesh parts is itself visible
+				// Ignore masked Elements
 				if (S4D_BGRA[3] == 0)
 				{
-					bool bHasVisibleExtractedElem = PickHelper.HasVisibleExtractedItem(*FeaturesToSelect);
-					if (!bHasVisibleExtractedElem)
-						return false;
+					return false;
+				}
+			}
+			if (CuttingPlanes && Opts.HitWorldPosition())
+			{
+				auto&& S4D_Clipping = CuttingPlanes->GetPixel(Feat_0);
+				if (Opts.HitWorldPosition()->Dot(FVector(S4D_Clipping[0], S4D_Clipping[1], S4D_Clipping[2]))
+					> S4D_Clipping[3])
+				{
+					return false;
 				}
 			}
 		}
@@ -1038,8 +1014,7 @@ void FITwinSceneTile::ShowElements(std::unordered_set<ITwinElementID> const& InE
 		}
 		if (FeaturesToUnHide && !FeaturesToUnHide->Features.empty())
 		{
-			SelectingAndHiding->SetPixelsAlpha(FeaturesToUnHide->Features, 255);
-			TextureNeeds.bWasChanged = true;
+			CreateAndSetSelectingAndHiding(*FeaturesToUnHide, TextureNeeds, ITwin::COLOR_UNSELECT_ELEMENT_BGRA, false);
 		}
 	}
 }
@@ -1177,8 +1152,7 @@ void FITwinSceneTile::ShowCategoriesPerModel(
 		}
 		if (FeaturesToUnHide && !FeaturesToUnHide->Features.empty())
 		{
-			SelectingAndHiding->SetPixelsAlpha(FeaturesToUnHide->Features, 255);
-			TextureNeeds.bWasChanged = true;
+			CreateAndSetSelectingAndHiding(*FeaturesToUnHide, TextureNeeds, ITwin::COLOR_UNSELECT_ELEMENT_BGRA, false);
 		}
 	}
 }

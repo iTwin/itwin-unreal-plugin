@@ -52,6 +52,7 @@
 #	include "SDK/Core/Visualization/MaterialPersistence.h"
 #	include "SDK/Core/Visualization/Timeline.h"
 #	include "SDK/Core/ITwinAPI/ITwinAuthManager.h"
+#	include "SDK/Core/Tools/DelayedCall.h"
 #	include <BeHeaders/Util/CleanUpGuard.h>
 #	include <BeHeaders/Compil/EnumSwitchCoverage.h>
 #   include "SDK/Core/Visualization/SplinesManager.h"
@@ -426,6 +427,7 @@ public:
 	void DeleteAllCustomMaterials();
 	size_t LoadSplinesLinkedToModel(ITwin::ModelLink const& Key, FITwinTilesetAccess& TilesetAccess);
 	void LoadPopulationsInGame(bool bHasLoadedPopulations);
+	void CreateOrRefreshPopulationInGame(FString const& assetPath, AdvViz::SDK::RefID const& groupId);
 
 private:
 	void AsyncLoadScene();
@@ -1213,6 +1215,66 @@ void AITwinDecorationHelper::FImpl::CreateKeyframeAnimPopulation()
 	}
 }
 
+void AITwinDecorationHelper::FImpl::CreateOrRefreshPopulationInGame(
+	FString const& assetPath,
+	AdvViz::SDK::RefID const& groupId)
+{
+	auto& instancesManager(DecorationIO->instancesManager_);
+	if (!instancesManager)
+		return;
+
+	AITwinPopulation* population = Owner.GetOrCreatePopulation(assetPath, groupId);
+	if (!population)
+	{
+		return;
+	}
+
+	auto gpPtr = instancesManager->GetInstancesGroup(groupId);
+	if (gpPtr)
+	{
+		auto gp = gpPtr->GetRAutoLock();
+		if (gp->GetType() == "animKeyframe")
+		{
+			auto animationKeyframes2 = DecorationIO->animationKeyframesPtr->GetRAutoLock();
+			auto keyfAnim = animationKeyframes2->find(AdvViz::SDK::IAnimationKeyframe::Id(gp->GetName()));
+			if (keyfAnim != animationKeyframes2->end())
+			{
+				std::shared_ptr<FITwinPopulationWithPathExt> animExt = std::make_shared<FITwinPopulationWithPathExt>();
+				animExt->population_ = population;
+				population->AddExtension(animExt);
+			}
+			else
+			{
+				BE_LOGW("keyframeAnim", "animation keyframe: " << gp->GetName() << " not found");
+			}
+		}
+	}
+
+	auto& pathAnimator(DecorationIO->pathAnimator);
+	if (pathAnimator)
+	{
+		const AdvViz::SDK::SharedInstVect& instances =
+			instancesManager->GetInstancesByObjectRef(ITwin::ConvertToStdString(assetPath), groupId);
+		for (size_t i = 0; i < instances.size(); ++i)
+		{
+			AdvViz::SDK::IInstancePtr instPtr = instances[i];
+			auto inst = instPtr->GetAutoLock();
+			if (inst->GetAnimPathId())
+			{
+				auto AnimPathInfoPtr = pathAnimator->GetAnimationPathInfo(inst->GetAnimPathId().value());
+				if (!AnimPathInfoPtr)
+					continue;
+				auto AnimPathInfo = AnimPathInfoPtr->GetAutoLock();
+				std::shared_ptr<InstanceWithSplinePathExt> animPathExt = std::make_shared<InstanceWithSplinePathExt>(AnimPathInfoPtr, population, i);
+				inst->AddExtension(animPathExt);
+				AnimPathInfo->AddExtension(animPathExt);
+			}
+		}
+	}
+
+	population->UpdateInstancesFromAVizToUE();
+}
+
 
 void AITwinDecorationHelper::FImpl::LoadPopulationsInGame(bool bHasLoadedPopulations)
 {
@@ -1236,57 +1298,7 @@ void AITwinDecorationHelper::FImpl::LoadPopulationsInGame(bool bHasLoadedPopulat
 	auto const objReferences = instancesManager->GetObjectReferences();
 	for (const auto& objRef : objReferences)
 	{
-		AITwinPopulation* population(nullptr);
-		FString const AssetPath(objRef.first.c_str());
-		// Clipping (=cutout) populations are pre-loaded, so we should ensure we use the pre-loaded versions
-		// instead of recreating other populations here:
-		if (AssetPath.Contains(TEXT("Clipping/Clipping")))
-			population = Owner.GetOrCreatePopulation(AssetPath, objRef.second);
-		else
-			population = Owner.CreatePopulation(AssetPath, objRef.second);
-		if (population)
-		{
-			auto gpPtr = instancesManager->GetInstancesGroup(objRef.second);
-			if (gpPtr)
-			{
-				auto gp = gpPtr->GetRAutoLock();
-				if (gp->GetType() == "animKeyframe")
-				{
-					auto animationKeyframes2 = DecorationIO->animationKeyframesPtr->GetRAutoLock();
-					auto keyfAnim = animationKeyframes2->find(IAnimationKeyframe::Id(gp->GetName()));
-					if (keyfAnim != animationKeyframes2->end()) {
-						std::shared_ptr<FITwinPopulationWithPathExt> animExt = std::make_shared<FITwinPopulationWithPathExt>();
-						animExt->population_ = population;
-						population->AddExtension(animExt);
-					}
-					else {
-						BE_LOGW("keyframeAnim", "animation keyframe: " << gp->GetName() << " not found");
-					}
-				}
-			}
-			population->UpdateInstancesFromAVizToUE();
-		}
-
-		auto& pathAnimator(DecorationIO->pathAnimator);
-		if (pathAnimator)
-		{
-			const AdvViz::SDK::SharedInstVect& instances = instancesManager->GetInstancesByObjectRef(objRef.first.c_str(), objRef.second);
-			for (size_t i = 0; i < instances.size(); ++i)
-			{
-				AdvViz::SDK::IInstancePtr instPtr = instances[i];
-				auto inst = instPtr->GetAutoLock();
-				if (inst->GetAnimPathId())
-				{
-					auto AnimPathInfoPtr = pathAnimator->GetAnimationPathInfo(inst->GetAnimPathId().value());
-					if (!AnimPathInfoPtr)
-						continue;
-					auto AnimPathInfo = AnimPathInfoPtr->GetAutoLock();
-					std::shared_ptr<InstanceWithSplinePathExt> animPathExt = std::make_shared<InstanceWithSplinePathExt>(AnimPathInfoPtr, population, i);
-					inst->AddExtension(animPathExt);
-					AnimPathInfo->AddExtension(animPathExt);
-				}
-			}
-		}
+		CreateOrRefreshPopulationInGame(FString(objRef.first.c_str()), objRef.second);
 	}
 
 	bPopulationEnabled = true;
@@ -1744,6 +1756,13 @@ bool AITwinDecorationHelper::MountPak(const std::string& file, const std::string
 	return true;
 }
 
+bool AITwinDecorationHelper::IsComponentDownloadPending(const FString& componentId) const
+{
+	if (!iTwinContentManager)
+		return false;
+	return !iTwinContentManager->ShouldDownloadComponent(componentId).IsEmpty();
+}
+
 AITwinPopulation* AITwinDecorationHelper::CreatePopulation(FString assetPath, const AdvViz::SDK::RefID& groupId) const
 {
 	AdvViz::SDK::IInstancesGroupPtr gpPtr =
@@ -1759,7 +1778,40 @@ AITwinPopulation* AITwinDecorationHelper::CreatePopulation(FString assetPath, co
 		FString componentId = iTwinContentManager->ShouldDownloadComponent(assetPath);
 		if (!componentId.IsEmpty())
 		{
-			iTwinContentManager->DownloadedComponent(componentId);
+			if (!iTwinContentManager->DownloadedComponent(componentId))
+			{
+				BE_LOGE("ContentHelper", "Failed to request component download: " << TCHAR_TO_UTF8(*componentId));
+				return nullptr;
+			}
+
+			// Population creation must wait until the corresponding component is mounted.
+			TWeakObjectPtr<AITwinDecorationHelper> weakOwner(const_cast<AITwinDecorationHelper*>(this));
+			std::string const delayedCallId =
+				"RetryPopulation_"
+				+ std::string(TCHAR_TO_UTF8(*componentId))
+				+ "_"
+				+ std::to_string(groupId.ID());
+
+			AdvViz::SDK::UniqueDelayedCall(delayedCallId,
+				[weakOwner, assetPath, groupId]() -> AdvViz::SDK::DelayedCall::EReturnedValue
+				{
+					if (!weakOwner.IsValid() || !weakOwner->iTwinContentManager)
+					{
+						return AdvViz::SDK::DelayedCall::EReturnedValue::Done;
+					}
+
+					if (!weakOwner->iTwinContentManager->ShouldDownloadComponent(assetPath).IsEmpty())
+					{
+						return AdvViz::SDK::DelayedCall::EReturnedValue::Repeat;
+					}
+
+					weakOwner->Impl->CreateOrRefreshPopulationInGame(assetPath, groupId);
+
+					return AdvViz::SDK::DelayedCall::EReturnedValue::Done;
+				},
+				0.25f);
+
+			return nullptr;
 		}
 		realAssetPath = iTwinContentManager->SanitizePath(assetPath);
 		iTwinContentManager->DownloadFromAssetPath(realAssetPath);

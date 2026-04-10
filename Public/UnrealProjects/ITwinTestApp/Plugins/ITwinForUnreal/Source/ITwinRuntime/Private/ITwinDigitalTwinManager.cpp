@@ -513,7 +513,7 @@ void AITwinDigitalTwinManager::LoadRealityData(FITwinRealityData3DInfo Info, EIT
 	else
 	{
 		// No need to repeat the same request: directly fills the reality data information:
-		RealityData->OnRealityData3DInfoRetrieved(/*bSuccess*/true, Info);
+		RealityData->SetRealityData3DInfo(Info);
 	}
 }
 

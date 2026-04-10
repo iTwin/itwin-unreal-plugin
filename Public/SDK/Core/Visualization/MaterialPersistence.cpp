@@ -44,10 +44,12 @@ namespace AdvViz::SDK
 		std::shared_ptr<Http> const& GetHttp() const { return http_; }
 		void SetHttp(std::shared_ptr<Http> const& http) { http_ = http; }
 
-		void LoadDataFromServer(std::string const& decorationId, std::set<std::string> const& specificModels = {});
+		void LoadDataFromServer(std::string const& decorationId,
+			TextureUsageMap& outTextureUsageMap,
+			std::set<std::string> const& specificModels = {});
 		void AsyncLoadDataFromServer(std::string const& decorationId,
-			std::function<void(expected<void, std::string> const&)> const& callback,
-			std::set<std::string> const& specificModels /*= {}*/);
+			std::function<void(expected<void, std::string> const&, TextureUsageMap const&)> const& callback,
+			std::set<std::string> const& specificModels = {});
 
 		bool HasLoadedModel(std::string const& iModelId) const;
 		void SetLoadedModel(std::string const& iModelId, bool bLoaded);
@@ -90,16 +92,11 @@ namespace AdvViz::SDK
 			auto thdata = thdata_.GetAutoLock();
 			return thdata->perIModelTextures_;
 		}
-		TextureUsageMap const& GetTextureUsageMap() const { 
-			//TODO: check thread safety
-			auto thdata = thdata_.GetAutoLock();
-			return thdata->textureUsageMap_;
-		}
-		TextureUsage GetTextureUsage(TextureKey const& textureKey) const;
-		void AddTextureUsage(TextureKey const& textureKey, EChannelType channel);
 
 		void SetLocalMaterialDirectory(std::filesystem::path const& materialDirectory);
-		size_t LoadMaterialCollection(std::filesystem::path const& materialJsonPath, std::string const& iModelID,
+		size_t LoadMaterialCollection(std::filesystem::path const& materialJsonPath,
+			std::string const& iModelID,
+			TextureUsageMap& outTextureUsageMap,
 			std::unordered_map<uint64_t, std::string>& matIDToDisplayName);
 		void AppendMaterialCollectionNames(std::unordered_map<uint64_t, std::string> const& matIDToDisplayName);
 
@@ -181,7 +178,6 @@ namespace AdvViz::SDK
 			IModelMaterialMap data_;
 			std::unordered_map<std::string, std::string> localToDecoTexId_;
 			PerIModelTextureSet perIModelTextures_;
-			TextureUsageMap textureUsageMap_;
 			std::unordered_set<std::string> loadedIModelIds_; // fully loaded model IDs.
 			std::set<std::string> iModelsForMaterialCollection_;
 			std::unordered_map<uint64_t, std::string> matIDToDisplayName_;
@@ -399,6 +395,7 @@ namespace AdvViz::SDK
 	}
 
 	void MaterialPersistenceManager::Impl::LoadDataFromServer(std::string const& decorationId,
+		TextureUsageMap& outTextureUsageMap,
 		std::set<std::string> const& specificModels /*= {}*/)
 	{
 		if (decorationId.empty())
@@ -421,17 +418,19 @@ namespace AdvViz::SDK
 
 		// Use a local map for loading, and replace it at the end.
 		IModelMaterialMap dataIO;
-
+		TextureUsageMap textureUsageMap;
 
 		auto ret = HttpGetWithLink_ByBatch<SJsonMaterialWithId>(GetHttp(),
 			"decorations/" + decorationId + "/materials",
 			{} /* extra headers*/,
-			[this, &dataIO](std::vector<SJsonMaterialWithId> const& rows) -> expected<void, std::string>
+			[this, &dataIO, &textureUsageMap](std::vector<SJsonMaterialWithId> const& rows) -> expected<void, std::string>
 		{
 			auto thdata = thdata_.GetAutoLock();
-			ParseJSONMaterials(rows, dataIO, thdata->perIModelTextures_, thdata->textureUsageMap_);
+			ParseJSONMaterials(rows, dataIO, thdata->perIModelTextures_, textureUsageMap);
 			return {};
 		});
+
+		outTextureUsageMap.swap(textureUsageMap);
 
 		if (!ret)
 		{
@@ -471,13 +470,13 @@ namespace AdvViz::SDK
 	}
 
 	void MaterialPersistenceManager::Impl::AsyncLoadDataFromServer(std::string const& decorationId,
-		std::function<void(expected<void,std::string> const&)> const& onFinishCallback,
+		std::function<void(expected<void, std::string> const&, TextureUsageMap const&)> const& onFinishCallback,
 		std::set<std::string> const& specificModels /*= {}*/)
 	{
 		if (decorationId.empty())
 		{
 			BE_ISSUE("decoration ID missing to load material definitions");
-			onFinishCallback(make_unexpected("decoration ID missing to load material definitions"));
+			onFinishCallback(make_unexpected("decoration ID missing to load material definitions"), {});
 			return;
 		}
 
@@ -490,7 +489,7 @@ namespace AdvViz::SDK
 		if (!GetHttp())
 		{
 			BE_ISSUE("No http support!");
-			onFinishCallback(make_unexpected("No http support!"));
+			onFinishCallback(make_unexpected("No http support!"), {});
 			return;
 		}
 
@@ -499,22 +498,23 @@ namespace AdvViz::SDK
 		std::shared_ptr< MaterialPersistenceManager::Impl> SThis = shared_from_this();
 		std::shared_ptr<std::set<std::string>> SSpecificModels = std::make_shared<std::set<std::string>>(specificModels);
 
+		std::shared_ptr<TextureUsageMap> textureUsageMapPtr = std::make_shared<TextureUsageMap>();
 		AsyncHttpGetWithLink_ByBatch<SJsonMaterialWithId>(GetHttp(),
 			"decorations/" + decorationId + "/materials",
 			{} /* extra headers*/,
-			[SThis, dataIOPtr, decorationId](std::vector<SJsonMaterialWithId> const& rows) -> expected<void, std::string>
+			[SThis, dataIOPtr, decorationId, textureUsageMapPtr](std::vector<SJsonMaterialWithId> const& rows) -> expected<void, std::string>
 			{
 				auto thdata = SThis->thdata_.GetAutoLock();
 				auto dataIO = dataIOPtr->GetAutoLock();
-				SThis->ParseJSONMaterials(rows, dataIO, thdata->perIModelTextures_, thdata->textureUsageMap_);
+				SThis->ParseJSONMaterials(rows, dataIO, thdata->perIModelTextures_, *textureUsageMapPtr);
 				return {};
 			},
-			[SThis, dataIOPtr, SSpecificModels, decorationId, onFinishCallback](expected<void, std::string> const& exp)
+			[SThis, dataIOPtr, SSpecificModels, decorationId, onFinishCallback, textureUsageMapPtr](expected<void, std::string> const& exp)
 			{
 				if (!exp)
 				{
 					BE_LOGW("ITwinDecoration", "Load material definitions failed. " << exp.error());
-					onFinishCallback(exp);
+					onFinishCallback(exp, {});
 					return;
 				}
 				auto dataIO = dataIOPtr->GetAutoLock();
@@ -550,7 +550,7 @@ namespace AdvViz::SDK
 					}
 				}
 
-				onFinishCallback(exp);
+				onFinishCallback(exp, *textureUsageMapPtr);
 			}
 			);
 
@@ -1205,23 +1205,6 @@ namespace AdvViz::SDK
 		}
 	}
 
-	TextureUsage MaterialPersistenceManager::Impl::GetTextureUsage(TextureKey const& textureKey) const
-	{
-		auto thdata = thdata_.GetRAutoLock();
-		auto const& textureUsageMap_ = thdata->textureUsageMap_;
-		return FindTextureUsage(textureUsageMap_, textureKey);
-	}
-
-	void MaterialPersistenceManager::Impl::AddTextureUsage(TextureKey const& textureKey, EChannelType channel)
-	{
-		if (!textureKey.id.empty() && textureKey.id != NONE_TEXTURE)
-		{
-			auto thdata = thdata_.GetAutoLock();
-			auto& textureUsageMap_ = thdata->textureUsageMap_;
-			textureUsageMap_[textureKey].AddChannel(channel);
-		}
-	}
-
 	void MaterialPersistenceManager::Impl::SetLocalMaterialDirectory(std::filesystem::path const& materialDirectory)
 	{
 		materialDirectory_ = materialDirectory;
@@ -1237,13 +1220,14 @@ namespace AdvViz::SDK
 	}
 
 	size_t MaterialPersistenceManager::Impl::LoadMaterialCollection(
-		std::filesystem::path const& materialJsonPath, std::string const& iModelID,
+		std::filesystem::path const& materialJsonPath,
+		std::string const& iModelID,
+		TextureUsageMap& outTextureUsageMap,
 		std::unordered_map<uint64_t, std::string>& outMatIDToDisplayName)
 	{
 		auto thdata = thdata_.GetAutoLock();
 		auto& iModelsForMaterialCollection_ = thdata->iModelsForMaterialCollection_;
 		auto& matIDToDisplayName_ = thdata->matIDToDisplayName_;
-		auto& textureUsageMap_ = thdata->textureUsageMap_;
 		auto& perIModelTextures_ = thdata->perIModelTextures_;
 		auto& data_ = thdata->data_;
 
@@ -1264,7 +1248,7 @@ namespace AdvViz::SDK
 			IModelMaterialMap dataIO;
 
 			PerIModelTextureSet perIModelTextures;
-			ParseJSONMaterials(jsonMaterials.materials, dataIO, perIModelTextures, textureUsageMap_);
+			ParseJSONMaterials(jsonMaterials.materials, dataIO, perIModelTextures, outTextureUsageMap);
 
 			// Append loaded definitions, enforcing their iModel ID from given one.
 			if (!dataIO.empty())
@@ -1686,14 +1670,15 @@ namespace AdvViz::SDK
 	}
 
 	void MaterialPersistenceManager::LoadDataFromServer(std::string const& decorationId,
+		TextureUsageMap& outTextureUsageMap,
 		std::set<std::string> const& specificModels /*= {}*/)
 	{
-		GetImpl().LoadDataFromServer(decorationId, specificModels);
+		GetImpl().LoadDataFromServer(decorationId, outTextureUsageMap, specificModels);
 	}
 
 	void MaterialPersistenceManager::AsyncLoadDataFromServer(
 		std::string const& decorationId,
-		std::function<void(expected<void, std::string> const&)> callback,
+		std::function<void(expected<void, std::string> const&, TextureUsageMap const&)> callback,
 		std::set<std::string> const& specificModels)
 	{
 		GetImpl().AsyncLoadDataFromServer(decorationId, callback, specificModels);
@@ -1709,10 +1694,12 @@ namespace AdvViz::SDK
 		GetImpl().SetLocalMaterialDirectory(materialDirectory);
 	}
 
-	size_t MaterialPersistenceManager::LoadMaterialCollection(std::filesystem::path const& materialJsonPath, std::string const& iModelID,
+	size_t MaterialPersistenceManager::LoadMaterialCollection(std::filesystem::path const& materialJsonPath,
+		std::string const& iModelID,
+		TextureUsageMap& outTextureUsageMap,
 		std::unordered_map<uint64_t, std::string>& matIDToDisplayName)
 	{
-		return GetImpl().LoadMaterialCollection(materialJsonPath, iModelID, matIDToDisplayName);
+		return GetImpl().LoadMaterialCollection(materialJsonPath, iModelID, outTextureUsageMap, matIDToDisplayName);
 	}
 
 	void MaterialPersistenceManager::AppendMaterialCollectionNames(
@@ -1729,21 +1716,6 @@ namespace AdvViz::SDK
 	PerIModelTextureSet const& MaterialPersistenceManager::GetDecorationTexturesByIModel() const
 	{
 		return GetImpl().GetDecorationTexturesByIModel();
-	}
-
-	TextureUsageMap const& MaterialPersistenceManager::GetTextureUsageMap() const
-	{
-		return GetImpl().GetTextureUsageMap();
-	}
-
-	TextureUsage MaterialPersistenceManager::GetTextureUsage(TextureKey const& textureKey) const
-	{
-		return GetImpl().GetTextureUsage(textureKey);
-	}
-
-	void MaterialPersistenceManager::AddTextureUsage(TextureKey const& textureKey, EChannelType channel)
-	{
-		GetImpl().AddTextureUsage(textureKey, channel);
 	}
 
 	bool MaterialPersistenceManager::HasMaterialDefinition(std::string const& iModelId, uint64_t materialId) const

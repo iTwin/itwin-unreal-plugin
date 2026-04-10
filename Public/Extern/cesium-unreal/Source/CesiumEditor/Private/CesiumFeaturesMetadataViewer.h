@@ -5,8 +5,10 @@
 #include "CesiumFeatureIdSet.h"
 #include "CesiumMetadataEncodingDetails.h"
 #include "CesiumMetadataPropertyDetails.h"
+#include "CesiumMetadataValue.h"
 #include "Containers/Array.h"
 #include "Containers/Map.h"
+#include "MetadataInterfaceCommon.h"
 #include "Templates/SharedPointer.h"
 #include "Templates/UniquePtr.h"
 #include "UObject/WeakObjectPtr.h"
@@ -16,10 +18,11 @@
 #include <optional>
 
 class SScrollBox;
-
 class ACesium3DTileset;
 class UCesiumFeaturesMetadataComponent;
 struct FCesiumModelMetadata;
+enum class ECesiumMetadataStatisticSemantic : uint8;
+enum class ComponentSearchResult;
 
 class CesiumFeaturesMetadataViewer : public SWindow {
   SLATE_BEGIN_ARGS(CesiumFeaturesMetadataViewer) {}
@@ -40,46 +43,35 @@ public:
 
 private:
   /**
-   * Encoding details for a `CesiumGltf::PropertyTableProperty` instance.
+   * A view of an instance of Cesium3DTileset::PropertyStatistics.
    */
-  struct PropertyInstanceEncodingDetails {
+  struct PropertyStatisticsView {
     /**
-     * The possible conversion methods for this property. Contains a subset of
-     * the values in ECesiumEncodedMetadataConversion.
+     * The ID of the class to which the property belongs.
      */
-    TArray<TSharedRef<ECesiumEncodedMetadataConversion>> conversionMethods;
+    TSharedRef<FString> pClassId;
     /**
-     * The combo box widget for selecting the conversion method.
+     * The ID of the property to which these statistics apply.
      */
-    TSharedPtr<SComboBox<TSharedRef<ECesiumEncodedMetadataConversion>>>
-        pConversionCombo;
+    TSharedRef<FString> pId;
     /**
-     * The option to set as the selected conversion, if previously specified
-     * (e.g., by details queried from UCesiumFeatureMetadataComponent).
+     * The statistics of the property.
      */
-    TSharedPtr<ECesiumEncodedMetadataConversion> pConversionSelection;
+    TArray<TSharedRef<StatisticView>> statistics;
+  };
+
+  /**
+   * A view of an instance of Cesium3DTileset::ClassStatistics.
+   */
+  struct ClassStatisticsView {
     /**
-     * The combo box widget for selecting the encoded type.
+     * The ID of the class to which these statistics apply.
      */
-    TSharedPtr<SComboBox<TSharedRef<ECesiumEncodedMetadataType>>>
-        pEncodedTypeCombo;
+    TSharedRef<FString> pId;
     /**
-     * The option to set as the selected encoded type, if previously specified
-     * (e.g., by details queried from UCesiumFeatureMetadataComponent).
+     * The properties belonging to the class.
      */
-    TSharedPtr<ECesiumEncodedMetadataType> pEncodedTypeSelection;
-    /**
-     * The combo box widget for selecting the encoded component type.
-     */
-    TSharedPtr<SComboBox<TSharedRef<ECesiumEncodedMetadataComponentType>>>
-        pEncodedComponentTypeCombo;
-    /**
-     * The option to set as the selected encoded component type, if previously
-     * specified (e.g., by details queried from
-     * UCesiumFeatureMetadataComponent).
-     */
-    TSharedPtr<ECesiumEncodedMetadataComponentType>
-        pEncodedComponentTypeSelection;
+    TArray<TSharedRef<PropertyStatisticsView>> properties;
   };
 
   /**
@@ -189,6 +181,7 @@ private:
     TArray<TSharedRef<FeatureIdSetInstance>> instances;
   };
 
+  void gatherTilesetStatistics();
   template <
       typename TSource,
       typename TSourceBlueprintLibrary,
@@ -202,6 +195,16 @@ private:
    * UCesiumFeaturesMetadataComponent.
    */
   void syncPropertyEncodingDetails();
+
+  TSharedRef<ITableRow> createStatisticRow(
+      TSharedRef<StatisticView> pItem,
+      const TSharedRef<STableViewBase>& list);
+  TSharedRef<ITableRow> createPropertyStatisticsDropdown(
+      TSharedRef<PropertyStatisticsView> pItem,
+      const TSharedRef<STableViewBase>& list);
+  void createClassStatisticsDropdown(
+      TSharedRef<SScrollBox>& pContent,
+      const ClassStatisticsView& classStatistics);
 
   TSharedRef<ITableRow> createPropertyInstanceRow(
       TSharedRef<PropertyInstance> pItem,
@@ -229,28 +232,30 @@ private:
       TSharedRef<SScrollBox>& pContent,
       const FeatureIdSetView& property);
 
-  enum ComponentSearchResult { NoMatch, PartialMatch, ExactMatch };
-
+  ComponentSearchResult findOnComponent(TSharedRef<StatisticView> pItem) const;
   ComponentSearchResult findOnComponent(
       TSharedRef<PropertyInstance> pItem,
-      bool compareEncodingDetails);
-  ComponentSearchResult findOnComponent(TSharedRef<FeatureIdSetInstance> pItem);
+      bool compareEncodingDetails) const;
+  ComponentSearchResult
+  findOnComponent(TSharedRef<FeatureIdSetInstance> pItem) const;
 
+  void registerStatistic(TSharedRef<StatisticView> pItem);
   void registerPropertyInstance(TSharedRef<PropertyInstance> pItem);
   void registerFeatureIdSetInstance(TSharedRef<FeatureIdSetInstance> pItem);
 
+  void removeStatistic(TSharedRef<StatisticView> pItem);
   void removePropertyInstance(TSharedRef<PropertyInstance> pItem);
   void removeFeatureIdSetInstance(TSharedRef<FeatureIdSetInstance> pItem);
 
   static TSharedRef<FString> getSharedRef(const FString& string);
-  static void initializeStaticVariables();
 
   static TSharedPtr<CesiumFeaturesMetadataViewer> _pExistingWindow;
-  TSharedPtr<SVerticalBox> _pContent;
+  TSharedPtr<SScrollBox> _pContent;
 
   TWeakObjectPtr<ACesium3DTileset> _pTileset;
   TWeakObjectPtr<UCesiumFeaturesMetadataComponent> _pFeaturesMetadataComponent;
 
+  TArray<ClassStatisticsView> _statisticsClasses;
   // The current Features / Metadata implementation folds the class / property
   // schemas into each implementation of PropertyTable, PropertyTableProperty,
   // etc. So this functions as a property source-centric view instead of a
@@ -259,13 +264,6 @@ private:
   TArray<FeatureIdSetView> _featureIdSets;
   TSet<FString> _propertyTextureNames;
 
-  // Avoid allocating numerous instances of simple enum values (because shared
-  // pointers /refs are required for SComboBox).
-  static TArray<TSharedRef<ECesiumEncodedMetadataConversion>>
-      _conversionOptions;
-  static TArray<TSharedRef<ECesiumEncodedMetadataType>> _encodedTypeOptions;
-  static TArray<TSharedRef<ECesiumEncodedMetadataComponentType>>
-      _encodedComponentTypeOptions;
   // Lookup map to reduce the number of strings allocated for duplicate property
   // names.
   static TMap<FString, TSharedRef<FString>> _stringMap;

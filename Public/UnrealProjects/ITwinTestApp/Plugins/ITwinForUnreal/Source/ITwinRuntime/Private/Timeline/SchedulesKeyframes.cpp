@@ -298,9 +298,8 @@ void HandleFallbackTransfoOutsideTaskIfNeeded(FITwinElementTimeline& ElementTime
 			{
 				F3DPathKFData ForcedKF;
 				ForcedKF.bFirstOrLastKeyframe = TaskDeps.bProfileForced3DPathOutsideIsAtPathStart;
-				if (GetLast3DPathTransformKeyframeToApply(TaskTimes, PathAssignment.TransformAnchor,
-														  TaskDeps.ProfileForced3DPathOutside->Keyframes, CoordConv,
-														  PathAssignment.b3DPathReverseDirection, ForcedKF))
+				if (GetLast3DPathTransformKeyframeToApply(TaskTimes, PathAssignment,
+						TaskDeps.ProfileForced3DPathOutside->Keyframes, CoordConv, ForcedKF))
 				{
 					ElementTimeline.SetTransformationAt(StartTimeToAdd,
 						ForcedKF.ConvertedPosition, ForcedKF.NormalizedRotation,
@@ -331,24 +330,91 @@ PTransform const& AddStaticTransformToTimeline(FITwinElementTimeline & ElementTi
 }
 
 bool GetLast3DPathTransformKeyframeToApply(FTimeRangeInSeconds const& TaskTimes,
-	std::variant<EAnchorPoint, FVector> const& TransformAnchor, std::vector<FTransformKey> const& Keyframes,
-	FITwinCoordConversions const& CoordConv, bool const b3DPathReverseDirection,
-	F3DPathKFData& KeyframeToApply)
+	FPathAssignment const& PathAssignment, std::vector<FTransformKey> const& Keyframes,
+	FITwinCoordConversions const& CoordConv, F3DPathKFData& KeyframeToApply)
 {
-	return Add3DPathTransformToTimeline(nullptr, TaskTimes, TransformAnchor, Keyframes,
-										CoordConv, b3DPathReverseDirection, {}, &KeyframeToApply);
+	return Add3DPathTransformToTimeline(nullptr, TaskTimes, PathAssignment, Keyframes, CoordConv, {},
+										&KeyframeToApply);
 }
 
 bool Add3DPathTransformToTimeline(FITwinElementTimeline* ElementTimeline,
-	FTimeRangeInSeconds const& TaskTimes, std::variant<EAnchorPoint, FVector> const& TransformAnchor,
-	std::vector<FTransformKey> const& Keyframes, FITwinCoordConversions const& CoordConv,
-	bool const b3DPathReverseDirection, FTaskDependenciesData const& TaskDeps,
-	F3DPathKFData* pOnlyGetSingleKeyframe/*= nullptr*/)
+	FTimeRangeInSeconds const& TaskTimes, FPathAssignment const& PathAssignment,
+	std::vector<FTransformKey> const& OriginalKeyframes, FITwinCoordConversions const& CoordConv,
+	FTaskDependenciesData const& TaskDeps, F3DPathKFData* pOnlyGetSingleKeyframe/*= nullptr*/)
 {
-	if (Keyframes.empty())
+	if (OriginalKeyframes.empty())
 		return false;
-	// Let's keep the possible anterior transformation set:
-	//ElementTimeline->SetTransformationDisabledAt(TaskTimes.first, EInterpolation::Step);
+	std::optional<std::vector<FTransformKey>> StretchedKeyFrames;
+	auto const* pKeyframes = &OriginalKeyframes;
+	if (PathAssignment.MotionStart > 0. || PathAssignment.MotionEnd < 1.
+		 && ensure(PathAssignment.MotionStart <= PathAssignment.MotionEnd))
+	{
+		StretchedKeyFrames.emplace(OriginalKeyframes);
+		std::sort(StretchedKeyFrames->begin(), StretchedKeyFrames->end());
+		double const LowBoundary = std::clamp(
+			PathAssignment.b3DPathReverseDirection ? (1. - PathAssignment.MotionEnd) : PathAssignment.MotionStart,
+			0., 1.);
+		double const HighBoundary = std::clamp(
+			PathAssignment.b3DPathReverseDirection ? (1. - PathAssignment.MotionStart) : PathAssignment.MotionEnd,
+			0., 1.);
+		// Crop the start of the 3D path, interpolating as needed
+		auto LowIt = std::lower_bound(StretchedKeyFrames->begin(), StretchedKeyFrames->end(),
+									  FTransformKey{ .RelativeTime = LowBoundary });
+		// If the 3D path actually stops _before_ LowBoundary, just keep the last keyframe
+		if (LowIt == StretchedKeyFrames->end())
+			LowIt = std::prev(StretchedKeyFrames->end());
+		// Lower bound is the 1st element >= LowBoundary, so we may need the previous one to interpolate
+		if (LowIt->RelativeTime != LowBoundary
+			&& LowIt != StretchedKeyFrames->begin() // First keyframe might(?) be > LowBoundary
+			&& LowIt != StretchedKeyFrames->end())
+		{
+			auto PrevIt = std::prev(LowIt);
+			// Overwrite PrevIt by interpolating PrevIt and LowIt linearly at a RelativeTime equal to
+			// LowBoundary, then erase all keyframes before PrevIt
+			PrevIt->Transform.BlendWith(LowIt->Transform,
+				// Divider not zero because lower bound is the _first_ >= LowBoundary
+				(LowBoundary - PrevIt->RelativeTime) / (LowIt->RelativeTime - PrevIt->RelativeTime));
+			PrevIt->RelativeTime = LowBoundary;
+			LowIt = PrevIt; // PrevIt is our new boundary, exclude it from erasal
+		}
+		if (LowIt != StretchedKeyFrames->begin())
+			StretchedKeyFrames->erase(StretchedKeyFrames->begin(), LowIt);
+
+		// Crop the end of the 3D path, interpolating as needed
+		auto HighIt = std::upper_bound(StretchedKeyFrames->begin(), StretchedKeyFrames->end(),
+									   FTransformKey{ .RelativeTime = HighBoundary });
+		if (HighIt != StretchedKeyFrames->end()) // if 3D path actually stops _before_ HighBoundary, nothing to do
+		{
+			if (HighIt == StretchedKeyFrames->begin()) // if 3D path starts _after_, keep only the first KF
+			{
+				++HighIt;
+			}
+			else
+			{
+				// Upper bound is the 1st element > HighBoundary, so we need to interpolate with the previous one
+				// (or use the previous one itself if exactly at HighBoundary)
+				auto PrevIt = std::prev(HighIt);
+				if (PrevIt->RelativeTime != HighBoundary)
+				{
+					// Overwrite PrevIt by interpolating PrevIt and HighIt linearly at a RelativeTime equal to
+					// HighBoundary, then erase all keyframes after and including HighIt
+					HighIt->Transform.Blend(PrevIt->Transform, HighIt->Transform,
+						// Divider not zero because upper bound is the _first_ > HighBoundary
+						(HighBoundary - PrevIt->RelativeTime) / (HighIt->RelativeTime - PrevIt->RelativeTime));
+					HighIt->RelativeTime = HighBoundary;
+					++HighIt; // HighIt is our new boundary, exclude it from erasal
+				}
+				// else: PrevIt is our new boundary, just erase from HighIt included until the end
+			}
+			if (HighIt != StretchedKeyFrames->end())
+				StretchedKeyFrames->erase(HighIt, StretchedKeyFrames->end());
+		}
+		double const TimeRangeToStretch = HighBoundary - LowBoundary;
+		double const Ratio = (TimeRangeToStretch != 0.) ? (1. / TimeRangeToStretch) : 0.;
+		for (auto& StretchedKF : (*StretchedKeyFrames))
+			StretchedKF.RelativeTime = Ratio * (StretchedKF.RelativeTime - LowBoundary);
+		pKeyframes = &(*StretchedKeyFrames);
+	}
 	double const TaskDuration = TaskTimes.second - TaskTimes.first;
 	FDeferredAnchor BaseAnchor;
 	std::visit([&BaseAnchor, &CoordConv](auto&& Var)
@@ -370,22 +436,21 @@ bool Add3DPathTransformToTimeline(FITwinElementTimeline* ElementTimeline,
 			}
 			else static_assert(always_false_v<T>, "non-exhaustive visitor!");
 		},
-		TransformAnchor);
+		PathAssignment.TransformAnchor);
 	// TODO_GCO: there are other cases of nilpotent paths, but harder to detect since alignments other than
 	// 'Original' need to compare the Translation component of the Transform to the right bounding box value
 	// (center for Center alignment, etc.)
 	if (EAnchorPoint::Original == BaseAnchor.AnchorPoint
-		&& Keyframes.end() == std::find_if(Keyframes.begin(), Keyframes.end(),
-			[&First = Keyframes.begin()->Transform](FTransformKey const& K) {
+		&& pKeyframes->end() == std::find_if(pKeyframes->begin(), pKeyframes->end(),
+			[&First = pKeyframes->begin()->Transform](FTransformKey const& K) {
 				return !FITwinMathExts::StrictlyEqualTransforms(K.Transform, First); }))
 	{
 		// Corner case of a nilpotent 3D path (azdev#1608204)
 		return false;
 	}
 	bool const bRelativeKFPositions = (EAnchorPoint::Original == BaseAnchor.AnchorPoint);
-	FVector FirstPos = FVector::Zero();
-	double LastKFRelativeTime = 0.;
-	auto&& prepKF = [&CoordConv, &FirstPos, &BaseAnchor, bRelativeKFPositions]
+	FVector PathRefPos = FVector::Zero();
+	auto&& prepKF = [&CoordConv, &PathRefPos, &BaseAnchor, bRelativeKFPositions]
 		(FTransform const& Transform, bool bFirstOrLastKeyframe)
 		{
 			FVector RotAxis; double Angle;
@@ -396,44 +461,45 @@ bool Add3DPathTransformToTimeline(FITwinElementTimeline* ElementTimeline,
 			RotAxis.Normalize();
 			return F3DPathKFData{
 				bRelativeKFPositions
-					? CoordConv.IModelToUnreal.TransformVector(Transform.GetTranslation() - FirstPos)
+					? CoordConv.IModelToUnreal.TransformVector(Transform.GetTranslation() - PathRefPos)
 					: CoordConv.IModelToUnreal.TransformPosition(Transform.GetTranslation())
 				, FQuat(RotAxis, Angle)
 				, BaseAnchor
 				, bFirstOrLastKeyframe
 			};
 		};
-	auto FirstKF = std::min_element(Keyframes.begin(), Keyframes.end());
-	auto LastKF  = std::max_element(Keyframes.begin(), Keyframes.end());
 	if (bRelativeKFPositions)
 	{
-		// Do not consider b3DPathReverseDirection here: the Element's position in the iModel is apparently the
-		// position at the start of the path, (as witnessed in azdev#1625066's project when the animation is Stop'd)
+		// Do not consider b3DPathReverseDirection here: the Element's position is apparently the position
+		// at the start of the (full) path, (as witnessed in azdev#1625066's project when the animation is Stop'd)
 		// even if it is to be applied in reverse, so offsets must always be computed from this position.
-		FirstPos = FirstKF->Transform.GetLocation();
-	}
-	if (b3DPathReverseDirection)
-	{
-		std::swap(FirstKF, LastKF);
+		// This reference position is also _not_ affected by MotionStart/MotionEnd.
+		PathRefPos = std::min_element(OriginalKeyframes.begin(), OriginalKeyframes.end())->Transform.GetLocation();
 	}
 	if (pOnlyGetSingleKeyframe)
 	{
+		bool const bNeedMinTimeKF =
+			pOnlyGetSingleKeyframe->bFirstOrLastKeyframe ^ PathAssignment.b3DPathReverseDirection;
 		*pOnlyGetSingleKeyframe = prepKF(
-			pOnlyGetSingleKeyframe->bFirstOrLastKeyframe ? FirstKF->Transform : LastKF->Transform,
+			bNeedMinTimeKF
+				? std::min_element(pKeyframes->begin(), pKeyframes->end())->Transform
+				: std::max_element(pKeyframes->begin(), pKeyframes->end())->Transform,
 			pOnlyGetSingleKeyframe->bFirstOrLastKeyframe);
 		return true;
 	}
-	LastKFRelativeTime = LastKF->RelativeTime;
+	double LastKFRelativeTime = PathAssignment.b3DPathReverseDirection
+		? std::min_element(pKeyframes->begin(), pKeyframes->end())->RelativeTime
+		: std::max_element(pKeyframes->begin(), pKeyframes->end())->RelativeTime;
 	// Shouldn't reach this when called from GetLast3DPathTransformKeyframeToApply
 	ensure(ElementTimeline && !pOnlyGetSingleKeyframe);
-	for (auto&& Key : Keyframes)
+	for (auto&& Key : (*pKeyframes))
 	{
 		auto&& KFData = prepKF(Key.Transform, false/*ignored*/);
 		bool const bIsLastKF = (Key.RelativeTime == LastKFRelativeTime);
 		// Note: SetTransformationAt will order keyframes by their time point, whatever their ordering in
 		// the input vector
 		double const ActualRelativeTime =
-			(b3DPathReverseDirection ? (1. - Key.RelativeTime) : Key.RelativeTime)
+			(PathAssignment.b3DPathReverseDirection ? (1. - Key.RelativeTime) : Key.RelativeTime)
 			// Prevent one KF overwriting another one when a resource is assigned to successive 3D paths
 			// on exactly adjacent tasks (time-wise)
 			// (noticed while investigating https://github.com/iTwin/itwin-unreal-plugin/issues/89)

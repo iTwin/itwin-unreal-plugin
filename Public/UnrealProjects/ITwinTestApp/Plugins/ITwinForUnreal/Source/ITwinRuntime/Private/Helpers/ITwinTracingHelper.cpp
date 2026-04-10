@@ -65,7 +65,8 @@ void FITwinTracingHelper::AddIgnoredComponents(const TArray<UPrimitiveComponent*
 
 /*static*/
 bool FITwinTracingHelper::GetRayFromMousePosition(UWorld const* World,
-	FVector2D& MousePosition, FVector& OutTraceStart, FVector& OutTraceDirection,
+	FVector2D& MousePosition,
+	FITwinRayTraceInput& OutTraceInput,
 	std::optional<FVector2D> const& CustomMousePosition /*= std::nullopt*/)
 {
 	if (!World)
@@ -84,10 +85,67 @@ bool FITwinTracingHelper::GetRayFromMousePosition(UWorld const* World,
 	if (!PlayerController->DeprojectScreenPositionToWorld(MousePosition.X, MousePosition.Y,
 		WorldLoc, WorldDir))
 		return false;
-	OutTraceStart = WorldLoc;
-	OutTraceDirection = WorldDir;
+	OutTraceInput.TraceStart = WorldLoc;
+	OutTraceInput.TraceDirection = WorldDir;
 	return true;
 }
+
+/*static*/
+int32 FITwinTracingHelper::GetRayTraceInputsFromScreenRatios(const UObject* WorldContextObject,
+	TArray<FVector2d> const& InScreenRatios,
+	TArray<FITwinRayTraceInput>& OutTraceInputs)
+{
+	if (InScreenRatios.IsEmpty())
+	{
+		ensureMsgf(false, TEXT("wrong input: missing ratio(s)"));
+		return 0;
+	}
+	UWorld const* World = WorldContextObject ? WorldContextObject->GetWorld() : nullptr;
+	if (!ensure(World))
+		return 0;
+	APlayerController const* PlayerController = World->GetFirstPlayerController();
+	if (!PlayerController)
+		return 0;
+
+	int32 Width(0), Height(0);
+	PlayerController->GetViewportSize(Width, Height);
+	if (Width <= 0 || Height <= 0)
+		return 0;
+
+	OutTraceInputs.Reserve(InScreenRatios.Num());
+	for (FVector2d const& ScreenRatio : InScreenRatios)
+	{
+		ensureMsgf(ScreenRatio.X >= 0 && ScreenRatio.X <= 1 && ScreenRatio.Y >= 0 && ScreenRatio.Y <= 1,
+			TEXT("wrong input: ratio should be between 0 and 1"));
+		FVector2D const ScreenPos(Width * ScreenRatio.X, Height * ScreenRatio.Y);
+		FITwinRayTraceInput TraceInput;
+		if (!UGameplayStatics::DeprojectScreenToWorld(PlayerController, ScreenPos,
+			TraceInput.TraceStart, TraceInput.TraceDirection))
+		{
+			continue;
+		}
+		OutTraceInputs.Add(TraceInput);
+	}
+	return OutTraceInputs.Num();
+}
+
+/*static*/
+bool FITwinTracingHelper::GetRayToTraceFromScreenCenter(const UObject* WorldContextObject, FITwinRayTraceInput& OutTraceInput)
+{
+	TArray<FITwinRayTraceInput> TraceInputs;
+	if (!GetRayTraceInputsFromScreenRatios(WorldContextObject, { { 0.5, 0.5 } }, TraceInputs))
+		return false;
+	if (ensure(TraceInputs.Num() == 1))
+	{
+		OutTraceInput = TraceInputs[0];
+		return true;
+	}
+	else
+	{
+		return false;
+	}
+}
+
 
 ITwinElementID FITwinTracingHelper::VisitElementsUnderCursor(UWorld const* World,
 	FVector2D& MousePosition, FVector& OutTraceStart, FVector& OutTraceEnd,
@@ -96,17 +154,17 @@ ITwinElementID FITwinTracingHelper::VisitElementsUnderCursor(UWorld const* World
 	std::optional<float> const& CustomTraceExtentInMeters /*= std::nullopt*/,
 	std::optional<FVector2D> const& CustomMousePosition /*= std::nullopt*/)
 {
-	FVector TraceStart, TraceDirection;
-	if (!GetRayFromMousePosition(World, MousePosition, TraceStart, TraceDirection, CustomMousePosition))
+	FITwinRayTraceInput TraceInput;
+	if (!GetRayFromMousePosition(World, MousePosition, TraceInput, CustomMousePosition))
 	{
 		return ITwin::NOT_ELEMENT;
 	}
 	FVector::FReal const TraceExtentInMeters = static_cast<FVector::FReal>(
 		CustomTraceExtentInMeters.value_or(1e6f)); // 1.000 km by default
 	FVector::FReal const TraceExtent = TraceExtentInMeters * 100;
-	FVector const TraceEnd = TraceStart + TraceDirection * TraceExtent;
+	FVector const TraceEnd = TraceInput.TraceStart + (TraceInput.TraceDirection * TraceExtent);
 
-	bool const bHasHits = Impl->LineTraceMulti(World, TraceStart, TraceEnd);
+	bool const bHasHits = Impl->LineTraceMulti(World, TraceInput.TraceStart, TraceEnd);
 
 	ITwinElementID FirstEltID = ITwin::NOT_ELEMENT;
 	if (bHasHits)
@@ -129,7 +187,7 @@ ITwinElementID FITwinTracingHelper::VisitElementsUnderCursor(UWorld const* World
 			}
 		}
 	}
-	OutTraceStart = TraceStart;
+	OutTraceStart = TraceInput.TraceStart;
 	OutTraceEnd = TraceEnd;
 
 	return FirstEltID;

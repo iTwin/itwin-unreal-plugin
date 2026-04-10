@@ -2,11 +2,13 @@
 # and possibly measure code coverage.
 # Usage:
 # be_add_test (testTarget
-#               [JS]
+#               [JS] {CATCH2]
 #               [TIMEOUT timeout]
 #               [EXE_ARGS arg arg ...]
 #               [COVERED_TARGETS target target ...])
 # testTarget: An existing target name (is must have been added by add_binary beforehand).
+# CATCH2: Indicates the test uses Catch2.
+#         This will automatically add the executable arguments to generate the test reports for ADO.
 # JS: Indicates the test is a javascript file, not an executable.
 # OV_EXT: Indicates the test is for an Omniverse extension.
 #         This requires that CAYMUS_CREATE_INSTALL_DIR points to a valid OV install directory.
@@ -28,7 +30,7 @@
 function (be_add_test testTarget)
 	cmake_parse_arguments (
 		funcArgs
-		"JS;OV_EXT"
+		"JS;OV_EXT;CATCH2"
 		"TIMEOUT"
 		"EXE_ARGS;COVERED_TARGETS"
 		${ARGN}
@@ -65,6 +67,9 @@ function (be_add_test testTarget)
 	endif ()
 	if (DEFINED funcArgs_EXE_ARGS)
 		list (APPEND exeArgs ${funcArgs_EXE_ARGS})
+	endif ()
+	if (${funcArgs_CATCH2})
+		list (APPEND exeArgs  --reporter "JUnit::out=${CMAKE_BINARY_DIR}/Testing/$<CONFIG>/${testTarget}.result.xml" --reporter console)
 	endif ()
 	toJsonStrList (exeArgsJsonList "${exeArgs}")
 	set (jsonArgs "${jsonArgs},\"exeArgs\":${exeArgsJsonList}")
@@ -167,31 +172,18 @@ add_custom_target (RunAllTests ALL)	# This target will be executed on the bbot n
 set_target_properties (RunAllTests PROPERTIES FOLDER UnitTests)
 
 # Coverage reports will be stored in a configuration-specific folder.
+# This is also the case for test results.
 # If the folder is created by the test runner script, there is a risk that 2 tests try to
 # create the folder simultaneously and thus fail.
 # So, instead of handling this case in the test runner script, we add a "PrepareTests" target that will create this folder.
 set (beCodeCoverageOutDirBase "${CMAKE_BINARY_DIR}/CodeCoverage/$(Configuration)")
-set (dummyOutput_PrepareTests "${CMAKE_BINARY_DIR}/PrepareTests/$(Configuration)/DummyCpp.cpp")
-add_custom_command (
-	OUTPUT "${dummyOutput_PrepareTests}"
+add_custom_target (PrepareTests
+	COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/Testing/$(Configuration)"
 	COMMAND ${CMAKE_COMMAND} -E make_directory "${beCodeCoverageOutDirBase}"
-	COMMAND ${CMAKE_COMMAND} -E make_directory "${dummyOutput_PrepareTests}/.."
-	COMMAND ${CMAKE_COMMAND} -E touch "${dummyOutput_PrepareTests}"
-)
-add_library (PrepareTests
-	STATIC
-	"${dummyOutput_PrepareTests}"
 )
 set_target_properties (PrepareTests PROPERTIES FOLDER UnitTests)
 
-if (BE_CODE_COVERAGE)
-	find_program (BE_COVERAGE_TOOL_EXE OpenCppCoverage HINTS "$ENV{ProgramFiles}/OpenCppCoverage")
-	if (BE_COVERAGE_TOOL_EXE STREQUAL "BE_COVERAGE_TOOL_EXE-NOTFOUND")
-		message ( SEND_ERROR "OpenCppCoverage not found while being searched in: ${OpenCppCoverage_SearchDirs}" )
-	else ()
-		message ( "OpenCppCoverage found in: ${BE_COVERAGE_TOOL_EXE}" )
-	endif ()
-endif ()
+include (be_coverage)
 
 # To be called at the end of the top-level CMakeLists.txt.
 # Adds some dependencies on unit test targets (eg. resources).

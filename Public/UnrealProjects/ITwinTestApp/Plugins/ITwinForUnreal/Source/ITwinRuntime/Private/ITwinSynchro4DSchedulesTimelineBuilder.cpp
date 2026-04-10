@@ -51,9 +51,9 @@ void InsertAnimatedMeshSubElemsRecursively(FIModelElementsKey const& AnimationKe
 		else
 			pElem = &Scene.ElementFor(ElementDesignation);
 		FITwinElement& Elem = *pElem;
-		// Insert without duplication, and using a deterministic ordering (for
-		// CreateTimelineKeyframesWithTaskDependencies), because concurrent 4D queries could obviously be received
-		// in an arbitrary order:
+		// Insert without duplication, and using a deterministic ordering, because concurrent 4D queries could
+		// obviously be received in an arbitrary order: necessary for CreateTimelineKeyframesWithTaskDependencies
+		// which can thus compare the Elem.AnimationKeys arrays directly.
 		auto const FirstGreaterOrEqual = std::lower_bound(
 			Elem.AnimationKeys.begin(), Elem.AnimationKeys.end(), AnimationKey,
 			[](const FIModelElementsKey& a, const FIModelElementsKey& b)
@@ -75,12 +75,10 @@ void InsertAnimatedMeshSubElemsRecursively(FIModelElementsKey const& AnimationKe
 		{
 			Elem.AnimationKeys.insert(FirstGreaterOrEqual, AnimationKey);
 		}
-		// When pre-fetching bindings, no Element has been received yet... It's annoying to have to add the
-		// Elements to their timeline(s) only once some geometry has been received for them :/
-		// On the other hand adding intermediate non-leaves Elements has some cost later on when iterating
-		// on a timeline's AnimatedMeshElements: let's assume only leave nodes have meshes? TODO_GCO
-		if ((bPrefetchAllElementAnimationBindings && Elem.SubElemsInVec.empty())
-			|| (Elem.bHasMesh && Elem.BBox.IsValid))
+		// When pre-fetching bindings, bHasMesh is not set at this point, since we may not have received a tile containing
+		// it yet. Let's rely on Elem.BBox instead. We used to rely on the list of child elements, assuming only leaves
+		// had geometries, but this proved wrong (ADO#2020662).
+		if (Elem.BBox.IsValid && (bPrefetchAllElementAnimationBindings || Elem.bHasMesh))
 		{
 			if (!OutSet.insert(Elem.ElementID).second)
 				continue; // already in set: no need for RemoveNonAnimatedDuplicate nor recursion
@@ -153,8 +151,6 @@ public:
 		FITwinElementTimeline& ElemTimeline, int const TimelineIndex,
 		std::unordered_set<FElementsGroup>& KeyframedSubgroups)
 	{
-		if (!ensure(!ElemTimeline.GetIModelElements().empty()))
-			return false;
 		bool bOnlyInstallOrRemove = true;
 		for (size_t AnimationBindingIndex : ElemTimeline.AnimationBindings())
 		{
@@ -196,45 +192,55 @@ public:
 						RefAnimKeys, FElementsGroup(ElemTimeline.GetIModelElements().begin(), ElemIt)));
 				}
 			}
+			auto SplitGroupExists = std::find_if(SplitElemGroups->begin(), SplitElemGroups->end(),
+				[&Elem](auto const& SplitGroup) { return SplitGroup.first == Elem.AnimationKeys; });
+			if (SplitGroupExists != SplitElemGroups->end())
+				SplitGroupExists->second.insert(*ElemIt);
 			else
-			{
-				auto SplitGroupExists = std::find_if(SplitElemGroups->begin(), SplitElemGroups->end(),
-					[&Elem](auto const& SplitGroup) { return SplitGroup.first == Elem.AnimationKeys; });
-				if (SplitGroupExists != SplitElemGroups->end())
-					SplitGroupExists->second.insert(*ElemIt);
-				else
-					SplitElemGroups->emplace_back(std::make_pair(
-						Elem.AnimationKeys, FElementsGroup{ *ElemIt }));
-			}
+				SplitElemGroups->emplace_back(std::make_pair(
+					Elem.AnimationKeys, FElementsGroup{ *ElemIt }));
 		}
 		// If all Elems have the same bindings (belong to the same timelines), nothing to do:
 		if (!SplitElemGroups)
 			return false;
+		ensure(SplitElemGroups->size() > 1);
 		bool bUseExisting = true;
+		FIModelElementsKey const UnsplitAnimKey = ElemTimeline.GetIModelElementsKey();
+		FITwinElementTimeline::FBindings const UnsplitBindings = ElemTimeline.GetAnimationBindings();
 		for (auto& [CommonAnimationKeys, ElementsSubGroup] : (*SplitElemGroups))
 		{
 			if (!KeyframedSubgroups.insert(ElementsSubGroup).second) // !inserted = already present thus handled
 				continue;
-			FIModelElementsKey const SubgroupElementsKey(Schedule.Groups.size());
+			FIModelElementsKey const SubgroupAnimKey(Schedule.NumGroups());
+			for (auto&& Elem : ElementsSubGroup)
+			{
+				auto&& AnimKeys = SceneMapping.ElementForSLOW(Elem).AnimationKeys;
+				std::replace(AnimKeys.begin(), AnimKeys.end(), UnsplitAnimKey, SubgroupAnimKey);
+			}
 			FITwinElementTimeline* pSubgroupTimeline;
 			if (bUseExisting)
 			{
 				bUseExisting = false;
-				MainTimeline.ResetElementTimelineFor(TimelineIndex, SubgroupElementsKey);
+				MainTimeline.ResetElementTimelineFor(TimelineIndex, SubgroupAnimKey);
 				ElemTimeline.IModelElementsRef() = ElementsSubGroup;
 				pSubgroupTimeline = &ElemTimeline;
 			}
 			else
 			{
-				pSubgroupTimeline = &MainTimeline.ElementTimelineFor(SubgroupElementsKey, ElementsSubGroup);
+				pSubgroupTimeline = &MainTimeline.ElementTimelineFor(SubgroupAnimKey, ElementsSubGroup);
 			}
 			for (auto&& AnimationKey : CommonAnimationKeys)
 			{
-				if (auto* Timeline = MainTimeline.GetElementTimelineFor(AnimationKey))
+				if (AnimationKey == UnsplitAnimKey) // timeline reused ie. no longer mapped to AnimationKey!
+				{
+					pSubgroupTimeline->AnimationBindings().insert(pSubgroupTimeline->AnimationBindings().end(),
+						UnsplitBindings.begin(), UnsplitBindings.end());
+				}
+				else if (auto* Timeline = MainTimeline.GetElementTimelineFor(AnimationKey))
 					pSubgroupTimeline->AnimationBindings().insert(pSubgroupTimeline->AnimationBindings().end(),
 						Timeline->GetAnimationBindings().begin(), Timeline->GetAnimationBindings().end());
 			}
-			Schedule.Groups.emplace_back(std::move(ElementsSubGroup));
+			Schedule.CreateNextGroup(std::move(ElementsSubGroup));
 			bool const bHasOnlyNeutralTasks = Schedule.HasOnlyNeutralBindings(
 				pSubgroupTimeline->AnimationBindings().begin(), pSubgroupTimeline->AnimationBindings().end());
 			for (size_t AnimationBindingIndex : ElemTimeline.AnimationBindings())
@@ -243,23 +249,6 @@ public:
 												bHasOnlyNeutralTasks);
 			}
 		}
-		//// We can either create a separate timeline only for task-dependency compliance keyframes, or have one
-		//// timeline for active task appearances, and a second for inactive ranges?
-		//for (auto&& [CommonAnimKeys, SplitGroup] : (*SplitElemGroups))
-		//{
-		//	for (size_t AnimationBindingIndex : ElemTimeline.AnimationBindings())
-		//	{
-		//		auto&& Binding = Schedule.AnimationBindings[AnimationBindingIndex];
-		//		auto Action = Schedule.AppearanceProfiles[Binding.AppearanceProfileInVec].ProfileType;
-		//		if (EProfileAction::Neutral == Action)
-		//		{
-		//			bool bHasNonNeutralTask = false;
-		//			for (auto&& AnimKey : CommonAnimKeys)
-		//			{
-		//			}
-		//		}
-		//	}
-		//}
 		return true;
 	}
 };
@@ -349,7 +338,9 @@ void FITwinScheduleTimelineBuilder::FinalizeTimeline(FITwinSchedule& Schedule)
 				}
 				else if constexpr (std::is_same_v<T, FString>)
 				{
-					BoundElements = Schedule.Groups[Binding.GroupInVec];
+					auto&& FedGUID2ElemID = std::bind(&FITwinSceneMapping::FindElementIDForGUID, pScene,
+													  std::placeholders::_1, std::placeholders::_2);
+					BoundElements = Schedule.GetGroupAsElementIDs(Binding.GroupInVec, FedGUID2ElemID);
 				}
 				else static_assert(always_false_v<T>, "non-exhaustive visitor!");
 			},
@@ -370,20 +361,22 @@ void FITwinScheduleTimelineBuilder::FinalizeTimeline(FITwinSchedule& Schedule)
 				GetInternals(*Impl->Owner).PrefetchWholeSchedule());
 			Detail::HideNonAnimatedDuplicates(*pScene, AnimatedMeshElements, Impl->MainTimeline);
 		}
-		if (AnimatedMeshElements.empty()) // no 'ensure', it seems to happen in rare cases
-			continue;
 		ElemTimelinePtr->IModelElementsRef().swap(AnimatedMeshElements);
-		// Respecting the "plans" may mean splitting the group of Elements, this is why it must be done
+		// Respecting the task dependencies may mean splitting the group of Elements, this is why it must be done
 		// AFTER InsertAnimatedMeshSubElemsRecursively because child Elems can be assigned independently
 		// from their Parents.
 	}
-	int TimelineIndex = 0;
 	// Subgroups split from timelines will be encountered in several calls to CreateAnimationBindingKeyframes,
 	// so we need to keep track of them because the first call will already have created their keyframes.
 	std::unordered_set<FElementsGroup> KeyframedSubgroups;
-	for (auto ElemTimelinePtr : Impl->MainTimeline.GetContainer())
+	auto&& Timelines = Impl->MainTimeline.GetContainer();
+	for (int TimelineIndex = 0; TimelineIndex < (int)Timelines.size(); ++TimelineIndex)
 	{
-		// Will stay null if there should be no task dependencies (and for unit testing)
+		auto ElemTimelinePtr = Timelines[TimelineIndex];
+		// no 'ensure', it happens in rare cases, like some line Elements in GSW Stadium which are discarded
+		// by InsertAnimatedMeshSubElemsRecursively because the iModel query has returned a null/empty BBox for them!
+		if (ElemTimelinePtr->GetIModelElements().empty())
+			continue;
 		if (IsUnitTesting() // TODO_GCO: no iModel nor SceneMapping at all for unit testing, right?
 			|| !Impl->CreateTimelineKeyframesWithTaskDependencies(*pScene, Schedule, *ElemTimelinePtr,
 																  TimelineIndex, KeyframedSubgroups))
@@ -396,7 +389,12 @@ void FITwinScheduleTimelineBuilder::FinalizeTimeline(FITwinSchedule& Schedule)
 													  bHasOnlyNeutralTasks);
 			}
 		}
-		++TimelineIndex;
+	}
+	for (auto&& ConstrDetailParent : pScene->GetConstructionDetailingParentsToHide())
+	{
+		auto const& Elem = pScene->ElementFor(ConstrDetailParent);
+		if (Elem.AnimationKeys.empty())
+			Impl->MainTimeline.AddNonAnimatedDuplicate(Elem.ElementID);
 	}
 }
 
@@ -455,8 +453,7 @@ void FITwinScheduleTimelineBuilder::FImpl::CreateAnimationBindingKeyframes(FITwi
 				{
 					auto&& Path3D = Schedule.Animation3DPaths[PathAssignment.Animation3DPathInVec].Keyframes;
 					ITwin::Timeline::Add3DPathTransformToTimeline(&ElementTimeline, Task.TimeRange,
-						PathAssignment.TransformAnchor, Path3D, *CoordConversions,
-						PathAssignment.b3DPathReverseDirection, TaskDeps);
+						PathAssignment, Path3D, *CoordConversions, TaskDeps);
 				}
 			}
 			else

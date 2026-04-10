@@ -49,6 +49,9 @@ void FCesiumRuntimeModule::StartupModule() {
       IPluginManager::Get().FindPlugin(TEXT("ITwinForUnreal"))->GetBaseDir(),
       TEXT("Shaders"));
   AddShaderSourceDirectoryMapping(
+      TEXT("/Plugin/CesiumForUnreal"),
+      PluginShaderDir);
+  AddShaderSourceDirectoryMapping(
       TEXT("/Plugin/ITwinForUnreal"),
       PluginShaderDir);
 }
@@ -63,6 +66,7 @@ FCesium3DTilesetIonTroubleshooting OnCesium3DTilesetIonTroubleshooting{};
 FCesiumRasterOverlayIonTroubleshooting
     OnCesiumRasterOverlayIonTroubleshooting{};
 FCesiumFeaturesMetadataAddProperties OnCesiumFeaturesMetadataAddProperties{};
+FCesiumVoxelMetadataBuildShader OnCesiumVoxelMetadataBuildShader{};
 
 CesiumAsync::AsyncSystem& getAsyncSystem() noexcept {
   static CesiumAsync::AsyncSystem asyncSystem(

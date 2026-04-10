@@ -90,7 +90,7 @@ namespace ITwin
 	using VisitTilesetUPtrFunction = TFunction<void(TilesetAccessUPtr&&)>;
 
 	template <class TITwinTilesetOwner>
-	inline void TIterateAllITwinTilesetPtrs(VisitTilesetUPtrFunction const& VisitFunc, UWorld* World)
+	inline void TIterateAllITwinTilesetPtrs(VisitTilesetUPtrFunction const& VisitFunc, UWorld const* World)
 	{
 		using ITwinActorIterator = TActorIterator<TITwinTilesetOwner>;
 		for (ITwinActorIterator ITwinActorIter(World); ITwinActorIter; ++ITwinActorIter)
@@ -104,7 +104,7 @@ namespace ITwin
 	}
 
 	template <class TITwinTilesetOwner>
-	inline void TIterateAllITwinTilesets(VisitTilesetFunction const& VisitFunc, UWorld* World)
+	inline void TIterateAllITwinTilesets(VisitTilesetFunction const& VisitFunc, UWorld const* World)
 	{
 		TIterateAllITwinTilesetPtrs<TITwinTilesetOwner>([&VisitFunc](TilesetAccessUPtr&& AccessUPtr)
 		{
@@ -113,7 +113,7 @@ namespace ITwin
 		}, World);
 	}
 
-	void IterateAllITwinTilesets(VisitTilesetFunction const& VisitFunc, UWorld* World)
+	void IterateAllITwinTilesets(VisitTilesetFunction const& VisitFunc, UWorld const* World)
 	{
 		if (!ensure(World))
 			return;
@@ -122,7 +122,7 @@ namespace ITwin
 		TIterateAllITwinTilesets<AITwinGoogle3DTileset>(VisitFunc, World);
 	}
 
-	void GatherTilesetsOfModelType(TilesetAccessUPtrArray& OutTilesets, EITwinModelType ModelType, UWorld* World)
+	void GatherTilesetsOfModelType(TilesetAccessUPtrArray& OutTilesets, EITwinModelType ModelType, UWorld const* World)
 	{
 		if (!ensure(World))
 			return;
@@ -177,7 +177,7 @@ namespace ITwin
 
 
 	template <class TITwinTilesetOwner>
-	TilesetAccessUPtr TGetTilesetAccessFromModelLinkImpl(const ModelLink& ModelLink, UWorld* World)
+	TilesetAccessUPtr TGetTilesetAccessFromModelLinkImpl(const ModelLink& ModelLink, UWorld const* World)
 	{
 		using ITwinActorIterator = TActorIterator<TITwinTilesetOwner>;
 		for (ITwinActorIterator ITwinActorIter(World); ITwinActorIter; ++ITwinActorIter)
@@ -190,7 +190,7 @@ namespace ITwin
 		return {};
 	}
 
-	TilesetAccessUPtr GetTilesetAccessFromModelLink(const ModelLink& ModelLink, UWorld* World)
+	TilesetAccessUPtr GetTilesetAccessFromModelLink(const ModelLink& ModelLink, UWorld const* World)
 	{
 		switch (ModelLink.first)
 		{

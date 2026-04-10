@@ -1,0 +1,81 @@
+# This port uses tinyxml2 from Unreal Engine, instead of the normal vcpkg version.
+# This is important for avoiding linker errors (multiply defined symbols) when
+# building and packaging Unreal Engine games that include cesium-native.
+#
+# AdvViz: no longer rely on UNREAL_ENGINE_ROOT from the environment, to avoid
+# having vcpkg binary cache depend on Unreal installation root, especially since
+# gRPC depends on openssl and takes ages to build...
+#	=> query the UE root from Windows registry so that we only depend on the UE
+#		version used (official or custom build hash)
+
+# If not on Linux or Windows, bail and use the vcpkg port. This is a
+# hack and is not generally done at the portfile.cmake level; usually
+# there would be a conditional in a vcpkg manifest file. However, we
+# are not using manifest mode with Unreal yet.
+if(NOT(VCPKG_TARGET_IS_WINDOWS OR VCPKG_TARGET_IS_LINUX))
+  set(CURRENT_PORT_DIR "${VCPKG_ROOT_DIR}/ports/tinyxml2")
+  include("${VCPKG_ROOT_DIR}/ports/tinyxml2/portfile.cmake")
+return()
+endif()
+
+# This was copied from the openssl vcpkg overlay. Unfortunately,
+# directory structure of Unreal's third party tree is not consistent
+# across packages, especially with respect to include file
+# directories, so we have to repeat most of the code here, slightly
+# tweaked.
+
+set(VCPKG_POLICY_EMPTY_PACKAGE enabled)
+
+set(BE_UNREAL_ROOT_REG_KEY "@BE_UNREAL_ROOT_REG_KEY@")
+set(BE_UNREAL_ROOT_REG_VALUE "@BE_UNREAL_ROOT_REG_VALUE@")
+
+# Code copied from Carrot.git/Public/CMake/detect_unreal_root.cmake:
+cmake_host_system_information(RESULT regResult QUERY WINDOWS_REGISTRY "${BE_UNREAL_ROOT_REG_KEY}"
+							  VALUE ${BE_UNREAL_ROOT_REG_VALUE} VIEW 64 ERROR_VARIABLE regErr)
+if (regErr)
+	message("Note: \"cannot find the file specified\" below would really mean the key or the value was not found.")
+	message(FATAL_ERROR "Reg key query for UE root dir failed with: ${regErr}")
+else()
+	message("Reg key query for UE install returned: ${regResult}")
+	if (EXISTS "${regResult}")
+		string(STRIP "${regResult}" REGISTERED_UE_ROOT)
+		string(REPLACE "\\" "/" REGISTERED_UE_ROOT "${REGISTERED_UE_ROOT}")
+	else()
+		message(FATAL_ERROR "Reg key query for UE install returned non-existent path: \"${regResult}\"")
+	endif()
+endif()
+message(STATUS "Using Unreal Engine installation at ${REGISTERED_UE_ROOT}")
+
+set(TINYXML2_UE_ROOT_RELATIVE_DIR "Engine/Source/ThirdParty/TinyXML2/${VERSION}")
+set(TINYXML2_ROOT_DIR "${REGISTERED_UE_ROOT}/${TINYXML2_UE_ROOT_RELATIVE_DIR}")
+if(NOT EXISTS "${TINYXML2_ROOT_DIR}/include")
+  message(FATAL_ERROR "No TinyXML2 root directory found for the specified version: `${TINYXML2_ROOT_DIR}`.")
+endif()
+
+if (VCPKG_TARGET_IS_WINDOWS)
+  set(TINYXML2_RELATIVE_LIB_LOCATION "lib/Win64/Release/tinyxml2.lib")
+  set(TINYXML2_INCLUDE_PATH "${TINYXML2_ROOT_DIR}/include")
+  set(TINYXML2_LIB_PATH "${TINYXML2_ROOT_DIR}/lib/Win64/Release")
+elseif (VCPKG_TARGET_IS_LINUX)
+  if (VCPKG_TARGET_ARCHITECTURE STREQUAL "x64")
+    set(TINYXML2_PLATFORM "x86_64-unknown-linux-gnu")
+  elseif (VCPKG_TARGET_ARCHITECTURE STREQUAL "arm64")
+    set(TINYXML2_PLATFORM "aarch64-unknown-linux-gnueabi")
+  else()
+    message(FATAL_ERROR "Unknown Unreal / TinyXML2 paths for Linux platform with architecture ${VCPKG_TARGET_ARCHITECTURE}.")
+  endif()
+
+  set(TINYXML2_LIB_PATH "${TINYXML2_ROOT_DIR}/lib/Unix/${TINYXML2_PLATFORM}")
+  set(TINYXML2_RELATIVE_LIB_LOCATION "lib/Unix/${TINYXML2_PLATFORM}/libtinyxml2.a")
+  set(TINYXML2_INCLUDE_PATH "${TINYXML2_ROOT_DIR}/include")
+else()
+  message(FATAL_ERROR "Unknown Unreal / TinyXML2 paths for VCPKG_CMAKE_SYSTEM_NAME ${VCPKG_CMAKE_SYSTEM_NAME}.")
+endif()
+
+file(INSTALL "${TINYXML2_LIB_PATH}/" DESTINATION "${CURRENT_PACKAGES_DIR}/lib")
+file(INSTALL "${TINYXML2_INCLUDE_PATH}/" DESTINATION "${CURRENT_PACKAGES_DIR}/include")
+
+configure_file(
+  "${CMAKE_CURRENT_LIST_DIR}/Tinyxml2Config.cmake.in"
+  "${CURRENT_PACKAGES_DIR}/share/tinyxml2/tinyxml2Config.cmake"
+  @ONLY)

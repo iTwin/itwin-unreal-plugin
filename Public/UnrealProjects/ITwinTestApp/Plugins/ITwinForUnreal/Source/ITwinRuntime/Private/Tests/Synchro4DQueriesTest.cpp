@@ -355,9 +355,7 @@ namespace TestSynchro4DQueries
 		Internals.MutateSchedules([](std::optional<FITwinSchedule>& Schedule)
 			{
 				check(!Schedule);
-				Schedule.emplace();
-				Schedule->Id = TEXT("<SchedId>");
-				Schedule->Name = TEXT("<SchedName>");
+				Schedule.emplace(TEXT("<SchedId>"), TEXT("<SchedName>"));
 				FAnimationBinding Binding;
 				Binding.AnimatedEntities = ITwinElementID(42);
 				Binding.TaskId = TEXT("<TaskId>");

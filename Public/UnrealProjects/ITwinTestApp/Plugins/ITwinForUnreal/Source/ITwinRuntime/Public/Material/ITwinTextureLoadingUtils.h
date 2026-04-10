@@ -41,7 +41,6 @@ namespace ITwin
 	bool ResolveDecorationTextures(
 		AdvViz::SDK::MaterialPersistenceManager& matPersistenceMngr,
 		AdvViz::SDK::PerIModelTextureSet const& perModelTextures,
-		AdvViz::SDK::TextureUsageMap const& textureUsageMap,
 		std::map<std::string, BeUtils::GltfMaterialHelperPtr> const& imodelToMatHelper,
 		bool bResolveLocalDiskTextures = false,
 		BeUtils::WLock const* pLock = nullptr);
@@ -53,7 +52,6 @@ namespace ITwin
 
 	void ResolveITwinTextures(
 		std::unordered_map<AdvViz::SDK::TextureKey, std::string> const& iTwinTextures,
-		AdvViz::SDK::TextureUsageMap const& textureUsageMap,
 		BeUtils::GltfMaterialHelperPtr GltfMatHelper,
 		std::filesystem::path const& textureDir);
 

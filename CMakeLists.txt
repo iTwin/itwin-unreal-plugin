@@ -1,6 +1,17 @@
-cmake_minimum_required (VERSION 3.28)
+cmake_minimum_required (VERSION 3.31)
 
 enable_testing()
+
+# Copy the Copilot agent instructions and agent definitions into the build directory
+# so that Visual Studio (and other tools) can discover them when working from the generated .sln.
+if (EXISTS "${CMAKE_SOURCE_DIR}/.github/copilot-instructions.md")
+	file (COPY "${CMAKE_SOURCE_DIR}/.github/copilot-instructions.md"
+		DESTINATION "${CMAKE_BINARY_DIR}/.github")
+endif ()
+if (EXISTS "${CMAKE_SOURCE_DIR}/.github/agents")
+	file (COPY "${CMAKE_SOURCE_DIR}/.github/agents"
+		DESTINATION "${CMAKE_BINARY_DIR}/.github")
+endif ()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/Public/CMake")
 include ("Public/SDK/cmake/HandleVCPKG.cmake")

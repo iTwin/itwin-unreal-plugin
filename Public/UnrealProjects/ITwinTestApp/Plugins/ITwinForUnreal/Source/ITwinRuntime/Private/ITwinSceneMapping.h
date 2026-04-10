@@ -33,6 +33,7 @@
 #include <UObject/WeakObjectPtr.h>
 
 #include <functional> // std::function, but also std::reference_wrapper
+#include <optional>
 #include <set>
 #include <unordered_map>
 #include <unordered_set>
@@ -51,7 +52,6 @@
 
 
 class AActor;
-class UITwinExtractedMeshComponent;
 class UMaterialInstanceDynamic;
 class UMaterialInterface;
 class UPrimitiveComponent;
@@ -162,9 +162,6 @@ struct FITwinElementFeaturesInTile
 	/// Invalidate the Selection flag for both this Element and all its Extracted entities
 	void InvalidateSelectingAndHidingTexFlags(FITwinSceneTile& SceneTile);
 
-	/// Whether this Element was already extracted. If so, it must have been done to comply to *all* anim
-	/// requirements, even if the StateToApply at the time had no partial transparency
-	bool bIsElementExtracted : 1 = false;
 	/// Whether we have already tested if some extraction was required to add some translucency (used to limit
 	/// the number of calls to HasOpaqueOrMaskedMaterial in CheckAndExtractElements)
 	bool bHasTestedForTranslucentFeaturesNeedingExtraction : 1 = false;
@@ -245,8 +242,6 @@ struct FITwinExtractedEntity
 	bool bIsCurrentlyTransformed = false;
 	/// Mandatory: something than can be used to transform the entity in the UE world.
 	TWeakObjectPtr<UStaticMeshComponent> TransformableMeshComponent;
-	/// Set only when Extraction (not glT tuning) is used, cf. SetHidden
-	TWeakObjectPtr<UITwinExtractedMeshComponent> ExtractedMeshComponent;
 	/// UV index where feature IDs were baked
 	std::optional<uint32> FeatureIDsUVIndex;
 	/// Material used to render the entity in the UE world
@@ -257,8 +252,6 @@ struct FITwinExtractedEntity
 	[[nodiscard]] bool IsValid() const {
 		return TransformableMeshComponent.IsValid() && Material.IsValid();
 	}
-	/// Set the extracted mesh hidden or not.
-	void SetHidden(bool bHidden);
 	/// Change the mesh base material.
 	bool SetBaseMaterial(UMaterialInterface* BaseMaterial);
 	/// Returns whether the material is using the opaque or masked blend mode.
@@ -308,6 +301,11 @@ OPTIONS_CLASS_ADD_MEMBER(bool, OnlyVisibleTiles, false)
 OPTIONS_CLASS_ADD_MEMBER(bool, TestElementVisibility, false)
 OPTIONS_CLASS_ADD_MEMBER(bool, MakeSelected, false)
 OPTIONS_CLASS_ADD_MEMBER(bool, SkipResetSelection, false)
+OPTIONS_CLASS_ADD_MEMBER(std::optional<FVector>, HitWorldPosition, {})
+	public:
+		static FPickingOptions CreateDefaultPickVisible() {
+			return FPickingOptions().OnlyVisibleTiles(true).TestElementVisibility(true).MakeSelected(true);
+		}
 OPTIONS_CLASS_END
 
 OPTIONS_CLASS_START(FShowHideOptions, )
@@ -807,9 +805,11 @@ private:
 	/// *All* Source Element IDs retrieved from the iModel metadata query. Cleared once DuplicateElements is
 	/// finished calculating, ie. as soon as the iModel metadata query batch completes.
 	FSourceElemenIDsCont SourceElementIDs;
-	/// Only contains entries for Elements with either a common Source Element IDs, or a common Federated
-	/// Element GUID: should be much fewer of those than SourceElementIDs.
+	/// Only contains entries for Elements with either:
+	///	 * a common Source Element IDs,
+	///	 * or a common Federated Element GUID (should be much fewer of those than SourceElementIDs)
 	std::vector<FDuplicateElementsVec> DuplicateElements;
+	std::vector<ITwinScene::ElemIdx> ConstructionDetailingParentsToHide;
 
 	std::function<FITwinScheduleTimeline const& ()> TimelineGetter;
 	std::function<UMaterialInterface* (ECesiumMaterialType)> MaterialGetter;
@@ -926,7 +926,9 @@ public:
 	void ReserveIModelMetadata(int TotalElements);
 	void FinishedParsingIModelMetadata();
 	int ParseIModelMetadata(TArray<TSharedPtr<FJsonValue>> const& JsonRows);
+	int ParseConstructionDetailingParentIDs(TArray<TSharedPtr<FJsonValue>> const& JsonRows);
 	FDuplicateElementsVec const& GetDuplicateElements(ITwinElementID const ElemID) const;
+	std::vector<ITwinScene::ElemIdx> const& GetConstructionDetailingParentsToHide() const;
 	FString ToString() const;
 	void CreateHighlightsAndOpacitiesTexture(FITwinSceneTile& SceneTile);
 	void CreateCuttingPlanesTexture(FITwinSceneTile& SceneTile);
@@ -938,14 +940,12 @@ public:
 	/// Same as the other SetupFeatureIDsInVertexUVs, but for all meshes of the tile (used for dev only)
 	void SetupFeatureIDsInVertexUVs(FITwinSceneTile& SceneTile, bool bUpdatingTile = false);
 	void OnNewTileBuilt(FITwinSceneTile& SceneTile);
-	void OnVisibilityChanged(FITwinSceneTile& SceneTile, bool bVisible,
-							 bool const bUseGltfTunerInsteadOfMeshExtraction);
+	void OnVisibilityChanged(FITwinSceneTile& SceneTile, bool bVisible);
 	/// Prepares a tile's internal properties and structures to allow animation for a timeline
 	void OnElementsTimelineModified(
 		std::variant<ITwinScene::TileIdx, std::reference_wrapper<FITwinSceneTile>> const KnownTile,
 		FITwinElementTimeline& ModifiedTimeline, std::vector<ITwinElementID> const* OnlyForElements,
-		bool const bUseGltfTunerInsteadOfMeshExtraction, bool const bTileIsTunedFor4D,
-		int const TimelineIndex);
+		bool const bTileIsTunedFor4D, int const TimelineIndex);
 	/// See long comment before call, in FITwinSynchro4DSchedulesInternals::HandleReceivedElements.
 	/// Does not (need to) handle selection highlight (see UpdateSelectingAndHidingTextures).
 	/// \return Whether new tiles received have textures set up for Synchro animation
@@ -1004,30 +1004,9 @@ public:
 	///		zeroed alpha masking the matching batched mesh) in an extracted Element's material
 	[[nodiscard]] static FMaterialParameterInfo const& GetExtractedElementForcedAlphaMaterialParameterInfo();
 
-	/// Extract Elements in all tiles if they were not yet
-	uint32 CheckAndExtractElements(FTimelineToScene const& TimelineOptim, bool const bOnlyVisibleTiles,
-		std::optional<ITwinScene::TileIdx> const& OnlySceneTile);
-	/// Extracts the given element, in all known tiles. New Unreal entities may be created.
-	/// \return the number of created entities in Unreal.
-	uint32 ExtractElement(ITwinElementID const Element, FITwinMeshExtractionOptions const& Options = {});
-	/// For debugging purposes - Extract some elements in a subset of the known tiles.
-	/// \param percentageOfTiles Percentage (in range [0;1] of known tiles from which to extract
-	/// \param percentageOfEltsInTile Percentage of elements which will be extracted from each tile processed
-	/// \return Number of elements newly extracted
-	uint32 ExtractElementsOfSomeTiles(float PercentageOfTiles, float PercentageOfEltsInTile = 0.1f,
-									  FITwinMeshExtractionOptions const& Options = {});
-
-	/// Hide or Show all extracted entities.
-	void HideExtractedEntities(bool bHide = true);
-
-	/// Hide or Show primitives from which we have previously extracted some entities.
-	/// This was added for debugging, and needs some optimizations in case this is meant
-	/// to be used in production for some reason (typically if we want the user to be
-	/// able to see only the animated parts of a Synchro4D animation...)
-	void HidePrimitivesWithExtractedEntities(bool bHide = true);
-
 	// Current calls PickVisibleElement, but we should have a more optimized way to do this...
-	[[nodiscard]] bool IsElementVisible(ITwinScene::ElemIdx const Rank) /*should be const*/;
+	[[nodiscard]] bool IsElementVisible(ITwinScene::ElemIdx const Rank, std::optional<FVector> HitWorldPosition)
+		/*should be const*/;
 
 	/// Checks whether the Element can be picked, ie if it is visible. Optionally 
 	/// \param InElemID Element to check. Pass NOT_ELEMENT to just discard any existing selection.
@@ -1035,7 +1014,8 @@ public:
 	/// \return Whether the Element could indeed be selected in any of the currently known tiles. Failure to
 	///		select can indeed happen when the Element is hidden through the material shader, or simply when
 	///		it is already selected.
-	bool PickVisibleElement(ITwinElementID const& InElemID, bool const bSelectElement = true);
+	bool PickVisibleElement(ITwinElementID const& InElemID,
+							FPickingOptions Opts = FPickingOptions::CreateDefaultPickVisible());
 
 	void HideElements(std::unordered_set<ITwinElementID> const& InElemIDs, bool IsConstruction, bool Force = false);
 	void ShowElements(std::unordered_set<ITwinElementID> const& InElemIDs, bool Force = false);
@@ -1097,12 +1077,6 @@ private:
 	bool ParseElementBBox(TSharedPtr<FJsonValue> const& BBoxLow, TSharedPtr<FJsonValue> const& BBoxHigh,
 						  FBox& ElemBBox);
 	void ApplySelectingAndHiding(FITwinSceneTile& SceneTile);
-	/// Extracts the given element in the given tile. New Unreal entities may be created.
-	/// \return the number of created entities in Unreal.
-	uint32 ExtractElementFromTile(ITwinElementID const Element, FITwinSceneTile& SceneTile,
-		FITwinMeshExtractionOptions const& Options = {},
-		FITwinElementFeaturesInTile* ElementFeaturesInTile = nullptr,
-		FITwinExtractedElement* ExtractedElem = nullptr);
 
 	template<typename Container>
 	void GatherTimelineElemInfos(FITwinSceneTile& SceneTile, FITwinElementTimeline const& Timeline,

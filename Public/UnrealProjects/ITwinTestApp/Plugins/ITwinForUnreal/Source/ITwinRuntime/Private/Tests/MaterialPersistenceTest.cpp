@@ -367,7 +367,10 @@ bool FITwinMaterialPersistenceTest::RunTest(const FString& /*Parameters*/)
 	{
 		std::atomic_bool IsLoadFinished = false;
 
-		auto const ValidateLoadedMaterials = [this, pMatIOMngr, imodelId, &IsLoadFinished]()
+		auto const ValidateLoadedMaterials = [this,
+											  pMatIOMngr,
+											  imodelId,
+											  &IsLoadFinished](AdvViz::SDK::TextureUsageMap const& UsageMap)
 		{
 			auto& MatIOMngr = *pMatIOMngr;
 			AdvViz::SDK::PerIModelTextureSet const& perModelTextures =
@@ -378,7 +381,8 @@ bool FITwinMaterialPersistenceTest::RunTest(const FString& /*Parameters*/)
 			// Each texture should have an usage.
 			for (auto const& texKey : perModelTextures.begin()->second)
 			{
-				UTEST_TRUE("has usage", MatIOMngr.GetTextureUsage(texKey).flags_ != 0);
+				UTEST_TRUE("has usage",
+					AdvViz::SDK::FindTextureUsage(UsageMap, texKey).flags_ != 0);
 			}
 
 			// Check a few loaded settings
@@ -390,8 +394,8 @@ bool FITwinMaterialPersistenceTest::RunTest(const FString& /*Parameters*/)
 				UTEST_TRUE("mat #83 color map", colorMap
 					&& colorMap->eSource == AdvViz::SDK::ETextureSource::Library
 					&& colorMap->texture == "Roof_Tiles/color.png");
-				UTEST_TRUE("color map usage", MatIOMngr.GetTextureUsage({ colorMap->texture, colorMap->eSource })
-					.HasChannel(AdvViz::SDK::EChannelType::Color));
+				auto const TexUsage = AdvViz::SDK::FindTextureUsage(UsageMap, { colorMap->texture, colorMap->eSource });
+				UTEST_TRUE("color map usage", TexUsage.HasChannel(AdvViz::SDK::EChannelType::Color));
 				auto const color = matDefinition.GetChannelColorOpt(AdvViz::SDK::EChannelType::Color);
 				bool const bIsExpectedColor = color && *color == AdvViz::SDK::ITwinColor{ 1., 1., 1., 1. };
 				UTEST_TRUE("mat #83 color", bIsExpectedColor);
@@ -403,16 +407,16 @@ bool FITwinMaterialPersistenceTest::RunTest(const FString& /*Parameters*/)
 				UTEST_TRUE("mat #56 metallic map", metallicMap
 					&& metallicMap->eSource == AdvViz::SDK::ETextureSource::Decoration
 					&& metallicMap->texture == "0xade57343837ffcc8_road_4ln2w_height.jpg");
-				UTEST_TRUE("metallic map usage", MatIOMngr.GetTextureUsage({ metallicMap->texture, metallicMap->eSource })
-					.HasChannel(AdvViz::SDK::EChannelType::Metallic));
+				auto const metallicMapUsage = AdvViz::SDK::FindTextureUsage(UsageMap, { metallicMap->texture, metallicMap->eSource });
+				UTEST_TRUE("metallic map usage", metallicMapUsage.HasChannel(AdvViz::SDK::EChannelType::Metallic));
 				auto const normalValue = matDefinition.GetChannelIntensityOpt(AdvViz::SDK::EChannelType::Normal);
 				UTEST_TRUE("mat #56 normal amplitude", normalValue && std::fabs(*normalValue - 0.725) < 1e-5);
 				auto const normalMap = matDefinition.GetChannelMapOpt(AdvViz::SDK::EChannelType::Normal);
 				UTEST_TRUE("mat #56 normal map", normalMap
 					&& normalMap->eSource == AdvViz::SDK::ETextureSource::Decoration
 					&& normalMap->texture == "0xd4919cc328654b18_Normal.png");
-				UTEST_TRUE("normal map usage", MatIOMngr.GetTextureUsage({ normalMap->texture, normalMap->eSource })
-					.HasChannel(AdvViz::SDK::EChannelType::Normal));
+				auto const normalMapUsage = AdvViz::SDK::FindTextureUsage(UsageMap, { normalMap->texture, normalMap->eSource });
+				UTEST_TRUE("normal map usage", normalMapUsage.HasChannel(AdvViz::SDK::EChannelType::Normal));
 				auto const color = matDefinition.GetChannelColorOpt(AdvViz::SDK::EChannelType::Color);
 				bool const bIsExpectedColor = color && (std::fabs((*color)[1] - 0.4313725) < 1e-5);
 				UTEST_TRUE("mat #56 color", bIsExpectedColor);
@@ -426,14 +430,15 @@ bool FITwinMaterialPersistenceTest::RunTest(const FString& /*Parameters*/)
 		MatIOMngr.AsyncLoadDataFromServer(TEST_DECO_ID,
 			[this,
 			 ValidateLoadedMaterials = std::move(ValidateLoadedMaterials),
-			 MatAsyncCallback](AdvViz::expected<void, std::string> const&)
+			 MatAsyncCallback](AdvViz::expected<void, std::string> const&, AdvViz::SDK::TextureUsageMap const& UsageMap)
 		{
 			AsyncTask(ENamedThreads::GameThread,
 				[this,
 				 ValidateLoadedMaterials = std::move(ValidateLoadedMaterials),
-				 MatAsyncCallback]()
+				 MatAsyncCallback,
+				 UsageMap]()
 			{
-				ValidateLoadedMaterials();
+				ValidateLoadedMaterials(UsageMap);
 				MatAsyncCallback->OnRequestDone();
 			});
 		});

@@ -10,7 +10,6 @@
 
 #include <IncludeCesium3DTileset.h>
 #include <ITwinDigitalTwin.h>
-#include <ITwinExtractedMeshComponent.h>
 #include <ITwinGeoLocation.h>
 #include <ITwinIModelInternals.h>
 #include <ITwinIModel3DInfo.h>
@@ -37,6 +36,7 @@
 #include <Material/ITwinMaterialDefaultTexturesHolder.h>
 #include <Math/UEMathExts.h>
 #include <Cesium3DTilesetLoadFailureDetails.h>
+#include <CesiumFeaturesMetadataComponent.h>
 #include <CesiumWgs84Ellipsoid.h>
 #include <Network/JsonQueriesCache.h>
 #include <Timeline/Timeline.h>
@@ -451,7 +451,6 @@ public:
 		S4D.MaxTimelineUpdateMilliseconds = Settings.Synchro4DMaxTimelineUpdateMilliseconds;
 		S4D.ScheduleQueriesServerPagination = Settings.Synchro4DQueriesDefaultPagination;
 		S4D.ScheduleQueriesBindingsPagination = Settings.Synchro4DQueriesBindingsPagination;
-		S4D.bUseGltfTunerInsteadOfMeshExtraction = Settings.bSynchro4DUseGltfTunerInsteadOfMeshExtraction;
 		S4D.GlTFTranslucencyRule = Settings.Synchro4DGlTFTranslucencyRule;
 		S4D.bDisableColoring = Settings.bSynchro4DDisableColoring;
 		S4D.bDisableVisibilities = Settings.bSynchro4DDisableVisibilities;
@@ -493,17 +492,6 @@ public:
 
 	void TestExportCompletionAfterDelay(FString const& InExportId, float DelayInSeconds);
 
-
-	/// Extracts the given element, in all known tiles.
-	/// New Unreal entities may be created.
-	/// \return the number of entities created in Unreal.
-	uint32 ExtractElement(
-		ITwinElementID const Element,
-		FITwinMeshExtractionOptions const& Options)
-	{
-		return Internals.SceneMapping.ExtractElement(Element, Options);
-	}
-
 	/// Display per-feature bounding boxes for debugging.
 	void DisplayFeatureBBoxes() const
 	{
@@ -536,42 +524,6 @@ public:
 			}
 		}
 	#endif // ENABLE_DRAW_DEBUG
-	}
-	/// Extract some elements in a subset of the known tiles.
-	/// \param percentageOfTiles Percentage (in range [0;1] of known tiles from which to
-	/// extract.
-	/// \param percentageOfEltsInTile Percentage of elements which will be extracted from
-	/// each tile processed.
-	/// (for debugging).
-	void ExtractElementsOfSomeTiles(
-		float percentageOfTiles,
-		float percentageOfEltsInTile = 0.1f)
-	{
-		FITwinMeshExtractionOptions ExtractionOpts;
-	#if ENABLE_DRAW_DEBUG
-		ExtractionOpts.bPerElementColorationMode = true; // use coloring system for debugging...
-	#endif
-		Internals.SceneMapping.ExtractElementsOfSomeTiles(
-			percentageOfTiles, percentageOfEltsInTile, ExtractionOpts);
-	}
-
-	/// Extract the given element from all known tiles.
-	uint32 ExtractElement(ITwinElementID const Element)
-	{
-		FITwinMeshExtractionOptions ExtractionOpts;
-#if ENABLE_DRAW_DEBUG
-		ExtractionOpts.bPerElementColorationMode = true; // use coloring system for debugging...
-#endif
-		return Internals.SceneMapping.ExtractElement(Element, ExtractionOpts);
-	}
-
-	void HidePrimitivesWithExtractedEntities(bool bHide = true)
-	{
-		Internals.SceneMapping.HidePrimitivesWithExtractedEntities(bHide);
-	}
-	void HideExtractedEntities(bool bHide = true)
-	{
-		Internals.SceneMapping.HideExtractedEntities(bHide);
 	}
 
 #if ENABLE_DRAW_DEBUG
@@ -673,9 +625,9 @@ public:
 	}
 
 	/// Used to query info about all Elements of the iModel by reading rows from its database tables through
-	/// a paginated series of HTTP RPC requests. We'll use an instance to get the the parent-child
-	/// relationships, and (concurrently) another for the "Source Element ID" (aka "Identifier") information,
-	/// successively.
+	/// a paginated series of HTTP RPC requests. We use a single instance for the bulk of the needed metadata
+	/// combined in a single ECSQL query (parent-child relationships, bounding boxes, Federation GUIDs and
+	/// Source Element IDs) and another instance to (concurrently) get the Construction Detailing Elements parent IDs.
 	class FQueryElementMetadataPageByPage
 	{
 	public:
@@ -706,7 +658,12 @@ public:
 				break;
 			}
 			if (TotalRowsExpected > 0)
-				return std::min(99., (100. * QueryRowStart) / TotalRowsExpected);
+			{
+				if (bQueryingConstructionDetailingParentIDs)
+					return 96.;
+				// Hack, the rest is for bQueryingConstructionDetailingParentIDs which progress is not handled
+				return 0.96 * std::min(100., (100. * QueryRowStart) / TotalRowsExpected);
+			}
 			else
 				return 0.;
 		}
@@ -714,7 +671,7 @@ public:
 	private:
 		AITwinIModel& Owner;
 		EElementsMetadata const KindOfMetadata;
-		FString const ECSQLQueryString;
+		FString ECSQLQueryString;
 		FString const ECSQLQueryCount;
 		FString const BatchMsg;
 		std::optional<AdvViz::SDK::ITwinAPIRequestInfo> RequestInfo;
@@ -724,6 +681,10 @@ public:
 
 		EState State = EState::NotStarted;
 		int QueryRowStart = 0, TotalRowsParsed = 0, TotalRowsExpected = -1;
+		/// Temp hack to avoid too many conflicts with Laurent's optimization branch: NOT querying concurrently,
+		/// and NOT handling progression feedback either...
+		bool bQueryingConstructionDetailingParentIDs = false;
+		bool bIgnoreMissingConstructionDetailingECClass = false;
 		HttpRequestID CurrentRequestID;
 		/// Down from 50K to 32K to accommodate bounding boxes, because server reply is capped to 8MB!
 		static constexpr int QueryRowCount = 32000;
@@ -733,6 +694,8 @@ public:
 			Owner.ScheduleDownloadPercentComplete = 0.;
 			QueryRowStart = TotalRowsParsed = 0;
 			TotalRowsExpected = -1;
+			ECSQLQueryString = GetCombinedMetadataQueryString();
+			bQueryingConstructionDetailingParentIDs = bIgnoreMissingConstructionDetailingECClass = false;
 			FString const CacheFolder = QueriesCache::GetCacheFolder(
 				QueriesCache::ESubtype::ElementsMetadataCombined,
 				Owner.ServerConnection->Environment, Owner.ITwinId, Owner.IModelId, Owner.ResolvedChangesetId);
@@ -748,16 +711,20 @@ public:
 			QueryNextPage();
 		}
 
+		FString GetCombinedMetadataQueryString()
+		{
+			return FString(
+			  TEXT("SELECT e.ECInstanceId, b.BBoxLow, b.BBoxHigh, e.Parent.Id, e.FederationGuid, a.Identifier"))
+				+ TEXT(" FROM bis.Element e")
+				+ TEXT(" LEFT JOIN bis.ExternalSourceAspect a ON a.Element.Id = e.ECInstanceId")
+				+ TEXT(" LEFT JOIN bis.GeometricElement3d b ON b.ECInstanceId = e.ECInstanceId");
+		}
+
 	public:
 		FQueryElementMetadataPageByPage(AITwinIModel& InOwner, EElementsMetadata const InKindOfMetadata)
 			: Owner(InOwner)
 			, KindOfMetadata(InKindOfMetadata)
-			, ECSQLQueryString(
-				FString("SELECT e.ECInstanceId, b.BBoxLow, b.BBoxHigh, e.Parent.Id, e.FederationGuid, a.Identifier")
-				+ TEXT(" FROM bis.Element e")
-				+ TEXT(" LEFT JOIN bis.ExternalSourceAspect a ON a.Element.Id = e.ECInstanceId")
-				+ TEXT(" LEFT JOIN bis.GeometricElement3d b ON b.ECInstanceId = e.ECInstanceId")
-			)
+			, ECSQLQueryString(GetCombinedMetadataQueryString())
 			, ECSQLQueryCount(TEXT("SELECT COUNT(*) FROM bis.Element"))
 			, BatchMsg(FString(TEXT("iModel Elements metadata for ")) + InOwner.GetActorNameOrLabel())
 			, Cache(InOwner)
@@ -821,10 +788,27 @@ public:
 			}
 			else
 			{
+				AdvViz::SDK::FilterErrorFunc funcIgnoreMissingConstructionDetailing;
+				if (bQueryingConstructionDetailingParentIDs)
+				{
+					funcIgnoreMissingConstructionDetailing =
+						[this](long/*statusCode*/, std::string const& requestError, bool& bAllowRetry, bool& bLogError)
+					{
+						if (requestError.find("ECClass 'Construction.ConstructionDetailingElementSplitsGeometricElement3d' does not exist")
+							!= std::string::npos)
+						{
+							bAllowRetry = false;
+							bLogError = false;
+							// Flag the error to be ignored in OnQueryCompleted so that finalization can happen
+							// and 4D actually become available!
+							bIgnoreMissingConstructionDetailingECClass = true;
+						}
+					};
+				}
 				Owner.WebServices->QueryIModelRows({}, {}, {}, {}, 0, 0, // everything's in RequestInfo
 					std::bind(&FQueryElementMetadataPageByPage::SetCurrentRequestID, this,
 							  std::placeholders::_1),
-					&(*RequestInfo));
+					&(*RequestInfo), std::move(funcIgnoreMissingConstructionDetailing));
 			}
 		}
 
@@ -849,7 +833,7 @@ public:
 				DoRestart();
 				return true;
 			}
-			if (!bSuccess)
+			if (!bSuccess && !bIgnoreMissingConstructionDetailingECClass)
 			{
 				State = EState::StoppedOnError;
 				return true;
@@ -888,13 +872,17 @@ public:
 							}
 						}
 					}
-					else
+					else if (!bQueryingConstructionDetailingParentIDs)
 					{
 						RowsParsed = IModelInternals.SceneMapping.ParseIModelMetadata(*JsonRows);
+						TotalRowsParsed += RowsParsed;
+					}
+					else
+					{
+						RowsParsed = IModelInternals.SceneMapping.ParseConstructionDetailingParentIDs(*JsonRows);
 					}
 				}
 			}
-			TotalRowsParsed += RowsParsed;
 			if (RowsParsed > 0 || bHasReceivedTableCount)
 			{
 				if (bHasReceivedTableCount)
@@ -911,6 +899,17 @@ public:
 						Owner.Impl->UpdateIModel4DLoadProgress();
 					}
 				}
+				QueryNextPage();
+			}
+			else if (!bQueryingConstructionDetailingParentIDs)
+			{
+				bQueryingConstructionDetailingParentIDs = true;
+				QueryRowStart = 0;
+				// Instead of "SELECT DISTINCT TargetECInstanceId FROM ..." to get only a list of unique IDs for the
+				// parents, we could use "GROUP BY" if we wanted to get also the ECInstanceId of any child of each
+				// TargetECInstanceId, for example
+				ECSQLQueryString = FString(TEXT("SELECT DISTINCT TargetECInstanceId"))
+					+ TEXT(" FROM Construction.ConstructionDetailingElementSplitsGeometricElement3d");
 				QueryNextPage();
 			}
 			else
@@ -1080,7 +1079,9 @@ void AITwinIModel::FImpl::MakeTileset(std::optional<FITwinExportInfo> const& Exp
 	ElementsMetadataQuerying->Restart();
 	// It seems risky to NOT do a ResetSchedules here: for example, FITwinElement::AnimationKeys are
 	// not set, MainTimeline::NonAnimatedDuplicates is empty, etc.
-	// We could just "reinterpret" the known schedule data, but since it is in a local cache...
+	// TODO_GCO: We could just "reinterpret" the known schedule data, to avoid reparsing the local cache, which
+	// should be straightforward now that the timelines are all created in FinalizeTimeline, and would reduce
+	// the lags at loading time when setting up the iModel calls RefreshTileset (eg. when loading a cut-out, etc.)
 	if (IsValid(Owner.Synchro4DSchedules) && ensure(Owner.bResolvedChangesetIdValid))
 		Owner.Synchro4DSchedules->ResetSchedules();
 
@@ -3280,7 +3281,7 @@ void FITwinIModelInternals::OnVisibilityChanged(ITwin::CesiumTileID const& TileI
 	// Actual processing is delayed because:
 	// Short story: this is called from the middle of USceneComponent::SetVisibility, after the component's
 	//		flag was set, but BEFORE it's children components' flags are set! (when applied recursively)
-	// Long story: in the case of UITwinExtractedMeshComponent, the attachment hierarchy is thus...:
+	// Long story: in the case of UITwinExtractedMeshComponent (*), the attachment hierarchy is thus...:
 	//    Tileset --holds--> UCesiumGltfComponent --holds--> UCesiumGltfPrimitiveComponent
 	// ...and when visibility is set from Cesium rules, this is the sequence of actions:
 	//	1. UCesiumGltfComponent::SetVisibility
@@ -3293,6 +3294,9 @@ void FITwinIModelInternals::OnVisibilityChanged(ITwin::CesiumTileID const& TileI
 	// BEFORE the UCesiumGltfPrimitiveComponent pParent below is thought to be visible! It would be
 	// possible to check the grand-parent's visible flags instead of the parent's (see SetFullyHidden...), but
 	// it would be an ugly assumption, and the whole situation felt really unsafe.
+	//
+	// [*] UITwinExtractedMeshComponent does not exist anymore: it was used when extracting UE meshes.
+	// (blame here to find the corresponding code).
 	if (SceneTile)
 	{
 		auto const TileRank = SceneMapping.KnownTileRank(*SceneTile);
@@ -3308,9 +3312,7 @@ void AITwinIModel::FImpl::HandleTilesHavingChangedVisibility()
 		auto& SceneTile = Internals.SceneMapping.KnownTile(TileRank);
 		if (bVisible != SceneTile.bVisible)
 		{
-			Internals.SceneMapping.OnVisibilityChanged(SceneTile, bVisible,
-				Owner.Synchro4DSchedules
-					? Owner.Synchro4DSchedules->bUseGltfTunerInsteadOfMeshExtraction : false);
+			Internals.SceneMapping.OnVisibilityChanged(SceneTile, bVisible);
 			if (Owner.Synchro4DSchedules)
 			{
 				Owner.Synchro4DSchedules->OnVisibilityChanged(SceneTile, bVisible);
@@ -3429,7 +3431,6 @@ void FITwinIModelInternals::OnElementsTimelineModified(FITwinElementTimeline& Mo
 		SceneMapping.ForEachKnownTile([&](FITwinSceneTile& SceneTile)
 		{
 			SceneMapping.OnElementsTimelineModified(SceneTile, ModifiedTimeline, OnlyForElements,
-				Schedules->bUseGltfTunerInsteadOfMeshExtraction,
 				SchedInternals.TileTunedForSchedule(SceneTile),
 				Index);
 		});
@@ -3496,7 +3497,9 @@ bool FITwinIModelInternals::OnClickedElement(ITwinElementID const Element, FHitR
 	bool const bSelectElement /*= true*/)
 {
 	auto const LastSelected = SceneMapping.GetSelectedElement();
-	if (bPickUponClickInViewport && !SceneMapping.PickVisibleElement(Element, bSelectElement))
+	if (bPickUponClickInViewport
+		&& !SceneMapping.PickVisibleElement(Element, FPickingOptions::CreateDefaultPickVisible()
+			.MakeSelected(bSelectElement).HitWorldPosition(HitResult.ImpactPoint)))
 	{
 		// filtered out, most likely Element is masked out by Saved view, as Construction data, or by 4D
 		return false;
@@ -3582,14 +3585,6 @@ void FITwinIModelInternals::DescribeElement(ITwinElementID const Element,
 				UE_LOG(LogITwin, Display, TEXT("Owning Tile: %s"), *TileIdString);
 			}
 		}
-	}
-	// Another debugging option: extract clicked Element
-	static bool bExtractElementOnClick = false;
-	if (bExtractElementOnClick && Element != ITwin::NOT_ELEMENT)
-	{
-		FITwinMeshExtractionOptions ExtractOpts;
-		ExtractOpts.bPerElementColorationMode = true;
-		SceneMapping.ExtractElement(Element, ExtractOpts);
 	}
 
 	if (bLogPropertiesUponSelectElement)
@@ -3801,90 +3796,6 @@ static FAutoConsoleCommandWithWorldAndArgs FCmd_ITwinDisplayFeaturesBBoxes(
 })
 );
 
-// Console command to extract some meshes
-static FAutoConsoleCommandWithWorldAndArgs FCmd_ITwinExtractSomeMeshes(
-	TEXT("cmd.ITwin_ExtractSomeMeshes"),
-	TEXT("Extract some meshes from the known tiles."),
-	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
-{
-	float percentageOfTiles = 0.25f;
-	float percentageOfEltsInTiles = 0.20f;
-	bool bHide = true;
-	if (Args.Num() >= 1)
-	{
-		percentageOfTiles = FCString::Atof(*Args[0]);
-	}
-	if (Args.Num() >= 2)
-	{
-		percentageOfEltsInTiles = FCString::Atof(*Args[1]);
-	}
-	for (TActorIterator<AITwinIModel> IModelIter(World); IModelIter; ++IModelIter)
-	{
-		FITwinIModelImplAccess::Get(**IModelIter).ExtractElementsOfSomeTiles(
-			percentageOfTiles,
-			percentageOfEltsInTiles);
-	}
-})
-);
-
-// Console command to extract a given ITwin Element ID
-static FAutoConsoleCommandWithWorldAndArgs FCmd_ITwinExtractElement(
-	TEXT("cmd.ITwin_ExtractElement"),
-	TEXT("Extract a given ITwin Element from the known tiles."),
-	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
-{
-	ITwinElementID Element = ITwin::NOT_ELEMENT;
-	if (Args.Num() >= 1)
-	{
-		Element = ITwin::ParseElementID(Args[0]);
-	}
-	if (Element != ITwin::NOT_ELEMENT)
-	{
-		for (TActorIterator<AITwinIModel> IModelIter(World); IModelIter; ++IModelIter)
-		{
-			FITwinIModelImplAccess::Get(**IModelIter).ExtractElement(Element);
-		}
-	}
-})
-);
-
-// Console command to hide GLTF meshes partly (or fully) extracted
-static FAutoConsoleCommandWithWorldAndArgs FCmd_ITwinHidePrimitivesWithExtractedEntities(
-	TEXT("cmd.ITwin_HidePrimitivesWithExtractedEntities"),
-	TEXT("Hide ITwin primitives from which some parts were extracted."),
-	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
-{
-	bool bHide = true;
-	if (!Args.IsEmpty())
-	{
-		bHide = Args[0].ToBool();
-	}
-	for (TActorIterator<AITwinIModel> IModelIter(World); IModelIter; ++IModelIter)
-	{
-		FITwinIModelImplAccess::Get(**IModelIter).HidePrimitivesWithExtractedEntities(bHide);
-	}
-})
-);
-
-// Console command to hide all extracted meshes.
-static FAutoConsoleCommandWithWorldAndArgs FCmd_ITwinHideExtractedEntities(
-	TEXT("cmd.ITwin_HideExtractedEntities"),
-	TEXT("Hide entities previously extracted from ITwin primitives."),
-	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
-{
-	bool bHide = true;
-	if (!Args.IsEmpty())
-	{
-		bHide = Args[0].ToBool();
-	}
-	for (TActorIterator<AITwinIModel> IModelIter(World); IModelIter; ++IModelIter)
-	{
-		FITwinIModelImplAccess::Get(**IModelIter).HideExtractedEntities(bHide);
-	}
-})
-);
-
-
 // Console command to create a new saved view
 static FAutoConsoleCommandWithWorldAndArgs FCmd_ITwinAddSavedView(
 	TEXT("cmd.ITwin_AddSavedView"),
@@ -4022,7 +3933,7 @@ static FAutoConsoleCommandWithWorldAndArgs FCmd_ITwinToggleSelectedElement(
 			ITwinScene::ElemIdx Rank;
 			auto const* SceneElem = IModelInt.SceneMapping.GetElementForSLOW(SelectedElement, &Rank);
 			if (SceneElem)
-				if (IModelInt.SceneMapping.IsElementVisible(Rank))
+				if (IModelInt.SceneMapping.IsElementVisible(Rank, {}))
 					IModelInt.HideElements({ SelectedElement }, /*IsConstruction*/false, true);
 				else
 					IModelInt.ShowElements({ SelectedElement }, true);
@@ -4109,7 +4020,7 @@ static FAutoConsoleCommandWithWorldAndArgs FCmd_ITwinRefreshIModelTileset(
 	}
 }));
 
-// Console command to change the metallic factor of a given material.
+// Console command to change the intensity factor of a channel for a given material.
 static FAutoConsoleCommandWithWorldAndArgs FCmd_ITwinSetMaterialChannelIntensity(
 	TEXT("cmd.ITwinSetMaterialChannelIntensity"),
 	TEXT("Set the intensity factor of the given channel for the given material."),
@@ -4132,6 +4043,36 @@ static FAutoConsoleCommandWithWorldAndArgs FCmd_ITwinSetMaterialChannelIntensity
 	{
 		(*IModelIter)->SetMaterialChannelIntensity(MatID,
 			static_cast<AdvViz::SDK::EChannelType>(ChannelId), Intensity);
+	}
+}));
+
+// Console command to change the color of a given material.
+static FAutoConsoleCommandWithWorldAndArgs FCmd_ITwinSetMaterialColor(
+	TEXT("cmd.ITwinSetMaterialColor"),
+	TEXT("Override the color of the given material."),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+{
+	if (Args.Num() < 4)
+	{
+		BE_LOGE("ITwinAPI", "A material ID and 3 color components (R/G/B) are required");
+		return;
+	}
+	const uint64_t MatID = ITwin::ParseElementID(Args[0]).value();
+	const int32 ColorR = FCString::Atoi(*Args[1]);
+	const int32 ColorG = FCString::Atoi(*Args[2]);
+	const int32 ColorB = FCString::Atoi(*Args[3]);
+	if (ColorR < 0 || ColorR > 255
+		|| ColorG < 0 || ColorG > 255
+		|| ColorB < 0 || ColorB > 255)
+	{
+		BE_LOGE("ITwinAPI", "Expecting color components in range [0;255]");
+		return;
+	}
+	FLinearColor const Color(ColorR / 255., ColorG / 255., ColorB / 255.);
+	for (TActorIterator<AITwinIModel> IModelIter(World); IModelIter; ++IModelIter)
+	{
+		(*IModelIter)->SetMaterialChannelColor(MatID,
+			AdvViz::SDK::EChannelType::Color, Color);
 	}
 }));
 
@@ -4266,11 +4207,6 @@ static FAutoConsoleCommandWithWorldAndArgs FCmd_ITwinResetTileMaterials(
 				if (MC)
 					MC->SetMaterial(0, pNewMaterial);
 			}
-			SceneTile.ForEachExtractedEntity([pNewMaterial](FITwinExtractedEntity& Extr)
-				{
-					if (Extr.ExtractedMeshComponent.IsValid())
-						Extr.ExtractedMeshComponent->SetMaterial(0, pNewMaterial);
-				});
 		};
 	if (SceneTile)
 		fncResetMat(*SceneTile);

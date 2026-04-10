@@ -10,7 +10,6 @@
 #include <ITwinCesiumTileID.inl>
 #include <ITwinDynamicShadingProperty.h>
 #include <ITwinDynamicShadingProperty.inl>
-#include <ITwinExtractedMeshComponent.h>
 #include <ITwinIModel.h>
 #include <ITwinUtilityLibrary.h>
 #include <Material/ITwinMaterialParameters.h>
@@ -23,6 +22,7 @@
 #	include <Core/Tools/Log.h>
 #include <Compil/AfterNonUnrealIncludes.h>
 
+#include <Components/StaticMeshComponent.h>
 #include <Engine/Texture.h>
 #include <GenericPlatform/GenericPlatformTime.h>
 #include <Logging/LogMacros.h>
@@ -589,29 +589,10 @@ void FITwinSceneMapping::ApplySelectingAndHiding(FITwinSceneTile& SceneTile)
 	}
 }
 
-void FITwinSceneMapping::OnVisibilityChanged(FITwinSceneTile& SceneTile, bool bVisible,
-											 bool const bUseGltfTunerInsteadOfMeshExtraction)
+void FITwinSceneMapping::OnVisibilityChanged(FITwinSceneTile& SceneTile, bool bVisible)
 {
 	if (bVisible)
 	{
-		if (!bUseGltfTunerInsteadOfMeshExtraction)
-		{
-			SceneTile.ForEachExtractedEntity([](FITwinExtractedEntity& Extracted)
-				{
-					if (!Extracted.TransformableMeshComponent.IsValid()
-						|| !Extracted.TransformableMeshComponent->GetOuter())
-					{
-						return;
-					}
-					if (auto* SceneComp
-						= Cast<USceneComponent>(Extracted.TransformableMeshComponent->GetOuter()))
-					{
-						Extracted.OriginalTransform = SceneComp->GetComponentTransform();
-						Extracted.TransformableMeshComponent->SetWorldTransform(
-							Extracted.OriginalTransform, false, nullptr, ETeleportType::TeleportPhysics);
-					}
-				});
-		}
 		ensure(!SceneTile.bVisible);//should have been tested earlier
 		ApplySelectingAndHiding(SceneTile);
 	}
@@ -782,9 +763,8 @@ bool FITwinSceneMapping::ParseSomeElementIdentifier(TMapByRank& OutIDMap, ITwinS
 		// was inserted => first time the Source Element ID is encountered, but don't create a duplicates
 		// list just yet!
 	}
-	else
+	else // already in set => we have a duplicate
 	{
-		// already in set => we have a duplicate
 		auto& FirstSourceElem = ElementFor(SourceEntry.first->Rank);
 		// first duplicate: create the list
 		if (ITwinScene::NOT_DUPL == FirstSourceElem.DuplicatesList)
@@ -803,6 +783,26 @@ bool FITwinSceneMapping::ParseSomeElementIdentifier(TMapByRank& OutIDMap, ITwinS
 	return true;
 }
 
+int FITwinSceneMapping::ParseConstructionDetailingParentIDs(TArray<TSharedPtr<FJsonValue>> const& JsonRows)
+{
+	int i = 0;
+	ConstructionDetailingParentsToHide.reserve(ConstructionDetailingParentsToHide.size() + (size_t)JsonRows.Num());
+	for (auto const& Row : JsonRows)
+	{
+		auto const& Entries = Row->AsArray();
+		if (!ensure(!Entries.IsEmpty()))
+			continue;
+		ITwinElementID const ElemId = ITwin::ParseElementID(Entries[0]->AsString());
+		if (!ensure(ITwin::NOT_ELEMENT != ElemId))
+			continue;
+		++i;
+		ITwinScene::ElemIdx InVec = ITwinScene::NOT_ELEM;
+		(void)ElementForSLOW(ElemId, &InVec);
+		ConstructionDetailingParentsToHide.push_back(InVec); // unique by design of the ECSQL query
+	}
+	return i;
+}
+
 FITwinSceneMapping::FDuplicateElementsVec const& FITwinSceneMapping::GetDuplicateElements(
 	ITwinElementID const ElemID) const
 {
@@ -812,6 +812,11 @@ FITwinSceneMapping::FDuplicateElementsVec const& FITwinSceneMapping::GetDuplicat
 		return Empty;
 	else
 		return DuplicateElements[Elem.DuplicatesList.value()];
+}
+
+std::vector<ITwinScene::ElemIdx> const& FITwinSceneMapping::GetConstructionDetailingParentsToHide() const
+{
+	return ConstructionDetailingParentsToHide;
 }
 
 void FITwinSceneMapping::Update4DAnimTileTextures(FITwinSceneTile& SceneTile, size_t& DirtyTexCount,
@@ -1114,7 +1119,7 @@ void FITwinSceneMapping::CreateCuttingPlanesTexture(FITwinSceneTile& SceneTile)
 void FITwinSceneMapping::OnElementsTimelineModified(
 	std::variant<ITwinScene::TileIdx, std::reference_wrapper<FITwinSceneTile>> const Tile,
 	FITwinElementTimeline& ModifiedTimeline, std::vector<ITwinElementID> const* OnlyForElements,
-	bool const bUseGltfTunerInsteadOfMeshExtraction, bool const bTileIsTunedFor4D, int const TimelineIndex)
+	bool const bTileIsTunedFor4D, int const TimelineIndex)
 {
 	auto& SceneTile = (Tile.index() == 0) ? KnownTile(std::get<0>(Tile)) : (std::get<1>(Tile).get());
 	if (0 == ModifiedTimeline.NumKeyframes() || ITwin::NOT_FEATURE == SceneTile.MaxFeatureID)
@@ -1158,10 +1163,8 @@ void FITwinSceneMapping::OnElementsTimelineModified(
 		}
 	}
 	// I removed the big condition below because non-empty/bogus timelines almost(*) always use this texture,
-	// either for coloring, or for masking fully clipped objects or, when using mesh extraction, for masking
-	// parts that were extracted because of partial transparency and/or transformations. When using gtlf
-	// tuning instead, there are rare cases where it would not be needed, like transform-only or
-	// partial-viz-only tasks...
+	// either for coloring, or for masking fully clipped objects. Now that we are using glTF tuning, there
+	// are rare cases where it would not be needed, like transform-only or partial-viz-only tasks...
 	if (!SceneTile.HighlightsAndOpacities)
 	{
 		CreateHighlightsAndOpacitiesTexture(SceneTile);
@@ -1248,10 +1251,8 @@ void FITwinSceneMapping::OnElementsTimelineModified(
 			.NbOfElements = (uint32_t)TileElems.size(),
 			.FirstExtract = bMayNeedExtraction ? TimelineOptim->Extracts.size() : NO_EXTRACTION,
 			.NbOfExtracts = (uint32_t)(bMayNeedExtraction
-				? (bUseGltfTunerInsteadOfMeshExtraction
-					// Always assume a future retuning may yield non-empty TimelineMeshes here:
-					? (/*TimelineMeshes.empty() ? 0 :*/ bTileIsTunedFor4D ? 1 : 0)
-					: TileElems.size())
+				?  // Always assume a future retuning may yield non-empty TimelineMeshes here:
+				  (/*TimelineMeshes.empty() ? 0 :*/ bTileIsTunedFor4D ? 1 : 0)
 				: 0),
 		});
 	if (Entry.second) // was inserted
@@ -1261,7 +1262,7 @@ void FITwinSceneMapping::OnElementsTimelineModified(
 		if (bMayNeedExtraction)
 		{
 			TimelineOptim->Extracts.reserve(TimelineOptim->Extracts.size() + Entry.first->NbOfExtracts);
-			if (bUseGltfTunerInsteadOfMeshExtraction && bTileIsTunedFor4D)
+			if (bTileIsTunedFor4D)
 			{
 				// With retuning, we use a single dummy Extract, with timeline index as ExtractedElement's ID
 				FITwinElementFeaturesInTile DummyElemInTile{ ITwinElementID(TimelineIndex) };
@@ -1273,14 +1274,6 @@ void FITwinSceneMapping::OnElementsTimelineModified(
 		{
 			TimelineOptim->TileElems.push_back(TileElems[i]);
 			TimelineOptim->SceneElems.push_back(SceneElems[i]);
-			if (bMayNeedExtraction && !bUseGltfTunerInsteadOfMeshExtraction)
-			{
-				auto& ElementInTile = SceneTile.ElementFeatures(TileElems[i]);
-				// Allocate the Extraction entry even if the Element will not actually need extraction in
-				// the end (case of already translucent mat - see doc on FTimelineToSceneTile::NbOfElements)
-				(void)SceneTile.ExtractedElementSLOW(ElementInTile);
-				TimelineOptim->Extracts.push_back(ElementInTile.ExtractedRank);
-			}
 		}
 	}
 	//else: not the first time we load this tile, but we never erase from TimelineOptim->Tiles
@@ -1288,7 +1281,7 @@ void FITwinSceneMapping::OnElementsTimelineModified(
 	// Can't keep the list of meshes from one tile version to another, because gltf meshes may typically
 	// have been split or merged: use a single dummy ExtractedElement and fill its vector with the list of
 	// mesh components of current tile to which the current timeline applies:
-	if (bMayNeedExtraction && bUseGltfTunerInsteadOfMeshExtraction && bTileIsTunedFor4D)
+	if (bMayNeedExtraction && bTileIsTunedFor4D)
 	{
 		auto& SingleDummyExtract =
 			SceneTile.ExtractedElement(TimelineOptim->Extracts[Entry.first->FirstExtract]);
@@ -1300,17 +1293,6 @@ void FITwinSceneMapping::OnElementsTimelineModified(
 											CoordConversions.IModelTilesetTransform);
 		}
 	}
-}
-
-void FITwinSceneMapping::HideExtractedEntities(bool bHide /*= true*/)
-{
-	ForEachKnownTile([bHide](FITwinSceneTile& SceneTile)
-	{
-		SceneTile.ForEachExtractedEntity([bHide](FITwinExtractedEntity& ExtractedEntity)
-			{
-				ExtractedEntity.SetHidden(bHide);
-			});
-	});
 }
 
 FBox const& FITwinSceneMapping::GetBoundingBox(ITwinElementID const Element) const
@@ -1366,262 +1348,15 @@ FBox FITwinSceneMapping::GetBoundingBoxOfAllGlTFMeshes() const
 	return Box;
 }
 
-namespace
+bool FITwinSceneMapping::IsElementVisible(ITwinScene::ElemIdx const Rank, std::optional<FVector> HitWorldPosition)
+	/*should be const*/
 {
-	struct FExtractionOperationInfo
-	{
-		uint32 nbUEEntities = 0;
-		FITwinMeshExtractionOptions OptsOpaque, OptsTranslucent;
-
-		FExtractionOperationInfo(
-			std::function<UMaterialInterface* (ECesiumMaterialType)> const& MaterialGetter)
-		{
-			SetupHighlightsAndOpacitiesInfo();
-			ITwinMatParamInfo::SetupSelectingAndHidingInfo();
-			SetupCuttingPlanesInfo();
-			ITwinMatParamInfo::SetupFeatureIdInfo();
-			// Even merely transforming requires a new material instance, because of ForcedOpacity!
-			OptsOpaque.bCreateNewMaterialInstance = true;
-			OptsTranslucent = OptsOpaque;
-			OptsOpaque.BaseMaterialForNewInstance = MaterialGetter(ECesiumMaterialType::Opaque);
-			OptsTranslucent.BaseMaterialForNewInstance = MaterialGetter(ECesiumMaterialType::Translucent);
-		}
-	};
-}
-
-uint32 FITwinSceneMapping::CheckAndExtractElements(FTimelineToScene const& TimelineOptim,
-	bool const bOnlyVisibleTiles, std::optional<ITwinScene::TileIdx> const& OnlySceneTile)
-{
-	if (!ensure(MaterialGetter))
-		return 0;
-	std::optional<FExtractionOperationInfo> ExtractOp;
-	for (auto&& TileOptim : TimelineOptim.Tiles)
-	{
-		auto& SceneTile = KnownTile(TileOptim.Rank);
-		if (!SceneTile.IsLoaded()
-			|| (bOnlyVisibleTiles && !SceneTile.bVisible)
-			|| (OnlySceneTile && (*OnlySceneTile) != TileOptim.Rank)
-			|| !ensure(TileOptim.FirstExtract != NO_EXTRACTION))
-		{
-			continue;
-		}
-		auto const ElemStart = TimelineOptim.TileElems.begin() + TileOptim.FirstElement;
-		auto const ScElemStart = TimelineOptim.SceneElems.begin() + TileOptim.FirstElement;
-		auto const ElemEnd = ElemStart + TileOptim.NbOfElements;
-		auto const ExtrStart = TimelineOptim.Extracts.begin() + TileOptim.FirstExtract;
-		auto ExtrIt = ExtrStart;
-		auto ScElemIt = ScElemStart;
-		for (auto It = ElemStart; It != ElemEnd; ++It, ++ScElemIt, ++ExtrIt)
-		{
-			FITwinElementFeaturesInTile& ElementInTile = SceneTile.ElementFeatures(*It);
-			if (ElementInTile.bIsElementExtracted)
-				continue;
-			FITwinElement& SceneElem = ElementFor(*ScElemIt);
-			ensure(SceneElem.ElementID == ElementInTile.ElementID);
-			// If extracting only for translucency, and Element only has translucent materials in this tile
-			// already, we won't actually need to extract.
-			if (!SceneElem.Requirements.bNeedBeTransformable
-				// && SceneElem.Requirements.bNeedTranslucentMat <== obvious
-				&& ElementInTile.bHasTestedForTranslucentFeaturesNeedingExtraction)
-			{
-				continue;
-			}
-			if (!ExtractOp)
-				ExtractOp.emplace(MaterialGetter);
-			FITwinExtractedElement& ExtractedElem = SceneTile.ExtractedElement(*ExtrIt);
-			ensure(ExtractedElem.ElementID == ElementInTile.ElementID);
-			bool const bOriginalMatOpaque = ElementInTile.HasOpaqueOrMaskedMaterial();
-			bool const bExtractedNeedTranslucentMat =
-				SceneElem.Requirements.bNeedTranslucentMat || !bOriginalMatOpaque;
-			ElementInTile.bHasTestedForTranslucentFeaturesNeedingExtraction = true;
-			ExtractOp->nbUEEntities += ExtractElementFromTile(ElementInTile.ElementID, SceneTile,
-				bExtractedNeedTranslucentMat ? ExtractOp->OptsTranslucent : ExtractOp->OptsOpaque,
-				&ElementInTile, &ExtractedElem);
-			if (ElementInTile.bIsElementExtracted
-				&& !ElementInTile.bIsAlphaSetInTextureToHideExtractedElement
-				&& ensure(SceneTile.HighlightsAndOpacities))
-			{
-				// Ensure the parts that were extracted are made invisible in the original mesh
-				SceneTile.HighlightsAndOpacities->SetPixelsAlpha(ElementInTile.Features, 0);
-				ElementInTile.bIsAlphaSetInTextureToHideExtractedElement = true;
-				ElementInTile.TextureFlags.Synchro4DHighlightOpaTexFlag.Invalidate();
-			}
-			ElementInTile.bIsElementExtracted = true;// even if it failed, do not try over again
-		}
-	}
-	return ExtractOp ? ExtractOp->nbUEEntities : 0;
-}
-
-uint32 FITwinSceneMapping::ExtractElement(
-	ITwinElementID const Element,
-	FITwinMeshExtractionOptions const& Options /*= {}*/)
-{
-	uint32 nbUEEntities = 0;
-	ForEachKnownTile([&, this](FITwinSceneTile& SceneTile)
-	{
-		nbUEEntities += ExtractElementFromTile(Element, SceneTile, Options);
-	});
-	return nbUEEntities;
-}
-
-uint32 FITwinSceneMapping::ExtractElementFromTile(ITwinElementID const Element, FITwinSceneTile& SceneTile,
-	FITwinMeshExtractionOptions const& InOptions /*= {}*/,
-	FITwinElementFeaturesInTile* ElementFeaturesInTile/*= nullptr*/,
-	FITwinExtractedElement* ExtractedElemInTile/*= nullptr*/)
-{
-	uint32 nbUEEntities = 0;
-	// Beware several primitives in the tile can contain the element to extract. That's why we store a vector
-	// in ExtractedEntityCont.
-	decltype(FITwinExtractedElement::Entities)* EntitiesVec = nullptr;
-	FITwinMeshExtractionOptions Options = InOptions;
-	Options.SceneTile = &SceneTile;
-	if (!ElementFeaturesInTile) // slow path for mostly dev/debug code
-		ElementFeaturesInTile = &SceneTile.ElementFeaturesSLOW(Element);
-	for (FITwinGltfMeshComponentWrapper& gltfMeshData : SceneTile.GltfMeshes)
-	{
-		if (gltfMeshData.CanExtractElement(Element))
-		{
-			if (!EntitiesVec)
-			{
-				if (ExtractedElemInTile) // fast path used for code inside ApplyAnimation
-				{
-					EntitiesVec = &ExtractedElemInTile->Entities;
-				}
-				else // slow path for mostly dev/debug code
-				{
-					auto Entry = SceneTile.ExtractedElementSLOW(*ElementFeaturesInTile);
-					EntitiesVec = &((Entry.first).get().Entities);
-				}
-				EntitiesVec->clear(); // just in case we had extracted an obsolete version
-			}
-			auto& ExtractedEntity = EntitiesVec->emplace_back(FITwinExtractedEntity{ Element });
-			if (gltfMeshData.ExtractElement(Element, ExtractedEntity, Options))
-			{
-				nbUEEntities++;
-			}
-			else
-			{
-				// Don't keep half constructed extracted entity
-				EntitiesVec->pop_back();
-			}
-		}
-	}
-	if (nbUEEntities > 0)
-	{
-		// Set a flag to mark this Element as extracted.
-		ElementFeaturesInTile->bIsElementExtracted = true;
-		ITwinMatParamInfo::SetupFeatureIdInfo();
-		for (auto&& Extracted : *EntitiesVec)
-		{
-			SetupFeatureIdUVIndex(SceneTile, Extracted);
-			if (SceneTile.HighlightsAndOpacities)
-			{
-				if (SceneTile.HighlightsAndOpacities->SetupInMaterial(Extracted.Material,
-																	  *HighlightsAndOpacitiesInfo))
-				{
-					Extracted.TextureFlags.Synchro4DHighlightOpaTexFlag.OnTextureSetupInMaterials(1);
-				}
-				else
-				{
-					SceneTile.bNeed4DHighlightsOpaTextureSetupInMaterials = true;
-					bNew4DAnimTexturesNeedSetupInMaterials = true;//tex is not new, but material is!
-				}
-			}
-			if (SceneTile.CuttingPlanes)
-			{
-				if (SceneTile.CuttingPlanes->SetupInMaterial(Extracted.Material, *CuttingPlanesInfo))
-					Extracted.TextureFlags.Synchro4DCuttingPlaneTexFlag.OnTextureSetupInMaterials(1);
-				else
-				{
-					SceneTile.bNeed4DCuttingPlanesTextureSetupInMaterials = true;
-					bNew4DAnimTexturesNeedSetupInMaterials = true;//tex is not new, but material is!
-				}
-			}
-			if (SceneTile.SelectingAndHiding)
-			{
-				if (SceneTile.SelectingAndHiding->SetupInMaterial(
-					Extracted.Material, *ITwinMatParamInfo::SelectingAndHidingInfo))
-				{
-					Extracted.TextureFlags.SelectingAndHidingTexFlag.OnTextureSetupInMaterials(1);
-				}
-				else
-				{
-					SceneTile.bNeedSelectingAndHidingTextureSetupInMaterials = true;
-					//tex is not new, but material is!
-					bNewSelectingAndHidingTexturesNeedSetupInMaterials = true;
-				}
-			}
-		}
-	}
-	return nbUEEntities;
-}
-
-uint32 FITwinSceneMapping::ExtractElementsOfSomeTiles(
-	float percentageOfTiles,
-	float percentageOfEltsInTile /*= 0.1f*/,
-	FITwinMeshExtractionOptions const& opts /*= {}*/)
-{
-	uint32 nbExtractedElts = 0;
-
-#if ENABLE_DRAW_DEBUG
-	uint32 const nbTilesToExtract = static_cast<uint32>(std::ceil(KnownTiles.size() * percentageOfTiles));
-	uint32 nbProcessedTiles = 0;
-
-	ForEachKnownTile([&](FITwinSceneTile& SceneTile)
-	{
-		if (nbProcessedTiles >= nbTilesToExtract)
-		{
-			return;
-		}
-		for (FITwinGltfMeshComponentWrapper& gltfMeshData : SceneTile.GltfMeshes)
-		{
-			uint32 const nbExtracted = gltfMeshData.ExtractSomeElements(
-				SceneTile,
-				percentageOfEltsInTile,
-				opts);
-			if (nbExtracted > 0)
-			{
-				nbExtractedElts += nbExtracted;
-				nbProcessedTiles++;
-				if (nbProcessedTiles >= nbTilesToExtract)
-				{
-					break;
-				}
-			}
-		}
-	});
-#endif // ENABLE_DRAW_DEBUG
-
-	return nbExtractedElts;
-}
-
-void FITwinSceneMapping::HidePrimitivesWithExtractedEntities(bool bHide /*= true*/)
-{
-	ForEachKnownTile([bHide](FITwinSceneTile& SceneTile)
-	{
-		SceneTile.ForEachExtractedEntity([&SceneTile, bHide](FITwinExtractedEntity& Extracted)
-			{
-				// Note that there is room for optimization: with this implementation, we may
-				// hide a same mesh again and again (as many times as the number of extracted
-				// elements...)
-				for (FITwinGltfMeshComponentWrapper& gltfMeshData : SceneTile.GltfMeshes)
-				{
-					if (gltfMeshData.HasDetectedElementID(Extracted.ElementID))
-					{
-						gltfMeshData.HideOriginalMeshComponent(bHide);
-					}
-				}
-			});
-	});
-}
-
-bool FITwinSceneMapping::IsElementVisible(ITwinScene::ElemIdx const Rank) /*should be const*/
-{
-	return PickVisibleElement(ElementFor(Rank).ElementID, /*bSelectElement*/false);
+	return PickVisibleElement(ElementFor(Rank).ElementID,
+		FPickingOptions::CreateDefaultPickVisible().MakeSelected(false).HitWorldPosition(HitWorldPosition));
 }
 
 bool FITwinSceneMapping::PickVisibleElement(ITwinElementID const& InElemID,
-											bool const bSelectElement /*= true*/)
+	FPickingOptions Opts/*= FPickingOptions::CreateDefaultPickVisible()*/)
 {
 	// Bad: first, because returning false would make caller think the Element is not there or invisible,
 	// and secondly because the visibility (thru shader) could have changed since the Element was selected!
@@ -1629,13 +1364,12 @@ bool FITwinSceneMapping::PickVisibleElement(ITwinElementID const& InElemID,
 	//	return false;
 	bool bPickedInATile = false;
 	FITwinSceneTile::FTextureNeeds TextureNeeds;
-	ForEachKnownTile([&InElemID, &bPickedInATile, &TextureNeeds, bSelectElement](FITwinSceneTile& SceneTile)
+	ForEachKnownTile([&InElemID, &bPickedInATile, &TextureNeeds, Opts](FITwinSceneTile& SceneTile)
 	{
-		bPickedInATile |= SceneTile.PickElement(InElemID, TextureNeeds,
-			FPickingOptions().OnlyVisibleTiles(true).TestElementVisibility(true).MakeSelected(bSelectElement));
+		bPickedInATile |= SceneTile.PickElement(InElemID, TextureNeeds, Opts);
 	});
 	this->bNewSelectingAndHidingTexturesNeedSetupInMaterials |= TextureNeeds.bWasCreated;
-	if (bSelectElement)
+	if (Opts.MakeSelected())
 	{
 		SelectedElement = InElemID;
 		// Do it now for existing textures: the initial UpdateTexture call of new textures will also be attempted,
@@ -1793,7 +1527,7 @@ bool FITwinSceneMapping::PickVisibleMaterial(ITwinMaterialID const& InMaterialID
 		ForEachKnownTile([&InMaterialID, &bPickedMaterial, &TextureNeeds](FITwinSceneTile& SceneTile)
 		{
 			bPickedMaterial |= SceneTile.PickMaterial(InMaterialID, TextureNeeds,
-				FPickingOptions().OnlyVisibleTiles(true).TestElementVisibility(true).MakeSelected(true));
+													  FPickingOptions::CreateDefaultPickVisible());
 		});
 	}
 

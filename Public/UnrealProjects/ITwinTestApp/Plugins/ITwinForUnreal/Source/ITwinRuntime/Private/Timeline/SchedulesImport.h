@@ -59,8 +59,7 @@ public:
 	void ResetConnection(FString const& ITwinAkaProjectAkaContextId, FString const& IModelId,
 						 FString const& InChangesetId);
 	void SetSchedulesImportConnectors(FOnAnimationBindingAdded const& InOnAnimBindingAdded,
-									  FOnReceivedScheduleStats const& InOnReceivedScheduleStats,
-									  FFindElementIDFromGUID const& InFncElementIDFromGUID);
+									  FOnReceivedScheduleStats const& InOnReceivedScheduleStats);
 	std::pair<int, int> HandlePendingQueries();
 	/// \param FromTime Restrict the query to tasks starting (or ending) at or after this date. Ignored if
 	///		UntilTime and FromTime are strictly equal (eg. both default constructed).

@@ -21,7 +21,6 @@
 #include <Misc/Paths.h>
 
 #include <ITwinElementID.h>
-#include <ITwinExtractedMeshComponent.h>
 #include <ITwinSceneMapping.h>
 #include <ITwinIModel.h>
 #include <ITwinIModelInternals.h>
@@ -60,6 +59,10 @@
 namespace ITwin
 {
 	ITWINRUNTIME_API bool IsMLMaterialPredictionEnabled();
+
+	UMaterialInstanceDynamic* ChangeBaseMaterialInUEMesh(UStaticMeshComponent& MeshComponent,
+		UMaterialInterface* BaseMaterial,
+		TWeakObjectPtr<UMaterialInstanceDynamic> const* SupposedPreviousMaterial /*= nullptr*/);
 }
 
 
@@ -257,14 +260,13 @@ void FITwinIModelMaterialHandler::OnMaterialPropertiesRetrieved(AdvViz::SDK::ITw
 
 	// Also convert available textures to Cesium format, if they are needed in the tuning.
 	std::unordered_map<AdvViz::SDK::TextureKey, std::string> texturesToResolve;
-	AdvViz::SDK::TextureUsageMap usageMap;
-	GltfMatHelper->ListITwinTexturesToResolve(texturesToResolve, usageMap, lock);
+	GltfMatHelper->ListITwinTexturesToResolve(texturesToResolve, lock);
 	std::filesystem::path const textureDir = GltfMatHelper->GetTextureDirectory(lock);
 
 	lock.unlock();
 	if (!texturesToResolve.empty())
 	{
-		ITwin::ResolveITwinTextures(texturesToResolve, usageMap, GltfMatHelper, textureDir);
+		ITwin::ResolveITwinTextures(texturesToResolve, GltfMatHelper, textureDir);
 	}
 }
 
@@ -280,13 +282,9 @@ void FITwinIModelMaterialHandler::OnTextureDataRetrieved(std::string const& text
 		std::unordered_map<AdvViz::SDK::TextureKey, std::string> texturesToResolve;
 		texturesToResolve.emplace(texKey, texturePath.filename().generic_string());
 
-		AdvViz::SDK::TextureUsageMap usageMap;
-		auto const& MaterialPersistenceMngr = GetPersistenceManager();
-		usageMap.emplace(texKey, // DONOTForget: do NOT pick this into Carrot1
-			MaterialPersistenceMngr ? MaterialPersistenceMngr->GetTextureUsage(texKey)
-									: AdvViz::SDK::TextureUsage{ 1 });
-		BE_ASSERT(AdvViz::SDK::FindTextureUsage(usageMap, texKey).flags_ != 0);
-		ITwin::ResolveITwinTextures(texturesToResolve, usageMap, GltfMatHelper, texturePath.parent_path());
+		BE_ASSERT(GltfMatHelper->GetTextureUsage(texKey).flags_ != 0);
+
+		ITwin::ResolveITwinTextures(texturesToResolve, GltfMatHelper, texturePath.parent_path());
 	}
 }
 
@@ -409,10 +407,12 @@ void FITwinIModelMaterialHandler::UpdateModelFromMatMLPrediction(bool bSuccess,
 		MatIOMngr->SetLocalMaterialDirectory(MaterialDirectory);
 
 		// Try to load local collection, if any.
+		AdvViz::SDK::TextureUsageMap TextureUsageMap;
 		if (MatIOMngr->LoadMaterialCollection(MaterialDirectory / "materials.json",
-			IModelId, MatIDToName) > 0)
+			IModelId, TextureUsageMap, MatIDToName) > 0)
 		{
 			// Resolve textures, if any.
+			GltfMatHelper->AppendTextureUsageMap(TextureUsageMap, Lock);
 			AdvViz::SDK::PerIModelTextureSet const& perModelTextures =
 				MatIOMngr->GetDecorationTexturesByIModel();
 			auto itIModelTex = perModelTextures.find(IModelId);
@@ -427,7 +427,7 @@ void FITwinIModelMaterialHandler::UpdateModelFromMatMLPrediction(bool bSuccess,
 				IModelIdToMatHelper.emplace(IModelId, GltfMatHelper);
 
 				ITwin::ResolveDecorationTextures(*MatIOMngr,
-					IModelTextures, MatIOMngr->GetTextureUsageMap(),
+					IModelTextures,
 					IModelIdToMatHelper, false, &Lock);
 			}
 		}
@@ -1353,14 +1353,13 @@ void FITwinIModelMaterialHandler::TSetMaterialChannelParam(MaterialParamHelper c
 			if (!bIsReplacingColorTex)
 			{
 				std::unordered_map<AdvViz::SDK::TextureKey, std::string> itwinTextures;
-				AdvViz::SDK::TextureUsageMap usageMap;
 				BeUtils::RLock Lock(GltfMatHelper->GetMutex());
-				GltfMatHelper->AppendITwinTexturesToResolveFromMaterial(itwinTextures, usageMap, MaterialId, Lock);
+				GltfMatHelper->AppendITwinTexturesToResolveFromMaterial(itwinTextures, MaterialId, Lock);
 				if (!itwinTextures.empty())
 				{
 					auto const TexDir = GltfMatHelper->GetTextureDirectory(Lock);
 					Lock.unlock();
-					ITwin::ResolveITwinTextures(itwinTextures, usageMap, GltfMatHelper, TexDir);
+					ITwin::ResolveITwinTextures(itwinTextures, GltfMatHelper, TexDir);
 				}
 			}
 		}
@@ -1568,9 +1567,11 @@ bool FITwinIModelMaterialHandler::LoadMaterialWithoutRetuning(
 		PerModelTextures.emplace(imodelId, NewTextures);
 		imodelIdToMatHelper.emplace(imodelId, GltfMatHelper);
 
+		GltfMatHelper->AppendTextureUsageMap(NewTextureUsageMap, Lock);
+
 		if (!ITwin::ResolveDecorationTextures(
 			*MatIOMngr,
-			PerModelTextures, NewTextureUsageMap,
+			PerModelTextures,
 			imodelIdToMatHelper,
 			/*bResolveLocalDiskTextures =*/ TexSource == ETextureSource::LocalDisk,
 			&Lock))
@@ -1936,7 +1937,7 @@ namespace ITwin
 		}
 
 		UMaterialInstanceDynamic* pMaterial =
-			ITwin::ChangeBaseMaterialInUEMesh(*MeshComponent, pBaseMaterial);
+			ITwin::ChangeBaseMaterialInUEMesh(*MeshComponent, pBaseMaterial, nullptr);
 		if (ensure(pMaterial))
 		{
 			MeshComponent->SetMaterial(0, pMaterial);

@@ -161,6 +161,13 @@ public:
 	std::variant<ITwin::Timeline::EAnchorPoint, FVector> TransformAnchor;
 	/// Direction of the trajectory along the path, in case of a non-static transform
 	bool b3DPathReverseDirection = false;
+	/** From SynchroPro documentation : "Use the Motion Start and Motion End fields to specify where along the
+	3D path the object should start and stop. This can be used if the object should travel only a portion of the total
+	path during this task. (...) Regardless of the Start and End location, the object will still use the entire
+	duration of the task to travel the specified portion of the path."
+		These members use normalized values instead of the original percentages.
+	*/
+	double MotionStart = 0., MotionEnd = 1.;
 };
 
 /// Defines either a static transformation (a single FTransform expressed in the iTwin reference system,
@@ -186,7 +193,7 @@ public:
 
 /// Description of the animation of Elements during a Task: the properties that strictly identify a
 /// binding as unique are the following:<ul>
-/// <li>AnimatedEntities (ie. a single ElementID or Fed.GUID, or the string Id of an FElementsGroup)</li>
+/// <li>AnimatedEntities (ie. a single ElementID or Fed.GUID, or the string Id of an elements group)</li>
 /// <li>TaskId, to get the animation's time range from a task</li>
 /// <li>AppearanceProfileId, to get the initial, active and final appearance of the elements</li>
 /// <li>TransfoAssignmentId, to get the optional transformation(s) of the elements (static or following
@@ -197,7 +204,7 @@ class FAnimationBinding
 public:
 	FString TaskId;
 	size_t TaskInVec = ITwin::INVALID_IDX;
-	/// Single Element bound, or Id of the FElementsGroup listing all Elements bound by this animation
+	/// Single Element bound, or Id of the elements group listing all Elements bound by this animation
 	std::variant<ITwinElementID, FGuid/*Federated Element GUID*/, FString/*group Id*/>
 		AnimatedEntities{ ITwin::NOT_ELEMENT };
 	/// Index of the item matching AnimatedEntities, in case it is a group, in FITwinSchedule::Groups
@@ -311,9 +318,15 @@ namespace ITwin::Timeline
 class FITwinSchedule
 {
 public:
-	FString Id, Name; // <== keep first and ordered, for list init
+	FString Id, Name;
 	/// "Unknown" also means "Not needed", when used with APIM, which hides this detail from us.
 	EITwinSchedulesGeneration Generation = EITwinSchedulesGeneration::Unknown;
+
+	FITwinSchedule(FString const& ScheduleId, FString const& ScheduleName,
+				   EITwinSchedulesGeneration ScheduleGen = EITwinSchedulesGeneration::Unknown)
+		: Id(ScheduleId), Name(ScheduleName), Generation(ScheduleGen) {}
+
+public:
 	/// Schedule statistics, eg. for download progress feedback purposes: expected totals queried from server
 	std::optional<FITwinScheduleStats> StatisticsTotal;
 	/// Schedule statistics, eg. for download progress feedback purposes: current items received from 4D api
@@ -325,11 +338,51 @@ public:
 
 	std::vector<FAnimationBinding> AnimationBindings;
 	std::vector<FScheduleTask> Tasks;
-	std::vector<FElementsGroup> Groups;
 	std::vector<FAppearanceProfile> AppearanceProfiles;
 	std::vector<FTransformAssignment> TransfoAssignments;
 	std::vector<FAnimation3DPath> Animation3DPaths;
 
+	size_t NumGroups() const;
+	size_t GetNextGroupID() const;
+	void CreateNextGroup();
+	void CreateNextGroup(FElementsGroup&& Group);
+	bool AddToGroup(size_t InVec, ITwinElementID const ElemID);
+	bool AddToGroup(size_t InVec, FGuid const FedGUID);
+
+	template<typename TFedGUID2ElemID>
+	FElementsGroup const& GetGroupAsElementIDs(size_t GroupInVec, TFedGUID2ElemID const& FedGUID2ElemID)
+	{
+		if (EITwinSchedulesGeneration::NextGen == Generation)
+		{
+			if (ElemIDGroups.empty())
+				ElemIDGroups.resize(FedGUIDGroups.size());
+			auto& Group = ElemIDGroups[GroupInVec];
+			auto&& FedGroup = FedGUIDGroups[GroupInVec];
+			if (Group.empty()) // not  "!= FedGroup.size()" in case FedGUID2ElemID returns false
+			{
+				Group.reserve(FedGroup.size());
+				ITwinElementID Found;
+				for (auto&& FedGUID : FedGroup)
+					if (FedGUID2ElemID(FedGUID, Found))
+						Group.insert(Found);
+			}
+			return Group;
+		}
+		else
+			return ElemIDGroups[GroupInVec];
+	}
+
+private:
+	/// Legacy schedule animation bindings identify Elements by their Element ID, hence FElementsGroup.
+	/// Only one array is used, either this one for Legacy schedules, or FedGUIDGroups for Next-gen.
+	std::vector<FElementsGroup> ElemIDGroups;
+	/// Next-gen schedule animation bindings identify Elements by their Federation GUIDs, which can no longer be
+	/// resolved into Element IDs until FinalizeTimeline as we used to before iModel metadata and 4D queries were
+	/// made to run concurrently to reduce loading times.
+	/// Only one array is used, either this one for Next-gen schedules, or ElemIDGroups for Legacy.
+	std::vector<std::unordered_set<FGuid>> FedGUIDGroups;
+
+public:
 	/// Known animation bindings: NOT to avoid useless requests to task details, appearance profiles, etc.
 	/// as those have their own maps to cache data after (or pending) retrieval.
 	/// NOT really to avoid useless calls to OnAnimationBinding either, as the current timeline
@@ -368,4 +421,3 @@ public:
 using FOnAnimationBindingAdded =
 	std::function<void(FITwinSchedule const&, size_t const/*AnimationBindingIndex*/, FSchedLock&)>;
 using FOnReceivedScheduleStats = std::function<void(FITwinScheduleStats const&, FSchedLock&)>;
-using FFindElementIDFromGUID = std::function<bool(FGuid const&, ITwinElementID&/*OutElem*/)>;

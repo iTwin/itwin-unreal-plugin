@@ -1,0 +1,8 @@
+if (BE_CODE_COVERAGE)
+	find_program (BE_COVERAGE_TOOL_EXE OpenCppCoverage HINTS "$ENV{ProgramFiles}/OpenCppCoverage")
+	if (BE_COVERAGE_TOOL_EXE STREQUAL "BE_COVERAGE_TOOL_EXE-NOTFOUND")
+		message ( SEND_ERROR "OpenCppCoverage not found while being searched in: ${OpenCppCoverage_SearchDirs}" )
+	else ()
+		message ( "OpenCppCoverage found in: ${BE_COVERAGE_TOOL_EXE}" )
+	endif ()
+endif ()

@@ -124,6 +124,8 @@ private:
 		std::shared_ptr<AdvViz::SDK::AsyncRequestGroupCallback> CallbackPtr,
 		std::function<void(bool)>&& OnDecorationCreatedFunc);
 
+	void InitDefaultInstancesGroup(AdvViz::SDK::IInstancesGroupPtr const& defaultGroupPtr);
+
 private:
 	FString LoadedITwinId;
 	FString LoadedSceneID;

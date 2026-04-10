@@ -45,6 +45,21 @@ public:
 	/// Enable the tool, while deactivating the others if needed.
 	bool MakeActiveTool(IActiveStateRecord const& State);
 
+
+	/// Helper class to disable the tool in a given scope
+	/// (typically during the export of a video).
+	class [[nodiscard]] ITWINRUNTIME_API FToolDisabler
+	{
+	public:
+		FToolDisabler(AITwinInteractiveTool* InTool);
+		virtual ~FToolDisabler();
+	protected:
+		TWeakObjectPtr<AITwinInteractiveTool> Tool;
+		const bool bEnabledBackup;
+	};
+	virtual TSharedPtr<FToolDisabler> MakeToolDisabler();
+
+
 	/// Disable all existing tools.
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
 	static void DisableAll(UWorld* World);
@@ -148,6 +163,8 @@ public:
 	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FInteractiveCreationCompletedEvent, bool, bEventTriggeredFromITS);
 	UPROPERTY()
 	FInteractiveCreationCompletedEvent InteractiveCreationCompletedEvent;
+	UPROPERTY()
+	FInteractiveCreationCompletedEvent InteractiveCutoutCreationCompletedEvent;
 
 	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FInteractiveCreationAbortedEvent, bool, bEventTriggeredFromITS);
 	UPROPERTY()

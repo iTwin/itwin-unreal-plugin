@@ -96,7 +96,7 @@ GltfMaterialHelper::GltfMaterialHelper()
 }
 
 void GltfMaterialHelper::SetITwinMaterialProperties(uint64_t matID, AdvViz::SDK::ITwinMaterialProperties const& props,
-	std::string const& nameInIModel, WLock const&)
+	std::string const& nameInIModel, WLock const& lock)
 {
 	auto ret = materialMap_.try_emplace(matID, props);
 
@@ -137,8 +137,8 @@ void GltfMaterialHelper::SetITwinMaterialProperties(uint64_t matID, AdvViz::SDK:
 
 			textureDataMap_.try_emplace(texKey, TextureData{});
 
-			if (persistenceMngr_) // register texture usage now (even though the texture is not loaded yet
-				persistenceMngr_->AddTextureUsage(texKey, supportedTypeIt->second);
+			// register texture usage now (even though the texture is not loaded yet
+			AddTextureUsage(texKey, supportedTypeIt->second, lock);
 		}
 	}
 }
@@ -399,7 +399,7 @@ namespace
 			matDefinition.SetChannelIntensity(this->channel_, this->newValue_);
 		}
 
-		void OnModificationApplied(AdvViz::SDK::MaterialPersistenceManager& /*persistenceMngr*/) const
+		void OnModificationApplied(WLock const& /*lock*/) const
 		{
 
 		}
@@ -434,10 +434,12 @@ namespace
 			matDefinition.SetChannelIntensityMap(this->channel_, this->newValue_);
 		}
 
-		void OnModificationApplied(AdvViz::SDK::MaterialPersistenceManager& persistenceMngr) const
+		void OnModificationApplied(WLock const& lock) const
 		{
 			// Register usage in the manager for the texture.
-			persistenceMngr.AddTextureUsage({ this->newValue_.texture, this->newValue_.eSource }, this->channel_);
+			this->gltfMatHelper_.AddTextureUsage({ this->newValue_.texture, this->newValue_.eSource },
+				this->channel_,
+				lock);
 		}
 	};
 
@@ -471,7 +473,7 @@ namespace
 			matDefinition.SetChannelColor(this->channel_, this->newValue_);
 		}
 
-		void OnModificationApplied(AdvViz::SDK::MaterialPersistenceManager& /*persistenceMngr*/) const
+		void OnModificationApplied(WLock const& /*lock*/) const
 		{
 
 		}
@@ -516,10 +518,12 @@ namespace
 			matDefinition.SetChannelColorMap(this->channel_, this->newValue_);
 		}
 
-		void OnModificationApplied(AdvViz::SDK::MaterialPersistenceManager& persistenceMngr) const
+		void OnModificationApplied(WLock const& lock) const
 		{
 			// Register usage in the manager for the texture.
-			persistenceMngr.AddTextureUsage({ this->newValue_.texture, this->newValue_.eSource }, this->channel_);
+			this->gltfMatHelper_.AddTextureUsage({ this->newValue_.texture, this->newValue_.eSource },
+				this->channel_,
+				lock);
 		}
 	};
 
@@ -562,7 +566,7 @@ namespace
 			matDefinition.uvTransform = this->newValue_;
 		}
 
-		void OnModificationApplied(AdvViz::SDK::MaterialPersistenceManager& /*persistenceMngr*/) const
+		void OnModificationApplied(WLock const& /*lock*/) const
 		{
 
 		}
@@ -590,7 +594,7 @@ namespace
 			matDefinition.kind = this->newValue_;
 		}
 
-		void OnModificationApplied(AdvViz::SDK::MaterialPersistenceManager& /*persistenceMngr*/) const
+		void OnModificationApplied(WLock const& /*lock*/) const
 		{
 
 		}
@@ -618,7 +622,7 @@ namespace
 			matDefinition.displayName = this->newValue_;
 		}
 
-		void OnModificationApplied(AdvViz::SDK::MaterialPersistenceManager& /*persistenceMngr*/) const
+		void OnModificationApplied(WLock const& /*lock*/) const
 		{
 
 		}
@@ -693,7 +697,7 @@ void GltfMaterialHelper::TSetChannelParam(ParamHelper const& helper, uint64_t ma
 			CompleteDefinitionWithDefaultValues(matDefToStore, matID, lock);
 			persistenceMngr_->SetMaterialSettings(iModelID_, matID, matDefToStore);
 
-			helper.OnModificationApplied(*persistenceMngr_);
+			helper.OnModificationApplied(lock);
 		}
 	}
 }
@@ -904,6 +908,29 @@ bool GltfMaterialHelper::TestTranslucencyRequirement(AdvViz::SDK::TextureKey con
 	std::optional<bool>& needTranslucencyOpt = itTex->second.needTranslucencyOpt_;
 	needTranslucencyOpt = bNeedTranslucency;
 	return bNeedTranslucency;
+}
+
+AdvViz::SDK::TextureUsage GltfMaterialHelper::GetTextureUsage(
+	AdvViz::SDK::TextureKey const& textureKey) const
+{
+	RLock lock(mutex_);
+	return AdvViz::SDK::FindTextureUsage(textureUsageMap_, textureKey);
+}
+
+void GltfMaterialHelper::AddTextureUsage(AdvViz::SDK::TextureKey const& textureKey,
+	AdvViz::SDK::EChannelType channel,
+	WLock const& /*lock*/)
+{
+	if (!textureKey.id.empty() && textureKey.id != AdvViz::SDK::NONE_TEXTURE)
+	{
+		textureUsageMap_[textureKey].AddChannel(channel);
+	}
+}
+
+void GltfMaterialHelper::AppendTextureUsageMap(AdvViz::SDK::TextureUsageMap const& usageMap,
+	WLock const& /*lock*/)
+{
+	textureUsageMap_.insert(usageMap.begin(), usageMap.end());
 }
 
 void GltfMaterialHelper::UpdateCurrentAlphaMode(uint64_t matID,
@@ -1347,7 +1374,6 @@ void GltfMaterialHelper::ListITwinTexturesToDownload(std::vector<std::string>& m
 
 void GltfMaterialHelper::AppendITwinTexturesToResolveFromMaterial(
 	std::unordered_map<AdvViz::SDK::TextureKey, std::string>& itwinTextures,
-	AdvViz::SDK::TextureUsageMap& usageMap,
 	uint64_t matID,
 	RWLockBase const& lock) const
 {
@@ -1362,7 +1388,6 @@ void GltfMaterialHelper::AppendITwinTexturesToResolveFromMaterial(
 		if (texMap.HasTexture() && texMap.eSource == ETextureSource::ITwin)
 		{
 			AdvViz::SDK::TextureKey const key = { texMap.texture, texMap.eSource };
-			usageMap[key].AddChannel(eChan);
 			auto itTex = textureDataMap_.find(key);
 			if (itTex != textureDataMap_.end()
 				&& itTex->second.IsAvailable()
@@ -1375,7 +1400,6 @@ void GltfMaterialHelper::AppendITwinTexturesToResolveFromMaterial(
 }
 
 void GltfMaterialHelper::ListITwinTexturesToResolve(std::unordered_map<AdvViz::SDK::TextureKey, std::string>& itwinTextures,
-													AdvViz::SDK::TextureUsageMap& usageMap,
 													RWLockBase const& lock) const
 {
 	// iTwin textures already present in cache should be resolved before any tuning can occur.
@@ -1385,7 +1409,7 @@ void GltfMaterialHelper::ListITwinTexturesToResolve(std::unordered_map<AdvViz::S
 		auto const& itwinMat(data.iTwinMaterialDefinition_);
 		if (AdvViz::SDK::HasCustomSettings(itwinMat))
 		{
-			AppendITwinTexturesToResolveFromMaterial(itwinTextures, usageMap, matID, lock);
+			AppendITwinTexturesToResolveFromMaterial(itwinTextures, matID, lock);
 		}
 	}
 }
@@ -1558,7 +1582,6 @@ std::string GltfMaterialHelper::GetTextureURL(std::string const& textureId, AdvV
 
 GltfMaterialHelper::TextureAccess GltfMaterialHelper::StoreCesiumImage(TextureKey const& textureKey,
 	CesiumGltf::Image&& cesiumImage,
-	AdvViz::SDK::TextureUsageMap const& textureUsageMap,
 	WLock const& lock,
 	std::optional<bool> const& needTranslucencyOpt /*= std::nullopt*/,
 	std::optional<std::filesystem::path> const& pathOnDisk /*= std::nullopt*/)
@@ -1575,7 +1598,9 @@ GltfMaterialHelper::TextureAccess GltfMaterialHelper::StoreCesiumImage(TextureKe
 		newEntry.path_ = *pathOnDisk;
 	}
 
-	auto const texUsage = AdvViz::SDK::FindTextureUsage(textureUsageMap, textureKey);
+	auto const texUsage = AdvViz::SDK::FindTextureUsage(textureUsageMap_, textureKey);
+	BE_ASSERT(texUsage.flags_ != 0 ||
+		textureKey.id.starts_with(CESIUM_FORMATTED_TEX_PREFIX));
 	// If the texture is used by color or alpha, we meed to detect the need for blend mode now,
 	// because the cesium image can be freed from CPU later (once transferred by Cesium to GPU).
 	if (texUsage.HasChannel(AdvViz::SDK::EChannelType::Color)

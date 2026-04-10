@@ -62,12 +62,14 @@ jobs:
           unreal-program-name: ${{ inputs.unreal-program-name }}
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      - name: Capture AWS secrets for vcpkg cache
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Check out repository code
+        uses: actions/checkout@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_INTERNAL_SERVICES_VCPKG_ACCESS_KEY }}
-          aws-secret-access-key: ${{ secrets.AWS_INTERNAL_SERVICES_VCPKG_SECRET_KEY }}
-          aws-region: us-east-1
+          submodules: recursive
+      - name: Configure vcpkg caching
+        uses: ./.github/actions/vcpkg-cache
+        with:
+          id: ${{ inputs.upload-package-base-name }}
       - name: Install Ninja and patchelf
         run: |
           sudo apt install -y ninja-build patchelf

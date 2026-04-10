@@ -283,12 +283,6 @@ public:
 		EditAnywhere)
 	FDateTime QueryAllUntilTime = FDateTime::UtcNow();//see ScheduleTime about UtcNow()
 
-	/// Test flag telling which method to use to handle mesh parts needing partial visibility or
-	/// transformations: "mesh extraction" = legacy method (MVP/EAP1), gltf tuner = new method.
-	UPROPERTY(Category = "Schedules Replay",
-		EditAnywhere)
-	bool bUseGltfTunerInsteadOfMeshExtraction = true;
-
 	UPROPERTY(Category = "Schedules Replay", meta = (DisplayName = "Translucent Mesh Grouping"),
 		EditAnywhere)
 	EITwin4DGlTFTranslucencyRule GlTFTranslucencyRule = EITwin4DGlTFTranslucencyRule::Unlimited;

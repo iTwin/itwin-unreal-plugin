@@ -14,6 +14,7 @@ node_modules
 **/Generated/*-ts-stub
 test-results
 jestCommon.generated.js
+playwrightCommon.generated.js
 
 # Contains credentials used by iTwinStudio tests, should not be committed.
 .env.local*
@@ -50,6 +51,7 @@ jestCommon.generated.js
 **/UnrealProjects/*/Plugins/BeStudioIntegration/Source/ThirdParty/**
 **/UnrealProjects/*/Plugins/MyPlugin/Source/ThirdParty/**
 **/UnrealProjects/*/Plugins/ZPlugin/Source/ThirdParty/**
+**/UnrealProjects/*/Plugins/ITwinForUnreal/Source/CesiumEditor
 **/UnrealProjects/*/Plugins/ITwinForUnreal/Source/CesiumRuntime
 **/UnrealProjects/Engine
 

@@ -22,6 +22,15 @@ class AITwinIModel;
 class UPrimitiveComponent;
 
 
+
+struct FITwinRayTraceInput
+{
+	FVector TraceStart = FVector::ZeroVector;
+	FVector TraceDirection = FVector::XAxisVector;
+	//std::optional<float> TraceExtentInMeters;
+};
+
+
 /// Helper to trace a ray in the scene, and collecting information on the impacted iTwin element.
 class FITwinTracingHelper
 {
@@ -30,9 +39,22 @@ public:
 	/// CustomMousePosition is provided).
 	static bool GetRayFromMousePosition(UWorld const* World,
 		FVector2D& OutMousePosition,
-		FVector& OutTraceStart,
-		FVector& OutTraceDirection,
+		FITwinRayTraceInput& OutTraceInput,
 		std::optional<FVector2D> const& CustomMousePosition = std::nullopt);
+
+	/// Computes the start and direction of a ray trace for a given set of ratios on screen.
+	/// For each ratio, the ray is computed from the corresponding position on screen. The function returns
+	/// the number of successfully computed rays.
+	/// A ratio of (0.5, 0.5) corresponds to the center of the screen, (0, 0) to the top left corner, and
+	// (1, 1) to the bottom right corner.
+	static int32 GetRayTraceInputsFromScreenRatios(const UObject* WorldContextObject,
+		TArray<FVector2d> const& InScreenRatios,
+		TArray<FITwinRayTraceInput>& OutTraceInputs);
+
+	/// Computes the start and direction of a ray trace from the center of the screen.
+	static bool GetRayToTraceFromScreenCenter(const UObject* WorldContextObject,
+		FITwinRayTraceInput& OutTraceInput);
+
 
 	FITwinTracingHelper();
 

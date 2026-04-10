@@ -164,9 +164,8 @@ void AITwinPickingActor::PickUnderCursorWithOptions(FPickingResult& OutPickingRe
 	OutPickingResult.PickedMaterialIModel = nullptr;
 	if (PickedMaterial && ensure(PickedMaterialIModel))
 	{
-
 #if ENABLE_DRAW_DEBUG
-		ElementId += FString::Printf(TEXT(" [MatID: %llu (%s)]"),
+		UE_LOG(LogITwin, Display, TEXT("iTwin MaterialID: %llu - name: %s"),
 			*PickedMaterial, *PickedMaterialIModel->GetMaterialName(*PickedMaterial));
 #endif
 

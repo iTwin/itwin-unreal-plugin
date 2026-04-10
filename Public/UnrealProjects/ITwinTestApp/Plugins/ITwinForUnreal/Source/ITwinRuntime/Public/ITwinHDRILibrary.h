@@ -57,6 +57,8 @@ public:
 	{
 		UTextureCube* tc = nullptr;
 		bool hasSettings = false;
+		bool pendingDownload = false;
+		FString pendingComponentId;
 		ITwinHDRI settings;
 	};
 	static LoadHdriResult GetHrdiFromName(AITwinDecorationHelper const* persistanceMngr, FString NewHDRIName);
@@ -68,3 +70,6 @@ public:
 
 static std::vector<std::pair<std::string,bool>> GetListOfHDRIPresets();
 };
+
+
+

@@ -15,6 +15,7 @@
 #include <UObject/WeakObjectPtrTemplates.h>
 
 class AActor;
+class UWorld;
 class ACesium3DTileset;
 class AITwinDecorationHelper;
 struct ITwinSceneInfo;
@@ -34,12 +35,12 @@ namespace ITwin
 	ITWINRUNTIME_API UCesiumPolygonRasterOverlay* GetCutoutOverlay(ACesium3DTileset const& Tileset);
 
 	using VisitTilesetFunction = TFunction<void(FITwinTilesetAccess const&)>;
-	ITWINRUNTIME_API void IterateAllITwinTilesets(const VisitTilesetFunction& VisitFunc, class UWorld* World);
+	ITWINRUNTIME_API void IterateAllITwinTilesets(const VisitTilesetFunction& VisitFunc, UWorld const* World);
 
 	using TilesetAccessUPtr = TUniquePtr<FITwinTilesetAccess>;
 	using TilesetAccessUPtrArray = TArray<TilesetAccessUPtr>;
-	ITWINRUNTIME_API void GatherTilesetsOfModelType(TilesetAccessUPtrArray& OutTilesets, EITwinModelType ModelType, class UWorld* World);
-	ITWINRUNTIME_API TilesetAccessUPtr GetTilesetAccessFromModelLink(const ModelLink& ModelLink, class UWorld* World);
+	ITWINRUNTIME_API void GatherTilesetsOfModelType(TilesetAccessUPtrArray& OutTilesets, EITwinModelType ModelType, UWorld const* World);
+	ITWINRUNTIME_API TilesetAccessUPtr GetTilesetAccessFromModelLink(const ModelLink& ModelLink, UWorld const* World);
 	//! This is the screenspace error it is best limiting oneself to with Google 3D Tiles,
 	//! to avoid huge memory usage and download times
 	ITWINRUNTIME_API extern const double GOOGLE3D_BEST_SCREENSPACE_ERROR;

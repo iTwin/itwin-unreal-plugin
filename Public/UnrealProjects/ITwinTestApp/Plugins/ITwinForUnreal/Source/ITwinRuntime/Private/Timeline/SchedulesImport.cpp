@@ -77,8 +77,6 @@ private:
 	FOnAnimationBindingAdded OnAnimationBindingAdded =
 		[](FITwinSchedule const&, size_t const/*AnimIdx*/, FLock&) {};
 	FOnReceivedScheduleStats OnReceivedScheduleStats = [](FITwinScheduleStats const&, FLock&) {};
-	FFindElementIDFromGUID FncElementIDFromGUID = [](FGuid const&, ITwinElementID& OutElem) {
-		OutElem = ITwin::NOT_ELEMENT; return false; };
 	ITwinHttp::FMutex& Mutex;///< TODO_GCO: use a per-Schedule mutex?
 	bool bUseAPIM = false; ///< MUST be before XXXPagination members below! (see ctors)
 	const int RequestPagination;///< pageSize for paginated requests EXCEPT animation bindings
@@ -175,8 +173,7 @@ public:
 	void ResetConnection(FString const& ITwinAkaProjectAkaContextId, FString const& IModelId,
 						 FString const& InChangesetId, FString const& CustomCacheDir);
 	void SetSchedulesImportConnectors(FOnAnimationBindingAdded const& InOnAnimationBindingAdded,
-									  FOnReceivedScheduleStats const& InOnReceivedScheduleStats,
-									  FFindElementIDFromGUID const& FncElementIDFromGUID);
+									  FOnReceivedScheduleStats const& InOnReceivedScheduleStats);
 	std::pair<int, int> HandlePendingQueries();
 	void QueryEntireSchedules(FDateTime const FromTime, FDateTime const UntilTime,
 							  std::function<void(bool/*success*/)>&& OnQueriesCompleted);
@@ -475,7 +472,11 @@ void FITwinSchedulesImport::FImpl::OnFoundScheduleForTargetedIModel(FString cons
 		SchedulesGeneration = EITwinSchedulesGeneration::Legacy;
 	}
 	if (!Schedule || Schedule->Id != ScheduleId)
-		Schedule.emplace(FITwinSchedule{ ScheduleId, ScheduleName, SchedulesGeneration });
+	{
+		// Note: safer to explicit the ctor, in case ScheduleId & ScheduleName are const refs on the reset
+		// Schedule's members, in which case the copy must be done before the optional is reset
+		Schedule.emplace(FITwinSchedule(ScheduleId, ScheduleName, SchedulesGeneration));
+	}
 	Schedule->Reserve(200);
 	// Set up the cache folder for the next requests
 	if (UnitTesting // cache mandatory in TUs (and Owner->Owner is nullptr)
@@ -554,8 +555,7 @@ void FITwinSchedulesImport::FImpl::RequestSchedules(ReusableJsonQueries::FStacki
 					FString Id;
 					if (!ensure(SchedObj->TryGetStringField(TEXT("id"), Id) && !Id.IsEmpty()))
 						continue;
-					ScheduleCandidates->emplace_back(
-						FITwinSchedule{ Id, SchedObj->GetStringField(TEXT("name")) });
+					ScheduleCandidates->emplace_back(Id, SchedObj->GetStringField(TEXT("name")));
 					bool isNextGen;
 					if (SchedObj->TryGetBoolField(TEXT("isNextGen"), isNextGen))
 					{
@@ -984,7 +984,7 @@ std::set<ITwinElementID>::const_iterator FITwinSchedulesImport::FImpl::RequestAn
 			std::unordered_set<size_t> CreatedTransfoAssignments;
 			std::unordered_set<size_t> FullyDefinedBindingsToNotify;
 			std::unordered_set<size_t> UpdatedGroups;
-			size_t const FirstNewGroupIndex = Schedule->Groups.size();
+			size_t const FirstNewGroupIndex = Schedule->GetNextGroupID();
 			for (auto&& NewBinding : Items)
 			{
 				const auto& BindingObj = NewBinding->AsObject();
@@ -1057,25 +1057,21 @@ std::set<ITwinElementID>::const_iterator FITwinSchedulesImport::FImpl::RequestAn
 					if (ITwin::INVALID_IDX == Anim.GroupInVec)
 					{
 						auto KnownGroup = Schedule->KnownGroups.try_emplace(
-							std::get<FString>(Anim.AnimatedEntities), Schedule->Groups.size());
+							std::get<FString>(Anim.AnimatedEntities), Schedule->GetNextGroupID());
 						Anim.GroupInVec = KnownGroup.first->second;
 						if (KnownGroup.second) // was inserted => need to create it
-							Schedule->Groups.emplace_back();
+							Schedule->CreateNextGroup();
 					}
-					if (ITwin::NOT_ELEMENT == ElementID && ensure(ElementGuid.IsValid()))
-					{
-						if (!FncElementIDFromGUID(ElementGuid, ElementID))
-						{
-							ensure(false);
-							continue;
-						}
-					}
-					if (Schedule->Groups[Anim.GroupInVec].insert(ElementID).second // was inserted...
-						&& Anim.GroupInVec < FirstNewGroupIndex)			   //...into a pre-existing group
+					bool wasInserted = false;
+					if (ITwin::NOT_ELEMENT != ElementID)
+						wasInserted = Schedule->AddToGroup(Anim.GroupInVec, ElementID);
+					else if (ensure(ElementGuid.IsValid()))
+						wasInserted = Schedule->AddToGroup(Anim.GroupInVec, ElementGuid);
+					if (wasInserted && Anim.GroupInVec < FirstNewGroupIndex) //...into a pre-existing group
 					{
 						// rare case of a binding using an existing group that we happen to discover has more
-						// Elements than we initially thought (since the current workflow of spatially-
-						// -filtered queries can mean we might miss some Elements, as it was convened for ease
+						// Elements than we initially thought (the DEPRECATED workflow of spatially-
+						// -filtered queries could mean we might miss some Elements, as it was convened for ease
 						// of implementation that spatial filtering would NOT (on server side) also return the
 						// bindings for all items of the same group as the Elements passed in the query.
 						UpdatedGroups.insert(Anim.GroupInVec);
@@ -1372,7 +1368,7 @@ void FITwinSchedulesImport::FImpl::CreateRandomAppearanceProfile(size_t const An
 	};
 	if (bCreateGroupFromResource3DEntities)
 	{
-		size_t const ElementsGroupInVec = Schedule->Groups.size();
+		size_t const ElementsGroupInVec = Schedule->NumGroups();
 		AnimationBinding.AnimatedEntities = AnimationBinding.TaskId;//reuse as groupId
 		AnimationBinding.AppearanceProfileId = TEXT("<DummyAppearanceProfileId>");
 		AnimationBinding.GroupInVec = ElementsGroupInVec;
@@ -1768,6 +1764,10 @@ void FITwinSchedulesImport::FImpl::Parse3DPathTransfoAssignment(TSharedPtr<FJson
 		}
 	}
 	JSON_GETBOOL_OR(JsonObj, "reverseDirection", PathAssignment.b3DPathReverseDirection, return);
+	JSON_GETNUMBER_OR(JsonObj, "motionStart", PathAssignment.MotionStart, PathAssignment.MotionStart = 0.);
+	JSON_GETNUMBER_OR(JsonObj, "motionEnd", PathAssignment.MotionEnd, PathAssignment.MotionEnd = 1.);
+	if (PathAssignment.MotionStart > PathAssignment.MotionEnd)
+		std::swap(PathAssignment.MotionStart, PathAssignment.MotionEnd);
 
 	std::optional<FLock> optLock;
 	if (!pLock) optLock.emplace(Mutex);
@@ -2014,16 +2014,13 @@ void FITwinSchedulesImport::FImpl::Request3DPathKeyframes(ReusableJsonQueries::F
 
 void FITwinSchedulesImport::FImpl::SetSchedulesImportConnectors(
 	FOnAnimationBindingAdded const& InOnAnimationBindingAdded,
-	FOnReceivedScheduleStats const& InOnReceivedScheduleStats,
-	FFindElementIDFromGUID const& InFncElementIDFromGUID)
+	FOnReceivedScheduleStats const& InOnReceivedScheduleStats)
 {
 	FLock Lock(Mutex);
 	if (ensure(InOnAnimationBindingAdded))
 		OnAnimationBindingAdded = InOnAnimationBindingAdded;
 	if (ensure(InOnReceivedScheduleStats))
 		OnReceivedScheduleStats = InOnReceivedScheduleStats;
-	if (ensure(InFncElementIDFromGUID))
-		FncElementIDFromGUID = InFncElementIDFromGUID;
 }
 
 void FITwinSchedulesImport::FImpl::ResetConnection(FString const& ITwinAkaProjectAkaContextId,
@@ -2358,11 +2355,9 @@ void FITwinSchedulesImport::ResetConnectionForTesting(FString const& ITwinAkaPro
 
 void FITwinSchedulesImport::SetSchedulesImportConnectors(
 	FOnAnimationBindingAdded const& InOnAnimationBindingAdded,
-	FOnReceivedScheduleStats const& InOnReceivedScheduleStats,
-	FFindElementIDFromGUID const& InFncElementIDFromGUID)
+	FOnReceivedScheduleStats const& InOnReceivedScheduleStats)
 {
-	Impl->SetSchedulesImportConnectors(InOnAnimationBindingAdded, InOnReceivedScheduleStats,
-									   InFncElementIDFromGUID);
+	Impl->SetSchedulesImportConnectors(InOnAnimationBindingAdded, InOnReceivedScheduleStats);
 }
 
 std::pair<int, int> FITwinSchedulesImport::HandlePendingQueries()
@@ -2397,7 +2392,10 @@ void FITwinSchedule::Reserve(size_t Count)
 {
 	AnimationBindings.reserve(Count);
 	Tasks.reserve(Count);
-	Groups.reserve(Count);
+	if (EITwinSchedulesGeneration::Legacy == Generation)
+		ElemIDGroups.reserve(Count);
+	else if (EITwinSchedulesGeneration::NextGen == Generation)
+		FedGUIDGroups.reserve(Count);
 	AppearanceProfiles.reserve(Count);
 	TransfoAssignments.reserve(Count);
 	Animation3DPaths.reserve(Count);
@@ -2493,7 +2491,7 @@ FString FITwinSchedule::ToString() const
 		"\t%llu unique Elements or Groups are bound to a task."),
 		(EITwinSchedulesGeneration::Unknown == Generation) ? TEXT("<Gen?>")
 			: ((EITwinSchedulesGeneration::Legacy == Generation) ? TEXT("Legacy") : TEXT("NextGen")),
-		*Id, *Name, AnimationBindings.size(), Tasks.size(), Groups.size(), AppearanceProfiles.size(),
+		*Id, *Name, AnimationBindings.size(), Tasks.size(), NumGroups(), AppearanceProfiles.size(),
 		TransfoAssignments.size(),
 		std::count_if(TransfoAssignments.begin(), TransfoAssignments.end(),
 			[](auto&& Known) { return Known.Transformation.index() == 0; }),

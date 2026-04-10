@@ -15,6 +15,7 @@
 			,"CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL"
 			,"SELECTED_PRESET": "${presetName}"
 		}
+		,"toolset": { "value": "host=x64,version=14.44.35207" }
 	}
 	,{
 		"name": "dll_win64static"
@@ -24,6 +25,7 @@
 			,"CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL"
 			,"VCPKG_TARGET_TRIPLET": "x64-windows-static-md"
 		}
+		,"toolset": { "value": "host=x64,version=14.44.35207" }
 	}
 	,{
 		"name": "win64Unreal"
@@ -51,6 +53,7 @@
 			// Not preventing vcpkg from building -dbg variants either... :/
 			//,"VCPKG_BUILD_TYPE": "Release"
 		}
+		,"toolset": { "value": "host=x64,version=14.44.35207" }
 	}
 	,{
 	  "name": "macosXcodeX64"

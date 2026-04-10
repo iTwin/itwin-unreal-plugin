@@ -29,27 +29,11 @@ else()
 	endif()
 endif()
 message(STATUS "Using Unreal Engine installation at ${REGISTERED_UE_ROOT}")
+set(OPENSSL_ROOT_DIR "${REGISTERED_UE_ROOT}/Engine/Source/ThirdParty/OpenSSL/${VERSION}")
 
-# Some old versions of UE used to have multiple versions of OpenSSL, with different versions used on different platforms.
-# That is no longer the case in UE 5.3 to 5.7, but the below logic may need to change if that ever happens again.
-set(OPENSSL_VERSIONS_DIR_GLOB "${REGISTERED_UE_ROOT}/Engine/Source/ThirdParty/OpenSSL/${VERSION}")
-file(GLOB OPENSSL_POSSIBLE_ROOT_DIRS LIST_DIRECTORIES true "${OPENSSL_VERSIONS_DIR_GLOB}")
-
-# Find the subdirectories, each of which should represent an OpenSSL version.
-set(OPENSSL_VERSION_DIRS "")
-foreach(OPENSSL_POSSIBLE_ROOT_DIR IN LISTS OPENSSL_POSSIBLE_ROOT_DIRS)
-  if(IS_DIRECTORY "${OPENSSL_POSSIBLE_ROOT_DIR}")
-    list(APPEND OPENSSL_VERSION_DIRS "${OPENSSL_POSSIBLE_ROOT_DIR}")
-  endif()
-endforeach()
-
-# There should be exactly one version, otherwise we don't know what to do.
-list(LENGTH OPENSSL_VERSION_DIRS OPENSSL_VERSION_DIRS_LENGTH)
-if(NOT OPENSSL_VERSION_DIRS_LENGTH EQUAL 1)
-  message(FATAL_ERROR "Could not deduce the OpenSSL root directory because there is not exactly one directory matching `${OPENSSL_VERSIONS_DIR_GLOB}`.")
+if(NOT EXISTS "${OPENSSL_ROOT_DIR}/include")
+  message(FATAL_ERROR "No OpenSSL root directory found for the specified version: `${OPENSSL_ROOT_DIR}`.")
 endif()
-
-list(GET OPENSSL_VERSION_DIRS 0 OPENSSL_ROOT_DIR)
 
 if (VCPKG_TARGET_IS_ANDROID)
   set(OPENSSL_INCLUDE_PATH "${OPENSSL_ROOT_DIR}/include/Android")

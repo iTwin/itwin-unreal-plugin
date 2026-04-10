@@ -104,6 +104,9 @@ public:
 	/// overridden from IITwinWebServicesObserver:
 	virtual void OnRealityData3DInfoRetrieved(bool bSuccess, FITwinRealityData3DInfo const& Info) override;
 
+	/// Set the information on the reality data, and trigger the corresponding update.
+	void SetRealityData3DInfo(FITwinRealityData3DInfo const& Info);
+
 private:
 	UPROPERTY(Category = "iTwin",
 		VisibleAnywhere)

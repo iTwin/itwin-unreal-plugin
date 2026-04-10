@@ -1,0 +1,15 @@
+# This is executed from Carrot's CMake, so no need for any kind of trick
+# to get REGISTERED_UE_ROOT, it _is_ defined!
+set(TINYXML2_ROOT_DIR "${REGISTERED_UE_ROOT}/@TINYXML2_UE_ROOT_RELATIVE_DIR@")
+set(IMPORT_LIB_LOCATION "${TINYXML2_ROOT_DIR}/@TINYXML2_RELATIVE_LIB_LOCATION@")
+set(IMPORT_INCLUDE_DIR "${TINYXML2_ROOT_DIR}/include")
+
+# Use a prefix specific to this project
+set(projPrefix tinyxml2)
+set(proj tinyxml2)
+
+add_library(${projPrefix}::${proj} STATIC IMPORTED)
+set_target_properties(${projPrefix}::${proj} PROPERTIES
+  INCLUDE_DIRECTORIES "${IMPORT_INCLUDE_DIR}"
+  INTERFACE_INCLUDE_DIRECTORIES "${IMPORT_INCLUDE_DIR}"
+  IMPORTED_LOCATION "${IMPORT_LIB_LOCATION}")

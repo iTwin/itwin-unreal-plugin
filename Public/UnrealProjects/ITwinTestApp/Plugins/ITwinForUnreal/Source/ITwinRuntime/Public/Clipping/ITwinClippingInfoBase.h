@@ -17,6 +17,8 @@
 #include <ITwinClippingInfoBase.generated.h>
 
 class UITwinTileExcluderBase;
+class UWorld;
+
 
 USTRUCT()
 struct FITwinClippingInfluenceInfo
@@ -52,6 +54,7 @@ struct FITwinClippingInfoBase
 	virtual void DeactivatePrimitiveInExcluder(UITwinTileExcluderBase& Excluder) const;
 
 	/// Returns whether the given model should be influenced by this clipping effect.
+	/// Note that if the effect is disabled, this will always return false.
 	/// (Google 3D tilesets use EITwinModelType::GlobalMapLayer as model type).
 	bool ShouldInfluenceModel(const ITwin::ModelLink& ModelIdentifier) const;
 
@@ -69,7 +72,9 @@ struct FITwinClippingInfoBase
 	FBox const& GetInfluenceBoundingBox() const;
 
 	void InvalidateInfluenceBoundingBox();
-	void UpdateInfluenceBoundingBox(class UWorld* World);
+	void UpdateInfluenceBoundingBox(UWorld const* World);
+
+	FBox const& GetUpToDateInfluenceBoundingBox(UWorld const* World);
 
 protected:
 	virtual void DoSetInvertEffect(bool bInvert);
@@ -80,6 +85,9 @@ private:
 	inline FITwinClippingInfluenceInfo& MutableInfluenceInfo(EITwinModelType ModelType);
 	inline FITwinClippingInfluenceInfo const& GetInfluenceInfo(EITwinModelType ModelType) const;
 
+	/// Returns whether the given model should be influenced by this clipping effect, independently of the
+	/// enabled state of the effect.
+	inline bool DoesInfluenceModel(const ITwin::ModelLink& ModelIdentifier) const;
 
 protected:
 

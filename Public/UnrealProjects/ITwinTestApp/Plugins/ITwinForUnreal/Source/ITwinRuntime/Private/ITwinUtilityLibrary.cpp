@@ -421,31 +421,44 @@ bool UITwinUtilityLibrary::GetSavedViewFromPlayerController(const AITwinIModel* 
 }
 
 
-/*static*/ CesiumGeometry::OrientedBoundingBox UITwinUtilityLibrary::GetOrientedBoundingBox(ACesium3DTileset* Tileset)
+/*static*/
+std::optional<CesiumGeometry::OrientedBoundingBox> UITwinUtilityLibrary::GetOrientedBoundingBox(ACesium3DTileset* TilesetActor)
 {
-	const Cesium3DTilesSelection::Tile* pRootTile = Tileset->GetTileset()->getRootTile();
-	const ACesiumGeoreference* pGeoreference = Tileset->ResolveGeoreference();
+	const Cesium3DTilesSelection::Tileset* pTileset = ensure(TilesetActor) ? TilesetActor->GetTileset() : nullptr;
+	const Cesium3DTilesSelection::Tile* pRootTile = pTileset ? pTileset->getRootTile() : nullptr;
+	const ACesiumGeoreference* pGeoreference = ensure(TilesetActor) ? TilesetActor->ResolveGeoreference() : nullptr;
 
-	if (pRootTile && pGeoreference) {
+	if (pRootTile && pGeoreference)
+	{
 		return Cesium3DTilesSelection::getOrientedBoundingBoxFromBoundingVolume(
 			pRootTile->getBoundingVolume(),
 			pGeoreference->GetEllipsoid()->GetNativeEllipsoid());
 	}
-	return CesiumGeometry::OrientedBoundingBox(glm::dvec3(0, 0, 0), glm::dmat3(1));
+	else
+	{
+		return std::nullopt;
+	}
 }
 
 
 /*static*/FBox UITwinUtilityLibrary::GetUnrealAxisAlignBoundingBox(ACesium3DTileset* Tileset)
 {
-	const ACesiumGeoreference* pGeoreference = Tileset->ResolveGeoreference();
-	CesiumGeometry::OrientedBoundingBox obb = GetOrientedBoundingBox(Tileset);
+	auto const OBB_opt = GetOrientedBoundingBox(Tileset);
+	if (!OBB_opt)
+	{
+		// Return an invalid box.
+		return FBox();
+	}
+	CesiumGeometry::OrientedBoundingBox const& obb = OBB_opt.value();
 
 	std::array<glm::dvec3, 8> corners = { glm::dvec3(1.,1.,1.),  glm::dvec3(-1.,1.,1.),  glm::dvec3(-1.,-1.,1.),  glm::dvec3(1.,-1.,1.),
 										 glm::dvec3(1.,1.,-1.), glm::dvec3(-1.,1.,-1.), glm::dvec3(-1.,-1.,-1.), glm::dvec3(1.,-1.,-1.)
 	};
 
+	const ACesiumGeoreference* pGeoreference = Tileset->ResolveGeoreference();
 	FBox box;
-	for (const glm::dvec3& corner : corners) {
+	for (const glm::dvec3& corner : corners)
+	{
 		glm::dvec3 cornerPos = obb.getCenter() + obb.getHalfAxes() * corner;
 		FVector cornerPos2(cornerPos.x, cornerPos.y, cornerPos.z);
 		box += pGeoreference->TransformEarthCenteredEarthFixedPositionToUnreal(

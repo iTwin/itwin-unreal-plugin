@@ -507,6 +507,8 @@ void FReusableJsonQueries::HandlePendingQueries()
 	}
 	else
 	{
+		// TODO_GCO: could use a time budget, or move entirely off the game thread (even though parsing the replies
+		// for cache hits is already in the worker thread, so I'm not how long this can be: time it!)
 		while (Impl->HandlePendingQueries()) {}
 	}
 }

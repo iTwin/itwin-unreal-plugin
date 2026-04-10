@@ -101,7 +101,72 @@ namespace AdvViz::SDK
 			std::string id;
 		};
 
-		void LoadInstancesGroups(const std::string& decorationId, const IInstancesGroupPtr& defaultGroupPtr = {})
+
+		IInstancesGroupPtr FindDefaultGroup() const
+		{
+			auto thdata = thdata_.GetAutoLock();
+			if (thdata->mapIdToInstGroups_.empty())
+			{
+				return {};
+			}
+			// First try to find it by name.
+			for (auto const& [id, groupPtr] : thdata->mapIdToInstGroups_)
+			{
+				auto gp = groupPtr->GetAutoLock();
+				if (gp->GetName() == DEFAULT_GROUP_NAME)
+					return groupPtr;
+			}
+			// For compatibility with older version, if not found by name, try to find it by the default DB
+			// id (empty string).
+			for (auto const& [id, groupPtr] : thdata->mapIdToInstGroups_)
+			{
+				if (!id.HasDBIdentifier())
+					return groupPtr;
+			}
+			// Last resort: a group with no user data nor type...
+
+			for (auto const& [id, groupPtr] : thdata->mapIdToInstGroups_)
+			{
+				auto gp = groupPtr->GetAutoLock();
+				if (gp->GetType().empty()
+					&& gp->GetName().empty()
+					&& !gp->GetLinkedSplineId())
+				{
+					return groupPtr;
+				}
+			}
+			return {};
+		}
+
+		void InitDefaultGroupFromLoadedGroups(const std::function<void(IInstancesGroupPtr const&)>& setDefaultGroupfct = {})
+		{
+			// Determine the default group, and set it through the provided callback (if any).
+			IInstancesGroupPtr defaultGroupPtr = FindDefaultGroup();
+
+			if (setDefaultGroupfct)
+			{
+				setDefaultGroupfct(defaultGroupPtr);
+
+				// Note that the callback may have created a new default group if it was not found, so we
+				// need to retrieve it again to be sure to have the right pointer (with the right ID).
+				if (!defaultGroupPtr)
+				{
+					defaultGroupPtr = FindDefaultGroup();
+				}
+			}
+
+			if (defaultGroupPtr)
+			{
+				// For compatibility with older version, always associate the empty DB id with the default
+				// group (in case some instances were saved without any group ID).
+				auto gp = defaultGroupPtr->GetAutoLock();
+				auto thdata = thdata_.GetAutoLock();
+				thdata->groupIDMap_[""] = gp->GetId().ID();
+			}
+		}
+
+		void LoadInstancesGroups(const std::string& decorationId,
+			const std::function<void(IInstancesGroupPtr const&)>& setDefaultGroupfct = {})
 		{
 			struct SJsonInstGroupWithId
 			{
@@ -111,47 +176,16 @@ namespace AdvViz::SDK
 				std::string id;
 			};
 
-			if (defaultGroupPtr)
-			{
-				// For compatibility with older version, always associate the empty DB id with the default
-				// group.
-				auto gp = defaultGroupPtr->GetAutoLock();
-				auto thdata = thdata_.GetAutoLock();
-				thdata->groupIDMap_[""] = gp->GetId().ID();
-			}
-
-			bool hasAddedDefaultGroup = false;
-
 			auto ret = HttpGetWithLink<SJsonInstGroupWithId>(GetHttp(),
 				"decorations/" + decorationId + "/instancesgroups",
 				{} /* extra headers*/,
-				[this, &hasAddedDefaultGroup, defaultGroupPtr](SJsonInstGroupWithId const& row) -> expected<void, std::string>
+				[this](SJsonInstGroupWithId const& row) -> expected<void, std::string>
 			{
 				IInstancesGroup* group;
-				IInstancesGroup* defaultGroup;
-				if (defaultGroupPtr)
-					defaultGroup = &defaultGroupPtr->Lock();
-				else
-					defaultGroup = nullptr;
-
-
-				bool const isDefaultGroup = defaultGroup && defaultGroup->GetName() == row.name;
 				{
 					auto thdata = thdata_.GetAutoLock();
-					if (isDefaultGroup)
-					{
-						group = defaultGroup;
-						// Do not change the internal ID of the default group, only update its DB identifier
-						RefID groupId = group->GetId();
-						groupId.SetDBIdentifier(row.id);
-						group->SetId(groupId);
-						thdata->groupIDMap_.emplace(row.id, groupId.ID());
-					}
-					else
-					{
-						group = IInstancesGroup::New();
-						group->SetId(RefID::FromDBIdentifier(row.id, thdata->groupIDMap_));
-					}
+					group = IInstancesGroup::New();
+					group->SetId(RefID::FromDBIdentifier(row.id, thdata->groupIDMap_));
 				}
 				group->SetName(row.name);
 				if (row.type.has_value())
@@ -172,25 +206,16 @@ namespace AdvViz::SDK
 
 				auto groupPtr = Tools::MakeSharedLockableDataPtr<IInstancesGroup>(group);
 				AddInstancesGroup(groupPtr);
-				if (isDefaultGroup)
-				{
-					hasAddedDefaultGroup = true;
-					defaultGroupPtr->Unlock();
-				}
 				return {};
 			});
-
-			// If we have provided a default group, and did not parse anything here, make sure the instances,
-			// if any, will all be assigned this default group.
-			if (defaultGroupPtr && !hasAddedDefaultGroup)
-			{
-				AddInstancesGroup(defaultGroupPtr);
-			}
 
 			if (!ret)
 			{
 				BE_LOGW("ITwinDecoration", "Load instances groups failed. " << ret.error());
 			}
+
+			// Determine the default group, and set it through the provided callback (if any).
+			InitDefaultGroupFromLoadedGroups(setDefaultGroupfct);
 		}
 
 		void LoadInstances(const std::string& decorationId)
@@ -324,7 +349,7 @@ namespace AdvViz::SDK
 		void AsyncLoadInstancesGroups(const std::string& decorationId,
 			std::function<void(IInstancesGroupPtr&)> onCreatedGroupCallback,
 			std::function<void(expected<void, std::string> const& result)> onFinishCallback,
-			const IInstancesGroupPtr& defaultGroupPtr = {})
+			std::function<void(IInstancesGroupPtr const&)> const& setDefaultGroupfct = {})
 		{
 			struct SJsonInstGroupWithId
 			{
@@ -334,50 +359,20 @@ namespace AdvViz::SDK
 				std::string id;
 			};
 
-			if (defaultGroupPtr)
-			{
-				// For compatibility with older version, always associate the empty DB id with the default group.
-				auto gp = defaultGroupPtr->GetAutoLock();
-				auto thdata = thdata_.GetAutoLock();
-				thdata->groupIDMap_[""] = gp->GetId().ID();
-			}
-
-			std::shared_ptr<bool> hasAddedDefaultGroup = std::make_shared<bool>(false);
-
 			std::shared_ptr<InstancesManager::Impl> SThis(shared_from_this());
-			IInstancesGroupPtr defaultGroupPtr2(defaultGroupPtr);
 
 			AsyncHttpGetWithLink<SJsonInstGroupWithId>(GetHttp(),
 				"decorations/" + decorationId + "/instancesgroups",
 				{} /* extra headers*/,
-				[SThis, hasAddedDefaultGroup, defaultGroupPtr2, onCreatedGroupCallback](SJsonInstGroupWithId const& row) -> expected<void, std::string>
+				[SThis, onCreatedGroupCallback](SJsonInstGroupWithId const& row) -> expected<void, std::string>
 				{
 					IInstancesGroup* group;
-					IInstancesGroup* defaultGroup = nullptr;
 					std::optional<Tools::AutoLockObject<RWLockablePtrObject<IInstancesGroup>>> dgpLocked;
-					if (defaultGroupPtr2)
-					{
-						dgpLocked.emplace(defaultGroupPtr2->GetAutoLock());
-						defaultGroup = &dgpLocked->Get();
-					}
 
-					bool const isDefaultGroup = defaultGroup && defaultGroup->GetName() == row.name;
 					{
 						auto thdata = SThis->thdata_.GetAutoLock();
-						if (isDefaultGroup)
-						{
-							group = defaultGroup;
-							// Do not change the internal ID of the default group, only update its DB identifier
-							RefID groupId = group->GetId();
-							groupId.SetDBIdentifier(row.id);
-							group->SetId(groupId);
-							thdata->groupIDMap_.emplace(row.id, groupId.ID());
-						}
-						else
-						{
-							group = IInstancesGroup::New();
-							group->SetId(RefID::FromDBIdentifier(row.id, thdata->groupIDMap_));
-						}
+						group = IInstancesGroup::New();
+						group->SetId(RefID::FromDBIdentifier(row.id, thdata->groupIDMap_));
 					}
 					group->SetName(row.name);
 					if (row.type.has_value())
@@ -397,8 +392,6 @@ namespace AdvViz::SDK
 					}
 					auto groupPtr = Tools::MakeSharedLockableDataPtr<IInstancesGroup>(group);
 					SThis->AddInstancesGroup(groupPtr);
-					if (isDefaultGroup)
-						*hasAddedDefaultGroup = true;
 
 					// Invoke callback for each created group
 					if (onCreatedGroupCallback)
@@ -408,8 +401,11 @@ namespace AdvViz::SDK
 
 					return {};
 				},
-				[SThis, defaultGroupPtr2, hasAddedDefaultGroup, onFinishCallback](expected<void, std::string> const& result)
+				[SThis, setDefaultGroupfct, onFinishCallback](expected<void, std::string> const& result)
 				{
+					// Determine the default group, and set it through the provided callback (if any).
+					SThis->InitDefaultGroupFromLoadedGroups(setDefaultGroupfct);
+
 					if (!result)
 					{
 						// Invoke completion callback
@@ -418,13 +414,6 @@ namespace AdvViz::SDK
 							onFinishCallback(result);
 						}
 						return;
-					}
-
-					// If we have provided a default group, and did not parse anything here, make sure the instances,
-					// if any, will all be assigned this default group.
-					if (defaultGroupPtr2 && !*hasAddedDefaultGroup)
-					{
-						SThis->AddInstancesGroup(defaultGroupPtr2);
 					}
 
 					// Invoke completion callback
@@ -438,10 +427,11 @@ namespace AdvViz::SDK
 				}
 			);
 		}
-		void LoadDataFromServer(const std::string& decorationId, const IInstancesGroupPtr& defaultGroup = {})
+		void LoadDataFromServer(const std::string& decorationId,
+			const std::function<void(IInstancesGroupPtr const&)>& setDefaultGroupfct = {})
 		{
 			Clear();
-			LoadInstancesGroups(decorationId, defaultGroup);
+			LoadInstancesGroups(decorationId, setDefaultGroupfct);
 			LoadInstances(decorationId);
 		}
 
@@ -449,7 +439,7 @@ namespace AdvViz::SDK
 			const std::function<void(IInstancePtr&)>& OnCreatedInstancefct,
 			const std::function<void(IInstancesGroupPtr&)>& OnCreatedGroupfct,
 			const std::function<void(expected<void, std::string> const&)>& OnLoadFinishedfct,
-			const IInstancesGroupPtr& defaultGroup = {}
+			const std::function<void(IInstancesGroupPtr const&)>& setDefaultGroupfct = {}
 			)
 		{
 			Clear();
@@ -475,7 +465,7 @@ namespace AdvViz::SDK
 						OnLoadFinishedfct(result);
 					}
 				},
-				defaultGroup
+				setDefaultGroupfct
 			);
 		}
 
@@ -1164,18 +1154,19 @@ namespace AdvViz::SDK
 		}
 	};
 
-	void InstancesManager::LoadDataFromServer(const std::string& decorationId, const IInstancesGroupPtr& defaultGroup /*= {}*/)
+	void InstancesManager::LoadDataFromServer(const std::string& decorationId,
+		const std::function<void(IInstancesGroupPtr const&)>& setDefaultGroupfct /*= {}*/)
 	{
-		GetImpl().LoadDataFromServer(decorationId, defaultGroup);
+		GetImpl().LoadDataFromServer(decorationId, setDefaultGroupfct);
 	}
 
 	void InstancesManager::AsyncLoadDataFromServer(const std::string& decorationId, 
 		const std::function<void(IInstancePtr&)>& OnCreatedInstancefct,
 		const std::function<void(IInstancesGroupPtr&)>& OnCreatedGroupfct,
 		const std::function<void(expected<void, std::string> const&)>& OnLoadFinishedfct,
-		const IInstancesGroupPtr& defaultGroup = {})
+		const std::function<void(IInstancesGroupPtr const&)>& setDefaultGroupfct /*= {}*/)
 	{
-		GetImpl().AsyncLoadDataFromServer(decorationId, OnCreatedInstancefct, OnCreatedGroupfct, OnLoadFinishedfct, defaultGroup);
+		GetImpl().AsyncLoadDataFromServer(decorationId, OnCreatedInstancefct, OnCreatedGroupfct, OnLoadFinishedfct, setDefaultGroupfct);
 	}
 
 	void InstancesManager::AsyncSaveDataOnServer(const std::string& decorationId, std::function<void(bool)>&& onDataSavedFunc /*= {}*/)

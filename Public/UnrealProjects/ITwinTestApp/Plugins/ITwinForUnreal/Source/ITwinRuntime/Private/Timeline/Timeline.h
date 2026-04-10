@@ -182,6 +182,7 @@ class ElementTimelineEx : public ElementTimeline
 {
 public:
 	using Super = ElementTimeline;
+	using FBindings = FSmallVec<size_t, 4>;
 
 private:
 	FIModelElementsKey IModelElementsKey;
@@ -192,7 +193,6 @@ private:
 	/// Cache of offsets between each Element's BBox center and the center of the whole group's BBox
 	/// (only in the case of a group of Elements - see FIModelElementsKey)
 	std::unordered_map<ITwinElementID, FVector> IModelElementOffsets;
-	using FBindings = FSmallVec<size_t, 4>;
 	FBindings AnimationBindingsIndices;
 
 	FBox IModelElementsBoundingBox;
@@ -256,7 +256,10 @@ class MainTimeline : public MainTimelineBase<ElementTimelineEx>
 
 	/// Maps each animated Element or group of Elements to a single timeline that applies only to it
 	std::unordered_map<FIModelElementsKey, int/*timeline index*/> ElementsKeyToTimeline;
-	/// See HideNonAnimatedDuplicates in ITwinSynchro4DSchedulesTimelineBuilder.cpp
+	/// See HideNonAnimatedDuplicates in ITwinSynchro4DSchedulesTimelineBuilder.cpp: "duplicate" must be understood
+	/// as "duplicate" geometry, and has two sources: either fully duplicated Elements (sharing the same Source
+	/// Element ID) because of bad handling of overlapping tasks in the 4D backend, or duplicated geometry resulting
+	/// of the slicing of a single Element into several Contruction Detailing Elements.
 	FElementsGroup NonAnimatedDuplicates;
 	bool bHasNewOrModifiedTimeline_ = false;
 

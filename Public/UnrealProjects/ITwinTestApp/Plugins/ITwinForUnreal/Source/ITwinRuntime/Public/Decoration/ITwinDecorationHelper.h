@@ -236,6 +236,8 @@ public:
 	AITwinPopulation* GetPopulation(FString assetPath, const AdvViz::SDK::RefID& groupId) const;
 	AITwinKeyframePath* CreateKeyframePath() const;
 	bool MountPak(const std::string & file, const std::string& id) const;
+	/// Returns true if the component with the given id still needs to be downloaded/mounted.
+	bool IsComponentDownloadPending(const FString& componentId) const;
 	AITwinPopulation* CreatePopulation(FString assetPath, const AdvViz::SDK::RefID& groupId) const;
 	AITwinPopulation* GetOrCreatePopulation(FString assetPath, const AdvViz::SDK::RefID& groupId) const;
 	int32 GetPopulationInstanceCount(FString assetPath, const AdvViz::SDK::RefID& groupId) const;

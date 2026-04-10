@@ -126,8 +126,6 @@ FITwinHDRILibrary::ITwinHDRI FITwinHDRILibrary::ConvertKeyValueMapToDRISettings(
 
 FITwinHDRILibrary::LoadHdriResult FITwinHDRILibrary::GetHrdiFromName(AITwinDecorationHelper const* persistanceMngr, FString NewHDRIName)
 {
-
-
 	LoadHdriResult res;
 	FString PathName = TEXT("/Game/") + FString(ITwin::HDRI_LIBRARY) + TEXT("/") + NewHDRIName;
 	bool FullPath = NewHDRIName.StartsWith(TEXT("/Game/"));
@@ -140,7 +138,12 @@ FITwinHDRILibrary::LoadHdriResult FITwinHDRILibrary::GetHrdiFromName(AITwinDecor
 			FString componentId = persistanceMngr->iTwinContentManager->ShouldDownloadComponent(PathName);
 			if (!componentId.IsEmpty())
 			{
-				persistanceMngr->iTwinContentManager->DownloadedComponent(componentId);
+				res.pendingDownload = persistanceMngr->iTwinContentManager->DownloadedComponent(componentId);
+				if (res.pendingDownload)
+				{
+					res.pendingComponentId = componentId;
+					return res;
+				}
 			}
 			PathName = persistanceMngr->iTwinContentManager->SanitizePath(NewHDRIName);
 			FullPath = true;
@@ -186,6 +189,11 @@ FITwinHDRILibrary::LoadHdriResult FITwinHDRILibrary::GetHrdiFromName(AITwinDecor
 				res.settings = FITwinHDRILibrary::ConvertKeyValueMapToDRISettings(hdriData->HDRIParameters);
 				res.hasSettings = true;
 			}
+		}
+		else if(PathName.EndsWith("_withsettings")) // bakcup try to reload original 
+		{
+			PathName = PathName.LeftChop(13);
+			DefaultTextureCube = LoadObject<UTextureCube>(nullptr, *PathName);
 		}
 	}
 	res.tc = DefaultTextureCube;

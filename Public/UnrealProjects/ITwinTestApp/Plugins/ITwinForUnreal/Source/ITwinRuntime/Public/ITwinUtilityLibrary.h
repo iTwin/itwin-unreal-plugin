@@ -11,6 +11,7 @@
 #include <Kismet/BlueprintFunctionLibrary.h>
 #include <glm/glm.hpp>
 #include <CesiumGeometry/OrientedBoundingBox.h>
+#include <optional>
 #include <ITwinUtilityLibrary.generated.h>
 
 class ACesium3DTileset;
@@ -101,7 +102,7 @@ public:
 
 	static void ZoomOn(FBox const& FocusBBox, UWorld* World, double MinDistanceToCenter = 10000);
 
-	static CesiumGeometry::OrientedBoundingBox GetOrientedBoundingBox(ACesium3DTileset* Tileset);
+	static std::optional<CesiumGeometry::OrientedBoundingBox> GetOrientedBoundingBox(ACesium3DTileset* Tileset);
 	static FBox GetUnrealAxisAlignBoundingBox(ACesium3DTileset* Tileset);
 
 };
