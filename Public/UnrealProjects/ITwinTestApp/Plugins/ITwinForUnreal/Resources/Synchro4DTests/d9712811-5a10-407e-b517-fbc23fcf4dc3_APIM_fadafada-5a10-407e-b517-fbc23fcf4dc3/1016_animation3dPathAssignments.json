@@ -1,0 +1,9 @@
+﻿{
+	"url": "https://api.bentley.com/schedules/fadafada-5a10-407e-b517-fbc23fcf4dc3/animation-3d-path-assignments?$top=10000&$deltaToken=dummy-animation3dPathAssignments-token-1016",
+	"verb": "GET",
+	"connectedSuccessfully": true,
+	"responseCode": 200
+,
+	"reply": 
+{"deltaToken":"special-dev-no-delta-token","animation3dPathAssignments":[{"adjustForTaskPercentComplete":false,"alignment":"Center","center":{"x":0.0,"y":0.0,"z":0.0},"deleted":false,"id":"9bc57b42-309f-4cb3-8d11-ab50e5d3b741","motionEnd":0.3300000166893005,"motionStart":0.12999999523162842,"pathId":"3f3c6a38-7a7b-4d7a-8550-1585c96cc130","pauseDuringNonWorkingTime":false,"reverseDirection":true},{"adjustForTaskPercentComplete":false,"alignment":"Custom","center":{"x":0.0,"y":0.0,"z":500.0},"deleted":false,"id":"c0b6b255-877a-4d9a-a781-5c9098620c56","motionEnd":0.6700000166893005,"motionStart":0.12999999523162842,"pathId":"3f3c6a38-7a7b-4d7a-8550-1585c96cc130","pauseDuringNonWorkingTime":false,"reverseDirection":false}],"_links":{"self":{"href":"https://api.bentley.com/schedules/fadafada-5a10-407e-b517-fbc23fcf4dc3/animation-3d-path-assignments?$top=10000&$deltaToken=dummy-animation3dPathAssignments-token-1016"}}}
+}

@@ -32,11 +32,14 @@ namespace AdvViz::SDK::Tools
 		inline static Type* New(Args...args) { return GetGlobals().newFct_(args...); }
 		inline static void SetNewFct(NewFctT newFct) { 
 			GetGlobals().newFct_ = newFct;
+			// Increment the counter to let clients detect the factory has changed.
+			GetGlobals().newFctRevision_++;
 		}
 		inline static void SetDeleteFct(DeleteFctT deleteFct) {
 			GetGlobals().deleteFct_ = deleteFct;
 		}
 		static NewFctT GetNewFct() { return GetGlobals().newFct_; }
+		inline static int GetNewFctRevision() { return GetGlobals().newFctRevision_; }
 		inline static DeleteFctT GetDeleteFct() { return GetGlobals().deleteFct_; }
 		virtual ~Factory() {} //class derivate from Factory needs virtual destructor
 
@@ -54,6 +57,7 @@ namespace AdvViz::SDK::Tools
 	private:
 		struct Globals {
 			NewFctT newFct_;
+			int newFctRevision_ = -1; // Can be used to detect if the factory has changed.
 			DeleteFctT deleteFct_;
 			Globals();
 		};

@@ -32,11 +32,14 @@ class AITwinInteractiveTool;
 class AITwinPopulation;
 class AITwinSplineHelper;
 class AITwinAnimPathHelper;
+class AITwinAVConnector;
+
 namespace AdvViz::SDK
 {
 	class RefID;
 }
 
+struct FFeatureEventProperties;
 
 USTRUCT()
 struct FAnimPathIdentifier 
@@ -79,6 +82,10 @@ public:
 	UPROPERTY()
 	FAnimPathListModifiedEvent AnimPathListModifiedEvent;
 
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE(FSelectedAnimPathModifiedEvent);
+	UPROPERTY()
+	FSelectedAnimPathModifiedEvent SelectedAnimPathModifiedEvent;
+
 	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FAnimPathAddedEvent, FAnimPathIdentifier, PathHandle);
 	UPROPERTY()
 	FAnimPathAddedEvent AnimPathAddedEvent;
@@ -107,6 +114,12 @@ public:
 	UPROPERTY()
 	FSplinePointMovedEvent SplinePointMovedEvent;
 
+	// Structured tracking of path animation modifications (mirrors ClippingModified/PopulationChanged),
+	// used for spline point add/remove analytics when there is no specific instance to report.
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FPathAnimChangedEvent, const FFeatureEventProperties&, Properties);
+	UPROPERTY()
+	FPathAnimChangedEvent PathAnimChangedEvent;
+
 	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FActivationEvent, bool, bActivated);
 	UPROPERTY()
 	FActivationEvent ActivationEvent;
@@ -114,10 +127,6 @@ public:
 	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FInteractiveCreationAbortedEvent, bool, bTriggeredFromITS);
 	UPROPERTY()
 	FInteractiveCreationAbortedEvent InteractiveCreationAbortedEvent;
-
-	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FAnimPathModifiedEvent, FAnimPathIdentifier, PathHandle, bool, bTriggeredFromITS);
-	UPROPERTY()
-	FAnimPathModifiedEvent AnimPathModifiedEvent;
 
 	AITwinPathAnimTool();
 
@@ -135,6 +144,8 @@ public:
 	// Set the Path Animation Manager to manage the creation and update of path animations on the server
 	void SetPathAnimManager(const std::shared_ptr<AdvViz::SDK::IPathAnimManager>& InPathAnimManager);
 
+	void SetArticulatedVehiclesConnector(AITwinAVConnector* AVConnector);
+
 	// Manage synchronization of animation playback with the camera timeline
 	DECLARE_DELEGATE_RetVal(TOptional<float>, FGetTimelineFixedTime);
 	FGetTimelineFixedTime GetTimelineFixedTime;
@@ -142,11 +153,19 @@ public:
 	// Load existing animation paths from the server for the current scene
 	void LoadAnimationPaths();
 
+	// Returns whether the tool is currently loading animation paths from the server
+	// (as opposed to interactive creation). Used to avoid tracking analytics events for
+	// paths restored while loading a scene.
+	bool IsLoadingAnimationPaths() const;
+
 	// Initiate the interactive creation of a new animation path
 	bool StartInteractiveCreation(EITwinAnimPathType PathType);
 
 	// Abort current animation path creation, if any
 	void AbortInteractiveCreation(bool bTriggeredFromITS);
+
+	// Resume/pause the interactive creation of the existing (selected) animation path
+	void ToggleSplineToolForSelectedPath();
 
 	// Deactivate the path drawing tool and abort animation path creation, if any
 	void Deactivate();
@@ -207,6 +226,7 @@ public:
 
 	bool HasInvDirection(FAnimPathIdentifier PathHandle) const;
 	void SetInvDirection(FAnimPathIdentifier PathHandle, bool bInvDirection);
+	void SetInvDirectionAll(EITwinAnimPathType PathType, bool bInvDirection);
 
 	bool IsLoop(FAnimPathIdentifier PathHandle) const;
 	void SetIsLoop(FAnimPathIdentifier PathHandle, bool isLoop);
@@ -241,20 +261,44 @@ public:
 	float GetMaxSpeed(FAnimPathIdentifier PathHandle) const;
 	void SetMaxSpeed(FAnimPathIdentifier PathHandle, float MaxSpeed);
 
+	float GetTightness(FAnimPathIdentifier PathHandle, int32 PointIndex) const;
+	void SetTightness(FAnimPathIdentifier PathHandle, int32 PointIndex, float Tightness);
+
+	float GetPathLength(FAnimPathIdentifier PathHandle) const;
+	int32 GetInstancesNum(FAnimPathIdentifier PathHandle) const;
+
+	int32 GetSelectedSplinePoint(FAnimPathIdentifier PathHandle, bool& CanEditTangents) const;
+	bool IsSplineToolActive(FAnimPathIdentifier PathHandle) const;
+
 	UFUNCTION()
 	void OnSplineHelperAdded(AITwinSplineHelper* NewSpline);
 
 	UFUNCTION()
-	void OnSplineHelperRemoved(AITwinSplineHelper* SplineBeingRemoved);
+	void OnSplineHelperRemoved(AITwinSplineHelper* SplineBeingRemoved, bool bTriggeredFromITS);
 
 	UFUNCTION()
 	void OnItemCreationAbortedInTool(const AITwinInteractiveTool* Tool, bool bTriggeredFromITS);
 
 	UFUNCTION()
 	void OnSplineEditedInTool();
-	
+
 	UFUNCTION()
 	void OnSplinePointMovedInTool(bool bTriggeredFromITS);
+
+	UFUNCTION()
+	void OnSplineMoveStart();
+
+	UFUNCTION()
+	void OnSplinePointMoveStart();
+
+	UFUNCTION()
+	void OnSplinePointAddedInTool();
+
+	UFUNCTION()
+	void OnSplinePointRemovedInTool();
+
+	UFUNCTION()
+	void OnPathAnimPolygonSelected();
 
 protected:
 	//virtual void BeginPlay() override;

@@ -30,12 +30,15 @@ public:
 	void OnMaskOutNonAnimatedElements();
 	void OnFadeOutNonAnimatedElements();
 	void ApplyAnimationOnTile(const TITwinSceneTilePtr& SceneTile);
-	void DisableAnimationInTile(const TITwinSceneTilePtr& SceneTile);
+	void ResetAnimationInTile(const TITwinSceneTilePtr& SceneTile);
 
 	void Play();
 	bool IsPlaying() const;
+	bool IsPaused() const;
+	bool IsStopped() const;
 	void Pause();
 	void Stop();
+	void ResetAnimation();
 
 	void ManageMeshDynamicShadows(FITwinSynchro4DSchedulesInternals& SchedInternals);
 

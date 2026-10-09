@@ -1,0 +1,4 @@
+{
+    "status": 200,
+    "body": "{\"scene\":{\"id\":\"dbfb49d1-5ee9-45ba-90fe-ade097fb83f4\",\"displayName\":\"000Test\",\"iTwinId\":\"36ff2262-0867-4da9-8a20-ab9b343b23e8\",\"tags\":[],\"createdById\":\"bfa1138c-7d37-4950-8e73-4028c4c81b1e\",\"lastModifiedById\":\"bfa1138c-7d37-4950-8e73-4028c4c81b1e\",\"creationTime\":\"2026-06-09T07:00:13.505Z\",\"lastModified\":\"2026-06-09T07:00:13.505Z\",\"sceneData\":{\"objects\":{\"href\":\"https://api.bentley.com/scenes/dbfb49d1-5ee9-45ba-90fe-ade097fb83f4/objects?iTwinId=36ff2262-0867-4da9-8a20-ab9b343b23e8\"}}}}"
+}

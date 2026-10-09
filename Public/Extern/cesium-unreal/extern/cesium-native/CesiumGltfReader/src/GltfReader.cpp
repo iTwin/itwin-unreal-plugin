@@ -238,7 +238,10 @@ GltfReaderResult readBinaryGltf(
     // The byte length of the BIN chunk MAY be up to 3 bytes
     // bigger than JSON-defined buffer.byteLength. When it is
     // more than 3 bytes bigger, generate a warning.
-    if (binaryChunkSize - buffer.byteLength > 3) {
+    // Bentley-AdvViz: Reality meshes often have a difference of 4 here, which
+    // leads to a lot of warnings everytime a tile is (re-)loaded. Ideally this
+    // warning should occur only once per tileset...
+    if (binaryChunkSize - buffer.byteLength > 4 /*3*/) {
       result.warnings.emplace_back(
           "The size of the first buffer in the JSON chunk is " +
           std::to_string(buffer.byteLength) +

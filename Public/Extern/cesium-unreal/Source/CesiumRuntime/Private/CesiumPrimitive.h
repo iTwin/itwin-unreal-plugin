@@ -1,4 +1,4 @@
-// Copyright 2020-2024 CesiumGS, Inc. and Contributors
+// Copyright 2020-2026 CesiumGS, Inc. and Contributors
 
 #pragma once
 
@@ -141,6 +141,9 @@ public:
   std::optional<Cesium3DTilesSelection::BoundingVolume> boundingVolume;
 
   void destroy();
+
+  CesiumPrimitiveData& operator=(const CesiumPrimitiveData& other) = delete;
+  CesiumPrimitiveData& operator=(CesiumPrimitiveData&& other) = default;
 };
 
 /**

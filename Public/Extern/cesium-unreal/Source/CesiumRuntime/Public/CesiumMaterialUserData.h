@@ -1,4 +1,4 @@
-// Copyright 2020-2024 CesiumGS, Inc. and Contributors
+// Copyright 2020-2026 CesiumGS, Inc. and Contributors
 
 #pragma once
 
@@ -23,12 +23,8 @@ class UCesiumMaterialUserData : public UAssetUserData {
   GENERATED_BODY()
 
 public:
-#if ENGINE_VERSION_5_6_OR_HIGHER
   virtual void PostEditChangeOwner(
       const FPropertyChangedEvent& PropertyChangedEvent) override;
-#else
-  virtual void PostEditChangeOwner() override;
-#endif
 
   void UpdateLayerNames();
 

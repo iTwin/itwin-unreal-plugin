@@ -1,0 +1,4 @@
+{
+    "status": 200,
+    "body": "{\"name\":\"Decoration\",\"itwinid\":\"5e15184e-6d3c-43fd-ad04-e28b4b39485e\",\"gcs\":{\"wkt\":\"GEOCCS[\\\"WGS 84 (G2296)\\\",DATUM[\\\"World_Geodetic_System_1984_G2296\\\",SPHEROID[\\\"WGS 84\\\", 6378137, 298.257223563,AUTHORITY[\\\"EPSG\\\", \\\"7030\\\"]],AUTHORITY[\\\"EPSG\\\", \\\"1383\\\"]],PRIMEM[\\\"Greenwich\\\", 0,AUTHORITY[\\\"EPSG\\\", \\\"8901\\\"]],UNIT[\\\"metre\\\", 1,AUTHORITY[\\\"EPSG\\\", \\\"9001\\\"]],AXIS[\\\"Geocentric X\\\", OTHER],AXIS[\\\"Geocentric Y\\\", OTHER],AXIS[\\\"Geocentric Z\\\", NORTH],AUTHORITY[\\\"EPSG\\\", \\\"10604\\\"]]\",\"center\":[48.84603980855607,2.371000031296311,0]},\"id\":\"6a69c66d88a66e7d500cc0ae\"}"
+}

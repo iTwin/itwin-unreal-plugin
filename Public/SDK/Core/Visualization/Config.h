@@ -11,6 +11,7 @@
 	#include <string>
 	#include <memory>
 	#include <filesystem>
+	#include <optional>
 	#include "Core/Network/Network.h"
 	#ifndef MODULE_EXPORT
 		#define MODULE_EXPORT
@@ -36,6 +37,8 @@ MODULE_EXPORT namespace AdvViz::SDK
 			SServer server;
 		};
 		ADVVIZ_LINK void Init(const SConfig& config);
+
+		ADVVIZ_LINK std::optional<SConfig> GetCurrent();
 
 		ADVVIZ_LINK SConfig LoadFromFile(std::filesystem::path& path);
 	}

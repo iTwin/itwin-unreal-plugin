@@ -15,6 +15,7 @@
 #include <Timeline/SchedulesKeyframes.h>
 #include <Timeline/SchedulesStructs.inl>
 #include <Timeline/Timeline.h>
+#include <Timeline/TimelineTypes.h>
 
 #include <Compil/BeforeNonUnrealIncludes.h>
 	#include <BeHeaders/Compil/AlwaysFalse.h>
@@ -30,6 +31,69 @@
 #include <vector>
 
 namespace Detail {
+
+void InsertAnimationKey(FITwinElement::FAnimKeysVec& AnimationKeys, FIModelElementsKey const& AnimationKey)
+{
+	// Note: skipped the LessAnimationKey comparator appearing in
+	// https://github.com/iTwin/itwin-unreal-plugin/pull/121/changes/2bd35a3655464d768c16ae3c3bd94dee823c74a9
+	// because the proper operator exists in TimelineTypes.h (it had a bug previously which is now fixed, which may
+	// explain why the PR author needed LessAnimationKey to fix the timeline splitting issue).
+	auto const FirstGreaterOrEqual = std::lower_bound(AnimationKeys.begin(), AnimationKeys.end(), AnimationKey);
+	if (FirstGreaterOrEqual == AnimationKeys.end() || AnimationKey != *FirstGreaterOrEqual)
+		AnimationKeys.insert(FirstGreaterOrEqual, AnimationKey);
+}
+
+void ReplaceAnimationKey(FITwinElement::FAnimKeysVec& AnimationKeys,
+	FIModelElementsKey const& ExistingAnimationKey, FIModelElementsKey const& NewAnimationKey)
+{
+	if (ExistingAnimationKey == NewAnimationKey)
+		return;
+	auto ExistingAnimationKeyIt = std::lower_bound(AnimationKeys.begin(), AnimationKeys.end(), ExistingAnimationKey);
+	if (!ensure(ExistingAnimationKeyIt != AnimationKeys.end() && ExistingAnimationKey == *ExistingAnimationKeyIt))
+	{
+		InsertAnimationKey(AnimationKeys, NewAnimationKey);
+		return;
+	}
+	AnimationKeys.erase(ExistingAnimationKeyIt);
+	InsertAnimationKey(AnimationKeys, NewAnimationKey);
+}
+
+void AddAnimationKeyToAnimatedParents(FITwinSceneMapping& SceneMapping, ITwinScene::ElemIdx ParentIdx,
+	FIModelElementsKey const& ExistingAnimationKey, FIModelElementsKey const& NewAnimationKey)
+{
+	while (ITwinScene::NOT_ELEM != ParentIdx)
+	{
+		auto& ParentElem = SceneMapping.ElementFor(ParentIdx);
+		auto const ExistingAnimationKeyIt =
+			std::lower_bound(ParentElem.AnimationKeys.begin(), ParentElem.AnimationKeys.end(), ExistingAnimationKey);
+		// Note: this break relies on the unwritten convention that keys are fonud contiguously from the bound node
+		// down to all children. Convention also witnessed in FITwinSceneMapping::OnElementsTimelineModified and
+		// implemented by InsertAnimatedMeshSubElemsRecursively's stragtegy.
+		if (ExistingAnimationKeyIt == ParentElem.AnimationKeys.end()
+			|| ExistingAnimationKey != *ExistingAnimationKeyIt)
+			break;
+		// If it contained the old key, add the new one, but don't erase the old one right now, as other children may
+		// still need it (since a parent contains all the keys of its children). We'll erase the old keys from all
+		// parents after all timelines have been processed.
+		InsertAnimationKey(ParentElem.AnimationKeys, NewAnimationKey);
+		ParentIdx = ParentElem.ParentInVec;
+	}
+}
+
+void ReassignAnimationKeyForSplit(FITwinSceneMapping& SceneMapping, FElementsGroup const& ElementsSubGroup,
+	FIModelElementsKey const& ExistingAnimationKey, FIModelElementsKey const& NewAnimationKey)
+{
+	for (ITwinElementID const ElemID : ElementsSubGroup)
+	{
+		ITwinScene::ElemIdx ElemIdx = ITwinScene::NOT_ELEM;
+		auto* Elem = SceneMapping.GetElementForSLOW(ElemID, &ElemIdx);
+		if (!ensure(Elem))
+			continue;
+		ReplaceAnimationKey(Elem->AnimationKeys, ExistingAnimationKey, NewAnimationKey);
+		AddAnimationKeyToAnimatedParents(SceneMapping, Elem->ParentInVec,
+			ExistingAnimationKey, NewAnimationKey);
+	}
+}
 
 template<typename ElemDesignationContainer>
 void InsertAnimatedMeshSubElemsRecursively(FIModelElementsKey const& AnimationKey,
@@ -53,12 +117,7 @@ void InsertAnimatedMeshSubElemsRecursively(FIModelElementsKey const& AnimationKe
 		// Insert without duplication, and using a deterministic ordering, because concurrent 4D queries could
 		// obviously be received in an arbitrary order: necessary for CreateTimelineKeyframesWithTaskDependencies
 		// which can thus compare the Elem.AnimationKeys arrays directly.
-		auto const FirstGreaterOrEqual = std::lower_bound(Elem.AnimationKeys.begin(), Elem.AnimationKeys.end(),
-														  AnimationKey);
-		if (FirstGreaterOrEqual == Elem.AnimationKeys.end() || AnimationKey != (*FirstGreaterOrEqual))
-		{
-			Elem.AnimationKeys.insert(FirstGreaterOrEqual, AnimationKey);
-		}
+		InsertAnimationKey(Elem.AnimationKeys, AnimationKey);
 		// When pre-fetching bindings, bHasMesh is not set at this point, since we may not have received a tile with
 		// it yet. Let's rely on Elem.BBox instead. We used to rely on the list of child elements, assuming only leaves
 		// had geometries, but this proved wrong (ADO#2020662).
@@ -121,6 +180,7 @@ public:
 
 	void CreateAnimationBindingKeyframes(FITwinSchedule const& Schedule, FITwinElementTimeline& ElemTimeline,
 		size_t const AnimationBindingIndex, bool const bHasOnlyNeutralTasks);
+	void ClearTimelinesData();
 
 	// Need to split (or add) a timeline if:
 	// * it has at least one Neutral task and some Elements are also bound to Install/Remove tasks
@@ -129,8 +189,9 @@ public:
 	//		while some others are not: in that case, both the appearance profile and the transform of the Install
 	//		task have priority over the Maintain task's outside its timerange.
 	//
-	// \return True if task dependencies were found and thus all keyframes created, false otherwise (ie caller will
-	//		create the keyframes the usual way, for the whole input timeline).
+	// \return True if task dependencies were found leading to splitting a timeline, and thus all keyframes have been
+	//		created inside this method. False otherwise (ie caller will create the keyframes the usual way, for the
+	//		whole input timeline).
 	bool CreateTimelineKeyframesWithTaskDependencies(FITwinSceneMapping& SceneMapping,
 		FITwinSchedule& Schedule, // not const coz I'm adding the subgroups to it but could use separate counter
 		FITwinElementTimeline& ElemTimeline, int const TimelineIndex,
@@ -156,7 +217,7 @@ public:
 		// Inst/Rem tasks (but there is also the case of the Temp task acting as Rem regarding visibility
 		// outside subsequent Temp/Maint tasks), but it could be a lot of logic to code for a minor perf gain.
 		auto ElemIt = ElemTimeline.GetIModelElements().begin();
-		// TODO_GCO: need an "ElemTimeline.GetIModelElementsRanks()"
+		// TODO_GCO: to optimize, I need an "ElemTimeline.GetIModelElementsRanks()"...
 		FITwinElement::FAnimKeysVec const RefAnimKeys = SceneMapping.ElementForSLOW(*ElemIt).AnimationKeys;
 		++ElemIt;
 		std::optional<std::vector<std::pair<FITwinElement::FAnimKeysVec, FElementsGroup>>> SplitElemGroups;
@@ -190,45 +251,50 @@ public:
 			return false;
 		ensure(SplitElemGroups->size() > 1);
 		bool bUseExisting = true;
-		FIModelElementsKey const UnsplitAnimKey = ElemTimeline.GetIModelElementsKey();
-		FITwinElementTimeline::FBindings const UnsplitBindings = ElemTimeline.GetAnimationBindings();
+		FIModelElementsKey const ExistingAnimationKey = ElemTimeline.GetIModelElementsKey();
+		FITwinElementTimeline::FBindings const ExistingAnimationBindings = ElemTimeline.GetAnimationBindings();
 		for (auto& [CommonAnimationKeys, ElementsSubGroup] : (*SplitElemGroups))
 		{
 			if (!KeyframedSubgroups.insert(ElementsSubGroup).second) // !inserted = already present thus handled
 				continue;
-			FIModelElementsKey const SubgroupAnimKey(Schedule.NumGroups());
-			for (auto&& Elem : ElementsSubGroup)
-			{
-				auto&& AnimKeys = SceneMapping.ElementForSLOW(Elem).AnimationKeys;
-				std::replace(AnimKeys.begin(), AnimKeys.end(), UnsplitAnimKey, SubgroupAnimKey);
-			}
 			FITwinElementTimeline* pSubgroupTimeline;
-			if (bUseExisting)
+			bool const bReusingExistingTimeline = bUseExisting;
+			FIModelElementsKey const SubgroupElementsKey(Schedule.NumGroups());
+			Detail::ReassignAnimationKeyForSplit(
+				SceneMapping, ElementsSubGroup, ExistingAnimationKey, SubgroupElementsKey);
+			if (bReusingExistingTimeline)
 			{
 				bUseExisting = false;
-				MainTimeline.ResetElementTimelineFor(TimelineIndex, SubgroupAnimKey);
 				ElemTimeline.IModelElementsRef() = ElementsSubGroup;
+				// We just reuse the existing timeline index, but we need to reassign it to the new Elements key,
+				// and reset its members
+				MainTimeline.ResetElementTimelineFor(TimelineIndex, SubgroupElementsKey);
 				pSubgroupTimeline = &ElemTimeline;
 			}
 			else
 			{
-				pSubgroupTimeline = &MainTimeline.ElementTimelineFor(SubgroupAnimKey, ElementsSubGroup);
+				pSubgroupTimeline = &MainTimeline.ElementTimelineFor(SubgroupElementsKey, ElementsSubGroup);
 			}
+			// ExistingAnimationKey is in every subgroup's CommonAnimationKeys by construction, and is no longer
+			// registered after ResetElementTimelineFor, so seed from the saved copy and skip it in the loop.
+			// We *do* need these bindings, and not a subset of them: the split isn't dividing the original bindings
+			// between subgroups — the original bindings apply to all of the original elements, by definition.
+			// The split exists so each subgroup can additionally see the bindings of the other timelines its elements
+			// belong to, because CreateAnimationBindingKeyframes needs the complete per-element task set to resolve
+			// inter-task dependencies.
+			pSubgroupTimeline->AnimationBindings() = ExistingAnimationBindings;
 			for (auto&& AnimationKey : CommonAnimationKeys)
 			{
-				if (AnimationKey == UnsplitAnimKey) // timeline reused ie. no longer mapped to AnimationKey!
-				{
-					pSubgroupTimeline->AnimationBindings().insert(pSubgroupTimeline->AnimationBindings().end(),
-						UnsplitBindings.begin(), UnsplitBindings.end());
-				}
-				else if (auto* Timeline = MainTimeline.GetElementTimelineFor(AnimationKey))
+				if (AnimationKey == ExistingAnimationKey)
+					continue;
+				if (auto* Timeline = MainTimeline.GetElementTimelineFor(AnimationKey))
 					pSubgroupTimeline->AnimationBindings().insert(pSubgroupTimeline->AnimationBindings().end(),
 						Timeline->GetAnimationBindings().begin(), Timeline->GetAnimationBindings().end());
 			}
 			Schedule.CreateNextGroup(std::move(ElementsSubGroup));
 			bool const bHasOnlyNeutralTasks = Schedule.HasOnlyNeutralBindings(
 				pSubgroupTimeline->AnimationBindings().begin(), pSubgroupTimeline->AnimationBindings().end());
-			for (size_t AnimationBindingIndex : ElemTimeline.AnimationBindings())
+			for (size_t AnimationBindingIndex : pSubgroupTimeline->AnimationBindings())
 			{
 				CreateAnimationBindingKeyframes(Schedule, *pSubgroupTimeline, AnimationBindingIndex,
 												bHasOnlyNeutralTasks);
@@ -243,34 +309,51 @@ bool FITwinScheduleTimelineBuilder::IsUnitTesting() const
 	return nullptr == Impl->Owner;
 }
 
-void FITwinScheduleTimelineBuilder::OnReceivedScheduleStats(FITwinScheduleStats const& Stats, FSchedLock&)
+void FITwinScheduleTimelineBuilder::OnReceivedScheduleStats(FITwinScheduleStats const& Stats)
 {
 	// TODO_GCO: could reserve MainTimeline's container
 }
 
-void FITwinScheduleTimelineBuilder::AddAnimationBindingToTimeline(FITwinSchedule const& Schedule,
-	size_t const AnimationBindingIndex, FSchedLock&)
+void FITwinScheduleTimelineBuilder::AddAnimationBindingToTimeline(FITwinSchedule& Schedule,
+	size_t const AnimationBindingIndex)
 {
 	auto&& Binding = Schedule.AnimationBindings[AnimationBindingIndex];
-	if (!ensure(Binding.NotifiedVersion == VersionToken::None))
+	if (Binding.bDeleted
+		// normally bindings would have been deleted too, but for unit tests it's easier to support this
+		|| Schedule.Tasks[Binding.TaskInVec].bDeleted
+		|| Schedule.AppearanceProfiles[Binding.AppearanceProfileInVec].bDeleted)
+	{
 		return;
-	std::optional<FIModelElementsKey> AnimationKey;
-	std::visit([&](auto&& Ident)
+	}
+	auto SceneMappingLock = (*Impl->SceneMappingPtr)->GetAutoLock();
+	FITwinSceneMapping& SceneMapping = *SceneMappingLock.GetPtr();
+	auto AnimationKey = std::visit([&](auto&& Ident) -> std::optional<FIModelElementsKey>
 		{
 			using T = std::decay_t<decltype(Ident)>;
 			if constexpr (std::is_same_v<T, ITwinElementID>)
 			{
-				AnimationKey.emplace(Ident);
+				return FIModelElementsKey(Ident);
 			}
 			else if constexpr (std::is_same_v<T, FGuid>)
 			{
-				AnimationKey.emplace(Ident);
+				ITwinElementID ElemID;
+				if (SceneMapping.FindElementIDForGUID(Ident, ElemID))
+					return FIModelElementsKey(Ident);
 			}
-			else if constexpr (std::is_same_v<T, FString>)
+			else if constexpr (std::is_same_v<T, FString>) // group GUID => GroupInVec must be set
 			{
-				AnimationKey.emplace(Binding.GroupInVec);
+				auto&& FedGUID2ElemID = std::bind(&FITwinSceneMapping::FindElementIDForGUID, &SceneMapping,
+												  std::placeholders::_1, std::placeholders::_2);
+				FElementsGroup const& BoundElements =
+					Schedule.GetGroupAsElementIDs(Binding.GroupInVec, FedGUID2ElemID);
+				if (!BoundElements.empty())
+					return FIModelElementsKey(Binding.GroupInVec);
+				else
+					return std::nullopt;
 			}
-			else static_assert(always_false_v<T>, "non-exhaustive visitor!");
+			else
+				static_assert(always_false_v<T>, "non-exhaustive visitor!");
+			return std::nullopt;
 		},
 		Binding.AnimatedEntities);
 	if (!AnimationKey)
@@ -285,11 +368,16 @@ void FITwinScheduleTimelineBuilder::AddAnimationBindingToTimeline(FITwinSchedule
 //! existing ElementTimelineEx.
 void FITwinScheduleTimelineBuilder::FinalizeTimeline(FITwinSchedule& Schedule)
 {
+	Impl->ClearTimelinesData();
 	if (!Impl->SceneMappingPtr)
 	{
 		AITwinIModel * IModel = Impl->Owner ? Cast<AITwinIModel>(Impl->Owner->GetOwner()) : nullptr;
 		if (IModel)
 			Impl->SceneMappingPtr = &GetInternals(*IModel).SceneMapping;
+	}
+	for (size_t AnimIdx = 0; AnimIdx < Schedule.AnimationBindings.size(); ++AnimIdx)
+	{
+		AddAnimationBindingToTimeline(Schedule, AnimIdx);
 	}
 	auto SceneMappingLock = (*Impl->SceneMappingPtr)->GetAutoLock();
 	FITwinSceneMapping& SceneMapping = *SceneMappingLock.GetPtr();
@@ -299,8 +387,6 @@ void FITwinScheduleTimelineBuilder::FinalizeTimeline(FITwinSchedule& Schedule)
 			continue;
 		// All bindings listed necessarily animate the same Elements since they are part of the same timeline
 		auto&& Binding = Schedule.AnimationBindings[*ElemTimelinePtr->AnimationBindings().begin()];
-		if (!ensure(Binding.NotifiedVersion == VersionToken::InitialVersion))
-			return;
 		FElementsGroup BoundElements;
 		std::visit([&](auto&& Ident)
 			{
@@ -317,7 +403,7 @@ void FITwinScheduleTimelineBuilder::FinalizeTimeline(FITwinSchedule& Schedule)
 						BoundElements.insert(SingleElementID);
 					}
 				}
-				else if constexpr (std::is_same_v<T, FString>)
+				else if constexpr (std::is_same_v<T, FString>) // group GUID => GroupInVec must be set
 				{
 					auto&& FedGUID2ElemID = std::bind(&FITwinSceneMapping::FindElementIDForGUID, &SceneMapping,
 													  std::placeholders::_1, std::placeholders::_2);
@@ -360,6 +446,29 @@ void FITwinScheduleTimelineBuilder::FinalizeTimeline(FITwinSchedule& Schedule)
 			}
 		}
 	}
+	// After all timelines have been processed (including subgroup timelines created during splits,
+	// which the loop above visits too since it re-evaluates Timelines.size()), drop animation keys
+	// whose timeline was unregistered by a split. Elements and parents still referencing them would
+	// otherwise trip ensure(Timeline) in UpdateGltfTunerRules and be skipped by ForEachElementTimeline.
+	auto const& MainTimeline = Impl->MainTimeline;
+	SceneMapping.MutateElements([&MainTimeline](FITwinElement& Elem)
+		{
+			if (Elem.AnimationKeys.empty())
+				return;
+			auto const NewEnd = std::remove_if(Elem.AnimationKeys.begin(), Elem.AnimationKeys.end(),
+				[&MainTimeline](FIModelElementsKey const& Key)
+				{ return nullptr == MainTimeline.GetElementTimelineFor(Key); });
+			Elem.AnimationKeys.erase(NewEnd, Elem.AnimationKeys.end());
+		});
+	// CreateTimelineKeyframesWithTaskDependencies can empty some timelines
+	for (int TimelineIndex = 0; TimelineIndex < (int)Timelines.size(); )
+	{
+		auto ElemTimelinePtr = Timelines[TimelineIndex];
+		if (ElemTimelinePtr->GetIModelElements().empty())
+			Impl->MainTimeline.SwapWithLastAndDelete(TimelineIndex);
+		else
+			++TimelineIndex;
+	}
 	for (auto&& ConstrDetailParent : SceneMapping.GetConstructionDetailingParentsToHide())
 	{
 		auto const& Elem = SceneMapping.ElementFor(ConstrDetailParent);
@@ -399,30 +508,36 @@ void FITwinScheduleTimelineBuilder::FImpl::CreateAnimationBindingKeyframes(FITwi
 	ITwin::Timeline::AddVisibilityToTimeline(ElementTimeline, AppearanceProfile, Task.TimeRange, TaskDeps);
 	ITwin::Timeline::PTransform const* TransformKeyframe = nullptr;
 #if SYNCHRO4D_ENABLE_TRANSFORMATIONS()
-	if (ITwin::INVALID_IDX != Binding.TransfoAssignmentInVec) // optional
+	FStaticTransformAssignment const* StaticTransfoAssignment =
+		(ITwin::INVALID_IDX == Binding.StaticTransfoAssignmentInVec) ? nullptr
+			: (&Schedule.StaticTransfoAssignments[Binding.StaticTransfoAssignmentInVec]);
+	FPathTransformAssignment const* PathTransfoAssignment =
+		(ITwin::INVALID_IDX == Binding.PathTransfoAssignmentInVec) ? nullptr
+			: (&Schedule.PathTransfoAssignments[Binding.PathTransfoAssignmentInVec]);
+	// Should mean schedule is not consistent (binding should have been updated), but can be useful for testing:
+	if (StaticTransfoAssignment && StaticTransfoAssignment->bDeleted)
+		StaticTransfoAssignment = nullptr;
+	if (PathTransfoAssignment && PathTransfoAssignment->bDeleted)
+		PathTransfoAssignment = nullptr;
+	if (StaticTransfoAssignment || PathTransfoAssignment)
 	{
 		// Animation binding can have both static transfo and 3D path (with same Id, see azdev#1689132),
 		// In that case, we store both assignments separately (see KnownTransfoAssignments's bool subkey),
 		// to avoid having to worry about concurrent writes to the TransfoAssignment variant.
 		// But the static transform is ignored like in Synchro Pro (TransfoAssignment.bStaticTransform is
 		// set to false in FITwinSchedulesImport::FImpl::RequestAnimationBindings).
-		auto&& TransfoAssignment = Schedule.TransfoAssignments[Binding.TransfoAssignmentInVec];
-		if (Binding.bStaticTransform
-			&& std::holds_alternative<FTransform>(TransfoAssignment.Transformation))
+		if (StaticTransfoAssignment && !PathTransfoAssignment)
 		{
 			TransformKeyframe = &ITwin::Timeline::AddStaticTransformToTimeline(ElementTimeline,
-				Task.TimeRange, std::get<0>(TransfoAssignment.Transformation), *CoordConversions, TaskDeps);
+				Task.TimeRange, StaticTransfoAssignment->Transform, *CoordConversions, TaskDeps);
 		}
-		else if (!Binding.bStaticTransform
-			&& std::holds_alternative<FPathAssignment>(TransfoAssignment.Transformation))
+		else if (PathTransfoAssignment && ensure(ITwin::INVALID_IDX != PathTransfoAssignment->Animation3DPathInVec))
 		{
-			auto&& PathAssignment = std::get<1>(TransfoAssignment.Transformation);
-			if (ensure(ITwin::INVALID_IDX != PathAssignment.Animation3DPathInVec))
-			{
-				auto&& Path3D = Schedule.Animation3DPaths[PathAssignment.Animation3DPathInVec].Keyframes;
-				ITwin::Timeline::Add3DPathTransformToTimeline(&ElementTimeline, Task.TimeRange,
-					PathAssignment, Path3D, *CoordConversions, TaskDeps);
-			}
+			auto&& Path3D = Schedule.Animation3DPaths[PathTransfoAssignment->Animation3DPathInVec].Keyframes;
+			ITwin::Timeline::Add3DPathTransformToTimeline(&ElementTimeline, Task.TimeRange,
+				// The static transform is actually ignored, as mentioned above and confirmed in #2070419
+				nullptr, //Was: StaticTransfoAssignment ? (&StaticTransfoAssignment->Transform) : nullptr,
+				*PathTransfoAssignment, Path3D, *CoordConversions, TaskDeps);
 		}
 		else
 		{
@@ -487,32 +602,42 @@ FITwinScheduleTimelineBuilder::~FITwinScheduleTimelineBuilder()
 	ensure(EInit::Ready != InitState); // Pending or Disposable are both OK
 }
 
+void FITwinScheduleTimelineBuilder::FImpl::ClearTimelinesData()
+{
+	if (!Owner) // <=> unit test
+		return;
+	for (auto const& ElementTimelinePtr : MainTimeline.GetContainer())
+		if (ElementTimelinePtr->ExtraData)
+		{
+			delete (static_cast<FTimelineToScene*>(ElementTimelinePtr->ExtraData));
+			ElementTimelinePtr->ExtraData = nullptr;
+		}
+	MainTimeline.ClearTimelinesData();
+
+	AITwinIModel* IModel = Cast<AITwinIModel>(Owner->GetOwner());
+	if (ensure(IModel))
+	{
+		auto SceneMappingLocked = GetInternals(*IModel).SceneMapping->GetAutoLock();
+		SceneMappingLocked->ForEachKnownTile([](const TITwinSceneTilePtr& SceneTilePtr)
+			{
+				auto SceneTileLock = SceneTilePtr->GetAutoLock();
+				SceneTileLock->TimelinesIndices.clear();
+				SceneTileLock->ClearExtractedElements();
+			});
+		SceneMappingLocked->MutateElements([](FITwinElement& Elem)
+			{
+				Elem.AnimationKeys.clear();
+				Elem.Requirements = {};
+			});
+	}
+}
+
 void FITwinScheduleTimelineBuilder::Uninitialize()
 {
 	if (!ensure(EInit::Disposable != InitState))
 		return;
 	if (EInit::Pending != InitState)
-	{
-		for (auto const& ElementTimelinePtr : Impl->MainTimeline.GetContainer())
-			if (ElementTimelinePtr->ExtraData)
-				delete (static_cast<FTimelineToScene*>(ElementTimelinePtr->ExtraData));
-
-		AITwinIModel* IModel = Cast<AITwinIModel>(Impl->Owner->GetOwner());
-		if (ensure(IModel))
-		{
-			auto SceneMappingLocked = GetInternals(*IModel).SceneMapping->GetAutoLock();
-			SceneMappingLocked->ForEachKnownTile([](const TITwinSceneTilePtr& SceneTilePtr)
-				{
-					auto SceneTileLock = SceneTilePtr->GetAutoLock();
-					SceneTileLock->TimelinesIndices.clear();
-				});
-			SceneMappingLocked->MutateElements([](FITwinElement& Elem)
-				{
-					Elem.AnimationKeys.clear();
-					Elem.Requirements = {};
-				});
-		}
-	}
+		Impl->ClearTimelinesData();
 	InitState = EInit::Disposable;
 }
 
@@ -568,3 +693,16 @@ void FITwinScheduleTimelineBuilder::DebugDumpFullTimelinesAsJson(FString const& 
 		}
 	}
 }
+
+#if WITH_TESTS
+bool FITwinScheduleTimelineBuilder::TestOnlyCreateTimelineKeyframesWithTaskDependencies(
+	FITwinSceneMapping& SceneMapping,
+	FITwinSchedule& Schedule,
+	FITwinElementTimeline& ElemTimeline,
+	int TimelineIndex,
+	std::unordered_set<FElementsGroup>& KeyframedSubgroups)
+{
+	return Impl->CreateTimelineKeyframesWithTaskDependencies(
+		SceneMapping, Schedule, ElemTimeline, TimelineIndex, KeyframedSubgroups);
+}
+#endif

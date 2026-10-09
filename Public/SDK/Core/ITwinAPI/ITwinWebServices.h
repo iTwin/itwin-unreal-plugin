@@ -19,7 +19,6 @@
 
 #include "../AdvVizLinkType.h"
 #include "ITwinEnvironment.h"
-#include "ITwinMatMLPredictionEnums.h"
 #include "ITwinTypes.h"
 
 #include <filesystem>
@@ -50,6 +49,15 @@ MODULE_EXPORT namespace AdvViz::SDK
 
 		//! Change the server URL - only used for unit testing
 		void SetCustomServerURL(std::string const& serverUrl);
+
+		//! Returns the current root URL of the iTwin API, based on the current environment.
+		//! If a custom server URL has been set, it will return that one instead.
+		std::string GetAPIRootURL() const;
+
+		//! Sets a global factor applied to delay times used in the retry system.
+		//! Can be used in the context of unit tests, typically, to avoid losing too much time for requests
+		//! meant to fail.
+		void SetRetryDelayFactor(float factor);
 
 		void SetObserver(IITwinWebServicesObserver* observer);
 		bool HasObserver(IITwinWebServicesObserver const* observer) const;
@@ -145,12 +153,6 @@ MODULE_EXPORT namespace AdvViz::SDK
 			std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId,
 			std::string const& textureId);
 
-		bool IsSetupForForMaterialMLPrediction() const;
-		void SetMaterialMLPredictionCacheFolder(std::filesystem::path const& cacheFolder);
-		void SetupForMaterialMLPrediction();
-		EITwinMatMLPredictionStatus GetMaterialMLPrediction(
-			std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId);
-
 		void GetGoogleCuratedContentAccess();
 
 		void RunCustomRequest(
@@ -175,8 +177,6 @@ MODULE_EXPORT namespace AdvViz::SDK
 
 
 	private:
-		std::string GetAPIRootURL() const;
-
 		/// Modify a setting which may have an impact on the end server, and make the relevant updates if
 		/// needed.
 		template <typename Func>

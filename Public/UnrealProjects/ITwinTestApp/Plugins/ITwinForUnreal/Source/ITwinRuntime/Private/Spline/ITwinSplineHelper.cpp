@@ -9,7 +9,11 @@
 
 #include <Spline/ITwinSplineHelper.h>
 #include <Spline/ITwinSplineHelper.inl>
+
 #include <Spline/ITwinSplineHelper2DWidgetImpl.h>
+#include <Spline/ITwinSplineGeometry.h>
+#include <PathAnimation/ITwinAnimPathShaderParameters.h>
+
 #include <Math/UEMathConversion.h>
 #include <CesiumGlobeAnchorComponent.h>
 #include <CesiumCartographicPolygon.h>
@@ -43,16 +47,6 @@
 
 namespace ITwinSpline
 {
-	inline int32 GetPrevIndex(const int32 Index, const int32 NumPoints, bool bLoop)
-	{
-		return (Index > 0) ? (Index - 1) : (bLoop ? (NumPoints - 1) : Index);
-	}
-
-	inline int32 GetNextIndex(const int32 Index, const int32 NumPoints, bool bLoop)
-	{
-		return (Index < NumPoints - 1) ? (Index + 1) : (bLoop ? 0 : Index);
-	}
-
 	AdvViz::SDK::ESplineTangentMode UEToAViz(const EITwinTangentMode sdkMode)
 	{
 		switch (sdkMode)
@@ -79,14 +73,6 @@ namespace ITwinSpline
 		case AdvViz::SDK::ESplineTangentMode::Custom:
 			return EITwinTangentMode::Custom;
 		}
-	}
-
-	bool IsPathAnim(const EITwinSplineUsage Usage)
-	{
-		return Usage == EITwinSplineUsage::AnimPath
-			|| Usage == EITwinSplineUsage::AnimPathTraffic
-			|| Usage == EITwinSplineUsage::AnimPathCrowd
-			|| Usage == EITwinSplineUsage::AnimPathObject;
 	}
 }
 
@@ -118,6 +104,13 @@ struct AITwinSplineHelper::FImpl
 
 	bool bNeedsUpdate2DElements = false;
 
+#if WITH_EDITOR
+	FString CustomActorLabel;
+#endif
+
+	//! Store the shader scalar parameters for the anim path usage. Useful in case of insertion
+	//! of a new spline mesh.
+	std::array<float, static_cast<size_t>(EITwinAnimPathShaderScalarParam::Count)> AnimPathShaderScalarParams;
 
 	static constexpr double RIBBON_SCALE = 0.60;
 	static std::optional<EITwinSplineUsage> UsageForSpawnedActor;
@@ -149,12 +142,18 @@ struct AITwinSplineHelper::FImpl
 	FVector GetLocationAtSplinePoint(int32 pointIndex) const;
 	void SetLocationAtSplinePoint(int32 pointIndex, const FVector& location);
 
+	void UpdateTangentAuto(int32 pointIndex, const FVector& pos, const FVector& prevPos, const FVector& nextPos);
+
+	void UpdateTangentDir(int32 pointIndex, const FVector& newTangentDir);
+	void UpdateTangent(int32 pointIndex, const FVector& newTangentDir, float tangentLength);
+
 	bool IncludeInWorldBox(FBox& Box) const;
 
-	void DeletePoint(int32 pointIndex);
+	//! Returns true if the point was successfully deleted.
+	bool DeletePoint(int32 pointIndex);
 
-	void DuplicatePoint(int32 pointIndex);
-	void DuplicatePoint(int32& pointIndex, FVector& newWorldPosition);
+	bool DuplicatePoint(int32 pointIndex);
+	bool DuplicatePoint(int32& pointIndex, FVector& newWorldPosition);
 	int32 InsertPointAt(const int32 PointIndex, FVector const& NewWorldPosition);
 
 	void ScaleMeshComponentsForCurrentPOV();
@@ -167,6 +166,14 @@ struct AITwinSplineHelper::FImpl
 	{
 		return Owner.GetUsage() != EITwinSplineUsage::AnimPathTraffic
 			&& Owner.GetUsage() != EITwinSplineUsage::AnimPathCrowd;
+	}
+
+	//! Whether we use the path animation shader for this spline (with advanced featurs such as lane count,
+	//! lane width, separator width, etc.).
+	inline bool UsePathAnimationShader() const
+	{
+		return Owner.GetUsage() == EITwinSplineUsage::AnimPathTraffic
+			|| Owner.GetUsage() == EITwinSplineUsage::AnimPathCrowd;
 	}
 
 	//! Returns true if the spline is used as an helper for edge display (introduced for cutout cubes).
@@ -256,6 +263,21 @@ struct AITwinSplineHelper::FImpl
 		InvalidateTracingData();
 		Invalidate2DElements();
 	}
+
+	void SetTightness(int32 PointIndex, float InTightness);
+	float GetTightness(int32 PointIndex) const;
+
+	//! Set a scalar parameter value for the path animation shader.
+	void SetPathAnimShaderScalarParameterValue(EITwinAnimPathShaderScalarParam Param, float Value, bool bApplyToMeshComponents);
+	//! Transfer all path animation shader parameters to the spline mesh components (to be called after a
+	//! batch of changes).
+	void TransferPathAnimShaderParametersToMeshes();
+	//! Returns the array view of the path animation shader scalar parameters, and the index of the first.
+	inline TArrayView<const float> GetPathAnimScalarParams(int32& OutFirstParamIndex) const;
+
+	//! Adapt the U-scaling of the given spline mesh component to the current length of the corresponding
+	//! segment of the spline (for path animation usage).
+	void AdaptArrowsDensityForSplineMeshComponent(int32 PointIndex);
 };
 
 /*static*/
@@ -263,6 +285,9 @@ std::optional<EITwinSplineUsage> AITwinSplineHelper::FImpl::UsageForSpawnedActor
 
 AITwinSplineHelper::FImpl::FImpl(AITwinSplineHelper& InOwner) : Owner(InOwner)
 {
+	// Initialize AnimPathShaderScalarParams with default values (will be filled with actual values when the
+	// spline is initialized from the animation path.
+	AnimPathShaderScalarParams.fill(0.f);
 }
 
 template <typename TFunc>
@@ -504,7 +529,13 @@ void AITwinSplineHelper::FImpl::AddAllMeshComponents()
 	{
 		// For edge display mode, use a cylinder with rounded caps ("EdgeMesh") instead of a ribbon
 		// ("SplineMesh") to make edges independent from the view point.
-		FString const SplineMeshAssetName = IsEdgeDisplayHelper() ? TEXT("EdgeMesh") : TEXT("SplineMeshTransp");
+		// For path animation with one or several lanes, use a dedicated mesh (with an arrow indicating the
+		// direction).
+		FString const SplineMeshAssetName = IsEdgeDisplayHelper()
+			? TEXT("EdgeMesh")
+			: (UsePathAnimationShader()
+				? TEXT("PathAnimationMesh")
+				: TEXT("SplineMeshTransp"));
 		Owner.SplineMesh = LoadObject<UStaticMesh>(
 			nullptr,
 			*FString::Printf(TEXT("/ITwinForUnreal/ITwin/Meshes/%s.%s"), *SplineMeshAssetName, *SplineMeshAssetName),
@@ -594,6 +625,42 @@ FVector2D AITwinSplineHelper::FImpl::GetRibbonScale2D() const
 	);
 }
 
+inline TArrayView<const float> AITwinSplineHelper::FImpl::GetPathAnimScalarParams(int32& OutFirstParamIndex) const
+{
+	// Offset of 1 because the first parameter is the selection parameter, which is not managed here.
+	constexpr int32 FirstParamIndex = 1;
+	OutFirstParamIndex = FirstParamIndex;
+	return TArrayView<const float>(
+		AnimPathShaderScalarParams.data() + FirstParamIndex,
+		(int32)AnimPathShaderScalarParams.size() - FirstParamIndex);
+}
+
+void AITwinSplineHelper::FImpl::AdaptArrowsDensityForSplineMeshComponent(int32 PointIndex)
+{
+	if (!ensure(UsePathAnimationShader()
+		&& PointIndex >= 0
+		&& PointIndex < Owner.SplineMeshComponents.Num()))
+	{
+		return;
+	}
+	if (!Owner.SplineComponent || !Owner.SplineMeshComponents[PointIndex])
+	{
+		return;
+	}
+	// The constant 6 below is defined in M_PathAnimation.uasset (UScaling). I did not put this parameter
+	// in the enum EITwinAnimPathShaderScalarParam because it is not to be defined per path but per segment,
+	// as it is used to have a regular distribution of arrows over the whole path.
+	static constexpr int32 UV_SCALING_PARAM_INDEX = 6;
+	static_assert(UV_SCALING_PARAM_INDEX == static_cast<int32>(EITwinAnimPathShaderScalarParam::Count), "UV scaling parameter index mismatch");
+
+	const float StartDistance = Owner.SplineComponent->GetDistanceAlongSplineAtSplinePoint(PointIndex);
+	const float EndDistance = Owner.SplineComponent->GetDistanceAlongSplineAtSplinePoint(PointIndex + 1);
+	const float DistanceInMeters = FMath::Abs(EndDistance - StartDistance) * 0.01f;
+	static constexpr float ARROW_PER_METER = 1.0f / 6.0f; // 1 arrow every 6 meters
+
+	Owner.SplineMeshComponents[PointIndex]->SetCustomPrimitiveDataFloat(UV_SCALING_PARAM_INDEX, DistanceInMeters * ARROW_PER_METER);
+}
+
 void AITwinSplineHelper::FImpl::AddSplineMeshComponentsForPoint(int32 pointIndex)
 {
 	BE_ASSERT(Owner.bDraw3DRibbon);
@@ -614,6 +681,16 @@ void AITwinSplineHelper::FImpl::AddSplineMeshComponentsForPoint(int32 pointIndex
 	splineMeshComp->SetEndScale(SplineScale, false);
 
 	splineMeshComp->SetCustomPrimitiveDataFloat(0, bSelected ? 1.0f : 0.0f);
+
+	if (UsePathAnimationShader())
+	{
+		// Apply the current shader scalar parameters for path animation to the new spline mesh component.
+		int32 FirstParamIndex = 0;
+		const TArrayView<const float> ScalarParams = GetPathAnimScalarParams(FirstParamIndex);
+		splineMeshComp->SetCustomPrimitiveDataFloatArray(FirstParamIndex, ScalarParams);
+
+		AdaptArrowsDensityForSplineMeshComponent(pointIndex);
+	}
 }
 
 void AITwinSplineHelper::FImpl::AddMeshComponentsForPoint(int32 PointIndex)
@@ -689,6 +766,11 @@ void AITwinSplineHelper::FImpl::UpdateMeshComponentsForPoint(int32 PointIndex)
 			SplineComp.GetLeaveTangentAtSplinePoint(StartIndex, SPL_LOCAL),
 			SplineComp.GetLocationAtSplinePoint(EndIndex, SPL_LOCAL),
 			SplineComp.GetArriveTangentAtSplinePoint(EndIndex, SPL_LOCAL));
+
+		if (UsePathAnimationShader())
+		{
+			AdaptArrowsDensityForSplineMeshComponent(PointIndex);
+		}
 	}
 	if (Owner.bDraw3DPoints && ensure(PointIndex < Owner.PointMeshComponents.Num()))
 	{
@@ -718,11 +800,11 @@ void AITwinSplineHelper::FImpl::SetTangentMode(const EITwinTangentMode mode)
 		int32 nextIndex = ITwinSpline::GetNextIndex(i, NbSplinePoints, isLoop);
 
 		FVector prevPoint = SplineComp.GetLocationAtSplinePoint(prevIndex, SPL_LOCAL);
-		FVector currPoint = SplineComp.GetLocationAtSplinePoint(currIndex, SPL_LOCAL);
 		FVector nextPoint = SplineComp.GetLocationAtSplinePoint(nextIndex, SPL_LOCAL);
 
 		if (TangentMode == EITwinTangentMode::Linear)
 		{
+			FVector currPoint = SplineComp.GetLocationAtSplinePoint(currIndex, SPL_LOCAL);
 			SplineComp.SetTangentsAtSplinePoint(
 				i, currPoint - prevPoint, nextPoint - currPoint, SPL_LOCAL, false);
 		}
@@ -817,14 +899,11 @@ void AITwinSplineHelper::FImpl::SetLocationAtSplinePoint(int32 pointIndex, const
 		FVector nextNextPos = SplineComp.GetLocationAtSplinePoint(
 			ITwinSpline::GetNextIndex(nextPointIndex, numPoints, isLoop), SPL_LOCAL);
 
-		if (prevPointIndex != pointIndex)
-			SplineComp.SetTangentAtSplinePoint(
-				prevPointIndex, (pos - prevPrevPos) * SMOOTH_FACTOR, SPL_LOCAL, false);
-		SplineComp.SetTangentAtSplinePoint(
-			pointIndex, (nextPos - prevPos) * SMOOTH_FACTOR, SPL_LOCAL, false);
-		if (nextPointIndex != pointIndex)
-			SplineComp.SetTangentAtSplinePoint(
-				nextPointIndex, (nextNextPos - pos) * SMOOTH_FACTOR, SPL_LOCAL, false);
+		if (prevPointIndex != pointIndex)// && SplineComp.GetSplinePointType(prevPointIndex) != ESplinePointType::CurveCustomTangent)
+			UpdateTangentAuto(prevPointIndex, prevPos, prevPrevPos, pos);
+		UpdateTangentAuto(pointIndex, pos, prevPos, nextPos);
+		if (nextPointIndex != pointIndex)// && SplineComp.GetSplinePointType(nextPointIndex) != ESplinePointType::CurveCustomTangent)
+			UpdateTangentAuto(nextPointIndex, nextPos, pos, nextNextPos);
 	}
 
 	SplineComp.UpdateSpline();
@@ -853,6 +932,31 @@ void AITwinSplineHelper::FImpl::SetLocationAtSplinePoint(int32 pointIndex, const
 	CopyPointToSecondaryCartographicPolygons(pointIndex, prevPointIndex, nextPointIndex);
 
 	OnSplineModified();
+}
+
+void AITwinSplineHelper::FImpl::UpdateTangentAuto(int32 pointIndex, const FVector& pos, const FVector& prevPos, const FVector& nextPos)
+{
+	UpdateTangent(pointIndex, (nextPos - prevPos), FMath::Min((pos - prevPos).Length(), (nextPos - pos).Length()));
+}
+
+void AITwinSplineHelper::FImpl::UpdateTangentDir(int32 pointIndex, const FVector& newTangentDir)
+{
+	USplineComponent& SplineComp(*Owner.SplineComponent);
+
+	FVector tangent = SplineComp.GetTangentAtSplinePoint(pointIndex, SPL_LOCAL);
+	float TargetTangentLength = FMath::Max(tangent.Length(), SMALL_NUMBER);
+	UpdateTangent(pointIndex, newTangentDir, TargetTangentLength);
+}
+
+void AITwinSplineHelper::FImpl::UpdateTangent(int32 pointIndex, const FVector & newTangentDir, float TargetTangentLength)
+{
+	USplineComponent& SplineComp(*Owner.SplineComponent);
+
+	FVector tangent = newTangentDir;
+	float TangentLength = FMath::Max(tangent.Length(), SMALL_NUMBER);
+	tangent *= TargetTangentLength / TangentLength;
+	SplineComp.SetTangentAtSplinePoint(
+		pointIndex, tangent, SPL_LOCAL, false);
 }
 
 bool AITwinSplineHelper::FImpl::IncludeInWorldBox(FBox& Box) const
@@ -884,15 +988,17 @@ void AITwinSplineHelper::FImpl::RemoveSplineMeshComponentForPoint(int32 PointInd
 	}
 }
 
-void AITwinSplineHelper::FImpl::DeletePoint(int32 pointIndex)
+bool AITwinSplineHelper::FImpl::DeletePoint(int32 pointIndex)
 {
 	if (!Owner.SplineComponent)
 	{
-		return;
+		return false;
 	}
 	CHECK_NUMBER_OF_SPLINE_MESH_COMPONENTS();
 
 	USplineComponent& SplineComp(*Owner.SplineComponent);
+
+	bool bDeleted = false;
 
 	// Set the new tangents before deleting the point
 	bool isLoop = LoopIndices();
@@ -969,9 +1075,11 @@ void AITwinSplineHelper::FImpl::DeletePoint(int32 pointIndex)
 			SelectedPointIndex = -1;
 		}
 		CHECK_NUMBER_OF_POINTS();
+
+		bDeleted = true;
 	}
 
-	if (NeedsDraw3DElements())
+	if (bDeleted && NeedsDraw3DElements())
 	{
 		// Remove the meshes representing the point
 
@@ -1008,15 +1116,17 @@ void AITwinSplineHelper::FImpl::DeletePoint(int32 pointIndex)
 	}
 
 	OnSplineModified();
+
+	return bDeleted;
 }
 
-void AITwinSplineHelper::FImpl::DuplicatePoint(int32 pointIndex)
+bool AITwinSplineHelper::FImpl::DuplicatePoint(int32 pointIndex)
 {
 	using namespace AdvViz::SDK;
 
 	if (!Owner.SplineComponent || pointIndex < 0)
 	{
-		return;
+		return false;
 	}
 
 	USplineComponent& SplineComp(*Owner.SplineComponent);
@@ -1052,13 +1162,14 @@ void AITwinSplineHelper::FImpl::DuplicatePoint(int32 pointIndex)
 	CHECK_NUMBER_OF_POINTS();
 
 	Invalidate2DElements();
+	return true;
 }
 
-void AITwinSplineHelper::FImpl::DuplicatePoint(int32& pointIndex, FVector& newWorldPosition)
+bool AITwinSplineHelper::FImpl::DuplicatePoint(int32& pointIndex, FVector& newWorldPosition)
 {
 	if (!Owner.SplineComponent)
 	{
-		return;
+		return false;
 	}
 
 	bool isLoop = LoopIndices();
@@ -1070,13 +1181,16 @@ void AITwinSplineHelper::FImpl::DuplicatePoint(int32& pointIndex, FVector& newWo
 	FVector currPos = SplineComp.GetLocationAtSplinePoint(pointIndex, SPL_WORLD);
 	FVector nextPos = SplineComp.GetLocationAtSplinePoint(nextPointIndex, SPL_WORLD);
 
-	DuplicatePoint(pointIndex);
+	if (!DuplicatePoint(pointIndex))
+	{
+		return false;
+	}
 
-	double direction = (nextPos - prevPos).Dot(newWorldPosition - currPos);
-	if (direction > 0)
+	if (ITwinSpline::ShouldAdvanceIndexAfterDuplication(prevPos, currPos, nextPos, newWorldPosition))
 	{
 		pointIndex++;
 	}
+	return true;
 }
 
 int32 AITwinSplineHelper::FImpl::InsertPointAt(const int32 PointIndex, FVector const& NewWorldPosition)
@@ -1087,12 +1201,14 @@ int32 AITwinSplineHelper::FImpl::InsertPointAt(const int32 PointIndex, FVector c
 	}
 	USplineComponent& SplineComp(*Owner.SplineComponent);
 	int32 NumPoints = SplineComp.GetNumberOfSplinePoints();
-	if (!ensure(PointIndex >= 0 && NumPoints > 0 && PointIndex <= NumPoints))
+
+	if (!ensure(ITwinSpline::IsValidInsertionIndex(PointIndex, NumPoints)))
 	{
 		return INDEX_NONE;
 	}
 	// To avoid code duplication, let's duplicate a point and move it at once.
-	DuplicatePoint(std::min(PointIndex, NumPoints - 1));
+	DuplicatePoint(ITwinSpline::ResolveDuplicationSourceIndex(PointIndex, NumPoints));
+
 	if (ensure(PointIndex < SplineComp.GetNumberOfSplinePoints()))
 	{
 		SetLocationAtSplinePoint(PointIndex, NewWorldPosition);
@@ -1305,43 +1421,14 @@ void AITwinSplineHelper::FImpl::InsertPointInSecondaryCartographicPolygons(int32
 
 void AITwinSplineHelper::FImpl::UpdateTracingData() const
 {
-	FPoly& Polygon = TracingData.SplinePolygon;
-	Polygon.Init();
+	TArray<FVector> SplinePts;
 	const int32 NumPoints = Owner.GetNumberOfSplinePoints();
-	if (NumPoints > 2)
+	SplinePts.SetNum(NumPoints);
+	for (int32 i(0); i < NumPoints; ++i)
 	{
-		Polygon.Vertices.SetNum(NumPoints);
-		for (int32 i(0); i < NumPoints; ++i)
-		{
-			Polygon.Vertices[i] = FVector3f(GetLocationAtSplinePoint(i));
-		}
+		SplinePts[i] = GetLocationAtSplinePoint(i);
 	}
-	else if (NumPoints == 2)
-	{
-		// Create a thin rectangle to allow intersection tests on 2-point splines
-		const FVector3f Point0(GetLocationAtSplinePoint(0));
-		const FVector3f Point1(GetLocationAtSplinePoint(1));
-		const FVector3f Direction = (Point1 - Point0).GetSafeNormal();
-		const FVector3f Normal = FVector3f::CrossProduct(Direction, FVector3f::UpVector);
-		const float HalfWidth = 50.f; // considering spline to be 1m wide
-		Polygon.Vertices.SetNum(4);
-		Polygon.Vertices[0] = Point0 + Normal * HalfWidth;
-		Polygon.Vertices[1] = Point0 - Normal * HalfWidth;
-		Polygon.Vertices[2] = Point1 - Normal * HalfWidth;
-		Polygon.Vertices[3] = Point1 + Normal * HalfWidth;
-	}
-
-	if (NumPoints >= 2)
-	{
-		TracingData.SplineBarycenter = Polygon.GetMidPoint();
-	}
-	else
-	{
-		TracingData.SplineBarycenter = FVector::ZeroVector;
-	}
-	Polygon.Fix();
-	Polygon.CalcNormal(true);
-
+	ITwinSpline::BuildSplinePolygon(SplinePts, TracingData.SplinePolygon, TracingData.SplineBarycenter);
 	TracingData.bNeedUpdateTracingData = false;
 }
 
@@ -1351,54 +1438,7 @@ bool AITwinSplineHelper::FImpl::DoesLineIntersectSplinePolygon(const FVector& St
 	{
 		UpdateTracingData();
 	}
-
-	// For some reason, FPoly::DoesLineIntersect is not exported...
-	// return TracingData.SplinePolygon.DoesLineIntersect(Start, End);
-	auto const& Vertices(TracingData.SplinePolygon.Vertices);
-	auto const& Normal(TracingData.SplinePolygon.Normal);
-
-	// Filter degenerated cases...
-	if (Vertices.Num() < 3)
-	{
-		return false;
-	}
-
-	// If the ray doesn't cross the plane, don't bother going any further.
-	const float DistStart = FVector::PointPlaneDist(Start, (FVector)Vertices[0], (FVector)Normal);
-	const float DistEnd = FVector::PointPlaneDist(End, (FVector)Vertices[0], (FVector)Normal);
-
-	if ((DistStart < 0 && DistEnd < 0) || (DistStart > 0 && DistEnd > 0))
-	{
-		return false;
-	}
-
-	// Get the intersection of the line and the plane.
-	FVector Intersection = FMath::LinePlaneIntersection(Start, End, (FVector)Vertices[0], (FVector)Normal);
-	//if (Intersect)	*Intersect = Intersection;
-	if (Intersection == Start || Intersection == End)
-	{
-		return false;
-	}
-
-	// Check if the intersection point is actually on the poly.
-	FVector SidePlaneNormal;
-	FVector3f Side;
-
-	for (int32 x = 0; x < Vertices.Num(); x++)
-	{
-		// Create plane perpendicular to both this side and the polygon's normal.
-		Side = Vertices[x] - Vertices[(x - 1 < 0) ? Vertices.Num() - 1 : x - 1];
-		SidePlaneNormal = FVector(Side ^ Normal);
-		SidePlaneNormal.Normalize();
-
-		// If point is not behind all the planes created by this polys edges, it's outside the poly.
-		if (FVector::PointPlaneDist(Intersection, (FVector)Vertices[x], SidePlaneNormal) > UE_THRESH_POINT_ON_PLANE)
-		{
-			return false;
-		}
-	}
-
-	return true;
+	return ITwinSpline::DoesLineIntersectPolygon(TracingData.SplinePolygon, Start, End);
 }
 
 void AITwinSplineHelper::FImpl::SetSelected(bool bInSelected)
@@ -1461,6 +1501,60 @@ void AITwinSplineHelper::FImpl::SetInteractiveCreationInProgress(bool bInProgres
 		this->bInteractiveCreationInProgress = bInProgress;
 		// Invalidate 2D elements, as some buttons are disabled during interactive creation.
 		Invalidate2DElements();
+	}
+}
+
+void AITwinSplineHelper::FImpl::SetPathAnimShaderScalarParameterValue(EITwinAnimPathShaderScalarParam Param, float Value,
+	bool bApplyToMeshComponents)
+{
+	BE_ASSERT(ITwinSpline::IsPathAnim(Usage));
+	if (!UsePathAnimationShader())
+	{
+		// Skip setting the parameter if the shader is not used, to avoid unnecessary updates.
+		return;
+	}
+
+	BE_ASSERT(Param != EITwinAnimPathShaderScalarParam::Selection, "selection is not managed here");
+
+	const int32 ParamIndex = static_cast<int32>(Param);
+
+	if (ParamIndex >= (int32)AnimPathShaderScalarParams.size())
+	{
+		BE_ISSUE("out of range", ParamIndex, EITwinAnimPathShaderScalarParam::Count);
+		return;
+	}
+
+	const bool bHasChanged = AnimPathShaderScalarParams[ParamIndex] != Value;
+	AnimPathShaderScalarParams[ParamIndex] = Value;
+
+	// Apply it to existing spline mesh components.
+	if (bHasChanged && bApplyToMeshComponents)
+	{
+		for (auto const& SplineMeshComp : Owner.SplineMeshComponents)
+		{
+			if (SplineMeshComp)
+			{
+				SplineMeshComp->SetCustomPrimitiveDataFloat(ParamIndex, Value);
+			}
+		}
+	}
+}
+
+void AITwinSplineHelper::FImpl::TransferPathAnimShaderParametersToMeshes()
+{
+	if (!UsePathAnimationShader())
+	{
+		// Skip setting the parameter if the shader is not used, to avoid unnecessary updates.
+		return;
+	}
+	int32 FirstParamIndex = 0;
+	const TArrayView<const float> ScalarParams = GetPathAnimScalarParams(FirstParamIndex);
+	for (auto const& SplineMeshComp : Owner.SplineMeshComponents)
+	{
+		if (SplineMeshComp)
+		{
+			SplineMeshComp->SetCustomPrimitiveDataFloatArray(FirstParamIndex, ScalarParams);
+		}
 	}
 }
 
@@ -1586,6 +1680,13 @@ void AITwinSplineHelper::BeginPlay()
 		// Make sure the chunk widgets are initially hidden.
 		OnScreen2DWidget->OnVisibilityUpdated();
 	}
+
+#if WITH_EDITOR
+	if (!Impl->CustomActorLabel.IsEmpty())
+	{
+		SetActorLabel(Impl->CustomActorLabel);
+	}
+#endif
 }
 
 void AITwinSplineHelper::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -1663,6 +1764,22 @@ void AITwinSplineHelper::Initialize(USplineComponent* splineComp, AdvViz::SDK::I
 	Impl->Initialize(splineComp, spline);
 }
 
+void AITwinSplineHelper::SetCustomActorLabel(const FString& InCustomActorLabel)
+{
+#if WITH_EDITOR
+	if (HasActorBegunPlay())
+	{
+		SetActorLabel(InCustomActorLabel);
+	}
+	else
+	{
+		// Avoid setting the name too soon, which does break the root component of the actor.
+		// (at least in unit test context).
+		Impl->CustomActorLabel = InCustomActorLabel;
+	}
+#endif // WITH_EDITOR
+}
+
 bool AITwinSplineHelper::IsInteractiveCreationInProgress() const
 {
 	return Impl->bInteractiveCreationInProgress;
@@ -1706,6 +1823,66 @@ EITwinTangentMode AITwinSplineHelper::GetTangentMode() const
 void AITwinSplineHelper::SetTangentMode(const EITwinTangentMode mode)
 {
 	Impl->SetTangentMode(mode);
+}
+
+void AITwinSplineHelper::FImpl::SetTightness(int32 PointIndex, float InTightness)
+{
+	float TargetTangentLength = ITwinSpline::TangentLengthFromTightness(InTightness);
+
+	USplineComponent& SplineComp(*Owner.SplineComponent);
+
+	const int32 NumPoints = SplineComp.GetNumberOfSplinePoints();
+	const bool bIsLoop = SplineComp.IsClosedLoop();
+	
+	// Get neighboring point indices
+	const int32 PrevIndex = ITwinSpline::GetPrevIndex(PointIndex, NumPoints, bIsLoop);
+	const int32 NextIndex = ITwinSpline::GetNextIndex(PointIndex, NumPoints, bIsLoop);
+
+	// Get positions of the current, previous, and next points
+	const FVector PrevPos = SplineComp.GetLocationAtSplinePoint(PrevIndex, SPL_LOCAL);
+	//const FVector CurrPos = SplineComp.GetLocationAtSplinePoint(PointIndex, SPL_LOCAL);
+	const FVector NextPos = SplineComp.GetLocationAtSplinePoint(NextIndex, SPL_LOCAL);
+
+	UpdateTangent(PointIndex, NextPos - PrevPos, TargetTangentLength);
+
+	SplineComp.UpdateSpline();
+
+	// Update the internal AdvViz spline data (for the saving of points)
+	if (Spline)
+		UpdatePointFromUEtoAViz(PointIndex);
+
+	// Update meshes
+	if (NeedsDraw3DElements())
+	{
+		UpdateMeshComponentsForPoint(ITwinSpline::GetPrevIndex(PointIndex, NumPoints, bIsLoop));
+		UpdateMeshComponentsForPoint(PointIndex);
+	}
+
+	OnSplineModified();
+}
+
+float AITwinSplineHelper::FImpl::GetTightness(int32 PointIndex) const
+{
+	USplineComponent const& SplineComp(*Owner.SplineComponent);
+
+	const FVector ArriveTangent = SplineComp.GetArriveTangentAtSplinePoint(PointIndex, SPL_LOCAL);
+	return ITwinSpline::TightnessFromTangentLength(ArriveTangent.Length());
+}
+
+void AITwinSplineHelper::SetTightness(int32 PointIndex, float InTightness/* = 0.5f*/)
+{
+	if (!SplineComponent || PointIndex < 0 || PointIndex >= SplineComponent->GetNumberOfSplinePoints())
+		return;
+
+	Impl->SetTightness(PointIndex, InTightness);
+}
+
+float AITwinSplineHelper::GetTightness(int32 PointIndex) const
+{
+	if (!SplineComponent || PointIndex < 0 || PointIndex >= SplineComponent->GetNumberOfSplinePoints())
+		return 0.0f;
+
+	return Impl->GetTightness(PointIndex);
 }
 
 int32 AITwinSplineHelper::FindPointIndexFromMeshComponent(UStaticMeshComponent* MeshComp) const
@@ -1913,29 +2090,29 @@ bool AITwinSplineHelper::DoesLineIntersectSplinePolygon(const FVector& Start, co
 
 int32 AITwinSplineHelper::MinNumberOfPointsForValidSpline() const
 {
-	return IsClosedLoop() ? 3 : 2;
+	return ITwinSpline::MinNumberOfPointsForValidSpline(IsClosedLoop());
 }
 
 bool AITwinSplineHelper::CanDeletePoint() const
 {
-	return GetNumberOfSplinePoints() > MinNumberOfPointsForValidSpline();
+	return ITwinSpline::CanDeletePoint(GetNumberOfSplinePoints(), IsClosedLoop());
 }
 
-void AITwinSplineHelper::DeletePoint(int32 pointIndex)
+bool AITwinSplineHelper::DeletePoint(int32 pointIndex)
 {
-	Impl->DeletePoint(pointIndex);
+	return Impl->DeletePoint(pointIndex);
 }
 
-void AITwinSplineHelper::DuplicatePoint(int32 pointIndex)
+bool AITwinSplineHelper::DuplicatePoint(int32 pointIndex)
 {
-	Impl->DuplicatePoint(pointIndex);
+	return Impl->DuplicatePoint(pointIndex);
 }
 
 // This function can be used to duplicate a point when moving it. The passed index should
 // be the currently selected point. It is modified if necessary depending on the movement.
-void AITwinSplineHelper::DuplicatePoint(int32& pointIndex, FVector& newWorldPosition)
+bool AITwinSplineHelper::DuplicatePoint(int32& pointIndex, FVector& newWorldPosition)
 {
-	Impl->DuplicatePoint(pointIndex, newWorldPosition);
+	return Impl->DuplicatePoint(pointIndex, newWorldPosition);
 }
 
 int32 AITwinSplineHelper::InsertPointAt(const int32 PointIndex, FVector const& NewWorldPosition)
@@ -2190,6 +2367,21 @@ bool AITwinSplineHelper::IsUsedForPathAnim() const
 	return ITwinSpline::IsPathAnim(GetUsage());
 }
 
+void AITwinSplineHelper::SetPathAnimShaderScalarParameterValue(EITwinAnimPathShaderScalarParam Param, float Value,
+	bool bApplyToMeshComponents /*= true*/)
+{
+	Impl->SetPathAnimShaderScalarParameterValue(Param, Value, bApplyToMeshComponents);
+}
+
+void AITwinSplineHelper::TransferPathAnimShaderParametersToMeshes()
+{
+	Impl->TransferPathAnimShaderParametersToMeshes();
+}
+
+bool AITwinSplineHelper::IsUsedForPopulation() const
+{
+	return ITwinSpline::IsPopulation(GetUsage());
+}
 
 #if ENABLE_DRAW_DEBUG
 

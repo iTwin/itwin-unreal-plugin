@@ -30,4 +30,4 @@ set(utilHeaders
 	Util/OptionsClass.h
 )
 source_group(Util FILES ${utilHeaders})
-add_library(BeHeaders INTERFACE ${boostHeaders} ${compilHeaders} ${strongTypesHeaders} ${utilHeaders})
+be_add_library(BeHeaders INTERFACE ${boostHeaders} ${compilHeaders} ${strongTypesHeaders} ${utilHeaders})

@@ -12,7 +12,9 @@
 #include <ITwinSceneMapping.h>
 #include <ITwinServerConnection.h>
 #include <ITwinUtilityLibrary.h>
+#include <Network/JsonQueriesCacheInit.h>
 #include <Tests/GenericHelpers.h>
+#include <Timeline/ScheduleComparison.inl>
 #include <Timeline/SchedulesImport.h>
 #include <Timeline/Timeline.h>
 
@@ -23,6 +25,7 @@
 #include <Interfaces/IPluginManager.h>
 #include <JsonObjectConverter.h>
 #include <Misc/FileHelper.h>
+#include <Misc/Paths.h>
 
 #include <Compil/BeforeNonUnrealIncludes.h>
 #	include <SDK/Core/Tools/LockableObject.h>
@@ -86,9 +89,10 @@ public:
 	std::optional<FITwinCoordConversions> CoordConv;
 	std::optional<int> optRequestPagination;
 	std::optional<int> optBindingsReqPagination;
-	std::optional<int64_t> optMaxElementIDsFilterSize;
-	FString TestName, ITwinId, IModelId, ChangesetId;
+	FString TestName, ScheduleName, ITwinId, IModelId, ChangesetId;
+	EITwinSchedulesGeneration Generation = EITwinSchedulesGeneration::Legacy;
 	std::optional<FString> EnvPrefix;
+	bool bUseCachedScheduleData = false;
 
 	std::unique_ptr<FITwinSchedulesImport> SchedulesApi;
 
@@ -102,10 +106,22 @@ public:
 		return IPluginManager::Get().FindPlugin(TEXT("ITwinForUnreal"))->GetBaseDir()
 			+ TEXT("/Resources/Synchro4DTests/");
 	}
+
+	bool LoadScheduleFromJson(FITwinSchedule* pOutSchedule = nullptr)
+	{
+		if (!pOutSchedule)
+			pOutSchedule = &(*Schedule);
+		IPlatformFile& FileManager = FPlatformFileManager::Get().GetPlatformFile();
+		FString const RefJsonPath = GetBaseTestFolder() / (TestName + ".schedule.json");
+		FString RefJson;
+		if (!FFileHelper::LoadFileToString(RefJson, *RefJsonPath))
+			return false;
+		return pOutSchedule->FromJsonString(RefJson);
+	}
 	
 	bool EnsureFullSchedule()
 	{
-		ensure(optRequestPagination && optBindingsReqPagination && optMaxElementIDsFilterSize
+		ensure(((optRequestPagination && optBindingsReqPagination) || bUseCachedScheduleData)
 			&& !TestName.IsEmpty() && !ITwinId.IsEmpty() && !IModelId.IsEmpty() && !ChangesetId.IsEmpty());
 		if (SchedulesApi)
 		{
@@ -121,12 +137,6 @@ public:
 			CoordConv.emplace();
 			if (!ensureMsgf(FJsonObjectConverter::JsonObjectStringToUStruct(CoordConvStr, &(*CoordConv)),
 							TEXT("Critical error: could not parse %s"), *CoordConvPath))
-				return true;// stop waiting, test will fail
-			FString const TestCacheFolder = GetBaseTestFolder()
-				+ FString::Printf(TEXT("%s-%d-%d"), *TestName, *optRequestPagination, *optBindingsReqPagination)
-				+ TEXT(".cache");
-			if (!ensureMsgf(IFileManager::Get().DirectoryExists(*TestCacheFolder),
-							TEXT("Critical error: missing or invalid cache folder %s"), *TestCacheFolder))
 				return true;// stop waiting, test will fail
 			FString const ElemDataPath = GetBaseTestFolder() + TestName + TEXT(".ElemData.json");
 			FString ElemDataStr;
@@ -144,29 +154,38 @@ public:
 				TEXT("Critical error: could not parse data from %s"), *ElemDataPath))
 				return true;// stop waiting, test will fail
 			TimelineBuilder.emplace(FITwinScheduleTimelineBuilder::CreateForUnitTesting(SceneMapping, *CoordConv));
-			std::lock_guard<std::mutex> Lock(s_Mutex); // overrides are globals
-			// Both are mandatory, even those not used, because of the way we instantiate SchedulesApi without
-			// iModel not Schedules Component
-			std::swap(ITwin_TestOverrides::RequestPagination, *optRequestPagination);
-			std::swap(ITwin_TestOverrides::BindingsRequestPagination, *optBindingsReqPagination);
-			std::swap(ITwin_TestOverrides::MaxElementIDsFilterSize, *optMaxElementIDsFilterSize);
 			// Schedule Id passed below is equal to iTwin Id, as is often the case in Legacy projects.
-			// The Schedule "Name" could be anything, it only appears in the cache.txt but overwriting this file is
-			// skipped when unit testing.
-			Schedule.emplace(ITwinId, TEXT("foo"), EITwinSchedulesGeneration::Legacy);
-			SchedulesApi.reset(new FITwinSchedulesImport(
-				TEXT("https://") + (*EnvPrefix) + TEXT("api.bentley.com/schedules"),
-				TimelineBuilder->Timeline(), TStrongObjectPtr<UObject>(EditorWorld), ScheduleMutex, Schedule));
-			std::swap(ITwin_TestOverrides::RequestPagination, *optRequestPagination);
-			std::swap(ITwin_TestOverrides::BindingsRequestPagination, *optBindingsReqPagination);
-			std::swap(ITwin_TestOverrides::MaxElementIDsFilterSize, *optMaxElementIDsFilterSize);
-			SchedulesApi->SetSchedulesImportConnectors(
-				std::bind(&FITwinScheduleTimelineBuilder::AddAnimationBindingToTimeline, &(*TimelineBuilder),
-						  std::placeholders::_1, std::placeholders::_2, std::placeholders::_3),
-				std::bind(&FITwinScheduleTimelineBuilder::OnReceivedScheduleStats, &(*TimelineBuilder),
-						  std::placeholders::_1, std::placeholders::_2));
-			SchedulesApi->ResetConnectionForTesting(ITwinId, IModelId, ChangesetId, TestCacheFolder,
-													EITwinSchedulesGeneration::Legacy);
+			Schedule.emplace(ITwinId, ScheduleName, Generation);
+			if (bUseCachedScheduleData)
+			{
+				if (!LoadScheduleFromJson())
+					*Schedule = FITwinSchedule(ITwinId, ScheduleName); // test will fail on empty schedule
+				return true;
+			}
+			else
+			{
+				FString const TestCacheFolder = GetBaseTestFolder()
+					+ FString::Printf(TEXT("%s-%d-%d"), *TestName, *optRequestPagination, *optBindingsReqPagination)
+					+ TEXT(".cache");
+				if (!ensureMsgf(IFileManager::Get().DirectoryExists(*TestCacheFolder),
+					TEXT("Critical error: missing or invalid cache folder %s"), *TestCacheFolder))
+					return true;// stop waiting, test will fail
+
+				std::lock_guard<std::mutex> Lock(s_Mutex); // overrides are globals
+				// Both are mandatory, even those not used, because of the way we instantiate SchedulesApi without
+				// iModel nor Schedules Component
+				std::swap(ITwin_TestOverrides::RequestPagination, *optRequestPagination);
+				std::swap(ITwin_TestOverrides::BindingsRequestPagination, *optBindingsReqPagination);
+				SchedulesApi.reset(new FITwinSchedulesImport(
+					TEXT("https://") + (*EnvPrefix) + TEXT("api.bentley.com/schedules"),
+					TimelineBuilder->Timeline(), TStrongObjectPtr<UObject>(EditorWorld), ScheduleMutex, Schedule));
+				std::swap(ITwin_TestOverrides::RequestPagination, *optRequestPagination);
+				std::swap(ITwin_TestOverrides::BindingsRequestPagination, *optBindingsReqPagination);
+				SchedulesApi->SetSchedulesImportConnectors(
+					std::bind(&FITwinScheduleTimelineBuilder::OnReceivedScheduleStats, &(*TimelineBuilder),
+							  std::placeholders::_1));
+				SchedulesApi->ResetConnectionForTesting(ITwinId, IModelId, ChangesetId, TestCacheFolder, Generation);
+			}
 		}
 		return SchedulesApi->HasFinishedPrefetching();
 	}
@@ -179,7 +198,7 @@ BEGIN_DEFINE_SPEC(Synchro4DImportSpec, "Bentley.ITwinForUnreal.ITwinRuntime.Sche
 	std::shared_ptr<FSynchro4DImportTestHelper> Helper;
 void WaitFullSchedule(const FDoneDelegate& Done,
 	std::function<void(std::shared_ptr<FSynchro4DImportTestHelper> Helper)> SetupFnc);
-bool LoadMainTimelineFromJson(FString const& TestName, ITwin::Timeline::MainTimeline& TimelineFromJson,
+bool LoadMainTimelineFromJson(FString const& FileStem, ITwin::Timeline::MainTimeline& TimelineFromJson,
 							  FString* JsonFromFile = nullptr);
 void CheckEntireScheduleMatchesJson();
 END_DEFINE_SPEC(Synchro4DImportSpec)
@@ -194,9 +213,10 @@ void Synchro4DImportSpec::WaitFullSchedule(const FDoneDelegate& Done,
 				return true; // stop waiting, test probably already failed
 			if (Helper->EnsureFullSchedule())
 			{
-				TestTrue("Something went wrong querying the full schedule",
-					Helper->SchedulesApi && Helper->SchedulesApi->HasFinishedPrefetching()
-					&& !Helper->SchedulesApi->HasFetchingErrors() && Helper->Schedule);
+				TestTrue("Something went wrong querying the full schedule", Helper->Schedule
+					&& (Helper->bUseCachedScheduleData
+						|| (Helper->SchedulesApi && Helper->SchedulesApi->HasFinishedPrefetching()
+							&& !Helper->SchedulesApi->HasFetchingErrors())));
 				return true;
 			}
 			else return false;
@@ -211,7 +231,7 @@ bool Synchro4DImportSpec::LoadMainTimelineFromJson(FString const& FileStem,
 	FString RefJson;
 	if (!JsonFromFile)
 		JsonFromFile = &RefJson;
-	if (!FFileHelper::LoadFileToString(*JsonFromFile, *(RefJsonPath + TEXT(".json"))))
+	if (!FFileHelper::LoadFileToString(*JsonFromFile, *(RefJsonPath + TEXT(".timelines.json"))))
 		return false;
 	return 0 == TimelineFromJson.FromJsonString(*JsonFromFile);
 }
@@ -220,17 +240,34 @@ void Synchro4DImportSpec::CheckEntireScheduleMatchesJson()
 {
 	Helper->TimelineBuilder->FinalizeTimeline(*Helper->Schedule);
 	ITwin::Timeline::MainTimeline ReferenceTimelines;
-	TestTrue("Deserializing timeline", LoadMainTimelineFromJson(Helper->TestName, ReferenceTimelines));
+	TestTrue("Deserializing timelines", LoadMainTimelineFromJson(Helper->TestName, ReferenceTimelines));
 	bool const bTimelinesMatch = AreNearlyEqual(ReferenceTimelines, Helper->TimelineBuilder->GetTimeline(), 1e-6f);
-	TestTrue("Entire schedule matches saved reference", bTimelinesMatch);
+	TestTrue("Deserialized timelines match ref", bTimelinesMatch);
 	if (!bTimelinesMatch)
 	{
 		FString const RefJsonPath = Helper->GetBaseTestFolder() + Helper->TestName;
+		// Write both the current ref and the differing timelines in a way that can be compared by humans, to help
+		// validating changes when actual 4D code changes are expected and the ref needs to be updated:
+		Helper->TimelineBuilder->GetTimeline().SetJsonPrintingWithHumanReadableTimes(true);
+		Helper->TimelineBuilder->GetTimeline().SetJsonPrintingNumberOfDecimals(6);
+		FFileHelper::SaveStringToFile(Helper->TimelineBuilder->GetTimeline().ToPrettyJsonString(),
+			*(RefJsonPath + TEXT("-differs-HumanComparable.json")), FFileHelper::EEncodingOptions::ForceUTF8);
+		ReferenceTimelines.SetJsonPrintingWithHumanReadableTimes(true);
+		ReferenceTimelines.SetJsonPrintingNumberOfDecimals(6);
+		FFileHelper::SaveStringToFile(ReferenceTimelines.ToPrettyJsonString(),
+			*(RefJsonPath + TEXT("-CurrentRef-HumanComparable.json")), FFileHelper::EEncodingOptions::ForceUTF8);
+		// Writes the differing timelines again, this time with full precision and no human-readable times, which is
+		// the format that needs be commited to the repo is all the differences are validated:
 		Helper->TimelineBuilder->GetTimeline().SetJsonPrintingWithHumanReadableTimes(false);
 		Helper->TimelineBuilder->GetTimeline().SetJsonPrintingNumberOfDecimals(-1);
 		FFileHelper::SaveStringToFile(Helper->TimelineBuilder->GetTimeline().ToPrettyJsonString(),
-			*(RefJsonPath + TEXT("-differs.json")), FFileHelper::EEncodingOptions::ForceUTF8);
+			*(RefJsonPath + TEXT("-differs-NewRefCandidate.json")), FFileHelper::EEncodingOptions::ForceUTF8);
 	}
+	FITwinSchedule RefSchedule(Helper->ITwinId, Helper->ScheduleName);
+	TestTrue("Deserializing schedule", Helper->LoadScheduleFromJson(&RefSchedule));
+	TestTrue("Schedule JSON cache in repo is of the current version",
+		Helper->Schedule->JsonCacheVersion == FITwinSchedule::CurrentJsonCacheVersion);
+	TestTrue("Deserialized schedule matches ref", RefSchedule == (*Helper->Schedule));
 }
 
 void Synchro4DImportSpec::Define()
@@ -240,7 +277,6 @@ void Synchro4DImportSpec::Define()
 			if (!Helper)
 				Helper = std::make_shared<FSynchro4DImportTestHelper>();
 			TestTrue("Need EditorWorld", nullptr != Helper->EditorWorld);
-			Helper->optMaxElementIDsFilterSize = 500; // unused
 			pushAllowTickInEditor();
 		});
 	AfterEach([this]()
@@ -259,8 +295,8 @@ void Synchro4DImportSpec::Define()
 				TimelineFromJson.SetJsonPrintingNumberOfDecimals(6);
 				FString BackToJson = TimelineFromJson.ToPrettyJsonString();
 				FString JsonFromRef;
-				TestTrue("Reading timeline ref string",
-					LoadMainTimelineFromJson(TestName + TEXT("-RefStr"), TimelineFromRef, &JsonFromRef));
+				TestTrue("Reading timeline ref string", LoadMainTimelineFromJson(
+					TEXT("StandaloneJsonReadingTestRef_") + TestName, TimelineFromRef, &JsonFromRef));
 				bool bTimelinesMatch = (BackToJson == JsonFromRef);
 				if (!bTimelinesMatch)
 				{
@@ -272,7 +308,8 @@ void Synchro4DImportSpec::Define()
 				TestTrue("Deserialized timeline matches original JSON", bTimelinesMatch);
 				if (!bTimelinesMatch)
 				{
-					FString const OutJsonPath = Helper->GetBaseTestFolder() + TestName + TEXT("_jsonInOut.json");
+					FString const OutJsonPath = Helper->GetBaseTestFolder() + TEXT("StandaloneJsonReadingTest_")
+						+ TestName + TEXT("_jsonInOut.json");
 					FFileHelper::SaveStringToFile(BackToJson, *OutJsonPath, FFileHelper::EEncodingOptions::ForceUTF8);
 				}
 			});
@@ -311,6 +348,7 @@ void Synchro4DImportSpec::Define()
 		{
 			auto const SetupFnc = [](std::shared_ptr<FSynchro4DImportTestHelper> Helper) {
 					Helper->TestName = TEXT("4D-testing");
+					Helper->ScheduleName = TEXT("Exhaustive test with primitives");
 					Helper->ITwinId = TEXT("d9712811-5a10-407e-b517-fbc23fcf4dc3");
 					Helper->IModelId = TEXT("b088e94b-bfa8-48b0-b551-e7dbb3ef5ee1");
 					Helper->ChangesetId = TEXT("3de7554f8e10bb7c5fa7dbd88e2e6c76d3b04dc7");
@@ -328,6 +366,7 @@ void Synchro4DImportSpec::Define()
 		{
 			auto const SetupFnc = [](std::shared_ptr<FSynchro4DImportTestHelper> Helper) {
 					Helper->TestName = TEXT("4D-testing");
+					Helper->ScheduleName = TEXT("Exhaustive test with primitives");
 					Helper->ITwinId = TEXT("d9712811-5a10-407e-b517-fbc23fcf4dc3");
 					Helper->IModelId = TEXT("b088e94b-bfa8-48b0-b551-e7dbb3ef5ee1");
 					Helper->ChangesetId = TEXT("3de7554f8e10bb7c5fa7dbd88e2e6c76d3b04dc7");
@@ -341,14 +380,40 @@ void Synchro4DImportSpec::Define()
 			It("should match the ref json",
 				std::bind(&Synchro4DImportSpec::CheckEntireScheduleMatchesJson, this));
 		});
-	// Cannot work yet, too many differences because of iModel Elements metadata being unavailable in unit tests
-	// (Note: json data for this test not committed either, being rather big)
-	xDescribe("Querying a bigger schedule, with larger pagination", [this]()
+	// Actually redundant with the other "4D-testing" tests above since CheckEntireScheduleMatchesJson also
+	// loads the serialized schedule to compare it to the one built from the cached HTTP replies...
+	Describe("Loading serialized schedule", [this]()
+		{
+			auto const SetupFnc = [](std::shared_ptr<FSynchro4DImportTestHelper> Helper) {
+				Helper->TestName = TEXT("4D-testing");
+				Helper->ScheduleName = TEXT("");// will be read from Json
+				Helper->Generation = EITwinSchedulesGeneration::Unknown;// will be read from Json
+				Helper->ITwinId = TEXT("d9712811-5a10-407e-b517-fbc23fcf4dc3");
+				Helper->IModelId = TEXT("b088e94b-bfa8-48b0-b551-e7dbb3ef5ee1");
+				Helper->ChangesetId = TEXT("3de7554f8e10bb7c5fa7dbd88e2e6c76d3b04dc7");
+				Helper->EnvPrefix = TEXT(""); // ie Prod
+				Helper->bUseCachedScheduleData = true; // skip querying, use the already serialized schedule instead
+				};
+			LatentBeforeEach(FTimespan::FromSeconds(5.),
+				std::bind(&Synchro4DImportSpec::WaitFullSchedule, this, std::placeholders::_1, SetupFnc));
+			It("should have overwritten the supplied name and generation with those from the Json",
+				[this]() {
+					TestTrue("Schedule name matches the one in the serialized schedule",
+						FString(TEXT("Exhaustive test with primitives")) == Helper->Schedule->Name);
+					TestTrue("Schedule generation matches the one in the serialized schedule",
+						EITwinSchedulesGeneration::Legacy == Helper->Schedule->Generation);
+				});
+			// Just compare the FullSchedule against the reference file
+			It("should match the ref json",
+				std::bind(&Synchro4DImportSpec::CheckEntireScheduleMatchesJson, this));
+		});
+	Describe("Querying a bigger schedule, with larger pagination", [this]()
 		{
 			auto const SetupFnc = [](std::shared_ptr<FSynchro4DImportTestHelper> Helper) {
 					Helper->optRequestPagination = 10000;
 					Helper->optBindingsReqPagination = 10000;
-					Helper->TestName = TEXT("GSW-Stadium-only");
+					Helper->TestName = TEXT("GSW-Stadium");
+					Helper->ScheduleName = TEXT("GSW Stadium Only");
 					Helper->ITwinId = TEXT("437e02f9-ab73-43a2-b525-f340f9579854");
 					Helper->IModelId = TEXT("4ab017b4-6376-416d-8dbe-30808e4ca0f8");
 					Helper->ChangesetId = TEXT("b3aca9315d78e470f328b2c023baffaed726470b");
@@ -359,6 +424,24 @@ void Synchro4DImportSpec::Define()
 			// Just compare the FullSchedule against the reference file
 			It("should match the ref json",
 				std::bind(&Synchro4DImportSpec::CheckEntireScheduleMatchesJson, this));
+		});
+	Describe("Find other changeset's cached json schedules", [this]()
+		{
+			It("should find the other changeset's cached json schedules", [this]() {
+				FString const CacheName(TEXT("d9712811-5a10-407e-b517-fbc23fcf4dc3_APIM_fadafada-5a10-407e-b517-fbc23fcf4dc3_DUMMYCHANGESETAFTERUNDERSCORE"));
+				QueriesCache::FChangesetFinderIterator Finder(CacheName + TEXT(".json"));
+				FString const TestJsonsCacheFolder =
+					FPaths::Combine(Helper->GetBaseTestFolder(), TEXT("DummyCachedSchedulesJsons"));
+				IFileManager::Get().IterateDirectory(*TestJsonsCacheFolder, Finder);
+				TArray<FString> const& OtherChangesetJsonSchedules = Finder.GetOtherChangesetJsonsFound();
+				TestTrue("Found 2 json filenames, no less, no more", OtherChangesetJsonSchedules.Num() == 2);
+				TestTrue("Found the first one, full path, ending with '-2'", OtherChangesetJsonSchedules.Contains(
+					FPaths::Combine(TestJsonsCacheFolder, TEXT("d9712811-5a10-407e-b517-fbc23fcf4dc3_APIM_fadafada-5a10-407e-b517-fbc23fcf4dc3_DUMMYCHANGESETAFTERUNDERSCORE-2.json"))));
+				TestTrue("Found the second one, full path, ending with '#3'", OtherChangesetJsonSchedules.Contains(
+					FPaths::Combine(TestJsonsCacheFolder, TEXT("d9712811-5a10-407e-b517-fbc23fcf4dc3_APIM_fadafada-5a10-407e-b517-fbc23fcf4dc3_DUMMYCHANGESETfoobar#3.json"))));
+				// Tested manually: could copy to some tmp folder to include in unit test...
+				//Finder.DeleteOtherChangesetJsons();
+			});
 		});
 }
 

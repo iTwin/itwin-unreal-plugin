@@ -68,6 +68,7 @@ public:
 	/// Apply Func to all material instances linked to this mesh.
 	void ForEachMaterialInstance(std::function<void(UMaterialInstanceDynamic&)> const& Func);
 
+	FTransform GetMeshComponentOriginalTransform(FTransform const& IModelTilesetTransform);
 
 private:
 
@@ -80,6 +81,7 @@ private:
 private:
 	/// Original mesh component created by Cesium plugin.
 	TWeakObjectPtr<UStaticMeshComponent> gltfMeshComponent_;
+	std::optional<FTransform> OriginalTransform;
 
 	/// If we bake feature IDs in per-vertex UVs, this will store the
 	/// corresponding UV index.

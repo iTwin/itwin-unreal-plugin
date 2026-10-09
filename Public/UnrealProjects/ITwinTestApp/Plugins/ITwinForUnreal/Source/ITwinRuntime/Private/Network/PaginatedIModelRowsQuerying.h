@@ -37,13 +37,13 @@ class FPaginatedIModelRowsQueries : public std::enable_shared_from_this<FPaginat
 {
 public:
 	enum class EState {
-		NotStarted, Running, NeedRestart, Finished, StoppedOnError, Cancelled
+		NotStarted, Running, NeedRestart, Finished, StoppedOnError, Cancelling, Cancelled
 	};
 
 	using FOnLoadProgressUpdated = std::function<void()>;
 
 	FPaginatedIModelRowsQueries(AITwinIModel& InIModel, EElementsMetadata InKindOfMetadata,
-		ITwinHttp::FMutex& InMutex, FOnLoadProgressUpdated InOnLoadProgressUpdated,
+		std::shared_ptr<ITwinHttp::FMutex> InMutex, FOnLoadProgressUpdated InOnLoadProgressUpdated,
 		int InQueryRowCount, int InMaxNumPageInProgress);
 
 	void Cancel();
@@ -59,7 +59,7 @@ public:
 	void OnIModelUninit();
 
 private:
-	void QueryNextPage();
+	bool QueryNextPage();
 	/// \return Whether the reply was to a request emitted by this instance of metadata requester, and was
 	///			thus parsed here.
 	bool OnQueryCompleted(bool bSuccess, std::variant<FString, TSharedPtr<FJsonObject>> const& QueryResult,
@@ -74,6 +74,7 @@ private:
 	std::string const Description;
 	FString LastCacheFolderUsed;
 	FJsonQueriesCache Cache;
+	std::shared_ptr<ITwinHttp::FMutex> MutexPtr;
 	ITwinHttp::FMutex& Mutex;
 	FOnLoadProgressUpdated OnLoadProgressUpdated;
 	/// Down from 50K to 32K to accommodate BBoxes in "Combined" metadata, because server reply is capped to 8MB!
@@ -87,6 +88,9 @@ private:
 
 	int NumPageInProgress = 0;
 	size_t RequestsFromCache = 0, RequestsFromRemote = 0;
+	/// The maximum number of pages that can be in progress (either as an in-flight remote query, or as a worker
+	/// thread currently parsing a cached or remote reply), both to avoid overwhelm the server, but also to avoid
+	/// spawning as many parsing threads as there are cached pages, which can be a lot for large models.
 	int MaxNumPageInProgress = 4;
 	bool lastPageReached = false;
 	bool bQueryTableCount = true;

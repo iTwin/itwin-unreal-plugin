@@ -8,10 +8,10 @@ if (SINGLETONDLL)
     set(libtype SHARED)
 endif()
 
-add_library(Singleton ${libtype}     
+be_add_library(Singleton ${libtype}     
     singleton.h
     singleton_api.h
     singleton.cpp
 )
 target_compile_features(Singleton PRIVATE ${DefaultCXXSTD})
-set_target_properties(Singleton PROPERTIES FOLDER "SDK/Core") 
+set_target_properties(Singleton PROPERTIES FOLDER "SDK/Core")

@@ -57,6 +57,7 @@ class UMaterialInstanceDynamic;
 class UMaterialInterface;
 class UPrimitiveComponent;
 class UStaticMeshComponent;
+class UITwinClipping3DTilesetHelper;
 class UITwinSceneMappingBuilder;
 class UTexture;
 
@@ -301,6 +302,7 @@ struct IndexBySourceID {};
 OPTIONS_CLASS_START(FPickingOptions, )
 OPTIONS_CLASS_ADD_MEMBER(bool, OnlyVisibleTiles, false)
 OPTIONS_CLASS_ADD_MEMBER(bool, TestElementVisibility, false)
+OPTIONS_CLASS_ADD_MEMBER(bool, SkipClippingTest, false)
 OPTIONS_CLASS_ADD_MEMBER(bool, MakeSelected, false)
 OPTIONS_CLASS_ADD_MEMBER(bool, SkipResetSelection, false)
 OPTIONS_CLASS_ADD_MEMBER(std::optional<FVector>, HitWorldPosition, {})
@@ -406,10 +408,17 @@ public:
 	/// algorithms. Value cached to detect changes in visibility and trigger 4D anim updates.
 	/// NOTE: defaults to false so that unloaded tiles are rightfully considered invisible!
 	bool bVisible = false;
-	struct pair_hash {
+	struct pair_hash
+	{
 		std::size_t operator()(const std::pair<ITwinElementID, ITwinElementID>& p) const {
 			return std::hash<ITwinElementID>()(p.first) ^ (std::hash<ITwinElementID>()(p.second) << 1);
 		}
+	};
+
+	struct FTextureNeeds
+	{
+		bool bWasCreated = false; ///< Created textures need to be set up in materials
+		bool bWasChanged = false; ///< Changed textures need to be sent to the renderer for update on GPU
 	};
 
 private:
@@ -476,27 +485,10 @@ private:
 	class ElementSelectionHelper;
 	class MaterialSelectionHelper;
 
-	struct FTextureNeeds
-	{
-		bool bWasCreated = false; ///< Created textures need to be set up in materials
-		bool bWasChanged = false; ///< Changed textures need to be sent to the renderer for update on GPU
-	};
 	template <typename FeaturesInTile>
 	void CreateAndSetSelectingAndHiding(FeaturesInTile& FeaturesToSelectOrHide,
 		FTextureNeeds& TextureNeeds, const std::array<uint8, 4>& Color_BGRA, bool const bColorOrAlpha);
 
-	/// \param bTestElementVisibility Pass true when this method is called to interactively select an Element,
-	///		which is only allowed when it is visible (because the call is initiated by geometry intersection
-	///		algorithms that have no knowledge of the possible masking of Elements by the 4D effects or custom
-	///		hiding requests from the user (eg. construction data or applying Saved View properties)
-	/// \return Whether the Element could indeed be selected in any of the currently known tiles. Failure to
-	///		select can indeed happen when the Element is hidden through the material shader (but NO LONGER
-	///		when it is already selected!)
-	bool PickElement(ITwinElementID const& InElemID, FTextureNeeds& TextureNeeds, FPickingOptions const Opts);
-	/// Same as PickElement, but for a Material ID.
-	bool PickMaterial(ITwinRenderMaterialElementID const& InMaterialID, FTextureNeeds& TextureNeeds, FPickingOptions const Opts);
-	/// Remove specific elements from the current selection highlight.
-	void DeselectElements(std::unordered_set<ITwinElementID> const& InElemIDs, FTextureNeeds& TextureNeeds);
 
 	template<typename SelectableHelper, typename SelectableID>
 	bool TPickSelectable(SelectableHelper const& PickHelper, SelectableID const& InElemID,
@@ -513,22 +505,8 @@ private:
 		std::function<void(FeatureType*)> UnhideFeatures,
 		std::function<void(FeatureType*)> HideFeatures,
 		FITwinSceneTile::FTextureNeeds& TextureNeeds,
-		FShowHideOptions const Opts,
+		FShowHideOptions const& Opts,
 		std::unordered_set<IDType> const* SelectedIDs = nullptr);
-	void HideElements(std::unordered_set<ITwinElementID> const& InElemIDs, FTextureNeeds& TextureNeeds,
-					  FShowHideOptions const Opts);
-	void HideModels(std::unordered_set<ITwinElementID> const& InModelIDs, FTextureNeeds& TextureNeeds,
-					FShowHideOptions const Opts);
-	void HideCategories(std::unordered_set<ITwinElementID> const& InCategoryIDs, FTextureNeeds& TextureNeeds,
-						FShowHideOptions const Opts);
-	void HideCategoriesPerModel(
-		std::unordered_set<std::pair<ITwinElementID, ITwinElementID>, FITwinSceneTile::pair_hash> const& InCategoryPerModelIDs,
-		FTextureNeeds& TextureNeeds, FShowHideOptions const Opts);
-	void ShowCategoriesPerModel(
-		std::unordered_set<std::pair<ITwinElementID, ITwinElementID>, FITwinSceneTile::pair_hash> const& InCategoryPerModelIDs,
-		FTextureNeeds& TextureNeeds, FShowHideOptions const Opts);
-	void ShowElements(std::unordered_set<ITwinElementID> const& InElemIDs, FTextureNeeds& TextureNeeds,
-					  FShowHideOptions const Opts);
 
 	template<typename ElementsCont>
 	void ForEachElementFeaturesSLOW(ElementsCont const& ForElementIDs,
@@ -536,19 +514,11 @@ private:
 	template<typename ElementsCont>
 	void ForEachExtractedElementSLOW(ElementsCont const& ForElementIDs,
 									 std::function<void(FITwinExtractedEntity&)> const& Func);
-	void UseTunedMeshAsExtract(FITwinExtractedElement& DummyExtr, int32_t const GltfMeshWrapperIndex,
-							   FTransform const& IModelTilesetTransform);
-
-	/// Edit all material instances created from a primitive configured to match a given ITwin material ID.
-	void ForEachMaterialInstanceMatchingID(uint64_t ITwinMaterialID,
-										   std::function<void(UMaterialInstanceDynamic&)> const& Func);
-	void SetITwinMaterialChannelTexture(uint64_t ITwinMaterialID, AdvViz::SDK::EChannelType Channel,
-										UTexture* pTexture);
-	void ResetCustomTexturesInMaterials();
 
 public:
 	[[nodiscard]] bool IsLoaded() const;
 	void Unload();
+	void ClearExtractedElements();
 	FString GetIDString() const;
 	FString ToString() const;
 
@@ -651,20 +621,67 @@ public:
 	/// \return A short-lived, non-const reference on the existing or inserted FITwinCategoryPerModelsFeaturesInTile
 	[[nodiscard]] FITwinCategoryPerModelFeaturesInTile& CategoryPerModelFeaturesSLOW(ITwinElementID const& CategoryID, ITwinElementID const& ModelID);
 
+	/// \param bTestElementVisibility Pass true when this method is called to interactively select an Element,
+	///		which is only allowed when it is visible (because the call is initiated by geometry intersection
+	///		algorithms that have no knowledge of the possible masking of Elements by the 4D effects or custom
+	///		hiding requests from the user - eg. construction data or applying Saved View properties)
+	/// \return Whether the Element could indeed be selected in any of the currently known tiles. Failure to
+	///		select can indeed happen when the Element is hidden through the material shader (but NO LONGER
+	///		when it is already selected!)
+	bool PickElement(ITwinElementID const& InElemID, FTextureNeeds& TextureNeeds, FPickingOptions const& Opts);
+	/// Same as PickElement, but for a Material ID.
+	bool PickMaterial(ITwinRenderMaterialElementID const& InMaterialID, FTextureNeeds& TextureNeeds, FPickingOptions const& Opts);
+	/// Remove specific elements from the current selection highlight.
+	void DeselectElements(std::unordered_set<ITwinElementID> const& InElemIDs, FTextureNeeds& TextureNeeds);
+
+	/// Hide the given elements in the tile.
+	void HideElements(std::unordered_set<ITwinElementID> const& InElemIDs, FTextureNeeds& TextureNeeds,
+		FShowHideOptions const& Opts);
+	/// Show the given elements in the tile.
+	void ShowElements(std::unordered_set<ITwinElementID> const& InElemIDs, FTextureNeeds& TextureNeeds,
+		FShowHideOptions const& Opts);
+
+	/// Hide the given models in the tile.
+	void HideModels(std::unordered_set<ITwinElementID> const& InModelIDs, FTextureNeeds& TextureNeeds,
+		FShowHideOptions const& Opts);
+	/// Hide the given categories in the tile.
+	void HideCategories(std::unordered_set<ITwinElementID> const& InCategoryIDs, FTextureNeeds& TextureNeeds,
+		FShowHideOptions const& Opts);
+
+	/// Hide the given categories per model in the tile.
+	void HideCategoriesPerModel(
+		std::unordered_set<std::pair<ITwinElementID, ITwinElementID>, FITwinSceneTile::pair_hash> const& InCategoryPerModelIDs,
+		FTextureNeeds& TextureNeeds, FShowHideOptions const& Opts);
+	/// Show the given categories per model in the tile.
+	void ShowCategoriesPerModel(
+		std::unordered_set<std::pair<ITwinElementID, ITwinElementID>, FITwinSceneTile::pair_hash> const& InCategoryPerModelIDs,
+		FTextureNeeds& TextureNeeds, FShowHideOptions const& Opts);
+
+
+	void UseTunedMeshAsExtract(FITwinExtractedElement& DummyExtr, int32_t const GltfMeshWrapperIndex,
+		FTransform const& IModelTilesetTransform);
+
+	/// Edit all material instances created from a primitive configured to match a given ITwin material ID.
+	void ForEachMaterialInstanceMatchingID(uint64_t ITwinMaterialID,
+		std::function<void(UMaterialInstanceDynamic&)> const& Func);
+	void SetITwinMaterialChannelTexture(uint64_t ITwinMaterialID, AdvViz::SDK::EChannelType Channel,
+		UTexture* pTexture);
+	void ResetCustomTexturesInMaterials();
+
 }; // class FITwinSceneTile
 
 // We create a specific class instead of "using" to allow forward declaration.
-class TITwinSceneTilePtr :public AdvViz::SDK::Tools::TSharedLockableData<FITwinSceneTile>
+class TITwinSceneTilePtr : public AdvViz::SDK::Tools::TSharedLockableData<FITwinSceneTile>
 {
+	using Super = AdvViz::SDK::Tools::TSharedLockableData<FITwinSceneTile>;
 public:
-	using AdvViz::SDK::Tools::TSharedLockableData<FITwinSceneTile>::TSharedLockableData;
-	using AdvViz::SDK::Tools::TSharedLockableData<FITwinSceneTile>::operator=;
+	/// Inherits ordinary base constructors, but not the base's copy/move constructors, hence the need for the
+	/// additional constructor below.
+	using Super::Super;
+	using Super::operator=;
 
-	// Helper constructor to allow construction from the wrapped shared_ptr type
-	TITwinSceneTilePtr(std::shared_ptr<AdvViz::SDK::Tools::RWLockableObject<FITwinSceneTile, AdvViz::SDK::Tools::TSharedRecursiveMutex>> ptr)
-		: AdvViz::SDK::Tools::TSharedLockableData<FITwinSceneTile>(std::move(ptr))
-	{
-	}
+	/// Needed to be able to write "TITwinSceneTilePtr SceneTilePtr = MakeSharedLockableData<FITwinSceneTile>()"
+	TITwinSceneTilePtr(Super ptr) : Super(std::move(ptr)) {}
 };
 
 constexpr size_t NO_EXTRACTION = (size_t)-1;
@@ -877,6 +894,7 @@ private:
 	/// Had to defer that a little bit because when the metadata are in cache, FinishedParsingIModelMetadata
 	/// is called before CoordConversions is set
 	bool bNeedConvertElemBBoxes = false;
+	TWeakObjectPtr<UITwinClipping3DTilesetHelper> ClippingHelper;
 
 public:
 	struct ExtractTileID
@@ -951,7 +969,7 @@ public:
 												ITwinScene::ElemIdx* Rank = nullptr);
 	/// Does NOT create the Element if it is not already known.
 	[[nodiscard]] FITwinElement* GetElementForSLOW(ITwinElementID const KnownElementId,
-												   ITwinScene::ElemIdx* Rank = nullptr);
+												   ITwinScene::ElemIdx* Rank = nullptr) const;
 	[[nodiscard]] bool FindElementIDForGUID(FGuid const& ElementGuid, ITwinElementID& Found) const;
 	// For dev - Won't work unless emptying SourceElementIDs is commented out in FinishedParsingIModelMetadata:
 	[[nodiscard]] bool FindElementIDForSourceID(FString const& SourceID, ITwinElementID& Found) const;
@@ -1030,6 +1048,7 @@ public:
 	[[nodiscard]] FTransform const& GetIModel2UnrealTransfo() const { return CoordConversions.IModelToUnreal; }
 	[[nodiscard]] FITwinCoordConversions const& GetIModel2UnrealCoordConv() const { return CoordConversions; }
 	void SetIModel2UnrealTransfos(AITwinIModel const& IModel);
+	void SetClippingHelper(UITwinClipping3DTilesetHelper* ClippingHelper);
 	/// Do not call from FinishedParsingIModelMetadata, which can happen before CoordConversions has been set
 	void ConvertElemBBoxesIfNeeded();
 
@@ -1050,17 +1069,22 @@ public:
 	[[nodiscard]] static FMaterialParameterInfo const& GetExtractedElementForcedAlphaMaterialParameterInfo();
 
 	// Current calls PickVisibleElement, but we should have a more optimized way to do this...
-	[[nodiscard]] bool IsElementVisible(ITwinScene::ElemIdx const Rank, std::optional<FVector> HitWorldPosition)
-		/*should be const*/;
+	[[nodiscard]] bool IsElementVisible(ITwinScene::ElemIdx const Rank, std::optional<FVector> HitWorldPosition,
+										bool const bSkipClippingTest = false) /*should be const*/;
 
-	/// Checks whether the Element can be picked, ie if it is visible. Optionally 
+	/// Checks whether the Element can be picked, ie if it is visible. Visibility is tested only for the entire Element
+	/// (accounting for the various show/hide flags, as well as 4D transparency), unless a hit position is provided, in
+	/// which case 4D animation growth simulation and cut-out primitives are also accounted for.
 	/// \param InElemID Element to check. Pass NOT_ELEMENT to just discard any existing selection.
-	/// \param bSelectElement If check succeeds, select the Element.
+	/// \param Opts Picking options for selection additivity, the kind of tests performed, etc.
 	/// \return Whether the Element could indeed be selected in any of the currently known tiles. Failure to
 	///		select can indeed happen when the Element is hidden through the material shader, or simply when
 	///		it is already selected.
 	bool PickVisibleElement(ITwinElementID const& InElemID,
 							FPickingOptions Opts = FPickingOptions::CreateDefaultPickVisible());
+	/// See PickVisibleElement for the meaning of the parameters. This version allows to check multiple Elements at
+	/// once, and returns true if at least one of them could be selected. Does not handle testing against the cut-out
+	/// primitives or 4D growth simulations (as it would require a hit position for each Element).
 	bool PickVisibleElements(std::unordered_set<ITwinElementID> const& InElemIDs,
 							 FPickingOptions Opts = FPickingOptions::CreateDefaultPickVisible());
 	void DeselectElements(std::unordered_set<ITwinElementID> const& InElemIDs);
@@ -1091,8 +1115,7 @@ public:
 	using ITwinColor = std::array<double, 4>;
 
 	/// Same as PickVisibleElement, but applying to a Material.
-	bool PickVisibleMaterial(ITwinMaterialID const& InMaterialID, bool bIsMaterialPrediction,
-		std::optional<ITwinColor> const& ColorToRestore = std::nullopt);
+	bool PickVisibleMaterial(ITwinMaterialID const& InMaterialID);
 	//! Returns the selected Material's ID, if a Material is selected, or ITwin::NOT_MATERIAL.
 	[[nodiscard]] ITwinMaterialID GetSelectedMaterial() const { return SelectedMaterial; }
 
@@ -1145,11 +1168,17 @@ inline bool operator<(FITwinSceneMapping::FElemGuid const& A, FITwinSceneMapping
 }
 
 // We create a specific class instead of "using" to allow forward declaration.
-class TSceneMappingPtr :public AdvViz::SDK::Tools::TSharedLockableData<FITwinSceneMapping>
+class TSceneMappingPtr : public AdvViz::SDK::Tools::TSharedLockableData<FITwinSceneMapping>
 {
+	using Super = AdvViz::SDK::Tools::TSharedLockableData<FITwinSceneMapping>;
 public:
-	using AdvViz::SDK::Tools::TSharedLockableData<FITwinSceneMapping>::TSharedLockableData;
-	using AdvViz::SDK::Tools::TSharedLockableData<FITwinSceneMapping>::operator=;
+	/// Inherits ordinary base constructors, but not the base's copy/move constructors, hence the need for the
+	/// additional constructor below.
+	using Super::Super;
+	using Super::operator=;
+
+	/// Needed to be able to write "TSceneMappingPtr SceneMappingPtr = MakeSharedLockableData<FITwinSceneMapping>(..)"
+	TSceneMappingPtr(Super ptr) : Super(std::move(ptr)) {}
 };
 
 namespace ITwinMatParamInfo

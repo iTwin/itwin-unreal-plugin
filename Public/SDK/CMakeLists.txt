@@ -77,6 +77,7 @@ include(cmake/configure_advviz_library.cmake)
 
 include (be_setup_native_lib_flags)
 include (be_coverage)
+include (be_utils)
 if (BE_CODE_COVERAGE)
 	find_package (Python3 REQUIRED COMPONENTS Interpreter)
 	# A rather recent version of python is needed, eg. for pathlib.Path.readlink() etc.
@@ -86,21 +87,35 @@ if (BE_CODE_COVERAGE)
 	endif ()
 endif ()
 
-function (be_add_sdk_test target)
+function (be_add_sdk_test testTarget)
+	cmake_parse_arguments (
+		funcArgs
+		""
+		""
+		"COVERED_TARGETS"
+		${ARGN}
+	)
 	# When code coverage is enabled, we have to filter the stdout and exit code of OpenCppCoverage.
 	# We use FixStdoutForVS.py to do this.
 	# Since add_test() does not support redirection, we use a cmd file.
 	# It also allows us to create the test output folder before running the test (needed also when coverage is disabled).
-	set (cmdFile "${CMAKE_CURRENT_BINARY_DIR}/RunTests_${target}_$<CONFIG>.cmd")
+	set (cmdFile "${CMAKE_CURRENT_BINARY_DIR}/RunTests_${testTarget}_$<CONFIG>.cmd")
 	set (testOutDir "${CMAKE_BINARY_DIR}/Testing/$<CONFIG>")
-	set (runCommand "\"$<TARGET_FILE:${target}>\" --reporter \"JUnit::out=${testOutDir}/${target}.result.xml\" --reporter console")
-	if (BE_CODE_COVERAGE)
+	set (runCommand "\"$<TARGET_FILE:${testTarget}>\" --reporter \"JUnit::out=${testOutDir}/${testTarget}.result.xml\" --reporter console")
+	if (BE_CODE_COVERAGE AND DEFINED funcArgs_COVERED_TARGETS)
+		set (extraArgs "")
+		foreach (target ${funcArgs_COVERED_TARGETS})
+			set (extraArgs "${extraArgs}\
+ --sources \"$<SHELL_PATH:$<TARGET_PROPERTY:${target},SOURCE_DIR>>\"\
+"
+			)
+		endforeach ()
 		set (runCommand "\
 \"${BE_COVERAGE_TOOL_EXE}\"\
- --export_type \"html:${CMAKE_BINARY_DIR}/CodeCoverage/$<CONFIG>/${target}\"\
- --export_type \"cobertura:${CMAKE_BINARY_DIR}/CodeCoverage/$<CONFIG>/${target}/report.cobertura.xml\"\
- --modules \"$<SHELL_PATH:$<TARGET_FILE_DIR:${target}>>\"\
- --sources \"$<SHELL_PATH:${CMAKE_CURRENT_FUNCTION_LIST_DIR}>\"\
+ --export_type \"html:${CMAKE_BINARY_DIR}/CodeCoverage/$<CONFIG>/${testTarget}\"\
+ --export_type \"cobertura:${CMAKE_BINARY_DIR}/CodeCoverage/$<CONFIG>/${testTarget}/report.cobertura.xml\"\
+ --modules \"$<SHELL_PATH:$<TARGET_FILE_DIR:${testTarget}>>\"\
+ ${extraArgs}\
  -- ${runCommand}\
  2>&1 | \"${Python3_EXECUTABLE}\" \"${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../CMake/FixStdoutForVS.py\"\
 "
@@ -111,7 +126,7 @@ function (be_add_sdk_test target)
 ${runCommand}\
 "
 	)
-	add_test(NAME ${target} COMMAND "${cmdFile}")
+	add_test(NAME ${testTarget} COMMAND "${cmdFile}")
 endfunction ()
 
 add_custom_target (RunSdkTests "${CMAKE_CTEST_COMMAND}" -C $<CONFIG> -V)

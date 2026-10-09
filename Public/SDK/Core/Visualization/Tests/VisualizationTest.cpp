@@ -9,23 +9,14 @@
 #include "../Visualization.h"
 #include <filesystem>
 #include <catch2/catch_all.hpp>
-#include <httpmockserver/mock_server.h>
-#include <httpmockserver/port_searcher.h>
-#include "Mock.h"
+#include <Core/Network/Tests/AsyncTestHelpers.h>
+#include <Core/Network/Tests/HttpMock.h>
 
 #include "Core/Tools/Tools.h"
 #include "Core/Tools/Internal_mathConv.inl"
 #include <numbers>
-#include <chrono>
-#include <thread>
 
 using namespace AdvViz::SDK;
-
-HTTPMock* GetHttpMock()
-{
-	static std::unique_ptr<httpmock::MockServer> httpMockM = HTTPMock::MakeServer();
-	return static_cast<HTTPMock*>(httpMockM.get());
-}
 
 
 TEST_CASE("Visualization:Config")
@@ -60,19 +51,6 @@ void SetDefaultConfig()
 	CreateAdvVizLogChannels();
 }
 
-bool WaitForAsyncTask(std::atomic_bool& taskFinished, int maxSeconds)
-{
-	using namespace std::chrono_literals;
-
-	int elapsedMilliSec = 0;
-	while (!taskFinished && elapsedMilliSec < maxSeconds * 1000)
-	{
-		std::this_thread::sleep_for(100ms);
-		elapsedMilliSec += 100;
-	}
-	return taskFinished;
-}
-
 TEST_CASE("Visualization"){
 
 	SECTION("Decoration") {
@@ -84,21 +62,21 @@ TEST_CASE("Visualization"){
 			REQUIRE(GetDefaultHttp().get() != nullptr);
 
 			auto respKeyPost = std::pair("POST", "/advviz/v1/decorations");
-			mock->responseFct_[respKeyPost] = [] {
+			mock->SetResponseFunction(respKeyPost, [] {
 				std::string s = "{\"data\":{\"gcs\":{\"center\":[0,0,0], \"wkt\":\"WGS84\"}, \"itwinid\":\"904a89f7-b63c-4ae1-a223-88517bd4bb08\", \"name\":\"test auto\"}, \"id\":\"66c476ed1129763cf5485826\"}";
 				return HTTPMock::Response2(200, s);
-				};
+			});
 
 			auto respKeyGet = std::pair("GET", "/advviz/v1/decorations/66c476ed1129763cf5485826");
-			mock->responseFct_[respKeyGet] = [] {
+			mock->SetResponseFunction(respKeyGet, [] {
 				std::string s = "{\"name\":\"test auto\",\"itwinid\":\"904a89f7-b63c-4ae1-a223-88517bd4bb08\",\"gcs\":{\"wkt\":\"WGS84\",\"center\":[0,0,0]},\"id\":\"66c476ed1129763cf5485826\"}";
 				return HTTPMock::Response2(200, s);
-				};
+			});
 
 			auto respKeyDelete = std::pair("DELETE", "/advviz/v1/decorations/66c476ed1129763cf5485826");
-			mock->responseFct_[respKeyDelete] = [] {
+			mock->SetResponseFunction(respKeyDelete, [] {
 				return HTTPMock::Response2(200, "{\"id\":\"66c476ed1129763cf5485826\"");
-				};
+			});
 
 			std::shared_ptr<IDecoration> decoration(IDecoration::New());
 			std::atomic_bool asyncCreateDone = false;

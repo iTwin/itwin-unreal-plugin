@@ -6,7 +6,6 @@
 |
 +--------------------------------------------------------------------------------------*/
 
-
 #include <ITwinGoogle3DTileset.h>
 
 #include <ITwinGeolocation.h>
@@ -18,7 +17,6 @@
 
 #include <Kismet/GameplayStatics.h>
 #include <EngineUtils.h> // for TActorIterator<>
-
 
 #include <Compil/BeforeNonUnrealIncludes.h>
 #	include <Core/ITwinAPI/ITwinScene.h>
@@ -101,7 +99,8 @@ public:
 	AITwinGoogle3DTileset& Owner;
 	AITwinDecorationHelper* PersistenceMgr = nullptr;
 	bool bHasLoadedGeoLocationFromDeco = false;
-	bool bEnableGeoRefEdition = true; // Geo-location can be imposed by outside - when the loaded imodels/reality-data are geo-located
+	/// Geo-location can be imposed by outside - when the loaded imodels/reality-data are geo-located
+	bool bEnableGeoRefEdition = true;
 	TObjectPtr<UITwinClipping3DTilesetHelper> ClippingHelper;
 	std::optional<float> CustomCreditsFontScale;
 	bool bNeedsUpdateCreditsWidget = false;
@@ -263,6 +262,22 @@ std::string AITwinGoogle3DTileset::ElevationtKey;
 	ElevationtKey = GoogleElevationKey;
 }
 
+namespace
+{
+	static std::shared_ptr<AdvViz::SDK::Http> const& GetGoogleHttp()
+	{
+		using namespace AdvViz::SDK;
+
+		static std::shared_ptr<Http> g_GoogleHttp;
+		if (!g_GoogleHttp)
+		{
+			g_GoogleHttp = std::shared_ptr<Http>(Http::New());
+			g_GoogleHttp->SetBaseUrl("https://maps.googleapis.com/maps/api");
+		}
+		return g_GoogleHttp;
+	}
+}
+
 /*static*/
 bool AITwinGoogle3DTileset::RequestElevationtAtGeolocation(AdvViz::SDK::ITwinGeolocationInfo const& GeolocationInfo,
 	std::function<void(std::optional<double> const& elevationOpt)>&& InCallback)
@@ -274,12 +289,8 @@ bool AITwinGoogle3DTileset::RequestElevationtAtGeolocation(AdvViz::SDK::ITwinGeo
 	BE_LOGI("ITwinAdvViz", "Requesting elevation at ["
 		<< GeolocationInfo.latitude << ", " << GeolocationInfo.longitude << "]");
 
-	static std::shared_ptr<Http> g_GoogleHttp;
-	if (!g_GoogleHttp)
-	{
-		g_GoogleHttp = std::shared_ptr<Http>(Http::New());
-		g_GoogleHttp->SetBaseUrl("https://maps.googleapis.com/maps/api");
-	}
+	std::shared_ptr<Http> const& g_GoogleHttp = GetGoogleHttp();
+
 	struct SElevationInfo
 	{
 		double elevation = -1.0;
@@ -325,6 +336,17 @@ bool AITwinGoogle3DTileset::RequestElevationtAtGeolocation(AdvViz::SDK::ITwinGeo
 	);
 	return true;
 }
+
+#if WITH_TESTS
+
+/*static*/ void AITwinGoogle3DTileset::SetElevationTestURL(FString const& ServerUrl)
+{
+	std::shared_ptr<AdvViz::SDK::Http> const& g_GoogleHttp = GetGoogleHttp();
+	g_GoogleHttp->SetBaseUrl(TCHAR_TO_ANSI(*ServerUrl));
+}
+
+#endif // WITH_TESTS
+
 
 /*static*/
 AITwinGoogle3DTileset* AITwinGoogle3DTileset::MakeInstance(UWorld& World,
@@ -436,8 +458,16 @@ AITwinGoogle3DTileset::AITwinGoogle3DTileset()
 	}
 }
 
-AITwinGoogle3DTileset::~AITwinGoogle3DTileset()
+/*static*/
+void AITwinGoogle3DTileset::AddReferencedObjects(UObject* InThis, FReferenceCollector& Collector)
 {
+	Super::AddReferencedObjects(InThis, Collector);
+	const AITwinGoogle3DTileset* Actor = static_cast<const AITwinGoogle3DTileset*>(InThis);
+	if (Actor->Impl)
+	{
+		Collector.AddReferencedObject(Actor->Impl->ClippingHelper);
+		// Note: do not add FImpl::PersistenceMgr which lives independently of this actor
+	}
 }
 
 void AITwinGoogle3DTileset::Tick(float DeltaTime)
@@ -454,11 +484,6 @@ void AITwinGoogle3DTileset::Tick(float DeltaTime)
 			Impl->bNeedsUpdateCreditsWidget = false;
 		}
 	}
-}
-
-void AITwinGoogle3DTileset::EndPlay(const EEndPlayReason::Type EndPlayReason)
-{
-	Super::EndPlay(EndPlayReason);
 }
 
 void AITwinGoogle3DTileset::SetActorHiddenInGame(bool bNewHidden)
@@ -541,10 +566,20 @@ bool AITwinGoogle3DTileset::MakeClippingHelper()
 
 	// Connect mesh creation callback
 	this->SetLifecycleEventReceiver(Impl->ClippingHelper.Get());
+	this->RefreshTileset();
 
 	return true;
 }
 
+[[nodiscard]] bool AITwinGoogle3DTileset::IsVisibleAtPoint(FVector const& WorldPosition) const
+{
+	if (IsHidden())
+		return false;
+	auto* Clipr = GetClippingHelper();
+	if (!Clipr)
+		return true;
+	return !Clipr->ShouldCutOut(WorldPosition);
+}
 
 AITwinGoogle3DTileset::FTilesetAccess::FTilesetAccess(AITwinGoogle3DTileset* InGoogleTileset)
 	: FITwinTilesetAccess(InGoogleTileset)

@@ -4,6 +4,7 @@ advanced_option(BE_FILL_SHARED_VCPKG_BINARY_CACHE "Fill the shared vcpkg binary 
 advanced_option(BE_REBUILD_ALL_VCPKG_FOR_MEND "When non-empty, ignore all vcpkg binary caches so that everything is rebuilt, and a filtered copy of vcpkg's buildtrees folder is prepared. Pass a **relative** path (cwrsync requirement) from the **source** repository root to the folder into which to copy the buildtrees" "")
 advanced_option(BE_VCPKG_FILTERED_BUILDTREES_RELPATH "**Relative** path (for consistency with BE_REBUILD_ALL_VCPKG_FOR_MEND) from the **source** repository root to the folder containing the filtered copy of vcpkg buildtrees prepared in advance" "../vcpkg-buildtrees-for-Mend")
 
+advanced_option (BE_SYNC_BENTLEY_UE_FROM_NAS "" OFF)
 # Note: BE_UNREAL_ENGINE_DIR detection/setting moved to detect_unreal_root.cmake
 # because it needed to be included before the "project" call in the root CMakeLists
 

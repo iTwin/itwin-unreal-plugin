@@ -17,6 +17,8 @@ enum class EPopulationToolMode : uint8 {
 	Instantiate = 1,
 	InstantiateN = 2,
 	RemoveInstances = 3,
+	Area = 4,
+	Path = 5
 };
 
 UENUM(BlueprintType)

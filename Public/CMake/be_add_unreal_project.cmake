@@ -94,6 +94,24 @@ function (be_create_plugin_packager_target pluginName projectDir)
 			)
 		endif()
 	else()
+		# Run through 'env' in order to pass options to BuildPlugin, because it does not ready any project-specific
+		# BuildConfiguration.xml (because the HostProject that is use as a container for the plugin build process is
+		# created by UBT without any customization possibility) and Engine-specific configuration is not possible with
+		# an installed (official) build (and maybe not even with our "faked installed" source build anyway...)
+		# Note: had to remove "./" before "${RunUATBaseName}" otherwise I got "'.' is not an executable command"
+		set(runUatCommand ${CMAKE_COMMAND} -E env
+				UnrealBuildTool_WindowsPlatform__CompilerVersion="${BE_GENERATOR_TOOLSET}"
+				# This would reduce further but may reduce optimizations:
+				# UnrealBuildTool_BuildConfiguration__bAllowLTCG=false
+				UnrealBuildTool_BuildConfiguration__bUseAdaptiveUnityBuild=false
+				UnrealBuildTool_BuildConfiguration__bForceUnityBuild=true
+			"${RunUATBasename}" BuildPlugin -Plugin=${pluginPackageSrcDir}/${pluginName}.uplugin -Package="${pluginPackageDstDir}" -CreateSubFolder
+				-TargetPlatforms=${TargetPlatform}
+				# Too bad: this option avoids shipping code that might fail to build depending on CPP ordering during unity builds,
+				# but of course to detect missing includes it disables unity build of the plugin itself, even with read-only sources
+				# (see attrib command below), leading to much larger build products in total
+				# -StrictIncludes
+		)
 		add_custom_command ( TARGET ${packagerTargetName}
 			POST_BUILD
 			WORKING_DIRECTORY "${BE_UNREAL_ENGINE_DIR}/Build/BatchFiles"
@@ -109,7 +127,8 @@ function (be_create_plugin_packager_target pluginName projectDir)
 			COMMAND attrib /S +R "${pluginPackageSrcDir}/*"
 			COMMAND ${CMAKE_COMMAND} -E rm -rf "${pluginPackageSrcDir}/Binaries"
 			COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/UnrealProjects/ExternBinaries_${projectName}_${pluginName}" "${pluginPackageSrcDir}/Binaries"
-			COMMAND ./${RunUATBasename} BuildPlugin -Plugin=${pluginPackageSrcDir}/${pluginName}.uplugin -Package="${pluginPackageDstDir}" -CreateSubFolder -TargetPlatforms=${TargetPlatform}
+			COMMAND echo ${runUatCommand}
+			COMMAND ${runUatCommand}
 		)
 	endif()
 	set_target_properties (${packagerTargetName} PROPERTIES FOLDER "UnrealProjects/Packaging")
@@ -627,6 +646,10 @@ function (be_add_unreal_project projectDir)
 		set (UnrealLaunchPath "${BE_UNREAL_ENGINE_DIR}/Binaries/Mac/UnrealEditor$<$<CONFIG:Debug>:-Mac-Debug>$<$<CONFIG:UnrealDebug>:-Mac-DebugGame>")
 	endif()
 
+	set(_ubtPerProjectXmlConfigDir "${projectAbsDir}/Saved/UnrealBuildTool")
+	make_directory("${_ubtPerProjectXmlConfigDir}")
+	configure_file("${CMAKE_SOURCE_DIR}/Public/CMake/BuildConfiguration.xml.in" "${_ubtPerProjectXmlConfigDir}/BuildConfiguration.xml" @ONLY)
+	message("Configured ${CMAKE_SOURCE_DIR}/Public/CMake/BuildConfiguration.xml.in => ${_ubtPerProjectXmlConfigDir}/BuildConfiguration.xml")
 	
 	# Now that all build dirs have been setup, we can ask UBT to generate the project files (.sln, .vcxproj...).
 	# We will use some of these generated files to create some cmake targets.
@@ -704,7 +727,7 @@ function (be_add_unreal_project projectDir)
 
 		if (NOT FOR_VERACODE)
 			set (packagingOutputDir_Game "${CMAKE_BINARY_DIR}/Packaging_Output/${projectName}/$<$<CONFIG:Debug>:Debug>$<$<CONFIG:UnrealDebug>:DebugGame>$<$<CONFIG:Release>:Development>")
-
+			set_property (GLOBAL PROPERTY bePackagingOutputDir_Game_${projectName} "${packagingOutputDir_Game}")
 			# Add a target that will build & package the Game version of the app.
 			add_custom_target (${projectName}_Game_Packaged ALL
 				# Delete the output folder, as it may contain temporary files generated while debugging the iTwinStudio app
@@ -750,6 +773,7 @@ function (be_add_unreal_project projectDir)
 			# Add a target that will build & package the Shipping version of the app.
 			set_property (TARGET ${projectName}_Shipping PROPERTY VS_DEBUGGER_COMMAND "${projectAbsDir}/Binaries/Win64/${projectName}-Win64-Shipping.exe")
 			set (packagingOutputDir_Shipping "${CMAKE_BINARY_DIR}/Packaging_Output/${projectName}/Shipping")
+			set_property (GLOBAL PROPERTY bePackagingOutputDir_Shipping_${projectName} "${packagingOutputDir_Shipping}")
 			add_custom_target (${projectName}_Shipping_Packaged ALL
 				COMMAND "$<$<NOT:$<CONFIG:Release>>:TARGET_NOT_COMPATIBLE_WITH_THIS_CONFIG>"
 				# Delete the output folder, see comment above for the XXX_Game_Packaged target.
@@ -779,10 +803,14 @@ function (be_add_unreal_project projectDir)
 				| "${Python3_EXECUTABLE_NATIVE}" "${CMAKE_SOURCE_DIR}/Public/CMake/FixStdoutForVS.py"
 				VERBATIM
 			)
+			# Bentley-specific processing (signing...).
+			if (COMMAND be_process_binary_private)
+				be_process_binary_private (${projectName})
+			endif ()
 		endif()
 	elseif (APPLE)
 		message( "generating unreal project for ${projectAbsDir}/${projectName}.uproject")
-		# Mac has a risk of freeze of UnrealBuildTools, try multiple time with timeout
+		# Mac has a risk of freeze of UnrealBuildTool, try multiple time with timeout
 		execute_process (
 			COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/Public/CMake/LaunchWithTimeout.py" -r 3 -t 300 "${BE_UNREAL_ENGINE_DIR}/Build/BatchFiles/Mac/Build.sh" -ProjectFiles -Project "${projectAbsDir}/${projectName}.uproject" -WaitMutex
 			COMMAND_ERROR_IS_FATAL ANY
@@ -923,6 +951,12 @@ function (be_add_unreal_project projectDir)
 					--sources "${projectAbsDirNative}\\Source"
 					--sources "${projectAbsDirNative}\\Plugins\\*\\Source"
 					--excluded_sources "*\\ThirdParty\\*"
+					--excluded_sources "*\\ITwinCommonUX\\*"
+					--excluded_sources "*\\ModelSelector\\*"
+					--excluded_sources "*\\*WidgetImpl*"
+					--excluded_sources "*\\Tests\\*"
+					--excluded_sources "*\\*Test.cpp"
+					--excluded_sources "*\\Test*.cpp"
 					-- "${runCommand}"
 				)
 			endif ()

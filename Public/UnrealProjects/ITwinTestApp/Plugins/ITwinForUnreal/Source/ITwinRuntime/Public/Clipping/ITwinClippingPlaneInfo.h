@@ -28,6 +28,13 @@ struct FITwinClippingPlaneInfo final : public FITwinClippingInfoBase
 
 	FPlaneEquation const& GetPlaneEquation() const { return PlaneEquation; }
 
+	// returns the equation with inversion already folded in
+	FPlaneEquation GetEffectivePlaneEquation() const
+	{
+		auto Eq = GetPlaneEquation();
+		return GetInvertEffect() ? FPlaneEquation{ -Eq.PlaneOrientation, -Eq.PlaneW } : Eq;
+	}
+
 	void SetPlaneEquation(FVector const& PlaneOrientation, double PlaneW, bool bPropagateToTileExcluders = true);
 
 protected:

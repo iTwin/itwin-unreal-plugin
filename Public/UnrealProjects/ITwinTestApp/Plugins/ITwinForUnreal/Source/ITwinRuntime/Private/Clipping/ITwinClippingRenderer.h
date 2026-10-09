@@ -11,6 +11,7 @@
 #include <CoreMinimal.h>
 #include <Clipping/ITwinClippingEnums.h>
 #include <ITwinModelType.h>
+#include <Templates/PimplPtr.h>
 #include <optional>
 
 #include "ITwinClippingRenderer.generated.h"
@@ -36,13 +37,14 @@ class UITwinClippingRenderer : public UObject
 	GENERATED_BODY()
 public:
 	UITwinClippingRenderer();
+
 	void SetEffectManager(UITwinClippingEffectManager* InManager);
 
 	void OnClippingInstanceArrayResized(EITwinClippingPrimitiveType PrimitiveType);
 
 	//! Encode the flipping of the clipping effect in the Material Parameter Collection, so that it can be
-	//! used in shaders.
-	bool EncodeFlippingInMPC(EITwinClippingPrimitiveType Type);
+	//! accessed in shaders.
+	bool EncodeFlippingInMPC(EITwinClippingPrimitiveType Type, int32 PrimitiveIndex);
 
 	bool UpdateBoxPropertiesInMPC(FITwinClippingBoxInfo const& BoxInfo, int32 BoxIndex);
 
@@ -59,11 +61,21 @@ public:
 	/// Update clipping effects in all tilesets in the scene.
 	void UpdateAllTilesets(std::optional<EITwinClippingPrimitiveType> const& SpecificPrimitiveType = std::nullopt);
 
+	//! Registers a new tileset in the renderer, so that it can be updated with the current clipping effects.
+	void RegisterTileset(FITwinTilesetAccess const& TilesetAccess);
+
 	//! Returns true if the given world position is cut out by any of the clipping effects affecting the
 	//! layer identified by the given model identifier.
 	bool ShouldCutOut(FVector const& AbsoluteWorldPosition, ITwin::ModelLink const& ModelIdentifier,
 		UCesiumPolygonRasterOverlay const* RasterOverlay) const;
 
+	/// Recompute the model->group mapping from the current influence sets, and push the resulting
+	/// per-primitive masks to the MPC. Returns true if the mapping actually changed, in which case
+	/// callers must refresh the Custom Primitive Data of ALL tilesets, not just the one they own.
+	/// Must be called on influence/registration changes, NOT on geometry-only edits
+	/// (see #OnEffectPropertiesModified).
+	bool RebuildModelGroups();
+	bool UpdateActivationMasksInMPC();
 
 #if WITH_EDITOR
 	/// Globally activate/deactivate all effects of given type, at given level. This is for debugging, only
@@ -77,8 +89,7 @@ private:
 	UMaterialParameterCollection* GetMPCClipping();
 	UMaterialParameterCollectionInstance* GetMPCClippingInstance();
 
-	template <typename PrimitiveInfo, EITwinClippingPrimitiveType PrimitiveType>
-	bool TEncodeFlippingInMPC();
+	bool EncodeBoxFlippingInMPC(int32 BoxIndex);
 
 	
 	template <EITwinClippingPrimitiveType PrimitiveType>
@@ -91,13 +102,6 @@ private:
 		FTilesetUpdateInfo& UpdateInfo);
 	void UpdateTileset_Polygons(FITwinTilesetAccess const& TilesetAccess,
 		FTilesetUpdateInfo& UpdateInfo);
-
-
-	template <typename PrimitiveInfo, EITwinClippingPrimitiveType PrimitiveType>
-	void TUpdateAllClippingPrimitives(TArray<PrimitiveInfo>& ClippingInfos);
-
-	void UpdateAllClippingPrimitives(EITwinClippingPrimitiveType PrimitiveType);
-
 
 
 	/// Returns cut-out value (understood as opacity: 0 if cut out, 1 if not) for box primitives at given
@@ -116,4 +120,7 @@ private:
 	UPROPERTY(Category = "iTwin",
 		VisibleAnywhere)
 	UITwinClippingMPCHolder* ClippingMPCHolder = nullptr;
+
+	class FImpl;
+	TPimplPtr<FImpl> Impl;
 };

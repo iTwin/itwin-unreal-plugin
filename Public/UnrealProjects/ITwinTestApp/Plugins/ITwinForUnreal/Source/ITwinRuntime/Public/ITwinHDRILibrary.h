@@ -10,13 +10,19 @@
 
 #include <CoreMinimal.h>
 #include <AssetRegistry/AssetData.h>
-#include <ItwinRuntime/public/Decoration/ItwinDecorationHelper.h>
+
 #include <ITwinRuntime/Private/Compil/BeforeNonUnrealIncludes.h>
 #	include <SDK/Core/Tools/Error.h>
 #	include <SDK/Core/ITwinAPI/ITwinScene.h>
 #include <ITwinRuntime/Private/Compil/AfterNonUnrealIncludes.h>
 
+namespace AdvViz::SDK
+{
+	class IScenePersistence;
+}
+class AITwinDecorationHelper;
 class UTextureCube;
+
 namespace ITwin
 {
 	static const TCHAR* HDRI_LIBRARY = TEXT("HDRILibrary");
@@ -31,6 +37,7 @@ class ITWINRUNTIME_API FITwinHDRILibrary
 {
 public:
 	using ITwinHDRI = AdvViz::SDK::ITwinHDRISettings;
+	using IScenePersistence = AdvViz::SDK::IScenePersistence;
 
 	struct ExportError
 	{
@@ -47,11 +54,14 @@ public:
 	using ExportResult = AdvViz::expected<void,ExportError>;
 
 	//! Export the given HDRI settings to disk. If the process succeeds, a .json description will be generated
-	static ExportResult ExportHDRIToDisk(AITwinDecorationHelper const* persistanceMngr, ITwinHDRI const& HDRISettings, FString const& HDRIName, FString const& DestinationFolder);
+	static ExportResult ExportHDRIToDisk(IScenePersistence const* scenePersistence,
+		ITwinHDRI const& HDRISettings,
+		FString const& HDRIName,
+		FString const& DestinationFolder);
 
 	//! Returns the path to user-defined HDRI library. The folder may not exist.
 	static FString GetCustomHDRIPath();
-	static ITwinHDRI ConvertKeyValueMapToDRISettings(const TMap<FString, FString> &HDRIParameters);
+	static ITwinHDRI ConvertKeyValueMapToDRISettings(const TMap<FString, FString>& HDRIParameters);
 
 	struct LoadHdriResult
 	{
@@ -61,15 +71,12 @@ public:
 		FString pendingComponentId;
 		ITwinHDRI settings;
 	};
-	static LoadHdriResult GetHrdiFromName(AITwinDecorationHelper const* persistanceMngr, FString NewHDRIName);
+	static LoadHdriResult GetHrdiFromName(AITwinDecorationHelper const* persistenceMngr, FString NewHDRIName);
 
 #if WITH_EDITOR
 	// Import all stom HDRIs found in the user HDRI library path into the project HDRI library
-	static void ImportJsonToLibrary(AITwinDecorationHelper const* persistanceMngr);
+	static void ImportJsonToLibrary(IScenePersistence const* scenePersistence);
 #endif
 
-static std::vector<std::pair<std::string,bool>> GetListOfHDRIPresets();
+	static std::vector<std::pair<std::string,bool>> GetListOfHDRIPresets();
 };
-
-
-

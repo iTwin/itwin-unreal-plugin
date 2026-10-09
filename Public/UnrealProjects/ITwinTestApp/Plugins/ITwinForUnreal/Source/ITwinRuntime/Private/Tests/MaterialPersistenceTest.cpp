@@ -9,7 +9,11 @@
 
 #if WITH_TESTS
 
-#include "WebTestHelpers.h"
+#include <Tests/ITwinAutomationTestBaseNoLogs.h>
+#include <Tests/ITwinMockServerBase.h>
+#include <Tests/WebTestHelpers.h>
+#include <ITwinServerConnection.h>
+#include <Network/HttpUtils.h>
 
 #include <HAL/PlatformProcess.h>
 #include <HAL/PlatformFile.h>
@@ -205,29 +209,6 @@ std::unique_ptr<httpmock::MockServer> FMaterialPersistenceMockServer::MakeServer
 	return httpmock::getFirstRunningMockServer<FMaterialPersistenceMockServer>(startPort, tryCount);
 }
 
-
-class FITwinMaterialIOAsyncCallback
-{
-public:
-	void OnRequestStarted()
-	{
-		NumRequestsStarted++;
-	}
-	void OnRequestDone()
-	{
-		NumRequestsDone++;
-	}
-
-	bool IsDone() const { return NumRequestsDone == NumRequestsStarted; }
-
-private:
-	uint32 NumRequestsStarted = 0;
-	uint32 NumRequestsDone = 0;
-};
-
-using FITwinMaterialIOAsyncCallbackPtr = std::shared_ptr<FITwinMaterialIOAsyncCallback>;
-
-
 class FITwinMatPersistenceTestHelper : public FITwinAPITestHelperBase
 {
 public:
@@ -238,7 +219,6 @@ public:
 
 	std::shared_ptr<MaterialPersistenceManager> GetMatIOMngr() { return MatIO; }
 	bool& GetServerValidationResponseFlag() { return bServerValidationResponseFlag; }
-	FITwinMaterialIOAsyncCallbackPtr GetMatAsyncCallback() { return MatAsyncCallback; }
 
 protected:
 	virtual bool DoInit(AdvViz::SDK::EITwinEnvironment) override;
@@ -249,7 +229,6 @@ private:
 
 	std::shared_ptr<MaterialPersistenceManager> MatIO;
 	bool bServerValidationResponseFlag = false;
-	FITwinMaterialIOAsyncCallbackPtr MatAsyncCallback;
 };
 
 /*static*/
@@ -285,8 +264,6 @@ bool FITwinMatPersistenceTestHelper::DoInit(AdvViz::SDK::EITwinEnvironment Env)
 
 	bServerValidationResponseFlag = false;
 
-	MatAsyncCallback = std::make_shared<FITwinMaterialIOAsyncCallback>();
-
 	return true;
 }
 
@@ -307,7 +284,7 @@ bool FNUTWaitForMockServerResponseFlag::Update()
 {
 	return bServerValidationResponseFlag;
 }
-DEFINE_LATENT_AUTOMATION_COMMAND_ONE_PARAMETER(FNUTWaitForAsyncMaterialSaving, FITwinMaterialIOAsyncCallbackPtr, MatAsyncCallback);
+DEFINE_LATENT_AUTOMATION_COMMAND_ONE_PARAMETER(FNUTWaitForAsyncMaterialSaving, FITwinIOAsyncCallbackPtr, MatAsyncCallback);
 
 bool FNUTWaitForAsyncMaterialSaving::Update()
 {
@@ -324,7 +301,7 @@ bool FNUTWaitForAsyncMaterialSaving::Update()
 
 
 
-IMPLEMENT_CUSTOM_SIMPLE_AUTOMATION_TEST(FITwinMaterialPersistenceTest, FAutomationTestBaseNoLogs, \
+IMPLEMENT_CUSTOM_SIMPLE_AUTOMATION_TEST(FITwinMaterialPersistenceTest, FITwinAutomationTestBaseNoLogs, \
 	"Bentley.ITwinForUnreal.ITwinRuntime.MaterialPersistence", \
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
@@ -337,7 +314,7 @@ bool FITwinMaterialPersistenceTest::RunTest(const FString& /*Parameters*/)
 	}
 
 	auto pMatIOMngr = Helper.GetMatIOMngr();
-	FITwinMaterialIOAsyncCallbackPtr MatAsyncCallback = Helper.GetMatAsyncCallback();
+	FITwinIOAsyncCallbackPtr MatAsyncCallback = Helper.GetAsyncCallback();
 	auto& MatIOMngr = *pMatIOMngr;
 	bool& bServerValidationResponseFlag = Helper.GetServerValidationResponseFlag();
 
@@ -354,10 +331,10 @@ bool FITwinMaterialPersistenceTest::RunTest(const FString& /*Parameters*/)
 		Request->SetURL(fullUrl.c_str());
 		Request->OnProcessRequestComplete().BindLambda(
 			[this, &bServerValidationResponseFlag]
-			(FHttpRequestPtr, FHttpResponsePtr Response, bool bConnectedSuccessfully) mutable
+			(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bConnectedSuccessfully) mutable
 			{
-				TestTrue("bConnectedSuccessfully", bConnectedSuccessfully);
-				TestEqual("status_code", 200, Response->GetResponseCode());
+				TestTrue(TEXT("Mock server arg_test response"),
+					ITwinHttp::CheckRequest(Request, Response, ITwinHttp::ConnectionSuccess(bConnectedSuccessfully)));
 				bServerValidationResponseFlag = true;
 			});
 		Request->ProcessRequest();

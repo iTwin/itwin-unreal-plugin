@@ -833,14 +833,17 @@ void GltfMaterialHelper::TSetChannelParam(ParamHelper const& helper, uint64_t ma
 		bValueModified = helper.DoesNewValueDifferFrom(oldValue);
 		helper.SetNewValue(matID, matDefinition, lock);
 
-		if (bValueModified && persistenceMngr_)
+		if (bValueModified)
 		{
-			// Notify the persistence manager for future DB update.
-			// Note that we now pass the *full* definition of the material, because there is no guarantee
-			// that default values are the same in our plugin and in the decoration service.
-			AdvViz::SDK::ITwinMaterial matDefToStore(matDefinition);
-			CompleteDefinitionWithDefaultValues(matDefToStore, matID, nullptr, lock);
-			persistenceMngr_->SetMaterialSettings(iModelID_, matID, matDefToStore);
+			if (persistenceMngr_)
+			{
+				// Notify the persistence manager for future DB update.
+				// Note that we now pass the *full* definition of the material, because there is no guarantee
+				// that default values are the same in our plugin and in the decoration service.
+				AdvViz::SDK::ITwinMaterial matDefToStore(matDefinition);
+				CompleteDefinitionWithDefaultValues(matDefToStore, matID, nullptr, lock);
+				persistenceMngr_->SetMaterialSettings(iModelID_, matID, matDefToStore);
+			}
 
 			helper.OnModificationApplied(lock);
 		}
@@ -1592,6 +1595,9 @@ void GltfMaterialHelper::SetMaterialKind(uint64_t matID, AdvViz::SDK::EMaterialK
 
 bool GltfMaterialHelper::GetCustomRequirements(uint64_t matID, AdvViz::SDK::EMaterialKind& outKind, bool& bOutRequiresTranslucency) const
 {
+	bOutRequiresTranslucency = false;
+	outKind = AdvViz::SDK::EMaterialKind::PBR;
+
 	RLock lock(mutex_);
 	auto itMat = materialMap_.find(matID);
 	if (itMat != materialMap_.end())

@@ -13,11 +13,14 @@
 #include <Components/Widget.h>
 #include <Kismet/KismetMathLibrary.h>
 #include <Input/Reply.h>
+#include <array>
 
 
 struct UITwinSpline2DWidget::FImpl
 {
-	TArray<FVector2D> SampledOnScreenPositions;
+	//! Use a distinct slot for each purpose - important when drawing uses just 2 samples, for cutouts, while
+	//! hit testing requires more samples to be more accurate.
+	std::array<TArray<FVector2D>, static_cast<size_t>(ITwin::ESplineSamplingPurpose::ENUM_END)> SampledOnScreenPositions;
 };
 
 
@@ -32,7 +35,10 @@ void UITwinSpline2DWidget::SetStartAndEnd(const FITwinSplineChunk2DInfo& InChunk
 {
 	Chunk2DInfo = InChunk2DInfo;
 
-	Impl->SampledOnScreenPositions.Reset();
+	for (auto& SampledPositions : Impl->SampledOnScreenPositions)
+	{
+		SampledPositions.Reset();
+	}
 }
 
 void UITwinSpline2DWidget::SetTint(const FLinearColor& InTint)
@@ -69,7 +75,7 @@ bool UITwinSpline2DWidget::IsScreenPositionOverSpline(const FGeometry& Geometry,
 {
 	const FVector2D LocalMouse = Geometry.AbsoluteToLocal(ScreenPosition);
 
-	if (!ensure(HasCachedSplineSampling()))
+	if (!ensure(HasCachedSplineSampling(ITwin::ESplineSamplingPurpose::HitTesting)))
 	{
 		return false;
 	}
@@ -86,7 +92,7 @@ bool UITwinSpline2DWidget::IsScreenPositionOverSpline(const FGeometry& Geometry,
 	FVector2D ClosestPoint2D = { -1., -1. };
 	bool bIsOver = false;
 
-	const TArray<FVector2D>& SampledPositions = GetCachedSplineSampling();
+	const TArray<FVector2D>& SampledPositions = GetCachedSplineSampling(ITwin::ESplineSamplingPurpose::HitTesting);
 	FVector2D Prev = SampledPositions[0];
 	for (int32 Step = 1; Step < SampledPositions.Num(); ++Step)
 	{
@@ -122,9 +128,13 @@ int32 UITwinSpline2DWidget::NativePaint(const FPaintArgs& Args, const FGeometry&
 	FPaintContext Context = FPaintContext(AllottedGeometry, MyCullingRect, OutDrawElements, LayerId, InWidgetStyle, bParentEnabled);
 	if (bDrawAsMultiLine)
 	{
-		if (HasCachedSplineSampling())
+		if (HasCachedSplineSampling(ITwin::ESplineSamplingPurpose::Drawing))
 		{
-			UWidgetBlueprintLibrary::DrawLines(Context, GetCachedSplineSampling(), Tint, true /*bAntiAlias*/, Thickness);
+			UWidgetBlueprintLibrary::DrawLines(Context,
+				GetCachedSplineSampling(ITwin::ESplineSamplingPurpose::Drawing),
+				Tint,
+				true /*bAntiAlias*/,
+				Thickness);
 		}
 	}
 	else
@@ -139,12 +149,12 @@ int32 UITwinSpline2DWidget::NativePaint(const FPaintArgs& Args, const FGeometry&
 }
 
 
-void UITwinSpline2DWidget::CacheSplineSampling(const TArray<FVector2D>& InSampledPositions)
+void UITwinSpline2DWidget::CacheSplineSampling(const TArray<FVector2D>& InSampledPositions, ITwin::ESplineSamplingPurpose Purpose)
 {
-	Impl->SampledOnScreenPositions = InSampledPositions;
+	Impl->SampledOnScreenPositions[static_cast<size_t>(Purpose)] = InSampledPositions;
 }
 
-const TArray<FVector2D>& UITwinSpline2DWidget::GetCachedSplineSampling() const
+const TArray<FVector2D>& UITwinSpline2DWidget::GetCachedSplineSampling(ITwin::ESplineSamplingPurpose Purpose) const
 {
-	return Impl->SampledOnScreenPositions;
+	return Impl->SampledOnScreenPositions[static_cast<size_t>(Purpose)];
 }

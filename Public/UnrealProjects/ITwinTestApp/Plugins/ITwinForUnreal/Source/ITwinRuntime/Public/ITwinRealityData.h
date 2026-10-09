@@ -42,18 +42,16 @@ public:
 		BlueprintAssignable)
 	FOnRealityDataLoaded OnRealityDataLoaded;
 
-
-
 	AITwinRealityData();
-	~AITwinRealityData();
 	virtual void Tick(float DeltaSeconds) override;
 	virtual bool ShouldTickIfViewportsOnly() const override { return true; }
-	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void Destroyed() override;
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 #endif
 	virtual void PostLoad() override;
+	// also from UObject "interface":
+	static void AddReferencedObjects(UObject* InThis, FReferenceCollector& Collector);
 
 	UFUNCTION(Category = "iTwin",
 		CallInEditor,
@@ -91,9 +89,6 @@ public:
 	/// Return true if the required identifiers for loading reality data are all set.
 	bool HasRealityDataIdentifiers() const;
 
-	UFUNCTION()
-	void OnSceneLoaded(bool success);
-
 	bool IsGeolocated() const { return bGeolocated; }
 
 	TUniquePtr<FITwinTilesetAccess> MakeTilesetAccess();
@@ -104,6 +99,7 @@ public:
 
 	UITwinClipping3DTilesetHelper* GetClippingHelper() const;
 	bool MakeClippingHelper();
+	[[nodiscard]] bool IsVisibleAtPoint(FVector const& WorldPosition) const;
 
 	bool GetBoundingBox(FBox& OutBox, bool bClampOutlandishValues);
 

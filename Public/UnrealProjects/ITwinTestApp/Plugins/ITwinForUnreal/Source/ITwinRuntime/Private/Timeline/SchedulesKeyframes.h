@@ -23,9 +23,10 @@ class FTransformKey;
 class FAnimation3DPath;
 class FAppearanceProfile;
 class FActiveAppearance;
-class FPathAssignment;
+class FPathTransformAssignment;
 class FSimpleAppearance;
-class FTransformAssignment;
+class FStaticTransformAssignment;
+class FPathTransformAssignment;
 struct FITwinCoordConversions;
 
 namespace ITwin::Timeline {
@@ -41,9 +42,11 @@ struct FTaskDependenciesData
 	FSimpleAppearance const* ProfileForcedAppearanceAfter = nullptr;
 	/// See ProfileForcedTransfoAssignOutside below
 	bool bForceDisablingTransformationOutside = false;
-	/// Transformation to fallback to outside of a task can be "none" (nullptr), "something" (non-null),
-	/// or "reset to original" (nullptr but bForceDisablingTransformationOutside == true)
-	FTransformAssignment const* ProfileForcedTransfoAssignOutside = nullptr;
+	/// Transformation to fallback to outside of a task can be "none" (nullptr), "something" (either one or both
+	/// ProfileForcedStaticTransfoAssignOutside and ProfileForcedPathTransfoAssignOutside are non-null),
+	/// or "reset to original" (both nullptr but bForceDisablingTransformationOutside == true)
+	FStaticTransformAssignment const* ProfileForcedStaticTransfoAssignOutside = nullptr;
+	FPathTransformAssignment const* ProfileForcedPathTransfoAssignOutside = nullptr;
 	/// Only set if ProfileForcedTransfoAssignOutside is not null and assignment is to a 3D path
 	FAnimation3DPath const* ProfileForced3DPathOutside = nullptr;
 	/// Only set if ProfileForcedTransfoAssignOutside is not null and assignment is to a 3D path, tells whether to use
@@ -74,16 +77,21 @@ PTransform const& AddStaticTransformToTimeline(FITwinElementTimeline& ElementTim
 	FTimeRangeInSeconds const& TaskTimes, FTransform const& Transform, FITwinCoordConversions const& CoordConv,
 	FTaskDependenciesData const& TaskDeps);
 
+/// \param StaticTransformUnused Ignored as #2070419 concluded that it was in fact not possible to have both
+///		actually applied at the same time: in that case, the static transform is ignored
 bool GetLast3DPathTransformKeyframeToApply(FTimeRangeInSeconds const& TaskTimes,
-	FPathAssignment const& PathAssignment, std::vector<FTransformKey> const& Keyframes,
-	FITwinCoordConversions const& CoordConv, F3DPathKFData& KeyframeToApply);
+	FTransform const* StaticTransformUnused, FPathTransformAssignment const& PathAssignment,
+	std::vector<FTransformKey> const& Keyframes, FITwinCoordConversions const& CoordConv,
+	F3DPathKFData& KeyframeToApply);
 
+/// \param StaticTransformUnused Ignored as #2070419 concluded that it was in fact not possible to have both
+///		actually applied at the same time: in that case, the static transform is ignored
 /// \return Whether pOnlyGetSingleKeyframe was non-null AND data for a keyframe was indeed extracted into it
 bool Add3DPathTransformToTimeline(
 	FITwinElementTimeline* ElementTimeline, FTimeRangeInSeconds const& TaskTimes,
-	FPathAssignment const& PathAssignment, std::vector<FTransformKey> const& Keyframes,
-	FITwinCoordConversions const& CoordConv, FTaskDependenciesData const& TaskDeps,
-	F3DPathKFData* pOnlyGetSingleKeyframe = nullptr);
+	FTransform const* StaticTransformUnused, FPathTransformAssignment const& PathAssignment,
+	std::vector<FTransformKey> const& Keyframes, FITwinCoordConversions const& CoordConv,
+	FTaskDependenciesData const& TaskDeps, F3DPathKFData* pOnlyGetSingleKeyframe = nullptr);
 
 void HandleFallbackTransfoOutsideTaskIfNeeded(FITwinElementTimeline& ElementTimeline,
 	FTimeRangeInSeconds const& TaskTimes, FITwinCoordConversions const& CoordConv,

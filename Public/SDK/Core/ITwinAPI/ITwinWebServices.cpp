@@ -7,7 +7,6 @@
 +--------------------------------------------------------------------------------------*/
 
 #include "ITwinWebServices.h"
-#include <Core/ITwinApi/ITwinMaterialPrediction.h>
 #include <Core/ITwinApi/ITwinRequestDump.h>
 #include "ITwinAuthManager.h"
 #include "ITwinWebServicesObserver.h"
@@ -140,34 +139,9 @@ namespace AdvViz::SDK
 		LastError lastError_;
 
 		std::string customServerURL_;
+		float retryDelayFactor_ = 1.f;
 
 		bool hasSetupMLMaterialAssignment_ = false;
-
-		enum class EMatMLPredictionStep : uint8_t
-		{
-			Init = 0,
-
-			RunJob,
-			GetJobStatus,
-			GetJobResults,
-
-			Done
-		};
-		struct MaterialMLPredictionInfo
-		{
-			EMatMLPredictionStep step_ = EMatMLPredictionStep::Init;
-			std::string iTwinId_;
-			std::string iModelId_;
-			std::string changesetId_;
-
-			// Variables filled from the ML service responses
-			std::string jobId_;
-			std::optional<std::string> jobResultURL_;
-			ITwinMaterialPrediction result_;
-		};
-		std::optional<MaterialMLPredictionInfo> matMLPredictionInfo_ = std::nullopt;
-		std::filesystem::path matMLPredictionCacheFolder_;
-		bool isResumingMatMLPrediction_ = false;
 
 
 	public:
@@ -239,42 +213,11 @@ namespace AdvViz::SDK
 						  std::placeholders::_1, std::placeholders::_2),
 			int const attempt = 0);
 
-		EITwinMatMLPredictionStatus ProcessMatMLPrediction(std::string const& iTwinId,
-			std::string const& iModelId, std::string const& changesetId);
-
 		void OnGoogleCuratedContentAccessRetrieved(bool bSuccess,
 			ITwinGoogleCuratedContentAccess const& googleContentAccess, RequestID const& requestID);
 
 		void SetLastError(std::string const& strError, RequestID const& requestID,
 			int retriesLeft, bool bLogError = true);
-
-	private:
-		ITwinAPIRequestInfo BuildMatMLPredictionRequestInfo(EMatMLPredictionStep eStep);
-		void ProcessMatMLPredictionStep(EMatMLPredictionStep eStep);
-		bool ProcessMatMLPredictionStepWithDelay(EMatMLPredictionStep eStep);
-		std::pair<float, int> ShouldRetryMaterialMLStep(EMatMLPredictionStep eStep, int attempt, int httpCode) const;
-
-		struct MatMLPredictionParseResult
-		{
-			/// Whether we received a valid response.
-			bool parsingOK = false;
-			/// Response parsing error should be filled *only* in case of communication error, not when the
-			/// service fails to compute a prediction for some reason.
-			std::string parsingError;
-			/// Will be set to false when the response indicates a failed or finished job.
-			bool continueJob = false;
-			/// Only used at step GetJobStatus, which should be retried as long as the job is not finished.
-			bool retryWithDelay = false;
-		};
-		void ParseMatMLPredictionResponse(EMatMLPredictionStep eStep,
-			Http::Response const& response, RequestID const&,
-			MatMLPredictionParseResult& parseResult);
-
-		/// Reset all data retrieved from the ML material prediction server (job ID...)
-		void ResetMatMLJobData();
-
-		std::filesystem::path GetMatMLInfoPath() const;
-		void RemoveMatMLInfoFile();
 
 	}; // class ITwinWebServices::Impl
 
@@ -389,25 +332,23 @@ namespace AdvViz::SDK
 		ModifyServerSetting([this, &serverUrl] { impl_->customServerURL_ = serverUrl; });
 	}
 
+	void ITwinWebServices::SetRetryDelayFactor(float factor)
+	{
+		impl_->retryDelayFactor_ = factor;
+	}
+
 	std::string ITwinWebServices::GetAPIRootURL() const
 	{
 		return impl_->GetAPIRootURL(env_);
 	}
 
-	namespace
-	{
-		//! Set this variable to true in the debugger to dump all requests & responses.
-		//! The generated files can then be used in automatic tests, to mock the web services.
-		//! See For example IModelRenderTest.cpp. 
-		static bool g_ShouldDumpRequests = false;
-	} // unnamed namespace
 
 	void ITwinWebServices::Impl::ProcessHttpRequest(ITwinAPIRequestInfo const& requestInfo,
 		ResultCallback&& InResultCallback,
 		std::function<void(RequestID const&)> && notifyRequestID/*= {}*/,
 		FilterErrorFunc&& filterError /*= {}*/,
 		Http::EAsyncCallbackExecutionMode asyncCBExecMode,
-		std::function<std::pair<float, int>(int attempt, int httpCode)> && shouldRetry/*= {}*/,
+		std::function<std::pair<float, int>(int attempt, int httpCode)> && shouldRetry/*= defaultShouldRetryFunc*/,
 		int const attempt/*= 0*/)
 	{
 		if (requestInfo.badlyFormed)
@@ -475,15 +416,11 @@ namespace AdvViz::SDK
 		}
 
 		std::filesystem::path requestDumpPath;
-		if (g_ShouldDumpRequests)
+		if (RequestDump::ShouldDumpRequests())
 		{
 			// Dump request to temp folder.
-			requestDumpPath = std::filesystem::temp_directory_path()/"iTwinRequestDump"/
-				RequestDump::GetRequestHash(requestInfo.UrlSuffix, requestInfo.ContentString.str());
-			std::filesystem::remove_all(requestDumpPath);
-			std::filesystem::create_directories(requestDumpPath);
-			std::ofstream(requestDumpPath/"request.json") << rfl::json::write(
-				RequestDump::Request{requestInfo.UrlSuffix, requestInfo.ContentString.str()}, YYJSON_WRITE_PRETTY);
+			RequestDump::DumpRequest(
+				requestInfo.UrlSuffix, requestInfo.ContentString.str(), requestDumpPath);
 		}
 		using RequestPtr = HttpRequest::RequestPtr;
 		using Response = HttpRequest::Response;
@@ -496,17 +433,14 @@ namespace AdvViz::SDK
 			filterError = std::move(filterError),
 			shouldRetry = std::move(shouldRetry),
 			asyncCBExecMode,
-			requestDumpPath, attempt, retryInfo/*needs to be mutable*/]
+			requestDumpPath = std::move(requestDumpPath),
+			attempt, retryInfo/*needs to be mutable*/]
 			(RequestPtr const& request, Response& response) mutable
 		{
 			if (!requestDumpPath.empty())
 			{
-				// Dump response to temp folder.
-				std::ofstream(requestDumpPath/"response.json") << rfl::json::write(
-					RequestDump::Response{response.first, response.second}, YYJSON_WRITE_PRETTY);
-				if (!response.second.empty())
-					std::ofstream(requestDumpPath/"response.bin").write(
-						(const char*)response.second.data(), response.second.size());
+				// Dump response to the same temp folder.
+				RequestDump::DumpResponse(response.first, response.second, requestDumpPath);
 			}
 			if (!(*isValidLambda))
 			{
@@ -540,7 +474,7 @@ namespace AdvViz::SDK
 					if (bAllowRetry)
 					{
 						// Retry after a delay.
-						float const delayInSeconds = std::max(0.1f, retryInfo.first);
+						float const delayInSeconds = std::max(0.1f, this->retryDelayFactor_ * retryInfo.first);
 						std::string const delayedCallUniqueID = uniqueName_ + requestInfoCopy.ShortName;
 
 						UniqueDelayedCall(delayedCallUniqueID,
@@ -723,15 +657,11 @@ namespace AdvViz::SDK
 		}
 
 		std::filesystem::path requestDumpPath;
-		if (g_ShouldDumpRequests)
+		if (RequestDump::ShouldDumpRequests())
 		{
 			// Dump request to temp folder.
-			requestDumpPath = std::filesystem::temp_directory_path() / "iTwinRequestDump" /
-				RequestDump::GetRequestHash(requestInfo.UrlSuffix, requestInfo.ContentString.str());
-			std::filesystem::remove_all(requestDumpPath);
-			std::filesystem::create_directories(requestDumpPath);
-			std::ofstream(requestDumpPath / "request.json") << rfl::json::write(
-				RequestDump::Request{ requestInfo.UrlSuffix, requestInfo.ContentString.str() }, YYJSON_WRITE_PRETTY);
+			RequestDump::DumpRequest(
+				requestInfo.UrlSuffix, requestInfo.ContentString.str(), requestDumpPath);
 		}
 		using RequestPtr = HttpRequest::RequestPtr;
 		using Response = HttpRequest::Response;
@@ -740,17 +670,13 @@ namespace AdvViz::SDK
 			isValidLambda = isThisValid_,
 			requestInfoCopy = requestInfo,
 			resultCallback = std::move(InResultCallback),
-			requestDumpPath]
+			requestDumpPath = std::move(requestDumpPath)]
 		(RequestPtr const& request, Response const& response) mutable
 			{
 				if (!requestDumpPath.empty())
 				{
-					// Dump response to temp folder.
-					std::ofstream(requestDumpPath / "response.json") << rfl::json::write(
-						RequestDump::Response{ response.first, response.second }, YYJSON_WRITE_PRETTY);
-					if (!response.second.empty())
-						std::ofstream(requestDumpPath / "response.bin").write(
-							(const char*)response.second.data(), response.second.size());
+					// Dump response to the same temp folder.
+					RequestDump::DumpResponse(response.first, response.second, requestDumpPath);
 				}
 				if (!(*isValidLambda))
 				{
@@ -784,7 +710,7 @@ namespace AdvViz::SDK
 							if (bAllowRetry)
 							{
 								// Retry after a delay.
-								float const delayInSeconds = std::max(0.1f, retryInfo.first);
+								float const delayInSeconds = std::max(0.1f, this->retryDelayFactor_ * retryInfo.first);
 								std::string const delayedCallUniqueID = uniqueName_ + requestInfoCopy.ShortName;
 
 								UniqueDelayedCall(delayedCallUniqueID,
@@ -858,7 +784,7 @@ namespace AdvViz::SDK
 				setErrorGuard.release();
 			});
 
-			[requestDumpPath, InResultCallback = std::move(InResultCallback)](Http::Response& response)
+			[requestDumpPath = std::move(requestDumpPath), InResultCallback = std::move(InResultCallback)](Http::Response& response)
 			{
 				AdvViz::expected<Http::Response, std::string> result;
 				if (Http::IsSuccessful(response))
@@ -866,11 +792,8 @@ namespace AdvViz::SDK
 					if (!requestDumpPath.empty())
 					{
 						// Dump response to temp folder.
-						std::ofstream(requestDumpPath / "response.json") << rfl::json::write(
-							RequestDump::Response{ response.first, response.second }, YYJSON_WRITE_PRETTY);
-						if (!response.second.empty())
-							std::ofstream(requestDumpPath / "response.bin").write(
-								(const char*)response.second.data(), response.second.size());
+						// Dump response to the same temp folder.
+						RequestDump::DumpResponse(response.first, response.second, requestDumpPath);
 					}
 
 					result = std::move(response);
@@ -3388,530 +3311,6 @@ Content-Type: application/octet-stream
 			}
 			return bResult;
 		});
-	}
-
-	bool ITwinWebServices::IsSetupForForMaterialMLPrediction() const
-	{
-		return impl_->hasSetupMLMaterialAssignment_;
-	}
-
-	void ITwinWebServices::SetupForMaterialMLPrediction()
-	{
-		impl_->hasSetupMLMaterialAssignment_ = true;
-	}
-
-	void ITwinWebServices::SetMaterialMLPredictionCacheFolder(std::filesystem::path const& cacheFolder)
-	{
-		std::filesystem::path actualCacheFolder(cacheFolder);
-		if (!cacheFolder.empty())
-		{
-			// Create cache folder if needed.
-			std::error_code ec;
-			if (!std::filesystem::is_directory(cacheFolder, ec)
-				&& !std::filesystem::create_directories(cacheFolder, ec))
-			{
-				actualCacheFolder.clear();
-			}
-		}
-		impl_->matMLPredictionCacheFolder_ = actualCacheFolder;
-	}
-
-	ITwinAPIRequestInfo ITwinWebServices::Impl::BuildMatMLPredictionRequestInfo(EMatMLPredictionStep eStep)
-	{
-		BE_ASSERT(matMLPredictionInfo_
-			&& !matMLPredictionInfo_->iTwinId_.empty()
-			&& !matMLPredictionInfo_->iModelId_.empty());
-
-		// Post or Get
-		bool const usePost = (eStep == EMatMLPredictionStep::RunJob);
-		ITwinAPIRequestInfo requestInfo = {
-			fmt::format("MatMLPrediction_{}", static_cast<uint8_t>(eStep)),
-			usePost ? EVerb::Post : EVerb::Get,
-			"/material-assignment/jobs",
-			"application/vnd.bentley.itwin-platform.v1+json"
-		};
-
-		if (eStep >= EMatMLPredictionStep::GetJobStatus)
-		{
-			requestInfo.UrlSuffix += fmt::format("/{}", matMLPredictionInfo_->jobId_);
-			requestInfo.badlyFormed = matMLPredictionInfo_->jobId_.empty();
-		}
-
-		switch (eStep)
-		{
-		default:
-		case EMatMLPredictionStep::Init:
-		case EMatMLPredictionStep::Done:
-			BE_ISSUE("no request for this step");
-			requestInfo.badlyFormed = true;
-			break;
-
-		case EMatMLPredictionStep::RunJob:
-		{
-			requestInfo.ContentType = "application/json";
-			requestInfo.ContentString = std::string("{"
-				"\"iModelId\": \"") + matMLPredictionInfo_->iModelId_ + "\","
-				"\"changesetId\": \"" + matMLPredictionInfo_->changesetId_ + "\" }";
-			requestInfo.badlyFormed |= matMLPredictionInfo_->iModelId_.empty();
-			break;
-		}
-
-		case EMatMLPredictionStep::GetJobStatus:
-			break;
-
-		case EMatMLPredictionStep::GetJobResults:
-			requestInfo.UrlSuffix += "/materials";
-
-			if (matMLPredictionInfo_->jobResultURL_)
-			{
-				BE_ASSERT(matMLPredictionInfo_->jobResultURL_->starts_with("https://"));
-				requestInfo.UrlSuffix = *matMLPredictionInfo_->jobResultURL_;
-				requestInfo.isFullUrl = true;
-			}
-			break;
-		}
-		BE_ASSERT(!requestInfo.badlyFormed);
-		return requestInfo;
-	}
-
-	namespace Detail
-	{
-		struct InferenceInfo
-		{
-			std::string id;
-			std::string status;
-			std::optional<int> totalSteps;
-			std::optional<int> completedSteps;
-		};
-		struct InferenceInfoHolder
-		{
-			InferenceInfo inference;
-		};
-
-		struct JobLink
-		{
-			std::string href;
-		};
-		struct JobStatusLinks
-		{
-			JobLink materials;
-			JobLink iTwin;
-			JobLink iModel;
-		};
-
-		struct JobInfo
-		{
-			std::string jobId;
-			std::string status;
-			JobStatusLinks _links;
-		};
-		struct JobInfoHolder
-		{
-			JobInfo job;
-		};
-
-		struct Result
-		{
-			std::string id;
-			std::string name; // will always be "results.json" in our case
-			uint64_t size = 0;
-		};
-		struct ResultVec
-		{
-			std::vector<Result> results;
-		};
-
-		struct InferenceElementInfo
-		{
-			std::string id;
-			float confidence = 0.f;
-		};
-		struct InferenceMaterialEntry
-		{
-			std::string material; // name of the material - eg. "Wood"
-			std::vector<InferenceElementInfo> elements;
-		};
-		struct JobResultsHolder
-		{
-			std::vector<InferenceMaterialEntry> materials;
-		};
-
-		void TranslateTo(std::vector<InferenceMaterialEntry> const& MLOutput, ITwinMaterialPrediction& predictions)
-		{
-			auto& dstData(predictions.data);
-			dstData.clear();
-			dstData.reserve(MLOutput.size());
-			for (auto const& e : MLOutput)
-			{
-				auto& dstEntry = dstData.emplace_back();
-				dstEntry.material = e.material;
-				dstEntry.elements.reserve(e.elements.size());
-				std::transform(
-					e.elements.begin(), e.elements.end(),
-					std::back_inserter(dstEntry.elements),
-					[](InferenceElementInfo const& eltInfo) noexcept
-				{
-					return std::stoull(eltInfo.id, nullptr, /*base*/16);
-				});
-			}
-		}
-	}
-
-
-	void ITwinWebServices::Impl::ParseMatMLPredictionResponse(EMatMLPredictionStep eStep,
-		Http::Response const& response, RequestID const&,
-		MatMLPredictionParseResult& parseResult)
-	{
-		std::string& parsingError(parseResult.parsingError);
-		// Distinguish 2 kinds of errors: parsing vs failed job
-		bool& responseOK(parseResult.parsingOK);
-		bool& continueJob(parseResult.continueJob);
-
-		responseOK = continueJob = false;
-		parseResult.retryWithDelay = false; // specific to GetJobStatus
-
-		if (!Http::IsSuccessful(response))
-		{
-			parsingError = fmt::format("Error response code: {}", response.first);
-			return;
-		}
-
-		// Most of responses will consist in a description of current run.
-		Detail::JobInfoHolder body;
-		switch (eStep)
-		{
-		case EMatMLPredictionStep::RunJob:
-		{
-			responseOK = Json::FromString(body, response.second, parsingError);
-
-			continueJob = responseOK && !body.job.jobId.empty();
-			matMLPredictionInfo_->jobId_ = body.job.jobId;
-			if (continueJob && !matMLPredictionCacheFolder_.empty())
-			{
-				// Save current job info, in order to be able to resume in a future session, in case the
-				// user quits the application before the job terminates.
-				std::ofstream(GetMatMLInfoPath()) << rfl::json::write(
-					*matMLPredictionInfo_, YYJSON_WRITE_PRETTY);
-			}
-			break;
-		}
-
-		case EMatMLPredictionStep::GetJobStatus:
-		{
-			responseOK = Json::FromString(body, response.second, parsingError);
-			if (responseOK)
-			{
-				continueJob = true;
-				std::string const& status = body.job.status;
-				if (status == "Succeeded"
-					|| status == "Finished"
-					|| status == "Completed")
-				{
-					// Successful job. Store the result url, if any (note that this url is easy to
-					// reconstruct from the job ID, but make sure our code works if a custom url is given.
-					auto const& resultURL = body.job._links.materials.href;
-					matMLPredictionInfo_->jobResultURL_.reset();
-					if (!resultURL.empty())
-					{
-						BE_ASSERT(resultURL.starts_with("https://"));
-						matMLPredictionInfo_->jobResultURL_ = resultURL;
-					}
-				}
-				else if (status == "Failed")
-				{
-					// The inference has failed => abort
-					BE_LOGE("ITwinAPI", "[ML Material Prediction] A problem has occurred during the inference - abort job");
-
-					// Make sure the failed run will not be tested again in the future
-					RemoveMatMLInfoFile();
-
-					continueJob = false;
-				}
-				else
-				{
-					// Status can be "InProgress", "Queued"... => repeat request after a delay.
-					parseResult.retryWithDelay = true;
-				}
-			}
-			break;
-		}
-
-		case EMatMLPredictionStep::GetJobResults:
-		{
-			Detail::JobResultsHolder result;
-			auto& resultMaterials(result.materials);
-			responseOK = Json::FromString(result, response.second, parsingError);
-			continueJob = responseOK;
-			if (continueJob)
-			{
-				// Translate it in a format that is easier to handle by glTF Tuner
-				Detail::TranslateTo(resultMaterials, matMLPredictionInfo_->result_);
-
-				// Cache this result
-				if (!matMLPredictionCacheFolder_.empty())
-				{
-					std::ofstream(matMLPredictionCacheFolder_ / "results.json") << rfl::json::write(
-						matMLPredictionInfo_->result_, YYJSON_WRITE_PRETTY);
-				}
-			}
-			break;
-		}
-
-		default:
-		case EMatMLPredictionStep::Init:
-		case EMatMLPredictionStep::Done:
-			BE_ISSUE("no response expected for this step");
-			break;
-		}
-	}
-
-	bool ITwinWebServices::Impl::ProcessMatMLPredictionStepWithDelay(EMatMLPredictionStep eStep)
-	{
-		if (!observer_)
-		{
-			// This service helper is now orphan (the level may have been exited...)
-			return false;
-		}
-
-		// Repeat the same step after a delay
-		return UniqueDelayedCall(uniqueName_ + "MatMLPredictionPipeline",
-			[this, eStep, isValidLambda = isThisValid_]()
-			{
-				if (*isValidLambda)
-				{
-					ProcessMatMLPredictionStep(eStep);
-				}
-				return DelayedCall::EReturnedValue::Done;
-			}, 10.0 /* in seconds*/);
-	}
-
-	std::pair<float, int> ITwinWebServices::Impl::ShouldRetryMaterialMLStep(
-		EMatMLPredictionStep eStep, int attempt, int httpCode) const
-	{
-		if (!observer_)
-		{
-			// Do not retry if we are orphan (UE exiting...)
-			return std::make_pair(0.f, 0);
-		}
-		if (isResumingMatMLPrediction_)
-		{
-			// ...nor if we have resumed a previous job: in such case, the job we are requesting
-			// may have been destroyed on the server, typically if it was started a long time ago...
-			// In such case, we will restart from scratch.
-			return std::make_pair(0.f, 0);
-		}
-
-		// Some Material Prediction steps should *not* be retried
-		switch (eStep)
-		{
-		case EMatMLPredictionStep::GetJobResults:
-			return defaultShouldRetryFunc(attempt, httpCode);
-
-		default:
-		case EMatMLPredictionStep::Init:
-		case EMatMLPredictionStep::Done:
-			BE_ISSUE("invalid ML step");
-			[[fallthrough]];
-		case EMatMLPredictionStep::RunJob:
-		case EMatMLPredictionStep::GetJobStatus:
-			return std::make_pair(0.f, 0);
-		}
-	}
-
-	void ITwinWebServices::Impl::ResetMatMLJobData()
-	{
-		matMLPredictionInfo_->jobId_ = {};
-		matMLPredictionInfo_->result_ = {};
-	}
-
-	std::filesystem::path ITwinWebServices::Impl::GetMatMLInfoPath() const
-	{
-		return matMLPredictionCacheFolder_ / "info_v1.json";
-	}
-
-	void ITwinWebServices::Impl::RemoveMatMLInfoFile()
-	{
-		// Make sure the failed run will not be tested again in the future
-		if (!matMLPredictionCacheFolder_.empty())
-		{
-			std::error_code ec;
-			auto const matMLInfoFile = GetMatMLInfoPath();
-			if (std::filesystem::exists(matMLInfoFile, ec))
-			{
-				std::filesystem::remove(matMLInfoFile, ec);
-			}
-		}
-	}
-
-	void ITwinWebServices::Impl::ProcessMatMLPredictionStep(EMatMLPredictionStep eStep)
-	{
-		if (!hasSetupMLMaterialAssignment_)
-		{
-			BE_ISSUE("SetupForMaterialMLPrediction not called!");
-			return;
-		}
-		if (!matMLPredictionInfo_)
-		{
-			BE_ISSUE("MaterialMLPredictionInfo not initialized!");
-			return;
-		}
-		if (!observer_)
-		{
-			// This service helper is now orphan (the level may have been exited...)
-			return;
-		}
-		matMLPredictionInfo_->step_ = eStep;
-
-		ProcessHttpRequest(
-			BuildMatMLPredictionRequestInfo(eStep),
-			[this, eStep]
-			(Http::Response const& response, RequestID const& requestId, std::string& parsingError) -> bool
-			{
-				MatMLPredictionParseResult parseResult;
-				ParseMatMLPredictionResponse(eStep, response, requestId, parseResult);
-				parsingError = parseResult.parsingError;
-
-				if (parseResult.continueJob)
-				{
-					if (parseResult.retryWithDelay)
-					{
-						// Repeat the same step after a delay.
-						ProcessMatMLPredictionStepWithDelay(eStep);
-						return true;
-					}
-
-					EMatMLPredictionStep const nextStep = static_cast<EMatMLPredictionStep>(
-						uint8_t(eStep) + 1);
-					if (nextStep == EMatMLPredictionStep::Done)
-					{
-						// We are done - broadcast the result
-						matMLPredictionInfo_->step_ = EMatMLPredictionStep::Done;
-
-						if (observer_)
-						{
-							observer_->OnMatMLPredictionRetrieved(true, matMLPredictionInfo_->result_);
-						}
-					}
-					else
-					{
-						// Launch next request
-						ProcessMatMLPredictionStep(nextStep);
-					}
-				}
-				else if (isResumingMatMLPrediction_)
-				{
-					// Restart from the beginning
-					isResumingMatMLPrediction_ = false;
-					ResetMatMLJobData();
-					RemoveMatMLInfoFile();
-					ProcessMatMLPredictionStep(EMatMLPredictionStep::RunJob);
-				}
-				else
-				{
-					// Notify error and abort
-					matMLPredictionInfo_->step_ = EMatMLPredictionStep::Done;
-					if (observer_)
-					{
-						observer_->OnMatMLPredictionRetrieved(false, {}, owner_.GetRequestError(requestId));
-					}
-				}
-				return parseResult.parsingOK;
-			},
-			{} /*notifyRequestID*/,
-			{} /*filterError*/,
-			Http::EAsyncCallbackExecutionMode::MainThread,
-			std::bind(&ITwinWebServices::Impl::ShouldRetryMaterialMLStep,
-				this, eStep, std::placeholders::_1, std::placeholders::_2));
-	}
-
-
-	EITwinMatMLPredictionStatus ITwinWebServices::Impl::ProcessMatMLPrediction(
-		std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId)
-	{
-		if (!hasSetupMLMaterialAssignment_)
-		{
-			BE_ISSUE("SetupForMaterialMLPrediction not called!");
-			return EITwinMatMLPredictionStatus::Failed;
-		}
-		if (iTwinId.empty() || iModelId.empty())
-		{
-			BE_ISSUE("iTwin ID and iModel ID are required");
-			return EITwinMatMLPredictionStatus::Failed;
-		}
-		if (matMLPredictionInfo_
-			&& matMLPredictionInfo_->step_ != EMatMLPredictionStep::Init
-			&& matMLPredictionInfo_->step_ != EMatMLPredictionStep::Done)
-		{
-			return EITwinMatMLPredictionStatus::InProgress;
-		}
-
-		EMatMLPredictionStep initialStep = EMatMLPredictionStep::RunJob;
-		isResumingMatMLPrediction_ = false;
-
-		// Before starting a new run (which is heavy in resources), see if we have already cached some
-		// results, or at least created a run which is still in progress.
-		std::error_code ec;
-		if (!matMLPredictionCacheFolder_.empty()
-			&& std::filesystem::is_directory(matMLPredictionCacheFolder_, ec))
-		{
-			// See if we have cached a previous result
-			auto const matMLResultFile = matMLPredictionCacheFolder_ / "results.json";
-			if (std::filesystem::exists(matMLResultFile, ec))
-			{
-				ITwinMaterialPrediction reloadedResult;
-				std::ifstream ifs(matMLResultFile);
-				std::string parseError;
-				if (Json::FromStream(reloadedResult, ifs, parseError))
-				{
-					if (observer_)
-					{
-						observer_->OnMatMLPredictionRetrieved(true, reloadedResult);
-					}
-					return EITwinMatMLPredictionStatus::Complete;
-				}
-				else
-				{
-					std::filesystem::remove(matMLResultFile, ec);
-				}
-			}
-
-			// See if a job was already created
-			auto const matMLInfoFile = GetMatMLInfoPath();
-			if (std::filesystem::exists(matMLInfoFile, ec))
-			{
-				MaterialMLPredictionInfo reloadedInfo;
-				std::ifstream ifs(matMLInfoFile);
-				std::string parseError;
-				if (Json::FromStream(reloadedInfo, ifs, parseError)
-					&& !reloadedInfo.jobId_.empty())
-				{
-					matMLPredictionInfo_ = reloadedInfo;
-					initialStep = EMatMLPredictionStep::GetJobStatus;
-					isResumingMatMLPrediction_ = true;
-				}
-				else
-				{
-					std::filesystem::remove(matMLInfoFile, ec);
-				}
-			}
-		}
-
-		if (!matMLPredictionInfo_)
-			matMLPredictionInfo_.emplace();
-		matMLPredictionInfo_->iTwinId_ = iTwinId;
-		matMLPredictionInfo_->iModelId_ = iModelId;
-		matMLPredictionInfo_->changesetId_ = changesetId;
-
-		// Start the process by first step...
-		ProcessMatMLPredictionStep(initialStep);
-
-		return EITwinMatMLPredictionStatus::InProgress;
-	}
-
-	EITwinMatMLPredictionStatus ITwinWebServices::GetMaterialMLPrediction(
-		std::string const& iTwinId, std::string const& iModelId, std::string const& changesetId)
-	{
-		return impl_->ProcessMatMLPrediction(iTwinId, iModelId, changesetId);
 	}
 
 	void ITwinWebServices::Impl::OnGoogleCuratedContentAccessRetrieved(bool bSuccess,

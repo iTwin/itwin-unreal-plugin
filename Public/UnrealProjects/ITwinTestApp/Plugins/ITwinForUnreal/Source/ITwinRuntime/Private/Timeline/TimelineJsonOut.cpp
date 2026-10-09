@@ -219,7 +219,9 @@ template<typename JsonPrintPolicy> FString MainTimeline::ToJsonString() const
 	{
 		// If it pops, check TimelineCompareOrderedElementIDs :/
 		ensure(OrderedTimelines.end() == OrderedTimelines.find(ElementTimeline));
-		OrderedTimelines.insert(ElementTimeline);
+		// CreateTimelineKeyframesWithTaskDependencies can empty some timelines :/ (why?)
+		if (!ElementTimeline->GetIModelElements().empty())
+			OrderedTimelines.insert(ElementTimeline);
 	}
 	for (auto&& ElementTimeline : OrderedTimelines)
 	{

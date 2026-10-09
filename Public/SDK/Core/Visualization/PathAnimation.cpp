@@ -99,7 +99,7 @@ namespace AdvViz::SDK
 
 	double AnimationPathInfo::GetSpeed() const
 	{
-		return GetImpl().serverSideData_.speed.value_or(700.0); // in m/s
+		return GetImpl().serverSideData_.speed.value_or(750.); // in m/s
 	}
 
 	void AnimationPathInfo::SetOffsetX(double v)
@@ -209,7 +209,7 @@ namespace AdvViz::SDK
 
 	double AnimationPathInfo::GetLaneWidth() const
 	{
-		return GetImpl().serverSideData_.laneWidth.value_or(300.0);
+		return GetImpl().serverSideData_.laneWidth.value_or(320.0);
 	}
 
 	void AnimationPathInfo::SetDensity(double v)

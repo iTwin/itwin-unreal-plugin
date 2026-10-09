@@ -109,6 +109,12 @@ template<typename> class TTaskAwaiter;
 template<typename>
 constexpr bool bFalse = false;
 
+struct FAwaitingPromise
+{
+	FPromise* Promise;
+	FAwaitingPromise* Next;
+};
+
 // On Windows, both std::mutex and std::shared_mutex are SRWLOCKs, but mutex
 // has extra padding for ABI compatibility. Prefer shared_mutex for now.
 #ifdef _MSVC_STL_VERSION

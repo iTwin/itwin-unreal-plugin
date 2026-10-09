@@ -1,4 +1,4 @@
-// Copyright 2020-2025 Bentley Systems, Inc. and Contributors
+// Copyright 2020-2026 CesiumGS, Inc. and Contributors
 
 #include "CesiumGaussianSplatSubsystem.h"
 
@@ -121,6 +121,20 @@ void UCesiumGaussianSplatSubsystem::Initialize(
 
 void UCesiumGaussianSplatSubsystem::Deinitialize() {
   this->_isTickEnabled = false;
+
+  // The splat actor, its Niagara component, and the world they live in are
+  // owned elsewhere, and the raw pointers to them are invisible to the
+  // garbage collector. During engine shutdown the world and everything in it
+  // may already be destroyed by the time this function runs, leaving the
+  // pointers dangling and even IsValid() unsafe to call on them (#1879).
+  // Everything is being torn down anyway, so simply drop the references.
+  if (IsEngineExitRequested()) {
+    this->_pNiagaraActor = nullptr;
+    this->_pNiagaraComponent = nullptr;
+    this->_pLastCreatedWorld = nullptr;
+    this->SplatComponents.Empty();
+    return;
+  }
 
   if (IsValid(this->_pNiagaraActor)) {
     this->_pNiagaraActor->Destroy();

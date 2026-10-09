@@ -91,7 +91,7 @@ class FITwinSynchro4DAnimator::FImpl
 					   std::optional<std::pair<double const&, double const&>> const& TimeIncrement,
 					   std::optional<ITwinScene::TileIdx> OnlySceneTile, bool const bOnlyVisibleTiles);
 	/// \param OnlyThisTile If nullptr, stop animation in all tiles
-	void StopAnimationInTiles(const TITwinSceneTilePtr& OnlyThisTile = {});
+	void ResetAnimationInTiles(const TITwinSceneTilePtr& OnlyThisTile = {});
 
 public:
 	FImpl(FITwinSynchro4DAnimator& InOwner) : Owner(InOwner) {}
@@ -124,8 +124,7 @@ void FITwinSynchro4DAnimator::ManageMeshDynamicShadows(FITwinSynchro4DSchedulesI
 void FITwinSynchro4DAnimator::TickAnimation(float DeltaTime, bool const bForceUpdateAll)
 {
 	auto&& SchedInternals = GetInternals(Owner);
-	if (SchedInternals.PrefetchWholeSchedule()
-		&& !SchedInternals.IsPrefetchedAvailableAndApplied())
+	if (!SchedInternals.IsAvailableAndApplied())
 	{
 		ensure(false); return;
 	}
@@ -170,6 +169,16 @@ bool FITwinSynchro4DAnimator::IsPlaying() const
 	return Impl->bIsPlaying;
 }
 
+bool FITwinSynchro4DAnimator::IsPaused() const
+{
+	return Impl->bIsPaused;
+}
+
+bool FITwinSynchro4DAnimator::IsStopped() const
+{
+	return !IsPlaying() && !IsPaused();
+}
+
 void FITwinSynchro4DAnimator::Pause()
 {
 	if (Impl->bIsPlaying)
@@ -184,9 +193,12 @@ void FITwinSynchro4DAnimator::Pause()
 void FITwinSynchro4DAnimator::Stop()
 {
 	auto&& SchedInternals = GetInternals(Owner);
-	if (SchedInternals.PrefetchWholeSchedule()
-		&& !SchedInternals.IsPrefetchedAvailableAndApplied())
+	if (!SchedInternals.IsAvailableAndApplied())
 	{
+		// Allow to contradict the default behavior of applying 4D once the schedule is available!
+		Impl->bIsPaused = false;
+		Impl->bIsPlaying = false;
+		Impl->bPrevIsPlaying.reset();
 		return;
 	}
 	if (Impl->bIsPlaying)
@@ -197,16 +209,21 @@ void FITwinSynchro4DAnimator::Stop()
 	{
 		Impl->LastAnimationTime.reset();
 		Impl->bIsPaused = false;
-		Impl->StopAnimationInTiles();
+		Impl->ResetAnimationInTiles();
 	}
 }
 
-void FITwinSynchro4DAnimator::DisableAnimationInTile(const TITwinSceneTilePtr& SceneTilePtr)
+void FITwinSynchro4DAnimator::ResetAnimation()
 {
-	Impl->StopAnimationInTiles(SceneTilePtr);
+	Impl->ResetAnimationInTiles();
 }
 
-void FITwinSynchro4DAnimator::FImpl::StopAnimationInTiles(const TITwinSceneTilePtr& OnlyThisTile/*= nullptr*/)
+void FITwinSynchro4DAnimator::ResetAnimationInTile(const TITwinSceneTilePtr& SceneTilePtr)
+{
+	Impl->ResetAnimationInTiles(SceneTilePtr);
+}
+
+void FITwinSynchro4DAnimator::FImpl::ResetAnimationInTiles(const TITwinSceneTilePtr& OnlyThisTile/*= nullptr*/)
 {
 	auto* IModel = Cast<AITwinIModel>(Owner.Owner.GetOwner());
 	if (!IModel)
@@ -225,8 +242,8 @@ void FITwinSynchro4DAnimator::FImpl::StopAnimationInTiles(const TITwinSceneTileP
 			SceneTile.ForEachExtractedEntity([](FITwinExtractedEntity& Extracted)
 				{
 					if (Extracted.TransformableMeshComponent.IsValid())
-						Extracted.TransformableMeshComponent->SetWorldTransform(Extracted.OriginalTransform, false,
-							nullptr, ETeleportType::TeleportPhysics);
+						Extracted.TransformableMeshComponent->SetWorldTransform(
+							Extracted.OriginalTransform, false, nullptr, ETeleportType::TeleportPhysics);
 				});
 			SchedInternals.HideNonAnimatedDuplicates(SceneTilePtr, NonAnimatedDuplicates);
 		};
@@ -253,8 +270,7 @@ void FITwinSynchro4DAnimator::OnChangedAnimationSpeed()
 void FITwinSynchro4DAnimator::OnChangedScheduleRenderSetting()
 {
 	auto&& SchedInternals = GetInternals(Owner);
-	if (SchedInternals.PrefetchWholeSchedule()
-		&& !SchedInternals.IsPrefetchedAvailableAndApplied())
+	if (!SchedInternals.IsAvailableAndApplied())
 	{
 		return;
 	}
@@ -270,8 +286,7 @@ void FITwinSynchro4DAnimator::OnMaskOutNonAnimatedElements()
 void FITwinSynchro4DAnimator::OnFadeOutNonAnimatedElements()
 {
 	auto&& SchedInternals = GetInternals(Owner);
-	if (SchedInternals.PrefetchWholeSchedule()
-		&& !SchedInternals.IsPrefetchedAvailableAndApplied())
+	if (!SchedInternals.IsAvailableAndApplied())
 	{
 		return;
 	}
@@ -515,8 +530,7 @@ void FITwinSynchro4DAnimator::FImpl::ApplyAnimation(bool const bForceUpdateAll)
 {
 	auto const& Schedules = Owner.Owner;
 	auto&& SchedInternals = GetInternals(Schedules);
-	if (SchedInternals.PrefetchWholeSchedule()
-		&& !SchedInternals.IsPrefetchedAvailableAndApplied())
+	if (!SchedInternals.IsAvailableAndApplied())
 	{
 		ensure(false); return;
 	}
@@ -526,9 +540,7 @@ void FITwinSynchro4DAnimator::FImpl::ApplyAnimation(bool const bForceUpdateAll)
 		return;
 
 	if (!IModelInvariants)
-	{
 		IModelInvariants.emplace(*IModel);
-	}
 	bool bWaitingForTextures = false;
 	auto SceneMappingLocked = IModelInvariants->Internals.SceneMapping->GetAutoLock();
 	if (SceneMappingLocked->TilesHaveNew4DAnimTextures(bWaitingForTextures))
@@ -805,14 +817,15 @@ void FITwinSynchro4DAnimator::ApplyAnimationOnTile(const TITwinSceneTilePtr& Sce
 		auto&& SchedInternals = GetInternals(Owner);
 		if (!Impl->bIsPlaying && !Impl->bIsPaused) // ie Stopped
 		{
-			Impl->StopAnimationInTiles(SceneTilePtr);
+			Impl->ResetAnimationInTiles(SceneTilePtr);
 			return;
 		}
-		if (SchedInternals.PrefetchWholeSchedule()
-			&& !SchedInternals.IsPrefetchedAvailableAndApplied())
+		if (!SchedInternals.IsAvailableAndApplied())
 		{
 			return;
 		}
+		if (!Impl->IModelInvariants)
+			Impl->IModelInvariants.emplace(*IModel);
 		auto&& AllTimelines = SchedInternals.GetTimeline().GetContainer();
 		IModelInternals = &GetInternals(*IModel);
 		auto SceneMappingLocked = IModelInternals->SceneMapping->GetRAutoLock();
@@ -836,12 +849,13 @@ namespace ITwin::Timeline::Interpolators {
 // Slightly less-than-basic interpolators
 //---------------------------------------------------------------------------------------
 
-template<> inline FContinue Default::operator ()<FTransform>(
-	FTransform& Out, FTransform const& x0, FTransform const& x1, float u, void* /*userData*/) const
-{
-	Out.Blend(x0, x1, u);
-	return Continue;
-}
+// UNUSED - be careful with "smart" interpolation and 4D keyframes, see earlier attempt with FQuat: #2129717
+//template<> inline FContinue Default::operator ()<FTransform>(
+//	FTransform& Out, FTransform const& x0, FTransform const& x1, float u, void* /*userData*/) const
+//{
+//	Out.Blend(x0, x1, u);
+//	return Continue;
+//}
 
 template<> inline FContinue Default::operator ()<ITwin::Flag::FPresence>(
 	ITwin::Flag::FPresence& Out, ITwin::Flag::FPresence const& x0, ITwin::Flag::FPresence const& x1,

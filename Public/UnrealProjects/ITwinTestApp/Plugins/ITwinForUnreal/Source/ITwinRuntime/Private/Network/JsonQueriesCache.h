@@ -6,11 +6,11 @@
 |
 +--------------------------------------------------------------------------------------*/
 
-
 #pragma once
 
 #include "HttpUtils.h"
 #include "JsonQueriesCacheTypes.h"
+#include <ITwinHttpUtils.h>
 
 #include <Dom/JsonObject.h>
 #include <Interfaces/IHttpRequest.h>
@@ -32,7 +32,6 @@ namespace QueriesCache
 		Schedules,
 		DEPRECATED_ElementsHierarchies,
 		DEPRECATED_ElementsSourceIDs,
-		MaterialMLPrediction,
 		ElementsMetadataCombined,
 		ElementsMetadataNoBBoxes,
 		ElementsMetadataBBoxes,
@@ -72,14 +71,14 @@ class FJsonQueriesCache
 	void ToJson(FHttpRequestPtr const& Req, TSharedRef<FJsonObject>& JsonObj) const;
 	void ToJson(AdvViz::SDK::ITwinAPIRequestInfo const& Req, TSharedRef<FJsonObject>& JsonObj) const;
 	void Write(TSharedRef<FJsonObject>& JsonObj, int const ResponseCode,
-		FString const& ContentAsString, bool const bConnectedSuccessfully, bool const bRequestSucceeded,
-		ITwinHttp::FMutex& Mutex, int const QueryTimestamp);
+		FString const& ContentAsString, ITwinHttp::ConnectionSuccess fConnectedSuccessfully,
+		bool const bRequestSucceeded, int const QueryTimestamp);
+	bool IsValid() const;
 
 public:
-	explicit FJsonQueriesCache(UObject const& Owner);
+	explicit FJsonQueriesCache(UObject const& Owner, ITwinHttp::FMutex& Mutex);
 	~FJsonQueriesCache();
 
-	bool IsValid() const;
 	bool IsUnitTesting() const;
 	/// Actually initializes the cache for your "session"
 	[[nodiscard]] bool Initialize(FString CacheFolder, EITwinEnvironment const Environment,
@@ -93,23 +92,32 @@ public:
 	[[nodiscard]] bool LoadSessionSimulation(FString const& SimulateFromFolder);
 	/// Deletes the filesystem folder containing the cache data
 	void ClearFromDisk();
+	FString CacheFolder() const;
 
-	/// Read a request's reply from the cache, based on the handle returned by one of the LookUp methods
-	[[nodiscard]] TSharedPtr<FJsonObject> Read(QueriesCache::FSessionMap::const_iterator const It) const;
+	/// Read a request's reply from the cache, based on the filepath returned by one of the LookUp methods
+	static [[nodiscard]] TSharedPtr<FJsonObject> Read(FString&& CacheEntryPath);
 
 	/// Look up the response to an Unreal Http request in the cache. Note: AcceptHeader, ContentType and
 	/// custom headers are not taken into account for indexing. When non-empty, pass the resulting
-	/// iterator to Read to actually load and parse the response Json.
+	/// file path to Read to actually load and parse the response Json.
+	/// \param EraseParameter Redact a parameter from the passed Request's URL before looking up the request
+	///		(used for "$deltaToken"). This will NOT erase the parameter from the URL of the cache entries, so
+	///		that those will never be returned by this method when using this parameter.
+	///		Search is case-sensitive.
 	/// \return Empty object on cache miss
-	[[nodiscard]] std::optional<QueriesCache::FSessionMap::const_iterator> LookUp(
-		FHttpRequestPtr const& Request, ITwinHttp::EVerb const Verb, ITwinHttp::FMutex& Mutex) const;
+	[[nodiscard]] std::optional<FString> LookUp(FHttpRequestPtr const& Request, ITwinHttp::EVerb const Verb,
+		bool bUnsetDroppableFlagOnHit, std::optional<FString> EraseParameter = {}) const;
+	/// Same as above, but with the caller already holding a lock on the cache's mutex, which is required for the
+	/// returned iterator to remain valid until the caller releases the lock.
+	[[nodiscard]] std::optional<QueriesCache::FCacheMap::const_iterator> LookUp(ITwinHttp::FLock& Lock,
+		FHttpRequestPtr const& Request, ITwinHttp::EVerb const Verb, bool bUnsetDroppableFlagOnHit,
+		std::optional<FString> EraseParameter = {}) const;
 
 	/// Look up the response to an AdvViz::SDK request in the cache. Note: AcceptHeader, ContentType and
 	/// custom headers are not taken into account for indexing. When non-empty, pass the resulting
-	/// iterator to Read to actually load and parse the response Json
+	/// file path to Read to actually load and parse the response Json.
 	/// \return Empty object on cache miss
-	[[nodiscard]] std::optional<QueriesCache::FSessionMap::const_iterator> LookUp(
-		AdvViz::SDK::ITwinAPIRequestInfo const& RequestInfo, ITwinHttp::FMutex& Mutex) const;
+	[[nodiscard]] std::optional<FString> LookUp(AdvViz::SDK::ITwinAPIRequestInfo const& RequestInfo) const;
 
 	/// Save the response to an Unreal Http query in the cache
 	/// \parameter CompletedRequest Request for which we just obtained a response
@@ -117,13 +125,28 @@ public:
 	///		instead except that it's practical for inspection to have files with "simple" names made from 
 	///		integers like "00000004_res_00000002.json" instead of using GUIDs
 	void Write(FHttpRequestPtr const& CompletedRequest, FHttpResponsePtr const Response,
-		bool const bConnectedSuccessfully, ITwinHttp::FMutex& Mutex, int const QueryTimestamp = -1);
-	void Write(AdvViz::SDK::ITwinAPIRequestInfo const& CompletedRequest,
-		FString const& QueryResult, bool const bConnectedSuccessfully, ITwinHttp::FMutex& Mutex,
-		int const QueryTimestamp = -1);
+		ITwinHttp::ConnectionSuccess bConnectedSuccessfully, int const QueryTimestamp = -1);
+	void Write(AdvViz::SDK::ITwinAPIRequestInfo const& CompletedRequest, FString const& QueryResult,
+		ITwinHttp::ConnectionSuccess bConnectedSuccessfully, int const QueryTimestamp = -1);
+
+	/// \see FReusableJsonQueries::OnDeltaTokenExpired
+	/// \param bMarkSimilarAsDroppable When true, will traverse the whole cache and mark 'droppable' ALL entries
+	///		sharing the same URL and parameters *after* removing any continuationToken parameter. It would have been
+	///		better to rely on 'nextPageToken' to rebuild the actual chaining, but it would have meant parsing a
+	///		possibly large number of multi-MB replies (or at least reading the files to memory, even if actually
+	///		parsing the JSON structure were skipped by simply grepping for the token.
+	///		Only intended and to be used with GET requests.
+	/// \param SimilarIgnoreParam URL parameter allowed to differ when looking for "similar" cache entries
+	/// \return Number of entries marked droppable, if bMarkSimilarAsDroppable is true. Zero otherwise.
+	size_t EraseEntry(QueriesCache::FCacheMap::const_iterator Entry, bool bMarkSimilarAsDroppable,
+		ITwinHttp::FLock& Lock, FString const& SimilarIgnoreParam = {}, int32 SimilarParamMaxLengthHint = -1);
+
+	/// \see FReusableJsonQueries::OnDeltaTokenExpired
+	/// \return Number of entries erased.
+	size_t EraseDroppableEntries();
 
 	/// Internal use (public unless you know how to befriend a private nested class of a template class...)
 	[[nodiscard]] int CurrentTimestamp() const;
 	/// Internal use (public unless you know how to befriend a private nested class of a template class...)
-	void RecordQuery(FHttpRequestPtr const& Request, ITwinHttp::FMutex& Mutex);
+	void RecordQuery(FHttpRequestPtr const& Request);
 };

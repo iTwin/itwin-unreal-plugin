@@ -1,5 +1,30 @@
 # Change Log {#changes}
 
+### v2.30.0 - 2026-10-01
+
+##### Additions :tada:
+
+- Added support for styling features in `ACesium3DTileset` with Blueprints, using a specified `BlueprintStyleClass` that implements `ICesium3DTilesStylingProvider` on `UCesiumFeaturesMetadataComponent`.
+- Added support for per-element styling on `CesiumVectorTilesRasterOverlay`, using either a specified Blueprint class implementing `ICesiumVectorTilesStylingCallbacks` or a C++ class derived from `CesiumVectorOverlays::VectorStylingProvider`. 
+
+##### Fixes :wrench:
+
+- Fixed a bug that made `FCesiumCamera` use incorrect parameters when its source was set to `ECameraParameterSource::CameraComponent`.
+
+### v2.29.1 - 2026-09-01
+
+This release updates [cesium-native](https://github.com/CesiumGS/cesium-native) from v0.63.0 to v0.64.0. See the [changelog](https://github.com/CesiumGS/cesium-native/blob/main/CHANGES.md) for a complete list of changes in cesium-native.
+
+### v2.29.0 - 2026-08-03
+
+##### Breaking Changes :mega:
+
+- Removed support for Unreal Engine 5.5. Unreal Engine 5.6 or later is now required.
+
+##### Additions :tada:
+
+- Added support for rendering points with `BENTLEY_materials_points_style`.
+
 ### v2.28.0 - 2026-07-01
 
 This is the last release that will support Unreal 5.5. Future versions will require Unreal 5.6+.

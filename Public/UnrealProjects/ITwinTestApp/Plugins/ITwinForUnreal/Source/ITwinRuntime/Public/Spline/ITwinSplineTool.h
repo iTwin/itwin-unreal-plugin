@@ -89,7 +89,7 @@ public:
 
 	//! Deletes the spline passed as parameter, and its associated cartographic polygon (if any).
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
-	void DeleteSpline(AITwinSplineHelper* SplineHelper);
+	void DeleteSpline(AITwinSplineHelper* SplineHelper, bool bTriggeredFromITS);
 
 	//! Deletes the spline passed as parameter at scene load time (without broadcasting any events).
 	void DeleteSplineAtLoad(AITwinSplineHelper* SplineHelper);
@@ -101,11 +101,11 @@ public:
 
 	//! Deletes the selected point.
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
-	void DeleteSelectedPoint();
+	bool DeleteSelectedPoint();
 
 	//! Duplicate the selected point.
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
-	void DuplicateSelectedPoint();
+	bool DuplicateSelectedPoint();
 
 	//! Enables the automatic duplication of the currently selected point when the user starts moving it.
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
@@ -133,6 +133,10 @@ public:
 	//! determined by the layer intersected upon the first click.
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
 	void ToggleInteractiveCreationMode(bool bTriggeredFromITS = false, bool bAutoSelectCutoutTarget = false);
+
+	//! Toggle the interactive edition mode for the selected spline.
+	//! Currently this feature is only used for animation paths.
+	void ToggleInteractiveEditionMode();
 
 	//! Returns the current spline tool destination usage.
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
@@ -197,7 +201,7 @@ public:
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
 	void StartBlendedCameraMovement(FTransform const& NewCameraTransform);
 
-	//! Adds a new spline at specified position, for the given usage.
+	//! Adds a new spline at specified position, for the usage currently defined for this tool.
 	AITwinSplineHelper* AddSpline(FVector const& Position, TArray<FVector> const& CustomSplinePoints = {});
 
 	//! Adds a spline loaded from the decoration service.
@@ -220,7 +224,7 @@ public:
 	FSplineOrPointRemovedEvent SplinePointRemovedEvent;
 	UPROPERTY()
 	FSplineOrPointRemovedEvent SplineRemovedEvent;
-	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FSplineBeforeRemoveEvent, AITwinSplineHelper*, SplineBeingRemoved);
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FSplineBeforeRemoveEvent, AITwinSplineHelper*, SplineBeingRemoved, bool, bTriggeredFromITS);
 	UPROPERTY()
 	FSplineBeforeRemoveEvent SplineBeforeRemovedEvent;
 
@@ -236,9 +240,9 @@ public:
 	UPROPERTY()
 	FSplinePointSelectedEvent SplinePointSelectedEvent;
 
-	DECLARE_DYNAMIC_MULTICAST_DELEGATE(FCutoutPolygonSelectedEvent);
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE(FSplineSelectedEvent);
 	UPROPERTY()
-	FCutoutPolygonSelectedEvent CutoutPolygonSelectedEvent;
+	FSplineSelectedEvent SplineSelectedEvent;
 
 	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FSplinePointMovedEvent, bool, bMovedInITS);
 	UPROPERTY()
@@ -263,6 +267,8 @@ public:
 protected:
 	virtual void SetEnabledImpl(bool bValue) override;
 	virtual bool IsEnabledImpl() const override;
+	virtual bool IsPopulationToolImpl() const override;
+	virtual void SetUsedForPopulationImpl(bool bForPopulation) override;
 	virtual void SetUsedOnCutoutPrimitiveImpl(bool bForCutout) override;
 	virtual bool IsUsedOnCutoutPrimitiveImpl() const override;
 	virtual void SetUsedForPathAnimImpl(bool bForPathAnim) override;

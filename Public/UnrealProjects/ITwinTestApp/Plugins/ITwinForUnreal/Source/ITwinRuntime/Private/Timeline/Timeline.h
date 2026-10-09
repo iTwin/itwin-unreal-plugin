@@ -243,6 +243,7 @@ class MainTimeline : public MainTimelineBase<ElementTimelineEx>
 	bool bHasNewOrModifiedTimeline_ = false;
 
 public:
+	void ClearTimelinesData() override;
 	void OnElementsTimelineModified(ElementTimelineEx& ModifiedTimeline);
 	bool TestNewOrModifiedAndResetFlag() {
 		bool tmp = bHasNewOrModifiedTimeline_; bHasNewOrModifiedTimeline_ = false; return tmp;
@@ -262,6 +263,7 @@ public:
 	/// Only reuse the timeline index in the container, reassigning it to the new Elements key: none of the members
 	/// are preserved.
 	void ResetElementTimelineFor(int TimelineIndex, FIModelElementsKey const& NewIModelElementsKey);
+	void SwapWithLastAndDelete(int TimelineIndex);
 
 	/// Dumps the timelines as an array of individual FElementsGroup timelines: since this is used for
 	/// unit testing, the array is ordered with respect to FElementsGroup's Elements, not to any

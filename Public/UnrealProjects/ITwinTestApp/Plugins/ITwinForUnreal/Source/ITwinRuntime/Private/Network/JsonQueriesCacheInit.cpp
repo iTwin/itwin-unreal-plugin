@@ -6,7 +6,6 @@
 |
 +--------------------------------------------------------------------------------------*/
 
-
 #include "JsonQueriesCacheInit.h"
 
 #include <Compil/BeforeNonUnrealIncludes.h>
@@ -15,6 +14,7 @@
 	#include <Core/Tools/JsonCacheUtilities.h>
 #include <Compil/AfterNonUnrealIncludes.h>
 
+#include <HAL/PlatformFileManager.h>
 #include <Misc/Paths.h>
 
 #include <optional>
@@ -92,7 +92,7 @@ bool FRecordDirIterator::Visit(const TCHAR* Filename, bool bIsDirectory) /*overr
 
 		bIsReply = true;
 		errno = 0;
-		FSessionMap::iterator SessionMapIt = SessionMap.end();
+		FCacheMap::iterator CacheMapIt = CacheMap.end();
 		if (bSimulationMode)
 		{
 			auto const ReplyToTimestamp = FCString::Strtoi(*OutArray[2], nullptr, 10);
@@ -108,35 +108,34 @@ bool FRecordDirIterator::Visit(const TCHAR* Filename, bool bIsDirectory) /*overr
 			if (!ReplayMap->try_emplace(Timestamp, ReplyToTimestamp).second)
 				{ ensure(false); return false; }
 			bool bWrongType = false;
-			std::visit([&bWrongType, &SessionMapIt, this](auto&& Var)
+			std::visit([&bWrongType, &CacheMapIt, this](auto&& Var)
 				{
 					using T = std::decay_t<decltype(Var)>;
 					if constexpr (std::is_same_v<T, FString>)
-						SessionMapIt = SessionMap.find(Var);
+						CacheMapIt = CacheMap.find(QueriesCache::FQueryKey(Var, {}));
 					else if constexpr (std::is_same_v<T, FQueryKey>)
-						SessionMapIt = SessionMap.find(Var);
+						CacheMapIt = CacheMap.find(Var);
 					else if constexpr (std::is_same_v<T, int32>)
 						bWrongType = true;//should have gotten a query, but this is a reply!
 					else static_assert(always_false_v<T>, "non-exhaustive visitor!");
 				},
 				QueryInReplay->second);
-			if (bWrongType || SessionMap.end() == SessionMapIt)
+			if (bWrongType || CacheMap.end() == CacheMapIt)
 				{ ensure(false); return false; }
 		}
 		else
 		{
-			// do like in "query" case below, but only on SessionMap
-			FSessionMap::key_type Key;
-			if (Reply.Req.value_.verb == "POST")
-				Key = FQueryKey(Reply.Req.value_.url.c_str(), Reply.Req.value_.payload->c_str());
-			else // GET
-				Key = FString(Reply.Req.value_.url.c_str());
-			auto Inserted = SessionMap.try_emplace(Key, FString{});
+			// do like in "query" case below, but only on CacheMap
+			auto Inserted = CacheMap.try_emplace(
+				FQueryKey(
+					Reply.Req.value_.url.c_str(),
+					FString((Reply.Req.value_.verb == "POST") ? Reply.Req.value_.payload->c_str() : "")),
+				FEntry{});
 			if (!Inserted.second) { ensure(false); return false; }
-			SessionMapIt = Inserted.first;
+			CacheMapIt = Inserted.first;
 		}
 		if (Reply.connectedSuccessfully)
-			SessionMapIt->second = Filename;
+			CacheMapIt->second.ReplyFilepath = Filename;
 	}
 	else if (/*bSimulationMode &&*/OutArray.Num() == 2 && OutArray[1] == TEXT("req")) // query
 	{
@@ -148,7 +147,7 @@ bool FRecordDirIterator::Visit(const TCHAR* Filename, bool bIsDirectory) /*overr
 		}
 		if (!Query.IsValid())
 			{ ensure(false); return false; }
-		FSessionMap::key_type SimuKey;
+		FCacheMap::key_type SimuKey;
 		FReplayMap::mapped_type Mapped;
 		// SimuKey and Mapped are not the same variant type, hence the redundancy:
 		if (Query.verb == "POST")
@@ -158,16 +157,57 @@ bool FRecordDirIterator::Visit(const TCHAR* Filename, bool bIsDirectory) /*overr
 		}
 		else // GET
 		{
-			SimuKey = FString(Query.url.c_str());
-			Mapped  = FString(Query.url.c_str());
+			SimuKey = FQueryKey(Query.url.c_str(), {});
+			Mapped  = FQueryKey(Query.url.c_str(), {});
 		}
 		if (!ReplayMap->try_emplace(Timestamp, Mapped).second)
 			{ ensure(false); return false; }
-		if (!SessionMap.try_emplace(SimuKey, FString{}).second)
+		if (!CacheMap.try_emplace(SimuKey, FString{}).second)
 			{ ensure(false); return false; }
 	}
 	else if (!ensure(bIsReply)) { return false; }
 	return true;
+}
+
+FChangesetFinderIterator::FChangesetFinderIterator(FString&& InLatestChangesetJson)
+	: LatestChangesetJson(InLatestChangesetJson)
+{
+	int32 LastUnderscoreIndex;
+	if (LatestChangesetJson.EndsWith(TEXT(".json"))
+		&& LatestChangesetJson.FindLastChar(TEXT('_'), LastUnderscoreIndex))
+	{
+		BaseFilename = LatestChangesetJson.Left(LastUnderscoreIndex);
+	}
+	else
+	{
+		ensure(false);
+		BaseFilename = LatestChangesetJson; // to avoid matching anything
+	}
+}
+
+bool FChangesetFinderIterator::Visit(const TCHAR* Filename, bool bIsDirectory)
+{
+	if (bIsDirectory)
+		return true;
+	FString const LeafName = FPaths::GetCleanFilename(Filename);
+	if (!LeafName.StartsWith(BaseFilename) || LeafName == LatestChangesetJson)
+		return true;
+	OtherChangesetJsons.Add(Filename);
+	return true;
+}
+
+TArray<FString> const& FChangesetFinderIterator::GetOtherChangesetJsonsFound() const
+{
+	return OtherChangesetJsons;
+}
+
+void FChangesetFinderIterator::DeleteOtherChangesetJsons() const
+{
+	IPlatformFile& FileManager = FPlatformFileManager::Get().GetPlatformFile();
+	for (FString const& OtherChangesetJson : OtherChangesetJsons)
+	{
+		FileManager.DeleteFile(*OtherChangesetJson);
+	}
 }
 
 } // ns JsonQueriesCache

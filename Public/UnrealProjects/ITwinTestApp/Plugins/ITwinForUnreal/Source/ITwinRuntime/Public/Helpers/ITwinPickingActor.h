@@ -25,7 +25,21 @@ UCLASS()
 class ITWINRUNTIME_API AITwinPickingActor : public AActor
 {
 	GENERATED_BODY()
+	using Super = AActor;
 public:
+	AITwinPickingActor();
+	virtual void PostLoad() override;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "iTwin")
+	bool bEnablePicking = false;
+
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif
+
+	UFUNCTION(BlueprintCallable, Category = "iTwin")
+	void PickUnderCursor();
+
 	/// Determine the position some properties of the first visible object below the mouse cursor in the
 	/// viewport. Does _not_ select the Element (in case of iModel geometry).
 	/// \param ElementId In case of iModel geometry, return the ElementId of the face hit.
@@ -60,14 +74,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "iTwin")
 	void DeSelect(AITwinIModel* iModel);
 
-	DECLARE_EVENT_OneParam(AITwinPickingActor, FElementPicked, FString);
-	FElementPicked& OnElementPicked() { return ElementPickedEvent; }
-
 	UPROPERTY(BlueprintAssignable, Category = "iTwin")
 	FOnMaterialPicked OnMaterialPicked;
 
 	UPROPERTY(BlueprintAssignable, Category = "iTwin")
 	FOnElemPicked OnElemPicked;
+
 private:
-	FElementPicked ElementPickedEvent;
+	void OnToggledPicking();
 };

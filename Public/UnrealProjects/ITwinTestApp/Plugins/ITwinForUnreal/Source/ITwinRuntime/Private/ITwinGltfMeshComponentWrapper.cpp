@@ -23,9 +23,6 @@
 #	include <BeUtils/Gltf/ExtensionITwinMaterialID.h>
 #include <Compil/AfterNonUnrealIncludes.h>
 
-//=======================================================================================
-// class FITwinGltfMeshComponentWrapper
-//=======================================================================================
 FITwinGltfMeshComponentWrapper::FITwinGltfMeshComponentWrapper(ICesiumLoadedTilePrimitive& TilePrim,
 															   std::optional<uint32> uvIndexForFeatures)
 	: gltfMeshComponent_(&TilePrim.GetMeshComponent())
@@ -97,4 +94,27 @@ void FITwinGltfMeshComponentWrapper::ForEachMaterialInstance(std::function<void(
 	{
 		Func(*Mat);
 	}
+}
+
+FTransform FITwinGltfMeshComponentWrapper::GetMeshComponentOriginalTransform(
+	FTransform const& IModelTilesetTransform)
+{
+	if (!OriginalTransform)
+	{
+		if (!gltfMeshComponent_.IsValid())
+		{
+			return FTransform::Identity;
+		}
+		OriginalTransform.emplace(gltfMeshComponent_->GetComponentTransform());
+		// May not yet be the "actual" transform to World coordinates (ie Tileset and iModel transforms may not be
+		// accounted), when the Component is not yet attached: when it happens (see "if (pGltf->GetAttachParent()
+		// == nullptr)" in ACesium3DTileset::showTilesToRender), the transform of the pGltf and all its children
+		// primitive components are updated with the right value.
+		// => Apply the tileset transform manually when needed:
+		if (!gltfMeshComponent_->GetAttachParent()/*gltf component*/->GetAttachParent()/*tileset actor*/)
+		{
+			(*OriginalTransform) = (*OriginalTransform) * IModelTilesetTransform;
+		}
+	}
+	return *OriginalTransform;
 }

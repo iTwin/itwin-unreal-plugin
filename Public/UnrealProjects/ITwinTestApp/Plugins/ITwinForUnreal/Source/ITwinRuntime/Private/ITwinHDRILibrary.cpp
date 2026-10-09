@@ -7,29 +7,39 @@
 +--------------------------------------------------------------------------------------*/
 
 #include <ITwinHDRILibrary.h>
-#include <ITwinHDRIDataAsset.h>
 
+#include <ITwinHDRIDataAsset.h>
+#include <Content/ITwinContentManager.h>
+#include <Decoration/ItwinDecorationHelper.h>
+
+
+// Unreal Engine includes
+#include <AssetRegistry/AssetRegistryModule.h>
+#include <Engine/TextureCube.h>
 #include <HAL/FileManager.h>
 #include <Misc/Paths.h>
-
-#include <ITwinRuntime/Private/Compil/BeforeNonUnrealIncludes.h>
-#	include <fmt/format.h>
-#	include <spdlog/fmt/fmt.h>
-#	include <SDK/Core/ITwinAPI/ITwinScene.h>
-#include <ITwinRuntime/Private/Compil/AfterNonUnrealIncludes.h>
-
-#include <fstream>
-#include <filesystem>
-
 #if WITH_EDITOR
 #	include <Factories/DataAssetFactory.h>
 #	include <FileHelpers.h>
 #	include <ObjectTools.h>
 #	include <UObject/Package.h>
 #endif // WITH_EDITOR
-#	include <AssetRegistry/AssetRegistryModule.h>
-#include <Engine/TextureCube.h>
-#include "Content/ITwinContentManager.h"
+
+
+
+#include <ITwinRuntime/Private/Compil/BeforeNonUnrealIncludes.h>
+#	include <fmt/format.h>
+#	include <spdlog/fmt/fmt.h>
+#	include <SDK/Core/ITwinAPI/ITwinScene.h>
+#	include <SDK/Core/Visualization/ScenePersistence.h>
+#include <ITwinRuntime/Private/Compil/AfterNonUnrealIncludes.h>
+
+#include <fstream>
+#include <filesystem>
+
+
+
+
 ITWINRUNTIME_API void ITwin::GetAssetDataInDirectory(const FString& CurrentDirPath, const UClass& Class, TArray<FAssetData>& OutAssetData)
 {
 	FAssetRegistryModule& assetRegistryModule =
@@ -44,21 +54,25 @@ ITWINRUNTIME_API void ITwin::GetAssetDataInDirectory(const FString& CurrentDirPa
 }
 
 /*static*/
-FITwinHDRILibrary::ExportResult FITwinHDRILibrary::ExportHDRIToDisk(AITwinDecorationHelper const* persistanceMngr, ITwinHDRI const& HDRISettings, FString const& HDRIName, FString const& DestinationFolder) {
-	std::filesystem::path OutputFolder = std::filesystem::path(TCHAR_TO_UTF8(*DestinationFolder)) / std::filesystem::path(TCHAR_TO_UTF8(*HDRIName));
-	std::filesystem::path const jsonHDRIPath = OutputFolder / HDRI_JSON_BASENAME;
-
-	if (!persistanceMngr)
+FITwinHDRILibrary::ExportResult FITwinHDRILibrary::ExportHDRIToDisk(IScenePersistence const* scenePersistence,
+	ITwinHDRI const& HDRISettings,
+	FString const& HDRIName,
+	FString const& DestinationFolder)
+{
+	if (!scenePersistence)
 	{
 		return AdvViz::make_unexpected(ExportError{ "no scene persistence manager!" });
 	}
 
-	std::string jsonHDRIStr = persistanceMngr->ExportHDRIAsJson(HDRISettings);
+	std::string jsonHDRIStr = scenePersistence->ExportHDRIAsJson(HDRISettings);
 	if (jsonHDRIStr.empty())
 	{
 		return AdvViz::make_unexpected(ExportError{
 			fmt::format("Failed to export HDRI {} settings as JSON.", TCHAR_TO_UTF8(*HDRIName)) });
 	}
+
+	std::filesystem::path OutputFolder = std::filesystem::path(TCHAR_TO_UTF8(*DestinationFolder)) / std::filesystem::path(TCHAR_TO_UTF8(*HDRIName));
+	std::filesystem::path const jsonHDRIPath = OutputFolder / HDRI_JSON_BASENAME;
 
 	std::error_code ec;
 	if (!std::filesystem::is_directory(OutputFolder, ec)
@@ -124,28 +138,28 @@ FITwinHDRILibrary::ITwinHDRI FITwinHDRILibrary::ConvertKeyValueMapToDRISettings(
 	return settings;
 }
 
-FITwinHDRILibrary::LoadHdriResult FITwinHDRILibrary::GetHrdiFromName(AITwinDecorationHelper const* persistanceMngr, FString NewHDRIName)
+FITwinHDRILibrary::LoadHdriResult FITwinHDRILibrary::GetHrdiFromName(AITwinDecorationHelper const* persistenceMngr, FString NewHDRIName)
 {
 	LoadHdriResult res;
 	FString PathName = TEXT("/Game/") + FString(ITwin::HDRI_LIBRARY) + TEXT("/") + NewHDRIName;
 	bool FullPath = NewHDRIName.StartsWith(TEXT("/Game/"));
 	auto l = GetListOfHDRIPresets();
 	std::string strname = TCHAR_TO_UTF8(*NewHDRIName);
-	if (persistanceMngr && persistanceMngr->iTwinContentManager)
+	if (persistenceMngr && persistenceMngr->iTwinContentManager)
 	{
-		if (!persistanceMngr->iTwinContentManager->HasComponentIDInPath(NewHDRIName).IsEmpty())
+		if (!persistenceMngr->iTwinContentManager->HasComponentIDInPath(NewHDRIName).IsEmpty())
 		{
-			FString componentId = persistanceMngr->iTwinContentManager->ShouldDownloadComponent(PathName);
+			FString componentId = persistenceMngr->iTwinContentManager->ShouldDownloadComponent(PathName);
 			if (!componentId.IsEmpty())
 			{
-				res.pendingDownload = persistanceMngr->iTwinContentManager->DownloadedComponent(componentId);
+				res.pendingDownload = persistenceMngr->iTwinContentManager->DownloadedComponent(componentId);
 				if (res.pendingDownload)
 				{
 					res.pendingComponentId = componentId;
 					return res;
 				}
 			}
-			PathName = persistanceMngr->iTwinContentManager->SanitizePath(NewHDRIName);
+			PathName = persistenceMngr->iTwinContentManager->SanitizePath(NewHDRIName);
 			FullPath = true;
 		}
 		else if (FullPath)
@@ -164,12 +178,12 @@ FITwinHDRILibrary::LoadHdriResult FITwinHDRILibrary::GetHrdiFromName(AITwinDecor
 	
 	) == l.end())
 	{
-		BE_LOGE("FITwinHDRILibrary", fmt::format("HDRI named {} not found in presets.", TCHAR_TO_UTF8(*NewHDRIName)));
+		BE_LOGE("ITwinHDRI", fmt::format("HDRI named {} not found in presets.", TCHAR_TO_UTF8(*NewHDRIName)));
 		return res;
 	}
-	if (persistanceMngr && persistanceMngr->iTwinContentManager)
+	if (persistenceMngr && persistenceMngr->iTwinContentManager)
 	{
-		persistanceMngr->iTwinContentManager->DownloadFromAssetPath(PathName);
+		persistenceMngr->iTwinContentManager->Mount(PathName);
 	}
 
 	UTextureCube* DefaultTextureCube = LoadObject<UTextureCube>(nullptr, *PathName);
@@ -180,9 +194,9 @@ FITwinHDRILibrary::LoadHdriResult FITwinHDRILibrary::GetHrdiFromName(AITwinDecor
 		{
 			auto BaseName = hdriData->HDRIParameters["hdriName"];
 			PathName = TEXT("/Game/") + FString(ITwin::HDRI_LIBRARY) + TEXT("/") + BaseName;
-			if (persistanceMngr && persistanceMngr->iTwinContentManager)
+			if (persistenceMngr && persistenceMngr->iTwinContentManager)
 			{
-				persistanceMngr->iTwinContentManager->DownloadFromAssetPath(PathName);
+				persistenceMngr->iTwinContentManager->Mount(PathName);
 			}
 			DefaultTextureCube = LoadObject<UTextureCube>(nullptr, *PathName);
 			if (DefaultTextureCube) {
@@ -202,14 +216,20 @@ FITwinHDRILibrary::LoadHdriResult FITwinHDRILibrary::GetHrdiFromName(AITwinDecor
 
 #if WITH_EDITOR
 /*static*/
-void FITwinHDRILibrary::ImportJsonToLibrary(AITwinDecorationHelper const* persistanceMngr) {
+void FITwinHDRILibrary::ImportJsonToLibrary(IScenePersistence const* scenePersistence)
+{
+	if (!scenePersistence)
+	{
+		BE_LOGE("ITwinHDRI", "ImportJsonToLibrary: no scene persistence manager!");
+		return;
+	}
 	// Export and import from the same directory.
 	FString customHDRIDir = FITwinHDRILibrary::GetCustomHDRIPath();
 
 	TArray<FString> JsonFiles;
 	IFileManager::Get().FindFilesRecursive(JsonFiles, *customHDRIDir, TEXT("*.json"), true, false);
 
-	for(const FString& AssetPath : JsonFiles)
+	for (const FString& AssetPath : JsonFiles)
 	{
 		FStringView AssetDir, AssetName, AssetExt;
 		FPathViews::Split(AssetPath, AssetDir, AssetName, AssetExt); // <asset_dir> / "hdri" / "json"
@@ -236,7 +256,7 @@ void FITwinHDRILibrary::ImportJsonToLibrary(AITwinDecorationHelper const* persis
 		}
 
 		AdvViz::SDK::KeyValueStringMap KeyValueMap;
-		if (!persistanceMngr->ConvertHDRIJsonFileToKeyValueMap(TCHAR_TO_UTF8(*AssetPath), KeyValueMap))
+		if (!scenePersistence->ConvertHDRIJsonFileToKeyValueMap(TCHAR_TO_UTF8(*AssetPath), KeyValueMap))
 		{
 			ensureMsgf(false, TEXT("could not parse Json material"));
 			continue;

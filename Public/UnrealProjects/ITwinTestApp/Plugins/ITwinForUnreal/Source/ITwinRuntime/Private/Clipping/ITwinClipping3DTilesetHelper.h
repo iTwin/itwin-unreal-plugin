@@ -20,6 +20,7 @@ class UITwinClippingEffectManager;
 class ACesium3DTileset;
 class UPrimitiveComponent;
 class FITwinTilesetAccess;
+class FITwinClippingModelGroups;
 class UCesiumPolygonRasterOverlay;
 
 /// Used in Cesium lifecycle mechanism in order to:
@@ -45,7 +46,7 @@ public:
 
 	/// Update the Custom Primitive Data values depending on current activation of the clipping planes and
 	/// boxes, and return true if at least one value was modified.
-	bool UpdateCPDFlagsFromClippingSelection(const UITwinClippingEffectManager& EffectManager);
+	bool UpdateCPDFlagsFromClippingSelection(FITwinClippingModelGroups const& ModelGroups);
 
 	void SetClippingTool(const AITwinClippingTool* InClippingTool);
 	void SetCutoutOverlay(const UCesiumPolygonRasterOverlay* InPolygonRasterOverlay);
@@ -57,13 +58,7 @@ private:
 	ITwin::ModelLink ModelIdentifier; // Identifies the iModel/RealityData/GlobalMapLayer the tileset belongs to.
 	TWeakObjectPtr<const UITwinClippingRenderer> ClippingRenderer;
 	TWeakObjectPtr<const UCesiumPolygonRasterOverlay> CutoutOverlayPtr;
-	// For internal reasons (see ITwinClippingTool.cpp for details), there are currently up to 32 planes and
-	// 32 cubes, and we encode them by groups of 16.
-	// See Shaders/ITwin/GetPlanesClipping.ush and Shaders/ITwin/GetBoxClipping.ush as well as the material
-	// graph in ITwin/Materials/MF_GlobalClipping.uasset
-	float ScalarActivePlanes_0_15 = 0.f;
-	float ScalarActivePlanes_16_31 = 0.f;
-
-	float ScalarActiveBoxes_0_15 = 0.f;
-	float ScalarActiveBoxes_16_31 = 0.f;
+	// Identifies this model's clipping configuration; the per-primitive masks live in
+	// MPC_Clipping. See FITwinClippingModelGroups and ClippingCommon.ush.
+	float ScalarClippingModelGroupId = 0.f;
 };

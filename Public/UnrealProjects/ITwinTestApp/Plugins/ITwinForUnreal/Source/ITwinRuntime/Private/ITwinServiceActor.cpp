@@ -74,6 +74,17 @@ void AITwinServiceActor::SetTestMode(FString const& ServerUrl)
 	WebServices->SetTestServerURL(ServerUrl);
 	WebServices->SetObserver(this);
 }
+
+bool AITwinServiceActor::IsInTestMode(FString& OutServerUrl) const
+{
+	if (WebServices)
+	{
+		OutServerUrl = WebServices->GetServerURL();
+		return OutServerUrl.StartsWith(TEXT("http://localhost:"));
+	}
+	return false;
+}
+
 #endif // WITH_TESTS
 
 const UITwinWebServices* AITwinServiceActor::GetWebServices() const

@@ -75,8 +75,9 @@ jobs:
           sudo apt install -y ninja-build patchelf
       - name: Set environment variables
         run: |
-          echo "CESIUM_UNREAL_VERSION=$GITHUB_REF_NAME" >> "$GITHUB_ENV"
-          echo "BUILD_CESIUM_UNREAL_PACKAGE_NAME=${{ inputs.upload-package-base-name }}-$GITHUB_REF_NAME" >> "$GITHUB_ENV"
+          export GH_REF_NAME=$GITHUB_REF_NAME
+          echo "CESIUM_UNREAL_VERSION=${GH_REF_NAME//\//-}" >> "$GITHUB_ENV"
+          echo "BUILD_CESIUM_UNREAL_PACKAGE_NAME=${{ inputs.upload-package-base-name }}-${GH_REF_NAME//\//-}" >> "$GITHUB_ENV"
           echo "UNREAL_ENGINE_ROOT=/mnt/work/${{ inputs.unreal-program-name }}" >> "$GITHUB_ENV"
           echo "LINUX_MULTIARCH_ROOT=/mnt/work/${{ inputs.unreal-program-name }}/Engine/Extras/ThirdPartyNotUE/SDKs/HostLinux/Linux_x64/${{ inputs.clang-version }}/" >> "$GITHUB_ENV"
       - name: Build cesium-native
@@ -106,7 +107,7 @@ jobs:
           printf '<?xml version="1.0" encoding="utf-8" ?>\n<Configuration xmlns="https://www.unrealengine.com/BuildConfiguration">\n    <BuildConfiguration>\n      <MaxParallelActions>2</MaxParallelActions>\n    </BuildConfiguration>\n    <SourceFileWorkingSet><Provider>None</Provider></SourceFileWorkingSet>\n</Configuration>\n' > ~/.config/Unreal\ Engine/UnrealBuildTool/BuildConfiguration.xml
       - name: Build plugin
         run: |
-          sed -i 's/\"EngineVersion\": \"5.5.0\"/\"EngineVersion\": \"${{ inputs.unreal-engine-version }}\"/g' CesiumForUnreal.uplugin
+          sed -i 's/\"EngineVersion\": \"5.[[:digit:]].0\"/\"EngineVersion\": \"${{ inputs.unreal-engine-version }}\"/g' CesiumForUnreal.uplugin
           cd $UNREAL_ENGINE_ROOT/Engine/Build/BatchFiles
           ./RunUAT.sh BuildPlugin -Plugin="$GITHUB_WORKSPACE/CesiumForUnreal.uplugin" -Package="$GITHUB_WORKSPACE/packages/CesiumForUnreal" -CreateSubFolder -TargetPlatforms=Linux
       - name: Fix RPATH

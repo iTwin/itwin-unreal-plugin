@@ -48,6 +48,7 @@ option(BE_RSYNC_DELETE_LOCAL "When using our Unreal fork and syncing with EONNAS
 include (be_file_utils)
 
 set(BE_CURRENT_UE_VERSION_BASED_ON "UE_5.6")
+set(BE_CURRENT_FULL_UE_VERNUM_BASED_ON "5.6.1") # used by the yaml pipeline to determine the BeUE fork branch, eg. advviz-ue5.6.1
 set(BE_OPENSSL_VERSION_STRING_OFFICIAL_BASED_ON "1.1.1t")
 set(BE_OPENSSL_PORT_VERSION_STRING_OFFICIAL_BASED_ON "0")
 set(BE_TINYXML2_VERSION_STRING_OFFICIAL_BASED_ON "9.0.0")
@@ -56,8 +57,8 @@ set(BE_TINYXML2_VERSION_STRING_OFFICIAL_BASED_ON "9.0.0")
 # Note: if the folder has already been registered, the build hash it is associated with is NOT updated
 # when calling UnrealVersionSelector.exe in rsync_be_unreal again when 'incrementing' the build hash...
 set(BE_CURRENT_BE_UE_VERSION "A5DAEB5B-4462-EC2C-0618-E5A4B687C453")
-set(BE_OPENSSL_VERSION_STRING_BEUE "1.1.1zg")
-set(BE_OPENSSL_PORT_VERSION_STRING_BEUE "1")
+set(BE_OPENSSL_VERSION_STRING_BEUE "3.5.9")
+set(BE_OPENSSL_PORT_VERSION_STRING_BEUE "2")
 set(BE_TINYXML2_VERSION_STRING_BEUE "9.0.0")
 # List all previous versions here separated by semi-colons, in reverse chronological order... :-o
 # Was used for when we just switched version (for a source build), so it is not yet registered...
@@ -67,9 +68,8 @@ set(BE_UNREAL_VERSION_USED) # will be set to one of the above
 
 set(BE_CURRENT_UE_VERSION_IS_REGISTERED OFF)
 if (BE_USE_OFFICIAL_UNREAL)
-	message(WARNING "Using *official* Unreal Engine from Epic (version ${BE_CURRENT_UE_VERSION_BASED_ON}) instead of Bentley's fork! Some features may not work or not optimally.")
+	message(WARNING "Using *official* Unreal Engine from Epic (version ${BE_CURRENT_FULL_UE_VERNUM_BASED_ON}) instead of Bentley's fork! Some features may not work or not optimally.")
 	set(BE_IS_USING_BENTLEY_UNREAL 0) # written in a .h
-	mark_as_advanced(BE_RSYNC_CREDENTIALS_FILE) # Not needed for installed Engines
 	set(BE_UNREAL_VERSION_USED ${BE_CURRENT_UE_VERSION_BASED_ON})
 	string(REPLACE "UE_" "" ueOfficialRegValue ${BE_UNREAL_VERSION_USED})
 	set(BE_UNREAL_ROOT_REG_KEY "HKEY_LOCAL_MACHINE/SOFTWARE/EpicGames/Unreal Engine/${ueOfficialRegValue}")
@@ -79,11 +79,7 @@ if (BE_USE_OFFICIAL_UNREAL)
 	set(BE_TINYXML2_VERSION_STRING "${BE_TINYXML2_VERSION_STRING_OFFICIAL_BASED_ON}")
 else()
 	set(BE_IS_USING_BENTLEY_UNREAL 1) # written in a .h
-	if (BE_RSYNC_CREDENTIALS_FILE)
-		message("Using Unreal Engine built from source (version ${BE_CURRENT_BE_UE_VERSION}), using ${BE_RSYNC_CREDENTIALS_FILE} for rsync credentials")
-	else()
-		message(WARNING "Using Unreal Engine built from source (version ${BE_CURRENT_BE_UE_VERSION}) but no credentials file supplied: proceeding assuming no sync is needed, UE version is OK and you know what you are doing...")
-	endif()
+	message("Using Unreal Engine built from source (version hash: ${BE_CURRENT_BE_UE_VERSION}, based on UE ${BE_CURRENT_FULL_UE_VERNUM_BASED_ON})")
 	set(BE_UNREAL_ROOT_REG_KEY "HKEY_CURRENT_USER/Software/Epic Games/Unreal Engine/Builds")
 	set(BE_UNREAL_VERSION_USED ${BE_CURRENT_BE_UE_VERSION})
 	set(BE_UNREAL_ROOT_REG_VALUE "{${BE_UNREAL_VERSION_USED}}")
@@ -165,7 +161,7 @@ if (WIN32)
 else()
 	set(RSYNC_COMMAND "rsync") # assumed in path (seems to be the case on tokamac)
 endif()
-if (BE_IS_USING_BENTLEY_UNREAL AND BE_RSYNC_CREDENTIALS_FILE)
+if (BE_IS_USING_BENTLEY_UNREAL AND BE_RSYNC_CREDENTIALS_FILE AND BE_SYNC_BENTLEY_UE_FROM_NAS) # now disabled by default
 	include(rsync_be_unreal)
 endif()
 

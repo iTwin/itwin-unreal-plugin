@@ -1,0 +1,84 @@
+#pragma once
+
+#include "/Plugin/ITwinForUnreal/ITwin/ClippingCommon.ush"
+
+// Per-box layout (stride 4, interleaved):
+//   slot 0 : BoxInvMatrix_col0_i.xyz
+//   slot 1 : BoxInvMatrix_col1_i.xyz
+//   slot 2 : BoxInvMatrix_col2_i.xyz
+//   slot 3 : BoxTranslation_i.xyz, .w = flip flag (LSB)
+float4 ITwin_GetBoxVector(uint BoxIndex, uint Slot, uint BoxVectorBase)
+{
+    return ITwin_GetClippingVector(BoxVectorBase + 4u * BoxIndex + Slot);
+}
+
+bool ITwin_IsBoxActive(uint BoxIndex, uint BoxMaskScalarBase, uint ClippingModelGroupId)
+{
+    return ITwin_IsActiveForModelGroup(BoxIndex, BoxMaskScalarBase, ClippingModelGroupId);
+}
+
+// Flip makes the box subtractive. NB: the C++ side (TClippingPrimitiveShaderAdapter<Box>)
+// already negates the user-facing "invert" flag before upload - convention unchanged.
+bool ITwin_IsBoxFlipped(uint BoxIndex, uint BoxVectorBase)
+{
+    return ((uint) ITwin_GetBoxVector(BoxIndex, 3, BoxVectorBase).w & 1u) != 0u;
+}
+
+// Returns an opacity: 1 = keep geometry, 0 = cut out.
+float ITwin_GetBoxClipping(
+	float3 WorldPosition,
+	uint NumBoxes,
+	uint BoxVectorBase,
+	uint BoxMaskScalarBase,
+	uint ClippingModelGroupId)
+{
+    const float3 BottomLeft = float3(-0.5, -0.5, -0.5);
+    const float3 TopRight = float3(0.5, 0.5, 0.5);
+
+	// By convention (same as in MF_Clipping), the clipping value is an opacity: 1 means no
+	// cutting, 0 hides the geometry. By default a box is additive; a flipped box is subtractive.
+    float clippingValue = 1.0;
+    uint NumActiveBoxes = 0;
+    uint NumActiveAdditiveBoxes = 0;
+    float AdditiveBoxValue = 0.0;
+    float SubtractiveBoxValue = 0.0;
+
+    LOOP
+    for (uint i = 0; i < NumBoxes; ++i)
+    {
+        if (!ITwin_IsBoxActive(i, BoxMaskScalarBase, ClippingModelGroupId))
+            continue;
+
+        const float3x3 BoxInvMatrix = float3x3(
+			ITwin_GetBoxVector(i, 0, BoxVectorBase).xyz,
+			ITwin_GetBoxVector(i, 1, BoxVectorBase).xyz,
+			ITwin_GetBoxVector(i, 2, BoxVectorBase).xyz);
+        const float3 PosBoxCoords =
+			mul(BoxInvMatrix, WorldPosition - ITwin_GetBoxVector(i, 3, BoxVectorBase).xyz);
+
+		// Inclusion test without branching
+		// (from https://stackoverflow.com/questions/12751080/glsl-point-inside-box-test)
+        const float3 s = step(BottomLeft, PosBoxCoords) - step(TopRight, PosBoxCoords);
+        const float isInsideValueForBox = s.x * s.y * s.z;
+
+        if (ITwin_IsBoxFlipped(i, BoxVectorBase))
+        {
+            SubtractiveBoxValue += isInsideValueForBox;
+        }
+        else
+        {
+            NumActiveAdditiveBoxes++;
+            AdditiveBoxValue += isInsideValueForBox;
+        }
+        NumActiveBoxes++;
+    }
+
+    if (NumActiveBoxes > 0)
+    {
+        if (SubtractiveBoxValue > 0.0)
+            clippingValue = 0.0;
+        else if (NumActiveAdditiveBoxes > 0)
+            clippingValue = AdditiveBoxValue;
+    }
+    return step(1.0, clippingValue);
+}

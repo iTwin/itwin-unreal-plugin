@@ -10,6 +10,7 @@
 
 #include <Blueprint/WidgetLayoutLibrary.h>
 #include <Camera/PlayerCameraManager.h>
+#include <Engine/World.h>
 #include <GameFramework/PlayerController.h>
 
 namespace ITwin

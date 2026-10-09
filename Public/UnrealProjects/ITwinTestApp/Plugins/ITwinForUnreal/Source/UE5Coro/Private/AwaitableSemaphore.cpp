@@ -34,14 +34,6 @@
 using namespace UE5Coro;
 using namespace UE5Coro::Private;
 
-namespace
-{
-struct FAwaitingPromise
-{
-	FPromise* Promise;
-	FAwaitingPromise* Next;
-};
-}
 
 FAwaitableSemaphore::FAwaitableSemaphore(int Capacity, int InitialCount)
 	: Capacity(Capacity), Count(InitialCount)

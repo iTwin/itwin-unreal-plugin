@@ -41,7 +41,6 @@ MODULE_EXPORT namespace AdvViz::SDK
 	struct ITwinRenderMaterialProperties;
 	struct ITwinRenderMaterialPropertiesMap;
 	struct ITwinTextureData;
-	struct ITwinMaterialPrediction;
 	struct GeoCoordsReply;
 	struct IModelPagedNodesRes;
 	struct FilteredNodesRes;
@@ -94,11 +93,7 @@ MODULE_EXPORT namespace AdvViz::SDK
 		virtual void OnIModelQueried(bool bSuccess, std::string const& Response, RequestID const&) = 0;
 
 		virtual void OnMaterialPropertiesRetrieved(bool bSuccess, ITwinRenderMaterialPropertiesMap const& props) = 0;
-
 		virtual void OnTextureDataRetrieved(bool bSuccess, std::string const& textureId, ITwinTextureData const& textureData) = 0;
-
-		virtual void OnMatMLPredictionRetrieved(bool bSuccess, ITwinMaterialPrediction const& prediction, std::string const& error = {}) = 0;
-		virtual void OnMatMLPredictionProgress(float fProgressRatio) = 0;
 
 		virtual void OnGoogleCuratedContentAccessRetrieved(bool bSuccess, ITwinGoogleCuratedContentAccess const& infos, RequestID const&) = 0;
 	};
@@ -141,8 +136,6 @@ MODULE_EXPORT namespace AdvViz::SDK
 		void OnIModelQueried(bool bSuccess, std::string const& Response, RequestID const&) override;
 		void OnMaterialPropertiesRetrieved(bool bSuccess, ITwinRenderMaterialPropertiesMap const& props) override;
 		void OnTextureDataRetrieved(bool bSuccess, std::string const& textureId, ITwinTextureData const& textureData) override;
-		void OnMatMLPredictionRetrieved(bool bSuccess, ITwinMaterialPrediction const& prediction, std::string const& error = {}) override;
-		void OnMatMLPredictionProgress(float fProgressRatio) override;
 		void OnGoogleCuratedContentAccessRetrieved(bool bSuccess, ITwinGoogleCuratedContentAccess const& infos, RequestID const&) override;
 
 	protected:

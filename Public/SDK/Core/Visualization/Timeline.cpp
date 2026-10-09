@@ -195,11 +195,20 @@ namespace AdvViz::SDK
 	void TimelineKeyframe::Update(const KeyframeData& data)
 	{
 		// note: time is immutable
-		double oldtime = GetImpl().keyframeData.time;
+		const double oldtime = GetImpl().keyframeData.time;
 		auto id = GetImpl().keyframeData.id;
 		GetImpl().keyframeData = data;
 		GetImpl().keyframeData.time = oldtime;
 		GetImpl().keyframeData.id = id;
+		GetImpl().InvalidateDB();
+	}
+
+	void TimelineKeyframe::SetTime(double time)
+	{
+		const double oldtime = GetImpl().keyframeData.time;
+		if (oldtime == time)
+			return;
+		GetImpl().keyframeData.time = time;
 		GetImpl().InvalidateDB();
 	}
 
@@ -225,7 +234,7 @@ namespace AdvViz::SDK
 		GetImpl().SetId(id);
 	}
 
-	bool TimelineKeyframe::CompareForOrder(ITimelineKeyframe* b) const
+	bool TimelineKeyframe::CompareForOrder(const ITimelineKeyframe* b) const
 	{
 		return GetData().time < b->GetData().time;
 	}
@@ -521,6 +530,54 @@ namespace AdvViz::SDK
 		GetImpl().SetId(id);
 	}
 
+	expected<void, std::string> TimelineClip::SetKeyFrameTimes(const std::vector<float>& sortedTimes)
+	{
+		// Normally, times are not mutable in a key-frame, as we need to maintain the order of the key-frames.
+		// But if we change all times in a way that preserves the existing order, we can do it.
+		const size_t KFCount = GetKeyframeCount();
+		if (sortedTimes.size() != KFCount)
+		{
+			return make_unexpected(
+				std::string("new times size should match the existing key-frames: got ")
+				+ std::to_string(sortedTimes.size()) + ", expected " + std::to_string(KFCount));
+		}
+
+		// Apply the same millisecond rounding as AddKeyframe/GetKeyframe: without it, a time
+		// stored here could never be found again through GetKeyframe/GetKeyframeIndex (note
+		// that widening a float to double rarely lands on an exact millisecond).
+		std::vector<double> newTimes;
+		newTimes.reserve(KFCount);
+		for (float t : sortedTimes)
+		{
+			newTimes.push_back(RoundTime(static_cast<double>(t)));
+		}
+
+		// The key-frames are held in an ordered set keyed on time, and we mutate those keys in
+		// place. This is only legitimate if the new times keep the exact same ordering, so they
+		// must be strictly increasing: equal times would break the set invariant and leave two
+		// key-frames sharing a time, which GetKeyframe could no longer disambiguate.
+		const auto badIt = std::adjacent_find(newTimes.begin(), newTimes.end(),
+			[](double a, double b) { return !(a < b); });
+		if (badIt != newTimes.end())
+		{
+			return make_unexpected(
+				std::string("new key-frame times must be strictly increasing once rounded to ms, got ")
+				+ std::to_string(*badIt) + " then " + std::to_string(*std::next(badIt)));
+		}
+
+		// Validation is complete: from here on the update cannot fail, so it stays all-or-nothing.
+		size_t kfIndex = 0;
+		auto it = GetImpl().keyframes_.begin();
+		for (; it != GetImpl().keyframes_.end(); ++it, ++kfIndex)
+		{
+			auto kf = *it;
+			if (kf)
+			{
+				kf->SetTime(newTimes[kfIndex]);
+			}
+		}
+		return {};
+	}
 
 	////////////////////////////////////////////////////////////////////// Timeline /////////////////////////////////////
 

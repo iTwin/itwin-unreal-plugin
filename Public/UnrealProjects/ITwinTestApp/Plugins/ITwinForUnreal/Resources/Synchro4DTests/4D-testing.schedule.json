@@ -1,0 +1,2619 @@
+﻿{
+    "id": "d9712811-5a10-407e-b517-fbc23fcf4dc3",
+    "name": "Exhaustive test with primitives",
+    "jsonCacheVersion": 1,
+    "generation": "Legacy",
+    "bindingsDeltaToken": "",
+    "appearanceProfilesDeltaToken": "",
+    "tasksDeltaToken": "",
+    "staticTransfosDeltaToken": "",
+    "anim3DPathsAssignmentsDeltaToken": "",
+    "anim3DPathsDeltaToken": "",
+    "anim3DPathKeyframesDeltaToken": "",
+    "statisticsTotal": {
+        "animation3dPathAssignmentCount": 20,
+        "animation3dPathCount": 3,
+        "animation3dPathKeyframeCount": 10,
+        "animation3dTransformCount": 20,
+        "animationBindingCount": 110,
+        "appearanceProfileCount": 16,
+        "taskCount": 13
+    },
+    "animationBindings": [
+        {
+            "taskId": "517a0739-be1d-40d5-a0bb-dd5457700491",
+            "appearanceProfileId": "cef22464-9ba1-4833-a13c-b50338936175",
+            "staticTransfoAssignmentId": "000e6fe7-ae0e-4b10-9dab-bbb8dd9a02e9",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "8ffc6035-4c30-4421-9e2d-49c0ea1ffec6"
+            }
+        },
+        {
+            "taskId": "e237fec7-2de2-479e-a13d-4d8543e69cfb",
+            "appearanceProfileId": "c62374be-3745-4a30-8385-750d702f2643",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "37a27df6-6e47-434c-9bb0-f1df979deb12"
+            }
+        },
+        {
+            "taskId": "ff7ff77a-db98-45c0-9a33-2065812d122f",
+            "appearanceProfileId": "ed18be6d-fc59-409d-b68b-bbdca81b3a21",
+            "staticTransfoAssignmentId": "0264e64c-5746-4d3f-b679-693330212a81",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "551c8dac-b694-4d3a-8ecf-65de3a196c73"
+            }
+        },
+        {
+            "taskId": "7244705d-5215-4157-ab4b-8a84db9e554f",
+            "appearanceProfileId": "ee52b710-8cb8-459d-8066-99555c64df6f",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "c639eb2c-7d73-492d-99d6-624c98f98b49"
+            }
+        },
+        {
+            "taskId": "517a0739-be1d-40d5-a0bb-dd5457700491",
+            "appearanceProfileId": "ed18be6d-fc59-409d-b68b-bbdca81b3a21",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "ee9d0693-e4ca-4c45-bdc8-aa9f2987e294"
+            }
+        },
+        {
+            "taskId": "e16465cc-73c8-4de8-b316-4efbbefede86",
+            "appearanceProfileId": "2847411f-bd6a-41ee-b8cc-023274e3b07a",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "05cf5c76-2c96-43de-95a8-d95d032b0ff8",
+            "animatedEntities": {
+                "type": "group",
+                "value": "4dbb40f6-0656-4e98-8adb-4bf0b8e55beb"
+            }
+        },
+        {
+            "taskId": "e16465cc-73c8-4de8-b316-4efbbefede86",
+            "appearanceProfileId": "05a76ab1-e06f-4605-ad11-bbfa632b6171",
+            "staticTransfoAssignmentId": "06aa9c3b-efe8-4efc-9d1a-5e1956725c0c",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "f4ac445e-c75c-4ed9-8d7f-16d78f7c115d"
+            }
+        },
+        {
+            "taskId": "dffc51c0-180c-4b55-adaa-3615bdd558fe",
+            "appearanceProfileId": "2847411f-bd6a-41ee-b8cc-023274e3b07a",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "1bbcb5ce-8f37-4212-8b7e-668b64bca8e4"
+            }
+        },
+        {
+            "taskId": "f988f1cd-41b8-43f1-a4f4-c26b06426c0e",
+            "appearanceProfileId": "3ca98204-11a8-4491-aab5-2d31099e76ca",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "d94fd83f-4717-4db3-abc7-30d0d7d12118"
+            }
+        },
+        {
+            "taskId": "7244705d-5215-4157-ab4b-8a84db9e554f",
+            "appearanceProfileId": "ed18be6d-fc59-409d-b68b-bbdca81b3a21",
+            "staticTransfoAssignmentId": "0b68b465-6670-42c4-99f5-596de1bbc993",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "98767231-4de3-4f76-8774-65f0577f7710"
+            }
+        },
+        {
+            "taskId": "ff7ff77a-db98-45c0-9a33-2065812d122f",
+            "appearanceProfileId": "3ca98204-11a8-4491-aab5-2d31099e76ca",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "0b9fe16d-fe5a-4d29-ab67-f5a26f868352",
+            "animatedEntities": {
+                "type": "group",
+                "value": "b8048a56-e3ec-48a8-a9da-82d661796e0c"
+            }
+        },
+        {
+            "taskId": "dffc51c0-180c-4b55-adaa-3615bdd558fe",
+            "appearanceProfileId": "3ca98204-11a8-4491-aab5-2d31099e76ca",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "d94fd83f-4717-4db3-abc7-30d0d7d12118"
+            }
+        },
+        {
+            "taskId": "e16465cc-73c8-4de8-b316-4efbbefede86",
+            "appearanceProfileId": "2847411f-bd6a-41ee-b8cc-023274e3b07a",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "1891094d-00dd-4c37-83c1-531dccbe22ac",
+            "animatedEntities": {
+                "type": "group",
+                "value": "5965655c-96c4-4ba2-8c6a-7a603fa604b5"
+            }
+        },
+        {
+            "taskId": "ff7ff77a-db98-45c0-9a33-2065812d122f",
+            "appearanceProfileId": "3ca98204-11a8-4491-aab5-2d31099e76ca",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "1a509476-e6a7-46b9-b5b2-164bbff100e6",
+            "animatedEntities": {
+                "type": "group",
+                "value": "8d342dc1-c432-46e9-83b7-f6468d36135e"
+            }
+        },
+        {
+            "taskId": "7244705d-5215-4157-ab4b-8a84db9e554f",
+            "appearanceProfileId": "ed18be6d-fc59-409d-b68b-bbdca81b3a21",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "5cbecf68-0bb7-4071-ba30-4e999f76449d"
+            }
+        },
+        {
+            "taskId": "e237fec7-2de2-479e-a13d-4d8543e69cfb",
+            "appearanceProfileId": "ed18be6d-fc59-409d-b68b-bbdca81b3a21",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "209d3a4d-8a8c-4cb4-8c87-1fd0a073fa38",
+            "animatedEntities": {
+                "type": "group",
+                "value": "287bae81-7ea9-4b3e-b7b8-acc9977b5337"
+            }
+        },
+        {
+            "taskId": "633af080-4a79-493f-93f4-219c3d147f06",
+            "appearanceProfileId": "ed18be6d-fc59-409d-b68b-bbdca81b3a21",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "cda02918-efcd-4705-b206-416431c23c4d"
+            }
+        },
+        {
+            "taskId": "7244705d-5215-4157-ab4b-8a84db9e554f",
+            "appearanceProfileId": "c62374be-3745-4a30-8385-750d702f2643",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "51dbc309-455e-466c-842c-2287c36ae680"
+            }
+        },
+        {
+            "taskId": "ad823fdb-f98a-41f7-b7af-2f5ed5243fce",
+            "appearanceProfileId": "ee52b710-8cb8-459d-8066-99555c64df6f",
+            "staticTransfoAssignmentId": "2ad4801c-6a3e-49bb-a487-6f383c4714f3",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "98767231-4de3-4f76-8774-65f0577f7710"
+            }
+        },
+        {
+            "taskId": "ad823fdb-f98a-41f7-b7af-2f5ed5243fce",
+            "appearanceProfileId": "ee52b710-8cb8-459d-8066-99555c64df6f",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "c639eb2c-7d73-492d-99d6-624c98f98b49"
+            }
+        },
+        {
+            "taskId": "e16465cc-73c8-4de8-b316-4efbbefede86",
+            "appearanceProfileId": "ffb16b7d-77bf-4f88-990e-9234e7761805",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "3220ef69-d64c-4cf3-bedb-8249909039fe"
+            }
+        },
+        {
+            "taskId": "7244705d-5215-4157-ab4b-8a84db9e554f",
+            "appearanceProfileId": "ee52b710-8cb8-459d-8066-99555c64df6f",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "9d423274-61a2-4b08-9054-0ae00876a470"
+            }
+        },
+        {
+            "taskId": "ad823fdb-f98a-41f7-b7af-2f5ed5243fce",
+            "appearanceProfileId": "c62374be-3745-4a30-8385-750d702f2643",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "ee9d0693-e4ca-4c45-bdc8-aa9f2987e294"
+            }
+        },
+        {
+            "taskId": "633af080-4a79-493f-93f4-219c3d147f06",
+            "appearanceProfileId": "ee52b710-8cb8-459d-8066-99555c64df6f",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "f5d2759b-4d8b-4cf0-b76d-80b4320bf1ca"
+            }
+        },
+        {
+            "taskId": "517a0739-be1d-40d5-a0bb-dd5457700491",
+            "appearanceProfileId": "2847411f-bd6a-41ee-b8cc-023274e3b07a",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "1088ffdf-4870-4d61-a24b-62ae3314cb22"
+            }
+        },
+        {
+            "taskId": "e16465cc-73c8-4de8-b316-4efbbefede86",
+            "appearanceProfileId": "2847411f-bd6a-41ee-b8cc-023274e3b07a",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "30592eb5-0d8b-4994-85eb-c4766bb6bd24",
+            "animatedEntities": {
+                "type": "group",
+                "value": "1447403f-35a2-488c-9e3c-89e4e36cc215"
+            }
+        },
+        {
+            "taskId": "ad823fdb-f98a-41f7-b7af-2f5ed5243fce",
+            "appearanceProfileId": "e6399834-1807-4b99-a6c4-92fc068bdbbe",
+            "staticTransfoAssignmentId": "33fb8ad1-c45a-4f4a-ae32-83a75b2fa55d",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "34c6f28c-ef9c-4c47-8f8f-8d9aec9bcf36"
+            }
+        },
+        {
+            "taskId": "517a0739-be1d-40d5-a0bb-dd5457700491",
+            "appearanceProfileId": "e6399834-1807-4b99-a6c4-92fc068bdbbe",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "9d423274-61a2-4b08-9054-0ae00876a470"
+            }
+        },
+        {
+            "taskId": "517a0739-be1d-40d5-a0bb-dd5457700491",
+            "appearanceProfileId": "2847411f-bd6a-41ee-b8cc-023274e3b07a",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "98767231-4de3-4f76-8774-65f0577f7710"
+            }
+        },
+        {
+            "taskId": "088cd559-5b4a-4127-b84e-3317713f1646",
+            "appearanceProfileId": "c62374be-3745-4a30-8385-750d702f2643",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "f0348984-c5fe-40ff-8274-fe760a9c49be"
+            }
+        },
+        {
+            "taskId": "dffc51c0-180c-4b55-adaa-3615bdd558fe",
+            "appearanceProfileId": "d8799a15-c9b2-4882-aac9-29843e674e98",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "c8e8ab90-6469-46bd-a401-a500fe9c1887"
+            }
+        },
+        {
+            "taskId": "e16465cc-73c8-4de8-b316-4efbbefede86",
+            "appearanceProfileId": "e6399834-1807-4b99-a6c4-92fc068bdbbe",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "002d6107-4ad5-4fbd-9375-1b4dbb6d437c"
+            }
+        },
+        {
+            "taskId": "ff7ff77a-db98-45c0-9a33-2065812d122f",
+            "appearanceProfileId": "3ca98204-11a8-4491-aab5-2d31099e76ca",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "425ba1fe-9ba7-451e-8452-8e98060f26d2",
+            "animatedEntities": {
+                "type": "group",
+                "value": "93bd6991-d85f-4244-a65e-d98e39032fcf"
+            }
+        },
+        {
+            "taskId": "ad823fdb-f98a-41f7-b7af-2f5ed5243fce",
+            "appearanceProfileId": "ed18be6d-fc59-409d-b68b-bbdca81b3a21",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "44985b48-bed5-46ee-8b67-a6696d7a049c",
+            "animatedEntities": {
+                "type": "group",
+                "value": "fadd5f05-c280-41ef-b671-a36efd723bda"
+            }
+        },
+        {
+            "taskId": "ff7ff77a-db98-45c0-9a33-2065812d122f",
+            "appearanceProfileId": "2847411f-bd6a-41ee-b8cc-023274e3b07a",
+            "staticTransfoAssignmentId": "4505ff1b-bf8a-48c6-bdf0-5c9c5b3bcfae",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "f4ac445e-c75c-4ed9-8d7f-16d78f7c115d"
+            }
+        },
+        {
+            "taskId": "ad823fdb-f98a-41f7-b7af-2f5ed5243fce",
+            "appearanceProfileId": "3ae80333-cce3-4459-8585-a3bf3404be4f",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "8ffc6035-4c30-4421-9e2d-49c0ea1ffec6"
+            }
+        },
+        {
+            "taskId": "e237fec7-2de2-479e-a13d-4d8543e69cfb",
+            "appearanceProfileId": "e6399834-1807-4b99-a6c4-92fc068bdbbe",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "c4ffb5c9-235b-4776-b93d-4b41df700f01"
+            }
+        },
+        {
+            "taskId": "d4682a7b-3169-4a5f-a6bc-50ed017643bc",
+            "appearanceProfileId": "3ae80333-cce3-4459-8585-a3bf3404be4f",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "5cbecf68-0bb7-4071-ba30-4e999f76449d"
+            }
+        },
+        {
+            "taskId": "ad823fdb-f98a-41f7-b7af-2f5ed5243fce",
+            "appearanceProfileId": "4a781456-059c-4b06-86d9-16b288bf299c",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "8b1cece7-4a5f-4ddb-a624-5c3a188de488"
+            }
+        },
+        {
+            "taskId": "e237fec7-2de2-479e-a13d-4d8543e69cfb",
+            "appearanceProfileId": "cef22464-9ba1-4833-a13c-b50338936175",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "9d423274-61a2-4b08-9054-0ae00876a470"
+            }
+        },
+        {
+            "taskId": "517a0739-be1d-40d5-a0bb-dd5457700491",
+            "appearanceProfileId": "2847411f-bd6a-41ee-b8cc-023274e3b07a",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "c639eb2c-7d73-492d-99d6-624c98f98b49"
+            }
+        },
+        {
+            "taskId": "e16465cc-73c8-4de8-b316-4efbbefede86",
+            "appearanceProfileId": "cef22464-9ba1-4833-a13c-b50338936175",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "7aad49e6-de01-40bb-8bdc-4fb798a8aad0"
+            }
+        },
+        {
+            "taskId": "633af080-4a79-493f-93f4-219c3d147f06",
+            "appearanceProfileId": "c62374be-3745-4a30-8385-750d702f2643",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "c639eb2c-7d73-492d-99d6-624c98f98b49"
+            }
+        },
+        {
+            "taskId": "7244705d-5215-4157-ab4b-8a84db9e554f",
+            "appearanceProfileId": "ffb16b7d-77bf-4f88-990e-9234e7761805",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "55355b54-8c5e-4e2c-ad00-f84ae2fe13d8"
+            }
+        },
+        {
+            "taskId": "ad823fdb-f98a-41f7-b7af-2f5ed5243fce",
+            "appearanceProfileId": "e6399834-1807-4b99-a6c4-92fc068bdbbe",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "a17796e6-c6fe-4156-b57a-017b7599d49c"
+            }
+        },
+        {
+            "taskId": "e16465cc-73c8-4de8-b316-4efbbefede86",
+            "appearanceProfileId": "c4956da3-8ce5-4393-a183-32ae780d7de3",
+            "staticTransfoAssignmentId": "56ab79ed-cc6c-49d6-8ca2-53ce0e160d5a",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "2bfb072e-1eac-420c-9d1c-f4e2e3198891"
+            }
+        },
+        {
+            "taskId": "7244705d-5215-4157-ab4b-8a84db9e554f",
+            "appearanceProfileId": "e6399834-1807-4b99-a6c4-92fc068bdbbe",
+            "staticTransfoAssignmentId": "59752349-bc7c-4009-88d5-b18abfc5db0e",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "37a27df6-6e47-434c-9bb0-f1df979deb12"
+            }
+        },
+        {
+            "taskId": "f988f1cd-41b8-43f1-a4f4-c26b06426c0e",
+            "appearanceProfileId": "05a76ab1-e06f-4605-ad11-bbfa632b6171",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "7a1b7263-f1cf-4ee4-9e8b-fb20ef5145a9"
+            }
+        },
+        {
+            "taskId": "633af080-4a79-493f-93f4-219c3d147f06",
+            "appearanceProfileId": "ed18be6d-fc59-409d-b68b-bbdca81b3a21",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "f0348984-c5fe-40ff-8274-fe760a9c49be"
+            }
+        },
+        {
+            "taskId": "ad823fdb-f98a-41f7-b7af-2f5ed5243fce",
+            "appearanceProfileId": "3ae80333-cce3-4459-8585-a3bf3404be4f",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "287bae81-7ea9-4b3e-b7b8-acc9977b5337"
+            }
+        },
+        {
+            "taskId": "ad823fdb-f98a-41f7-b7af-2f5ed5243fce",
+            "appearanceProfileId": "cee6690f-b307-4410-b7e8-e54063bb6319",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "f5d2759b-4d8b-4cf0-b76d-80b4320bf1ca"
+            }
+        },
+        {
+            "taskId": "633af080-4a79-493f-93f4-219c3d147f06",
+            "appearanceProfileId": "ee52b710-8cb8-459d-8066-99555c64df6f",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "5cbecf68-0bb7-4071-ba30-4e999f76449d"
+            }
+        },
+        {
+            "taskId": "e16465cc-73c8-4de8-b316-4efbbefede86",
+            "appearanceProfileId": "2847411f-bd6a-41ee-b8cc-023274e3b07a",
+            "staticTransfoAssignmentId": "6b93f26c-a1e5-46e9-9a38-721d752d75d9",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "0e2ab706-6add-456a-bc15-7dd884428cfc"
+            }
+        },
+        {
+            "taskId": "d4682a7b-3169-4a5f-a6bc-50ed017643bc",
+            "appearanceProfileId": "d8799a15-c9b2-4882-aac9-29843e674e98",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "402e987b-a99b-4c66-b506-c0e6d9e67d0a"
+            }
+        },
+        {
+            "taskId": "e237fec7-2de2-479e-a13d-4d8543e69cfb",
+            "appearanceProfileId": "3ca98204-11a8-4491-aab5-2d31099e76ca",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "d94fd83f-4717-4db3-abc7-30d0d7d12118"
+            }
+        },
+        {
+            "taskId": "e16465cc-73c8-4de8-b316-4efbbefede86",
+            "appearanceProfileId": "85ab143e-515a-430d-84ae-4e5925d13889",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "d6047865-9910-4223-a661-ce21bc5f4ec6"
+            }
+        },
+        {
+            "taskId": "633af080-4a79-493f-93f4-219c3d147f06",
+            "appearanceProfileId": "cef22464-9ba1-4833-a13c-b50338936175",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "98767231-4de3-4f76-8774-65f0577f7710"
+            }
+        },
+        {
+            "taskId": "ad823fdb-f98a-41f7-b7af-2f5ed5243fce",
+            "appearanceProfileId": "ee52b710-8cb8-459d-8066-99555c64df6f",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "b46821bc-2ab4-4563-b825-e1b280c3bff3"
+            }
+        },
+        {
+            "taskId": "e237fec7-2de2-479e-a13d-4d8543e69cfb",
+            "appearanceProfileId": "d8799a15-c9b2-4882-aac9-29843e674e98",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "7a1b7263-f1cf-4ee4-9e8b-fb20ef5145a9"
+            }
+        },
+        {
+            "taskId": "ff7ff77a-db98-45c0-9a33-2065812d122f",
+            "appearanceProfileId": "0a67df06-a8c4-4504-8ee5-0ba292ce752c",
+            "staticTransfoAssignmentId": "85752499-56d8-44ca-9a61-c881fc5522f6",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "7a1b7263-f1cf-4ee4-9e8b-fb20ef5145a9"
+            }
+        },
+        {
+            "taskId": "ff7ff77a-db98-45c0-9a33-2065812d122f",
+            "appearanceProfileId": "2847411f-bd6a-41ee-b8cc-023274e3b07a",
+            "staticTransfoAssignmentId": "938357ba-2743-4c61-a172-4c0436141aaf",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "d5d7d82c-6011-4d16-8e38-40ab14b88941"
+            }
+        },
+        {
+            "taskId": "ff7ff77a-db98-45c0-9a33-2065812d122f",
+            "appearanceProfileId": "3ca98204-11a8-4491-aab5-2d31099e76ca",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "9bc57b42-309f-4cb3-8d11-ab50e5d3b741",
+            "animatedEntities": {
+                "type": "group",
+                "value": "bf89a4b8-710a-41bf-a384-c21dc38fba61"
+            }
+        },
+        {
+            "taskId": "ff7ff77a-db98-45c0-9a33-2065812d122f",
+            "appearanceProfileId": "3ca98204-11a8-4491-aab5-2d31099e76ca",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "9c02e20f-4891-4993-b81d-0f89ee2df6a9",
+            "animatedEntities": {
+                "type": "group",
+                "value": "25baf11d-9e97-4257-876e-ab30569303f1"
+            }
+        },
+        {
+            "taskId": "e16465cc-73c8-4de8-b316-4efbbefede86",
+            "appearanceProfileId": "e6399834-1807-4b99-a6c4-92fc068bdbbe",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "9c21c14d-dcbb-489d-9249-5f17604f6fa1",
+            "animatedEntities": {
+                "type": "group",
+                "value": "afd76af2-6dac-40d6-984d-3a7cca6d01db"
+            }
+        },
+        {
+            "taskId": "f988f1cd-41b8-43f1-a4f4-c26b06426c0e",
+            "appearanceProfileId": "d8799a15-c9b2-4882-aac9-29843e674e98",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "c8e8ab90-6469-46bd-a401-a500fe9c1887"
+            }
+        },
+        {
+            "taskId": "ad823fdb-f98a-41f7-b7af-2f5ed5243fce",
+            "appearanceProfileId": "2847411f-bd6a-41ee-b8cc-023274e3b07a",
+            "staticTransfoAssignmentId": "a349e266-e497-4121-b2f8-1e045f9c00a8",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "d70c64a8-0394-492a-af2f-4cebbe652513"
+            }
+        },
+        {
+            "taskId": "517a0739-be1d-40d5-a0bb-dd5457700491",
+            "appearanceProfileId": "ffb16b7d-77bf-4f88-990e-9234e7761805",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "287bae81-7ea9-4b3e-b7b8-acc9977b5337"
+            }
+        },
+        {
+            "taskId": "b3b6ccc8-2e86-47fa-9181-4ec555179bd7",
+            "appearanceProfileId": "ee52b710-8cb8-459d-8066-99555c64df6f",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "8b1cece7-4a5f-4ddb-a624-5c3a188de488"
+            }
+        },
+        {
+            "taskId": "e237fec7-2de2-479e-a13d-4d8543e69cfb",
+            "appearanceProfileId": "c62374be-3745-4a30-8385-750d702f2643",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "34c6f28c-ef9c-4c47-8f8f-8d9aec9bcf36"
+            }
+        },
+        {
+            "taskId": "633af080-4a79-493f-93f4-219c3d147f06",
+            "appearanceProfileId": "cef22464-9ba1-4833-a13c-b50338936175",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "b090b5a6-a8a2-4001-be77-0a6fbf6c5e3e",
+            "animatedEntities": {
+                "type": "group",
+                "value": "a17796e6-c6fe-4156-b57a-017b7599d49c"
+            }
+        },
+        {
+            "taskId": "ff7ff77a-db98-45c0-9a33-2065812d122f",
+            "appearanceProfileId": "ed18be6d-fc59-409d-b68b-bbdca81b3a21",
+            "staticTransfoAssignmentId": "b0f6ace0-5d5f-4ee2-ae66-5c8d652828ae",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "a5fb15a3-9918-49fd-88f6-7593ceaaea48"
+            }
+        },
+        {
+            "taskId": "0f1c8636-f9ee-46e2-8fd2-9a93cbc04072",
+            "appearanceProfileId": "3ca98204-11a8-4491-aab5-2d31099e76ca",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "e7a994e8-77c7-4617-820e-869104843f23"
+            }
+        },
+        {
+            "taskId": "0f1c8636-f9ee-46e2-8fd2-9a93cbc04072",
+            "appearanceProfileId": "2847411f-bd6a-41ee-b8cc-023274e3b07a",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "01b6e0c8-d109-42f9-9f4a-48cbca06cf6e"
+            }
+        },
+        {
+            "taskId": "e16465cc-73c8-4de8-b316-4efbbefede86",
+            "appearanceProfileId": "cef22464-9ba1-4833-a13c-b50338936175",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "b6a1916e-d3c9-409e-9d3a-611a04cf4d86",
+            "animatedEntities": {
+                "type": "group",
+                "value": "8556cfb6-65a2-4815-add1-6e0da3fbb024"
+            }
+        },
+        {
+            "taskId": "517a0739-be1d-40d5-a0bb-dd5457700491",
+            "appearanceProfileId": "e6399834-1807-4b99-a6c4-92fc068bdbbe",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "d70c64a8-0394-492a-af2f-4cebbe652513"
+            }
+        },
+        {
+            "taskId": "0f1c8636-f9ee-46e2-8fd2-9a93cbc04072",
+            "appearanceProfileId": "3ca98204-11a8-4491-aab5-2d31099e76ca",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "03d43286-a6b0-4e92-962b-7d7714b449c0"
+            }
+        },
+        {
+            "taskId": "ad823fdb-f98a-41f7-b7af-2f5ed5243fce",
+            "appearanceProfileId": "2847411f-bd6a-41ee-b8cc-023274e3b07a",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "37a27df6-6e47-434c-9bb0-f1df979deb12"
+            }
+        },
+        {
+            "taskId": "ff7ff77a-db98-45c0-9a33-2065812d122f",
+            "appearanceProfileId": "3ca98204-11a8-4491-aab5-2d31099e76ca",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "c0b6b255-877a-4d9a-a781-5c9098620c56",
+            "animatedEntities": {
+                "type": "group",
+                "value": "1bbcb5ce-8f37-4212-8b7e-668b64bca8e4"
+            }
+        },
+        {
+            "taskId": "7244705d-5215-4157-ab4b-8a84db9e554f",
+            "appearanceProfileId": "2847411f-bd6a-41ee-b8cc-023274e3b07a",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "ee9d0693-e4ca-4c45-bdc8-aa9f2987e294"
+            }
+        },
+        {
+            "taskId": "dffc51c0-180c-4b55-adaa-3615bdd558fe",
+            "appearanceProfileId": "3ca98204-11a8-4491-aab5-2d31099e76ca",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "7a1b7263-f1cf-4ee4-9e8b-fb20ef5145a9"
+            }
+        },
+        {
+            "taskId": "ff7ff77a-db98-45c0-9a33-2065812d122f",
+            "appearanceProfileId": "85ab143e-515a-430d-84ae-4e5925d13889",
+            "staticTransfoAssignmentId": "c4029adf-c5eb-40a7-bc85-2b59a4e63309",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "016ea9eb-f6f6-4567-9104-4218ac682efe"
+            }
+        },
+        {
+            "taskId": "633af080-4a79-493f-93f4-219c3d147f06",
+            "appearanceProfileId": "ee52b710-8cb8-459d-8066-99555c64df6f",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "37a27df6-6e47-434c-9bb0-f1df979deb12"
+            }
+        },
+        {
+            "taskId": "e237fec7-2de2-479e-a13d-4d8543e69cfb",
+            "appearanceProfileId": "d8799a15-c9b2-4882-aac9-29843e674e98",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "c8e8ab90-6469-46bd-a401-a500fe9c1887"
+            }
+        },
+        {
+            "taskId": "ad823fdb-f98a-41f7-b7af-2f5ed5243fce",
+            "appearanceProfileId": "c62374be-3745-4a30-8385-750d702f2643",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "1088ffdf-4870-4d61-a24b-62ae3314cb22"
+            }
+        },
+        {
+            "taskId": "ad823fdb-f98a-41f7-b7af-2f5ed5243fce",
+            "appearanceProfileId": "0a67df06-a8c4-4504-8ee5-0ba292ce752c",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "9d423274-61a2-4b08-9054-0ae00876a470"
+            }
+        },
+        {
+            "taskId": "7244705d-5215-4157-ab4b-8a84db9e554f",
+            "appearanceProfileId": "ee52b710-8cb8-459d-8066-99555c64df6f",
+            "staticTransfoAssignmentId": "c906de8d-9e75-44ef-92b7-8236beb08d85",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "a17796e6-c6fe-4156-b57a-017b7599d49c"
+            }
+        },
+        {
+            "taskId": "7244705d-5215-4157-ab4b-8a84db9e554f",
+            "appearanceProfileId": "2847411f-bd6a-41ee-b8cc-023274e3b07a",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "f5d2759b-4d8b-4cf0-b76d-80b4320bf1ca"
+            }
+        },
+        {
+            "taskId": "517a0739-be1d-40d5-a0bb-dd5457700491",
+            "appearanceProfileId": "ee52b710-8cb8-459d-8066-99555c64df6f",
+            "staticTransfoAssignmentId": "d39d817f-701a-4209-9b2b-5e4c1df6efe3",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "f5d2759b-4d8b-4cf0-b76d-80b4320bf1ca"
+            }
+        },
+        {
+            "taskId": "517a0739-be1d-40d5-a0bb-dd5457700491",
+            "appearanceProfileId": "2847411f-bd6a-41ee-b8cc-023274e3b07a",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "34c6f28c-ef9c-4c47-8f8f-8d9aec9bcf36"
+            }
+        },
+        {
+            "taskId": "f988f1cd-41b8-43f1-a4f4-c26b06426c0e",
+            "appearanceProfileId": "0a67df06-a8c4-4504-8ee5-0ba292ce752c",
+            "staticTransfoAssignmentId": "d68e4e42-5771-424c-b275-5c47355b4e1b",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "f4ac445e-c75c-4ed9-8d7f-16d78f7c115d"
+            }
+        },
+        {
+            "taskId": "e16465cc-73c8-4de8-b316-4efbbefede86",
+            "appearanceProfileId": "0a67df06-a8c4-4504-8ee5-0ba292ce752c",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "dab1c4f3-3d9d-486f-85b0-87f15b3f5caa",
+            "animatedEntities": {
+                "type": "group",
+                "value": "d02f8a4a-b1da-45b8-a949-f0092ebee143"
+            }
+        },
+        {
+            "taskId": "e16465cc-73c8-4de8-b316-4efbbefede86",
+            "appearanceProfileId": "ed18be6d-fc59-409d-b68b-bbdca81b3a21",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "f5f06a5b-359e-4f4d-ba24-e8b778df2eb4"
+            }
+        },
+        {
+            "taskId": "e16465cc-73c8-4de8-b316-4efbbefede86",
+            "appearanceProfileId": "2847411f-bd6a-41ee-b8cc-023274e3b07a",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "e5e2e2a9-5e5f-4875-b357-3e5de8cc23f0",
+            "animatedEntities": {
+                "type": "group",
+                "value": "6f4e5f2d-4de8-456e-8289-48ef430b1c11"
+            }
+        },
+        {
+            "taskId": "e16465cc-73c8-4de8-b316-4efbbefede86",
+            "appearanceProfileId": "cef22464-9ba1-4833-a13c-b50338936175",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "eb0c8752-180f-450c-b179-6636999c4269",
+            "animatedEntities": {
+                "type": "group",
+                "value": "ae5856eb-96a7-4166-8106-01da066396b3"
+            }
+        },
+        {
+            "taskId": "517a0739-be1d-40d5-a0bb-dd5457700491",
+            "appearanceProfileId": "2847411f-bd6a-41ee-b8cc-023274e3b07a",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "d3aafae0-0d35-435f-86aa-afd2113598ff"
+            }
+        },
+        {
+            "taskId": "517a0739-be1d-40d5-a0bb-dd5457700491",
+            "appearanceProfileId": "2847411f-bd6a-41ee-b8cc-023274e3b07a",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "fb487111-f662-456b-87a8-b247ada3d3f5",
+            "animatedEntities": {
+                "type": "group",
+                "value": "a17796e6-c6fe-4156-b57a-017b7599d49c"
+            }
+        },
+        {
+            "taskId": "0f1c8636-f9ee-46e2-8fd2-9a93cbc04072",
+            "appearanceProfileId": "3ca98204-11a8-4491-aab5-2d31099e76ca",
+            "staticTransfoAssignmentId": "fb871b3b-398d-4a28-bed0-b0cbb2f9383c",
+            "pathTransfoAssignmentId": "fb871b3b-398d-4a28-bed0-b0cbb2f9383c",
+            "animatedEntities": {
+                "type": "group",
+                "value": "b36042ec-fe56-4db8-bdde-df6701ee7be4"
+            }
+        },
+        {
+            "taskId": "e16465cc-73c8-4de8-b316-4efbbefede86",
+            "appearanceProfileId": "3ae80333-cce3-4459-8585-a3bf3404be4f",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "d94fd83f-4717-4db3-abc7-30d0d7d12118"
+            }
+        },
+        {
+            "taskId": "517a0739-be1d-40d5-a0bb-dd5457700491",
+            "appearanceProfileId": "2847411f-bd6a-41ee-b8cc-023274e3b07a",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "48d54949-1db4-4903-82d6-bd3c59ac0a90"
+            }
+        },
+        {
+            "taskId": "e16465cc-73c8-4de8-b316-4efbbefede86",
+            "appearanceProfileId": "2847411f-bd6a-41ee-b8cc-023274e3b07a",
+            "staticTransfoAssignmentId": "",
+            "pathTransfoAssignmentId": "fee271a4-9fd3-4eeb-abf2-02c53f2054bf",
+            "animatedEntities": {
+                "type": "group",
+                "value": "8b02de7d-45f4-4b2e-8a6c-a4fc6e2ed520"
+            }
+        },
+        {
+            "taskId": "517a0739-be1d-40d5-a0bb-dd5457700491",
+            "appearanceProfileId": "e6399834-1807-4b99-a6c4-92fc068bdbbe",
+            "staticTransfoAssignmentId": "ff249a5a-c153-492d-be1d-dcd5a3109678",
+            "pathTransfoAssignmentId": "",
+            "animatedEntities": {
+                "type": "group",
+                "value": "fadd5f05-c280-41ef-b671-a36efd723bda"
+            }
+        }
+    ],
+    "tasks": [
+        {
+            "id": "e16465cc-73c8-4de8-b316-4efbbefede86",
+            "name": "Lift box",
+            "start": 63851792400.0,
+            "finish": 63870633540.0
+        },
+        {
+            "id": "ff7ff77a-db98-45c0-9a33-2065812d122f",
+            "name": "Maintain block",
+            "start": 63851792400.0,
+            "finish": 63876186000.0
+        },
+        {
+            "id": "0f1c8636-f9ee-46e2-8fd2-9a93cbc04072",
+            "name": "Maintain block Finished",
+            "start": 63851792400.0,
+            "finish": 63877366800.0
+        },
+        {
+            "id": "f988f1cd-41b8-43f1-a4f4-c26b06426c0e",
+            "name": "StartedTask",
+            "start": 63876934800.0,
+            "finish": 63884739600.0
+        },
+        {
+            "id": "d4682a7b-3169-4a5f-a6bc-50ed017643bc",
+            "name": "Shorter",
+            "start": 63854470800.0,
+            "finish": 63867263940.0
+        },
+        {
+            "id": "dffc51c0-180c-4b55-adaa-3615bdd558fe",
+            "name": "LaterTask",
+            "start": 63884739600.0,
+            "finish": 63892602000.0
+        },
+        {
+            "id": "e237fec7-2de2-479e-a13d-4d8543e69cfb",
+            "name": "LaterTask2",
+            "start": 63894416400.0,
+            "finish": 63898650000.0
+        },
+        {
+            "id": "7244705d-5215-4157-ab4b-8a84db9e554f",
+            "name": "Test",
+            "start": 63850755600.0,
+            "finish": 63857955600.0
+        },
+        {
+            "id": "633af080-4a79-493f-93f4-219c3d147f06",
+            "name": "TestLater",
+            "start": 63859741200.0,
+            "finish": 63866926800.0
+        },
+        {
+            "id": "517a0739-be1d-40d5-a0bb-dd5457700491",
+            "name": "TestJustAfter",
+            "start": 63866926800.0,
+            "finish": 63872974800.0
+        },
+        {
+            "id": "ad823fdb-f98a-41f7-b7af-2f5ed5243fce",
+            "name": "TestMuchLater",
+            "start": 63883501200.0,
+            "finish": 63889318800.0
+        },
+        {
+            "id": "b3b6ccc8-2e86-47fa-9181-4ec555179bd7",
+            "name": "StartKey_Install",
+            "start": 63850669200.0,
+            "finish": 63850669200.0
+        },
+        {
+            "id": "088cd559-5b4a-4127-b84e-3317713f1646",
+            "name": "StartKey_Remove",
+            "start": 63850669200.0,
+            "finish": 63850669200.0
+        }
+    ],
+    "appearanceProfiles": [
+        {
+            "id": "05a76ab1-e06f-4605-ad11-bbfa632b6171",
+            "profileType": 1,
+            "startAppearance": {
+                "useOriginalColor": true,
+                "useOriginalAlpha": true
+            },
+            "activeAppearance": {
+                "base": {
+                    "color": [
+                        0.0,
+                        1.0,
+                        0.0
+                    ],
+                    "alpha": 1
+                },
+                "growthDirectionCustom": [
+                    0.0,
+                    0.0,
+                    1.0
+                ],
+                "growthSimulationMode": 4
+            },
+            "finishAppearance": {
+                "useOriginalColor": true,
+                "alpha": 0.5
+            }
+        },
+        {
+            "id": "0a67df06-a8c4-4504-8ee5-0ba292ce752c",
+            "profileType": 4,
+            "startAppearance": {
+                "useOriginalColor": true,
+                "useOriginalAlpha": true
+            },
+            "activeAppearance": {
+                "base": {
+                    "useOriginalColor": true,
+                    "alpha": 0.699999988079071
+                },
+                "growthDirectionCustom": [
+                    0.0,
+                    0.0,
+                    1.0
+                ],
+                "growthSimulationMode": 7
+            },
+            "finishAppearance": {
+                "useOriginalColor": true,
+                "alpha": 0.699999988079071
+            }
+        },
+        {
+            "id": "2847411f-bd6a-41ee-b8cc-023274e3b07a",
+            "profileType": 4,
+            "startAppearance": {
+                "useOriginalColor": true,
+                "useOriginalAlpha": true
+            },
+            "activeAppearance": {
+                "base": {
+                    "color": [
+                        1.0,
+                        1.0,
+                        0.0
+                    ],
+                    "alpha": 1
+                },
+                "growthDirectionCustom": [
+                    0.0,
+                    0.0,
+                    1.0
+                ],
+                "growthSimulationMode": 7
+            },
+            "finishAppearance": {
+                "useOriginalColor": true,
+                "useOriginalAlpha": true
+            }
+        },
+        {
+            "id": "3ae80333-cce3-4459-8585-a3bf3404be4f",
+            "profileType": 4,
+            "startAppearance": {
+                "color": [
+                    0.54117647058823526,
+                    0.16862745098039217,
+                    0.88627450980392153
+                ],
+                "alpha": 0.60000002384185791
+            },
+            "activeAppearance": {
+                "base": {
+                    "color": [
+                        0.12549019607843137,
+                        0.69803921568627447,
+                        0.66666666666666663
+                    ],
+                    "alpha": 0.89999997615814209
+                },
+                "growthDirectionCustom": [
+                    0.0,
+                    0.0,
+                    1.0
+                ],
+                "growthSimulationMode": 0
+            },
+            "finishAppearance": {
+                "color": [
+                    0.0,
+                    1.0,
+                    1.0
+                ],
+                "alpha": 0.800000011920929
+            }
+        },
+        {
+            "id": "3ca98204-11a8-4491-aab5-2d31099e76ca",
+            "profileType": 1,
+            "startAppearance": {
+                "useOriginalColor": true,
+                "useOriginalAlpha": true
+            },
+            "activeAppearance": {
+                "base": {
+                    "color": [
+                        0.82352941176470584,
+                        0.41176470588235292,
+                        0.11764705882352941
+                    ],
+                    "useOriginalAlpha": true
+                },
+                "growthDirectionCustom": [
+                    0.0,
+                    0.0,
+                    1.0
+                ],
+                "growthSimulationMode": 7
+            },
+            "finishAppearance": {
+                "useOriginalColor": true,
+                "useOriginalAlpha": true
+            }
+        },
+        {
+            "id": "4a781456-059c-4b06-86d9-16b288bf299c",
+            "profileType": 0,
+            "startAppearance": {
+                "useOriginalColor": true,
+                "useOriginalAlpha": true
+            },
+            "activeAppearance": {
+                "base": {
+                    "useOriginalColor": true,
+                    "useOriginalAlpha": true
+                },
+                "growthDirectionCustom": [
+                    0.0,
+                    0.0,
+                    1.0
+                ],
+                "growthSimulationMode": 7
+            },
+            "finishAppearance": {
+                "useOriginalColor": true,
+                "useOriginalAlpha": true
+            }
+        },
+        {
+            "id": "85ab143e-515a-430d-84ae-4e5925d13889",
+            "profileType": 2,
+            "startAppearance": {
+                "useOriginalColor": true,
+                "alpha": 0.699999988079071
+            },
+            "activeAppearance": {
+                "base": {
+                    "color": [
+                        0.0,
+                        1.0,
+                        0.0
+                    ],
+                    "alpha": 1
+                },
+                "growthDirectionCustom": [
+                    0.0,
+                    0.0,
+                    1.0
+                ],
+                "growthSimulationMode": 3
+            },
+            "finishAppearance": {
+                "useOriginalColor": true,
+                "useOriginalAlpha": true
+            }
+        },
+        {
+            "id": "c4956da3-8ce5-4393-a183-32ae780d7de3",
+            "profileType": 3,
+            "startAppearance": {
+                "useOriginalColor": true,
+                "useOriginalAlpha": true
+            },
+            "activeAppearance": {
+                "base": {
+                    "color": [
+                        0.41568627450980394,
+                        0.35294117647058826,
+                        0.803921568627451
+                    ],
+                    "useOriginalAlpha": true
+                },
+                "growthDirectionCustom": [
+                    0.0,
+                    0.0,
+                    1.0
+                ],
+                "growthSimulationMode": 2,
+                "invertGrowth": true
+            },
+            "finishAppearance": {
+                "useOriginalColor": true,
+                "useOriginalAlpha": true
+            }
+        },
+        {
+            "id": "c62374be-3745-4a30-8385-750d702f2643",
+            "profileType": 2,
+            "startAppearance": {
+                "useOriginalColor": true,
+                "useOriginalAlpha": true
+            },
+            "activeAppearance": {
+                "base": {
+                    "color": [
+                        1.0,
+                        0.63137254901960782,
+                        0.011764705882352939
+                    ],
+                    "alpha": 1
+                },
+                "growthDirectionCustom": [
+                    0.0,
+                    0.0,
+                    1.0
+                ],
+                "growthSimulationMode": 7
+            },
+            "finishAppearance": {
+                "useOriginalColor": true,
+                "useOriginalAlpha": true
+            }
+        },
+        {
+            "id": "cee6690f-b307-4410-b7e8-e54063bb6319",
+            "profileType": 1,
+            "startAppearance": {
+                "useOriginalColor": true,
+                "useOriginalAlpha": true
+            },
+            "activeAppearance": {
+                "base": {
+                    "color": [
+                        0.0,
+                        1.0,
+                        0.0
+                    ],
+                    "alpha": 1
+                },
+                "growthDirectionCustom": [
+                    0.0,
+                    0.0,
+                    1.0
+                ],
+                "growthSimulationMode": 2
+            },
+            "finishAppearance": {
+                "color": [
+                    0.39215686274509803,
+                    0.58431372549019611,
+                    0.92941176470588238
+                ],
+                "alpha": 0.66999995708465576
+            }
+        },
+        {
+            "id": "cef22464-9ba1-4833-a13c-b50338936175",
+            "profileType": 4,
+            "startAppearance": {
+                "useOriginalColor": true,
+                "useOriginalAlpha": true
+            },
+            "activeAppearance": {
+                "base": {
+                    "color": [
+                        1.0,
+                        1.0,
+                        0.00392156862745098
+                    ],
+                    "alpha": 1
+                },
+                "growthDirectionCustom": [
+                    0.0,
+                    0.0,
+                    1.0
+                ],
+                "growthSimulationMode": 3,
+                "invertGrowth": true
+            },
+            "finishAppearance": {
+                "color": [
+                    0.86274509803921573,
+                    0.0784313725490196,
+                    0.23529411764705882
+                ],
+                "useOriginalAlpha": true
+            }
+        },
+        {
+            "id": "d8799a15-c9b2-4882-aac9-29843e674e98",
+            "profileType": 1,
+            "startAppearance": {
+                "useOriginalColor": true,
+                "useOriginalAlpha": true
+            },
+            "activeAppearance": {
+                "base": {
+                    "color": [
+                        1.0,
+                        0.0,
+                        0.0
+                    ],
+                    "alpha": 0.5
+                },
+                "growthDirectionCustom": [
+                    0.0,
+                    0.0,
+                    1.0
+                ],
+                "growthSimulationMode": 7
+            },
+            "finishAppearance": {
+                "useOriginalColor": true,
+                "useOriginalAlpha": true
+            }
+        },
+        {
+            "id": "e6399834-1807-4b99-a6c4-92fc068bdbbe",
+            "profileType": 3,
+            "startAppearance": {
+                "useOriginalColor": true,
+                "useOriginalAlpha": true
+            },
+            "activeAppearance": {
+                "base": {
+                    "color": [
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "alpha": 1
+                },
+                "growthDirectionCustom": [
+                    0.0,
+                    0.0,
+                    1.0
+                ],
+                "growthSimulationMode": 7
+            },
+            "finishAppearance": {
+                "useOriginalColor": true,
+                "useOriginalAlpha": true
+            }
+        },
+        {
+            "id": "ed18be6d-fc59-409d-b68b-bbdca81b3a21",
+            "profileType": 2,
+            "startAppearance": {
+                "color": [
+                    0.60392156862745094,
+                    0.803921568627451,
+                    0.19607843137254902
+                ],
+                "useOriginalAlpha": true
+            },
+            "activeAppearance": {
+                "base": {
+                    "color": [
+                        0.0,
+                        1.0,
+                        0.0
+                    ],
+                    "alpha": 1
+                },
+                "growthDirectionCustom": [
+                    0.0,
+                    0.0,
+                    1.0
+                ],
+                "growthSimulationMode": 2
+            },
+            "finishAppearance": {
+                "useOriginalColor": true,
+                "useOriginalAlpha": true
+            }
+        },
+        {
+            "id": "ee52b710-8cb8-459d-8066-99555c64df6f",
+            "profileType": 1,
+            "startAppearance": {
+                "useOriginalColor": true,
+                "useOriginalAlpha": true
+            },
+            "activeAppearance": {
+                "base": {
+                    "color": [
+                        0.0,
+                        1.0,
+                        0.0
+                    ],
+                    "alpha": 1
+                },
+                "growthDirectionCustom": [
+                    0.0,
+                    0.0,
+                    1.0
+                ],
+                "growthSimulationMode": 4
+            },
+            "finishAppearance": {
+                "useOriginalColor": true,
+                "useOriginalAlpha": true
+            }
+        },
+        {
+            "id": "ffb16b7d-77bf-4f88-990e-9234e7761805",
+            "profileType": 1,
+            "startAppearance": {
+                "useOriginalColor": true,
+                "useOriginalAlpha": true
+            },
+            "activeAppearance": {
+                "base": {
+                    "color": [
+                        0.0,
+                        0.807843137254902,
+                        0.81960784313725488
+                    ],
+                    "alpha": 1
+                },
+                "growthDirectionCustom": [
+                    0.57735025882720947,
+                    0.57735025882720947,
+                    0.57735025882720947
+                ],
+                "growthSimulationMode": 6
+            },
+            "finishAppearance": {
+                "color": [
+                    0.1803921568627451,
+                    0.54509803921568623,
+                    0.3411764705882353
+                ],
+                "useOriginalAlpha": true
+            }
+        }
+    ],
+    "staticTransfoAssignments": [
+        {
+            "id": "000e6fe7-ae0e-4b10-9dab-bbb8dd9a02e9",
+            "transform": {
+                "translation": [
+                    1.16302908282E-06,
+                    7604.685546875,
+                    -20506.943359375
+                ],
+                "rotation": [
+                    0.34723021872797849,
+                    0.0,
+                    0.0,
+                    0.9377799183188561
+                ]
+            }
+        },
+        {
+            "id": "0264e64c-5746-4d3f-b679-693330212a81",
+            "transform": {
+                "translation": [
+                    43104.25,
+                    9790.4765625,
+                    -37967.125
+                ],
+                "rotation": [
+                    0.10581082134057447,
+                    0.86869572028873587,
+                    0.34388858787244375,
+                    -0.340459182238288
+                ]
+            }
+        },
+        {
+            "id": "06aa9c3b-efe8-4efc-9d1a-5e1956725c0c",
+            "transform": {
+                "translation": [
+                    2.576052793E-08,
+                    44.472625732421875,
+                    5.2965759778E-07
+                ]
+            }
+        },
+        {
+            "id": "0b68b465-6670-42c4-99f5-596de1bbc993",
+            "transform": {
+                "translation": [
+                    29916.705078125,
+                    -13928.015625,
+                    6.928E-14
+                ],
+                "rotation": [
+                    0.0,
+                    0.0,
+                    0.36124166358256454,
+                    0.93247223041337879
+                ]
+            }
+        },
+        {
+            "id": "2ad4801c-6a3e-49bb-a487-6f383c4714f3",
+            "transform": {
+                "translation": [
+                    -5379.1533203125,
+                    6781.66845703125,
+                    126.88013458251953
+                ],
+                "rotation": [
+                    0.0,
+                    0.0,
+                    -0.094754724679265073,
+                    0.99550064899574864
+                ]
+            }
+        },
+        {
+            "id": "33fb8ad1-c45a-4f4a-ae32-83a75b2fa55d",
+            "transform": {
+                "translation": [
+                    49.54840087890625,
+                    -1.98025736609E-06,
+                    6.928E-14
+                ]
+            }
+        },
+        {
+            "id": "4505ff1b-bf8a-48c6-bdf0-5c9c5b3bcfae",
+            "transform": {
+                "translation": [
+                    1.288208296E-08,
+                    -168.62924194335938,
+                    2.6482879889E-07
+                ]
+            }
+        },
+        {
+            "id": "56ab79ed-cc6c-49d6-8ca2-53ce0e160d5a",
+            "transform": {
+                "translation": [
+                    -70655.8828125,
+                    4428.60302734375,
+                    -3473.034912109375
+                ],
+                "rotation": [
+                    0.20629280881648235,
+                    0.27109587244200867,
+                    -0.17444787285758434,
+                    0.92386051145775061
+                ],
+                "scale": [
+                    2.4921394370311472,
+                    1.2230260939049042,
+                    1.5427512444190628
+                ]
+            }
+        },
+        {
+            "id": "59752349-bc7c-4009-88d5-b18abfc5db0e",
+            "transform": {
+                "translation": [
+                    68975.8828125,
+                    4075.71484375,
+                    0.0
+                ],
+                "rotation": [
+                    0.0,
+                    0.0,
+                    0.76048705102225178,
+                    0.64935309749586867
+                ]
+            }
+        },
+        {
+            "id": "6b93f26c-a1e5-46e9-9a38-721d752d75d9",
+            "transform": {
+                "translation": [
+                    9184.537109375,
+                    -7241.5810546875,
+                    0.0
+                ],
+                "rotation": [
+                    0.0,
+                    0.0,
+                    0.12849811079001233,
+                    0.99170975366958958
+                ]
+            }
+        },
+        {
+            "id": "85752499-56d8-44ca-9a61-c881fc5522f6",
+            "transform": {
+                "translation": [
+                    6.30825525E-09,
+                    139.95513916015625,
+                    44.843711853027344
+                ]
+            }
+        },
+        {
+            "id": "938357ba-2743-4c61-a172-4c0436141aaf",
+            "transform": {
+                "translation": [
+                    20232.388671875,
+                    -11964.494140625,
+                    0.0
+                ],
+                "rotation": [
+                    0.0,
+                    0.0,
+                    0.25881904885601786,
+                    0.96592582528332183
+                ]
+            }
+        },
+        {
+            "id": "a349e266-e497-4121-b2f8-1e045f9c00a8",
+            "transform": {
+                "translation": [
+                    -8689.7978515625,
+                    12912.1875,
+                    0.0
+                ],
+                "rotation": [
+                    0.0,
+                    0.0,
+                    -0.17007218547082908,
+                    0.98543160682473341
+                ]
+            }
+        },
+        {
+            "id": "b0f6ace0-5d5f-4ee2-ae66-5c8d652828ae",
+            "transform": {
+                "translation": [
+                    16117.5634765625,
+                    -1265.9549560546875,
+                    -26368.501953125
+                ],
+                "rotation": [
+                    0.45828317165197041,
+                    0.15766243443867792,
+                    0.27254955274970893,
+                    0.831165346151663
+                ]
+            }
+        },
+        {
+            "id": "c4029adf-c5eb-40a7-bc85-2b59a4e63309",
+            "transform": {
+                "translation": [
+                    111.45409393310547,
+                    -69.495643615722656,
+                    -6.5393743515014648
+                ]
+            }
+        },
+        {
+            "id": "c906de8d-9e75-44ef-92b7-8236beb08d85",
+            "transform": {
+                "translation": [
+                    -13032.3251953125,
+                    28895.8046875,
+                    0.0
+                ],
+                "rotation": [
+                    0.0,
+                    0.0,
+                    -0.34722961984785661,
+                    0.93778014006499044
+                ]
+            }
+        },
+        {
+            "id": "d39d817f-701a-4209-9b2b-5e4c1df6efe3",
+            "transform": {
+                "translation": [
+                    -11091.0146484375,
+                    19223.744140625,
+                    0.0
+                ],
+                "rotation": [
+                    0.0,
+                    0.0,
+                    -0.24229898985690779,
+                    0.97020162827853584
+                ]
+            }
+        },
+        {
+            "id": "d68e4e42-5771-424c-b275-5c47355b4e1b",
+            "transform": {
+                "translation": [
+                    2.576052793E-08,
+                    -6.67836502544E-06,
+                    279.41995239257813
+                ]
+            }
+        },
+        {
+            "id": "fb871b3b-398d-4a28-bed0-b0cbb2f9383c",
+            "transform": {
+                "translation": [
+                    -11755.3916015625,
+                    41312.69921875,
+                    0.0
+                ],
+                "rotation": [
+                    0.0,
+                    0.0,
+                    -0.47345513235679348,
+                    0.88081793671848641
+                ]
+            }
+        },
+        {
+            "id": "ff249a5a-c153-492d-be1d-dcd5a3109678",
+            "transform": {
+                "translation": [
+                    18415.43359375,
+                    -11752.7236328125,
+                    0.0
+                ],
+                "rotation": [
+                    0.0,
+                    0.0,
+                    0.23894055782268572,
+                    0.97103419601339691
+                ]
+            }
+        }
+    ],
+    "pathTransfoAssignments": [
+        {
+            "id": "05cf5c76-2c96-43de-95a8-d95d032b0ff8",
+            "pathAssignment": {
+                "animation3DPathId": "3f3c6a38-7a7b-4d7a-8550-1585c96cc130",
+                "transformAnchor": {
+                    "type": "anchorPoint",
+                    "value": "MaxZ"
+                }
+            }
+        },
+        {
+            "id": "0b9fe16d-fe5a-4d29-ab67-f5a26f868352",
+            "pathAssignment": {
+                "animation3DPathId": "3f3c6a38-7a7b-4d7a-8550-1585c96cc130",
+                "transformAnchor": {
+                    "type": "anchorPoint",
+                    "value": "Original"
+                },
+                "3DPathReverseDirection": true,
+                "motionStart": 0.5
+            }
+        },
+        {
+            "id": "1891094d-00dd-4c37-83c1-531dccbe22ac",
+            "pathAssignment": {
+                "animation3DPathId": "a16f8cf5-a3a0-4640-ac15-075c509022e5",
+                "transformAnchor": {
+                    "type": "anchorPoint",
+                    "value": "MinX"
+                }
+            }
+        },
+        {
+            "id": "1a509476-e6a7-46b9-b5b2-164bbff100e6",
+            "pathAssignment": {
+                "animation3DPathId": "3f3c6a38-7a7b-4d7a-8550-1585c96cc130",
+                "transformAnchor": {
+                    "type": "anchorPoint",
+                    "value": "Original"
+                },
+                "motionStart": 0.41999998688697815
+            }
+        },
+        {
+            "id": "209d3a4d-8a8c-4cb4-8c87-1fd0a073fa38",
+            "pathAssignment": {
+                "animation3DPathId": "cb00fae1-b23b-4dc8-abb2-5c476e7cba81",
+                "transformAnchor": {
+                    "type": "anchorPoint",
+                    "value": "Original"
+                }
+            }
+        },
+        {
+            "id": "30592eb5-0d8b-4994-85eb-c4766bb6bd24",
+            "pathAssignment": {
+                "animation3DPathId": "a16f8cf5-a3a0-4640-ac15-075c509022e5",
+                "transformAnchor": {
+                    "type": "anchorPoint",
+                    "value": "MaxY"
+                }
+            }
+        },
+        {
+            "id": "425ba1fe-9ba7-451e-8452-8e98060f26d2",
+            "pathAssignment": {
+                "animation3DPathId": "3f3c6a38-7a7b-4d7a-8550-1585c96cc130",
+                "transformAnchor": {
+                    "type": "anchorPoint",
+                    "value": "Original"
+                },
+                "3DPathReverseDirection": true,
+                "motionEnd": 0.5
+            }
+        },
+        {
+            "id": "44985b48-bed5-46ee-8b67-a6696d7a049c",
+            "pathAssignment": {
+                "animation3DPathId": "cb00fae1-b23b-4dc8-abb2-5c476e7cba81",
+                "transformAnchor": {
+                    "type": "anchorPoint",
+                    "value": "Original"
+                }
+            }
+        },
+        {
+            "id": "9bc57b42-309f-4cb3-8d11-ab50e5d3b741",
+            "pathAssignment": {
+                "animation3DPathId": "3f3c6a38-7a7b-4d7a-8550-1585c96cc130",
+                "transformAnchor": {
+                    "type": "anchorPoint",
+                    "value": "Center"
+                },
+                "3DPathReverseDirection": true,
+                "motionStart": 0.12999999523162842,
+                "motionEnd": 0.67000001668930054
+            }
+        },
+        {
+            "id": "9c02e20f-4891-4993-b81d-0f89ee2df6a9",
+            "pathAssignment": {
+                "animation3DPathId": "3f3c6a38-7a7b-4d7a-8550-1585c96cc130",
+                "transformAnchor": {
+                    "type": "anchorPoint",
+                    "value": "Original"
+                },
+                "motionEnd": 0.5
+            }
+        },
+        {
+            "id": "9c21c14d-dcbb-489d-9249-5f17604f6fa1",
+            "pathAssignment": {
+                "animation3DPathId": "a16f8cf5-a3a0-4640-ac15-075c509022e5",
+                "transformAnchor": {
+                    "type": "anchorPoint",
+                    "value": "Original"
+                }
+            }
+        },
+        {
+            "id": "b090b5a6-a8a2-4001-be77-0a6fbf6c5e3e",
+            "pathAssignment": {
+                "animation3DPathId": "3f3c6a38-7a7b-4d7a-8550-1585c96cc130",
+                "transformAnchor": {
+                    "type": "anchorPoint",
+                    "value": "Original"
+                }
+            }
+        },
+        {
+            "id": "b6a1916e-d3c9-409e-9d3a-611a04cf4d86",
+            "pathAssignment": {
+                "animation3DPathId": "a16f8cf5-a3a0-4640-ac15-075c509022e5",
+                "transformAnchor": {
+                    "type": "anchorPoint",
+                    "value": "Original"
+                },
+                "3DPathReverseDirection": true
+            }
+        },
+        {
+            "id": "c0b6b255-877a-4d9a-a781-5c9098620c56",
+            "pathAssignment": {
+                "animation3DPathId": "3f3c6a38-7a7b-4d7a-8550-1585c96cc130",
+                "transformAnchor": {
+                    "type": "anchorPoint",
+                    "value": "Center"
+                },
+                "motionStart": 0.12999999523162842,
+                "motionEnd": 0.67000001668930054
+            }
+        },
+        {
+            "id": "dab1c4f3-3d9d-486f-85b0-87f15b3f5caa",
+            "pathAssignment": {
+                "animation3DPathId": "a16f8cf5-a3a0-4640-ac15-075c509022e5",
+                "transformAnchor": {
+                    "type": "anchorPoint",
+                    "value": "Center"
+                }
+            }
+        },
+        {
+            "id": "e5e2e2a9-5e5f-4875-b357-3e5de8cc23f0",
+            "pathAssignment": {
+                "animation3DPathId": "a16f8cf5-a3a0-4640-ac15-075c509022e5",
+                "transformAnchor": {
+                    "type": "anchorPoint",
+                    "value": "MinZ"
+                }
+            }
+        },
+        {
+            "id": "eb0c8752-180f-450c-b179-6636999c4269",
+            "pathAssignment": {
+                "animation3DPathId": "a16f8cf5-a3a0-4640-ac15-075c509022e5",
+                "transformAnchor": {
+                    "type": "anchorPoint",
+                    "value": "MinZ"
+                },
+                "3DPathReverseDirection": true
+            }
+        },
+        {
+            "id": "fb487111-f662-456b-87a8-b247ada3d3f5",
+            "pathAssignment": {
+                "animation3DPathId": "a16f8cf5-a3a0-4640-ac15-075c509022e5",
+                "transformAnchor": {
+                    "type": "anchorPoint",
+                    "value": "Original"
+                }
+            }
+        },
+        {
+            "id": "fb871b3b-398d-4a28-bed0-b0cbb2f9383c",
+            "pathAssignment": {
+                "animation3DPathId": "a16f8cf5-a3a0-4640-ac15-075c509022e5",
+                "transformAnchor": {
+                    "type": "anchorPoint",
+                    "value": "Original"
+                }
+            }
+        },
+        {
+            "id": "fee271a4-9fd3-4eeb-abf2-02c53f2054bf",
+            "pathAssignment": {
+                "animation3DPathId": "cb00fae1-b23b-4dc8-abb2-5c476e7cba81",
+                "transformAnchor": {
+                    "type": "offset",
+                    "value": [
+                        -67.97039794921875,
+                        1.2192000150680542,
+                        -50.000003814697266
+                    ]
+                }
+            }
+        }
+    ],
+    "animation3DPaths": [
+        {
+            "id": "3f3c6a38-7a7b-4d7a-8550-1585c96cc130",
+            "name": "BoxPathZMin",
+            "color": [
+                1.0,
+                0.0,
+                0.0
+            ],
+            "keyframes": [
+                {
+                    "transform": {
+                        "translation": [
+                            32304.482421875,
+                            32124.833984375,
+                            19.618907928466797
+                        ],
+                        "rotation": [
+                            0.0,
+                            0.38268343236508978,
+                            0.0,
+                            0.92387953251128674
+                        ]
+                    },
+                    "relativeTime": 0.0
+                },
+                {
+                    "transform": {
+                        "translation": [
+                            32298.8359375,
+                            31818.537109375,
+                            4.9392104148864746
+                        ],
+                        "rotation": [
+                            0.0,
+                            0.70710678118654757,
+                            0.0,
+                            0.70710678118654757
+                        ]
+                    },
+                    "relativeTime": 0.40621295571327209
+                },
+                {
+                    "transform": {
+                        "translation": [
+                            32483.419921875,
+                            31869.609375,
+                            4.9392104148864746
+                        ]
+                    },
+                    "relativeTime": 0.531000018119812
+                },
+                {
+                    "transform": {
+                        "translation": [
+                            32483.419921875,
+                            31869.609375,
+                            4.9392104148864746
+                        ],
+                        "rotation": [
+                            0.0,
+                            0.0,
+                            0.70710678118654757,
+                            0.70710678118654757
+                        ]
+                    },
+                    "relativeTime": 0.54000002145767212
+                },
+                {
+                    "transform": {
+                        "translation": [
+                            32739.681640625,
+                            31852.955078125,
+                            4.9392104148864746
+                        ],
+                        "rotation": [
+                            0.0,
+                            0.0,
+                            -0.38268343236508978,
+                            0.92387953251128674
+                        ]
+                    },
+                    "relativeTime": 1.0
+                }
+            ]
+        },
+        {
+            "id": "a16f8cf5-a3a0-4640-ac15-075c509022e5",
+            "name": "Lift cargo",
+            "color": [
+                0.94117647058823528,
+                0.94509803921568625,
+                0.996078431372549
+            ],
+            "keyframes": [
+                {
+                    "transform": {
+                        "translation": [
+                            32363.30078125,
+                            31542.296875,
+                            92.877578735351563
+                        ],
+                        "rotation": [
+                            -0.10536825633739121,
+                            0.013581172782496339,
+                            -0.00143917095990052,
+                            0.99433948477777323
+                        ]
+                    },
+                    "relativeTime": 0.0
+                },
+                {
+                    "transform": {
+                        "translation": [
+                            32427.767578125,
+                            31440.361328125,
+                            100.58619689941406
+                        ]
+                    },
+                    "relativeTime": 0.25
+                },
+                {
+                    "transform": {
+                        "translation": [
+                            32562.376953125,
+                            31475.376953125,
+                            197.37570190429688
+                        ]
+                    },
+                    "relativeTime": 1.0
+                }
+            ]
+        },
+        {
+            "id": "cb00fae1-b23b-4dc8-abb2-5c476e7cba81",
+            "name": "CraneCustomXYZ",
+            "color": [
+                1.0,
+                0.0,
+                0.0
+            ],
+            "keyframes": [
+                {
+                    "transform": {
+                        "translation": [
+                            32795.40234375,
+                            31972.001953125,
+                            99.6951904296875
+                        ],
+                        "rotation": [
+                            0.0,
+                            0.0,
+                            -0.766044443118978,
+                            0.64278760968653936
+                        ]
+                    },
+                    "relativeTime": 0.0
+                },
+                {
+                    "transform": {
+                        "translation": [
+                            32795.40234375,
+                            31972.001953125,
+                            99.6951904296875
+                        ]
+                    },
+                    "relativeTime": 1.0
+                }
+            ]
+        }
+    ],
+    "elemIDGroups": [
+        {
+            "id": "8ffc6035-4c30-4421-9e2d-49c0ea1ffec6",
+            "items": [
+                "0x1a0000000073"
+            ]
+        },
+        {
+            "id": "37a27df6-6e47-434c-9bb0-f1df979deb12",
+            "items": [
+                "0x1a0000000086"
+            ]
+        },
+        {
+            "id": "551c8dac-b694-4d3a-8ecf-65de3a196c73",
+            "items": [
+                "0x1a0000000097"
+            ]
+        },
+        {
+            "id": "c639eb2c-7d73-492d-99d6-624c98f98b49",
+            "items": [
+                "0x1a0000000084"
+            ]
+        },
+        {
+            "id": "ee9d0693-e4ca-4c45-bdc8-aa9f2987e294",
+            "items": [
+                "0x1a0000000088"
+            ]
+        },
+        {
+            "id": "4dbb40f6-0656-4e98-8adb-4bf0b8e55beb",
+            "items": [
+                "0x1a000000005b"
+            ]
+        },
+        {
+            "id": "f4ac445e-c75c-4ed9-8d7f-16d78f7c115d",
+            "items": [
+                "0x1a00000000ae"
+            ]
+        },
+        {
+            "id": "1bbcb5ce-8f37-4212-8b7e-668b64bca8e4",
+            "items": [
+                "0x1a0000000085"
+            ]
+        },
+        {
+            "id": "d94fd83f-4717-4db3-abc7-30d0d7d12118",
+            "items": [
+                "0x1a00000000aa"
+            ]
+        },
+        {
+            "id": "98767231-4de3-4f76-8774-65f0577f7710",
+            "items": [
+                "0x1a0000000072"
+            ]
+        },
+        {
+            "id": "b8048a56-e3ec-48a8-a9da-82d661796e0c",
+            "items": [
+                "0x1a000000006f"
+            ]
+        },
+        {
+            "id": "5965655c-96c4-4ba2-8c6a-7a603fa604b5",
+            "items": [
+                "0x1a000000008c"
+            ]
+        },
+        {
+            "id": "8d342dc1-c432-46e9-83b7-f6468d36135e",
+            "items": [
+                "0x1a000000009b"
+            ]
+        },
+        {
+            "id": "5cbecf68-0bb7-4071-ba30-4e999f76449d",
+            "items": [
+                "0x1a0000000078"
+            ]
+        },
+        {
+            "id": "287bae81-7ea9-4b3e-b7b8-acc9977b5337",
+            "items": [
+                "0x1a0000000083"
+            ]
+        },
+        {
+            "id": "cda02918-efcd-4705-b206-416431c23c4d",
+            "items": [
+                "0x1a0000000095"
+            ]
+        },
+        {
+            "id": "51dbc309-455e-466c-842c-2287c36ae680",
+            "items": [
+                "0x1a000000009d",
+                "0x1a000000008e"
+            ]
+        },
+        {
+            "id": "3220ef69-d64c-4cf3-bedb-8249909039fe",
+            "items": [
+                "0x1a000000008d"
+            ]
+        },
+        {
+            "id": "9d423274-61a2-4b08-9054-0ae00876a470",
+            "items": [
+                "0x1a0000000076"
+            ]
+        },
+        {
+            "id": "f5d2759b-4d8b-4cf0-b76d-80b4320bf1ca",
+            "items": [
+                "0x1a0000000071"
+            ]
+        },
+        {
+            "id": "1088ffdf-4870-4d61-a24b-62ae3314cb22",
+            "items": [
+                "0x1a0000000074"
+            ]
+        },
+        {
+            "id": "1447403f-35a2-488c-9e3c-89e4e36cc215",
+            "items": [
+                "0x1a00000000a9"
+            ]
+        },
+        {
+            "id": "34c6f28c-ef9c-4c47-8f8f-8d9aec9bcf36",
+            "items": [
+                "0x1a000000008b"
+            ]
+        },
+        {
+            "id": "f0348984-c5fe-40ff-8274-fe760a9c49be",
+            "items": [
+                "0x1a000000007a"
+            ]
+        },
+        {
+            "id": "c8e8ab90-6469-46bd-a401-a500fe9c1887",
+            "items": [
+                "0x1a0000000079"
+            ]
+        },
+        {
+            "id": "002d6107-4ad5-4fbd-9375-1b4dbb6d437c",
+            "items": [
+                "0x1a0000000090"
+            ]
+        },
+        {
+            "id": "93bd6991-d85f-4244-a65e-d98e39032fcf",
+            "items": [
+                "0x1a000000005c"
+            ]
+        },
+        {
+            "id": "fadd5f05-c280-41ef-b671-a36efd723bda",
+            "items": [
+                "0x1a000000007d"
+            ]
+        },
+        {
+            "id": "c4ffb5c9-235b-4776-b93d-4b41df700f01",
+            "items": [
+                "0x1a00000000a7",
+                "0x1a000000008e"
+            ]
+        },
+        {
+            "id": "8b1cece7-4a5f-4ddb-a624-5c3a188de488",
+            "items": [
+                "0x1a0000000082"
+            ]
+        },
+        {
+            "id": "7aad49e6-de01-40bb-8bdc-4fb798a8aad0",
+            "items": [
+                "0x1a00000000a4"
+            ]
+        },
+        {
+            "id": "55355b54-8c5e-4e2c-ad00-f84ae2fe13d8",
+            "items": [
+                "0x1a0000000094"
+            ]
+        },
+        {
+            "id": "a17796e6-c6fe-4156-b57a-017b7599d49c",
+            "items": [
+                "0x1a000000008a"
+            ]
+        },
+        {
+            "id": "2bfb072e-1eac-420c-9d1c-f4e2e3198891",
+            "items": [
+                "0x1a00000000a5"
+            ]
+        },
+        {
+            "id": "7a1b7263-f1cf-4ee4-9e8b-fb20ef5145a9",
+            "items": [
+                "0x1a000000006d"
+            ]
+        },
+        {
+            "id": "0e2ab706-6add-456a-bc15-7dd884428cfc",
+            "items": [
+                "0x1a0000000063"
+            ]
+        },
+        {
+            "id": "402e987b-a99b-4c66-b506-c0e6d9e67d0a",
+            "items": [
+                "0x1a000000007b"
+            ]
+        },
+        {
+            "id": "d6047865-9910-4223-a661-ce21bc5f4ec6",
+            "items": [
+                "0x1a0000000091"
+            ]
+        },
+        {
+            "id": "b46821bc-2ab4-4563-b825-e1b280c3bff3",
+            "items": [
+                "0x1a00000000ac"
+            ]
+        },
+        {
+            "id": "d5d7d82c-6011-4d16-8e38-40ab14b88941",
+            "items": [
+                "0x1a000000009a"
+            ]
+        },
+        {
+            "id": "bf89a4b8-710a-41bf-a384-c21dc38fba61",
+            "items": [
+                "0x1a000000007e"
+            ]
+        },
+        {
+            "id": "25baf11d-9e97-4257-876e-ab30569303f1",
+            "items": [
+                "0x1a00000000a1"
+            ]
+        },
+        {
+            "id": "afd76af2-6dac-40d6-984d-3a7cca6d01db",
+            "items": [
+                "0x1a0000000062"
+            ]
+        },
+        {
+            "id": "d70c64a8-0394-492a-af2f-4cebbe652513",
+            "items": [
+                "0x1a0000000087"
+            ]
+        },
+        {
+            "id": "a5fb15a3-9918-49fd-88f6-7593ceaaea48",
+            "items": [
+                "0x1a00000000a2"
+            ]
+        },
+        {
+            "id": "e7a994e8-77c7-4617-820e-869104843f23",
+            "items": [
+                "0x1a0000000081"
+            ]
+        },
+        {
+            "id": "01b6e0c8-d109-42f9-9f4a-48cbca06cf6e",
+            "items": [
+                "0x1a00000000af"
+            ]
+        },
+        {
+            "id": "8556cfb6-65a2-4815-add1-6e0da3fbb024",
+            "items": [
+                "0x1a0000000060"
+            ]
+        },
+        {
+            "id": "03d43286-a6b0-4e92-962b-7d7714b449c0",
+            "items": [
+                "0x1a000000007f"
+            ]
+        },
+        {
+            "id": "016ea9eb-f6f6-4567-9104-4218ac682efe",
+            "items": [
+                "0x1a00000000a6"
+            ]
+        },
+        {
+            "id": "d02f8a4a-b1da-45b8-a949-f0092ebee143",
+            "items": [
+                "0x1a00000000a0"
+            ]
+        },
+        {
+            "id": "f5f06a5b-359e-4f4d-ba24-e8b778df2eb4",
+            "items": [
+                "0x1a000000005f"
+            ]
+        },
+        {
+            "id": "6f4e5f2d-4de8-456e-8289-48ef430b1c11",
+            "items": [
+                "0x1a000000005a"
+            ]
+        },
+        {
+            "id": "ae5856eb-96a7-4166-8106-01da066396b3",
+            "items": [
+                "0x1a000000008f"
+            ]
+        },
+        {
+            "id": "d3aafae0-0d35-435f-86aa-afd2113598ff",
+            "items": [
+                "0x1a0000000093",
+                "0x1a0000000096"
+            ]
+        },
+        {
+            "id": "b36042ec-fe56-4db8-bdde-df6701ee7be4",
+            "items": [
+                "0x1a000000005e"
+            ]
+        },
+        {
+            "id": "48d54949-1db4-4903-82d6-bd3c59ac0a90",
+            "items": [
+                "0x1a00000000ac",
+                "0x1a000000009d",
+                "0x1a000000006e"
+            ]
+        },
+        {
+            "id": "8b02de7d-45f4-4b2e-8a6c-a4fc6e2ed520",
+            "items": [
+                "0x1a000000009f",
+                "0x1a000000005d"
+            ]
+        }
+    ]
+}

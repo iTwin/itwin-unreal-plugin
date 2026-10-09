@@ -12,7 +12,6 @@
 #include <ITwinFwd.h>
 #include <ITwinLoadInfo.h>
 #include <ITwinServiceActor.h>
-#include <MaterialPrediction/ITwinMaterialPredictionStatus.h>
 #include <Misc/Optional.h>
 #include <Templates/PimplPtr.h>
 #include <memory>
@@ -81,6 +80,7 @@ public:
 	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnSavedViewGroupAddedEvent, bool, bSuccess, const FSavedViewGroupInfo&, SavedViewGroup);
 	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnSavedViewAddedEvent, bool, bSuccess, const FSavedViewInfo&, SavedView);
 	DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(FOnConfirmLoadNewChangeset, FString, IModelId, FString, IModelName, FString, NewChangesetId, FString, NewChangesetName);
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnElementPropertiesRetrieved, bool, bSuccess, const FElementProperties&, ElementProps, const FString&, ElementId);
 	UPROPERTY()
 	FOnFinishedLoadingSavedViewsEvent FinishedLoadingSavedViews;
 	UPROPERTY()
@@ -93,6 +93,8 @@ public:
 	FOnSavedViewAddedEvent SavedViewAdded;
 	UPROPERTY()
 	FOnConfirmLoadNewChangeset ConfirmLoadNewChangeset;
+	UPROPERTY()
+	FOnElementPropertiesRetrieved ElementPropertiesRetrieved;
 
 
 	UPROPERTY(Category = "iTwin|Loading",
@@ -169,17 +171,32 @@ public:
 	UFUNCTION(Category = "iTwin", CallInEditor)
 	void ClearMetadataAnd4DCaches();
 
+	/// Sets whether the Synchro4D schedule should be automatically loaded. In test context, if the automatic
+	/// loading was disabled through Disable4DAutoLoadSchedule, this function will have no effect and the
+	/// automatic loading will remain disabled.
+	UFUNCTION(Category = "iTwin",
+		BlueprintCallable)
+	void SetSynchro4DAutoLoadSchedule(bool bInSynchro4DAutoLoadSchedule);
+
 	//! When false, Synchro4D schedule queries and loading will not happen. If some queries have been already
 	//! started, setting to false will not prevent their replies from being handled, but no new query will be
 	//! emitted: they will be stacked and should restart correctly when the flag is set to true again
 	//! (UNTESTED though). It is recommended to set to false before the actor starts ticking, or at least
 	//! before the iModel Elements metadata have finished querying/loading.
 	UPROPERTY(Category = "iTwin", meta = (DisplayName = "Auto-Load Synchro4D Schedule"),
-		EditAnywhere)
+		EditAnywhere,
+		BlueprintSetter = SetSynchro4DAutoLoadSchedule)
 	bool bSynchro4DAutoLoadSchedule = true;
+
+	//! When true, the movie sequencer will wait for the 4D schedule to be fully loaded before starting to render
+	//! a sequence. When false it will not, which assumes the 4D animation is not to be applied to the movie sequence,
+	//! or that the user will take care of waiting for the schedule to be loaded before starting the sequence.
+	UPROPERTY(Category = "iTwin", EditAnywhere)
+	bool bMovieSequencerWaitsForSchedule = true;
 
 	UFUNCTION(BlueprintGetter)
 	double GetScheduleDownloadPercentComplete() const;
+
 
 private:
 	/// Percentage of the data needed to replay a 4D schedule (if any) that is estimated to be available.
@@ -205,9 +222,11 @@ public:
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 #endif
 	virtual void PostLoad() override;
-	virtual void Tick(float DeltaTime) override;
+	virtual void Tick(float DeltaSeconds) override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual bool ShouldTickIfViewportsOnly() const override { return true; }
+	// also from UObject "interface":
+	static void AddReferencedObjects(UObject* InThis, FReferenceCollector& Collector);
 
 	//! To be called at least once after ServerConnection, IModelId, ChangesetId have been set.
 	//! This will query the mesh export service for a corresponding export, and if complete one is found,
@@ -268,6 +287,14 @@ public:
 
 	//! Globally enable or disable saved view updates.
 	static void EnableSavedViewsUpdates(bool bEnableSV);
+	//! Returns whether saved view updates are globally enabled.
+	static bool AreSavedViewsUpdatesEnabled();
+
+#if WITH_TESTS
+	//! Used in some automated tests, to permanently disable auto-loading of 4D schedules.
+	static void Disable4DAutoLoadSchedule(bool bDisable);
+#endif
+
 
 	UFUNCTION(Category = "iTwin",
 		BlueprintCallable)
@@ -308,6 +335,9 @@ public:
 
 	//! Returns true if the given element is currently selected (highlighted).
 	bool IsElementSelected(const FString& ElementId) const;
+
+	//! Returns true if the iModel contains an element with the given ID.
+	bool HasElementWithID(const FString& ElementId) const;
 
 	//! Deselect any material previously selected. This will disable the selection highlight, if any.
 	UFUNCTION(Category = "iTwin",
@@ -350,7 +380,7 @@ public:
 
 	UFUNCTION(Category = "iTwin",
 		BlueprintCallable)
-	void SelectElement(const FString& ElementId);
+	bool SelectElement(const FString& ElementId);
 
 	/// Select multiple elements at once, with additive highlight.
 	void SelectElements(const TArray<FString>& ElementIds);
@@ -373,12 +403,13 @@ public:
 		BlueprintCallable)
 	void OnLoadNewChangesetConfirmation(const FString& NewChangesetId, bool bLoadNewChangeset);
 
+#if WITH_EDITOR
 	//! TEMPORARY (for tests). Triggers a re-tune of the glTF model.
 	UFUNCTION(Category = "iTwin",
 		CallInEditor,
 		BlueprintCallable)
 	void Retune();
-
+#endif // WITH_EDITOR
 
 	//! Globally enable or disable material tuning features.
 	UFUNCTION(Category = "iTwin",
@@ -389,6 +420,8 @@ public:
 	UFUNCTION(Category = "iTwin",
 		BlueprintCallable)
 	static bool IsMaterialTuningEnabled();
+
+	void InitializeMaterialTuning();
 
 	//! Highlight the parts of the model using the given iTwin Material ID.
 	void HighlightMaterial(uint64 MaterialID);
@@ -448,43 +481,6 @@ public:
 	//! Enforce reloading material definitions as read from the material persistence manager.
 	void ReloadCustomizedMaterials();
 
-	//! Initiate the Machine Learning service for material predictions.
-	UFUNCTION(Category = "iTwin|Materials",
-		BlueprintCallable)
-	void LoadMaterialMLPrediction();
-
-	//! Toggle the ML-based material prediction mode on or off.
-	UFUNCTION(Category = "iTwin|Materials",
-		BlueprintCallable)
-	void ToggleMLMaterialPrediction(bool bActivate);
-
-	UFUNCTION(Category = "iTwin|Materials",
-		BlueprintCallable)
-	bool IsMaterialMLPredictionActivated() const {
-		return bActivateMLMaterialPrediction;
-	}
-	UFUNCTION(Category = "iTwin|Materials",
-		BlueprintCallable)
-	void ActivateMLMaterialPrediction(bool bActivate);
-
-	UFUNCTION(Category = "iTwin|Materials",
-		BlueprintCallable)
-	EITwinMaterialPredictionStatus GetMaterialMLPredictionStatus() const {
-		return MLMaterialPredictionStatus;
-	}
-	UFUNCTION(Category = "iTwin|Materials",
-		BlueprintCallable)
-	void SetMaterialMLPredictionStatus(EITwinMaterialPredictionStatus InStatus);
-
-	UFUNCTION(Category = "iTwin|Materials",
-		BlueprintCallable)
-	bool VisualizeMaterialMLPrediction() const;
-
-	//! Called when the user validates the results of material prediction.
-	void ValidateMLPrediction();
-
-	void SetMaterialMLPredictionObserver(IITwinWebServicesObserver* observer);
-	IITwinWebServicesObserver* GetMaterialMLPredictionObserver() const;
 
 	//! Creates a helper to perform some requests/modifications on the tileset.
 	TUniquePtr<FITwinTilesetAccess> MakeTilesetAccess();
@@ -511,11 +507,9 @@ public:
 	UFUNCTION()
 	void OnSavedViewInfoAdded(bool bSuccess, FSavedViewInfo SavedViewInfo);
 	UFUNCTION()
-	void OnSceneLoaded(bool success);
+	bool AreSavedViewsLoaded() const { return bAreSavedViewsLoaded; }
 	UFUNCTION()
-	bool AreSavedViewsLoaded() {return bAreSavedViewsLoaded;}
-	UFUNCTION()
-	bool IsUpdatingSavedViews() {return bIsUpdatingSavedViews;}
+	bool IsUpdatingSavedViews() const { return bIsUpdatingSavedViews; }
 
 
 	//! Returns null if the iModel does not have extents, or if it is not known yet.
@@ -596,8 +590,6 @@ private:
 	virtual void OnMaterialPropertiesRetrieved(bool bSuccess, AdvViz::SDK::ITwinRenderMaterialPropertiesMap const& props) override;
 	virtual void OnTextureDataRetrieved(bool bSuccess, std::string const& textureId, AdvViz::SDK::ITwinTextureData const& textureData) override;
 	virtual void OnIModelQueried(bool bSuccess, FString const& QueryResult, HttpRequestID const&) override;
-	virtual void OnMatMLPredictionRetrieved(bool bSuccess, AdvViz::SDK::ITwinMaterialPrediction const& prediction, std::string const& error = {}) override;
-	virtual void OnMatMLPredictionProgress(float fProgressRatio) override;
 
 	/// overridden from FITwinDefaultWebServicesObserver:
 	virtual const TCHAR* GetObserverName() const override;
@@ -609,6 +601,8 @@ private:
 	void OnTilesetLoadFailure(FCesium3DTilesetLoadFailureDetails const& Details);
 
 	void CreateDefaultTexturesComponent();
+
+	void RunUninit();
 
 public:
 	class FImpl;
@@ -626,9 +620,6 @@ private:
 	UITwinMaterialDefaultTexturesHolder* DefaultTexturesHolder = nullptr;
 
 	UPROPERTY()
-	bool bEnableMLMaterialPrediction = false;
-
-	UPROPERTY()
 	FGetAllSavedViewsProgress groupsProgress;
 
 	UPROPERTY()
@@ -636,19 +627,6 @@ private:
 	UPROPERTY()
 	bool bIsUpdatingSavedViews = false;
 
-	//! Activate material prediction based on machine learning API.
-	UPROPERTY(Category = "iTwin|Materials",
-		EditAnywhere,
-		BlueprintSetter = ActivateMLMaterialPrediction,
-		Meta = (EditCondition = "bEnableMLMaterialPrediction", EditConditionHides))
-	bool bActivateMLMaterialPrediction = false;
-
-	//! Current status of ML-based material prediction for the iModel.
-	UPROPERTY(Category = "iTwin|Materials",
-		VisibleAnywhere,
-		BlueprintSetter = SetMaterialMLPredictionStatus,
-		Meta = (EditCondition = "bEnableMLMaterialPrediction", EditConditionHides))
-	EITwinMaterialPredictionStatus MLMaterialPredictionStatus = EITwinMaterialPredictionStatus::Unknown;
 
 	//! FITwinIModelImplAccess is defined in ITwinImodel.cpp, so it is only usable here.
 	//! It is needed for some free functions (console commands) to access the impl.

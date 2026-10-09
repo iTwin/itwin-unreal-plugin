@@ -171,6 +171,20 @@ void FITwinClippingInfoBase::BeforeDestroy()
 	EdgeSplines.Empty();
 }
 
+void FITwinClippingInfoBase::CopyGenericInfoFrom(FITwinClippingInfoBase const& Other)
+{
+	SetEnabled(Other.IsEnabled());
+	SetInvertEffect(Other.GetInvertEffect());
+
+	IModelInfluenceInfo = Other.IModelInfluenceInfo;
+	RealityDataInfluenceInfo = Other.RealityDataInfluenceInfo;
+	GlobalMapLayersInfluenceInfo = Other.GlobalMapLayersInfluenceInfo;
+
+	InfluenceBoundingBox = Other.InfluenceBoundingBox;
+	bNeedsUpdateBoundingBox = Other.bNeedsUpdateBoundingBox;
+
+	SetSceneLinkId(Other.GetSceneLinkId());
+}
 
 bool FITwinClippingInfoBase::ShouldInfluenceModel(const ITwin::ModelLink& ModelIdentifier) const
 {

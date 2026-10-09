@@ -1,0 +1,12 @@
+{
+    "id": "2199023255739_ff4fc2bf-74b2-4a3d-8549-1758cdfd4fb7",
+    "displayName": "Tar",
+    "type": "PBR",
+    "color": "#FFFFFF",
+    "albedoMap": "test_material_textures/color.jpg",
+    "albedoMapFactor": 1.0,
+    "roughness": 0.9009018148915184,
+    "metallic": 0.0,
+    "opacity": 1.0,
+    "opacityMap": "test_material_textures/opacity.png"
+}

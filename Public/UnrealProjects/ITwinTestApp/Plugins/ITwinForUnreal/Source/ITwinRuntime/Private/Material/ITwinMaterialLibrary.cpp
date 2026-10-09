@@ -136,7 +136,7 @@ FITwinMaterialLibrary::ExportResult FITwinMaterialLibrary::ExportMaterialToDisk(
 	auto const& MatHelper = IModel.GetGltfMaterialHelper();
 	if (!MatHelper)
 	{
-		return AdvViz::make_unexpected(ExportError{ std::string("no material helper in iMode l") + IModelId });
+		return AdvViz::make_unexpected(ExportError{ std::string("no material helper in iModel") + IModelId });
 	}
 
 
@@ -444,25 +444,7 @@ void FITwinMaterialLibrary::InitPaths(AITwinDecorationHelper const& DecoHelper)
 	{
 		// Previously, the MaterialLibrary content was packaged withing the Unreal application.
 		BeMatLibraryRootPath = FPaths::ProjectContentDir() / ITwin::MAT_LIBRARY;
-		// This path no longer exists in default iTwin applications => log and display error (the user did
-		// not install the additional content in the right location...)
-		static FString LastExtDirChecked;
-		if (!FPaths::DirectoryExists(BeMatLibraryRootPath) && LastExtDirChecked != ExternalMatLibraryPath)
-		{
-			LastExtDirChecked = ExternalMatLibraryPath; // avoid displaying the same message several times.
-			FString DefaultMatLibraryPath = ExternalMatLibraryPath;
-			DefaultMatLibraryPath.ReplaceInline(TEXT("\\"), TEXT("/"), ESearchCase::CaseSensitive);
-			FString const StrMessage =
-				TEXT("No iTwin Material Library found: please install it in this directory: ")
-				+ DefaultMatLibraryPath
-				+ TEXT("\n\nIf you don\'t, you may get some missing textures when loading existing scenes.");
-			std::string const StrMessage_utf8 = TCHAR_TO_UTF8(*StrMessage);
-			//BE_ISSUE(StrMessage_utf8.c_str());
-			BE_LOGE("ContentHelper", StrMessage_utf8);
-			FMessageDialog::Open(EAppMsgCategory::Error, EAppMsgType::Ok,
-				FText::FromString(StrMessage),
-				FText::FromString(""));
-		}
+		// This path no longer exists in default iTwin applications, nor the Material browser.
 	}
 }
 
@@ -479,7 +461,7 @@ const FString& FITwinMaterialLibrary::GetCustomLibraryPath()
 		FString OutDir = FPlatformProcess::UserSettingsDir();
 		if (OutDir.IsEmpty())
 		{
-			ensureMsgf(false, TEXT("No user settings directory"));
+			BE_ISSUE("No user settings directory");
 			return {};
 		}
 		return FPaths::Combine(OutDir, TEXT("Bentley"), TEXT("AdvViz"), TEXT("Materials"));
@@ -491,7 +473,7 @@ const FString& FITwinMaterialLibrary::GetCustomLibraryPath()
 /*static*/
 const FString& FITwinMaterialLibrary::GetBentleyLibraryPath()
 {
-	ensureMsgf(!BeMatLibraryRootPath.IsEmpty(), TEXT("InitPaths must be called before!"));
+	BE_ASSERT(!BeMatLibraryRootPath.IsEmpty(), "InitPaths must be called before!");
 	return BeMatLibraryRootPath;
 }
 
@@ -736,7 +718,7 @@ bool FITwinMaterialLibrary::ImportJsonToLibrary(FString const& AssetPath)
 	KeyValueStringMap KeyValueMap;
 	if (!MatIOMngr->ConvertJsonFileToKeyValueMap(TCHAR_TO_UTF8(*AssetPath), DirPrefix, KeyValueMap))
 	{
-		ensureMsgf(false, TEXT("could not parse Json material"));
+		BE_ISSUE("could not parse Json material");
 		return false;
 	}
 

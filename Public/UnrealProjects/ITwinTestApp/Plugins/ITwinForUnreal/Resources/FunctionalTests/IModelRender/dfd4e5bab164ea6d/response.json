@@ -1,0 +1,4 @@
+{
+    "status": 200,
+    "body": "{\"total_rows\":3,\"rows\":[{\"position\":[7965.530943337347,3252.1878794352697,94.90631508914521],\"text\":\"Sample Text.\",\"colorTheme\":\"Dark\",\"displayMode\":\"Marker and label\",\"name\":\"\",\"id\":\"687900066ad8f8d49a5ed15c\"},{\"position\":[7882.343766838119,3345.5241453490503,94.90631508914521],\"text\":\"NEW!!\",\"colorTheme\":\"Dark\",\"displayMode\":\"Marker and label\",\"name\":\"\",\"id\":\"687900066ad8f8d49a5ed15b\"},{\"position\":[8026.130561479206,3187.7692048255467,94.90379810420563],\"text\":\"Sample Text.\",\"colorTheme\":\"Dark\",\"displayMode\":\"Marker and label\",\"name\":\"\",\"id\":\"687900066ad8f8d49a5ed15d\"}],\"_links\":{\"self\":\"https://itwindecoration-eus.bentley.com/advviz/v1/decorations/67e15d193b05b1ea579faee9/annotations?$skip=0\\u0026$top=1000\"}}"
+}

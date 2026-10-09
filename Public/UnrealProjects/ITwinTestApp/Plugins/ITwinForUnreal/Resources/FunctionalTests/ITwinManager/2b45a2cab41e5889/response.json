@@ -1,0 +1,4 @@
+{
+    "status": 200,
+    "body": "{\r\n  \"type\": \"AzureBlobSasUrl\",\r\n  \"access\": \"Read\",\r\n  \"_links\": {\r\n    \"containerUrl\": {\r\n      \"href\": \"{TEST_MOCK_SERVER_URL}/RealityDataMesh/tileset.json\"\r\n    }\r\n  }\r\n}"
+}

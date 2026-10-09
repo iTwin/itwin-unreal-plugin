@@ -22,6 +22,11 @@ class UITwinSplineWithPin2DWidgetImpl;
 struct FITwinSplineChunk2DInfo;
 class USplineComponent;
 
+namespace ITwin
+{
+	enum class ESplineSamplingPurpose : uint8;
+}
+
 /// This widget is used to display a 3D spline in 2D, on screen,  as a child of the main viewport widget.
 /// It is linked to an AITwinSplineHelper, from which it fetches the data to display.
 UCLASS()
@@ -82,7 +87,8 @@ public:
 	void OnSplinePointPicked(int32 PickedPointIndex);
 
 	bool SampleSplineChunkWidget(const UITwinSplineWithPin2DWidgetImpl& ChunkWidget,
-		int32 NumSubdivisions) const;
+		int32 NumSubdivisions,
+		ITwin::ESplineSamplingPurpose Purpose) const;
 
 	bool SampleSplineChunk(TArray<FVector2D>& OutSampledPositions,
 		int32 ChunkIndex,

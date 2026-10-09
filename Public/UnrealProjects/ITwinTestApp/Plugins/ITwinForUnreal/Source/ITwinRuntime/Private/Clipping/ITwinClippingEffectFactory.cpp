@@ -306,7 +306,34 @@ namespace ITwin::Clipping
 	}
 }
 
-void UITwinClippingEffectFactory::UpdateClippingPropertiesFromAVizInstance(EITwinClippingPrimitiveType Type, int32 InstanceIndex)
+void UITwinClippingEffectFactory::StorePropertiesInAVizInstance(EITwinClippingPrimitiveType Type, int32 InstanceIndex) const
+{
+	if (!ensure(IsValidEffectIndex(Type, InstanceIndex)))
+	{
+		return;
+	}
+	auto const& Population = EffectManager->GetPopulation(Type);
+	if (Population.IsValid())
+	{
+		auto AVizInstance = Population->GetAVizInstance(InstanceIndex);
+
+		const FITwinClippingInfoBase& Prop = EffectManager->GetEffect(Type, InstanceIndex);
+
+		if (ensure(AVizInstance))
+		{
+			// Encode our properties in the instance name. This is no longer used for persistence - which now
+			// uses the Scene API -, but only for undo/redo system in a session.
+			const std::string EncodedInfo = ITwin::Clipping::EncodeProperties(Prop);
+			auto inst = AVizInstance->GetAutoLock();
+			if (EncodedInfo != inst->GetName())
+			{
+				inst->SetName(EncodedInfo);
+			}
+		}
+	}
+}
+
+void UITwinClippingEffectFactory::UpdatePropertiesFromAVizInstance(EITwinClippingPrimitiveType Type, int32 InstanceIndex)
 {
 	if (!ensure(IsValidEffectIndex(Type, InstanceIndex)))
 	{
@@ -315,7 +342,9 @@ void UITwinClippingEffectFactory::UpdateClippingPropertiesFromAVizInstance(EITwi
 	// Decode properties from instance name - we used to have a method doing the opposite (blame here to find
 	// 'UpdateAVizInstanceProperties'), but it was removed when the persistence was moved to SceneAPI.
 	// We keep this method for compatibility with old scenes, and also for cutout interactive creation (see
-	// #ConfigureNewInstance, #ConfigureNewInstanceAsDisabled).
+	// #ConfigureNewInstance, #ConfigureNewInstanceAsDisabled), and undo system.
+	// Note that 'UpdateAVizInstanceProperties' was reborn as 'StoreClippingPropertiesInAVizInstance', to
+	// fix undo case (see ADO#2110376).
 	auto const& Population = EffectManager->GetPopulation(Type);
 	if (Population.IsValid())
 	{
@@ -364,7 +393,7 @@ bool UITwinClippingEffectFactory::TAddEffectFromInstance(TArray<PrimitiveInfo>& 
 			{
 				ClippingInfos.SetNum(InstanceIndex + 1);
 			}
-			bool bIsClippingReady = UpdateClippingPrimitiveFromUEInstance(PrimitiveType, InstanceIndex);
+			bool bIsClippingReady = UpdateClippingPrimitiveFromUEInstance(PrimitiveType, InstanceIndex, EUpdateContext::Add);
 
 			bHasAddedClippingPrimitive = bIsClippingReady;
 		}
@@ -424,7 +453,10 @@ inline double UITwinClippingEffectFactory::GetPrimitiveMasterMeshScale(EITwinCli
 		return 1.0;
 	double MasterMeshScale = 1.0;
 	const FBox MasterMeshBox = Population->GetMasterMeshBoundingBox();
-	if (ensure(MasterMeshBox.IsValid))
+
+	BE_ASSERT(MasterMeshBox.IsValid || GUsingNullRHI || GIsAutomationTesting,
+		"Master mesh bounding box is invalid. This may happen if the master mesh is not loaded yet (e.g. in a headless environment).");
+	if (MasterMeshBox.IsValid)
 	{
 		MasterMeshScale = MasterMeshBox.GetSize().GetAbsMax();
 		MasterMeshScaleCacheByType.Add(Type, MasterMeshScale);
@@ -565,7 +597,8 @@ bool UITwinClippingEffectFactory::UpdateClippingPlaneEquationFromUEInstance(int3
 	return true;
 }
 
-bool UITwinClippingEffectFactory::UpdateClippingPrimitiveFromUEInstance(EITwinClippingPrimitiveType Type, int32 InstanceIndex)
+bool UITwinClippingEffectFactory::UpdateClippingPrimitiveFromUEInstance(EITwinClippingPrimitiveType Type, int32 InstanceIndex,
+	EUpdateContext Context)
 {
 	bool bUpdated = false;
 	constexpr bool bInvalidateDB = false;
@@ -581,19 +614,22 @@ bool UITwinClippingEffectFactory::UpdateClippingPrimitiveFromUEInstance(EITwinCl
 	case EITwinClippingPrimitiveType::Polygon:
 	case EITwinClippingPrimitiveType::Count:, false);
 	}
-	// NB: when loading cutouts from the Scene API in game, there is no AdvViz Instance created at this point
-	// and instead, the cutout properties will be retrieved from the Scene API cutout.
+	// NB:
+	// - when loading cutouts from the Scene API in game, there is no AdvViz Instance created at this point
+	// and instead, the cutout properties will be retrieved from the Scene API cutout;
+	// - also, when removing an effect, we should not consider the AdvViz properties, as they are not updated
+	// during the lifetime of the primitive (read comment in UpdatePropertiesFromAVizInstance).
 	const bool bIsLoadingSceneAPICutoutsInGame = Persistence.IsValid()
 		&& Persistence->IsLoadingSceneCutoutsInGame();
-	if (bUpdated && !bIsLoadingSceneAPICutoutsInGame)
+	if (bUpdated && !bIsLoadingSceneAPICutoutsInGame && Context != EUpdateContext::Remove)
 	{
-		UpdateClippingPropertiesFromAVizInstance(Type, InstanceIndex);
+		UpdatePropertiesFromAVizInstance(Type, InstanceIndex);
 	}
 	return bUpdated;
 }
 
 template <typename ClippingPrimitiveInfo, EITwinClippingPrimitiveType PrimitiveType>
-void UITwinClippingEffectFactory::TUpdateAllClippingPrimitives(TArray<ClippingPrimitiveInfo>& ClippingInfos)
+void UITwinClippingEffectFactory::TUpdateAllClippingPrimitives(TArray<ClippingPrimitiveInfo>& ClippingInfos, EUpdateContext Context)
 {
 	if (!ensure(EffectManager.IsValid()))
 		return;
@@ -613,37 +649,78 @@ void UITwinClippingEffectFactory::TUpdateAllClippingPrimitives(TArray<ClippingPr
 	// Update all remaining primitives.
 	for (int32 InstanceIndex(0); InstanceIndex < NumPrims; ++InstanceIndex)
 	{
-		UpdateClippingPrimitiveFromUEInstance(PrimitiveType, InstanceIndex);
-
-		if (RemovalContextOpt)
-		{
-			// Preserve the Scene Link ID for primitives which are kept.
-			const auto EffectRefId = EffectManager->GetEffectId(PrimitiveType, InstanceIndex);
-			auto itLinkId = RemovalContextOpt->EffectRefIdToSceneLinkIdMap.find(EffectRefId);
-			if (ensure(itLinkId != RemovalContextOpt->EffectRefIdToSceneLinkIdMap.end()))
-			{
-				ClippingInfos[InstanceIndex].SetSceneLinkId(itLinkId->second);
-			}
-		}
+		UpdateClippingPrimitiveFromUEInstance(PrimitiveType, InstanceIndex, Context);
 	}
 }
 
-void UITwinClippingEffectFactory::UpdateAllClippingPrimitives(EITwinClippingPrimitiveType PrimitiveType)
+void UITwinClippingEffectFactory::UpdateAllClippingPrimitives(EITwinClippingPrimitiveType PrimitiveType, EUpdateContext Context)
 {
 	switch (PrimitiveType)
 	{
 	case EITwinClippingPrimitiveType::Box:
 		TUpdateAllClippingPrimitives<FITwinClippingBoxInfo, EITwinClippingPrimitiveType::Box>(
-			EffectManager->ClippingBoxInfos);
+			EffectManager->ClippingBoxInfos, Context);
 		break;
 	case EITwinClippingPrimitiveType::Plane:
 		TUpdateAllClippingPrimitives<FITwinClippingPlaneInfo, EITwinClippingPrimitiveType::Plane>(
-			EffectManager->ClippingPlaneInfos);
+			EffectManager->ClippingPlaneInfos, Context);
 		break;
 	BE_UNCOVERED_ENUM_ASSERT_AND_BREAK(
 	case EITwinClippingPrimitiveType::Polygon:
 	case EITwinClippingPrimitiveType::Count:);
 	}
+}
+
+template <typename PrimitiveInfo, EITwinClippingPrimitiveType PrimitiveType>
+void UITwinClippingEffectFactory::TOnClippingInstancesRemoved(TArray<PrimitiveInfo>& ClippingInfos,
+	const TArray<int32>& IndicesInDescendingOrder, bool bUseRemoveAtSwap)
+{
+	// Preserve the Scene Link ID and other generic properties for primitives which are kept.
+	TArray<PrimitiveInfo> InitialClippingInfos;
+	InitialClippingInfos.SetNum(ClippingInfos.Num());
+	for (int32 i(0); i < ClippingInfos.Num(); ++i)
+	{
+		InitialClippingInfos[i].CopyGenericInfoFrom(ClippingInfos[i]);
+	}
+
+	// To do so, build correspondance between old array and the remaining ones.
+	TArray<int32> IndicesCorresp;
+	IndicesCorresp.SetNum(ClippingInfos.Num());
+	for (int32 i(0); i < ClippingInfos.Num(); ++i)
+	{
+		IndicesCorresp[i] = i;
+	}
+	for (auto const& Index : IndicesInDescendingOrder)
+	{
+		if (Index < IndicesCorresp.Num())
+		{
+			if (bUseRemoveAtSwap && IndicesCorresp.Num() > 1)
+			{
+				IndicesCorresp[Index] = IndicesCorresp.Num() - 1;
+				IndicesCorresp.Pop();
+			}
+			else
+			{
+				IndicesCorresp.RemoveAt(Index);
+			}
+		}
+	}
+	BE_ASSERT(IndicesCorresp.Num() == ClippingInfos.Num() - IndicesInDescendingOrder.Num());
+
+	for (int32 i(0); i < IndicesCorresp.Num(); ++i)
+	{
+		const int NewIndex = i;
+		const int OldIndex = IndicesCorresp[i];
+		if (NewIndex != OldIndex)
+		{
+			ClippingInfos[NewIndex].CopyGenericInfoFrom(InitialClippingInfos[OldIndex]);
+		}
+	}
+
+	// Update all remaining primitives and actually shrink the array.
+	TUpdateAllClippingPrimitives<PrimitiveInfo, PrimitiveType>(ClippingInfos, EUpdateContext::Remove);
+
+	BE_ASSERT(ClippingInfos.Num() == IndicesCorresp.Num());
 }
 
 int32 UITwinClippingEffectFactory::RegisterCutoutSpline(AITwinSplineHelper* SplineHelper)
@@ -684,7 +761,7 @@ EITwinClippingPrimitiveType UITwinClippingEffectFactory::OnClippingInstancesLoad
 		EffectManager->RegisterCutoutPopulation(PrimitiveType, Population);
 		if (bUpdateEffectInfos)
 		{
-			UpdateAllClippingPrimitives(PrimitiveType);
+			UpdateAllClippingPrimitives(PrimitiveType, EUpdateContext::Load);
 		}
 	}
 	return PrimitiveType;
@@ -716,7 +793,7 @@ EITwinClippingPrimitiveType UITwinClippingEffectFactory::OnClippingInstanceModif
 	return EITwinClippingPrimitiveType::Count;
 }
 
-bool UITwinClippingEffectFactory::DeRegisterCutoutSpline(AITwinSplineHelper* SplineBeingRemoved)
+bool UITwinClippingEffectFactory::DeRegisterCutoutSpline(AITwinSplineHelper* SplineBeingRemoved, bool bTriggeredFromITS)
 {
 	if (!ensure(EffectManager.IsValid()))
 	{
@@ -733,8 +810,6 @@ bool UITwinClippingEffectFactory::DeRegisterCutoutSpline(AITwinSplineHelper* Spl
 
 		EffectManager->ClippingPolygonInfos.RemoveAt(Index);
 
-		const bool bTriggeredFromITS = RemovalContextOpt
-			&& RemovalContextOpt->Initiator == UITwinClippingEffectFactory::ERemovalInitiator::ITS;
 		if (EventHub.IsValid())
 		{
 			EventHub->EffectRemovedEvent.Broadcast(EITwinClippingPrimitiveType::Polygon, Index, bTriggeredFromITS);
@@ -755,20 +830,6 @@ UITwinClippingEffectFactory::FScopedRemovalContext::FScopedRemovalContext(UITwin
 	Factory.RemovalContextOpt.emplace();
 	Factory.RemovalContextOpt->Initiator = RemovalInitiator;
 	Factory.RemovalContextOpt->PrimitiveType = Type;
-
-	auto const& Manager = Factory.EffectManager;
-	if (Manager.IsValid())
-	{
-		// Fill a map of the RefIDs of the effects that are being removed, to their corresponding AViz cutout
-		// RefID, so that we can properly maintain the same correspondence after the removal.
-		const int32 NumEff = Manager->NumEffects(Type);
-		for (int32 i(0); i < NumEff; ++i)
-		{
-			const auto EffectRefId = Manager->GetEffectId(Type, i);
-			auto const& Effect = Manager->GetEffect(Type, i);
-			Factory.RemovalContextOpt->EffectRefIdToSceneLinkIdMap[EffectRefId] = Effect.GetSceneLinkId();
-		}
-	}
 }
 
 
@@ -813,13 +874,26 @@ void UITwinClippingEffectFactory::BeforeRemoveClippingInstances(EITwinInstantiat
 }
 
 
-EITwinClippingPrimitiveType UITwinClippingEffectFactory::OnClippingInstancesRemoved(EITwinInstantiatedObjectType ObjectType)
+EITwinClippingPrimitiveType UITwinClippingEffectFactory::OnClippingInstancesRemoved(EITwinInstantiatedObjectType ObjectType,
+	const TArray<int32>& IndicesInDescendingOrder, bool bUseRemoveAtSwap)
 {
 	EITwinClippingPrimitiveType const EffectType = ToClippingType(ObjectType);
 	if (ensure(EffectType != EITwinClippingPrimitiveType::Count))
 	{
-		// Recreate all effects from remaining instances.
-		UpdateAllClippingPrimitives(EffectType);
+		switch (EffectType)
+		{
+		case EITwinClippingPrimitiveType::Box:
+			TOnClippingInstancesRemoved<FITwinClippingBoxInfo, EITwinClippingPrimitiveType::Box>(
+				EffectManager->ClippingBoxInfos, IndicesInDescendingOrder, bUseRemoveAtSwap);
+			break;
+		case EITwinClippingPrimitiveType::Plane:
+			TOnClippingInstancesRemoved<FITwinClippingPlaneInfo, EITwinClippingPrimitiveType::Plane>(
+				EffectManager->ClippingPlaneInfos, IndicesInDescendingOrder, bUseRemoveAtSwap);
+			break;
+		BE_UNCOVERED_ENUM_ASSERT_AND_BREAK(
+		case EITwinClippingPrimitiveType::Polygon:
+		case EITwinClippingPrimitiveType::Count:);
+		}
 	}
 	return EffectType;
 }
@@ -834,6 +908,13 @@ bool UITwinClippingEffectFactory::RemoveEffect(EITwinClippingPrimitiveType Type,
 	FScopedRemovalContext RemovalCtx(*this,
 		bTriggeredFromITS ? ERemovalInitiator::ITS : ERemovalInitiator::Unreal,
 		Type);
+
+	// Before removing an instance, store the current effect properties in the AdvViz instance so
+	// that they are automatically restored if we undo the deletion afterwards.
+	if (Type == EITwinClippingPrimitiveType::Box || Type == EITwinClippingPrimitiveType::Plane)
+	{
+		StorePropertiesInAVizInstance(Type, PrimitiveIndex);
+	}
 
 	if (EventHub.IsValid())
 	{
@@ -859,7 +940,7 @@ bool UITwinClippingEffectFactory::RemoveEffect(EITwinClippingPrimitiveType Type,
 		auto const& SplineTool = EffectManager->GetSplineTool();
 		if (PolygonInfo.GetSpline().IsValid() && ensure(SplineTool.IsValid()))
 		{
-			SplineTool->DeleteSpline(PolygonInfo.GetSpline().Get());
+			SplineTool->DeleteSpline(PolygonInfo.GetSpline().Get(), bTriggeredFromITS);
 		}
 		break;
 	}

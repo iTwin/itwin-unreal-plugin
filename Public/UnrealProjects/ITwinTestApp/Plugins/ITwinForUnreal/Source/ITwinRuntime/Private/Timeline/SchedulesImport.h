@@ -37,13 +37,15 @@ class FITwinSchedulesImport
 
 public:
 	FITwinSchedulesImport(UITwinSynchro4DSchedules& Owner, std::recursive_mutex& Mutex,
-						  std::optional<FITwinSchedule>& Schedules);
+						  std::optional<FITwinSchedule>& Schedule);
 	FITwinSchedulesImport(FITwinSchedulesImport&& InOwner) = delete;
 	FITwinSchedulesImport& operator=(FITwinSchedulesImport&& Other);
 	FString ToString() const;
 
 	/// Tells whether the connection information was set up and the structure is ready to start querying
 	bool IsReadyToQuery() const;
+	FString ComputeCacheName() const;
+	void BeginShutdown();
 	/// When pre-fetching everything, including animation bindings, tells whether everything has been queried
 	/// and all replies have been received from the server (including retries, in case of unsuccessful
 	/// requests). This doesn't mean all replies were successful: @see HasFetchingErrors.
@@ -59,28 +61,19 @@ public:
 	EHttpResponseCodes::Type FirstFetchingErrorCode() const;
 	size_t FetchedFromRemote() const;
 	size_t FetchedFromCache() const;
-	void UninitializeCache();
+	void Uninitialize();
 	size_t NumTasks() const;
 	void ResetConnection(FString const& ITwinAkaProjectAkaContextId, FString const& IModelId,
 						 FString const& InChangesetId);
-	void SetSchedulesImportConnectors(FOnAnimationBindingAdded const& InOnAnimBindingAdded,
-									  FOnReceivedScheduleStats const& InOnReceivedScheduleStats);
+	void SetSchedulesImportConnectors(FOnReceivedScheduleStats const& InOnReceivedScheduleStats);
 	std::pair<int, int> HandlePendingQueries();
-	/// \param FromTime Restrict the query to tasks starting (or ending) at or after this date. Ignored if
-	///		UntilTime and FromTime are strictly equal (eg. both default constructed).
-	/// \param UntilTime Restrict the query to tasks starting (or ending) at or before this date. Ignored if
-	///		UntilTime and FromTime are strictly equal (eg. both default constructed).
-	void QueryEntireSchedules(FDateTime const FromTime = {}, FDateTime const UntilTime = {},
-							  std::function<void(bool/*success*/)>&& OnQueriesCompleted = {});
-	void QueryAroundElementTasks(ITwinElementID const ElementID, FTimespan const MarginFromStart,
-		FTimespan const MarginFromEnd, std::function<void(bool/*success*/)>&& OnQueriesCompleted = {});
-	/// \param ElementIDs Collection of Elements to query. Empty when returning from this method.
-	/// \param FromTime Restrict the query to tasks starting (or ending) at or after this date. Ignored if
-	///		UntilTime and FromTime are strictly equal (eg. both default constructed).
-	/// \param UntilTime Restrict the query to tasks starting (or ending) at or before this date. Ignored if
-	///		UntilTime and FromTime are strictly equal (eg. both default constructed).
-	void QueryElementsTasks(std::set<ITwinElementID>& ElementIDs, FDateTime const FromTime = {},
-		FDateTime const UntilTime = {}, std::function<void(bool/*success*/)>&& OnQueriesCompleted = {});
+	void DebugProcessScheduleUpdateIncrement();
+	// Note: QueryEntireSchedules (includes time range filtering), QueryAroundElementTasks and
+	// QueryElementsTasks have been removed as support on APIM required substantial changes - blame here.
+
+#if WITH_TESTS
+	bool SimulateScheduleForTest(FSimulatedScheduleOptions const& Options);
+#endif // WITH_TESTS
 
 private:
 	UITwinSynchro4DSchedules* Owner;///< Never nullptr, not a ref because of move-assignment op

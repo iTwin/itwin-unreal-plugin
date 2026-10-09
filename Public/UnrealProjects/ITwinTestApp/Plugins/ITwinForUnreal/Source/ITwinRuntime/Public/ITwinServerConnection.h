@@ -8,21 +8,24 @@
 
 #pragma once
 
+#include <ITwinHttpUtils.h>
+
 #include <GameFramework/Actor.h>
 #include <Interfaces/IHttpRequest.h>
 #include <Interfaces/IHttpResponse.h>
 #include <Logging/LogMacros.h>
 #include <UObject/Object.h>
+
 #include <array>
 #include <string>
 #include <memory>
+
 #include <ITwinServerConnection.generated.h>
 
 namespace AdvViz::SDK
 {
 	class ThreadSafeAccessToken;
 }
-
 
 UENUM()
 enum class EITwinEnvironment : uint8
@@ -32,6 +35,7 @@ enum class EITwinEnvironment : uint8
 	Dev,
 	Invalid,
 };
+
 UENUM()
 enum class EITwinSceneService : uint8
 {
@@ -39,6 +43,7 @@ enum class EITwinSceneService : uint8
 	SceneAPI,
 	Invalid,
 };
+
 namespace ITwin
 {
 	// App ID can be depend on the chosen environment, so we store all possible values
@@ -78,6 +83,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "iTwin")
 	FString GetAccessToken() const;
 
+	static std::shared_ptr<AdvViz::SDK::ThreadSafeAccessToken> GetAccessTokenPtrForEnv(EITwinEnvironment Environment);
 	std::shared_ptr<AdvViz::SDK::ThreadSafeAccessToken> GetAccessTokenPtr() const;
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin")
@@ -91,8 +97,6 @@ public:
 		BlueprintCallable)
 	void FillAuthorizationURL();
 
-	static bool CheckRequest(FHttpRequestPtr const& CompletedRequest, FHttpResponsePtr const& Response,
-		bool connectedSuccessfully, FString* pstrError = nullptr, bool const bWillRetry = false);
 	//! Sets the app ID for all environments.
 	//! This function is useful only for Bentley apps, which may use non-Prod envs.
 	static void SetITwinAppIDArray(ITwin::AppIDArray const& ITwinAppIDs, bool bLogIDs = true);

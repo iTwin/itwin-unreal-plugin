@@ -453,21 +453,28 @@ namespace AdvViz::SDK {
 		/*---------------------------------------------------------------------------*/
 
 		template<typename Type>
-		inline long DeleteJson(Type& t, const std::string& url, const BodyParams& body, const Headers& h = {})
+		inline long DeleteJson(Type& t, const std::string& url, const BodyParams& body, const Headers& h = {},
+			bool bIsExpectingOutput = true)
 		{
 			Response r(DeleteJson(url, body, h));
 			if (IsSuccessful(r))
-				Json::FromString(t, r.second);
+			{
+				if (bIsExpectingOutput || !r.second.empty())
+					Json::FromString(t, r.second);
+			}
 			else
+			{
 				BE_LOGE("http", "DeleteJson failed code:" << r.first << " url:" << url << " body in:" << body.str() << " body out:" << r.second);
+			}
 			return r.first;
 		}
 
 		template<typename Type, typename TypeBody>
-		inline long DeleteJsonJBody(Type& t, const std::string& url, const TypeBody& body, const Headers& h = {})
+		inline long DeleteJsonJBody(Type& t, const std::string& url, const TypeBody& body, const Headers& h = {},
+			bool bIsExpectingOutput = true)
 		{
 			const BodyParams bodyParams(Json::ToString(body));
-			return DeleteJson<Type>(t, url, bodyParams, h);
+			return DeleteJson<Type>(t, url, bodyParams, h, bIsExpectingOutput);
 		}
 
 		template<typename TFunctor>

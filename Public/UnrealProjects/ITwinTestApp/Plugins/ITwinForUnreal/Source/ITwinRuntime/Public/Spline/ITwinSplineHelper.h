@@ -23,6 +23,7 @@
 #include <ITwinRuntime/Private/Compil/AfterNonUnrealIncludes.h>
 
 #include <memory>
+#include <optional>
 #include <set>
 #include "ITwinSplineHelper.generated.h"
 
@@ -36,6 +37,7 @@ class ACesiumCartographicPolygon;
 class ACesiumGeoreference;
 class FITwinTilesetAccess;
 class UITwinSplineHelper2DWidgetImpl;
+enum class EITwinAnimPathShaderScalarParam : uint8;
 
 //! This class is used to edit a spline.
 //! It handles the synchronization of points between a USplineComponent (to which instances
@@ -96,6 +98,9 @@ public:
 	//! points.
 	void Initialize(USplineComponent* splineComp, AdvViz::SDK::ISplinePtr spline);
 
+	//! Sets a custom label for this spline helper, which will be used in the editor to identify it.
+	void SetCustomActorLabel(const FString& InCustomActorLabel);
+
 	//! Returns true if the spline is currently being created in interactive mode (i.e. the user is adding
 	//! points one by one, and the spline is not finished yet).
 	UFUNCTION(Category = "iTwin Spline",
@@ -124,6 +129,18 @@ public:
 	//! Sets the tangent mode for all points (Linear or Smooth) and recomputes the tangents automatically.
 	//! It does nothing for the Custom mode, which should be set for points individually.
 	void SetTangentMode(const EITwinTangentMode mode);
+
+	//! Sets tangents at a spline point with automatic computation based on a tightness parameter.
+	//! Should only be used in Smooth tangent mode. 
+	//! @param Tightness Controls the curve sharpness: 
+	//!		0.0 = completely flat/smooth (no tangent influence)
+	//!		1.0 = sharp turn (full tangent magnitude)
+	//!		Default smooth mode uses 0.5
+	void SetTightness(int32 PointIndex, float InTightness = 0.5f);
+
+	//! Gets the tangent tightness value at a spline point.
+	//! @return Tightness value (0.0 to 1.0), or 0.0 if the calculation is invalid
+	float GetTightness(int32 PointIndex) const;
 
 	//! Return the last point mesh component, if any.
 	UStaticMeshComponent* GetLastPointMeshComponent() const;
@@ -224,16 +241,20 @@ public:
 	bool CanDeletePoint() const;
 
 	//! Deletes the point at the given index.
-	void DeletePoint(int32 pointIndex);
+	//! @note The caller is responsible for re-establishing the point selection afterwards:
+	//! the selection is reset when the deleted point was the selected one, but indices after
+	//! pointIndex shift down and are NOT adjusted. See AITwinSplineTool::DeleteSelectedPoint.
+	//! Returns true if the point was successfully deleted.
+	bool DeletePoint(int32 pointIndex);
 
 	//! Duplicates the point at the given index.
-	void DuplicatePoint(int32 pointIndex);
+	bool DuplicatePoint(int32 pointIndex);
 
 	//! Duplicates the point at the given index, using the given new position to detect which of the 2 points
 	//! should be moved (but the method doesn't actually move it).
 	//! If it's the new point, pointIndex stays the same.
 	//! If it's the existing point, pointIndex is incremented by 1.
-	void DuplicatePoint(int32& pointIndex, FVector& newWorldPosition);
+	bool DuplicatePoint(int32& pointIndex, FVector& newWorldPosition);
 
 	//! Inserts a new point at the given index. Returns the new point index (which will be PointIndex if it
 	//! succeeded, or else INDEX_NONE).
@@ -266,6 +287,17 @@ public:
 	int32 GetSelectedPointIndex() const;
 
 	bool IsUsedForPathAnim() const;
+
+	//! Set a scalar parameter value for the path animation shader. (In practice, those are stored as
+	//! per-primitive data in the spline mesh components, and used by the shader to adapt the path look
+	//! (lanes, two-way, left hand drive etc.).
+	void SetPathAnimShaderScalarParameterValue(EITwinAnimPathShaderScalarParam Param, float Value,
+		bool bApplyToMeshComponents = true);
+	//! Transfer all path animation shader parameters to the spline mesh components (to be called after a
+	//! batch of changes).
+	void TransferPathAnimShaderParametersToMeshes();
+
+	bool IsUsedForPopulation() const;
 
 	//! The globe anchor is a constraint ensuring that the spline helper is correctly
 	//! placed on the earth surface.

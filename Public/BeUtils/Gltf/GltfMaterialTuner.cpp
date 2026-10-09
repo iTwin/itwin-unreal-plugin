@@ -965,7 +965,8 @@ namespace BeUtils
 
 			bool const hasCustomAlpha = DefinesChannel(itwinMatDef, AdvViz::SDK::EChannelType::Alpha);
 			bool const hasCustomAO = DefinesChannel(itwinMatDef, AdvViz::SDK::EChannelType::AmbientOcclusion);
-			bool const hasCustomColor = DefinesChannel(itwinMatDef, AdvViz::SDK::EChannelType::Color);
+			bool const hasCustomColor = DefinesChannel(itwinMatDef, AdvViz::SDK::EChannelType::Color)
+				&& itwinMatDef.channels[(size_t)AdvViz::SDK::EChannelType::Color]->HasColor();
 			bool const hasCustomNormal = DefinesChannel(itwinMatDef, AdvViz::SDK::EChannelType::Normal);
 
 			if (!customMaterial.pbrMetallicRoughness)
@@ -1046,7 +1047,7 @@ namespace BeUtils
 			if (hasCustomColor)
 			{
 				auto const& baseColor =
-					itwinMatDef.channels[(size_t)AdvViz::SDK::EChannelType::Color]->color;
+					itwinMatDef.channels[(size_t)AdvViz::SDK::EChannelType::Color]->color.value();
 				customMaterial.pbrMetallicRoughness->baseColorFactor =
 				{
 					baseColor[0],
@@ -1410,6 +1411,14 @@ namespace BeUtils
 		{
 			ConvertChannelTextureToGltf(itwinMatId, AdvViz::SDK::EChannelType::AmbientOcclusion, needTranslucency, lock);
 		}
+
+		auto const normalMap = matDefinition.GetChannelColorMapOpt(AdvViz::SDK::EChannelType::Normal);
+		if (normalMap && normalMap->HasTexture()
+			&& normalMap->eSource == AdvViz::SDK::ETextureSource::LocalDisk)
+		{
+			ConvertChannelTextureToGltf(itwinMatId, AdvViz::SDK::EChannelType::Normal, needTranslucency, lock);
+		}
+
 		// Detect translucency requirement.
 		std::string glTFAlphaMode;
 		materialHelper_->StoreInitialAlphaModeIfNeeded(itwinMatId, glTFAlphaMode, lock);

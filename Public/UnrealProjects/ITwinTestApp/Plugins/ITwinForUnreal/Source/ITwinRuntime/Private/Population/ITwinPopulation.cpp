@@ -10,9 +10,11 @@
 #include "Population/ITwinPopulation.inl"
 #include "Population/ITwinPopulationWithPathExt.h"
 #include <Clipping/ITwinClippingTool.h>
+#include <Decoration/ITwinContentLibrarySettings.h>
 #include <Helpers/WorldSingleton.h>
+#include "ITwinPopulationFoliage.h"
+#include <Math/UEMathConversion.h>
 
-#include "Math/UEMathConversion.h"
 
 #include <Blueprint/WidgetLayoutLibrary.h>
 #include <DrawDebugHelpers.h>
@@ -22,8 +24,8 @@
 #include "Kismet/GameplayStatics.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "MeshDescription.h"
 #include "Kismet/KismetSystemLibrary.h"
-#include "ITwinPopulationFoliage.h"
 #include <HttpModule.h>
 #include <Interfaces/IHttpResponse.h>
 #include <Policies/CondensedJsonPrintPolicy.h>
@@ -31,7 +33,7 @@
 #include <Serialization/JsonReader.h>
 #include <Serialization/JsonWriter.h>
 #include <Serialization/JsonSerializer.h>
-#include <Decoration/ITwinContentLibrarySettings.h>
+#include <UObject/Package.h>
 
 
 #include <Compil/BeforeNonUnrealIncludes.h>
@@ -204,43 +206,71 @@ private:
 	AdvViz::SDK::RefID gpId_; // cached group id
 };
 
+namespace
+{
+	//! Creates an empty UStaticMesh with no geometry, but with a valid mesh description and section info map.
+	UStaticMesh* CreateEmptyMesh(UObject* InOuter, FName InName)
+	{
+		TArray<FStaticMaterial> Materials;
+		FStaticMeshComponentRecreateRenderStateContext RecreateRenderStateContext(FindObject<UStaticMesh>(InOuter, *InName.ToString()));
+		auto StaticMesh = NewObject<UStaticMesh>(InOuter, InName, RF_Public | RF_Standalone);
+
+		// Add one LOD for the base mesh
+#if WITH_EDITOR
+		StaticMesh->AddSourceModel();
+#endif
+#if WITH_EDITORONLY_DATA
+		StaticMesh->CreateMeshDescription(0);
+		//Set the Imported version before calling the build
+		StaticMesh->ImportVersion = EImportStaticMeshVersion::LastVersion;
+#endif
+		StaticMesh->SetStaticMaterials(Materials);
+		StaticMesh->Build();
+		StaticMesh->MarkPackageDirty();
+		return StaticMesh;
+	}
+}
+
 /* static */
-AITwinPopulation* AITwinPopulation::CreatePopulation(const UObject* WorldContextObject, const FString& AssetPath,
+AITwinPopulation* AITwinPopulation::CreatePopulation(const UObject* WorldContextObject, const FString& AssetPath, 
+	const FString& ObjectPath,
 	AVizInstancesManagerPtr const& AvizInstanceManager,
 	AVizInstancesGroupPtr const& AvizInstanceGroup)
 {
 	// Spawn a new actor with a deferred call in order to be able
 	// to set the static mesh before BeginPlay is called.
-	FTransform spawnTransform;
-	AActor* newActor = UGameplayStatics::BeginDeferredActorSpawnFromClass(
-		WorldContextObject, AITwinPopulation::StaticClass(), spawnTransform,
+	FTransform SpawnTransform;
+	AActor* NewActor = UGameplayStatics::BeginDeferredActorSpawnFromClass(
+		WorldContextObject, AITwinPopulation::StaticClass(), SpawnTransform,
 		ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
 
-	AITwinPopulation* population = Cast<AITwinPopulation>(newActor);
+	AITwinPopulation* Population = Cast<AITwinPopulation>(NewActor);
 
-	if (!population)
+	if (!Population)
 	{
 		return nullptr;
 	}
 
 	// Clipping primitive property must be set *before* creating the UE instanced mesh component
 	if (AssetPath.Contains(TEXT("ClippingPlane")))
-		population->objectType = EITwinInstantiatedObjectType::ClippingPlane;
+		Population->objectType = EITwinInstantiatedObjectType::ClippingPlane;
 	else if (AssetPath.Contains(TEXT("ClippingBox")))
-		population->objectType = EITwinInstantiatedObjectType::ClippingBox;
+		Population->objectType = EITwinInstantiatedObjectType::ClippingBox;
 
-	UStaticMesh* Mesh = LoadObject<UStaticMesh>(nullptr, *AssetPath);
+	UStaticMesh* Mesh = GUsingNullRHI
+		? CreateEmptyMesh(GetTransientPackage(), NAME_None)
+		: LoadObject<UStaticMesh>(nullptr, *ObjectPath);
 	if (Mesh)
 	{
-		FITwinFoliageComponentHolder& FoliageHolder = population->FoliageComponents.AddDefaulted_GetRef();
-		FoliageHolder.InitWithMasterMesh(*population, Mesh);
+		FITwinFoliageComponentHolder& FoliageHolder = Population->FoliageComponents.AddDefaulted_GetRef();
+		FoliageHolder.InitWithMasterMesh(*Population, Mesh);
 	}
 	else
 	{
 		// We now support Blueprint format, to handle groups of meshes (introduced to fix Nanite limitations,
 		// as translucent materials cannot be rendered with Nanite, so we separate the opaque mesh parts from
 		// the translucent ones, and save them as a blueprint).
-		FString BPLoadPath = FString::Printf(TEXT("Blueprint'%s.%s_C'"), *AssetPath, *FPaths::GetPathLeaf(AssetPath));
+		FString BPLoadPath = FString::Printf(TEXT("Blueprint'%s.%s_C'"), *ObjectPath, *FPaths::GetPathLeaf(ObjectPath));
 
 		// from https://dev.epicgames.com/community/snippets/d5R/load-spawn-blueprint-actor-asset-from-c-w-o-prev-ref?locale=pt-br
 		TSoftClassPtr<AActor> ActorBpClass = TSoftClassPtr<AActor>(FSoftObjectPath(BPLoadPath));
@@ -275,22 +305,22 @@ AITwinPopulation* AITwinPopulation::CreatePopulation(const UObject* WorldContext
 		for (int32 i = 0; i < BP_Meshes.Num(); ++i)
 		{
 			UStaticMeshComponent* MeshComp = Cast<UStaticMeshComponent>(BP_Meshes[i]);
-			FITwinFoliageComponentHolder& FoliageHolder = population->FoliageComponents.AddDefaulted_GetRef();
-			FoliageHolder.InitWithMasterMesh(*population, MeshComp->GetStaticMesh().Get());
+			FITwinFoliageComponentHolder& FoliageHolder = Population->FoliageComponents.AddDefaulted_GetRef();
+			FoliageHolder.InitWithMasterMesh(*Population, MeshComp->GetStaticMesh().Get());
 		}
 
 		// Make sure the actor created at world's zero will not be visible (fortunately, this does not also
-		// hide the meshes managed by the UInstancedStaticMeshComponent!)
+		// hide the meshes managed by the UHierarchicalInstancedStaticMeshComponent!)
 		BP_Actor->SetActorHiddenInGame(true);
 	}
 
-	UGameplayStatics::FinishSpawningActor(newActor, spawnTransform);
+	UGameplayStatics::FinishSpawningActor(NewActor, SpawnTransform);
 
-	population->SetInstancesManager(AvizInstanceManager);
-	population->SetInstancesGroup(AvizInstanceGroup);
-	population->SetObjectRef(TCHAR_TO_UTF8(*AssetPath));
+	Population->SetInstancesManager(AvizInstanceManager);
+	Population->SetInstancesGroup(AvizInstanceGroup);
+	Population->SetObjectRef(TCHAR_TO_UTF8(*AssetPath));
 
-	return population;
+	return Population;
 }
 
 AITwinPopulation::AITwinPopulation()
@@ -321,7 +351,7 @@ inline bool AITwinPopulation::CheckInstanceCount() const
 
 	if (Impl->instancesManager_)
 	{
-		uint64_t InstCount_Aviz = Impl->instancesManager_->GetInstanceCountByObjectRef(objectRef, Impl->GetGpId());
+		uint64_t InstCount_Aviz = Impl->instancesManager_->GetInstanceCountByObjectRef(decoObjectRef, Impl->GetGpId());
 		if (!ensureMsgf((int32)InstCount_Aviz == InstCount_UE,
 			TEXT("The UE and AdvViz::SDK population should have the same number of instances.")))
 		{
@@ -416,7 +446,7 @@ namespace
 AdvViz::SDK::IInstancePtr AITwinPopulation::GetAVizInstance(int32 instanceIndex) const
 {
 	auto gp = Impl->GetInstancesGroup()->GetRAutoLock();
-	const AdvViz::SDK::SharedInstVect& instances = Impl->instancesManager_->GetInstancesByObjectRef(objectRef, gp->GetId());
+	const AdvViz::SDK::SharedInstVect& instances = Impl->instancesManager_->GetInstancesByObjectRef(decoObjectRef, gp->GetId());
 	if (instanceIndex >= 0 && instanceIndex < instances.size())
 	{
 		return instances[instanceIndex];
@@ -544,7 +574,7 @@ void AITwinPopulation::SetInstanceTransform(int32 instanceIndex, const FTransfor
 	{
 		NotifyClippingToolOfTransform(instanceIndex, bTriggeredFromITS);
 
-		const AdvViz::SDK::SharedInstVect& instances = Impl->instancesManager_->GetInstancesByObjectRef(objectRef, Impl->GetGpId());
+		const AdvViz::SDK::SharedInstVect& instances = Impl->instancesManager_->GetInstancesByObjectRef(decoObjectRef, Impl->GetGpId());
 		if (instanceIndex < instances.size())
 		{
 			AdvViz::SDK::IInstancePtr instPtr = instances[instanceIndex]; 
@@ -608,7 +638,7 @@ void AITwinPopulation::SetInstanceColorVariation(int32 instanceIndex, const FVec
 {
 	if (SetInstanceColorVariationUEOnly(instanceIndex, v))
 	{
-		const AdvViz::SDK::SharedInstVect& instances = Impl->instancesManager_->GetInstancesByObjectRef(objectRef, Impl->GetGpId());
+		const AdvViz::SDK::SharedInstVect& instances = Impl->instancesManager_->GetInstancesByObjectRef(decoObjectRef, Impl->GetGpId());
 		if (instanceIndex < instances.size())
 		{
 			AdvViz::SDK::IInstancePtr instPtr = instances[instanceIndex]; 
@@ -641,7 +671,7 @@ AdvViz::SDK::RefID AITwinPopulation::GetInstanceRefId(int32 instanceIndex) const
 	if (instanceIndex >= 0 && instanceIndex < GetNumberOfInstances())
 	{
 		const AdvViz::SDK::SharedInstVect& instances =
-			Impl->instancesManager_->GetInstancesByObjectRef(objectRef, Impl->GetGpId());
+			Impl->instancesManager_->GetInstancesByObjectRef(decoObjectRef, Impl->GetGpId());
 		if (ensure(instanceIndex < instances.size()))
 		{
 			AdvViz::SDK::IInstancePtr instPtr = instances[instanceIndex];
@@ -657,7 +687,7 @@ int32 AITwinPopulation::GetInstanceIndexFromRefId(const AdvViz::SDK::RefID& refI
 	if (Impl->instancesManager_ && Impl->GetInstancesGroup())
 	{
 		const AdvViz::SDK::SharedInstVect& instances =
-			Impl->instancesManager_->GetInstancesByObjectRef(objectRef, Impl->GetGpId());
+			Impl->instancesManager_->GetInstancesByObjectRef(decoObjectRef, Impl->GetGpId());
 		auto it = std::find_if(instances.begin(), instances.end(),
 			[&refId](auto&& instPtr) { auto inst = instPtr->GetRAutoLock(); return inst->GetRefId() == refId; });
 		if (it != instances.end())
@@ -803,6 +833,12 @@ int32 AITwinPopulation::AddInstance(const FTransform& Transform, EAddInstanceCon
 		return INDEX_NONE;
 	}
 
+	auto gp = Impl->GetInstancesGroup()->GetRAutoLock();
+	// Add the same instance in the manager of the SDK core.
+	// It must be done before FinalizeAddedInstance, as we need the RefID for the influence mapping in the
+	// MPC (see FITwinClippingModelGroups).
+	auto AvizInstance = Impl->instancesManager_->AddInstance(decoObjectRef, gp->GetId());
+
 	if (IsClippingPrimitive() && (Context == EAddInstanceContext::Default
 								|| Context == EAddInstanceContext::LoadScene))
 	{
@@ -810,9 +846,6 @@ int32 AITwinPopulation::AddInstance(const FTransform& Transform, EAddInstanceCon
 		FinalizeAddedInstance(instIndex);
 	}
 
-	auto gp = Impl->GetInstancesGroup()->GetRAutoLock();
-	// Add the same instance in the manager of the SDK core
-	auto AvizInstance = Impl->instancesManager_->AddInstance(objectRef, gp->GetId());
 	if (AvizInstance)
 	{
 		UpdateAVizInstance(AvizInstance, ueInstanceInfo, this);
@@ -846,7 +879,7 @@ void AITwinPopulation::UpdateInstanceIndicesAfterRemoval(std::vector<int32_t> co
 	}
 	else if (!IndicesInReversedOrder.empty())
 	{
-		const AdvViz::SDK::SharedInstVect& instances = Impl->instancesManager_->GetInstancesByObjectRef(objectRef, GroupId);
+		const AdvViz::SDK::SharedInstVect& instances = Impl->instancesManager_->GetInstancesByObjectRef(decoObjectRef, GroupId);
 		for (size_t i = IndicesInReversedOrder.back(); i < instances.size(); ++i)
 		{
 			AdvViz::SDK::IInstancePtr instPtr = instances[i];
@@ -863,7 +896,7 @@ void AITwinPopulation::UpdateInstanceIndicesAfterRemoval(std::vector<int32_t> co
 
 bool AITwinPopulation::CheckInstanceIndices(AdvViz::SDK::RefID const& GroupId) const
 {
-	const AdvViz::SDK::SharedInstVect& instances = Impl->instancesManager_->GetInstancesByObjectRef(objectRef, GroupId);
+	const AdvViz::SDK::SharedInstVect& instances = Impl->instancesManager_->GetInstancesByObjectRef(decoObjectRef, GroupId);
 	for (size_t i = 0; i < instances.size(); ++i)
 	{
 		AdvViz::SDK::IInstancePtr instPtr = instances[i];
@@ -880,9 +913,9 @@ bool AITwinPopulation::CheckInstanceIndices(AdvViz::SDK::RefID const& GroupId) c
 	return true;
 }
 
-void AITwinPopulation::SignalInstanceCreation(const FString& objectRef)
+void AITwinPopulation::SignalInstanceCreation(const FString& decoObjectRef)
 {
-  InteractiveInstancePlacementEvent.Broadcast(objectRef);
+  InteractiveInstancePlacementEvent.Broadcast(decoObjectRef);
 }
 
 void AITwinPopulation::RemoveInstance(int32 instIndex)
@@ -926,19 +959,19 @@ void AITwinPopulation::RemoveInstance(int32 instIndex)
 	if (!bValidIndex)
 		return;
 
+	const bool bUseRemoveAtSwap = UseRemoveAtSwapOpt.value_or(false);
+
 	if (ClippingActor)
 	{
 		// Second notification for the Clipping Tool.
-		ClippingActor->OnClippingInstancesRemoved(objectType, { instIndex });
+		ClippingActor->OnClippingInstancesRemoved(objectType, { instIndex }, bUseRemoveAtSwap);
 	}
-	
-	
+
 	auto gp = Impl->GetInstancesGroup()->GetRAutoLock();
 
-	const bool bUseRemoveAtSwap = UseRemoveAtSwapOpt.value_or(false);
 	std::vector<int32_t> indices;
 	indices.push_back(instIndex);
-	Impl->instancesManager_->RemoveInstancesByObjectRef(objectRef, gp->GetId(),
+	Impl->instancesManager_->RemoveInstancesByObjectRef(decoObjectRef, gp->GetId(),
 		indices, bUseRemoveAtSwap);
 
 	UpdateInstanceIndicesAfterRemoval(indices, gp->GetId(), bUseRemoveAtSwap);
@@ -977,10 +1010,12 @@ void AITwinPopulation::RemoveInstances(TArray<int32>& InstanceIndices)
 		UseRemoveAtSwapOpt = bMeshSupportsRemoveSwap;
 	}
 
+	const bool bUseRemoveAtSwap = UseRemoveAtSwapOpt.value_or(false);
+
 	if (ClippingActor)
 	{
 		// Second notification for the Clipping Tool.
-		ClippingActor->OnClippingInstancesRemoved(objectType, InstanceIndices);
+		ClippingActor->OnClippingInstancesRemoved(objectType, InstanceIndices, bUseRemoveAtSwap);
 	}
 
 	std::vector<int32_t> indices;
@@ -989,9 +1024,8 @@ void AITwinPopulation::RemoveInstances(TArray<int32>& InstanceIndices)
 	{
 		indices.push_back(ind);
 	}
-	const bool bUseRemoveAtSwap = UseRemoveAtSwapOpt.value_or(false);
 
-	Impl->instancesManager_->RemoveInstancesByObjectRef(objectRef, Impl->GetGpId(),
+	Impl->instancesManager_->RemoveInstancesByObjectRef(decoObjectRef, Impl->GetGpId(),
 		indices, bUseRemoveAtSwap);
 
 	UpdateInstanceIndicesAfterRemoval(indices, Impl->GetGpId(), bUseRemoveAtSwap);
@@ -1001,14 +1035,14 @@ void AITwinPopulation::OnInstanceRestored(const AdvViz::SDK::RefID& restoredID)
 {
 	if (Impl->instancesManager_ && Impl->GetInstancesGroup())
 	{
-		Impl->instancesManager_->OnInstancesRestored(objectRef, Impl->GetGpId(),
+		Impl->instancesManager_->OnInstancesRestored(decoObjectRef, Impl->GetGpId(),
 			{ restoredID });
 	}
 }
 
 void AITwinPopulation::UpdateInstancesFromAVizToUE()
 {
-	const AdvViz::SDK::SharedInstVect& instances = Impl->instancesManager_->GetInstancesByObjectRef(objectRef, Impl->GetGpId());
+	const AdvViz::SDK::SharedInstVect& instances = Impl->instancesManager_->GetInstancesByObjectRef(decoObjectRef, Impl->GetGpId());
 
 	AITwinClippingTool* ClippingTool = nullptr;
 	if (IsClippingPrimitive())
@@ -1018,7 +1052,7 @@ void AITwinPopulation::UpdateInstancesFromAVizToUE()
 		{
 			// Skip legacy cutout instances if they were already converted to to Scene API.
 			// No need to delete them from the data base: just remove them from the manager.
-			Impl->instancesManager_->SetInstanceCountByObjectRef(objectRef, Impl->GetGpId(), 0);
+			Impl->instancesManager_->SetInstanceCountByObjectRef(decoObjectRef, Impl->GetGpId(), 0);
 			return;
 		}
 	}
@@ -1116,7 +1150,7 @@ void AITwinPopulation::SetInstancesGroup(AVizInstancesGroupPtr const& instGroup)
 
 void AITwinPopulation::SetObjectRef(const std::string& objRef)
 {
-	objectRef = objRef;
+	decoObjectRef = objRef;
 
 	if (objRef.find("Character") != std::string::npos)
 	{
@@ -1178,7 +1212,7 @@ void AITwinPopulation::SetObjectRef(const std::string& objRef)
 
 const std::string& AITwinPopulation::GetObjectRef() const
 {
-	return objectRef;
+	return decoObjectRef;
 }
 
 AdvViz::SDK::RefID AITwinPopulation::GetInstanceGroupId() const
@@ -1189,7 +1223,7 @@ AdvViz::SDK::RefID AITwinPopulation::GetInstanceGroupId() const
 bool AITwinPopulation::IsRotationVariationEnabled() const
 {
 	return objectType == EITwinInstantiatedObjectType::Vegetation ||
-		   objectType == EITwinInstantiatedObjectType::Character;
+		   objectType == EITwinInstantiatedObjectType::Character || bIsSplinePopulation;
 }
 
 bool AITwinPopulation::IsScaleVariationEnabled() const
@@ -1374,10 +1408,10 @@ void AITwinPopulation::AddInstances(int32 numInst)
 	static const AdvViz::SDK::SharedInstVect NoSDKInstances;
 	if (bSyncWithAdvVizSDK)
 	{
-		Impl->instancesManager_->SetInstanceCountByObjectRef(objectRef, Impl->GetGpId(), oldNumInst + numInst);
+		Impl->instancesManager_->SetInstanceCountByObjectRef(decoObjectRef, Impl->GetGpId(), oldNumInst + numInst);
 	}
 	const AdvViz::SDK::SharedInstVect& instances = bSyncWithAdvVizSDK
-		? Impl->instancesManager_->GetInstancesByObjectRef(objectRef, Impl->GetGpId())
+		? Impl->instancesManager_->GetInstancesByObjectRef(decoObjectRef, Impl->GetGpId())
 		: NoSDKInstances;
 
 	UnrealInstanceInfo ueInstInfo;
@@ -1429,7 +1463,7 @@ void AITwinPopulation::AddInstances(int32 numInst)
 			UpdateAVizInstance(instPtr, ueInstInfo, this);
 			auto inst = instPtr->GetAutoLock();
 			inst->SetShouldSave(true);
-			BE_ASSERT(inst->GetObjectRef() == objectRef && inst->GetGroup() == Impl->GetInstancesGroup());
+			BE_ASSERT(inst->GetObjectRef() == decoObjectRef && inst->GetGroup() == Impl->GetInstancesGroup());
 		}
 	}
 

@@ -11,13 +11,14 @@
 #include <ITwinIModel.h>
 #include <ITwinIModelInternals.h>
 #include <ITwinSynchro4DSchedules.h>
-#include <ITwinServerConnection.h>
 #include <ITwinWebServices/ITwinWebServices.h>
 #include <ITwinSceneMapping.h>
 #include <Network/JsonQueriesCache.h>
 
 #include <HAL/FileManager.h>
 #include <HAL/PlatformFileManager.h>
+#include <HAL/PlatformProcess.h>
+#include <Internationalization/Regex.h>
 #include <Tasks/Task.h>
 #include <Serialization/JsonReader.h>
 #include <Serialization/JsonSerializer.h>
@@ -25,7 +26,6 @@
 #include <Compil/BeforeNonUnrealIncludes.h>
 #	include <BeHeaders/Util/CleanUpGuard.h>
 #	include <Core/Tools/Log.h>
-#	include <Core/Tools/DelayedCall.h>
 #	include <SDK/Core/Tools/Tools.h>
 #	include <SDK/Core/ITwinAPI/ITwinTypes.h>
 #include <Compil/AfterNonUnrealIncludes.h>
@@ -122,7 +122,7 @@ FString GetCacheFolder(EElementsMetadata const KindOfMetadata, AITwinIModel cons
 }
 
 FPaginatedIModelRowsQueries::FPaginatedIModelRowsQueries(AITwinIModel& InIModel,
-	EElementsMetadata const InKindOfMetadata, ITwinHttp::FMutex& InMutex,
+	EElementsMetadata const InKindOfMetadata, std::shared_ptr<ITwinHttp::FMutex> InMutex,
 	FOnLoadProgressUpdated InOnLoadProgressUpdated, int InQueryRowCount, int InMaxNumPageInProgress)
 	: IModel(InIModel)
 	, KindOfMetadata(InKindOfMetadata)
@@ -130,8 +130,9 @@ FPaginatedIModelRowsQueries::FPaginatedIModelRowsQueries(AITwinIModel& InIModel,
 	, ECSQLQueryCount(GetMetadataQueryCountString(InKindOfMetadata))
 	, Description(GetMetadataQueryDescription(InKindOfMetadata) + " queries for " + TCHAR_TO_UTF8(*InIModel.IModelId)
 		+ " (\""  + TCHAR_TO_UTF8(*InIModel.GetActorNameOrLabel()) + "\")")
-	, Cache(InIModel)
-	, Mutex(InMutex)
+	, Cache(InIModel, *InMutex)
+	, MutexPtr(InMutex)
+	, Mutex(*InMutex)
 	, OnLoadProgressUpdated(std::move(InOnLoadProgressUpdated))
 	, QueryRowCount(InQueryRowCount)
 	, MaxNumPageInProgress(InMaxNumPageInProgress)
@@ -142,7 +143,14 @@ FPaginatedIModelRowsQueries::FPaginatedIModelRowsQueries(AITwinIModel& InIModel,
 void FPaginatedIModelRowsQueries::Cancel()
 {
 	ITwinHttp::FLock Lock(Mutex);
-	State = EState::Cancelled;
+	// If we switch 'NotStarted' to 'Cancelling', we get problems when exiting the IModelHeadless test (where
+	// auto-load of S4D is disabled for good reasons): when the IModel is destroyed by the GC, we try to
+	// access the FTSTicker too late in OnIModelUninit. It did not make sense anyway to not skip directly to
+	// 'Cancelled' as there is nothing to wait for in that case.
+	if (EState::Running == State /*|| EState::NotStarted == State*/ || EState::NeedRestart == State)
+		State = EState::Cancelling;
+	else if (EState::NotStarted == State)
+		State = EState::Cancelled;
 }
 
 double FPaginatedIModelRowsQueries::PercentComplete() const
@@ -157,6 +165,7 @@ double FPaginatedIModelRowsQueries::PercentComplete() const
 		return 100.;
 	case EState::StoppedOnError:
 	case EState::Running:
+	case EState::Cancelling:
 	case EState::Cancelled:
 		break;
 	}
@@ -227,7 +236,7 @@ void FPaginatedIModelRowsQueries::DoRestart()
 	bQueryTableCount = !ECSQLQueryCount.IsEmpty();
 	NumPageInProgress = 0;
 	lastPageReached = false;
-	for (int i = 0; i < MaxNumPageInProgress; ++i) // read MaxNumPageInProgress pages in //
+	for (int i = 0; i < MaxNumPageInProgress; ++i)
 	{
 		std::weak_ptr<FPaginatedIModelRowsQueries> wptr = shared_from_this();
 		UE::Tasks::Launch(UE_SOURCE_LOCATION,
@@ -256,17 +265,17 @@ void FPaginatedIModelRowsQueries::Restart()
 	}
 }
 
-void FPaginatedIModelRowsQueries::QueryNextPage()
+bool FPaginatedIModelRowsQueries::QueryNextPage()
 {
-	if (EState::Cancelled == State)
-	{
-		BE_LOGI("ITwinAPI", Description << ": queries cancelled.");
-		return;
-	}
 	std::shared_ptr<AdvViz::SDK::ITwinAPIRequestInfo> RequestInfo;
 	int currentQueryRowStart = -1; // will stay "-1" for 'bQueryTableCount'
 	{
 		ITwinHttp::FLock Lock(Mutex);
+		if (EState::Cancelling == State || EState::Cancelled == State || EState::StoppedOnError == State)
+		{
+			BE_LOGI("ITwinAPI", Description << ": queries cancelled.");
+			return false;
+		}
 		NumPageInProgress++;
 		RequestInfo = std::make_shared<AdvViz::SDK::ITwinAPIRequestInfo>(
 			IModel.GetMutableWebServices()->InfosToQueryIModel(
@@ -280,11 +289,11 @@ void FPaginatedIModelRowsQueries::QueryNextPage()
 		bQueryTableCount = false;
 	}
 
-	auto const Hit = Cache.IsValid() ? Cache.LookUp(*RequestInfo, Mutex) : std::nullopt;
+	auto Hit = Cache.LookUp(*RequestInfo);
 	if (Hit)
 	{
 		BE_LOGD("ITwinAPI", Description << ": start query page in cache begin rowstart:" << currentQueryRowStart << " count:" << QueryRowCount << " RequestInfoId:" << RequestInfo.get());
-		OnQueryCompleted(true, Cache.Read(*Hit), RequestInfo, currentQueryRowStart == -1, false);
+		OnQueryCompleted(true, Cache.Read(std::move(*Hit)), RequestInfo, currentQueryRowStart == -1, false);
 	}
 	else
 	{
@@ -292,9 +301,21 @@ void FPaginatedIModelRowsQueries::QueryNextPage()
 		std::weak_ptr< FPaginatedIModelRowsQueries> wptr(shared_from_this());
 		AdvViz::SDK::FilterErrorFunc funcFilterError;
 		AdvViz::SDK::FilterErrorFunc funcStoreFirstErrorCode =
-			[this](long statusCode, std::string const& requestError, bool&, bool&)
+			[this](long statusCode, std::string const& requestError, bool& bAllowRetry, bool& /*bLogError*/)
 			{
-				if (!EHttpResponseCodes::IsOk(statusCode))
+				if (EHttpResponseCodes::IsOk(statusCode))
+				{
+					// Avoid retrying requests that explicitly fail with an error about data base schema
+					// mismatch (e.g. missing ECClass) - this is not a transient error and will not be fixed
+					// by retrying.
+					FRegexPattern Pattern(TEXT("ECClass '([^']*)' does not exist"));
+					FRegexMatcher PatternMatcher(Pattern, FString(requestError.c_str()));
+					if (PatternMatcher.FindNext())
+					{
+						bAllowRetry = false;
+					}
+				}
+				else
 				{
 					ITwinHttp::FLock Lock(Mutex);
 					if (EHttpResponseCodes::IsOk(FirstErrorCode))
@@ -364,6 +385,7 @@ void FPaginatedIModelRowsQueries::QueryNextPage()
 			AdvViz::SDK::Http::EAsyncCallbackExecutionMode::WorkerThread,
 			&(*RequestInfo), std::move(funcFilterError));
 	}
+	return true;
 }
 
 bool FPaginatedIModelRowsQueries::OnQueryCompleted(bool const bSuccess,
@@ -380,8 +402,7 @@ bool FPaginatedIModelRowsQueries::OnQueryCompleted(bool const bSuccess,
 		});
 
 	bool const bFromCache = (QueryResult.index() == 1);
-	auto& IModelInternals = GetInternals(IModel);
-	TSceneMappingPtr sceneMapping = IModelInternals.SceneMapping;
+	TSceneMappingPtr sceneMapping = GetInternals(IModel).SceneMapping;
 	std::weak_ptr<FPaginatedIModelRowsQueries> wptr = shared_from_this();
 
 	auto fctFinish = [wptr, sceneMapping, bFromCache]() {
@@ -391,13 +412,13 @@ bool FPaginatedIModelRowsQueries::OnQueryCompleted(bool const bSuccess,
 
 		{
 			ITwinHttp::FLock Lock(pThis->Mutex);
-			if (pThis->State == EState::Finished)
+			if (pThis->State == EState::Finished || pThis->State == EState::Cancelled)
 				return;
 
-			BE_LOGD("ITwinAPI", pThis->Description << " Check finished NumPageInProgress:"
-								<< pThis->NumPageInProgress << " lastPageReached:" << pThis->lastPageReached);
+			BE_LOGD("ITwinAPI", pThis->Description << ": check if finished: NumPageInProgress="
+								<< pThis->NumPageInProgress << ", lastPageReached=" << pThis->lastPageReached);
 
-			if (pThis->NumPageInProgress != 0 || !pThis->lastPageReached)
+			if (pThis->NumPageInProgress != 0 || (!pThis->lastPageReached && pThis->State != EState::Cancelling))
 				return;
 
 			BE_LOGI("ITwinAPI", pThis->Description << ": page query finished, total retrieved from "
@@ -410,7 +431,7 @@ bool FPaginatedIModelRowsQueries::OnQueryCompleted(bool const bSuccess,
 		{
 			ITwinHttp::FLock Lock(pThis->Mutex);
 			pThis->UninitializeCache();
-			BE_LOGD("ITwinAPI", pThis->Description << " final preparation started");
+			BE_LOGD("ITwinAPI", pThis->Description << ": final preparation started");
 		}
 
 		{
@@ -426,14 +447,19 @@ bool FPaginatedIModelRowsQueries::OnQueryCompleted(bool const bSuccess,
 			ensure(EState::NotStarted != pThis->State);
 			if (EState::Running == pThis->State)
 				pThis->State = EState::Finished;
-			//else: Cancelled or StoppedOnError, don't change!
-			BE_LOGD("ITwinAPI", pThis->Description << " final preparation finished");
+			else if (EState::Cancelling == pThis->State)
+			{
+				// will break OnIModelUninit()'s waiting loop (once the lock is released), after which almost
+				// everything is unsafe, from IModel to pThis itself! (sceneMapping is OK as a shared_ptr)
+				pThis->State = EState::Cancelled;
+			}
+			BE_LOGD("ITwinAPI", pThis->Description << ": final preparation finished");
 		}
 	};
 
 	{
 		ITwinHttp::FLock Lock(Mutex);
-		if (EState::Cancelled == State || EState::StoppedOnError == State)
+		if (EState::Cancelling == State || EState::StoppedOnError == State || EState::Cancelled == State)
 		{
 			BE_LOGI("ITwinAPI", Description << ": queries cancelled"
 								<< ((EState::StoppedOnError == State) ? " (on error)." : "."));
@@ -472,8 +498,7 @@ bool FPaginatedIModelRowsQueries::OnQueryCompleted(bool const bSuccess,
 	else
 	{
 		BE_LOGD("ITwinAPI", Description << ": Deserialize json RequestInfoId:" << RequestInfo.get() << " started");
-		if (Cache.IsValid())
-			Cache.Write(*RequestInfo, std::get<0>(QueryResult), true, Mutex);
+		Cache.Write(*RequestInfo, std::get<0>(QueryResult), ITwinHttp::ConnectionSuccess(true));
 		auto Reader = TJsonReaderFactory<TCHAR>::Create(std::get<0>(QueryResult));
 		if (!FJsonSerializer::Deserialize(Reader, JsonObj))
 			JsonObj.Reset();
@@ -493,7 +518,7 @@ bool FPaginatedIModelRowsQueries::OnQueryCompleted(bool const bSuccess,
 					bHasReceivedTableCount = true;
 					if (TotalRowsExpected > 0)
 					{
-						auto SceneMappingLock = IModelInternals.SceneMapping->GetAutoLock();
+						auto SceneMappingLock = sceneMapping->GetAutoLock();
 						SceneMappingLock->ReserveIModelMetadata(TotalRowsExpected);
 					}
 				}
@@ -533,6 +558,7 @@ bool FPaginatedIModelRowsQueries::OnQueryCompleted(bool const bSuccess,
 					}
 					BE_LOGD("ITwinAPI", strlog << " finished");
 
+					bool bLocalLastPageReached;
 					{
 						ITwinHttp::FLock Lock(pThis->Mutex);
 						pThis->NumPageInProgress--;
@@ -542,7 +568,12 @@ bool FPaginatedIModelRowsQueries::OnQueryCompleted(bool const bSuccess,
 								pThis->RequestsFromCache++;
 							else
 								pThis->RequestsFromRemote++;
+						bLocalLastPageReached = pThis->lastPageReached;
+						// release lock before QueryNextPage: when in cache, even though processing the metadata
+						// is moved to a task, reading/parsing the json will chain and block substantially
 					}
+					if (!bLocalLastPageReached)
+						pThis->QueryNextPage();
 
 					fctFinish();
 				},
@@ -556,6 +587,7 @@ bool FPaginatedIModelRowsQueries::OnQueryCompleted(bool const bSuccess,
 		{
 			BE_LOGI("ITwinAPI", Description << ": table count retrieved from " << (bFromCache ? "cache: " : "remote: ")
 								<< TotalRowsExpected);
+			QueryNextPage();
 		}
 		else
 		{
@@ -566,57 +598,21 @@ bool FPaginatedIModelRowsQueries::OnQueryCompleted(bool const bSuccess,
 				if (OnLoadProgressUpdated)
 					OnLoadProgressUpdated();
 			}
-		}
-		int CurrentNumPageInProgress;
-		{
-			ITwinHttp::FLock Lock(Mutex);
-			CurrentNumPageInProgress = NumPageInProgress;
-		}
-		// "<" instead of former "<=" because now the counter is decremented after this (except in the unlikely
-		// case where the task above has already executed when we reach this).
-		if (CurrentNumPageInProgress < MaxNumPageInProgress)
-		{
-			QueryNextPage();
-		}
-		else
-		{
-			static std::atomic_int taskcounter{ 0 };
-			AdvViz::SDK::UniqueDelayedCall("OnQueryCompleted.QueryNextPage" + std::to_string(taskcounter++),
-				[wptr]()
-				{
-					auto pThis = wptr.lock();
-					if (!pThis)
-						return AdvViz::SDK::DelayedCall::EReturnedValue::Done;
-					{
-						ITwinHttp::FLock Lock(pThis->Mutex);
-						if (pThis->NumPageInProgress > pThis->MaxNumPageInProgress) // still too many tasks
-						{
-							return AdvViz::SDK::DelayedCall::EReturnedValue::Repeat;
-						}
-					}
-					UE::Tasks::Launch(UE_SOURCE_LOCATION,
-						[wptr]()
-						{
-							auto pThis = wptr.lock();
-							if (!pThis)
-								return;
-							pThis->QueryNextPage();
-						},
-						UE::Tasks::ETaskPriority::BackgroundLow);
-					return AdvViz::SDK::DelayedCall::EReturnedValue::Done;
-				},
-				0.064f);
+			// Not calling QueryNextPage() here because it will be done when the curent reply is finished parsing,
+			// in the worker thread (see above). This is to avoid having too many queries in flight OR parsing at the
+			// same time because, when replies are in cache, a lot more than MaxNumPageInProgress would end up
+			// being processed at the same time, leading to a severe memory spike for large iModels.
 		}
 	}
 	else
 	{
 		// Current page queried returned no result => signal completion.
 		lastPageReached = true;
-		// Must decrement before fctFinish, in case we are the last one.
-		if (!PageDecrementer.isClean())
-			PageDecrementer.cleanup();
-		fctFinish();
 	}
+	// Must decrement before fctFinish, in case we are the last one.
+	if (!PageDecrementer.isClean())
+		PageDecrementer.cleanup();
+	fctFinish();
 	return true;
 }
 
@@ -640,5 +636,17 @@ bool FPaginatedIModelRowsQueries::ClearCacheOnDisk()
 
 void FPaginatedIModelRowsQueries::OnIModelUninit()
 {
+	Cancel();// State becomes EState::Cancelling, unless it was already stopped somehow (Finished or StoppedOnError)
+	int WaitSomeMore = 60;
+	while (WaitSomeMore--)
+	{
+		{	ITwinHttp::FLock Lock(Mutex);
+			if (EState::Cancelling != State) // ie Cancelled, StoppedOnError, NotStarted or Finished
+				break;
+		}
+		// Don't! Can crash like in #2111180 - no longer needed as I had to remove the delayed call to fix it.
+		//FTSTicker::GetCoreTicker().Tick(1.0);
+		FPlatformProcess::Sleep(.5f);
+	}
 	UninitializeCache();
 }

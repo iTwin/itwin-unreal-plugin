@@ -1,0 +1,4 @@
+{
+    "status": 200,
+    "body": "{\"statusCode\":0,\"result\":{\"class\":\"Physical Object\",\"id\":\"0x59\",\"label\":\"Cube [0-2H]\",\"items\":{\"@Presentation:selectedItems.categoryLabel@\":{\"type\":\"category\",\"items\":{\"Model\":{\"type\":\"primitive\",\"value\":\"zoupiUTF8_ADE_InstancesTest\"},\"Code\":{\"type\":\"primitive\",\"value\":\"\"},\"User Label\":{\"type\":\"primitive\",\"value\":\"Cube\"},\"Category\":{\"type\":\"primitive\",\"value\":\"zoupiLayer0\"}}}}}}"
+}

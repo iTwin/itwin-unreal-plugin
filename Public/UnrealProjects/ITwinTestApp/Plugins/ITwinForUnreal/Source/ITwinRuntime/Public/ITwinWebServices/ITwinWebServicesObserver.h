@@ -16,6 +16,7 @@
 
 struct FChangesetInfos;
 struct FIModelInfos;
+struct FIModelProcessingStatus;
 struct FITwinInfo;
 struct FITwinInfos;
 struct FITwinExportInfos;
@@ -34,7 +35,6 @@ struct FEcefLocation;
 namespace AdvViz::SDK {
 	struct ITwinInfo;
 	struct ITwinRenderMaterialPropertiesMap;
-	struct ITwinMaterialPrediction;
 	struct ITwinTextureData;
 	struct GeoCoordsReply;
 	struct ITwinGoogleCuratedContentAccess;
@@ -52,6 +52,7 @@ public:
 	virtual void OnITwinInfoRetrieved(bool bSuccess, AdvViz::SDK::ITwinInfo const& Info) = 0;
 
 	virtual void OnIModelsRetrieved(bool bSuccess, FIModelInfos const& Infos) = 0;
+	virtual void OnIModelProcessingStatusRetrieved(bool bSuccess, FIModelProcessingStatus const& Status) = 0;
 
 	virtual void OnRealityDataRetrieved(bool bSuccess, FITwinRealityDataInfos const& Infos) = 0;
 	virtual void OnRealityData3DInfoRetrieved(bool bSuccess, FITwinRealityData3DInfo const& Info) = 0;
@@ -84,8 +85,6 @@ public:
 
 	virtual void OnMaterialPropertiesRetrieved(bool bSuccess, AdvViz::SDK::ITwinRenderMaterialPropertiesMap const& props) = 0;
 	virtual void OnTextureDataRetrieved(bool bSuccess, std::string const& textureId, AdvViz::SDK::ITwinTextureData const& textureData) = 0;
-	virtual void OnMatMLPredictionRetrieved(bool bSuccess, AdvViz::SDK::ITwinMaterialPrediction const& prediction, std::string const& error = {}) = 0;
-	virtual void OnMatMLPredictionProgress(float fProgressRatio) = 0;
 
 	virtual void OnGoogleCuratedContentAccessRetrieved(bool bSuccess,
 		AdvViz::SDK::ITwinGoogleCuratedContentAccess const& infos, HttpRequestID const& RequestID) = 0;
@@ -103,6 +102,7 @@ public:
 	virtual void OnITwinsRetrieved(bool bSuccess, FITwinInfos const& Infos) override;
 	virtual void OnITwinInfoRetrieved(bool bSuccess, AdvViz::SDK::ITwinInfo const& Info) override;
 	virtual void OnIModelsRetrieved(bool bSuccess, FIModelInfos const& Infos) override;
+	virtual void OnIModelProcessingStatusRetrieved(bool bSuccess, FIModelProcessingStatus const& Status) override;
 	virtual void OnRealityDataRetrieved(bool bSuccess, FITwinRealityDataInfos const& Infos) override;
 	virtual void OnRealityData3DInfoRetrieved(bool bSuccess, FITwinRealityData3DInfo const& Info) override;
 	virtual void OnChangesetsRetrieved(bool bSuccess, FChangesetInfos const& ChangesetInfos) override;
@@ -131,8 +131,6 @@ public:
 
 	virtual void OnMaterialPropertiesRetrieved(bool bSuccess, AdvViz::SDK::ITwinRenderMaterialPropertiesMap const& props) override;
 	virtual void OnTextureDataRetrieved(bool bSuccess, std::string const& textureId, AdvViz::SDK::ITwinTextureData const& textureData) override;
-	virtual void OnMatMLPredictionRetrieved(bool bSuccess, AdvViz::SDK::ITwinMaterialPrediction const& prediction, std::string const& error = {}) override;
-	virtual void OnMatMLPredictionProgress(float fProgressRatio) override;
 
 	virtual void OnGoogleCuratedContentAccessRetrieved(bool bSuccess,
 		AdvViz::SDK::ITwinGoogleCuratedContentAccess const& infos, HttpRequestID const& RequestID) override;

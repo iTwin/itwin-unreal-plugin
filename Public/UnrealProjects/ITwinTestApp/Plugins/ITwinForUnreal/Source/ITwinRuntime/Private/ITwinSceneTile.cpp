@@ -259,6 +259,11 @@ void FITwinSceneTile::Unload()
 	//	(etc.)
 }
 
+void FITwinSceneTile::ClearExtractedElements()
+{
+	ExtractedElements.clear();
+}
+
 FITwinElementFeaturesInTile const* FITwinSceneTile::FindElementFeaturesConstSLOW(ITwinElementID const& ElemID,
 	ITwinTile::ElemIdx* OutRank /*= nullptr*/) const
 {
@@ -510,23 +515,12 @@ void FITwinSceneTile::UseTunedMeshAsExtract(FITwinExtractedElement& DummyExtr,
 		return;
 	DummyExtr.Entities.emplace_back(FITwinExtractedEntity{
 		.ElementID = DummyExtr.ElementID,
-		.OriginalTransform = MeshComp->GetComponentTransform(),
+		.OriginalTransform = MeshWrapper.GetMeshComponentOriginalTransform(IModelTilesetTransform),
 		.TransformableMeshComponent = MeshComp,
 		.FeatureIDsUVIndex = UVIndex,
 		.Material = Material,
 		//.TextureFlags <== will be ignored, see UpdateExtractedElement in ITwinSynchro4DAnimator.cpp
-		});
-
-	// MeshComp->GetComponentTransform() is not yet the actual transform to World coordinates (Tileset
-	// and iModel transforms are not accounted), because the Component is not attached yet: when it
-	// happens (see "if (pGltf->GetAttachParent() == nullptr)" in ACesium3DTileset::showTilesToRender),
-	// the transform of the pGltf and all its children primitive components are updated with the right value.
-	// => Apply the tileset transform manually:
-	if (!MeshComp->GetAttachParent()/*gltf component*/->GetAttachParent()/*tileset actor*/)
-	{
-		auto& Transfo = DummyExtr.Entities.back().OriginalTransform;
-		Transfo = Transfo * IModelTilesetTransform;
-	}
+	  });
 }
 
 void FITwinSceneTile::ForEachExtractedElement(std::function<void(FITwinExtractedElement&)> const& Func)
@@ -929,7 +923,7 @@ bool FITwinSceneTile::TPickSelectable(SelectableHelper const& PickHelper, Select
 }
 
 bool FITwinSceneTile::PickElement(ITwinElementID const& InElemID, FTextureNeeds& TextureNeeds,
-								  FPickingOptions const Opts)
+								  FPickingOptions const& Opts)
 {
 	ElementSelectionHelper EltSelectionHelper(*this);
 	return TPickSelectable(EltSelectionHelper, InElemID, TextureNeeds, Opts);
@@ -956,7 +950,7 @@ void FITwinSceneTile::DeselectElements(std::unordered_set<ITwinElementID> const&
 }
 
 bool FITwinSceneTile::PickMaterial(ITwinRenderMaterialElementID const& InMaterialID, FTextureNeeds& TextureNeeds,
-								   FPickingOptions const Opts)
+								   FPickingOptions const& Opts)
 {
 	MaterialSelectionHelper MatSelectionHelper(*this);
 	return TPickSelectable(MatSelectionHelper, InMaterialID, TextureNeeds, Opts);
@@ -969,7 +963,7 @@ void FITwinSceneTile::THideIDs(std::unordered_set<IDType>& CurrentHiddenItems,
 		std::function<void(FeatureType*)> UnhideFeatures,
 		std::function<void(FeatureType*)> HideFeatures,
 		FITwinSceneTile::FTextureNeeds& TextureNeeds,
-		FShowHideOptions Opts,
+		FShowHideOptions const& Opts,
 		std::unordered_set<IDType> const* SelectedIDs /*= nullptr*/)
 {
 	// Update hidden elements in current saved view
@@ -1017,7 +1011,7 @@ void FITwinSceneTile::THideIDs(std::unordered_set<IDType>& CurrentHiddenItems,
 }
 
 void FITwinSceneTile::HideElements(std::unordered_set<ITwinElementID> const& InElemIDs,
-	FTextureNeeds& TextureNeeds, FShowHideOptions const Opts)
+	FTextureNeeds& TextureNeeds, FShowHideOptions const& Opts)
 {
 	if (MaxFeatureID == ITwin::NOT_FEATURE
 		 || (Opts.OnlyVisibleTiles() && !bVisible)) // filter out hidden tiles too (other LODs, culled out...)
@@ -1040,7 +1034,7 @@ void FITwinSceneTile::HideElements(std::unordered_set<ITwinElementID> const& InE
 }
 
 void FITwinSceneTile::ShowElements(std::unordered_set<ITwinElementID> const& InElemIDs,
-	FTextureNeeds& TextureNeeds, FShowHideOptions const Opts)
+	FTextureNeeds& TextureNeeds, FShowHideOptions const& Opts)
 {
 	if (MaxFeatureID == ITwin::NOT_FEATURE
 		|| (Opts.OnlyVisibleTiles() && !bVisible)) // filter out hidden tiles too (other LODs, culled out...)
@@ -1074,7 +1068,9 @@ void FITwinSceneTile::ShowElements(std::unordered_set<ITwinElementID> const& InE
 		{
 			FeaturesToUnHide = FindElementFeaturesSLOW(InID);
 		}
-		if (FeaturesToUnHide && !FeaturesToUnHide->Features.empty())
+		if (FeaturesToUnHide && !FeaturesToUnHide->Features.empty()
+			// No need to create it if it does not exist since then all Elements are already visible!
+			&& SelectingAndHiding)
 		{
 			CreateAndSetSelectingAndHiding(*FeaturesToUnHide, TextureNeeds, ITwin::COLOR_UNSELECT_ELEMENT_BGRA, false);
 		}
@@ -1082,7 +1078,7 @@ void FITwinSceneTile::ShowElements(std::unordered_set<ITwinElementID> const& InE
 }
 
 void FITwinSceneTile::HideModels(std::unordered_set<ITwinElementID> const& InModelIDs,
-	FTextureNeeds& TextureNeeds, FShowHideOptions const Opts)
+	FTextureNeeds& TextureNeeds, FShowHideOptions const& Opts)
 {
 	if (MaxFeatureID == ITwin::NOT_FEATURE
 		|| (Opts.OnlyVisibleTiles() && !bVisible)) // filter out hidden tiles too (other LODs, culled out...)
@@ -1104,7 +1100,7 @@ void FITwinSceneTile::HideModels(std::unordered_set<ITwinElementID> const& InMod
 }
 
 void FITwinSceneTile::HideCategories(std::unordered_set<ITwinElementID> const& InCategoryIDs,
-	FTextureNeeds& TextureNeeds, FShowHideOptions const Opts)
+	FTextureNeeds& TextureNeeds, FShowHideOptions const& Opts)
 {
 	if (MaxFeatureID == ITwin::NOT_FEATURE
 		|| (Opts.OnlyVisibleTiles() && !bVisible)) // filter out hidden tiles too (other LODs, culled out...)
@@ -1127,7 +1123,7 @@ void FITwinSceneTile::HideCategories(std::unordered_set<ITwinElementID> const& I
 
 void FITwinSceneTile::HideCategoriesPerModel(
 	std::unordered_set<std::pair<ITwinElementID,ITwinElementID>, FITwinSceneTile::pair_hash> const& InCategoryPerModelIDs,
-	FTextureNeeds& TextureNeeds, FShowHideOptions const Opts)
+	FTextureNeeds& TextureNeeds, FShowHideOptions const& Opts)
 {
 	if (MaxFeatureID == ITwin::NOT_FEATURE
 		|| (Opts.OnlyVisibleTiles() && !bVisible)) // filter out hidden tiles too (other LODs, culled out...)
@@ -1178,7 +1174,7 @@ void FITwinSceneTile::HideCategoriesPerModel(
 
 void FITwinSceneTile::ShowCategoriesPerModel(
 	std::unordered_set<std::pair<ITwinElementID, ITwinElementID>, FITwinSceneTile::pair_hash> const& InCategoryPerModelIDs,
-	FTextureNeeds& TextureNeeds, FShowHideOptions const Opts)
+	FTextureNeeds& TextureNeeds, FShowHideOptions const& Opts)
 {
 	if (MaxFeatureID == ITwin::NOT_FEATURE
 		|| (Opts.OnlyVisibleTiles() && !bVisible)) // filter out hidden tiles too (other LODs, culled out...)
@@ -1212,7 +1208,9 @@ void FITwinSceneTile::ShowCategoriesPerModel(
 		{
 			FeaturesToUnHide = FindCategoryPerModelFeaturesSLOW(InID);
 		}
-		if (FeaturesToUnHide && !FeaturesToUnHide->Features.empty())
+		if (FeaturesToUnHide && !FeaturesToUnHide->Features.empty()
+			// No need to create it if it does not exist since then all Elements are already visible!
+			&& SelectingAndHiding)
 		{
 			CreateAndSetSelectingAndHiding(*FeaturesToUnHide, TextureNeeds, ITwin::COLOR_UNSELECT_ELEMENT_BGRA, false);
 		}
@@ -1242,7 +1240,7 @@ FString FITwinSceneTile::GetIDString() const
 
 FString FITwinSceneTile::ToString() const
 {
-	auto const ModelVer = pCesiumTile->GetGltfModel()
+	auto const ModelVer = (pCesiumTile && pCesiumTile->GetGltfModel())
 		? Cesium3DTilesSelection::GltfModifierVersionExtension::getVersion(*pCesiumTile->GetGltfModel())
 		: std::optional<int64_t>();
 	return FString::Printf(TEXT(

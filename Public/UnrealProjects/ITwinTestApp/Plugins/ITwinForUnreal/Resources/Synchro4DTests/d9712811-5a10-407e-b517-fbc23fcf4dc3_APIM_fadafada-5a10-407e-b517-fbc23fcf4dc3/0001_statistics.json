@@ -1,0 +1,9 @@
+﻿{
+	"url": "https://api.bentley.com/schedules/fadafada-5a10-407e-b517-fbc23fcf4dc3/animation-statistics",
+	"verb": "GET",
+	"connectedSuccessfully": true,
+	"responseCode": 200
+,
+	"reply": 
+{"animationStatistics":{"animation3dPathAssignmentCount":20,"animation3dPathCount":3,"animation3dPathKeyframeCount":10,"animation3dTransformCount":20,"animationBindingCount":110,"appearanceProfileCount":16,"taskCount":13}}
+}

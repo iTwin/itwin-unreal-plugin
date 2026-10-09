@@ -1,4 +1,4 @@
-// Copyright 2020-2024 CesiumGS, Inc. and Contributors
+// Copyright 2020-2026 CesiumGS, Inc. and Contributors
 
 #include "CesiumPointAttenuationVertexFactory.h"
 
@@ -18,19 +18,9 @@ FBufferRHIRef CreatePointAttenuationBuffer(
     int32 Size,
     int32 Stride,
     EBufferUsageFlags Flags) {
-#if ENGINE_VERSION_5_6_OR_HIGHER
   FRHIBufferCreateDesc CreateDesc(Name, Size, Stride, Flags);
   CreateDesc.SetInitialState(ERHIAccess::VertexOrIndexBuffer);
   return RHICmdList.CreateBuffer(CreateDesc);
-#else
-  FRHIResourceCreateInfo CreateInfo(Name);
-  return RHICmdList.CreateBuffer(
-      Size,
-      Flags,
-      Stride,
-      ERHIAccess::VertexOrIndexBuffer,
-      CreateInfo);
-#endif
 }
 } // namespace
 

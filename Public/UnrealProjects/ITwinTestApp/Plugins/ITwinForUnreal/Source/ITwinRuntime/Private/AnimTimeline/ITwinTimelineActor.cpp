@@ -16,6 +16,7 @@
 #include <Camera/CameraComponent.h>
 #include <CineCameraActor.h>
 #include <Engine/World.h>
+#include <EngineUtils.h>
 #include <GameFramework/Pawn.h>
 #include <HAL/FileManager.h>
 #include <Kismet/GameplayStatics.h>
@@ -38,8 +39,8 @@ namespace ITwin
 {
 	float fDefaultTimeDelta = 5.f; // default delta time when appending key-frames
 
-	ITWINRUNTIME_API bool GetSynchroDateFromSchedules(TMap<FString, UITwinSynchro4DSchedules*> const& SchedMap, FDateTime& Out, FString& ScheduleIDOut);
-	ITWINRUNTIME_API void SetSynchroDateToSchedules(TMap<FString, UITwinSynchro4DSchedules*> const& SchedMap, const FDateTime& InDate);
+	ITWINRUNTIME_API void SetSynchroDateToSchedules(TMap<FString, UITwinSynchro4DSchedules*> const& SchedMap,
+													const FDateTime& InDate);
 
 	FString GetTimelineDataPath()
 	{
@@ -52,21 +53,27 @@ namespace ITwin
 
 	ACineCameraActor* SpawnCamera(UWorld* pWorld)
 	{
-		FVector pos;
-		FRotator rot;
-		ScreenUtils::GetCurrentView(pWorld, pos, rot);
+		if (!pWorld)
+			return nullptr;
 
-		// hack that allows to load an existing non-empty level sequence for testing
-		//if (auto ExistingCam = Cast<ACineCameraActor>(UGameplayStatics::GetActorOfClass(pWorld, ACineCameraActor::StaticClass())))
-		//	return ExistingCam;
+		// Defaults matter: GetCurrentView leaves its outputs untouched when there is no
+		// player controller (headless/automation runs), and FVector/FRotator do not
+		// zero-initialize themselves.
+		FVector pos(FVector::ZeroVector);
+		FRotator rot(FRotator::ZeroRotator);
+		ScreenUtils::GetCurrentView(pWorld, pos, rot);
 
 		FActorSpawnParameters SpawnInfo;
 		auto NewCamera = pWorld->SpawnActor<ACineCameraActor>(ACineCameraActor::StaticClass(), pos, rot, SpawnInfo);
-		if (UCameraComponent* CameraComponent = NewCamera->GetCameraComponent())
-			if (APlayerCameraManager* CamManager = pWorld->GetFirstPlayerController()->PlayerCameraManager)
-				CameraComponent->SetFieldOfView(CamManager->GetFOVAngle());
-		return NewCamera;
+		if (!NewCamera)
+			return nullptr;
 
+		if (UCameraComponent* CameraComponent = NewCamera->GetCameraComponent())
+			if (APlayerController* pController = pWorld->GetFirstPlayerController())
+				if (APlayerCameraManager* CamManager = pController->PlayerCameraManager)
+					CameraComponent->SetFieldOfView(CamManager->GetFOVAngle());
+
+		return NewCamera;
 	}
 
 	// To store and interpolate date in the sequencer, we use its timespan from an arbitrary base date 01-01-2000.
@@ -267,6 +274,59 @@ public:
 		}
 	}
 
+	// Moves the key-frame at slot iKFSrc to slot iKFDst. The clip's time grid (and hence its
+	// duration and per-frame transition times) is left untouched: only the key-frame contents
+	// (camera, atmo, synchro, snapshot ID) are shifted from one slot to the next.
+	bool ReorderKeyFrame(int iKFSrc, int iKFDst)
+	{
+		if (iKFSrc == iKFDst || !HasKeyFrame(iKFSrc) || !HasKeyFrame(iKFDst))
+			return false;
+
+		int const nKFs = (int)GetKeyframeCount();
+		std::vector<AdvViz::SDK::ITimelineKeyframe::KeyframeData> vData(nKFs);
+		std::vector<std::string> vSnapshotIds(nKFs);
+		std::vector<float> vTimes(nKFs); // slot times, stay where they are
+
+		for (int i = 0; i < nKFs; ++i)
+		{
+			auto kf = GetKeyframeByIndex(i);
+			if (!kf)
+				return false; // inconsistent clip, better do nothing than corrupt it
+			vData[i] = (*kf)->GetData();
+			vSnapshotIds[i] = (*kf)->GetSnapshotId();
+			vTimes[i] = vData[i].time;
+		}
+
+		// Rotate the payloads of the [min, max] slot range, so that src ends up at dst
+		// and the key-frames in between are shifted by one slot.
+		if (iKFSrc < iKFDst)
+		{
+			std::rotate(vData.begin() + iKFSrc, vData.begin() + iKFSrc + 1, vData.begin() + iKFDst + 1);
+			std::rotate(vSnapshotIds.begin() + iKFSrc, vSnapshotIds.begin() + iKFSrc + 1,
+						vSnapshotIds.begin() + iKFDst + 1);
+		}
+		else
+		{
+			std::rotate(vData.begin() + iKFDst, vData.begin() + iKFSrc, vData.begin() + iKFSrc + 1);
+			std::rotate(vSnapshotIds.begin() + iKFDst, vSnapshotIds.begin() + iKFSrc,
+						vSnapshotIds.begin() + iKFSrc + 1);
+		}
+
+		// Write back, re-assigning each slot's own time to the payload it now holds.
+		int const iFirst = std::min(iKFSrc, iKFDst);
+		int const iLast = std::max(iKFSrc, iKFDst);
+		for (int i = iFirst; i <= iLast; ++i)
+		{
+			auto kf = GetKeyframeByIndex(i);
+			if (!kf)
+				continue;
+			vData[i].time = vTimes[i];
+			(*kf)->Update(vData[i]);
+			(*kf)->SetSnapshotId(vSnapshotIds[i]);
+		}
+		return true;
+	}
+
 	void GetKeyFrameTimes(TArray<float>& vTimes)
 	{
 		vTimes.Empty();
@@ -387,7 +447,8 @@ public:
 	TStrongObjectPtr<ULevelSequencePlayer> pPlayer_;
 	TStrongObjectPtr<ALevelSequenceActor> pPlayerActor_;
 	TStrongObjectPtr<AActor> pSynchroActor_;
-	std::function<TMap<FString, UITwinSynchro4DSchedules*> const& ()> GetSchedules;
+	std::function<bool(FDateTime& Out, FString& ScheduleIDOut)> GetSynchro4DScheduleTime;
+	std::function<void(FDateTime const& Date)> SetSynchro4DScheduleTime;
 
 	ACineCameraActor* CurrentCutTrackCamera_ = nullptr; 
 	TArray<float> CurrentCutTrackStartTimes_;
@@ -401,7 +462,6 @@ public:
 	int nextFreeClipID_ = 0;
 	int curClip_ = -1.f; ///< index of the current clip in the clip array
 	float curTime_ = 0.f; ///< current clip time in seconds (don't confuse with schedule time/date)
-	bool isLooping_ = false;
 	
 	std::shared_ptr<AdvViz::SDK::ITimelineKeyframe> copiedKF_; // used for copy-paste
 	//SynchroData synchroData_; // for now, we simply assign current UI date to each new key-frame
@@ -410,7 +470,8 @@ public:
 	{
 		// Find predefined timeline-related level sequence (its creation is only possible in editor mode)
 		levelSequencePath_ = FString("/ITwinForUnreal/ITwin/AnimTimeline/ITwinLevelSequence");
-		pLevelSeq_.Reset(Cast<ULevelSequence>(StaticLoadObject(ULevelSequence::StaticClass(), nullptr, *levelSequencePath_)));
+		pLevelSeq_.Reset(
+			Cast<ULevelSequence>(StaticLoadObject(ULevelSequence::StaticClass(), nullptr, *levelSequencePath_)));
 		CreatePlayer();
 
 		timeline_.reset(AdvViz::SDK::Timeline::New());
@@ -430,6 +491,53 @@ public:
 		AnimTracksInfo_.Add(USequencerHelper::FTrackInfo(TEXT("Exposure"), USequencerHelper::TT_Float));
 		AnimTracksInfo_.Add(USequencerHelper::FTrackInfo(TEXT("UseHeliodon"), USequencerHelper::TT_Bool));
 		AnimTracksInfo_.Add(USequencerHelper::FTrackInfo(TEXT("HRDIImage"), USequencerHelper::TT_String));
+
+		// Set reasonable default implementations for the synchro4D schedule time retrieval and setting functions
+		// (replaced in Engage by custom implementations based on Engage's 4D controller)
+		SetSynchro4DScheduleTime = [pOwner=&Owner](FDateTime const& Date)
+			{
+				if (IsValid(pOwner) && pOwner->GetWorld())
+				{
+					TMap<FString, UITwinSynchro4DSchedules*> SchedMap;
+					for (TActorIterator<AITwinIModel> It(pOwner->GetWorld()); It; ++It)
+					{
+						auto* Sched = It->GetSynchro4DSchedules();
+						if (IsValid(Sched) && Sched->GetDateRange() != FDateRange())
+							SchedMap.Add(Sched->ScheduleId, Sched);
+					}
+					ITwin::SetSynchroDateToSchedules(SchedMap, Date);
+				}
+			};
+		GetSynchro4DScheduleTime = [pOwner = &Owner](FDateTime& Out, FString& ScheduleIDOut)
+			{
+				if (IsValid(pOwner) && pOwner->GetWorld())
+				{
+					Out = FDateTime::MinValue();
+					ScheduleIDOut = FString();
+					for (TActorIterator<AITwinIModel> It(pOwner->GetWorld()); It; ++It)
+					{
+						auto* Sched = It->GetSynchro4DSchedules();
+						if (!IsValid(Sched))
+							continue;
+						auto Timerange = Sched->GetDateRange();
+						if (Timerange != FDateRange() && Sched->ScheduleTime >= Timerange.GetLowerBoundValue()
+							&& Sched->ScheduleTime <= Timerange.GetUpperBoundValue())
+						{
+							Out = Sched->ScheduleTime;
+							ScheduleIDOut = Sched->ScheduleId;
+							return true;
+						}
+						else if (Out == FDateTime::MinValue() && Timerange != FDateRange())
+						{
+							Out = Timerange.GetUpperBoundValue();
+							ScheduleIDOut = Sched->ScheduleId;
+						}
+					}
+					if (Out != FDateTime::MinValue())
+						return true;
+				}
+				return false;
+			};
 	}
 
 	~FImpl()
@@ -689,6 +797,24 @@ public:
 			vTimes.Add(fAccumTime); // append theoretical start time of the next clip
 	}
 
+
+	void SetClipKeyFrameTimes(ClipData& clip, const std::vector<float>& vNewTimes)
+	{
+		// Update the model first: if the new times are invalid, leave the sequencer tracks
+		// untouched so that the UI stays in sync with the timeline data.
+		auto const res = clip.SetKeyFrameTimes(vNewTimes);
+		if (!res)
+		{
+			BE_LOGE("Timeline", "Could not retime clip '" << clip.GetName()
+				<< "': " << res.error());
+			return;
+		}
+
+		USequencerHelper::SetClipKFsTimes(clip.GetTracks(), levelSequencePath_, vNewTimes);
+
+		UpdateSceneFromTimeline(); // see comment in AddOrUpdateKeyFrame
+	}
+
 	void GetEnabledClipIndices(TArray<int>& vIndices, bool bSkipEmpty = false)
 	{
 		vIndices.Empty();
@@ -930,9 +1056,9 @@ public:
 
 	bool GetSynchroDateFromAvailableSchedules(FDateTime& Out, FString& ScheduleIDOut)
 	{
-		if (!GetSchedules)
+		if (!GetSynchro4DScheduleTime)
 			return false;
-		return ITwin::GetSynchroDateFromSchedules(GetSchedules(), Out, ScheduleIDOut);
+		return GetSynchro4DScheduleTime(Out, ScheduleIDOut);
 	}
 
 	// Add/update the specified clip's key-frame with current scene state
@@ -1025,6 +1151,36 @@ public:
 		UpdateSceneFromTimeline(); // see comment in AddOrUpdateKeyFrame
 	}
 
+	bool ReorderKeyFrame(int clipIdx, int iKFSrc, int iKFDst)
+	{
+		auto clip = GetClip(clipIdx);
+		if (!clip)
+			return false;
+		if (!clip->ReorderKeyFrame(iKFSrc, iKFDst))
+			return false;
+
+		// Key-frame times are unchanged, but the values stored at those times in the level sequence
+		// tracks now belong to different key-frames: overwrite them in place. Do NOT remove the keys
+		// first: AddKeyFrameToChannel already replaces any existing key at the same frame, whereas
+		// RemoveKeyFrame would shrink (and possibly empty) the section range.
+		int const iFirst = std::min(iKFSrc, iKFDst);
+		int const iLast = std::max(iKFSrc, iKFDst);
+		TArray<std::optional<USequencerHelper::KFValueType> > ParamValues;
+		for (int i = iFirst; i <= iLast; ++i)
+		{
+			auto kf = clip->GetKeyframeByIndex(i);
+			if (!kf)
+				continue;
+			auto const& KF = (*kf)->GetData();
+			ConvertToSequencer(KF, ParamValues);
+			USequencerHelper::AddKeyFrame(clip->GetTracks(), levelSequencePath_, KF.time, ParamValues);
+		}
+
+		UpdateSceneFromTimeline(); // see comment in AddOrUpdateKeyFrame
+
+		return true;
+	}
+
 	void ImportFromJson()
 	{
 #if 0
@@ -1088,7 +1244,7 @@ public:
 	}
 
 	/// \param Out If there is no "current time" (ie no clip), the current schedule date found on any iModel
-	///		with a schedule is used. If there is on schedule either, ITwin::GetBaseDate() is used.
+	///		with a schedule is used. If there is no schedule either, ITwin::GetBaseDate() is used.
 	/// \return true if the date returned comes from the animation, false if any fallback value was used
 	bool GetSynchroDateFromTime(ClipData* clip, float fTime, FDateTime& Out)
 	{
@@ -1103,21 +1259,19 @@ public:
 				return true;
 			}
 		}
-		
-		if (GetSchedules)
+		if (GetSynchro4DScheduleTime)
 		{
-			FString scheduleId;
-			if (GetSynchroDateFromAvailableSchedules(Out, scheduleId))
+			FString Unused;
+			if (GetSynchro4DScheduleTime(Out, Unused))
 				return false; // yes, false, see dox
 		}
-
 		Out = ITwin::GetBaseDate();
 		return false;
 	}
 
 	void UpdateSynchroDateFromTime(ClipData* clip, float fTime)
 	{
-		if (!GetSchedules)
+		if (!SetSynchro4DScheduleTime)
 			return;
 
 		FDateTime curDate;
@@ -1125,7 +1279,7 @@ public:
 		{
 			BE_LOGV("Timeline", "Time set to " << fTime << ", setting current date to "
 				<< TCHAR_TO_UTF8(*(curDate.ToFormattedString(TEXT("%d %b %Y")))));
-			ITwin::SetSynchroDateToSchedules(GetSchedules(), curDate);
+			SetSynchro4DScheduleTime(curDate);
 		}
 		else
 		{
@@ -1141,99 +1295,157 @@ public:
 		FAtmoAnimSettings data;
 		Owner.GetAtmoSettingsDelegate.Execute(data);
 
+		bool changed = false;
+
 		auto idx = AnimTracksInfo_.IndexOfByKey(TEXT("date_sun"));
 		if (idx != INDEX_NONE && idx < clip->GetTracks().Num())
 		{
 			double dateDelta;
 			USequencerHelper::GetDoubleValueAtTime(clip->GetTracks()[idx].Get(), levelSequencePath_, fTime, dateDelta);
 			if(fabs(dateDelta) > 1e-6)
-				data.heliodonDate = ITwin::TimelineToSynchro(dateDelta);
+			{
+				auto date = ITwin::TimelineToSynchro(dateDelta);
+				if (data.heliodonDate != date)
+				{
+					data.heliodonDate = date;
+					changed = true;
+				}
+			}
 		}
 		idx = AnimTracksInfo_.IndexOfByKey(TEXT("clouds"));
 		if (idx != INDEX_NONE && idx < clip->GetTracks().Num())
 		{
 			float Value;
 			USequencerHelper::GetFloatValueAtTime(clip->GetTracks()[idx].Get(), levelSequencePath_, fTime, Value);
-			data.cloudCoverage = Value;
+			if (data.cloudCoverage != Value)
+			{
+				data.cloudCoverage = Value;
+				changed = true;
+			}
 		}
 		idx = AnimTracksInfo_.IndexOfByKey(TEXT("fog"));
 		if (idx != INDEX_NONE && idx < clip->GetTracks().Num())
 		{
 			float Value;
 			USequencerHelper::GetFloatValueAtTime(clip->GetTracks()[idx].Get(), levelSequencePath_, fTime, Value);
-			data.fog = Value;
+			if (data.fog != Value)
+			{
+				data.fog = Value;
+				changed = true;
+			}
 		}
 		idx = AnimTracksInfo_.IndexOfByKey(TEXT("sunAzimuth"));
 		if (idx != INDEX_NONE && idx < clip->GetTracks().Num())
 		{
 			float Value;
 			USequencerHelper::GetFloatValueAtTime(clip->GetTracks()[idx].Get(), levelSequencePath_, fTime, Value);
-			data.sunAzimuth = Value;
+			if (data.sunAzimuth != Value)
+			{
+				data.sunAzimuth = Value;
+				changed = true;
+			}
 		}
 		idx = AnimTracksInfo_.IndexOfByKey(TEXT("sunAzimuth"));
 		if (idx != INDEX_NONE && idx < clip->GetTracks().Num())
 		{
 			float Value;
 			USequencerHelper::GetFloatValueAtTime(clip->GetTracks()[idx].Get(), levelSequencePath_, fTime, Value);
-			data.sunAzimuth = Value;
+			if (data.sunAzimuth != Value)
+			{
+				data.sunAzimuth = Value;
+				changed = true;
+			}
 		}
 		idx = AnimTracksInfo_.IndexOfByKey(TEXT("sunPitch"));
 		if (idx != INDEX_NONE && idx < clip->GetTracks().Num())
 		{
 			float Value;
 			USequencerHelper::GetFloatValueAtTime(clip->GetTracks()[idx].Get(), levelSequencePath_, fTime, Value);
-			data.sunPitch = Value;
+			if (data.sunPitch != Value)
+			{
+				data.sunPitch = Value;
+				changed = true;
+			}
 		}
 		idx = AnimTracksInfo_.IndexOfByKey(TEXT("HeliodonLong"));
 		if (idx != INDEX_NONE && idx < clip->GetTracks().Num())
 		{
 			float Value;
 			USequencerHelper::GetFloatValueAtTime(clip->GetTracks()[idx].Get(), levelSequencePath_, fTime, Value);
-			data.heliodonLongitude = Value;
+			if (data.heliodonLongitude != Value)
+			{
+				data.heliodonLongitude = Value;
+				changed = true;
+			}
 		}
 		idx = AnimTracksInfo_.IndexOfByKey(TEXT("HeliodonLat"));
 		if (idx != INDEX_NONE && idx < clip->GetTracks().Num())
 		{
 			float Value;
 			USequencerHelper::GetFloatValueAtTime(clip->GetTracks()[idx].Get(), levelSequencePath_, fTime, Value);
-			data.heliodonLatitude = Value;
+			if (data.heliodonLatitude != Value)
+			{
+				data.heliodonLatitude = Value;
+				changed = true;
+			}
 		}
 		idx = AnimTracksInfo_.IndexOfByKey(TEXT("HDRIZRotation"));
 		if (idx != INDEX_NONE && idx < clip->GetTracks().Num())
 		{
 			float Value;
 			USequencerHelper::GetFloatValueAtTime(clip->GetTracks()[idx].Get(), levelSequencePath_, fTime, Value);
-			data.HDRIZRotation = Value;
+			if (data.HDRIZRotation != Value)
+			{
+				data.HDRIZRotation = Value;
+				changed = true;
+			}
 		}
 		idx = AnimTracksInfo_.IndexOfByKey(TEXT("sunIntensity"));
 		if (idx != INDEX_NONE && idx < clip->GetTracks().Num())
 		{
 			float Value;
 			USequencerHelper::GetFloatValueAtTime(clip->GetTracks()[idx].Get(), levelSequencePath_, fTime, Value);
-			data.sunIntensity = Value;
+			if (data.sunIntensity != Value)
+			{
+				data.sunIntensity = Value;
+				changed = true;
+			}
 		}
 		idx = AnimTracksInfo_.IndexOfByKey(TEXT("HRDIImage"));
 		if (idx != INDEX_NONE && idx < clip->GetTracks().Num())
 		{
 			std::string Value;
 			USequencerHelper::GetStringValueAtTime(clip->GetTracks()[idx].Get(), levelSequencePath_, fTime, Value);
-			data.HDRIImage = Value;
+			if (data.HDRIImage != Value)
+			{
+				data.HDRIImage = Value;
+				changed = true;
+			}
 		}
 		idx = AnimTracksInfo_.IndexOfByKey(TEXT("UseHeliodon"));
 		if (idx != INDEX_NONE && idx < clip->GetTracks().Num())
 		{
 			bool Value = true;
 			USequencerHelper::GetBoolValueAtTime(clip->GetTracks()[idx].Get(), levelSequencePath_, fTime, Value);
-			data.useHeliodon = Value;
+			if (data.useHeliodon != Value)
+			{
+				data.useHeliodon = Value;
+				changed = true;
+			}
 		}
 		idx = AnimTracksInfo_.IndexOfByKey(TEXT("Exposure"));
 		if (idx != INDEX_NONE && idx < clip->GetTracks().Num())
 		{
 			float Value;
 			USequencerHelper::GetFloatValueAtTime(clip->GetTracks()[idx].Get(), levelSequencePath_, fTime, Value);
-			data.exposure = Value;
+			if (data.exposure != Value)
+			{
+				data.exposure = Value;
+				changed = true;
+			}
 		}
-		Owner.SetAtmoSettingsDelegate.Execute(data);
+		if (changed)
+			Owner.SetAtmoSettingsDelegate.Execute(data);
 	}
 
 	void SetCurrentTime(float fTime)
@@ -1356,13 +1568,14 @@ void AITwinTimelineActor::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
+	// Do this even when !IsPlaying otherwise we keep (and show in the UI) the last time obtained
+	// from the player before it stopped, which can be substantial depending on frame rate and
+	// have visible effect on the 4D because task state often changes *just* before the end
+	float fPlayerTime = Impl->pPlayer_->GetCurrentTime().AsSeconds();
+	Impl->SetCurrentTime(fPlayerTime); // update synchro, atmo etc. from current time
+
 	if (Impl->pPlayer_->IsPlaying())
 	{
-		float fPlayerTime = Impl->pPlayer_->GetCurrentTime().AsSeconds();
-		//auto [clipIdx, clipTime] = GetClipIdxAndTimeWithinSequence(fPlayerTime);
-		//Impl->curClip_ = clipIdx;
-		//Impl->SetCurrentTime(clipTime);
-		Impl->SetCurrentTime(fPlayerTime); // update synchro, atmo etc. from current time
 		if (fPlayerTime > USequencerHelper::GetPlaybackEndTime(Impl->levelSequencePath_))
 			Impl->pPlayer_->Stop();
 	}
@@ -1777,9 +1990,19 @@ float AITwinTimelineActor::GetKeyFrameTime(int iKF) const
 
 void AITwinTimelineActor::MoveKeyFrame(int clipIdx, float fOldTime, float fNewTime, bool bMoveOneKFOnly)
 {
-	if (fabsf(fOldTime-fNewTime) < 0.1)
-		return;
+	// No dead-zone here on purpose: FImpl::MoveKeyFrame already rejects no-op moves using
+	// AdvViz::SDK::RoundTime, i.e. at the millisecond precision of the timeline data model.
+	// A coarser threshold here would silently drop small but legitimate edits coming from
+	// the setters (SetKFDuration, SetPerFrameDuration, SetClipDuration).
 	Impl->MoveKeyFrame(fOldTime, fNewTime, clipIdx, bMoveOneKFOnly);
+}
+
+
+void AITwinTimelineActor::ReorderKeyFrame(int clipIdx, int iKFSrc, int iKFDst)
+{
+	if (!Impl->IsReady())
+		return;
+	Impl->ReorderKeyFrame(clipIdx, iKFSrc, iKFDst);
 }
 
 void AITwinTimelineActor::CopyKeyFrame(int clipIdx, int iKF)
@@ -1841,8 +2064,11 @@ void AITwinTimelineActor::SetKFDuration(int KF, float fDuration)
 	if (!clip || clip->GetKeyframeCount() < 2)
 		return;
 
+	if (KF < 0 || KF + 1 >= (int)clip->GetKeyframeCount())
+		return;
+
 	float curKFTime = clip->GetKeyFrameTime(KF);
-	float nextKFTime = clip->GetKeyFrameTime(KF+1);
+	float nextKFTime = clip->GetKeyFrameTime(KF + 1);
 	MoveKeyFrame(Impl->curClip_, nextKFTime, curKFTime + fDuration, false);
 }
 
@@ -1850,12 +2076,30 @@ void AITwinTimelineActor::SetClipDuration(int clipIdx, float fDuration)
 {
 	if (!Impl->IsReady())
 		return;
+	if (!ensure(fDuration > 0.f))
+		return;
 	auto clip = Impl->GetClip(clipIdx);
 	if (!clip || clip->GetKeyframeCount() < 2)
 		return;
 	
-	float fPerFrameDuration = fDuration / (clip->GetKeyframeCount()-1);
-	SetPerFrameDuration(clipIdx, fPerFrameDuration);
+	const float fCurrentDuration = clip->GetDuration();
+	if (!ensure(fCurrentDuration > 0.f))
+		return;
+	if (fabs(fCurrentDuration - fDuration) < 1e-3f)
+		return;
+	// Scale all times with a common factor so that each key-frame keeps its relative duration to the next
+	// one, but the total duration is now fDuration
+	const float fScaleDurationBy = fDuration / fCurrentDuration;
+	const size_t nKFs = clip->GetKeyframeCount();
+
+	std::vector<float> vNewTimes;
+	vNewTimes.resize(nKFs);
+	for (size_t i(0); i < nKFs; i++)
+	{
+		vNewTimes[i] = clip->GetKeyFrameTime(i) * fScaleDurationBy;
+	}
+
+	Impl->SetClipKeyFrameTimes(*clip, vNewTimes);
 }
 
 void AITwinTimelineActor::SetPerFrameDuration(int clipIdx, float fPerFrameDuration)
@@ -1866,13 +2110,16 @@ void AITwinTimelineActor::SetPerFrameDuration(int clipIdx, float fPerFrameDurati
 	if (!clip || clip->GetKeyframeCount() == 0)
 		return;
 
-	TArray<float> vTimes;
-	int nKFs = clip->GetKeyframeCount();
-	for (int i(nKFs-1); i >= 1; i--)
+	const size_t nKFs = clip->GetKeyframeCount();
+
+	std::vector<float> vNewTimes;
+	vNewTimes.resize(nKFs);
+	for (size_t i(0); i < nKFs; i++)
 	{
-		clip->GetKeyFrameTimes(vTimes);
-		MoveKeyFrame(clipIdx, vTimes[i], i * fPerFrameDuration, true);
+		vNewTimes[i] = i * fPerFrameDuration;
 	}
+
+	Impl->SetClipKeyFrameTimes(*clip, vNewTimes);
 }
 
 std::pair<int, float> AITwinTimelineActor::GetClipIdxAndTimeWithinSequence(float fSeqTime)
@@ -1999,10 +2246,13 @@ void AITwinTimelineActor::OnPlaybackStarted()
 	SetActorTickEnabled(true);
 }
 
-void AITwinTimelineActor::SetSynchroIModels(
-	std::function<TMap<FString, UITwinSynchro4DSchedules*> const&()> InGetSchedules)
+void AITwinTimelineActor::ConnectToSynchro(
+	std::function<bool(FDateTime& Out, FString& ScheduleIDOut)>&& InGetSynchro4DScheduleTime,
+	std::function<void(FDateTime const& Date)>&& InSetSynchro4DScheduleTime/*={}*/)
 {
-	Impl->GetSchedules = InGetSchedules;
+	Impl->GetSynchro4DScheduleTime = std::move(InGetSynchro4DScheduleTime);
+	if (InSetSynchro4DScheduleTime)
+		Impl->SetSynchro4DScheduleTime = std::move(InSetSynchro4DScheduleTime);
 }
 
 std::shared_ptr<AdvViz::SDK::ITimeline> AITwinTimelineActor::GetTimelineSDK()
@@ -2035,10 +2285,13 @@ void ScreenUtils::SetCurrentView(UWorld* pWorld, const FVector& pos, const FRota
 		return;
 	if (APlayerController* pController = pWorld->GetFirstPlayerController())
 	{
-		pController->GetPawnOrSpectator()->SetActorLocation(pos, false, nullptr, ETeleportType::TeleportPhysics);
-		pController->SetControlRotation(rot);
-		pController->GetPawnOrSpectator()->SetActorRotation(rot);
-		pController->SetViewTargetWithBlend(pController->GetPawnOrSpectator());
+		if (APawn* Pawn = pController->GetPawnOrSpectator())
+		{
+			Pawn->SetActorLocation(pos, false, nullptr, ETeleportType::TeleportPhysics);
+			pController->SetControlRotation(rot);
+			Pawn->SetActorRotation(rot);
+			pController->SetViewTargetWithBlend(Pawn);
+		}
 		if (auto pCamManager = pController->PlayerCameraManager)
 		{
 			pCamManager->UpdateCamera(pWorld->GetDeltaSeconds());
@@ -2094,4 +2347,3 @@ FTransform ScreenUtils::GetCurrentViewTransform(UWorld* pWorld)
 		<< "), Position (" << pos.X << ", " << pos.Y << ", " << pos.Z << ")");
 	return FTransform(rot, pos, FVector(1, 1, 1));
 }
-

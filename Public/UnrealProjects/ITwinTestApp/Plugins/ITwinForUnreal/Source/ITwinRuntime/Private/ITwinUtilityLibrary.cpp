@@ -26,6 +26,11 @@
 #include <GameFramework/PlayerStart.h>
 #include <Engine/World.h>
 
+#if WITH_EDITOR
+	#include "Editor.h"
+	#include "LevelEditorViewport.h"
+#endif // WITH_EDITOR
+
 FTransform UITwinUtilityLibrary::Inverse(FTransform const& Transform)
 {
 	return FTransform(Transform.ToMatrixWithScale().Inverse());
@@ -352,6 +357,22 @@ namespace
 	}
 }
 
+/*static*/ const AActor* UITwinUtilityLibrary::GetPawnActor()
+{
+	return GetPlayerControllerPawn();
+}
+
+/*static*/ std::optional<double> UITwinUtilityLibrary::GetCameraFOV()
+{
+	TObjectIterator<APlayerController> Itr;
+	if (!ensure(Itr))
+		return std::nullopt;
+	APlayerController const* Controller = *Itr;
+	if (!ensure(Controller) || !Controller->PlayerCameraManager)
+		return std::nullopt;
+	return std::make_optional<double>(Controller->PlayerCameraManager->GetFOVAngle());
+}
+
 void UITwinUtilityLibrary::GetSavedViewFrustumFromPlayerController(const AITwinIModel* IModel,
 																   FSavedView& SavedView)
 {
@@ -379,13 +400,12 @@ bool UITwinUtilityLibrary::GetSavedViewFromPlayerController(const AITwinIModel* 
 	APawn const* Pawn = GetPlayerControllerPawn();
 	if (!Pawn)
 		return false;
-	const auto& Location_UE = Pawn->GetActorLocation();
-	const auto& Rotation_UE = Pawn->GetActorRotation();
+	const auto Location_UE = Pawn->GetActorLocation();
+	const auto Rotation_UE = Pawn->GetActorRotation();
 	auto Transform = FTransform(Rotation_UE, Location_UE);
 	OutSavedView = GetSavedViewFromUnrealTransform(IModel, Transform);
 	return true;
 }
-
 
 /*static*/ void UITwinUtilityLibrary::ZoomOn(FBox const& FocusBBox, UWorld* World, double MinDistanceToCenter /*= 10000*/)
 {
@@ -400,26 +420,39 @@ bool UITwinUtilityLibrary::GetSavedViewFromPlayerController(const AITwinIModel* 
 	{
 		TArray<AActor*> PlayerStarts;
 		UGameplayStatics::GetAllActorsOfClass(World, APlayerStart::StaticClass(), PlayerStarts);
-		if (!PlayerStarts.IsEmpty() && PlayerController && Pawn)
+		if (!PlayerStarts.IsEmpty())
 		{
 			HomeForwardDir = PlayerStarts[0]->GetActorForwardVector();
 			HomeOrientation = PlayerStarts[0]->GetActorRotation();
 		}
 		initstatic = true;
 	}
+
 	if (Pawn)
 	{
-		auto const BBoxLen = FocusBBox.GetSize().Length();
-		Pawn->SetActorLocation(
+		FVector const NewPawLocation = FocusBBox.GetCenter()
 			// "0.2" is empirical, "projectExtents" is usually quite larger than the model itself
-			FocusBBox.GetCenter()
-			- FMath::Max(0.2 * BBoxLen, MinDistanceToCenter)
-			* HomeForwardDir,
-			false, nullptr, ETeleportType::TeleportPhysics);
+			- FMath::Max(0.2 * FocusBBox.GetSize().Length(), MinDistanceToCenter) * HomeForwardDir;
+		Pawn->SetActorLocation(NewPawLocation, false, nullptr, ETeleportType::TeleportPhysics);
 		PlayerController->SetControlRotation(HomeOrientation);
 	}
+	else // not in-game nor PIE
+	{
+#if WITH_EDITOR
+		auto* PoV = StaticCast<FEditorViewportClient*>(GEditor->GetActiveViewport()->GetClient());
+		if (PoV)
+		{
+			// I find it confusing to change the orientation when zooming :/ Since this is only for debugging,
+			// I will skip it when in the Editor
+			FVector const NewCamLocation = FocusBBox.GetCenter()
+				// "0.2" is empirical, "projectExtents" is usually quite larger than the model itself
+				- FMath::Max(0.2 * FocusBBox.GetSize().Length(), MinDistanceToCenter)
+					* PoV->GetViewTransform().GetRotation().Vector();
+			PoV->SetViewLocation(NewCamLocation);
+		}
+#endif // WITH_EDITOR
+	}
 }
-
 
 /*static*/
 std::optional<CesiumGeometry::OrientedBoundingBox> UITwinUtilityLibrary::GetOrientedBoundingBox(ACesium3DTileset* TilesetActor)
@@ -439,7 +472,6 @@ std::optional<CesiumGeometry::OrientedBoundingBox> UITwinUtilityLibrary::GetOrie
 		return std::nullopt;
 	}
 }
-
 
 /*static*/FBox UITwinUtilityLibrary::GetUnrealAxisAlignBoundingBox(ACesium3DTileset* Tileset)
 {

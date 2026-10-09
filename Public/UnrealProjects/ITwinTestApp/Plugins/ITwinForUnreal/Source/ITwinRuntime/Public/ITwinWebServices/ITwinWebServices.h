@@ -15,7 +15,6 @@
 #include "UObject/NoExportTypes.h"
 #include <ITwinServerConnection.h>
 #include "ITwinWebServices_Info.h"
-#include <MaterialPrediction/ITwinMaterialPredictionStatus.h>
 
 #include <ITwinRuntime/Private/Compil/BeforeNonUnrealIncludes.h>
 #	include <SDK/Core/Network/Network.h>
@@ -37,6 +36,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnAuthorizationChecked, bool, bSuc
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGetITwinInfoComplete, bool, bSuccess, FITwinInfo, iTwin);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGetiTwinsComplete, bool, bSuccess, FITwinInfos, iTwins);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGetiTwiniModelsComplete, bool, bSuccess, FIModelInfos, iModels);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGetIModelProcessingStatusComplete, bool, bSuccess, FIModelProcessingStatus, ProcessingStatus);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGetiModelChangesetsComplete, bool, bSuccess, FChangesetInfos, Changesets);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGetExportsComplete, bool, bSuccess, FITwinExportInfos, Exports);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGetExportInfoComplete, bool, bSuccess, FITwinExportInfo, Export);
@@ -116,6 +116,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
 	void GetiTwiniModels(FString iTwinId);
+
+	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
+	void GetIModelProcessingStatus(FString iModelId);
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
 	void GetiModelChangesets(FString iModelId);
@@ -217,21 +220,13 @@ public:
 	void ConvertIModelCoordsToGeoCoords(FString iTwinId, FString iModelId, FString ChangesetId,
 		FVector const& IModelSpatialCoords, std::function<void(HttpRequestID)>&& NotifRequestID);
 
-	//!------------------------------------------------------------------------------------------------------
-	//! WORK IN PROGRESS - UNRELEASED - material predictions using machine learning.
-	//!
-	bool IsSetupForForMaterialMLPrediction() const;
-	//! Change the server to be compatible with ML Material Assignment. Beware it will make all other iTwin
-	//! services unavailable from this actor, since the base URL is different...
-	void SetupForMaterialMLPrediction();
-	EITwinMaterialPredictionStatus GetMaterialMLPrediction(FString iTwinId, FString iModelId,
-														   FString ChangesetId);
-	//-------------------------------------------------------------------------------------------------------
-
 	void GetGoogleCuratedContentAccess();
 
 
 	void SetCustomServerURL(std::string const& ServerUrl);
+
+	//! Returns the current server URL, or an empty string if none is set.
+	FString GetServerURL() const;
 
 	void RunCustomRequest(
 		AdvViz::SDK::ITwinAPIRequestInfo const& RequestInfo,
@@ -250,6 +245,9 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
 	FOnGetiTwiniModelsComplete OnGetiTwiniModelsComplete;
+
+	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
+	FOnGetIModelProcessingStatusComplete OnGetIModelProcessingStatusComplete;
 
 	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
 	FOnGetiModelChangesetsComplete OnGetiModelChangesetsComplete;
@@ -367,7 +365,12 @@ public:
 	static bool ShouldLogErrors() { return bLogErrors; }
 
 #if WITH_TESTS
+	//! Sets a custom URL for tests (generally the URL corrsponding to a mock server).
 	void SetTestServerURL(FString const& ServerUrl);
+	//! Sets a global factor applied to delay times used in the retry system.
+	//! Can be used to avoid losing too much time for requests meant to fail.
+	void SetRetryDelayFactor(float InFactor);
+
 	static void SetupTestMode(EITwinEnvironment Env, FString const& TokenFileSuffix);
 #endif
 

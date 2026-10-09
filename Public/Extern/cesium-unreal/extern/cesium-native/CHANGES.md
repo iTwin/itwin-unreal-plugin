@@ -1,5 +1,42 @@
 # Change Log
 
+### v0.65.0 - 2026-10-01
+
+##### Breaking Changes :mega:
+
+- `Cesium3DTilesSelection::ViewState` can be supplied a delegate that computes a general tile error measure. The interface for setting a fixed geometric error in the `ViewState` object has been removed; that functionality can be implemented instead using the delegate.
+
+##### Additions :tada:
+
+- Added support for the `GS_3DT` reality data type in `ITwinRealityDataContentLoader`.
+- Added support for styling on `CesiumVectorOverlays::VectorTilesRasterOverlay` by specifying a `VectorStylingProvider` through the `pStylingProvider` parameter in `VectorTilesRasterOverlayOptions`.
+
+##### Fixes :wrench:
+
+- Fixed PNTS conversion to reject section lengths that exceed the declared tile byte length.
+- Fixed potential out-of-bounds access while decoding Draco-compressed glTFs.
+
+### v0.64.0 - 2026-09-01
+
+##### Additions :tada:
+
+- Added support for "area paging": selection of a region of terrain tiles at a fixed level of detail. The changes to `Cesium3DTilesSelection::ViewState` include support for for general culling volumes in addition to frustums.
+- Added intesection tests for `Cesium3DTilesSelection::BoundingVolume` objects.
+
+### v0.63.0 - 2026-08-03
+
+##### Additions :tada:
+
+- Added support for the [`BENTLEY_materials_line_style`](https://github.com/CesiumGS/glTF/pull/89) extension in `CesiumGltf`, `CesiumGltfReader`, and `CesiumGltfWriter`.
+- Added support for the [`BENTLEY_materials_point_style`](https://github.com/CesiumGS/glTF/pull/91) extension in `CesiumGltf`, `CesiumGltfReader`, and `CesiumGltfWriter`.
+- Added support for the [`KHR_lights_punctual`](https://github.com/KhronosGroup/glTF/tree/main/extensions/2.0/Khronos/KHR_lights_punctual) extension in `CesiumGltf`, `CesiumGltfReader`, and `CesiumGltfWriter`.
+- Added support for reading arrays of arbitrary JSON values in `CesiumJsonReader::ArrayJsonHandler`.
+
+##### Fixes :wrench:
+
+- `CesiumVectorOverlays::GeoJsonDocumentRasterOverlay` now actually rasterizes `Point` and `MultiPoint` geometry. Previously these were silently dropped before reaching the rasterizer, even though point rendering was already supported.
+- The offsets to string feature data in `MAXAR_content_geojson` tiles are now optimized to an appropriate integer type, instead of always using UINT64.
+
 ### v0.62.0 - 2026-07-01
 
 ##### Breaking Changes :mega:

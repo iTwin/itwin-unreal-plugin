@@ -50,6 +50,12 @@ set(ENV{VCPKG_FORCE_DOWNLOADED_BINARIES} "ON")
 # For debugging vcpkg in manifest mode (didn't work in CMakePresets.json nor on command line!)
 #set(VCPKG_INSTALL_OPTIONS "--debug")
 
+if (CMAKE_GENERATOR_TOOLSET)
+	string(REGEX REPLACE ".*version=" "" BE_GENERATOR_TOOLSET "${CMAKE_GENERATOR_TOOLSET}")
+else()
+	message(FATAL_ERROR "No toolset specified in CMakePresets.json? We rely on it to tell UnrealBuildTool to use the same!")
+endif()
+
 # Use "Private" dir as main dir if it exists, otherwise "Public".
 foreach (dir Private Public)
 	if (NOT EXISTS "${CMAKE_SOURCE_DIR}/${dir}")

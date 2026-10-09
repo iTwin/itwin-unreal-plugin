@@ -1,0 +1,4 @@
+{
+    "status": 200,
+    "body": "{\"total_rows\":3,\"rows\":[{\"name\":\"\",\"id\":\"680f9f9eca4049d8600279be\"},{\"name\":\"\",\"id\":\"68108c12ca4049d860027ab8\"},{\"name\":\"\",\"id\":\"68109e06ca4049d860027b1c\"}],\"_links\":{\"self\":\"https://itwindecoration-eus.bentley.com/advviz/v1/decorations/67e15d193b05b1ea579faee9/instancesgroups?$skip=0\\u0026$top=1000\"}}"
+}

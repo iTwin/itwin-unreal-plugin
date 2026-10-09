@@ -16,6 +16,7 @@
 #include <BeUtils/Misc/Random.h>
 
 #include <algorithm>
+#include <cmath>
 // Just a wrapper for async++.h that disables some warnings
 #include <CesiumAsync/Impl/cesium-async++.h>
 
@@ -53,7 +54,7 @@ namespace BeUtils
 			double dRefVal(pData_[0]);
 			for (size_t i(1); i < pData_.size(); ++i)
 			{
-				if (fabs(pData_[i] - dRefVal) > 1e-4)
+				if (std::fabs(pData_[i] - dRefVal) > 1e-4)
 					return false;
 			}
 			return true;
@@ -77,60 +78,63 @@ namespace BeUtils
 #endif //DEV
 
 
-	bool Compare2DSegments_Y(const Segment_2D& seg1, const Segment_2D& seg2)
+	namespace
 	{
-		return std::min(seg1.posStart_.y, seg1.posEnd_.y) < std::min(seg2.posStart_.y, seg2.posEnd_.y);
-	}
-
-	bool ComparePt2D_X(const IntersectionPt2D& p1, const IntersectionPt2D& p2)
-	{
-		return p1.ptInter_.x < p2.ptInter_.x;
-	}
-
-	size_t FindAll2DIntersectionsMatchingY(
-		Intersection2DVector& intersections,
-		std::vector<Segment_2D> const& segments,
-		double y)
-	{
-		intersections.clear();
-
-		for (Segment_2D const& seg : segments)
+		bool Compare2DSegments_Y(const Segment_2D& seg1, const Segment_2D& seg2)
 		{
-			double fMaxY = std::max(seg.posStart_.y, seg.posEnd_.y);
-			if (fMaxY < y)
-				continue;
-			double fMinY = std::min(seg.posStart_.y, seg.posEnd_.y);
-			if (fMinY > y)
-				break; // stop the visit (as the segments are sorted)
-
-			// we have an intersection here. Let's compute it.
-			IntersectionPt2D inter;
-			inter.ptInter_.y = y;
-
-			double dY_seg = seg.posEnd_.y - seg.posStart_.y;
-			double dX_seg = seg.posEnd_.x - seg.posStart_.x;
-
-			inter.normal_.x = -dY_seg;
-			inter.normal_.y = dX_seg;
-			// note: no need to normalize this normal: we just need to know the direction...
-
-			if (dY_seg == 0)
-			{
-				// we have an horizontal segment. Add 2 intersections.
-				inter.ptInter_.x = seg.posStart_.x;
-				intersections.push_back(inter);
-
-				inter.ptInter_.x = seg.posEnd_.x;
-				intersections.push_back(inter);
-			}
-			else
-			{
-				inter.ptInter_.x = seg.posStart_.x + (y - seg.posStart_.y) * dX_seg / dY_seg;
-				intersections.push_back(inter);
-			}
+			return std::min(seg1.posStart_.y, seg1.posEnd_.y) < std::min(seg2.posStart_.y, seg2.posEnd_.y);
 		}
-		return intersections.size();
-	}
+
+		bool ComparePt2D_X(const IntersectionPt2D& p1, const IntersectionPt2D& p2)
+		{
+			return p1.ptInter_.x < p2.ptInter_.x;
+		}
+
+		size_t FindAll2DIntersectionsMatchingY(
+			Intersection2DVector& intersections,
+			std::vector<Segment_2D> const& segments,
+			double y)
+		{
+			intersections.clear();
+
+			for (Segment_2D const& seg : segments)
+			{
+				double fMaxY = std::max(seg.posStart_.y, seg.posEnd_.y);
+				if (fMaxY < y)
+					continue;
+				double fMinY = std::min(seg.posStart_.y, seg.posEnd_.y);
+				if (fMinY > y)
+					break; // stop the visit (as the segments are sorted)
+
+				// we have an intersection here. Let's compute it.
+				IntersectionPt2D inter;
+				inter.ptInter_.y = y;
+
+				double dY_seg = seg.posEnd_.y - seg.posStart_.y;
+				double dX_seg = seg.posEnd_.x - seg.posStart_.x;
+
+				inter.normal_.x = -dY_seg;
+				inter.normal_.y = dX_seg;
+				// note: no need to normalize this normal: we just need to know the direction...
+
+				if (dY_seg == 0)
+				{
+					// we have an horizontal segment. Add 2 intersections.
+					inter.ptInter_.x = seg.posStart_.x;
+					intersections.push_back(inter);
+
+					inter.ptInter_.x = seg.posEnd_.x;
+					intersections.push_back(inter);
+				}
+				else
+				{
+					inter.ptInter_.x = seg.posStart_.x + (y - seg.posStart_.y) * dX_seg / dY_seg;
+					intersections.push_back(inter);
+				}
+			}
+			return intersections.size();
+		}
+	} // unnamed namespace
 
 	Intersection2DSorter::Intersection2DSorter()
 	{
@@ -323,7 +327,12 @@ namespace BeUtils
 			//customInterruptorSlot
 		);
 
-		std::vector<Segment_2D> segments;
+		std::vector<Segment_2D>& segments = segments_;
+		segments.clear();
+		cellKinds_.clear();
+		outlineBox_ = BoundingBox();
+		// Note: the bbox filled by Bake2DSegments is the *3D world* box of the sampled curve, not the
+		// box of the projected 2D segments => we compute the 2D one ourselves below.
 		BoundingBox bbox;
 		bool const use2DSegments = (p2DPath.GetType() == Population2DPattern::EPatternType::Enclosure);
 
@@ -342,8 +351,12 @@ namespace BeUtils
 
 			if (segments.size() < 3)
 			{
-				// invalid curve (empty spline?)
-				return true;
+				// Invalid/degenerated outline (empty spline?): nothing can be enclosed, so mark the
+				// whole map as occluded. Leaving the initial 1.0 values would make callers populate
+				// the entire box as if it were inside the (missing) outline.
+				segments.clear();
+				std::fill(pData_.begin(), pData_.end(), 0.0);
+				return false;
 			}
 
 			// generate map from segments through a scan-line algorithm
@@ -362,11 +375,18 @@ namespace BeUtils
 			{
 				return false;
 			}
+
+			// Classify cells so that GetSampledPositions only needs to run the exact inside test on
+			// cells actually crossed by the outline.
+			ClassifyCells(iter.dOcclusionValue_outside_);
 		}
 		else
 		{
-			// Code not extracted from vue.git
+			// Code not extracted from vue.git. Mark the whole map as occluded so that callers do not
+			// populate the entire box from an unbuilt map (segments_/cellKinds_ were cleared above).
 			BE_ISSUE("ribbon mode not supported");
+			std::fill(pData_.begin(), pData_.end(), 0.0);
+			return false;
 		}
 
 #if IS_EON_DEV()
@@ -375,6 +395,144 @@ namespace BeUtils
 #endif //DEV
 
 		return true;
+	}
+
+	void OcclusionMap::ClassifyCells(double dOcclusionValue_outside)
+	{
+		const int nGridCells = nWidth_ * nHeight_;
+		if (nGridCells <= 0 || (int)pData_.size() < nGridCells
+			|| dCellWidth_ <= 0. || dCellHeight_ <= 0.)
+		{
+			// Empty or degenerated grid (null cell size would produce inf/NaN below): no
+			// classification available => GetSampledPositions falls back to the exact test.
+			cellKinds_.clear();
+			return;
+		}
+
+		// 1. Interior / Outside from the scan-line result (cell center classification).
+		cellKinds_.resize(nGridCells);
+		for (int c = 0; c < nGridCells; ++c)
+		{
+			cellKinds_[c] = static_cast<uint8_t>(
+				(pData_[c] != dOcclusionValue_outside) ? ECellKind::Interior : ECellKind::Outside);
+		}
+
+		// 2D bounding box of the projected outline (used as early-out in IsInsideOutline).
+		outlineBox_ = BoundingBox();
+		for (Segment_2D const& seg : segments_)
+		{
+			ExtendBox(outlineBox_, glm::dvec3(seg.posStart_, 0.));
+			ExtendBox(outlineBox_, glm::dvec3(seg.posEnd_, 0.));
+		}
+
+		// 2. Boundary: every cell crossed by an outline segment.
+		// For each segment and each row it spans, clip the segment to the row band and mark all cells
+		// covered by the clipped X range. This is exact for axis-aligned cells (a segment crosses a
+		// cell iff its X range clipped to the cell's Y band overlaps the cell's X range).
+		const double invW = 1.0 / dCellWidth_;
+		const double invH = 1.0 / dCellHeight_;
+		const double gridMaxX = dOrigX_ + nWidth_ * dCellWidth_;
+		const double gridMaxY = dOrigY_ + nHeight_ * dCellHeight_;
+		// Small conservative margin to absorb floating-point error at cell borders.
+		const double epsX = 1e-6 * dCellWidth_;
+		const double epsY = 1e-6 * dCellHeight_;
+
+		auto rowOf = [&](double y) -> int
+		{
+			return std::clamp(static_cast<int>(std::floor((y - dOrigY_) * invH)), 0, nHeight_ - 1);
+		};
+		auto colOf = [&](double x) -> int
+		{
+			return std::clamp(static_cast<int>(std::floor((x - dOrigX_) * invW)), 0, nWidth_ - 1);
+		};
+
+		for (Segment_2D const& seg : segments_)
+		{
+			const double x0 = seg.posStart_.x, y0 = seg.posStart_.y;
+			const double x1 = seg.posEnd_.x, y1 = seg.posEnd_.y;
+			const double segMinY = std::min(y0, y1) - epsY;
+			const double segMaxY = std::max(y0, y1) + epsY;
+			if (segMaxY < dOrigY_ || segMinY > gridMaxY)
+				continue;
+
+			const double dx = x1 - x0;
+			const double dy = y1 - y0;
+			const bool horizontal = (std::abs(dy) <= epsY);
+			const double dxdy = horizontal ? 0. : (dx / dy);
+
+			const int jMin = rowOf(segMinY);
+			const int jMax = rowOf(segMaxY);
+			for (int j = jMin; j <= jMax; ++j)
+			{
+				double xLo, xHi;
+				if (horizontal)
+				{
+					xLo = std::min(x0, x1);
+					xHi = std::max(x0, x1);
+				}
+				else
+				{
+					const double bandLo = std::clamp(dOrigY_ + j * dCellHeight_ - epsY, segMinY, segMaxY);
+					const double bandHi = std::clamp(dOrigY_ + (j + 1) * dCellHeight_ + epsY, segMinY, segMaxY);
+					const double xA = x0 + (bandLo - y0) * dxdy;
+					const double xB = x0 + (bandHi - y0) * dxdy;
+					xLo = std::min(xA, xB);
+					xHi = std::max(xA, xB);
+				}
+				xLo -= epsX;
+				xHi += epsX;
+				if (xHi < dOrigX_ || xLo > gridMaxX)
+					continue;
+
+				const int iMin = colOf(xLo);
+				const int iMax = colOf(xHi);
+				uint8_t* row = cellKinds_.data() + static_cast<size_t>(j) * nWidth_;
+				for (int i = iMin; i <= iMax; ++i)
+				{
+					row[i] = static_cast<uint8_t>(ECellKind::Boundary);
+				}
+			}
+		}
+	}
+
+	OcclusionMap::ECellKind OcclusionMap::GetCellKind(int cellIndex) const
+	{
+		if (cellIndex < 0 || cellIndex >= (int)cellKinds_.size())
+		{
+			// No outline information: nothing can be excluded, consider everything interior.
+			return ECellKind::Interior;
+		}
+		return static_cast<ECellKind>(cellKinds_[cellIndex]);
+	}
+
+	bool OcclusionMap::IsInsideOutline(double x, double y) const
+	{
+		if (segments_.empty())
+			return true;
+
+		if (IsInitialized(outlineBox_)
+			&& (x < outlineBox_.min[0] || x > outlineBox_.max[0]
+				|| y < outlineBox_.min[1] || y > outlineBox_.max[1]))
+		{
+			return false;
+		}
+
+		// Even-odd ray casting along +X. Segments are sorted by min Y (see Compare2DSegments_Y),
+		// so we can stop as soon as a segment starts above y.
+		int crossings = 0;
+		for (Segment_2D const& seg : segments_)
+		{
+			const double y0 = seg.posStart_.y;
+			const double y1 = seg.posEnd_.y;
+			if (std::min(y0, y1) > y)
+				break;
+			// half-open test so that a vertex shared by 2 segments is counted once.
+			if ((y0 <= y) == (y1 <= y))
+				continue;
+			const double ix = seg.posStart_.x + (y - y0) * (seg.posEnd_.x - seg.posStart_.x) / (y1 - y0);
+			crossings += (x < ix) ? 1 : 0;
+		}
+		return (crossings & 1) != 0;
 	}
 
 	namespace
@@ -418,40 +576,113 @@ namespace BeUtils
 	}
 
 	size_t OcclusionMap::GetSampledPositions(std::vector<glm::dvec3>& outPositions,
-		bool forceAligned, uint32_t randSeed) const
+		bool forceAligned, uint32_t randSeed, float angle) const
 	{
 		outPositions.clear();
 		BE_ASSERT(nCells_ > 0 && (int)pData_.size() == nCells_);
 
 		RandomNumberGenerator rand(randSeed);
 
-		int cellIndex = 0;
-		double y = GetStart2DPosY();
-		for (int j = 0; j < GetHeight(); ++j)
+		// Only candidates generated in cells crossed by the outline need the exact test: interior
+		// cells are inside by construction, and cells with a null density are skipped anyway.
+		// Without cell classification (degenerated grid), every candidate is tested exactly.
+		const bool hasOutline = !segments_.empty();
+		const bool hasCellKinds = hasOutline && ((int)cellKinds_.size() >= nWidth_ * nHeight_);
+		auto acceptCandidate = [&](int cellIndex, double px, double py) -> bool
 		{
-			double x = GetStart2DPosX();
-			for (int i = 0; i < GetWidth(); ++i)
+			if (!hasOutline)
+				return true;
+			if (!hasCellKinds)
+				return IsInsideOutline(px, py);
+			switch (static_cast<ECellKind>(cellKinds_[cellIndex]))
 			{
-				if (pData_[cellIndex] > 0)
+			case ECellKind::Interior:
+				return true;
+			case ECellKind::Outside:
+				// Note: in occlusion mode, outside cells keep a non-null density (1.0), hence this
+				// explicit rejection (the pData_ > 0 test done by the callers is not sufficient).
+				return false;
+			case ECellKind::Boundary:
+			default:
+				return IsInsideOutline(px, py);
+			}
+		};
+
+		if (forceAligned)
+		{
+			double boxMinX, boxMaxX, boxMinY, boxMaxY;
+			this->Get2DBoxInfo(boxMinX, boxMaxX, boxMinY, boxMaxY);
+			const double centerX = (boxMinX + boxMaxX) * 0.5;
+			const double centerY = (boxMinY + boxMaxY) * 0.5;
+			const double cosA = std::cos(static_cast<double>(angle));
+			const double sinA = std::sin(static_cast<double>(angle));
+
+			const double halfW = (boxMaxX - boxMinX) * 0.5;
+			const double halfH = (boxMaxY - boxMinY) * 0.5;
+			const double absCos = std::abs(cosA);
+			const double absSin = std::abs(sinA);
+			const double extHalfW = halfW * absCos + halfH * absSin;
+			const double extHalfH = halfW * absSin + halfH * absCos;
+
+			const double cellW = GetCellWidth();
+			const double cellH = GetCellHeight();
+
+			const int halfCountX = static_cast<int>(std::ceil(extHalfW / cellW));
+			const int halfCountY = static_cast<int>(std::ceil(extHalfH / cellH));
+
+			for (int j = -halfCountY; j <= halfCountY; ++j)
+			{
+				const double ly = j * cellH;
+				for (int i = -halfCountX; i <= halfCountX; ++i)
 				{
-					// The current cell belongs to the spline's interior => add a sample.
-					if (forceAligned)
-					{
-						outPositions.emplace_back(x, y, 0.);
-					}
-					else
+					const double lx = i * cellW;
+
+					const double wx = centerX + lx * cosA - ly * sinA;
+					const double wy = centerY + lx * sinA + ly * cosA;
+
+					if (wx < boxMinX || wx > boxMaxX || wy < boxMinY || wy > boxMaxY)
+						continue;
+
+					// Cell containing (wx, wy). dOrigX_/dOrigY_ are the grid *min corner* (see
+					// TBasic2DMap::InitWith), not the center of cell (0,0) (that is dStartX_/dStartY_, i.e.
+					// GetStart2DPosX/Y()). Hence floor from the min corner is the exact cell index, and is the
+					// same mapping as ClassifyCells (and equivalent to GetRawValueAt's round from the cell
+					// center, except on exact ties).
+					const int ci = std::clamp(static_cast<int>(std::floor((wx - dOrigX_) / cellW)), 0, GetWidth() - 1);
+					const int cj = std::clamp(static_cast<int>(std::floor((wy - dOrigY_) / cellH)), 0, GetHeight() - 1);
+					const int cellIndex = ci + cj * GetWidth();
+					if (pData_[cellIndex] <= 0)
+						continue;
+					if (!acceptCandidate(cellIndex, wx, wy))
+						continue;
+
+					outPositions.emplace_back(wx, wy, 0.);
+				}
+			}
+		}
+		else
+		{
+			int cellIndex = 0;
+			double y = GetStart2DPosY();
+			for (int j = 0; j < GetHeight(); ++j)
+			{
+				double x = GetStart2DPosX();
+				for (int i = 0; i < GetWidth(); ++i)
+				{
+					if (pData_[cellIndex] > 0)
 					{
 						glm::dvec3 location;
-						if (FindRandLocation(location, x, y, cellIndex, *this, rand))
+						if (FindRandLocation(location, x, y, cellIndex, *this, rand)
+							&& acceptCandidate(cellIndex, location.x, location.y))
 						{
 							outPositions.emplace_back(location);
 						}
 					}
+					x += GetCellWidth();
+					cellIndex++;
 				}
-				x += GetCellWidth();
-				cellIndex++;
+				y += GetCellHeight();
 			}
-			y += GetCellHeight();
 		}
 
 		return outPositions.size();

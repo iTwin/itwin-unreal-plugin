@@ -15,6 +15,7 @@
 #include <Clipping/ITwinClippingEffectManager.h>
 #include <Clipping/ITwinClippingEffectManager.inl>
 #include <Clipping/ITwinClippingMPCHolder.h>
+#include <Clipping/ITwinClippingModelGroups.h>
 #include <Clipping/ITwinPlaneTileExcluder.h>
 
 #include <ITwinGoogle3DTileset.h>
@@ -37,9 +38,15 @@
 #	include <glm/gtx/compatibility.hpp>
 #include <Compil/AfterNonUnrealIncludes.h>
 
+class UITwinClippingRenderer::FImpl
+{
+public:
+	FITwinClippingModelGroups ModelGroups;
+};
 
 UITwinClippingRenderer::UITwinClippingRenderer()
 	: Super()
+	, Impl(MakePimpl<FImpl>())
 {
 	this->ClippingMPCHolder = CreateDefaultSubobject<UITwinClippingMPCHolder>(TEXT("MPC_Holder"));
 }
@@ -56,12 +63,85 @@ UMaterialParameterCollection* UITwinClippingRenderer::GetMPCClipping()
 
 UMaterialParameterCollectionInstance* UITwinClippingRenderer::GetMPCClippingInstance()
 {
+	UMaterialParameterCollectionInstance* MPC = nullptr;
 	UWorld* World = GetWorld();
 	if (ensure(World))
 	{
-		return World->GetParameterCollectionInstance(GetMPCClipping());
+		MPC = World->GetParameterCollectionInstance(GetMPCClipping());
 	}
-	return nullptr;
+
+	// Function-level static on purpose: the MPC layout is an asset-wide property, so validating it once
+	// per process is enough (no need to redo it per world/PIE session).
+	static bool bChecked = false;
+	if (!bChecked && MPC && MPC->IsCollectionValid())
+	{
+		// Ensure that the MPC has the expected number of parameters.
+		// This is a sanity check to ensure that the MPC asset has not been modified in a way that would
+		//  break the clipping system.
+		std::string MPCAssetError;
+
+		if (MPC->GetCollection()->VectorParameters.Num() != ITwin::MAX_CLIPPING_PLANES + 4 * ITwin::MAX_CLIPPING_BOXES)
+		{
+			MPCAssetError = "Cutout MPC asset has an unexpected number of vector parameters!";
+		}
+
+		TArray<FName> ScalarNames = MPC->GetCollection()->GetScalarParameterNames();
+
+		const auto ScalarIndexOf = [&ScalarNames](const TCHAR* Name) -> int32 {
+			return ScalarNames.IndexOfByKey(FName(Name));
+		};
+
+		float BoxVectorBase(0.f), PlaneVectorBase(0.f), BoxMaskBase(0.f), PlaneMaskBase(0.f);
+		if (ensure(
+			MPC->GetScalarParameterValue(FName(TEXT("BoxVectorBase")), BoxVectorBase)
+			&&
+			MPC->GetScalarParameterValue(FName(TEXT("PlaneVectorBase")), PlaneVectorBase)
+			&&
+			MPC->GetScalarParameterValue(FName(TEXT("BoxMaskScalarBase")), BoxMaskBase)
+			&&
+			MPC->GetScalarParameterValue(FName(TEXT("PlaneMaskScalarBase")), PlaneMaskBase)))
+		{
+			const int32 ScalarSlots = FMath::DivideAndRoundUp(MPC->GetCollection()->ScalarParameters.Num(), 4);
+			if (static_cast<int32>(BoxVectorBase) != ScalarSlots)
+			{
+				MPCAssetError = "Cutout MPC asset has an unexpected BoxVectorBase value!";
+				MPC->SetScalarParameterValue(TEXT("BoxVectorBase"), static_cast<float>(ScalarSlots));
+			}
+			if (static_cast<int32>(PlaneVectorBase) != ScalarSlots + 4 * ITwin::MAX_CLIPPING_BOXES)
+			{
+				MPCAssetError = "Cutout MPC asset has an unexpected PlaneVectorBase value!";
+				MPC->SetScalarParameterValue(TEXT("PlaneVectorBase"), static_cast<float>(ScalarSlots + 4 * ITwin::MAX_CLIPPING_BOXES));
+			}
+
+			const int32 BoxMask0 = ScalarIndexOf(TEXT("BoxActivationMask_0_0"));
+			const int32 PlaneMask0 = ScalarIndexOf(TEXT("PlaneActivationMask_0_0"));
+
+			if (static_cast<int32>(BoxMaskBase) != BoxMask0)
+			{
+				MPCAssetError = "Cutout MPC asset has an unexpected BoxMaskBase value!";
+				MPC->SetScalarParameterValue(TEXT("BoxMaskBase"), (float)BoxMask0);
+			}
+			if (static_cast<int32>(PlaneMaskBase) != PlaneMask0)
+			{
+				MPCAssetError = "Cutout MPC asset has an unexpected PlaneMaskBase value!";
+				MPC->SetScalarParameterValue(TEXT("PlaneMaskBase"), (float)PlaneMask0);
+			}
+		}
+		else
+		{
+			MPCAssetError = "Cutout MPC asset is missing one of the required scalar parameters!";
+		}
+
+		if (!MPCAssetError.empty())
+		{
+			BE_ISSUE(MPCAssetError.c_str(),
+				"Use UITwinClippingMPCGenerator to regenerate the MPC asset, and save the changes.");
+			BE_LOGE("Cutout", MPCAssetError.c_str());
+		}
+
+		bChecked = true;
+	}
+	return MPC;
 }
 
 namespace
@@ -388,9 +468,9 @@ void UITwinClippingRenderer::UpdateTileset(FITwinTilesetAccess const& TilesetAcc
 		// collision meshes.
 		ClippingHelper = MakeClippingHelper(Tileset, ModelIdentifier);
 	}
-	if (ClippingHelper && ensure(EffectManager.IsValid()))
+	if (ClippingHelper)
 	{
-		if (ClippingHelper->UpdateCPDFlagsFromClippingSelection(*EffectManager))
+		if (ClippingHelper->UpdateCPDFlagsFromClippingSelection(Impl->ModelGroups))
 		{
 			// Update existing meshes, if any.
 			ClippingHelper->ApplyCPDFlagsToAllMeshComponentsInTileset(Tileset);
@@ -403,10 +483,30 @@ void UITwinClippingRenderer::UpdateTileset(FITwinTilesetAccess const& TilesetAcc
 
 void UITwinClippingRenderer::UpdateAllTilesets(std::optional<EITwinClippingPrimitiveType> const& SpecificPrimitiveType /*= std::nullopt*/)
 {
+	// Groups must be up to date before UpdateCPDFlagsFromClippingSelection() reads them.
+	// Note the rebuild is global by nature (a signature spans boxes AND planes), regardless
+	// of SpecificPrimitiveType, which only filters the tile-excluder work below.
+	RebuildModelGroups();
+
 	ITwin::IterateAllITwinTilesets([this, SpecificPrimitiveType](FITwinTilesetAccess const& TilesetAccess)
 	{
 		UpdateTileset(TilesetAccess, SpecificPrimitiveType);
 	}, GetWorld());
+}
+
+void UITwinClippingRenderer::RegisterTileset(FITwinTilesetAccess const& TilesetAccess)
+{
+	// A new model appeared: it needs a clipping group id before its CPD is filled below.
+	if (RebuildModelGroups())
+	{
+		// Ids of *existing* models may have been reshuffled: refresh every tileset's CPD.
+		UpdateAllTilesets();
+	}
+	else
+	{
+		// When a new tileset is created, automatically apply global clipping effects to it, if any.
+		UpdateTileset(TilesetAccess);
+	}
 }
 
 namespace
@@ -436,63 +536,65 @@ namespace
 			return !bInvert;
 		}
 	};
+
+
+	/// Builds the value of BoxTranslation_<i>: xyz = translation, w = flip flag (LSB).
+	/// Must stay in sync with ITwin_IsBoxFlipped() in BoxClippingFuncs.ush.
+	inline FLinearColor MakeBoxTranslationParam(FITwinClippingBoxInfo const& BoxInfo)
+	{
+		using BoxShaderAdapter = TClippingPrimitiveShaderAdapter<EITwinClippingPrimitiveType::Box>;
+		glm::dvec3 const& T = BoxInfo.GetBoxProperties().BoxTranslation;
+		const bool bFlipInShader = BoxShaderAdapter::GetFlipFlag(BoxInfo.GetInvertEffect());
+		return FLinearColor(
+			static_cast<float>(T.x),
+			static_cast<float>(T.y),
+			static_cast<float>(T.z),
+			bFlipInShader ? 1.f : 0.f);
+	}
 }
 
-template <typename PrimitiveInfo, EITwinClippingPrimitiveType PrimitiveType>
-bool UITwinClippingRenderer::TEncodeFlippingInMPC()
-{
 
+bool UITwinClippingRenderer::EncodeBoxFlippingInMPC(int32 BoxIndex)
+{
 	if (!ensure(EffectManager.IsValid()))
 		return false;
+	if (!EffectManager->IsValidEffectIndex(EITwinClippingPrimitiveType::Box, BoxIndex))
+		return false;
 
-	using ClippingShaderAdapter = TClippingPrimitiveShaderAdapter<PrimitiveType>;
-
-	const int32 NumEffects = EffectManager->NumEffects(PrimitiveType);
-
-	// We encode the inversion of primitives on float, per groups of 16.
-	// inspired by https://theinstructionlimit.com/encoding-boolean-flags-into-a-float-in-hlsl
-
-	int FlipFlags_0_15 = 0;
-	for (int32 i = 0; i < std::min(16, NumEffects); i++)
-	{
-		const bool bInvert = EffectManager->GetEffect(PrimitiveType, i).GetInvertEffect();
-		if (ClippingShaderAdapter::GetFlipFlag(bInvert))
-			FlipFlags_0_15 |= (1 << i);
-	}
-	int FlipFlags_16_31 = 0;
-	for (int32 i = 0; i < std::min(16, NumEffects - 16); i++)
-	{
-		const bool bInvert = EffectManager->GetEffect(PrimitiveType, 16 + i).GetInvertEffect();
-		if (ClippingShaderAdapter::GetFlipFlag(bInvert))
-			FlipFlags_16_31 |= (1 << i);
-	}
-
-	using PrimitiveTraits = TClippingPrimitiveMPCTrait<PrimitiveType>;
-
-	bool bStoredInMPC = false;
 	UMaterialParameterCollectionInstance* MPCInstance = GetMPCClippingInstance();
-	if (ensure(MPCInstance))
-	{
-		bStoredInMPC = MPCInstance->SetScalarParameterValue(
-			FName(*FString::Printf(TEXT("Flip%s_0_15"), PrimitiveTraits::PrimitiveNamePlural)),
-			static_cast<float>(FlipFlags_0_15));
+	if (!ensure(MPCInstance))
+		return false;
 
-		bStoredInMPC &= MPCInstance->SetScalarParameterValue(
-			FName(*FString::Printf(TEXT("Flip%s_16_31"), PrimitiveTraits::PrimitiveNamePlural)),
-			static_cast<float>(FlipFlags_16_31));
-		ensure(bStoredInMPC);
-	}
+	// The flip flag is stored in the .w component of BoxTranslation_<i>, so we rewrite the
+	// whole vector (SetVectorParameterValue cannot update a single component).
+	FITwinClippingBoxInfo const& BoxInfo = EffectManager->GetBoxEffect(BoxIndex);
+	const bool bStoredInMPC = MPCInstance->SetVectorParameterValue(
+		FName(fmt::format("BoxTranslation_{}", BoxIndex).c_str()),
+		MakeBoxTranslationParam(BoxInfo));
+	ensure(bStoredInMPC);
 	return bStoredInMPC;
 }
 
-bool UITwinClippingRenderer::EncodeFlippingInMPC(EITwinClippingPrimitiveType Type)
+bool UITwinClippingRenderer::EncodeFlippingInMPC(EITwinClippingPrimitiveType Type, int32 PrimitiveIndex)
 {
 	switch (Type)
 	{
 	case EITwinClippingPrimitiveType::Box:
-		return TEncodeFlippingInMPC<FITwinClippingBoxInfo, EITwinClippingPrimitiveType::Box>();
+		return EncodeBoxFlippingInMPC(PrimitiveIndex);
+
 	case EITwinClippingPrimitiveType::Plane:
-		return TEncodeFlippingInMPC<FITwinClippingPlaneInfo, EITwinClippingPrimitiveType::Plane>();
+		// We now directly bake the flipping into the plane equation, so we just need to update the MPC for
+		// the plane equation.
+		if (ensure(EffectManager.IsValid()) && EffectManager->IsValidEffectIndex(EITwinClippingPrimitiveType::Plane, PrimitiveIndex))
+		{
+			OnEffectPropertiesModified(EITwinClippingPrimitiveType::Plane, PrimitiveIndex);
+			return true;
+		}
+		else
+		{
+			return false;
+		}
+
 	BE_UNCOVERED_ENUM_ASSERT_AND_RETURN(
 	case EITwinClippingPrimitiveType::Polygon:
 	case EITwinClippingPrimitiveType::Count:
@@ -542,8 +644,13 @@ void UITwinClippingRenderer::OnClippingInstanceArrayResized(EITwinClippingPrimit
 		, );
 	}
 
-	// Update Material Parameter Collection for cutout, as well as 3D tilesets.
-	EncodeFlippingInMPC(PrimitiveType);
+	// Update Material Parameter Collection for all cutouts of this type.
+	const int32 Count = EffectManager->NumEffects(PrimitiveType);
+	for (int32 i = 0; i < Count; ++i)
+	{
+		OnEffectPropertiesModified(PrimitiveType, i);
+	}
+	// Update 3D tilesets.
 	UpdateAllTilesets(PrimitiveType);
 }
 
@@ -572,7 +679,7 @@ bool UITwinClippingRenderer::UpdateBoxPropertiesInMPC(FITwinClippingBoxInfo cons
 				FLinearColor(col2.x, col2.y, col2.z))
 			&& MPCInstance->SetVectorParameterValue(
 				FName(fmt::format("BoxTranslation_{}", BoxIndex).c_str()),
-				FLinearColor(BoxTranslation.x, BoxTranslation.y, BoxTranslation.z));
+				MakeBoxTranslationParam(BoxInfo));   // xyz = translation, w = flip
 		ensure(bIsClippingReady);
 	}
 	return bIsClippingReady;
@@ -584,7 +691,9 @@ bool UITwinClippingRenderer::UpdatePlanePropertiesInMPC(FITwinClippingPlaneInfo 
 	UMaterialParameterCollectionInstance* MPCInstance = GetMPCClippingInstance();
 	if (ensure(MPCInstance))
 	{
-		auto const& PlaneEquation = PlaneInfo.GetPlaneEquation();
+		// To avoid consuming a distinct parameter for each plane inversion flag, we bake it directly
+		// in the plane equation.
+		auto const PlaneEquation = PlaneInfo.GetEffectivePlaneEquation();
 		auto const& PlaneOrientation = PlaneEquation.PlaneOrientation;
 		double const PlaneW = PlaneEquation.PlaneW;
 
@@ -629,13 +738,64 @@ void UITwinClippingRenderer::OnEffectPropertiesModified(EITwinClippingPrimitiveT
 	}
 }
 
+bool UITwinClippingRenderer::RebuildModelGroups()
+{
+	if (!ensure(EffectManager.IsValid()))
+		return false;
+
+	std::vector<ITwin::ModelLink> Models;
+	ITwin::IterateAllITwinTilesets([&Models](FITwinTilesetAccess const& TilesetAccess)
+	{
+		Models.push_back(TilesetAccess.GetDecorationKey());
+	}, GetWorld());
+
+	FITwinClippingEffectManagerInfluenceSource const InfluenceSource(*EffectManager);
+	if (!Impl->ModelGroups.Rebuild(InfluenceSource, Models))
+		return false;
+
+	UpdateActivationMasksInMPC();   // per-primitive group masks -> MPC
+	return true;
+}
+
+bool UITwinClippingRenderer::UpdateActivationMasksInMPC()
+{
+	UMaterialParameterCollectionInstance* MPCInstance = GetMPCClippingInstance();
+	if (!ensure(MPCInstance && EffectManager.IsValid()))
+		return false;
+
+	bool bOk = true;
+	const auto PushMasks = [&](EITwinClippingPrimitiveType Type, const char* Prefix)
+	{
+		const int32 Count = EffectManager->NumEffects(Type);
+		for (int32 i = 0; i < Count; ++i)
+		{
+			const uint64 Mask = Impl->ModelGroups.GetPrimitiveMask(Type, i);
+			// Split the 48-bit group mask into CLIPPING_MASK_WORDS scalars of
+			// CLIPPING_BITS_PER_MASK_WORD bits each: MPC scalars are float32, and only integers
+			// up to 2^24 survive the round-trip exactly. Must match ClippingCommon.ush.
+			for (int32 w = 0; w < ITwin::CLIPPING_MASK_WORDS; ++w)
+			{
+				const uint32 Word = static_cast<uint32>(
+					(Mask >> (w * ITwin::CLIPPING_BITS_PER_MASK_WORD))
+					& ((uint64(1) << ITwin::CLIPPING_BITS_PER_MASK_WORD) - 1));
+				bOk &= MPCInstance->SetScalarParameterValue(
+					FName(fmt::format("{}ActivationMask_{}_{}", Prefix, i, w).c_str()),
+					static_cast<float>(Word)); // <= 2^24-1: exactly representable
+			}
+		}
+	};
+	PushMasks(EITwinClippingPrimitiveType::Box,   "Box");
+	PushMasks(EITwinClippingPrimitiveType::Plane, "Plane");
+	ensure(bOk);
+	return bOk;
+}
 
 double UITwinClippingRenderer::GetClippingValue_Boxes(FVector const& AbsoluteWorldPosition, ITwin::ModelLink const& ModelIdentifier) const
 {
 	if (!ensure(EffectManager.IsValid()))
 		return 1.0;
 
-	// Equivalent of shader GetBoxClipping.ush
+	// Equivalent of function ITwin_GetBoxClipping in shader BoxClippingFuncs.ush
 	double clippingValue = 1.0;
 
 	uint32 NumActiveBoxes = 0;
@@ -691,7 +851,9 @@ double UITwinClippingRenderer::GetClippingValue_Planes(FVector const& WorldPosit
 	if (!ensure(EffectManager.IsValid()))
 		return 1.0;
 
-	// Equivalent of shader GetPlanesClipping.ush
+	// Equivalent of function ITwin_GetPlaneClipping in shader PlaneClippingFuncs.ush
+	// The only difference is that we handle the inversion of the plane explicitly here, whereas it is baked
+	// into the shader in the MPC (see GetEffectivePlaneEquation).
 
 	const int32 PlaneCount = EffectManager->NumEffects(EITwinClippingPrimitiveType::Plane);
 	for (int32 PlaneIndex = 0; PlaneIndex < PlaneCount; PlaneIndex++)
@@ -767,6 +929,8 @@ void UITwinClippingRenderer::ActivateEffects(EITwinClippingPrimitiveType Type, E
 			case EITwinClippingPrimitiveType::Polygon:
 			case EITwinClippingPrimitiveType::Count:);
 			}
+			// full update of masks needed.
+			UpdateAllTilesets(Type);
 		}
 	}
 }

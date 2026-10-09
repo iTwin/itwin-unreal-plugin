@@ -25,6 +25,10 @@ void FITwinDefaultWebServicesObserver::OnIModelsRetrieved(bool bSuccess, FIModel
 {
 	ensureMsgf(false, TEXT("%s does not handle iModels"), GetObserverName());
 }
+void FITwinDefaultWebServicesObserver::OnIModelProcessingStatusRetrieved(bool bSuccess, FIModelProcessingStatus const& Status)
+{
+	ensureMsgf(false, TEXT("%s does not handle iModel processing status"), GetObserverName());
+}
 void FITwinDefaultWebServicesObserver::OnRealityDataRetrieved(bool bSuccess, FITwinRealityDataInfos const& Infos)
 {
 	ensureMsgf(false, TEXT("%s does not handle RealityData"), GetObserverName());
@@ -129,14 +133,6 @@ void FITwinDefaultWebServicesObserver::OnMaterialPropertiesRetrieved(bool bSucce
 void FITwinDefaultWebServicesObserver::OnTextureDataRetrieved(bool bSuccess, std::string const& , AdvViz::SDK::ITwinTextureData const& )
 {
 	ensureMsgf(false, TEXT("%s does not handle querying texture data"), GetObserverName());
-}
-void FITwinDefaultWebServicesObserver::OnMatMLPredictionRetrieved(bool bSuccess, AdvViz::SDK::ITwinMaterialPrediction const&, std::string const& )
-{
-	ensureMsgf(false, TEXT("%s does not handle material predictions"), GetObserverName());
-}
-void FITwinDefaultWebServicesObserver::OnMatMLPredictionProgress(float )
-{
-	ensureMsgf(false, TEXT("%s does not handle material predictions"), GetObserverName());
 }
 void FITwinDefaultWebServicesObserver::OnGoogleCuratedContentAccessRetrieved(bool ,
 	AdvViz::SDK::ITwinGoogleCuratedContentAccess const& , HttpRequestID const& )

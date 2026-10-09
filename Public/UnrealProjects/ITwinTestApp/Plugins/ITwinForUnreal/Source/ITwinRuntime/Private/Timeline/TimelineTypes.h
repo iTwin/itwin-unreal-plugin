@@ -16,6 +16,8 @@
 	#include <boost/functional/hash.hpp>
 #include <Compil/AfterNonUnrealIncludes.h>
 
+#include <algorithm>
+#include <vector>
 #include <unordered_set>
 #include <variant>
 
@@ -67,8 +69,18 @@ struct std::hash<FElementsGroup>
 public:
 	size_t operator()(FElementsGroup const& Elements) const
 	{
+		std::vector<ITwinElementID> SortedElements;
+		SortedElements.reserve(Elements.size());
+		for (ITwinElementID const& ElemID : Elements)
+			SortedElements.push_back(ElemID);
+		std::sort(SortedElements.begin(), SortedElements.end(),
+			[](ITwinElementID const& A, ITwinElementID const& B)
+			{
+				return A.value() < B.value();
+			});
+
 		size_t h = 0;
-		for (typename FElementsGroup::value_type const& ElemID : Elements)
+		for (ITwinElementID const& ElemID : SortedElements)
 			boost::hash_combine(h, ElemID.value());
 		return h;
 	}

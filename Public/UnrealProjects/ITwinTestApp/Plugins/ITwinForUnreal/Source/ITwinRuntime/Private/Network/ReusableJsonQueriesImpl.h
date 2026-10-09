@@ -6,7 +6,6 @@
 |
 +--------------------------------------------------------------------------------------*/
 
-
 #pragma once
 
 #include "JsonQueriesCache.h"
@@ -25,8 +24,12 @@ class FReusableJsonQueries::FImpl
 
 	class FRequestHandler
 	{
+	public:
+		static constexpr int DefaultNbRetries = 2;
+
+	private:
 		/// JsonQueries and FromPool usable as long as (*IsJsonQueriesValid)
-		std::shared_ptr<bool> IsJsonQueriesValid;
+		std::shared_ptr<std::atomic_bool> IsJsonQueriesValid;
 		FReusableJsonQueries::FImpl& JsonQueries;
 		FPoolRequest& FromPool;
 		FRequestArgs RequestArgs;
@@ -42,26 +45,29 @@ class FReusableJsonQueries::FImpl
 		{
 		}
 
-		bool IsValid() const { return (*IsJsonQueriesValid) == true; }
+		bool IsValid() const { return IsJsonQueriesValid->load(); }
 		[[nodiscard]] TSharedPtr<TPromise<void>> Run(std::shared_ptr<FRequestHandler> This,
-			FHttpRequestPtr CompletedRequest, FHttpResponsePtr Response, bool bConnectedSuccessfully);
+			FHttpRequestPtr CompletedRequest, FHttpResponsePtr Response,
+			ITwinHttp::ConnectionSuccess bConnectedSuccessfully);
 		void ProcessResponse(TSharedPtr<FJsonObject> ResponseJson, FHttpResponsePtr Response,
-							 bool const bConnectedSuccessfully, bool const bRetry);
-		void CleanUp(FHttpResponsePtr Response, bool const bConnectedSuccessfully, bool const bRetry);
+			ITwinHttp::ConnectionSuccess bConnectedSuccessfully, ITwinHttp::RetryQuery bRetry,
+			ITwinHttp::DeltaQuery bIsDeltaQuery);
+		void CleanUp(FHttpResponsePtr Response, ITwinHttp::ConnectionSuccess bConnectedSuccessfully,
+					 ITwinHttp::RetryQuery bRetry, ITwinHttp::DeltaQuery bIsDeltaQuery);
 	};
 
 	FString BaseUrlNoSlash;
 	FCheckRequest const CheckRequest;
 	std::function<FString()> const GetBearerToken;
+	std::function<bool()> FreezeNextBatches;
 	ITwinHttp::FMutex& Mutex;
 	bool bIsRecordingForSimulation = false;
 	FJsonQueriesCache Cache;
 	ReusableJsonQueries::EReplayMode ReplayMode = ReusableJsonQueries::EReplayMode::None;
 
-	/// Flag tracking the status of "RequestsInBatch != 0 || !NextBatches.empty()" in order to trigger
-	/// OnScheduleQueryingStatusChanged when it changes
+	/// Flag tracking the status of "RequestsInBatch != 0 || !NextBatches.empty()", used to be needed to trigger
+	/// OnScheduleQueryingStatusChanged but not anymore. Might be useful tho so leaving it.
 	bool bIsRunning = false;
-	FScheduleQueryingDelegate const* OnScheduleQueryingStatusChanged = nullptr;
 
 	/// Number of requests in the current "batch", which is a grouping of requests which ordering is not
 	/// relevant. Incremented when stacking requests, decremented when finishing a request.
@@ -85,15 +91,18 @@ class FReusableJsonQueries::FImpl
 	/// Stats: last completion time
 	double LastCompletionTime = 0.;
 
-	std::shared_ptr<bool> IsThisValid;
+	/// Only readable after IsThisValid has been confirmed true
+	std::atomic_bool bIsShuttingDown{ false };
+	std::shared_ptr<std::atomic_bool> IsThisValid;
 
 	/// \return Whether a pending request was emitted
 	bool HandlePendingQueries();
 	void StackRequest(ITwinHttp::FLock* Lock, ITwinHttp::EVerb const Verb, FUrlSubpath&& UrlSubpath,
 		FUrlArgList&& Params, FProcessJsonObject&& ProcessCompletedFunc, FString&& PostDataString,
-		int const RetriesLeft = 2, double const DontRetryUntil = -1.);
+		int const RetriesLeft = FRequestHandler::DefaultNbRetries, double const DontRetryUntil = -1.);
 	void DoEmitRequest(FPoolRequest& FromPool, FRequestArgs RequestArgs);
 	[[nodiscard]] FString JoinToBaseUrl(FUrlSubpath const& UrlSubpath, int32 const ExtraSlack) const;
+	void ShutdownLocked(ITwinHttp::FLock&/*Lock*/);
 
 public:
 	~FImpl();
@@ -105,8 +114,7 @@ public:
 	FImpl(UObject const& Owner, FString const& InBaseUrlNoSlash, FAllocateRequest const& AllocateRequest,
 		uint8_t const SimultaneousRequestsAllowed, FCheckRequest const& InCheckRequest,
 		ITwinHttp::FMutex& InMutex, TCHAR const* const InRecordToFolder, int const InRecorderSessionIndex,
-		TCHAR const* const InSimulateFromFolder,
-		FScheduleQueryingDelegate const* OnScheduleQueryingStatusChanged,
-		std::function<FString()> const& GetBearerToken);
+		TCHAR const* const InSimulateFromFolder, std::function<FString()> const& GetBearerToken,
+		std::function<bool()> const& FreezeNextBatches);
 
 }; // class FReusableJsonQueries::FImpl

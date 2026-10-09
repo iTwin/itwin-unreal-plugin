@@ -1,0 +1,9 @@
+﻿{
+	"url": "https://api.bentley.com/schedules/fadafada-5a10-407e-b517-fbc23fcf4dc3/tasks?$top=10000&$deltaToken=dummy-tasks-token-1032",
+	"verb": "GET",
+	"connectedSuccessfully": true,
+	"responseCode": 200
+,
+	"reply": 
+{"deltaToken":"special-dev-no-delta-token","tasks":[{"actualDuration":null,"actualFinish":null,"actualPhysicalQuantity":0.0,"actualStart":null,"calendarId":"1e6717b6-e37a-4046-a86e-d5dc457a2de6","comment":"","constraintEarlyDate":null,"constraintLateDate":null,"constraintType":"NoConstraint","deleted":false,"duration":null,"durationType":"Fixed","estimatedRate":0.0,"expectedFinish":null,"finish":null,"id":"e16465cc-73c8-4de8-b316-4efbbefede86","isWbs":false,"name":"Lift box with a change not affecting 4D","parentId":null,"percentComplete":0,"physicalQuantity":0.0,"physicalQuantityUnit":"Unknown","plannedDuration":4406400,"plannedFinish":"2024-12-24T10:39:00Z","plannedPhysicalQuantity":0.0,"plannedStart":"2024-05-21T09:00:00Z","progressType":"Automatic","remainingDuration":null,"remainingPhysicalQuantity":0.0,"ruleId":null,"start":null,"status":"Planned","statusId":"9bb741fb-d514-48b3-8fef-aa24ecd242f7","type":"Work","url":"","userDefinedId":"ST00120"}],"_links":{"self":{"href":"https://api.bentley.com/schedules/fadafada-5a10-407e-b517-fbc23fcf4dc3/tasks?$top=10000&$deltaToken=dummy-tasks-token-1032"}}}
+}

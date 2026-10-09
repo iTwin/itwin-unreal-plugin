@@ -55,6 +55,9 @@ public:
 	//! Used in automated tests, to enable mocking of web services.
 	//! \param ServerUrl The url of the mock server to use (eg "http://localhost:1234").
 	void SetTestMode(FString const& ServerUrl);
+	//! Returns true if the actor is currently in test mode (ie using a mock server).
+	//! In such case, ServerUrl is filled with the url of the mock server.
+	bool IsInTestMode(FString& OutServerUrl) const;
 #endif
 
 protected:

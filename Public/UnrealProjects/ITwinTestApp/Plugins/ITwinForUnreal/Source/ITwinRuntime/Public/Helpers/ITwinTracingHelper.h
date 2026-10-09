@@ -6,7 +6,6 @@
 |
 +--------------------------------------------------------------------------------------*/
 
-
 #pragma once
 
 #include "CoreMinimal.h"
@@ -16,12 +15,9 @@
 
 #include <functional>
 #include <optional>
-#include <unordered_set>
 
 class AITwinIModel;
 class UPrimitiveComponent;
-
-
 
 struct FITwinRayTraceInput
 {
@@ -29,7 +25,6 @@ struct FITwinRayTraceInput
 	FVector TraceDirection = FVector::XAxisVector;
 	//std::optional<float> TraceExtentInMeters;
 };
-
 
 /// Helper to trace a ray in the scene, and collecting information on the impacted iTwin element.
 class FITwinTracingHelper
@@ -55,6 +50,7 @@ public:
 	static bool GetRayToTraceFromScreenCenter(const UObject* WorldContextObject,
 		FITwinRayTraceInput& OutTraceInput);
 
+	static bool IsValidAndVisibleImpact(FHitResult const& HitResult, ITwinElementID& EltID);
 
 	FITwinTracingHelper();
 
@@ -67,7 +63,7 @@ public:
 
 	ITwinElementID VisitElementsUnderCursor(UWorld const* World,
 		FVector2D& OutMousePosition, FVector& OutTraceStart, FVector& OutTraceEnd,
-		std::function<void(FHitResult const&, std::unordered_set<ITwinElementID>&)>&& HitResultHandler,
+		std::function<void(FHitResult const&, ITwinElementID const&)>&& HitResultHandler,
 		std::optional<uint32> const& MaxUniqueElementsHit = std::nullopt,
 		std::optional<float> const& CustomTraceExtentInMeters = std::nullopt,
 		std::optional<FVector2D> const& CustomMousePosition = std::nullopt);
@@ -76,11 +72,6 @@ public:
 	/// filtering out objects and/or iTwin elements currently invisible.
 	bool FindNearestImpact(FHitResult& OutHitResult, UWorld const* World,
 		FVector const& TraceStart, FVector const& TraceEnd);
-
-	/// Checks whether the impact corresponds to an Element which can be picked, ie which is currently
-	/// visible.
-	bool PickVisibleElement(FHitResult const& HitResult, AITwinIModel& IModel, ITwinElementID& OutEltID,
-		bool bSelectElement, bool bAdditive = false);
 
 private:
 	struct FImpl;

@@ -6,8 +6,6 @@
 |
 +--------------------------------------------------------------------------------------*/
 
-
-
 #pragma once
 
 #include <IncludeCesium3DTileset.h>
@@ -51,17 +49,23 @@ public:
 	static bool RequestElevationtAtGeolocation(AdvViz::SDK::ITwinGeolocationInfo const& GeolocationInfo,
 		std::function<void(std::optional<double> const& elevationOpt)>&& Callback);
 
+#if WITH_TESTS
+	//! Used in automated tests, to enable mocking of google elevation service.
+	//! \param ServerUrl The url of the mock server to use (eg "http://localhost:1234").
+	static void SetElevationTestURL(FString const& ServerUrl);
+#endif
+
 	static AITwinGoogle3DTileset* MakeInstance(UWorld& World,
 		bool bGeneratePhysicsMeshes = false, float DpiScaleForCredits = 1.0f);
 
 	AITwinGoogle3DTileset();
-	~AITwinGoogle3DTileset();
 	virtual void Tick(float DeltaTime) override;
-	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void SetActorHiddenInGame(bool bNewHidden) override;
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 #endif
+	// also from UObject "interface":
+	static void AddReferencedObjects(UObject* InThis, FReferenceCollector& Collector);
 
 	UFUNCTION()
 	void OnSceneLoaded(bool bSuccess);
@@ -80,6 +84,7 @@ public:
 
 	class UITwinClipping3DTilesetHelper* GetClippingHelper() const;
 	bool MakeClippingHelper();
+	[[nodiscard]] bool IsVisibleAtPoint(FVector const& WorldPosition) const;
 
 	//! Creates a helper to perform some requests/modifications on the tileset.
 	TUniquePtr<FITwinTilesetAccess> MakeTilesetAccess();

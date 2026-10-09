@@ -12,12 +12,12 @@ Detailed instructions for setting up a Cesium for Unreal development environment
 After compiling Unreal Engine, set the following environment variables in your `.bashrc`.
 
 ```bash
-export UNREAL_ENGINE_DIR=<path_to_unreal_engine>
-export UNREAL_ENGINE_COMPILER_DIR=$UNREAL_ENGINE_DIR/Engine/Extras/ThirdPartyNotUE/SDKs/HostLinux/Linux_x64/v23_clang-18.1.0-rockylinux8/x86_64-unknown-linux-gnu
-export UNREAL_ENGINE_LIBCXX_DIR=$UNREAL_ENGINE_DIR/Engine/Source/ThirdParty/Unix/LibCxx
+export UNREAL_ENGINE_ROOT=<path_to_unreal_engine>
+export UNREAL_ENGINE_COMPILER_DIR=$UNREAL_ENGINE_ROOT/Engine/Extras/ThirdPartyNotUE/SDKs/HostLinux/Linux_x64/v25_clang-18.1.0-rockylinux8/x86_64-unknown-linux-gnu
+export UNREAL_ENGINE_LIBCXX_DIR=$UNREAL_ENGINE_ROOT/Engine/Source/ThirdParty/Unix/LibCxx
 ```
 > [!note]
-> `v23_clang-18.1.0-rockylinux8` is correct for Unreal Engine v5.5. It may be different for other versions of Unreal Engine. See the [Unreal documentation](https://dev.epicgames.com/documentation/en-us/unreal-engine/linux-development-requirements-for-unreal-engine?application_version=5.5) for the equivalent for your version of Unreal Engine.
+> `v25_clang-18.1.0-rockylinux8` is correct for Unreal Engine v5.6. It may be different for other versions of Unreal Engine. See the [Unreal documentation](https://dev.epicgames.com/documentation/en-us/unreal-engine/linux-development-requirements-for-unreal-engine?application_version=5.6) for the equivalent for your version of Unreal Engine.
 
 # Cloning the git repos
 
@@ -62,17 +62,6 @@ cmake --build build --target install
 > [!note]
 > To build faster by using multiple CPU cores, add `-j14` to the build/install command above, i.e. `cmake --build build --target install -j14`. "14" is the number of threads to use, and a higher or lower number may be more suitable for your system.
 
-## KTX-Software workaround
-
-You may encounter an issue with the Unreal Build tool generating errors with symlinks in the KTX-Software submodule. This directory is no longer needed after cesium-native is built, therefore it can safely be removed.
-
-Delete the entire 'cesium-unreal/extern' directory:
-
-    cd ..
-    rm -rf extern
-
-Alternatively, this directory could be moved elsewhere and brought back in the case of a rebuild.
-
 # Build and package the Cesium for Unreal plugin
 
 Store the absolute path of the root directory of the `cesium-unreal` repo in an environment variable for ease of reference:
@@ -81,20 +70,20 @@ Store the absolute path of the root directory of the `cesium-unreal` repo in an 
 
 And build the plugin:
 
-    cd $UNREAL_ENGINE_DIR/Engine/Build/BatchFiles
+    cd $UNREAL_ENGINE_ROOT/Engine/Build/BatchFiles
     ./RunUAT.sh BuildPlugin -Plugin="$CESIUM_FOR_UNREAL_DIR/CesiumForUnreal.uplugin" -Package="$CESIUM_FOR_UNREAL_DIR/../packages/CesiumForUnreal" -CreateSubFolder -TargetPlatforms=Linux
 
 And finally copy the built plugin into the Engine plugins directory:
 ```
-mkdir -p $UNREAL_ENGINE_DIR/Engine/Plugins/Marketplace
-cp -r $CESIUM_FOR_UNREAL_DIR/../packages/CesiumForUnreal $UNREAL_ENGINE_DIR/Engine/Plugins/Marketplace/
+mkdir -p $UNREAL_ENGINE_ROOT/Engine/Plugins/Marketplace
+cp -r $CESIUM_FOR_UNREAL_DIR/../packages/CesiumForUnreal $UNREAL_ENGINE_ROOT/Engine/Plugins/Marketplace/
 ```
 > [!note]
 > On Linux (unlike Windows), it is essential that the `CesiumForUnreal` plugin go in the `Plugins/Marketplace/` subdirectory, rather than directly in `Plugins/`. Otherwise, the relative paths to other plugin `.so` files that the Unreal Build Tool has built into the plugin will not resolve correctly.
 
 # Using the plugin with the Cesium for Unreal Samples project
 
-The Cesium for Unreal Samples project demonstrates a bunch of features of Cesium for Unreal, and it is useful during development for testing the plugin. I can be cloned from GitHub as well:
+The Cesium for Unreal Samples project demonstrates a bunch of features of Cesium for Unreal, and it is useful during development for testing the plugin. It can be cloned from GitHub as well:
 
     cd ~/dev
     git clone https://github.com/CesiumGS/cesium-unreal-samples.git

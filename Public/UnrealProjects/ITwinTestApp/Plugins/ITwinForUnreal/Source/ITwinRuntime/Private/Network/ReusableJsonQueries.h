@@ -14,10 +14,12 @@
 #include <HttpFwd.h>
 #include <Templates/PimplPtr.h>
 
+#include <ITwinHttpUtils.h>
 #include <ITwinSynchro4DSchedules.h>
 #include <Network/HttpUtils.h>
 
 #include <Compil/BeforeNonUnrealIncludes.h>
+#	include <BeHeaders/StrongTypes/TaggedValue.h>
 #	include <Core/ITwinAPI/ITwinRequestTypes.h>
 #include <Compil/AfterNonUnrealIncludes.h>
 
@@ -25,6 +27,7 @@
 #include <atomic>
 #include <deque>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <utility>
@@ -39,7 +42,7 @@ public:
 	bool bIsAvailable{ true };
 	bool bSuccess{ true };
 	bool bTryFromCache{ true };
-	bool bShouldCancel{ false };
+	std::shared_ptr<std::atomic_bool> bShouldCancel = std::make_shared<std::atomic_bool>(false);
 	TSharedPtr<TPromise<void>> AsyncRoutine;
 
 	void Cancel();
@@ -54,8 +57,16 @@ using FUrlArgList = std::vector<std::pair<FString, FString>>;
 using FUrlSubpath = std::vector<FString>;
 using FProcessJsonObject = std::function<void(TSharedPtr<FJsonObject> const&)>;
 using FAllocateRequest = std::function<FHttpRequestPtr()>;
+DEFINE_STRONG_BOOL(DeltaTokenExpired);
+// Returns whether the response is valid and safe to parse. Returning false keeps retry handling active.
 using FCheckRequest = std::function<bool(FHttpRequestPtr const& /*CompletedRequest*/,
-	FHttpResponsePtr const& /*Response*/, bool /*connectedSuccessfully*/, bool const/*bWillRetry*/)>;
+	FHttpResponsePtr const& /*Response*/, ITwinHttp::ConnectionSuccess, ITwinHttp::RetryQuery&, DeltaTokenExpired&)>;
+
+namespace APIParams
+{
+	static const FString PageToken("$continuationToken");
+	static const FString DeltaToken("$deltaToken");
+}
 
 struct FRequestArgs
 {
@@ -104,11 +115,12 @@ public:
 		FAllocateRequest const& AllocateRequest, uint8_t const SimultaneousRequestsAllowed,
 		FCheckRequest const& CheckRequest, ITwinHttp::FMutex& Mutex,
 		TCHAR const* const InSavedFolderForReplay, int const InRecorderSessionIndex,
-		TCHAR const* const InSimulateFromFolder,
-		FScheduleQueryingDelegate const* OnScheduleQueryingStatusChanged,
-		std::function<FString()> const& GetBearerToken);
+		TCHAR const* const InSimulateFromFolder, std::function<FString()> const& GetBearerToken,
+		std::function<bool()> const& FreezeNextBatches);
 
 	void ChangeRemoteUrl(FString const& NewRemoteUrl);
+	[[nodiscard]] FString JoinToBaseUrl(FUrlSubpath const& UrlSubpath);
+	void BeginShutdown();
 
 	/// Called during game tick to sent new requests and handle request batches in the waiting list
 	void HandlePendingQueries();
@@ -124,6 +136,7 @@ public:
 	/// possible cache entries (reply payloads are never kept in memory). Also resets all internal variables
 	/// to a state leading to not using the cache at all.
 	void ClearCacheFromMemory();
+	FString CacheFolder() const;
 	
 	/// A request may need to prevent other unrelated requests to be stacked and sent at the same time,
 	/// and/or wait for the current queue and running requests to finish, to use their result for example.
@@ -139,6 +152,20 @@ public:
 	void StackRequest(ReusableJsonQueries::FStackingToken const&, ITwinHttp::FLock* Lock,
 		ITwinHttp::EVerb const Verb, FUrlSubpath&& UrlSubpath, FUrlArgList&& Params,
 		FProcessJsonObject&& ProcessCompletedFunc, FString&& PostDataString = {});
+
+	/// Delete from the cache (and the filesystem) the entry corresponding to the first reply of a set of paginated
+	/// replies which last page yielded the delta token used in the \see DeltaRequest. All other replies will be
+	/// marked droppable: in case the first page is the same, we will be able to reuse them, otherwise the next call to
+	/// EraseDroppableEntries will erase them.
+	///
+	/// \param DeltaRequest Incremental update request using a delta token, for which the server replied that the
+	///		token has expired, ie we need to request again from scratch.
+	/// \return Number of cache entries dropped (for the first page), or marked droppable (all subsequent pages)
+	size_t OnDeltaTokenExpired(FHttpRequestPtr const& DeltaRequest);
+
+	/// Erase from cache and filesystem any entry marked 'droppable' by earlier calls to OnDeltaTokenExpired, and not
+	/// reused since.
+	size_t EraseDroppableEntries();
 
 	/// Returns the current size of the requests queue expressed as a pair of values in the form
 	/// '{Batches,CurrentBatchRequests}' where 'Batches' in the number of request batches left to process

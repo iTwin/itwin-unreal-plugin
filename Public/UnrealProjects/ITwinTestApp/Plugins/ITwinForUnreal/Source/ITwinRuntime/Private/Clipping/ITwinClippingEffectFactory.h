@@ -45,7 +45,6 @@ public:
 	{
 		ERemovalInitiator Initiator = ERemovalInitiator::ITS;
 		EITwinClippingPrimitiveType PrimitiveType = EITwinClippingPrimitiveType::Count;
-		std::unordered_map<AdvViz::SDK::RefID, AdvViz::SDK::RefID> EffectRefIdToSceneLinkIdMap;
 	};
 
 	struct [[nodiscard]] FScopedRemovalContext
@@ -82,7 +81,8 @@ public:
 	void BeforeRemoveClippingInstances(EITwinInstantiatedObjectType ObjectType,
 		const TArray<int32>& InstanceIndices);
 
-	EITwinClippingPrimitiveType OnClippingInstancesRemoved(EITwinInstantiatedObjectType ObjectType);
+	EITwinClippingPrimitiveType OnClippingInstancesRemoved(EITwinInstantiatedObjectType ObjectType,
+		const TArray<int32>& IndicesInDescendingOrder, bool bUseRemoveAtSwap);
 
 	EITwinClippingPrimitiveType OnClippingInstanceModified(EITwinInstantiatedObjectType ObjectType,
 		int32 InstanceIndex);
@@ -91,7 +91,7 @@ public:
 	/// (or INDEX_NONE if creation failed).
 	int32 RegisterCutoutSpline(AITwinSplineHelper* SplineHelper);
 
-	bool DeRegisterCutoutSpline(AITwinSplineHelper* SplineBeingRemoved);
+	bool DeRegisterCutoutSpline(AITwinSplineHelper* SplineBeingRemoved, bool bTriggeredFromITS);
 
 	/// Remove the effect of given type and index, and return whether the removal was successful.
 	bool RemoveEffect(EITwinClippingPrimitiveType Type, int32 PrimitiveIndex, bool bTriggeredFromITS);
@@ -104,7 +104,14 @@ private:
 
 	void DeleteSelectedPopulationInstance();
 
-	bool UpdateClippingPrimitiveFromUEInstance(EITwinClippingPrimitiveType Type, int32 InstanceIndex);
+	enum class EUpdateContext : uint8_t
+	{
+		Load,
+		Add,
+		Remove
+	};
+
+	bool UpdateClippingPrimitiveFromUEInstance(EITwinClippingPrimitiveType Type, int32 InstanceIndex, EUpdateContext Context);
 
 	template <EITwinClippingPrimitiveType PrimitiveType>
 	bool TStartInteractivePrimitiveInstanceCreation();
@@ -117,9 +124,13 @@ private:
 
 
 	template <typename PrimitiveInfo, EITwinClippingPrimitiveType PrimitiveType>
-	void TUpdateAllClippingPrimitives(TArray<PrimitiveInfo>& ClippingInfos);
+	void TUpdateAllClippingPrimitives(TArray<PrimitiveInfo>& ClippingInfos, EUpdateContext Context);
 
-	void UpdateAllClippingPrimitives(EITwinClippingPrimitiveType PrimitiveType);
+	void UpdateAllClippingPrimitives(EITwinClippingPrimitiveType PrimitiveType, EUpdateContext Context);
+
+	template <typename PrimitiveInfo, EITwinClippingPrimitiveType PrimitiveType>
+	void TOnClippingInstancesRemoved(TArray<PrimitiveInfo>& ClippingInfos,
+		const TArray<int32>& IndicesInDescendingOrder, bool bUseRemoveAtSwap);
 
 
 	/// Update the plane equation in all tile excluders matching the modified actor, and update it in the
@@ -143,7 +154,10 @@ private:
 
 	/// Apply properties from the loaded instance (for legacy support: cutout used to be saved on the
 	/// decoration service). Also used during interactive creation of a new effect.
-	void UpdateClippingPropertiesFromAVizInstance(EITwinClippingPrimitiveType Type, int32 InstanceIndex);
+	void UpdatePropertiesFromAVizInstance(EITwinClippingPrimitiveType Type, int32 InstanceIndex);
+
+	/// Store the effect properties in the AdvViz instance persist it in case of undo.
+	void StorePropertiesInAVizInstance(EITwinClippingPrimitiveType Type, int32 InstanceIndex) const;
 
 
 private:

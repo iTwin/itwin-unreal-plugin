@@ -10,7 +10,6 @@
 #include "JsonQueriesCacheInit.h"
 #include <Hashing/UnrealString.h>
 #include <ITwinIModelSettings.h>
-#include <ITwinServerConnection.h>
 #include <ITwinServerEnvironment.h>
 
 #include <ITwinRuntime/Private/Compil/BeforeNonUnrealIncludes.h>
@@ -18,6 +17,7 @@
 #	include <Core/Tools/Log.h>
 #include <ITwinRuntime/Private/Compil/AfterNonUnrealIncludes.h>
 
+#include <HAL/FileManager.h>
 #include <Interfaces/IHttpResponse.h>
 #include <Misc/FileHelper.h>
 #include <Misc/Paths.h>
@@ -47,7 +47,6 @@ namespace QueriesCache
 		case ESubtype::Schedules:						SubtypeFolder = TEXT("Schedules"); break;
 		case ESubtype::DEPRECATED_ElementsHierarchies:	SubtypeFolder = TEXT("ElemTrees"); break;
 		case ESubtype::DEPRECATED_ElementsSourceIDs:	SubtypeFolder = TEXT("ElemSrcID"); break;
-		case ESubtype::MaterialMLPrediction:			SubtypeFolder = TEXT("MaterialMLPrediction"); break;
 		case ESubtype::ElementsMetadataCombined:		SubtypeFolder = TEXT("ElemMetadata"); break;
 		case ESubtype::ElementsMetadataNoBBoxes:		SubtypeFolder = TEXT("ElemMetadataNoBBoxes"); break;
 		case ESubtype::ElementsMetadataBBoxes:			SubtypeFolder = TEXT("ElemMetadataBBoxes"); break;
@@ -61,10 +60,15 @@ namespace QueriesCache
 			return CacheFolder;
 		if (ESubtype::Schedules == Type)
 		{
+			FString Ret;
 			if (ExtraStr.Contains(ITwinId)) // often the case at the moment for schedule Ids...
-				return FPaths::Combine(CacheFolder, ExtraStr + TEXT("_") + ChangesetId);
+				Ret = FPaths::Combine(CacheFolder, ExtraStr);
 			else
-				return FPaths::Combine(CacheFolder, ITwinId + TEXT("_") + ExtraStr + TEXT("_") + ChangesetId);
+				Ret = FPaths::Combine(CacheFolder, ITwinId + TEXT("_") + ExtraStr);
+			// NextGen are not tied to a specific changeset, thus it is passed empty
+			if (!ChangesetId.IsEmpty())
+				Ret += TEXT("_") + ChangesetId;
+			return Ret;
 		}
 		else
 		{
@@ -118,7 +122,6 @@ public:
 			QueriesCache::GetCacheFolder(QueriesCache::ESubtype::DEPRECATED_ElementsHierarchies, Env, {}, {}, {}),
 			QueriesCache::GetCacheFolder(QueriesCache::ESubtype::DEPRECATED_ElementsSourceIDs, Env, {}, {}, {}),
 			QueriesCache::GetCacheFolder(QueriesCache::ESubtype::Schedules, Env, {}, {}, {}),
-			//QueriesCache::GetCacheFolder(QueriesCache::ESubtype::MaterialMLPrediction, Env, {}, {}, {}),
 			QueriesCache::GetCacheFolder(QueriesCache::ESubtype::ElementsMetadataCombined, Env, {}, {}, {}),
 			QueriesCache::GetCacheFolder(QueriesCache::ESubtype::ElementsMetadataNoBBoxes, Env, {}, {}, {}),
 			QueriesCache::GetCacheFolder(QueriesCache::ESubtype::ElementsMetadataBBoxes, Env, {}, {}, {}),
@@ -144,7 +147,7 @@ public:
 					if (!FFileHelper::LoadFileToString(FileContent, *TimestampFile))
 						{ ensure(false); continue; }
 					TArray<FString> OutArray;
-					// cache.txt file contains actually 2 or 3 pieces of data (info string is optional) with
+					// MRU_TIMESTAMP file contains actually 2 or 3 pieces of data (info string is optional) with
 					// pipe separators, ie: "TIMESTAMP_TICKS|DISKSIZE_BYTES|INFO_STRING"
 					if (FileContent.ParseIntoArray(OutArray, TEXT("|")) < 2)
 						{ ensure(false); continue; }
@@ -292,19 +295,26 @@ public:
 class FJsonQueriesCache::FImpl
 {
 public:
+	FImpl(ITwinHttp::FMutex& InMutex) : Mutex(InMutex) {}
+	ITwinHttp::FMutex& Mutex;
 	FString PathBase;
 	FCacheMRU::iterator Entry;
 	std::shared_ptr<FJsonQueriesCacheManager> Manager;
 	bool bIsRecordingForSimulation = false;
 	bool bIsUnitTesting = false;
 	int RecorderTimestamp = 0;
-	QueriesCache::FSessionMap SessionMap;
+	QueriesCache::FCacheMap CacheMap;
 };
 
-FJsonQueriesCache::FJsonQueriesCache(UObject const& Owner) : Impl(MakePimpl<FImpl>())
+FJsonQueriesCache::FJsonQueriesCache(UObject const& Owner, ITwinHttp::FMutex& Mutex) : Impl(MakePimpl<FImpl>(Mutex))
 {
 	//critical! CDOs are deleted after FImpl static members have been destroyed!
 	check(!Owner.HasAnyFlags(RF_ClassDefaultObject));
+}
+
+FString FJsonQueriesCache::CacheFolder() const
+{
+	return Impl->PathBase;
 }
 
 bool FJsonQueriesCache::IsValid() const
@@ -319,25 +329,28 @@ bool FJsonQueriesCache::IsUnitTesting() const
 
 int FJsonQueriesCache::CurrentTimestamp() const
 {
+	ITwinHttp::FLock Lock(Impl->Mutex);
 	return (IsValid() ? Impl->RecorderTimestamp : (-1));
 }
 
 void FJsonQueriesCache::Uninitialize()
 {
+	ITwinHttp::FLock Lock(Impl->Mutex);
 	if (IsValid() && Impl->Manager)
 	{
 		Impl->Manager->MarkAsUsed(*this, Impl->Entry, FJsonQueriesCacheManager::EUseFlag::Unloading);
 	}
 	Impl->Manager.reset();
 	Impl->PathBase.Empty();
-	QueriesCache::FSessionMap Tmp;
-	Impl->SessionMap.swap(Tmp);
+	QueriesCache::FCacheMap Tmp;
+	Impl->CacheMap.swap(Tmp);
 	Impl->bIsRecordingForSimulation = false;
 	Impl->RecorderTimestamp = 0;
 }
 
 void FJsonQueriesCache::ClearFromDisk()
 {
+	ITwinHttp::FLock Lock(Impl->Mutex);
 	if (IsValid())
 		IFileManager::Get().DeleteDirectory(*Impl->PathBase, /*requireExists*/false, /*recurse*/true);
 }
@@ -375,7 +388,7 @@ bool FJsonQueriesCache::Initialize(FString CacheFolder, EITwinEnvironment const 
 	}
 	Impl->PathBase = CacheFolder;
 	FString ParseError;
-	QueriesCache::FRecordDirIterator DirIter(Impl->SessionMap, nullptr, ParseError, &Impl->RecorderTimestamp);
+	QueriesCache::FRecordDirIterator DirIter(Impl->CacheMap, nullptr, ParseError, &Impl->RecorderTimestamp);
 	if (IFileManager::Get().IterateDirectory(*CacheFolder, DirIter))
 	{
 		// set "InUse" and update timestamp (see also dtor...)
@@ -404,13 +417,16 @@ FJsonQueriesCache::~FJsonQueriesCache()
 
 bool FJsonQueriesCache::LoadSessionSimulation(FString const& SimulateFromFolder)
 {
+	ITwinHttp::FLock Lock(Impl->Mutex);
+	if (!IsValid()) // may have been uninit from another thread
+		return false;
 	Impl->PathBase = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir());
 	if (ensure(IFileManager::Get().DirectoryExists(*Impl->PathBase)
 		&& IFileManager::Get().DirectoryExists(*(Impl->PathBase += SimulateFromFolder))))
 	{
 		QueriesCache::FReplayMap ReplayMap;
 		FString ParseError;
-		QueriesCache::FRecordDirIterator DirIter(Impl->SessionMap, &ReplayMap, ParseError);
+		QueriesCache::FRecordDirIterator DirIter(Impl->CacheMap, &ReplayMap, ParseError);
 		if (IFileManager::Get().IterateDirectory(*Impl->PathBase, DirIter))
 			return true;
 		BE_LOGE("ITwinQuery", "Error parsing simulation data from " << TCHAR_TO_UTF8(*SimulateFromFolder)
@@ -420,28 +436,34 @@ bool FJsonQueriesCache::LoadSessionSimulation(FString const& SimulateFromFolder)
 }
 
 void FJsonQueriesCache::Write(AdvViz::SDK::ITwinAPIRequestInfo const& CompletedRequest,
-	FString const& QueryResult, bool const bConnectedSuccessfully, ITwinHttp::FMutex& Mutex,
+	FString const& QueryResult, ITwinHttp::ConnectionSuccess bConnectedSuccessfully,
 	int const QueryTimestamp/*= -1*/)
 {
 	auto JsonObj = MakeShared<FJsonObject>();
 	ToJson(CompletedRequest, JsonObj);
-	Write(JsonObj, bConnectedSuccessfully ? 200 : 500/*we don't get the actual code from SDK...*/,
-		bConnectedSuccessfully ? QueryResult : FString{}, bConnectedSuccessfully, bConnectedSuccessfully,
-		Mutex, QueryTimestamp);
+	Write(JsonObj,
+		bConnectedSuccessfully ? 200 : 500/*we don't get the actual code from SDK...*/,
+		bConnectedSuccessfully ? QueryResult : FString{},
+		bConnectedSuccessfully, (bool)bConnectedSuccessfully,
+		QueryTimestamp);
 }
 
 void FJsonQueriesCache::Write(FHttpRequestPtr const& CompletedRequest, FHttpResponsePtr const Response,
-	bool const bConnectedSuccessfully, ITwinHttp::FMutex& Mutex, int const QueryTimestamp/*= -1*/)
+	ITwinHttp::ConnectionSuccess bConnectedSuccessfully, int const QueryTimestamp/*= -1*/)
 {
+	ITwinHttp::FLock Lock(Impl->Mutex);
+	if (!IsValid()) // may have been uninit from another thread
+		return;
 	auto JsonObj = MakeShared<FJsonObject>();
 	ToJson(CompletedRequest, JsonObj);
 	if (Response)
 	{
 		FString Reply = Response->GetContentAsString();
 		bool const bRequestSucceeded = EHttpRequestStatus::Succeeded == CompletedRequest->GetStatus();
-		// See comment in FReusableJsonQueries::FImpl::FRequestHandler::ProcessResponse
-		FString const ContinuationToken = // check request success, otherwise reply may be html...
-			(bConnectedSuccessfully && bRequestSucceeded)
+		// See comment in FReusableJsonQueries::FImpl::FRequestHandler::ProcessResponse: write the response header
+		// in the cache in a way that will put it directly in the JSON when reading from a cache entry.
+		FString const ContinuationToken =
+			(bConnectedSuccessfully && bRequestSucceeded) // check request success, otherwise reply may be html
 				? Response->GetHeader(TEXT("Continuation-Token")) : FString{};
 		if (!ContinuationToken.IsEmpty())
 		{
@@ -452,21 +474,36 @@ void FJsonQueriesCache::Write(FHttpRequestPtr const& CompletedRequest, FHttpResp
 					+ Reply.RightChop(Index + 1);
 			}
 		}
-		Write(JsonObj, Response->GetResponseCode(), Reply, bConnectedSuccessfully, bRequestSucceeded,
-			  Mutex, QueryTimestamp);
+		else // For NextGen schedules, last page of a request should contain a Delta-Token for incremental updates
+		{
+			FString const DeltaToken =
+				(bConnectedSuccessfully && bRequestSucceeded) // same comment as above
+					? Response->GetHeader(TEXT("Delta-Token")) : FString{};
+			if (!DeltaToken.IsEmpty())
+			{
+				int32 Index;
+				if (ensure(Reply.FindChar(TCHAR('{'), Index)))
+				{
+					Reply = FString("{\"deltaToken\":\"") + DeltaToken + FString("\",")
+						+ Reply.RightChop(Index + 1);
+				}
+			}
+		}
+		Write(JsonObj, Response->GetResponseCode(), Reply, bConnectedSuccessfully, bRequestSucceeded, QueryTimestamp);
 	}
 	else
 	{
 		Write(JsonObj, 418/* https://en.wikipedia.org/wiki/HTTP_418 */, {}, bConnectedSuccessfully, false,
-			  Mutex, QueryTimestamp);
+			  QueryTimestamp);
 	}
 }
 
 void FJsonQueriesCache::Write(TSharedRef<FJsonObject>& JsonObj, int const ResponseCode,
-	FString const& ContentAsString, bool const bConnectedSuccessfully, bool const bRequestSucceeded,
-	ITwinHttp::FMutex& Mutex, int const QueryTimestamp)
+	FString const& ContentAsString, ITwinHttp::ConnectionSuccess bConnectedSuccessfully, bool const bRequestSucceeded,
+	int const QueryTimestamp)
 {
-	if (!ensure(IsValid()))
+	ITwinHttp::FLock Lock(Impl->Mutex);
+	if (!IsValid()) // may have been uninit from another thread
 		return;
 	if (Impl->bIsRecordingForSimulation)
 	{
@@ -475,7 +512,7 @@ void FJsonQueriesCache::Write(TSharedRef<FJsonObject>& JsonObj, int const Respon
 	}
 	else 
 		ensure(bRequestSucceeded); // we shouldn't write unsuccessful replies in the cache...
-	JsonObj->SetBoolField(TEXT("connectedSuccessfully"), bConnectedSuccessfully);
+	JsonObj->SetBoolField(TEXT("connectedSuccessfully"), bConnectedSuccessfully.value());
 	JsonObj->SetNumberField(TEXT("responseCode"), ResponseCode);
 	FString JsonString;
 	auto JsonWriter = TJsonWriterFactory<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>::Create(&JsonString);
@@ -522,8 +559,7 @@ namespace
 	}
 }
 
-void FJsonQueriesCache::ToJson(AdvViz::SDK::ITwinAPIRequestInfo const& Req, TSharedRef<FJsonObject>& JsonObj) 
-	const
+void FJsonQueriesCache::ToJson(AdvViz::SDK::ITwinAPIRequestInfo const& Req, TSharedRef<FJsonObject>& JsonObj) const
 {
 	JsonObj->SetStringField(TEXT("url"), Req.UrlSuffix.c_str());
 	JsonObj->SetStringField(TEXT("verb"), ITwinHttp::GetVerbString(Req.Verb));
@@ -534,6 +570,10 @@ void FJsonQueriesCache::ToJson(AdvViz::SDK::ITwinAPIRequestInfo const& Req, TSha
 		else
 			JsonObj->SetStringField(TEXT("payload"), ToUnrealString(Req.ContentString));
 	}
+	// yes protect even this, against Uninitialize() being called from another thread while we are recording a query
+	ITwinHttp::FLock Lock(Impl->Mutex);
+	if (!IsValid())
+		return;
 	if (Impl->bIsRecordingForSimulation)
 	{
 		// see the other ToJson below, could factorize the Headers part with a template func...
@@ -554,6 +594,10 @@ void FJsonQueriesCache::ToJson(FHttpRequestPtr const& Req, TSharedRef<FJsonObjec
 		else
 			JsonObj->SetStringField(TEXT("payload"), PostContentString);
 	}
+	// yes protect even this, against Uninitialize() being called from another thread while we are recording a query
+	ITwinHttp::FLock Lock(Impl->Mutex);
+	if (!IsValid())
+		return;
 	if (Impl->bIsRecordingForSimulation)
 	{
 		TArray<TSharedPtr<FJsonValue>> HeadersJson;
@@ -588,82 +632,98 @@ void FJsonQueriesCache::ToJson(FHttpRequestPtr const& Req, TSharedRef<FJsonObjec
 	}
 }
 
-void FJsonQueriesCache::RecordQuery(FHttpRequestPtr const& Request, ITwinHttp::FMutex& Mutex)
+void FJsonQueriesCache::RecordQuery(FHttpRequestPtr const& Request)
 {
-	if (IsValid())
-	{
-		ITwinHttp::FLock Lock(Mutex);
-		auto JsonObj = MakeShared<FJsonObject>();
-		ToJson(Request, JsonObj);
-		FString const Path = FPaths::Combine(Impl->PathBase,
-											 FString::Printf(TEXT("%08d_req.json"), Impl->RecorderTimestamp));
-		++Impl->RecorderTimestamp;
-		FString JsonString;
-		auto JsonWriter = TJsonWriterFactory<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>::Create(&JsonString);
-		FJsonSerializer::Serialize(JsonObj, JsonWriter);
-		FFileHelper::SaveStringToFile(JsonString, *Path, FFileHelper::EEncodingOptions::ForceUTF8);
-	}
+	ITwinHttp::FLock Lock(Impl->Mutex);
+	if (!IsValid())
+		return;
+	auto JsonObj = MakeShared<FJsonObject>();
+	ToJson(Request, JsonObj);
+	FString const Path = FPaths::Combine(Impl->PathBase,
+											FString::Printf(TEXT("%08d_req.json"), Impl->RecorderTimestamp));
+	++Impl->RecorderTimestamp;
+	FString JsonString;
+	auto JsonWriter = TJsonWriterFactory<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>::Create(&JsonString);
+	FJsonSerializer::Serialize(JsonObj, JsonWriter);
+	FFileHelper::SaveStringToFile(JsonString, *Path, FFileHelper::EEncodingOptions::ForceUTF8);
 }
 
-std::optional<QueriesCache::FSessionMap::const_iterator> FJsonQueriesCache::LookUp(
-	AdvViz::SDK::ITwinAPIRequestInfo const& Request, ITwinHttp::FMutex& Mutex) const
+std::optional<FString> FJsonQueriesCache::LookUp(AdvViz::SDK::ITwinAPIRequestInfo const& Request) const
 {
-	ITwinHttp::FLock Lock(Mutex);
-	QueriesCache::FSessionMap::const_iterator It;
+	ITwinHttp::FLock Lock(Impl->Mutex);
+	if (!IsValid()) // may have been uninit from another thread
+		return std::nullopt;
+	QueriesCache::FCacheMap::const_iterator It;
 	switch (Request.Verb)
 	{
 	case ITwinHttp::EVerb::Get:
-		It = Impl->SessionMap.find(Request.UrlSuffix.c_str());
+		It = Impl->CacheMap.find(QueriesCache::FQueryKey(FString(Request.UrlSuffix.c_str()), {}));
 		break;
 	case ITwinHttp::EVerb::Post:
 	{
-		It = Impl->SessionMap.find(
-			QueriesCache::FQueryKey(Request.UrlSuffix.c_str(), ToUnrealString(Request.ContentString)));
+		It = Impl->CacheMap.find(QueriesCache::FQueryKey(Request.UrlSuffix.c_str(),
+														   ToUnrealString(Request.ContentString)));
 		break;
 	}
 	default:
 		ensure(false); // unimplemented
 		return {};
 	}
-	if (Impl->SessionMap.end() != It)
-		return It;
+	if (Impl->CacheMap.end() != It)
+		return It->second.ReplyFilepath;
 	else return std::nullopt;
 }
 
-std::optional<QueriesCache::FSessionMap::const_iterator> FJsonQueriesCache::LookUp(
-	FHttpRequestPtr const& Request, ITwinHttp::EVerb const Verb, ITwinHttp::FMutex& Mutex) const
+std::optional<QueriesCache::FCacheMap::const_iterator> FJsonQueriesCache::LookUp(ITwinHttp::FLock& Lock,
+	FHttpRequestPtr const& Request, ITwinHttp::EVerb const Verb, bool bUnsetDroppableFlagOnHit,
+	std::optional<FString> EraseParameter/*= {}*/) const
 {
-	ITwinHttp::FLock Lock(Mutex);
-	QueriesCache::FSessionMap::const_iterator It;
+	if (!IsValid()) // may have been uninit from another thread
+		return std::nullopt;
+	QueriesCache::FCacheMap::iterator It; // not const_iterator, see bDroppable below
+	QueriesCache::FQueryKey Key;
+	TArray<uint8> const* pContentAsArray = nullptr;
 	switch (Verb)
 	{
-	case ITwinHttp::EVerb::Get:
-		It = Impl->SessionMap.find(Request->GetURL());
-		break;
 	case ITwinHttp::EVerb::Post:
-	{
-		auto&& ContentAsArray = Request->GetContent();
-		It = Impl->SessionMap.find(QueriesCache::FQueryKey(
-			Request->GetURL(),
-			FString(ContentAsArray.Num(), UTF8_TO_TCHAR(ContentAsArray.GetData()))));
+		pContentAsArray = &Request->GetContent();
+		Key.second = FString(pContentAsArray->Num(), UTF8_TO_TCHAR(pContentAsArray->GetData()));
+		[[fallthrough]];
+	case ITwinHttp::EVerb::Get:
+		Key.first = Request->GetURL();
+		if (EraseParameter)
+			ITwinHttp::EraseURLParameter(Key.first, *EraseParameter);
+		It = Impl->CacheMap.find(Key);
 		break;
-	}
 	default:
 		ensure(false); // unimplemented
 		return {};
 	}
-	if (Impl->SessionMap.end() != It)
+	if (Impl->CacheMap.end() != It)
+	{
+		if (bUnsetDroppableFlagOnHit && It->second.bDroppable)
+			It->second.bDroppable = false;
 		return It;
+	}
 	else return std::nullopt;
 }
 
-TSharedPtr<FJsonObject> FJsonQueriesCache::Read(QueriesCache::FSessionMap::const_iterator const It) const
+std::optional<FString> FJsonQueriesCache::LookUp(FHttpRequestPtr const& Request, ITwinHttp::EVerb const Verb,
+	bool bUnsetDroppableFlagOnHit, std::optional<FString> EraseParameter/*= {}*/) const
 {
-	if (Impl->SessionMap.end() != It)
+	ITwinHttp::FLock Lock(Impl->Mutex);
+	auto Found = LookUp(Lock, Request, Verb, bUnsetDroppableFlagOnHit, EraseParameter);
+	if (Found)
+		return (*Found)->second.ReplyFilepath;
+	else return std::nullopt;
+}
+
+/*static*/
+TSharedPtr<FJsonObject> FJsonQueriesCache::Read(FString&& CacheEntryPath)
+{
+	FString FileContent;
+	if (FFileHelper::LoadFileToString(FileContent, *CacheEntryPath))
 	{
-		FString FileContent;
-		if (!FFileHelper::LoadFileToString(FileContent, *It->second))
-			return {};
 		auto Reader = TJsonReaderFactory<TCHAR>::Create(FileContent);
 		TSharedPtr<FJsonObject> JsonObject;
 		if (!FJsonSerializer::Deserialize(Reader, JsonObject) || !JsonObject.IsValid())
@@ -678,4 +738,57 @@ TSharedPtr<FJsonObject> FJsonQueriesCache::Read(QueriesCache::FSessionMap::const
 	{
 		return {};
 	}
+}
+
+size_t FJsonQueriesCache::EraseEntry(QueriesCache::FCacheMap::const_iterator ToErase, bool bMarkSimilarAsDroppable,
+	ITwinHttp::FLock& Lock, FString const& SimilarIgnoreParam/*= {}*/, int32 SimilarParamMaxLengthHint/*= -1*/)
+{
+	size_t MarkedDroppable = 0;
+	if (bMarkSimilarAsDroppable && ensure(!SimilarIgnoreParam.IsEmpty()))
+	{
+		ensure(ToErase->first.second.IsEmpty()); // POST request?! Payload is ignored below!
+		FString RedactedUrl;
+		// +2 for '?' (or '&') and '='
+		RedactedUrl.Reserve(ToErase->first.first.Len() + SimilarIgnoreParam.Len() + SimilarParamMaxLengthHint + 2);
+		for (auto& Entry : Impl->CacheMap)
+		{
+			RedactedUrl.Reset();
+			if (ITwinHttp::EraseURLParameter(Entry.first.first, SimilarIgnoreParam, &RedactedUrl))
+			{
+				if (RedactedUrl == ToErase->first.first && !Entry.second.bDroppable)
+				{
+					Entry.second.bDroppable = true;
+					++MarkedDroppable;
+				}
+			}
+			// But then Entry is necessarily the target of ToErase...
+			// else if (Entry.first.first == ToErase->first.first) { Entry.second.bDroppable = ... }
+		}
+	}
+	Impl->CacheMap.erase(ToErase);
+	return MarkedDroppable;
+}
+
+size_t FJsonQueriesCache::EraseDroppableEntries()
+{
+	size_t Erased = 0;
+	std::vector<FString> FilesToDel;
+	{
+		ITwinHttp::FLock Lock(Impl->Mutex);
+		for (QueriesCache::FCacheMap::iterator It = Impl->CacheMap.begin(); It != Impl->CacheMap.end(); )
+		{
+			if (It->second.bDroppable)
+			{
+				FilesToDel.emplace_back(std::move(It->second.ReplyFilepath));
+				It = Impl->CacheMap.erase(It);
+				++Erased;
+			}
+			else
+				++It;
+		}
+	}
+	IFileManager& FileMgr = IFileManager::Get();
+	for (auto&& FilePath : FilesToDel)
+		FileMgr.Delete(*FilePath);
+	return Erased;
 }

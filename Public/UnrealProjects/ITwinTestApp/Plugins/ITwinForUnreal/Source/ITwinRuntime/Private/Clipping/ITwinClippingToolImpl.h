@@ -85,6 +85,10 @@ public:
 		EITwinModelType ModelType, bool bAll);
 	void SetEffectInfluenceModel(EITwinClippingPrimitiveType EffectType, int32 EffectIndex,
 		const ITwin::ModelLink& ModelIdentifier, bool bInfluence);
+
+	/// Return whether the given effect does influence the model specified by the given identifier.
+	/// Beware that it does not take the enabled state of the effect into account: if the effect is disabled,
+	/// this will still return true if the effect would influence the model.
 	bool DoesEffectInfluenceModel(EITwinClippingPrimitiveType EffectType, int32 EffectIndex,
 		const ITwin::ModelLink& ModelIdentifier) const;
 	TSet<FString> GetInfluencedSpecificModels(EITwinClippingPrimitiveType EffectType,
@@ -140,13 +144,13 @@ public:
 	bool IsRotationMode() const;
 
 	void OnClippingInstanceAdded(AITwinPopulation* Population, EITwinInstantiatedObjectType ObjectType, int32 InstanceIndex);
-	void OnClippingInstancesRemoved(EITwinInstantiatedObjectType ObjectType, const TArray<int32>& InstanceIndices);
+	void OnClippingInstancesRemoved(EITwinInstantiatedObjectType ObjectType, const TArray<int32>& IndicesInDescendingOrder, bool bUseRemoveAtSwap);
 
 	UFUNCTION()
 	void OnSplineHelperAdded(AITwinSplineHelper* NewSpline);
 
 	UFUNCTION()
-	void OnSplineHelperRemoved(AITwinSplineHelper* SplineBeingRemoved);
+	void OnSplineHelperRemoved(AITwinSplineHelper* SplineBeingRemoved, bool bTriggeredFromITS);
 
 	/// Change all effect proxies visibility in the viewport (without deactivating them).
 	/// This affects translucent boxes/planes as well as spline meshes displayed for cutout polygons.

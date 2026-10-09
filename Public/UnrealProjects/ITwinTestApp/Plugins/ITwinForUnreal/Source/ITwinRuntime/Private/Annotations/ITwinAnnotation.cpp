@@ -9,114 +9,14 @@
 #include <Annotations/ITwinAnnotation.h>
 #include <Annotations/ITwin2DAnnotationWidgetImpl.h>
 
-#include "Blueprint/WidgetLayoutLibrary.h"
-#include "Kismet/KismetMathLibrary.h"
-#include "Materials/Material.h"
-#include "Components/WidgetComponent.h"
-
-#include <Compil/BeforeNonUnrealIncludes.h>
-#	include <BeHeaders/Util/CleanUpGuard.h>
-#	include <Core/Visualization/AnnotationsManager.h>
-#include <Compil/AfterNonUnrealIncludes.h>
-
-namespace
-{
-	static TObjectPtr<const UObject> CustomFontObject;
-}
-
-template <typename ObjClass>
-static ObjClass* LoadObjFromPath(const FName& Path)
-{
-	if (Path == NAME_None)
-		return nullptr;
-	return Cast<ObjClass>(StaticLoadObject(ObjClass::StaticClass(), nullptr, *Path.ToString()));
-}
-
-static UMaterial* LoadMaterialFromPath(const FName& Path)
-{
-	if (Path == NAME_None)
-		return nullptr;
-	return LoadObjFromPath<UMaterial>(Path);
-}
-
-/*static*/ bool AITwinAnnotation::bVRMode = false;
-/*static*/ bool AITwinAnnotation::bUseWorldSpaceWidgets = true;
-
-/*static*/ void AITwinAnnotation::EnableVR()
-{
-	bVRMode = true;
-}
-
-/*static*/ void AITwinAnnotation::SetCustomFontObject(const UObject* InFontObject)
-{
-	CustomFontObject = InFontObject;
-}
-
 AITwinAnnotation::AITwinAnnotation()
 {
-	PrimaryActorTick.bCanEverTick = true;
-
-	root = CreateDefaultSubobject<USceneComponent>(TEXT("Root Position"));
-	SetRootComponent(root);
-
-	// Create widget component for world-space rendering
-	widgetComponent = CreateDefaultSubobject<UWidgetComponent>(TEXT("AnnotationWidgetComponent"));
-	widgetComponent->SetupAttachment(root);
-	widgetComponent->SetWidgetSpace(EWidgetSpace::Screen);
-	widgetComponent->SetDrawSize(FVector2D(400.0f, 200.0f));
-	widgetComponent->SetPivot(FVector2D(0.0f, 0.0f)); // Pivot at bottom center (pin position)
-	widgetComponent->SetVisibility(false); // Hidden by default until BeginPlay
-
-	BuildWidget();
 }
 
-void AITwinAnnotation::BeginPlay()
+void AITwinAnnotation::DoBuildOnScreenWidget()
 {
-	Super::BeginPlay();
-	SetTickGroup(ETickingGroup::TG_PostUpdateWork);
-	
-	// Build the appropriate widget type based on settings
-	InitWorldSpaceWidget();
-	
-	SetColorTheme(colorTheme);
-	SetMode(mode);
-	SetFontSize(_fontSize);
-		
-	// Hiding annotations if in VR mode
-	if (AITwinAnnotation::VRMode())
-	{
-		SetVisibility(false);
-	}
-}
-
-void AITwinAnnotation::BuildWidget()
-{
-	// Build viewport-based widget (legacy approach)
-	onScreen = CreateWidget<UITwin2DAnnotationWidgetImpl>(GetWorld(), LoadClass <UITwin2DAnnotationWidgetImpl> (nullptr,
-		TEXT("/Script/UMGEditor.WidgetBlueprint'/ITwinForUnreal/ITwin/Annotations/ITwin2DAnnotationWidget.ITwin2DAnnotationWidget_C'")));
-	if (onScreen)
-	{
-		if (CustomFontObject)
-		{
-			onScreen->SetFontObject(CustomFontObject);
-		}
-		onScreen->SetText(content);
-	}
-}
-
-void AITwinAnnotation::InitWorldSpaceWidget()
-{
-	if (!widgetComponent || !onScreen)
-		return;
-
-	// Configure widget component for world-space rendering
-	onScreen->SetPinPosition(FVector2D(0.0f, 0.0f));
-	widgetComponent->SetWidget(onScreen);
-	widgetComponent->SetVisibility(bVisible);
-	
-	// Set collision and rendering properties
-	widgetComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	widgetComponent->SetCastShadow(false);
+	CreateOnScreenWidgetFromClass<UITwin2DAnnotationWidgetImpl>(
+		TEXT("/Script/UMGEditor.WidgetBlueprint'/ITwinForUnreal/ITwin/Annotations/ITwin2DAnnotationWidget.ITwin2DAnnotationWidget_C'"));
 }
 
 AdvViz::SDK::AnnotationPtr AITwinAnnotation::GetAVizAnnotation() const
@@ -155,122 +55,61 @@ void AITwinAnnotation::SetAVizAnnotation(const AdvViz::SDK::AnnotationPtr& annot
 	aVizAnnotationPtr = annotation;
 }
 
-const FText& AITwinAnnotation::GetText() const
+void AITwinAnnotation::OnTextModified(const FText& InText)
 {
-	return content;
-}
-
-void AITwinAnnotation::SetText(const FText& text)
-{
-	if (content.ToString() != text.ToString() && aVizAnnotationPtr)
-	{
-		auto aVizAnnotation = aVizAnnotationPtr->GetAutoLock();
-		aVizAnnotation->text = std::string(reinterpret_cast<const char*>(StringCast<UTF8CHAR>(*text.ToString()).Get()));
-		aVizAnnotation->SetShouldSave(true);
-	}
-	content = text;
-	UpdateDisplay();
-	OnTextChanged.Broadcast(this, text);
-}
-
-void AITwinAnnotation::SetVisibility(bool InBVisible)
-{
-	if (AITwinAnnotation::VRMode() && InBVisible)
-		return;
-		
 	if (aVizAnnotationPtr)
 	{
 		auto aVizAnnotation = aVizAnnotationPtr->GetAutoLock();
-		std::string displayMode = DisplayModeToString(mode, InBVisible);
+		const FString TextString = InText.ToString();
+		const std::string NewText = TCHAR_TO_UTF8(*TextString);
+		if (aVizAnnotation->text != NewText)
+		{
+			aVizAnnotation->text = NewText;
+			aVizAnnotation->SetShouldSave(true);
+		}
+	}
+}
+
+void AITwinAnnotation::OnVisibilityModified(bool bInVisible)
+{
+	if (aVizAnnotationPtr)
+	{
+		auto aVizAnnotation = aVizAnnotationPtr->GetAutoLock();
+		std::string displayMode = DisplayModeToString(Mode, bInVisible);
 		if (aVizAnnotation->displayMode.value_or("Marker and label") != displayMode)
 		{
 			aVizAnnotation->displayMode = displayMode;
 			aVizAnnotation->SetShouldSave(true);
 		}
 	}
-	bVisible = InBVisible;
-	UpdateDisplay();
 }
 
-bool AITwinAnnotation::Is2DMode() const
+void AITwinAnnotation::OnModeModified(EITwinCalloutMode InMode)
 {
-	return mode == EITwinAnnotationMode::BasicWidget
-		|| mode == EITwinAnnotationMode::FixedWidget
-		|| mode == EITwinAnnotationMode::LabelOnly;
-}
-
-void AITwinAnnotation::SetMode(EITwinAnnotationMode inMode)
-{
-	bool bWas2d = Is2DMode();
 	if (aVizAnnotationPtr)
 	{
 		auto aVizAnnotation = aVizAnnotationPtr->GetAutoLock();
-		std::string displayMode = DisplayModeToString(inMode, bVisible);
+		std::string displayMode = DisplayModeToString(InMode, bVisible);
 		if (aVizAnnotation->displayMode.value_or("Marker and label") != displayMode)
 		{
 			aVizAnnotation->displayMode = displayMode;
 			aVizAnnotation->SetShouldSave(true);
 		}
 	}
-	mode = inMode;
-	UpdateDisplay();
 }
 
-void AITwinAnnotation::SetModeFromIndex(int inMode)
-{
-	if (inMode < 0 || inMode >= 2)
-		return;
-	if (inMode == 0)
-		SetMode(EITwinAnnotationMode::BasicWidget);
-	else if (inMode == 1)
-		SetMode(EITwinAnnotationMode::LabelOnly);
-}
-
-EITwinAnnotationMode AITwinAnnotation::GetDisplayMode() const
-{
-	return mode;
-}
-
-int AITwinAnnotation::GetDisplayModeIndex() const
-{
-	return mode == EITwinAnnotationMode::LabelOnly ? 1 : 0;
-}
-
-void AITwinAnnotation::SetColorTheme(EITwinAnnotationColor color)
+void AITwinAnnotation::OnColorThemeModified(EITwinCalloutColor InColor)
 {
 	if (aVizAnnotationPtr)
 	{
 		auto aVizAnnotation = aVizAnnotationPtr->GetAutoLock();
-		if (aVizAnnotation->colorTheme.value_or("Dark") != ColorThemeToString(color))
+		if (aVizAnnotation->colorTheme.value_or("Dark") != ColorThemeToString(InColor))
 		{
-			aVizAnnotation->colorTheme = ColorThemeToString(color);
+			aVizAnnotation->colorTheme = ColorThemeToString(InColor);
 			aVizAnnotation->SetShouldSave(true);
 		}
 	}
-	colorTheme = color;
-	UpdateDisplay();
 }
-
-void AITwinAnnotation::SetColorThemeFromIndex(int color)
-{
-	color += 1; // To skip undefined
-	if (color <= 0 || color >= static_cast<int>(EITwinAnnotationColor::Count))
-		return;
-	SetColorTheme(static_cast<EITwinAnnotationColor>(color));
-}
-
-EITwinAnnotationColor AITwinAnnotation::GetColorTheme() const
-{
-	return colorTheme;
-}
-
-int AITwinAnnotation::GetColorThemeIndex() const
-{
-	return (int) colorTheme - 1; // -1 to ignore undefined
-}
-
-void AITwinAnnotation::OnModeChanged()
-{}
 
 void AITwinAnnotation::Relocate(FVector position, FRotator rotation)
 {
@@ -283,80 +122,36 @@ void AITwinAnnotation::Relocate(FVector position, FRotator rotation)
 	}
 }
 
-void AITwinAnnotation::SetBackgroundColor(const FLinearColor& color)
+void AITwinAnnotation::OnNameModified(const FString& NewName)
 {
-	if (Is2DMode() && onScreen)
-	{
-		onScreen->SetBackgroundColor(color);
-	}
-}
-
-FLinearColor AITwinAnnotation::GetBackgroundColor() const
-{
-	return _backgroundColor;
-}
-
-void AITwinAnnotation::SetTextColor(const FLinearColor& color)
-{
-	if (Is2DMode() && onScreen)
-	{
-		onScreen->SetTextColor(color);
-	}
-}
-
-FLinearColor AITwinAnnotation::GetTextColor() const
-{
-	return _textColor;
-}
-
-void AITwinAnnotation::SetName(FString newName)
-{
-	name = newName;
 	if (aVizAnnotationPtr)
 	{
 		auto aVizAnnotation = aVizAnnotationPtr->GetAutoLock();
-		if (aVizAnnotation->name != TCHAR_TO_UTF8(*newName))
+		if (aVizAnnotation->name != TCHAR_TO_UTF8(*NewName))
 		{
-			aVizAnnotation->name = TCHAR_TO_UTF8(*newName);
+			aVizAnnotation->name = TCHAR_TO_UTF8(*NewName);
 			aVizAnnotation->SetShouldSave(true);
 		}
 	}
 }
 
-FString AITwinAnnotation::GetName() const
+void AITwinAnnotation::OnFontSizeModified(int32 InFontSize)
 {
-	return name;
-}
-
-void AITwinAnnotation::SetFontSize(int size)
-{
-	_fontSize = size;
 	if (Is2DMode())
 	{
 		if (aVizAnnotationPtr)
 		{
 			auto aVizAnnotation = aVizAnnotationPtr->GetAutoLock();
-			if (aVizAnnotation->fontSize.value_or(14) != size)
+			if (aVizAnnotation->fontSize.value_or(14) != InFontSize)
 			{
-				if (size == 14)
+				if (InFontSize == 14)
 					aVizAnnotation->fontSize.reset();
 				else
-					aVizAnnotation->fontSize = size;
+					aVizAnnotation->fontSize = InFontSize;
 				aVizAnnotation->SetShouldSave(true);
 			}
 		}
-		UpdateDisplay();
 	}
-}
-
-int AITwinAnnotation::GetFontSize() const
-{
-	return _fontSize;
-}
-
-bool AITwinAnnotation::GetVisibility() const
-{
-	return bVisible;
 }
 
 void AITwinAnnotation::SetShouldSave(bool shouldSave)
@@ -372,112 +167,4 @@ void AITwinAnnotation::SetId(int inId)
 {
 	BE_ASSERT(inId >= 0, "keep negative values for actions over 'all'");
 	id = inId;
-}
-
-void AITwinAnnotation::ConfigureWidget(UITwin2DAnnotationWidgetImpl* Widget) const
-{
-	if (!Widget)
-		return;
-
-	Widget->SetText(content);
-	Widget->SetLabelOnly(mode == EITwinAnnotationMode::LabelOnly);
-	Widget->SetBackgroundColor(ColorThemeToBackgroundColor(colorTheme));
-	Widget->SetTextColor(colorTheme == EITwinAnnotationColor::White
-		? FLinearColor(0.0f, 0.0f, 0.0f, 1.0f)
-		: FLinearColor(1.0f, 1.0f, 1.0f, 1.0f));
-	Widget->SetFontSize(_fontSize);
-
-	if (mode == EITwinAnnotationMode::LabelOnly)
-	{
-		Widget->SetPinPosition(FVector2D(0.0f, 0.0f));
-		Widget->SetLabelPosition(FVector2D(0.0f, 0.0f));
-	}
-	else
-	{
-		Widget->SetPinPosition(FVector2D(0.0f, 0.0f));
-		Widget->SetLabelPosition(FVector2D(0.0f, -100.0f));
-	}
-}
-
-void AITwinAnnotation::UpdateDisplay()
-{
-	if (!onScreen)
-		return;
-
-	ConfigureWidget(onScreen);
-
-	if (bUseWorldSpaceWidgets && widgetComponent)
-	{
-		widgetComponent->SetVisibility(bVisible);
-	}
-	else if (onScreen)
-	{
-		onScreen->SetVisibility(bVisible ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
-	}
-}
-
-void AITwinAnnotation::Tick(float DeltaTime)
-{
-	Super::Tick(DeltaTime);
-	if (!bVisible)
-		return;
-
-	if (Is2DMode())
-	{
-		if (bUseWorldSpaceWidgets && widgetComponent)
-		{
-			// Distance based label collapsing to reduce clutter.
-			APlayerController* PlayerController = GetWorld()->GetFirstPlayerController();
-			if (PlayerController && PlayerController->PlayerCameraManager)
-			{
-				FVector camLoc = PlayerController->PlayerCameraManager->GetCameraLocation();
-
-				auto dist = UKismetMathLibrary::Vector_Distance(GetActorLocation(), camLoc);
-				if ((dist >= labelCollapseDistance) == onScreen->IsLabelShown())
-					onScreen->ToggleShowLabel(!onScreen->IsLabelShown());
-			}
-		}
-	}
-}
-
-std::string AITwinAnnotation::ColorThemeToString(EITwinAnnotationColor color)
-{
-	if (colorNames.find(color) != colorNames.end())
-		return colorNames.at(color);
-	else
-		return "Dark";
-}
-
-std::string AITwinAnnotation::DisplayModeToString(EITwinAnnotationMode mode, bool visibility)
-{
-	if (mode == EITwinAnnotationMode::LabelOnly)
-		return visibility ? "Label only" : "Label only;Hidden";
-	else
-		return visibility ? "Marker and label" : "Marker and label;Hidden";
-}
-
-EITwinAnnotationColor AITwinAnnotation::ColorThemeToEnum(const std::string& color)
-{
-	for (auto [key, value] : colorNames)
-	{
-		if (value == color)
-			return key;
-	}
-	return EITwinAnnotationColor::Dark;
-}
-
-EITwinAnnotationMode AITwinAnnotation::DisplayModeToEnum(const std::string& mode)
-{
-	if (mode.starts_with("Label only"))
-		return EITwinAnnotationMode::LabelOnly;
-	else
-		return EITwinAnnotationMode::BasicWidget;
-}
-
-FLinearColor AITwinAnnotation::ColorThemeToBackgroundColor(EITwinAnnotationColor color)
-{
-	if (backgroundColors.find(color) != backgroundColors.end())
-		return backgroundColors.at(color);
-	else
-		return FLinearColor(0.067f, 0.071f, 0.075f, 1.0f);
 }

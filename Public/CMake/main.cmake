@@ -70,6 +70,7 @@ include (be_get_targets)
 include (be_add_test)
 include (jsonUtils)
 include (be_utils)
+include (be_add_custom_command)
 # Add all the targets for the cesium dependencies before changing the global include directories & co.
 add_subdirectory (Public/CesiumDependencies)
 

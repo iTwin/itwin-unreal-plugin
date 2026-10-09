@@ -7,6 +7,8 @@
 +--------------------------------------------------------------------------------------*/
 
 #include <Spline/ITwinSplineTool.h>
+
+#include <Spline/ITwinSplineGeometry.h>
 #include <Spline/ITwinSplineHelper.h>
 
 #include <Math/UEMathConversion.h>
@@ -64,11 +66,6 @@ namespace ITwin
 	}
 }
 
-namespace ITwinSpline
-{
-	extern bool IsPathAnim(const EITwinSplineUsage Usage);
-}
-
 class AITwinSplineTool::FImpl
 {
 public:
@@ -78,6 +75,7 @@ public:
 
 	AITwinSplineHelper* selectedSplineHelper = nullptr;
 	bool duplicateWhenMovingPoint = false;
+	int32 interactiveEditionStartPointIndex = 0;
 	EITwinSplineToolMode ToolMode = EITwinSplineToolMode::Undefined;
 	EITwinSplineUsage ToolUsage = EITwinSplineUsage::Undefined;
 	std::shared_ptr<AdvViz::SDK::ISplinesManager> splinesManager;
@@ -109,10 +107,10 @@ public:
 	void DeleteSelection();
 	bool HasSelectedPoint() const;
 	void DeleteSelectedSpline();
-	void DeleteSpline(AITwinSplineHelper* SplineHelper);
+	void DeleteSpline(AITwinSplineHelper* SplineHelper, bool bTriggeredFromITS);
 	bool CanDeletePoint() const;
-	void DeleteSelectedPoint();
-	void DuplicateSelectedPoint();
+	bool DeleteSelectedPoint();
+	bool DuplicateSelectedPoint();
 	bool InsertPointAt(AITwinSplineHelper* Spline, int32 PointIndex, FVector const& NewWorldPosition);
 	void EnableDuplicationWhenMovingPoint(bool value);
 	FTransform GetSelectionTransform() const;
@@ -148,6 +146,12 @@ public:
 	//! Returns true if a new spline was finalized.
 	bool ToggleInteractiveCreationMode(bool bTriggeredFromITS, bool bInAutoSelectCutoutTarget = false);
 	void AbortInteractiveCreation(bool bTriggeredFromITS);
+
+	//! Finalizes the interactive edition of an already existing spline.
+	//! \param bTriggeredFromITS Whether the event was triggered from iTwinStudio (as opposed to Unreal)
+	//! \param bValidateResult Whether to validate the result of the interactive edition
+	//! \return Returns false if no interactive edition was in progress.
+	bool FinishInteractiveSplineEdition(bool bTriggeredFromITS, bool bValidateResult);
 
 	void SetAutoSelectCutoutTarget(bool bInAutoSelectCutoutTarget);
 
@@ -256,7 +260,6 @@ void AITwinSplineTool::FImpl::SetSelectedSpline(AITwinSplineHelper* splineHelper
 	if (!bHasJustDeletedSelectedSpline)
 	{
 		owner.SplineSelectionEvent.Broadcast();
-		owner.SplineEditionEvent.Broadcast();
 	}
 }
 
@@ -265,8 +268,6 @@ void AITwinSplineTool::FImpl::SetSelectedPointIndex(int32 PointIndex, bool bBroa
 	if (selectedSplineHelper)
 	{
 		selectedSplineHelper->SetSelectedPointIndex(PointIndex);
-
-		owner.SplineEditionEvent.Broadcast();
 
 		if (bBroadcastPointSelection)
 		{
@@ -316,20 +317,20 @@ void AITwinSplineTool::FImpl::DeleteSelection()
 		// Re-enable deletion after a short delay.
 		AITwinSplineTool* SplineToolActor = &owner;
 		owner.GetWorld()->GetTimerManager().SetTimer(PreventDeletionTimerHandle,
-			FTimerDelegate::CreateLambda([this, SplineToolActor, _ = TStrongObjectPtr<AITwinSplineTool>(SplineToolActor)]
+			FTimerDelegate::CreateLambda([this, SplineToolActor = TWeakObjectPtr<AITwinSplineTool>(SplineToolActor)]
 		{
-			if (IsValid(SplineToolActor))
+			if (SplineToolActor.IsValid())
 				bPreventDeletion = false;
 		}),
 			0.5f /* in seconds*/, false);
 	}
 }
 
-void AITwinSplineTool::FImpl::DeleteSpline(AITwinSplineHelper* SplineHelper)
+void AITwinSplineTool::FImpl::DeleteSpline(AITwinSplineHelper* SplineHelper, bool bTriggeredFromITS)
 {
 	const bool bIsSelectedSpline = (SplineHelper == selectedSplineHelper);
 
-	owner.SplineBeforeRemovedEvent.Broadcast(SplineHelper);
+	owner.SplineBeforeRemovedEvent.Broadcast(SplineHelper, bTriggeredFromITS);
 
 	SplineHelper->DeleteCartographicPolygons([this](ACesiumCartographicPolygon* Polygon)
 	{
@@ -354,7 +355,7 @@ void AITwinSplineTool::FImpl::DeleteSelectedSpline()
 {
 	if (HasSelection())
 	{
-		DeleteSpline(selectedSplineHelper);
+		DeleteSpline(selectedSplineHelper, /*bTriggeredFromITS*/false);
 	}
 }
 
@@ -370,23 +371,26 @@ bool AITwinSplineTool::FImpl::CanDeletePoint() const
 	return HasSelectedPoint() && selectedSplineHelper->CanDeletePoint();
 }
 
-void AITwinSplineTool::FImpl::DeleteSelectedPoint()
+bool AITwinSplineTool::FImpl::DeleteSelectedPoint()
 {
-	if (CanDeletePoint())
-	{
-		int32 selectedPointIndex = GetSelectedPointIndex();
-		selectedSplineHelper->DeletePoint(selectedPointIndex);
+	if (!CanDeletePoint())
+		return false;
 
+	int32 SelectedPoint = GetSelectedPointIndex();
+	const bool bDeleted = selectedSplineHelper->DeletePoint(SelectedPoint);
+
+	if (bDeleted)
+	{
 		// Select the next point in the spline (most of the time, we can just keep current index unchanged,
 		// since the point was just removed. The only exception is when we deleted the last one => then we
 		// loop...)
-		if (selectedPointIndex >= selectedSplineHelper->GetNumberOfSplinePoints())
+		if (SelectedPoint >= selectedSplineHelper->GetNumberOfSplinePoints())
 		{
-			selectedPointIndex = 0;
+			SelectedPoint = 0;
 		}
-		if (ensure(selectedPointIndex < selectedSplineHelper->GetNumberOfSplinePoints()))
+		if (ensure(SelectedPoint < selectedSplineHelper->GetNumberOfSplinePoints()))
 		{
-			SetSelectedPointIndex(selectedPointIndex);
+			SetSelectedPointIndex(SelectedPoint);
 
 			owner.SplinePointRemovedEvent.Broadcast();
 		}
@@ -400,14 +404,17 @@ void AITwinSplineTool::FImpl::DeleteSelectedPoint()
 		}
 		TriggerDelayedRefresh();
 	}
+
+	return bDeleted;
 }
 
-void AITwinSplineTool::FImpl::DuplicateSelectedPoint()
+bool AITwinSplineTool::FImpl::DuplicateSelectedPoint()
 {
 	if (HasSelectedPoint())
 	{
-		selectedSplineHelper->DuplicatePoint(GetSelectedPointIndex());
+		return selectedSplineHelper->DuplicatePoint(GetSelectedPointIndex());
 	}
+	return false;
 }
 
 void AITwinSplineTool::FImpl::EnableDuplicationWhenMovingPoint(bool value)
@@ -605,7 +612,8 @@ bool AITwinSplineTool::FImpl::InsertPointAt(AITwinSplineHelper* Spline, int32 Po
 bool AITwinSplineTool::FImpl::HasSameUsageAs(AITwinSplineHelper const* SplineHelper) const
 {
 	return this->GetUsage() == SplineHelper->GetUsage()
-		|| owner.IsUsedForPathAnim() && SplineHelper->IsUsedForPathAnim();
+		|| (owner.IsUsedForPathAnim() && SplineHelper->IsUsedForPathAnim()) 
+		|| (owner.IsPopulationTool() && SplineHelper->IsUsedForPopulation());
 }
 
 bool AITwinSplineTool::FImpl::DoMouseClickAction()
@@ -669,7 +677,7 @@ bool AITwinSplineTool::FImpl::DoMouseClickAction()
 					// accordingly (e.g. for point validation and selection, or display of control points).
 					NewSplineHelper->SetInteractiveCreationInProgress(true);
 
-					if (owner.IsUsedForPathAnim())
+					if (owner.IsUsedForPathAnim() || NewSplineHelper->GetUsage() == EITwinSplineUsage::PopulationPath)
 					{
 						NewSplineHelper->SetTangentMode(EITwinTangentMode::Smooth);
 						NewSplineHelper->SetClosedLoop(false);
@@ -912,9 +920,9 @@ namespace ITwin
 					if (RasterOverlay->InvertSelection &&
 						RasterOverlay->Polygons.IsEmpty())
 					{
-						// If no more polygons are left in an inverted raster overlay, one should totally
-						// disable it or the tileset will be totally invisible (all tiles being excluded...)
-						RasterOverlay->ExcludeSelectedTiles = false;
+						// If no more polygons are left in an inverted raster overlay, reset the inversion
+						// or the tileset will be totally invisible (all tiles being excluded...)
+						RasterOverlay->InvertSelection = false;
 					}
 				}
 				else
@@ -1452,6 +1460,7 @@ AITwinSplineHelper* AITwinSplineTool::FImpl::CreateSpline(EITwinSplineUsage Spli
 				LinkedTilesets, owner.GetMode(), PositionOpt, LoadedSpline);
 		}
 		ensureMsgf(SplineMaker.get() != nullptr, TEXT("no tileset ready for cut-out polygon creation"));
+		ensureMsgf(CustomSplinePoints.IsEmpty(), TEXT("custom spline points ignored for cut-out polygons"));
 	}
 	else
 	{
@@ -1691,90 +1700,6 @@ void AITwinSplineTool::FImpl::SetAutoSelectCutoutTarget(bool bInAutoSelectCutout
 	bAutoSelectCutoutTarget = bInAutoSelectCutoutTarget;
 }
 
-bool AITwinSplineTool::FImpl::ToggleInteractiveCreationMode(bool bTriggeredFromITS, bool bInAutoSelectCutoutTarget /*= false*/)
-{
-	const EITwinSplineToolMode PreviousMode = ToolMode;
-
-	bool bHasNewSpline = false;
-	TWeakObjectPtr<AITwinSplineHelper> NewSpline = nullptr;
-	if (PreviousMode == EITwinSplineToolMode::InteractiveCreation
-		&& HasSelectedPoint())
-	{
-		// Discard the last duplicated point.
-		// If the newly create spline has not enough points, remove it at once.
-		if (CanDeletePoint())
-		{
-			NewSpline = selectedSplineHelper; // Store value before it is reset in DeleteSelectedPoint
-			DeleteSelectedPoint();
-			bHasNewSpline = true;
-		}
-		else
-		{
-			DeleteSelectedSpline();
-		}
-	}
-
-	if (bHasNewSpline)
-	{
-		// Deselect point so that the new polygon appears as "globally" selected once created.
-		// (AzDev#1943807)
-		SetSelectedPointIndex(-1);
-
-		// The new spline is now fully created, we can exit the interactive creation mode.
-		ensure(NewSpline->IsInteractiveCreationInProgress());
-		NewSpline->SetInteractiveCreationInProgress(false);
-
-		// End of the creation of a spline in interactive mode => refresh scene and broadcast creation event.
-		RefreshScene(NewSpline.Get());
-
-		owner.SplineAddedEvent.Broadcast(NewSpline.Get());
-		owner.SplineEditionEvent.Broadcast();
-		owner.InteractiveCreationCompletedEvent.Broadcast(&owner, bTriggeredFromITS);
-		owner.SplineSelectionEvent.Broadcast();
-	}
-
-	ActorsExcludedFromPicking.Reset();
-
-	ToolMode = (PreviousMode == EITwinSplineToolMode::InteractiveCreation)
-		? EITwinSplineToolMode::Undefined
-		: EITwinSplineToolMode::InteractiveCreation;
-
-	if (ToolMode == EITwinSplineToolMode::InteractiveCreation)
-	{
-		// Deselect any spline before creating a new one.
-		SetSelectedSpline(nullptr);
-
-		// Avoid conflict with slightly similar feature...
-		EnableDuplicationWhenMovingPoint(false);
-
-		SetAutoSelectCutoutTarget(bInAutoSelectCutoutTarget);
-	}
-
-	return bHasNewSpline;
-}
-
-void AITwinSplineTool::FImpl::AbortInteractiveCreation(bool bTriggeredFromITS)
-{
-	if (ToolMode != EITwinSplineToolMode::InteractiveCreation)
-		return;
-	DeleteSelectedSpline();
-	SetMode(EITwinSplineToolMode::Undefined);
-
-	// AzDev#1968067:
-	// When the event is triggered from Unreal (ie. bTriggeredFromITS is false) through the escape key, we
-	// prefer to keep the drawing mode active, so we won't notify iTwin Studio here, and we toggle the
-	// creation mode on at once:
-	const bool bTriggeredFromUnreal = !bTriggeredFromITS;
-	if (bTriggeredFromUnreal)
-	{
-		ToggleInteractiveCreationMode(bTriggeredFromITS, true);
-	}
-	else
-	{
-		owner.InteractiveCreationAbortedEvent.Broadcast(&owner, bTriggeredFromITS);
-	}
-}
-
 void AITwinSplineTool::FImpl::RefreshScene(AITwinSplineHelper const* TargetSpline /*= nullptr*/)
 {
 	if (GetUsage() == EITwinSplineUsage::MapCutout)
@@ -1813,9 +1738,9 @@ void AITwinSplineTool::FImpl::TriggerDelayedRefresh()
 	// Note that this does replace the callback, so if a pending refresh was already there, it will be
 	// discarded, which is exactly what we want here.
 	owner.GetWorld()->GetTimerManager().SetTimer(RefreshTimerHandle,
-		FTimerDelegate::CreateLambda([this, SplineToolActor, _ = TStrongObjectPtr<AITwinSplineTool>(SplineToolActor)]
+		FTimerDelegate::CreateLambda([this, SplineToolActor = TWeakObjectPtr<AITwinSplineTool>(&owner)]
 	{
-		if (IsValid(SplineToolActor))
+		if (SplineToolActor.IsValid())
 			RefreshScene();
 	}),
 		RefreshDelay, false);
@@ -1941,9 +1866,9 @@ void AITwinSplineTool::DeleteSelectedSpline()
 	Impl->DeleteSelectedSpline();
 }
 
-void AITwinSplineTool::DeleteSpline(AITwinSplineHelper* SplineHelper)
+void AITwinSplineTool::DeleteSpline(AITwinSplineHelper* SplineHelper, bool bTriggeredFromITS)
 {
-	Impl->DeleteSpline(SplineHelper);
+	Impl->DeleteSpline(SplineHelper, bTriggeredFromITS);
 }
 
 void AITwinSplineTool::DeleteSplineAtLoad(AITwinSplineHelper* SplineHelper)
@@ -1960,14 +1885,14 @@ bool AITwinSplineTool::CanDeletePoint() const
 	return Impl->CanDeletePoint();
 }
 
-void AITwinSplineTool::DeleteSelectedPoint()
+bool AITwinSplineTool::DeleteSelectedPoint()
 {
-	Impl->DeleteSelectedPoint();
+	return Impl->DeleteSelectedPoint();
 }
 
-void AITwinSplineTool::DuplicateSelectedPoint()
+bool AITwinSplineTool::DuplicateSelectedPoint()
 {
-	Impl->DuplicateSelectedPoint();
+	return Impl->DuplicateSelectedPoint();
 }
 
 void AITwinSplineTool::EnableDuplicationWhenMovingPoint(bool value)
@@ -2003,6 +1928,25 @@ void AITwinSplineTool::SetEnabledImpl(bool bValue)
 bool AITwinSplineTool::IsEnabledImpl() const
 {
 	return Impl->IsEnabled();
+}
+
+bool AITwinSplineTool::IsPopulationToolImpl() const
+{
+	return GetUsage() == EITwinSplineUsage::PopulationZone 
+		   || GetUsage() == EITwinSplineUsage::PopulationPath 
+		   || GetUsage() == EITwinSplineUsage::SplinePopulation;
+}
+
+void AITwinSplineTool::SetUsedForPopulationImpl(bool bForPopulation)
+{
+	if (bForPopulation)
+	{
+		SetUsage(EITwinSplineUsage::SplinePopulation);
+	}
+	else if (IsPopulationTool())
+	{
+		SetUsage(EITwinSplineUsage::Undefined);
+	}
 }
 
 void AITwinSplineTool::ResetToDefaultImpl()
@@ -2092,9 +2036,118 @@ void AITwinSplineTool::SetMode(EITwinSplineToolMode NewMode)
 	Impl->SetMode(NewMode);
 }
 
+bool AITwinSplineTool::FImpl::ToggleInteractiveCreationMode(bool bTriggeredFromITS, bool bInAutoSelectCutoutTarget /*= false*/)
+{
+	const EITwinSplineToolMode PreviousMode = ToolMode;
+	bool isEditingExistingSpline = (interactiveEditionStartPointIndex > 0);
+
+	bool bHasNewSpline = false;
+	TWeakObjectPtr<AITwinSplineHelper> NewSpline = nullptr;
+	if (PreviousMode == EITwinSplineToolMode::InteractiveCreation
+		&& HasSelectedPoint())
+	{
+		// Discard the last duplicated point.
+		// If the newly create spline has not enough points, remove it at once.
+		if (CanDeletePoint())
+		{
+			NewSpline = selectedSplineHelper; // Store value before it is reset in DeleteSelectedPoint
+			DeleteSelectedPoint();
+			bHasNewSpline = true;
+		}
+		else
+		{
+			DeleteSelectedSpline();
+		}
+	}
+
+	if (bHasNewSpline)
+	{
+		// Deselect point so that the new polygon appears as "globally" selected once created.
+		// (AzDev#1943807)
+		SetSelectedPointIndex(-1);
+
+		// The new spline is now fully created, we can exit the interactive creation mode.
+		ensure(NewSpline->IsInteractiveCreationInProgress());
+		NewSpline->SetInteractiveCreationInProgress(false);
+
+		// End of the creation of a spline in interactive mode => refresh scene and broadcast creation event.
+		RefreshScene(NewSpline.Get());
+
+		if (!isEditingExistingSpline)
+		{
+			owner.SplineAddedEvent.Broadcast(NewSpline.Get());
+			owner.SplineEditionEvent.Broadcast();
+			owner.InteractiveCreationCompletedEvent.Broadcast(&owner, bTriggeredFromITS);
+			owner.SplineSelectionEvent.Broadcast();
+		}
+	}
+
+	ActorsExcludedFromPicking.Reset();
+	interactiveEditionStartPointIndex = 0;
+
+	ToolMode = (PreviousMode == EITwinSplineToolMode::InteractiveCreation)
+		? EITwinSplineToolMode::Undefined
+		: EITwinSplineToolMode::InteractiveCreation;
+
+	if (ToolMode == EITwinSplineToolMode::InteractiveCreation)
+	{
+		// Deselect any spline before creating a new one.
+		SetSelectedSpline(nullptr);
+
+		// Avoid conflict with slightly similar feature...
+		EnableDuplicationWhenMovingPoint(false);
+
+		SetAutoSelectCutoutTarget(bInAutoSelectCutoutTarget);
+	}
+	else if (isEditingExistingSpline)
+	{
+		owner.SplineEditionEvent.Broadcast();
+	}
+
+	return bHasNewSpline;
+}
+
 void AITwinSplineTool::ToggleInteractiveCreationMode(bool bTriggeredFromITS, bool bAutoSelectCutoutTarget /*= false*/)
 {
 	Impl->ToggleInteractiveCreationMode(bTriggeredFromITS, bAutoSelectCutoutTarget);
+}
+
+bool AITwinSplineTool::FImpl::FinishInteractiveSplineEdition(bool bTriggeredFromITS, bool bValidateResult)
+{
+	auto SelectedSpline = GetSelectedSpline();
+	if (!SelectedSpline || !SelectedSpline->IsInteractiveCreationInProgress() || interactiveEditionStartPointIndex == 0)
+		return false;
+
+	ToggleInteractiveCreationMode(bTriggeredFromITS, false);
+	SetEnabled(false);
+	SetSelectedSpline(SelectedSpline);
+	owner.SplineEditionEvent.Broadcast();
+
+	return true;
+}
+
+void AITwinSplineTool::ToggleInteractiveEditionMode()
+{
+	// This function can only be triggered from iTwin Studio UI.
+	// For cancel/validate from Unreal viewport using Esc/Enter keys
+	// see AbortInteractiveCreation() and ValidateInteractiveCreation().
+	auto SelectedSpline = GetSelectedSpline();
+	if (!SelectedSpline)
+		return;
+
+	if (SelectedSpline->IsInteractiveCreationInProgress())
+	{
+		Impl->FinishInteractiveSplineEdition(true, true);
+	}
+	else
+	{
+		SelectedSpline->DuplicatePoint(SelectedSpline->GetNumberOfSplinePoints() - 1);
+		SelectedSpline->SetSelectedPointIndex(SelectedSpline->GetNumberOfSplinePoints() - 1);
+		SelectedSpline->SetInteractiveCreationInProgress(true);
+		SetMode(EITwinSplineToolMode::InteractiveCreation);
+		SetEnabled(true);
+		Impl->interactiveEditionStartPointIndex = SelectedSpline->GetNumberOfSplinePoints() - 1;
+	}
 }
 
 bool AITwinSplineTool::StartInteractiveCreationImpl()
@@ -2118,6 +2171,45 @@ bool AITwinSplineTool::StartInteractiveCreationImpl()
 bool AITwinSplineTool::IsInteractiveCreationModeImpl() const
 {
 	return GetMode() == EITwinSplineToolMode::InteractiveCreation;
+}
+
+void AITwinSplineTool::FImpl::AbortInteractiveCreation(bool bTriggeredFromITS)
+{
+	if (ToolMode != EITwinSplineToolMode::InteractiveCreation)
+		return;
+
+	if (!bTriggeredFromITS && interactiveEditionStartPointIndex > 0)
+	{
+		// We are editing existing spline, so we can just exit the interactive
+		// creation mode and keep the spline selected. Perhaps we should also remove
+		// all the points that were added during this interactive edition
+		// session (to be discussed).
+		auto SelectedSpline = GetSelectedSpline();
+		if (SelectedSpline)
+		{
+			ToggleInteractiveCreationMode(false, false);
+			SetEnabled(false);
+			SetSelectedSpline(SelectedSpline);
+			owner.SplineEditionEvent.Broadcast();
+			return;
+		}
+	}
+	DeleteSelectedSpline();
+	SetMode(EITwinSplineToolMode::Undefined);
+
+	// AzDev#1968067:
+	// When the event is triggered from Unreal (ie. bTriggeredFromITS is false) through the escape key, we
+	// prefer to keep the drawing mode active, so we won't notify iTwin Studio here, and we toggle the
+	// creation mode on at once:
+	const bool bTriggeredFromUnreal = !bTriggeredFromITS;
+	if (bTriggeredFromUnreal)
+	{
+		ToggleInteractiveCreationMode(bTriggeredFromITS, true);
+	}
+	else
+	{
+		owner.InteractiveCreationAbortedEvent.Broadcast(&owner, bTriggeredFromITS);
+	}
 }
 
 void AITwinSplineTool::AbortInteractiveCreationImpl(bool bTriggeredFromITS)
@@ -2324,10 +2416,10 @@ void AITwinSplineTool::StartBlendedCameraMovement(const FTransform& NewCameraTra
 	const float BlendTime = 3.f;
 	Impl->StartCameraMovement(NewCameraTransform, BlendTime);
 	GetWorld()->GetTimerManager().SetTimer(Impl->TimerHandle,
-		FTimerDelegate::CreateLambda([=, this, _ = TStrongObjectPtr<AITwinSplineTool>(this)]
+		FTimerDelegate::CreateLambda([=, SplineToolActor = TWeakObjectPtr<AITwinSplineTool>(this)]
 	{
-		if (IsValid(this))
-			Impl->EndCameraMovement(NewCameraTransform);
+		if (SplineToolActor.IsValid())
+			SplineToolActor->Impl->EndCameraMovement(NewCameraTransform);
 	}),
 		BlendTime, false);
 }
@@ -2707,10 +2799,9 @@ namespace ITwin
 			// Make sure the selection gizmo will point at the newly selected point.
 			SplineTool->SplineSelectionEvent.Broadcast();
 
-			if (SelectedPointIndex != INDEX_NONE && SplineHelper->GetUsage() == EITwinSplineUsage::MapCutout)
+			if (SelectedPointIndex != INDEX_NONE)
 			{
-				// When a cut-out point is selected, broadcast the event to the AITwinClippingTool.
-				SplineTool->CutoutPolygonSelectedEvent.Broadcast();
+				SplineTool->SplineSelectedEvent.Broadcast();
 			}
 		}
 		else

@@ -788,6 +788,9 @@ struct GltfTuner::Impl : public GltfTunerVersions
 	glm::dvec4 rootTranslation_ = glm::dvec4(0., 0., 0., 1.);
 
 	void UpdateRulesIfNeeded(Cesium3DTilesSelection::GltfModifier const& tuner);
+
+	static bool SortAnim4DRulesAndCheckIfSame(
+		bool bOptimizeForRegularUpdates, Rules& otherRules, Rules const& tuningRules4DSorted);
 };
 
 GltfTuner::GltfTuner(bool const bTuneWithoutRules) : impl_(new Impl())
@@ -799,6 +802,35 @@ GltfTuner::GltfTuner(bool const bTuneWithoutRules) : impl_(new Impl())
 // Needed explicitly here so that impl_'s destruction occurs in the CPP where Impl is defined
 GltfTuner::~GltfTuner()
 {
+}
+
+// Assumes elements in each group are sorted
+bool operator==(GltfTuner::Rules::Anim4DGroup const& lhs, GltfTuner::Rules::Anim4DGroup const& rhs)
+{
+	return lhs.elements_ == rhs.elements_;
+}
+bool operator<(GltfTuner::Rules::Anim4DGroup const& lhs, GltfTuner::Rules::Anim4DGroup const& rhs)
+{
+	return lhs.elements_ < rhs.elements_;
+}
+
+/*static*/
+/// Compare groups: ignore the order of groups, the order of Element IDs inside groups, as well as the timeline
+/// indices (Anim4DId ids_). One of the set of rules is assumed to be already sorted
+bool GltfTuner::Impl::SortAnim4DRulesAndCheckIfSame(bool bOptimizeForRegularUpdates, Rules& otherRules,
+													Rules const& tuningRules4DSorted)
+{
+	if (otherRules.anim4DGroups_.empty() && tuningRules4DSorted.anim4DGroups_.empty())
+		return true;
+	if (!bOptimizeForRegularUpdates)
+		return false;
+	// No optim on size mismatch: the method will return false, so otherRules.anim4DGroups_ must be sorted anyway since
+	// it will become the "next" rules.
+	//if (otherRules.anim4DGroups_.size() != tuningRules4DSorted.anim4DGroups_.size())
+	for (auto& groupToSort : otherRules.anim4DGroups_)
+		std::sort(groupToSort.elements_.begin(), groupToSort.elements_.end());
+	std::sort(otherRules.anim4DGroups_.begin(), otherRules.anim4DGroups_.end());
+	return otherRules.anim4DGroups_ == tuningRules4DSorted.anim4DGroups_;
 }
 
 void GltfTuner::Impl::UpdateRulesIfNeeded(Cesium3DTilesSelection::GltfModifier const& tuner)
@@ -872,16 +904,10 @@ void GltfTuner::Impl::UpdateRulesIfNeeded(Cesium3DTilesSelection::GltfModifier c
 	}
 }
 
-CesiumAsync::Future<void> GltfTuner::onRegister(
-	const CesiumAsync::AsyncSystem& asyncSystem,
-	const std::shared_ptr<CesiumAsync::IAssetAccessor>& /*pAssetAccessor*/,
-	const std::shared_ptr<spdlog::logger>& /*pLogger*/,
-	const Cesium3DTilesSelection::TilesetMetadata& tilesetMetadata,
-	const Cesium3DTilesSelection::Tile& rootTile)
+void GltfTuner::ParseExtras(CesiumUtility::JsonValue::Object const& extras)
 {
-	impl_->rootTranslation_ = glm::column(rootTile.getTransform(), 3);
-	const auto iTwinMatsIt = tilesetMetadata.asset.extras.find("iTwinMaterials");
-	if (tilesetMetadata.asset.extras.end() != iTwinMatsIt
+	const auto iTwinMatsIt = extras.find("iTwinMaterials");
+	if (extras.end() != iTwinMatsIt
 		&& iTwinMatsIt->second.isArray())
 	{
 		std::vector<ITwinMaterialInfo> itwinMaterials;
@@ -926,6 +952,17 @@ CesiumAsync::Future<void> GltfTuner::onRegister(
 			onMaterialInfoParsed_(itwinMaterials);
 		}
 	}
+}
+
+CesiumAsync::Future<void> GltfTuner::onRegister(
+	const CesiumAsync::AsyncSystem& asyncSystem,
+	const std::shared_ptr<CesiumAsync::IAssetAccessor>& /*pAssetAccessor*/,
+	const std::shared_ptr<spdlog::logger>& /*pLogger*/,
+	const Cesium3DTilesSelection::TilesetMetadata& tilesetMetadata,
+	const Cesium3DTilesSelection::Tile& rootTile)
+{
+	impl_->rootTranslation_ = glm::column(rootTile.getTransform(), 3);
+	ParseExtras(tilesetMetadata.asset.extras);
 	return asyncSystem.createResolvedFuture();
 }
 
@@ -990,8 +1027,6 @@ bool GltfTuner::applyForUnitTest(const CesiumGltf::Model& model, const glm::dmat
 
 int64_t GltfTuner::SetMaterialRules(Rules&& tuningRules)
 {
-	// Here we do not test if the new rules actually differ from the current ones.
-	// For now we assume it is the responsibility of the caller to call this only when needed.
 	BeUtils::WLock wlock(impl_->mutex_);
 	// Optimize when resetting this type of rules several times
 	if (tuningRules.materialGroups_.empty() && tuningRules.itwinMatIDsToSplit_.empty()
@@ -1007,20 +1042,25 @@ int64_t GltfTuner::SetMaterialRules(Rules&& tuningRules)
 	return *getCurrentVersion();
 }
 
-int64_t GltfTuner::SetAnim4DRules(Rules&& tuningRules)
+bool GltfTuner::SetAnim4DRules(Rules&& tuningRules, int64_t& currentVersion, bool bOptimizeForRegularUpdates)
 {
-	// Here we do not test if the new rules actually differ from the current ones.
-	// For now we assume it is the responsibility of the caller to call this only when needed.
+	// We test if the new rules actually differ from the current ones only when bOptimizeForRegularUpdates is true,
+	// which is used for NextGen incremental schedule updates.
 	BeUtils::WLock wlock(impl_->mutex_);
-	// Optimize when resetting this type of rules several times
-	if (tuningRules.anim4DGroups_.empty() && impl_->rulesEx_.tuningRules_.anim4DGroups_.empty())
+	// Will need to test/compare to pending "next rules" OR to current rules: since pending != current, even if this
+	// call reverts to the current rules, we cannot revert the trigger anyway...
+	bool const bHasPendingNextRules = (impl_->anim4DRulesVersion_ > impl_->rulesEx_.anim4DRulesVersion_);
+	if (Impl::SortAnim4DRulesAndCheckIfSame(bOptimizeForRegularUpdates,
+		tuningRules, bHasPendingNextRules ? impl_->nextTuningRules_ : impl_->rulesEx_.tuningRules_))
 	{
-		return getCurrentVersion() ? (*getCurrentVersion()) : std::numeric_limits<int64_t>::max();
+		currentVersion = getCurrentVersion() ? (*getCurrentVersion()) : std::numeric_limits<int64_t>::max();
+		return false;
 	}
 	impl_->nextTuningRules_.anim4DGroups_ = std::move(tuningRules.anim4DGroups_);
 	++impl_->anim4DRulesVersion_;
 	trigger();
-	return *getCurrentVersion();
+	currentVersion = *getCurrentVersion();
+	return true;
 }
 
 bool GltfTuner::HasITwinMaterialInfo() const

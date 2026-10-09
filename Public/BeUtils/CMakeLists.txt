@@ -1,5 +1,5 @@
 include (be_setup_native_lib_flags)
-add_library (BeUtils
+be_add_library (BeUtils
 	STATIC
 	Gltf/ExtensionITwinMaterial.h
 	Gltf/ExtensionITwinMaterialID.h

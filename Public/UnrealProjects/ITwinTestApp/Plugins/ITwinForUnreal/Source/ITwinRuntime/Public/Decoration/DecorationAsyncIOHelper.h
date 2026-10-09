@@ -23,6 +23,7 @@
 #	include "SDK/Core/Visualization/ScenePersistence.h"
 #	include "SDK/Core/Visualization/KeyframeAnimation.h"
 #	include "SDK/Core/Visualization/PathAnimation.h"
+#	include "SDK/Core/Visualization/PopulationPersistence.h"
 #include <ITwinRuntime/Private/Compil/AfterNonUnrealIncludes.h>
 
 #include <atomic>
@@ -56,11 +57,15 @@ public:
 	void RequestStop();
 	bool IsInitialized() const;
 
-	void InitDecorationService(UWorld* WorldContextObject);
+	void InitScene();
+	void InitDecorationService(UWorld* WorldContextObject, bool bResetConfig = true);
 
 	void SetLoadedITwinId(const FString& ITwinId);	
 	FString GetLoadedITwinId() const;
-	void SetLoadedSceneId(FString InLoadedSceneId, bool inNewsScene = false);
+	void SetLoadedSceneId(const FString& InLoadedSceneId);
+	//! Sets whether the selected scene is new (not yet saved on the server). This is used to perform some
+	//! required initialization in such case.
+	void SetNewScene(bool bInNewScene);
 
 	void RegisterWaitableLoadEvent(WaitableLoadEventUPtr&& LoadEventPtr);
 	void WaitForExternalLoadEvents(int MaxSecondsToWait);
@@ -78,6 +83,7 @@ public:
 	void AsyncLoadAnnotations(LoadCallback Callback);
 	void AsyncLoadSplines(LoadCallback Callback);
 	void AsyncLoadPathAnimations(LoadCallback Callback);
+	void AsyncLoadPopulationMetadata(LoadCallback Callback);
 
 
 	/// Asynchronous save methods: return true if some requests were actually started.
@@ -88,6 +94,7 @@ public:
 
 	std::shared_ptr<AdvViz::SDK::ISplinesManager> const& GetSplinesManager();
 	std::shared_ptr<AdvViz::SDK::IPathAnimManager> const& GetPathAnimManager();
+	std::shared_ptr<AdvViz::SDK::IPopulationManager> const& GetPopulationManager();
 
 	using ScenePtrVector = AdvViz::SDK::ScenePtrVector;
 	AdvViz::expected<ScenePtrVector, AdvViz::SDK::HttpError> GetITwinScenes(const FString& itwinid);
@@ -105,6 +112,13 @@ public:
 	void CreateLinkIfNeeded(ModelIdentifier const& Key, std::function<void(LinkSharedPtr)> const& linkInitor);
 
 	void AsyncRefreshLinks(LoadCallback&& InCallback);
+
+#if WITH_TESTS
+	//! Used in automated tests, to enable mocking of decoration / scene API services.
+	//! \param Port The port of the local mock server to use.
+	//! The url of the server will be "http://localhost:<port>". Pass -1 as port to deactivate the test mode.
+	void SetMockServerPort(const UWorld* WorldContextObject, int InPort);
+#endif
 
 	// which service to use for saving/loading scenes and decorations. This is set by default to the same value as the one in AITwinServerConnection, but can be overridden.
 	EITwinSceneService InitConnexionService = EITwinSceneService::Invalid;
@@ -126,6 +140,11 @@ private:
 
 	void InitDefaultInstancesGroup(AdvViz::SDK::IInstancesGroupPtr const& defaultGroupPtr);
 
+	void LoadDefaultSceneForITwin(CallbackWithBool OnFinishCallback);
+	void PostLoadSceneFromServer(bool bCreateTimelineIfNeeded = false);
+	void InitDecorationServiceConnection(const UWorld* WorldContextObject, bool bResetConfig = true,
+		bool bPropagateToSceneAPI = false);
+
 private:
 	FString LoadedITwinId;
 	FString LoadedSceneID;
@@ -141,18 +160,21 @@ private:
 	std::shared_ptr<AdvViz::SDK::ISplinesManager> splinesManager;
 	std::shared_ptr<AdvViz::SDK::IAnnotationsManager> annotationsManager;
 	std::shared_ptr<AdvViz::SDK::IPathAnimManager> pathAnimManager;
+	std::shared_ptr<AdvViz::SDK::IPopulationManager> populationManager;
 
 	std::shared_ptr<std::atomic_bool> shouldStop = std::make_shared<std::atomic_bool>(false);
 	std::shared_ptr<std::atomic_bool> isThisValid = std::make_shared<std::atomic_bool>(true);
 	bool decorationIsLinked = false;
 	typedef AdvViz::SDK::Tools::TLockableRWData<std::map<ModelIdentifier, LinkSharedPtr>> TLinksMap;
 	TLinksMap links;
-
-	friend class AITwinDecorationHelper;
-	void PostLoadSceneFromServer();
-	void InitDecorationServiceConnection(const UWorld* WorldContextObject);
 	bool bNeedInitConfig = true;
 
 	mutable std::shared_mutex WaitableLoadEventsMutex;
 	std::vector<WaitableLoadEventUPtr> WaitableLoadEvents;
+
+#if WITH_TESTS
+	int MockServerPort = -1;
+#endif // WITH_TESTS
+
+	friend class AITwinDecorationHelper;
 };

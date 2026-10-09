@@ -1,17 +1,17 @@
-add_library(Json INTERFACE
+be_add_library(Json INTERFACE
 	Json.h
 )
 target_link_libraries (Json INTERFACE
 	reflectcpp::reflectcpp
 )
-set_target_properties(Json PROPERTIES FOLDER "SDK/Core") 
+set_target_properties(Json PROPERTIES FOLDER "SDK/Core")
 
 if(SDK_ADDUNITTEST)
-	add_executable(JsonTest JsonTest.cpp)
-	target_compile_features(JsonTest PRIVATE ${DefaultCXXSTD})	
+	be_add_executable(JsonTest JsonTest.cpp)
+	target_compile_features(JsonTest PRIVATE ${DefaultCXXSTD})
 	set_target_properties(JsonTest PROPERTIES FOLDER "SDK/Core/Tests")
 
-	target_link_libraries(JsonTest PRIVATE 
+	target_link_libraries(JsonTest PRIVATE
 							Json
 							Catch2::Catch2WithMain
 							Tools
@@ -31,5 +31,7 @@ if(SDK_ADDUNITTEST)
 	if (MSVC)
 		target_compile_options(JsonTest PRIVATE "/Zc:preprocessor")
 	endif()
-	be_add_sdk_test (JsonTest)
+	be_add_sdk_test (JsonTest
+		COVERED_TARGETS Json
+	)
 endif()

@@ -9,9 +9,12 @@
 
 #include <Helpers/ITwinTracingHelper.h>
 
+#include <Compil/IsUsingBentleyUnreal.h>
 #include <ITwinIModel.h>
 #include <ITwinIModelInternals.h>
 #include <ITwinMetadataConstants.h>
+#include <ITwinRealityData.h>
+#include <ITwinGoogle3DTileset.h>
 
 #include <CesiumMetadataPickingBlueprintLibrary.h>
 #include <CesiumMetadataValue.h>
@@ -21,7 +24,12 @@
 #include <Engine/LocalPlayer.h>
 #include <Engine/World.h>
 #include <GameFramework/PlayerController.h>
+#include <RHIGlobals.h>
 
+#if WITH_EDITOR
+#include <EditorModeManager.h>
+#include <EditorViewportClient.h>
+#endif
 
 struct FITwinTracingHelper::FImpl
 {
@@ -72,21 +80,42 @@ bool FITwinTracingHelper::GetRayFromMousePosition(UWorld const* World,
 	if (!World)
 		return false;
 	APlayerController* PlayerController = World->GetFirstPlayerController();
-	if (!PlayerController)
+	if (PlayerController) // in-game/PIE
+	{
+		if (CustomMousePosition)
+			MousePosition = *CustomMousePosition;
+		else
+		{
+			ULocalPlayer* LocalPlayer = PlayerController->GetLocalPlayer();
+			if (!LocalPlayer || !LocalPlayer->ViewportClient)
+				return false;
+			else if (!LocalPlayer->ViewportClient->GetMousePosition(MousePosition))
+				return false;
+		}
+		FVector WorldLoc, WorldDir;
+		if (!PlayerController->DeprojectScreenPositionToWorld(MousePosition.X, MousePosition.Y, WorldLoc, WorldDir))
+			return false;
+		OutTraceInput.TraceStart = WorldLoc;
+		OutTraceInput.TraceDirection = WorldDir;
+	}
+	else
+	{
+#if WITH_EDITOR
+		ensure(!CustomMousePosition); // TODO: unimplemented
+		auto const& ModeTools = GLevelEditorModeTools();
+		auto VpClient = ModeTools.GetHoveredViewportClient();
+		if (!VpClient)
+			VpClient = ModeTools.GetFocusedViewportClient();
+		if (!VpClient)
+			return false;
+		FViewportCursorLocation const EdCursorLoc = VpClient->GetCursorWorldLocationFromMousePos();
+		OutTraceInput.TraceStart = EdCursorLoc.GetOrigin();
+		OutTraceInput.TraceDirection = EdCursorLoc.GetDirection();
+		MousePosition = EdCursorLoc.GetCursorPos();
+#else
 		return false;
-	ULocalPlayer* LocalPlayer = PlayerController->GetLocalPlayer();
-	if (!LocalPlayer || !LocalPlayer->ViewportClient)
-		return false;
-	if (CustomMousePosition)
-		MousePosition = *CustomMousePosition;
-	else if (!LocalPlayer->ViewportClient->GetMousePosition(MousePosition))
-		return false;
-	FVector WorldLoc, WorldDir;
-	if (!PlayerController->DeprojectScreenPositionToWorld(MousePosition.X, MousePosition.Y,
-		WorldLoc, WorldDir))
-		return false;
-	OutTraceInput.TraceStart = WorldLoc;
-	OutTraceInput.TraceDirection = WorldDir;
+#endif
+	}
 	return true;
 }
 
@@ -130,11 +159,21 @@ int32 FITwinTracingHelper::GetRayTraceInputsFromScreenRatios(const UObject* Worl
 }
 
 /*static*/
-bool FITwinTracingHelper::GetRayToTraceFromScreenCenter(const UObject* WorldContextObject, FITwinRayTraceInput& OutTraceInput)
+bool FITwinTracingHelper::GetRayToTraceFromScreenCenter(const UObject* WorldContextObject,
+														FITwinRayTraceInput& OutTraceInput)
 {
 	TArray<FITwinRayTraceInput> TraceInputs;
 	if (!GetRayTraceInputsFromScreenRatios(WorldContextObject, { { 0.5, 0.5 } }, TraceInputs))
-		return false;
+	{
+		if (GUsingNullRHI || GIsAutomationTesting)
+		{
+			// For unit test, add a default input.
+			FITwinRayTraceInput TraceInput;
+			TraceInputs.Add(TraceInput);
+		}
+		else
+			return false;
+	}
 	if (ensure(TraceInputs.Num() == 1))
 	{
 		OutTraceInput = TraceInputs[0];
@@ -146,10 +185,75 @@ bool FITwinTracingHelper::GetRayToTraceFromScreenCenter(const UObject* WorldCont
 	}
 }
 
+/*static*/
+bool FITwinTracingHelper::IsValidAndVisibleImpact(FHitResult const& HitResult, ITwinElementID& ElementID)
+{
+	if (!HitResult.HasValidHitObjectHandle())
+		return false;
+	auto HitActor = HitResult.GetActor();
+	if (!HitActor || HitActor->IsHidden())
+		return false;
+	AITwinIModel* HitIModel = Cast<AITwinIModel>(HitActor->GetOwner());
+	if (HitIModel)
+	{
+		// Note: this function to get the Element ID is different (less efficient) than the one passed to
+		// SetTriangleHitFilter in UITwinSceneMappingBuilder::OnTileMeshPrimitiveLoaded: that is because here the
+		// Cesium function we use must determine the FCesiumFeatureIdSet from the hit MeshComponent, while in the other
+		// case we already obtained it and stored it in the lambda capture.
+		auto&& CalcElemID = [&HitResult, &ElementID/*out var!*/]() mutable
+			{
+				TMap<FString, FCesiumMetadataValue> const Table =
+					UCesiumMetadataPickingBlueprintLibrary::GetPropertyTableValuesFromHit(
+						HitResult, ITwinCesium::Metada::ELEMENT_FEATURE_ID_SLOT);
+				FCesiumMetadataValue const* const ElemIdFound = Table.Find(ITwinCesium::Metada::ELEMENT_NAME);
+				if (ElemIdFound != nullptr)
+					ElementID = ITwinElementID(
+						CesiumMetadataValueAccess::GetUnsignedInteger64(*ElemIdFound, ITwin::NOT_ELEMENT.value()));
+				else
+					ElementID = ITwin::NOT_ELEMENT;
+				return ElementID;
+			};
+#if BE_IS_USING_BENTLEY_UNREAL
+		// Invisible impacts were already filtered thanks to pCollisionMesh->SetTriangleHitFilter
+		// (see UITwinSceneMappingBuilder::OnTileMeshPrimitiveLoaded),
+		// but we need to determine the ElementID: we could store it in the HitResult somewhere in Unreal's
+		// intersection code, but it means touching a lot of code because the low-level intersection functions pass
+		// the 'out' parameters one by one (position, vertex index, face index, etc.), not as a single struct, so
+		// adding another parameter is not trivial and could affect performance.
+		ElementID = CalcElemID();
+#else
+		// Test if the picked location is visible
+		if (!GetInternals(*HitIModel).IsVisibleAtPoint(CalcElemID, HitResult.ImpactPoint))
+			return false;
+#endif // !BE_IS_USING_BENTLEY_UNREAL
+	}
+	else // Test if the picked location is visible (mostly = !cut-out)
+	{
+#if BE_IS_USING_BENTLEY_UNREAL
+		// For both Reality Data and Google tilesets, invisible impacts were already filtered thanks to
+		// pCollisionMesh->SetTriangleHitFilter (see UITwinClipping3DTilesetHelper::OnTileMeshPrimitiveLoaded)
+		// => nothing to do
+#else
+		AITwinRealityData* HitRealityData = Cast<AITwinRealityData>(HitActor->GetOwner());
+		if (HitRealityData)
+		{
+			if (!HitRealityData->IsVisibleAtPoint(HitResult.ImpactPoint))
+				return false;
+		}
+		else
+		{
+			AITwinGoogle3DTileset* HitGoogleTileset = Cast<AITwinGoogle3DTileset>(HitActor);
+			if (HitGoogleTileset && !HitGoogleTileset->IsVisibleAtPoint(HitResult.ImpactPoint))
+				return false;
+		}
+#endif // !BE_IS_USING_BENTLEY_UNREAL
+	}
+	return true;
+}
 
 ITwinElementID FITwinTracingHelper::VisitElementsUnderCursor(UWorld const* World,
 	FVector2D& MousePosition, FVector& OutTraceStart, FVector& OutTraceEnd,
-	std::function<void(FHitResult const&, std::unordered_set<ITwinElementID>&)>&& HitResultHandler,
+	std::function<void(FHitResult const&, ITwinElementID const&)>&& HitResultHandler,
 	std::optional<uint32> const& MaxUniqueElementsHit /*= std::nullopt*/,
 	std::optional<float> const& CustomTraceExtentInMeters /*= std::nullopt*/,
 	std::optional<FVector2D> const& CustomMousePosition /*= std::nullopt*/)
@@ -172,14 +276,15 @@ ITwinElementID FITwinTracingHelper::VisitElementsUnderCursor(UWorld const* World
 		std::unordered_set<ITwinElementID> DejaVu;
 		for (auto&& HitResult : Impl->AllHits)
 		{
-			auto HitActor = HitResult.GetActor();
-			if (!HitActor || HitActor->IsHidden())
+			ITwinElementID ElementID = ITwin::NOT_ELEMENT;
+			if (!IsValidAndVisibleImpact(HitResult, ElementID))
 				continue;
-			HitResultHandler(HitResult, DejaVu);
+			HitResultHandler(HitResult, ElementID);
 
-			if (FirstEltID == ITwin::NOT_ELEMENT && DejaVu.size() == 1)
+			if (FirstEltID == ITwin::NOT_ELEMENT)
 			{
-				FirstEltID = *DejaVu.cbegin();
+				FirstEltID = ElementID;
+				DejaVu.insert(ElementID);//ok even if ITwin::NOT_ELEMENT, to break the loop
 			}
 			if (!MaxUniqueElementsHit || (uint32)DejaVu.size() >= (*MaxUniqueElementsHit))
 			{
@@ -193,46 +298,6 @@ ITwinElementID FITwinTracingHelper::VisitElementsUnderCursor(UWorld const* World
 	return FirstEltID;
 }
 
-
-bool FITwinTracingHelper::PickVisibleElement(FHitResult const& HitResult, AITwinIModel& IModel,
-	ITwinElementID& OutEltID, bool bSelectElement, bool bAdditive /*= false*/)
-{
-	ITwinElementID EltID = ITwin::NOT_ELEMENT;
-
-	TMap<FString, FCesiumMetadataValue> const Table =
-		UCesiumMetadataPickingBlueprintLibrary::GetPropertyTableValuesFromHit(
-			HitResult, ITwinCesium::Metada::ELEMENT_FEATURE_ID_SLOT);
-	FCesiumMetadataValue const* const ElemIdFound = Table.Find(ITwinCesium::Metada::ELEMENT_NAME);
-	if (ElemIdFound != nullptr)
-	{
-		EltID = ITwinElementID(CesiumMetadataValueAccess::GetUnsignedInteger64(
-			*ElemIdFound, ITwin::NOT_ELEMENT.value()));
-	}
-	OutEltID = EltID;
-	if (EltID != ITwin::NOT_ELEMENT)
-	{
-		FITwinIModelInternals& IModelInternals = GetInternals(IModel);
-		if (bAdditive && bSelectElement)
-		{
-			// Toggle: if the element is already selected, deselect it
-			auto const& SelectedElems = IModelInternals.GetSelectedElements();
-			if (SelectedElems.contains(EltID))
-			{
-				auto SceneMappingLock = IModelInternals.SceneMapping->GetAutoLock();
-				std::unordered_set<ITwinElementID> ToDeselect{ EltID };
-				SceneMappingLock->DeselectElements(ToDeselect);
-				return true;
-			}
-		}
-		if (IModelInternals.HasElementWithID(EltID)
-			&& IModelInternals.OnClickedElement(EltID, HitResult, bSelectElement, bAdditive))
-		{
-			return true;
-		}
-	}
-	return false;
-}
-
 bool FITwinTracingHelper::FindNearestImpact(FHitResult& OutHitResult, UWorld const* World,
 	FVector const& TraceStart, FVector const& TraceEnd)
 {
@@ -240,25 +305,11 @@ bool FITwinTracingHelper::FindNearestImpact(FHitResult& OutHitResult, UWorld con
 	{
 		return false;
 	}
-
-	// Filter hidden impacts
 	for (auto&& HitResult : Impl->AllHits)
 	{
-		if (!HitResult.HasValidHitObjectHandle())
+		ITwinElementID ElementID = ITwin::NOT_ELEMENT;
+		if (!IsValidAndVisibleImpact(HitResult, ElementID))
 			continue;
-		auto HitActor = HitResult.GetActor();
-		if (!HitActor || HitActor->IsHidden())
-			continue;
-		AITwinIModel* HitIModel = Cast<AITwinIModel>(HitActor->GetOwner());
-		if (HitIModel)
-		{
-			// Test if the picked element (if any) is visible
-			ITwinElementID EltID = ITwin::NOT_ELEMENT;
-			if (!PickVisibleElement(HitResult, *HitIModel, EltID, false /*bSelectElement*/))
-			{
-				continue;
-			}
-		}
 		OutHitResult = HitResult;
 		return true;
 	}

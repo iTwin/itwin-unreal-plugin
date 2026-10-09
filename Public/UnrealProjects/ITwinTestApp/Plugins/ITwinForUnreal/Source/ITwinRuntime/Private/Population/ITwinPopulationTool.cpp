@@ -14,12 +14,18 @@
 #include <ITwinGoogle3DTileset.h>
 #include <ITwinRealityData.h>
 #include <ITwinTilesetAccess.h>
+#include <ITwinUtilityLibrary.h>
 #include <ITwinFeatureChange.h>
 #include <Population/ITwinPopulation.h>
 #include <Population/ITwinPopulation.inl>
+#include <Population/ITwinPopulationHelper.h>
+#include <Spline/ITwinSplineGeometry.h>
 #include <Spline/ITwinSplineHelper.h>
 #include <Spline/ITwinUESplineCurve.h>
+#include <Spline/ITwinSplineTool.h>
 
+#include <Async/Async.h>
+#include <Components/SplineComponent.h>
 #include <EngineUtils.h> // for TActorIterator<>
 #include <Engine/EngineTypes.h>
 #include <Engine/GameViewportClient.h>
@@ -32,13 +38,35 @@
 #include <Slate/SceneViewport.h>
 #include <SceneView.h>
 
+#include <atomic>
 #include <map>
+#include <memory>
 #include <vector>
 
 #include <Compil/BeforeNonUnrealIncludes.h>
 #	include <BeHeaders/Util/CleanUpGuard.h>
 #	include <BeUtils/SplineSampling/SplineSampling.h>
+#	include <SDK/Core/Visualization/PopulationPersistence.h>
+#	include "SDK/Core/Tools/DelayedCall.h"
+#	include "SDK/Core/Tools/Log.h"
 #include <Compil/AfterNonUnrealIncludes.h>
+
+namespace
+{
+	EITwinPopulationType GetPopulationTypeFromSplineUsage(EITwinSplineUsage SplineUsage)
+	{
+		switch (SplineUsage)
+		{
+		case EITwinSplineUsage::PopulationZone:
+			return EITwinPopulationType::Area;
+		case EITwinSplineUsage::PopulationPath:
+			return EITwinPopulationType::Path;
+		default:
+			ensureMsgf(false, TEXT("Unknown spline usage"));
+			return EITwinPopulationType::Count;
+		}
+	}
+}
 
 namespace ITwin
 {
@@ -227,15 +255,47 @@ class AITwinPopulationTool::FImpl : public FITwinBrushHelper
 public:
 	AITwinPopulationTool& owner;
 	AITwinDecorationHelper* decorationHelper = nullptr;
+	std::shared_ptr<AdvViz::SDK::IPopulationManager> populationManager;
+
+	TArray<TStrongObjectPtr<UITwinAreaPopulationHelper>> AreaInfos;
+	TArray<TStrongObjectPtr<UITwinPathPopulationHelper>> PathInfos;
 
 	bool enabled = false; // boolean used to switch on or off the population tool
 
 	EPopulationToolMode toolMode = EPopulationToolMode::Select;
 	ETransformationMode transformationMode = ETransformationMode::Move;
 
+	inline const UITwinPopulationHelper* GetPopulationInfo(FPopulationIdentifier PopHandle) const;
+	inline UITwinPopulationHelper* GetMutablePopulationInfo(FPopulationIdentifier PopHandle);
+
+	void LoadPopulations();
+	void ApplyRotationRangeToPopulationInstances(
+		UITwinPopulationHelper* PopHelper, const FFloatRange& NewRangeDeg);
+	void ApplyScaleRangeToPopulationInstances(
+		UITwinPopulationHelper* PopHelper, const FFloatRange& NewRange);
+	void ApplyRotationModeChange(
+		UITwinPopulationHelper* PopHelper,
+		EITwinPathPopulationRotationMode OldMode,
+		EITwinPathPopulationRotationMode NewMode);
+	// Called when loading a scene, it checks whether the path asset instances have finished loading.
+	bool ArePopulationsFullyLoaded(UITwinPopulationHelper* PopHelper);
+
+	void RemovePopulationObjects(FPopulationIdentifier PopHandle);
+	void RemovePopulationObjects(UITwinPopulationHelper* PopHelper);
+
+	AITwinPopulation const* GetSelectedPopulation(int32& OutSelectedInstanceIndex) const;
+
+	TWeakObjectPtr<AITwinSplineTool> SplineTool;
+
 	AITwinPopulation* selectedPopulation = nullptr;
 	std::optional<AITwinPopulation::FInteractiveTransformationScope> InteractiveTransformationScope;
 	int32 selectedInstanceIndex = INDEX_NONE;
+
+	inline int32 NumPopulations(EITwinPopulationType Type) const;
+
+	void OnActivatePicking(bool bActivate);
+
+	void OnSplineEditedInTool(bool bFinalEdit);
 
 	struct FCreatedInstance
 	{
@@ -259,6 +319,10 @@ public:
 
 	FVector::FReal InstancesScaleVariation = 0.2;
 	FVector::FReal InstancesRotationVariation = UE_DOUBLE_PI;
+	FVector::FReal InstancesRotationVariationMin = -InstancesRotationVariation;
+	FVector::FReal InstancesRotationVariationMax = InstancesRotationVariation;
+	FVector::FReal InstancesScaleVariationMin = -InstancesScaleVariation;
+	FVector::FReal InstancesScaleVariationMax = InstancesScaleVariation;
 	bool forcePerpendicularToSurface = false;
 
 	bool isEditingBrushSize = false;
@@ -316,6 +380,9 @@ public:
 
 	ETransformationMode GetTransformationMode() const { return transformationMode; }
 	void SetTransformationMode(ETransformationMode mode);
+
+	std::optional<FPopulationIdentifier> GetSelectedSplinePopulation() const;
+	bool SelectSplinePopulation(FPopulationIdentifier PopHandle, bool bEnterIsolationMode = true);
 
 	AITwinPopulation* GetSelectedPopulation() const { return selectedPopulation; }
 	int32 GetSelectedInstanceIndex() const { return selectedInstanceIndex; }
@@ -426,9 +493,98 @@ public:
 
 	void PopulationChanged(AITwinPopulation &population, EChangeType change, const FString &eventSource);
 
+	// Track a modification event for a spline population (Area/Path), when there is no specific
+	// AITwinPopulation instance to report (eg. spline point added/removed).
+	void SplinePopulationChanged(EITwinPopulationType PopulationType, EChangeType change,
+		const FString &eventSource = FString(), const FString &modificationKind = FString());
+
+	void OnSplineChanged(const FString &eventSource, const FString &modificationKind);
+
+	// Store whether the removal event was initiated by Unreal (delete key in 3D viewport) or
+	// iTwin Studio (trash icon in path property widget)
+	enum class ERemovalInitiator : uint8_t
+	{
+		Unreal,
+		ITS
+	};
+	std::optional<ERemovalInitiator> RemovalInitiatorOpt;
+
+	struct [[nodiscard]] FScopedRemovalContext
+	{
+		FImpl& Impl;
+
+		FScopedRemovalContext(FImpl& InImpl, ERemovalInitiator RemovalInitiator) : Impl(InImpl)
+		{
+			Impl.RemovalInitiatorOpt.emplace(RemovalInitiator);
+		}
+
+		~FScopedRemovalContext()
+		{
+			Impl.RemovalInitiatorOpt.reset();
+		}
+	};
+
 	// Population along / inside a spline
-	uint32 PopulateSpline();
-	uint32 PopulateSpline(AITwinSplineHelper const& TargetSpline);
+	/// Make the Spline Tool the active tool, with usage restricted to spline populations.
+	TWeakObjectPtr<AITwinSplineTool> ActivateSplineTool(UWorld* World, EITwinPopulationType PopulationType);
+	// Select a spline, or reset selection if InSplineHelper is null
+	void SelectSpline(AITwinSplineHelper* SplineHelper, UWorld* World);
+	/// Show/Hide population proxies for the given population type.
+	void SetPopulationProxyVisibility(EITwinPopulationType PopulationType, bool bVisibleInGame, bool bIsolationMode = false);
+	void ShowOnlyPopulationProxiesOfType(EITwinPopulationType SelectedType, bool bIsolationMode);
+	// Change all spline populations visibility in the viewport (without deactivating them)
+	void SetAllPopulationProxiesVisibility(bool bVisibleInGame);
+	void HideAllPopulationProxies() { SetAllPopulationProxiesVisibility(false); }
+	void PopulateSpline();
+	/// Requests an (asynchronous) population of the given spline.
+	/// \param bFinalEdit True when the spline reached a stable state (end of edition, parameter change...).
+	///        In such case any computation in progress for this spline is discarded and a new one is
+	///        started at once. When false (interactive edition in progress), the current computation is
+	///        kept, and a new one is scheduled right after it (coalescing all intermediate requests).
+	void PopulateSpline(AITwinSplineHelper const& TargetSpline, bool bFinalEdit = true);
+	bool RegisterPopulationSpline(AITwinSplineHelper* SplineHelper);
+
+	// ---- Asynchronous spline population ----
+	// The population is split in 3 phases:
+	//  1. (game thread) snapshot the spline and the sampling parameters,
+	//  2. (worker thread) sample the spline => list of positions,
+	//  3. (game thread) project positions onto the scene and create the instances.
+	struct FSplinePopulationJob
+	{
+		TWeakObjectPtr<AITwinSplineHelper const> Spline;
+		TSharedPtr<FITwinSplineSnapshotCurve> Curve;
+		BeUtils::SplineSamplingParameters SamplingParams;
+		BeUtils::BoundingBox SamplingBox;
+		glm::dvec3 AverageInstanceDims = glm::dvec3(0.0);
+		double BoundsMaxZ = 0.;
+		std::vector<glm::dvec3> Positions; // output of the worker thread
+		std::atomic<bool> bDone = false;
+		std::atomic<bool> bCancelled = false;
+	};
+	struct FSplinePopulationState
+	{
+		std::shared_ptr<FSplinePopulationJob> RunningJob;
+		bool bPendingRequest = false;
+	};
+	std::map<AdvViz::SDK::RefID, FSplinePopulationState> SplinePopulationStates;
+
+	bool StartSplinePopulationJob(AITwinSplineHelper const& TargetSpline, FSplinePopulationState& State);
+	void ApplySplinePopulationJob(FSplinePopulationJob& Job);
+	void TickSplinePopulationJobs();
+	void CancelSplinePopulationJobs(AdvViz::SDK::RefID const* SplineId = nullptr);
+
+	bool UnregisterPopulationSpline(AITwinSplineHelper* SplineBeingRemoved, bool bTriggeredFromITS);
+	bool RemovePopulation(FPopulationIdentifier PopHandle, bool bTriggeredFromITS);
+	void ZoomOnPopulation(FPopulationIdentifier PopHandle);
+	// For communication with iTwin Studio
+	AdvViz::SDK::RefID GetPopulationRefId(FPopulationIdentifier PopulationHandle) const;
+	FPopulationIdentifier GetPopulationIdentifier(AdvViz::SDK::RefID const& RefID) const;
+	/// Returns the unique identifier of a population from its index.
+	AdvViz::SDK::RefID GetPopulationId(EITwinPopulationType PopulationType, int32 PopulationIndex) const;
+	void ToggleSplineToolForSelectedPath();
+private:
+	FPopulationIdentifier GetPopulationIdentifierFromSpline(AdvViz::SDK::RefID const& RefID) const;
+	UITwinPopulationHelper* CreatePop(EITwinPopulationType PopType);
 };
 
 AITwinPopulationTool::FImpl::FImpl(AITwinPopulationTool& inOwner)
@@ -492,6 +648,20 @@ void AITwinPopulationTool::FImpl::SetMode(EPopulationToolMode mode)
 	else
 	{
 		HideBrushSphere();
+		if (toolMode == EPopulationToolMode::Area || toolMode == EPopulationToolMode::Path)
+		{
+			// Abort current spline population creation, if any
+			owner.AbortInteractiveCreation(true);
+
+			// Make sure we hide all spline population proxies (only the new item will be visible).
+			HideAllPopulationProxies();
+			// Start interactive drawing.
+			SplineTool = ActivateSplineTool(owner.GetWorld(), toolMode == EPopulationToolMode::Area? EITwinPopulationType::Area : EITwinPopulationType::Path);
+			if (SplineTool.IsValid())
+			{
+				SplineTool->StartInteractiveCreation();
+			}
+		}
 	}
 
 	if (bChangingMode)
@@ -502,6 +672,71 @@ void AITwinPopulationTool::FImpl::SetMode(EPopulationToolMode mode)
 	// Use interactive placement for the single instance mode.
 	// AzDev#2085006.
 	SetPreviewPlacedObject(toolMode == EPopulationToolMode::Instantiate);
+}
+
+void AITwinPopulationTool::FImpl::SetPopulationProxyVisibility(EITwinPopulationType PopulationType, bool bVisibleInGame, bool bIsolationMode/* = false*/)
+{
+	switch (PopulationType)
+	{
+		case EITwinPopulationType::Area:
+		case EITwinPopulationType::Path:
+		{
+			for (int32 i(0); i < NumPopulations(PopulationType); i++)
+			{
+				auto PopHelper = GetPopulationInfo(FPopulationIdentifier(PopulationType, i));
+				if (PopHelper && PopHelper->SplineHelper.IsValid())
+				{
+					const bool bShowSpline = bVisibleInGame
+						&& (!bIsolationMode || PopHelper->SplineHelper->IsSelected())
+						&& PopHelper->IsVisible();
+					PopHelper->SplineHelper->SetActorHiddenInGame(!bShowSpline);
+				}
+			}
+			break;
+		}
+	}
+}
+
+void AITwinPopulationTool::FImpl::ShowOnlyPopulationProxiesOfType(EITwinPopulationType SelectedType, bool bIsolationMode)
+{
+	for (EITwinPopulationType PopulationType : TEnumRange<EITwinPopulationType>())
+	{
+		SetPopulationProxyVisibility(PopulationType, PopulationType == SelectedType, bIsolationMode);
+	}
+}
+
+bool AITwinPopulationTool::FImpl::SelectSplinePopulation(FPopulationIdentifier PopHandle, bool bEnterIsolationMode)
+{
+	if (!ensure(PopHandle.IsValid(NumPopulations(PopHandle.PopulationType))))
+		return false;
+
+	bool bHasSetSelection = false;
+	auto PopHelper = GetPopulationInfo(PopHandle);
+	switch (PopHandle.PopulationType)
+	{
+		case EITwinPopulationType::Area:
+		case EITwinPopulationType::Path:
+		{
+			if (PopHelper && PopHelper->SplineHelper.IsValid())
+			{
+				SelectSpline(PopHelper->SplineHelper.Get(), owner.GetWorld());
+
+				bHasSetSelection = PopHelper->SplineHelper->IsSelected();
+			}
+			break;
+		}
+		BE_UNCOVERED_ENUM_ASSERT_AND_BREAK(case EITwinPopulationType::Count:);
+	}
+	if (bEnterIsolationMode && bHasSetSelection)
+	{
+		ShowOnlyPopulationProxiesOfType(PopHandle.PopulationType, true);
+	}
+	return bHasSetSelection;
+}
+
+bool AITwinPopulationTool::SelectSplinePopulation(FPopulationIdentifier PopHandle, bool bEnterIsolationMode)
+{
+	return Impl->SelectSplinePopulation(PopHandle, bEnterIsolationMode);
 }
 
 void AITwinPopulationTool::FImpl::SetTransformationMode(ETransformationMode mode)
@@ -560,7 +795,8 @@ bool AITwinPopulationTool::FImpl::ShowOnlyTranslationZGizmo() const
 
 bool AITwinPopulationTool::FImpl::IsPopulationModeActivated() const
 {
-	return toolMode == EPopulationToolMode::Instantiate || IsBrushModeActivated();
+	return toolMode == EPopulationToolMode::Instantiate || IsBrushModeActivated() || 
+		   toolMode == EPopulationToolMode::Area || toolMode == EPopulationToolMode::Path;
 }
 
 bool AITwinPopulationTool::FImpl::IsBrushModeActivated() const
@@ -635,6 +871,10 @@ FTransform AITwinPopulationTool::FImpl::GetSelectionTransform() const
 		{
 			return selectedPopulation->GetInstanceTransform(selectedInstanceIndex);
 		}
+	}
+	else if (SplineTool.IsValid() && SplineTool->HasSelection())
+	{
+		return SplineTool->GetSelectionTransform();
 	}
 
 	return FTransform();
@@ -997,6 +1237,16 @@ void AITwinPopulationTool::FImpl::SetInteractivePlacement(bool bInInteractivePla
 	}
 }
 
+bool AITwinPopulationTool::IsSplineToolActive(FPopulationIdentifier PopHandle) const
+{
+	if (auto PopHelper = Impl->GetPopulationInfo(PopHandle))
+	{
+		if (Impl->SplineTool.IsValid() && Impl->SplineTool->GetSelectedSpline() == PopHelper->SplineHelper.Get())
+			return Impl->SplineTool->IsInteractiveCreationMode();
+	}
+	return false;
+}
+
 bool AITwinPopulationTool::FImpl::StartInteractiveCreation()
 {
 	Be::CleanUpGuard RestoreStateCleanup([this]
@@ -1004,6 +1254,10 @@ bool AITwinPopulationTool::FImpl::StartInteractiveCreation()
 		SetInteractivePlacement(false);
 	});
 	SetInteractivePlacement(true);
+	// Reset group ID to static instances group, in case it was left pointing to a spline group
+	// after creating a spline population (area/path). Without this, the previewed instance would
+	// be created in the spline group and marked as a spline population, making it unselectable.
+	UpdateGroupId(nullptr);
 	if (!AddSingleInstanceAtViewCenter(true))
 	{
 		return false;
@@ -1181,10 +1435,14 @@ bool AITwinPopulationTool::FImpl::DoMouseClickAction()
 		//
 		// Note that this fix is generic: if we allow the user to hide populations by hand in the future, it
 		// will be useful as well.
+		// 
+		// We should also not be able to select instances of path or region populations
 		TArray<AActor*> const& AllPopulationActors = GetAllPopulations();
 		for (auto PopulationActor : AllPopulationActors)
 		{
-			if (Cast<AITwinPopulation const>(PopulationActor)->IsHiddenInGame())
+			if (Cast<AITwinPopulation const>(PopulationActor)->IsHiddenInGame()
+			 ||	Cast<AITwinPopulation const>(PopulationActor)->IsSplinePopulation() 
+			 || Cast<AITwinPopulation const>(PopulationActor)->IsPartOfPathAnimation())
 				ActorsToIgnore.Push(PopulationActor);
 		}
 	}
@@ -1259,6 +1517,10 @@ bool AITwinPopulationTool::FImpl::DoMouseClickAction()
 
 void AITwinPopulationTool::FImpl::Tick(float DeltaTime)
 {
+	// Async spline populations must progress even when the tool is not enabled (eg. after leaving the
+	// population tool while a computation was still running).
+	TickSplinePopulationJobs();
+
 	if (!enabled)
 		return;
 	if (IsBrushModeActivated())
@@ -1281,6 +1543,7 @@ void AITwinPopulationTool::FImpl::Tick(float DeltaTime)
 		// Add/remove instances in the brush zone.
 		if (hitResult.GetActor() && IsBrushing())
 		{
+			UpdateGroupId(nullptr);
 			auto const& EditedPopulationsActors = GetEditedPopulations();
 			if (!EditedPopulationsActors.empty() && toolMode == EPopulationToolMode::InstantiateN)
 			{
@@ -1317,7 +1580,10 @@ void AITwinPopulationTool::FImpl::Tick(float DeltaTime)
 						{
 							AITwinPopulation* HitPopulation = Cast<AITwinPopulation>(hitActor);
 							// Never remove hidden instances (clipping primitives, typically).
-							if (!HitPopulation->IsHiddenInGame())
+							// Also don't remove instances of path and region populations or path animation.
+							if (!HitPopulation->IsHiddenInGame() 
+							&& !HitPopulation->IsSplinePopulation() 
+							&& !HitPopulation->IsPartOfPathAnimation())
 								hitsByPopulation[HitPopulation].AddUnique(hitRes.Item);
 						}
 					}
@@ -1429,7 +1695,7 @@ bool AITwinPopulationTool::FImpl::ComputeTransformFromHitResult(
 		else
 		{
 			RotVar = FMath::FRandRange(
-				-InstancesRotationVariation, InstancesRotationVariation);
+				InstancesRotationVariationMin, InstancesRotationVariationMax);
 
 			if (bStartingInteractiveCreation)
 			{
@@ -1486,7 +1752,7 @@ bool AITwinPopulationTool::FImpl::ComputeTransformFromHitResult(
 		}
 		else
 		{
-			ScaleVar = FMath::FRandRange(-InstancesScaleVariation, InstancesScaleVariation);
+			ScaleVar = FMath::FRandRange(InstancesScaleVariationMin, InstancesScaleVariationMax);
 
 			if (bStartingInteractiveCreation)
 			{
@@ -1494,7 +1760,7 @@ bool AITwinPopulationTool::FImpl::ComputeTransformFromHitResult(
 				SavedTransform.ScaleVariation = ScaleVar;
 			}
 		}
-		hitMat = hitMat.ApplyScale(1. + ScaleVar);
+		hitMat = hitMat.ApplyScale(population->IsSplinePopulation()? ScaleVar : 1. + ScaleVar);
 	}
 
 	transform.SetFromMatrix(hitMat);
@@ -1899,8 +2165,8 @@ void AITwinPopulationTool::FImpl::StartDragging(AITwinPopulation* population)
 		DraggedPopTreeUpdateDisabler.reset();
 		DraggedPopTreeUpdateDisabler.emplace(*draggedAssetPopulation);
 	}
-	DraggingRotVar = FMath::FRandRange(-InstancesRotationVariation, InstancesRotationVariation);
-	DraggingScaleVar = FMath::FRandRange(-InstancesScaleVariation, InstancesScaleVariation);
+	DraggingRotVar = FMath::FRandRange(InstancesRotationVariationMin, InstancesRotationVariationMax);
+	DraggingScaleVar = FMath::FRandRange(InstancesScaleVariationMin, InstancesScaleVariationMax);
 	UpdatePopulationsArray();
 	UpdatePopulationsCollisionType();
 }
@@ -1928,14 +2194,37 @@ void AITwinPopulationTool::FImpl::DeleteInstanceFromPopulation(
 
 namespace
 {
-
+	bool IsSplineUsedForPopulation(AITwinSplineHelper* SplineHelper)
+	{
+		return SplineHelper && ITwinSpline::IsPopulation(SplineHelper->GetUsage());
+	}
 }
 
-uint32 AITwinPopulationTool::FImpl::PopulateSpline()
+TWeakObjectPtr<AITwinSplineTool> AITwinPopulationTool::FImpl::ActivateSplineTool(UWorld* World, EITwinPopulationType PopulationType)
+{
+	ensure(SplineTool.IsValid());
+	return ITwin::ActivateSplineTool(World, PopulationType == EITwinPopulationType::Area? EITwinSplineUsage::PopulationZone : EITwinSplineUsage::PopulationPath, SplineTool);
+}
+
+void AITwinPopulationTool::FImpl::SelectSpline(AITwinSplineHelper* SplineHelper, UWorld* World)
+{
+	ensure(SplineTool.IsValid());
+	ITwin::SelectSpline(SplineHelper, INDEX_NONE, World, SplineTool);
+}
+
+void AITwinPopulationTool::FImpl::SetAllPopulationProxiesVisibility(bool bVisibleInGame)
+{
+	for (EITwinPopulationType PopType : TEnumRange<EITwinPopulationType>())
+	{
+		SetPopulationProxyVisibility(PopType, bVisibleInGame);
+	}
+}
+
+void AITwinPopulationTool::FImpl::PopulateSpline()
 {
 	if (!owner.SelectedSpline.IsValid())
-		return 0;
-	return PopulateSpline(*owner.SelectedSpline);
+		return;
+	PopulateSpline(*owner.SelectedSpline, /*bFinalEdit*/true);
 }
 
 void AITwinPopulationTool::FImpl::UpdateGroupId(AITwinSplineHelper const* CurSpline)
@@ -1992,7 +2281,7 @@ void AITwinPopulationTool::FImpl::PopulationChanged(AITwinPopulation& population
 
 	if (population.IsClippingPrimitive())
 	{
-		properties.bIsPrimitive = true;
+		properties.FeatureType = EFeatureType::Clipping;
 		properties.AddProperty(TEXT("cutout_type"), population.GetObjectTypeName());
 		if (change == EChangeType::Modified)
 		{
@@ -2001,6 +2290,7 @@ void AITwinPopulationTool::FImpl::PopulationChanged(AITwinPopulation& population
 	}
 	else
 	{
+		properties.FeatureType = EFeatureType::PopulationObject;
 		std::string componentName = population.GetObjectRef();
 		componentName = componentName.substr(componentName.find_last_of("/") + 1);
 		properties.AddProperty(TEXT("component_name"), UTF8_TO_TCHAR(componentName.c_str()));
@@ -2011,52 +2301,165 @@ void AITwinPopulationTool::FImpl::PopulationChanged(AITwinPopulation& population
 		}
 	}
 	properties.AddProperty(TEXT("event_source"), eventSource);
+	owner.PopulationChangedEvent.Broadcast(properties);
+}
+
+void AITwinPopulationTool::FImpl::SplinePopulationChanged(EITwinPopulationType PopulationType, EChangeType change,
+	const FString& eventSource /*= FString()*/, const FString& modificationKind /*= FString()*/)
+{
+	FFeatureEventProperties properties;
+	properties.ChangeType = change;
+	properties.FeatureType = EFeatureType::PopulationSpline;
+
+	FString population_type;
+	switch (PopulationType)
+	{
+	case EITwinPopulationType::Area: population_type = TEXT("area"); break;
+	case EITwinPopulationType::Path: population_type = TEXT("path"); break;
+	default: break;
+	}
+	properties.AddProperty(TEXT("population_type"), population_type);
+	if (!eventSource.IsEmpty())
+	{
+		properties.AddProperty(TEXT("event_source"), eventSource);
+	}
+	if (!modificationKind.IsEmpty())
+	{
+		properties.AddProperty(TEXT("population_setting"), modificationKind);
+	}
 
 	owner.PopulationChangedEvent.Broadcast(properties);
 }
 
-uint32 AITwinPopulationTool::FImpl::PopulateSpline(AITwinSplineHelper const& TargetSpline)
+void AITwinPopulationTool::FImpl::PopulateSpline(AITwinSplineHelper const& TargetSpline, bool bFinalEdit /*= true*/)
 {
 	if (!TargetSpline.GetSplineComponent())
-		return 0;
+		return;
 
+	FSplinePopulationState& State = SplinePopulationStates[TargetSpline.GetAVizSplineId()];
+
+	if (State.RunningJob && !State.RunningJob->bDone)
+	{
+		if (bFinalEdit)
+		{
+			// The edition is finished: discard the computation in progress (its result would be obsolete
+			// anyway) and force a new computation from the final state of the spline.
+			State.RunningJob->bCancelled = true;
+			State.RunningJob.reset();
+			State.bPendingRequest = false;
+		}
+		else
+		{
+			// Interactive edition: keep the current computation running, and remember that a new one should
+			// be launched as soon as it is over (all intermediate requests are coalesced into one).
+			State.bPendingRequest = true;
+			return;
+		}
+	}
+	State.bPendingRequest = false;
+	StartSplinePopulationJob(TargetSpline, State);
+}
+
+bool AITwinPopulationTool::FImpl::StartSplinePopulationJob(AITwinSplineHelper const& TargetSpline,
+	FSplinePopulationState& State)
+{
 	UpdateGroupId(&TargetSpline);
+
+	FPopulationIdentifier popHandle = GetPopulationIdentifierFromSpline(TargetSpline.GetAVizSplineId());
+	auto popHelper = GetMutablePopulationInfo(popHandle);
+	if (!popHelper)
+		return false;
+
+	// Note: the existing instances are kept visible until the new result is ready (they are removed in
+	// ApplySplinePopulationJob).
+
+	ClearUsedAssets();
+	for (auto assetPath : popHelper->Get3DObjects())
+	{
+		if (!assetPath.IsEmpty())
+			SetUsedAsset(assetPath, true);
+	}
 
 	const bool bForceUpdateEditedPopulations = EditedPopulations.empty();
 	auto const& EditedPopulationsActors = GetEditedPopulations(bForceUpdateEditedPopulations);
-	if (EditedPopulationsActors.empty())
-		return 0;
 
-	// First remove all instances populated on this spline.
-	for (AITwinPopulation* Population : EditedPopulationsActors)
+	// When an asset is used for the first time in the application, its component may still be
+	// downloading/mounting: in such case, AITwinDecorationHelper::GetOrCreatePopulation returns null
+	// (the population actor is created later, once the component is available), and the asset is thus
+	// missing from EditedPopulationsActors. Schedule a retry of the whole population as soon as all
+	// population actors exist, so that the user does not have to trigger a new computation by hand.
 	{
-		Population->RemoveAllInstances();
+		TArray<FString> PendingAssets;
+		for (auto const& assetPath : popHelper->Get3DObjects())
+		{
+			if (!assetPath.IsEmpty() && !decorationHelper->GetPopulation(assetPath, instanceGroupId))
+				PendingAssets.Add(assetPath);
+		}
+		if (!PendingAssets.IsEmpty())
+		{
+			TWeakObjectPtr<AITwinPopulationTool> weakOwner(&owner);
+			TWeakObjectPtr<AITwinSplineHelper const> weakSpline(&TargetSpline);
+			AdvViz::SDK::RefID const GroupId = instanceGroupId;
+			std::string const delayedCallId =
+				"RetryPopulateSplineOnAssetLoaded_" + std::to_string(TargetSpline.GetAVizSplineId().ID());
+			AdvViz::SDK::UniqueDelayedCall(delayedCallId,
+				[weakOwner, weakSpline, GroupId, PendingAssets = MoveTemp(PendingAssets)]()
+				-> AdvViz::SDK::DelayedCall::EReturnedValue
+				{
+					if (!weakOwner.IsValid() || !weakSpline.IsValid() || !weakOwner->Impl->decorationHelper)
+						return AdvViz::SDK::DelayedCall::EReturnedValue::Done;
+					auto& Impl = *weakOwner->Impl;
+					for (FString const& assetPath : PendingAssets)
+					{
+						// Use GetPopulation (and not GetOrCreatePopulation) to avoid re-triggering downloads.
+						if (!Impl.decorationHelper->GetPopulation(assetPath, GroupId))
+							return AdvViz::SDK::DelayedCall::EReturnedValue::Repeat;
+					}
+					// Force re-collection of edited populations, so that the newly created ones are used.
+					Impl.EditedPopulations.clear();
+					Impl.PopulateSpline(*weakSpline, /*bFinalEdit*/true);
+					return AdvViz::SDK::DelayedCall::EReturnedValue::Done;
+				},
+				0.25f);
+		}
 	}
 
-	FITwinUESplineCurve const Curve(*TargetSpline.GetSplineComponent());
+	if (EditedPopulationsActors.empty())
+	{
+		// Nothing can be populated (yet): clear obsolete instances, if any.
+		if (popHelper->Populations.Num() > 0)
+			RemovePopulationObjects(popHelper);
+		return false;
+	}
 
-	BeUtils::SplineSamplingParameters SamplingParams;
+	auto Job = std::make_shared<FSplinePopulationJob>();
+	Job->Spline = &TargetSpline;
+
+	BeUtils::SplineSamplingParameters& SamplingParams = Job->SamplingParams;
 	SamplingParams.samplingMode = (TargetSpline.GetUsage() == EITwinSplineUsage::PopulationZone)
 		? BeUtils::ESplineSamplingMode::Interior
 		: BeUtils::ESplineSamplingMode::AlongPath;
-	//SamplingParams.fixedNbInstances = 10;
-	//SamplingParams.fixedSpacing = glm::dvec2(5. * 100); // 5m
+	SamplingParams.density = popHelper->GetDensity();
+	SamplingParams.forceAligned = popHelper->GetMode() == EITwinSplinePopulationMode::Regular 
+								  || TargetSpline.GetUsage() == EITwinSplineUsage::PopulationPath;
+	SamplingParams.gridRotAngle = FMath::DegreesToRadians(popHelper->GetGridRotation());
+	SamplingParams.forbidOverlap = popHelper->IsAvoidOverlapping();
 
-	// The transformation to world is "baked" in FUESplineCurve.
-	BeUtils::TransformHolder const IdentityTsf;
+	// Use CalcBounds directly, it works in all build configurations 
+	// (unlike GetActorBounds which doesn't seem to work properly in shipping, only works in editor for some reason).
+	USplineComponent const* SplineComp = TargetSpline.GetSplineComponent();
+	FBoxSphereBounds SplineBounds = SplineComp->CalcBounds(SplineComp->GetComponentTransform());
+	FVector BoundsMin = SplineBounds.Origin - SplineBounds.BoxExtent;
+	FVector BoundsMax = SplineBounds.Origin + SplineBounds.BoxExtent;
 
-	FVector SplineOrigin, SplineExtent;
-	TargetSpline.GetActorBounds(false, SplineOrigin, SplineExtent);
-	FVector BoundsMin = SplineOrigin - SplineExtent;
-	FVector BoundsMax = SplineOrigin + SplineExtent;
-
-	BeUtils::BoundingBox SamplingBox;
+	BeUtils::BoundingBox& SamplingBox = Job->SamplingBox;
 	SamplingBox.min[0] = BoundsMin.X;
 	SamplingBox.min[1] = BoundsMin.Y;
 	SamplingBox.min[2] = BoundsMin.Z;
 	SamplingBox.max[0] = BoundsMax.X;
 	SamplingBox.max[1] = BoundsMax.Y;
 	SamplingBox.max[2] = BoundsMax.Z;
+	Job->BoundsMaxZ = BoundsMax.Z;
 
 	glm::dvec3 AccumBBoxDims(0.0);
 	for (AITwinPopulation const* Population : EditedPopulationsActors)
@@ -2065,21 +2468,177 @@ uint32 AITwinPopulationTool::FImpl::PopulateSpline(AITwinSplineHelper const& Tar
 		AccumBBoxDims += glm::dvec3(BoxSize.X, BoxSize.Y, BoxSize.Z);
 	}
 	glm::dvec3 const AverageInstanceDims = AccumBBoxDims / (double)EditedPopulationsActors.size();
+	Job->AverageInstanceDims = AverageInstanceDims;
 
-	std::vector<glm::dvec3> Positions;
-	BeUtils::SampleSpline(Curve, IdentityTsf, SamplingBox, AverageInstanceDims, SamplingParams, Positions);
+	if (SamplingParams.forceAligned) {
+		if (!popHelper->IsSpacingRandomized())
+		{
+			const double distance = popHelper->GetDistance() * 100.0;
+			if (distance > 0.)
+				SamplingParams.fixedSpacing = glm::dvec2(distance);
+			else if (SamplingParams.samplingMode == BeUtils::ESplineSamplingMode::AlongPath)
+				SamplingParams.fixedSpacing = glm::dvec2(AverageInstanceDims.x);
+		}
+		else if (popHelper->IsSpacingRandomized())
+			SamplingParams.randomSpacing = glm::dvec2(popHelper->GetDistanceRange().GetLowerBoundValue(), popHelper->GetDistanceRange().GetUpperBoundValue()) * 100.0;
+	}
 
+	// Snapshot the spline (the live USplineComponent must not be accessed from the worker thread).
+	Job->Curve = MakeShared<FITwinSplineSnapshotCurve>(*SplineComp);
+
+	State.RunningJob = Job;
+
+	BE_LOGD("ITwinPopulation", "Starting async population of spline " << TargetSpline.GetAVizSplineId().ID());
+
+	// Phase 2: sampling on a worker thread. The job is kept alive by the lambda; it is only read from
+	// the game thread once bDone is set.
+	Async(EAsyncExecution::ThreadPool, [Job]()
+	{
+		if (!Job->bCancelled)
+		{
+			// The transformation to world is "baked" in the snapshot curve.
+			BeUtils::TransformHolder const IdentityTsf;
+			BeUtils::SampleSpline(*Job->Curve, IdentityTsf, Job->SamplingBox, Job->AverageInstanceDims,
+				Job->SamplingParams, Job->Positions);
+		}
+		Job->bDone = true;
+	});
+	return true;
+}
+
+void AITwinPopulationTool::FImpl::TickSplinePopulationJobs()
+{
+	if (SplinePopulationStates.empty())
+		return;
+
+	for (auto It = SplinePopulationStates.begin(); It != SplinePopulationStates.end(); )
+	{
+		FSplinePopulationState& State = It->second;
+		if (!State.RunningJob)
+		{
+			It = SplinePopulationStates.erase(It);
+			continue;
+		}
+		if (!State.RunningJob->bDone)
+		{
+			++It;
+			continue;
+		}
+		std::shared_ptr<FSplinePopulationJob> Job = std::move(State.RunningJob);
+		State.RunningJob.reset();
+
+		if (!Job->bCancelled && Job->Spline.IsValid())
+		{
+			ApplySplinePopulationJob(*Job);
+		}
+
+		if (State.bPendingRequest && Job->Spline.IsValid())
+		{
+			// An edition occurred while we were computing: launch the coalesced request now.
+			State.bPendingRequest = false;
+			StartSplinePopulationJob(*Job->Spline, State);
+			++It;
+		}
+		else
+		{
+			It = SplinePopulationStates.erase(It);
+		}
+	}
+}
+
+void AITwinPopulationTool::FImpl::CancelSplinePopulationJobs(AdvViz::SDK::RefID const* SplineId /*= nullptr*/)
+{
+	auto CancelState = [](FSplinePopulationState& State)
+	{
+		if (State.RunningJob)
+			State.RunningJob->bCancelled = true;
+		State.RunningJob.reset();
+		State.bPendingRequest = false;
+	};
+	if (SplineId)
+	{
+		auto It = SplinePopulationStates.find(*SplineId);
+		if (It != SplinePopulationStates.end())
+		{
+			CancelState(It->second);
+			SplinePopulationStates.erase(It);
+		}
+	}
+	else
+	{
+		for (auto& [Id, State] : SplinePopulationStates)
+			CancelState(State);
+		SplinePopulationStates.clear();
+	}
+}
+
+void AITwinPopulationTool::FImpl::ApplySplinePopulationJob(FSplinePopulationJob& Job)
+{
+	AITwinSplineHelper const& TargetSpline = *Job.Spline;
+	USplineComponent const* SplineComp = TargetSpline.GetSplineComponent();
+	if (!SplineComp)
+		return;
+
+	UpdateGroupId(&TargetSpline);
+
+	FPopulationIdentifier popHandle = GetPopulationIdentifierFromSpline(TargetSpline.GetAVizSplineId());
+	auto popHelper = GetMutablePopulationInfo(popHandle);
+	if (!popHelper)
+		return;
+
+	// Now that the new result is ready, remove all instances previously populated on this spline.
+	if (popHelper->Populations.Num() > 0)
+		RemovePopulationObjects(popHelper);
+
+	// The used assets may have changed while the job was running (eg. another spline was selected):
+	// re-target them to this spline's objects.
+	ClearUsedAssets();
+	for (auto const& assetPath : popHelper->Get3DObjects())
+	{
+		if (!assetPath.IsEmpty())
+			SetUsedAsset(assetPath, true);
+	}
+	auto const& EditedPopulationsActors = GetEditedPopulations(/*bForceUpdateArray*/true);
+	if (EditedPopulationsActors.empty())
+		return;
+
+	std::vector<glm::dvec3> const& Positions = Job.Positions;
 	if (Positions.empty())
-		return 0;
+		return;
 
 	uint32 NumAddedInstances = 0;
 	// Project sampled spline position onto scene.
 	UWorld const* World = owner.GetWorld();
-	float const ZStart = static_cast<float>(BoundsMax.Z + 1e5);
+	float const ZStart = static_cast<float>(Job.BoundsMaxZ + 1e5);
 	FVector const TraceDir = FVector::DownVector;
 	FITwinTracingHelper TracingHelper;
 	UpdatePopulationsArray();
 	TracingHelper.AddIgnoredActors(GetAllPopulations());
+	TArray<AActor const*> ActorsToIgnore;
+	if (owner.GizmoActorClass)
+	{
+		ActorsToIgnore.Add(UGameplayStatics::GetActorOfClass(World, owner.GizmoActorClass));
+	}
+	ITwin::AppendSplineHelpers(ActorsToIgnore, World);
+	TracingHelper.AddIgnoredActors(ActorsToIgnore);
+	InstancesRotationVariation = FMath::DegreesToRadians(popHelper->GetRotation());
+	InstancesScaleVariation = popHelper->GetScale();
+	InstancesRotationVariationMin = InstancesRotationVariation;
+	InstancesRotationVariationMax = InstancesRotationVariation;
+	InstancesScaleVariationMin = InstancesScaleVariation;
+	InstancesScaleVariationMax = InstancesScaleVariation;
+	if (popHelper->IsRotationRandomized())
+	{
+		InstancesRotationVariationMin = FMath::DegreesToRadians(popHelper->GetRotationRange().GetLowerBoundValue());
+		InstancesRotationVariationMax = FMath::DegreesToRadians(popHelper->GetRotationRange().GetUpperBoundValue());
+		InstancesRotationVariation = FMath::Abs(InstancesRotationVariationMax - InstancesRotationVariationMin);
+	}
+	if (popHelper->IsScaleRandomized())
+	{
+		InstancesScaleVariationMin = popHelper->GetScaleRange().GetLowerBoundValue();
+		InstancesScaleVariationMax = popHelper->GetScaleRange().GetUpperBoundValue();
+		InstancesScaleVariation = FMath::Abs(InstancesScaleVariationMax - InstancesScaleVariationMin);
+	}
 	for (glm::dvec3 const& SplinePos : Positions)
 	{
 		// Project spline position onto ground
@@ -2094,13 +2653,100 @@ uint32 AITwinPopulationTool::FImpl::PopulateSpline(AITwinSplineHelper const& Tar
 		AITwinPopulation* Population = EditedPopulationsActors[popIndex];
 
 		FTransform InstTransform;
+		if (TargetSpline.GetUsage() == EITwinSplineUsage::PopulationZone 
+			|| TargetSpline.GetUsage() == EITwinSplineUsage::PopulationPath)
+			Population->SetSplinePopulation(true);
 		if (ComputeTransformFromHitResult(HitResult, InstTransform, Population))
 		{
+			// For path populations in Relative rotation mode, orient the instance along the spline tangent.
+			if (TargetSpline.GetUsage() == EITwinSplineUsage::PopulationPath
+				&& popHelper->GetRotationMode() == EITwinPathPopulationRotationMode::Relative)
+			{
+				// Find the closest input key on the spline to get the tangent direction.
+				FVector InstanceLocation = InstTransform.GetTranslation();
+				float ClosestInputKey = SplineComp->FindInputKeyClosestToWorldLocation(InstanceLocation);
+				FVector SplineTangent = SplineComp->GetTangentAtSplineInputKey(ClosestInputKey, ESplineCoordinateSpace::World);
+				SplineTangent.Z = 0.;
+				if (SplineTangent.Normalize(1e-6))
+				{
+					FQuat::FReal SplineYaw = FMath::Atan2(SplineTangent.Y, SplineTangent.X) + UE_HALF_PI;
+					FQuat CurrentRotation = InstTransform.GetRotation();
+					FQuat SplineRotation(FVector::ZAxisVector, SplineYaw);
+					FQuat FinalRotation = SplineRotation * CurrentRotation;
+					InstTransform.SetRotation(FinalRotation);
+				}
+			}
 			Population->AddInstance(InstTransform);
+			popHelper->Populations.Add(Population);
 			NumAddedInstances++;
 		}
 	}
-	return NumAddedInstances;
+	InstancesRotationVariation = UE_DOUBLE_PI;
+	InstancesScaleVariation = 0.2;
+	InstancesRotationVariationMin = -InstancesRotationVariation;
+	InstancesRotationVariationMax = InstancesRotationVariation;
+	InstancesScaleVariationMin = -InstancesScaleVariation;
+	InstancesScaleVariationMax = InstancesScaleVariation;
+
+	BE_LOGD("ITwinPopulation", "Async population of spline " << TargetSpline.GetAVizSplineId().ID()
+		<< " applied: " << NumAddedInstances << " instance(s)");
+
+	owner.SelectedPopulationModifiedEvent.Broadcast();
+}
+
+UITwinPopulationHelper* AITwinPopulationTool::FImpl::CreatePop(EITwinPopulationType PopType)
+{
+	switch (PopType)
+	{
+	case EITwinPopulationType::Area:
+	{
+		TStrongObjectPtr<UITwinAreaPopulationHelper> AreaInfo(NewObject<UITwinAreaPopulationHelper>(&owner));
+		AreaInfos.Add(AreaInfo);
+		return AreaInfo.Get();
+	}
+	case EITwinPopulationType::Path:
+	{
+		TStrongObjectPtr<UITwinPathPopulationHelper> PathInfo(NewObject<UITwinPathPopulationHelper>(&owner));
+		PathInfos.Add(PathInfo);
+		return PathInfo.Get();
+	}
+	BE_UNCOVERED_ENUM_ASSERT_AND_RETURN(case EITwinPopulationType::Count:, nullptr);
+	}
+}
+
+bool AITwinPopulationTool::FImpl::RegisterPopulationSpline(AITwinSplineHelper* SplineHelper)
+{
+	// This function is called when a new spline is created with the Spline Tool, and also when an existing spline
+	// is loaded from the server. If we are loading an existing population spline from server, we should wait until
+	// all the populations are loaded before registering them here
+	if (SplineHelper->GetAVizSplineId().HasDBIdentifier())
+		return false;
+
+	// Check whether it's actually a new spline and not interactive edition of an existing one
+	if (GetPopulationIdentifierFromSpline(SplineHelper->GetAVizSplineId()).IsValid())
+		return false;
+
+	FPopulationIdentifier PopHandle;
+	PopHandle.PopulationType = GetPopulationTypeFromSplineUsage(SplineHelper->GetUsage());
+	PopHandle.PopulationIndex = NumPopulations(PopHandle.PopulationType);
+
+	UITwinPopulationHelper* PopHelper = CreatePop(PopHandle.PopulationType);
+	if (!PopHelper)
+		return false;
+
+	auto PopPropPtr = populationManager->AddPopulationInfo();
+	auto PopProp = PopPropPtr->GetAutoLock();
+	PopProp->SetSplineId(SplineHelper->GetAVizSplineId());
+	PopProp->SetShouldSave(true);
+	PopHelper->Init(SplineHelper, PopPropPtr);
+
+	PopulateSpline(*SplineHelper, /*bFinalEdit*/true);
+
+	SplinePopulationChanged(PopHandle.PopulationType, EChangeType::Added);
+
+	owner.PopulationListModifiedEvent.Broadcast();
+	owner.PopulationAddedEvent.Broadcast(PopHandle);
+	return true;
 }
 
 // -----------------------------------------------------------------------------
@@ -2124,6 +2770,10 @@ void AITwinPopulationTool::SetMode(EPopulationToolMode mode)
 
 ETransformationMode AITwinPopulationTool::GetTransformationMode() const
 {
+	if (Impl->GetSelectedSplinePopulation())
+	{
+		return ETransformationMode::Move;
+	}
 	return Impl->GetTransformationMode();
 }
 
@@ -2164,7 +2814,7 @@ bool AITwinPopulationTool::HasSelectedInstance() const
 
 bool AITwinPopulationTool::HasSelectionImpl() const
 {
-	return Impl->HasSelectedInstance();
+	return Impl->HasSelectedInstance() || GetSelectedSplinePopulation();
 }
 
 void AITwinPopulationTool::DeleteSelectionImpl()
@@ -2226,6 +2876,392 @@ float AITwinPopulationTool::GetBrushSize() const
 void AITwinPopulationTool::SetBrushSize(float size)
 {
 	Impl->SetBrushSize(size);
+}
+
+float AITwinPopulationTool::GetDensity(FPopulationIdentifier PopHandle) const
+{
+	ensure(PopHandle.PopulationType == EITwinPopulationType::Area);
+	if (auto PopulationInfo = Impl->GetPopulationInfo(PopHandle))
+		return PopulationInfo->GetDensity();
+	return 0.f;
+}
+
+void AITwinPopulationTool::SetDensity(FPopulationIdentifier PopHandle, float Density)
+{
+	ensure(PopHandle.PopulationType == EITwinPopulationType::Area);
+	if (auto PopulationInfo = Impl->GetMutablePopulationInfo(PopHandle))
+	{
+		PopulationInfo->SetDensity(Density);
+		PopulateSpline(*PopulationInfo->SplineHelper);
+	}
+}
+
+float AITwinPopulationTool::GetScale(FPopulationIdentifier PopHandle) const
+{
+	ensure(PopHandle.PopulationType == EITwinPopulationType::Area || PopHandle.PopulationType == EITwinPopulationType::Path);
+	if (auto PopulationInfo = Impl->GetPopulationInfo(PopHandle))
+		return PopulationInfo->GetScale();
+	return 0.f;
+}
+
+void AITwinPopulationTool::SetScale(FPopulationIdentifier PopHandle, float Scale)
+{
+	ensure(PopHandle.PopulationType == EITwinPopulationType::Area || PopHandle.PopulationType == EITwinPopulationType::Path);
+	if (auto PopulationInfo = Impl->GetMutablePopulationInfo(PopHandle))
+	{
+		PopulationInfo->SetScale(Scale);
+		if (PopHandle.PopulationType == EITwinPopulationType::Path)
+		{
+			Impl->ApplyScaleRangeToPopulationInstances(PopulationInfo, FFloatRange(Scale, Scale));
+		}
+		else
+		{
+			PopulateSpline(*PopulationInfo->SplineHelper);
+		}
+	}
+}
+
+float AITwinPopulationTool::GetRotation(FPopulationIdentifier PopHandle) const
+{
+	ensure(PopHandle.PopulationType == EITwinPopulationType::Area || PopHandle.PopulationType == EITwinPopulationType::Path);
+	if (auto PopulationInfo = Impl->GetPopulationInfo(PopHandle))
+		return PopulationInfo->GetRotation();
+	return 0.f;
+}
+
+void AITwinPopulationTool::FImpl::ApplyScaleRangeToPopulationInstances(
+	UITwinPopulationHelper* PopHelper, const FFloatRange& NewRange)
+{
+	if (!PopHelper)
+		return;
+
+	const float NewMin = NewRange.GetLowerBoundValue();
+	const float NewMax = NewRange.GetUpperBoundValue();
+
+	for (auto PopulationWeak : PopHelper->Populations)
+	{
+		AITwinPopulation* Population = PopulationWeak.Get();
+		if (!Population)
+			continue;
+
+		if (!Population->IsScaleVariationEnabled())
+			continue;
+
+		const bool bIsSplinePop = Population->IsSplinePopulation();
+		const int32 NumInstances = Population->GetNumberOfInstances();
+		for (int32 i = 0; i < NumInstances; ++i)
+		{
+			FTransform InstTransform = Population->GetInstanceTransform(i);
+
+			const FVector::FReal NewScaleVar = FMath::FRandRange(NewMin, NewMax);
+			const FVector::FReal NewScaleValue = bIsSplinePop ? NewScaleVar : 1. + NewScaleVar;
+
+			InstTransform.SetScale3D(FVector(NewScaleValue));
+			Population->SetInstanceTransform(i, InstTransform);
+		}
+	}
+}
+
+void AITwinPopulationTool::FImpl::ApplyRotationRangeToPopulationInstances(
+	UITwinPopulationHelper* PopHelper, const FFloatRange& NewRangeDeg)
+{
+	if (!PopHelper)
+		return;
+
+	const FQuat::FReal NewMin = FMath::DegreesToRadians(NewRangeDeg.GetLowerBoundValue());
+	const FQuat::FReal NewMax = FMath::DegreesToRadians(NewRangeDeg.GetUpperBoundValue());
+
+	const bool bRelativeMode = PopHelper->GetRotationMode() == EITwinPathPopulationRotationMode::Relative;
+	USplineComponent const* SplineComp = (bRelativeMode && PopHelper->SplineHelper.IsValid())
+		? PopHelper->SplineHelper->GetSplineComponent()
+		: nullptr;
+
+	for (auto PopulationWeak : PopHelper->Populations)
+	{
+		AITwinPopulation* Population = PopulationWeak.Get();
+		if (!Population)
+			continue;
+
+		if (!Population->IsRotationVariationEnabled())
+			continue;
+
+		const int32 NumInstances = Population->GetNumberOfInstances();
+		for (int32 i = 0; i < NumInstances; ++i)
+		{
+			FTransform InstTransform = Population->GetInstanceTransform(i);
+			FQuat CurrentRotation = InstTransform.GetRotation();
+
+			const FVector UpAxis = CurrentRotation.GetUpVector();
+
+			FVector sX = FVector::XAxisVector;
+			if (FMath::Abs(sX | UpAxis) > 0.8)
+				sX = FVector::YAxisVector;
+			FVector sY = (UpAxis ^ sX).GetSafeNormal();
+			sX = sY ^ UpAxis;
+			FQuat SurfaceAlignment(FMatrix(sX, sY, UpAxis, FVector::ZeroVector));
+
+			const FQuat::FReal NewRotVar = FMath::FRandRange(NewMin, NewMax);
+			FQuat NewRotation = FQuat(UpAxis, NewRotVar) * SurfaceAlignment;
+
+			if (SplineComp)
+			{
+				FVector InstanceLocation = InstTransform.GetTranslation();
+				float ClosestInputKey = SplineComp->FindInputKeyClosestToWorldLocation(InstanceLocation);
+				FVector SplineTangent = SplineComp->GetTangentAtSplineInputKey(ClosestInputKey, ESplineCoordinateSpace::World);
+				SplineTangent.Z = 0.;
+				if (SplineTangent.Normalize(1e-6))
+				{
+					FQuat::FReal SplineYaw = FMath::Atan2(SplineTangent.Y, SplineTangent.X) + UE_HALF_PI;
+					FQuat SplineRotation(FVector::ZAxisVector, SplineYaw);
+					NewRotation = SplineRotation * NewRotation;
+				}
+			}
+
+			InstTransform.SetRotation(NewRotation.GetNormalized());
+			Population->SetInstanceTransform(i, InstTransform);
+		}
+	}
+}
+
+void AITwinPopulationTool::SetRotation(FPopulationIdentifier PopHandle, float Rotation)
+{
+	ensure(PopHandle.PopulationType == EITwinPopulationType::Area || PopHandle.PopulationType == EITwinPopulationType::Path);
+	if (auto PopulationInfo = Impl->GetMutablePopulationInfo(PopHandle))
+	{
+		PopulationInfo->SetRotation(Rotation);
+		if (PopHandle.PopulationType == EITwinPopulationType::Path)
+		{
+			Impl->ApplyRotationRangeToPopulationInstances(PopulationInfo, FFloatRange(Rotation, Rotation));
+		}
+		else
+		{
+			PopulateSpline(*PopulationInfo->SplineHelper);
+		}
+	}
+}
+
+void AITwinPopulationTool::FImpl::ApplyRotationModeChange(
+	UITwinPopulationHelper* PopHelper,
+	EITwinPathPopulationRotationMode OldMode,
+	EITwinPathPopulationRotationMode NewMode)
+{
+	if (!PopHelper || !PopHelper->SplineHelper.IsValid())
+		return;
+
+	USplineComponent const* SplineComp = PopHelper->SplineHelper->GetSplineComponent();
+	if (!SplineComp)
+		return;
+
+	const bool bAddTangent = (NewMode == EITwinPathPopulationRotationMode::Relative);
+
+	for (auto PopulationWeak : PopHelper->Populations)
+	{
+		AITwinPopulation* Population = PopulationWeak.Get();
+		if (!Population || !Population->IsRotationVariationEnabled())
+			continue;
+
+		const int32 NumInstances = Population->GetNumberOfInstances();
+		for (int32 i = 0; i < NumInstances; ++i)
+		{
+			FTransform InstTransform = Population->GetInstanceTransform(i);
+
+			FVector InstanceLocation = InstTransform.GetTranslation();
+			float ClosestInputKey = SplineComp->FindInputKeyClosestToWorldLocation(InstanceLocation);
+			FVector SplineTangent = SplineComp->GetTangentAtSplineInputKey(ClosestInputKey, ESplineCoordinateSpace::World);
+			SplineTangent.Z = 0.;
+			if (!SplineTangent.Normalize(1e-6))
+				continue;
+
+			FQuat::FReal SplineYaw = FMath::Atan2(SplineTangent.Y, SplineTangent.X) + UE_HALF_PI;
+			FQuat SplineRotation(FVector::ZAxisVector, bAddTangent ? SplineYaw : -SplineYaw);
+
+			FQuat CurrentRotation = InstTransform.GetRotation();
+			InstTransform.SetRotation((SplineRotation * CurrentRotation).GetNormalized());
+			Population->SetInstanceTransform(i, InstTransform);
+		}
+	}
+}
+
+float AITwinPopulationTool::GetGridRotation(FPopulationIdentifier PopHandle) const
+{
+	ensure(PopHandle.PopulationType == EITwinPopulationType::Area);
+	if (auto PopulationInfo = Impl->GetPopulationInfo(PopHandle))
+		return PopulationInfo->GetGridRotation();
+	return 0.f;
+}
+
+void AITwinPopulationTool::SetGridRotation(FPopulationIdentifier PopHandle, float GridRotation)
+{
+	ensure(PopHandle.PopulationType == EITwinPopulationType::Area);
+	if (auto PopulationInfo = Impl->GetMutablePopulationInfo(PopHandle))
+	{
+		PopulationInfo->SetGridRotation(GridRotation);
+		PopulateSpline(*PopulationInfo->SplineHelper);
+	}
+}
+
+float AITwinPopulationTool::GetDistance(FPopulationIdentifier PopHandle) const
+{
+	if (auto PopulationInfo = Impl->GetPopulationInfo(PopHandle))
+		return PopulationInfo->GetDistance();
+	return 0.f;
+}
+
+void AITwinPopulationTool::SetDistance(FPopulationIdentifier PopHandle, float Distance)
+{
+	if (auto PopulationInfo = Impl->GetMutablePopulationInfo(PopHandle))
+	{
+		PopulationInfo->SetDistance(Distance);
+		PopulateSpline(*PopulationInfo->SplineHelper);
+	}
+}
+
+FFloatRange AITwinPopulationTool::GetRangeDistance(FPopulationIdentifier PopHandle) const
+{
+	if (auto PopulationInfo = Impl->GetPopulationInfo(PopHandle))
+		return PopulationInfo->GetDistanceRange();
+	return FFloatRange();
+}
+
+void AITwinPopulationTool::SetRangeDistance(FPopulationIdentifier PopHandle, FFloatRange Range)
+{
+	if (auto PopulationInfo = Impl->GetMutablePopulationInfo(PopHandle))
+	{
+		PopulationInfo->SetDistanceRange(Range);
+		PopulateSpline(*PopulationInfo->SplineHelper);
+	}
+}
+
+FFloatRange AITwinPopulationTool::GetRangeScale(FPopulationIdentifier PopHandle) const
+{
+	if (auto PopulationInfo = Impl->GetPopulationInfo(PopHandle))
+		return PopulationInfo->GetScaleRange();
+	return FFloatRange();
+}
+
+void AITwinPopulationTool::SetRangeScale(FPopulationIdentifier PopHandle, FFloatRange Range)
+{
+	if (auto PopulationInfo = Impl->GetMutablePopulationInfo(PopHandle))
+	{
+		PopulationInfo->SetScaleRange(Range);
+		if (PopHandle.PopulationType == EITwinPopulationType::Path)
+		{
+			Impl->ApplyScaleRangeToPopulationInstances(PopulationInfo, Range);
+		}
+		else
+		{
+			PopulateSpline(*PopulationInfo->SplineHelper);
+		}
+	}
+}
+
+FFloatRange AITwinPopulationTool::GetRangeRotation(FPopulationIdentifier PopHandle) const
+{
+	if (auto PopulationInfo = Impl->GetPopulationInfo(PopHandle))
+		return PopulationInfo->GetRotationRange();
+	return FFloatRange();
+}
+
+void AITwinPopulationTool::SetRangeRotation(FPopulationIdentifier PopHandle, FFloatRange Range)
+{
+	if (auto PopulationInfo = Impl->GetMutablePopulationInfo(PopHandle))
+	{
+		PopulationInfo->SetRotationRange(Range);
+		if (PopHandle.PopulationType == EITwinPopulationType::Path)
+		{
+			Impl->ApplyRotationRangeToPopulationInstances(PopulationInfo, Range);
+		}
+		else
+		{
+			PopulateSpline(*PopulationInfo->SplineHelper);
+		}
+	}
+}
+
+float AITwinPopulationTool::GetTightness(FPopulationIdentifier PopHandle, int32 PointIndex) const
+{
+	if (auto PopulationInfo = Impl->GetPopulationInfo(PopHandle))
+	{
+		if (ensure(PopulationInfo->SplineHelper.IsValid()))
+		{
+			return PopulationInfo->SplineHelper->GetTightness(PointIndex);
+		}
+	}
+	return 0.f;
+}
+
+void AITwinPopulationTool::SetTightness(FPopulationIdentifier PopHandle, int32 PointIndex, float Tightness)
+{
+	if (auto PopulationInfo = Impl->GetMutablePopulationInfo(PopHandle))
+	{
+		if (ensure(PopulationInfo->SplineHelper.IsValid()))
+		{
+			// Also updates the AdvViz spline, so that the new tangents are persisted.
+			PopulationInfo->SplineHelper->SetTightness(PointIndex, FMath::Clamp(Tightness, 0.f, 1.f));
+			PopulateSpline(*PopulationInfo->SplineHelper);
+		}
+	}
+}
+
+int32 AITwinPopulationTool::GetSelectedSplinePoint(FPopulationIdentifier PopHandle, bool& CanEditTangents) const
+{
+	CanEditTangents = true;
+	if (auto PopulationInfo = Impl->GetPopulationInfo(PopHandle))
+	{
+		if (PopulationInfo->SplineHelper.IsValid()
+			&& Impl->SplineTool.IsValid()
+			&& Impl->SplineTool->GetSelectedSpline() == PopulationInfo->SplineHelper.Get()
+			&& Impl->SplineTool->HasSelectedPoint())
+		{
+			const int32 PointIndex = Impl->SplineTool->GetSelectedPointIndex();
+			if (!PopulationInfo->SplineHelper->IsClosedLoop() &&
+				(PointIndex == 0 || PointIndex == PopulationInfo->SplineHelper->GetNumberOfSplinePoints() - 1))
+				CanEditTangents = false;
+			return PointIndex;
+		}
+	}
+	return INDEX_NONE;
+}
+
+EITwinSplinePopulationMode AITwinPopulationTool::GetSplinePopulationMode(FPopulationIdentifier PopHandle) const
+{
+	ensure(PopHandle.PopulationType == EITwinPopulationType::Area);
+	if (auto PopulationInfo = Impl->GetPopulationInfo(PopHandle))
+	{
+		return PopulationInfo->GetMode();
+	}
+	return EITwinSplinePopulationMode::Regular;
+}
+
+void AITwinPopulationTool::SetSplinePopulationMode(FPopulationIdentifier PopHandle, EITwinSplinePopulationMode Mode)
+{
+	ensure(PopHandle.PopulationType == EITwinPopulationType::Area);
+	if (auto PopulationInfo = Impl->GetMutablePopulationInfo(PopHandle))
+	{
+		PopulationInfo->SetMode(Mode);
+		PopulateSpline(*PopulationInfo->SplineHelper);
+	}
+}
+
+EITwinPathPopulationRotationMode AITwinPopulationTool::GetPathPopulationRotationMode(FPopulationIdentifier PopHandle) const
+{
+	ensure(PopHandle.PopulationType == EITwinPopulationType::Path);
+	if (auto PopulationInfo = Impl->GetPopulationInfo(PopHandle))
+	{
+		return PopulationInfo->GetRotationMode();
+	}
+	return EITwinPathPopulationRotationMode::Absolute;
+}
+
+void AITwinPopulationTool::SetPathPopulationRotationMode(FPopulationIdentifier PopHandle, EITwinPathPopulationRotationMode RotationMode)
+{
+	ensure(PopHandle.PopulationType == EITwinPopulationType::Path);
+	if (auto PopulationInfo = Impl->GetMutablePopulationInfo(PopHandle))
+	{
+		const EITwinPathPopulationRotationMode OldMode = PopulationInfo->GetRotationMode();
+		PopulationInfo->SetRotationMode(RotationMode);
+		Impl->ApplyRotationModeChange(PopulationInfo, OldMode, RotationMode);
+	}
 }
 
 FTransform AITwinPopulationTool::GetSelectionTransformImpl() const
@@ -2586,6 +3622,8 @@ TUniquePtr<AITwinPopulationTool::IBrushUndoEntry> AITwinPopulationTool::MakeBrus
 
 void AITwinPopulationTool::SetEnabledImpl(bool bValue)
 {
+	if (Impl->SplineTool.IsValid() && Impl->SplineTool->HasSelection())
+		return;
 	Impl->SetEnabled(bValue);
 }
 
@@ -2602,6 +3640,141 @@ void AITwinPopulationTool::ResetToDefaultImpl()
 void AITwinPopulationTool::SetDecorationHelper(AITwinDecorationHelper* decoHelper)
 {
 	Impl->SetDecorationHelper(decoHelper);
+}
+
+void AITwinPopulationTool::SetPopulationManager(const std::shared_ptr<AdvViz::SDK::IPopulationManager>& InPopulationManager)
+{
+	Impl->populationManager = InPopulationManager;
+}
+
+void AITwinPopulationTool::FImpl::LoadPopulations()
+{
+	if (!populationManager)
+	{
+		BE_LOGW("ITwinPopulation", "LoadPopulations: no population manager");
+		return;
+	}
+
+	std::set<AdvViz::SDK::RefID> populationIds;
+	populationManager->GetPopulationIds(populationIds);
+
+	BE_LOGI("ITwinPopulation", "LoadPopulations: " << populationIds.size() << " population(s) to load");
+
+	for (const AdvViz::SDK::RefID& popId : populationIds)
+	{
+		auto popInfoPtr = populationManager->GetPopulationInfo(popId);
+		if (!popInfoPtr)
+			continue;
+
+		auto popInfo = popInfoPtr->GetRAutoLock();
+		const AdvViz::SDK::RefID& splineRefId = popInfo->GetSplineId();
+		if (!splineRefId.IsValid())
+			continue;
+
+		// Find the corresponding spline helper in the world.
+		AITwinSplineHelper* MatchingSpline = nullptr;
+		for (TActorIterator<AITwinSplineHelper> SplineIter(owner.GetWorld()); SplineIter; ++SplineIter)
+		{
+			if ((*SplineIter)->GetAVizSplineId() == splineRefId)
+			{
+				MatchingSpline = *SplineIter;
+				break;
+			}
+		}
+		if (!MatchingSpline)
+		{
+			BE_LOGW("ITwinPopulation", "LoadPopulations: could not find spline for population " << popId.ID());
+			continue;
+		}
+
+		const EITwinPopulationType PopType = GetPopulationTypeFromSplineUsage(MatchingSpline->GetUsage());
+		if (PopType != EITwinPopulationType::Area && PopType != EITwinPopulationType::Path)
+			continue;
+
+		auto InstGroupId = decorationHelper->GetInstancesGroupIdForSpline(*MatchingSpline);
+		if (splineToGroupId.find(MatchingSpline) == splineToGroupId.end())
+			splineToGroupId.emplace(MatchingSpline, InstGroupId);
+
+		FPopulationIdentifier PopHandle;
+		PopHandle.PopulationType = PopType;
+		PopHandle.PopulationIndex = PopType == EITwinPopulationType::Area? AreaInfos.Num() : PathInfos.Num();
+
+		auto PopHelper = CreatePop(PopType);
+		PopHelper->Init(MatchingSpline, popInfoPtr);
+
+		std::vector<std::string> objects;
+		popInfo->GetObjects(objects);
+		TArray<FString> ObjectPaths;
+		for (const auto& obj : objects)
+			ObjectPaths.Add(UTF8_TO_TCHAR(obj.c_str()));
+		PopHelper->Set3DObjectsFromProps();
+		if (ObjectPaths.Num() == 0)
+			continue;
+
+		bool bAllAssetsLoaded = true;
+		for (auto asset : ObjectPaths)
+		{
+			// We do not want to trigger new population creation when loading an existing scene, just wait for all populations to load and then create the link
+			if (!decorationHelper->GetOrCreatePopulation(asset, InstGroupId))
+				bAllAssetsLoaded = false;
+		}
+
+		TArray<FString> CapturedPaths = ObjectPaths;
+		auto LinkPopulationsToSpline = [this, CapturedPaths, PopHelper, InstGroupId]()
+		{
+			for (const auto& path : CapturedPaths)
+			{
+				AITwinPopulation* Population = decorationHelper->GetPopulation(path, InstGroupId);
+				if (Population)
+				{
+					Population->SetSplinePopulation(true);
+					PopHelper->Populations.Add(Population);
+					Population->SetHiddenInGame(!PopHelper->IsVisible());
+				}
+			}
+		};
+
+		if (bAllAssetsLoaded)
+		{
+			LinkPopulationsToSpline();
+		}
+		else
+		{
+			// Delay adding objects to spline until all items have been completely loaded from the component center.
+			TWeakObjectPtr<AITwinPopulationTool> weakOwner(&owner);
+			std::string const delayedCallId = "RetryPopulateSpline_" + std::to_string(reinterpret_cast<uintptr_t>(PopHelper));
+			AdvViz::SDK::UniqueDelayedCall(delayedCallId,
+				[weakOwner, PopHelper, LinkPopulationsToSpline = MoveTemp(LinkPopulationsToSpline)]() -> AdvViz::SDK::DelayedCall::EReturnedValue
+				{
+					if (!weakOwner.IsValid())
+						return AdvViz::SDK::DelayedCall::EReturnedValue::Done;
+
+					if (weakOwner->Impl->ArePopulationsFullyLoaded(PopHelper))
+					{
+						LinkPopulationsToSpline();
+						return AdvViz::SDK::DelayedCall::EReturnedValue::Done;
+					}
+
+					return AdvViz::SDK::DelayedCall::EReturnedValue::Repeat;
+				},
+				0.25f);
+		}
+
+		owner.PopulationListModifiedEvent.Broadcast();
+		owner.PopulationAddedEvent.Broadcast(PopHandle);
+	}
+}
+
+void AITwinPopulationTool::LoadPopulations()
+{
+	Impl->LoadPopulations();
+}
+
+bool AITwinPopulationTool::IsLoadingPopulations() const
+{
+	if (Impl->SplineTool.IsValid() && Impl->SplineTool->IsLoadingSpline())
+		return true;
+	return false;
 }
 
 bool AITwinPopulationTool::DragActorInLevel(const FVector2D& screenPosition, const FString& assetPath)
@@ -2634,15 +3807,122 @@ void AITwinPopulationTool::ReplaceUsedAssets(const TArray<FString>& AssetPaths)
 	Impl->ReplaceUsedAssets(AssetPaths);
 }
 
+void AITwinPopulationTool::SetGizmoActorClass(TSubclassOf<AActor> ActorClass)
+{
+	GizmoActorClass = ActorClass;
+}
+
 AITwinPopulation* AITwinPopulationTool::PreLoadPopulation(const FString& AssetPath)
 {
 	return Impl->PreLoadPopulation(AssetPath);
+}
+
+void AITwinPopulationTool::FImpl::OnActivatePicking(bool bActivate)
+{
+	if (bActivate)
+	{
+		// Beware the tool can be activated *after* the user selects spline population from the list in the UI: in
+		// such case, we should not make all proxies visible, but instead preserve the current isolation
+		// mode.
+		auto const CurrentSelection = GetSelectedSplinePopulation();
+		if (CurrentSelection)
+			ShowOnlyPopulationProxiesOfType(CurrentSelection->PopulationType, true);
+		else
+		{
+			if (!SplineTool->IsEnabled() || !SplineTool->IsPopulationTool())
+				ITwin::ActivateSplineTool(owner.GetWorld(), EITwinSplineUsage::SplinePopulation, SplineTool);
+			SetAllPopulationProxiesVisibility(true);
+		}
+	}
+	else
+	{
+		HideAllPopulationProxies();
+	}
+}
+
+void AITwinPopulationTool::OnActivatePicking(bool bActivate)
+{
+	Impl->OnActivatePicking(bActivate);
+}
+
+bool AITwinPopulationTool::DoMouseClickPicking(bool& bOutSelectionGizmoNeeded)
+{
+	UWorld* World = GetWorld();
+	if (!World)
+		return false;
+	bool bRelevantAction = false;
+	bOutSelectionGizmoNeeded = false;
+	// Test spline populations then brushes and single placement objects.
+
+	// Note that we can only have one active tool at a time, but we don't want the population splines to be
+	// hidden just because we temporarily disable the spline tool...
+	AITwinSplineTool::FAutomaticVisibilityDisabler AutoVisDisabler;
+
+	if (NumPopulations() > 0)
+	{
+		auto const ActiveTool = ITwin::ActivateSplineTool(World, EITwinSplineUsage::SplinePopulation, Impl->SplineTool);
+		if (ActiveTool.IsValid())
+		{
+			ActiveTool->SetUsedForPopulation(true);
+			bRelevantAction = ActiveTool->DoMouseClickAction();
+			if (bRelevantAction)
+				bOutSelectionGizmoNeeded = ActiveTool->HasSelection();
+			auto const NewSelection = GetSelectedSplinePopulation();
+			if (NewSelection)
+			{
+				// Isolation of the selected item, if any.
+				Impl->ShowOnlyPopulationProxiesOfType(NewSelection->PopulationType, true);
+			}
+			else
+			{
+				// End of isolation mode.
+				Impl->SetAllPopulationProxiesVisibility(true);
+			}
+
+			// Notify new selection. If nothing is selected, notify it as well
+			BroadcastSelection();
+		}
+	}
+	if (!bRelevantAction)
+	{
+		// Activate population tool
+		auto const ActiveTool = this;
+		if (!IsEnabled())
+		{
+			AITwinInteractiveTool::DisableAll(GetWorld());
+			SetEnabled(true);
+		}
+		SetUsedOnCutout(false);
+		auto prevTransformationMode = Impl->transformationMode;
+		ResetToDefault();
+		Impl->transformationMode = prevTransformationMode;
+		SetMode(EPopulationToolMode::Select);
+		bRelevantAction = ActiveTool->DoMouseClickAction();
+		if (bRelevantAction) {
+			bOutSelectionGizmoNeeded = ActiveTool->HasSelectedPopulation();
+			NonSplinePopulationSelectedEvent.Broadcast();
+		}
+	}
+
+	return bRelevantAction;
 }
 
 void AITwinPopulationTool::SetUsedOnCutout(bool bForCutout)
 {
 	Impl->SetUsedOnCutout(bForCutout);
 }
+
+int32 AITwinPopulationTool::NumPopulations() const
+{
+	int32 totalPopulations(0);
+	for (EITwinPopulationType PopulationType : { EITwinPopulationType::Area,
+												 EITwinPopulationType::Path })
+	{
+		totalPopulations += NumPopulations(PopulationType);
+	}
+	return totalPopulations;
+}
+
 
 void AITwinPopulationTool::SetInstanceTransformProxy(IITwinPopulationInstanceTransformProxyPtr InTransformProxy)
 {
@@ -2691,6 +3971,14 @@ void AITwinPopulationTool::BeginPlay()
 	Impl->InitBrushSphere(GetWorld());
 }
 
+void AITwinPopulationTool::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	Super::EndPlay(EndPlayReason);
+	Impl->CancelSplinePopulationJobs();
+	Impl->AreaInfos.Empty();
+	Impl->PathInfos.Empty();
+}
+
 void AITwinPopulationTool::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
@@ -2698,14 +3986,486 @@ void AITwinPopulationTool::Tick(float DeltaTime)
 	Impl->Tick(DeltaTime);
 }
 
+inline
+int32 AITwinPopulationTool::FImpl::NumPopulations(EITwinPopulationType Type) const
+{
+	switch (Type)
+	{
+		case EITwinPopulationType::Area:		return AreaInfos.Num();
+		case EITwinPopulationType::Path:		return PathInfos.Num();
+
+	// Those types hold no population list: this is not an error, as an invalid/unknown population
+	// identifier (typically EITwinPopulationType::Count) is commonly tested against this count.
+	case EITwinPopulationType::Object:
+	case EITwinPopulationType::Erase:
+	case EITwinPopulationType::Count:
+	default:
+		return 0;
+	}
+}
+
+void AITwinPopulationTool::OnOverviewCamera(AITwinSplineHelper const* SpecificSpline)
+{
+	UWorld* World = GetWorld();
+	if (!World)
+		return;
+	AITwinSplineTool::FAutomaticVisibilityDisabler AutoVisDisabler;
+	TWeakObjectPtr<AITwinSplineTool> SplineTool = Impl->ActivateSplineTool(World, GetPopulationTypeFromSplineUsage(SpecificSpline->GetUsage()));
+	if (SplineTool.IsValid())
+	{
+		SplineTool->OnOverviewCamera(SpecificSpline);
+	}
+}
+
+void AITwinPopulationTool::FImpl::ZoomOnPopulation(FPopulationIdentifier PopHandle)
+{
+	switch (PopHandle.PopulationType)
+	{
+		case EITwinPopulationType::Area:
+		case EITwinPopulationType::Path:
+		{
+			auto PopHelper = GetPopulationInfo(PopHandle);
+			if (PopHelper && PopHelper->SplineHelper.IsValid())
+			{
+				// use overview camera for zoom
+				owner.OnOverviewCamera(PopHelper->SplineHelper.Get());
+			}
+			break;
+		}
+		BE_UNCOVERED_ENUM_ASSERT_AND_BREAK(case EITwinPopulationType::Count:);
+	}
+}
+
+void AITwinPopulationTool::ZoomOnPopulation(FPopulationIdentifier PopHandle)
+{
+	Impl->ZoomOnPopulation(PopHandle);
+}
+
+FPopulationIdentifier AITwinPopulationTool::FImpl::GetPopulationIdentifierFromSpline(AdvViz::SDK::RefID const& RefID) const
+{
+	int32 Index = AreaInfos.IndexOfByPredicate(
+		[&RefID](TStrongObjectPtr<UITwinAreaPopulationHelper> const InItem)
+		{
+			return InItem->SplineHelper.IsValid() && InItem->SplineHelper->GetAVizSplineId() == RefID;
+		});
+	if (Index != INDEX_NONE)
+		return FPopulationIdentifier(EITwinPopulationType::Area, Index);
+
+	Index = PathInfos.IndexOfByPredicate(
+		[&RefID](TStrongObjectPtr<UITwinPathPopulationHelper> const InItem)
+		{
+			return InItem->SplineHelper.IsValid() && InItem->SplineHelper->GetAVizSplineId() == RefID;
+		});
+	if (Index != INDEX_NONE)
+		return FPopulationIdentifier(EITwinPopulationType::Path, Index);
+
+	return FPopulationIdentifier(EITwinPopulationType::Count, INDEX_NONE);
+}
+
+bool AITwinPopulationTool::FImpl::UnregisterPopulationSpline(AITwinSplineHelper* SplineBeingRemoved, bool bTriggeredFromITS)
+{
+	auto const SelectedBefore = GetSelectedSplinePopulation();
+
+	auto PopHandle = GetPopulationIdentifierFromSpline(SplineBeingRemoved->GetAVizSplineId());
+	if (ensure(PopHandle.IsValid(NumPopulations(PopHandle.PopulationType))))
+	{
+		// Discard any population computation in progress for this spline.
+		AdvViz::SDK::RefID const SplineId = SplineBeingRemoved->GetAVizSplineId();
+		CancelSplinePopulationJobs(&SplineId);
+
+		if (!bTriggeredFromITS)
+			RemovePopulationObjects(PopHandle);
+
+		// Remove from the population manager for persistence.
+		populationManager->RemovePopulationInfo(GetPopulationInfo(PopHandle)->GetPopRefID());
+
+		switch (PopHandle.PopulationType)
+		{
+		case EITwinPopulationType::Area:
+			AreaInfos.RemoveAt(PopHandle.PopulationIndex);
+			break;
+		case EITwinPopulationType::Path:
+			PathInfos.RemoveAt(PopHandle.PopulationIndex);
+			break;
+		default:
+			break;
+		}
+
+		if (!bTriggeredFromITS && !SplineBeingRemoved->IsInteractiveCreationInProgress())
+		{
+			SplinePopulationChanged(PopHandle.PopulationType, EChangeType::Deleted, TEXT("key_down"));
+		}
+
+		owner.PopulationRemovedEvent.Broadcast(PopHandle, bTriggeredFromITS);
+		owner.PopulationListModifiedEvent.Broadcast();
+
+		// After removing a spline population, we should exit isolation mode or else we'll be in an inconsistent state
+		if (SelectedBefore)
+		{
+			SetAllPopulationProxiesVisibility(true);
+		}
+		return true;
+	}
+
+	return false;
+}
+
+void AITwinPopulationTool::OnSplineHelperRemoved(AITwinSplineHelper* SplineBeingRemoved, bool bTriggeredFromITS)
+{
+	if (IsSplineUsedForPopulation(SplineBeingRemoved))
+	{
+		Impl->UnregisterPopulationSpline(SplineBeingRemoved, bTriggeredFromITS);
+	}
+}
+
+void AITwinPopulationTool::FImpl::RemovePopulationObjects(UITwinPopulationHelper* PopHelper)
+{
+	if (!PopHelper)
+		return;
+
+	for (auto Population : PopHelper->Populations)
+	{
+		if (Population.IsValid())
+			Population->RemoveAllInstances();
+	}
+	PopHelper->Populations.Empty();
+}
+
+bool AITwinPopulationTool::FImpl::ArePopulationsFullyLoaded(UITwinPopulationHelper* PopHelper)
+{
+	if (!PopHelper || !PopHelper->SplineHelper.IsValid())
+		return false;
+	auto InstGroupId = decorationHelper->GetInstancesGroupIdForSpline(*(PopHelper->SplineHelper));
+	auto Assets = PopHelper->Get3DObjects();
+	for (auto asset : Assets)
+	{
+		AITwinPopulation* Population = decorationHelper->GetPopulation(asset, InstGroupId);
+		if (!Population || Population->GetNumberOfInstances() == 0)
+			return false;
+	}
+	return true;
+}
+
+void AITwinPopulationTool::FImpl::RemovePopulationObjects(FPopulationIdentifier PopHandle)
+{
+	RemovePopulationObjects(GetMutablePopulationInfo(PopHandle));
+}
+
+bool AITwinPopulationTool::FImpl::RemovePopulation(FPopulationIdentifier PopHandle, bool bTriggeredFromITS)
+{
+	if (!ensure(PopHandle.IsValid(NumPopulations(PopHandle.PopulationType))))
+		return false;
+
+	// Select the spline population if needed (for undo/redo) - the spline is already selected if this event is
+	// triggered from iTS spline population properties page, but not if the event is triggered from the list of populations.
+	auto const CurrentSelection = GetSelectedSplinePopulation();
+	bool bPopulationIsSelected = CurrentSelection
+		&& CurrentSelection->PopulationType == PopHandle.PopulationType
+		&& CurrentSelection->PopulationIndex == PopHandle.PopulationIndex;
+	if (!bPopulationIsSelected)
+	{
+		bPopulationIsSelected = SelectSplinePopulation(PopHandle, false);
+	}
+
+	const int32 NumPopsOld = NumPopulations(PopHandle.PopulationType);
+	switch (PopHandle.PopulationType)
+	{
+		case EITwinPopulationType::Area:
+		case EITwinPopulationType::Path:
+		{
+			if (auto PopHelper = GetPopulationInfo(PopHandle))
+			{
+				RemovePopulationObjects(PopHandle);
+				if (PopHelper->SplineHelper.IsValid() && ensure(SplineTool.IsValid()))
+					SplineTool->DeleteSpline(PopHelper->SplineHelper.Get(), bTriggeredFromITS);
+			}
+		}
+	}
+
+	const bool bRemoved = (NumPopulations(PopHandle.PopulationType) == NumPopsOld - 1);
+	return bRemoved;
+}
+
+bool AITwinPopulationTool::RemovePopulation(FPopulationIdentifier PopHandle, bool bTriggeredFromITS)
+{
+	const bool bRemoved = Impl->RemovePopulation(PopHandle, bTriggeredFromITS);
+	return bRemoved;
+}
+
+void AITwinPopulationTool::Get3DObjects(FPopulationIdentifier PopHandle, TArray<FString>& Assets) const
+{
+	if (auto PopHelper = Impl->GetPopulationInfo(PopHandle))
+		Assets = PopHelper->Get3DObjects(/*Assets*/);
+	else
+		Assets.Empty();
+}
+
+void AITwinPopulationTool::Set3DObjects(FPopulationIdentifier PopHandle, const TArray<FString>& Assets)
+{
+	ensure(PopHandle.PopulationType != EITwinPopulationType::Object || Assets.Num() == 1);
+	auto PopHelper = Impl->GetMutablePopulationInfo(PopHandle);
+	if (!PopHelper)
+		return;
+	PopHelper->Set3DObjects(Assets);
+	PopulateSpline(*PopHelper->SplineHelper);
+}
+
+bool AITwinPopulationTool::IsVisible(FPopulationIdentifier PopHandle) const
+{
+	if (auto PopInfo = Impl->GetPopulationInfo(PopHandle))
+		return PopInfo->IsVisible();
+	return false;
+}
+
+void AITwinPopulationTool::SetVisible(FPopulationIdentifier PopHandle, bool isVisible, bool bForceHiddenSpline)
+{
+	if (auto PopHelper = Impl->GetMutablePopulationInfo(PopHandle))
+	{
+		PopHelper->SetVisible(isVisible);
+		if (!PopHelper)
+			return;
+		for (auto Population : PopHelper->Populations)
+		{
+			if (!Population.IsValid())
+				continue;
+			Population->SetHiddenInGame(!isVisible);
+		}
+		if (PopHelper->SplineHelper.IsValid())
+			PopHelper->SplineHelper->SetActorHiddenInGame(!isVisible || bForceHiddenSpline);
+	}
+}
+
+bool AITwinPopulationTool::IsAvoidOverlapping(FPopulationIdentifier PopHandle) const
+{
+	if (auto PopInfo = Impl->GetPopulationInfo(PopHandle))
+		return PopInfo->IsAvoidOverlapping();
+	return false;
+}
+
+void AITwinPopulationTool::SetAvoidOverlapping(FPopulationIdentifier PopHandle, bool isAvoidOverlapping)
+{
+	if (auto PopHelper = Impl->GetMutablePopulationInfo(PopHandle))
+	{
+		PopHelper->SetIsAvoidOverlapping(isAvoidOverlapping);
+		PopulateSpline(*PopHelper->SplineHelper);
+	}
+}
+
+void AITwinPopulationTool::SetAllVisible(bool isVisible, bool bForceHiddenSpline)
+{
+	for (EITwinPopulationType PopType : { EITwinPopulationType::Area,
+										   EITwinPopulationType::Path })
+	{
+		for (int32 Index(0); Index < NumPopulations(PopType); ++Index)
+		{
+			SetVisible(FPopulationIdentifier(PopType, Index), isVisible, bForceHiddenSpline);
+		}
+	}
+}
+
+void AITwinPopulationTool::SetIsSpacingRandomized(FPopulationIdentifier PopHandle, bool isSpacingRandomized)
+{
+	ensure(PopHandle.PopulationType == EITwinPopulationType::Path);
+	auto PopHelper = Impl->GetMutablePopulationInfo(PopHandle);
+	if (!PopHelper)
+		return;
+	PopHelper->SetIsSpacingRandomized(isSpacingRandomized);
+	PopulateSpline(*PopHelper->SplineHelper);
+}
+
+bool AITwinPopulationTool::IsSpacingRandomized(FPopulationIdentifier PopHandle) const
+{
+	if (auto PopInfo = Impl->GetPopulationInfo(PopHandle))
+		return PopInfo->IsSpacingRandomized();
+	return false;
+}
+
+void AITwinPopulationTool::SetIsScaleRandomized(FPopulationIdentifier PopHandle, bool isScaleRandomized)
+{
+	auto PopHelper = Impl->GetMutablePopulationInfo(PopHandle);
+	if (!PopHelper)
+		return;
+	PopHelper->SetIsScaleRandomized(isScaleRandomized);
+	if (PopHandle.PopulationType == EITwinPopulationType::Path)
+	{
+		const FFloatRange Range = isScaleRandomized
+			? PopHelper->GetScaleRange()
+			: FFloatRange(PopHelper->GetScale(), PopHelper->GetScale());
+		Impl->ApplyScaleRangeToPopulationInstances(PopHelper, Range);
+	}
+	else
+	{
+		PopulateSpline(*PopHelper->SplineHelper);
+	}
+}
+
+bool AITwinPopulationTool::IsScaleRandomized(FPopulationIdentifier PopHandle) const
+{
+	if (auto PopInfo = Impl->GetPopulationInfo(PopHandle))
+		return PopInfo->IsScaleRandomized();
+	return false;
+}
+
+void AITwinPopulationTool::SetIsRotationRandomized(FPopulationIdentifier PopHandle, bool isRotationRandomized)
+{
+	auto PopHelper = Impl->GetMutablePopulationInfo(PopHandle);
+	if (!PopHelper)
+		return;
+	PopHelper->SetIsRotationRandomized(isRotationRandomized);
+	if (PopHandle.PopulationType == EITwinPopulationType::Path)
+	{
+		const FFloatRange Range = isRotationRandomized
+			? PopHelper->GetRotationRange()
+			: FFloatRange(PopHelper->GetRotation(), PopHelper->GetRotation());
+		Impl->ApplyRotationRangeToPopulationInstances(PopHelper, Range);
+	}
+	else
+	{
+		PopulateSpline(*PopHelper->SplineHelper);
+	}
+}
+
+bool AITwinPopulationTool::IsRotationRandomized(FPopulationIdentifier PopHandle) const
+{
+	if (auto PopInfo = Impl->GetPopulationInfo(PopHandle))
+		return PopInfo->IsRotationRandomized();
+	return false;
+}
+
+inline UITwinPopulationHelper* AITwinPopulationTool::FImpl::GetMutablePopulationInfo(FPopulationIdentifier PopHandle)
+{
+	if (!PopHandle.IsValid(NumPopulations(PopHandle.PopulationType)))
+		return nullptr;
+	switch (PopHandle.PopulationType)
+	{
+	BE_UNCOVERED_ENUM_ASSERT_AND_FALLTHROUGH(case EITwinPopulationType::Count:)
+	case EITwinPopulationType::Area:	return AreaInfos[PopHandle.PopulationIndex].Get();
+	case EITwinPopulationType::Path:	return PathInfos[PopHandle.PopulationIndex].Get();
+	}
+}
+
+inline const UITwinPopulationHelper* AITwinPopulationTool::FImpl::GetPopulationInfo(FPopulationIdentifier PopHandle) const
+{
+	if (!PopHandle.IsValid(NumPopulations(PopHandle.PopulationType)))
+		return nullptr;
+	switch (PopHandle.PopulationType)
+	{
+	BE_UNCOVERED_ENUM_ASSERT_AND_FALLTHROUGH(case EITwinPopulationType::Count:)
+	case EITwinPopulationType::Area:	return AreaInfos[PopHandle.PopulationIndex].Get();
+	case EITwinPopulationType::Path:	return PathInfos[PopHandle.PopulationIndex].Get();
+	}
+}
+
+int32 AITwinPopulationTool::NumPopulations(EITwinPopulationType Type) const
+{
+	return Impl->NumPopulations(Type);
+}
+
 void AITwinPopulationTool::SetSelectedSpline(AITwinSplineHelper* Spline)
 {
 	SelectedSpline = Spline;
 }
 
-uint32 AITwinPopulationTool::PopulateSpline(AITwinSplineHelper const& TargetSpline)
+void AITwinPopulationTool::PopulateSpline(AITwinSplineHelper const& TargetSpline, bool bFinalEdit /*= true*/)
 {
-	return Impl->PopulateSpline(TargetSpline);
+	Impl->PopulateSpline(TargetSpline, bFinalEdit);
+}
+
+bool AITwinPopulationTool::IsPopulatingSpline(AITwinSplineHelper const& TargetSpline) const
+{
+	auto It = Impl->SplinePopulationStates.find(TargetSpline.GetAVizSplineId());
+	return It != Impl->SplinePopulationStates.end()
+		&& (It->second.RunningJob || It->second.bPendingRequest);
+}
+
+void AITwinPopulationTool::OnSplineHelperAdded(AITwinSplineHelper* NewSpline)
+{
+	if (IsSplineUsedForPopulation(NewSpline))
+	{
+		Impl->RegisterPopulationSpline(NewSpline);
+	}
+}
+
+void AITwinPopulationTool::ConnectSplineTool(AITwinSplineTool* SplineTool)
+{
+	Impl->SplineTool = SplineTool;
+	if (SplineTool)
+	{
+		SplineTool->SplineAddedEvent.AddUniqueDynamic(this, &AITwinPopulationTool::OnSplineHelperAdded);
+		SplineTool->SplineBeforeRemovedEvent.AddUniqueDynamic(this, &AITwinPopulationTool::OnSplineHelperRemoved);
+		SplineTool->SplinePointMovedEvent.AddUniqueDynamic(this, &AITwinPopulationTool::OnSplinePointMovedInTool);
+		SplineTool->SplineEditionEvent.AddUniqueDynamic(this, &AITwinPopulationTool::OnSplineEditedInTool);
+		SplineTool->SplinePointAddedEvent.AddUniqueDynamic(this, &AITwinPopulationTool::OnSplinePointAddedInTool);
+		SplineTool->SplinePointRemovedEvent.AddUniqueDynamic(this, &AITwinPopulationTool::OnSplinePointRemovedInTool);
+		SplineTool->SplinePointMovingStartedEvent.AddUniqueDynamic(this, &AITwinPopulationTool::OnSplinePointMoveStart);
+		SplineTool->SplineMovingStartedEvent.AddUniqueDynamic(this, &AITwinPopulationTool::OnSplineMoveStart);
+		SplineTool->SplineSelectedEvent.AddUniqueDynamic(this, &AITwinPopulationTool::OnPopulationPolygonSelected);
+	}
+}
+
+void AITwinPopulationTool::FImpl::OnSplineEditedInTool(bool bFinalEdit)
+{
+	if (!SplineTool.IsValid() || !SplineTool->IsPopulationTool() || !SplineTool->GetSelectedSpline())
+		return;
+	if (SplineTool->IsInteractiveCreationMode())
+	{
+		return;
+	}
+	auto PopHandle = GetPopulationIdentifierFromSpline(SplineTool->GetSelectedSpline()->GetAVizSplineId());
+	if (auto PopHelper = GetMutablePopulationInfo(PopHandle))
+	{
+		if (PopHelper->SplineHelper.IsValid())
+			PopulateSpline(*PopHelper->SplineHelper, bFinalEdit);
+	}
+	owner.SelectedPopulationModifiedEvent.Broadcast();
+}
+
+
+void AITwinPopulationTool::OnSplineEditedInTool()
+{
+	// End of an edition (point added/removed, interactive edition finished...): force the final state.
+	Impl->OnSplineEditedInTool(/*bFinalEdit*/true);
+}
+
+void AITwinPopulationTool::OnSplinePointMovedInTool(bool bTriggeredFromITS)
+{
+	// Interactive move in progress: keep the current computation, and queue the latest state.
+	Impl->OnSplineEditedInTool(/*bFinalEdit*/false);
+}
+
+void AITwinPopulationTool::OnSplineMoveStart()
+{
+	Impl->OnSplineChanged(TEXT("gizmo"), TEXT("position"));
+}
+
+void AITwinPopulationTool::OnSplinePointMoveStart()
+{
+	Impl->OnSplineChanged(TEXT("gizmo"), TEXT("point_position"));
+}
+
+void AITwinPopulationTool::FImpl::OnSplineChanged(const FString& eventSource, const FString& modificationKind)
+{
+	if (SplineTool.IsValid() && SplineTool->IsPopulationTool()
+		&& SplineTool->GetSelectedSpline()
+		&& !SplineTool->IsInteractiveCreationMode()
+		&& !owner.IsLoadingPopulations())
+	{
+		auto PopHandle = GetPopulationIdentifierFromSpline(SplineTool->GetSelectedSpline()->GetAVizSplineId());
+		if (PopHandle.IsValid(NumPopulations(PopHandle.PopulationType)))
+		{
+			SplinePopulationChanged(PopHandle.PopulationType, EChangeType::Modified, eventSource, modificationKind);
+		}
+	}
+}
+
+void AITwinPopulationTool::OnSplinePointAddedInTool()
+{
+	Impl->OnSplineChanged(TEXT("mouse_click"), TEXT("point_added"));
+}
+
+void AITwinPopulationTool::OnSplinePointRemovedInTool()
+{
+	Impl->OnSplineChanged(TEXT("key_down"), TEXT("point_removed"));
 }
 
 bool AITwinPopulationTool::StartInteractiveCreationImpl()
@@ -2726,6 +4486,190 @@ bool AITwinPopulationTool::IsUsedOnCutoutPrimitiveImpl() const
 void AITwinPopulationTool::SetUsedOnCutoutPrimitiveImpl(bool bForCutout)
 {
 	SetUsedOnCutout(bForCutout);
+}
+
+AITwinPopulation const* AITwinPopulationTool::FImpl::GetSelectedPopulation(int32& OutSelectedInstanceIndex) const
+{
+	AITwinPopulation const* SelectedPopulation = nullptr;
+	OutSelectedInstanceIndex = INDEX_NONE;
+	SelectedPopulation = owner.GetSelectedPopulation();
+	if (SelectedPopulation)
+	{
+		OutSelectedInstanceIndex = owner.GetSelectedInstanceIndex();
+	}
+	return SelectedPopulation;
+}
+
+std::optional<FPopulationIdentifier> AITwinPopulationTool::FImpl::GetSelectedSplinePopulation() const
+{
+	int32 InstanceIndex(INDEX_NONE);
+	if (ensure(SplineTool.IsValid()) && SplineTool->IsPopulationTool())
+	{
+		if (auto SelectedSplinePopulation = SplineTool->GetSelectedSpline())
+			return GetPopulationIdentifierFromSpline(SelectedSplinePopulation->GetAVizSplineId());
+	}
+	return std::nullopt;
+}
+
+std::optional<FPopulationIdentifier> AITwinPopulationTool::GetSelectedSplinePopulation() const
+{
+	return Impl->GetSelectedSplinePopulation();
+}
+
+void AITwinPopulationTool::BroadcastSelection()
+{
+	// Notify new selection (using -1 as index if nothing i selected)
+	auto const NewSelection = GetSelectedSplinePopulation();
+	if (NewSelection)
+	{
+		PopulationSelectedEvent.Broadcast(NewSelection.value());
+	}
+	else
+	{
+		PopulationSelectedEvent.Broadcast(FPopulationIdentifier());
+	}
+}
+
+void AITwinPopulationTool::OnPopulationPolygonSelected()
+{
+	BroadcastSelection();
+}
+
+void AITwinPopulationTool::DeSelectAll(bool bExitIsolationMode)
+{
+	auto CurrentSelection = GetSelectedSplinePopulation();
+	if (CurrentSelection)
+	{
+		Impl->SelectSpline(nullptr, GetWorld());
+
+		if (bExitIsolationMode)
+		{
+			// Restore visibility of proxies.
+			Impl->SetAllPopulationProxiesVisibility(true);
+		}
+	}
+	BroadcastSelection();
+}
+
+AdvViz::SDK::RefID AITwinPopulationTool::FImpl::GetPopulationRefId(FPopulationIdentifier PopulationHandle) const
+{
+	auto PopulationHelper = GetPopulationInfo(PopulationHandle);
+	return PopulationHelper && PopulationHelper->SplineHelper.IsValid() ? PopulationHelper->SplineHelper->GetAVizSplineId() : AdvViz::SDK::RefID::Invalid();
+}
+
+AdvViz::SDK::RefID AITwinPopulationTool::GetPopulationRefId(FPopulationIdentifier PopulationHandle) const
+{
+	return Impl->GetPopulationRefId(PopulationHandle);
+}
+
+AdvViz::SDK::RefID AITwinPopulationTool::FImpl::GetPopulationId(EITwinPopulationType PopulationType, int32 PopulationIndex) const
+{
+	switch (PopulationType)
+	{
+		case EITwinPopulationType::Area:
+		{
+			if (PopulationIndex >= 0 && PopulationIndex < AreaInfos.Num())
+			{
+				auto const& AreaInfo = AreaInfos[PopulationIndex].Get();
+				if (AreaInfo->SplineHelper.IsValid())
+				{
+					return AreaInfo->SplineHelper->GetAVizSplineId();
+				}
+			}
+			break;
+		}
+		case EITwinPopulationType::Path:
+		{
+			if (PopulationIndex >= 0 && PopulationIndex < PathInfos.Num())
+			{
+				auto const& PathInfo = PathInfos[PopulationIndex].Get();
+				if (PathInfo->SplineHelper.IsValid())
+				{
+					return PathInfo->SplineHelper->GetAVizSplineId();
+				}
+			}
+			break;
+		}
+		BE_UNCOVERED_ENUM_ASSERT_AND_BREAK(case EITwinPopulationType::Count:);
+	}
+	return AdvViz::SDK::RefID::Invalid();
+}
+
+AdvViz::SDK::RefID AITwinPopulationTool::GetPopulationId(EITwinPopulationType PopulationType, int32 PopulationIndex) const
+{
+		return Impl->GetPopulationId(PopulationType, PopulationIndex);
+}
+
+FPopulationIdentifier AITwinPopulationTool::FImpl::GetPopulationIdentifier(AdvViz::SDK::RefID const& RefID) const
+{
+	int32 Index = AreaInfos.IndexOfByPredicate(
+		[&RefID](TStrongObjectPtr<UITwinAreaPopulationHelper> const InItem)
+		{
+			return InItem->SplineHelper.IsValid()
+				&& InItem->SplineHelper->GetAVizSplineId() == RefID;
+		});
+	if (Index != INDEX_NONE)
+		return FPopulationIdentifier(EITwinPopulationType::Area, Index);
+
+	Index = PathInfos.IndexOfByPredicate(
+		[&RefID](TStrongObjectPtr<UITwinPathPopulationHelper> const InItem)
+		{
+			return InItem->SplineHelper.IsValid()
+				&& InItem->SplineHelper->GetAVizSplineId() == RefID;
+		});
+	if (Index != INDEX_NONE)
+		return FPopulationIdentifier(EITwinPopulationType::Path, Index);
+
+	return FPopulationIdentifier(EITwinPopulationType::Count, INDEX_NONE);
+}
+
+FPopulationIdentifier AITwinPopulationTool::GetPopulationIdentifier(AdvViz::SDK::RefID const& RefID) const
+{
+	return Impl->GetPopulationIdentifier(RefID);
+}
+
+
+void AITwinPopulationTool::AbortInteractiveCreation(bool bTriggeredFromITS)
+{
+	// Abort current population creation, if any
+	AITwinInteractiveTool* ActiveTool = AITwinInteractiveTool::GetActiveTool(GetWorld());
+	if (ActiveTool && ActiveTool->IsPopulationTool())
+	{
+		if (ActiveTool->IsInteractiveCreationMode())
+			ActiveTool->AbortInteractiveCreation(bTriggeredFromITS);
+		ActiveTool->SetEnabled(false);
+		ActiveTool->SetUsedForPopulation(false);
+	}
+}
+
+void AITwinPopulationTool::Deactivate()
+{
+	// Abort current population creation, if any.
+	AbortInteractiveCreation(true);
+
+	// Deselect all, without changing the visibility (since we will hide all below...)
+	DeSelectAll(false);
+
+	// Trigger event to refresh the selection gizmo
+	ActivationEvent.Broadcast(false);
+
+	Impl->HideAllPopulationProxies();
+}
+
+void AITwinPopulationTool::FImpl::ToggleSplineToolForSelectedPath()
+{
+	if (SplineTool.IsValid())
+	{
+		if (SplineTool->GetSelectedSpline() && SplineTool->GetSelectedSpline()->IsUsedForPopulation())
+		{
+			SplineTool->ToggleInteractiveEditionMode();
+		}
+	}
+}
+
+void AITwinPopulationTool::ToggleSplineToolForSelectedPath()
+{
+	Impl->ToggleSplineToolForSelectedPath();
 }
 
 void AITwinPopulationTool::AbortInteractiveCreationImpl(bool bTriggeredFromITS)

@@ -14,7 +14,6 @@
 #include <Containers/Map.h>
 
 #include <Material/ITwinMaterialLoadingUtils.h>
-#include <MaterialPrediction/ITwinMaterialPredictionStatus.h>
 
 #include <Misc/Optional.h>
 
@@ -42,7 +41,6 @@ namespace AdvViz::SDK
 	enum class ETextureSource : uint8_t;
 	enum class EMaterialKind : uint8_t;
 	struct ITwinMaterial;
-	struct ITwinMaterialPrediction;
 	struct ITwinRenderMaterialPropertiesMap;
 	struct ITwinTextureData;
 	struct ITwinUVTransform;
@@ -76,9 +74,6 @@ public:
 	std::shared_ptr<BeUtils::GltfTuner> const& GetTuner() const {
 		return GltfTuner;
 	}
-
-	/// Request a new tuning of the tileset.
-	void Retune();
 
 	std::shared_ptr<BeUtils::GltfMaterialHelper> const& GetGltfMatHelper() const {
 		return GltfMatHelper;
@@ -138,6 +133,10 @@ public:
 	bool GetMaterialCustomRequirements(uint64_t MaterialId, AdvViz::SDK::EMaterialKind& OutMaterialKind,
 		bool& bOutRequiresTranslucency) const;
 
+	//! Retrieves the name of a material. If bForMaterialEditor is true, the display name is returned (if any),
+	//! otherwise the internal name is returned.
+	FString GetMaterialName(uint64_t MaterialId, bool bForMaterialEditor = false) const;
+
 	//! Rename a material.
 	bool SetMaterialName(uint64_t MaterialId, FString const& NewName);
 
@@ -178,23 +177,6 @@ public:
 		LoadOptions const& Options = {});
 
 
-	//-----------------------------------------------------------------------------------
-	// ML-based material prediction
-	//-----------------------------------------------------------------------------------
-	void ActivateMLMaterialPrediction(bool bActivate);
-	void SetMaterialMLPredictionStatus(EITwinMaterialPredictionStatus InStatus);
-	bool VisualizeMaterialMLPrediction() const {
-		return bActivateMLMaterialPrediction
-			&& (MLMaterialPredictionStatus == EITwinMaterialPredictionStatus::Complete
-				|| MLMaterialPredictionStatus == EITwinMaterialPredictionStatus::Validated);
-	}
-	void SetMaterialMLPredictionObserver(IITwinWebServicesObserver* observer);
-	IITwinWebServicesObserver* GetMaterialMLPredictionObserver() const { return MLPredictionMaterialObserver; }
-	void OnMatMLPredictionRetrieved(bool bSuccess, AdvViz::SDK::ITwinMaterialPrediction const& Prediction,
-		std::string const& error, AITwinIModel& IModel);
-	void OnMatMLPredictionProgress(float fProgressRatio, AITwinIModel const& IModel);
-	void ValidateMLPrediction();
-
 private:
 	/// Fills the map of known iTwin materials, if it was read from the tileset.
 	void FillMaterialInfoFromTuner(AITwinIModel const* IModel);
@@ -207,15 +189,6 @@ private:
 	void TSetMaterialChannelParam(MaterialParamHelper const& Helper, uint64_t MaterialId,
 		TSceneMappingPtr& SceneMapping);
 
-	// Persistence management for ML material prediction.
-	void SaveMLPredictionState();
-	void LoadMLPredictionState(bool& bActivateML, BeUtils::WLock const& Lock);
-
-	void UpdateModelFromMatMLPrediction(bool bSuccess,
-		AdvViz::SDK::ITwinMaterialPrediction const& Prediction,
-		std::string const& error,
-		AITwinIModel& IModel);
-
 
 private:
 	std::shared_ptr<BeUtils::GltfTuner> GltfTuner;
@@ -224,21 +197,6 @@ private:
 
 	//! Map of iTwin materials (the IDs are retrieved from the meta-data provided by the M.E.S)
 	TMap<uint64, FITwinCustomMaterial> ITwinMaterials;
-	//! Map of materials returned by the ML-based prediction service.
-	TMap<uint64, FITwinCustomMaterial> MLPredictionMaterials;
-	//! Secondary (optional) observer used for UI typically.
-	IITwinWebServicesObserver* MLPredictionMaterialObserver = nullptr;
-
-	struct FMatPredictionEntry
-	{
-		uint64_t MatID = 0;
-		std::vector<uint64_t> Elements;
-	};
-	std::vector<FMatPredictionEntry> MaterialMLPredictions;
-
-	bool bActivateMLMaterialPrediction = false;
-	EITwinMaterialPredictionStatus MLMaterialPredictionStatus = EITwinMaterialPredictionStatus::Unknown;
-
 
 	//! Persistence manager for material settings. A given instance will use either a specific manager, or
 	//! the global one.

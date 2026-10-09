@@ -13,6 +13,7 @@
 #include <EngineUtils.h> // for TActorIterator<>
 #include <ITwinIModel.h>
 #include <ITwinRealityData.h>
+#include <ProfilingDebugging/CpuProfilerTrace.h>
 
 #include <Compil/BeforeNonUnrealIncludes.h>
 #	include <BeHeaders/Compil/EnumSwitchCoverage.h>
@@ -75,12 +76,12 @@ bool FindHeight(UWorld* World, const FVector& InPos, float& OutHeight, FVector& 
 
 void UBakedAnimKeyFrames::MarkForUpdate()
 {
-	Status = EBakedKeyFramesStatus::Invalid;
+	Status = EBakedKeyFramesStatus::NeedsUpdate;
 }
 
 bool UBakedAnimKeyFrames::NeedsUpdate() const
 {
-	return Status == EBakedKeyFramesStatus::Invalid;
+	return Status == EBakedKeyFramesStatus::NeedsUpdate;
 }
 
 bool UBakedAnimKeyFrames::IsReady() const
@@ -125,20 +126,43 @@ void UBakedAnimKeyFrames::BakeSpline(UWorld* World, const AdvViz::SDK::RefID& Sp
 		}();
 
 	if (!AnimSpline || InSpeed <= 0.0f)
+	{
+		Status = EBakedKeyFramesStatus::Invalid;
 		return;
+	}
 
 	auto UESpline = AnimSpline->GetSplineComponent();
-
-	TotalLength = UESpline->GetSplineLength(); // in cm
-	BE_LOGI("App", "Processing animation spline of length " << TotalLength);
-	if (TotalLength < 0.01f)
+	if (!UESpline)
+	{
+		Status = EBakedKeyFramesStatus::Invalid;
 		return;
+	}
 
 	LaneIdx = InLaneIdx;
 
-	float CurrentDistance = 0.0f;
+	constexpr float MaxReasonableSplineLength = 2'000'000.0f; // 20 km
+
+	TotalLength = UESpline->GetSplineLength(); // in cm
+	BE_LOGI("App", "Processing animation spline of length " << TotalLength);
+	// Check whether the spline is not too short or corrupted (we set a limit of 20 km here)
+	if (!FMath::IsFinite(TotalLength) || TotalLength < 0.01f || TotalLength > MaxReasonableSplineLength)
+	{
+		BE_LOGI("App", "Invalid spline, animation baking cancelled");
+		Status = EBakedKeyFramesStatus::Invalid;
+		return;
+	}
+
+	int32 EstimatedKeyframes = FMath::CeilToInt(TotalLength / BakedFramesStep) + 1;
+	if (InOffset.has_value())
+		EstimatedKeyframes *= 2;
+	transforms.SetNumUninitialized(EstimatedKeyframes);
+
 	FVector PrevLocation = UESpline->GetLocationAtDistanceAlongSpline(0.0f, ESplineCoordinateSpace::World);
+	float CurrentDistance = 0.0f;
 	float AccumulatedDistance = 0.0f;
+	float NextFrameDistance = 0.0f;
+	float DistanceStep = InOffset.has_value() ? 0.1f : BakedFramesStep;
+	int32 Index = 0;
 	while (CurrentDistance <= TotalLength)
 	{
 		// Position along spline at given distance
@@ -159,6 +183,19 @@ void UBakedAnimKeyFrames::BakeSpline(UWorld* World, const AdvViz::SDK::RefID& Sp
 			SplineLocation.Z = GroundZ;
 		}
 
+		if (InOffset.has_value())
+		{
+			if (CurrentDistance > 0.0f)
+				AccumulatedDistance += FVector::Dist(PrevLocation, SplineLocation);
+			PrevLocation = SplineLocation;
+			if (AccumulatedDistance < NextFrameDistance)
+			{
+				// Skip this frame, we haven't reached the next step yet
+				CurrentDistance += DistanceStep;
+				continue;
+			}
+		}
+		
 		// Build orientation
 		FVector Forward = SplineTangent;
 		FVector Up = GroundNormal;
@@ -169,25 +206,24 @@ void UBakedAnimKeyFrames::BakeSpline(UWorld* World, const AdvViz::SDK::RefID& Sp
 		FMatrix Basis(AlignedForward, Right, Up, FVector::ZeroVector);
 		FQuat WorldRotation = FQuat(Basis);
 
-		// Apply alignment fix if needed (Y+ to X+ correction)
+		// Apply alignment fix (Y+ to X+ correction, currently required for all vehicle content items)
 		FQuat AlignmentFix = FQuat(FVector::UpVector, 3 * PI / 2);
 		FQuat FinalRotation = WorldRotation * AlignmentFix;
 
+		// Add new transform keyframe
 		FTransform Keyframe(FinalRotation, SplineLocation);
-		transforms.Add(Keyframe);
+		transforms[Index++] = Keyframe;
 
-		if (InOffset.has_value() && CurrentDistance > 0.0f)
-		{
-			AccumulatedDistance += FVector::Dist(PrevLocation, SplineLocation);
-			PrevLocation = SplineLocation;
-		}
-
+		NextFrameDistance += BakedFramesStep;
 		CurrentDistance += DistanceStep;
 	}
+
+	transforms.SetNum(Index);
 
 	// If offset is used, total path length might be different from the spline length
 	if (InOffset.has_value())
 		TotalLength = AccumulatedDistance;
+	BE_LOGI("App", "Successfully baked " << Index << " keyframes for lane " << LaneIdx << ", final lane length is " << TotalLength);
 	TotalTime = TotalLength / InSpeed;
 
 	Status = transforms.Num() > 0 ? EBakedKeyFramesStatus::Ready : EBakedKeyFramesStatus::Invalid;
@@ -202,22 +238,62 @@ int32 UBakedAnimKeyFrames::GetKeyframeIndex(float Time)
 	return FMath::Clamp(Index, 0, transforms.Num() - 2); // -2 to allow interpolation with next frame
 }
 
-FTransform UBakedAnimKeyFrames::GetTransform(float Time, bool bReverse/* = false*/)
+FTransform UBakedAnimKeyFrames::GetTransform(float Time, bool bNeedAlignmentFix, bool bReverse)
 {
-	auto idx = GetKeyframeIndex(bReverse ? TotalTime - Time : Time);
-	if (idx < 0)
+	TRACE_CPUPROFILER_EVENT_SCOPE(BakedAnimKeyFrames_GetTransform);
+	BE_ASSERT(Time <= TotalTime);
+
+	if (!IsReady())
 		return FTransform();
 
-	auto outTransform = transforms[idx];
+	Time = FMath::Clamp(Time, 0.f, TotalTime);
+
+	float IndexFloat(0.f);
 	if (bReverse)
 	{
-		const FQuat Rot = outTransform.GetRotation();
-		const FVector Up = Rot.GetUpVector();
-		const FQuat FlipQuat(Up, PI); // 180 degrees rotation around local up
-		FQuat NewRot = Rot * FlipQuat;
-		NewRot.Normalize();
-		outTransform = FTransform(NewRot, outTransform.GetLocation(), outTransform.GetScale3D());
+		IndexFloat = (transforms.Num() - 1) * (TotalTime-Time) / TotalTime;
 	}
-	return outTransform;
-}
+	else
+	{
+		IndexFloat = (transforms.Num() - 1) * Time / TotalTime;
+	}
+	int32 Index = FMath::FloorToInt(IndexFloat);
+	int32 IndexNext = FMath::Clamp(Index + 1, 0, transforms.Num() - 1);
+	float Alpha = IndexFloat - (float)Index;
 
+	const FTransform& A = transforms[Index];
+	const FTransform& B = transforms[IndexNext];
+
+	FVector Location = FMath::Lerp(
+		A.GetLocation(),
+		B.GetLocation(),
+		Alpha);
+
+	FQuat Rotation = FQuat::Slerp(
+		A.GetRotation(),
+		B.GetRotation(),
+		Alpha).GetNormalized();
+
+	if (!bNeedAlignmentFix)
+	{
+		// Currently most assets used in animation are standard content vehicles which require alignment fix.
+		// So we apply it by default when baking animation and undo it here if needed - for instance, 
+		// for characters or articulated vehicles.
+		FQuat UndoAlignmentFix = FQuat(FVector::UpVector, PI / 2);
+		FQuat NewRot = Rotation * UndoAlignmentFix;
+		NewRot.Normalize();
+		Rotation = NewRot;
+	}
+
+	if (bReverse)
+	{
+		// rotate the vehicle 180 degrees to face the opposite direction
+		const FVector Up = Rotation.GetUpVector();
+		const FQuat FlipQuat(Up, PI); // 180 degrees rotation around local up
+		FQuat NewRot = Rotation * FlipQuat;
+		NewRot.Normalize();
+		Rotation = NewRot;
+	}
+
+	return FTransform(Rotation, Location);
+}

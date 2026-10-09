@@ -14,11 +14,11 @@ class ACesium3DTileset;
 // ITwin
 class AITwinDigitalTwin;
 class AITwinIModel;
+class AITwinRealityData;
 class AITwinSavedView;
 class AITwinServerConnection;
 class FITwinGeolocation;
 class FITwinIModelInternals;
-class FITwinRealityData;
 class FITwinSynchro4DAnimator;
 class FITwinSceneTile;
 class TITwinSceneTilePtr;

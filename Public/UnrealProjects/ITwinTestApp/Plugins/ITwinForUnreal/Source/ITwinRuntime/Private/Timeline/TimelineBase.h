@@ -150,6 +150,8 @@ public:
 	using ObjectTimelinePtr = std::shared_ptr<_ObjectTimeline>;
 	using TimelineObjectContainer = std::vector<ObjectTimelinePtr>;
 	virtual ~MainTimelineBase() {}
+	virtual void ClearTimelinesData();
+	void ResetTimeRange();
 	[[nodiscard]] const TimelineObjectContainer& GetContainer() const { return Container; }
 	[[nodiscard]] TimelineObjectContainer& GetContainer() { return Container; }
 	[[nodiscard]] const FTimeRangeInSeconds& GetTimeRange() const;
@@ -161,10 +163,8 @@ public:
 	void SetJsonPrintingWithHumanReadableTimes(bool bHumanReadableTimes) const;
 	void SetJsonPrintingNumberOfDecimals(int NumberOfDecimals) const;
 
-protected:
-	TimelineObjectContainer Container;
-
 private:
+	TimelineObjectContainer Container;
 	FTimeRangeInSeconds TimeRange = ITwin::Time::InitForMinMax();
 };
 

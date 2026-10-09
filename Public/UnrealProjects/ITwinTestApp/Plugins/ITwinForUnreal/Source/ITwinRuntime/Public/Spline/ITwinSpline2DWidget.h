@@ -57,6 +57,18 @@ struct FITwinSplineChunk2DInfo
 	}
 };
 
+namespace ITwin
+{
+	//! There can be two different purposes for sampling a spline: either to draw it on screen, or to perform
+	//! hit-testing. The two purposes may require different sampling strategies (e.g. more subdivisions for
+	//! hit-testing than for drawing, in case of linear tangent mode).
+	enum class ESplineSamplingPurpose : uint8
+	{
+		Drawing = 0,
+		HitTesting,
+		ENUM_END
+	};
+}
 
 /// This widget is used to display a 3D spline in 2D, on screen, as a child of the main viewport widget.
 UCLASS()
@@ -88,14 +100,14 @@ public:
 
 
 	/// Cache the sampled positions of the spline, to avoid re-sampling it every frame for mouse hit testing.
-	void CacheSplineSampling(const TArray<FVector2D>& InSampledPositions);
+	void CacheSplineSampling(const TArray<FVector2D>& InSampledPositions, ITwin::ESplineSamplingPurpose Purpose);
 
 	/// Get the cached sampled positions of the spline, if any.
-	const TArray<FVector2D>& GetCachedSplineSampling() const;
+	const TArray<FVector2D>& GetCachedSplineSampling(ITwin::ESplineSamplingPurpose Purpose) const;
 
 	/// Whether the sampled positions of the spline are cached and can be retrieved with
-	/// GetCachedSplineSampling().
-	bool HasCachedSplineSampling() const { return !GetCachedSplineSampling().IsEmpty(); }
+	/// GetCachedSplineSampling.
+	bool HasCachedSplineSampling(ITwin::ESplineSamplingPurpose Purpose) const { return !GetCachedSplineSampling(Purpose).IsEmpty(); }
 
 	/// Whether to draw the spline as a multi-line (instead of a single Bezier curve). This can be used to
 	/// avoid numeric issues when the spline is very long on screen or has very high curvature, which can

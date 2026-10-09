@@ -182,6 +182,11 @@ bool AITwinInteractiveTool::IsPopulationTool() const
 	return IsPopulationToolImpl();
 }
 
+void AITwinInteractiveTool::SetUsedForPopulation(bool bForPopulation)
+{
+	SetUsedForPopulationImpl(bForPopulation);
+}
+
 bool AITwinInteractiveTool::IsUsedOnCutoutPrimitive() const
 {
 	return IsUsedOnCutoutPrimitiveImpl();

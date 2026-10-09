@@ -19,3 +19,25 @@ function (be_escape_semicolons outVarName)
 	string (REPLACE ";" "\;" replaced "${inVarValue}")
 	set (${outVarName} "${replaced}" PARENT_SCOPE)
 endfunction ()
+
+# Called by be_add_executable() & be_add_library().
+function (be_process_binary target)
+	# Bentley-specific processing (signing...).
+	if (COMMAND be_process_binary_private)
+		be_process_binary_private (${ARGV})
+	endif ()
+endfunction ()
+
+# Same signature as built-in add_executable().
+# May do additional processing if applicable.
+function (be_add_executable)
+	add_executable (${ARGV})
+	be_process_binary (${ARGV0})
+endfunction ()
+
+# Same signature as built-in add_library().
+# May do additional processing if applicable.
+function (be_add_library)
+	add_library (${ARGV})
+	be_process_binary (${ARGV0})
+endfunction ()

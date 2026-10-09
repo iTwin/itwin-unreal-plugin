@@ -12,9 +12,8 @@
 #include <mutex>
 
 #include <catch2/catch_all.hpp>
-#include <httpmockserver/mock_server.h>
-#include <httpmockserver/port_searcher.h>
-#include "Mock.h"
+#include <Core/Network/Tests/AsyncTestHelpers.h>
+#include <Core/Network/Tests/HttpMock.h>
 
 using namespace AdvViz::SDK;
 
@@ -90,7 +89,6 @@ bool IdenticalInstanceManagers(IInstancesManager const& mngr1, IInstancesManager
 	return true;
 }
 
-bool WaitForAsyncTask(std::atomic_bool& taskFinished, int maxSeconds);
 void SetDefaultConfig();
 
 namespace
@@ -205,7 +203,7 @@ TEST_CASE("Instances Manager")
 			std::mutex serverMutex;
 
 			auto respKeyPostGroups = std::pair("POST", "/advviz/v1/decorations/TEST_INSTANCES_ID/instancesgroups");
-			mock->responseFctWithData_[respKeyPostGroups] = [&](const std::string& data)
+			mock->SetResponseFunctionWithData(respKeyPostGroups, [&](const std::string& data)
 			{
 				std::unique_lock<std::mutex> lock(serverMutex);
 				// group should be posted before instances
@@ -223,10 +221,10 @@ TEST_CASE("Instances Manager")
 				{
 					return HTTPMock::Response2(505, "unexpected instance group data");
 				}
-			};
+			});
 
 			auto respKeyPost = std::pair("POST", "/advviz/v1/decorations/TEST_INSTANCES_ID/instances");
-			mock->responseFctWithData_[respKeyPost] = [&](const std::string& data)
+			mock->SetResponseFunctionWithData(respKeyPost, [&](const std::string& data)
 			{
 				std::unique_lock<std::mutex> lock(serverMutex);
 				// groups should be posted before instances
@@ -270,7 +268,7 @@ TEST_CASE("Instances Manager")
 				{
 					return HTTPMock::Response2(505, "unexpected instance POST data");
 				}
-			};
+			});
 
 			auto instanceManager = GetTestInstanceManager();
 			auto groupPtr = instanceManager->GetInstancesGroupByName(TEST_GROUP_NAME);
@@ -315,7 +313,7 @@ TEST_CASE("Instances Manager")
 			}
 
 			auto respKeyPutInstances = std::pair("PUT", "/advviz/v1/decorations/TEST_INSTANCES_ID/instances");
-			mock->responseFctWithData_[respKeyPutInstances] = [&](const std::string& data)
+			mock->SetResponseFunctionWithData(respKeyPutInstances, [&](const std::string& data)
 			{
 				std::unique_lock<std::mutex> lock(serverMutex);
 				++receivedRequests;
@@ -335,7 +333,7 @@ TEST_CASE("Instances Manager")
 				{
 					return HTTPMock::Response2(505, "unexpected instance PUT data");
 				}
-			};
+			});
 			SaveInstancesAndWait();
 
 
@@ -344,7 +342,7 @@ TEST_CASE("Instances Manager")
 			CHECK(instanceManager->GetInstanceCountByObjectRef("Animals/Bird.uasset", groupId) == 2);
 
 			auto respKeyDeleteInstances = std::pair("DELETE", "/advviz/v1/decorations/TEST_INSTANCES_ID/instances");
-			mock->responseFctWithData_[respKeyDeleteInstances] = [&](const std::string& data)
+			mock->SetResponseFunctionWithData(respKeyDeleteInstances, [&](const std::string& data)
 			{
 				std::unique_lock<std::mutex> lock(serverMutex);
 				++receivedRequests;
@@ -361,14 +359,14 @@ TEST_CASE("Instances Manager")
 				{
 					return HTTPMock::Response2(505, "unexpected instance DELETE data");
 				}
-			};
+			});
 			SaveInstancesAndWait();
 
 
 			// Load instances.
 
 			auto respKeyGetGroups = std::pair("GET", "/advviz/v1/decorations/TEST_INSTANCES_ID/instancesgroups");
-			mock->responseFct_[respKeyGetGroups] = [&]
+			mock->SetResponseFunction(respKeyGetGroups, [&]
 			{
 				std::unique_lock<std::mutex> lock(serverMutex);
 				++receivedRequests;
@@ -380,10 +378,10 @@ TEST_CASE("Instances Manager")
 					"{\"total_rows\":1,\"rows\":[" \
 					"{\"name\":\"test_group\",\"id\":\"gp1\"}" \
 					"],\"_links\":{}}");
-			};
+			});
 
 			auto respKeyGet = std::pair("GET", "/advviz/v1/decorations/TEST_INSTANCES_ID/instances");
-			mock->responseFct_[respKeyGet] = [&]
+			mock->SetResponseFunction(respKeyGet, [&]
 			{
 				std::unique_lock<std::mutex> lock(serverMutex);
 				++receivedRequests;
@@ -397,7 +395,7 @@ TEST_CASE("Instances Manager")
 					"{\"name\":\"inst\",\"matrix\":[0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0],\"colorshift\":\"#00ff7f\",\"groupid\":\"gp1\",\"objref\":\"Animals/Bird.uasset\",\"id\":\"instId_2\"}," \
 					"{\"name\":\"inst\",\"matrix\":[0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0],\"groupid\":\"gp1\",\"objref\":\"Animals/Tiger.uasset\",\"id\":\"instId_4\"}" \
 					"],\"_links\":{}}");
-			};
+			});
 
 			std::shared_ptr<IInstancesManager> instanceManager2(IInstancesManager::New());
 			instanceManager2->LoadDataFromServer("TEST_INSTANCES_ID");

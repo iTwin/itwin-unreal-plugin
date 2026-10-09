@@ -72,7 +72,12 @@ inline double ToNearestSecond(double const TimeInSeconds)
 
 inline FDateTime ToNearestSecond(FDateTime const& DateTime)
 {
-	return ToDateTime(ToNearestSecond(FromDateTime(DateTime)));
+	// No: here we are using a double as an intermediate value: it can represent seconds as integers with no problem
+	// (up to 2^^53) but then ToDateTime multiplies by 1^^7 _before_ casting to int64, ie. for a date in 2026 the
+	// value in Unreal Ticks being much larger than 2^^53 (> 2^^59), the double will incur a precision loss.
+	//return ToDateTime(ToNearestSecond(FromDateTime(DateTime)));
+	int64 const RoundedSeconds = (DateTime.GetTicks() + (ETimespan::TicksPerSecond / 2)) / ETimespan::TicksPerSecond;
+	return FDateTime(ETimespan::TicksPerSecond * RoundedSeconds);
 }
 
 inline FDateRange ToNearestSecond(FDateRange const& DateRange)

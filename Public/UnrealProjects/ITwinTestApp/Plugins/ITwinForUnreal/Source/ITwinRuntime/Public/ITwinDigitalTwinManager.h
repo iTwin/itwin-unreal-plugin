@@ -64,6 +64,11 @@ public:
 	UPROPERTY()
 	FComponentLoadedEvent ComponentLoadedEvent;
 
+	// Broadcasted just before an iModel or RealityData is removed
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FComponentWillBeRemovedEvent, AActor*, ComponentWillBeRemoved, EITwinModelType, ComponentType);
+	UPROPERTY()
+	FComponentWillBeRemovedEvent ComponentWillBeRemovedEvent;
+
 	// Broadcasted when an iModel or RealityData has been removed
 	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FComponentRemovedEvent, FString, StringId, EITwinModelType, ComponentType);
 	UPROPERTY()
@@ -77,6 +82,22 @@ public:
 	DECLARE_DYNAMIC_MULTICAST_DELEGATE(FITwinInfoReceivedEvent);
 	UPROPERTY()
 	FITwinInfoReceivedEvent ITwinInfoReceivedEvent;
+
+	//! Triggered when the scene is loaded.
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FSceneLoadedEvent, bool, bSuccess);
+	UPROPERTY()
+	FSceneLoadedEvent SceneLoadedEvent;
+
+	//! Triggered when the geo-location is set (it is set at most once for the whole scene).
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FGeoLocationSetEvent, bool, bFromScene, bool, bFromElevationRequest);
+	UPROPERTY()
+	FGeoLocationSetEvent GeoLocationSetEvent;
+
+	//! Triggered when another the geo-located layer is loaded (can be used to to display a warning in case
+	//! of large gap).
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FGeoLocationGapInMeters, double, Distance, const FString&, LayerId);
+	UPROPERTY()
+	FGeoLocationGapInMeters GeoLocationGapInMetersEvent;
 
 	// Helper to broadcast component info only once in a given scope.
 	class [[nodiscard]] ITWINRUNTIME_API FLoadingScope
@@ -111,7 +132,7 @@ public:
 	void ResetITwin();
 
 	// Gather all the information about the iTwin and its components
-	void Init(FString const& InITwinId, FString const& InDisplayName);
+	void Init(FString const& InITwinId, FString const& InDisplayName, bool bNoWebServicesForTesting = false);
 
 	/// Load specified iModel or Reality Data into the scene.
 	UFUNCTION(Category = "iTwin",
@@ -182,7 +203,7 @@ public:
 	void RemoveComponent(FString const& StringId);
 
 	UFUNCTION()
-	void OnSceneLoadingStartStop(bool bStart);
+	void OnSceneLoaded(bool bSuccess);
 
 	void SetIsLoadingScene(bool bIsLoading);
 	bool IsLoadingScene() const { return bIsLoadingScene; }
@@ -191,6 +212,8 @@ public:
 	bool IsRealityData(FString const& StringId) const;
 
 	bool HasLoadingPending(bool bLogState = false) const;
+
+	int32 CountProcessedIModelAttachmentRequests() const { return NumProcessedIModelAttachmentRequests; }
 
 	//! Returns whether the request retrieving iTWin information is completed.
 	bool HasRetrievedITwinInfo() const;
@@ -210,6 +233,7 @@ public:
 
 	//! Start loading the decoration attached to this iTwin, if any.
 	UFUNCTION(Category = "iTwin",
+		CallInEditor,
 		BlueprintCallable)
 	void LoadDecoration();
 
@@ -217,6 +241,10 @@ public:
 	UFUNCTION(Category = "iTwin",
 		BlueprintCallable)
 	void SaveDecoration();
+
+	//! Returns true if the geo-location of the scene has been set (either from a loaded layer or from the
+	//! scene itself).
+	bool IsGeoLocationSet() const;
 
 
 protected:
@@ -235,6 +263,9 @@ private:
 
 	void OnComponentInfoRetrieved();
 
+	void OnComponentLoaded(AActor* LoadedObject, EITwinModelType ModelType, const FString& LayerId);
+
+	void SetupSpawnedLayer(AITwinServiceActor* NewLayer);
 
 private:
 	// iTwin info
@@ -287,6 +318,8 @@ private:
 
 	// components that have been fully loaded
 	TSet<FString> CompletedLoadIds;
+
+	int32 NumProcessedIModelAttachmentRequests = 0;
 
 	UDirectionalLightComponent* SkyLight = nullptr;
 	int32 NumLoadingScopes = 0;

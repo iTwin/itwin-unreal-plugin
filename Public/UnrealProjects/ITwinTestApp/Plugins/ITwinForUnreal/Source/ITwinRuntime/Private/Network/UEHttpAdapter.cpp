@@ -6,13 +6,14 @@
 |
 +--------------------------------------------------------------------------------------*/
 
-
 #include "UEHttpAdapter.h"
-#include "HttpUtils.h"
+#include <Network/HttpUtils.h>
+#include <Tests/ITwinMockServerBase.h>
 
 #include <Interfaces/IHttpResponse.h>
 #include <HttpModule.h>
 #include <Tasks/Task.h>
+#include <Misc/EngineVersionComparison.h>
 
 class FUEHttpRequest::FImpl
 {
@@ -66,17 +67,34 @@ public:
 		}
 	}
 
-	void Process(AdvViz::SDK::Http const& http,
-				 std::string const& url,
-				 AdvViz::SDK::Http::BodyParams const& bodyParams,
-				 AdvViz::SDK::Http::Headers const& headers,
-				 bool isFullUrl)
+	//! Returns the full  URL for the given URL, based on whether it is already a full URL or a relative one.
+	static std::string GetFullUrl(AdvViz::SDK::Http const& http, std::string const& url, bool isFullUrl)
 	{
 		std::string FullURL;
 		if (isFullUrl)
 			FullURL = url;
 		else
 			FullURL = http.GetBaseUrl() + url;
+#if WITH_TESTS
+		// In automated test mode, we expect all requests to be redirected to a mock server URL (except for
+		// some functional tests working on real projects).
+		if (GIsAutomationTesting
+			&& !FullURL.starts_with("http://localhost")
+			&& FITwinMockServerBase::HasRunningInstance())
+		{
+			BE_ISSUE("In test mode, requests should be redirected to a mock server URL", FullURL);
+		}
+#endif
+		return FullURL;
+	}
+
+	void Process(AdvViz::SDK::Http const& http,
+				 std::string const& url,
+				 AdvViz::SDK::Http::BodyParams const& bodyParams,
+				 AdvViz::SDK::Http::Headers const& headers,
+				 bool isFullUrl)
+	{
+		const std::string FullURL = GetFullUrl(http, url, isFullUrl);
 		UERequest->SetURL(FullURL.c_str());
 		for (auto const& [Key, Value] : headers)
 		{
@@ -98,9 +116,8 @@ public:
 	{
 		if (response.first == HTTP_CONNECT_ERR)
 		{
-			FString const UEError = TEXT("Connection to the server failed (unreachable?)");
-			//+ EHttpRequestStatus::ToString(CompletedRequest->GetStatus()); <= obviously "Failed", so pointless
-			requestError = TCHAR_TO_UTF8(*UEError);
+			requestError = TCHAR_TO_UTF8(
+				*ITwinHttp::DescribeTransportFailure(UERequest, ITwinHttp::ConnectionSuccess(false), {}));
 			return false;
 		}
 		else if (!EHttpResponseCodes::IsOk(response.first))

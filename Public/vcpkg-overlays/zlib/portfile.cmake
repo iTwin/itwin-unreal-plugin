@@ -7,6 +7,7 @@ vcpkg_from_github(
     HEAD_REF master
 	PATCHES
 		0001-zlib-static-output-name.patch
+		0002-zlib-CVE-2026-85091.patch
 )
 
 # This is (was?) generated during the cmake build

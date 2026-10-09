@@ -7,6 +7,8 @@
 +--------------------------------------------------------------------------------------*/
 
 #include "ITwinSceneMapping.h"
+
+#include <Clipping/ITwinClipping3DTilesetHelper.h>
 #include <ITwinCesiumTileID.inl>
 #include <ITwinDynamicShadingProperty.h>
 #include <ITwinDynamicShadingProperty.inl>
@@ -474,7 +476,7 @@ FITwinElement& FITwinSceneMapping::ElementFor(ITwinScene::ElemIdx const Rank)
 }
 
 FITwinElement* FITwinSceneMapping::GetElementForSLOW(ITwinElementID const KnownElementID,
-	ITwinScene::ElemIdx* Rank/*= nullptr*/)
+	ITwinScene::ElemIdx* Rank/*= nullptr*/) const
 {
 	auto& ByID = AllElements.get<IndexByElemID>();
 	auto It = ByID.find(KnownElementID);
@@ -674,12 +676,14 @@ void FITwinSceneMapping::FinishedParsingIModelMetadata(bool bFinishedElemIDs, bo
 	{
 		CheckParentChildGraph();
 		// Need to keep at least as long as (APIM NextGen) schedule is loading!
-	//#if !WITH_EDITOR
+	#if !WITH_EDITOR
 	//	decltype(FederatedElementGUIDs) EmptyFed;
 	//	FederatedElementGUIDs.swap(EmptyFed);
-	//#endif
+		// Keep in Editor for some console commands like FCmd_ITwinZoomOnSelectedElement because SP files usually
+		// do not have the Federation GUIDs
 		decltype(SourceElementIDs) Empty;
 		SourceElementIDs.swap(Empty);
+	#endif
 	}
 	if (bFinishedBBoxes)
 		bNeedConvertElemBBoxes = true;
@@ -715,7 +719,9 @@ int FITwinSceneMapping::ParseStandaloneBoundingBoxes(TSceneMappingPtr SceneMappi
 	for (auto const& Row : JsonRows)
 	{
 		auto const& Entries = Row->AsArray();
-		if (!ensure(Entries.Num() == 3))
+		// Don't assert: some Elements apparently are listed (with only their ID in the first column) in the "physical
+		// entities" table but have no BBox, eg. in 4D-I95-for-LumenRT from iTwin 2c7efcad-19b6-4ec6-959f-f36d49699071
+		if (!/*ensure*/(Entries.Num() == 3))
 			continue;
 		ITwinElementID const ElemId = ITwin::ParseElementID(Entries[0]->AsString());
 		if (!ensure(ITwin::NOT_ELEMENT != ElemId))
@@ -875,9 +881,8 @@ bool FITwinSceneMapping::ParseSomeElementIdentifier(TMapByRank& OutIDMap, ITwinS
 		// was inserted => first time the Source Element ID is encountered, but don't create a duplicates
 		// list just yet!
 	}
-	else // already in set => we have a duplicate
+	else if (bHandleDuplicates) // already in set => we have a duplicate
 	{
-		ensure(bHandleDuplicates); // can we have FederationGUID duplicates? Probably not, by definition!
 		auto& FirstSourceElem = ElementFor(SourceEntry.first->Rank);
 		// first duplicate: create the list
 		if (ITwinScene::NOT_DUPL == FirstSourceElem.DuplicatesList)
@@ -891,6 +896,12 @@ bool FITwinSceneMapping::ParseSomeElementIdentifier(TMapByRank& OutIDMap, ITwinS
 			DuplicateElements[FirstSourceElem.DuplicatesList.value()].push_back(ElemIdx);
 		}
 		ElementFor(ElemIdx).DuplicatesList = FirstSourceElem.DuplicatesList;
+	}
+	else // can we have FederationGUID duplicates? Probably not, by definition!
+	{	 // but we can have several rows for the same ElementID returned by the query!
+		 // For example, EA_p1's Metrostation has an Element that "references" the Reality mesh,
+		 // and this one has two different Source IDs, hence I guess the 2 rows...
+		ensure(ElemIdx == SourceEntry.first->Rank); // same FedGUID should mean same Element
 	}
 	++GoodEntry;
 	return true;
@@ -1500,11 +1511,17 @@ FBox FITwinSceneMapping::GetBoundingBoxOfAllGlTFMeshes() const
 	return Box;
 }
 
-bool FITwinSceneMapping::IsElementVisible(ITwinScene::ElemIdx const Rank, std::optional<FVector> HitWorldPosition)
-	/*should be const*/
+void FITwinSceneMapping::SetClippingHelper(UITwinClipping3DTilesetHelper* InClippingHelper)
+{
+	ClippingHelper = InClippingHelper;
+}
+
+bool FITwinSceneMapping::IsElementVisible(ITwinScene::ElemIdx const Rank, std::optional<FVector> HitWorldPosition,
+										  bool const bSkipClippingTest/*= false*/) /*should be const*/
 {
 	return PickVisibleElement(ElementFor(Rank).ElementID,
-		FPickingOptions::CreateDefaultPickVisible().MakeSelected(false).HitWorldPosition(HitWorldPosition));
+		FPickingOptions::CreateDefaultPickVisible().MakeSelected(false).HitWorldPosition(HitWorldPosition)
+												   .SkipClippingTest(bSkipClippingTest));
 }
 
 bool FITwinSceneMapping::PickVisibleElement(ITwinElementID const& InElemID,
@@ -1514,27 +1531,38 @@ bool FITwinSceneMapping::PickVisibleElement(ITwinElementID const& InElemID,
 	// and secondly because the visibility (thru shader) could have changed since the Element was selected!
 	//if (bSelectElement && InElemID == SelectedElement)
 	//	return false;
+	bool bIsCutOut = false;
+	if (Opts.TestElementVisibility() && !Opts.SkipClippingTest() && Opts.HitWorldPosition())
+	{
+		auto pClipTester = ClippingHelper.Pin();
+		if (pClipTester && pClipTester->ShouldCutOut(*Opts.HitWorldPosition()))
+			bIsCutOut = true;
+	}
 	bool bPickedInATile = false;
 	FITwinSceneTile::FTextureNeeds TextureNeeds;
-	ForEachKnownTile(std::function<bool(TITwinSceneTilePtr const&)>(
-		[&InElemID, &bPickedInATile, &TextureNeeds, Opts](TITwinSceneTilePtr const& SceneTilePtr)
+	if (!bIsCutOut || (Opts.MakeSelected() && !Opts.SkipResetSelection()))
 	{
-		auto SceneTileLock = SceneTilePtr->GetAutoLock();
-		auto& SceneTile = *SceneTileLock;
-		bPickedInATile |= SceneTile.PickElement(InElemID, TextureNeeds, Opts);
-		if (!Opts.MakeSelected() && bPickedInATile)
+		ForEachKnownTile(std::function<bool(TITwinSceneTilePtr const&)>(
+			[&InElemID, &bPickedInATile, &TextureNeeds, Opts](TITwinSceneTilePtr const& SceneTilePtr)
 		{
-			// If we are not selecting, we can stop as soon as we find the Element in a tile
-			return false; // break ForEachKnownTile
-		}
-		return true; // continue ForEachKnownTile
-	}));
-	this->bNewSelectingAndHidingTexturesNeedSetupInMaterials |= TextureNeeds.bWasCreated;
+			auto SceneTileLock = SceneTilePtr->GetAutoLock();
+			auto& SceneTile = *SceneTileLock;
+			bPickedInATile |= SceneTile.PickElement(InElemID, TextureNeeds, Opts);
+			if (!Opts.MakeSelected() && bPickedInATile)
+			{
+				// If we are not selecting (and thus not deselecting either), we can stop as soon as we find the
+				// Element in a tile
+				return false; // break ForEachKnownTile
+			}
+			return true; // continue ForEachKnownTile
+		}));
+		this->bNewSelectingAndHidingTexturesNeedSetupInMaterials |= TextureNeeds.bWasCreated;
+	}
 	if (Opts.MakeSelected())
 	{
 		if (!Opts.SkipResetSelection())
 			SelectedElements.clear();
-		if (InElemID != ITwin::NOT_ELEMENT)
+		if (InElemID != ITwin::NOT_ELEMENT && (bPickedInATile || !Opts.TestElementVisibility()))
 			SelectedElements.insert(InElemID);
 		// Do it now for existing textures: the initial UpdateTexture call of new textures will also be attempted,
 		// but most likely the TextureRHI is not ready yet, so it will be done again automatically when calling
@@ -1548,9 +1576,12 @@ bool FITwinSceneMapping::PickVisibleElement(ITwinElementID const& InElemID,
 bool FITwinSceneMapping::PickVisibleElements(std::unordered_set<ITwinElementID> const& InElemIDs,
 	FPickingOptions Opts/*= FPickingOptions::CreateDefaultPickVisible()*/)
 {
-	bool bPickedAny = false;
+	ensure(!Opts.HitWorldPosition()); // does not make sense: thus it does not handle clipping
 	FITwinSceneTile::FTextureNeeds TextureNeeds;
-	ForEachKnownTile([&InElemIDs, &bPickedAny, &TextureNeeds, Opts]
+	bool bPickedAny = false;
+	if (Opts.MakeSelected() && !Opts.SkipResetSelection())
+		SelectedElements.clear();
+	ForEachKnownTile([&InElemIDs, &TextureNeeds, &bPickedAny, &Selection = SelectedElements, Opts]
 		(TITwinSceneTilePtr const& SceneTilePtr)
 	{
 		auto SceneTileLock = SceneTilePtr->GetAutoLock();
@@ -1562,21 +1593,18 @@ bool FITwinSceneMapping::PickVisibleElements(std::unordered_set<ITwinElementID> 
 			if (!bFirst)
 				PerElemOpts = PerElemOpts.SkipResetSelection(true);
 			bFirst = false;
-			bPickedAny |= SceneTile.PickElement(ElemID, TextureNeeds, PerElemOpts);
+			if ((SceneTile.PickElement(ElemID, TextureNeeds, PerElemOpts) || !Opts.TestElementVisibility())
+				&& ElemID != ITwin::NOT_ELEMENT)
+			{
+				Selection.insert(ElemID);
+				bPickedAny = true;
+			}
 		}
 	});
 	this->bNewSelectingAndHidingTexturesNeedSetupInMaterials |= TextureNeeds.bWasCreated;
-	if (Opts.MakeSelected())
+	if (Opts.MakeSelected() && TextureNeeds.bWasChanged)
 	{
-		if (!Opts.SkipResetSelection())
-			SelectedElements.clear();
-		for (auto const& ElemID : InElemIDs)
-		{
-			if (ElemID != ITwin::NOT_ELEMENT)
-				SelectedElements.insert(ElemID);
-		}
-		if (TextureNeeds.bWasChanged)
-			UpdateSelectingAndHidingTextures();
+		UpdateSelectingAndHidingTextures();
 	}
 	return bPickedAny;
 }
@@ -1705,61 +1733,23 @@ namespace ITwin
 	std::array<uint8, 4> const& GetMaterialSelectionHighlightBGRA();
 }
 
-bool FITwinSceneMapping::PickVisibleMaterial(ITwinMaterialID const& InMaterialID, bool bIsMaterialPrediction,
-	std::optional<ITwinColor> const& ColorToRestore /*= std::nullopt*/)
+bool FITwinSceneMapping::PickVisibleMaterial(ITwinMaterialID const& InMaterialID)
 {
 	bool bPickedMaterial = false;
 	FITwinSceneTile::FTextureNeeds TextureNeeds;
 
-	if (bIsMaterialPrediction)
+	// We used to handle a special case for material prediction here, but the feature was removed
+	// (blame here to see the code).
+
+	// General case, based on per-feature pixels in a texture, exactly as for ElementIDs.
+	const ITwinRenderMaterialElementID IModelMaterialID(InMaterialID.getValue());
+	ForEachKnownTile([&IModelMaterialID, &bPickedMaterial, &TextureNeeds](TITwinSceneTilePtr const& SceneTilePtr)
 	{
-		// Special case of material prediction: temporarily override the material colors in all UE material
-		// instances matching this iTwin material ID (we can do it because the whole tileset has been tuned
-		// against the predicted materials).
-		std::optional<ITwinColor> ColorToSet;
-		uint64_t MatIdToEdit = InMaterialID.getValue();
-		if (InMaterialID == ITwin::NOT_MATERIAL)
-		{
-			// Restore the original material's color, if any.
-			if (SelectedMaterial != ITwin::NOT_MATERIAL)
-			{
-				ensure(ColorToRestore.has_value());
-				ColorToSet = ColorToRestore;
-				MatIdToEdit = SelectedMaterial.getValue();
-			}
-		}
-		else
-		{
-			MatIdToEdit = InMaterialID.getValue();
-			auto const& Highlight_BGRA = ITwin::GetMaterialSelectionHighlightBGRA();
-			const double ColorConv = 1. / 255.;
-			ColorToSet = ITwinColor{
-				ColorConv * Highlight_BGRA[2],
-				ColorConv * Highlight_BGRA[1],
-				ColorConv * Highlight_BGRA[0],
-				ColorConv * Highlight_BGRA[3]
-			};
-		}
-		if (ColorToSet)
-		{
-			SetITwinMaterialChannelColor(MatIdToEdit,
-				AdvViz::SDK::EChannelType::Color,
-				*ColorToSet);
-			bPickedMaterial = true;
-		}
-	}
-	else
-	{
-		// General case, based on per-feature pixels in a texture, exactly as for ElementIDs.
-		const ITwinRenderMaterialElementID IModelMaterialID(InMaterialID.getValue());
-		ForEachKnownTile([&IModelMaterialID, &bPickedMaterial, &TextureNeeds](TITwinSceneTilePtr const& SceneTilePtr)
-		{
-			auto SceneTileLock = SceneTilePtr->GetAutoLock();
-			auto& SceneTile = *SceneTileLock;
-			bPickedMaterial |= SceneTile.PickMaterial(IModelMaterialID, TextureNeeds,
-													  FPickingOptions::CreateDefaultPickVisible());
-		});
-	}
+		auto SceneTileLock = SceneTilePtr->GetAutoLock();
+		auto& SceneTile = *SceneTileLock;
+		bPickedMaterial |= SceneTile.PickMaterial(IModelMaterialID, TextureNeeds,
+												  FPickingOptions::CreateDefaultPickVisible());
+	});
 
 	SelectedMaterial = InMaterialID;
 	this->bNewSelectingAndHidingTexturesNeedSetupInMaterials |= TextureNeeds.bWasCreated;

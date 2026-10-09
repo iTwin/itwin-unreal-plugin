@@ -163,7 +163,7 @@ namespace {
 		pChannel->SetKeyTimes(vKeyHandles, vKeyTimes);
 	}
 
-	template<class T>
+	template <class T>
 	void ShiftSectionKFs(UMovieSceneSection* pSection, TRange<FFrameNumber> editedKFRange, FFrameNumber deltaFrameNum)
 	{
 		using Traits = SequencerTypeTraits<T>;
@@ -181,6 +181,106 @@ namespace {
 		for (int i(0); i < pSection->GetChannelProxy().NumChannels(); i++)
 			ShiftKeyFrameInChannel(pSection->GetChannelProxy().GetChannel<typename Traits::ChannelType>(i), editedKFRange, deltaFrameNum);
 		// adjust frame range to the shifted times
+		pSection->SetRange(ComputeRangeFromKFs(pSection));
+		pSection->Modify();
+	}
+
+	/// Picks Count evenly spaced indices within [0, Size-1], first and last included.
+	/// Linear interpolation on the index, rounded to a real index: the caller therefore
+	/// always ends up using values that actually exist in the source array.
+	/// The result is strictly increasing as long as Count <= Size.
+	TArray<int32> ComputeEvenlySpacedIndices(int32 Count, int32 Size)
+	{
+		TArray<int32> Indices;
+		if (Count <= 0 || Size <= 0)
+			return Indices;
+
+		Indices.Reserve(Count);
+		if (Count == 1)
+		{
+			Indices.Add(0);
+			return Indices;
+		}
+
+		for (int32 i = 0; i < Count; ++i)
+		{
+			const double Ratio = (double)i / (double)(Count - 1);
+			int32 Index = FMath::RoundToInt(Ratio * (double)(Size - 1));
+			// Rounding can repeat an index when Count is close to Size; force strict growth
+			// so that no two keys are ever assigned the same frame.
+			if (i > 0 && Index <= Indices.Last())
+				Index = FMath::Min(Indices.Last() + 1, Size - 1);
+			Indices.Add(Index);
+		}
+		return Indices;
+	}
+
+	void SetKeyFrameTimesInChannel(FMovieSceneChannel* pChannel, const TArray<FFrameNumber>& NewFrameNumbers)
+	{
+		if (pChannel == nullptr || NewFrameNumbers.Num() == 0)
+			return;
+		TArray<FFrameNumber> vKeyTimes;
+		TArray<FKeyHandle> vKeyHandles;
+		pChannel->GetKeys(TRange<FFrameNumber>::All(), &vKeyTimes, &vKeyHandles);
+		if (vKeyTimes.Num() == 0)
+			return; // channel not animated (e.g. an atmo track on a clip without atmo data)
+
+		if (vKeyTimes.Num() == NewFrameNumbers.Num())
+		{
+			pChannel->SetKeyTimes(vKeyHandles, NewFrameNumbers);
+		}
+		else
+		{
+			// The channel is out of sync with the clip's key-frame list. This is not expected, so
+			// stay conservative: never add or remove keys here, only retime existing ones, and
+			// only with times taken from NewFrameNumbers (the clip's time grid stays authoritative).
+			if (vKeyTimes.Num() > NewFrameNumbers.Num())
+			{
+				// More keys than times: every key would need a distinct frame, and two keys cannot
+				// share one. Retiming only part of them would leave the remaining keys at their old
+				// times, possibly out of order. Leave the channel alone rather than corrupt it.
+				BE_LOGW("Timeline", "Channel holds " << vKeyTimes.Num() << " key(s) but only "
+					<< NewFrameNumbers.Num() << " new time(s) were provided; leaving it unchanged");
+				return;
+			}
+
+			// Fewer keys than times: use an evenly spaced subset of the new times, keeping the
+			// first and the last so the channel still spans the whole clip.
+			BE_LOGW("Timeline", "Channel holds " << vKeyTimes.Num() << " key(s) but "
+				<< NewFrameNumbers.Num() << " new time(s) were provided; remapping onto a subset");
+
+			const TArray<int32> Picked = ComputeEvenlySpacedIndices(vKeyTimes.Num(), NewFrameNumbers.Num());
+			TArray<FFrameNumber> Times;
+			Times.Reserve(Picked.Num());
+			for (int32 Index : Picked)
+				Times.Add(NewFrameNumbers[Index]);
+
+			pChannel->SetKeyTimes(vKeyHandles, Times);
+		}
+	}
+
+	template <class T>
+	void SetSectionKFs(UMovieSceneSection* pSection, const TArray<FFrameNumber>& NewFrameNumbers)
+	{
+		BE_ASSERT(NewFrameNumbers.Num() > 0);
+
+		using Traits = SequencerTypeTraits<T>;
+
+		if (!pSection || NewFrameNumbers.Num() == 0)
+			return;
+		auto ExtendedRange = pSection->GetRange();
+		// Extend frame range to include new frame times
+		if (NewFrameNumbers.Last() > ExtendedRange.GetUpperBoundValue())
+		{
+			ExtendedRange.SetUpperBoundValue(NewFrameNumbers.Last());
+			pSection->SetRange(ExtendedRange);
+		}
+		// Set the new times in each transform channel
+		for (int i(0); i < pSection->GetChannelProxy().NumChannels(); i++)
+		{
+			SetKeyFrameTimesInChannel(pSection->GetChannelProxy().GetChannel<typename Traits::ChannelType>(i), NewFrameNumbers);
+		}
+		// Adjust frame range to the modified times
 		pSection->SetRange(ComputeRangeFromKFs(pSection));
 		pSection->Modify();
 	}
@@ -1587,32 +1687,71 @@ void USequencerHelper::ShiftClipKFsOld(ACameraActor* pCameraActor, FString level
 }
 
 namespace {
-	void DoShiftClipKFs(TArray<TStrongObjectPtr<UMovieSceneTrack> >& Tracks, const FFrameNumber &InDeltaFrameNum, std::optional< TRange<FFrameNumber> > InKFRange = std::nullopt)
+
+	/// Carries a track's value type as a tag, so a generic lambda can recover it via
+	/// decltype(Tag)::Type. Avoids repeating the track-class dispatch for every operation.
+	template <typename T>
+	struct TTrackValueTag { using Type = T; };
+
+	/// Dispatches on the track's concrete class and invokes Func with the matching tag.
+	/// Returns false (and asserts) for unsupported track classes.
+	template <typename FuncT>
+	bool VisitTrackValueType(const UMovieSceneTrack* pTrack, FuncT&& Func)
 	{
-		for (size_t i(0); i < Tracks.Num(); i++)
+		if (!pTrack)
+			return false;
+
+		const FName ClassName = pTrack->GetClass()->GetFName();
+		if (ClassName == TEXT("MovieScene3DTransformTrack")) { Func(TTrackValueTag<FTransform>{});   return true; }
+		if (ClassName == TEXT("MovieSceneFloatVectorTrack")) { Func(TTrackValueTag<FVector>{});      return true; }
+		if (ClassName == TEXT("MovieSceneDoubleTrack"))      { Func(TTrackValueTag<double>{});       return true; }
+		if (ClassName == TEXT("MovieSceneFloatTrack"))       { Func(TTrackValueTag<float>{});        return true; }
+		if (ClassName == TEXT("MovieSceneBoolTrack"))        { Func(TTrackValueTag<bool>{});         return true; }
+		if (ClassName == TEXT("MovieSceneStringTrack"))      { Func(TTrackValueTag<std::string>{});  return true; }
+
+		BE_ASSERT(false, "Unsupoorted type of track");
+		return false;
+	}
+
+	/// Iterates a clip's tracks, resolving each one's section and value type.
+	/// Func is called as Func(Tag, TrackIndex, pTrack, pSection).
+	template <typename FuncT>
+	void ForEachTrackSection(TArray<TStrongObjectPtr<UMovieSceneTrack> >& Tracks, FuncT&& Func)
+	{
+		for (int32 i = 0; i < Tracks.Num(); ++i)
 		{
 			if (!Tracks[i])
 				continue;
 			UMovieSceneTrack* pTrack = Tracks[i].Get();
-			auto pSection = GetSectionFromTrack(pTrack, 0);
-			TRange<FFrameNumber> KFRange = InKFRange.has_value() ? *InKFRange : pSection->GetRange();
-			if (pTrack->GetClass()->GetFName().Compare(TEXT("MovieScene3DTransformTrack")) == 0)
-				ShiftSectionKFs<FTransform>(pSection, KFRange, InDeltaFrameNum);
-			else if (pTrack->GetClass()->GetFName().Compare(TEXT("MovieSceneFloatVectorTrack")) == 0)
-				ShiftSectionKFs<FVector>(pSection, KFRange, InDeltaFrameNum);
-			else if (pTrack->GetClass()->GetFName().Compare(TEXT("MovieSceneDoubleTrack")) == 0)
-				ShiftSectionKFs<double>(pSection, KFRange, InDeltaFrameNum);
-			else if (pTrack->GetClass()->GetFName().Compare(TEXT("MovieSceneFloatTrack")) == 0)
-				ShiftSectionKFs<float>(pSection, KFRange, InDeltaFrameNum);
-			else if (pTrack->GetClass()->GetFName().Compare(TEXT("MovieSceneBoolTrack")) == 0)
-				ShiftSectionKFs<bool>(pSection, KFRange, InDeltaFrameNum);
-			else if (pTrack->GetClass()->GetFName().Compare(TEXT("MovieSceneStringTrack")) == 0)
-				ShiftSectionKFs<std::string>(pSection, KFRange, InDeltaFrameNum);
-			else
-			{
-				BE_ASSERT(false, "Unsupoorted type of track");
-			}
+			UMovieSceneSection* pSection = GetSectionFromTrack(pTrack, 0); // we use only one section per track
+			if (!pSection)
+				continue;
+			VisitTrackValueType(pTrack, [&](auto Tag) { Func(Tag, i, pTrack, pSection); });
 		}
+	}
+
+	void DoShiftClipKFs(TArray<TStrongObjectPtr<UMovieSceneTrack> >& Tracks, const FFrameNumber &InDeltaFrameNum,
+						std::optional< TRange<FFrameNumber> > InKFRange = std::nullopt)
+	{
+		ForEachTrackSection(Tracks,
+			[&](auto Tag, int32 /*i*/, UMovieSceneTrack* /*pTrack*/, UMovieSceneSection* pSection)
+		{
+			using T = typename decltype(Tag)::Type;
+			const TRange<FFrameNumber> KFRange = InKFRange.has_value() ? *InKFRange : pSection->GetRange();
+			ShiftSectionKFs<T>(pSection, KFRange, InDeltaFrameNum);
+		});
+	}
+
+	void DoSetClipKFsTimes(TArray<TStrongObjectPtr<UMovieSceneTrack> >& Tracks, const TArray<FFrameNumber>& NewFrameNumbers)
+	{
+		BE_ASSERT(NewFrameNumbers.Num() > 0);
+
+		ForEachTrackSection(Tracks,
+			[&](auto Tag, int32 /*i*/, UMovieSceneTrack* /*pTrack*/, UMovieSceneSection* pSection)
+		{
+			using T = typename decltype(Tag)::Type;
+			SetSectionKFs<T>(pSection, NewFrameNumbers);
+		});
 	}
 }
 
@@ -1631,6 +1770,20 @@ void USequencerHelper::ShiftClipKFs(TArray<TStrongObjectPtr<UMovieSceneTrack> >&
 	auto DeltaFrameNum = GetTimeFrameNum(pLevelSeq, fDeltaTime);
 
 	DoShiftClipKFs(Tracks, DeltaFrameNum);
+}
+
+void USequencerHelper::SetClipKFsTimes(TArray<TStrongObjectPtr<UMovieSceneTrack> >& Tracks, FString levelSequencePath, const std::vector<float>& vNewTimes)
+{
+	if (!ensure(vNewTimes.size() > 0))
+		return;
+	ULevelSequence* pLevelSeq = Cast<ULevelSequence>(StaticLoadObject(ULevelSequence::StaticClass(), nullptr, *levelSequencePath));
+	TArray<FFrameNumber> NewFrameNumbers;
+	NewFrameNumbers.Reserve(vNewTimes.size());
+	for (float Time : vNewTimes)
+	{
+		NewFrameNumbers.Add(GetTimeFrameNum(pLevelSeq, Time));
+	}
+	DoSetClipKFsTimes(Tracks, NewFrameNumbers);
 }
 
 

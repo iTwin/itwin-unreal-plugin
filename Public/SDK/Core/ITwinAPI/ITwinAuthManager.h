@@ -88,6 +88,8 @@ MODULE_EXPORT namespace AdvViz::SDK
 		static std::string GetAppID(EITwinEnvironment env);
 
 		static void AddScope(std::string const& extraScope);
+		//! Only an extra scope that was added with AddScope can be removed with RemoveScope.
+		static bool RemoveScope(std::string const& extraScope);
 		static bool HasScope(std::string const& scope);
 
 		static void SetRedirectUriPort(int port);

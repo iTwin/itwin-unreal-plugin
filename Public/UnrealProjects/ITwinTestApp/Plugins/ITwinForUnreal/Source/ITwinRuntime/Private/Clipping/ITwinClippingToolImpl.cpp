@@ -88,6 +88,8 @@ void UITwinClippingToolImpl::ClippingModified(
 {
 	FFeatureEventProperties properties;
 	properties.ChangeType = change;
+	properties.FeatureType = EFeatureType::Clipping;
+
 	FString cutout_type;
 	switch (Type)
 	{
@@ -174,12 +176,13 @@ void UITwinClippingToolImpl::OnClippingInstancesLoaded(AITwinPopulation* Populat
 }
 
 
-void UITwinClippingToolImpl::OnClippingInstancesRemoved(EITwinInstantiatedObjectType ObjectType, const TArray<int32>& InstanceIndices)
+void UITwinClippingToolImpl::OnClippingInstancesRemoved(EITwinInstantiatedObjectType ObjectType,
+	const TArray<int32>& IndicesInDescendingOrder, bool bUseRemoveAtSwap)
 {
-	if (InstanceIndices.IsEmpty())
+	if (IndicesInDescendingOrder.IsEmpty())
 		return;
 
-	EITwinClippingPrimitiveType EffectType = Factory->OnClippingInstancesRemoved(ObjectType);
+	EITwinClippingPrimitiveType EffectType = Factory->OnClippingInstancesRemoved(ObjectType, IndicesInDescendingOrder, bUseRemoveAtSwap);
 	if (ensure(EffectType != EITwinClippingPrimitiveType::Count))
 	{
 		// Recreate all effects from remaining instances.
@@ -251,14 +254,14 @@ void UITwinClippingToolImpl::OnSplineHelperAdded(AITwinSplineHelper* NewSpline)
 	}
 }
 
-void UITwinClippingToolImpl::OnSplineHelperRemoved(AITwinSplineHelper* SplineBeingRemoved)
+void UITwinClippingToolImpl::OnSplineHelperRemoved(AITwinSplineHelper* SplineBeingRemoved, bool bTriggeredFromITS)
 {
 	if (SplineBeingRemoved
 		&& SplineBeingRemoved->GetUsage() == EITwinSplineUsage::MapCutout)
 	{
 		auto const SelectedBefore = GetSelectedEffect();
 
-		if (Factory->DeRegisterCutoutSpline(SplineBeingRemoved))
+		if (Factory->DeRegisterCutoutSpline(SplineBeingRemoved, bTriggeredFromITS))
 		{
 			// After removing a cutout, we should exit isolation mode or else we'll be in an inconsistent state
 			// (cutout selection mode in iTS, but some or all cutout proxies hidden in Unreal).
@@ -269,7 +272,7 @@ void UITwinClippingToolImpl::OnSplineHelperRemoved(AITwinSplineHelper* SplineBei
 			}
 		}
 
-		if (!SplineBeingRemoved->IsInteractiveCreationInProgress())
+		if (!bTriggeredFromITS && !SplineBeingRemoved->IsInteractiveCreationInProgress())
 		{
 			ClippingModified(EITwinClippingPrimitiveType::Polygon, EChangeType::Deleted, TEXT("key_down"));
 		}
@@ -340,6 +343,15 @@ void UITwinClippingToolImpl::SelectPopulationInstance(AITwinPopulation* Populati
 		PopTool->SetSelectedInstanceIndex(InstanceIndex);
 		OnPrimitiveSelectionChanged(Type, InstanceIndex);
 
+		if (bUpdateTransformationMode)
+		{
+			// Quick fix to refresh the gizmo mode: the call to SelectionChangedEvent below would only
+			// refresh the coordinates of the gizmo, but if no instance was selected, and the gizmo
+			// was used for the Spline Tool (thus in Move mode), we should ensure we update it to use
+			// the transformation mode imposed here.
+			// (see ADO#2138730, in particular the video 2138730-1911.mp4).
+			EventHub->ActivationEvent.Broadcast(true);
+		}
 		PopTool->SelectionChangedEvent.Broadcast();
 	}
 }
@@ -553,7 +565,7 @@ void UITwinClippingToolImpl::OnSplinePointRemoved()
 		return;
 	}
 
-	if (SplineTool.IsValid() && !SplineTool->IsInteractiveCreationMode())
+	if (!SplineTool->IsInteractiveCreationMode())
 	{
 		ClippingModified(EITwinClippingPrimitiveType::Polygon, EChangeType::Modified, TEXT("key_down"), TEXT("point_removed"));
 	}
@@ -619,8 +631,8 @@ void UITwinClippingToolImpl::SetInvertEffect(EITwinClippingPrimitiveType Type, i
 			}
 			else
 			{
-				// For other types we just update flags in Material Parameter Collection.
-				Renderer->EncodeFlippingInMPC(Type);
+				// For other types we just update one parameter in Material Parameter Collection.
+				Renderer->EncodeFlippingInMPC(Type, PrimitiveIndex);
 			}
 
 			if (Persistence)

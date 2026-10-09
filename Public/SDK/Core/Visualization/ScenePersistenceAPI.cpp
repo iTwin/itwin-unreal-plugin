@@ -291,14 +291,14 @@ namespace AdvViz::SDK {
 			{
 				envPrefix = "https://";
 			}
-			if (curstomServerConfig.server.port != -1 || !curstomServerConfig.server.server.empty())
+			if (customServerConfig.server.port != -1 || !customServerConfig.server.server.empty())
 			{
-				std::string baseUrl = curstomServerConfig.server.server;
-				if (curstomServerConfig.server.port >= 0)
+				std::string baseUrl = customServerConfig.server.server;
+				if (customServerConfig.server.port >= 0)
 				{
-					baseUrl += ":" + std::to_string(curstomServerConfig.server.port);
+					baseUrl += ":" + std::to_string(customServerConfig.server.port);
 				}
-				baseUrl += curstomServerConfig.server.urlapiprefix;
+				baseUrl += customServerConfig.server.urlapiprefix;
 				Http_->SetBaseUrl(baseUrl.c_str());
 			}
 			else
@@ -307,7 +307,7 @@ namespace AdvViz::SDK {
 			}
 		}
 
-		Config::SConfig curstomServerConfig;
+		Config::SConfig customServerConfig;
 
 	private:
 		std::string envPrefix;
@@ -1061,7 +1061,14 @@ namespace AdvViz::SDK {
 					AddLink(link);
 					{
 						auto thdata = thdata_.GetAutoLock();
-						thdata->jsonAtmo_.heliodonDate = "2024-03-18T12:00:00Z";
+
+						// Format today time as ISO 8601 (UTC)
+						// For the hour, we use 12:00 to avoid having a too dark scene at night when loading
+						// a new scene.
+						using namespace std::chrono;
+						zoned_time local_now{ current_zone(), system_clock::now() };
+
+						thdata->jsonAtmo_.heliodonDate = std::format("{:%Y-%m-%dT12:00:00Z}", local_now);
 						thdata->jsonAtmo_.useHeliodon = true;
 						thdata->jsonAtmo_.heliodonLongitude = -77.90736389160156;
 						thdata->jsonAtmo_.heliodonLatitude = 35.857818603515625;
@@ -1997,6 +2004,7 @@ namespace AdvViz::SDK {
 		SetAtmosphere(defaultAtmo);
 		SetSceneSettings(ITwinSceneSettings());
 		SetShouldSave(false);
+		SetTimeline(std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New()));
 	}
 
 	std::vector<std::shared_ptr<AdvViz::SDK::ILink>> ScenePersistenceAPI::GetLinks() const
@@ -3226,7 +3234,7 @@ namespace AdvViz::SDK {
 
 	void SetSceneAPIConfig(const Config::SConfig& c)
 	{
-		creds.curstomServerConfig = c;
+		creds.customServerConfig = c;
 	}
 
 }

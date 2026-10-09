@@ -18,10 +18,7 @@
 
 #include <Network/JsonQueriesCache.h>
 #include <ITwinWebServices/ITwinWebServices.h>
-#include <Misc/Paths.h>
-
 #include <ITwinElementID.h>
-
 #include <ITwinIModel.h>
 #include <ITwinIModelInternals.h>
 #include <ITwinSceneMappingBuilder.h>
@@ -44,7 +41,6 @@
 #	include <BeUtils/Misc/MiscUtils.h>
 #	include <SDK/Core/ITwinAPI/ITwinMaterial.h>
 #	include <SDK/Core/ITwinAPI/ITwinMaterial.inl>
-#	include <SDK/Core/ITwinAPI/ITwinMaterialPrediction.h>
 #	include <SDK/Core/ITwinAPI/ITwinTypes.h>
 #	include <SDK/Core/Tools/Tools.h>
 #	include <SDK/Core/Visualization/MaterialPersistence.h>
@@ -56,8 +52,6 @@
 
 namespace ITwin
 {
-	ITWINRUNTIME_API bool IsMLMaterialPredictionEnabled();
-
 	UMaterialInstanceDynamic* ChangeBaseMaterialInUEMesh(UStaticMeshComponent& MeshComponent,
 		UMaterialInterface* BaseMaterial,
 		TWeakObjectPtr<UMaterialInstanceDynamic> const* SupposedPreviousMaterial /*= nullptr*/);
@@ -135,9 +129,10 @@ void FITwinIModelMaterialHandler::Initialize(std::shared_ptr<BeUtils::GltfTuner>
 			{
 				return FString::Printf(TEXT("0x%I64x"), V.id);
 			});
-			if (bAttachedToImodel && !MaterialIds.IsEmpty())
+			UITwinWebServices* WebServices = bAttachedToImodel ? IModelPtr->GetMutableWebServices() : nullptr;
+			if (WebServices && !MaterialIds.IsEmpty())
 			{
-				IModelPtr->GetMutableWebServices()->GetMaterialListProperties(
+				WebServices->GetMaterialListProperties(
 					IModelPtr->ITwinId, IModelPtr->IModelId, IModelPtr->GetSelectedChangeset(),
 					MaterialIds);
 			}
@@ -148,13 +143,38 @@ void FITwinIModelMaterialHandler::Initialize(std::shared_ptr<BeUtils::GltfTuner>
 TMap<uint64, FITwinIModelMaterialHandler::FITwinCustomMaterial> const&
 FITwinIModelMaterialHandler::GetCustomMaterials() const
 {
-	return VisualizeMaterialMLPrediction() ? MLPredictionMaterials : ITwinMaterials;
+	return ITwinMaterials;
 }
 
 TMap<uint64, FITwinIModelMaterialHandler::FITwinCustomMaterial>&
 FITwinIModelMaterialHandler::GetMutableCustomMaterials()
 {
-	return VisualizeMaterialMLPrediction() ? MLPredictionMaterials : ITwinMaterials;
+	return ITwinMaterials;
+}
+
+FString FITwinIModelMaterialHandler::GetMaterialName(uint64_t MaterialId, bool bForMaterialEditor /*= false*/) const
+{
+	FITwinCustomMaterial const* Mat = GetCustomMaterials().Find(MaterialId);
+	if (Mat)
+	{
+		if (bForMaterialEditor)
+		{
+			if (!Mat->DisplayName.IsEmpty())
+			{
+				return Mat->DisplayName;
+			}
+			// Use the custom material name loaded from the scene, if any.
+			if (GltfMatHelper)
+			{
+				std::string const CustomName = GltfMatHelper->GetMaterialName(MaterialId);
+				if (!CustomName.empty())
+					return UTF8_TO_TCHAR(CustomName.c_str());
+			}
+		}
+		return Mat->Name;
+	}
+	else
+		return {};
 }
 
 namespace
@@ -224,7 +244,7 @@ void FITwinIModelMaterialHandler::OnMaterialPropertiesRetrieved(AdvViz::SDK::ITw
 
 	for (auto const& [matId, matProperties] : props.data_)
 	{
-		ensureMsgf(matId == matProperties.id, TEXT("material ID mismatch vs map key!"));
+		BE_ASSERT(matId == matProperties.id, "material ID mismatch vs map key!");
 		FString const MaterialID(matId.c_str());
 		auto const id64 = ITwin::ParseElementID(MaterialID);
 		// If the list of iTwin material IDs was read from tileset.json, the material being inspected should be
@@ -233,13 +253,17 @@ void FITwinIModelMaterialHandler::OnMaterialPropertiesRetrieved(AdvViz::SDK::ITw
 			&&
 			ensureMsgf(id64 != ITwin::NOT_ELEMENT, TEXT("Invalid material ID %s"), *MaterialID))
 		{
-			FITwinCustomMaterial* CustomMat = CustomMaterials.Find(id64.value());
-			ensureMsgf(CustomMat != nullptr, TEXT("Material mismatch: ID %s not found in tileset.json (%s)"),
-				*MaterialID, *FString(matProperties.name.c_str()));
-
-			GltfMatHelper->SetIModelRenderMaterialProperties(id64.value(), matProperties,
-				TCHAR_TO_UTF8(*CustomMat->Name),
-				Lock);
+			FITwinCustomMaterial const* CustomMat = CustomMaterials.Find(id64.value());
+			if (CustomMat)
+			{
+				GltfMatHelper->SetIModelRenderMaterialProperties(id64.value(), matProperties,
+					TCHAR_TO_UTF8(*CustomMat->Name),
+					Lock);
+			}
+			else
+			{
+				BE_ISSUE("Material mismatch: ID not found in tileset.json: ", matId, matProperties.name);
+			}
 		}
 	}
 
@@ -298,308 +322,6 @@ void FITwinIModelMaterialHandler::OnTextureDataRetrieved(std::string const& text
 		BE_ASSERT(GltfMatHelper->GetTextureUsage(texKey).flags_ != 0);
 
 		ITwin::ResolveITwinTextures(texturesToResolve, GltfMatHelper, texturePath.parent_path());
-	}
-}
-
-
-void FITwinIModelMaterialHandler::ActivateMLMaterialPrediction(bool bActivate)
-{
-	const bool bUseMatPrediction_Old = VisualizeMaterialMLPrediction();
-	bActivateMLMaterialPrediction = bActivate;
-
-	// Persistence
-	if (bUseMatPrediction_Old != VisualizeMaterialMLPrediction())
-	{
-		SaveMLPredictionState();
-	}
-}
-
-void FITwinIModelMaterialHandler::ValidateMLPrediction()
-{
-	// Called when the user clicks the "Apply" button to validate the prediction.
-	SaveMLPredictionState();
-}
-
-void FITwinIModelMaterialHandler::SaveMLPredictionState()
-{
-	// For Carrot EAP2, just use a predefined material slot (in the future, we may save a true material
-	// mapping, with more complex rules...)
-	AdvViz::SDK::ITwinMaterial MLSwitcherMat;
-	MLSwitcherMat.kind = VisualizeMaterialMLPrediction() ? AdvViz::SDK::EMaterialKind::Glass
-		: AdvViz::SDK::EMaterialKind::PBR;
-
-	BeUtils::WLock Lock(GltfMatHelper->GetMutex());
-	GltfMatHelper->CreateITwinMaterialSlot(ITwin::NOT_MATERIAL.value(), "", Lock);
-	GltfMatHelper->SetMaterialFullDefinition(ITwin::NOT_MATERIAL.value(), MLSwitcherMat, Lock);
-}
-
-void FITwinIModelMaterialHandler::LoadMLPredictionState(bool& bActivateML, BeUtils::WLock const& Lock)
-{
-	// See if we have to activate material prediction (see corresponding code in #SaveMLPredictionState.
-	// Note that this is a temporary solution to avoid having to modify the Decoration Server close to a
-	// release).
-	bActivateML = false;
-
-	if (!ensure(GltfMatHelper->HasPersistenceInfo()))
-		return;
-
-	// Only create the special slot if it exists in loaded decoration.
-	auto const* MLSwitcherMat = GltfMatHelper->CreateITwinMaterialSlot(ITwin::NOT_MATERIAL.value(),
-		"", Lock, /*bOnlyIfCustomDefinitionExists*/true);
-	bActivateML = (MLSwitcherMat
-		&& MLSwitcherMat->kind == AdvViz::SDK::EMaterialKind::Glass);
-}
-
-void FITwinIModelMaterialHandler::SetMaterialMLPredictionStatus(EITwinMaterialPredictionStatus InStatus)
-{
-	MLMaterialPredictionStatus = InStatus;
-}
-
-void FITwinIModelMaterialHandler::SetMaterialMLPredictionObserver(IITwinWebServicesObserver* observer)
-{
-	MLPredictionMaterialObserver = observer;
-}
-
-void FITwinIModelMaterialHandler::UpdateModelFromMatMLPrediction(bool bSuccess,
-	AdvViz::SDK::ITwinMaterialPrediction const& Prediction, std::string const& error,
-	AITwinIModel& IModel)
-{
-	if (!ensure(ITwin::IsMLMaterialPredictionEnabled()))
-		return;
-
-	BeUtils::WLock Lock(GltfMatHelper->GetMutex());
-
-	if (!bSuccess || Prediction.data.empty())
-	{
-		IModel.SetMaterialMLPredictionStatus(EITwinMaterialPredictionStatus::Failed);
-		if (MLPredictionMaterialObserver)
-		{
-			MLPredictionMaterialObserver->OnMatMLPredictionRetrieved(false, {}, error);
-		}
-		return;
-	}
-
-	if (IModel.VisualizeMaterialMLPrediction())
-	{
-		// Already done by another thread.
-		return;
-	}
-	IModel.SetMaterialMLPredictionStatus(EITwinMaterialPredictionStatus::Complete);
-
-	const std::string IModelId = TCHAR_TO_UTF8(*IModel.IModelId);
-
-	// Deduce a new tuning from material prediction.
-	// For the initial version, this will replace the materials retrieved previously from the decoration
-	// service (to be defined: should we allow the user to revert to the previous version afterwards?)
-	auto& MLPredMaterials = MLPredictionMaterials;
-	MLPredMaterials = {};
-	MLPredMaterials.Reserve(Prediction.data.size());
-
-	MaterialMLPredictions.clear();
-	MaterialMLPredictions.reserve(Prediction.data.size());
-
-	std::unordered_map<uint64_t, std::string> MatIDToName;
-
-	// Reload/Save material customizations from/to a file in order to create a collection of materials for
-	// the predefined material categories (Wood, Steel, Aluminum etc.)
-	auto const& MatIOMngr = GetPersistenceManager();
-	if (MatIOMngr)
-	{
-		// This path will be independent from the current iModel, so that it is easier to locate
-		std::filesystem::path MaterialDirectory =
-			TCHAR_TO_UTF8(*QueriesCache::GetCacheFolder(
-				QueriesCache::ESubtype::MaterialMLPrediction,
-				EITwinEnvironment::Prod, {}, {}, {}));
-		if (MaterialDirectory.has_parent_path())
-		{
-			// Step back because the custom mapping should not depend on the server environment.
-			MaterialDirectory = MaterialDirectory.parent_path();
-		}
-
-		MatIOMngr->SetLocalMaterialDirectory(MaterialDirectory);
-
-		// Try to load local collection, if any.
-		AdvViz::SDK::TextureUsageMap TextureUsageMap;
-		if (MatIOMngr->LoadMaterialCollection(MaterialDirectory / "materials.json",
-			IModelId, TextureUsageMap, MatIDToName) > 0)
-		{
-			// Resolve textures, if any.
-			GltfMatHelper->AppendTextureUsageMap(TextureUsageMap, Lock);
-			AdvViz::SDK::PerIModelTextureSet const& perModelTextures =
-				MatIOMngr->GetDecorationTexturesByIModel();
-			auto itIModelTex = perModelTextures.find(IModelId);
-			const bool bHasLoadedTextures =
-				itIModelTex != perModelTextures.end() && !itIModelTex->second.empty();
-			if (bHasLoadedTextures)
-			{
-				AdvViz::SDK::PerIModelTextureSet IModelTextures;
-				IModelTextures.emplace(IModelId, itIModelTex->second);
-
-				std::map<std::string, std::shared_ptr<BeUtils::GltfMaterialHelper>> IModelIdToMatHelper;
-				IModelIdToMatHelper.emplace(IModelId, GltfMatHelper);
-
-				ITwin::ResolveDecorationTextures(*MatIOMngr,
-					IModelTextures,
-					IModelIdToMatHelper, false, &Lock);
-			}
-		}
-	}
-
-	// Hard-coded mapping for now...
-	struct MLMaterialMappingInfo
-	{
-		FString MaterialName;
-		FString AssetPath;
-	};
-	static const std::vector<MLMaterialMappingInfo> MLMaterialMapping = {
-		{ TEXT("Aluminum"),			TEXT("Metal/Aluminum") },
-		{ TEXT("Asphalt"),			TEXT("Road_Pavers/Asphalt__Grey_") },
-		{ TEXT("Ceramic tiles"),	TEXT("Marble_Granite/Marble_grayish_pink") },
-		{ TEXT("Concrete"),			TEXT("Concrete/Concrete_gray") },
-		{ TEXT("Concrete with rebar"), TEXT("Concrete/Concrete_new") },
-		{ TEXT("Glass"),			TEXT("Glass/Glass_-_1") },
-		{ TEXT("Metal"),			TEXT("Metal/Cast_metal") },
-		{ TEXT("Plastic"),			TEXT("Plastic/Blue_reflective_plastic") },
-		{ TEXT("Steel"),			TEXT("Metal/Stainless_steel") },
-		{ TEXT("Wood"),				TEXT("Wood/Wood11") },
-	};
-
-	// Get the maximum material ID in the iModel.
-	uint64 MaxMaterialID = 0;
-	for (auto const& [MatId, _] : ITwinMaterials)
-	{
-		MaxMaterialID = std::max(MaxMaterialID, MatId);
-	}
-	const uint64 FirstMLMaterialID = MaxMaterialID + 1;
-
-	// We will use local material IDs (but try to keep the same ID for a given material).
-	std::unordered_map<std::string, uint64_t> NameToMatID;
-	uint64 NextMaterialID = FirstMLMaterialID + MLMaterialMapping.size();
-	bool hasFoundNewNames = false;
-	for (auto const& [matId, name] : MatIDToName)
-	{
-		NameToMatID[name] = matId;
-		if (NextMaterialID <= matId)
-		{
-			NextMaterialID = matId + 1;
-		}
-	}
-
-	// First load the materials corresponding to the prediction (usually, they are loaded from the material
-	// library, but if the user makes some modifications afterwards, they are stored in the decoration
-	// service for that particular iModel.
-	for (auto const& MatEntry : Prediction.data)
-	{
-		const FString MatName = UTF8_TO_TCHAR(MatEntry.material.c_str());
-		// Assign a unique ID for each material of the classification, trying to reuse predefined ones loaded
-		// from default collections.
-		uint64_t MatID(0);
-		auto const itID = NameToMatID.find(MatEntry.material);
-		if (itID != NameToMatID.end())
-		{
-			// This material was overridden from local configuration file.
-			MatID = itID->second;
-		}
-		else
-		{
-			// Try to find a correspondence in the Material Library.
-			const auto mappingIt = std::find_if(
-				MLMaterialMapping.begin(),
-				MLMaterialMapping.end(),
-				[&MatName](const MLMaterialMappingInfo& Candidate) {
-				return Candidate.MaterialName == MatName;
-			});
-			if (mappingIt != MLMaterialMapping.end())
-			{
-				MatID = FirstMLMaterialID + uint64(mappingIt - MLMaterialMapping.begin());
-			}
-			else
-			{
-				// Totally unknown material...
-				MatID = NextMaterialID++;
-				hasFoundNewNames = true;
-			}
-			MatIDToName.emplace(MatID, MatEntry.material);
-
-			// Load material definition from the library if we have not reloaded it from the decoration
-			// service.
-			if (mappingIt != MLMaterialMapping.end()
-				&& !MatIOMngr->HasMaterialDefinition(IModelId, MatID))
-			{
-				AdvViz::SDK::ITwinMaterial NewMaterial;
-				[[maybe_unused]] bool const bLoadOK = LoadMaterialWithoutRetuning(NewMaterial, MatID,
-					FITwinMaterialLibrary::GetBeLibraryPathForLoading(mappingIt->AssetPath),
-					IModel.IModelId, Lock);
-				ensureMsgf(bLoadOK, TEXT("Could not load material from %s"), *mappingIt->AssetPath);
-			}
-		}
-
-		FITwinCustomMaterial& CustomMat = MLPredMaterials.FindOrAdd(MatID);
-		CustomMat.Name = MatName;
-
-		auto& MatPredictionEntry = MaterialMLPredictions.emplace_back();
-		MatPredictionEntry.Elements = MatEntry.elements;
-		MatPredictionEntry.MatID = MatID;
-	}
-
-	// Then create the corresponding entries in the material helper (important for edition), and enable
-	// material tuning if we do have a custom definition.
-	{
-		BeUtils::ITwinToGltfTextureConverter TexConverter(GltfMatHelper);
-
-		for (auto& [MatID, CustomMat] : MLPredMaterials)
-		{
-			// Also create the corresponding entries in the material helper (important for edition), and enable
-			// material tuning if we do have a custom definition.
-			auto const* MatInfo = GltfMatHelper->CreateITwinMaterialSlot(MatID,
-																		TCHAR_TO_UTF8(*CustomMat.Name),
-																		Lock);
-			if (MatInfo && AdvViz::SDK::HasCustomSettings(*MatInfo))
-			{
-				CustomMat.bAdvancedConversion = true;
-
-				// Perform texture conversions at once.
-				TexConverter.ConvertTexturesToGltf(MatID, Lock);
-			}
-		}
-	}
-
-	if (MatIOMngr && hasFoundNewNames)
-	{
-		MatIOMngr->AppendMaterialCollectionNames(MatIDToName);
-	}
-}
-
-
-void FITwinIModelMaterialHandler::OnMatMLPredictionRetrieved(bool bSuccess,
-	AdvViz::SDK::ITwinMaterialPrediction const& Prediction, std::string const& error,
-	AITwinIModel& IModel)
-{
-	// Update the material mapping based on material ML predictions. Only one thread should do it!
-	UpdateModelFromMatMLPrediction(bSuccess, Prediction, error, IModel);
-
-	if (MLPredictionMaterialObserver)
-	{
-		MLPredictionMaterialObserver->OnMatMLPredictionRetrieved(bSuccess, Prediction);
-	}
-
-	// Re-tune the glTF model accordingly.
-	SplitGltfModelForCustomMaterials();
-}
-
-void FITwinIModelMaterialHandler::OnMatMLPredictionProgress(float fProgressRatio, AITwinIModel const& IModel)
-{
-	// Just log progression
-	FString strProgress = TEXT("computing material predictions for ") + IModel.GetActorNameOrLabel();
-	if (fProgressRatio < 1.f)
-		strProgress += FString::Printf(TEXT("... (%.0f%%)"), 100.f * fProgressRatio);
-	else
-		strProgress += TEXT(" -> done");
-	BE_LOGI("ITwinAPI", "[ML_MaterialPrediction] " << TCHAR_TO_UTF8(*strProgress));
-
-	if (MLPredictionMaterialObserver)
-	{
-		MLPredictionMaterialObserver->OnMatMLPredictionProgress(fProgressRatio);
 	}
 }
 
@@ -674,31 +396,6 @@ void FITwinIModelMaterialHandler::DetectCustomizedMaterials(AITwinIModel* OwnerI
 		GltfMatHelper->SetPersistenceInfo(TCHAR_TO_ANSI(*OwnerIModel->IModelId), MaterialPersistenceMngr);
 	}
 
-	// Detect the activation of ML material prediction.
-	bool bActivateMLMatPrediction = false;
-	if (MaterialPersistenceMngr)
-	{
-		LoadMLPredictionState(bActivateMLMatPrediction, Lock);
-	}
-
-	// Use a cleanup guard in case of early exit.
-	Be::CleanUpGuard GltfMatHelperProcessingGuard([&Lock, OwnerIModel, bActivateMLMatPrediction]
-	{
-		Lock.unlock(); // we are done editing GltfMatHelper
-
-		if (bActivateMLMatPrediction && OwnerIModel)
-		{
-			OwnerIModel->ToggleMLMaterialPrediction(true);
-			// If the material prediction can be reloaded from cache (which will be the case if we reload
-			// a scene on the same machine as earlier), directly set the status to validated, so that the
-			// Revert/Apply buttons do not show up in the Object Material panel.
-			if (OwnerIModel->VisualizeMaterialMLPrediction())
-			{
-				OwnerIModel->SetMaterialMLPredictionStatus(EITwinMaterialPredictionStatus::Validated);
-			}
-		}
-	});
-
 	// See if some material definitions can be loaded from the decoration service.
 	size_t LoadedSettings = GltfMatHelper->LoadMaterialCustomizations(Lock);
 	if (LoadedSettings == 0)
@@ -729,15 +426,8 @@ void FITwinIModelMaterialHandler::DetectCustomizedMaterials(AITwinIModel* OwnerI
 		}
 	}
 
-	// Toggle material prediction at the end if needed. This may trigger a custom glTF tuning.
-	GltfMatHelperProcessingGuard.cleanup();
-
-	const bool bHasTriggeredTuning = (bActivateMLMatPrediction && OwnerIModel
-		&& OwnerIModel->VisualizeMaterialMLPrediction());
-
-	// Request a glTF tuning if needed (and if it has not just been done for the visualization of the
-	// material prediction).
-	if (NumCustomMaterials > 0 && !bHasTriggeredTuning)
+	// Request a glTF tuning if needed
+	if (NumCustomMaterials > 0)
 	{
 		SplitGltfModelForCustomMaterials();
 	}
@@ -775,29 +465,10 @@ void FITwinIModelMaterialHandler::SplitGltfModelForCustomMaterials(bool bForceRe
 		this->MatIDsToSplit = NewMatIDsToSplit;
 
 		BeUtils::GltfTuner::Rules rules;
-
-		if (VisualizeMaterialMLPrediction())
-		{
-			rules.materialGroups_.reserve(MaterialMLPredictions.size());
-			for (auto const& MatEntry : MaterialMLPredictions)
-			{
-				rules.materialGroups_.emplace_back(BeUtils::GltfTuner::Rules::MaterialGroup{
-						.elements_ = MatEntry.Elements,
-						.material_ = 0,// does not matter much (will be overridden), but needs to be >= 0
-						.itwinMaterialID_ = MatEntry.MatID
-					});
-			}
-		}
-
 		rules.itwinMatIDsToSplit_.swap(NewMatIDsToSplit);
 		GltfTuner->SetMaterialRules(std::move(rules));
-		//Retune(); <== version increment (and thus retuning) now automatic in SetMaterialRules/SetAnim4DRules
+		//GltfTuner->trigger()(); version increment (and thus retuning) automatic in SetMaterialRules/SetAnim4DRules
 	}
-}
-
-void FITwinIModelMaterialHandler::Retune()
-{
-	GltfTuner->trigger();
 }
 
 double FITwinIModelMaterialHandler::GetMaterialChannelIntensity(uint64_t MaterialId, AdvViz::SDK::EChannelType Channel) const
@@ -1121,7 +792,7 @@ namespace
 		bool NeedGltfTuning(ParamType const& /*CurrentIntensity*/) const
 		{
 			// Changing the color of transparency/opacity just makes no sense!
-			ensureMsgf(false, TEXT("invalid combination (color vs opacity)"));
+			BE_ISSUE("invalid combination (color vs opacity)");
 			return false;
 		}
 	};
@@ -1261,7 +932,7 @@ namespace
 
 		void ApplyNewValueToScene(uint64_t /*MaterialId*/, TSceneMappingPtr& /*SceneMapping*/) const
 		{
-			ensureMsgf(false, TEXT("changing material kind requires a retuning"));
+			BE_ISSUE("changing material kind requires a retuning");
 		}
 
 		bool NeedGltfTuning(ParamType const& /*CurrentMap*/) const
@@ -1356,8 +1027,6 @@ void FITwinIModelMaterialHandler::TSetMaterialChannelParam(MaterialParamHelper c
 	if (bNeedGltfTuning)
 	{
 		// The whole tileset will be reloaded with updated materials.
-		// Here we enforce a Retune in all cases, because of the potential switch opaque/translucent, or the
-		// need for tangents in case of normal mapping.
 		if (bFirstTimeMaterialIsCustomized)
 		{
 			// If the original MES material uses textures (color textures, for now, as the MES does not
@@ -1377,7 +1046,9 @@ void FITwinIModelMaterialHandler::TSetMaterialChannelParam(MaterialParamHelper c
 				}
 			}
 		}
-		SplitGltfModelForCustomMaterials(true);
+		// Here we force the material-related tuner rules to be overwritten (and thus retuning triggered), because
+		// of the potential switch opaque/translucent, or the need for tangents in case of normal mapping.
+		SplitGltfModelForCustomMaterials(/*bForceRetune*/true);
 	}
 	else
 	{
@@ -1979,7 +1650,7 @@ namespace ITwin
 
 		TSceneMappingPtr SceneMappingPtr;
 		SceneMappingPtr = AdvViz::SDK::Tools::MakeSharedLockableData<FITwinSceneMapping>(false);
-		UITwinSceneMappingBuilder::BuildFromNonCesiumMesh(SceneMappingPtr, MeshComponent, MaterialId);
+		UITwinSceneMappingBuilder::BuildFromNonCesiumMesh(SceneMappingPtr, *MeshComponent, MaterialId);
 
 		return MaterialHandler->LoadMaterialFromAssetFile(MaterialId, MaterialAssetInfo,
 			IModelId, SceneMappingPtr,

@@ -129,4 +129,7 @@ protected:
 	bool IsTypeOf(std::uint64_t i) const override { return (i == GetTypeId()) || AdvViz::SDK::Http::IsTypeOf(i); }
 	
 	std::string EncodeForUrl(const std::string& str) const override;
+
+	//! Returns the full  URL for the given URL, based on whether it is already a full URL or a relative one.
+	std::string GetFullUrl(const std::string& url, bool isFullUrl) const;
 };

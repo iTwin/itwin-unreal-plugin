@@ -9,7 +9,7 @@
 
 #include <Helpers/ITwinStartup.h>
 
-#include <Annotations/ITwinAnnotation.h>
+#include <Callouts/ITwinCallout.h>
 #include <ITwinRuntime/Private/Compil/BeforeNonUnrealIncludes.h>
 #	include <Core/Visualization/Visualization.h>
 #	include <Core/Tools/Tools.h>
@@ -63,7 +63,11 @@ void FITwinStartup::CommonStartup(FString const& ModuleName)
 #endif
 
 	CreateAdvVizLogChannels();
-	CreateLogChannel("ContentHelper", Level::info); //unreal only logs
+	//unreal only logs
+	CreateLogChannel("ContentHelper", Level::info);
+	CreateLogChannel("Cutout", Level::info);
+	CreateLogChannel("VideoExport", Level::info);
+	CreateLogChannel("ArticulatedVehicles", Level::info);
 
 	// Remark: at this point, logs are not yet totally enabled: #InitLog is called a few lines below, through
 	// Tools::#InitAssertHandler.
@@ -84,5 +88,5 @@ void FITwinStartup::CommonStartup(FString const& ModuleName)
 
 void FITwinStartup::EnableVR()
 {
-	AITwinAnnotation::EnableVR();
+	AITwinCallout::EnableVR();
 }

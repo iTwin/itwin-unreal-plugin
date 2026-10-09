@@ -19,6 +19,8 @@
 	#include <SDK/Core/Tools/Tools.h>
 #include <Compil/AfterNonUnrealIncludes.h>
 
+#include <variant>
+
 struct FHitResult;
 
 /// Destructors (of UObject descendents) being called only by the garbage collector, ie. at a time we
@@ -32,6 +34,7 @@ struct FHitResult;
 class FIModelUninitializer
 {
 	std::vector<std::function<void()>> OrderedUninits;
+	bool bIsBeingRun = false;
 
 public:
 	~FIModelUninitializer() { ensure(OrderedUninits.empty()); }
@@ -41,8 +44,11 @@ public:
 		OrderedUninits.push_back(std::move(Func));
 	}
 
+	bool IsBeingRun() const { return bIsBeingRun; }
+
 	void Run()
 	{
+		bIsBeingRun = true;
 		for (auto&& Func : OrderedUninits)
 			Func();
 		OrderedUninits.clear();
@@ -60,7 +66,7 @@ public:
 	AITwinIModel& Owner;
 	TSceneMappingPtr SceneMapping;
 	/// helper to activate clipping effects in the mesh components.
-	TStrongObjectPtr<UITwinClipping3DTilesetHelper> ClippingHelper;
+	TObjectPtr<UITwinClipping3DTilesetHelper> ClippingHelper;
 	std::shared_ptr<FIModelUninitializer> Uniniter;
 	std::unordered_set<ITwinScene::TileIdx> TilesPendingRenderReadiness;
 	double LastScheduleDownloadProgressLogged = -100.;
@@ -93,7 +99,7 @@ public:
 		return GroupBox;
 	}
 
-	bool HasElementWithID(ITwinElementID const Element) const
+	[[nodiscard]] bool HasElementWithID(ITwinElementID const Element) const
 	{
 		auto SceneMappingLocked = SceneMapping->GetRAutoLock();
 		auto const& Elem = SceneMappingLocked->GetElement(Element);
@@ -109,17 +115,21 @@ public:
 
 	enum class E4DScheduleStatus
 	{
-		Unknown, Loading, Finished, NoneOrEmpty
+		Unknown, Loading, Finished, Failed, NoneOrEmpty
 	};
 	void Update4DScheduleDownloadStatus(E4DScheduleStatus Sched4DStatus, double PercentComplete = 0.);
-	bool AreSynchro4DSchedulesMetadataLoadedOrCancelled() const;
-	bool HasSynchro4DSchedulesMetadataQueryingError() const;
-	size_t ElementsMetadataFetchedFromRemote() const;
-	size_t ElementsMetadataFetchedFromCache() const;
-	EHttpResponseCodes::Type ElementsMetadataFirstErrorCode() const;
-	FString ElementsMetadataFirstErrorString() const;
+	[[nodiscard]] bool AreSynchro4DSchedulesMetadataLoadedOrCancelled() const;
+	[[nodiscard]] bool HasSynchro4DSchedulesMetadataQueryingError() const;
+	[[nodiscard]] size_t ElementsMetadataFetchedFromRemote() const;
+	[[nodiscard]] size_t ElementsMetadataFetchedFromCache() const;
+	[[nodiscard]] EHttpResponseCodes::Type ElementsMetadataFirstErrorCode() const;
+	[[nodiscard]] FString ElementsMetadataFirstErrorString() const;
 	void LogScheduleDownloadProgressed();
 
+	/// \param ElementId Pass either an Element ID, or a function returning one: useful to defer non-trivial
+	///		computation of the Element ID to optimize cases where clipping culls the given WorldPosition anyway
+	[[nodiscard]] bool IsVisibleAtPoint(std::variant<std::function<ITwinElementID()>, ITwinElementID> ElementId,
+										FVector const& WorldPosition) const;
 	bool OnClickedElement(ITwinElementID const Element, FHitResult const& HitResult,
 						  bool const bSelectElement = true, bool const bAdditive = false);
 	void DescribeElement(ITwinElementID const Element, TWeakObjectPtr<UPrimitiveComponent> HitComponent = {});

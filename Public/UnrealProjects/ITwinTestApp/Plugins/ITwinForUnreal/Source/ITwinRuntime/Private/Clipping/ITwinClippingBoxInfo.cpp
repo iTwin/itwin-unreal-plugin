@@ -94,13 +94,20 @@ void FITwinClippingBoxInfo::DoCreateEdgeSplines(TArray<TObjectPtr<AITwinSplineHe
 		{ CubePositions[1], CubePositions[3], CubePositions[7], CubePositions[5] },
 		{ CubePositions[0], CubePositions[4], CubePositions[6], CubePositions[2] }
 	};
+
+	static int32 BoxEdgeSplineCounter = 0;
+
 	for (int i(0); i < 6; ++i)
 	{
 		auto EdgeSpline = SplineTool.AddSpline(FVector::ZeroVector, CubeFaces[i]);
-		OutEdgeSplines.Add(EdgeSpline);
+		if (EdgeSpline)
+		{
+			OutEdgeSplines.Add(EdgeSpline);
+			EdgeSpline->SetActorHiddenInGame(true);
 #if WITH_EDITOR
-		EdgeSpline->SetActorLabel(FString::Printf(TEXT("BoxEdgeSpline_%d"), i));
+			EdgeSpline->SetCustomActorLabel(FString::Printf(TEXT("BoxEdgeSpline_%d_%d"), BoxEdgeSplineCounter, i));
 #endif
-		EdgeSpline->SetActorHiddenInGame(true);
+		}
 	}
+	++BoxEdgeSplineCounter;
 }

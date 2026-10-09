@@ -1,0 +1,4 @@
+{
+    "status": 200,
+    "body": "{\n   \"results\" : \n   [\n      {\n         \"elevation\" : 31.91356086730957,\n         \"location\" : \n         {\n            \"lat\" : 28.54208902143952,\n            \"lng\" : -81.37895848285396\n         },\n         \"resolution\" : 0.5964969992637634\n      }\n   ],\n   \"status\" : \"OK\"\n}"
+}

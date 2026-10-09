@@ -1,14 +1,17 @@
 #include <Cesium3DTilesSelection/BoundingVolume.h>
+#include <Cesium3DTilesSelection/GeneralCullingVolume.h>
+#include <Cesium3DTilesSelection/Tile.h>
 #include <Cesium3DTilesSelection/ViewState.h>
 #include <CesiumGeometry/BoundingCylinderRegion.h>
 #include <CesiumGeometry/BoundingSphere.h>
-#include <CesiumGeometry/CullingResult.h>
 #include <CesiumGeometry/CullingVolume.h>
 #include <CesiumGeometry/OrientedBoundingBox.h>
 #include <CesiumGeometry/Transforms.h>
 #include <CesiumGeospatial/BoundingRegion.h>
 #include <CesiumGeospatial/BoundingRegionWithLooseFittingHeights.h>
 #include <CesiumGeospatial/Ellipsoid.h>
+#include <CesiumGeospatial/GlobeRectangle.h>
+#include <CesiumGeospatial/LocalHorizontalCoordinateSystem.h>
 #include <CesiumGeospatial/S2CellBoundingVolume.h>
 
 #include <glm/common.hpp>
@@ -19,8 +22,11 @@
 #include <glm/geometric.hpp>
 
 #include <cmath>
+#include <cstdint>
 #include <limits>
+#include <memory>
 #include <optional>
+#include <utility>
 #include <variant>
 
 using namespace CesiumGeometry;
@@ -119,85 +125,43 @@ ViewState::ViewState(
           viewportSize,
           ellipsoid) {}
 
-namespace {
-template <class T>
-bool isBoundingVolumeVisible(
-    const T& boundingVolume,
-    const CullingVolume& cullingVolume) noexcept {
-  const CullingResult left =
-      boundingVolume.intersectPlane(cullingVolume.leftPlane);
-  if (left == CullingResult::Outside) {
-    return false;
+ViewState::ViewState(
+    const BoundingVolume& boundingVolume,
+    std::shared_ptr<ViewStateMeasureDelegate> pMeasureDelegate,
+    const CesiumGeospatial::Ellipsoid& ellipsoid)
+    : _position{0.0, 0.0, 1.0},
+      _direction{0.0, 0.0, 1.0},
+      _viewportSize{0, 0},
+      _ellipsoid(ellipsoid),
+      _positionCartographic{},
+      _cullingVolume(boundingVolume),
+      _viewMatrix(1.0),
+      _projectionMatrix(1.0),
+      _pMeasureDelegate(std::move(pMeasureDelegate)) {
+  std::optional<GlobeRectangle> globeRectangle =
+      estimateGlobeRectangle(boundingVolume, ellipsoid);
+  if (!globeRectangle) {
+    return;
   }
-
-  const CullingResult right =
-      boundingVolume.intersectPlane(cullingVolume.rightPlane);
-  if (right == CullingResult::Outside) {
-    return false;
-  }
-
-  const CullingResult top =
-      boundingVolume.intersectPlane(cullingVolume.topPlane);
-  if (top == CullingResult::Outside) {
-    return false;
-  }
-
-  const CullingResult bottom =
-      boundingVolume.intersectPlane(cullingVolume.bottomPlane);
-  if (bottom == CullingResult::Outside) {
-    return false;
-  }
-
-  return true;
+  // Get approximate center, a "North" view direction,and up at the center.
+  this->_positionCartographic = globeRectangle->computeCenter();
+  LocalHorizontalCoordinateSystem enu{
+      *_positionCartographic,
+      LocalDirection::East,
+      LocalDirection::North,
+      LocalDirection::Up,
+      1.0,
+      ellipsoid};
+  this->_viewMatrix = enu.getLocalToEcefTransformation();
+  this->_position = positionFromView(_viewMatrix);
+  this->_direction = directionFromView(_viewMatrix);
 }
-} // namespace
 
 bool ViewState::isBoundingVolumeVisible(
     const BoundingVolume& boundingVolume) const noexcept {
-  // TODO: use plane masks
-  struct Operation {
-    const ViewState& viewState;
-
-    bool operator()(const OrientedBoundingBox& boundingBox) noexcept {
-      return Cesium3DTilesSelection::isBoundingVolumeVisible(
-          boundingBox,
-          viewState._cullingVolume);
-    }
-
-    bool operator()(const BoundingRegion& boundingRegion) noexcept {
-      return Cesium3DTilesSelection::isBoundingVolumeVisible(
-          boundingRegion,
-          viewState._cullingVolume);
-    }
-
-    bool operator()(const BoundingSphere& boundingSphere) noexcept {
-      return Cesium3DTilesSelection::isBoundingVolumeVisible(
-          boundingSphere,
-          viewState._cullingVolume);
-    }
-
-    bool operator()(
-        const BoundingRegionWithLooseFittingHeights& boundingRegion) noexcept {
-      return Cesium3DTilesSelection::isBoundingVolumeVisible(
-          boundingRegion.getBoundingRegion(),
-          viewState._cullingVolume);
-    }
-
-    bool operator()(const S2CellBoundingVolume& s2Cell) noexcept {
-      return Cesium3DTilesSelection::isBoundingVolumeVisible(
-          s2Cell,
-          viewState._cullingVolume);
-    }
-
-    bool
-    operator()(const BoundingCylinderRegion& boundingCylinderRegion) noexcept {
-      return Cesium3DTilesSelection::isBoundingVolumeVisible(
-          boundingCylinderRegion,
-          viewState._cullingVolume);
-    }
-  };
-
-  return std::visit(Operation{*this}, boundingVolume);
+  return Cesium3DTilesSelection::isBoundingVolumeVisible(
+      this->_cullingVolume,
+      boundingVolume);
 }
 
 double ViewState::computeDistanceSquaredToBoundingVolume(
@@ -252,6 +216,20 @@ double ViewState::computeDistanceSquaredToBoundingVolume(
 }
 
 double ViewState::computeScreenSpaceError(
+    const Tile& tile,
+    double distance,
+    uint32_t depth) const noexcept {
+  if (this->_pMeasureDelegate) {
+    return this->_pMeasureDelegate->computeSelectionMeasure(
+        tile,
+        distance,
+        depth);
+  } else {
+    return this->computeScreenSpaceError(tile.getGeometricError(), distance);
+  }
+}
+
+double ViewState::computeScreenSpaceError(
     double geometricError,
     double distance) const noexcept {
   // Avoid divide by zero when viewer is inside the tile
@@ -281,4 +259,5 @@ double ViewState::getHorizontalFieldOfView() const noexcept {
 double ViewState::getVerticalFieldOfView() const noexcept {
   return std::atan(-1.0 / this->_projectionMatrix[1][1]) * 2.0;
 }
+
 } // namespace Cesium3DTilesSelection

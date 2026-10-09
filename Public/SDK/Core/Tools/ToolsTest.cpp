@@ -172,11 +172,16 @@ TEST_CASE("Tools:Interface")
 		REQUIRE(pObj->GetDynTypeId() == MyClass::GetTypeId());
 	}
 	{
+		const int initialRevision = IMyClass::GetNewFctRevision();
+
 		// We want MyExtendedClass to be instantiate everywhere we need a IMyClass, so we define the "New" function.
 		IMyClass::SetNewFct([]() {
 			IMyClass* p(static_cast<IMyClass*>(new MyExtendedClass));
 			return p;
 			});
+
+		// The 'NewFct' revision should have been incremented.
+		REQUIRE(IMyClass::GetNewFctRevision() == initialRevision + 1);
 
 		std::shared_ptr<IMyClass> pObj(IMyClass::New());
 		REQUIRE(pObj->Fct1() == 654);

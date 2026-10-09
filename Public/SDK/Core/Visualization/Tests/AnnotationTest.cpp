@@ -12,9 +12,8 @@
 #include <mutex>
 
 #include <catch2/catch_all.hpp>
-#include <httpmockserver/mock_server.h>
-#include <httpmockserver/port_searcher.h>
-#include "Mock.h"
+#include <Core/Network/Tests/AsyncTestHelpers.h>
+#include <Core/Network/Tests/HttpMock.h>
 
 using namespace AdvViz::SDK;
 
@@ -49,7 +48,6 @@ bool CompareAnnotations(const std::vector<AdvViz::SDK::AnnotationPtr>& ll1, cons
 	}
 	return true;
 }
-bool WaitForAsyncTask(std::atomic_bool& taskFinished, int maxSeconds);
 void SetDefaultConfig();
 TEST_CASE("Annotation"){
 
@@ -64,7 +62,7 @@ TEST_CASE("Annotation"){
 			std::mutex objectsMutex;
 
 			auto respKeyPost = std::pair("POST", "/advviz/v1/decorations/deid/annotations");
-			mock->responseFctWithData_[respKeyPost] = [&objects, &objectsMutex](const std::string& data)
+			mock->SetResponseFunctionWithData(respKeyPost, [&objects, &objectsMutex](const std::string& data)
 			{
 				std::unique_lock<std::mutex> lock(objectsMutex);
 
@@ -73,10 +71,10 @@ TEST_CASE("Annotation"){
 				obj += data.substr(17, data.length() - 19);
 				objects.push_back(obj);
 				return HTTPMock::Response2(200, s);
-			};
+			});
 
 			auto respKeyGet = std::pair("GET", "/advviz/v1/decorations/deid/annotations");
-			mock->responseFct_[respKeyGet] = [&objects, &objectsMutex]
+			mock->SetResponseFunction(respKeyGet, [&objects, &objectsMutex]
 			{
 				std::unique_lock<std::mutex> lock(objectsMutex);
 
@@ -90,12 +88,12 @@ TEST_CASE("Annotation"){
 					s[s.size() - 1] = ' ';
 				s += "],\"_links\":{}}";
 				return HTTPMock::Response2(200, s);
-			};
+			});
 
 			auto respKeyDelete = std::pair("DELETE", "/advviz/v1/decorations/deid/annotations");
-			mock->responseFct_[respKeyDelete] = [] {
+			mock->SetResponseFunction(respKeyDelete, [] {
 				return HTTPMock::Response2(200, "{\"id\":\"id1\"");
-				};
+				});
 			std::atomic_bool taskFinished = false;
 
 			std::shared_ptr<IAnnotationsManager> annotationManager(IAnnotationsManager::New());

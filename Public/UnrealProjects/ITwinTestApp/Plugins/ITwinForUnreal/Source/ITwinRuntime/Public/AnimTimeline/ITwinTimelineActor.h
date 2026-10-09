@@ -118,6 +118,8 @@ public:
 	void RemoveKeyFrame(int iKF);
 	// Change key-frame time (within the current clip)
 	void MoveKeyFrame(int clipIdx, float fOldTime, float fNewTime, bool bMoveOneKFOnly);
+	// Move an existing key-frame to a different slot within the clip, keeping the clip's timing grid unchanged
+	void ReorderKeyFrame(int clipIdx, int iKFSrc, int iKFDst);
 
 	// Get duration of a clip
 	float GetClipDuration(int clipIdx);
@@ -206,8 +208,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "iTwin")
 	void OnPlaybackStarted();
 
-	void SetSynchroIModels(
-		std::function<TMap<FString, class UITwinSynchro4DSchedules*> const&()> InGetSchedules);
+	void ConnectToSynchro(std::function<bool(FDateTime& Out, FString& ScheduleIDOut)>&& InGetSynchro4DSchedulesTime,
+						  std::function<void(FDateTime const& Date)>&& InSetSynchro4DSchedulesTime = {});
 
 	std::shared_ptr<AdvViz::SDK::ITimeline> GetTimelineSDK();
 	void SetTimelineSDK(const std::shared_ptr<AdvViz::SDK::ITimeline>& p);

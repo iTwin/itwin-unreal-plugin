@@ -137,6 +137,9 @@ public:
 
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
 	bool IsPopulationTool() const;
+	
+	UFUNCTION(Category = "iTwin", BlueprintCallable)
+	void SetUsedForPopulation(bool bForPopulation);
 
 	/// Returns true if the tool is currently used on a cutout primitive.
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
@@ -194,6 +197,7 @@ protected:
 	virtual void ResetToDefaultImpl() PURE_VIRTUAL(AITwinInteractiveTool::ResetToDefaultImpl);
 
 	virtual bool IsPopulationToolImpl() const { return false; }
+	virtual void SetUsedForPopulationImpl(bool /*bForPopulation*/) { }
 
 	virtual void SetUsedOnCutoutPrimitiveImpl(bool /*bForCutout*/) { }
 	virtual bool IsUsedOnCutoutPrimitiveImpl() const { return false; }

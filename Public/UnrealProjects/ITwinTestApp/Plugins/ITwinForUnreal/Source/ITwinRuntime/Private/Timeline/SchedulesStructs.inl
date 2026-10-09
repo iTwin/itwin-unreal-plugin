@@ -14,10 +14,11 @@
 template<typename BindingIndexIterator>
 bool FITwinSchedule::HasOnlyNeutralBindings(BindingIndexIterator First, BindingIndexIterator Last) const
 {
-	return AnimationBindings.end() == std::find_if(
-		AnimationBindings.begin(), AnimationBindings.end(), [this](FAnimationBinding const& Binding)
+	return Last == std::find_if(
+		First, Last, [this](const auto& BindingIndex)
 		{
-			return EProfileAction::Neutral != this->AppearanceProfiles[Binding.AppearanceProfileInVec].ProfileType;
+			return EProfileAction::Neutral
+				!= this->AppearanceProfiles[this->AnimationBindings[BindingIndex].AppearanceProfileInVec].ProfileType;
 		});
 }
 
@@ -28,15 +29,16 @@ namespace Detail
 		double Time;
 		EProfileAction ProfileType;
 		FSimpleAppearance const& Appearance;
-		FTransformAssignment const* TransfoAssignment = nullptr;
+		FStaticTransformAssignment const* StaticTransfoAssignment = nullptr;
+		FPathTransformAssignment const* PathTransfoAssignment = nullptr;
 		bool bUseTransfoStart = false;
 	};
 	using OptTimedProfile = std::optional<TimedProfile>;
 
-	void UpdateTimedProfiles(FScheduleTask const& Task, FScheduleTask const& OtherTask,
+	inline void UpdateTimedProfiles(FScheduleTask const& Task, FScheduleTask const& OtherTask,
 		FAppearanceProfile const& OtherProfile,
 		OptTimedProfile& LatestBefore, OptTimedProfile& EarliestAfter,
-		FTransformAssignment const* TransfoAssignment)
+		FStaticTransformAssignment const* StaticTransfoAssignment, FPathTransformAssignment const* PathTransfoAssignment)
 	{
 		// Note: testing OtherTask's end vs. this task's end date, not start date, even though we are looking for a
 		// task that finished "before": this will handle some overlap situations + handle the case where both
@@ -47,7 +49,7 @@ namespace Detail
 			{
 				LatestBefore.emplace(TimedProfile{
 					OtherTask.TimeRange.second, OtherProfile.ProfileType, OtherProfile.FinishAppearance,
-					TransfoAssignment, /*bUseTransfoStart*/false });
+					StaticTransfoAssignment, PathTransfoAssignment, /*bUseTransfoStart*/false });
 			}
 		}
 		if (OtherTask.TimeRange.first > Task.TimeRange.first) // see comment above, same reasoning
@@ -56,22 +58,23 @@ namespace Detail
 			{
 				EarliestAfter.emplace(TimedProfile{
 					OtherTask.TimeRange.first, OtherProfile.ProfileType, OtherProfile.StartAppearance,
-					TransfoAssignment, /*bUseTransfoStart*/true });
+					StaticTransfoAssignment, PathTransfoAssignment, /*bUseTransfoStart*/true });
 			}
 		}
 	}
 
-	void SetTransfoAssignmentDataDeps(FITwinSchedule const& Schedule,
+	inline void SetTransfoAssignmentDataDeps(FITwinSchedule const& Schedule,
 		ITwin::Timeline::FTaskDependenciesData& TaskDeps, TimedProfile const& Profile)
 	{
-		if (!Profile.TransfoAssignment)
+		if (!Profile.StaticTransfoAssignment && !Profile.PathTransfoAssignment)
 			return;
-		TaskDeps.ProfileForcedTransfoAssignOutside = Profile.TransfoAssignment;
-		if (std::holds_alternative<FPathAssignment>(Profile.TransfoAssignment->Transformation)
-			&& ::ITwin::INVALID_IDX != std::get<1>(Profile.TransfoAssignment->Transformation).Animation3DPathInVec)
+		TaskDeps.ProfileForcedStaticTransfoAssignOutside = Profile.StaticTransfoAssignment;
+		TaskDeps.ProfileForcedPathTransfoAssignOutside = Profile.PathTransfoAssignment;
+		if (Profile.PathTransfoAssignment
+			&& ::ITwin::INVALID_IDX != Profile.PathTransfoAssignment->Animation3DPathInVec)
 		{
 			TaskDeps.ProfileForced3DPathOutside = &Schedule.Animation3DPaths[
-				std::get<1>(Profile.TransfoAssignment->Transformation).Animation3DPathInVec];
+				Profile.PathTransfoAssignment->Animation3DPathInVec];
 			TaskDeps.bProfileForced3DPathOutsideIsAtPathStart = Profile.bUseTransfoStart;
 		}
 	}
@@ -99,27 +102,30 @@ void FITwinSchedule::FindAnyPriorityAppearances(BindingIndexIterator First, Bind
 	{
 		FAnimationBinding const& OtherBinding = AnimationBindings[*It];
 		FAppearanceProfile const& OtherProfile = AppearanceProfiles[OtherBinding.AppearanceProfileInVec];
+		FStaticTransformAssignment const* StaticTransfoAssignment =
+			(ITwin::INVALID_IDX == OtherBinding.StaticTransfoAssignmentInVec) ? nullptr
+				: (&StaticTransfoAssignments[OtherBinding.StaticTransfoAssignmentInVec]);
+		FPathTransformAssignment const* PathTransfoAssignment =
+			(ITwin::INVALID_IDX == OtherBinding.PathTransfoAssignmentInVec) ? nullptr
+				: (&PathTransfoAssignments[OtherBinding.PathTransfoAssignmentInVec]);
 		if (EProfileAction::Install == OtherProfile.ProfileType
 			|| EProfileAction::Remove == OtherProfile.ProfileType)
 		{
 			UpdateTimedProfiles(Task, Tasks[OtherBinding.TaskInVec], OtherProfile,
 				LatestPrioFinishBefore, EarliestPrioStartAfter,
-				(ITwin::INVALID_IDX == OtherBinding.TransfoAssignmentInVec) ? nullptr
-					: (&TransfoAssignments[OtherBinding.TransfoAssignmentInVec]));
+				StaticTransfoAssignment, PathTransfoAssignment);
 		}
 		else if (EProfileAction::Temporary == OtherProfile.ProfileType)
 		{
 			UpdateTimedProfiles(Task, Tasks[OtherBinding.TaskInVec], OtherProfile,
 				LatestTempFinishBefore, EarliestTempStartAfter,
-				(ITwin::INVALID_IDX == OtherBinding.TransfoAssignmentInVec) ? nullptr
-					: (&TransfoAssignments[OtherBinding.TransfoAssignmentInVec]));
+				StaticTransfoAssignment, PathTransfoAssignment);
 		}
 		else if (EProfileAction::Maintenance == OtherProfile.ProfileType)
 		{
 			UpdateTimedProfiles(Task, Tasks[OtherBinding.TaskInVec], OtherProfile,
 				LatestMaintainFinishBefore, EarliestMaintainStartAfter,
-				(ITwin::INVALID_IDX == OtherBinding.TransfoAssignmentInVec) ? nullptr
-					: (&TransfoAssignments[OtherBinding.TransfoAssignmentInVec]));
+				StaticTransfoAssignment, PathTransfoAssignment);
 		}
 	}
 	if (EProfileAction::Maintenance == ThisAction)
@@ -198,9 +204,9 @@ void FITwinSchedule::FindAnyPriorityAppearances(BindingIndexIterator First, Bind
 			}
 			// else: Temp already behaves as if preceded by a Remove
 		}
-		else if (EarliestPrioStartAfter && EProfileAction::Remove == EarliestPrioStartAfter->ProfileType)
+		else if (EarliestPrioStartAfter)
 		{
-			if (!LatestMaintainFinishBefore)
+			if (EProfileAction::Remove == EarliestPrioStartAfter->ProfileType && !LatestMaintainFinishBefore)
 			{
 				TaskDeps.ProfileForcedAppearanceBefore = &EarliestPrioStartAfter->Appearance;
 				TaskDeps.ProfileForcedAppearanceAfter = &EarliestPrioStartAfter->Appearance;
@@ -208,6 +214,8 @@ void FITwinSchedule::FindAnyPriorityAppearances(BindingIndexIterator First, Bind
 				TaskDeps.ProfileForcedVisibilityAfter.emplace(true);
 				Detail::SetTransfoAssignmentDataDeps(*this, TaskDeps, *EarliestPrioStartAfter);
 			}
+			// else: Temp already behaves as if followed by an Install (but don't fallback into the
+			// "EarliestMaintainStartAfter" case below when there is one! eg. "Q" in my test project...
 		}
 		else if (EarliestMaintainStartAfter)
 		{

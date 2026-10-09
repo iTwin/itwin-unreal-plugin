@@ -1,0 +1,9 @@
+﻿{
+	"url": "https://api.bentley.com/schedules/fadafada-5a10-407e-b517-fbc23fcf4dc3/appearance-profiles?$top=10000&$deltaToken=dummy-appearanceProfiles-token-1023",
+	"verb": "GET",
+	"connectedSuccessfully": true,
+	"responseCode": 200
+,
+	"reply": 
+{"deltaToken":"special-dev-no-delta-token","appearanceProfiles":[{"action":"Remove","activeAppearance":{"color":"#ff0000","finishTransparency":0,"growthSimulation":{"adjustForTaskPercentComplete":false,"direction":{"x":0.0,"y":0.0,"z":1.0},"mode":"RightLeft","pauseDuringNonWorkingTime":false,"simulateAsRemove":false},"isEnabled":true,"startTransparency":0,"useOriginalColor":false,"useOriginalTransparency":true},"createdOn":null,"deleted":false,"endAppearance":{"color":"#00ff00","isEnabled":true,"transparency":0,"useOriginalColor":true,"useOriginalTransparency":true},"id":"d8799a15-c9b2-4882-aac9-29843e674e98","name":"InstallTestColorsNowRemove","parentId":null,"startAppearance":{"color":"#00ff00","isEnabled":true,"transparency":0,"useOriginalColor":true,"useOriginalTransparency":true}}],"_links":{"self":{"href":"https://api.bentley.com/schedules/fadafada-5a10-407e-b517-fbc23fcf4dc3/appearance-profiles?$top=10000&$deltaToken=dummy-appearanceProfiles-token-1023"}}}
+}

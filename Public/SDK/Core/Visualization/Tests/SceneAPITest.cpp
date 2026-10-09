@@ -12,18 +12,12 @@
 #include <mutex>
 
 #include <catch2/catch_all.hpp>
-#include <httpmockserver/mock_server.h>
-#include <httpmockserver/port_searcher.h>
-#include "Mock.h"
+#include <Core/Network/Tests/AsyncTestHelpers.h>
+#include <Core/Network/Tests/HttpMock.h>
 
 using namespace AdvViz::SDK;
 
 
-static HTTPMock* GetHttpMock2()
-{
-	static std::unique_ptr<httpmock::MockServer> httpMockM = HTTPMock::MakeServer();
-	return static_cast<HTTPMock*>(httpMockM.get());
-}
 bool CompareLink(const AdvViz::SDK::ILink& l1, const AdvViz::SDK::ILink& l2)
 {
 	if (l1.GetType() != l2.GetType())
@@ -78,7 +72,7 @@ static void SetDefaultConfig()
 {
 	Config::SConfig config;
 	config.server.server = "http://localhost";
-	config.server.port = GetHttpMock2()->getPort();
+	config.server.port = GetHttpMock()->getPort();
 	config.server.urlapiprefix = "";
 	Config::Init(config);
 	SetSceneAPIConfig(config);
@@ -86,15 +80,13 @@ static void SetDefaultConfig()
 	CreateAdvVizLogChannels();
 }
 
-bool WaitForAsyncTask(std::atomic_bool& taskFinished, int maxSeconds);
-
 TEST_CASE("SceneAPI"){
 
 	SECTION("ScenePersistence") {
 		try {
 			static const std::string itwinID = "eaa1a1d1-0e60-4894-92be-c393fba76ca6";
 			SetDefaultConfig();
-			HTTPMock* mock = GetHttpMock2();
+			HTTPMock* mock = GetHttpMock();
 			REQUIRE(mock != nullptr);
 
 			REQUIRE(GetDefaultHttp().get() != nullptr);
@@ -102,7 +94,7 @@ TEST_CASE("SceneAPI"){
 			std::mutex objectsMutex;
 			bool bTestMultiPage = false;
 			auto respKeyPost = std::pair("POST", "/scenes");
-			mock->responseFct_[respKeyPost] = [] {
+			mock->SetResponseFunction(respKeyPost, [] {
 				std::string s = "\
 				{\
 					\"scene\" : { \
@@ -115,10 +107,10 @@ TEST_CASE("SceneAPI"){
 					}\
 				}";
 				return HTTPMock::Response2(200, s);
-				};
+			});
 
 			auto respKeyGet = std::pair("GET", "/scenes/995970f2-bdfb-4d6b-8224-a40e890859fb");
-			mock->responseFct_[respKeyGet] = [] {
+			mock->SetResponseFunction(respKeyGet, [] {
 				std::string s = "\
 				{\
 					\"scene\" : { \
@@ -131,9 +123,9 @@ TEST_CASE("SceneAPI"){
 					}\
 				}";
 				return HTTPMock::Response2(200, s);
-				};
+			});
 			auto respKeyPATCH = std::pair("PATCH", "/scenes/995970f2-bdfb-4d6b-8224-a40e890859fb");
-			mock->responseFct_[respKeyPATCH] = [] {
+			mock->SetResponseFunction(respKeyPATCH, [] {
 				std::string s = "\
 				{\
 					\"scene\" : { \
@@ -146,9 +138,9 @@ TEST_CASE("SceneAPI"){
 					}\
 				}";
 				return HTTPMock::Response2(200, s);
-				};
+			});
 			auto respKeyGetObj = std::pair("GET", "/scenes/995970f2-bdfb-4d6b-8224-a40e890859fb/objects");
-			mock->responseFctWithArgs_[respKeyGetObj] = [&objects, &objectsMutex, &bTestMultiPage]
+			mock->SetResponseFunctionWithArgs(respKeyGetObj, [&objects, &objectsMutex, &bTestMultiPage]
 				(const std::vector<HTTPMock::UrlArg>& urlArguments)
 			{
 				std::unique_lock<std::mutex> lock(objectsMutex);
@@ -218,10 +210,10 @@ TEST_CASE("SceneAPI"){
 					"\"_links\" : {" + buildLinks() + "}" \
 				" }";
 				return HTTPMock::Response2(200, s);
-			};
+			});
 
 			auto respKeyPostObj = std::pair("POST", "/scenes/995970f2-bdfb-4d6b-8224-a40e890859fb/objects");
-			mock->responseFctWithData_[respKeyPostObj] = [&objects, &objectsMutex]  (const std::string& data){
+			mock->SetResponseFunctionWithData(respKeyPostObj, [&objects, &objectsMutex]  (const std::string& data){
 				std::unique_lock<std::mutex> lock(objectsMutex);
 				size_t ss = objects.size();
 				auto id = "995970f2-bdfb-4d6b-8224-" + std::to_string(ss);
@@ -242,11 +234,11 @@ TEST_CASE("SceneAPI"){
 					}\
 				]}";
 				return HTTPMock::Response2(200, s);
-				};
+			});
 			auto respKeyDelete = std::pair("DELETE", "/scenes/995970f2-bdfb-4d6b-8224-a40e890859fb");
-			mock->responseFct_[respKeyDelete] = [] {
+			mock->SetResponseFunction(respKeyDelete, [] {
 				return HTTPMock::Response2(204, "");
-				};
+			});
 
 			std::shared_ptr<ScenePersistenceAPI> scene(ScenePersistenceAPI::New());
 			std::atomic_bool asyncCreateSceneDone = false;

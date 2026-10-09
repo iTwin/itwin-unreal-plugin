@@ -94,25 +94,14 @@ public:
 		Category = "iTwin")
 	int IModelForceShadowUpdatesMillisec = 1000;
 
-	//! When false, Synchro4D schedule queries and loading will not happen. If some queries have been already
-	//! started, setting to false will not prevent their replies from being handled, but no new query will be
-	//! emitted: they will be stacked and should restart correctly when the flag is set to true again
-	//! (UNTESTED though). It is recommended to set to false before the actor starts ticking, or at least
-	//! before the iModel Elements metadata have finished querying/loading.
+	//! When true, Synchro4D schedule queries and loading will not happen unless the auto-load flag is checked again
+	//! on the iModel after it has been loaded or created
 	UPROPERTY(
 		Config,
 		EditAnywhere,
 		BlueprintReadOnly,
 		Category = "iTwin")
-	bool bIModelAutoLoadSynchro4DSchedules = true;
-
-	/// Use official api.bentley.com 4D endpoints rather than the legacy internal ES-API endpoints.
-	UPROPERTY(
-		Config,
-		EditAnywhere,
-		BlueprintReadOnly,
-		Category = "iTwin")
-	bool bSynchro4DUseAPIM = true;
+	bool bIModelOverrideDisableAutoLoad4DSchedules = false;
 
 	/**
 	 * From ACesium3DTileset::MaximumScreenSpaceError:
@@ -238,16 +227,6 @@ public:
 		Category = "iTwin",
 		meta = (ConfigRestartRequired = true))
 	bool bEnableMaterialTuning = false;
-
-	/// Enable prediction of materials based on an iTwin Machine Learning api. The api is still under
-	/// development. It requires some specific scopes to be added to your iTwin App.
-	UPROPERTY(
-		Config,
-		EditAnywhere,
-		BlueprintReadOnly,
-		Category = "iTwin",
-		meta = (ConfigRestartRequired = true))
-	bool bEnableML_MaterialPrediction = false;
 
 	/// Work-in-progress features.
 	UPROPERTY(

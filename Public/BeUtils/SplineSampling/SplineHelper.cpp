@@ -185,9 +185,13 @@ namespace BeUtils
 		if (samplingMode == EPathRegularSamplingMode::FixedSpacing)
 		{
 			const double* pFixedSpacing = std::get_if<double>(&fixedCountOrDistance);
-			if (!pFixedSpacing || *pFixedSpacing <= 0.)
+			if (!pFixedSpacing || *pFixedSpacing < 0.)
 			{
 				BE_ISSUE("missing or wrong spacing value for FixedSpacing mode");
+				return 0;
+			}
+			else if (*pFixedSpacing == 0.)
+			{
 				return 0;
 			}
 			deltaLength = *pFixedSpacing;

@@ -70,11 +70,13 @@ public class ITwinRuntime : ModuleRules
 		if (Target.bBuildEditor)
 		{
 			PrivateDependencyModuleNames.AddRange(new string[]{
+				"EditorFramework",
 				"FunctionalTesting",
+				"InputCore",
 				"Projects",
 				"ScreenShotComparisonTools",
 				"UnrealEd",
-			});
+            });
 		}
 		string libFolder = "UnrealDebug";
 		string libExtension = ".lib";

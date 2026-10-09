@@ -6,7 +6,7 @@
 |
 +--------------------------------------------------------------------------------------*/
 
-#include "ITwinContentManager.h"
+#include "Content/ITwinContentManager.h"
 #include "HAL/PlatformFilemanager.h"
 #include "HAL/PlatformFile.h"
 #include "Misc/Paths.h"
@@ -35,6 +35,12 @@ UITwinContentManager::~UITwinContentManager()
 void UITwinContentManager::LoadContentJsonFile()
 {
     std::filesystem::path jsonPath = std::filesystem::path(TCHAR_TO_UTF8(*ContentRootPath)) / "content.json";
+    std::error_code ec;
+    if (!std::filesystem::exists(jsonPath, ec))
+    {
+        BE_LOGV("ContentHelper", "File content.json does not exist");
+        return;
+    }
     std::string parseError;
     std::vector<SContentInfo> ContentData;
     if (AdvViz::SDK::Json::LoadFile(ContentData, jsonPath, parseError))
@@ -95,21 +101,38 @@ FString UITwinContentManager::ShouldDownloadComponent(const FString& path) const
 
 FString UITwinContentManager::SanitizePath(const FString& path) const
 {
-    FString componentId = HasComponentIDInPath(path);
-    if (!componentId.IsEmpty())
-    {
+	FString componentId = HasComponentIDInPath(path);
+	if (!componentId.IsEmpty())
+	{
 		FString res = path.RightChop(componentId.Len());
 		return res;
-    }
-    return path;
+	}
+	return path;
 }
 
-void UITwinContentManager::DownloadFromAssetPath(const FString& path)
+void UITwinContentManager::SetComponentObjectPath(const FString& componentId, const FString& objectPath)
+{
+	if (componentId.IsEmpty())
+		return;
+	ComponentObjectPaths[componentId] = objectPath;
+}
+
+FString UITwinContentManager::GetComponentObjectPath(const FString& componentId) const
+{
+	auto it = ComponentObjectPaths.find(componentId);
+	if (it != ComponentObjectPaths.end())
+	{
+		return it->second;
+	}
+	return FString();
+}
+
+void UITwinContentManager::Mount(const FString& path)
 {
     if (IsRunningPIE())
         return;
 
-    BE_LOGI("ContentHelper", "DownloadFromAssetPath: " << TCHAR_TO_UTF8(*path));
+    BE_LOGI("ContentHelper", "Mount: " << TCHAR_TO_UTF8(*path));
     // find chunkid base on path
 	auto it = ContentInfoMap.find(path);
     if (it == ContentInfoMap.end())

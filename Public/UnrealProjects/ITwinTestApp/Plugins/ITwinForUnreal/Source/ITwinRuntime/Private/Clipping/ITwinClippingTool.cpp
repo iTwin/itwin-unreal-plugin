@@ -93,7 +93,7 @@ void AITwinClippingTool::ConnectSplineTool(AITwinSplineTool* SplineTool)
 		SplineTool->SplineAddedEvent.AddUniqueDynamic(Impl.Get(), &UITwinClippingToolImpl::OnSplineHelperAdded);
 		SplineTool->SplineBeforeRemovedEvent.AddUniqueDynamic(Impl.Get(), &UITwinClippingToolImpl::OnSplineHelperRemoved);
 		SplineTool->InteractiveCreationAbortedEvent.AddUniqueDynamic(this, &AITwinClippingTool::OnItemCreationAbortedInTool);
-		SplineTool->CutoutPolygonSelectedEvent.AddUniqueDynamic(this, &AITwinClippingTool::OnCutoutPolygonSelected);
+		SplineTool->SplineSelectedEvent.AddUniqueDynamic(this, &AITwinClippingTool::OnCutoutPolygonSelected);
 		SplineTool->SplinePointMovedEvent.AddUniqueDynamic(Impl.Get(), &UITwinClippingToolImpl::OnSplinePointMoved);
 		SplineTool->SplinePointRemovedEvent.AddUniqueDynamic(Impl.Get(), &UITwinClippingToolImpl::OnSplinePointRemoved);
 		SplineTool->SplinePointAddedEvent.AddUniqueDynamic(Impl.Get(), &UITwinClippingToolImpl::OnSplinePointAdded);
@@ -119,8 +119,8 @@ void AITwinClippingTool::ConnectPersistenceManager(AITwinDecorationHelper* Decor
 
 void AITwinClippingTool::RegisterTileset(FITwinTilesetAccess const& TilesetAccess)
 {
-	// When a new tileset is created, automatically apply global clipping effects to it, if any.
-	Impl->Renderer->UpdateTileset(TilesetAccess);
+	// A new model appeared: it needs a clipping group id before its CPD is filled below.
+	Impl->Renderer->RegisterTileset(TilesetAccess);
 
 	// If some cutting planes are meant to influence this tileset, invalidate their bounding box (used for
 	// automatic recentering).
@@ -184,9 +184,10 @@ void AITwinClippingTool::BeforeRemoveClippingInstances(EITwinInstantiatedObjectT
 	Impl->Factory->BeforeRemoveClippingInstances(ObjectType, InstanceIndices);
 }
 
-void AITwinClippingTool::OnClippingInstancesRemoved(EITwinInstantiatedObjectType ObjectType, const TArray<int32>& InstanceIndices)
+void AITwinClippingTool::OnClippingInstancesRemoved(EITwinInstantiatedObjectType ObjectType,
+	const TArray<int32>& IndicesInDescendingOrder, bool bUseRemoveAtSwap)
 {
-	Impl->OnClippingInstancesRemoved(ObjectType, InstanceIndices);
+	Impl->OnClippingInstancesRemoved(ObjectType, IndicesInDescendingOrder, bUseRemoveAtSwap);
 }
 
 bool AITwinClippingTool::AllowLoadingLegacyInstances() const
@@ -404,7 +405,7 @@ int32 AITwinClippingTool::GetSelectedPolygonPointInfo(double& OutLatitude, doubl
 	return INDEX_NONE;
 }
 
-void AITwinClippingTool::SetPolygonPointLocation(int32 PolygonIndex, int32 PointIndex, double Latitude, double Longitude) const
+void AITwinClippingTool::SetPolygonPointLocation(int32 PolygonIndex, int32 PointIndex, double Latitude, double Longitude)
 {
 	Impl->SetPolygonPointLocation(PolygonIndex, PointIndex, Latitude, Longitude);
 }
@@ -415,30 +416,16 @@ bool AITwinClippingTool::GetEffectTransform(EITwinClippingPrimitiveType Type, in
 	return Impl->GetEffectTransform(Type, PrimitiveIndex, OutTransform, OutLatitude, OutLongitude, OutElevation);
 }
 
-bool AITwinClippingTool::GetSelectedEffectTransform(FTransform& OutTransform, double& OutLatitude, double& OutLongitude, double& OutElevation) const
-{
-	auto CurrentSelection = GetSelectedEffect();
-	if (CurrentSelection)
-	{
-		return GetEffectTransform(CurrentSelection->first, CurrentSelection->second,
-			OutTransform, OutLatitude, OutLongitude, OutElevation);
-	}
-	else
-	{
-		return false;
-	}
-}
-
 void AITwinClippingTool::SetEffectLocation(EITwinClippingPrimitiveType Type, int32 PrimitiveIndex,
 	double InLatitude, double InLongitude, double InElevation,
-	bool bTriggeredFromITS) const
+	bool bTriggeredFromITS)
 {
 	Impl->SetEffectLocation(Type, PrimitiveIndex, InLatitude, InLongitude, InElevation, bTriggeredFromITS);
 }
 
 void AITwinClippingTool::SetEffectRotation(EITwinClippingPrimitiveType Type, int32 PrimitiveIndex,
 	double InRotX, double InRotY, double InRotZ,
-	bool bTriggeredFromITS) const
+	bool bTriggeredFromITS)
 {
 	Impl->SetEffectRotation(Type, PrimitiveIndex, InRotX, InRotY, InRotZ, bTriggeredFromITS);
 }
@@ -503,6 +490,11 @@ void AITwinClippingTool::OnCutoutPolygonSelected()
 void AITwinClippingTool::OnOverviewCamera(AITwinSplineHelper const* SpecificSpline /*= nullptr*/)
 {
 	Impl->OnOverviewCamera(SpecificSpline);
+}
+
+void AITwinClippingTool::SetOverviewCamera()
+{
+	OnOverviewCamera(nullptr);
 }
 
 void AITwinClippingTool::SetTransformationMode(ETransformationMode Mode)
@@ -646,6 +638,11 @@ void AITwinClippingTool::Deactivate()
 	ActivationEvent.Broadcast(false);
 
 	Impl->HideAllEffectProxies();
+}
+
+bool AITwinClippingTool::HasEffectListListener() const
+{
+	return EffectListModifiedEvent.IsBound();
 }
 
 

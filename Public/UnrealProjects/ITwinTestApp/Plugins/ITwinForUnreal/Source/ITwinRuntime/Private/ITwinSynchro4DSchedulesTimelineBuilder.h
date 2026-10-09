@@ -21,6 +21,7 @@
 using FOnElementsTimelineModified =
 	std::function<void(FITwinElementTimeline&,  std::vector<ITwinElementID> const*)>;
 struct FITwinCoordConversions;
+class FITwinSceneMapping;
 class FITwinSchedule;
 class FITwinScheduleStats;
 using FSchedLock = std::lock_guard<std::recursive_mutex>;
@@ -50,6 +51,7 @@ public:
 private:
 	friend class FITwinSynchro4DSchedulesInternals;
 	friend class FSynchro4DImportTestHelper;
+	friend class FScheduleTimelineBuilderTestAccess;
 
 	class FImpl;
 	TPimplPtr<FImpl> Impl;
@@ -57,9 +59,16 @@ private:
 	enum class EInit : uint8_t { Pending, Ready, Disposable };
 	EInit InitState = EInit::Pending;
 
-	void AddAnimationBindingToTimeline(FITwinSchedule const& Schedule, size_t const AnimationBindingIndex,
-									   FSchedLock& Lock);
-	void OnReceivedScheduleStats(FITwinScheduleStats const& Stats, FSchedLock&);
+	void AddAnimationBindingToTimeline(FITwinSchedule& Schedule, size_t const AnimationBindingIndex);
+	void OnReceivedScheduleStats(FITwinScheduleStats const& Stats);
+#if WITH_TESTS
+	bool TestOnlyCreateTimelineKeyframesWithTaskDependencies(
+		FITwinSceneMapping& SceneMapping,
+		FITwinSchedule& Schedule,
+		FITwinElementTimeline& ElemTimeline,
+		int TimelineIndex,
+		std::unordered_set<FElementsGroup>& KeyframedSubgroups);
+#endif
 	FITwinScheduleTimelineBuilder();
 	bool IsUnitTesting() const;
 };

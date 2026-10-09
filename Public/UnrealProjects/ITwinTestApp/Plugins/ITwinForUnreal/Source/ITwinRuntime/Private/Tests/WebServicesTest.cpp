@@ -9,7 +9,10 @@
 
 #if WITH_TESTS 
 
-#include "WebTestHelpers.h"
+#include <Tests/ITwinAutomationTestBaseNoLogs.h>
+#include <Network/HttpUtils.h>
+#include <Tests/ITwinMockServerBase.h>
+#include <Tests/WebTestHelpers.h>
 
 #include <HAL/PlatformProcess.h>
 #include <HttpModule.h>
@@ -21,6 +24,12 @@
 #include <ITwinWebServices/ITwinWebServicesObserver.h>
 
 #include <ImageUtils.h>
+
+#if WITH_EDITOR
+#include <Editor/EditorEngine.h>
+#else
+#include <Tests/AutomationCommon.h>
+#endif
 
 #include <set>
 
@@ -60,10 +69,6 @@ bool FITwinWebServicesTest::RunTest(const FString& /*Parameters*/)
 }
 
 
-
-
-#define ITWINTEST_ACCESS_TOKEN "ThisIsATestITwinAccessToken"
-
 #define ITWINID_CAYMUS_EAP "itwinId-Cay-EA"
 #define IMODELID_BUILDING "imodelId-Building"
 #define CHANGESETID_BUILDING "changesetidbuilding59"
@@ -87,99 +92,13 @@ bool FITwinWebServicesTest::RunTest(const FString& /*Parameters*/)
 #define ITWINID_STADIUM_RN_QA "itwinId-Stadium-Ouh-QA"
 #define IMODELID_STADIUM "imodelId-Stadium-023"
 #define CHANGESETID_STADIUM "changesetIdStadium"
+#define IMODELID_SYNC_RUNNING "ef8eb98c-1ba4-4cb9-89f1-5eafcc7c443e"
 
 #define REALITYDATAID_ORLANDO "realityData-Id-Orlando-Magic"
 
 #define ITWINID_NOT_EXISTING "toto"
 
 /// Mock server implementation for iTwin services
-
-FITwinMockServerBase::FITwinMockServerBase(int port)
-	: httpmock::MockServer(port)
-{
-
-}
-/// Process /header_in request
-
-int FITwinMockServerBase::CheckRequiredHeaders(const std::vector<Header>& headers,
-	std::map<std::string, std::string> const& requiredHeaders) const
-{
-	std::set<std::string> matchedHeaders;
-	std::optional<int> headerError;
-	std::string errorInfo;
-	for (const Header& header : headers)
-	{
-		auto itReq = requiredHeaders.find(header.key);
-		if (itReq != requiredHeaders.end())
-		{
-			std::string_view const requiredValue(itReq->second);
-			bool const bMatchingValue = (header.value == requiredValue)
-				|| (requiredValue.ends_with("*")
-					&& header.value.starts_with(requiredValue.substr(0, requiredValue.length() - 1)));
-			if (bMatchingValue)
-			{
-				matchedHeaders.insert(header.key);
-			}
-			else
-			{
-				// Not the expected value!
-				errorInfo = std::string(" - value differs for ") + header.key
-					+ ": was expecting '" + itReq->second + "' and found '" + header.value + "'";
-				if (header.key == "Authorization")
-					headerError = MHD_HTTP_UNAUTHORIZED;
-				else
-					headerError = MHD_HTTP_BAD_REQUEST;
-				break;
-			}
-		}
-	}
-
-	if (!headerError
-		&& matchedHeaders.size() != requiredHeaders.size())
-	{
-		errorInfo = " - missing header(s): [";
-		int missingKeyIndex(0);
-		for (auto const& [key, _] : requiredHeaders)
-		{
-			if (!matchedHeaders.contains(key))
-			{
-				if (missingKeyIndex > 0)
-					errorInfo += ", ";
-				errorInfo += key;
-				missingKeyIndex++;
-			}
-		}
-		errorInfo += "]";
-		headerError = MHD_HTTP_BAD_REQUEST;
-	}
-	if (headerError)
-	{
-		BE_LOGE("ITwinAPI", "Not the expected headers (" << *headerError << errorInfo << ") -> " << ToString(headers));
-		return *headerError;
-	}
-
-	return MHD_HTTP_OK;
-}
-
-std::string FITwinMockServerBase::ToString(const std::vector<Header>& headers) const
-{
-	std::string Str("{ ");
-	for (const Header& header : headers)
-	{
-		Str += "{";
-		Str += header.key + " : " + header.value + "}, ";
-	}
-	Str += "}";
-	return Str;
-}
-
-/// Process /arg_test request (basic test to check that the mock server is answering)
-FITwinMockServerBase::Response FITwinMockServerBase::ProcessArgTest(const std::vector<UrlArg>& urlArguments) const
-{
-	static const StringMap expectedArgs = { { "b", "2" }, { "x", "0" } };
-	check(ToArgMap(urlArguments) == expectedArgs);
-	return Response();
-}
 
 class FITwinMockServer : public FITwinMockServerBase
 {
@@ -211,6 +130,10 @@ public:
 		if (isUrl(url, "/mesh-export"))
 		{
 			return ProcessMeshExportTest(url, method, data, urlArguments, headers);
+		}
+		if (isUrl(url, "/synchronization"))
+		{
+			return ProcessSynchronizationTest(url, urlArguments, headers);
 		}
 		if (isUrl(url, "/savedviews"))
 		{
@@ -495,6 +418,38 @@ private:
 				"\"_links\":{\"mesh\":{\"href\":\"https://gltf59.blob.net/expId-Turb-53?sv=2024-05-04&spr=https&se=2024-06-22T23%3A59%3A59Z&sr=c&sp=rl&sig=Nq%2B%2FPjEXu64kgPsYVBjuxTV44Zq4GfsSxqTDDygD4oI%3D\"}}}}"
 			);
 		}
+		return Response(MHD_HTTP_NOT_FOUND, "Page not found.");
+	}
+
+	Response ProcessSynchronizationTest(
+		const std::string& url,
+		const std::vector<UrlArg>& urlArguments,
+		const std::vector<Header>& headers) const
+	{
+		CHECK_ITWIN_HEADERS("v1");
+
+		StringMap argMap = ToArgMap(urlArguments);
+		if (url.ends_with("/connections")
+			&& argMap["imodelId"] == IMODELID_SYNC_RUNNING)
+		{
+			const std::string LastRunUrl =
+				"http://localhost:" + std::to_string(getPort())
+				+ "/synchronization/imodels/manifestconnections/manifestConn-Running-01/runs/run-running-01";
+			return Response(MHD_HTTP_OK, std::string("{\"connections\":[")
+				+ "{\"id\":\"manifestConn-Running-01\",\"displayName\":\"Primary synchronization\","
+				+ "\"iModelId\":\"" IMODELID_SYNC_RUNNING "\","
+				+ "\"_links\":{\"lastRun\":{\"href\":\"" + LastRunUrl + "\"}}},"
+				+ "{\"id\":\"manifestConn-Idle-02\",\"displayName\":\"Secondary synchronization\","
+				+ "\"iModelId\":\"" IMODELID_SYNC_RUNNING "\","
+				+ "\"_links\":{}}]}");
+		}
+		if (url.ends_with("/manifestconnections/manifestConn-Running-01/runs/run-running-01"))
+		{
+			return Response(MHD_HTTP_OK,
+				"{\"run\":{\"id\":\"run-running-01\",\"state\":\"Executing\","
+				"\"phase\":\"Synchronization\",\"startDateTime\":\"2026-04-02T16:45:00Z\"}}");
+		}
+
 		return Response(MHD_HTTP_NOT_FOUND, "Page not found.");
 	}
 
@@ -1062,6 +1017,7 @@ public:
 	IMPLEMENT_OBS_CALLBACK(OnITwinInfoRetrieved, AdvViz::SDK::ITwinInfo);
 	IMPLEMENT_OBS_CALLBACK(OnITwinsRetrieved, FITwinInfos);
 	IMPLEMENT_OBS_CALLBACK(OnIModelsRetrieved, FIModelInfos);
+	IMPLEMENT_OBS_CALLBACK(OnIModelProcessingStatusRetrieved, FIModelProcessingStatus);
 	IMPLEMENT_OBS_CALLBACK(OnChangesetsRetrieved, FChangesetInfos);
 
 	IMPLEMENT_OBS_CALLBACK(OnExportInfosRetrieved, FITwinExportInfos);
@@ -1107,6 +1063,10 @@ private:
 using TestObserverPtr = std::shared_ptr<ITwinTestWebServicesObserver>;
 
 
+FITwinAPITestHelperBase::FITwinAPITestHelperBase()
+{
+}
+
 FITwinAPITestHelperBase::~FITwinAPITestHelperBase()
 {
 
@@ -1126,20 +1086,21 @@ bool FITwinAPITestHelperBase::Init(AdvViz::SDK::EITwinEnvironment Env /*= EITwin
 {
 	if (bInitDone)
 		return true;
+
+	AsyncCallback = std::make_shared<FITwinIOAsyncCallback>();
+
 	if (!DoInit(Env))
 	{
 		return false;
 	}
-	static bool bHasSetTestToken = false;
+
 	ensureMsgf(IsInGameThread(), TEXT("UT should be initialized in game thread"));
-	if (!bHasSetTestToken)
 	{
 		auto& AuthMngr = AdvViz::SDK::ITwinAuthManager::GetInstance(Env);
 		if (ensure(AuthMngr))
 		{
 			AuthMngr->SetOverrideAccessToken(ITWINTEST_ACCESS_TOKEN, AdvViz::SDK::EITwinAuthOverrideMode::Testing);
 		}
-		bHasSetTestToken = true;
 	}
 	bInitDone = true;
 	return true;
@@ -1163,6 +1124,14 @@ std::string FITwinAPITestHelperBase::GetServerUrl() const
 	return {};
 }
 
+int FITwinAPITestHelperBase::GetMockServerPort() const
+{
+	if (MockServer)
+	{
+		return MockServer->getPort();
+	}
+	return -1;
+}
 
 bool FITwinAPITestHelperBase::PostCondition() const
 {
@@ -1189,6 +1158,20 @@ bool FITwinAPITestHelperBase::PostCondition() const
 		elapsedMilliSec += 100;
 	}
 	return taskFinished;
+}
+
+
+#if WITH_EDITOR
+extern UNREALED_API class UEditorEngine* GEditor;
+#endif
+
+/*static*/ UWorld* FITwinAPITestHelperBase::GetTestWorld()
+{
+#if WITH_EDITOR
+	return GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+#else
+	return AutomationCommon::GetAnyGameWorld();
+#endif
 }
 
 
@@ -1242,6 +1225,7 @@ bool FITwinAPITestHelper::DoInit(AdvViz::SDK::EITwinEnvironment Env)
 	ServerConnection->Environment = static_cast<EITwinEnvironment>(Env);
 	WebServices->SetServerConnection(ServerConnection);
 	WebServices->SetTestServerURL(url.c_str());
+	WebServices->SetRetryDelayFactor(0.1f); // wait less before retrying.
 	Observer = std::make_shared<ITwinTestWebServicesObserver>();
 	WebServices->SetObserver(Observer.get());
 	return true;
@@ -1272,7 +1256,7 @@ bool FNUTWaitForMockServerResponse::Update()
 }
 
 
-IMPLEMENT_CUSTOM_SIMPLE_AUTOMATION_TEST(FITwinWebServicesRequestTest, FAutomationTestBaseNoLogs, \
+IMPLEMENT_CUSTOM_SIMPLE_AUTOMATION_TEST(FITwinWebServicesRequestTest, FITwinAutomationTestBaseNoLogs, \
 	"Bentley.ITwinForUnreal.ITwinRuntime.WebServicesRequest", \
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
@@ -1306,10 +1290,10 @@ bool FITwinWebServicesRequestTest::RunTest(const FString& /*Parameters*/)
 		Observer->AddPendingRequest();
 		Request->OnProcessRequestComplete().BindLambda(
 			[this, Observer]
-			(FHttpRequestPtr, FHttpResponsePtr Response, bool bConnectedSuccessfully) mutable
+			(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bConnectedSuccessfully) mutable
 			{
-				TestTrue("bConnectedSuccessfully", bConnectedSuccessfully);
-				TestEqual("status_code", 200, Response->GetResponseCode());
+				TestTrue(TEXT("Mock server arg_test response"),
+					ITwinHttp::CheckRequest(Request, Response, ITwinHttp::ConnectionSuccess(bConnectedSuccessfully)));
 				Observer->OnResponseReceived();
 			});
 		Request->ProcessRequest();
@@ -1446,6 +1430,28 @@ bool FITwinWebServicesRequestTest::RunTest(const FString& /*Parameters*/)
 		};
 		// (WindTurbine)
 		WebServices->GetiModelChangesets(TEXT(IMODELID_WIND_TURBINE));
+	}
+
+	SECTION("Get iModel Processing Status")
+	{
+		Observer->AddPendingRequest();
+		Observer->OnIModelProcessingStatusRetrievedFunc =
+			[this](bool bSuccess, FIModelProcessingStatus const& Status)
+		{
+			UTEST_TRUE("Get iModel processing status request result", bSuccess);
+			UTEST_EQUAL("IModelId", Status.IModelId, TEXT(IMODELID_SYNC_RUNNING));
+			UTEST_EQUAL("ProcessingStatus", Status.ProcessingStatus, TEXT("synchronization running"));
+			UTEST_EQUAL("ConnectionId", Status.ConnectionId, TEXT("manifestConn-Running-01"));
+			UTEST_EQUAL("ConnectionType", Status.ConnectionType, TEXT("manifest"));
+			UTEST_EQUAL("ConnectionDisplayName", Status.ConnectionDisplayName, TEXT("Primary synchronization"));
+			UTEST_EQUAL("RunId", Status.RunId, TEXT("run-running-01"));
+			UTEST_EQUAL("RunState", Status.RunState, TEXT("Executing"));
+			UTEST_EQUAL("RunPhase", Status.RunPhase, TEXT("Synchronization"));
+			UTEST_EQUAL("StartDateTime", Status.StartDateTime, TEXT("2026-04-02T16:45:00Z"));
+			UTEST_TRUE("bSynchronizationRunning", Status.bSynchronizationRunning);
+			return true;
+		};
+		WebServices->GetIModelProcessingStatus(TEXT(IMODELID_SYNC_RUNNING));
 	}
 
 	FString const WindTurbine_CesiumExportId = TEXT(EXPORTID_WIND_TURBINE_CESIUM);

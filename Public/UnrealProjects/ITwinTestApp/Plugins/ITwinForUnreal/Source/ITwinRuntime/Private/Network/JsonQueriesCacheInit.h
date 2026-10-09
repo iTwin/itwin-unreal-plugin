@@ -6,7 +6,6 @@
 |
 +--------------------------------------------------------------------------------------*/
 
-
 #pragma once
 
 #include "JsonQueriesCacheTypes.h"
@@ -19,22 +18,37 @@ static const TCHAR* MRU_TIMESTAMP = TEXT("cache.txt");
 
 class FRecordDirIterator : public IPlatformFile::FDirectoryVisitor
 {
-	FSessionMap& SessionMap;
+	FCacheMap& CacheMap;
 	FReplayMap* ReplayMap = nullptr;
 	bool bSimulationMode = false;
 	FString& ParsingError;
 	int* pRecorderTimestamp = nullptr;
 
 public:
-	FRecordDirIterator(FSessionMap& InSessionMap,
+	FRecordDirIterator(FCacheMap& InCacheMap,
 		FReplayMap* InReplayMap, FString& InParsingError, int* pInRecorderTimestamp = nullptr)
 	:
-		SessionMap(InSessionMap), ReplayMap(InReplayMap), bSimulationMode(InReplayMap != nullptr),
+		CacheMap(InCacheMap), ReplayMap(InReplayMap), bSimulationMode(InReplayMap != nullptr),
 		ParsingError(InParsingError), pRecorderTimestamp(pInRecorderTimestamp)
 	{
 	}
 
 	virtual bool Visit(const TCHAR* Filename, bool bIsDirectory) override;
+};
+
+class FChangesetFinderIterator : public IPlatformFile::FDirectoryVisitor
+{
+	FString const LatestChangesetJson;
+	FString BaseFilename;
+	TArray<FString> OtherChangesetJsons;
+
+	virtual bool Visit(const TCHAR* Filename, bool bIsDirectory) override;
+
+public:
+	FChangesetFinderIterator(FString&& InLatestChangesetJson);
+
+	TArray<FString> const& GetOtherChangesetJsonsFound() const;
+	void DeleteOtherChangesetJsons() const;
 };
 
 } // ns QueriesCache

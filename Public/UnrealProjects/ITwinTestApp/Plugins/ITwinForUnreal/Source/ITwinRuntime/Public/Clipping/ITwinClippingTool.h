@@ -10,7 +10,7 @@
 #pragma once
 
 #include <Clipping/ITwinClippingEventHub.h>
-#include <ITwinModelType.h>
+#include <Clipping/ITwinClippingToolApi.h>
 #include <Containers/Array.h>
 #include <Containers/Map.h>
 
@@ -36,18 +36,12 @@ class AITwinInteractiveTool;
 class AITwinPopulation;
 class AITwinPopulationTool;
 enum class EITwinInstantiatedObjectType : uint8;
-enum class ETransformationMode : uint8;
-
-namespace AdvViz::SDK
-{
-	class RefID;
-}
 
 
 /// Class managing Clipping Tools.
 /// For this prototype, those tools are linked to the population tool, with dedicated objects.
 UCLASS()
-class ITWINRUNTIME_API AITwinClippingTool : public AITwinClippingEventHub
+class ITWINRUNTIME_API AITwinClippingTool final : public AITwinClippingEventHub, public IITwinClippingToolApi
 {
 	GENERATED_BODY()
 public:
@@ -69,8 +63,7 @@ public:
 
 	void OnModelRemoved(const ITwin::ModelLink& ModelIdentifier);
 
-	/// Initiate the interactive creation of a new effect.
-	bool StartInteractiveEffectCreation(EITwinClippingPrimitiveType Type);
+	virtual bool StartInteractiveEffectCreation(EITwinClippingPrimitiveType Type) override;
 
 	/// Abort current cutout effect creation, if any.
 	void AbortInteractiveCreation(bool bTriggeredFromITS);
@@ -90,7 +83,7 @@ public:
 	void BeforeRemoveClippingInstances(EITwinInstantiatedObjectType ObjectType, const TArray<int32>& InstanceIndices);
 
 	/// Update the clipping information upon the removal of clipping primitives.
-	void OnClippingInstancesRemoved(EITwinInstantiatedObjectType ObjectType, const TArray<int32>& InstanceIndices);
+	void OnClippingInstancesRemoved(EITwinInstantiatedObjectType ObjectType, const TArray<int32>& IndicesInDescendingOrder, bool bUseRemoveAtSwap);
 
 	/// Returns true if we are allowed to load legacy cutout instances, those retrieved from the Decoration
 	/// Service.
@@ -102,8 +95,7 @@ public:
 	/// Perform some automatic conversions when the loading is complete (such as migration to Scene API).
 	void OnLoadComplete();
 
-	/// Return the number of clipping effects for the given primitive type.
-	int32 NumEffects(EITwinClippingPrimitiveType Type) const;
+	virtual int32 NumEffects(EITwinClippingPrimitiveType Type) const override;
 
 	/// Return a mutable reference to the clipping effect of given type and index, to modify it.
 	FITwinClippingInfoBase& GetMutableEffect(EITwinClippingPrimitiveType Type, int32 Index);
@@ -111,8 +103,7 @@ public:
 	/// Return a const reference to the clipping effect of given type and index, to read its info.
 	const FITwinClippingInfoBase& GetEffect(EITwinClippingPrimitiveType Type, int32 Index) const;
 
-	/// Remove an individual clipping primitive. Returns true if the effect was actually removed.
-	bool RemoveEffect(EITwinClippingPrimitiveType Type, int32 PrimitiveIndex, bool bTriggeredFromITS);
+	virtual bool RemoveEffect(EITwinClippingPrimitiveType Type, int32 PrimitiveIndex, bool bTriggeredFromITS) override;
 
 	/// Flip the effect of given type and index.
 	void FlipEffect(EITwinClippingPrimitiveType Type, int32 PrimitiveIndex);
@@ -120,44 +111,33 @@ public:
 	/// Flip all effects of the given type.
 	void FlipAllEffectsOfType(EITwinClippingPrimitiveType Type);
 
-	bool GetInvertEffect(EITwinClippingPrimitiveType Type, int32 PrimitiveIndex) const;
-	void SetInvertEffect(EITwinClippingPrimitiveType Type, int32 PrimitiveIndex, bool bInvert);
+	virtual bool GetInvertEffect(EITwinClippingPrimitiveType Type, int32 PrimitiveIndex) const override;
+	virtual void SetInvertEffect(EITwinClippingPrimitiveType Type, int32 PrimitiveIndex, bool bInvert) override;
 
-	/// Select the effect of given type and index.
-	/// \param bEnterIsolationMode When true, we enter isolation mode, by hiding all the other proxies.
-	/// \return True if the effect could be selected.
-	bool SelectEffect(EITwinClippingPrimitiveType Type, int32 PrimitiveIndex,
-		bool bEnterIsolationMode = true);
+	virtual bool SelectEffect(EITwinClippingPrimitiveType Type, int32 PrimitiveIndex,
+		bool bEnterIsolationMode = true) override;
 
-	/// Zoom in on the effect of given type and index.
-	void ZoomOnEffect(EITwinClippingPrimitiveType Type, int32 PrimitiveIndex);
-
-	/// Returns a pair identifying the selected effect, if any.
-	using FEffectIdentifier = std::pair<EITwinClippingPrimitiveType, int32>;
-	std::optional<FEffectIdentifier> GetSelectedEffect() const;
-	/// Reset current selection to none.
-	/// \param bExitIsolationMode When true, and if there was currently an isolation mode, we exit it by
-	/// restoring the normal visibility of effect proxies.
-	void DeSelectAll(bool bExitIsolationMode = true);
+	virtual std::optional<FEffectIdentifier> GetSelectedEffect() const override;
+	/// \note The default value is provided here only for the numerous existing call sites
+	/// inside ITwinRuntime; IITwinClippingToolApi deliberately declares none.
+	virtual void DeSelectAll(bool bExitIsolationMode = true) override;
 
 	virtual void BroadcastSelection() override;
 
-	/// Return the index of the selected polygon point, if any (if a cutout polygon point is selected) and if
-	/// yes, fills its coordinates (latitude and longitude).
-	/// If no polygon is selected, or if none of its points is selected, INDEX_NONE is returned.
-	int32 GetSelectedPolygonPointInfo(double& OutLatitude, double& OutLongitude) const;
-	/// Modify the location of the selected cutout polygon point, if any.
-	void SetPolygonPointLocation(int32 PolygonIndex, int32 PointIndex, double Latitude, double Longitude) const;
 
-	bool GetEffectTransform(EITwinClippingPrimitiveType EffectType, int32 Index,
-		FTransform& OutTransform, double& OutLatitude, double& OutLongitude, double& OutElevation) const;
-	bool GetSelectedEffectTransform(FTransform& OutTransform, double& OutLatitude, double& OutLongitude, double& OutElevation) const;
-	void SetEffectLocation(EITwinClippingPrimitiveType EffectType, int32 Index,
+	virtual int32 GetSelectedPolygonPointInfo(double& OutLatitude, double& OutLongitude) const override;
+	virtual void SetPolygonPointLocation(int32 PolygonIndex, int32 PointIndex, double Latitude, double Longitude) override;
+
+	virtual bool GetEffectTransform(EITwinClippingPrimitiveType EffectType, int32 Index,
+		FTransform& OutTransform, double& OutLatitude, double& OutLongitude, double& OutElevation) const override;
+	virtual void SetEffectLocation(EITwinClippingPrimitiveType EffectType, int32 Index,
 		double InLatitude, double InLongitude, double InElevation,
-		bool bTriggeredFromITS) const;
-	void SetEffectRotation(EITwinClippingPrimitiveType EffectType, int32 Index,
+		bool bTriggeredFromITS) override;
+	virtual void SetEffectRotation(EITwinClippingPrimitiveType EffectType, int32 Index,
 		double InRotX, double InRotY, double InRotZ,
-		bool bTriggeredFromITS) const;
+		bool bTriggeredFromITS) override;
+
+	virtual void ZoomOnEffect(EITwinClippingPrimitiveType Type, int32 PrimitiveIndex) override;
 
 	/// Called when we activate/deactivate picking of clipping effects in the viewport.
 	void OnActivatePicking(bool bActivate);
@@ -169,15 +149,13 @@ public:
 	UFUNCTION(Category = "iTwinUX", BlueprintCallable)
 	void OnOverviewCamera(AITwinSplineHelper const* SpecificSpline = nullptr);
 
-	//! Set the transformation mode (for selection gizmo).
-	void SetTransformationMode(ETransformationMode Mode);
+	virtual void SetOverviewCamera() override;
 
-	/// Return whether the given effect is enabled.
-	bool IsEffectEnabled(EITwinClippingPrimitiveType EffectType, int32 Index) const;
-	/// Switches the given effect on or off.
-	void EnableEffect(EITwinClippingPrimitiveType EffectType, int32 Index, bool bInEnabled);
-	/// Enable or disable all effects.
-	void EnableAllEffects(bool bInEnabled);
+	virtual void SetTransformationMode(ETransformationMode Mode) override;
+
+	virtual bool IsEffectEnabled(EITwinClippingPrimitiveType EffectType, int32 Index) const override;
+	virtual void EnableEffect(EITwinClippingPrimitiveType EffectType, int32 Index, bool bInEnabled) override;
+	virtual void EnableAllEffects(bool bInEnabled) override;
 
 	/// Return whether the given effect should influence the given model.
 	bool ShouldEffectInfluenceModel(EITwinClippingPrimitiveType EffectType, int32 EffectIndex,
@@ -195,24 +173,23 @@ public:
 	/// Return whether the given effect should influence the given model type globally.
 	bool ShouldEffectInfluenceFullModelType(EITwinClippingPrimitiveType EffectType, int32 EffectIndex,
 		EITwinModelType ModelType) const;
+	/// Set whether the given effect should influence the given model type globally.
 	void SetEffectInfluenceFullModelType(EITwinClippingPrimitiveType EffectType, int32 EffectIndex,
 		EITwinModelType ModelType, bool bAll);
 
-	void SetEffectInfluenceModel(EITwinClippingPrimitiveType EffectType, int32 EffectIndex,
-		const ITwin::ModelLink& ModelIdentifier, bool bInfluence);
+	virtual void SetEffectInfluenceModel(EITwinClippingPrimitiveType EffectType, int32 EffectIndex,
+		const ITwin::ModelLink& ModelIdentifier, bool bInfluence) override;
 
-	bool DoesEffectInfluenceModel(EITwinClippingPrimitiveType EffectType, int32 EffectIndex,
-		const ITwin::ModelLink& ModelIdentifier) const;
+	virtual bool DoesEffectInfluenceModel(EITwinClippingPrimitiveType EffectType, int32 EffectIndex,
+		const ITwin::ModelLink& ModelIdentifier) const override;
 
-	TSet<FString> GetInfluencedSpecificModels(EITwinClippingPrimitiveType EffectType,
+	virtual TSet<FString> GetInfluencedSpecificModels(EITwinClippingPrimitiveType EffectType,
 		int32 EffectIndex,
-		EITwinModelType LayerType) const;
+		EITwinModelType LayerType) const override;
 
-	/// Returns the unique identifier of an effect from its index.
-	AdvViz::SDK::RefID GetEffectId(EITwinClippingPrimitiveType EffectType, int32 EffectIndex) const;
+	virtual AdvViz::SDK::RefID GetEffectId(EITwinClippingPrimitiveType EffectType, int32 EffectIndex) const override;
 
-	/// Returns the index of a given effect from its unique identifier.
-	int32 GetEffectIndex(EITwinClippingPrimitiveType EffectType, AdvViz::SDK::RefID const& RefID) const;
+	virtual int32 GetEffectIndex(EITwinClippingPrimitiveType EffectType, AdvViz::SDK::RefID const& RefID) const override;
 
 	UFUNCTION()
 	void OnSceneLoaded(bool bSuccess);
@@ -229,6 +206,7 @@ public:
 	/// Returns the renderer used to manage cutout effects in the scene.
 	const UITwinClippingRenderer* GetRenderer() const;
 
+	virtual bool HasEffectListListener() const override;
 
 #if WITH_EDITOR
 

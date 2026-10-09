@@ -1,0 +1,4 @@
+{
+    "status": 200,
+    "body": "{\"iTwin\":{\"id\":\"36ff2262-0867-4da9-8a20-ab9b343b23e8\",\"class\":\"Endeavor\",\"subClass\":\"Project\",\"type\":null,\"number\":\"0001239\",\"displayName\":\"DEMO_Building\",\"geographicLocation\":null,\"latitude\":51.501101190253394,\"longitude\":-0.1256101252865405,\"ianaTimeZone\":\"Europe/London\",\"dataCenterLocation\":\"UK South\",\"status\":\"Active\",\"parentId\":\"78202ffd-272b-4207-a7ad-7d2b1af5dafc\",\"iTwinAccountId\":\"78202ffd-272b-4207-a7ad-7d2b1af5dafc\",\"imageName\":null,\"image\":null,\"createdDateTime\":\"2021-05-11T17:18:53.49Z\",\"createdBy\":\"bbd01fa9-ff1d-4c21-b200-47e0833624a0\",\"lastModifiedDateTime\":\"2025-11-20T13:37:30.377Z\",\"lastModifiedBy\":\"af7a08ef-dfd5-4464-8eed-1cd1bb2f2064\"}}"
+}

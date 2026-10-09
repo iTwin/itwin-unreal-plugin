@@ -128,31 +128,17 @@ void AddCuttingPlaneToTimeline(FITwinElementTimeline& ElementTimeline, FAppearan
 		return;
 	}
 	bool const bZeroTimeTask = ((Time.second - KEYFRAME_TIME_EPSILON) <= Time.first);
-	if (bZeroTimeTask)
-	{
-		return; // nothing to do, FullyGrown/FullyRemoved states would be handled by Visibilities already
-	}
-	if (GrowthAppearance.GrowthSimulationMode == EGrowthSimulationMode::None
+	if (bZeroTimeTask
+		|| GrowthAppearance.GrowthSimulationMode == EGrowthSimulationMode::None
 		|| GrowthAppearance.GrowthSimulationMode == EGrowthSimulationMode::Unknown)
 	{
-		// We need this keyframe for (at least) these cases of successive tasks:
-		//	* Growth-simulated "Remove" or "Temporary" task A followed by non-growth-simulated task B
-		//	  (of any on-Neutral kind): without these, task A's "FullyRemoved" keyframe would also apply
-		//	  during task B!
-		//	* Non-growth-simulated "Install" or "Maintenance" task A followed by growth-simulated task B of
-		//	  kind "Install" or "Temporary": without these, task B's "FullyRemoved" keyframe would also apply
-		//	  during task A!
+		// We need this keyframe in case the task is preceded or followed by a growth-simulated task which
+		// "FullyRemove" state would also apply and thus needs to be contradicted here. We could probably optimize out
+		// some cases especially since task dependencies already handle many of them, but it's hardly possible to test
+		// them all (blame here and you'll see this is not the first version of this fix...) so I'd rather keep it for
+		// all non-growth tasks as a safety...
 		// From https://dev.azure.com/bentleycs/e-onsoftware/_workitems/edit/1551970
-		if (EProfileAction::Remove == Profile.ProfileType
-			|| EProfileAction::Maintenance == Profile.ProfileType)
-		{
-			ElementTimeline.SetCuttingPlaneAt(Time.first, {}, EGrowthStatus::FullyGrown, EInterpolation::Step);
-		}
-		if (EProfileAction::Install == Profile.ProfileType
-			|| EProfileAction::Maintenance == Profile.ProfileType)
-		{
-			ElementTimeline.SetCuttingPlaneAt(Time.second, {}, EGrowthStatus::FullyGrown, EInterpolation::Step);
-		}
+		ElementTimeline.SetCuttingPlaneAt(Time.first, {}, EGrowthStatus::FullyGrown, EInterpolation::Step);
 		return;
 	}
 	FVector PlaneOrientation = CoordConv.IModelToUntransformedIModelInUE
@@ -279,11 +265,12 @@ void HandleFallbackTransfoOutsideTaskIfNeeded(FITwinElementTimeline& ElementTime
 		ElementTimeline.SetTransformationDisabledAt(StartTimeToAdd, EInterpolation::Step);
 		ElementTimeline.SetTransformationDisabledAt(FinishTimeToAdd, EInterpolation::Step);
 	}
-	else if (TaskDeps.ProfileForcedTransfoAssignOutside)
+	else
 	{
-		if (!TaskDeps.ProfileForced3DPathOutside) // must be static then
+		if (TaskDeps.ProfileForcedStaticTransfoAssignOutside
+			&& !TaskDeps.ProfileForcedPathTransfoAssignOutside)
 		{
-			auto&& Transform = std::get<0>(TaskDeps.ProfileForcedTransfoAssignOutside->Transformation);
+			auto&& Transform = TaskDeps.ProfileForcedStaticTransfoAssignOutside->Transform;
 			ElementTimeline.SetTransformationAt(StartTimeToAdd,
 				Transform.GetTranslation(), Transform.GetRotation(),
 				FDeferredAnchor{ EAnchorPoint::Static, false, FVector::ZeroVector },
@@ -293,25 +280,26 @@ void HandleFallbackTransfoOutsideTaskIfNeeded(FITwinElementTimeline& ElementTime
 				FDeferredAnchor{ EAnchorPoint::Static, false, FVector::ZeroVector },
 				EInterpolation::Step);
 		}
-		else
+		else if (TaskDeps.ProfileForcedPathTransfoAssignOutside && ensure(TaskDeps.ProfileForced3DPathOutside))
 		{
-			auto&& PathAssignment = std::get<1>(TaskDeps.ProfileForcedTransfoAssignOutside->Transformation);
-			if (ensure(ITwin::INVALID_IDX != PathAssignment.Animation3DPathInVec))
+			F3DPathKFData ForcedKF;
+			ForcedKF.bFirstOrLastKeyframe = TaskDeps.bProfileForced3DPathOutsideIsAtPathStart;
+			if (GetLast3DPathTransformKeyframeToApply(TaskTimes,
+				// Actually ignored, see comment in header
+				/*TaskDeps.ProfileForcedStaticTransfoAssignOutside
+					? (&TaskDeps.ProfileForcedStaticTransfoAssignOutside->Transform) : */nullptr,
+				*TaskDeps.ProfileForcedPathTransfoAssignOutside,
+					TaskDeps.ProfileForced3DPathOutside->Keyframes, CoordConv, ForcedKF))
 			{
-				F3DPathKFData ForcedKF;
-				ForcedKF.bFirstOrLastKeyframe = TaskDeps.bProfileForced3DPathOutsideIsAtPathStart;
-				if (GetLast3DPathTransformKeyframeToApply(TaskTimes, PathAssignment,
-						TaskDeps.ProfileForced3DPathOutside->Keyframes, CoordConv, ForcedKF))
-				{
-					ElementTimeline.SetTransformationAt(StartTimeToAdd,
-						ForcedKF.ConvertedPosition, ForcedKF.NormalizedRotation,
-						ForcedKF.BaseAnchor, EInterpolation::Step);
-					ElementTimeline.SetTransformationAt(FinishTimeToAdd,
-						ForcedKF.ConvertedPosition, ForcedKF.NormalizedRotation,
-						ForcedKF.BaseAnchor, EInterpolation::Step);
-				}
+				ElementTimeline.SetTransformationAt(StartTimeToAdd,
+					ForcedKF.ConvertedPosition, ForcedKF.NormalizedRotation,
+					ForcedKF.BaseAnchor, EInterpolation::Step);
+				ElementTimeline.SetTransformationAt(FinishTimeToAdd,
+					ForcedKF.ConvertedPosition, ForcedKF.NormalizedRotation,
+					ForcedKF.BaseAnchor, EInterpolation::Step);
 			}
 		}
+		// else: no transfo of any kind
 	}
 }
 
@@ -332,15 +320,16 @@ PTransform const& AddStaticTransformToTimeline(FITwinElementTimeline & ElementTi
 }
 
 bool GetLast3DPathTransformKeyframeToApply(FTimeRangeInSeconds const& TaskTimes,
-	FPathAssignment const& PathAssignment, std::vector<FTransformKey> const& Keyframes,
-	FITwinCoordConversions const& CoordConv, F3DPathKFData& KeyframeToApply)
+	FTransform const* /*StaticTransform*/, FPathTransformAssignment const& PathAssignment,
+	std::vector<FTransformKey> const& Keyframes, FITwinCoordConversions const& CoordConv,
+	F3DPathKFData& KeyframeToApply)
 {
-	return Add3DPathTransformToTimeline(nullptr, TaskTimes, PathAssignment, Keyframes, CoordConv, {},
-										&KeyframeToApply);
+	return Add3DPathTransformToTimeline(nullptr, TaskTimes, nullptr/*StaticTransform, see comment in header*/,
+										PathAssignment, Keyframes, CoordConv, {}, &KeyframeToApply);
 }
 
-bool Add3DPathTransformToTimeline(FITwinElementTimeline* ElementTimeline,
-	FTimeRangeInSeconds const& TaskTimes, FPathAssignment const& PathAssignment,
+bool Add3DPathTransformToTimeline(FITwinElementTimeline* ElementTimeline, FTimeRangeInSeconds const& TaskTimes,
+	FTransform const* /*StaticTransform*/, FPathTransformAssignment const& PathAssignment,
 	std::vector<FTransformKey> const& OriginalKeyframes, FITwinCoordConversions const& CoordConv,
 	FTaskDependenciesData const& TaskDeps, F3DPathKFData* pOnlyGetSingleKeyframe/*= nullptr*/)
 {

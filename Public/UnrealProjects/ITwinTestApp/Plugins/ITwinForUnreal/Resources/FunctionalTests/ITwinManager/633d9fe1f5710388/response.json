@@ -1,0 +1,4 @@
+{
+    "status": 200,
+    "body": "{\r\n  \"realityData\": [\r\n    {\r\n      \"id\": \"d40db151-9fe4-4935-b615-d7cef5cb08e1\",\r\n      \"displayName\": \"Orlando_CesiumDraco_LAT\",\r\n      \"type\": \"Cesium3DTiles\"\r\n    }\r\n  ],\r\n  \"_links\": {\r\n    \"next\": null\r\n  }\r\n}"
+}

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Configuration xmlns="https://www.unrealengine.com/BuildConfiguration">
+<!-- [PPROJECT]/Saved/UnrealBuildTool/BuildConfiguration.xml written by CMake, do NOT edit directly!
+	 See Carrot.git/Public/CMake/BuildConfiguration.xml.in -->
+<WindowsPlatform>
+	<Compiler>VisualStudio2022</Compiler>
+	<CompilerVersion>@BE_GENERATOR_TOOLSET@</CompilerVersion>
+	<WindowsSdkVersion>Latest</WindowsSdkVersion>
+</WindowsPlatform>
+</Configuration>

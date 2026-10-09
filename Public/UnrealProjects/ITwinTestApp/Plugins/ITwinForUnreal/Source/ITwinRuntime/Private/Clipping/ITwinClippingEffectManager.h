@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include <Clipping/ITwinClippingConstants.h>
 #include <Clipping/ITwinClippingEnums.h>
 #include <Clipping/ITwinClippingBoxInfo.h>
 #include <Clipping/ITwinClippingCartographicPolygonInfo.h>
@@ -20,20 +21,6 @@ class AITwinSplineTool;
 class AITwinPopulation;
 class AITwinPopulationTool;
 class AITwinSplineHelper;
-
-
-namespace ITwin
-{
-	// The number of planes & boxes is currently limited, due to the way it is coded in the material graph:
-	// see Shaders/ITwin/GetPlanesClipping.ush for details, and the way it is connected to the material
-	// parameter collection (MPC_Clipping) in the material function (MF_GlobalClipping).
-	// (I have quickly looked for a way to manipulate these parameters with an index instead, but found
-	// nothing, hence the ridiculous number of connections in the graph...)
-	static constexpr int MAX_CLIPPING_PLANES = 32;
-
-	static constexpr int MAX_CLIPPING_BOXES = 32;
-}
-
 
 /// Holds the different kinds of cutout effects, and the link with the Spline Tool and Population tool, which
 /// are used to edit respectively the cutout polygons and the cutout cubes & planes.

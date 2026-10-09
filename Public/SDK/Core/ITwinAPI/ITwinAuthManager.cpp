@@ -98,6 +98,21 @@ namespace AdvViz::SDK
 			return true;
 		}
 
+		static bool RemoveScope(std::string const& extraScope)
+		{
+			std::string scopeToRemove = trim(extraScope);
+			if (scopeToRemove.empty())
+				return false;
+			BE_ASSERT(std::string(minimalScope_).find(scopeToRemove) == std::string::npos, "Cannot remove minimal scope");
+
+			scopeToRemove += " "; // make sure we remove the trailing space as well (see AddScope)
+			auto pos = extraScopes_.find(scopeToRemove);
+			if (pos == std::string::npos)
+				return false; // not found
+			extraScopes_.erase(pos, scopeToRemove.length());
+			return true;
+		}
+
 		static std::string const& GetAppID(EITwinEnvironment env)
 		{
 			// Use "ensure" instead of "check" here, so that the app will not stop (crash) if the user
@@ -237,6 +252,12 @@ namespace AdvViz::SDK
 	void ITwinAuthManager::AddScope(std::string const& extraScope)
 	{
 		Credentials::AddScope(extraScope);
+	}
+
+	/*static*/
+	bool ITwinAuthManager::RemoveScope(std::string const& extraScope)
+	{
+		return Credentials::RemoveScope(extraScope);
 	}
 
 	/*static*/

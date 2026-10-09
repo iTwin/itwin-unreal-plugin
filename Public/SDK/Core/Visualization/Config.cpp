@@ -23,15 +23,24 @@ namespace AdvViz::SDK
 		public:
 			SConfig config_;
 			std::shared_ptr<Http> defaultHttp_;
+			int httpFactoryRevision_ = -1;
 		};
 
 		static ConfigImpl g_config;
+
 		void Init(const SConfig& config)
 		{
 			// We can assume that Init is called by the main thread (aka 'game' thread in UE)
 			InitMainThreadId();
 			g_config.config_ = config;
-			g_config.defaultHttp_.reset(Http::New());
+			// Avoid resetting the Http shared pointer if we are just changing its url (for automated tests, typically).
+			// It will avoid having to change the http in all sub-managers (annotations, splines, path animations,
+			// etc.), which should all point to the same configuration.
+			if (!g_config.defaultHttp_ || g_config.httpFactoryRevision_ != Http::GetNewFctRevision())
+			{
+				g_config.defaultHttp_.reset(Http::New());
+				g_config.httpFactoryRevision_ = Http::GetNewFctRevision();
+			}
 			std::string baseUrl = config.server.server;
 			if (config.server.port >= 0)
 			{
@@ -43,6 +52,15 @@ namespace AdvViz::SDK
 			// Deactivate some asserts if the execution of callbacks in game/main thread is not supported.
 			SetSupportAsyncCallbacksInMainThread(
 				g_config.defaultHttp_->SupportsExecuteAsyncCallbackInMainThread());
+		}
+
+		std::optional<SConfig> GetCurrent()
+		{
+			if (g_config.config_.server.server.empty())
+			{
+				return std::nullopt;
+			}
+			return g_config.config_;
 		}
 
 		SConfig LoadFromFile(std::filesystem::path& path)

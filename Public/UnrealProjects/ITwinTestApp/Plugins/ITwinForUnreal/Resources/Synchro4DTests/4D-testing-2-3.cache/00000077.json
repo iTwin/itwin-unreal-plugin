@@ -1,0 +1,9 @@
+﻿{
+	"url": "https://api.bentley.com/schedules/d9712811-5a10-407e-b517-fbc23fcf4dc3/animation-3d-paths?$top=2",
+	"verb": "GET",
+	"connectedSuccessfully": true,
+	"responseCode": 200
+,
+	"reply": 
+{"nextPageToken":"eyJQcmltYXJ5U2tpcFRva2VuIjoiYTE2ZjhjZjUtYTNhMC00NjQwLWFjMTUtMDc1YzUwOTAyMmU1IiwiU2Vjb25kYXJ5U2tpcFRva2VuIjpudWxsLCJNZXRhRGF0YSI6bnVsbCwiVHlwZSI6MH0=","animation3dPaths":[{"color":"#ff0000","deleted":false,"id":"3f3c6a38-7a7b-4d7a-8550-1585c96cc130","name":"BoxPathZMin"},{"color":"#f0f1fe","deleted":false,"id":"a16f8cf5-a3a0-4640-ac15-075c509022e5","name":"Lift cargo"}],"_links":{"self":{"href":"https://api.bentley.com/schedules/d9712811-5a10-407e-b517-fbc23fcf4dc3/animation-3d-paths?$top=2"},"next":{"href":"https://api.bentley.com/schedules/d9712811-5a10-407e-b517-fbc23fcf4dc3/animation-3d-paths?$top=2&$continuationToken=eyJQcmltYXJ5U2tpcFRva2VuIjoiYTE2ZjhjZjUtYTNhMC00NjQwLWFjMTUtMDc1YzUwOTAyMmU1IiwiU2Vjb25kYXJ5U2tpcFRva2VuIjpudWxsLCJNZXRhRGF0YSI6bnVsbCwiVHlwZSI6MH0%3d"}}}
+}

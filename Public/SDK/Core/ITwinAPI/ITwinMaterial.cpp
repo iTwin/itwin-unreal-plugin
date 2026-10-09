@@ -70,7 +70,8 @@ namespace AdvViz::SDK
 
 	bool ITwinChannel::operator == (ITwinChannel const& rhs) const
 	{
-		return IdenticalColor(color, rhs.color)
+		return color.has_value() == rhs.color.has_value()
+			&& (!color.has_value() || IdenticalColor(color.value(), rhs.color.value()))
 			&& colorMap == rhs.colorMap
 			&& intensity == rhs.intensity
 			&& intensityMap == rhs.intensityMap;

@@ -1,0 +1,4 @@
+{
+    "status": 200,
+    "body": "{\"total_rows\":3,\"rows\":[{\"roughness\":1,\"metallic\":0,\"opacity\":1,\"albedoMapFactor\":1,\"color\":\"#076DFC\",\"displayName\":\"Vanilla Sky\",\"type\":\"PBR\",\"id\":\"38_b53cebea-451f-4433-942f-eabda9c11d21\"},{\"roughness\":1,\"metallic\":0,\"opacity\":1,\"albedoMapFactor\":1,\"color\":\"#00B75F\",\"type\":\"PBR\",\"id\":\"39_b53cebea-451f-4433-942f-eabda9c11d21\"},{\"roughness\":1,\"metallic\":0,\"opacity\":1,\"albedoMapFactor\":1,\"color\":\"#FAE900\",\"type\":\"PBR\",\"id\":\"40_b53cebea-451f-4433-942f-eabda9c11d21\"}],\"_links\":{\"self\":\"https://itwindecoration-eus.bentley.com/advviz/v1/decorations/6a69c66d88a66e7d500cc0ae/materials?$skip=0\\u0026$top=1000\"}}"
+}

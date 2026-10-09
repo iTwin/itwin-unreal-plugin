@@ -6,12 +6,16 @@
 |
 +--------------------------------------------------------------------------------------*/
 
-
 #pragma once
 
 #include "CoreMinimal.h"
 
+#include <ITwinHttpUtils.h>
+
+#include <HttpFwd.h>
+
 #include <Compil/BeforeNonUnrealIncludes.h>
+#	include <BeHeaders/StrongTypes/TaggedValue.h>
 #	include <Core/ITwinAPI/ITwinRequestTypes.h>
 #include <Compil/AfterNonUnrealIncludes.h>
 
@@ -37,4 +41,21 @@ namespace ITwinHttp
 		}
 		return Verb;
 	}
+
+	DEFINE_STRONG_BOOL(DeltaQuery);
+
+	FString DescribeTransportFailure(FHttpRequestPtr const& Request,
+		ITwinHttp::ConnectionSuccess const bConnectedSuccessfully, FHttpResponsePtr const& Response = {});
+
+	/// Erases a parameter (and its value!) in a copy of the input URL. The copy is only made if the parameter is
+	/// found in the input URL.
+	/// \param pRedactedUrl Output parameter where to copy the URL and erase the parameter, in case it is found in the
+	///		input URL. Untouched if this function returns false.
+	/// \return Whether a parameter was found and erased
+	bool EraseURLParameter(FString const& Url, FString const& EraseParam, FString* pRedatedUrl);
+
+	/// Erases a parameter (and its value!) in place in the passed URL string.
+	/// \param Url URL string modified in place. Untouched if this function returns false.
+	/// \return Whether a parameter was found and erased
+	bool EraseURLParameter(FString& Url, FString const& EraseParam);
 }

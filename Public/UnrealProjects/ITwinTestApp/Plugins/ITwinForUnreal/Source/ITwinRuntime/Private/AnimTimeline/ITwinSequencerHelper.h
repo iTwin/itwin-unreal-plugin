@@ -15,6 +15,7 @@
 #include <UObject/StrongObjectPtr.h>
 #include <optional>
 #include <variant>
+#include <vector>
 #include <string>
 #include "ITwinSequencerHelper.generated.h"
 
@@ -168,6 +169,8 @@ public:
 	static void ShiftClipKFs(TArray<TStrongObjectPtr<UMovieSceneTrack> >& Tracks, FString levelSequencePath, float fDeltaTime);
 	// move key-frames in the given range by the given delta time
 	static void ShiftClipKFsInRange(TArray<TStrongObjectPtr<UMovieSceneTrack> >& Tracks, FString levelSequencePath, float fStartTime, float fEndTime, float fDeltaTime);
+	//! Set the times of all key-frames in the given tracks
+	static void SetClipKFsTimes(TArray<TStrongObjectPtr<UMovieSceneTrack> >& Tracks, FString levelSequencePath, const std::vector<float>& vNewTimes);
 
 	// Save level sequence asset to a file (provided for debug purposes only)
 	UFUNCTION(BlueprintCallable, Category = "SequencerHelper")

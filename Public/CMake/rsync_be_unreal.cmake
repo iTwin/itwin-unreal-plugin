@@ -36,7 +36,7 @@ else()
 	# Engine/Build/InstalledBuild.txt is excluded in order to be updated last.
 	# "chmod=777" does not actually set 777 on Windows (TODO Mac) but works around a bug preventing writing Build/InstalledBuild.txt after the rsync :/
 	# Formerly using "--archive" <=> "-rlptgoD" but got "chgrp" errors which just triggered the COMMAND_ERROR_IS_FATAL even though the sync was OK => removed "-pgo", keeping "-rltD".
-	# Formerly using "--delete" but it would delete builds products: I could "--exclude" them, which would not delete them (there is "--delete-excluded" for that),
+	# Formerly using "--delete" but it would delete build products: I could "--exclude" them, which would not delete them (there is "--delete-excluded" for that),
 	# but if I exclude "Intermediate/*" the natvis files will not be sync'd :-/
 	# Maybe I could --exclude all Intermediate (and Binaries/Win64) and make a 2nd call specifically for natvis?
 	execute_process(

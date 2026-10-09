@@ -51,6 +51,9 @@ struct FITwinClippingInfoBase
 
 	virtual void BeforeDestroy();
 
+	//! Copies the generic info (enabled state, influence info) from another clipping effect.
+	void CopyGenericInfoFrom(FITwinClippingInfoBase const& Other);
+
 	bool IsEnabled() const { return bIsEnabled; }
 	void SetEnabled(bool bInEnabled);
 

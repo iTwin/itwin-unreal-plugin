@@ -1,0 +1,4 @@
+{
+    "status": 200,
+    "body": "{\"groups\":[{\"id\":\"ABuvsBwB-HBLgi-FNR2vusZiIv82ZwipTYogq5s0OyPoEOlGB-no7U2oljoAquHJEA\",\"displayName\":\"Advanced Visualization\",\"_links\":{\"iTwin\":{\"href\":\"https://api.bentley.com/iTwins/36ff2262-0867-4da9-8a20-ab9b343b23e8\"},\"project\":{\"href\":\"https://api.bentley.com/projects/36ff2262-0867-4da9-8a20-ab9b343b23e8\"},\"creator\":{\"href\":\"https://api.bentley.com/accesscontrol/iTwins/36ff2262-0867-4da9-8a20-ab9b343b23e8/members/3569267b-490b-4a3d-8637-4b1d092603f1\"},\"imodel\":{\"href\":\"https://api.bentley.com/imodels/0746e910-e8e9-4ded-a896-3a00aae1c910\"},\"savedViews\":{\"href\":\"https://api.bentley.com/savedviews?groupId=ABuvsBwB-HBLgi-FNR2vusZiIv82ZwipTYogq5s0OyPoEOlGB-no7U2oljoAquHJEA\"}},\"shared\":true,\"readOnly\":false}],\"_links\":{\"self\":{\"href\":\"https://api.bentley.com/savedviews/groups?iTwinId=36ff2262-0867-4da9-8a20-ab9b343b23e8&iModelId=0746e910-e8e9-4ded-a896-3a00aae1c910\"}}}"
+}

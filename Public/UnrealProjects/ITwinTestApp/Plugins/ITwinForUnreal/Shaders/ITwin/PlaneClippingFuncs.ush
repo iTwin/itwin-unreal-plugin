@@ -1,0 +1,41 @@
+#pragma once
+
+#include "/Plugin/ITwinForUnreal/ITwin/ClippingCommon.ush"
+
+// Per-plane layout (stride 1): PlaneEquation_i = (n.xyz, w).
+// There is NO flip flag: inversion of a plane is equivalent to negating (n, w), and the
+// C++ side folds it in at upload time (see FITwinClippingPlaneInfo::GetEffectivePlaneEquation).
+float4 ITwin_GetPlaneEquation(uint PlaneIndex, uint PlaneVectorBase)
+{
+    return ITwin_GetClippingVector(PlaneVectorBase + PlaneIndex);
+}
+
+bool ITwin_IsPlaneActive(uint PlaneIndex, uint PlaneMaskScalarBase, uint ClippingModelGroupId)
+{
+    return ITwin_IsActiveForModelGroup(PlaneIndex, PlaneMaskScalarBase, ClippingModelGroupId);
+}
+
+// Returns an opacity: 1 = keep geometry, 0 = cut out.
+// Planes intersect: the first plane rejecting the point wins.
+float ITwin_GetPlaneClipping(
+	float3 WorldPosition,
+	uint NumPlanes,
+	uint PlaneVectorBase,
+	uint PlaneMaskScalarBase,
+	uint ClippingModelGroupId)
+{
+    float PlanesClipping = 1.0;
+
+    LOOP
+    for (uint i = 0; i < NumPlanes; ++i)
+    {
+        if (!ITwin_IsPlaneActive(i, PlaneMaskScalarBase, ClippingModelGroupId))
+            continue;
+
+        const float4 PlaneEquation = ITwin_GetPlaneEquation(i, PlaneVectorBase);
+        PlanesClipping = step(dot(PlaneEquation.xyz, WorldPosition) - PlaneEquation.w, 0);
+        if (PlanesClipping == 0.0)
+            break;
+    }
+    return PlanesClipping;
+}

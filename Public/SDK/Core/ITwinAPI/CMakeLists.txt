@@ -1,5 +1,5 @@
 
-add_library ( ITwinAPI OBJECT
+be_add_library ( ITwinAPI OBJECT
 	ITwinAuthInfo.h
 	ITwinAuthManager.cpp
 	ITwinAuthManager.h
@@ -9,9 +9,8 @@ add_library ( ITwinAPI OBJECT
 	ITwinMaterial.cpp
 	ITwinMaterial.h
 	ITwinMaterial.inl
-	ITwinMaterialPrediction.h
-	ITwinMatMLPredictionEnums.h
 	ITwinScene.h
+	ITwinRequestDump.cpp
 	ITwinRequestDump.h
 	ITwinRequestTypes.h
 	ITwinTypes.h
@@ -25,9 +24,9 @@ if ( MSVC )
 	set_source_files_properties ( ITwinWebServices.cpp PROPERTIES COMPILE_FLAGS " /bigobj" )
 	target_compile_options(ITwinAPI PRIVATE /utf-8) # Needed for "fmt" lib.
 endif ()
-target_link_libraries( ITwinAPI PRIVATE 
+target_link_libraries( ITwinAPI PRIVATE
 					   Network
 					   Tools
 					   Json
 					  )
-set_target_properties ( ITwinAPI PROPERTIES FOLDER "SDK/Core" ) 
+set_target_properties ( ITwinAPI PROPERTIES FOLDER "SDK/Core" )

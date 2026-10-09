@@ -7,7 +7,6 @@
 +--------------------------------------------------------------------------------------*/
 
 #include <ITwinSavedView.h>
-#include <ITwinServerConnection.h>
 #include <ITwinSynchro4DSchedules.h>
 #include <ITwinUtilityLibrary.h>
 #include <ITwinWebServices/ITwinWebServices.h>
@@ -51,6 +50,7 @@ public:
 	{
 		None,
 		Move,
+		ApplyVisibility,
 		Rename
 	};
 	AITwinSavedView& Owner;
@@ -62,17 +62,29 @@ public:
 		: Owner(InOwner)
 	{
 	}
+
+	AITwinIModel* ResolveSavedViewIModel()
+	{
+		// Saved views created programmatically are owned by an AITwinIModel actor, but those created manually aren't.
+		// => In that case, are they attached to the iModel actor instead? Only when dragging it manually under the
+		// iModel actor in the Outliner maybe?
+		if (AITwinIModel* const AttachedIModel = Cast<AITwinIModel>(Owner.GetAttachParentActor()))
+			return AttachedIModel;
+		return Cast<AITwinIModel>(Owner.GetOwner());
+	}
+
 	void DestroyChildren()
 	{
 		const auto ChildrenCopy = Owner.Children;
 		for (auto& Child : ChildrenCopy)
-			Owner.GetWorld()->DestroyActor(Child);
+			if (Child)
+				Owner.GetWorld()->DestroyActor(Child);
 		Owner.Children.Empty();
 	}
+
 	void ApplyScheduleTime()
 	{
-		// saved views are owned by an iModel actor (except those created manually from scratch)
-		AITwinIModel* OwnerIModel = Cast<AITwinIModel>(Owner.GetOwner());
+		AITwinIModel* OwnerIModel = ResolveSavedViewIModel();
 		if (OwnerIModel && OwnerIModel->Synchro4DSchedules
 			&& !SavedViewData.DisplayStyle.RenderTimeline.IsEmpty())
 		{
@@ -84,11 +96,10 @@ public:
 			OwnerIModel->Synchro4DSchedules->Pause();
 		}
 	}
-	void StartCameraMovementToSavedView(float& OutBlendTime, ACameraActor*& Actor, const FTransform& Transform, float BlendTime)
+
+	void StartCameraMovementToSavedView(float& OutBlendTime, ACameraActor*& Actor, const FTransform& Transform,
+										float BlendTime)
 	{
-		AITwinIModel* IModel = Cast<AITwinIModel>(Owner.GetOwner());
-		if (!ensure(IModel != nullptr))
-			return;
 		OutBlendTime = BlendTime;
 		TObjectIterator<APlayerController> Itr;
 		if (!ensure(Itr))
@@ -128,16 +139,12 @@ AITwinSavedView::AITwinSavedView()
 void AITwinSavedView::OnSavedViewDeleted(bool bSuccess, FString const& InSavedViewId, FString const& Response)
 {
 	BE_LOGI("ITwinAPI", "SavedView deleted: " << TCHAR_TO_UTF8(*GetActorNameOrLabel()));
-	// usually, saved views are owned by a AITwinIModel actor (except those created manually from scratch)
-	AActor* OwnerActor = GetOwner();
-	AITwinServiceActor* OwnerSrvActor = OwnerActor ? Cast<AITwinServiceActor>(OwnerActor) : nullptr;
-
+	AITwinIModel* OwnerIModel = Impl->ResolveSavedViewIModel();
 	if (bSuccess && ensure(InSavedViewId == this->SavedViewId))
 	{
 		GetWorld()->DestroyActor(this);
 	}
-
-	UITwinWebServices const* ParentWebServices = OwnerSrvActor ? OwnerSrvActor->GetWebServices() : nullptr;
+	UITwinWebServices const* ParentWebServices = OwnerIModel ? OwnerIModel->GetWebServices() : nullptr;
 	if (ParentWebServices && ParentWebServices != this->GetWebServices())
 	{
 		// propagate information to parent iModel
@@ -147,7 +154,8 @@ void AITwinSavedView::OnSavedViewDeleted(bool bSuccess, FString const& InSavedVi
 
 namespace
 {
-	std::unordered_set<ITwinElementID> IntersectSets(const std::unordered_set<ITwinElementID>& SetA, const std::unordered_set<ITwinElementID>& SetB)
+	std::unordered_set<ITwinElementID> IntersectSets(const std::unordered_set<ITwinElementID>& SetA,
+													 const std::unordered_set<ITwinElementID>& SetB)
 	{
 		std::unordered_set<ITwinElementID> Result;
 
@@ -285,6 +293,9 @@ void AITwinSavedView::OnSavedViewRetrieved(bool bSuccess, FSavedView const& Save
 	case FImpl::EPendingOperation::Move:
 		MoveToSavedView();
 		break;
+	case FImpl::EPendingOperation::ApplyVisibility:
+		ApplySavedViewVisibility();
+		break;
 	case FImpl::EPendingOperation::Rename:
 		RenameSavedView();
 		break;
@@ -305,8 +316,7 @@ void AITwinSavedView::OnSavedViewEdited(bool bSuccess, FSavedView const& SavedVi
 	SetActorLabel(SavedViewInfo.DisplayName);
 #endif
 
-	// usually, saved views are owned by a AITwinIModel actor (except those created manually from scratch)
-	AITwinIModel* OwnerIModel = Cast<AITwinIModel>(GetOwner());
+	AITwinIModel* OwnerIModel = Impl->ResolveSavedViewIModel();
 	if (!OwnerIModel)
 		return;
 	FTransform const& Transform = UITwinUtilityLibrary::GetSavedViewUnrealTransform(OwnerIModel, SavedView);
@@ -405,18 +415,21 @@ void AITwinSavedView::MoveToSavedView()
 		{
 			checkSlow(GetWorld()->GetFirstPlayerController() == Controller && Controller->GetPawn() == Pawn);
 			auto StartRot = Pawn->GetActorRotation();
-			float BlendTime;
-			ACameraActor* Actor;
+			float BlendTime = 3.f;
+			ACameraActor* Actor = nullptr;
 			FTransform Transform(GetActorRotation(), GetActorLocation());
-			Impl->StartCameraMovementToSavedView(BlendTime, Actor, Transform, 3);
-			GetWorldTimerManager().SetTimer(ITwinSavedView::TimerHandle, FTimerDelegate::CreateLambda([=, this, _ = TStrongObjectPtr<AITwinSavedView>(this)]
+			Impl->StartCameraMovementToSavedView(BlendTime, Actor, Transform, 3.f);
+			GetWorldTimerManager().SetTimer(ITwinSavedView::TimerHandle,
+				FTimerDelegate::CreateLambda([=, ThisPtr = TWeakObjectPtr<AITwinSavedView>(this)]
 				{
-					if (!Impl || !IsValid(this))
+					if (!ThisPtr.IsValid())
 						return;
-					Impl->EndCameraMovement(Actor, Transform);
-					Impl->ApplyScheduleTime();
-					FinishedMovingToSavedView.Broadcast();
-				}), BlendTime, false);
+					ThisPtr->Impl->EndCameraMovement(Actor, Transform);
+					ThisPtr->Impl->ApplyScheduleTime();
+					ThisPtr->FinishedMovingToSavedView.Broadcast();
+				}),
+				BlendTime,
+				false);
 		}
 		else // no Pawn (nor Controller): we're probably in the Editor
 		{
@@ -452,16 +465,31 @@ void AITwinSavedView::MoveToSavedView()
 			}
 		#endif // WITH_EDITOR
 		}
-		AITwinIModel* const iModel = Cast<AITwinIModel>(GetAttachParentActor());
 		BE_LOGI("ITwinAPI",
 			"Applying show/hide requirements from SavedView " << TCHAR_TO_UTF8(*GetActorNameOrLabel()));
-		HideElements(iModel, Impl->SavedViewData);
+		ApplySavedViewVisibility();
 	}
 	else // fetch the saved view data before we can move to it
 	{
 		Impl->PendingOperation = FImpl::EPendingOperation::Move;
 		UpdateSavedView();
 	}
+}
+
+void AITwinSavedView::ApplySavedViewVisibility()
+{
+	if (SavedViewId.IsEmpty() && !Impl->bSavedViewTransformIsSet)
+	{
+		BE_LOGE("ITwinAPI", "ITwinSavedView has no SavedViewId - cannot apply saved view visibility");
+		return;
+	}
+	if (!Impl->bSavedViewTransformIsSet)
+	{
+		Impl->PendingOperation = FImpl::EPendingOperation::ApplyVisibility;
+		UpdateSavedView();
+		return;
+	}
+	HideElements(Impl->ResolveSavedViewIModel(), Impl->SavedViewData);
 }
 
 void AITwinSavedView::DeleteSavedView()
@@ -494,9 +522,7 @@ void AITwinSavedView::RenameSavedView()
 		UpdateSavedView();
 		return;
 	}
-
-	// usually, saved views are owned by a AITwinIModel actor (except those created manually from scratch)
-	AITwinIModel* OwnerIModel = Cast<AITwinIModel>(GetOwner());
+	AITwinIModel* OwnerIModel = Impl->ResolveSavedViewIModel();
 	if (!OwnerIModel)
 		return;
 	FSavedView CurrentSV = UITwinUtilityLibrary::GetSavedViewFromUnrealTransform(OwnerIModel,
@@ -525,9 +551,7 @@ void AITwinSavedView::RetakeSavedView()
 		BE_LOGE("ITwinAPI", "ITwinSavedView with no SavedViewId cannot be edited");
 		return;
 	}
-
-	// usually, saved views are owned by a AITwinIModel actor (except those created manually from scratch)
-	AITwinIModel* OwnerIModel = Cast<AITwinIModel>(GetOwner());
+	AITwinIModel* OwnerIModel = Impl->ResolveSavedViewIModel();
 	if (!OwnerIModel)
 		return;
 	FSavedView ModifiedSV;

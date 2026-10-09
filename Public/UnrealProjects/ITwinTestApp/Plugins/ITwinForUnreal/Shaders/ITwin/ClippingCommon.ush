@@ -1,0 +1,49 @@
+
+#pragma once
+
+#if ITWIN_CLIPPING_SHADER_VERSION < 2
+#error "Please update ITWIN_CLIPPING_SHADER_VERSION in the Custom nodes of MF_GlobalClipping"
+#endif
+
+// MPC_Clipping must be the ONLY Material Parameter Collection referenced by the material.
+// If another MPC is inserted anywhere in the graph, we may hit the wrong buffer here
+// (MPCs are mapped onto "MaterialCollection<N>", N = order of first reference).
+#ifndef ITWIN_CLIPPING_MPC
+#define ITWIN_CLIPPING_MPC MaterialCollection0
+#endif
+
+// Number of scalars used per primitive to store its "affected model groups" bitmask.
+#ifndef ITWIN_CLIPPING_MASK_WORDS
+#define ITWIN_CLIPPING_MASK_WORDS 2
+#endif
+// 24 bits: largest power of two range of integers exactly representable in a float32
+// mantissa. Do NOT raise to 32 without switching to asuint() round-tripping.
+#define ITWIN_CLIPPING_BITS_PER_MASK_WORD 24u
+#define ITWIN_CLIPPING_MAX_MODEL_GROUPS \
+	(ITWIN_CLIPPING_MASK_WORDS * ITWIN_CLIPPING_BITS_PER_MASK_WORD)
+
+// MPC layout: scalars are packed 4 per float4 at the head of Vectors[], vectors follow.
+// ScalarIndex is the index within the collection's ScalarParameters array.
+float ITwin_GetClippingScalar(uint ScalarIndex)
+{
+    return ITWIN_CLIPPING_MPC.Vectors[ScalarIndex >> 2u][ScalarIndex & 3u];
+}
+
+float4 ITwin_GetClippingVector(uint SlotIndex)
+{
+    return ITWIN_CLIPPING_MPC.Vectors[SlotIndex];
+}
+
+// Group 0 is reserved for "influenced by no clipping primitive": no primitive ever sets bit 0.
+bool ITwin_IsActiveForModelGroup(uint PrimitiveIndex, uint MaskScalarBase, uint ModelGroupId)
+{
+    if (ModelGroupId == 0u)
+        return false;
+
+    const uint Word = ModelGroupId / ITWIN_CLIPPING_BITS_PER_MASK_WORD;
+    const uint Bit = ModelGroupId % ITWIN_CLIPPING_BITS_PER_MASK_WORD;
+    const uint ScalarIndex =
+		MaskScalarBase + PrimitiveIndex * ITWIN_CLIPPING_MASK_WORDS + Word;
+    const uint Mask = (uint) ITwin_GetClippingScalar(ScalarIndex);
+    return ((Mask >> Bit) & 1u) != 0u;
+}

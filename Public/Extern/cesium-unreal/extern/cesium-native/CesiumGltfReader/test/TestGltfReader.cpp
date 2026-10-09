@@ -2,9 +2,15 @@
 #include <CesiumGltf/Accessor.h>
 #include <CesiumGltf/AccessorView.h>
 #include <CesiumGltf/Buffer.h>
+#include <CesiumGltf/BufferView.h>
+#include <CesiumGltf/ExtensionBentleyMaterialsPointStyle.h>
 #include <CesiumGltf/ExtensionBufferViewExtMeshoptCompression.h>
 #include <CesiumGltf/ExtensionCesiumRTC.h>
+#include <CesiumGltf/ExtensionExtMeshPrimitiveEdgeVisibility.h>
 #include <CesiumGltf/ExtensionKhrDracoMeshCompression.h>
+#include <CesiumGltf/ExtensionMaterialBentleyMaterialsLineStyle.h>
+#include <CesiumGltf/ExtensionModelKhrLightsPunctual.h>
+#include <CesiumGltf/ExtensionNodeKhrLightsPunctual.h>
 #include <CesiumGltf/Image.h>
 #include <CesiumGltf/Mesh.h>
 #include <CesiumGltf/MeshPrimitive.h>
@@ -273,7 +279,63 @@ TEST_CASE("Read TriangleWithPaddingInGlbBin") {
   GltfReader reader;
   GltfReaderResult result = reader.readGltf(data);
   REQUIRE(result.model);
-  REQUIRE(result.warnings.size() == 1);
+  REQUIRE(result.warnings.size() == 0/*1*/); // AdvViz: see workaround in same commit, warning is only for 5+ bytes padding now...
+}
+
+TEST_CASE("Read BENTLEY_materials_line_style") {
+  std::filesystem::path gltfFile = CesiumGltfReader_TEST_DATA_DIR;
+  gltfFile /= "StyledLines/BENTLEY_materials_line_style.gltf";
+
+  std::vector<std::byte> data = readFile(gltfFile);
+  GltfReader reader;
+  GltfReaderResult result = reader.readGltf(data);
+  REQUIRE(result.model);
+
+  const Model& model = result.model.value();
+  REQUIRE_EQ(model.meshes.size(), 1);
+
+  REQUIRE_EQ(model.meshes[0].primitives.size(), 1);
+
+  const CesiumGltf::MeshPrimitive& primitive = model.meshes[0].primitives[0];
+  CHECK(primitive.hasExtension<ExtensionExtMeshPrimitiveEdgeVisibility>());
+
+  const CesiumGltf::Material* pMaterial =
+      model.getSafe(&model.materials, primitive.material);
+  REQUIRE(pMaterial);
+
+  const auto* pLineStyleExtension =
+      pMaterial->getExtension<ExtensionMaterialBentleyMaterialsLineStyle>();
+  REQUIRE(pLineStyleExtension);
+  CHECK_EQ(pLineStyleExtension->width, 5);
+  CHECK_EQ(pLineStyleExtension->pattern, 61680);
+}
+
+TEST_CASE("Read BENTLEY_materials_point_style") {
+  std::filesystem::path gltfFile = CesiumGltfReader_TEST_DATA_DIR;
+  gltfFile /= "StyledPoints/BENTLEY_materials_point_style.gltf";
+  std::vector<std::byte> data = readFile(gltfFile);
+  GltfReader reader;
+  GltfReaderResult result = reader.readGltf(data);
+  REQUIRE(result.model);
+
+  const Model& model = result.model.value();
+  REQUIRE_EQ(model.meshes.size(), 1);
+  REQUIRE_EQ(model.meshes[0].primitives.size(), 4);
+
+  std::vector<int64_t> expectedDiameters{5, 8, 14, 10};
+  for (size_t i = 0; i < 4; i++) {
+    const CesiumGltf::MeshPrimitive& primitive = model.meshes[0].primitives[i];
+    REQUIRE_EQ(primitive.mode, CesiumGltf::MeshPrimitive::Mode::POINTS);
+
+    const CesiumGltf::Material* pMaterial =
+        model.getSafe(&model.materials, primitive.material);
+    REQUIRE(pMaterial);
+
+    const auto* pPointStyleExtension =
+        pMaterial->getExtension<ExtensionBentleyMaterialsPointStyle>();
+    REQUIRE(pPointStyleExtension);
+    CHECK_EQ(pPointStyleExtension->diameter, expectedDiameters[i]);
+  }
 }
 
 TEST_CASE("Read MeshPrimitiveModes") {
@@ -736,6 +798,62 @@ TEST_CASE("Handles primitive restart during primitive mode conversion") {
   }
 }
 
+TEST_CASE("Reads KHR_lights_punctual") {
+  std::filesystem::path gltfFile = CesiumGltfReader_TEST_DATA_DIR;
+  gltfFile /= "Lights/lights.gltf";
+  std::vector<std::byte> data = readFile(gltfFile);
+  GltfReader reader;
+  GltfReaderResult result = reader.readGltf(data);
+  REQUIRE(result.model);
+  const Model& model = result.model.value();
+
+  const ExtensionModelKhrLightsPunctual* pModelLights =
+      model.getExtension<ExtensionModelKhrLightsPunctual>();
+  REQUIRE(pModelLights);
+  REQUIRE_EQ(pModelLights->lights.size(), 3);
+
+  const Light& light0 = pModelLights->lights[0];
+  CHECK_EQ(light0.type, Light::Type::directional);
+  CHECK_EQ(light0.color, std::vector<double>{1.0, 0.9, 0.7});
+  CHECK_EQ(light0.intensity, 3.0);
+  CHECK(!light0.spot);
+
+  const Light& light1 = pModelLights->lights[1];
+  CHECK_EQ(light1.type, Light::Type::point);
+  CHECK_EQ(light1.color, std::vector<double>{1.0, 0.0, 0.0});
+  CHECK_EQ(light1.intensity, 20.0);
+  CHECK(!light1.spot);
+
+  const Light& light2 = pModelLights->lights[2];
+  CHECK_EQ(light2.type, Light::Type::spot);
+  CHECK_EQ(light2.color, std::vector<double>{0.3, 0.7, 1.0});
+  CHECK_EQ(light2.intensity, 40.0);
+
+  CHECK(light2.spot);
+  CHECK(CesiumUtility::Math::equalsEpsilon(
+      light2.spot->innerConeAngle,
+      0.785398163397448,
+      CesiumUtility::Math::Epsilon6));
+  CHECK(CesiumUtility::Math::equalsEpsilon(
+      light2.spot->outerConeAngle,
+      1.57079632679,
+      CesiumUtility::Math::Epsilon6));
+
+  REQUIRE_EQ(model.nodes.size(), 4);
+
+  const Node& node0 = model.nodes[0];
+  CHECK(node0.hasExtension<ExtensionNodeKhrLightsPunctual>());
+  CHECK_EQ(node0.getExtension<ExtensionNodeKhrLightsPunctual>()->light, 1);
+
+  const Node& node1 = model.nodes[1];
+  CHECK(node1.hasExtension<ExtensionNodeKhrLightsPunctual>());
+  CHECK_EQ(node1.getExtension<ExtensionNodeKhrLightsPunctual>()->light, 0);
+
+  const Node& node2 = model.nodes[2];
+  CHECK(node2.hasExtension<ExtensionNodeKhrLightsPunctual>());
+  CHECK_EQ(node2.getExtension<ExtensionNodeKhrLightsPunctual>()->light, 2);
+}
+
 TEST_CASE("Nested extras deserializes properly") {
   const std::string s = R"(
     {
@@ -884,6 +1002,72 @@ TEST_CASE("Can deserialize KHR_draco_mesh_compression") {
 
   REQUIRE(!primitive3.getGenericExtension("KHR_draco_mesh_compression"));
   REQUIRE(!primitive3.getExtension<ExtensionKhrDracoMeshCompression>());
+}
+
+namespace {
+// Builds a model with a single primitive whose POSITION attribute is
+// Draco-compressed, reusing the compressed bitstream from the CesiumMilkTruck
+// test data. In that bitstream, POSITION has unique ID 1 and three components.
+GltfReaderResult createDracoModel(const std::string& positionType) {
+  GltfReaderResult result;
+  Model& model = result.model.emplace();
+
+  Buffer& buffer = model.buffers.emplace_back();
+  buffer.cesium.data = readFile(
+      std::filesystem::path(CesiumGltfReader_TEST_DATA_DIR) /
+      "DracoCompressed" / "0.bin");
+  buffer.byteLength = int64_t(buffer.cesium.data.size());
+
+  BufferView& bufferView = model.bufferViews.emplace_back();
+  bufferView.buffer = 0;
+  bufferView.byteOffset = 1240;
+  bufferView.byteLength = 7871;
+
+  Accessor& accessor = model.accessors.emplace_back();
+  accessor.componentType = Accessor::ComponentType::FLOAT;
+  accessor.type = positionType;
+  accessor.count = 1856;
+
+  MeshPrimitive& primitive =
+      model.meshes.emplace_back().primitives.emplace_back();
+  primitive.attributes["POSITION"] = 0;
+
+  ExtensionKhrDracoMeshCompression& draco =
+      primitive.addExtension<ExtensionKhrDracoMeshCompression>();
+  draco.bufferView = 0;
+  draco.attributes["POSITION"] = 1;
+
+  model.addExtensionRequired(ExtensionKhrDracoMeshCompression::ExtensionName);
+
+  return result;
+}
+
+bool hasWarningContaining(
+    const GltfReaderResult& result,
+    const std::string& text) {
+  for (const std::string& warning : result.warnings) {
+    if (warning.find(text) != std::string::npos) {
+      return true;
+    }
+  }
+  return false;
+}
+} // namespace
+
+TEST_CASE("Rejects a Draco bufferView whose byte range overflows") {
+  GltfReader reader;
+  GltfReaderOptions options;
+
+  GltfReaderResult result = createDracoModel(Accessor::Type::VEC3);
+  BufferView& bufferView = result.model->bufferViews[0];
+  bufferView.byteOffset = std::numeric_limits<int64_t>::max() - 1000;
+  bufferView.byteLength = 2000;
+
+  reader.postprocessGltf(result, options);
+
+  REQUIRE(result.model);
+  CHECK(hasWarningContaining(result, "extends beyond its buffer"));
+  CHECK(result.model->accessors[0].bufferView == -1);
 }
 
 TEST_CASE("Extensions deserialize to JsonVaue iff "

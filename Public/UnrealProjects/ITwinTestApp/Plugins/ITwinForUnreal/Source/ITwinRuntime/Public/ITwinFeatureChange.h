@@ -22,6 +22,15 @@ enum class EChangeType : uint8 {
 	Modified = 2
 };
 
+UENUM(BlueprintType)
+enum class EFeatureType : uint8 {
+	None = 255,
+	Clipping = 0,
+	PopulationObject = 1,
+	PopulationSpline = 2,
+	PathAnimation = 3,
+};
+
 USTRUCT(BlueprintType)
 struct ITWINRUNTIME_API FFeatureEventProperty
 {
@@ -47,7 +56,7 @@ struct ITWINRUNTIME_API FFeatureEventProperties{
 	UPROPERTY(BlueprintReadWrite, Category = "ITwin")
 	EChangeType ChangeType = EChangeType::Added;
 	UPROPERTY(BlueprintReadWrite, Category = "ITwin")
-	bool bIsPrimitive = false;
+	EFeatureType FeatureType = EFeatureType::None;
 	UPROPERTY(BlueprintReadWrite, Category = "ITwin")
 	TArray<FFeatureEventProperty> Properties;
 

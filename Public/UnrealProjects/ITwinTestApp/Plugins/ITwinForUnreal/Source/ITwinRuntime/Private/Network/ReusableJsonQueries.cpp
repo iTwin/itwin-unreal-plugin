@@ -9,6 +9,7 @@
 #include "ReusableJsonQueries.h"
 #include "ReusableJsonQueriesImpl.h"
 #include "ITwinServerEnvironment.h"
+#include "HttpUtils.h"
 
 #include <Compil/BeforeNonUnrealIncludes.h>
 #	include <BeHeaders/Util/CleanUpGuard.h>
@@ -31,7 +32,7 @@ using namespace ReusableJsonQueries;
 
 void FPoolRequest::Cancel()
 {
-	bShouldCancel = true;
+	bShouldCancel->store(true);
 	if (!bIsAvailable)
 	{
 		if (!EHttpRequestStatus::IsFinished(Request->GetStatus()))
@@ -66,16 +67,15 @@ FReusableJsonQueries::FImpl::FImpl(UObject const& Owner,
 	FString const& InBaseUrlNoSlash, FAllocateRequest const& AllocateRequest,
 	uint8_t const SimultaneousRequestsAllowed, FCheckRequest const& InCheckRequest, ITwinHttp::FMutex& InMutex,
 	TCHAR const* const InRecordToFolder, int const InRecorderSessionIndex,
-	TCHAR const* const InSimulateFromFolder,
-	FScheduleQueryingDelegate const* InOnScheduleQueryingStatusChanged,
-	std::function<FString()> const& InGetBearerToken)
+	TCHAR const* const InSimulateFromFolder, std::function<FString()> const& InGetBearerToken,
+	std::function<bool()> const& InFreezeNextBatches)
 : BaseUrlNoSlash(InBaseUrlNoSlash)
 , CheckRequest(InCheckRequest)
 , GetBearerToken(InGetBearerToken)
+, FreezeNextBatches(InFreezeNextBatches)
 , Mutex(InMutex)
-, Cache(Owner)
-, OnScheduleQueryingStatusChanged(InOnScheduleQueryingStatusChanged)
-, IsThisValid(new bool(true))
+, Cache(Owner, InMutex)
+, IsThisValid(std::make_shared<std::atomic_bool>(true))
 {
 	if (InSimulateFromFolder && !FString(InSimulateFromFolder).IsEmpty()
 		&& Cache.LoadSessionSimulation(InSimulateFromFolder))
@@ -110,12 +110,11 @@ FReusableJsonQueries::FImpl::FImpl(UObject const& Owner,
 
 FReusableJsonQueries::FImpl::~FImpl()
 {
+	bIsShuttingDown.store(true);
+	// before the lock and after bIsShuttingDown on purpose
+	IsThisValid->store(false);
 	{	ITwinHttp::FLock Lock(Mutex);
-		RequestsInBatch = 0;
-		NextBatches.clear();
-		RequestsInQueue.clear();
-		for (auto&& FromPool : RequestsPool) // first: cancel (non-blocking)
-			FromPool.Cancel();
+		ShutdownLocked(Lock);
 	} // end of Mutex lock scope: otherwise Future.Wait() below would deadlock
 
 	// We need to wait forever when this is called when exiting the PIE. This is why UE5Coro usage had to
@@ -135,21 +134,26 @@ FReusableJsonQueries::FImpl::~FImpl()
 			auto Future = FromPool.AsyncRoutine->GetFuture();
 			if (!Future.IsReady()) Future.Wait(); // blocking
 		}
+}
 
-	// CancelRequest is not blocking, and FromPool.Request's are SharedPtr hence still held by the
-	// FHttpManager after FromPool's deletion, so 'Completed' delegates can still be called and we need to
-	// signal to them that they should no longer access any reference to destroyed data:
-	*IsThisValid = false;
+void FReusableJsonQueries::FImpl::ShutdownLocked(ITwinHttp::FLock&/*Lock*/)
+{
+	RequestsInBatch = 0;
+	NextBatches.clear();
+	RequestsInQueue.clear();
+	AvailableRequestSlots = 0;
+	bIsRunning = false;
+	IsThisValid->store(false);
+	for (auto&& FromPool : RequestsPool)
+		FromPool.Cancel();
 }
 
 TSharedPtr<TPromise<void>> FReusableJsonQueries::FImpl::FRequestHandler::Run(
 	std::shared_ptr<FReusableJsonQueries::FImpl::FRequestHandler> This,
-	FHttpRequestPtr CompletedRequest, FHttpResponsePtr Response, bool bConnectedSuccessfully)
+	FHttpRequestPtr CompletedRequest, FHttpResponsePtr Response, ITwinHttp::ConnectionSuccess bConnectedSuccessfully)
 {
-	// IsThisValid access not thread-safe otherwise... If needed, the destructor and this callback
-	// would have to also use another sync mechanism like a semaphore + a compare_and_swap loop
 	check(IsInGameThread());
-	if ((*IsJsonQueriesValid) == false)
+	if (!IsJsonQueriesValid->load() || JsonQueries.bIsShuttingDown.load())
 	{
 		// FHttpRequestPtr was cancelled and both FPoolRequest and owning FReusableJsonQueries deleted
 		// so other captures are invalid.
@@ -157,26 +161,41 @@ TSharedPtr<TPromise<void>> FReusableJsonQueries::FImpl::FRequestHandler::Run(
 		return {};
 	}
 	check(FromPool.bIsAvailable == false);
-	bool bRetry = !FromPool.bTryFromCache && (RequestArgs.RetriesLeft > 0);
+	ITwinHttp::RetryQuery bRetry(!FromPool.bTryFromCache && (RequestArgs.RetriesLeft > 0));
+	ITwinHttp::DeltaQuery bIsDeltaQuery(false);
 	// Could probably be in the destructor now (but we'd have to store Response & bConnectedSuccessfully)
-	Be::CleanUpGuard CleanUpOnExc([this, Response, bConnectedSuccessfully, &bRetry]
-								  { CleanUp(Response, bConnectedSuccessfully, bRetry); });
+	Be::CleanUpGuard CleanUpOnExc([this, Response, bConnectedSuccessfully, &bRetry, &bIsDeltaQuery]
+								  { CleanUp(Response, bConnectedSuccessfully, bRetry, bIsDeltaQuery); });
 	TSharedPtr<FJsonObject> ResponseJson;
+	DeltaTokenExpired bDeltaTokenExpired(false);
 	if (FromPool.bTryFromCache)
 	{
 		// Look up the request in the cache but move the heavier part (Read = load reply from filesystem
 		// + parsing the Json, then processing the caller-supplied callback) in the concurrent task:
-		auto const Hit = JsonQueries.Cache.LookUp(FromPool.Request, RequestArgs.Verb, JsonQueries.Mutex);
+		auto Hit = JsonQueries.Cache.LookUp(FromPool.Request, RequestArgs.Verb, true);
 		if (Hit)
 		{
 			FromPool.bSuccess = true; // needed before yield, used by caller
 			TSharedRef<TPromise<void>> Promise = MakeShared<TPromise<void>>();
 			AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask,
-				[This, CacheHit=(*Hit), Promise, Response, bConnectedSuccessfully, bRetry]
+				[This, CacheHitPath=std::move(*Hit), Promise, Response, bConnectedSuccessfully, bRetry]() mutable
 				{
-					if (!This->FromPool.bShouldCancel) // otw deadlock with ~FImpl
-						This->ProcessResponse(This->JsonQueries.Cache.Read(CacheHit), Response,
-											  bConnectedSuccessfully, bRetry);
+					if (!This->IsValid() || This->FromPool.bShouldCancel->load())
+					{
+						Promise->SetValue();
+						return;
+					}
+					TSharedPtr<FJsonObject> ResponseJson = This->JsonQueries.Cache.Read(std::move(CacheHitPath));
+					if (This->FromPool.bShouldCancel->load()) // again, for granularity
+					{
+						Promise->SetValue();
+						return;
+					}
+					// Note: the callback chain can reach UObjects and Blueprint UI, but ProcessResponse is also
+					// CPU-intensive so I want to keep it in the worker thread: all the callback paths have now been
+					// individually moved to the game thread using "AsyncTask(ENamedThreads::GameThread, ..)"
+					This->ProcessResponse(ResponseJson, Response, bConnectedSuccessfully, bRetry,
+										  ITwinHttp::DeltaQuery(false)); // delta queries are never cached
 					Promise->SetValue();
 				});
 			CleanUpOnExc.release();
@@ -184,22 +203,47 @@ TSharedPtr<TPromise<void>> FReusableJsonQueries::FImpl::FRequestHandler::Run(
 		}
 	}
 	else if (
-		JsonQueries.CheckRequest(CompletedRequest, Response, bConnectedSuccessfully, bRetry)
+		JsonQueries.CheckRequest(CompletedRequest, Response, bConnectedSuccessfully, bRetry, bDeltaTokenExpired)
 		//synonym to 20X response?
 		&& ensure(EHttpRequestStatus::Succeeded == CompletedRequest->GetStatus()))
 	{
-		bRetry = false;
+		bRetry = ITwinHttp::RetryQuery(false);
 		FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Response->GetContentAsString()),
 									 ResponseJson);
 	}
+	if (CompletedRequest.IsValid() && !CompletedRequest->GetURLParameter(APIParams::DeltaToken).IsEmpty())
+	{
+		// In case of failure, check if it was a deltaToken expiry issue: in that case, the Schedule's delta token has
+		// been cleared already, but it is still in this handler's RequestArgs, so we must clear it to avoid sending
+		// the same expired token again on the next retry. The next retry will be a full query.
+		if (bDeltaTokenExpired)
+		{
+			for (auto It = RequestArgs.Params.begin(); It != RequestArgs.Params.end(); ++It)
+				if (APIParams::DeltaToken == It->first)
+				{
+					RequestArgs.Params.erase(It);
+					break;
+				}
+			RequestArgs.RetriesLeft = DefaultNbRetries + 1; // because we immediately decrement in CleanUp when restacking
+		}
+		else
+			bIsDeltaQuery = ITwinHttp::DeltaQuery(true);
+	}
 	CleanUpOnExc.release();
-	ProcessResponse(ResponseJson, Response, bConnectedSuccessfully, bRetry);
+	ProcessResponse(ResponseJson, Response, bConnectedSuccessfully, bRetry, bIsDeltaQuery);
 	return {};
 }
 
 void FReusableJsonQueries::FImpl::FRequestHandler::ProcessResponse(TSharedPtr<FJsonObject> ResponseJson,
-	FHttpResponsePtr Response, bool const bConnectedSuccessfully, bool const bRetry)
+	FHttpResponsePtr Response, ITwinHttp::ConnectionSuccess bConnectedSuccessfully, ITwinHttp::RetryQuery bRetry,
+	ITwinHttp::DeltaQuery bIsDeltaQuery)
 {
+	if (JsonQueries.bIsShuttingDown.load())
+	{
+		FromPool.bSuccess = false;
+		CleanUp(Response, bConnectedSuccessfully, ITwinHttp::RetryQuery(false), bIsDeltaQuery);
+		return;
+	}
 	if (ResponseJson)
 	{
 		if (!FromPool.bTryFromCache && ensure(Response))
@@ -209,11 +253,17 @@ void FReusableJsonQueries::FImpl::FRequestHandler::ProcessResponse(TSharedPtr<FJ
 				ITwinHttp::FLock Lock(JsonQueries.Mutex);
 				JsonQueries.SuccessfulRequestsFromRemote++;
 			}
+			// When NOT reading from the cache, get these tokens from the reply headers and set them manually on the
+			// JSON structure passed to ProcessJsonResponseFunc. This way no need to change ProcessJsonResponseFunc's
+			// code (tokens used to be part of the JSON reply) nor its signature.
+			// Note that they are written in the cache with custom code, too: see FJsonQueriesCache::Write variant
+			// taking a FHttpResponsePtr.
 			FString const ContinuationToken = Response->GetHeader(TEXT("Continuation-Token"));
-			// this way no need to change ProcessJsonResponseFunc's code, but note that it is written in the
-			// cache with custom code, too: see FJsonQueriesCache::Write variant taking a FHttpResponsePtr
 			if (!ContinuationToken.IsEmpty())
 				ResponseJson->SetStringField(TEXT("nextPageToken"), ContinuationToken);
+			FString const DeltaToken = Response->GetHeader(TEXT("Delta-Token"));
+			if (!DeltaToken.IsEmpty())
+				ResponseJson->SetStringField(TEXT("deltaToken"), DeltaToken);
 		}
 		RequestArgs.ProcessJsonResponseFunc(ResponseJson);
 		FromPool.bSuccess = true;
@@ -225,13 +275,19 @@ void FReusableJsonQueries::FImpl::FRequestHandler::ProcessResponse(TSharedPtr<FJ
 		//if (!FromPool.bTryFromCache && !bRetry)
 		//	JsonQueries.Cache.ClearFromDisk();
 	}
-	CleanUp(Response, bConnectedSuccessfully, bRetry);
+	CleanUp(Response, bConnectedSuccessfully, bRetry, bIsDeltaQuery);
 }
 
 void FReusableJsonQueries::FImpl::FRequestHandler::CleanUp(
-	FHttpResponsePtr Response, bool const bConnectedSuccessfully, bool const bRetry)
+	FHttpResponsePtr Response, ITwinHttp::ConnectionSuccess bConnectedSuccessfully, ITwinHttp::RetryQuery bRetry,
+	ITwinHttp::DeltaQuery bIsDeltaQuery)
 {
 	ITwinHttp::FLock Lock(JsonQueries.Mutex);
+	if (JsonQueries.bIsShuttingDown.load())
+	{
+		FromPool.bIsAvailable = true;
+		return;
+	}
 	JsonQueries.LastCompletionTime = FPlatformTime::Seconds();
 	if (bRetry)
 	{
@@ -239,8 +295,9 @@ void FReusableJsonQueries::FImpl::FRequestHandler::CleanUp(
 		JsonQueries.StackRequest(&Lock, RequestArgs.Verb, std::move(RequestArgs.UrlSubpath),
 			std::move(RequestArgs.Params), std::move(RequestArgs.ProcessJsonResponseFunc),
 			std::move(RequestArgs.PostDataString), RequestArgs.RetriesLeft - 1,
-			// wait a short time before first retry, a longer time before 2nd (in seconds)
-			FPlatformTime::Seconds() + (RequestArgs.RetriesLeft == 2 ? 2. : 8.));
+			(RequestArgs.RetriesLeft == (DefaultNbRetries + 1)) ? /*case of expired delta token...*/-1 :
+				// wait a short time before first retry, a longer time before the others (in seconds)
+				FPlatformTime::Seconds() + (RequestArgs.RetriesLeft == DefaultNbRetries ? 2. : 8.));
 	}
 	if (!FromPool.bTryFromCache || FromPool.bSuccess)
 	{
@@ -248,7 +305,7 @@ void FReusableJsonQueries::FImpl::FRequestHandler::CleanUp(
 		++JsonQueries.AvailableRequestSlots; // next Tick will call HandlePendingRequests
 		--JsonQueries.RequestsInBatch;
 	}
-	if (-1 != QueryTimestamp && !FromPool.bTryFromCache && FromPool.bSuccess)
+	if (-1 != QueryTimestamp && !bIsDeltaQuery && !FromPool.bTryFromCache && FromPool.bSuccess)
 		// Do not write to cache the result of the initial "RequestSchedules" query which
 		// ProcessJsonResponseFunc actually initializes the cache: this would write duplicates of the
 		// same over and over (since this initial query can never by definition be read from the cache)
@@ -258,8 +315,7 @@ void FReusableJsonQueries::FImpl::FRequestHandler::CleanUp(
 		// in that case Initialize has returned false and TryLocalCache is not set...
 		//&& ReusableJsonQueries::EReplayMode::TryLocalCache == ReplayModeBeforeHandling)
 	{
-		JsonQueries.Cache.Write(FromPool.Request, Response, bConnectedSuccessfully,
-								JsonQueries.Mutex, QueryTimestamp);
+		JsonQueries.Cache.Write(FromPool.Request, Response, bConnectedSuccessfully, QueryTimestamp);
 	}
 }
 
@@ -313,7 +369,7 @@ void FReusableJsonQueries::FImpl::DoEmitRequest(FPoolRequest& FromPool, FRequest
 	switch (ReplayMode)
 	{
 	case ReusableJsonQueries::EReplayMode::OnDemandSimulation:
-		FromPool.AsyncRoutine = Handler->Run(Handler, {}, {}, true);
+		FromPool.AsyncRoutine = Handler->Run(Handler, {}, {}, ITwinHttp::ConnectionSuccess(true));
 		if (FromPool.bSuccess)
 			++CacheHits;
 		else
@@ -324,7 +380,7 @@ void FReusableJsonQueries::FImpl::DoEmitRequest(FPoolRequest& FromPool, FRequest
 		}
 		break;
 	case ReusableJsonQueries::EReplayMode::TryLocalCache:
-		FromPool.AsyncRoutine = Handler->Run(Handler, {}, {}, true);
+		FromPool.AsyncRoutine = Handler->Run(Handler, {}, {}, ITwinHttp::ConnectionSuccess(true));
 		if (FromPool.bSuccess) // was set before creating the AsyncTask
 		{
 			++CacheHits;
@@ -335,18 +391,19 @@ void FReusableJsonQueries::FImpl::DoEmitRequest(FPoolRequest& FromPool, FRequest
 		FromPool.bTryFromCache = false;
 		if (bIsRecordingForSimulation)
 		{
-			Cache.RecordQuery(FromPool.Request, Mutex);
+			Cache.RecordQuery(FromPool.Request);
 		}
 		// "Single" delegate, no need to Unbind to reuse:
 		FromPool.Request->OnProcessRequestComplete().BindLambda(
 			[&FromPool, Callback=std::move(Handler)]
 			(FHttpRequestPtr CompletedRequest, FHttpResponsePtr Response, bool bConnectedSuccessfully) mutable
 			{
-				if (!Callback->IsValid()) // otherwise FromPool.bShouldCancel itself is unsafe of course...
+				if (!Callback->IsValid())
 					return;
-				if (!FromPool.bShouldCancel)
+				if (!FromPool.bShouldCancel->load())
 					FromPool.AsyncRoutine =
-						Callback->Run(Callback, CompletedRequest, Response, bConnectedSuccessfully);
+					Callback->Run(Callback, CompletedRequest, Response,
+								  ITwinHttp::ConnectionSuccess(bConnectedSuccessfully));
 			});
 		FromPool.Request->ProcessRequest();
 		break;
@@ -379,6 +436,8 @@ bool FReusableJsonQueries::FImpl::HandlePendingQueries()
 	FPoolRequest* Slot = nullptr;
 	FRequestArgs RequestArgs;
 	{	ITwinHttp::FLock Lock(Mutex);
+		if (bIsShuttingDown.load())
+			return false;
 		if (AvailableRequestSlots > 0 && !RequestsInQueue.empty())
 		{
 			if (!ensure(AvailableRequestSlots <= RequestsPool.size()))
@@ -434,7 +493,7 @@ bool FReusableJsonQueries::FImpl::HandlePendingQueries()
 				if (bHasFoundRequestToProcess)
 				{
 					Slot->bIsAvailable = false;
-					Slot->bShouldCancel = false;
+					Slot->bShouldCancel->store(false);
 					Slot->AsyncRoutine.Reset();
 					--AvailableRequestSlots;
 				}
@@ -456,11 +515,11 @@ FReusableJsonQueries::FReusableJsonQueries(UObject const& Owner, FString const& 
 		FAllocateRequest const& AllocateRequest, uint8_t const SimultaneousRequestsAllowed,
 		FCheckRequest const& InCheckRequest, ITwinHttp::FMutex& InMutex, TCHAR const* const InRecordToFolder,
 		int const InRecorderSessionIndex, TCHAR const* const InSimulateFromFolder,
-		FScheduleQueryingDelegate const* OnScheduleQueryingStatusChanged,
-		std::function<FString()> const& InGetBearerToken)
+		std::function<FString()> const& InGetBearerToken,
+		std::function<bool()> const& FreezeNextBatches)
 : Impl(MakePimpl<FReusableJsonQueries::FImpl>(Owner, InBaseUrlNoSlash, AllocateRequest,
 	SimultaneousRequestsAllowed, InCheckRequest, InMutex, InRecordToFolder, InRecorderSessionIndex,
-	InSimulateFromFolder, OnScheduleQueryingStatusChanged, InGetBearerToken))
+	InSimulateFromFolder, InGetBearerToken, FreezeNextBatches))
 {
 }
 
@@ -470,8 +529,23 @@ void FReusableJsonQueries::ChangeRemoteUrl(FString const& NewRemoteUrl)
 	Impl->BaseUrlNoSlash = NewRemoteUrl;
 }
 
+FString FReusableJsonQueries::JoinToBaseUrl(FUrlSubpath const& UrlSubpath)
+{
+	return Impl->JoinToBaseUrl(UrlSubpath, 0);
+}
+
+void FReusableJsonQueries::BeginShutdown()
+{
+	ITwinHttp::FLock Lock(Impl->Mutex);
+	if (Impl->bIsShuttingDown.exchange(true))
+		return;
+	Impl->ShutdownLocked(Lock);
+}
+
 void FReusableJsonQueries::HandlePendingQueries()
 {
+	if (Impl->bIsShuttingDown.load())
+		return;
 	FStackingFunc NextBatch;
 	{	ITwinHttp::FLock Lock(Impl->Mutex);
 		ensure(Impl->RequestsInBatch >= 0);
@@ -480,8 +554,6 @@ void FReusableJsonQueries::HandlePendingQueries()
 			if (!Impl->bIsRunning)
 			{
 				Impl->bIsRunning = true;
-				if (Impl->OnScheduleQueryingStatusChanged) // <== NB: only set for NON-prefetched case
-					Impl->OnScheduleQueryingStatusChanged->Broadcast(Impl->bIsRunning);
 			}
 		}
 		else
@@ -491,11 +563,9 @@ void FReusableJsonQueries::HandlePendingQueries()
 				if (Impl->bIsRunning)
 				{
 					Impl->bIsRunning = false;
-					if (Impl->OnScheduleQueryingStatusChanged) // <== NB: only set for NON-prefetched case
-						Impl->OnScheduleQueryingStatusChanged->Broadcast(Impl->bIsRunning);
 				}
 			}
-			else
+			else if (!Impl->FreezeNextBatches())
 			{
 				NextBatch = std::move(Impl->NextBatches.front().Exec);
 				Impl->NextBatches.pop_front();
@@ -513,19 +583,21 @@ void FReusableJsonQueries::HandlePendingQueries()
 	else
 	{
 		// TODO_GCO: could use a time budget, or move entirely off the game thread (even though parsing the replies
-		// for cache hits is already in the worker thread, so I'm not how long this can be: time it!)
+		// for cache hits is already in the worker thread, so I'm not sure how long this can be: time it!)
 		while (Impl->HandlePendingQueries()) {}
 	}
 }
 
 void FReusableJsonQueries::FImpl::StackRequest(
 	ITwinHttp::FLock* Lock, ITwinHttp::EVerb const Verb, FUrlSubpath&& UrlSubpath, FUrlArgList&& Params,
-	FProcessJsonObject&& ProcessCompletedFunc, FString&& PostDataString /*= {}*/, int const RetriesLeft/*= 2*/,
-	double const DontRetryUntil/*= -1.*/)
+	FProcessJsonObject&& ProcessCompletedFunc, FString&& PostDataString /*= {}*/,
+	int const RetriesLeft/*= DefaultNbRetries*/, double const DontRetryUntil/*= -1.*/)
 {
 	std::optional<ITwinHttp::FLock> optLock;
 	if (!Lock)
 		optLock.emplace(Mutex);
+	if (bIsShuttingDown.load())
+		return;
 	++RequestsInBatch;
 	RequestsInQueue.emplace_back(FRequestArgs{Verb, std::move(UrlSubpath),
 		std::move(Params), std::move(ProcessCompletedFunc), std::move(PostDataString), RetriesLeft,
@@ -543,6 +615,8 @@ void FReusableJsonQueries::StackRequest(ReusableJsonQueries::FStackingToken cons
 void FReusableJsonQueries::NewBatch(FStackingFunc&& StackingFunc, bool const bPseudoBatch/*= false*/)
 {
 	ITwinHttp::FLock Lock(Impl->Mutex);
+	if (Impl->bIsShuttingDown.load())
+		return;
 	if (!Impl->RequestsInBatch && Impl->NextBatches.empty())
 	{
 		// Stack immediately, to avoid delays (in case of empty batches, in particular)
@@ -566,10 +640,31 @@ void FReusableJsonQueries::UninitializeCache()
 	Impl->Cache.Uninitialize();
 }
 
+FString FReusableJsonQueries::CacheFolder() const
+{
+	ITwinHttp::FLock Lock(Impl->Mutex);
+	return Impl->Cache.CacheFolder();
+}
+
 void FReusableJsonQueries::ClearCacheFromMemory()
 {
 	Impl->Cache.Uninitialize();
 	Impl->ReplayMode = ReusableJsonQueries::EReplayMode::None;
+}
+
+size_t FReusableJsonQueries::OnDeltaTokenExpired(FHttpRequestPtr const& DeltaRequest)
+{
+	ensure(DeltaRequest->GetVerb() == ITwinHttp::GetVerbString(ITwinHttp::EVerb::Get));
+	ITwinHttp::FLock Lock(Impl->Mutex);
+	auto FoundIt = Impl->Cache.LookUp(Lock, DeltaRequest, ITwinHttp::EVerb::Get, false, APIParams::DeltaToken);
+	if (FoundIt)
+		return Impl->Cache.EraseEntry(*FoundIt, true, Lock, APIParams::PageToken, 128);
+	return 0;
+}
+
+size_t FReusableJsonQueries::EraseDroppableEntries()
+{
+	return Impl->Cache.EraseDroppableEntries();
 }
 
 std::pair<int, int> FReusableJsonQueries::QueueSize() const

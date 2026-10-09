@@ -6,10 +6,12 @@
 |
 +--------------------------------------------------------------------------------------*/
 
-
 #include "UEHttp.h"
 #include "UEHttpAdapter.h" // just for ConvertUnrealHttpResponse
+#include <Network/HttpUtils.h> // just for DescribeTransportFailure
+#include <Tests/ITwinMockServerBase.h>
 
+#include <GenericPlatform/GenericPlatformHttp.h>
 #include <HAL/PlatformProcess.h>
 #include <HttpManager.h>
 #include <HttpModule.h>
@@ -17,8 +19,12 @@
 #include <Misc/Base64.h>
 #include <Misc/EngineVersionComparison.h>
 #include <Misc/FileHelper.h>
-#include "Tasks/Task.h"
-#include "GenericPlatform/GenericPlatformHttp.h"
+#include <Misc/Paths.h>
+#include <Tasks/Task.h>
+
+#include <Compil/BeforeNonUnrealIncludes.h>
+#	include <SDK/Core/ITwinAPI/ITwinRequestDump.h>
+#include <Compil/AfterNonUnrealIncludes.h>
 
 /*static*/
 void FUEHttp::Init()
@@ -63,7 +69,24 @@ namespace
 
 		return (status == EHttpRequestStatus::Failed);
 	}
+} // unnamed namespace
+
+std::string FUEHttp::GetFullUrl(const std::string& url, bool isFullUrl) const
+{
+	std::string const FullURL = (isFullUrl ? url : (GetBaseUrlStr() + '/' + url));
+#if WITH_TESTS
+	// In automated test mode, we expect all requests to be redirected to a mock server URL (except for some
+	// functional tests working on real projects).
+	if (GIsAutomationTesting
+		&& !FullURL.starts_with("http://localhost")
+		&& FITwinMockServerBase::HasRunningInstance())
+	{
+		BE_ISSUE("In test mode, requests should be redirected to a mock server URL", FullURL);
+	}
+#endif
+	return FullURL;
 }
+
 FUEHttp::Response FUEHttp::Do(FString verb, const std::string& url, const BodyParams& bodyParams,
 	const Headers& headers /*= {}*/, bool isFullUrl /*= false*/,
 	const std::function<void(Response&)> &callbackFct /*= {}*/,
@@ -76,7 +99,8 @@ FUEHttp::Response FUEHttp::Do(FString verb, const std::string& url, const BodyPa
 	if (!isFullUrl && (url.starts_with("http:") || url.starts_with("https:")))
 		isFullUrl = true;
 
-	HttpRequest->SetURL((isFullUrl ? url : (GetBaseUrlStr() + '/' + url)).c_str());
+	std::string const FullURL = GetFullUrl(url, isFullUrl);
+	HttpRequest->SetURL(FullURL.c_str());
 	for (auto const& [Key, Value] : headers)
 	{
 		HttpRequest->SetHeader(Key.c_str(), Value.c_str());
@@ -88,6 +112,23 @@ FUEHttp::Response FUEHttp::Do(FString verb, const std::string& url, const BodyPa
 			HttpRequest->SetContentAsString(UTF8_TO_TCHAR(bodyParams.str().c_str()));
 		else
 			HttpRequest->SetContentAsString(bodyParams.str().c_str());
+	}
+
+	std::filesystem::path RequestDumpPath;
+	if (AdvViz::SDK::RequestDump::ShouldDumpRequests())
+	{
+		// Dump request to temp folder.
+		std::string RelativeURL = url;
+		if (isFullUrl)
+		{
+			// Remove the base URL from the full URL to get a relative path
+			const std::string BaseURL = GetBaseUrlStr();
+			if (url.starts_with(BaseURL))
+			{
+				RelativeURL = url.substr(BaseURL.length());
+			}
+		}
+		AdvViz::SDK::RequestDump::DumpRequest(RelativeURL, bodyParams.str(), RequestDumpPath);
 	}
 
 	if (callbackFct)
@@ -105,10 +146,22 @@ FUEHttp::Response FUEHttp::Do(FString verb, const std::string& url, const BodyPa
 			HttpRequest->SetDelegateThreadPolicy(EHttpRequestDelegateThreadPolicy::CompleteOnHttpThread);
 		}
 
-		HttpRequest->OnProcessRequestComplete().BindLambda([callbackFct, asyncCBExecMode]
+		HttpRequest->OnProcessRequestComplete().BindLambda(
+			[callbackFct, asyncCBExecMode, RequestDumpPath = std::move(RequestDumpPath), FullURL]
 			(FHttpRequestPtr pRequest, FHttpResponsePtr pResponse, bool connectedSuccessfully)
 				{
+					UNUSED(FullURL); // FullURL was copied here just for debugging.
+					if (!connectedSuccessfully || !pResponse.IsValid())
+					{
+						BE_LOGW("http", "Transport failure in async request: " << TCHAR_TO_UTF8(
+							*ITwinHttp::DescribeTransportFailure(
+								pRequest, ITwinHttp::ConnectionSuccess(connectedSuccessfully), pResponse)));
+					}
 					auto Response = ConvertUnrealHttpResponse({}, pRequest, pResponse, connectedSuccessfully);
+					if (!RequestDumpPath.empty())
+					{
+						AdvViz::SDK::RequestDump::DumpResponse(Response.first, Response.second, RequestDumpPath);
+					}
 					if (asyncCBExecMode == EAsyncCallbackExecutionMode::GameThread)
 					{
 						callbackFct(Response);
@@ -128,7 +181,8 @@ FUEHttp::Response FUEHttp::Do(FString verb, const std::string& url, const BodyPa
 		bool bStartedRequest = HttpRequest->ProcessRequest();
 		if (!bStartedRequest)
 		{
-			BE_LOGE("http", "Failed to start HTTP Request.");
+			BE_LOGE("http", "Failed to start HTTP Request: " << TCHAR_TO_UTF8(
+				*ITwinHttp::DescribeTransportFailure(HttpRequest, ITwinHttp::ConnectionSuccess(false), {})));
 		}
 		return Response(0, std::string(""));
 	}
@@ -156,15 +210,23 @@ FUEHttp::Response FUEHttp::Do(FString verb, const std::string& url, const BodyPa
 		bool bStartedRequest = HttpRequest->ProcessRequest();
 		if (!bStartedRequest)
 		{
-			BE_LOGE("http", "Failed to start HTTP Request:" << url);
+			BE_LOGE("http", "Failed to start HTTP Request: " << TCHAR_TO_UTF8(
+				*ITwinHttp::DescribeTransportFailure(HttpRequest, ITwinHttp::ConnectionSuccess(false), {})));
 			return Response(0, std::string(""));
 		}
 
 		std::unique_lock<std::mutex> lock(mtx);
 		cv.wait_for(lock, std::chrono::hours(1), [&completed]() { return completed; });
 
-		return ConvertUnrealHttpResponse({}, HttpRequest.ToSharedPtr(), HttpRequest->GetResponse(),
-										 connectedSuccessfully);
+		Response Ret = ConvertUnrealHttpResponse({},
+			HttpRequest.ToSharedPtr(), HttpRequest->GetResponse(), connectedSuccessfully);
+
+		if (!RequestDumpPath.empty())
+		{
+			AdvViz::SDK::RequestDump::DumpResponse(Ret.first, Ret.second, RequestDumpPath);
+		}
+
+		return std::move(Ret);
 	}
 }
 
@@ -204,11 +266,20 @@ FUEHttp::Response FUEHttp::DoFile(FString verb, const std::string& url, const st
 
 	auto HttpRequest = FHttpModule::Get().CreateRequest();
 	HttpRequest->SetVerb(verb);
-	HttpRequest->SetURL((GetBaseUrlStr() + '/' + url).c_str());
+	HttpRequest->SetURL(GetFullUrl(url, false).c_str());
 	for (auto const& [Key, Value] : headers)
 	{
 		HttpRequest->SetHeader(Key.c_str(), Value.c_str());
 	}
+
+	// Add X-Filename header derived from the file path
+	// Use "filename" from extraParams if provided, otherwise derive it from the file path
+	FString CleanFilename = FPaths::GetCleanFilename(UTF8_TO_TCHAR(filePath.c_str()));
+	auto FilenameParamIt = std::find_if(extraParams.begin(), extraParams.end(),
+		[](const std::pair<std::string, std::string>& kv) { return kv.first == "filename"; });
+	if (FilenameParamIt != extraParams.end())
+		CleanFilename = UTF8_TO_TCHAR(FilenameParamIt->second.c_str());
+	HttpRequest->SetHeader(TEXT("X-Filename"), CleanFilename);
 
 	FString BoundaryLabel = FString();
 	FString BoundaryBegin = FString();
@@ -306,7 +377,8 @@ FUEHttp::Response FUEHttp::DoFile(FString verb, const std::string& url, const st
 		bool bStartedRequest = HttpRequest->ProcessRequest();
 		if (!bStartedRequest)
 		{
-			BE_LOGE("http", "Failed to start HTTP File Request.");
+			BE_LOGE("http", "Failed to start HTTP File Request: " << TCHAR_TO_UTF8(
+				*ITwinHttp::DescribeTransportFailure(HttpRequest, ITwinHttp::ConnectionSuccess(false), {})));
 		}
 		return Response(0, std::string(""));
 	}
@@ -317,7 +389,8 @@ FUEHttp::Response FUEHttp::DoFile(FString verb, const std::string& url, const st
 	bool bStartedRequest = HttpRequest->ProcessRequest();
 	if (!bStartedRequest)
 	{
-		BE_LOGE("http", "Failed to start HTTP File Request.");
+		BE_LOGE("http", "Failed to start HTTP File Request: " << TCHAR_TO_UTF8(
+			*ITwinHttp::DescribeTransportFailure(HttpRequest, ITwinHttp::ConnectionSuccess(false), {})));
 		return Response(0, std::string(""));
 	}
 		
@@ -356,6 +429,12 @@ FUEHttp::Response FUEHttp::DoFile(FString verb, const std::string& url, const st
 
 	if (counter == 0)
 		return Response(408, std::string(""));
+
+	if (status == EHttpRequestStatus::Failed)
+	{
+		BE_LOGW("http", "Transport failure in sync file request: " << TCHAR_TO_UTF8(
+			*ITwinHttp::DescribeTransportFailure(HttpRequest, ITwinHttp::ConnectionSuccess(false), response)));
+	}
 
 	return Response(0, std::string(""));
 }

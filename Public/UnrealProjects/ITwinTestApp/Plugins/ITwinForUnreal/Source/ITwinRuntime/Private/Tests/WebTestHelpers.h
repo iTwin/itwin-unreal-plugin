@@ -17,50 +17,37 @@
 
 #include <Compil/BeforeNonUnrealIncludes.h>
 #	include <Core/ITwinAPI/ITwinEnvironment.h>
-#	include <httpmockserver/mock_server.h>
-#	include <httpmockserver/port_searcher.h>
-#	include <microhttpd.h>
 #include <Compil/AfterNonUnrealIncludes.h>
 
 #include <atomic>
-#include <map>
+#include <memory>
 
+namespace httpmock {
+	class MockServer;
+}
 
-// Special token used in both WebServices and MaterialPErsistence tests
-#define ITWINTEST_ACCESS_TOKEN "ThisIsATestITwinAccessToken"
-
-
-
-/// Base class for mock servers used in iTwin services tests
-class FITwinMockServerBase : public httpmock::MockServer
+/// Helper class to track the number of requests started and completed in async tests.
+class FITwinIOAsyncCallback
 {
 public:
-	explicit FITwinMockServerBase(int port);
+	virtual ~FITwinIOAsyncCallback() = default;
 
-	virtual bool PostCondition() const { return true; }
-
-protected:
-	using StringMap = std::map<std::string, std::string>;
-
-	template <typename KeyValueType>
-	static StringMap ToArgMap(std::vector<KeyValueType> const& urlArguments)
+	void OnRequestStarted()
 	{
-		StringMap res;
-		for (auto const& arg : urlArguments)
-		{
-			res[arg.key] = arg.value;
-		}
-		return res;
+		NumRequestsStarted++;
+	}
+	void OnRequestDone()
+	{
+		NumRequestsDone++;
 	}
 
-	int CheckRequiredHeaders(const std::vector<Header>& headers,
-		std::map<std::string, std::string> const& requiredHeaders) const;
+	virtual bool IsDone() const { return NumRequestsDone == NumRequestsStarted; }
 
-	std::string ToString(const std::vector<Header>& headers) const;
-
-	/// Process /arg_test request
-	Response ProcessArgTest(const std::vector<UrlArg>& urlArguments) const;
+private:
+	uint32 NumRequestsStarted = 0;
+	uint32 NumRequestsDone = 0;
 };
+using FITwinIOAsyncCallbackPtr = std::shared_ptr<FITwinIOAsyncCallback>;
 
 
 class FITwinAPITestHelperBase
@@ -74,8 +61,10 @@ public:
 
 	/// Return URL server is listening at. E.g.: http://localhost:8080
 	std::string GetServerUrl() const;
-
+	int GetMockServerPort() const;
 	bool HasMockServer() const { return !!MockServer; }
+
+	FITwinIOAsyncCallbackPtr GetAsyncCallback() const { return AsyncCallback; }
 
 	/// Check conditions that should be met once all the tests have been run.
 	virtual bool PostCondition() const;
@@ -83,8 +72,11 @@ public:
 	/// Wait for a given task, for a maximum duration.
 	static bool WaitForAsyncTask(std::atomic_bool& taskFinished, int maxSeconds);
 
+	/// Return the UWorld instance used for testing. It is expected to be valid when tests are run.
+	static UWorld* GetTestWorld();
+
 protected:
-	FITwinAPITestHelperBase() {}
+	FITwinAPITestHelperBase();
 
 	bool InitServer(MockServerPtr Server);
 
@@ -94,23 +86,8 @@ protected:
 private:
 	MockServerPtr MockServer;
 	bool bInitDone = false;
+
+	FITwinIOAsyncCallbackPtr AsyncCallback;
 };
-
-
-// WebServices does log at Error level in case of errors, which by default would flag the test as failed
-// => Use an intermediate class to change this behavior
-//
-class FAutomationTestBaseNoLogs : public FAutomationTestBase
-{
-public:
-	FAutomationTestBaseNoLogs(const FString& InName, const bool bInComplexTask)
-		: FAutomationTestBase(InName, bInComplexTask)
-	{
-
-	}
-	virtual bool SuppressLogErrors() override { return true; }
-	virtual bool SuppressLogWarnings() override { return true; }
-};
-
 
 #endif // WITH_TESTS

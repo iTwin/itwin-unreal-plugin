@@ -1,4 +1,4 @@
-// Copyright 2020-2024 CesiumGS, Inc. and Contributors
+// Copyright 2020-2026 CesiumGS, Inc. and Contributors
 
 #include "CesiumTestHelpers.h"
 #include "CesiumGeoreference.h"
@@ -6,6 +6,7 @@
 
 #if WITH_EDITOR
 #include "Editor/EditorPerformanceSettings.h"
+#include <EditorViewportClient.h>
 #include "Interfaces/IPluginManager.h"
 #endif
 

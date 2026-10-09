@@ -62,6 +62,20 @@ void MainTimeline::ResetElementTimelineFor(int TimelineIndex, FIModelElementsKey
 	ElementsKeyToTimeline[NewIModelElementsKey] = TimelineIndex;
 }
 
+void MainTimeline::SwapWithLastAndDelete(int TimelineIndex)
+{
+	if (!ensure(TimelineIndex < GetContainer().size()))
+		return;
+	auto& Slot = GetContainer()[TimelineIndex]; // timeline to delete
+	ensure(1 == ElementsKeyToTimeline.erase(Slot->GetIModelElementsKey())); // erase map entry
+	if (TimelineIndex < ((int)GetContainer().size() - 1))
+	{
+		Slot = GetContainer().back(); // replace by the one at the end
+		ElementsKeyToTimeline[Slot->GetIModelElementsKey()] = TimelineIndex; // update map entry
+	}
+	GetContainer().pop_back();
+}
+
 void MainTimeline::OnElementsTimelineModified(ElementTimelineEx& ModifiedTimeline)
 {
 	// See "Note 2" in MainTimelineBase<_ObjectTimeline>::AddTimeline
@@ -82,6 +96,14 @@ void MainTimeline::AddNonAnimatedDuplicate(ITwinElementID const Elem)
 void MainTimeline::RemoveNonAnimatedDuplicate(ITwinElementID const Elem)
 {
 	NonAnimatedDuplicates.erase(Elem);
+}
+
+void MainTimeline::ClearTimelinesData()
+{
+	ElementsKeyToTimeline.clear();
+	NonAnimatedDuplicates.clear();
+	bHasNewOrModifiedTimeline_ = false;
+	Super::ClearTimelinesData();
 }
 
 bool ElementTimelineEx::AppliesToElement(ITwinElementID const& ElementID) const

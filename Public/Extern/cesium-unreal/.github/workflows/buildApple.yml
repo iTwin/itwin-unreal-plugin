@@ -29,13 +29,10 @@ jobs:
     steps:
       - name: Customize BuildConfiguration.xml
         run: |
-          mkdir -p ~/.config/Unreal\ Engine/UnrealBuildTool
+          mkdir -p ~/Documents/Unreal\ Engine/UnrealBuildTool
           # - We limit parallel actions because our builds use a lot more memory than UBT thinks they will.
           # - We set the source code control Provider to None so UBT includes all files in the unity build.
-          printf '<?xml version="1.0" encoding="utf-8" ?>\n<Configuration xmlns="https://www.unrealengine.com/BuildConfiguration">\n    <BuildConfiguration>\n      <MaxParallelActions>2</MaxParallelActions>\n    </BuildConfiguration>\n    <SourceFileWorkingSet><Provider>None</Provider></SourceFileWorkingSet>\n</Configuration>\n' > ~/.config/Unreal\ Engine/UnrealBuildTool/BuildConfiguration.xml
-          # In UE 5.5, UBT apparently loads from ~/Documents instead of ~/.config
-          mkdir -p ~/Documents/Unreal\ Engine/UnrealBuildTool
-          cp ~/.config/Unreal\ Engine/UnrealBuildTool/BuildConfiguration.xml ~/Documents/Unreal\ Engine/UnrealBuildTool/BuildConfiguration.xml
+          printf '<?xml version="1.0" encoding="utf-8" ?>\n<Configuration xmlns="https://www.unrealengine.com/BuildConfiguration">\n    <BuildConfiguration>\n      <MaxParallelActions>2</MaxParallelActions>\n    </BuildConfiguration>\n    <SourceFileWorkingSet><Provider>None</Provider></SourceFileWorkingSet>\n</Configuration>\n' > ~/Documents/Unreal\ Engine/UnrealBuildTool/BuildConfiguration.xml
       - name: Make some more disk space
         run: |
           df -h
@@ -83,7 +80,8 @@ jobs:
           unreal-program-name: ${{ inputs.unreal-program-name }}
       - name: Set environment variables
         run: |
-          export CESIUM_UNREAL_VERSION=$GITHUB_REF_NAME
+          export GH_REF_NAME=$GITHUB_REF_NAME
+          export CESIUM_UNREAL_VERSION=${GH_REF_NAME//\//-} # replace slash with hyphen
           export BUILD_CESIUM_UNREAL_PACKAGE_NAME="${{ inputs.upload-package-base-name }}-${CESIUM_UNREAL_VERSION}"
           # Make these available to subsequent steps
           echo "CESIUM_UNREAL_VERSION=${CESIUM_UNREAL_VERSION}" >> $GITHUB_ENV
@@ -153,7 +151,7 @@ jobs:
           rm -rf extern
       - name: Build plugin for macOS and iOS
         run: |
-          sed -i '' 's/\"EngineVersion\": \"5.5.0\"/\"EngineVersion\": \"${{ inputs.unreal-engine-version }}\"/g' CesiumForUnreal.uplugin
+          sed -i '' 's/\"EngineVersion\": \"5.[[:digit:]].0\"/\"EngineVersion\": \"${{ inputs.unreal-engine-version }}\"/g' CesiumForUnreal.uplugin
           export UNREAL_ENGINE_DIR=$HOME/${{ inputs.unreal-program-name }}
           cd $UNREAL_ENGINE_DIR/Engine/Build/BatchFiles
           ./RunUAT.sh BuildPlugin -Plugin="$GITHUB_WORKSPACE/CesiumForUnreal.uplugin" -Package="$GITHUB_WORKSPACE/packages/CesiumForUnreal" -CreateSubFolder -TargetPlatforms=Mac+iOS -Architecture_Mac=arm64+x64

@@ -1,0 +1,4 @@
+{
+    "urlSuffix": "/imodel/rpc/v4/mode/1/context/36ff2262-0867-4da9-8a20-ab9b343b23e8/imodel/0746e910-e8e9-4ded-a896-3a00aae1c910/changeset/d47d3b3060dc52f3123223d158b529877900c636/IModelReadRpcInterface-3.6.0-queryTextureData",
+    "body": "[{\"iTwinId\":\"36ff2262-0867-4da9-8a20-ab9b343b23e8\",\"iModelId\":\"0746e910-e8e9-4ded-a896-3a00aae1c910\",\"changeset\":{\"id\":\"d47d3b3060dc52f3123223d158b529877900c636\"}},{\"name\":\"0x180000000001\"}]"
+}

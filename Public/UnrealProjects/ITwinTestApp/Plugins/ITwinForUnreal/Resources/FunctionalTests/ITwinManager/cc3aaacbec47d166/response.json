@@ -1,0 +1,4 @@
+{
+    "status": 200,
+    "body": "{\"scene\":{\"id\":\"7a263dce-b6b5-4bd1-9f76-3b85b44e2788\",\"displayName\":\"JD geo-loc\",\"iTwinId\":\"36ff2262-0867-4da9-8a20-ab9b343b23e8\",\"tags\":[],\"createdById\":\"fab7496a-f871-4381-b243-623d0f897e09\",\"lastModifiedById\":\"fab7496a-f871-4381-b243-623d0f897e09\",\"creationTime\":\"2026-07-30T11:00:19.158Z\",\"lastModified\":\"2026-07-30T11:08:36.377Z\",\"sceneData\":{\"objects\":{\"href\":\"https://api.bentley.com/scenes/7a263dce-b6b5-4bd1-9f76-3b85b44e2788/objects?iTwinId=36ff2262-0867-4da9-8a20-ab9b343b23e8\"}}}}"
+}

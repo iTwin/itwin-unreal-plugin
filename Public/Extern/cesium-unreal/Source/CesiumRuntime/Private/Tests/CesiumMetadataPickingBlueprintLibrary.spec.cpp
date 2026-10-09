@@ -1,4 +1,4 @@
-// Copyright 2020-2024 CesiumGS, Inc. and Contributors
+// Copyright 2020-2026 CesiumGS, Inc. and Contributors
 
 #include "CesiumMetadataPickingBlueprintLibrary.h"
 #include "CesiumGltf/ExtensionExtMeshFeatures.h"
@@ -950,9 +950,6 @@ void FCesiumMetadataPickingSpec::Define() {
         pPrimitiveComponent->AttachToComponent(
             pModelComponent,
             FAttachmentTransformRules(EAttachmentRule::KeepRelative, false));
-        CesiumPrimitiveData& primitiveData =
-            pPrimitiveComponent->getPrimitiveData();
-        primitiveData = pPrimitiveComponent->getPrimitiveData();
       });
 
       It("returns empty map for invalid face index", [this]() {
@@ -1301,9 +1298,6 @@ void FCesiumMetadataPickingSpec::Define() {
         pPrimitiveComponent->AttachToComponent(
             pModelComponent,
             FAttachmentTransformRules(EAttachmentRule::KeepRelative, false));
-        CesiumPrimitiveData& primitiveData =
-            pPrimitiveComponent->getPrimitiveData();
-        primitiveData = pPrimitiveComponent->getPrimitiveData();
       });
 
       It("returns values for first feature ID set by default", [this]() {

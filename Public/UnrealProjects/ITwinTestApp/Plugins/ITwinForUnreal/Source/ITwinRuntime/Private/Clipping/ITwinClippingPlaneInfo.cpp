@@ -70,9 +70,14 @@ void FITwinClippingPlaneInfo::DoCreateEdgeSplines(TArray<TObjectPtr<AITwinSpline
 		{  0.5, -0.5, 0. }
 	};
 	auto EdgeSpline = SplineTool.AddSpline(FVector::ZeroVector, Face);
+	if (!ensure(EdgeSpline))
+	{
+		return;
+	}
 	OutEdgeSplines.Add(EdgeSpline);
-#if WITH_EDITOR
-	EdgeSpline->SetActorLabel(TEXT("PlaneEdgeSpline"));
-#endif
 	EdgeSpline->SetActorHiddenInGame(true);
+#if WITH_EDITOR
+	static int32 PlaneEdgeSplineCounter = 0;
+	EdgeSpline->SetCustomActorLabel(FString::Printf(TEXT("PlaneEdgeSpline_%d"), PlaneEdgeSplineCounter++));
+#endif
 }

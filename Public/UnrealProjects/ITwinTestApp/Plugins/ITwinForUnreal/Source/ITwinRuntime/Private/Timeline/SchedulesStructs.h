@@ -16,11 +16,13 @@
 #include <ITwinElementID.h>
 #include <Timeline/AnchorPoint.h>
 #include <Timeline/SchedulesConstants.h>
+#include <Timeline/SchedulesGeneration.h>
 #include <Timeline/TimeInSeconds.h>
 #include <Timeline/TimelineTypes.h>
 
 #include <Compil/BeforeNonUnrealIncludes.h>
 	#include <BeHeaders/Compil/AlwaysFalse.h>
+	#include <BeHeaders/StrongTypes/TaggedValue.h>
 	#include <boost/container_hash/hash.hpp>
 #include <Compil/AfterNonUnrealIncludes.h>
 
@@ -32,6 +34,7 @@
 #include <vector>
 
 class FITwinSchedule;
+class FJsonObject;
 using FSchedLock = std::lock_guard<std::recursive_mutex>;
 
 enum class EGrowthSimulationMode : uint8_t
@@ -45,13 +48,13 @@ enum class EGrowthSimulationMode : uint8_t
 class FSimpleAppearance
 {
 public: // Note: ordered for best packing, not semantics (keep order or change list inits!)
-	FVector Color;
+	FVector Color = FVector::ZeroVector;
 	float Alpha = 1.f;
 	bool bUseOriginalColor : 1 = true;
 	bool bUseOriginalAlpha : 1 = true;
 	FSimpleAppearance()
 	{}
-	FSimpleAppearance(const FVector & color, float alpha, bool useOriginalColor, bool useOriginalAlpha)
+	FSimpleAppearance(const FVector& color, float alpha, bool useOriginalColor, bool useOriginalAlpha)
 		: Color(color)
 		, Alpha(alpha)
 		, bUseOriginalColor(useOriginalColor)
@@ -66,15 +69,17 @@ class FActiveAppearance
 public: // Note: ordered for best packing, not semantics (keep order or change list inits!)
 	FSimpleAppearance Base; ///< color, color/alpha flags, and alpha (see also FinishAlpha)
 	/// Growth direction for the case EGrowthSimulationMode::Custom. Note that it is expressed in the
-	/// transformed base (see FTransformAssignment).
-	FVector GrowthDirectionCustom;
+	/// transformed base (see FPathTransformAssignment, FStaticTransformAssignment).
+	FVector GrowthDirectionCustom = FVector::ZeroVector;
 	float FinishAlpha = 1.f; ///< Alpha at the end of the task
 	/// Growth direction, either along a common axis, or custom, expressed in the iTwin base/convention.
-	/// Note that it should be interpreted in the transformed base (see FTransformAssignment).
+	/// Note that it should be interpreted in the transformed base (see FPathTransformAssignment, FStaticTransformAssignment).
 	EGrowthSimulationMode GrowthSimulationMode = EGrowthSimulationMode::None;
-	/// Not yet impl. in AppearanceProfilesApi.ts
+	/// Not yet impl. in AppearanceProfilesApi.ts so we will ignore it
+	/// (see also To/FromJsonObject for FActiveAppearance)
 	bool bGrowthSimulationBasedOnPercentComplete : 1 = false;
-	/// Not yet impl. in AppearanceProfilesApi.ts
+	/// Not yet impl. in AppearanceProfilesApi.ts so we will ignore it
+	/// (see also To/FromJsonObject for FActiveAppearance)
 	bool bGrowthSimulationPauseDuringNonWorkingTime : 1 = false;
 	/// Means the Element disappears during the task, instead of appearing. It also means the opposite
 	/// cutting plane /orientation/ will be used, but that's NOT equivalent to using the opposite value of
@@ -87,36 +92,19 @@ enum class EProfileAction : uint8_t
 	Neutral, Install, Remove, Temporary, Maintenance
 };
 
-/**
- From Julius Senkus (https://dev.azure.com/bentleycs/Synchro/_git/SynchroScheduleContract/pullRequest/430148#1717072325): "It is the date when the [item] was last modified, but in some cases might be a combination of multiple things, that is why it is defined as string. When you receive the last page, you also receive the last modified item date (delta token), then next time when you do a request, you can provide the delta token and receive only the items that were modified or removed (to update a local cache)."
+DEFINE_STRONG_BOOL(EDeletedProp);
 
- For the moment, we don't support this system here, but this flag is actually an embryo of the future feature.
-*/
-using FVersionToken = bool;
-namespace VersionToken
-{
-	constexpr FVersionToken None = false;
-	constexpr FVersionToken InitialVersion = true;
-}
-
-class FAnimationBindingProperty
+class FAnimProperty
 {
 public:
-	FVersionToken Version = VersionToken::None;
-	/// Until the property has been fully queried (including nested properties, if any), but no longer,
-	/// this member will contain a list of indices in FITwinSchedule::AnimationBindings for bindings sharing
-	/// this property (either directly, or indirectly through a nested property in the case of
-	/// a FTransfoAssignment pointing at a FAnimation3DPath, to name it).
-	/// Upon completion of all queries needed to fully define the property, the list will be used to notify
-	/// the animation bindings that they, in turn, might also now be fully defined. Then the list is emptied.
-	/// An empty list can only mean that the property is fully defined: if it was just created from the reply
-	/// of a batched request and it is not yet known which animation binding will need it, then the list contains
-	/// a single entry equal to INVALID_IDX.
-	std::vector<size_t> Bindings;
+	FString Id;
+	/// Defaulting to true allows to detect creation of new properties without having to rely on default-init of the
+	/// other property details, which may not have an "invalid" default value (see for example EProfileAcion below)
+	EDeletedProp bDeleted = EDeletedProp(true);
 };
 
 /// Default init yields nilpotent profiles (keeps original colors and alphas, not cut planes)
-class FAppearanceProfile : public FAnimationBindingProperty
+class FAppearanceProfile : public FAnimProperty
 {
 public:
 	EProfileAction ProfileType = EProfileAction::Neutral;
@@ -125,32 +113,33 @@ public:
 	FSimpleAppearance FinishAppearance;
 };
 
-/// Keyframe of an animation path
-class FTransformKey
+/// Keyframe of an animation path (note: the base's "Id" property is irrelevant in this particular case)
+class FTransformKey : public FAnimProperty
 {
 public:
 	/// Contains the translation (relative to the anchor point), rotation and scaling, in the iTwin reference
-	/// system. Scaling is apparently not used for 3D paths in the current Synchro tools, but supported here nonetheless.
+	/// system. Scaling is apparently not used for 3D paths in the current Synchro tools, but supported here
+	/// nonetheless. Note that FTransform's default init is the identity transform.
 	FTransform Transform;
 	/// Time of passing at this path point, as a proportion in [0;1] of the task duration. In case of a
 	/// static transform and not a 3D path, it is simply ignored.
 	double RelativeTime = 0.;
 };
 
-inline bool operator<(FTransformKey const& A, FTransformKey const& B)
-{
-	return A.RelativeTime < B.RelativeTime;
-}
-
 /// List of control points of a 3D path. We don't care for the 3D path name and color and thus skip the path
 /// endpoint to query directly the keyframes
-class FAnimation3DPath : public FAnimationBindingProperty
+class FAnimation3DPath : public FAnimProperty
 {
 public:
+	FString Name;
+	FVector Color = FVector::ZeroVector;
 	std::vector<FTransformKey> Keyframes;
 };
 
-class FPathAssignment
+/// Defines an animation path (FAnimation3DPath, through a FPathTransformAssignment) that a (group of) Element(s) can follow
+/// during the task. Animation is cumulated with the appearance profile, which uses the transformed base (for growth
+/// simulation). Trajectory and other properties are linearly interpolated.
+class FPathTransformAssignment : public FAnimProperty
 {
 public:
 	/// Id of an animation path that a (group of) Element(s) can follow during the task.
@@ -170,21 +159,17 @@ public:
 	double MotionStart = 0., MotionEnd = 1.;
 };
 
-/// Defines either a static transformation (a single FTransform expressed in the iTwin reference system,
-/// applying during the whole task), or an animation path (FAnimation3DPath, through a FPathAssignment)
-/// that a (group of) Element(s) can follow during the task.
-/// Animation is cumulated with the appearance profile, which uses the transformed base (for growth
-/// simulation). In case of a path, trajectory and other properties are linearly interpolated.
-class FTransformAssignment : public FAnimationBindingProperty
+/// Defines a static transformation as a single FTransform expressed in the iTwin reference system,
+/// applying during the whole task
+class FStaticTransformAssignment : public FAnimProperty
 {
 public:
-	std::variant<FTransform, FPathAssignment> Transformation;
+	FTransform Transform;
 };
 
-class FScheduleTask : public FAnimationBindingProperty
+class FScheduleTask : public FAnimProperty
 {
 public:
-	FString Id;
 	FString Name;
 	/// Task's start and finish times using dates in UTC time, expressed in seconds since Midnight
 	/// 00:00:00, January 1, 0001
@@ -199,7 +184,7 @@ public:
 /// <li>TransfoAssignmentId, to get the optional transformation(s) of the elements (static or following
 ///		a path)</li>
 /// </ul>
-class FAnimationBinding
+class FAnimationBinding : public FAnimProperty
 {
 public:
 	FString TaskId;
@@ -213,84 +198,16 @@ public:
 	FString AppearanceProfileId;
 	/// Index of the item matching AppearanceProfileId in FITwinSchedule::AppearanceProfiles
 	size_t AppearanceProfileInVec = ITwin::INVALID_IDX;
-	/// \see FTransformAssignment
-	FString TransfoAssignmentId;
-	size_t TransfoAssignmentInVec = ITwin::INVALID_IDX;
-	bool bStaticTransform = true;
-
-	/// For book-keeping: with 'None', notifications to the timeline will create the associated keyframes,
-	/// whereas when true, only an update of the list of affected Elements can be enacted. This flag is
-	/// necessary because of the delay between registration of a new binding in [Known]AnimationBindings
-	/// and the actual call to OnAnimationBinding, since task details, appearance profiles and/or
-	/// transformations (static or along a path) usually need to be queried in the meantime.
-	/// Note that many queries can be skipped when bindings are registered or elements are already known to
-	/// their assigned groups, even when this flag is false, because it means there is necessarily a pending
-	/// query which callback will end up creating the timeline entries for the whole binding.
-	FVersionToken NotifiedVersion = VersionToken::None;
+	/// \see FStaticTransformAssignment
+	FString StaticTransfoAssignmentId;
+	size_t StaticTransfoAssignmentInVec = ITwin::INVALID_IDX;
+	/// \see FPathTransformAssignment
+	FString PathTransfoAssignmentId;
+	size_t PathTransfoAssignmentInVec = ITwin::INVALID_IDX;
 
 	FString ToString(const TCHAR* SpecificElementID = nullptr) const;
-	bool FullyDefined(FITwinSchedule const& Schedule, bool const bAllowPendingQueries,
-					  FSchedLock& Lock) const;
+	bool FullyDefined(FITwinSchedule const& Schedule, FSchedLock& Lock) const;
 };
-
-template <>
-struct std::hash<FAnimationBinding>
-{
-public:
-	size_t operator()(FAnimationBinding const& Key) const
-	{
-		size_t Res = GetTypeHash(Key.TaskId);
-		std::visit([&Res](auto&& ElemOrGroupId)
-			{
-				using T = std::decay_t<decltype(ElemOrGroupId)>;
-				if constexpr (std::is_same_v<T, ITwinElementID>)
-					boost::hash_combine(Res, std::hash<uint64_t>()(ElemOrGroupId.value()));
-				else if constexpr (std::is_same_v<T, FGuid>)
-					boost::hash_combine(Res, GetTypeHash(ElemOrGroupId));
-				else if constexpr (std::is_same_v<T, FString>)
-					boost::hash_combine(Res, GetTypeHash(ElemOrGroupId));
-				else static_assert(always_false_v<T>, "non-exhaustive visitor!");
-			},
-			Key.AnimatedEntities);
-		boost::hash_combine(Res, GetTypeHash(Key.AppearanceProfileId));
-		boost::hash_combine(Res, GetTypeHash(Key.TransfoAssignmentId));
-		return Res;
-	}
-};
-
-template <>
-struct std::hash<std::pair<FString, bool>>
-{
-public:
-	size_t operator()(std::pair<FString, bool> const& Key) const
-	{
-		size_t Res = GetTypeHash(Key.first);
-		boost::hash_combine(Res, Key.second);
-		return Res;
-	}
-};
-
-inline bool operator ==(FAnimationBinding const& A, FAnimationBinding const& B)
-{
-	return A.TaskId == B.TaskId
-		&& A.AnimatedEntities.index() == B.AnimatedEntities.index()
-		&& (2 == A.AnimatedEntities.index()
-			? std::get<2>(A.AnimatedEntities) == std::get<2>(B.AnimatedEntities)
-			: (1 == A.AnimatedEntities.index()
-				? std::get<1>(A.AnimatedEntities) == std::get<1>(B.AnimatedEntities)
-				: std::get<0>(A.AnimatedEntities) == std::get<0>(B.AnimatedEntities)))
-		&& A.AppearanceProfileId == B.AppearanceProfileId
-		&& A.TransfoAssignmentId == B.TransfoAssignmentId;
-}
-
-/// Should be irrelevant ultimately
-enum class EITwinSchedulesGeneration : uint8
-{
-	Legacy,
-	NextGen,
-	Unknown
-};
-
 
 /**
  * Statistics obtained from https://api.bentley.com/schedules/{scheduleId}/animation-statistics
@@ -312,6 +229,8 @@ namespace ITwin::Timeline
 	struct FTaskDependenciesData;
 }
 
+#include "SchedulesStructsOps.inl" // defines hash funcs as well, hence included before FITwinSchedule
+
 /**
  * Schedules obtained from https://api.bentley.com/schedules, filtered by targeted iModel
  */
@@ -319,8 +238,14 @@ class FITwinSchedule
 {
 public:
 	FString Id, Name;
+	/// Increment when older chedule json's will have to be converted to the current version, or simply wiped out
+	static const int CurrentJsonCacheVersion = 1;
+	int JsonCacheVersion = CurrentJsonCacheVersion;
 	/// "Unknown" also means "Not needed", when used with APIM, which hides this detail from us.
 	EITwinSchedulesGeneration Generation = EITwinSchedulesGeneration::Unknown;
+
+	FString BindingsDeltaToken, AppearanceProfilesDeltaToken, TasksDeltaToken, StaticTransfosDeltaToken,
+			Anim3DPathsAssignmentsDeltaToken, Anim3DPathsDeltaToken, Anim3DPathKeyframesDeltaToken;
 
 	FITwinSchedule(FString const& ScheduleId, FString const& ScheduleName,
 				   EITwinSchedulesGeneration ScheduleGen = EITwinSchedulesGeneration::Unknown)
@@ -332,33 +257,48 @@ public:
 	/// Schedule statistics, eg. for download progress feedback purposes: current items received from 4D api
 	FITwinScheduleStats StatisticsCurrent;
 
-	// Not good here, prevents the class from going into a vector (could use a shared pointer? for the moment
-	// the sync will remain in FITwinSchedulesImport::FImpl
-	//std::[recursve_]mutex Mutex;
+	// Not good here, prevents the class from going into a vector (which we no longer do btw, so we could move the
+	// mutex here back from FITwinSchedulesImport::FImpl)
+	//std::[recursive_]mutex Mutex;
 
 	std::vector<FAnimationBinding> AnimationBindings;
 	std::vector<FScheduleTask> Tasks;
 	std::vector<FAppearanceProfile> AppearanceProfiles;
-	std::vector<FTransformAssignment> TransfoAssignments;
+	std::vector<FStaticTransformAssignment> StaticTransfoAssignments;
+	std::vector<FPathTransformAssignment> PathTransfoAssignments;
 	std::vector<FAnimation3DPath> Animation3DPaths;
 
 	size_t NumGroups() const;
 	size_t GetNextGroupID() const;
-	void CreateNextGroup();
+	void CreateNextGroup(bool const bIsElemIDGroup);
 	void CreateNextGroup(FElementsGroup&& Group);
 	bool AddToGroup(size_t InVec, ITwinElementID const ElemID);
 	bool AddToGroup(size_t InVec, FGuid const FedGUID);
+	void ResetElemIDGroups();
 
 	template<typename TFedGUID2ElemID>
 	FElementsGroup const& GetGroupAsElementIDs(size_t GroupInVec, TFedGUID2ElemID const& FedGUID2ElemID)
 	{
-		if (EITwinSchedulesGeneration::NextGen == Generation)
+		if (!ensure(ITwin::INVALID_IDX != GroupInVec
+			&& (GroupInVec < ElemIDGroups.size() || GroupInVec < FedGUIDGroups.size())))
 		{
+			static FElementsGroup Dummy;
+			return Dummy;
+		}
+		if (EITwinSchedulesGeneration::NextGen == Generation
+			// Adding this flexibility for test data (see comment in FITwinSchedule::AddToGroup), which has
+			// ElemIDGroups filled and an empty FedGUIDGroups even though it's (simulated) NextGen
+			&& ElemIDGroups.size() <= FedGUIDGroups.size())
+		{
+			// Schedule increments bringing bindings changes and thus possible group updates should reset ElemIDGroups
+			// entirely, to make sure the groups are rebuilt (eg. the same group could have an element added and
+			// another removed, so comparing the size is of course not sufficient)
+			ensure(ElemIDGroups.empty() || ElemIDGroups.size() == FedGUIDGroups.size());
 			if (ElemIDGroups.empty())
 				ElemIDGroups.resize(FedGUIDGroups.size());
 			auto& Group = ElemIDGroups[GroupInVec];
 			auto&& FedGroup = FedGUIDGroups[GroupInVec];
-			if (Group.empty()) // not  "!= FedGroup.size()" in case FedGUID2ElemID returns false
+			if (Group.empty()) // not  "!= FedGroup.size()" in case FedGUID2ElemID has returned false earlier
 			{
 				Group.reserve(FedGroup.size());
 				ITwinElementID Found;
@@ -368,8 +308,10 @@ public:
 			}
 			return Group;
 		}
-		else
+		else // GroupInVec validity is ensured above
+		{
 			return ElemIDGroups[GroupInVec];
+		}
 	}
 
 private:
@@ -381,6 +323,8 @@ private:
 	/// made to run concurrently to reduce loading times.
 	/// Only one array is used, either this one for Next-gen schedules, or ElemIDGroups for Legacy.
 	std::vector<std::unordered_set<FGuid>> FedGUIDGroups;
+
+	void RebuildKnownProperties();
 
 public:
 	/// Known animation bindings: NOT to avoid useless requests to task details, appearance profiles, etc.
@@ -397,14 +341,21 @@ public:
 	std::unordered_map<FString, size_t/*index in ...*/> KnownTasks;
 	std::unordered_map<FString, size_t/*index in ...*/> KnownGroups;
 	std::unordered_map<FString, size_t/*index in ...*/> KnownAppearanceProfiles;
-	std::unordered_map<std::pair<FString, bool/*bStaticTransform*/>, size_t/*...*/> KnownTransfoAssignments;
+	std::unordered_map<FString, size_t/*index in ...*/> KnownStaticTransfoAssignments;
+	std::unordered_map<FString, size_t/*index in ...*/> KnownPathTransfoAssignments;
 	std::unordered_map<FString, size_t/*index in ...*/> KnownAnimation3DPaths;
-
-	// Removed - blame here
-	//std::unordered_map<ITwinElementID, FVersionToken> AnimBindingsFullyKnownForElem;
 
 	void Reserve(size_t Count);
 
+	bool FullyDefined(FSchedLock& Lock) const;
+
+	[[nodiscard]] TSharedPtr<FJsonObject> ToJson() const;
+	[[nodiscard]] FString ToCondensedJsonString() const;
+	[[nodiscard]] FString ToPrettyJsonString() const;
+	bool FromJson(TSharedPtr<FJsonObject> const& Root);
+	bool FromJsonString(FString const& JsonString);
+	bool SaveToJson(FString const& Path, bool bPretty, FSchedLock&) const;
+	bool ReadFromJson(FString const& Path, FSchedLock&);
 	/// Return a string description with some statistics
 	FString ToString() const;
 
@@ -416,8 +367,9 @@ public:
 		FAnimationBinding const& ThisBinding, EProfileAction const ThisAction,
 		ITwin::Timeline::FTaskDependenciesData& TaskDeps) const;
 
+	// In ScheduleComparison.inl
+	friend bool operator==(const FITwinSchedule& A, const FITwinSchedule& B);
+
 }; // class FITwinSchedule
 
-using FOnAnimationBindingAdded =
-	std::function<void(FITwinSchedule const&, size_t const/*AnimationBindingIndex*/, FSchedLock&)>;
-using FOnReceivedScheduleStats = std::function<void(FITwinScheduleStats const&, FSchedLock&)>;
+using FOnReceivedScheduleStats = std::function<void(FITwinScheduleStats const&)>;

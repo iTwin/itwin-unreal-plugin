@@ -8,72 +8,12 @@
 
 #pragma once
 
-#include "CoreMinimal.h"
-#include "Blueprint/UserWidget.h"
-#include "Widgets/SCompoundWidget.h"
-#include "Misc/Attribute.h"
+#include <Callouts/ITwin2DCalloutWidgetImpl.h>
 
 #include "ITwin2DAnnotationWidgetImpl.generated.h"
 
-class UBorder;
-class UImage;
-class UTextBlock;
-class UITwinLineWidget;
-
 UCLASS()
-class ITWINRUNTIME_API UITwin2DAnnotationWidgetImpl : public UUserWidget
+class ITWINRUNTIME_API UITwin2DAnnotationWidgetImpl : public UITwin2DCalloutWidgetImpl
 {
     GENERATED_BODY()
-public:
-
-	UFUNCTION(BlueprintCallable, Category = "Interface")
-	void ToggleShowLabel(bool shown);
-
-	UFUNCTION(BlueprintCallable, Category = "Interface")
-	void SetLabelOnly(bool on);
-
-	UFUNCTION(BlueprintCallable, Category = "Interface")
-	bool IsLabelShown() const;
-	UFUNCTION(BlueprintCallable, Category = "Interface")
-	FText GetText() const;
-	UFUNCTION(BlueprintCallable, Category = "Interface")
-	void SetText(FText inText);
-	UFUNCTION(BlueprintCallable, Category = "Interface")
-	void SetPinPosition(FVector2D pos);
-	UFUNCTION(BlueprintCallable, Category = "Interface")
-	void SetLabelPosition(FVector2D pos);
-
-	UFUNCTION(BlueprintCallable, Category = "Interface")
-	void SetBackgroundColor(const FLinearColor& inColor);
-	UFUNCTION(BlueprintCallable, Category = "Interface")
-	FLinearColor GetBackgroundColor() const;
-	UFUNCTION(BlueprintCallable, Category = "Interface")
-	void SetTextColor(const FLinearColor& inColor);
-	UFUNCTION(BlueprintCallable, Category = "Interface")
-	FLinearColor GetTextColor() const;
-	UFUNCTION(BlueprintCallable, Category = "Interface")
-	void SetFontSize(int size);
-	UFUNCTION(BlueprintCallable, Category = "Interface")
-	void SetFontObject(const UObject* InFontObject);
-
-protected:
-	FVector2D pinPosition;
-	FVector2D labelPosition;
-	
-private:
-	void UpdateComponentsVisibility();
-	//UPROPERTY(Meta = (BindWidget))
-	//UCanvasPanel* canvas = nullptr;
-	UPROPERTY(Meta = (BindWidget))
-	UBorder* Pin = nullptr;
-	UPROPERTY(Meta = (BindWidget))
-	UBorder* Label = nullptr;
-	UPROPERTY(meta = (BindWidget))
-	UTextBlock* content = nullptr;
-	UPROPERTY(meta = (BindWidget))
-	UImage* Image = nullptr;
-	UPROPERTY(meta = (BindWidget))
-	UITwinLineWidget* line = nullptr;
-	bool bLabelShown = true;
-	bool bLabelOnly = false;
 };

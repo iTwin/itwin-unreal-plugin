@@ -13,7 +13,7 @@ Some important facts to understand before continuing:
 
 The Cesium for Unreal plugin code includes and links with a great deal of Unreal Engine code. It is built by the Unreal Build Tool, even when you compile from within Visual Studio.
 
-The MSVC compiler version that Epic used to build a release version of Unreal Engine can be found in that version's release notes. For example, the [release notes for Unreal Engine 5.5](https://dev.epicgames.com/documentation/en-us/unreal-engine/unreal-engine-5-5-release-notes?application_version=5.5) include this information:
+The MSVC compiler version that Epic used to build a release version of Unreal Engine can be found in that version's release notes. For example, the [release notes for Unreal Engine 5.6](https://dev.epicgames.com/documentation/en-us/unreal-engine/unreal-engine-5-6-release-notes?application_version=5.6) include this information:
 
 > * IDE Version the Build farm compiles against
 >   * Visual Studio 2022 17.8 14.38.33130 toolchain and Windows 10 SDK (10.0.22621.0)
@@ -22,7 +22,7 @@ For maximum compatibility, released versions of Cesium for Unreal should be buil
 
 However, when compiling for your own development purposes, you can use this version or any compatible newer one. In general, newer compilers work just fine, but not always. Older Unreal Engine versions are not tested against MSVC toolchain versions that came out after they're released (for obvious reasons), so sometimes, these new versions can't compile the older Unreal Engine code.
 
-In addition, Unreal Engine versions sometimes specify a _preferred_ MSVC version that the Unreal Build Tool will automatically use if it's installed. This is found in `PreferredVisualCppVersions` in `Engine/Config/Windows/Windows_SDK.json` in the UE installation. For UE 5.5 and 5.6 it is 14.38, and for 5.7 it is 14.44.
+In addition, Unreal Engine versions sometimes specify a _preferred_ MSVC version that the Unreal Build Tool will automatically use if it's installed. This is found in `PreferredVisualCppVersions` in `Engine/Config/Windows/Windows_SDK.json` in the UE installation. For UE 5.6 it is 14.38; for 5.7 and 5.8 it is 14.44.
 
 It's important to be aware of which MSVC version the Unreal Build Tool is using on your system so that you can make sure cesium-native and vcpkg dependencies (see below) use that same version _or older_.
 
@@ -50,7 +50,7 @@ To see what complete version numbers you have installed, look in `C:\Program Fil
 
 vcpkg has hard-coded logic to choose the very latest version of the compiler that you have installed. It completely ignores all the usual ways that different compiler versions can be selected, such as setting the defaults file (`"C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.props"`), setting environment variables or running the `vcvarsall` script.
 
-As explained above, if you're building for Unreal Engine 5.5 and 5.6, Unreal Build Tool will choose v14.38 of the compiler if it's installed, and 5.7 will use v14.44. This will lead to linker errors if you have a newer version installed, because vcpkg chooses the latest compiler version, and you'll be linking with an older compiler than was used to compile.
+As explained above, if you're building for Unreal Engine 5.6, Unreal Build Tool will choose v14.38 of the compiler if it's installed, and 5.7 and 5.8 will use v14.44. This will lead to linker errors if you have a newer version installed, because vcpkg chooses the latest compiler version, and you'll be linking with an older compiler than was used to compile.
 
 The easiest way to select a compiler for vcpkg to use is to set the `VCPKG_PLATFORM_TOOLSET_VERSION` environment variable. Despite the name, this is not built-in vcpkg functionality, but is instead something that our `x64-windows-unreal.cmake` triplet file looks for explicitly. To set it, run the following in a PowerShell window:
 

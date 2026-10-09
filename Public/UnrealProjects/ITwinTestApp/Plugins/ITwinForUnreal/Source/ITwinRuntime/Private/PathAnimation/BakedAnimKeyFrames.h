@@ -32,6 +32,7 @@ namespace AdvViz::SDK
 enum class EBakedKeyFramesStatus : uint8
 {
 	Invalid,
+	NeedsUpdate,
 	InProgress,
 	Ready
 };
@@ -54,13 +55,19 @@ public:
 	void SetSpeed(float InSpeed);
 	void BakeSpline(UWorld* World, const AdvViz::SDK::RefID& SplineId, float InSpeed, int32 InLaneIdx, std::optional<float> InOffset = {}/*corresponds to the offset of the lane*/);
 	int32 GetKeyframeIndex(float Time);
-	FTransform GetTransform(float Time, bool bReverse = false);
+	FTransform GetTransform(float Time, bool bNeedAlignmentFix, bool bReverse);
+
+	// Helper to get the total path length traveled at the given speed
+	float GetPathLength() const { return TotalLength; }
+
+	// Helper to get the speed this keyframe data is baked for (in cm/s)
+	float GetSpeed() const { return TotalLength > 0.f && TotalTime > 0.f ? TotalLength / TotalTime : 0.f; }
 
 private:
 	TArray<FTransform> transforms;
 	float TotalLength = 0.f;
 	float TotalTime = 0.f;
-	float DistanceStep = 30 / 25.f; // sample every 1/25s for an object moving at 1 km/h
+	float BakedFramesStep = 50.f; // 50 cm between the baked frames
 	int32 LaneIdx = 0;
 	EBakedKeyFramesStatus Status = EBakedKeyFramesStatus::Invalid;
 };

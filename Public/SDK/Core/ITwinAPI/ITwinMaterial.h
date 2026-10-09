@@ -76,13 +76,14 @@ namespace AdvViz::SDK
 
 	struct ITwinChannel
 	{
-		ITwinColor color = { 0., 0., 0., 1. };
+		std::optional<ITwinColor> color = std::nullopt;
 		ITwinChannelMap colorMap;
 
 		double intensity = 0.;
 		ITwinChannelMap intensityMap; // always grayscale
 
 		bool operator == (ITwinChannel const& rhs) const;
+		bool HasColor() const { return color.has_value(); }
 		bool HasTextureMap() const {
 			return colorMap.HasTexture() || intensityMap.HasTexture();
 		}

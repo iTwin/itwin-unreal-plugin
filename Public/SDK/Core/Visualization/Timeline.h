@@ -60,7 +60,7 @@ namespace AdvViz::SDK
 			std::optional<std::string> id; // is set by decoration service, optional not set when not already saved
 		};
 		// keyframe should be sorted by time first
-		virtual bool CompareForOrder(ITimelineKeyframe*) const = 0;
+		virtual bool CompareForOrder(const ITimelineKeyframe*) const = 0;
 		virtual const KeyframeData& GetData() const = 0;
 		// note: time and id are immutable, changes on these properties will be ignored. If you need to change them recreate a new keyframe in ITimelineClip.
 		virtual void Update(const KeyframeData& data) = 0;
@@ -69,6 +69,13 @@ namespace AdvViz::SDK
 
 		// should be use only by ITimelineClip
 		virtual void InternalCreate(const KeyframeData& data, bool markAsChanged = true) = 0;
+
+	private:
+		// Change the time of the key-frame. Should be use only by TimelineClip, because the ordering of the
+		// key-frames must be preserved.
+		virtual void SetTime(double time) = 0;
+
+		friend class TimelineClip;
 	};
 
 	class ADVVIZ_LINK TimelineKeyframe : public ITimelineKeyframe, public Tools::TypeId<TimelineKeyframe>
@@ -77,7 +84,7 @@ namespace AdvViz::SDK
 		 TimelineKeyframe();
 		 virtual ~TimelineKeyframe();
 
-		 bool CompareForOrder(ITimelineKeyframe*) const override;
+		 bool CompareForOrder(const ITimelineKeyframe*) const override;
 		 void InternalCreate(const KeyframeData& data, bool markAsChanged = true) override;
 		 const KeyframeData& GetData() const override;
 		 void Update(const KeyframeData& data) override;
@@ -94,6 +101,10 @@ namespace AdvViz::SDK
 		 using Tools::TypeId<TimelineKeyframe>::GetTypeId;
 		 std::uint64_t GetDynTypeId() const override { return GetTypeId(); }
 		 bool IsTypeOf(std::uint64_t i) const override { return (i == GetTypeId()); }
+
+	private:
+		void SetTime(double time) override;
+
 	protected:
 		struct Impl;
 		const std::unique_ptr<Impl> impl_;
@@ -148,6 +159,11 @@ namespace AdvViz::SDK
 		void SetSnapshotId(const std::string& Id);
 		std::string GetSnapshotId() const;
 		void GetKeyFrameSnapshotIds(std::vector<std::string>& Ids) const;
+
+		//! Set the key-frame times in sorted order. The input vector must be strictly increasing
+		//! (once rounded to the millisecond) and have exactly one entry per existing key-frame.
+		//! Returns an error and leaves the clip untouched if those preconditions are not met.
+		expected<void, std::string> SetKeyFrameTimes(const std::vector<float>& sortedTimes);
 
 		//------------------------------------------------------------------------------
 		/// overridden from ISavableItem

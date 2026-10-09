@@ -30,31 +30,22 @@ namespace AdvViz::SDK::Tools
 
 	void AssertHandlerFct(const libassert::assertion_info& info)
 	{
+		if (BE_GETLOG("BE_ASSERT"))
+		{
+			BE_LOGE("BE_ASSERT", info.to_string(0, libassert::color_scheme::blank));
+		}
+		else
+		{
+			std::cerr << info.to_string() << std::endl;
+			(void)fflush(stderr);
+		}
 		switch (info.type) {
 		case libassert::assert_type::assertion:
 		case libassert::assert_type::debug_assertion:
 		case libassert::assert_type::assumption:
-			if (BE_GETLOG("BE_ASSERT"))
-			{
-				BE_LOGD("BE_ASSERT", info.to_string(0, libassert::color_scheme::blank));
-			}
-			else
-			{
-				std::cerr << info.to_string() << std::endl;
-				(void)fflush(stderr);
-			}
 			break;
 		case libassert::assert_type::panic:
 		case libassert::assert_type::unreachable:
-			if (BE_GETLOG("BE_ASSERT"))
-			{
-				BE_LOGD("BE_ASSERT", info.to_string(0, libassert::color_scheme::blank));
-			}
-			else
-			{
-				std::cerr << info.to_string() << std::endl;
-				(void)fflush(stderr);
-			}
 			std::abort();
 			// Breaking here as debug CRT allows aborts to be ignored, if someone wants to make a
 			// debug build of this library

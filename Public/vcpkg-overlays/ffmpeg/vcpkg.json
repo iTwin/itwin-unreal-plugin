@@ -1,6 +1,6 @@
 {
   "name": "ffmpeg",
-  "version": "8.1.2",
+  "version": "9.0.1",
   "port-version": 1,
   "description": [
     "A library to decode, encode, transcode, mux, demux, stream, filter and play pretty much anything that humans and machines have created.",
@@ -165,6 +165,14 @@
           "name": "ffmpeg",
           "default-features": false,
           "features": [
+            "svt-av1"
+          ],
+          "platform": "!x86 & !arm32 & !uwp"
+        },
+        {
+          "name": "ffmpeg",
+          "default-features": false,
+          "features": [
             "opengl"
           ],
           "platform": "!uwp & !(arm64 & windows)"
@@ -284,7 +292,11 @@
     "ass": {
       "description": "Libass subtitles rendering, needed for subtitles and ass filter support in ffmpeg",
       "dependencies": [
-        "libass"
+        "libass",
+        {
+          "name": "libiconv",
+          "platform": "windows & static"
+        }
       ]
     },
     "avcodec": {
@@ -625,6 +637,13 @@
       "description": "SFTP protocol via libssh",
       "dependencies": [
         "libssh"
+      ]
+    },
+    "svt-av1": {
+      "description": "AV1 encoding via libSvtAv1Enc",
+      "supports": "!x86 & !arm32 & !uwp",
+      "dependencies": [
+        "svt-av1"
       ]
     },
     "swresample": {

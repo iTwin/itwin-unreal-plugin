@@ -10,7 +10,10 @@
 #include <PathAnimation/ITwinAnimPathHelper.h>
 #include <Spline/ITwinSplineHelper.h>
 #include <PathAnimation/BakedAnimKeyFrames.h>
+#include <PathAnimation/ITwinAnimPathShaderParameters.h>
+
 #include <Components/SplineComponent.h>
+#include <Engine/World.h>
 
 #include <Compil/BeforeNonUnrealIncludes.h>
 #	include <BeHeaders/Compil/EnumSwitchCoverage.h>
@@ -28,6 +31,9 @@ struct UITwinAnimPathHelper::FImpl
 	AdvViz::SDK::IAnimationPathInfoPtr PathProp;
 	TArray<TStrongObjectPtr<UBakedAnimKeyFrames> > BakedFramesPerLane;
 	TArray<FString> Objects; // same as 'objects' of PathProp but in FString format
+	// Spline length at the moment of last baking (used to detect if spline length
+	// has changed and significantly after edition and therefore path repopulation is required)
+	float BakedSplineLength = 0.f;
 	bool IsPaused = false;
 
 	FImpl(UITwinAnimPathHelper& InOwner)
@@ -110,8 +116,10 @@ void UITwinAnimPathHelper::FImpl::BakeAnimationIfNeeded(AdvViz::SDK::ISplinePtr 
 		return;
 
 	for (int32 i = 0; i < BakedFramesPerLane.Num(); ++i)
-		BakedFramesPerLane[i]->BakeSpline(Owner.GetWorld(), splineInst->GetId(), Owner.GetLaneSpeed(i), i, Owner.GetLaneOffset(i, false));
+		if (BakedFramesPerLane[i].IsValid())
+			BakedFramesPerLane[i]->BakeSpline(Owner.GetWorld(), splineInst->GetId(), Owner.GetLaneSpeed(i), i, Owner.GetLaneOffset(i, false));
 
+	BakedSplineLength = Owner.SplineHelper->GetSplineComponent()->GetSplineLength();
 	lastBakingRequestTime = -1.f;
 }
 
@@ -134,11 +142,11 @@ UBakedAnimKeyFrames* UITwinAnimPathHelper::GetBakedFrames(int laneIdx/* = 0*/)
 	return Impl->GetBakedFrames(laneIdx);
 }
 
-FTransform UITwinAnimPathHelper::GetStartTransform(int laneIdx/* = 0*/) const
+FTransform UITwinAnimPathHelper::GetStartTransform(int laneIdx, bool bNeedAlignmentFix) const
 {
 	if (auto Frames = Impl->GetBakedFrames(laneIdx))
 		if (Frames->IsReady())
-			return Frames->GetTransform(0.f, IsInvDirLane(laneIdx));
+			return Frames->GetTransform(0.f, bNeedAlignmentFix, IsInvDirLane(laneIdx));
 	return FTransform(SplineHelper->GetSplineComponent()->GetLocationAtDistanceAlongSpline(0.0, ESplineCoordinateSpace::World));
 }
 
@@ -147,7 +155,17 @@ float UITwinAnimPathHelper::GetLaneLength(int laneIdx) const
 	if (auto Frames = Impl->GetBakedFrames(laneIdx))
 		if (Frames->IsReady())
 			return Frames->GetTotalLength();
-	return SplineHelper->GetSplineComponent()->GetSplineLength();
+	return GetSplineLength();
+}
+
+float UITwinAnimPathHelper::GetSplineLength() const
+{
+	return SplineHelper.IsValid() ? SplineHelper->GetSplineComponent()->GetSplineLength() : 0.f;
+}
+
+float UITwinAnimPathHelper::GetBakedSplineLength() const
+{
+	return Impl->BakedSplineLength;
 }
 
 void UITwinAnimPathHelper::Init(AITwinSplineHelper* InSplineHelper, AdvViz::SDK::IAnimationPathInfoPtr InPathProp)
@@ -159,6 +177,38 @@ void UITwinAnimPathHelper::Init(AITwinSplineHelper* InSplineHelper, AdvViz::SDK:
 	
 	// TODO: apply the following right after spline tool activation
 	UpdateSpline();
+
+	if (SplineHelper.IsValid())
+	{
+		// Fill shader parameters for path animation (e.g. lane count, lane width, separator width, etc.)
+		auto PathProp = Impl->PathProp->GetRAutoLock();
+
+		// we don't want to apply those values to the mesh components yet: wewill send all values at once
+		// afterwards, to avoid multiple updates of the mesh components.
+		constexpr bool bApplyToMeshComponents = false;
+		SplineHelper->SetPathAnimShaderScalarParameterValue(
+			EITwinAnimPathShaderScalarParam::NumLanes,
+			static_cast<float>(PathProp->GetLaneCount()),
+			bApplyToMeshComponents);
+		SplineHelper->SetPathAnimShaderScalarParameterValue(
+			EITwinAnimPathShaderScalarParam::LaneWidth,
+			PathProp->GetLaneWidth(),
+			bApplyToMeshComponents);
+		SplineHelper->SetPathAnimShaderScalarParameterValue(
+			EITwinAnimPathShaderScalarParam::CentralSpacing,
+			PathProp->GetSepWidth(),
+			bApplyToMeshComponents);
+		SplineHelper->SetPathAnimShaderScalarParameterValue(
+			EITwinAnimPathShaderScalarParam::TwoWay,
+			PathProp->IsOneWay() ? 0.f : 1.f,
+			bApplyToMeshComponents);
+		SplineHelper->SetPathAnimShaderScalarParameterValue(
+			EITwinAnimPathShaderScalarParam::LeftHandDrive,
+			PathProp->HasInvDir() ? 1.f : 0.f,
+			bApplyToMeshComponents);
+		// Then update meshes with all shader parameters at once.
+		SplineHelper->TransferPathAnimShaderParametersToMeshes();
+	}
 }
 
 AdvViz::SDK::RefID UITwinAnimPathHelper::GetPathRefID() const
@@ -293,6 +343,12 @@ void UITwinAnimPathHelper::SetInvDirection(bool bInInvDirection)
 {
 	auto pathProp = Impl->PathProp->GetAutoLock();
 	pathProp->SetInvDir(bInInvDirection);
+
+	if (SplineHelper.IsValid())
+	{
+		SplineHelper->SetPathAnimShaderScalarParameterValue(
+			EITwinAnimPathShaderScalarParam::LeftHandDrive, bInInvDirection ? 1.f : 0.f);
+	}
 }
 
 bool UITwinAnimPathHelper::IsLoop() const
@@ -366,6 +422,12 @@ void UITwinCrowdAnimPathHelper::SetOneWay(bool bInOneWay)
 {
 	auto pathProp = Impl->PathProp->GetAutoLock();
 	pathProp->SetOneWay(bInOneWay);
+
+	if (SplineHelper.IsValid())
+	{
+		SplineHelper->SetPathAnimShaderScalarParameterValue(
+			EITwinAnimPathShaderScalarParam::TwoWay, bInOneWay ? 0.f : 1.f);
+	}
 }
 
 int UITwinCrowdAnimPathHelper::GetLaneCount() const
@@ -378,6 +440,12 @@ void UITwinCrowdAnimPathHelper::SetLaneCount(int InLaneCount)
 {
 	auto pathProp = Impl->PathProp->GetAutoLock();
 	pathProp->SetLaneCount(InLaneCount);
+
+	if (SplineHelper.IsValid())
+	{
+		SplineHelper->SetPathAnimShaderScalarParameterValue(
+			EITwinAnimPathShaderScalarParam::NumLanes, static_cast<float>(InLaneCount));
+	}
 }
 
 float UITwinCrowdAnimPathHelper::GetLaneWidth() const
@@ -390,6 +458,12 @@ void UITwinCrowdAnimPathHelper::SetLaneWidth(float InLaneWidth)
 {
 	auto pathProp = Impl->PathProp->GetAutoLock();
 	pathProp->SetLaneWidth(InLaneWidth);
+
+	if (SplineHelper.IsValid())
+	{
+		SplineHelper->SetPathAnimShaderScalarParameterValue(
+			EITwinAnimPathShaderScalarParam::LaneWidth, InLaneWidth);
+	}
 }
 
 float UITwinCrowdAnimPathHelper::GetDensity() const
@@ -419,6 +493,12 @@ void UITwinTrafficAnimPathHelper::SetSeparatorWidth(float InSeparatorWidth)
 {
 	auto pathProp = Impl->PathProp->GetAutoLock();
 	pathProp->SetSepWidth(InSeparatorWidth);
+
+	if (SplineHelper.IsValid())
+	{
+		SplineHelper->SetPathAnimShaderScalarParameterValue(
+			EITwinAnimPathShaderScalarParam::CentralSpacing, InSeparatorWidth);
+	}
 }
 
 float UITwinTrafficAnimPathHelper::GetSpeed() const

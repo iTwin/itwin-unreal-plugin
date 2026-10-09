@@ -71,7 +71,7 @@ public:
 
 	/// Create a dummy mapping composed of just one tile using one material.
 	static void BuildFromNonCesiumMesh(TSceneMappingPtr& SceneMapping,
-		const TWeakObjectPtr<UStaticMeshComponent>& MeshComponent,
+		UStaticMeshComponent& MeshComponent,
 		uint64_t ITwinMaterialID);
 
 private:

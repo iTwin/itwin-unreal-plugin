@@ -1,0 +1,4 @@
+{
+    "status": 200,
+    "body": "----------------------------94ebdb8660d77e850c70dee1\r\nContent-Disposition: form-data; name=\"objects\"\r\n\r\n{\"width\":870,\"height\":870,\"format\":0,\"transparency\":0,\"bytes\":{\"isBinary\":true,\"index\":0,\"size\":58396,\"chunks\":1}}\r\n----------------------------94ebdb8660d77e850c70dee1\r\nContent-Disposition: form-data; name=\"data-0\"\r\nContent-Type: application/octet-stream\r\n\r\n??"
+}

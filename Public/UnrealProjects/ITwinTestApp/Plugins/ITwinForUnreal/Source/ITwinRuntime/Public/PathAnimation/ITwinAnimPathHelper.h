@@ -60,7 +60,7 @@ ENUM_RANGE_BY_COUNT(EITwinAnimPathRepeatMode, EITwinAnimPathRepeatMode::Count);
 
 
 UCLASS()
-class UITwinAnimPathHelper : public UObject
+class ITWINRUNTIME_API UITwinAnimPathHelper : public UObject
 {
 	GENERATED_BODY()
 
@@ -90,11 +90,13 @@ public:
 	bool HasBakedAnimation() const;
 	void InvalidateBakedAnimation();
 	void BakeAnimationIfNeeded();
-	FTransform GetStartTransform(int laneIdx = 0) const;
+	FTransform GetStartTransform(int laneIdx, bool bNeedAlignmentFix) const;
 	float GetLaneLength(int laneIdx) const;
+	float GetSplineLength() const;
+	float GetBakedSplineLength() const;
 	// Total number of lanes in both directions.
 	int GetFullLaneCount() const { return IsOneWay() ? GetLaneCount() : GetLaneCount() * 2; }
-	float GetRoadWidth() const { return GetFullLaneCount() * GetLaneWidth() + GetSeparatorWidth(); }
+	float GetRoadWidth() const { return GetFullLaneCount() * GetLaneWidth() + (IsOneWay() ? 0 : GetSeparatorWidth()); }
 
 	// Parameters common to all path animation types (object, crowd, traffic)
 

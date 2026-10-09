@@ -641,27 +641,23 @@ void UITwinSceneMappingBuilder::OnTileMeshPrimitiveLoaded(ICesiumLoadedTilePrimi
 	for (auto const& pCollisionMesh : MeshComponent.GetBodySetup()->TriMeshGeometries)
 	{
 		pCollisionMesh->SetTriangleHitFilter(
-			[sceneMappingPtr, &FeatureIdSet, pElementPropertyTable, &ClippingHelperPtr, &MeshComponent]
+			[pIModel = this->IModel, &FeatureIdSet, pElementPropertyTable, &ClippingHelperPtr, &MeshComponent]
 			(FVector const& Position, uint32/*FaceIndex*/,
-			 uint32 VertexIndex, uint32/*VertexIndexB*/, uint32/*VertexIndexC*/)
+				uint32 VertexIndex, uint32/*VertexIndexB*/, uint32/*VertexIndexC*/)
 			{
-				FVector const WorldPosition = MeshComponent.GetComponentTransform().TransformPosition(Position);
-				if (ClippingHelperPtr && ClippingHelperPtr->ShouldCutOut(WorldPosition))
-					return false;
-				const int64 FeatureID = UCesiumFeatureIdSetBlueprintLibrary::GetFeatureIDForVertex(
-					FeatureIdSet, static_cast<int64>(VertexIndex));
-				if (FeatureID < 0)
+				if (!IsValid(pIModel))
 					return true;
-				const ITwinFeatureID ITwinFeatID = ITwinFeatureID(FeatureID);
-				ITwinElementID ElementID = FeatureIDToITwinID<ITwinElementID>(pElementPropertyTable, FeatureID);
-				ensure(IsInGameThread());
-				ITwinScene::ElemIdx ElemRank;
-				{
-					auto sceneMapping = sceneMappingPtr->GetAutoLock(); //should be GetRAutoLock but GetElementForSLOW & IsElementVisible are not const
-					if (!sceneMapping->GetElementForSLOW(ElementID, &ElemRank))
-						return true;
-					return sceneMapping->IsElementVisible(ElemRank, WorldPosition);
-				}
+				auto&& CalcElemID = [VertexIndex, &FeatureIdSet, pElementPropertyTable]()
+					{
+						const int64 FeatureID = UCesiumFeatureIdSetBlueprintLibrary::GetFeatureIDForVertex(
+							FeatureIdSet, static_cast<int64>(VertexIndex));
+						if (FeatureID < 0)
+							return ITwin::NOT_ELEMENT;
+						const ITwinFeatureID ITwinFeatID = ITwinFeatureID(FeatureID);
+						return FeatureIDToITwinID<ITwinElementID>(pElementPropertyTable, FeatureID);
+					};
+				FVector const WorldPosition = MeshComponent.GetComponentTransform().TransformPosition(Position);
+				return GetInternals(*pIModel).IsVisibleAtPoint(CalcElemID, WorldPosition);
 			});
 	}
 #endif // BE_IS_USING_BENTLEY_UNREAL
@@ -1209,7 +1205,7 @@ void UITwinSceneMappingBuilder::OnTileUnloading(ICesiumLoadedTile& LoadedTile)
 
 // static
 void UITwinSceneMappingBuilder::BuildFromNonCesiumMesh(TSceneMappingPtr& SceneMapping,
-	const TWeakObjectPtr<UStaticMeshComponent>& MeshComponent, uint64_t ITwinMaterialID)
+	UStaticMeshComponent& MeshComponent, uint64_t ITwinMaterialID)
 {
 	auto SceneMappingLocked = SceneMapping->GetAutoLock();
 	ensure(SceneMappingLocked->KnownTiles.empty());
@@ -1221,5 +1217,5 @@ void UITwinSceneMappingBuilder::BuildFromNonCesiumMesh(TSceneMappingPtr& SceneMa
 	));
 	auto const It = ByRank.emplace_back(std::move(NewTile)).first;
 	auto SceneTileLock = It->get()->GetAutoLock();
-	SceneTileLock->GltfMeshes.emplace_back(*MeshComponent.Get(), ITwinMaterialID);
+	SceneTileLock->GltfMeshes.emplace_back(MeshComponent, ITwinMaterialID);
 }

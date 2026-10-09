@@ -46,7 +46,7 @@ The easiest way to install Cesium for Unreal is by downloading the officially re
 You can also find all releases on the [Releases](https://github.com/CesiumGS/cesium-unreal/releases) page. This is useful if you want an older version, or if you can't or don't want to use the Unreal Engine Marketplace. In particular, if you're using Linux, the Releases page is a better option. To install any of these releases:
 
 1. If you previously installed the Cesium for Unreal plugin via the Unreal Engine Marketplace, uninstall it.
-2. Extract the release ZIP to Unreal Engine's `Engine/Plugins/Marketplace` directory. For example, on Unreal Engine 5.3 on Windows, this is typically `C:\Program Files\Epic Games\UE_5.3\Engine\Plugins\Marketplace`. You may need to create the `Marketplace` directory yourself.
+2. Extract the release ZIP to Unreal Engine's `Engine/Plugins/Marketplace` directory. For example, on Unreal Engine 5.6 on Windows, this is typically `C:\Program Files\Epic Games\UE_5.6\Engine\Plugins\Marketplace`. You may need to create the `Marketplace` directory yourself.
 3. If you've done this correctly, you'll find a `CesiumForUnreal` sub-directory inside the `Marketplace` directory, and the plugin is ready to use.
 
 You can also [use pre-release packages](Documentation/Pages/using-prerelease-packages.md).
@@ -59,7 +59,18 @@ See the [Developer Setup Guide](Documentation/developer-setup.md) to learn how t
 
 Cesium for Unreal's standard policy is to support the three most recent versions of Unreal Engine. Older versions of the plugin may be used with older versions of Unreal Engine, but we recommend staying up-to-date if at all possible.
 
-The code for the last version of the plugin that supported Unreal Engine 4 can be found in the [ue4-main](https://github.com/CesiumGS/cesium-unreal/tree/ue4-main) branch.
+For older versions of Unreal Engine, the last releases of the plugin that supported them are listed below:
+
+| Unreal Version | Last Supported Release |
+| -------------- | ---------------------- |
+| 4.26           | [v1.20.1](https://github.com/CesiumGS/cesium-unreal/releases/tag/v1.20.1-ue4) |
+| 4.27           | [v1.24.0](https://github.com/CesiumGS/cesium-unreal/releases/tag/v1.24.0-ue4) |
+| 5.0            | [v1.31.1](https://github.com/CesiumGS/cesium-unreal/releases/tag/v1.31.1)     |
+| 5.1            | [v2.5.0](https://github.com/CesiumGS/cesium-unreal/releases/tag/v2.5.0)       |
+| 5.2            | [v2.11.0](https://github.com/CesiumGS/cesium-unreal/releases/tag/v2.11.0)     |
+| 5.3            | [v2.17.0](https://github.com/CesiumGS/cesium-unreal/releases/tag/v2.17.0)     |
+| 5.4            | [v2.21.1](https://github.com/CesiumGS/cesium-unreal/releases/tag/v2.21.1)     |
+| 5.5            | [v2.28.0](https://github.com/CesiumGS/cesium-unreal/releases/tag/v2.28.0)     |
 
 ### Documentation
 

@@ -4,7 +4,7 @@ if (ADVVIZDLL)
     set(libtype SHARED)
 endif()
 
-add_library(Visualization ${libtype} 
+be_add_library(Visualization ${libtype} 
 		Visualization.h
 		Decoration.h
 		Decoration.cpp
@@ -44,6 +44,8 @@ add_library(Visualization ${libtype}
 		KeyframeAnimator.cpp 
 		PathAnimation.h
 		PathAnimation.cpp 
+		PopulationPersistence.h
+		PopulationPersistence.cpp
 		RefID.h
 		RefID.cpp
 		SavableItem.h
@@ -73,15 +75,16 @@ configure_advviz_library(Visualization)
 set_target_properties(Visualization PROPERTIES FOLDER "SDK/Core") 
 
 if(SDK_ADDUNITTEST)
-	add_executable(VisualizationTest 
+	be_add_executable(VisualizationTest 
 		Tests/VisualizationTest.cpp 
 		Tests/VizKeyframeTests.cpp
 		Tests/SceneAPITest.cpp
-		Tests/Mock.h
 		Tests/RefIDTest.cpp
 		Tests/AnnotationTest.cpp
 		Tests/InstancesTest.cpp
 		Tests/SplinesTest.cpp
+		Tests/PathAnimTest.cpp
+		Tests/TimelineTest.cpp
 	)
 	target_compile_features(VisualizationTest PRIVATE ${DefaultCXXSTD})
 	target_compile_definitions(VisualizationTest PRIVATE "CMAKE_SOURCE_DIR=\"${CMAKE_SOURCE_DIR}\"")
@@ -93,10 +96,10 @@ if(SDK_ADDUNITTEST)
 	else ()
 		set ( fmt_lib "${ADVVIZ_FMT_DEP}" )
 	endif()
-	target_link_libraries(VisualizationTest PRIVATE 
+	target_link_libraries(VisualizationTest PRIVATE
 							Visualization
 							${fmt_lib}
-							httpmockserver
+							NetworkMockServer
 							Catch2::Catch2WithMain
 						)
 	if (SINGLETONDLL)
@@ -118,5 +121,7 @@ if(SDK_ADDUNITTEST)
 	endif()
 	configure_advviz_library(VisualizationTest)
 
-	be_add_sdk_test (VisualizationTest)
+	be_add_sdk_test (VisualizationTest
+		COVERED_TARGETS Visualization
+	)
 endif()

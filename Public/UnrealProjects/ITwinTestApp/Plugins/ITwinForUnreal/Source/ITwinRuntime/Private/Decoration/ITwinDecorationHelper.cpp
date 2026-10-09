@@ -30,11 +30,11 @@
 #include <ITwinGoogle3DTileset.h>
 #include <ITwinIModel.h>
 #include <ITwinRealityData.h>
-#include <ITwinServerConnection.h>
 #include <Material/ITwinMaterialLibrary.h>
 #include <Population/ITwinKeyframePath.h>
 #include <Population/ITwinPopulation.h>
 #include <Population/ITwinPopulationWithPathExt.h>
+#include <Population/ITwinPopulationTool.h>
 #include <Spline/ITwinSplineHelper.h>
 #include <Spline/ITwinSplineTool.h>
 #include <PathAnimation/ITwinPathAnimTool.h>
@@ -236,31 +236,44 @@ namespace ITwin
 			return false;
 		}
 
-		// If a decoration helper already exists for this iTwin, consider that the loading is already in
-		// progress, or will be started from another path.
 		AITwinDecorationHelper const* DecoHelper = GetDecorationHelper(ITwinId, World);
-		return(DecoHelper == nullptr);
+		if (DecoHelper == nullptr)
+		{
+			return true;
+		}
+		// Test if the loading is already in progress or done.
+		return !DecoHelper->IsLoadingScene() && !DecoHelper->HasLoadedScene();
 	}
 
-	void LoadScene(const FString & ITwinId, UWorld* World)
+	AITwinDecorationHelper* GetOrCreateDecorationHelper(FString const& ITwinId, UWorld* World)
 	{
+		BE_ASSERT(!ITwinId.IsEmpty(), "iTwin Id required for decoration");
 		if (!World)
 		{
 			BE_ISSUE("no world given");
-			return;
+			return nullptr;
 		}
 		AITwinDecorationHelper* DecoHelper = GetDecorationHelper(ITwinId, World);
 		if (DecoHelper == nullptr)
 		{
 			// Instantiate the decoration helper now:
 			DecoHelper = World->SpawnActor<AITwinDecorationHelper>();
+			DecoHelper->SetLoadedITwinId(ITwinId);
 			if (auto* ITwinManager = GetDigitalITwinManagerByID(ITwinId, World))
 			{
-				DecoHelper->OnSceneLoadingStartStop.AddDynamic(ITwinManager, &AITwinDigitalTwinManager::OnSceneLoadingStartStop);
+				DecoHelper->SetITwinManager(ITwinManager);
 			}
-			DecoHelper->SetLoadedITwinId(ITwinId);
 		}
-		DecoHelper->LoadScene();
+		return DecoHelper;
+	}
+
+	void LoadScene(FString const& ITwinId, UWorld* World)
+	{
+		AITwinDecorationHelper* DecoHelper = GetOrCreateDecorationHelper(ITwinId, World);
+		if (DecoHelper)
+		{
+			DecoHelper->LoadScene();
+		}
 	}
 
 	void LoadIModelDecorationMaterials(AITwinIModel& IModel, UWorld* World)
@@ -417,12 +430,19 @@ public:
 	bool IsVREnabled() const;
 
 	bool IsLoadingScene() const { return RemainingLoadingSceneTasks > 0; }
+	bool HasLoadedScene() const { return bHasLoadedScene; }
 	bool IsSavingScene() const { return bIsSavingScene; }
 
-	void InitDecorationService();
+#if WITH_TESTS
+	void ResetLoadedScene();
+#endif
+
+	void InitDecorationService(bool bResetConfig = true);
 	void SetLoadedITwinId(FString const& LoadedITwinId);
 	FString GetLoadedITwinId() const;
 	bool HasITwinID() const;
+
+	void SetITwinManager(AITwinDigitalTwinManager* InITwinManager);
 
 	void StartLoadingDecoration(UWorld* WorldContextObject);
 	void StartLoadingIModelMaterials(AITwinIModel& IModel);
@@ -438,15 +458,22 @@ public:
 	void LoadPopulationsInGame(bool bHasLoadedPopulations);
 	void CreateOrRefreshPopulationInGame(FString const& assetPath, AdvViz::SDK::RefID const& groupId);
 
+	void VisitSplinesWaitingForLinkedModels(const TFunction<void(const AdvViz::SDK::ISpline&)>& Visitor) const;
+
 private:
 	void AsyncLoadScene();
 	void LoadMaterialsStep();
 	void LoadSplinesStep();
 	void LoadPathAnimationsStep();
+	void LoadPopulationMetadataStep();
 	void LoadPopulationsStep();
 	void LoadAnnotationsStep();
 	void AsyncLoadMaterials(TMap<FString, TWeakObjectPtr<AITwinIModel>> && IModelMap, bool bForSpecificModels);
 	void ResetTicker();
+
+	bool CheckGameViewport(const std::string& ItemName) const;
+
+	AITwinDigitalTwinManager* GetOrFindITwinManager();
 	
 	std::shared_ptr<FDecorationAsyncIOHelper> GetDecorationAsyncIOHelper() const;
 
@@ -459,6 +486,7 @@ private:
 		const UWorld* World);
 	void LoadAnnotationsInGame(bool bHasLoadedAnnoations);
 	void LoadPathAnimationsInGame(bool bHasLoadePathAnimations);
+	void LoadPopulationMetadataInGame(bool bHasLoadedPopulationMetadata);
 
 	void OnCustomMaterialsLoaded_GameThread(bool bHasLoadedMaterials);
 	void OnDecorationSaved_GameThread(bool bSuccess, bool bHasResetMaterials);
@@ -472,6 +500,7 @@ private:
 		BE_ASSERT(RemainingLoadingSceneTasks > 0);
 		if (RemainingLoadingSceneTasks.fetch_sub(1) == 1) //note:fetch_sub return old value
 		{	// All tasks complete
+			bHasLoadedScene = true;
 			CurrentContext = EAsyncContext::None;
 			Owner.OnDecorationLoaded.Broadcast();
 		}
@@ -488,6 +517,7 @@ private:
 	bool bMaterialEditionEnabled = false;
 	
 	std::atomic_int RemainingLoadingSceneTasks = 0;
+	std::atomic_bool bHasLoadedScene = false;
 	std::atomic_bool bIsSavingScene = false;
 	std::shared_ptr<std::atomic_bool> IsThisValid = std::make_shared<std::atomic_bool>(true);
 
@@ -506,6 +536,9 @@ private:
 	std::set<std::string> SpecificIModelsForMaterialLoading;
 	std::set<ITwin::ModelLink> ModelsWithLoadedSplines;
 
+	//! Points to the iTwin manager for the current iTwin, if any. It is used to broadcast events when the
+	//! scene loading starts or stops.
+	TWeakObjectPtr<AITwinDigitalTwinManager> ITwinManager;
 };
 
 
@@ -546,9 +579,9 @@ void AITwinDecorationHelper::FImpl::ResetTicker()
 	bIsDisplayingConfirmMsg = false;
 }
 
-void AITwinDecorationHelper::FImpl::InitDecorationService()
+void AITwinDecorationHelper::FImpl::InitDecorationService(bool bResetConfig /*= true*/)
 {
-	DecorationIO->InitDecorationService(Owner.GetWorld());
+	DecorationIO->InitDecorationService(Owner.GetWorld(), bResetConfig);
 }
 
 void AITwinDecorationHelper::FImpl::SetLoadedITwinId(FString const& LoadedITwinId)
@@ -568,6 +601,25 @@ FString AITwinDecorationHelper::FImpl::GetLoadedITwinId() const
 bool AITwinDecorationHelper::FImpl::HasITwinID() const
 {
 	return !DecorationIO->LoadedITwinId.IsEmpty();
+}
+
+
+void AITwinDecorationHelper::FImpl::SetITwinManager(AITwinDigitalTwinManager* InITwinManager)
+{
+	BE_ASSERT(!InITwinManager || InITwinManager->GetITwinId() == GetLoadedITwinId());
+	ITwinManager = InITwinManager;
+}
+
+AITwinDigitalTwinManager* AITwinDecorationHelper::FImpl::GetOrFindITwinManager()
+{
+	if (ITwinManager.IsValid() && ITwinManager->GetITwinId() == GetLoadedITwinId())
+	{
+		return ITwinManager.Get();
+	}
+	// If the iTwin ID had changed, try to find a manager matching the new ID:
+	UWorld* World = Owner.GetWorld();
+	ITwinManager = ITwin::GetDigitalITwinManagerByID(GetLoadedITwinId(), World);
+	return ITwinManager.Get();
 }
 
 std::shared_ptr<FDecorationAsyncIOHelper> AITwinDecorationHelper::FImpl::GetDecorationAsyncIOHelper() const
@@ -612,10 +664,14 @@ void AITwinDecorationHelper::FImpl::AsyncLoadScene()
 		return;
 	}
 
-	Owner.OnSceneLoadingStartStop.Broadcast(true);
+	if (auto* Manager = GetOrFindITwinManager())
+	{
+		Manager->SetIsLoadingScene(true);
+	}
 
 	RemainingLoadingSceneTasks = 1;
 	CurrentContext = EAsyncContext::Load;
+	bHasLoadedScene = false;
 	ResetTicker();
 
 	auto DecoIO = GetDecorationAsyncIOHelper();
@@ -688,6 +744,21 @@ void AITwinDecorationHelper::FImpl::AsyncLoadScene()
 	});
 }
 
+#if WITH_TESTS
+void AITwinDecorationHelper::FImpl::ResetLoadedScene()
+{
+	if (bHasLoadedScene)
+	{
+		bHasLoadedScene = false;
+		auto DecoIO = GetDecorationAsyncIOHelper();
+		if (DecoIO && DecoIO->scene)
+		{
+			// Recreate the scene, to reset its ID.
+			DecoIO->InitScene();
+		}
+	}
+}
+#endif // WITH_TESTS
 
 void AITwinDecorationHelper::FImpl::LoadMaterialsStep()
 {
@@ -804,6 +875,41 @@ void AITwinDecorationHelper::FImpl::LoadPathAnimationsStep()
 		});
 }
 
+void AITwinDecorationHelper::FImpl::LoadPopulationMetadataStep()
+{
+	auto DecoIO = GetDecorationAsyncIOHelper();
+	RemainingLoadingSceneTasks++;
+	TWeakObjectPtr<AITwinDecorationHelper> ownerPtr(&Owner);
+	AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask,
+		[DecoIO, ownerPtr]()
+		{
+			if (!ownerPtr.IsValid())
+				return;
+			DecoIO->AsyncLoadPopulationMetadata(
+				[ownerPtr](AdvViz::expected<void, std::string> const& exp)
+			{
+				if (!ownerPtr.IsValid())
+					return;
+				if (!exp)
+				{
+					BE_LOG_LOAD_UNEXP("population metadata", exp);
+					auto& This(ownerPtr.Get()->Impl);
+					This->FinishedALoadingTask();
+					return;
+				}
+				AsyncTask(ENamedThreads::GameThread,
+					[ownerPtr]()
+					{
+						if (!ownerPtr.IsValid())
+							return;
+						auto& This(ownerPtr.Get()->Impl);
+						ON_SCOPE_EXIT{ This->FinishedALoadingTask(); };
+						This->LoadPopulationMetadataInGame(true);
+					});
+			});
+		});
+}
+
 void AITwinDecorationHelper::FImpl::LoadPopulationsStep()
 {
 	auto DecoIO = GetDecorationAsyncIOHelper();
@@ -823,6 +929,9 @@ void AITwinDecorationHelper::FImpl::LoadPopulationsStep()
 
 				// Chain to LoadPathAnimations
 				This->LoadPathAnimationsStep();
+
+				// Chain to LoadPopulationMetadata
+				This->LoadPopulationMetadataStep();
 
 				// Be careful with new scenes, where the population will fail to load, but we should still
 				// enable future population creation => we will distinguish a "real" failure case from a
@@ -1000,10 +1109,11 @@ bool AITwinDecorationHelper::FImpl::ShouldAbort()
 
 void AITwinDecorationHelper::FImpl::SaveScene(FSaveRequestOptions const& opts)
 {
+	bool bSomethingToSave = true;
 	if (ReadOnly)
-		return;
+		bSomethingToSave = false;
 	if (!ShouldSaveScene())
-		return;
+		bSomethingToSave = false;
 
 	if (bIsSavingScene)
 	{
@@ -1015,7 +1125,8 @@ void AITwinDecorationHelper::FImpl::SaveScene(FSaveRequestOptions const& opts)
 	OnSceneSavedCallback = opts.OnSceneSavedCallback;
 	CurrentContext = EAsyncContext::Save;
 
-	PreSaveCameras();
+	if(bSomethingToSave)
+		PreSaveCameras();
 
 	ResetTicker();
 	NextConfirmTime = std::chrono::system_clock::now() + std::chrono::seconds(30);
@@ -1026,7 +1137,7 @@ void AITwinDecorationHelper::FImpl::SaveScene(FSaveRequestOptions const& opts)
 	// modifies some data being written. Then requests are run in an asynchronous way (using the AsyncXXX
 	// versions of AdvViz::SDK::Http)
 	auto DecoIO = GetDecorationAsyncIOHelper();
-	const bool bSomethingToSave = DecoIO &&
+	bSomethingToSave = bSomethingToSave && DecoIO &&
 		DecoIO->AsyncSave(
 			[this,
 			IsValidLambda = this->IsThisValid](bool bResult)
@@ -1063,6 +1174,13 @@ void AITwinDecorationHelper::FImpl::SaveScene(FSaveRequestOptions const& opts)
 		this->bIsDeletingCustomMaterials = false;
 		this->bIsSavingScene = false;
 		this->CurrentContext = EAsyncContext::None;
+		// It should probably not happen but in some unexplained cases it clearly does, and not calling the callback
+		// will freeze the iTS saving process in a silent endless loop (see #2100222 on Sept. 22nd '26).
+		if (OnSceneSavedCallback)
+		{
+			OnSceneSavedCallback(true);
+			OnSceneSavedCallback = {};
+		}
 	}
 
 	if (opts.bUponExit && !opts.OnSceneSavedCallback && bIsSavingScene)
@@ -1114,17 +1232,31 @@ void AITwinDecorationHelper::SetLoadedITwinId(FString ITwinId)
 	{
 		InitContentManager();
 	}
+	this->LoadedITwinId = ITwinId;
 	Impl->SetLoadedITwinId(ITwinId);
 }
 
 FString AITwinDecorationHelper::GetLoadedITwinId() const
 {
+	BE_ASSERT(this->LoadedITwinId == Impl->GetLoadedITwinId());
 	return Impl->GetLoadedITwinId();
 }
 
-void AITwinDecorationHelper::SetLoadedSceneId(FString InLoadedSceneId, bool inNewsScene /*= false*/)
+void AITwinDecorationHelper::SetLoadedSceneId(FString InLoadedSceneId)
 {
-	Impl->DecorationIO->SetLoadedSceneId(InLoadedSceneId, inNewsScene);
+	this->LoadedSceneId = InLoadedSceneId;
+	Impl->DecorationIO->SetLoadedSceneId(InLoadedSceneId);
+}
+
+void AITwinDecorationHelper::SetITwinManager(AITwinDigitalTwinManager* InITwinManager)
+{
+	Impl->SetITwinManager(InITwinManager);
+}
+
+void AITwinDecorationHelper::SetNewScene(bool bInNewScene)
+{
+	this->bIsNewScene = bInNewScene;
+	Impl->DecorationIO->SetNewScene(bInNewScene);
 }
 
 void AITwinDecorationHelper::FImpl::DissociateAnimation(const std::string& animId)
@@ -1263,6 +1395,22 @@ void AITwinDecorationHelper::FImpl::CreateOrRefreshPopulationInGame(
 	population->UpdateInstancesFromAVizToUE();
 }
 
+bool AITwinDecorationHelper::FImpl::CheckGameViewport(const std::string& ItemName) const
+{
+	if (!(GEngine && GEngine->GameViewport))
+	{
+		if (GIsAutomationTesting)
+		{
+			BE_LOGW("ITwinDecoration", ItemName << " cannot be loaded without a GameViewport, but we are in automation testing => ignoring");
+		}
+		else
+		{
+			BE_LOGW("ITwinDecoration", ItemName << " cannot be loaded in Editor");
+			return false;
+		}
+	}
+	return true;
+}
 
 void AITwinDecorationHelper::FImpl::LoadPopulationsInGame(bool bHasLoadedPopulations)
 {
@@ -1271,12 +1419,8 @@ void AITwinDecorationHelper::FImpl::LoadPopulationsInGame(bool bHasLoadedPopulat
 	if (!instancesManager)
 		return;
 
-	if (!(GEngine && GEngine->GameViewport))
-	{
-		BE_LOGW("ITwinDecoration", "Populations cannot be loaded in Editor");
+	if (!CheckGameViewport("Populations"))
 		return;
-	}
-
 	
 	CreateKeyframeAnimPopulation();
 
@@ -1343,11 +1487,8 @@ void AITwinDecorationHelper::FImpl::LoadSplinesInGame(bool bHasLoadedSplines)
 	if (!splinesManager)
 		return;
 
-	if (!(GEngine && GEngine->GameViewport))
-	{
-		BE_LOGW("ITwinDecoration", "Splines cannot be loaded in Editor");
+	if (!CheckGameViewport("Splines"))
 		return;
-	}
 
 	const UWorld* World = Owner.GetWorld();
 
@@ -1404,6 +1545,29 @@ void AITwinDecorationHelper::FImpl::LoadSplinesInGame(bool bHasLoadedSplines)
 	Owner.OnSplinesLoaded.Broadcast(true);
 }
 
+void AITwinDecorationHelper::FImpl::VisitSplinesWaitingForLinkedModels(const TFunction<void(const AdvViz::SDK::ISpline&)>& Visitor) const
+{
+	auto const& splinesManager(DecorationIO->splinesManager);
+	if (!splinesManager)
+		return;
+
+	const UWorld* World = Owner.GetWorld();
+	for (auto const& SplinePtr : splinesManager->GetSplines())
+	{
+		AITwinSplineTool::TilesetAccessArray LinkedTilesets;
+
+		// Splines linked to specific models can be loaded now, but only if the corresponding 3D tilesets are
+		// have all been created (in general, it won't be the case...)
+		ITwin::GetLinkedTilesets(LinkedTilesets, SplinePtr, World);
+		auto AdvVizSpline = SplinePtr->GetRAutoLock();
+		if (LinkedTilesets.Num() < (int32)AdvVizSpline->GetLinkedModels().size())
+		{
+			// This spline will be loaded later, once all linked tilesets are ready.
+			Visitor(*AdvVizSpline);
+		}
+	}
+}
+
 void AITwinDecorationHelper::FImpl::LoadAnnotationsInGame(bool bHasLoadedAnnoations)
 {
 	checkSlow(IsInGameThread());
@@ -1411,11 +1575,8 @@ void AITwinDecorationHelper::FImpl::LoadAnnotationsInGame(bool bHasLoadedAnnoati
 	if (!annotationsManager)
 		return;
 
-	if (!(GEngine && GEngine->GameViewport))
-	{
-		BE_LOGW("ITwinDecoration", "Annotations cannot be loaded in Editor");
+	if (!CheckGameViewport("Annotations"))
 		return;
-	}
 
 	Owner.OnAnnotationsLoaded.Broadcast(true);
 }
@@ -1427,11 +1588,8 @@ void AITwinDecorationHelper::FImpl::LoadPathAnimationsInGame(bool bHasLoadePathA
 	if (!pathAnimManager)
 		return;
 
-	if (!(GEngine && GEngine->GameViewport))
-	{
-		BE_LOGW("ITwinDecoration", "Path animations cannot be loaded in Editor");
+	if (!CheckGameViewport("Path animations"))
 		return;
-	}
 
 	const UWorld* World = Owner.GetWorld();
 
@@ -1447,6 +1605,32 @@ void AITwinDecorationHelper::FImpl::LoadPathAnimationsInGame(bool bHasLoadePathA
 	pathAnimTool->LoadAnimationPaths();
 
 	Owner.OnPathAnimationsLoaded.Broadcast(true);
+}
+
+void AITwinDecorationHelper::FImpl::LoadPopulationMetadataInGame(bool bHasLoadedPopulationMetadata)
+{
+	checkSlow(IsInGameThread());
+	auto& populationManager(DecorationIO->populationManager);
+	if (!populationManager)
+		return;
+
+	if (!CheckGameViewport("Population metadata"))
+		return;
+
+	const UWorld* World = Owner.GetWorld();
+
+	AITwinPopulationTool* populationTool =
+		(AITwinPopulationTool*)UGameplayStatics::GetActorOfClass(World, AITwinPopulationTool::StaticClass());
+
+	if (!populationTool)
+	{
+		BE_LOGW("ITwinDecoration", "Population metadata can't be loaded because there is no PopulationTool actor.");
+		return;
+	}
+
+	populationTool->LoadPopulations();
+
+	Owner.OnPopulationMetadataLoaded.Broadcast(true);
 }
 
 
@@ -1473,6 +1657,12 @@ AITwinDecorationHelper* AITwinDecorationHelper::GetInstance(const UWorld* InWorl
 		// found helper in case of several ones in the world (which is not supposed to happen).
 	}
 	return FoundHelper;
+}
+
+/*static*/
+AITwinDecorationHelper* AITwinDecorationHelper::FindByITwinID(FString const& ITwinId, const UWorld* InWorld)
+{
+	return ITwin::GetDecorationHelper(ITwinId, InWorld);
 }
 
 void AITwinDecorationHelper::InitContentManager()
@@ -1519,6 +1709,18 @@ bool AITwinDecorationHelper::IsLoadingScene() const
 {
 	return Impl->IsLoadingScene();
 }
+
+bool AITwinDecorationHelper::HasLoadedScene() const
+{
+	return Impl->HasLoadedScene();
+}
+
+#if WITH_TESTS
+void AITwinDecorationHelper::ResetLoadedScene()
+{
+	Impl->ResetLoadedScene();
+}
+#endif
 
 void AITwinDecorationHelper::RegisterWaitableLoadEvent(std::unique_ptr<FDecorationWaitableLoadEvent>&& LoadEventPtr)
 {
@@ -1591,8 +1793,10 @@ bool AITwinDecorationHelper::FImpl::ShouldSaveScene() const
 		&& DecorationIO->annotationsManager->HasAnnotationToSave();
 	bool const savePathAnimation = DecorationIO->pathAnimManager
 		&& DecorationIO->pathAnimManager->HasAnimPathsToSave();
+	bool const savePopulations = DecorationIO->populationManager
+		&& DecorationIO->populationManager->HasPopulationsToSave();
 
-	if (!saveInstances && !saveMaterials && !saveScenes && !saveTimeline && !saveSplines && !saveAnnotations && !savePathAnimation)
+	if (!saveInstances && !saveMaterials && !saveScenes && !saveTimeline && !saveSplines && !saveAnnotations && !savePathAnimation && !savePopulations)
 		return false;
 	return true;
 }
@@ -1761,8 +1965,18 @@ void AITwinDecorationHelper::OnRealityDataLoaded(bool bSuccess, FString StringId
 
 void AITwinDecorationHelper::FImpl::OnSceneLoad_GameThread(bool bSuccess)
 {
-	 // Must be called *before* the loops below, as it will actually instantiate the iModels/RealityDatas if
-	 // needed...
+	// The atmosphere must be updated *before* the manager, or else the handling of geo-location could
+	// make use overwrite the atmosphere settings just read! This is a quick fix for ADO#2139590, which was a
+	// regression in LA7. It worked before by pure chance, just because of the order of execution of
+	// listeners attached to the OnSceneLoaded delegate...
+	Owner.OnAtmosphereLoaded.Broadcast(bSuccess);
+
+	// Must be called *before* the loops below, as it will actually instantiate the iModels/RealityDatas if
+	// needed...
+	if (auto* Manager = GetOrFindITwinManager())
+	{
+		Manager->OnSceneLoaded(bSuccess);
+	}
 	Owner.OnSceneLoaded.Broadcast(bSuccess);
 
 	// Note that visibility will *not* be restored at this point, because it requires a tileset, and both
@@ -1836,6 +2050,13 @@ bool AITwinDecorationHelper::IsComponentDownloadPending(const FString& component
 	return !iTwinContentManager->ShouldDownloadComponent(componentId).IsEmpty();
 }
 
+void AITwinDecorationHelper::SetComponentObjectPath(const FString& componentId, const FString& objectPath) const
+{
+	if (!iTwinContentManager)
+		return;
+	iTwinContentManager->SetComponentObjectPath(componentId, objectPath);
+}
+
 AITwinPopulation* AITwinDecorationHelper::CreatePopulation(FString assetPath, const AdvViz::SDK::RefID& groupId) const
 {
 	AdvViz::SDK::IInstancesGroupPtr gpPtr =
@@ -1845,9 +2066,17 @@ AITwinPopulation* AITwinDecorationHelper::CreatePopulation(FString assetPath, co
 		BE_ISSUE("invalid group ID", groupId.ID(), groupId.GetDBIdentifier());
 		return nullptr;
 	}
+
 	FString realAssetPath = assetPath;
+	FString objectPath = assetPath;
 	if (iTwinContentManager)
 	{
+		objectPath = iTwinContentManager->GetComponentObjectPath(iTwinContentManager->HasComponentIDInPath(assetPath));
+		if (objectPath.IsEmpty())
+		{
+			objectPath = assetPath;
+		}
+
 		FString componentId = iTwinContentManager->ShouldDownloadComponent(assetPath);
 		if (!componentId.IsEmpty())
 		{
@@ -1866,7 +2095,7 @@ AITwinPopulation* AITwinDecorationHelper::CreatePopulation(FString assetPath, co
 				+ std::to_string(groupId.ID());
 
 			AdvViz::SDK::UniqueDelayedCall(delayedCallId,
-				[weakOwner, assetPath, groupId]() -> AdvViz::SDK::DelayedCall::EReturnedValue
+				[weakOwner, assetPath, componentId, groupId]() -> AdvViz::SDK::DelayedCall::EReturnedValue
 				{
 					if (!weakOwner.IsValid() || !weakOwner->iTwinContentManager)
 					{
@@ -1887,15 +2116,11 @@ AITwinPopulation* AITwinDecorationHelper::CreatePopulation(FString assetPath, co
 			return nullptr;
 		}
 		realAssetPath = iTwinContentManager->SanitizePath(assetPath);
-		iTwinContentManager->DownloadFromAssetPath(realAssetPath);
+		iTwinContentManager->Mount(realAssetPath);
 	}
 
-	AITwinPopulation* population = AITwinPopulation::CreatePopulation(this, realAssetPath,
+	AITwinPopulation* population = AITwinPopulation::CreatePopulation(this, assetPath, objectPath,
 		Impl->DecorationIO->instancesManager_, gpPtr);
-	if (population && realAssetPath != assetPath)
-	{
-		population->SetObjectRef(TCHAR_TO_UTF8(*assetPath));
-	}
 	return population;
 }
 
@@ -1955,6 +2180,11 @@ AdvViz::SDK::RefID AITwinDecorationHelper::GetInstancesGroupIdForSpline(AITwinSp
 	}
 }
 
+void AITwinDecorationHelper::VisitSplinesWaitingForLinkedModels(const TFunction<void(const AdvViz::SDK::ISpline&)>& Visitor) const
+{
+	Impl->VisitSplinesWaitingForLinkedModels(Visitor);
+}
+
 int32 AITwinDecorationHelper::GetPopulationInstanceCount(FString assetPath, const AdvViz::SDK::RefID& groupId) const
 {
 	return Impl->DecorationIO->instancesManager_->GetInstanceCountByObjectRef(ITwin::ConvertToStdString(assetPath), groupId);
@@ -1962,27 +2192,31 @@ int32 AITwinDecorationHelper::GetPopulationInstanceCount(FString assetPath, cons
 
 AdvViz::SDK::ITwinAtmosphereSettings AITwinDecorationHelper::GetAtmosphereSettings() const
 {
-	return Impl->DecorationIO->scene->GetAtmosphere();
+	if (ensure(Impl->DecorationIO && Impl->DecorationIO->scene))
+	{
+		return Impl->DecorationIO->scene->GetAtmosphere();
+	}
+	return {};
 }
 
 void AITwinDecorationHelper::SetAtmosphereSettings(const AdvViz::SDK::ITwinAtmosphereSettings& as) const
 {
 	if (Impl->DecorationIO && Impl->DecorationIO->scene)
+	{
 		Impl->DecorationIO->scene->SetAtmosphere(as);
+	}
 }
+
 AdvViz::SDK::ITwinSceneSettings AITwinDecorationHelper::GetSceneSettings() const
 {
 	// [Julot] I had a crash in Editor, when starting PIE *after* having instantiated an iModel manually in
 	// the level (which is not a relevant workflow for iTwin Engage, but could perfectly happen in the
-	// plugin, when decoration is fully supported there.
+	// plugin, when decoration is fully supported there).
 	if (ensure(Impl->DecorationIO && Impl->DecorationIO->scene))
 	{
 		return Impl->DecorationIO->scene->GetSceneSettings();
 	}
-	else
-	{
-		return {};
-	}
+	return {};
 }
 
 void AITwinDecorationHelper::SetSceneSettings(const AdvViz::SDK::ITwinSceneSettings& as) const
@@ -2076,6 +2310,28 @@ void AITwinDecorationHelper::EndPlay(const EEndPlayReason::Type EndPlayReason)
 
 	Impl->DecorationIO->RequestStop();
 }
+
+#if WITH_EDITOR
+void AITwinDecorationHelper::PostEditChangeProperty(FPropertyChangedEvent& e)
+{
+	Super::PostEditChangeProperty(e);
+
+	// Make sure we use the appropriate setters for LoadedITwinId, LoadedSceneId, bNewScene.
+	FName const PropertyName = (e.Property != nullptr) ? e.Property->GetFName() : NAME_None;
+	if (PropertyName == GET_MEMBER_NAME_CHECKED(AITwinDecorationHelper, LoadedITwinId))
+	{
+		SetLoadedITwinId(this->LoadedITwinId);
+	}
+	else if (PropertyName == GET_MEMBER_NAME_CHECKED(AITwinDecorationHelper, LoadedSceneId))
+	{
+		SetLoadedSceneId(this->LoadedSceneId);
+	}
+	else if (PropertyName == GET_MEMBER_NAME_CHECKED(AITwinDecorationHelper, bIsNewScene))
+	{
+		SetNewScene(this->bIsNewScene);
+	}
+}
+#endif // WITH_EDITOR
 
 void AITwinDecorationHelper::OnCloseRequested(FViewport*)
 {
@@ -2199,7 +2455,7 @@ void AITwinDecorationHelper::FImpl::LoadCameras()
 	}
 }
 
-bool AITwinDecorationHelper::IsVREnabled()
+bool AITwinDecorationHelper::IsVREnabled() const
 {
 	return Impl->IsVREnabled();
 }
@@ -2318,10 +2574,10 @@ FString AITwinDecorationHelper::GetSceneID() const
 		return FString();
 }
 
-void AITwinDecorationHelper::InitDecorationService()
+void AITwinDecorationHelper::InitDecorationService(bool bResetConfig /*= true*/)
 {
 	InitContentManager();
-	Impl->InitDecorationService();
+	Impl->InitDecorationService(bResetConfig);
 }
 
 AdvViz::expected<AdvViz::SDK::ScenePtrVector, AdvViz::SDK::HttpError> AITwinDecorationHelper::GetITwinScenes(const FString& itwinid)
@@ -2362,16 +2618,6 @@ void AITwinDecorationHelper::AsyncGetITwinSceneInfos(const FString& itwinid,
 std::shared_ptr<AdvViz::SDK::IAnnotationsManager> AITwinDecorationHelper::GetAnnotationManager() const
 {
 	return Impl->DecorationIO->annotationsManager;
-}
-
-std::string AITwinDecorationHelper::ExportHDRIAsJson(AdvViz::SDK::ITwinHDRISettings const& hdri) const
-{
-	return Impl->DecorationIO->scene->ExportHDRIAsJson(hdri);
-}
-
-bool AITwinDecorationHelper::ConvertHDRIJsonFileToKeyValueMap(std::string assetPath, AdvViz::SDK::KeyValueStringMap& keyValueMap) const
-{
-	return Impl->DecorationIO->scene->ConvertHDRIJsonFileToKeyValueMap(assetPath, keyValueMap);
 }
 
 void AITwinDecorationHelper::EnableExportOfResourcesInSceneApI(bool bEnable)
@@ -2457,6 +2703,11 @@ void AITwinDecorationHelper::ConnectPathAnimToolToPathManager(AITwinPathAnimTool
 	pathAnimTool->SetPathAnimManager(Impl->DecorationIO->GetPathAnimManager());
 }
 
+void AITwinDecorationHelper::ConnectPopulationToolToPopulationManager(AITwinPopulationTool* populationTool)
+{
+	populationTool->SetPopulationManager(Impl->DecorationIO->GetPopulationManager());
+}
+
 void AITwinDecorationHelper::SetDecoGeoreference(const FVector& latLongHeight)
 {
 	Impl->DecorationIO->SetDecoGeoreference(latLongHeight);
@@ -2466,3 +2717,14 @@ AdvViz::expected<void, std::string> AITwinDecorationHelper::InitDecoGeoreference
 { 
 	return Impl->DecorationIO->InitDecoGeoreference();
 }
+
+
+#if WITH_TESTS
+void AITwinDecorationHelper::SetMockServerPort(int Port)
+{
+	if (Impl->DecorationIO)
+	{
+		Impl->DecorationIO->SetMockServerPort(GetWorld(), Port);
+	}
+}
+#endif // WITH_TESTS

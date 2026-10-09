@@ -9,6 +9,7 @@
 #include <Clipping/ITwinClipping3DTilesetHelper.h>
 
 #include <Clipping/ITwinClippingEffectManager.inl>
+#include <Clipping/ITwinClippingModelGroups.h>
 #include <Clipping/ITwinClippingRenderer.h>
 #include <Clipping/ITwinClippingTool.h>
 #include <Compil/IsUsingBentleyUnreal.h>
@@ -24,12 +25,6 @@
 #	include <Chaos/TriangleMeshImplicitObject.h>
 #	include <PhysicsEngine/BodySetup.h>
 #endif
-
-// If we increment the maximum number of planes or boxes, we must synchronize the encoding of their
-// activation in the Custom Primitive Data (see the CPD parameters defined in MF_GlobalClipping)
-static_assert(ITwin::MAX_CLIPPING_PLANES <= 32, "");
-static_assert(ITwin::MAX_CLIPPING_BOXES <= 32, "");
-
 
 UITwinClipping3DTilesetHelper::UITwinClipping3DTilesetHelper()
 {
@@ -74,61 +69,21 @@ void UITwinClipping3DTilesetHelper::SetCutoutOverlay(const UCesiumPolygonRasterO
 	CutoutOverlayPtr = InPolygonRasterOverlay;
 }
 
-bool UITwinClipping3DTilesetHelper::UpdateCPDFlagsFromClippingSelection(UITwinClippingEffectManager const& EffectManager)
+bool UITwinClipping3DTilesetHelper::UpdateCPDFlagsFromClippingSelection(FITwinClippingModelGroups const& ModelGroups)
 {
-	const int32 NumPlanes = EffectManager.NumEffects(EITwinClippingPrimitiveType::Plane);
-	int ActivePlanes_0_15 = 0;
-	for (int32 i = 0; i < std::min(16, NumPlanes); i++)
+	const float NewId = static_cast<float>(ModelGroups.GetGroupId(ModelIdentifier));
+	if (std::fabs(ScalarClippingModelGroupId - NewId) > 0.5f)
 	{
-		if (EffectManager.ShouldEffectInfluenceModel(EITwinClippingPrimitiveType::Plane, i, ModelIdentifier))
-			ActivePlanes_0_15 |= (1 << i);
+		ScalarClippingModelGroupId = NewId;
+		return true;
 	}
-
-	int ActivePlanes_16_31 = 0;
-	for (int32 i = 0; i < std::min(16, NumPlanes - 16); i++)
-	{
-		if (EffectManager.ShouldEffectInfluenceModel(EITwinClippingPrimitiveType::Plane, 16 + i, ModelIdentifier))
-			ActivePlanes_16_31 |= (1 << i);
-	}
-
-	const int32 NumBoxes = EffectManager.NumEffects(EITwinClippingPrimitiveType::Box);
-	int ActiveBoxes_0_15 = 0;
-	for (int32 i = 0; i < std::min(16, NumBoxes); i++)
-	{
-		if (EffectManager.ShouldEffectInfluenceModel(EITwinClippingPrimitiveType::Box, i, ModelIdentifier))
-			ActiveBoxes_0_15 |= (1 << i);
-	}
-
-	int ActiveBoxes_16_31 = 0;
-	for (int32 i = 0; i < std::min(16, NumBoxes - 16); i++)
-	{
-		if (EffectManager.ShouldEffectInfluenceModel(EITwinClippingPrimitiveType::Box, 16 + i, ModelIdentifier))
-			ActiveBoxes_16_31 |= (1 << i);
-	}
-	bool bModified = false;
-	auto const updateScalar = [&bModified](float& DstScalar, int SrcValue)
-	{
-		if (std::fabs(DstScalar - static_cast<float>(SrcValue)) > 0.5f)
-		{
-			DstScalar = static_cast<float>(SrcValue);
-			bModified = true;
-		}
-	};
-	updateScalar(ScalarActivePlanes_0_15, ActivePlanes_0_15);
-	updateScalar(ScalarActivePlanes_16_31, ActivePlanes_16_31);
-	updateScalar(ScalarActiveBoxes_0_15, ActiveBoxes_0_15);
-	updateScalar(ScalarActiveBoxes_16_31, ActiveBoxes_16_31);
-
-	return bModified;
+	return false;
 }
 
 void UITwinClipping3DTilesetHelper::ApplyCPDFlagsToMeshComponent(UPrimitiveComponent& Component) const
 {
-	// the following indices (0, 1, 2, 3) are defined in ITwin/Materials/MF_GlobalClipping.uasset
-	Component.SetCustomPrimitiveDataFloat(0, ScalarActivePlanes_0_15);
-	Component.SetCustomPrimitiveDataFloat(1, ScalarActivePlanes_16_31);
-	Component.SetCustomPrimitiveDataFloat(2, ScalarActiveBoxes_0_15);
-	Component.SetCustomPrimitiveDataFloat(3, ScalarActiveBoxes_16_31);
+	// the following index (0) is defined in ITwin/Materials/MF_GlobalClipping.uasset
+	Component.SetCustomPrimitiveDataFloat(0, ScalarClippingModelGroupId);
 }
 
 void UITwinClipping3DTilesetHelper::ApplyCPDFlagsToAllMeshComponentsInTileset(ACesium3DTileset const& Tileset)

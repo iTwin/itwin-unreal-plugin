@@ -116,6 +116,48 @@ struct FIModelInfos
 };
 
 USTRUCT(BlueprintType)
+struct FIModelProcessingStatus
+{
+	GENERATED_USTRUCT_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "iModel Processing")
+		FString IModelId;
+
+	UPROPERTY(BlueprintReadOnly, Category = "iModel Processing")
+		FString ProcessingStatus;
+
+	UPROPERTY(BlueprintReadOnly, Category = "iModel Processing")
+		FString ConnectionId;
+
+	UPROPERTY(BlueprintReadOnly, Category = "iModel Processing")
+		FString ConnectionType;
+
+	UPROPERTY(BlueprintReadOnly, Category = "iModel Processing")
+		FString ConnectionDisplayName;
+
+	UPROPERTY(BlueprintReadOnly, Category = "iModel Processing")
+		FString RunId;
+
+	UPROPERTY(BlueprintReadOnly, Category = "iModel Processing")
+		FString RunState;
+
+	UPROPERTY(BlueprintReadOnly, Category = "iModel Processing")
+		FString RunResult;
+
+	UPROPERTY(BlueprintReadOnly, Category = "iModel Processing")
+		FString RunPhase;
+
+	UPROPERTY(BlueprintReadOnly, Category = "iModel Processing")
+		FString StartDateTime;
+
+	UPROPERTY(BlueprintReadOnly, Category = "iModel Processing")
+		FString EndDateTime;
+
+	UPROPERTY(BlueprintReadOnly, Category = "iModel Processing")
+		bool bSynchronizationRunning = false;
+};
+
+USTRUCT(BlueprintType)
 struct FChangesetInfo
 {
 	GENERATED_USTRUCT_BODY()

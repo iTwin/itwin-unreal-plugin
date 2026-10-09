@@ -63,6 +63,11 @@ public:
 		BlueprintCallable)
 	void MoveToSavedView();
 
+	UFUNCTION(Category = "iTwin",
+		CallInEditor,
+		BlueprintCallable)
+	void ApplySavedViewVisibility();
+
 	//! UpdateSavedView() needs to be called at least once before calling RenameSavedView()
 	//! to set the savedView transform.
 	//! Note: Only saved views created with the plugin can be renamed, legacy saved views are not editable.

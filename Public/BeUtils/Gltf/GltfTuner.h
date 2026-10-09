@@ -9,6 +9,7 @@
 #pragma once
 
 #include <Cesium3DTilesSelection/GltfModifier.h>
+#include <CesiumUtility/JsonValue.h>
 
 #include <boost/container/small_vector.hpp>
 #include <boost/container_hash/hash.hpp>
@@ -17,6 +18,7 @@
 #include <functional>
 #include <unordered_set>
 #include <variant>
+
 
 namespace BeUtils {
 
@@ -91,30 +93,6 @@ public:
 			//! Identifier of the 4D animation "group" to which the Elements refer: see anim4DGroups_ below
 			Anim4DId ids_;
 		};
-		//! Elements must be assigned to distinct anim4D "groups" when they cannot be merged together,
-		//! because either:
-		//!	 * they don't have the same material translucency requirement (only 4D-related, I guess the
-		//!	   original material's translucency depends on each ClusterId::material_),
-		//!  * or they have different transformation requirements (either none, or one or more task/3Dpath
-		//!    assignments)
-		//!
-		//! This means that all Elements that need to be made translucent _and_ have no transformation can
-		//! be put in the same group (much more efficient than the previous extraction method btw).
-		//! To investigate severe flickering artifacts (even with alpha=1) when large meshes intertwine
-		//! with all other non-translucent meshes, an option has been added to customize the rules, so
-		//! we are actually able to use unlimited (per tile!) grouping of translucent Elements, or to
-		//! limit grouping per common set of translucent timelines, or to isolate translucent Elements
-		//! individually, like with the legacy extraction method. Even though in the end the flickering
-		//! does not seem related to tuning, since in fact only extracted meshes do not flicker, all
-		//! others do, even untuned gltf meshes...
-		//!
-		//! For Elements which need to be transformable, we will use as "group Id" the list of the indices
-		//! (in FITwinScheduleTimeline's container) of the transform-needing timelines they belong to.
-		//! Usually there will be only one, but Elements can refer to several timelines, when belonging to
-		//! several transformed resources, or to a transformed resource assigned to different tasks along
-		//! with other resources.
-		//! Note that anim4DGroups_ will never change (at least with Legacy schedules), hence the separate
-		//! SetAnim4DRules method to avoid rebuilding the multimap everytime a material is edited :/
 		std::vector<Anim4DGroup> anim4DGroups_;
 
 		//! Callback for primitive-level pre-fetching (optional, for Unreal integration)
@@ -128,8 +106,20 @@ public:
 	~GltfTuner();
 	CesiumAsync::Future<std::optional<Cesium3DTilesSelection::GltfModifierOutput>> apply(
 		Cesium3DTilesSelection::GltfModifierInput&& input) override;
+	/// Pass a new set of rules for glTF modification needs because of material customizations.
+	/// Do NOT test if the new rules actually differ from the current ones. For now we assume it is the responsibility
+	/// of the caller to call this only when needed.
+	/// \return The result of a call to getCurrentVersion()
 	int64_t SetMaterialRules(Rules&& rules);
-	int64_t SetAnim4DRules(Rules&& rules);
+	/// Pass a new set of rules for glTF modification needs because of 4D schedule animation. This method WILL test if
+	/// the new rules actually differ from the current ones.
+	/// \param newCurrentVersion The result of a call to getCurrentVersion(), whatever the boolean value returned
+	/// \param bOptimizeForRegularUpdates In practice this is for NextGen incremental schedule updates: we don't want
+	///		to retune when not strictly necessary so we'll compare new rules with current rules, and thus ensure the
+	///		structures are sorted to facilitate comparisons. No need to incur the CPU cost for Legacy schedules where
+	///		the rules are never updated without reloading the tiles from a new changeset, so pass false in that case.
+	/// \return Whether the new rules were actually found to differ from the old ones, hence incrementing the version
+	bool SetAnim4DRules(Rules&& rules, int64_t& currentVersion, bool bOptimizeForRegularUpdates);
 
 	//! Set a callback to be invoked for each primitive during glTF processing in the worker thread.
 	//! This allows Unreal-specific code to pre-fetch metadata alongside GltfTuner's processing.
@@ -142,6 +132,8 @@ public:
 	bool HasITwinMaterialInfo() const;
 	std::vector<ITwinMaterialInfo> GetITwinMaterialInfo() const;
 	void SetMaterialInfoReadCallback(ITwinMaterialInfoReadCallback const&);
+
+	void ParseExtras(CesiumUtility::JsonValue::Object const& extras);
 
 	void SetMaterialHelper(std::shared_ptr<GltfMaterialHelper> const& matHelper);
 

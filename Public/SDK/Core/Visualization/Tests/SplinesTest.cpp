@@ -12,9 +12,8 @@
 #include <mutex>
 
 #include <catch2/catch_all.hpp>
-#include <httpmockserver/mock_server.h>
-#include <httpmockserver/port_searcher.h>
-#include "Mock.h"
+#include <Core/Network/Tests/AsyncTestHelpers.h>
+#include <Core/Network/Tests/HttpMock.h>
 
 using namespace AdvViz::SDK;
 
@@ -65,7 +64,7 @@ bool CompareSplines(ISplinesManager const& mngr1, ISplinesManager const& mngr2)
 	}
 	return true;
 }
-bool WaitForAsyncTask(std::atomic_bool& taskFinished, int maxSeconds);
+
 void SetDefaultConfig();
 
 TEST_CASE("Splines Saving")
@@ -85,7 +84,7 @@ TEST_CASE("Splines Saving")
 			std::mutex serverMutex;
 
 			auto respKeyPostPoints = std::pair("POST", "/advviz/v1/decorations/TEST_SPLINES_ID/splinepoints");
-			mock->responseFctWithData_[respKeyPostPoints] = [&](const std::string& data)
+			mock->SetResponseFunctionWithData(respKeyPostPoints, [&](const std::string& data)
 			{
 				std::unique_lock<std::mutex> lock(serverMutex);
 				// points should be posted before splines
@@ -111,10 +110,10 @@ TEST_CASE("Splines Saving")
 				{
 					return HTTPMock::Response2(504, "unexpected spline points data");
 				}
-			};
+			});
 
 			auto respKeyPost = std::pair("POST", "/advviz/v1/decorations/TEST_SPLINES_ID/splines");
-			mock->responseFctWithData_[respKeyPost] = [&](const std::string& data)
+			mock->SetResponseFunctionWithData(respKeyPost, [&](const std::string& data)
 			{
 				std::unique_lock<std::mutex> lock(serverMutex);
 				// points should be posted before splines
@@ -135,7 +134,7 @@ TEST_CASE("Splines Saving")
 				{
 					return HTTPMock::Response2(504, "unexpected spline data");
 				}
-			};
+			});
 
 			std::shared_ptr<ISplinesManager> splinesManager(ISplinesManager::New());
 			std::atomic_bool saveFinished = false;
@@ -198,7 +197,7 @@ TEST_CASE("Splines Saving")
 			}
 
 			auto respKeyPutPoints = std::pair("PUT", "/advviz/v1/decorations/TEST_SPLINES_ID/splinepoints");
-			mock->responseFctWithData_[respKeyPutPoints] = [&](const std::string& data)
+			mock->SetResponseFunctionWithData(respKeyPutPoints, [&](const std::string& data)
 			{
 				std::unique_lock<std::mutex> lock(serverMutex);
 				++receivedRequests;
@@ -216,7 +215,7 @@ TEST_CASE("Splines Saving")
 				{
 					return HTTPMock::Response2(504, "unexpected spline points update data");
 				}
-			};
+			});
 			SaveSplinesAndWait();
 
 
@@ -229,7 +228,7 @@ TEST_CASE("Splines Saving")
 			// The removal triggers two requests: one to remove the point from the spline (PUT) and one to
 			// delete the point.
 			auto respKeyPutSpline = std::pair("PUT", "/advviz/v1/decorations/TEST_SPLINES_ID/splines");
-			mock->responseFctWithData_[respKeyPutSpline] = [&](const std::string& data)
+			mock->SetResponseFunctionWithData(respKeyPutSpline, [&](const std::string& data)
 			{
 				std::unique_lock<std::mutex> lock(serverMutex);
 				++receivedRequests;
@@ -248,9 +247,9 @@ TEST_CASE("Splines Saving")
 				{
 					return HTTPMock::Response2(504, "unexpected spline update data");
 				}
-			};
+			});
 			auto respKeyDeletePoints = std::pair("DELETE", "/advviz/v1/decorations/TEST_SPLINES_ID/splinepoints");
-			mock->responseFctWithData_[respKeyDeletePoints] = [&](const std::string& data)
+			mock->SetResponseFunctionWithData(respKeyDeletePoints, [&](const std::string& data)
 			{
 				std::unique_lock<std::mutex> lock(serverMutex);
 				++receivedRequests;
@@ -266,13 +265,13 @@ TEST_CASE("Splines Saving")
 				{
 					return HTTPMock::Response2(504, "unexpected spline points delete data");
 				}
-			};
+			});
 			SaveSplinesAndWait();
 
 			// Load splines.
 
 			auto respKeyGet = std::pair("GET", "/advviz/v1/decorations/TEST_SPLINES_ID/splines");
-			mock->responseFct_[respKeyGet] = [&]
+			mock->SetResponseFunction(respKeyGet, [&]
 			{
 				std::unique_lock<std::mutex> lock(serverMutex);
 				++receivedRequests;
@@ -295,10 +294,10 @@ TEST_CASE("Splines Saving")
 						"{\"id\":\"spl2\",\"name\":\"spline_2\",\"usage\":\"PopulationZone\",\"pointIDs\":[\"pt5\",\"pt6\",\"pt7\",\"pt8\"],\"transform\":[1.0,0.0,0.0,0.0,0.0,1.0,0.0,0.0,0.0,0.0,1.0,0.0],\"closedLoop\":true}" \
 						"],\"_links\":{}}");
 				}
-			};
+			});
 
 			auto respKeyGetPoints = std::pair("GET", "/advviz/v1/decorations/TEST_SPLINES_ID/splinepoints");
-			mock->responseFct_[respKeyGetPoints] = [&]
+			mock->SetResponseFunction(respKeyGetPoints, [&]
 			{
 				std::unique_lock<std::mutex> lock(serverMutex);
 				++receivedRequests;
@@ -318,7 +317,7 @@ TEST_CASE("Splines Saving")
 					"{\"id\":\"pt7\",\"position\":[2.0,2.0,2.0],\"upVector\":[0.0,0.0,0.0],\"inTangentMode\":\"Linear\",\"inTangent\":[0.0,0.0,0.0],\"outTangentMode\":\"Linear\",\"outTangent\":[0.0,0.0,0.0]}," \
 					"{\"id\":\"pt8\",\"position\":[2.0,0.0,2.0],\"upVector\":[0.0,0.0,0.0],\"inTangentMode\":\"Linear\",\"inTangent\":[0.0,0.0,0.0],\"outTangentMode\":\"Linear\",\"outTangent\":[0.0,0.0,0.0]}" \
 					"],\"_links\":{}}");
-			};
+			});
 
 			std::shared_ptr<ISplinesManager> splinesManager2(ISplinesManager::New());
 			splinesManager2->LoadDataFromServer("TEST_SPLINES_ID");
@@ -328,7 +327,7 @@ TEST_CASE("Splines Saving")
 			// Remove spline and save
 
 			auto respKeyDelete = std::pair("DELETE", "/advviz/v1/decorations/TEST_SPLINES_ID/splines");
-			mock->responseFctWithData_[respKeyDelete] = [&](const std::string& data)
+			mock->SetResponseFunctionWithData(respKeyDelete, [&](const std::string& data)
 			{
 				std::unique_lock<std::mutex> lock(serverMutex);
 				++receivedRequests;
@@ -344,7 +343,7 @@ TEST_CASE("Splines Saving")
 				{
 					return HTTPMock::Response2(504, "unexpected spline delete data");
 				}
-			};
+			});
 
 			splinesManager->RemoveSpline(spline1_ptr);
 			SaveSplinesAndWait();

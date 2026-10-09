@@ -62,17 +62,6 @@ namespace BeUtils
 			std::vector<std::array<uint8_t, 4>> const& meshColors);
 
 
-		struct FormatTextureResultData
-		{
-			std::filesystem::path const filePath = {};
-			CesiumGltf::Image cesiumImage;
-		};
-
-		using FormatTextureResult = AdvViz::expected<
-			FormatTextureResultData,
-			GenericFailureDetails>;
-
-
 		enum ESaveImageAction
 		{
 			None,
@@ -81,12 +70,15 @@ namespace BeUtils
 		using SaveCesiumImageResult = AdvViz::expected<
 			ESaveImageAction,
 			GenericFailureDetails>;
+
 		static SaveCesiumImageResult SaveImageCesium(
 			CesiumGltf::Image const& image, std::filesystem::path const& outputTexPath);
+
 
 		using LoadCesiumImageResult = AdvViz::expected<
 			bool,
 			GenericFailureDetails>;
+
 		static LoadCesiumImageResult LoadImageCesium(
 			CesiumGltf::Image& image, std::vector<std::byte> const& buffer,
 			std::string const& contextInfo);
@@ -112,6 +104,16 @@ namespace BeUtils
 			std::string const& contextInfo);
 
 	protected:
+		struct FormatTextureResultData
+		{
+			std::filesystem::path const filePath = {};
+			CesiumGltf::Image cesiumImage;
+		};
+
+		using FormatTextureResult = AdvViz::expected<
+			FormatTextureResultData,
+			GenericFailureDetails>;
+
 		//! Merge color (if any) and alpha textures into one single texture, and return the resulting image
 		//! path (or an error).
 		FormatTextureResult MergeColorAlpha(AdvViz::SDK::ITwinChannelMap const& colorTex,

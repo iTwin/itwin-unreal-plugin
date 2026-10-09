@@ -214,11 +214,22 @@ bool FITwinDynamicShadingProperty<DataType, NumChannels>::UpdateTexture()
 		BE_LOGW("ITwinRender", "Dynamic Texture's update attempt while Texture isn't init'd or already GC'd!");
 		return true;
 	}
+	if (GUsingNullRHI)
+	{
+		// Do not try to access the texture RHI in NullRHI mode...
+		return false;
+	}
 	if (!bNeedUpdate)
 	{
 		return false;
 	}
-	auto* TextureRHI = ((FTexture2DResource*)Texture->GetResource())->GetTexture2DRHI();
+	FTextureResource* TextureResource = Texture->GetResource();
+	if (!TextureResource)
+	{
+		return true;
+	}
+
+	auto* TextureRHI = static_cast<FTexture2DResource*>(TextureResource)->GetTexture2DRHI();
 	// tested in UpdateTextureRegions too but bNeedUpdate requires this early exit
 	if (!TextureRHI)
 	{

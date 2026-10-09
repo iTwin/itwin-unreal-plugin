@@ -191,18 +191,19 @@ namespace AdvViz::SDK::Tools
 		CreateLogChannel("ITwinAPI", level);
 		CreateLogChannel("ITwinScene", level);
 		CreateLogChannel("ITwinDecoration", level);
+		CreateLogChannel("ITwinHDRI", level);
 		CreateLogChannel("ITwinMaterial", level);
 		CreateLogChannel("ITwinQuery", level);
 		CreateLogChannel("ITwin4DImp", level);
 		CreateLogChannel("ITwinRender", level);
 		CreateLogChannel("App", level);
 		CreateLogChannel("AppUI", level);
-		CreateLogChannel("Timeline", level);
 		CreateLogChannel("PathAnim", level);
+		CreateLogChannel("Timeline", level);
+		CreateLogChannel("ITwinPopulation", level);
 		CreateLogChannel("http", level);
 		CreateLogChannel("json", level);
 		CreateLogChannel("keyframeAnim", level);
-		CreateLogChannel("FITwinHDRILibrary", level);
 	}
 }
 

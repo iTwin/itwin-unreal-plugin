@@ -1,10 +1,7 @@
-// Copyright 2020-2024 CesiumGS, Inc. and Contributors
+// Copyright 2020-2026 CesiumGS, Inc. and Contributors
 
 #pragma once
 
-#include "Cesium3DTilesSelection/Tileset.h"
-#include "Cesium3DTilesSelection/ViewState.h"
-#include "Cesium3DTilesSelection/ViewUpdateResult.h"
 #include "Cesium3DTilesetLoadFailureDetails.h"
 #include "CesiumCreditSystem.h"
 #include "CesiumEncodedMetadataComponent.h"
@@ -19,9 +16,13 @@
 #include "Engine/EngineTypes.h"
 #include "GameFramework/Actor.h"
 #include "Interfaces/IHttpRequest.h"
+#include "PhysicsEngine/BodyInstance.h"
 #include "PrimitiveSceneProxy.h"
-#include <PhysicsEngine/BodyInstance.h>
 #include <Subsystems/EngineSubsystem.h>
+
+#include <Cesium3DTilesSelection/Tileset.h>
+#include <Cesium3DTilesSelection/ViewState.h>
+#include <Cesium3DTilesSelection/ViewUpdateResult.h>
 #include <atomic>
 #include <chrono>
 #include <glm/mat4x4.hpp>
@@ -1374,6 +1375,14 @@ public:
    */
   void SetLifecycleEventReceiver(UObject* EventReceiver);
 
+  /**
+   * When loaded from a saved level, the tileset will automatically load its
+   * tileset.json but in some cases we don't want it to, typically when owned by
+   * an iModel: we want to request a fresh url to avoid a confusing HTTP access
+   * error (because of an expired signature) accessing the stale url.
+   */
+  void SkipLoadingTilesetOnConstruction();
+
 private:
   /**
    * The event handler for ACesiumGeoreference::OnEllipsoidChanged.
@@ -1514,6 +1523,8 @@ private:
   // it's best being prepared for the future.
   UPROPERTY(Transient, DuplicateTransient, TextExportTransient)
   UObject* _pLifecycleEventReceiver;
+
+  bool _skipLoadingTilesetOnConstruction = false;
 
   friend class UnrealPrepareRendererResources;
   friend class UCesiumGltfPointsComponent;

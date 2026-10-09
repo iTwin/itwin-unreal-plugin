@@ -193,7 +193,7 @@ endif()
 include("cmake/defaults.cmake")
 
 project(cesium-native
-    VERSION 0.62.0
+    VERSION 0.65.0
     LANGUAGES CXX C
 )
 if (CMAKE_VERSION VERSION_GREATER_EQUAL 3.31)

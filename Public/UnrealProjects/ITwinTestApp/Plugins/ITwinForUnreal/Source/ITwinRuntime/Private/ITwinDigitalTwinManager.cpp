@@ -8,14 +8,19 @@
 
 #include "ITwinDigitalTwinManager.h"
 
+#include <Decoration/ITwinDecorationHelper.h>
 #include <ITwinGeolocation.h>
+#include <ITwinGoogle3DTilesController.h>
+#include <ITwinGoogle3DTileset.h>
 #include <ITwinIModel.h>
 #include <ITwinRealityData.h>
 #include <ITwinSynchro4DSchedules.h>
 #include <ITwinTilesetAccess.h>
 #include <ITwinWebServices/ITwinWebServices.h>
 
+#include <CesiumWgs84Ellipsoid.h>
 #include <Components/DirectionalLightComponent.h>
+#include <Engine/Engine.h>
 #include <Engine/World.h>
 
 #include <ITwinRuntime/Private/Compil/BeforeNonUnrealIncludes.h>
@@ -85,6 +90,18 @@ public:
 	FImpl(AITwinDigitalTwinManager& InOwner);
 	bool HasFinishedRetrievingAllComponentInfos() const;
 
+	// Called with LoadedObject as nullptr when loading a scene.
+	void HandleGeolocation(AActor* LoadedObject, EITwinModelType ModelType, const FString& LayerId);
+	void OnGeoLocationSet(bool bFromScene, bool bFromElevationRequest = false);
+	void RequestGeoLocElevationIfNeeded(bool bFromITwinInfo);
+
+	AITwinDecorationHelper* FindDecorationHelper() const;
+
+	bool ShouldSaveGeoRef(ACesiumGeoreference const& GeoRef) const;
+	void OnGeoRefSaved(ACesiumGeoreference const& GeoRef);
+
+public:
+	AITwinDigitalTwinManager& Owner;
 	// iTwin info
 	std::shared_mutex ITwinInfoMutex;
 	enum class EITwinRequestStatus : uint8_t
@@ -101,6 +118,15 @@ public:
 	EITwinRequestStatus GetRealityDataRequestStatus = EITwinRequestStatus::NotStarted;
 	int32 NumRealityDataRequests = 0;
 	int32 NumRealityDataRequestsDone = 0;
+
+	//! Whether we have already loaded a layer (iModel or RealityData) in the scene. Once an existing scene
+	//! has been loaded, we also consider it is true.
+	bool bHasLoadedLayer = false;
+	// True when we actually got a georeference
+	bool bGeoLocationSet = false;
+
+	FVector LastLatLongHeightSaved = FVector::ZeroVector;
+
 
 	// Some operations require to first fetch a valid authorization token
 	enum class EOperationUponAuth : uint8
@@ -121,6 +147,7 @@ public:
 };
 
 AITwinDigitalTwinManager::FImpl::FImpl(AITwinDigitalTwinManager& InOwner)
+	: Owner(InOwner)
 {
 	if (!InOwner.HasAnyFlags(RF_ClassDefaultObject))
 	{
@@ -170,6 +197,219 @@ bool AITwinDigitalTwinManager::FImpl::HasFinishedRetrievingAllComponentInfos() c
 }
 
 
+AITwinDecorationHelper* AITwinDigitalTwinManager::FImpl::FindDecorationHelper() const
+{
+	if (Owner.ITwinId.IsEmpty())
+	{
+		BE_LOGE("ITwinAPI", "Unspecified ITwinId - cannot fetch decoration helper");
+		return nullptr;
+	}
+	return AITwinDecorationHelper::FindByITwinID(Owner.ITwinId, Owner.GetWorld());
+}
+
+bool AITwinDigitalTwinManager::FImpl::ShouldSaveGeoRef(ACesiumGeoreference const& GeoRef) const
+{
+	const FVector LatLongHeight(
+		GeoRef.GetOriginLatitude(),
+		GeoRef.GetOriginLongitude(),
+		GeoRef.GetOriginHeight());
+	return !LastLatLongHeightSaved.Equals(LatLongHeight, UE_SMALL_NUMBER);
+}
+
+void AITwinDigitalTwinManager::FImpl::OnGeoRefSaved(ACesiumGeoreference const& GeoRef)
+{
+	LastLatLongHeightSaved = FVector(
+		GeoRef.GetOriginLatitude(),
+		GeoRef.GetOriginLongitude(),
+		GeoRef.GetOriginHeight());
+}
+
+
+namespace
+{
+	double ComputeDistanceMeters(const FCartographicProps& Props1, const FCartographicProps& Props2)
+	{
+		// Convert each cartographic position to ECEF
+		FVector ECEF1 = UCesiumWgs84Ellipsoid::LongitudeLatitudeHeightToEarthCenteredEarthFixed(
+			FVector(Props1.Longitude, Props1.Latitude, Props1.Height)
+		);
+		FVector ECEF2 = UCesiumWgs84Ellipsoid::LongitudeLatitudeHeightToEarthCenteredEarthFixed(
+			FVector(Props2.Longitude, Props2.Latitude, Props2.Height)
+		);
+		// Compute Euclidean distance in ECEF space (straight-line distance through Earth)
+		return FVector::Distance(ECEF1, ECEF2);
+	}
+}
+
+void AITwinDigitalTwinManager::FImpl::HandleGeolocation(AActor* LoadedObject, EITwinModelType ModelType, const FString& LayerId)
+{
+	auto&& Geoloc = FITwinGeolocation::Get(*Owner.GetWorld());
+	// Note: we can't rely on Geoloc->GeoReference->GetOriginPlacement being still TrueOrigin, because the
+	// Google 3D Tileset has actually set it to CartographicOrigin with the default (Exton's) long/lat, right
+	// from the start (see AMainLevelScript::OnWorldBeginPlay), but the first /other/ geolocated tileset
+	// loaded must change it to some more suitable location.
+	if (bGeoLocationSet)
+	{
+		ensure(!Geoloc->bCanBypassCurrentLocation);
+
+		// When adding an individual layer to the scene, detect cases with very distant geo-locations and
+		// warn the user about if in this case, as it can lead to very weird camera behavior.
+		// AzDev#2024778.
+		if (Owner.GetComponentLoadContext(LayerId) == EITwinLoadContext::Single)
+		{
+			auto TilesetAccess = Owner.GetTilesetAccess(ModelType, LayerId);
+			std::optional<FCartographicProps> GeoProps = TilesetAccess
+				? TilesetAccess->GetNativeGeoreference()
+				: std::nullopt;
+			if (GeoProps)
+			{
+				FCartographicProps CurrentGeoProps;
+				CurrentGeoProps.Latitude = Geoloc->GeoReference->GetOriginLatitude();
+				CurrentGeoProps.Longitude = Geoloc->GeoReference->GetOriginLongitude();
+				CurrentGeoProps.Height = Geoloc->GeoReference->GetOriginHeight();
+				const double DistanceMeters = ComputeDistanceMeters(CurrentGeoProps, *GeoProps);
+				Owner.GeoLocationGapInMetersEvent.Broadcast(DistanceMeters, LayerId);
+			}
+		}
+		return;
+	}
+	if (ModelType == EITwinModelType::IModel)
+	{
+		const auto IModel = Cast<AITwinIModel const>(LoadedObject);
+		if (ensure(IModel) && IModel->GetEcefLocation() && IModel->GetProjectExtents())
+		{
+			// Geoloc->GeoReference has been set up in MakeTileset, no need to repeat here
+			OnGeoLocationSet(false);
+		}
+	}
+	else if (ModelType == EITwinModelType::RealityData)
+	{
+		auto iRealData = Cast<AITwinRealityData>(LoadedObject);
+		if (ensure(iRealData) && iRealData->IsGeolocated())
+		{
+			iRealData->UseAsGeolocation();
+			OnGeoLocationSet(false);
+			// geo-location retrieved from reality-data usually lacks elevation information.
+			RequestGeoLocElevationIfNeeded(/*bFromITwinInfo*/false);
+		}
+	}
+
+	if (LoadedObject == nullptr)
+	{
+		BE_ASSERT(ModelType == EITwinModelType::GlobalMapLayer || ModelType == EITwinModelType::Invalid);
+		AITwinDecorationHelper* DecoHelper = FindDecorationHelper();
+		if (ensure(DecoHelper))
+		{
+			auto const ss = DecoHelper->GetSceneSettings();
+			if (ss.geoLocation.has_value())
+			{
+				Geoloc->GeoReference->SetOriginPlacement(EOriginPlacement::CartographicOrigin);
+				Geoloc->GeoReference->SetOriginLatitude((*ss.geoLocation)[0]);
+				Geoloc->GeoReference->SetOriginLongitude((*ss.geoLocation)[1]);
+				Geoloc->GeoReference->SetOriginHeight((*ss.geoLocation)[2]);
+				OnGeoLocationSet(true);
+				FVector latLongHeight((*ss.geoLocation)[0], (*ss.geoLocation)[1], (*ss.geoLocation)[2]);
+				// update decoration geo-reference transform
+				DecoHelper->SetDecoGeoreference(latLongHeight);
+			}
+		}
+		if (!bGeoLocationSet && Geoloc->bNeedElevationEvaluation)
+		{
+			// When the geo-location is determined by iTwin information, we lack the elevation, so we make
+			// a request to Google elevation API to get a better elevation than 0.0
+			RequestGeoLocElevationIfNeeded(/*bFromITwinInfo*/true);
+		}
+	}
+
+	if (!bGeoLocationSet
+		&& !Geoloc->bNeedElevationEvaluation
+		&& LoadedObject
+		&& ShouldSaveGeoRef(*Geoloc->GeoReference))
+	{
+		// If the user creates a scene using the default geo-location (Exton) with at least one model,
+		// it is important to save the geo-location so that the scene is not totally messed up in the future,
+		// in case one of the models or the itwin has a modification of its geo-location:
+		AITwinGoogle3DTilesController* GoogleTilesController = AITwinGoogle3DTilesController::GetInstance(
+			Owner.GetWorld());
+		if (GoogleTilesController
+			&& GoogleTilesController->HasValidGoogleTileset()
+			&& GoogleTilesController->DisplayGoogleTiles().value_or(false))
+		{
+			GoogleTilesController->UpdateAfterGeoLocSet(true);
+			GoogleTilesController->Save();
+			OnGeoRefSaved(*Geoloc->GeoReference);
+		}
+	}
+}
+
+void AITwinDigitalTwinManager::FImpl::OnGeoLocationSet(bool bFromScene, bool bFromElevationRequest /*= false*/)
+{
+	UWorld* World = Owner.GetWorld();
+	if (!ensure(World))
+		return;
+	auto&& Geoloc = FITwinGeolocation::Get(*World);
+	if (!ensure(Geoloc->GeoReference.Get()))
+		return;
+
+	// Note about elevation request: it should not alter the flags / geo-location set nor
+	// bCanBypassCurrentLocation, as those request are just
+	if (!bFromElevationRequest)
+	{
+		bGeoLocationSet = true;
+		Geoloc->bCanBypassCurrentLocation = false;
+	}
+
+	Owner.GeoLocationSetEvent.Broadcast(bFromScene, bFromElevationRequest);
+}
+
+void AITwinDigitalTwinManager::FImpl::RequestGeoLocElevationIfNeeded(bool bFromITwinInfo)
+{
+	UWorld* World = Owner.GetWorld();
+	if (!ensure(World))
+		return;
+	auto&& Geoloc = FITwinGeolocation::Get(*World);
+	if (Geoloc->bNeedElevationEvaluation && ensure(Geoloc->GeoReference.Get()))
+	{
+		ensure(fabs(Geoloc->GeoReference->GetOriginHeight()) < 1e-8);
+
+		const AdvViz::SDK::ITwinGeolocationInfo Geolocation =
+		{
+			.latitude = Geoloc->GeoReference->GetOriginLatitude(),
+			.longitude = Geoloc->GeoReference->GetOriginLongitude()
+		};
+
+		AITwinGoogle3DTileset::RequestElevationtAtGeolocation(Geolocation,
+			[bFromITwinInfo, Geolocation,
+			this, ThisOwner = TWeakObjectPtr<AITwinDigitalTwinManager>(&Owner)]
+			(std::optional<double> const& elevationOpt)
+		{
+			if (ThisOwner.IsValid() && elevationOpt)
+			{
+				auto&& Geoloc = FITwinGeolocation::Get(*ThisOwner->GetWorld());
+				// Before changing the elevation, check that the coordinates used for this request still
+				// match the current ones (the geo-reference could have been imposed by an iModel after we
+				// started the request...)
+				if (ensure(Geoloc->GeoReference.Get())
+					&& Geoloc->bNeedElevationEvaluation
+					&& fabs(Geolocation.latitude - Geoloc->GeoReference->GetOriginLatitude()) < 1e-8
+					&& fabs(Geolocation.longitude - Geoloc->GeoReference->GetOriginLongitude()) < 1e-8)
+				{
+					Geoloc->GeoReference->SetOriginHeight(*elevationOpt);
+					Geoloc->bNeedElevationEvaluation = false;
+					OnGeoLocationSet(bFromITwinInfo, /*bFromElevationRequest*/true);
+
+					const FVector latLongHeight(Geolocation.latitude, Geolocation.longitude, *elevationOpt);
+					// update decoration geo-reference transform
+					AITwinDecorationHelper* DecoHelper = FindDecorationHelper();
+					if (DecoHelper)
+						DecoHelper->SetDecoGeoreference(latLongHeight);
+				}
+			}
+		});
+	}
+}
+
+
 AITwinDigitalTwinManager::AITwinDigitalTwinManager()
 	: Impl(MakePimpl<FImpl>(*this))
 {
@@ -194,7 +434,8 @@ void AITwinDigitalTwinManager::ResetITwin()
 
 	const auto ChildrenCopy = Children;
 	for (auto& Child : ChildrenCopy)
-		GetWorld()->DestroyActor(Child);
+		if (AActor* ChildActor = Child.Get())
+			GetWorld()->DestroyActor(ChildActor);
 	Children.Empty();
 }
 
@@ -235,14 +476,20 @@ void AITwinDigitalTwinManager::UpdateITwin()
 	Init(ITwinId, DisplayName);
 }
 
-void AITwinDigitalTwinManager::Init(FString const& InITwinId, FString const& InDisplayName)
+void AITwinDigitalTwinManager::Init(FString const& InITwinId, FString const& InDisplayName,
+									bool bNoWebServicesForTesting/*=false*/)
 {
 	ITwinId = InITwinId;
 	DisplayName = InDisplayName;
 	{
 		BeUtils::WLock WLock(Impl->ITwinInfoMutex);
-		Impl->ITwinInfoRequestStatus = FImpl::EITwinRequestStatus::NotStarted;
+		Impl->ITwinInfoRequestStatus =
+			bNoWebServicesForTesting ? FImpl::EITwinRequestStatus::Done : FImpl::EITwinRequestStatus::NotStarted;
 		Impl->bHasLoggedGeolocInfo = false;
+	}
+	if (bNoWebServicesForTesting)
+	{
+		return;
 	}
 	if (CheckServerConnection() != AdvViz::SDK::EITwinAuthStatus::Success)
 	{
@@ -472,6 +719,22 @@ void AITwinDigitalTwinManager::Add(FITwinLoadInfo const& Info, AITwinIModel* IMo
 	IModel->AttachToActor(this, FAttachmentTransformRules::KeepRelativeTransform);
 }
 
+void AITwinDigitalTwinManager::SetupSpawnedLayer(AITwinServiceActor* NewLayer)
+{
+	NewLayer->AttachToActor(this, FAttachmentTransformRules::KeepRelativeTransform);
+
+	NewLayer->ServerConnection = ServerConnection;
+
+#if WITH_TESTS
+	// In test mode, we need to set the server URL to all spawned layers.
+	FString ServerUrl;
+	if (IsInTestMode(ServerUrl))
+	{
+		NewLayer->SetTestMode(ServerUrl);
+	}
+#endif
+}
+
 void AITwinDigitalTwinManager::Load(FITwinLoadInfo const& Info, EITwinLoadContext LoadContext)
 {
 	switch (Info.ModelType)
@@ -486,7 +749,7 @@ void AITwinDigitalTwinManager::Load(FITwinLoadInfo const& Info, EITwinLoadContex
 			IModel->LoadingMethod = ELoadingMethod::LM_Automatic;
 			IModel->ChangesetId = TEXT("latest");
 			IModel->OnIModelLoaded.AddDynamic(this, &AITwinDigitalTwinManager::OnIModelLoaded);
-			IModel->AttachToActor(this, FAttachmentTransformRules::KeepRelativeTransform);
+			SetupSpawnedLayer(IModel);
 			IModel->SetModelLoadInfo(Info);
 			IModel->LoadModel(Info.ExportId);
 
@@ -587,7 +850,7 @@ void AITwinDigitalTwinManager::Tick(float DeltaTime)
 						NewStatus = TGetITwinLayerLoadStatus<AITwinIModel>(*IModel);
 					}
 				}
-				else
+				else if (ModelType == EITwinModelType::RealityData)
 				{
 					AITwinRealityData const* RealityData = GetRealityData(LayerId);
 					if (RealityData)
@@ -598,6 +861,20 @@ void AITwinDigitalTwinManager::Tick(float DeltaTime)
 				if (NewStatus && *NewStatus != EITwinLayerLoadStatus::InProgress)
 				{
 					SetLoadStatus(ModelType, LayerId, *NewStatus);
+
+					if (*NewStatus == EITwinLayerLoadStatus::Complete)
+					{
+						// Outside of PIE, delegates are not called, so we execute the corresponding callback
+						// here to ensure the same operations are dones as in game/PIE.
+						if (ModelType == EITwinModelType::IModel)
+						{
+							OnIModelLoaded(true, LayerId);
+						}
+						else if (ModelType == EITwinModelType::RealityData)
+						{
+							OnRealityDataInfoLoaded(true, LayerId);
+						}
+					}
 				}
 			}
 		}
@@ -628,13 +905,12 @@ void AITwinDigitalTwinManager::LoadIModel(FIModelInfo const& Info, EITwinLoadCon
 	IModel->LoadingMethod = ELoadingMethod::LM_Automatic;
 	IModel->ChangesetId = TEXT("latest");
 	IModel->OnIModelLoaded.AddDynamic(this, &AITwinDigitalTwinManager::OnIModelLoaded);
-	IModel->AttachToActor(this, FAttachmentTransformRules::KeepRelativeTransform);
+	SetupSpawnedLayer(IModel);
+	IModel->IModelId = Info.Id;
+	IModel->ITwinId = ITwinId;
 #if WITH_EDITOR
 	IModel->SetActorLabel(Info.DisplayName);
 #endif
-	IModel->ServerConnection = ServerConnection;
-	IModel->IModelId = Info.Id;
-	IModel->ITwinId = ITwinId;
 	OnLoadIModelEvent.Broadcast();
 
 	ConnectLoadedIModelToUI(IModel);
@@ -670,8 +946,7 @@ void AITwinDigitalTwinManager::LoadRealityData(FITwinRealityData3DInfo const& In
 #if WITH_EDITOR
 	RealityData->SetActorLabel(Info.DisplayName);
 #endif
-	RealityData->AttachToActor(this, FAttachmentTransformRules::KeepRelativeTransform);
-	RealityData->ServerConnection = ServerConnection;
+	SetupSpawnedLayer(RealityData);
 	RealityData->RealityDataId = Info.Id;
 	RealityData->ITwinId = ITwinId;
 	RealityData->OnRealityDataInfoLoaded.AddDynamic(this, &AITwinDigitalTwinManager::OnRealityDataInfoLoaded);
@@ -702,7 +977,7 @@ void AITwinDigitalTwinManager::OnRealityDataInfoLoaded(bool bSuccess, FString St
 		// Now that RealityData information is known, we can broadcast the event (to handle geo-location,
 		// typically).
 		CompletedLoadIds.Add(StringId);
-		ComponentLoadedEvent.Broadcast(LoadedObjects[StringId], EITwinModelType::RealityData, StringId);
+		OnComponentLoaded(LoadedObjects[StringId], EITwinModelType::RealityData, StringId);
 	}
 }
 
@@ -760,15 +1035,49 @@ void AITwinDigitalTwinManager::OnIModelLoaded(bool bSuccess, FString StringId)
 		CompletedLoadIds.Add(StringId);
 		AsIModel->SetLightForForcedShadowUpdate(SkyLight);
 		// Load reality data attached to the iModel (same behavior as Design Review).
-		AsIModel->GetAttachedRealityDataIds().Then([this](const auto& RealityDataIdsFuture)
+		if (AsIModel->GetWebServices()) // none when unit testing
+			AsIModel->GetAttachedRealityDataIds().Then([this, StringId](const auto& RealityDataIdsFuture)
 			{
 				for (const auto& RealityDataId: RealityDataIdsFuture.Get())
 				{
 					LoadComponent(RealityDataId, EITwinLoadContext::Unknown);
 				}
+				NumProcessedIModelAttachmentRequests++;
 			});
-		ComponentLoadedEvent.Broadcast(LoadedObjects[StringId], EITwinModelType::IModel, StringId);
+		OnComponentLoaded(LoadedObjects[StringId], EITwinModelType::IModel, StringId);
 	}
+}
+
+void AITwinDigitalTwinManager::OnComponentLoaded(AActor* LoadedObject, EITwinModelType ModelType, const FString& LayerId)
+{
+	std::shared_ptr<AITwinDecorationHelper::SaveLocker> SaveLocker;
+
+	AITwinDecorationHelper* DecoHelper = Impl->FindDecorationHelper();
+
+	if (DecoHelper)
+	{
+		if (!Impl->bHasLoadedLayer)
+		{
+			// In case of first load, lock the save so that it does not trigger a save question.
+			SaveLocker = DecoHelper->LockSave();
+		}
+		DecoHelper->CreateLinkIfNeeded(ModelType, LayerId);
+	}
+
+	if (ModelType == EITwinModelType::IModel)
+	{
+		if (GetActiveIModel() == nullptr)
+			SetActiveIModel(LayerId);
+	}
+
+	Impl->HandleGeolocation(LoadedObject, ModelType, LayerId);
+
+	ComponentLoadedEvent.Broadcast(LoadedObject, ModelType, LayerId);
+}
+
+bool AITwinDigitalTwinManager::IsGeoLocationSet() const
+{
+	return Impl->bGeoLocationSet;
 }
 
 FString AITwinDigitalTwinManager::GetComponentName(FString const& StringId) const
@@ -869,17 +1178,19 @@ void AITwinDigitalTwinManager::SetIsLoadingScene(bool bIsLoading)
 	bIsLoadingScene = bIsLoading;
 }
 
-void AITwinDigitalTwinManager::OnSceneLoadingStartStop(bool bStart)
-{
-	SetIsLoadingScene(bStart);
-}
-
 void AITwinDigitalTwinManager::RemoveComponent(FString const& StringId)
 {
 	if (!LoadedObjects.Contains(StringId))
 		return;
 
 	auto Comp = *(LoadedObjects.Find(StringId));
+	if (Comp)
+	{
+		auto Type = Cast<AITwinIModel>(Comp) ? EITwinModelType::IModel
+			: (Cast<AITwinRealityData>(Comp) ? EITwinModelType::RealityData : EITwinModelType::Invalid);
+		if (EITwinModelType::Invalid != Type)
+			ComponentWillBeRemovedEvent.Broadcast(Comp, Type);
+	}
 	LoadedObjects.Remove(StringId);
 	CompletedLoadIds.Remove(StringId);
 	if (auto iModel = Cast<AITwinIModel>(Comp))
@@ -900,7 +1211,10 @@ void AITwinDigitalTwinManager::RemoveComponent(FString const& StringId)
 			}
 		}
 		Synchro4DSchedules.Remove(StringId);
-		iModel->Destroy();
+		// My unit test world has none (see MainPanelTests.cpp), which led to a warning here: I tried to add a context
+		// but it led to other errors, so I just skip destruction for the U.T.
+		if (nullptr != GEngine->GetWorldContextFromWorld(GetWorld()))
+			iModel->Destroy();
 		ComponentRemovedEvent.Broadcast(StringId, EITwinModelType::IModel);
 
 		SetLoadStatus(EITwinModelType::IModel, StringId, EITwinLayerLoadStatus::NotStarted);
@@ -982,6 +1296,38 @@ TSet<FString> AITwinDigitalTwinManager::GetLoadedLayers(EITwinModelType LayerTyp
 		}
 	}
 	return LoadedLayers;
+}
+
+void AITwinDigitalTwinManager::OnSceneLoaded(bool bSuccess)
+{
+	FLoadingScope LoadingScope(*this);
+
+	SetIsLoadingScene(false);
+
+	// We load the scene first so no geolocation should be set before
+	if (ensure(!Impl->bGeoLocationSet))
+	{
+		Impl->HandleGeolocation(nullptr, EITwinModelType::GlobalMapLayer, ITwin::GetGoogleLayerId());
+	}
+
+	if (bSuccess)
+	{
+		Impl->bHasLoadedLayer = true;
+
+		AITwinDecorationHelper* DecoHelper = Impl->FindDecorationHelper();
+		if (ensureMsgf(DecoHelper, TEXT("Scene loaded, but no Decoration Helper?")))
+		{
+			for (auto link : DecoHelper->GetLinkedElements())
+			{
+				if (link.second.IsEmpty())
+					continue;
+				// Load iModel / reality data attached to this scene.
+				this->LoadComponent(link.second, EITwinLoadContext::Scene);
+			}
+		}
+	}
+
+	SceneLoadedEvent.Broadcast(bSuccess);
 }
 
 void AITwinDigitalTwinManager::SetAutoLoadAllComponents(bool bInAutoLoadAllComponents)

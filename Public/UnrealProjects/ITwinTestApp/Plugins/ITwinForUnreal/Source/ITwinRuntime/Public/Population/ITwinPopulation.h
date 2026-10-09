@@ -33,6 +33,7 @@ namespace AdvViz::SDK
 class AITwinPopulation;
 class FITwinPopulationWithPathExt;
 class UInstancedStaticMeshComponent;
+class UHierarchicalInstancedStaticMeshComponent;
 class UFoliageInstancedStaticMeshComponent;
 
 namespace ECollisionEnabled { enum Type : int; }
@@ -47,7 +48,7 @@ struct FITwinFoliageComponentHolder
 	TObjectPtr<UStaticMesh> MasterMesh;
 
 	UPROPERTY(Category = "iTwin", EditAnywhere)
-	TObjectPtr<UInstancedStaticMeshComponent> InstancedMeshComponent;
+	TObjectPtr<UInstancedStaticMeshComponent> InstancedMeshComponent; //Is a UInstancedStaticMeshComponent for clipping primitve and UITwinInstancedStaticMeshComponent (derive from UHierarchicalInstancedStaticMeshComponent) for the rest of the instances.
 
 	UPROPERTY(Category = "iTwin", VisibleAnywhere)
 	bool bIsFoliageComponent = false;
@@ -77,6 +78,7 @@ public:
 
 
 	static AITwinPopulation* CreatePopulation(const UObject* WorldContextObject, const FString& AssetPath,
+		const FString& ObjectPath,
 		AVizInstancesManagerPtr const& AvizInstanceManager,
 		AVizInstancesGroupPtr const& AvizInstanceGroup);
 
@@ -240,6 +242,18 @@ public:
 		return (objectType == EITwinInstantiatedObjectType::ClippingPlane
 			|| objectType == EITwinInstantiatedObjectType::ClippingBox);
 	}
+	bool IsSplinePopulation() const {
+		return bIsSplinePopulation;
+	}
+	void SetSplinePopulation(bool bIsSpline) {
+		bIsSplinePopulation = bIsSpline;
+	}
+	bool IsPartOfPathAnimation() const {
+		return bIsPartOfPathAnimation;
+	}
+	void SetPartOfPathAnimation(bool bIsPartOfPathAnim) {
+		bIsPartOfPathAnimation = bIsPartOfPathAnim;
+	}
 	FString GetObjectTypeName() const;
 
 	static FVector GetRandomColorShift(const EITwinInstantiatedObjectType type);
@@ -280,7 +294,7 @@ private:
 	bool CheckInstanceIndices(AdvViz::SDK::RefID const& GroupId) const;
 
 	//signal
-	static void SignalInstanceCreation(const FString& objectRef);
+	static void SignalInstanceCreation(const FString& decoObjectRef);
 private:
 	UPROPERTY(Category = "iTwin", EditAnywhere)
 	TArray<FITwinFoliageComponentHolder> FoliageComponents;
@@ -302,10 +316,13 @@ private:
 
 	int32 SelectedInstanceIndex = INDEX_NONE;
 
+	bool bIsSplinePopulation = false;
+	bool bIsPartOfPathAnimation = false;
+
 	struct FImpl;
 	TPimplPtr<FImpl> Impl;
 
-	std::string objectRef; // reference (url, id...) of the instantiated object
+	std::string decoObjectRef; // decoration service reference (url, id...) of the instantiated object
 
 	EITwinInstantiatedObjectType objectType = EITwinInstantiatedObjectType::Other;
 

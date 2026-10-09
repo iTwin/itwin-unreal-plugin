@@ -10,7 +10,6 @@
 
 #include <IncludeCesium3DTileset.h>
 #include <ITwinGeolocation.h>
-#include <ITwinServerConnection.h>
 #include <ITwinSetupMaterials.h>
 #include <ITwinIModel.h>
 #include <ITwinTilesetAccess.h>
@@ -29,7 +28,6 @@
 #include <Kismet/GameplayStatics.h>
 #include <EngineUtils.h> // for TActorIterator<>
 #include <ITwinUtilityLibrary.h>
-
 
 
 class AITwinRealityData::FTilesetAccess : public FITwinTilesetAccess
@@ -81,7 +79,6 @@ public:
 	/// this value will be left empty, so that we fetch the info at least once to make sure we have a non
 	/// expired URL for the tileset.
 	FIdentifiers IdentifierInSpawnedTileset;
-
 
 	FImpl(AITwinRealityData& InOwner)
 		: Owner(InOwner)
@@ -173,10 +170,6 @@ public:
 			return;
 		// Look if a helper already exists:
 		DecorationPersistenceMgr = AITwinDecorationHelper::GetInstance(Owner.GetWorld());
-		if (DecorationPersistenceMgr)
-		{
-			DecorationPersistenceMgr->OnSceneLoaded.AddDynamic(&Owner, &AITwinRealityData::OnSceneLoaded);
-		}
 	}
 };
 
@@ -188,15 +181,6 @@ AITwinRealityData::AITwinRealityData()
 	// In Editor, outside of PIE, delegates are not called, so we use Tick to check for load status updates
 	// instead.
 	PrimaryActorTick.bCanEverTick = true;
-}
-
-AITwinRealityData::~AITwinRealityData()
-{
-}
-
-void AITwinRealityData::EndPlay(const EEndPlayReason::Type EndPlayReason)
-{
-	Super::EndPlay(EndPlayReason);
 }
 
 void AITwinRealityData::UpdateOnSuccessfulAuthorization()
@@ -236,11 +220,6 @@ void AITwinRealityData::SetRealityData3DInfo(FITwinRealityData3DInfo const& Info
 bool AITwinRealityData::HasRealityDataIdentifiers() const
 {
 	return !RealityDataId.IsEmpty() && !ITwinId.IsEmpty();
-}
-
-void AITwinRealityData::OnSceneLoaded(bool success)
-{
-
 }
 
 void AITwinRealityData::UpdateRealityData()
@@ -326,6 +305,16 @@ UITwinClipping3DTilesetHelper* AITwinRealityData::FTilesetAccess::GetClippingHel
 	if (!RealityData.IsValid())
 		return nullptr;
 	return RealityData->GetClippingHelper();
+}
+
+[[nodiscard]] bool AITwinRealityData::IsVisibleAtPoint(FVector const& WorldPosition) const
+{
+	if (IsHidden() || !HasTileset() || GetTileset()->IsHidden())
+		return false;
+	auto* Clipr = GetClippingHelper();
+	if (!Clipr)
+		return true;
+	return !Clipr->ShouldCutOut(WorldPosition);
 }
 
 FBox AITwinRealityData::FTilesetAccess::GetBoundingBox() const
@@ -469,7 +458,20 @@ void AITwinRealityData::Destroyed()
 	}
 	const auto ChildrenCopy = Children;
 	for (auto& Child: ChildrenCopy)
-		GetWorld()->DestroyActor(Child);
+		if (Child)
+			GetWorld()->DestroyActor(Child);
+}
+
+/*static*/
+void AITwinRealityData::AddReferencedObjects(UObject* InThis, FReferenceCollector& Collector)
+{
+	Super::AddReferencedObjects(InThis, Collector);
+	const AITwinRealityData* Actor = static_cast<const AITwinRealityData*>(InThis);
+	if (Actor->Impl)
+	{
+		Collector.AddReferencedObject(Actor->Impl->ClippingHelper);
+		// Note: do not add FImpl::DecorationPersistenceMgr which lives independently of this actor
+	}
 }
 
 UITwinClipping3DTilesetHelper* AITwinRealityData::GetClippingHelper() const
@@ -490,6 +492,7 @@ bool AITwinRealityData::MakeClippingHelper()
 	{
 		// Connect mesh creation callback
 		Tileset->SetLifecycleEventReceiver(Impl->ClippingHelper.Get());
+		Tileset->RefreshTileset();
 	}
 	return true;
 }

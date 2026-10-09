@@ -14,6 +14,7 @@
 #include <ITwinIModel.h>
 #include <ITwinGeolocation.h>
 #include <ITwinServerConnection.h>
+#include <ITwinWebServices/ITwinWebServices.h>
 #include <Material/ITwinMaterialLibrary.h>
 #include <Material/ITwinTextureLoadingUtils.h>
 
@@ -22,7 +23,6 @@
 #include <CesiumAsync/IAssetResponse.h>
 #include <CesiumGltfReader/GltfReader.h>
 
-#include <Kismet/GameplayStatics.h>
 #include <ImageUtils.h>
 #include <Misc/FileHelper.h>
 #include <Misc/Paths.h>
@@ -42,6 +42,7 @@
 #	include <SDK/Core/Visualization/SplinesManager.h>
 #	include <SDK/Core/Visualization/KeyframeAnimation.h>
 #	include <SDK/Core/Visualization/PathAnimation.h>
+#	include <SDK/Core/Visualization/PopulationPersistence.h>
 #	include <BeHeaders/Util/CleanUpGuard.h>
 #	include <BeUtils/Gltf/GltfMaterialHelper.h>
 #	include <BeUtils/Gltf/GltfMaterialTuner.h>
@@ -182,10 +183,14 @@ FString FDecorationAsyncIOHelper::GetLoadedITwinId() const
 	return LoadedITwinId;
 }
 
-void FDecorationAsyncIOHelper::SetLoadedSceneId(FString InLoadedSceneId, bool inNewsScene /*= false*/)
+void FDecorationAsyncIOHelper::SetLoadedSceneId(const FString& InLoadedSceneId)
 {
 	LoadedSceneID = InLoadedSceneId;
-	bSceneIdIsForNewScene = inNewsScene;
+}
+
+void FDecorationAsyncIOHelper::SetNewScene(bool bInNewScene)
+{
+	bSceneIdIsForNewScene = bInNewScene;
 }
 
 void FDecorationAsyncIOHelper::RequestStop()
@@ -195,27 +200,31 @@ void FDecorationAsyncIOHelper::RequestStop()
 
 bool FDecorationAsyncIOHelper::IsInitialized() const
 {
-	return (decoration && instancesManager_ && materialPersistenceMngr && splinesManager && annotationsManager && pathAnimManager);
+	return (decoration && instancesManager_ && materialPersistenceMngr && splinesManager && annotationsManager && pathAnimManager && populationManager);
 }
 
-void FDecorationAsyncIOHelper::InitDecorationServiceConnection(const UWorld* WorldContextObject)
+void FDecorationAsyncIOHelper::InitDecorationServiceConnection(const UWorld* WorldContextObject,
+	bool bResetConfig /*= true*/,
+	bool bPropagateToSceneAPI /*= false*/)
 {
 	using namespace AdvViz::SDK;
 	// Initialize the connection to the decoration service
 	if (bNeedInitConfig)
 	{
-		EITwinEnvironment Env = EITwinEnvironment::Prod;
+		EITwinEnvironment Env = UITwinWebServices::GetDefaultEnvironment();
 
 		// Deduce environment from current iTwin authorization, if any.
 		// Note that we must use the same environment both in iTwin IMS and decoration service, as the
 		// token will be validated on both sides. Therefore, it is much preferable to have a valid
 		// authorization at this point...
-		AITwinServerConnection const* ServerConnection = Cast<AITwinServerConnection const>(
-			UGameplayStatics::GetActorOfClass(WorldContextObject, AITwinServerConnection::StaticClass()));
-		if (ensure(ServerConnection
-			&& ServerConnection->Environment != EITwinEnvironment::Invalid))
+		TObjectPtr<AITwinServerConnection> ServerConnection;
+		if (UITwinWebServices::GetActiveConnection(ServerConnection, WorldContextObject))
 		{
-			Env = ServerConnection->Environment;
+			if (ensure(ServerConnection
+				&& ServerConnection->Environment != EITwinEnvironment::Invalid))
+			{
+				Env = ServerConnection->Environment;
+			}
 		}
 
 		UITwinDecorationServiceSettings const* DecoSettings = GetDefault<UITwinDecorationServiceSettings>();
@@ -264,13 +273,37 @@ void FDecorationAsyncIOHelper::InitDecorationServiceConnection(const UWorld* Wor
 			sconfig.server.urlapiprefix = TCHAR_TO_UTF8(*DecoSettings->CustomUrlApiPrefix);
 		}
 
-		Tools::GetCrashInfo()->AddInfo("DecoService.Server", sconfig.server.server);
-		Tools::GetCrashInfo()->AddInfo("DecoService.urlapiprefix", sconfig.server.urlapiprefix);
-
-		Config::Init(sconfig);
-		if (ServerConnection)
+#if WITH_TESTS
+		if (MockServerPort > 0)
 		{
-			GetDefaultHttp()->SetAccessToken(ServerConnection->GetAccessTokenPtr());
+			sconfig.server.server = "http://localhost";
+			sconfig.server.port = MockServerPort;
+			sconfig.server.urlapiprefix = "";
+		}
+#endif // WITH_TESTS
+
+		Config::SConfig const ActualConfig = bResetConfig ? sconfig
+			: Config::GetCurrent().value_or(sconfig);
+
+		Tools::GetCrashInfo()->AddInfo("DecoService.Server", ActualConfig.server.server);
+		Tools::GetCrashInfo()->AddInfo("DecoService.urlapiprefix", ActualConfig.server.urlapiprefix);
+
+		if (bResetConfig || !Config::GetCurrent().has_value())
+		{
+			Config::Init(sconfig);
+		}
+		if (bPropagateToSceneAPI)
+		{
+			// Mostly used for unit tests, to ensure that Scene API requests are sent to the same server as
+			// the decoration service.
+			SetSceneAPIConfig(ActualConfig);
+		}
+
+		if (Env != EITwinEnvironment::Invalid)
+		{
+			// Share the same access token as the one used for iTwin IMS, if any.
+			GetDefaultHttp()->SetAccessToken(
+				AITwinServerConnection::GetAccessTokenPtrForEnv(Env));
 		}
 		ScenePersistenceAPI::SetDefaultHttp(GetDefaultHttp());
 
@@ -280,6 +313,20 @@ void FDecorationAsyncIOHelper::InitDecorationServiceConnection(const UWorld* Wor
 		bNeedInitConfig = false;
 	}
 }
+
+#if WITH_TESTS
+void FDecorationAsyncIOHelper::SetMockServerPort(const UWorld* WorldContextObject, int InPort)
+{
+	const bool bChangeTestMode = (MockServerPort > 0) != (InPort > 0);
+	if (MockServerPort != InPort)
+	{
+		MockServerPort = InPort;
+
+		bNeedInitConfig = true;
+		InitDecorationServiceConnection(WorldContextObject, true, true);
+	}
+}
+#endif // WITH_TESTS
 
 void FDecorationAsyncIOHelper::InitDefaultInstancesGroup(AdvViz::SDK::IInstancesGroupPtr const& defaultGroupPtr)
 {
@@ -299,15 +346,21 @@ void FDecorationAsyncIOHelper::InitDefaultInstancesGroup(AdvViz::SDK::IInstances
 	}
 }
 
-void FDecorationAsyncIOHelper::InitDecorationService(UWorld* WorldContextObject)
+void FDecorationAsyncIOHelper::InitScene()
 {
 	using namespace AdvViz::SDK;
-	if (decoration && instancesManager_ && materialPersistenceMngr && splinesManager && annotationsManager && pathAnimManager)
+	scene.reset(ScenePersistenceAPI::New());
+}
+
+void FDecorationAsyncIOHelper::InitDecorationService(UWorld* WorldContextObject, bool bResetConfig /*= true*/)
+{
+	using namespace AdvViz::SDK;
+	if (decoration && instancesManager_ && materialPersistenceMngr && splinesManager && annotationsManager && pathAnimManager && populationManager)
 	{
 		// Already done.
 		return;
 	}
-	InitDecorationServiceConnection(WorldContextObject);
+	InitDecorationServiceConnection(WorldContextObject, bResetConfig);
 
 	decoration.reset(IDecoration::New());
 	decorationITwin = std::make_shared<FString>();
@@ -324,7 +377,7 @@ void FDecorationAsyncIOHelper::InitDecorationService(UWorld* WorldContextObject)
 	materialPersistenceMngr->SetMaterialLibraryDirectory(TCHAR_TO_UTF8(*MaterialLibraryPath));
 	AITwinIModel::SetMaterialPersistenceManager(materialPersistenceMngr);
 
-
+	InitScene();
 	scene.reset(ScenePersistenceAPI::New());
 	splinesManager.reset(ISplinesManager::New());
 	annotationsManager.reset(IAnnotationsManager::New());
@@ -332,6 +385,9 @@ void FDecorationAsyncIOHelper::InitDecorationService(UWorld* WorldContextObject)
 	pathAnimManager.reset(AdvViz::SDK::IPathAnimManager::New());
 	pathAnimManager->SetInstanceManager(instancesManager_);
 	pathAnimManager->SetSplinesManager(splinesManager);
+
+	populationManager.reset(AdvViz::SDK::IPopulationManager::New());
+	populationManager->SetSplinesManager(splinesManager);
 
 	// Connect the instance manager to the spline manager, in order to be able to reload instances groups
 	// linked to splines correctly.
@@ -491,7 +547,7 @@ bool FDecorationAsyncIOHelper::LoadITwinDecoration(std::string& OutError)
 	std::lock_guard<std::mutex> lock(loadDecorationMutex);
 	if (!decoration)
 	{
-		ensureMsgf(false, TEXT("InitDecorationService must be called before, in game thread"));
+		BE_ISSUE("InitDecorationService must be called before, in game thread");
 		OutError = "missing initialization";
 		return false;
 	}
@@ -576,7 +632,7 @@ void FDecorationAsyncIOHelper::AsyncLoadPopulations(LoadCallback OnFinishCallbac
 {
 	if (!instancesManager_)
 	{
-		ensureMsgf(false, TEXT("InitDecorationService must be called before, in game thread"));
+		BE_ISSUE("InitDecorationService must be called before, in game thread");
 		OnFinishCallback(AdvViz::make_unexpected("Missing initialization (no instance manager)"));
 		return;
 	}
@@ -826,7 +882,7 @@ void FDecorationAsyncIOHelper::AsyncLoadMaterials(
 {
 	if (!materialPersistenceMngr)
 	{
-		ensureMsgf(false, TEXT("InitDecorationService must be called before, in game thread"));
+		BE_ISSUE("InitDecorationService must be called before, in game thread");
 		OnFinishCallback(AdvViz::make_unexpected("Missing initialization (no material manager)"));
 		return;
 	}
@@ -982,7 +1038,7 @@ size_t ResolveTexturesLocatedOnDisk(
 		imgIndex = 0;
 
 		// for custom material library, we will also store the full path of textures so that the image widget
-		// can handle them without having to make a special case (see #UImageWidgetImpl).
+		// can handle them without having to make a special case.
 		const bool bStoreLocalPaths = textureDir.empty();
 		std::optional<std::filesystem::path> pathOnDiskOpt;
 
@@ -1043,7 +1099,10 @@ bool ITwin::ResolveDecorationTextures(
 			else if (bResolveLocalDiskTextures
 				&& texKey.eSource == AdvViz::SDK::ETextureSource::LocalDisk)
 			{
-				ensure(std::filesystem::path(texKey.id).is_absolute());
+#ifndef RELEASE_CONFIG
+				const std::filesystem::path texPath(texKey.id);
+				BE_ASSERT(texPath.is_absolute(), texPath);
+#endif
 				LocalDiskTexMap.emplace(texKey, texKey.id);
 			}
 		}
@@ -1137,13 +1196,15 @@ struct FDecorationAsyncIOHelper::SDecorationPartsToSave
 	bool bSaveSplines = false;
 	bool bSaveAnnotations = false;
 	bool bSaveAnimPaths = false;
+	bool bSavePopulations = false;
 
 	inline bool IsEmpty() const {
 		return !bSaveInstances
 			&& !bSaveMaterials
 			&& !bSaveSplines
 			&& !bSaveAnnotations
-			&& !bSaveAnimPaths;
+			&& !bSaveAnimPaths
+			&& !bSavePopulations;
 	}
 };
 
@@ -1155,7 +1216,8 @@ FDecorationAsyncIOHelper::GetDecorationPartsToSave() const
 		.bSaveMaterials = materialPersistenceMngr && materialPersistenceMngr->NeedUpdateDB(),
 		.bSaveSplines = splinesManager && splinesManager->HasSplinesToSave(),
 		.bSaveAnnotations = annotationsManager && annotationsManager->HasAnnotationToSave(),
-		.bSaveAnimPaths = pathAnimManager && pathAnimManager->HasAnimPathsToSave()
+		.bSaveAnimPaths = pathAnimManager && pathAnimManager->HasAnimPathsToSave(),
+		.bSavePopulations = populationManager && populationManager->HasPopulationsToSave()
 	};
 }
 
@@ -1256,8 +1318,13 @@ bool FDecorationAsyncIOHelper::DoAsyncSaveDecorationToServer(
 			[=, this, ptrStop = this->shouldStop](bool bSuccess) {
 			if (*ptrStop)
 				return;
-			TAsyncSaveDecorationPartThen(instancesManager_, WhatToSave.bSaveInstances, DecorationId, CallbackPtr,
-				[](bool /*bSuccess*/) {});
+			TAsyncSaveDecorationPartThen(populationManager, WhatToSave.bSavePopulations, DecorationId, CallbackPtr,
+				[=, this, ptrStop = ptrStop](bool bSuccess) {
+				if (*ptrStop)
+					return;
+				TAsyncSaveDecorationPartThen(instancesManager_, WhatToSave.bSaveInstances, DecorationId, CallbackPtr,
+					[](bool /*bSuccess*/) {});
+				});
 			});
 		}
 	);
@@ -1277,11 +1344,149 @@ bool FDecorationAsyncIOHelper::DoAsyncSaveDecorationToServer(
 	return true;
 }
 
+void FDecorationAsyncIOHelper::LoadDefaultSceneForITwin(CallbackWithBool OnFinishCallback)
+{
+	using namespace AdvViz::SDK;
+
+	if (LoadedITwinId.IsEmpty())
+	{
+		OnFinishCallback(AdvViz::make_unexpected("LoadDefaultSceneForITwin: LoadedITwinId.IsEmpty"));
+		return;
+	}
+
+	std::string const itwinid = TCHAR_TO_UTF8(*(LoadedITwinId));
+	std::string const sceneid = TCHAR_TO_UTF8(*(LoadedSceneID));
+
+	auto SThis = shared_from_this();
+
+	// Load the list of scenes for this iTwin, and pick the default one (or create a new one if none exists)
+	AsyncGetITwinSceneInfos(LoadedITwinId,
+		[SThis, OnFinishCallback, itwinid, sceneid](AdvViz::expected<SceneInfoVec, AdvViz::SDK::HttpError> const& ret)
+	{
+		if (ret)
+		{
+			SceneInfoVec const& SceneInfos(*ret);
+
+			if (SceneInfos.empty())
+			{
+				BE_LOGI("ITwinScene", "No scene found for iTwin " << itwinid);
+				if (!sceneid.empty())
+				{
+					if (SThis->bSceneIdIsForNewScene)
+					{
+						SThis->scene->PrepareCreation(sceneid, itwinid);
+					}
+					else
+					{
+						//FMessageDialog::Open(EAppMsgCategory::Error, EAppMsgType::Ok,
+						//	FText::FromString("Cannot find scene with ID " + sceneid + ", Create empty scene"),
+						//	FText::FromString(""));
+						BE_LOGE("ITwinScene", "Cannot find scene with ID " + sceneid + ", Create empty scene");
+
+						SThis->scene->PrepareCreation(defaultSceneName, itwinid);
+					}
+				}
+				else
+				{
+					SThis->scene->PrepareCreation(defaultSceneName, itwinid);
+				}
+				OnFinishCallback(false);
+				return;
+			}
+			else
+			{
+				SceneInfo SelectedSceneInfo;
+
+				if (!sceneid.empty())
+				{
+					if (SThis->bSceneIdIsForNewScene)
+					{
+						SThis->scene->PrepareCreation(sceneid, itwinid);
+						OnFinishCallback(false);
+						return;
+					}
+					else
+					{
+						bool found = false;
+						for (auto const& Info : SceneInfos)
+						{
+							if (Info.id == sceneid)
+							{
+								SelectedSceneInfo = Info;
+								found = true;
+								break;
+							}
+						}
+						if (!found)
+						{
+							std::string const ErrorMsg = "Cannot find scene with ID " + sceneid + ", first scene found loaded";
+							FMessageDialog::Open(EAppMsgCategory::Error, EAppMsgType::Ok,
+								FText::FromString(FString(ErrorMsg.c_str())),
+								FText::FromString(""));
+							BE_LOGE("ITwinScene", ErrorMsg);
+							SelectedSceneInfo = SceneInfos[0];
+						}
+					}
+				}
+				else
+				{
+					bool found = false;
+					// Take default scene and not a developer's scene by default
+					for (auto const& Info : SceneInfos)
+					{
+						if (Info.displayName == defaultSceneName)
+						{
+							SelectedSceneInfo = Info;
+							found = true;
+						}
+					}
+					if (!found)
+					{
+						SelectedSceneInfo = SceneInfos[0];
+					}
+				}
+
+				if (!SelectedSceneInfo.id.empty())
+				{
+					BE_LOGI("ITwinScene", "Loading scene '" << SelectedSceneInfo.displayName
+						<< "' (ID: " << SelectedSceneInfo.id << ") for iTwin " << itwinid);
+
+					if (!SThis->scene->Get(itwinid, SelectedSceneInfo.id))
+					{
+						OnFinishCallback(false);
+						return;
+					}
+					else
+					{
+						SThis->PostLoadSceneFromServer(true);
+						OnFinishCallback(true);
+					}
+				}
+			}
+		}
+		else
+		{
+			int const status = ret.error().httpCode;
+			if (status == 404 || status == 400)
+			{
+				//FMessageDialog::Open(EAppMsgCategory::Error, EAppMsgType::Ok,
+				//	FText::FromString("You don't seem to have access to scene API for this ITwin. You will not be able to save the scene."),
+				//	FText::FromString(""));
+				BE_LOGE("ITwinScene", "No access to empty scene, Create empty scene");
+				SThis->scene->PrepareCreation(defaultSceneName, itwinid);
+				OnFinishCallback(AdvViz::make_unexpected("No access to scene API for this ITwin"));
+				return;
+			}
+		}
+	}, false /*executeCallbackInMainthread*/);
+
+}
+
 void FDecorationAsyncIOHelper::AsyncLoadScene(CallbackWithBool onFinishcallback)
 {
 	if (!scene)
 	{
-		ensureMsgf(false, TEXT("InitDecorationService must be called before, in game thread"));
+		BE_ISSUE("InitDecorationService must be called before, in game thread");
 		onFinishcallback(AdvViz::make_unexpected("InitDecorationService must be called before, in game thread"));
 		return;
 	}
@@ -1301,10 +1506,17 @@ void FDecorationAsyncIOHelper::AsyncLoadScene(CallbackWithBool onFinishcallback)
 		return;
 	}
 	auto SThis = shared_from_this();
-	using namespace AdvViz::SDK;
-	// Optimization for the (probably nominal) case when user wants to load an existing scene:
-	// In this case, we first try to simply retrieve this scene from the server.
-	// If it succeeds, we can skip retrieving the entire list of scenes for this iTwin, which can be quite slow (depends on how many scenes exist).
+	if (LoadedSceneID.IsEmpty())
+	{
+		// No scene provided (happens in plugin, when decoration loading is activated).
+		LoadDefaultSceneForITwin(onFinishcallback);
+	}
+	else
+	{
+		// Optimization for the (probably nominal) case when user wants to load an existing scene:
+		// In this case, we first try to simply retrieve this scene from the server.
+		// If it succeeds, we can skip retrieving the entire list of scenes for this iTwin, which can be
+		// quite slow (depends on how many scenes exist).
 		scene->AsyncGet(itwinid, TCHAR_TO_UTF8(*(LoadedSceneID)),
 			[SThis, itwinid, onFinishcallback](AdvViz::expected<void, std::string> const& exp1)
 			{
@@ -1312,115 +1524,16 @@ void FDecorationAsyncIOHelper::AsyncLoadScene(CallbackWithBool onFinishcallback)
 
 				if (!bIsLoadExistingSceneOK)
 				{
-					auto scenes2res = SThis->GetITwinScenes(UTF8_TO_TCHAR(itwinid.c_str()));
-					if (!scenes2res)
-					{
-						int status = scenes2res.error().httpCode;
-						if (status == 404 || status == 400)
-						{
-							//FMessageDialog::Open(EAppMsgCategory::Error, EAppMsgType::Ok,
-							//	FText::FromString("You don't seem to have access to scene API for this ITwin. You will not be able to save the scene."),
-							//	FText::FromString(""));
-							BE_LOGE("ITwinScene", "No access to empty scene, Create empty scene");
-							SThis->scene->PrepareCreation(defaultSceneName, itwinid);
-							SThis->scene->SetTimeline(std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New()));
-							onFinishcallback(AdvViz::make_unexpected("No access to scene API for this ITwin"));
-							return;
-						}
-					}
-					else
-					{
-						std::vector<std::shared_ptr<IScenePersistence>> scenes2 = *scenes2res;
-						if (scenes2.empty())
-						{
-							if (!SThis->LoadedSceneID.IsEmpty())
-							{
-								std::string const sceneid = TCHAR_TO_UTF8(*(SThis->LoadedSceneID));
-								if (SThis->bSceneIdIsForNewScene)
-								{
-									SThis->scene->PrepareCreation(sceneid, itwinid);
-								}
-								else
-								{
-									//FMessageDialog::Open(EAppMsgCategory::Error, EAppMsgType::Ok,
-									//	FText::FromString("Cannot find scene with ID " + LoadedSceneID + ", Create empty scene"),
-									//	FText::FromString(""));
-									BE_LOGE("ITwinScene", "Cannot find scene with ID " + sceneid + ", Create empty scene");
-
-									SThis->scene->PrepareCreation(defaultSceneName, itwinid);
-								}
-								SThis->scene->SetTimeline(std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New()));
-							}
-							else
-							{
-								SThis->scene->PrepareCreation(defaultSceneName, itwinid);
-								SThis->scene->SetTimeline(std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New()));
-							}
-							onFinishcallback(false);
-							return;
-						}
-						else
-						{
-							if (!SThis->LoadedSceneID.IsEmpty())
-							{
-								std::string const sceneid = TCHAR_TO_UTF8(*(SThis->LoadedSceneID));
-								if (SThis->bSceneIdIsForNewScene)
-								{
-									SThis->scene->PrepareCreation(sceneid, itwinid);
-									SThis->scene->SetTimeline(std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New()));
-									onFinishcallback(false);
-									return;
-								}
-								else
-								{
-									bool found = false;
-									for (auto scen : scenes2)
-									{
-										if (scen->GetId() == sceneid)
-										{
-											SThis->scene = scen;
-											found = true;
-											break;
-										}
-									}
-									if (!found)
-									{
-										FMessageDialog::Open(EAppMsgCategory::Error, EAppMsgType::Ok,
-											FText::FromString("Cannot find scene with ID " + SThis->LoadedSceneID + ", first scene found loaded"),
-											FText::FromString(""));
-										BE_LOGE("ITwinScene", "Cannot find scene with ID " + sceneid + ", first scene found loaded");
-										SThis->scene = scenes2[0];
-									}
-								}
-							}
-							else
-							{
-								bool found = false;
-								//take default scene and not a dev scene by default
-								for (auto sc : scenes2)
-								{
-									if (sc->GetName() == defaultSceneName)
-									{
-										SThis->scene = sc;
-										found = true;
-									}
-								}
-								if (!found)
-									SThis->scene = scenes2[0];
-							}
-						}
-					}
+					SThis->LoadDefaultSceneForITwin(onFinishcallback);
 				}
-				SThis->PostLoadSceneFromServer();
-
-				if (!SThis->scene->GetTimeline())
-					SThis->scene->SetTimeline(std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New()));
+				SThis->PostLoadSceneFromServer(true);
 
 				onFinishcallback(true);
 			});
+	}
 }
 
-void FDecorationAsyncIOHelper::PostLoadSceneFromServer()
+void FDecorationAsyncIOHelper::PostLoadSceneFromServer(bool bCreateTimelineIfNeeded /*= false*/)
 {
 	auto linkslock = links.GetAutoLock();
 	linkslock->clear();
@@ -1431,7 +1544,10 @@ void FDecorationAsyncIOHelper::PostLoadSceneFromServer()
 			continue;
 		key.second = UTF8_TO_TCHAR(l->GetRef().c_str());
 		(*linkslock)[key] = l;
-		
+	}
+	if (bCreateTimelineIfNeeded && !scene->GetTimeline())
+	{
+		scene->SetTimeline(std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New()));
 	}
 }
 
@@ -1521,7 +1637,7 @@ void FDecorationAsyncIOHelper::AsyncLoadAnnotations(LoadCallback Callback)
 {
 	if (!annotationsManager)
 	{
-		ensureMsgf(false, TEXT("InitDecorationService must be called before, in game thread"));
+		BE_ISSUE("InitDecorationService must be called before, in game thread");
 		Callback(AdvViz::make_unexpected("Missing initialization (no annotation manager)"));
 		return;
 	}
@@ -1538,7 +1654,7 @@ void FDecorationAsyncIOHelper::AsyncLoadSplines(LoadCallback Callback)
 {
 	if (!splinesManager)
 	{
-		ensureMsgf(false, TEXT("InitDecorationService must be called before, in game thread"));
+		BE_ISSUE("InitDecorationService must be called before, in game thread");
 		Callback(AdvViz::make_unexpected("Missing initialization (no spline manager)"));
 		return;
 	}
@@ -1556,7 +1672,7 @@ void FDecorationAsyncIOHelper::AsyncLoadPathAnimations(LoadCallback Callback)
 {
 	if (!pathAnimManager)
 	{
-		ensureMsgf(false, TEXT("InitDecorationService must be called before, in game thread"));
+		BE_ISSUE("InitDecorationService must be called before, in game thread");
 		Callback(AdvViz::make_unexpected("Missing initialization (no path animator)"));
 		return;
 	}
@@ -1614,6 +1730,28 @@ std::shared_ptr<AdvViz::SDK::ISplinesManager> const& FDecorationAsyncIOHelper::G
 std::shared_ptr<AdvViz::SDK::IPathAnimManager> const& FDecorationAsyncIOHelper::GetPathAnimManager()
 {
 	return pathAnimManager;
+}
+
+std::shared_ptr<AdvViz::SDK::IPopulationManager> const& FDecorationAsyncIOHelper::GetPopulationManager()
+{
+	return populationManager;
+}
+
+void FDecorationAsyncIOHelper::AsyncLoadPopulationMetadata(LoadCallback Callback)
+{
+	if (!populationManager)
+	{
+		BE_ISSUE("InitDecorationService must be called before, in game thread");
+		Callback(AdvViz::make_unexpected("Missing initialization (no population manager)"));
+		return;
+	}
+	if (!LoadDecorationOrFinish(Callback))
+	{
+		return;
+	}
+	populationManager->AsyncLoadDataFromServer(decoration->GetId(),
+		[](AdvViz::SDK::IPopulationInfoPtr&) {},
+		Callback);
 }
 
 AdvViz::expected<AdvViz::SDK::ScenePtrVector, AdvViz::SDK::HttpError> FDecorationAsyncIOHelper::GetITwinScenes(const FString& iTwinid)

@@ -9,17 +9,14 @@
 
 #if WITH_TESTS
 
-#include "WebTestHelpers.h"
+#include <Tests/ITwinAutomationTestBaseNoLogs.h>
+#include <Tests/ITwinMockServerBase.h>
+#include <Tests/WebTestHelpers.h>
 
 #include <Annotations/ITwinAnnotation.h>
 
+#include <Engine/World.h>
 #include <Misc/LowLevelTestAdapter.h>
-
-#if WITH_EDITOR
-#include <Editor/EditorEngine.h>
-#else
-#include <Tests/AutomationCommon.h>
-#endif
 
 #include <Compil/BeforeNonUnrealIncludes.h>
 #	include <Core/ITwinAPI/ITwinAuthManager.h>
@@ -120,45 +117,10 @@ std::unique_ptr<httpmock::MockServer> FAnnotationPersistenceMockServer::MakeServ
 }
 
 
-class FAnnotationIOAsyncCallback
-{
-public:
-	void OnRequestStarted()
-	{
-		NumRequestsStarted++;
-	}
-	void OnRequestDone()
-	{
-		NumRequestsDone++;
-	}
-
-	bool IsDone() const { return NumRequestsDone == NumRequestsStarted; }
-
-private:
-	uint32 NumRequestsStarted = 0;
-	uint32 NumRequestsDone = 0;
-};
-
-
-#if WITH_EDITOR
-extern UNREALED_API class UEditorEngine* GEditor;
-#endif
-
 namespace
 {
-	inline UWorld* GetTestWorld()
-	{
-#if WITH_EDITOR
-		return GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
-#else
-		return AutomationCommon::GetAnyGameWorld();
-#endif
-	}
-
 	static const FString TextWithAccents = TEXT("Un \u00E9t\u00E9 h\u00E9lv\u00E8te");
 }
-
-using FAnnotationIOAsyncCallbackPtr = std::shared_ptr<FAnnotationIOAsyncCallback>;
 
 
 class FAnnotationPersistenceTestHelper : public FITwinAPITestHelperBase
@@ -171,7 +133,6 @@ public:
 
 	std::shared_ptr<AnnotationsManager> GetAnnotationsMngr() const { return AnnotationsMngr; }
 	std::shared_ptr<AdvViz::SDK::Http> GetHttp() const { return Http; }
-	FAnnotationIOAsyncCallbackPtr GetAsyncCallback() const { return AnnotAsyncCallback; }
 
 protected:
 	virtual bool DoInit(AdvViz::SDK::EITwinEnvironment) override;
@@ -182,7 +143,7 @@ private:
 
 	std::shared_ptr<AnnotationsManager> AnnotationsMngr;
 	std::shared_ptr<AdvViz::SDK::Http> Http;
-	FAnnotationIOAsyncCallbackPtr AnnotAsyncCallback;
+	FITwinIOAsyncCallbackPtr AsyncCallback;
 };
 
 /*static*/
@@ -215,7 +176,6 @@ bool FAnnotationPersistenceTestHelper::DoInit(AdvViz::SDK::EITwinEnvironment Env
 	AnnotationsMngr = std::make_shared<AnnotationsManager>();
 	AnnotationsMngr->SetHttp(Http);
 
-	AnnotAsyncCallback = std::make_shared<FAnnotationIOAsyncCallback>();
 	return true;
 }
 
@@ -230,7 +190,7 @@ FAnnotationPersistenceTestHelper::~FAnnotationPersistenceTestHelper()
 }
 
 
-DEFINE_LATENT_AUTOMATION_COMMAND_ONE_PARAMETER(FNUTWaitForAsyncAnnotationSaving, FAnnotationIOAsyncCallbackPtr, AnnotAsyncCallback);
+DEFINE_LATENT_AUTOMATION_COMMAND_ONE_PARAMETER(FNUTWaitForAsyncAnnotationSaving, FITwinIOAsyncCallbackPtr, AnnotAsyncCallback);
 
 bool FNUTWaitForAsyncAnnotationSaving::Update()
 {
@@ -246,7 +206,7 @@ bool FNUTWaitForAsyncAnnotationSaving::Update()
 }
 
 
-IMPLEMENT_CUSTOM_SIMPLE_AUTOMATION_TEST(FAnnotationPersistenceTest, FAutomationTestBaseNoLogs, \
+IMPLEMENT_CUSTOM_SIMPLE_AUTOMATION_TEST(FAnnotationPersistenceTest, FITwinAutomationTestBaseNoLogs, \
 	"Bentley.ITwinForUnreal.ITwinRuntime.AnnotationPersistence", \
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
@@ -263,11 +223,11 @@ bool FAnnotationPersistenceTest::RunTest(const FString& /*Parameters*/)
 
 	auto pAnnotationsMngr = Helper.GetAnnotationsMngr();
 	auto& AnnotationsMngr = *pAnnotationsMngr;
-	FAnnotationIOAsyncCallbackPtr AnnotAsyncCallback = Helper.GetAsyncCallback();
+	FITwinIOAsyncCallbackPtr AnnotAsyncCallback = Helper.GetAsyncCallback();
 
 	const std::string url = Helper.GetServerUrl();
 
-	UWorld* const World = GetTestWorld();
+	UWorld* const World = FITwinAPITestHelperBase::GetTestWorld();
 
 	SECTION("Add Annotation with unicode characters and Save")
 	{
@@ -295,7 +255,7 @@ bool FAnnotationPersistenceTest::RunTest(const FString& /*Parameters*/)
 			auto const& LoadedAnnotations = AnnotationManager2->GetAnnotations();
 			UTEST_TRUE(TEXT("Load annotations"), LoadedAnnotations.size() == 1);
 
-			UWorld* const World = GetTestWorld();
+			UWorld* const World = FITwinAPITestHelperBase::GetTestWorld();
 			UTEST_TRUE(TEXT("Check world"), World != nullptr);
 			AITwinAnnotation* LoadedAnnot = World->SpawnActor<AITwinAnnotation>(AITwinAnnotation::StaticClass(), FVector::ZeroVector, FRotator::ZeroRotator);
 			UTEST_TRUE(TEXT("Spawn annotation for load"), LoadedAnnot != nullptr);

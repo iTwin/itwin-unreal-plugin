@@ -605,12 +605,23 @@ void UITwinSplineHelper2DWidgetImpl::UpdateSplineWidgets()
 				bDrawAsMultiLine = true;
 			}
 
+			// Fix artefacts for cutout splines with linear tangents, by enforcing multi-line drawing in
+			// this case (see ADO#2104159).
+			bool bEnforceMultiLineForLinearCase = false;
+			if (bLinearTangents && !bDrawAsMultiLine)
+			{
+				bEnforceMultiLineForLinearCase = true;
+				bDrawAsMultiLine = true;
+			}
+
 			if (bDrawAsMultiLine)
 			{
 				// Draw as multi-line to avoid absurd tangents (or even crashes!). In this case, we sample
 				// the spline chunk at a higher resolution. If the sampling fails, the widget will simply
 				// not draw anything, which is better than drawing a single segment with absurd tangents.
-				SampleSplineChunkWidget(*Widget, 128 /*NumSubdivisions*/);
+				SampleSplineChunkWidget(*Widget,
+					bEnforceMultiLineForLinearCase ? 2 : 128 /*NumSubdivisions*/,
+					ITwin::ESplineSamplingPurpose::Drawing);
 			}
 			UITwinSpline2DWidget* SplineWidget = Widget->GetSpline2DWidget();
 			if (ensure(SplineWidget))
@@ -670,7 +681,8 @@ void UITwinSplineHelper2DWidgetImpl::OnSplinePointPicked(int32 PickedPointIndex)
 }
 
 bool UITwinSplineHelper2DWidgetImpl::SampleSplineChunkWidget(const UITwinSplineWithPin2DWidgetImpl& ChunkWidget,
-	int32 NumSubdivisions) const
+	int32 NumSubdivisions,
+	ITwin::ESplineSamplingPurpose Purpose) const
 {
 	// Only slave widgets should call this function, as the master has no spline helper to sample from.
 	BE_ASSERT(this != sMasterInstance);
@@ -682,7 +694,7 @@ bool UITwinSplineHelper2DWidgetImpl::SampleSplineChunkWidget(const UITwinSplineW
 	TArray<FVector2D> SampledPositions;
 	if (SampleSplineChunk(SampledPositions, ChunkWidget.GetSplineChunkIndex(), NumSubdivisions))
 	{
-		SplineWidget->CacheSplineSampling(SampledPositions);
+		SplineWidget->CacheSplineSampling(SampledPositions, Purpose);
 		return true;
 	}
 	else
@@ -711,8 +723,10 @@ const UITwinSplineWithPin2DWidgetImpl* UITwinSplineHelper2DWidgetImpl::FindClose
 		FVector2D ClosestPoint2D = { -1., -1. };
 
 		// First sample the corresponding spline chunk if needed.
-		if (!SplineWidget->HasCachedSplineSampling()
-			&& !SampleSplineChunkWidget(*ChunkWidget, 64 /*NumSubdivisions*/))
+		if (!SplineWidget->HasCachedSplineSampling(ITwin::ESplineSamplingPurpose::HitTesting)
+			&& !SampleSplineChunkWidget(*ChunkWidget,
+										96 /*NumSubdivisions*/,
+										ITwin::ESplineSamplingPurpose::HitTesting))
 		{
 			continue;
 		}

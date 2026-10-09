@@ -184,10 +184,23 @@ std::shared_ptr<_ObjectTimeline> const& MainTimelineBase<_ObjectTimeline>::AddTi
 	// case this call is pointless, but let's keep it to preserve also the other use case (adding an already
 	// filled timeline, for example in unit testing - see other call to IncludeTimeRange done only in
 	// FITwinIModelInternals::OnElementsTimelineModified)
-	// Note 2: IncludeTimeRange is also now included directly from SchedulesImport.cpp in case of pre-fetching
+	// Note 2: IncludeTimeRange is also now called directly from SchedulesImport.cpp in case of pre-fetching
 	// of all Tasks, in which case this is again redundant.
 	IncludeTimeRange(*Timeline);
 	return Container.back();
+}
+
+template<class _ObjectTimeline>
+void MainTimelineBase<_ObjectTimeline>::ClearTimelinesData()
+{
+	GetContainer().clear();
+	ResetTimeRange();
+}
+
+template<class _ObjectTimeline>
+void MainTimelineBase<_ObjectTimeline>::ResetTimeRange()
+{
+	TimeRange = ITwin::Time::InitForMinMax();
 }
 
 } // namespace ITwin::Timeline

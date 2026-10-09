@@ -15,9 +15,17 @@
 #include <CesiumMetadataValue.h>
 #include <ITwinMetadataConstants.h>
 
+#include <Components/InputComponent.h>
 #include <Containers/Ticker.h>
 #include <DrawDebugHelpers.h>
 #include <EngineUtils.h>
+
+#if WITH_EDITOR
+	#include "Helpers/ITwinPickingEdMode.h"
+	#include <Editor.h>
+	#include <EditorModeManager.h>
+	#include <EditorModes.h>
+#endif
 
 #include <optional>
 #include <unordered_set>
@@ -26,19 +34,8 @@ namespace ITwin
 {
 	std::optional<uint64_t> GetMaterialIDFromHit(FHitResult const& HitResult, AITwinIModel& IModel)
 	{
-		// When visualizing ML-based material predictions, we ignore the material IDs present in source
-		// meta-data, and replace them with custom material IDs depending on the ML inference
-		// => just test the material ID that we may have baked in the mesh.
-		if (IModel.VisualizeMaterialMLPrediction() && HitResult.Component.IsValid())
-		{
-			FITwinIModelInternals const& IModelInternals = GetInternals(IModel);
-			auto SceneMappingLock = IModelInternals.SceneMapping->GetAutoLock();
-			auto const Found = SceneMappingLock->FindOwningTileSLOW(HitResult.Component.Get());
-			if (auto* pMeshWrapper = Found.second)
-			{
-				return pMeshWrapper->GetITwinMaterialIDOpt();
-			}
-		}
+		// Blame here to see how we used to handle material prediction here (the feature was removed).
+
 		// General case: test meta-data produced by the Mesh Export Service. In this case, we will get
 		// the iModel's RenderMaterial ID.
 		TMap<FString, FCesiumMetadataValue> const Table1 =
@@ -54,6 +51,78 @@ namespace ITwin
 	}
 }
 
+AITwinPickingActor::AITwinPickingActor()
+{
+	SetRootComponent(CreateDefaultSubobject<USceneComponent>(TEXT("root")));
+}
+
+void AITwinPickingActor::PostLoad()
+{
+	Super::PostLoad();
+	if (!bEnablePicking)
+		return;
+	OnToggledPicking();
+}
+
+#if WITH_EDITOR
+void AITwinPickingActor::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
+{
+	Super::PostEditChangeProperty(PropertyChangedEvent);
+	auto const Name = PropertyChangedEvent.Property->GetFName();
+	if (Name == GET_MEMBER_NAME_CHECKED(AITwinPickingActor, bEnablePicking))
+		OnToggledPicking();
+}
+#endif // WITH_EDITOR
+
+void AITwinPickingActor::OnToggledPicking()
+{
+	if (bEnablePicking)
+	{
+		if (GetWorld()->GetFirstPlayerController())
+		{
+			if (InputComponent)
+			{
+				EnableInput(GetWorld()->GetFirstPlayerController());
+				InputComponent->BindKey(EKeys::LeftMouseButton, IE_Released, this,
+										&AITwinPickingActor::PickUnderCursor);
+			}
+		}
+		else if (!IsRunningCommandlet())
+		{
+#if WITH_EDITOR
+			GLevelEditorModeTools().AddDefaultMode(FITwinPickingEdMode::EM_ITwinPicking);
+			GLevelEditorModeTools().RemoveDefaultMode(FBuiltinEditorModes::EM_Default);
+			GLevelEditorModeTools().ActivateDefaultMode();
+#endif
+		}
+	}
+	else
+	{
+		if (GetWorld()->GetFirstPlayerController())
+		{
+			if (InputComponent)
+				InputComponent->ClearActionBindings();
+		}
+		else if (!IsRunningCommandlet())
+		{
+#if WITH_EDITOR
+			GLevelEditorModeTools().AddDefaultMode(FBuiltinEditorModes::EM_Default);
+			GLevelEditorModeTools().RemoveDefaultMode(FITwinPickingEdMode::EM_ITwinPicking);
+			GLevelEditorModeTools().ActivateDefaultMode();
+#endif
+		}
+	}
+}
+
+void AITwinPickingActor::PickUnderCursor()
+{
+	FString ElementId;
+	FVector2D MousePosition;
+	FHitResult HitResult;
+	PickUnderCursorWithOptions(ElementId, MousePosition, /*ThisIModelOnly =*/nullptr, HitResult,
+								FITwinPickingOptions{});
+}
+
 void AITwinPickingActor::PickUnderCursorWithOptions(FPickingResult& OutPickingResult,
 	AITwinIModel* PickedIModel, FITwinPickingOptions const& Options)
 {
@@ -61,7 +130,7 @@ void AITwinPickingActor::PickUnderCursorWithOptions(FPickingResult& OutPickingRe
 	FHitResult& VisibleHit(OutPickingResult.HitResult);
 	OutPickingResult.MaterialId.Reset();
 
-	std::optional<uint32> const MaxUniqueElementsHit = 1;// if changing this, see DejaVu.insert(ITwin::NOT_ELEMENT) below
+	std::optional<uint32> const MaxUniqueElementsHit = 1;
 	VisibleHit.Reset();
 	ITwinElementID PickedEltID = ITwin::NOT_ELEMENT;
 	std::optional<uint64_t> PickedMaterial;
@@ -98,59 +167,55 @@ void AITwinPickingActor::PickUnderCursorWithOptions(FPickingResult& OutPickingRe
 		TracingHelper.AddIgnoredComponents(Options.ComponentsToIgnore);
 	TracingHelper.VisitElementsUnderCursor(GetWorld(),
 		OutPickingResult.MousePosition, OutPickingResult.TraceStart, OutPickingResult.TraceEnd,
-		[this, PickedIModel, &Options, &PickedEltID, &PickedMaterial, &PickedMaterialIModel, &VisibleHit, &TracingHelper]
-		(FHitResult const& HitResult, std::unordered_set<ITwinElementID>& DejaVu)
-	{
-		AITwinIModel* iModel = PickedIModel;
-		// If passed, use it as a filter, otherwise, set it.
-		// Using GetOwner() because the hit actor is actually the cesium tileset
-		AActor* HitTilesetOwner = nullptr;
-		if (HitResult.HasValidHitObjectHandle())
-			if (AActor* HitTileset = HitResult.GetActor())
-				HitTilesetOwner = HitTileset->GetOwner(); // may be null or sth else than an iModel of course
-		if (iModel && iModel != HitTilesetOwner)
-			return;
-		if (!iModel)
-			iModel = Cast<AITwinIModel>(HitTilesetOwner);
-
-		if (iModel)
+		[this, PickedIModel, &Options, &PickedEltID, &PickedMaterial, &PickedMaterialIModel, &VisibleHit,
+			&TracingHelper]
+		(FHitResult const& HitResult, ITwinElementID const& EltID)
 		{
-			ITwinElementID EltID = ITwin::NOT_ELEMENT;
-			// TODO: invisible hits have been filtered out already so...
-			if (TracingHelper.PickVisibleElement(HitResult, *iModel, EltID,
-												 Options.bSelectElement, Options.bAdditiveSelection))
-			{
-				DejaVu.insert(EltID);
-				PickedEltID = EltID;
-				if (!VisibleHit.HasValidHitObjectHandle())
-					VisibleHit = HitResult;
-				ElementPickedEvent.Broadcast({});//why not pass PickedEltID?! TODO_GCO: 3DFT oldy, remove
+			AITwinIModel* iModel = PickedIModel;
+			// If passed, use it as a filter, otherwise, set it.
+			// Using GetOwner() because the hit actor is actually the cesium tileset
+			AActor* HitTilesetOwner = nullptr;
+			if (HitResult.HasValidHitObjectHandle())
+				if (AActor* HitTileset = HitResult.GetActor())
+					HitTilesetOwner = HitTileset->GetOwner(); // may be null or sth else than an iModel of course
+			if (iModel && iModel != HitTilesetOwner)
+				return;
+			if (!iModel)
+				iModel = Cast<AITwinIModel>(HitTilesetOwner);
 
+			if (EltID != ITwin::NOT_ELEMENT)
+				PickedEltID = EltID;
+			if (iModel)
+			{
+				FITwinIModelInternals& IModelInternals = GetInternals(*iModel);
+				if (Options.bAdditiveSelection && Options.bSelectElement
+					&& IModelInternals.GetSelectedElements().contains(EltID))
+				{
+					// Toggling inside a multi-selection: if the element is already selected, just deselect it
+					auto SceneMappingLock = IModelInternals.SceneMapping->GetAutoLock();
+					std::unordered_set<ITwinElementID> ToDeselect{ EltID };
+					SceneMappingLock->DeselectElements(ToDeselect);
+				}
+				else if (IModelInternals.HasElementWithID(EltID))
+				{
+					IModelInternals.OnClickedElement(EltID, HitResult, Options.bSelectElement,
+						Options.bAdditiveSelection);
+				}
 				if (Options.bSelectMaterial)
 				{
 					PickedMaterial = ITwin::GetMaterialIDFromHit(HitResult, *iModel);
 					PickedMaterialIModel = iModel;
 				}
 			}
-		}
-		else if (!VisibleHit.HasValidHitObjectHandle())
-		{
-			VisibleHit = HitResult;
-			// This is to avoid looping for more hits uselessly - ok as long as MaxUniqueElementsHit is 1...
-			DejaVu.insert(ITwin::NOT_ELEMENT);
-		}
-		if (Options.bSelectMaterial && !PickedMaterialIModel && iModel)
-		{
-			// Some primitive parts may not be assigned any ElementID but still have a valid ITwin material.
-			auto MatOpt = ITwin::GetMaterialIDFromHit(HitResult, *iModel);
-			if (MatOpt && !PickedMaterial)
-			{
-				PickedMaterial = MatOpt;
-				PickedMaterialIModel = iModel;
-			}
-		}
+			if (!VisibleHit.HasValidHitObjectHandle())
+				VisibleHit = HitResult;
 
-	}, MaxUniqueElementsHit, CustomTraceExtentInMeters, CustomMousePosition);
+		//if (Options.bSelectMaterial && !PickedMaterialIModel && iModel) {
+		// IsValidAndVisibleImpact now returns true for those impacts so this should be redundant:
+			// Some primitive parts may not be assigned any ElementID but still have a valid ITwin material.
+		//	...
+
+		}, MaxUniqueElementsHit, CustomTraceExtentInMeters, CustomMousePosition);
 
 	if (!PickedIModel && VisibleHit.HasValidHitObjectHandle())
 		PickedIModel = Cast<AITwinIModel>(VisibleHit.GetActor()->GetOwner());

@@ -10,6 +10,7 @@
 #pragma once
 
 #include <GameFramework/Actor.h>
+#include <Templates/Function.h>
 #include <Templates/PimplPtr.h>
 
 #include <ITwinLoadInfo.h>
@@ -30,6 +31,7 @@
 class FDecorationAsyncIOHelper;
 class FDecorationWaitableLoadEvent;
 class FViewport;
+class AITwinDigitalTwinManager;
 class AITwinIModel;
 class AITwinPopulation;
 class AITwinPopulationWithPath;
@@ -38,6 +40,7 @@ class AITwinSplineTool;
 class AITwinSplineHelper;
 class UITwinContentManager;
 class AITwinPathAnimTool;
+class AITwinPopulationTool;
 
 namespace AdvViz::SDK {
 	struct ITwinAtmosphereSettings;
@@ -46,6 +49,7 @@ namespace AdvViz::SDK {
 	class RefID;
 	class IScenePersistence;
 	class IAnnotationsManager;
+	class ISpline;
 }
 
 struct ITwinSceneInfo
@@ -95,6 +99,7 @@ enum class EITwinDecorationClientMode : uint8
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnDecorationIOStartStop, bool, bStart);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnDecorationIODone, bool, bSuccess);
 DECLARE_DELEGATE_RetVal_OneParam(bool, FOnDownloadRequest, const FString&);
+
 UCLASS()
 class ITWINRUNTIME_API AITwinDecorationHelper : public AActor
 {
@@ -129,6 +134,8 @@ public:
 	static bool UseComponentCenter();
 	/// Returns the singleton instance of the decoration helper for a given world (or nullptr if not found).
 	static AITwinDecorationHelper* GetInstance(const UWorld* InWorld);
+	/// Returns the instance associated to the given iTwin ID for a given world (or nullptr if not found).
+	static AITwinDecorationHelper* FindByITwinID(FString const& ITwinId, const UWorld* InWorld);
 
 	AITwinDecorationHelper();
 
@@ -144,10 +151,10 @@ public:
 	FOnDecorationIODone OnMaterialsLoaded;
 
 	UPROPERTY(BlueprintAssignable)
-	FOnDecorationIODone OnSceneLoaded;
+	FOnDecorationIODone OnAtmosphereLoaded;
 
 	UPROPERTY(BlueprintAssignable)
-	FOnDecorationIOStartStop OnSceneLoadingStartStop;
+	FOnDecorationIODone OnSceneLoaded;
 
 	UPROPERTY(BlueprintAssignable)
 	FOnDecorationIODone OnSplinesLoaded;
@@ -158,6 +165,9 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FOnDecorationIODone OnPathAnimationsLoaded;
 
+	UPROPERTY(BlueprintAssignable)
+	FOnDecorationIODone OnPopulationMetadataLoaded;
+
 	FOnDownloadRequest OnDownloadRequest;
 
 	/** Delegate when decoration is fully loaded. */
@@ -165,6 +175,28 @@ public:
 
 	UPROPERTY()
 	UITwinContentManager* iTwinContentManager = nullptr;
+
+	//! Associated iTwin Id. A decoration/scene is always linked to a specific iTwin.
+	UPROPERTY(Category = "iTwin|Loading",
+		meta = (DisplayName = "Loaded iTwin Id"),
+		EditAnywhere,
+		BlueprintSetter = SetLoadedITwinId)
+	FString LoadedITwinId;
+
+	//! Identifier of the scene to load.
+	UPROPERTY(Category = "iTwin|Loading",
+		meta = (DisplayName = "Loaded Scene Id"),
+		EditAnywhere,
+		BlueprintSetter = SetLoadedSceneId)
+	FString LoadedSceneId;
+
+	//! Whether the scene to load is new (not yet saved on the server).
+	UPROPERTY(Category = "iTwin|Loading",
+		meta = (DisplayName = "Is New Scene"),
+		EditAnywhere,
+		BlueprintSetter = SetNewScene)
+	bool bIsNewScene = false;
+
 
 	//! Sets the decoration client mode. Can be used to customize the handling of decorations for specific
 	//! usages.
@@ -178,15 +210,24 @@ public:
 	EITwinDecorationClientMode GetDecorationClientMode() const;
 
 
-	//! Set information about the associated iTwin/iModel
+	//! Set information about the associated iTwin.
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
-	void SetLoadedITwinId(FString InLoadedSceneId);
+	void SetLoadedITwinId(FString InLoadedITwinId);
 
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
 	FString GetLoadedITwinId() const;
 
+	//! Sets the associated AITwinDigitalTwinManager.
+	void SetITwinManager(AITwinDigitalTwinManager* InITwinManager);
+
+	//! Sets the identifier of the scene to load.
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
-	void SetLoadedSceneId(FString InLoadedSceneId, bool inNewsScene = false);
+	void SetLoadedSceneId(FString InLoadedSceneId);
+
+	//! Sets whether the selected scene is new (not yet saved on the server). This is used to perform some
+	//! required initialization in such case.
+	UFUNCTION(Category = "iTwin", BlueprintCallable)
+	void SetNewScene(bool bInNewScene);
 
 	//! Start loading the scene selected by SetLoadedSceneId(asynchronous).
 	UFUNCTION(Category = "iTwin",
@@ -201,6 +242,14 @@ public:
 
 	//! Returns true if the loading of a scene is in progress.
 	bool IsLoadingScene() const;
+
+	//! Returns true if a scene was loaded.
+	bool HasLoadedScene() const;
+
+#if WITH_TESTS
+	//! Used in automated tests, to reset the state of the decoration helper between tests.
+	void ResetLoadedScene();
+#endif
 
 	//! Registers an event to wait at the end of the scene loading, for synchronization between the loading
 	//! of the scene and some iTwin requests.
@@ -234,7 +283,7 @@ public:
 	};
 	void SaveSceneWithOptions(FSaveRequestOptions const& Options);
 
-	bool IsVREnabled();
+	bool IsVREnabled() const;
 
 	//! Permanently deletes all material customizations for current model (cannot be undone!)
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
@@ -245,11 +294,18 @@ public:
 	bool MountPak(const std::string & file, const std::string& id) const;
 	/// Returns true if the component with the given id still needs to be downloaded/mounted.
 	bool IsComponentDownloadPending(const FString& componentId) const;
+	/// Registers the resolved object path produced when a component is added, keyed by the component id
+	/// (the download token returned by ShouldDownloadComponent). It is later used to create the population.
+	void SetComponentObjectPath(const FString& componentId, const FString& objectPath) const;
 	AITwinPopulation* CreatePopulation(FString assetPath, const AdvViz::SDK::RefID& groupId) const;
 	AITwinPopulation* GetOrCreatePopulation(FString assetPath, const AdvViz::SDK::RefID& groupId) const;
 	int32 GetPopulationInstanceCount(FString assetPath, const AdvViz::SDK::RefID& groupId) const;
 	AdvViz::SDK::RefID GetStaticInstancesGroupId() const;
 	AdvViz::SDK::RefID GetInstancesGroupIdForSpline(const AITwinSplineHelper& Spline) const;
+
+	//! Visits all splines that are waiting for linked models to be loaded, and calls the given visitor
+	//! function on each of them.
+	void VisitSplinesWaitingForLinkedModels(const TFunction<void(const AdvViz::SDK::ISpline&)>& Visitor) const;
 
 	AdvViz::SDK::ITwinAtmosphereSettings GetAtmosphereSettings() const;
 	void SetAtmosphereSettings(const AdvViz::SDK::ITwinAtmosphereSettings&) const;
@@ -276,6 +332,7 @@ public:
 
 	void ConnectSplineToolToSplinesManager(AITwinSplineTool* splineTool);
 	void ConnectPathAnimToolToPathManager(AITwinPathAnimTool* pathAnimTool);
+	void ConnectPopulationToolToPopulationManager(AITwinPopulationTool* populationTool);
 
 	// return link identifiers found in scene
 	std::vector<ITwin::ModelLink> GetLinkedElements() const;
@@ -290,7 +347,7 @@ public:
 
 	std::shared_ptr<AdvViz::SDK::IScenePersistence> GetScenePersistence() const;
 	FString GetSceneID() const;
-	void InitDecorationService();
+	void InitDecorationService(bool bResetConfig = true);
 
 	void SetDecoGeoreference(const FVector& latLongHeight);
 	AdvViz::expected<void, std::string> InitDecoGeoreference();
@@ -304,18 +361,26 @@ public:
 
 	std::shared_ptr<AdvViz::SDK::IAnnotationsManager> GetAnnotationManager() const;
 
-	/// Export the given HDRI definition to json format.
-	std::string ExportHDRIAsJson(AdvViz::SDK::ITwinHDRISettings const& hdri) const;
-
-	bool ConvertHDRIJsonFileToKeyValueMap(std::string assetPath, AdvViz::SDK::KeyValueStringMap& keyValueMap) const;
-
 
 	//allow disable export of resources (IModels/RealityData) when saving the scene API. Scene API is not responsible for managing these resources in Itwin Engage and want to avoid sending them to the server when saving the scene 
 	static void EnableExportOfResourcesInSceneApI(bool bEnable);
 
+
+#if WITH_TESTS
+	//! Used in automated tests, to enable mocking of decoration / scene API services.
+	//! \param Port The port of the local mock server to use.
+	//! The url of the server will be "http://localhost:<port>". Pass -1 as port to deactivate the test mode.
+	void SetMockServerPort(int Port);
+#endif
+
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif
+
 
 private:
 	UFUNCTION()

@@ -9,23 +9,17 @@
 #include <ITwinServerConnection.h>
 #include <ITwinServerEnvironment.h>
 
-#include <Dom/JsonObject.h>
-#include <Dom/JsonValue.h>
-#include <Interfaces/IHttpResponse.h>
 #include <ITwinWebServices/ITwinAuthorizationManager.h>
 #include <ITwinWebServices/ITwinWebServices.h>
-#include <Serialization/JsonReader.h>
-#include <Serialization/JsonSerializer.h>
 
 #include <Compil/BeforeNonUnrealIncludes.h>
-#	include <BeHeaders/Util/CleanUpGuard.h>
 #	include <Core/ITwinAPI/ITwinWebServices.h>
 #include <Compil/AfterNonUnrealIncludes.h>
 
 DEFINE_LOG_CATEGORY(LogITwinHttp);
 
-
-std::shared_ptr<AdvViz::SDK::ThreadSafeAccessToken> AITwinServerConnection::GetAccessTokenPtr() const
+/*static*/
+std::shared_ptr<AdvViz::SDK::ThreadSafeAccessToken> AITwinServerConnection::GetAccessTokenPtrForEnv(EITwinEnvironment Environment)
 {
 	if (Environment == EITwinEnvironment::Invalid)
 	{
@@ -41,6 +35,11 @@ std::shared_ptr<AdvViz::SDK::ThreadSafeAccessToken> AITwinServerConnection::GetA
 	return AuthMngr->GetAccessToken();
 }
 
+std::shared_ptr<AdvViz::SDK::ThreadSafeAccessToken> AITwinServerConnection::GetAccessTokenPtr() const
+{
+	return GetAccessTokenPtrForEnv(this->Environment);
+}
+
 FString AITwinServerConnection::GetAccessToken() const
 {
 	auto token = GetAccessTokenPtr();
@@ -51,73 +50,6 @@ FString AITwinServerConnection::GetAccessToken() const
 			return tokenPtr->c_str();
 	}
 	return {};
-}
-
-/// Checks the request status, response code, and logs any failure (does not assert)
-/// \return Whether the request's response is valid and can be processed further
-/*static*/
-bool AITwinServerConnection::CheckRequest(FHttpRequestPtr const& CompletedRequest,
-	FHttpResponsePtr const& Response, bool connectedSuccessfully, FString* pstrError /*= nullptr*/,
-	bool const bWillRetry /*= false*/)
-{
-	FString requestError;
-
-	Be::CleanUpGuard FillErrorCleanup([&requestError, &CompletedRequest, pstrError, bWillRetry]
-	{
-		if (!requestError.IsEmpty() && UITwinWebServices::ShouldLogErrors())
-		{
-			FString const Correlation = CompletedRequest->GetHeader(TEXT("X-Correlation-ID"));
-			if (bWillRetry)
-			{
-				BE_LOGW("ITwinAPI", "Request failed (but will retry), to "
-					<< TCHAR_TO_UTF8(*CompletedRequest->GetURL()) << ", X-Correlation-ID="
-					<< TCHAR_TO_UTF8(*Correlation) << ", with " << TCHAR_TO_UTF8(*requestError));
-			}
-			else
-			{
-				BE_LOGE("ITwinAPI", "Request to " << TCHAR_TO_UTF8(*CompletedRequest->GetURL())
-					<< ", X-Correlation-ID=" << TCHAR_TO_UTF8(*Correlation)
-					<< ", failed with " << TCHAR_TO_UTF8(*requestError));
-			}
-		}
-		if (pstrError)
-		{
-			*pstrError = requestError;
-		}
-	});
-
-	if (!connectedSuccessfully || !Response.IsValid())
-	{
-		requestError = TEXT("Connection to the server failed (unreachable?)");
-		//+ EHttpRequestStatus::ToString(CompletedRequest->GetStatus()); <= obviously "Failed", so pointless
-		return false;
-	}
-	else if (!EHttpResponseCodes::IsOk(Response->GetResponseCode()))
-	{
-		requestError = FString::Printf(TEXT("code %d: %s"),
-			(int)Response->GetResponseCode(),
-			*EHttpResponseCodes::GetDescription(
-				(EHttpResponseCodes::Type)Response->GetResponseCode()).ToString());
-
-		// Used to investigate "401: unauthorized" errors (cause was apparently an obsolete token kept in the
-		// FReusableJsonQueries. Might still be useful later for other 401 (or 403) errors:
-		//if (401 == (int)Response->GetResponseCode())
-		//	requestError += FString::Printf(TEXT(", with auth header: %s"),
-		//									*CompletedRequest->GetHeader(TEXT("Authorization")));
-
-		// see if we can get more information in the response
-		std::string detailedError = AdvViz::SDK::ITwinWebServices::GetErrorDescriptionFromJson(
-			TCHAR_TO_UTF8(*Response->GetContentAsString()), "\t");
-		if (!detailedError.empty())
-		{
-			requestError += detailedError.c_str();
-		}
-		return false;
-	}
-	else
-	{
-		return true;
-	}
 }
 
 /*static*/

@@ -1,5 +1,5 @@
 
-add_library(Tools OBJECT
+be_add_library(Tools OBJECT
 		Tools.h
 		TypeId.h
 		Types.h
@@ -40,7 +40,7 @@ add_library(Tools OBJECT
 		TaskFinishMonitor.h
 )
 target_compile_features(Tools PRIVATE ${DefaultCXXSTD})
-set_target_properties(Tools PROPERTIES FOLDER "SDK/Core") 
+set_target_properties(Tools PROPERTIES FOLDER "SDK/Core")
 target_link_libraries(Tools PUBLIC libassert::assert Singleton)
 
 if ( DEFINED glm_INCLUDE_DIR )
@@ -49,11 +49,11 @@ endif ()
 configure_advviz_library(Tools)
 
 if(SDK_ADDUNITTEST)
-	add_executable(ToolsTest ToolsTest.cpp)
+	be_add_executable(ToolsTest ToolsTest.cpp)
 	target_compile_features(ToolsTest PRIVATE ${DefaultCXXSTD})
 	target_compile_definitions(ToolsTest PRIVATE "CMAKE_SOURCE_DIR=\"${CMAKE_SOURCE_DIR}\"")
 	set_target_properties(ToolsTest PROPERTIES FOLDER "SDK/Core/Tests")
-	target_link_libraries(ToolsTest PRIVATE 
+	target_link_libraries(ToolsTest PRIVATE
 							Tools
 							Catch2::Catch2
 						)
@@ -73,5 +73,7 @@ if(SDK_ADDUNITTEST)
 		target_compile_options(ToolsTest PRIVATE "/Zc:preprocessor")
 	endif()
 	configure_advviz_library(ToolsTest)
-	be_add_sdk_test (ToolsTest)
+	be_add_sdk_test (ToolsTest
+		COVERED_TARGETS Tools
+	)
 endif()

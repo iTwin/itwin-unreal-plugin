@@ -18,11 +18,42 @@
 #include <memory>
 #include <vector>
 
+#if WITH_TESTS
+	#include <ITwinRuntime/Private/Timeline/TimeInSeconds.h>
+	#include <ITwinRuntime/Private/Compil/BeforeNonUnrealIncludes.h>
+		#include <BeHeaders/Util/OptionsClass.h>
+	#include <ITwinRuntime/Private/Compil/AfterNonUnrealIncludes.h>
+#endif // WITH_TESTS
+
 #include <ITwinSynchro4DSchedules.generated.h>
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FScheduleQueryingDelegate, bool, bIsRunning);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FScheduleTimeRangeDelegate, FDateTime, StartTime, FDateTime, EndTime);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnScheduleInformationReceived, AITwinIModel*, IModel, FString, ScheduleId, FString, ScheduleName);
+
+/// Should be irrelevant ultimately but still makes a difference for animation bindings pagination size and for
+/// naming the schedule cache folders and files. Also, incremental schedule updates are only supported for NextGen
+/// schedules.
+UENUM()
+enum class EITwinSchedulesGeneration : uint8
+{
+	Legacy,
+	NextGen,
+	Unknown
+};
+
+#if WITH_TESTS
+	OPTIONS_CLASS_START(FSimulatedScheduleOptions, ITWINRUNTIME_API)
+		OPTIONS_CLASS_ADD_MEMBER(bool, WithListingError, false)
+		OPTIONS_CLASS_ADD_MEMBER(bool, WithQueryError, false)
+		OPTIONS_CLASS_ADD_MEMBER(FTimeRangeInSeconds, TimeRange, ITwin::Time::Undefined())
+		OPTIONS_CLASS_ADD_MEMBER(bool, IsAvailable, false)
+		OPTIONS_CLASS_ADD_MEMBER(bool, NotifyScheduleId, false)
+		OPTIONS_CLASS_ADD_MEMBER(bool, NotifyTimerange, false)
+		OPTIONS_CLASS_ADD_MEMBER(bool, NotifyQueryingStopped, false)
+		OPTIONS_CLASS_ADD_MEMBER(TCHAR, DigitSuffix, TCHAR('0'))
+	OPTIONS_CLASS_END
+#endif // WITH_TESTS
 
 /// Component of an AITwinIModel handling the Synchro4D schedules for a given iModel: it will query the
 /// REST api to compute the animation scripts for all tasks, and store the result for the iTwin's
@@ -50,7 +81,7 @@ public:
 	UMaterialInterface* BaseMaterialGlass = nullptr;
 
 	UPROPERTY(Category = "Schedules Querying",
-		VisibleAnywhere)
+		EditAnywhere)
 	FString ScheduleId;
 
 	UPROPERTY(Category = "Schedules Querying",
@@ -63,6 +94,12 @@ public:
 		EditAnywhere)
 	bool bFavorNextGenSchedule = false;
 
+	/// Generation of this schedule: only valid when the schedule Id is. "Legacy" schedule means created with
+	/// SYNCHRO Pro, ie. a schedule version of 6.X, whereas "NextGen" means created in SYNCHRO+ (version > 10).
+	UPROPERTY(Category = "Schedules Querying",
+		VisibleAnywhere)
+	EITwinSchedulesGeneration ScheduleGeneration = EITwinSchedulesGeneration::Unknown;
+
 	/// Update the remote connection details with the current URL, authorization token, etc. from the outer
 	/// iTwin's ServerConnection data
 	UFUNCTION(Category = "Schedules Querying",
@@ -70,42 +107,12 @@ public:
 		BlueprintCallable)
 	void UpdateConnection();
 
-	/// Launches asynchronous querying of schedules data for all Elements of the iModel, optionally
-	/// restricting to the time range given by QueryAllFromTime and QueryAllUntilTime (unless equal: add at
-	/// least one second to QueryAllUntilTime beyond QueryAllFromTime to get a "time point" query)
-	UFUNCTION(Category = "Schedules Querying",
-		CallInEditor,
-		BlueprintCallable)
-	void QueryAll();
-
 	/// Clear all previously queried schedules data and reset the remote connection details
 	/// \return Whether the component's structures could be reset successfully
 	UFUNCTION(Category = "Schedules Querying",
 		CallInEditor,
 		BlueprintCallable)
 	void ResetSchedules();
-
-	/// Launches asynchronous querying of schedule data for an Element and around its assigned tasks,
-	/// searching before and after the Element's tasks by a specified time extent (both can be zero).
-	/// \param ElementID Hexadecimal or decimal number representing the ElementID, which should be an
-	///		uint64 (but Blueprints do not support uint64)
-	/// \param MarginFromStart Signed timespan to extend the search period from the start of the first task
-	///		involving the specified Element. Be careful, the value is signed, thus a negative timespan means
-	///		"before the start ...", a positive one "after the start ..."
-	/// \param MarginFromEnd Signed timespan to extend the search period from the end of the last task
-	///		involving the specified Element. Be careful, the value is signed, thus a negative timespan means
-	///		"before the end ...", a positive one "after the end ..."
-	UFUNCTION(Category = "Schedules Querying",
-		BlueprintCallable)
-	void QueryAroundElementTasks(FString const ElementID, FTimespan const MarginFromStart,
-								 FTimespan const MarginFromEnd);
-
-	/// Launches asynchronous querying of schedule data for a set of Elements
-	/// \param Collection of Elements as hexadecimal or decimal number strings representing the ElementIDs,
-	///		which should be uint64 (but Blueprints do not support uint64)
-	UFUNCTION(Category = "Schedules Querying",
-		BlueprintCallable)
-	void QueryElementsTasks(TArray<FString> const& Elements);
 
 	UFUNCTION(Category = "Schedules Querying",
 		BlueprintCallable)
@@ -218,26 +225,22 @@ public:
 	int ScheduleQueriesServerPagination = 10000;
 
 	UPROPERTY(Category = "Schedules Querying|Advanced", EditAnywhere)
-	uint64 ScheduleQueriesMaxElementIDsFilterSize = 500;
-
-	/// Use official api.bentley.com 4D endpoints rather than the legacy internal ES-API endpoints.
-	UPROPERTY(Category = "Schedules Querying|Advanced",
-		EditAnywhere)
-	bool bStream4DFromAPIM = true;
-
-	/// DEPRECATED - leave "true".
-	UPROPERTY(Category = "Schedules Querying|Advanced", meta = (DisplayName = "Prefetch Whole Schedule"),
-		EditAnywhere)
-	bool bPrefetchAllElementAnimationBindings = true;
-
-	UPROPERTY(Category = "Schedules Querying|Advanced", EditAnywhere)
-	uint64 ScheduleQueriesMaxTaskIDsFilterSize = 100;
-
-	UPROPERTY(Category = "Schedules Querying|Advanced", EditAnywhere)
 	uint64 ScheduleQueriesBindingsPagination = 50000;
 
 	UPROPERTY(Category = "Schedules Querying|Advanced", EditAnywhere)
 	uint64 IModelDataQueriesPagination = 32000;
+
+	/// For Next-gen schedules, when true, do not emit queries for the incremental updates. When toggling this off,
+	/// delta requests that may be in flight will be processed and the raw schedule data will be updated, but the
+	/// changes will not be saved to the cached json and the 4D animation timelines will not be rebuilt.
+	UPROPERTY(Category = "Schedules Querying|Debug",
+		EditAnywhere)
+	bool bDebugFreezeIncrementalScheduleUpdates = false;
+
+	/// If bDebugFreezeIncrementalScheduleUpdates=true, this will process a single incremental update (if any) and
+	/// then freeze again.
+	UFUNCTION(Category = "Schedules Querying|Debug", CallInEditor)
+	void DebugProcessScheduleUpdateIncrement();
 
 	/// Use the correct schedules' task but use random appearance profiles (color, opacity and growth
 	/// simulations) for visual debugging.
@@ -285,45 +288,6 @@ public:
 	UPROPERTY(Category = "Schedules Querying|Debug",
 		EditAnywhere)
 	FString DebugSimulateSessionQueries;
-
-#if WITH_EDITORONLY_DATA
-	/// In-editor helper to only request the task for this Element using QueryElementsTasks (enter a decimal
-	/// or hexadecimal Element ID here).
-	UPROPERTY(Category = "Schedules Test Query",
-		EditAnywhere)
-	FString QueryOnlyThisElementSchedule;
-
-	/// In-editor helper to request the tasks "around" the time where "QueryOnlyThisElementSchedule" is
-	/// participating to its own tasks. Format is DDDDDDDD.HH:MM:SS.SSSSSSSS. Positive values will extend
-	/// the time range /before/ the start and /after the end of the tasks involving 
-	/// "QueryOnlyThisElementSchedule" (see QueryAroundElementTasks for comparison). Negative values are
-	/// still possible, for example if you want the overlapping tasks with a minimum overlap margin.
-	UPROPERTY(Category = "Schedules Test Query",
-		EditAnywhere)
-	FTimespan QueryScheduleBeforeAndAfterElement;
-#endif // WITH_EDITORONLY_DATA
-
-#if WITH_EDITOR
-	/// In-editor helper to launch the asynchronous querying of partial schedules data for
-	/// "QueryOnlyThisElementSchedule", extending the search to elements with tasks happening around the
-	/// same time if "QueryScheduleBeforeAndAfterElement" is set.
-	UFUNCTION(Category = "Schedules Test Query",
-		CallInEditor,
-		BlueprintCallable)
-	void SendPartialQuery();
-#endif // WITH_EDITOR
-
-	/// Restrict the QueryAll action to tasks starting (or ending) at or after this date. Ignored if
-	/// QueryAllUntilTime and QueryAllFromTime are strictly equal.
-	UPROPERTY(Category = "Schedules Test Query",
-		EditAnywhere)
-	FDateTime QueryAllFromTime = FDateTime::UtcNow();//see ScheduleTime about UtcNow()
-
-	/// Restrict the QueryAll action to tasks starting (or ending) at or before this date. Ignored if
-	/// QueryAllUntilTime and QueryAllFromTime are strictly equal.
-	UPROPERTY(Category = "Schedules Test Query",
-		EditAnywhere)
-	FDateTime QueryAllUntilTime = FDateTime::UtcNow();//see ScheduleTime about UtcNow()
 
 	UPROPERTY(Category = "Schedules Replay", meta = (DisplayName = "Translucent Mesh Grouping"),
 		EditAnywhere)
@@ -395,14 +359,22 @@ public:
 		BlueprintCallable)
 	void Pause();
 
+	UFUNCTION(Category = "Schedules Replay",
+		BlueprintCallable)
+	bool IsPaused() const;
+
 	/// Stop replay of the schedule animation, staying at the current script time, but resetting the
-	/// display to disable all scheduling effects (see "Pause" for the alternative).
+	/// display to disable all 4D animation effects (see "Pause" for the alternative).
 	/// Note: whether transformed Elements stay in place or are reset to their initial position is as yet
 	/// undefined.
 	UFUNCTION(Category = "Schedules Replay",
 		CallInEditor,
 		BlueprintCallable)
 	void Stop();
+
+	UFUNCTION(Category = "Schedules Replay",
+		BlueprintCallable)
+	bool IsStopped() const;
 
 	/// Split applying animation on Elements among subsequent ticks to avoid spending more than this amount
 	/// of time each time. Visual update only occurs once the whole iModel (?) has been updated, though.
@@ -449,15 +421,19 @@ public:
 	#if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 	#endif
-	void TickSchedules(float DeltaTime);
+	void TickSchedules(float DeltaSeconds);
 	void OnVisibilityChanged(const TITwinSceneTilePtr& SceneTilePtr, bool bVisible);
 	void OnQueryLoopStatusChange(bool bQueryLoopIsRunning, bool logFullScheduleStats = true);
 
 	UFUNCTION()
 	void LogStatisticsUponFullScheduleReceived(FDateTime StartTime, FDateTime EndTime);
 
+#if WITH_TESTS
+	bool SimulateScheduleForTest(FSimulatedScheduleOptions const& Options);
+#endif // WITH_TESTS
+
 	// For debugging, passing opaque FITwinSceneTile pointer.
-	void DisableAnimationInTile(void* SceneTile);
+	void ResetAnimationInTile(void* SceneTile);
 
 	/// <summary>
 	///  manage dynamic shadows for animated meshes

@@ -92,7 +92,7 @@ struct TraversalDetails {
    * the ones that we're not rendering. `notYetRenderableCount` is only reset
    * when a subtree is removed from the render queue because the
    * `notYetRenderableCount` exceeds the
-   * {@link TilesetOptions::loadingDescendantLimit}.
+   * @ref TilesetOptions::loadingDescendantLimit.
    */
   uint32_t notYetRenderableCount = 0;
 };
@@ -198,11 +198,11 @@ void addCurrentTileAndDescendantsToTilesFadingOutIfPreviouslyRendered(
  * @brief Returns whether a tile with the given bounding volume is visible for
  * the camera.
  *
- * @param viewState The {@link ViewState}
+ * @param viewState The @ref ViewState
  * @param boundingVolume The bounding volume of the tile
  * @param forceRenderTilesUnderCamera Whether tiles under the camera should
  * always be considered visible and rendered (see
- * {@link Cesium3DTilesSelection::TilesetOptions}).
+ * @ref Cesium3DTilesSelection::TilesetOptions).
  * @return Whether the tile is visible according to the current camera
  * configuration
  */
@@ -310,15 +310,15 @@ void addTileToRender(ViewUpdateResult& result, Tile& tile, double sse) {
 double computeSse(
     const TileSelectionContext& context,
     const TilesetFrameState& frameState,
-    const Tile& tile) noexcept {
+    const Tile& tile,
+    uint32_t depth) noexcept {
   double largestSse = 0.0;
   const auto& frustums = frameState.frustums;
   const auto& distances = context.scratchDistances;
   CESIUM_ASSERT(frustums.size() == distances.size());
   for (size_t i = 0; i < frustums.size(); ++i) {
-    const double sse = frustums[i].computeScreenSpaceError(
-        tile.getGeometricError(),
-        distances[i]);
+    const double sse =
+        frustums[i].computeScreenSpaceError(tile, distances[i], depth);
     if (sse > largestSse) {
       largestSse = sse;
     }
@@ -459,7 +459,8 @@ void fogCull(
   CESIUM_ASSERT(distances.size() == frustums.size());
   bool isFogCulled = true;
   for (size_t i = 0; i < frustums.size(); ++i) {
-    if (isVisibleInFog(distances[i], fogDensities[i])) {
+    if (frustums[i].getViewportSize().y == 0.0 ||
+        isVisibleInFog(distances[i], fogDensities[i])) {
       isFogCulled = false;
       break;
     }
@@ -1124,7 +1125,7 @@ TraversalDetails visitTileIfNeeded(
     ++result.culledTilesVisited;
   }
 
-  double tileSse = computeSse(context, frameState, tile);
+  double tileSse = computeSse(context, frameState, tile, depth);
   bool meetsSse = meetsSseThreshold(context, tileSse, cullResult.culled);
 
   TraversalDetails details = visitTile(
