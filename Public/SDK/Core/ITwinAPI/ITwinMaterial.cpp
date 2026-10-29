@@ -132,6 +132,8 @@ namespace AdvViz::SDK
 			return false;
 		if (displayName != rhs.displayName)
 			return false;
+		if (useSrgbColorSpace != rhs.useSrgbColorSpace)
+			return false;
 		return true;
 	}
 

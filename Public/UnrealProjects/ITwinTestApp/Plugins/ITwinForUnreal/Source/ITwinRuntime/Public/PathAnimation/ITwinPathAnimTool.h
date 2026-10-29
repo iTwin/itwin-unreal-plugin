@@ -40,6 +40,7 @@ namespace AdvViz::SDK
 }
 
 struct FFeatureEventProperties;
+struct FPathUpdateOptions;
 
 USTRUCT()
 struct FAnimPathIdentifier 
@@ -129,6 +130,12 @@ public:
 	FInteractiveCreationAbortedEvent InteractiveCreationAbortedEvent;
 
 	AITwinPathAnimTool();
+
+	UPROPERTY(EditAnywhere, Category = "PathAnimation|Async")
+	bool bUseAsyncPathUpdate = false;
+
+	UPROPERTY(EditAnywhere, Category = "PathAnimation|Async")
+	float PathUpdateDelaySeconds = 3.f;
 
 	virtual void Tick(float DeltaTime) override;
 
@@ -306,8 +313,9 @@ protected:
 
 private:
 	void BroadcastSelection();
-	void TriggerRebake(UITwinAnimPathHelper* PathHelper, bool bMultiObjectOnly);
-	void TriggerRepopulate(UITwinAnimPathHelper* PathHelper, bool bMultiObjectOnly);
+	void RequestUpdate(UITwinAnimPathHelper* PathHelper, FPathUpdateOptions Options);
+	void BakePathAnimationAsync(UITwinAnimPathHelper* PathHelper);
+	void UpdatePathOnTick(UITwinAnimPathHelper* PathHelper);
 
 	class FImpl;
 	TPimplPtr<FImpl> Impl;

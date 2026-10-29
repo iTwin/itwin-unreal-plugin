@@ -295,8 +295,7 @@ void UITwinClippingRenderer::UpdateTileset_Boxes(ACesium3DTileset& Tileset, ITwi
 		if (ensure(TileExcluderForBoxes)
 			&& !TileExcluderForBoxes->ContainsBox(BoxInfo.GetBoxPropertiesPtr()))
 		{
-			TileExcluderForBoxes->BoxPropertiesArray.push_back(
-				BoxInfo.GetBoxPropertiesPtr());
+			TileExcluderForBoxes->AddBox(BoxInfo.GetBoxPropertiesPtr());
 
 			auto& MutableBoxInfo = EffectManager->GetMutableEffect(EITwinClippingPrimitiveType::Box, BoxIndex);
 			MutableBoxInfo.RecordTileExcluder(TileExcluderForBoxes);
@@ -362,7 +361,7 @@ void UITwinClippingRenderer::UpdateTileset_Planes(ACesium3DTileset& Tileset, ITw
 		for (UActorComponent* CandidateComponent : ExistingPlaneTileExcluders)
 		{
 			UITwinPlaneTileExcluder* TileExcluder = Cast<UITwinPlaneTileExcluder>(CandidateComponent);
-			if (TileExcluder && TileExcluder->PlaneIndex == PlaneIndex)
+			if (TileExcluder && TileExcluder->GetPlaneIndex() == PlaneIndex)
 			{
 				TileExcluderForPlane = TileExcluder;
 				MatchedPlaneExcluders.insert(CandidateComponent);
@@ -380,9 +379,8 @@ void UITwinClippingRenderer::UpdateTileset_Planes(ACesium3DTileset& Tileset, ITw
 				auto& MutablePlaneInfo = EffectManager->GetMutableEffect(EITwinClippingPrimitiveType::Plane, PlaneIndex);
 				MutablePlaneInfo.RecordTileExcluder(TileExcluderForPlane);
 
-				TileExcluderForPlane->PlaneIndex = PlaneIndex;
-				TileExcluderForPlane->PlaneEquation.PlaneOrientation = PlaneOrientation;
-				TileExcluderForPlane->PlaneEquation.PlaneW = PlaneW;
+				TileExcluderForPlane->SetPlaneIndex(PlaneIndex);
+				TileExcluderForPlane->SetPlaneEquation(PlaneOrientation, PlaneW);
 				TileExcluderForPlane->SetInvertEffect(PlaneInfo.GetInvertEffect());
 
 				TileExcluderForPlane->SetFlags(

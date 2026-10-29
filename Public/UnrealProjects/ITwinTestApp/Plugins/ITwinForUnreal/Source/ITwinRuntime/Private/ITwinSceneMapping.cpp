@@ -13,6 +13,7 @@
 #include <ITwinDynamicShadingProperty.h>
 #include <ITwinDynamicShadingProperty.inl>
 #include <ITwinIModel.h>
+#include <ITwinSelectionOutlineRenderer.h>
 #include <ITwinUtilityLibrary.h>
 #include <Material/ITwinMaterialParameters.h>
 #include <Material/ITwinMaterialParameters.inl>
@@ -38,7 +39,6 @@
 DECLARE_LOG_CATEGORY_EXTERN(ITwinSceneMap, Log, All);
 DEFINE_LOG_CATEGORY(ITwinSceneMap);
 
-// TODO_GCO: ignored in FITwinSceneMapping::ReplicateAnimElemTextureSetupInTile
 #define DEBUG_SYNCHRO4D_BGRA 0
 bool FITwinSceneTile::HasInitialTexturesForChannel(UMaterialInstanceDynamic* Mat, AdvViz::SDK::EChannelType Chan) const
 {
@@ -66,6 +66,10 @@ static const FName HighlightsAndOpacitiesMaterialParameterName = "PROP_Synchro4D
 static const FName CuttingPlanesMaterialParameterName = "PROP_Synchro4D_CutPlanes";
 static const FName ExtractedElementForcedAlphaName = "PROP_Synchro4D_ForcedAlpha";
 static const FName FeatureIdMaterialParameterName = "_FEATURE_ID_0";
+
+/// Duration (seconds) of the blinking of the highlight color after a new selection (the blinking itself
+/// is done by the material, see BlinkingFactor in GetPerFeatureValues.ush)
+static constexpr double SelectionTintBlinkingDuration = 3.;
 
 constexpr int32 GetSynchro4DLayerIndexInMaterial(/*TWeakObjectPtr<UMaterialInstanceDynamic> pMaterial*/)
 {
@@ -630,6 +634,10 @@ void FITwinSceneMapping::ApplySelectingAndHiding(const TITwinSceneTilePtr& Scene
 			// For all calls except the first one above, skip the ResetSelection call otherwise the element
 			// selected is overwritten... (azdev#1808163)
 			.SkipResetSelection(true));
+		if (SelectionTintMode != EITwinSelectionTintMode::Blinking)
+			SceneTile.SetSelectionTintMode(SelectionTintMode, TextureNeeds);
+		SceneTile.SetHover(HoveredElement, ITwinRenderMaterialElementID{ HoveredMaterial.getValue() },
+						   SelectionTintMode, TextureNeeds);
 		auto const ShowHideOpts = FShowHideOptions().SkipResetSelection(true).Force(true);
 		SceneTile.HideCategories(HiddenCategoriesFromSavedView, TextureNeeds, ShowHideOpts);
 		SceneTile.HideModels(HiddenModelsFromSavedView, TextureNeeds, ShowHideOpts);
@@ -1048,7 +1056,8 @@ void FITwinSceneMapping::UpdateSelectingAndHidingTileTextures(TITwinSceneTilePtr
 {
 	//if (!SceneTile.bVisible) <== see Update4DAnimTileTextures
 	//	return;
-	auto SceneTile = SceneTilePtr->GetRAutoLock();
+	auto SceneTile = SceneTilePtr->GetAutoLock();
+	SceneTile->bHoverHighlightDirty = true;
 	if (SceneTile->SelectingAndHiding && SceneTile->SelectingAndHiding->UpdateTexture())
 	{
 		++DirtyTexCount;
@@ -1213,52 +1222,8 @@ void FITwinSceneMapping::GatherTimelineElemInfos(FITwinSceneTile& SceneTile,
 	}
 }
 
-bool FITwinSceneMapping::ReplicateAnimElemTextureSetupInTile(
-	std::pair<ITwinScene::TileIdx, std::unordered_set<ITwinScene::ElemIdx>> const& TileElements)
-{
-	auto SceneTilePtr = KnownTile(TileElements.first);
-	auto SceneTile = SceneTilePtr->GetAutoLock();
-	FElemAnimRequirements TileReq = {
-		.bNeedHiliteAndOpaTex = (bool)SceneTile->HighlightsAndOpacities,
-		.bNeedCuttingPlaneTex = (bool)SceneTile->CuttingPlanes
-	};
-	for (auto const& ElemRank : TileElements.second)
-	{
-		if (TileReq.bNeedHiliteAndOpaTex && TileReq.bNeedCuttingPlaneTex)
-			break;
-		ITwinScene::ElemIdx IdxInVec = ElemRank;
-		do
-		{
-			auto const& Elem = GetElement(IdxInVec);
-			TileReq.bNeedHiliteAndOpaTex |= Elem.Requirements.bNeedHiliteAndOpaTex;
-			TileReq.bNeedCuttingPlaneTex |= Elem.Requirements.bNeedCuttingPlaneTex;
-			// If animated by a Parent Element node, no specific animation will be received, we thus need
-			// to traverse ancesters here:
-			IdxInVec = Elem.ParentInVec;
-		}
-		while (IdxInVec != ITwinScene::NOT_ELEM
-			&& (!TileReq.bNeedHiliteAndOpaTex || !TileReq.bNeedCuttingPlaneTex));
-	}
-	// Note: doesn't account for DEBUG_SYNCHRO4D_BGRA
-	if (!SceneTile->HighlightsAndOpacities && TileReq.bNeedHiliteAndOpaTex)
-	{
-		CreateHighlightsAndOpacitiesTexture(SceneTile);
-	}
-	// Even if textures were already present, we'll have to SetupInMaterials in all (new) materials
-	SceneTile->bNeed4DHighlightsOpaTextureSetupInMaterials = TileReq.bNeedHiliteAndOpaTex;
-
-	if (!SceneTile->CuttingPlanes && TileReq.bNeedCuttingPlaneTex)
-	{
-		CreateCuttingPlanesTexture(SceneTile);
-	}
-	// Even if textures were already present, we'll have to SetupInMaterials in all (new) materials
-	SceneTile->bNeed4DCuttingPlanesTextureSetupInMaterials = TileReq.bNeedCuttingPlaneTex;
-
-	// Even if textures were already present, we'll have to SetupInMaterials in all (new) materials
-	bTilesHaveNew4DAnimTextures |= SceneTile->bNeed4DHighlightsOpaTextureSetupInMaterials
-								  || SceneTile->bNeed4DCuttingPlanesTextureSetupInMaterials;
-	return bTilesHaveNew4DAnimTextures;
-}
+// No longer used, removed - blame here to retrieve
+//bool FITwinSceneMapping::ReplicateAnimElemTextureSetupInTile(...)
 
 void FITwinSceneMapping::CreateHighlightsAndOpacitiesTexture(FITwinSceneTile& SceneTile)
 {
@@ -1561,9 +1526,15 @@ bool FITwinSceneMapping::PickVisibleElement(ITwinElementID const& InElemID,
 	if (Opts.MakeSelected())
 	{
 		if (!Opts.SkipResetSelection())
+		{
 			SelectedElements.clear();
+			SelectedMaterial = ITwin::NOT_MATERIAL; // tiles' ResetSelection also deselected the Material
+		}
 		if (InElemID != ITwin::NOT_ELEMENT && (bPickedInATile || !Opts.TestElementVisibility()))
+		{
 			SelectedElements.insert(InElemID);
+			StartSelectionTintBlinking(EITwinSelectionTintMode::Solid);
+		}
 		// Do it now for existing textures: the initial UpdateTexture call of new textures will also be attempted,
 		// but most likely the TextureRHI is not ready yet, so it will be done again automatically when calling
 		// SetupInMaterials (called from HandleNewSelectingAndHidingTextures!)
@@ -1580,7 +1551,10 @@ bool FITwinSceneMapping::PickVisibleElements(std::unordered_set<ITwinElementID> 
 	FITwinSceneTile::FTextureNeeds TextureNeeds;
 	bool bPickedAny = false;
 	if (Opts.MakeSelected() && !Opts.SkipResetSelection())
+	{
 		SelectedElements.clear();
+		SelectedMaterial = ITwin::NOT_MATERIAL; // tiles' ResetSelection also deselected the Material
+	}
 	ForEachKnownTile([&InElemIDs, &TextureNeeds, &bPickedAny, &Selection = SelectedElements, Opts]
 		(TITwinSceneTilePtr const& SceneTilePtr)
 	{
@@ -1602,6 +1576,8 @@ bool FITwinSceneMapping::PickVisibleElements(std::unordered_set<ITwinElementID> 
 		}
 	});
 	this->bNewSelectingAndHidingTexturesNeedSetupInMaterials |= TextureNeeds.bWasCreated;
+	if (Opts.MakeSelected() && bPickedAny)
+		StartSelectionTintBlinking(EITwinSelectionTintMode::Solid);
 	if (Opts.MakeSelected() && TextureNeeds.bWasChanged)
 	{
 		UpdateSelectingAndHidingTextures();
@@ -1752,12 +1728,80 @@ bool FITwinSceneMapping::PickVisibleMaterial(ITwinMaterialID const& InMaterialID
 	});
 
 	SelectedMaterial = InMaterialID;
+	if (InMaterialID != ITwin::NOT_MATERIAL)
+		StartSelectionTintBlinking(EITwinSelectionTintMode::Hidden);
 	this->bNewSelectingAndHidingTexturesNeedSetupInMaterials |= TextureNeeds.bWasCreated;
 	// same comment as in #PickVisibleElement
 	if (TextureNeeds.bWasChanged)
 		UpdateSelectingAndHidingTextures();
 
 	return bPickedMaterial;
+}
+
+void FITwinSceneMapping::StartSelectionTintBlinking(EITwinSelectionTintMode const ModeAfter)
+{
+	SelectionTintTimer.emplace(FSelectionTintTimer{ FPlatformTime::Seconds(), ModeAfter });
+	// The Pick* caller only colored the newly selected features (in Blinking mode)
+	SetSelectionTintMode(EITwinSelectionTintMode::Blinking);
+}
+
+void FITwinSceneMapping::UpdateSelectionTint()
+{
+	if (SelectedElements.empty() && SelectedMaterial == ITwin::NOT_MATERIAL)
+	{
+		SelectionTintTimer.reset();
+		SelectionTintMode = EITwinSelectionTintMode::Blinking; // nothing to recolor
+		return;
+	}
+	if (!SelectionTintTimer)
+		return;
+	if (FPlatformTime::Seconds() - SelectionTintTimer->StartTime >= SelectionTintBlinkingDuration)
+	{
+		auto const ModeAfter = SelectionTintTimer->ModeAfter;
+		SelectionTintTimer.reset();
+		SetSelectionTintMode(ModeAfter);
+	}
+}
+
+void FITwinSceneMapping::SetSelectionTintMode(EITwinSelectionTintMode const Mode)
+{
+	if (SelectionTintMode == Mode)
+		return;
+	SelectionTintMode = Mode;
+	FITwinSceneTile::FTextureNeeds TextureNeeds;
+	ForEachKnownTile([Mode, &TextureNeeds](TITwinSceneTilePtr const& SceneTilePtr)
+	{
+		auto SceneTileLock = SceneTilePtr->GetAutoLock();
+		SceneTileLock->SetSelectionTintMode(Mode, TextureNeeds);
+	});
+	if (TextureNeeds.bWasChanged)
+		UpdateSelectingAndHidingTextures();
+}
+
+void FITwinSceneMapping::HideSelectionTint()
+{
+	SelectionTintTimer.reset();
+	SetSelectionTintMode(EITwinSelectionTintMode::Hidden);
+}
+
+void FITwinSceneMapping::SetHover(ITwinElementID const& ElemID, ITwinMaterialID const& MatID)
+{
+	if (HoveredElement == ElemID && HoveredMaterial == MatID)
+		return;
+	HoveredElement = ElemID;
+	HoveredMaterial = MatID;
+	FITwinSceneTile::FTextureNeeds TextureNeeds;
+	ITwinRenderMaterialElementID const RenderMatID{ MatID.getValue() };
+	ForEachKnownTile([&ElemID, &RenderMatID, Mode = SelectionTintMode, &TextureNeeds]
+		(TITwinSceneTilePtr const& SceneTilePtr)
+	{
+		auto SceneTileLock = SceneTilePtr->GetAutoLock();
+		if (SceneTileLock->IsLoaded())
+			SceneTileLock->SetHover(ElemID, RenderMatID, Mode, TextureNeeds);
+	});
+	this->bNewSelectingAndHidingTexturesNeedSetupInMaterials |= TextureNeeds.bWasCreated;
+	if (TextureNeeds.bWasChanged)
+		UpdateSelectingAndHidingTextures();
 }
 
 std::pair<FITwinSceneTile const*, FITwinGltfMeshComponentWrapper const*>
@@ -1783,8 +1827,30 @@ FITwinSceneMapping::FindOwningTileSLOW(UPrimitiveComponent const* Component) con
 	return { nullptr, nullptr };
 }
 
+void FITwinSceneMapping::UpdateSelectionOutlines()
+{
+	check(IsInGameThread());
+	if (!ITwin::SelectionOutline::IsEnabled() && !bHadSelectionOutlines
+		&& HoveredElement == ITwin::NOT_ELEMENT && HoveredMaterial == ITwin::NOT_MATERIAL)
+		return;
+	bHadSelectionOutlines = false;
+	ForEachKnownTile([this](TITwinSceneTilePtr const& SceneTilePtr)
+	{
+		auto SceneTile = SceneTilePtr->GetAutoLock();
+		SceneTile->SelectionOutline.Sync(*SceneTile);
+		SceneTile->SyncMaterialHover();
+		bHadSelectionOutlines |= SceneTile->SelectionOutline.IsActive()
+			|| SceneTile->HoverSelectingAndHiding != nullptr;
+	});
+}
+
 void FITwinSceneMapping::Reset()
 {
+	ForEachKnownTile([](TITwinSceneTilePtr const& SceneTilePtr)
+	{
+		auto SceneTile = SceneTilePtr->GetAutoLock();
+		SceneTile->SelectionOutline.Destroy();
+	});
 	bool bHiddenConstruction = bHiddenConstructionData;
 	auto HiddenModels = HiddenModelsFromSavedView;
 	auto HiddenCategories = HiddenCategoriesFromSavedView;

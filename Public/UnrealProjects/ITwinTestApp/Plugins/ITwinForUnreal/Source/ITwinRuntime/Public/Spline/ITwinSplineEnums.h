@@ -12,6 +12,7 @@
 #include "CoreMinimal.h"
 #include <Engine/Blueprint.h>
 
+#include "ITwinSplineEnums.generated.h"
 
 //! WARNING!
 //! The enums below must be synchronized with the equivalent enums defined in AdvViz::SDK

@@ -11,6 +11,7 @@
 
 #include <GameFramework/Actor.h>
 #include <ITwinFwd.h>
+#include <ITwinEnvironmentEnum.h>
 #include <ITwinLogCategory.h>
 #include <ITwinWebServices/ITwinWebServicesObserver.h>
 
@@ -23,6 +24,13 @@
 class UITwinWebServices;
 
 
+UENUM(BlueprintType)
+enum class EEnvironmentSelectionMethod : uint8
+{
+	ESM_Automatic UMETA(DisplayName = "Automatic"),
+	ESM_Manual UMETA(DisplayName = "Manual")
+};
+
 //! Base class for all actors interacting with an iTwin Web Service.
 //! (and thus using an iTwin server connection at some point)
 UCLASS()
@@ -32,11 +40,31 @@ class ITWINRUNTIME_API AITwinServiceActor : public AActor, public FITwinDefaultW
 public:
 	UPROPERTY(Category = "iTwin",
 		EditAnywhere)
-	TObjectPtr<AITwinServerConnection> ServerConnection;
+	EEnvironmentSelectionMethod EnvironmentSelectionMethod = EEnvironmentSelectionMethod::ESM_Automatic;
+
+	UPROPERTY(Category = "iTwin",
+		meta = (EditCondition = "EnvironmentSelectionMethod == EEnvironmentSelectionMethod::ESM_Manual"),
+		EditAnywhere)
+	EITwinEnvironment Environment = EITwinEnvironment::Invalid;
 
 
 	AITwinServiceActor();
 	virtual void BeginDestroy() override;
+	virtual void PostLoad() override;
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif
+
+	UFUNCTION(Category = "iTwin",
+		BlueprintGetter)
+	EITwinEnvironment GetEnvironment() const { return Environment; }
+
+	UFUNCTION(Category = "iTwin",
+		BlueprintSetter)
+	void SetEnvironment(EITwinEnvironment InEnvironment);
+
+	//! Copy environment-related settings from another iTwinServiceActor (eg a manager) to this one.
+	void CopyEnvironmentFrom(AITwinServiceActor const& Other);
 
 	UFUNCTION(Category = "iTwin",
 		BlueprintCallable)
@@ -45,6 +73,10 @@ public:
 	UFUNCTION(Category = "iTwin",
 		BlueprintCallable)
 	UITwinWebServices* GetMutableWebServices();
+
+	UFUNCTION(Category = "iTwin",
+		BlueprintCallable)
+	bool HasAccessToken() const;
 
 	UFUNCTION(Category = "iTwin",
 		BlueprintCallable)
@@ -68,10 +100,10 @@ protected:
 	void UpdateWebServices();
 
 
-	/// Returns current connection status
+	/// Returns current authorization status
 	/// If bRequestAuthorisationIfNeeded is true and no valid connection currently exists, triggers an
 	/// authorization request.
-	AdvViz::SDK::EITwinAuthStatus CheckServerConnection(bool bRequestAuthorisationIfNeeded = true);
+	AdvViz::SDK::EITwinAuthStatus CheckAuthorizationStatus(bool bRequestAuthorisationIfNeeded = true);
 
 	/// overridden from FITwinDefaultWebServicesObserver:
 	virtual const TCHAR* GetObserverName() const override;

@@ -13,7 +13,6 @@
 #include <CoreMinimal.h>
 #include <Containers/Map.h>
 #include <ITwinLoadInfo.h>
-#include <ITwinServerConnection.h>
 
 #include <ITwinRuntime/Private/Compil/BeforeNonUnrealIncludes.h>
 #	include "SDK/Core/Visualization/Decoration.h"
@@ -120,8 +119,6 @@ public:
 	void SetMockServerPort(const UWorld* WorldContextObject, int InPort);
 #endif
 
-	// which service to use for saving/loading scenes and decorations. This is set by default to the same value as the one in AITwinServerConnection, but can be overridden.
-	EITwinSceneService InitConnexionService = EITwinSceneService::Invalid;
 
 private:
 	bool LoadITwinDecoration(std::string& OutError);

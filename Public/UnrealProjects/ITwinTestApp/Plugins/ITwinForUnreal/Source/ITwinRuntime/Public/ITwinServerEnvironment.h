@@ -8,7 +8,7 @@
 
 #pragma once
 
-#include "ITwinServerConnection.h"
+#include <ITwinEnvironmentEnum.h>
 
 namespace ITwinServerEnvironment
 {

@@ -412,9 +412,9 @@ FUEHttp::Response FUEHttp::DoFile(FString verb, const std::string& url, const st
 
 		if (code != 0)
 			break;
-		FPlatformProcess::Sleep(0.01);
+		FPlatformProcess::Sleep(0.01f);
 		if (IsInGameThread())
-			FHttpModule::Get().GetHttpManager().Tick(0.01);
+			FHttpModule::Get().GetHttpManager().Tick(0.01f);
 
 		counter--;
 		if (!counter)

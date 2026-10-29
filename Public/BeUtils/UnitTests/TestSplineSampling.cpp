@@ -7,6 +7,7 @@
 +--------------------------------------------------------------------------------------*/
 
 #include <catch2/catch_all.hpp>
+#include <BeUtils/SplineSampling/Basic2DMap.h>
 #include <BeUtils/SplineSampling/SplineSampling.h>
 #include <BeUtils/SplineSampling/OcclusionMap.h>
 #include <BeUtils/SplineSampling/SplineHelper.h>
@@ -711,3 +712,368 @@ TEST_CASE("TestOcclusionMap_CellClassification")
 	}
 }
 
+//---------------------------------------------------------------------------------------
+// TBasic2DMap tests.
+// #BasicDouble2DMap is the only explicitly instantiated specialization (see the
+// 'template class TBasic2DMap<double>;' at the end of Basic2DMap.cpp), and it is not
+// abstract here since IS_EON_DEV() is 0 => it can be used directly.
+//---------------------------------------------------------------------------------------
+
+namespace
+{
+	using BeUtils::BasicDouble2DMap;
+
+	/// Axis-aligned box of the given 2D dimensions, starting at the origin (the Z extent is
+	/// irrelevant for TBasic2DMap, which only uses min/max on X and Y).
+	static AdvViz::SDK::BoundingBox MakeMapBox(double width, double height)
+	{
+		return { { 0., 0., 0. }, { width, height, 1. } };
+	}
+
+	/// Fills the map cells with their own index, cast to double (cell (i,j) => i + j * width).
+	static void FillWithCellIndices(BasicDouble2DMap& map)
+	{
+		map.AllocateData(0.);
+		for (int cellIndex = 0; cellIndex < map.CountCells(); ++cellIndex)
+		{
+			map.SetValueAtCell(cellIndex, static_cast<double>(cellIndex));
+		}
+	}
+
+	/// Filter for #ComputeMeanWithFilter: only non-negative values contribute to the mean.
+	struct NonNegative2DFilter
+	{
+		bool ShouldAddContribution(double value) const { return value >= 0.; }
+	};
+}
+
+TEST_CASE("TestBasic2DMap_Init")
+{
+	// Nominal case: one cell per unit, no supersampling.
+	{
+		BasicDouble2DMap const map(MakeMapBox(2., 3.), 2, 3);
+		CHECK(map.GetWidth() == 2);
+		CHECK(map.GetHeight() == 3);
+		CHECK(map.CountCells() == 6);
+		CHECK(map.GetSuperSamplingFactor() == 1);
+		CHECK(map.GetCellWidth() == Catch::Approx(1.));
+		CHECK(map.GetCellHeight() == Catch::Approx(1.));
+		// The map always starts at the *center* of the first cell.
+		CHECK(map.GetStart2DPosX() == Catch::Approx(0.5));
+		CHECK(map.GetStart2DPosY() == Catch::Approx(0.5));
+		CHECK(map.GetResolution() == glm::vec2(2.f, 3.f));
+
+		double minX = 0., maxX = 0., minY = 0., maxY = 0.;
+		map.Get2DBoxInfo(minX, maxX, minY, maxY);
+		CHECK(minX == Catch::Approx(0.));
+		CHECK(maxX == Catch::Approx(2.));
+		CHECK(minY == Catch::Approx(0.));
+		CHECK(maxY == Catch::Approx(3.));
+	}
+
+	// Degenerated cell counts are clamped to at least one cell (no division by zero).
+	{
+		BasicDouble2DMap const map(MakeMapBox(2., 2.), 0, -4);
+		CHECK(map.GetWidth() == 1);
+		CHECK(map.GetHeight() == 1);
+		CHECK(map.CountCells() == 1);
+		CHECK(map.GetCellWidth() == Catch::Approx(2.));
+		CHECK(map.GetCellHeight() == Catch::Approx(2.));
+	}
+
+	// InitWith must fully reset a previously initialized map.
+	{
+		BasicDouble2DMap map(MakeMapBox(2., 3.), 2, 3);
+		map.InitWith(MakeMapBox(4., 4.), 4, 2);
+		CHECK(map.GetWidth() == 4);
+		CHECK(map.GetHeight() == 2);
+		CHECK(map.CountCells() == 8);
+		CHECK(map.GetCellWidth() == Catch::Approx(1.));
+		CHECK(map.GetCellHeight() == Catch::Approx(2.));
+	}
+}
+
+TEST_CASE("TestBasic2DMap_SuperSamplingAndDistribQuality")
+{
+	// Supersampling multiplies the resolution along both axes.
+	{
+		BasicDouble2DMap const map(MakeMapBox(2., 3.), 2, 3, 3 /*superSamplingFactor*/);
+		CHECK(map.GetSuperSamplingFactor() == 3);
+		CHECK(map.GetWidth() == 6);
+		CHECK(map.GetHeight() == 9);
+		CHECK(map.CountCells() == 54);
+		CHECK(map.GetCellWidth() == Catch::Approx(2. / 6.));
+		CHECK(map.GetCellHeight() == Catch::Approx(3. / 9.));
+		CHECK(map.GetStart2DPosX() == Catch::Approx(1. / 6.));
+		CHECK(map.GetStart2DPosY() == Catch::Approx(1. / 6.));
+	}
+
+	// A quality of 1 (the default) leaves the requested resolution untouched.
+	{
+		BasicDouble2DMap const map(MakeMapBox(4., 6.), 4, 6, 1, 1.f /*fDistribQuality*/);
+		CHECK(map.GetWidth() == 4);
+		CHECK(map.GetHeight() == 6);
+		CHECK(map.CountCells() == 24);
+	}
+
+	// A quality below 1 undersamples the map (rounded up).
+	{
+		BasicDouble2DMap const map(MakeMapBox(4., 6.), 4, 6, 1, 0.5f);
+		CHECK(map.GetWidth() == 2);
+		CHECK(map.GetHeight() == 3);
+		CHECK(map.CountCells() == 6);
+		CHECK(map.GetCellWidth() == Catch::Approx(2.));
+		CHECK(map.GetCellHeight() == Catch::Approx(2.));
+	}
+	{
+		// ceilf(0.3 * 2) = 1 along both axes.
+		BasicDouble2DMap const map(MakeMapBox(2., 2.), 2, 2, 1, 0.3f);
+		CHECK(map.GetWidth() == 1);
+		CHECK(map.GetHeight() == 1);
+	}
+
+	// A null or negative quality must not produce an empty map.
+	{
+		BasicDouble2DMap const mapNull(MakeMapBox(2., 2.), 8, 8, 1, 0.f);
+		CHECK(mapNull.GetWidth() == 1);
+		CHECK(mapNull.GetHeight() == 1);
+		CHECK(mapNull.CountCells() == 1);
+
+		BasicDouble2DMap const mapNeg(MakeMapBox(2., 2.), 8, 8, 1, -1.f);
+		CHECK(mapNeg.GetWidth() == 1);
+		CHECK(mapNeg.GetHeight() == 1);
+		CHECK(mapNeg.CountCells() == 1);
+	}
+
+	// Supersampling takes precedence over the (lower) quality factor.
+	{
+		BasicDouble2DMap const map(MakeMapBox(2., 2.), 2, 2, 2 /*superSamplingFactor*/, 0.5f);
+		CHECK(map.GetWidth() == 4);
+		CHECK(map.GetHeight() == 4);
+		CHECK(map.CountCells() == 16);
+	}
+
+	// The data buffer follows the (super/under)sampled cell count.
+	{
+		BasicDouble2DMap map(MakeMapBox(2., 2.), 2, 2, 4);
+		map.AllocateData(0.5);
+		REQUIRE(map.CountCells() == 64);
+		CHECK(map.GetValueAtCell(63) == Catch::Approx(0.5));
+		CHECK(map.ComputeMeanValue() == Catch::Approx(0.5));
+	}
+
+	// Custom cell count (3D populator mode: one cell per mesh face) overrides the grid count,
+	// while the 2D grid dimensions are left unchanged.
+	{
+		BasicDouble2DMap map(MakeMapBox(2., 2.), 2, 2, 1, 1.f, 10 /*nCustomCells*/);
+		CHECK(map.GetWidth() == 2);
+		CHECK(map.GetHeight() == 2);
+		CHECK(map.CountCells() == 10);
+		map.AllocateData(1.);
+		map.SetValueAtCell(9, 11.);
+		CHECK(map.ComputeMeanValue() == Catch::Approx(2.)); // (9 * 1 + 11) / 10
+	}
+	{
+		// A custom count matching the grid count is a no-op.
+		BasicDouble2DMap const map(MakeMapBox(2., 2.), 2, 2, 1, 1.f, 4);
+		CHECK(map.CountCells() == 4);
+	}
+}
+
+TEST_CASE("TestBasic2DMap_AllocateAndFill")
+{
+	BasicDouble2DMap map(MakeMapBox(2., 3.), 2, 3);
+	map.AllocateData(0.25);
+	REQUIRE(map.CountCells() == 6);
+	for (int cellIndex = 0; cellIndex < map.CountCells(); ++cellIndex)
+	{
+		CHECK(map.GetValueAtCell(cellIndex) == Catch::Approx(0.25));
+	}
+	CHECK(map.ComputeMeanValue() == Catch::Approx(0.25));
+
+	// FillMapWithValue overwrites every cell, keeping the allocated size.
+	map.SetValueAtCell(0, 42.);
+	map.FillMapWithValue(2.);
+	for (int cellIndex = 0; cellIndex < map.CountCells(); ++cellIndex)
+	{
+		CHECK(map.GetValueAtCell(cellIndex) == Catch::Approx(2.));
+	}
+	CHECK(map.ComputeMeanValue() == Catch::Approx(2.));
+
+	// Mean of heterogeneous values.
+	FillWithCellIndices(map);
+	CHECK(map.ComputeMeanValue() == Catch::Approx(2.5)); // (0+1+2+3+4+5) / 6
+
+	// Re-allocating resets all the values.
+	map.AllocateData(-1.);
+	CHECK(map.ComputeMeanValue() == Catch::Approx(-1.));
+
+	// FillMapWithValue on a non-allocated map is a no-op (it must not allocate nor crash).
+	BasicDouble2DMap emptyMap(MakeMapBox(2., 2.), 2, 2);
+	emptyMap.FillMapWithValue(1.);
+	CHECK(emptyMap.CountCells() == 4); // cell count is independent from the actual allocation
+}
+
+TEST_CASE("TestBasic2DMap_EvaluateAndGetRawValueAt")
+{
+	// 2x2 cells over a 2x2 box => cell size 1, cell centers at 0.5 and 1.5 on both axes.
+	BasicDouble2DMap map(MakeMapBox(2., 2.), 2, 2);
+	FillWithCellIndices(map); // values: 0 1 / 2 3
+
+	// Raw value: nearest cell, no blending.
+	CHECK(map.GetRawValueAt(0.5, 0.5) == Catch::Approx(0.));
+	CHECK(map.GetRawValueAt(1.6, 0.4) == Catch::Approx(1.));
+	CHECK(map.GetRawValueAt(0.4, 1.6) == Catch::Approx(2.));
+	CHECK(map.GetRawValueAt(1.9, 1.9) == Catch::Approx(3.));
+	// Positions outside the box are clamped to the border cells.
+	CHECK(map.GetRawValueAt(10., 10.) == Catch::Approx(3.));
+
+	// With interpolation enabled (the default), EvaluateValueAt blends the 4 neighbors and
+	// ignores the cell index.
+	CHECK(map.EvaluateValueAt(1., 1., -1) == Catch::Approx(1.5)); // (0+1+2+3) / 4
+	CHECK(map.EvaluateValueAt(0.5, 0.5, -1) == Catch::Approx(0.));
+
+	// With interpolation disabled, the cell index is used verbatim.
+	map.EnableInterpolation(false);
+	CHECK(map.EvaluateValueAt(1., 1., 3) == Catch::Approx(3.));
+	CHECK(map.EvaluateValueAt(0., 0., 2) == Catch::Approx(2.));
+	map.EnableInterpolation(true);
+	CHECK(map.EvaluateValueAt(1., 1., 3) == Catch::Approx(1.5));
+}
+
+TEST_CASE("TestBasic2DMap_InterpolateValidValueAt")
+{
+	BasicDouble2DMap map(MakeMapBox(2., 2.), 2, 2);
+	FillWithCellIndices(map); // values: 0 1 / 2 3
+
+	// Discarded value high enough to never trigger => plain bilinear interpolation.
+	{
+		const double noDiscard = 1000.;
+		// On a cell center, the weights collapse on that cell.
+		CHECK(map.InterpolateValidValueAt(0.5, 0.5, noDiscard) == Catch::Approx(0.));
+		CHECK(map.InterpolateValidValueAt(1.5, 0.5, noDiscard) == Catch::Approx(1.));
+		CHECK(map.InterpolateValidValueAt(0.5, 1.5, noDiscard) == Catch::Approx(2.));
+		CHECK(map.InterpolateValidValueAt(1.5, 1.5, noDiscard) == Catch::Approx(3.));
+		// Halfway between two cells along X, and at the center of the 4 cells.
+		CHECK(map.InterpolateValidValueAt(1., 0.5, noDiscard) == Catch::Approx(0.5));
+		CHECK(map.InterpolateValidValueAt(0.5, 1., noDiscard) == Catch::Approx(1.));
+		CHECK(map.InterpolateValidValueAt(1., 1., noDiscard) == Catch::Approx(1.5));
+		// Out-of-box positions are clamped onto the border, never out of the buffer.
+		CHECK(map.InterpolateValidValueAt(-100., -100., noDiscard) == Catch::Approx(0.));
+		CHECK(map.InterpolateValidValueAt(100., 100., noDiscard) == Catch::Approx(3.));
+	}
+
+	// As soon as one of the 4 neighbors is >= the discarded value, the discarded value itself is
+	// returned (no partial blending with invalid cells).
+	{
+		CHECK(map.InterpolateValidValueAt(1., 1., 3.) == Catch::Approx(3.));
+		CHECK(map.InterpolateValidValueAt(1., 1., 2.) == Catch::Approx(2.));
+		// Even on the center of cell 0 (raw value 0), since cells 2 and 3 are neighbors.
+		CHECK(map.InterpolateValidValueAt(0.5, 0.5, 2.) == Catch::Approx(2.));
+		// ...but on the center of cell 3 the neighborhood collapses on cell 3 only.
+		CHECK(map.InterpolateValidValueAt(1.5, 1.5, 4.) == Catch::Approx(3.));
+	}
+
+	// A uniform map interpolates to its unique value everywhere, unless it is itself discarded.
+	{
+		BasicDouble2DMap uniformMap(MakeMapBox(2., 2.), 4, 4);
+		uniformMap.AllocateData(0.75);
+		CHECK(uniformMap.InterpolateValidValueAt(0.3, 1.7, 1.) == Catch::Approx(0.75));
+		CHECK(uniformMap.InterpolateValidValueAt(0.3, 1.7, 0.75) == Catch::Approx(0.75));
+		CHECK(uniformMap.InterpolateValidValueAt(0.3, 1.7, 0.5) == Catch::Approx(0.5));
+	}
+}
+
+TEST_CASE("TestBasic2DMap_ComputeMean")
+{
+	// Square map: the 3x3 neighborhood is clamped at the borders.
+	{
+		BasicDouble2DMap const map(MakeMapBox(3., 3.), 3, 3);
+		const std::vector<double> buffer = { 0., 1., 2., 3., 4., 5., 6., 7., 8. };
+		REQUIRE(static_cast<int>(buffer.size()) == map.CountCells());
+
+		CHECK(map.ComputeMean(buffer.data(), 1, 1) == Catch::Approx(4.));  // all 9 cells
+		CHECK(map.ComputeMean(buffer.data(), 0, 0) == Catch::Approx(2.));  // 0,1,3,4
+		CHECK(map.ComputeMean(buffer.data(), 2, 0) == Catch::Approx(3.));  // 1,2,4,5
+		CHECK(map.ComputeMean(buffer.data(), 0, 2) == Catch::Approx(5.));  // 3,4,6,7
+		CHECK(map.ComputeMean(buffer.data(), 2, 2) == Catch::Approx(6.));  // 4,5,7,8
+		CHECK(map.ComputeMean(buffer.data(), 1, 0) == Catch::Approx(2.5)); // 0..5
+		CHECK(map.ComputeMean(buffer.data(), 1, 2) == Catch::Approx(5.5)); // 3..8
+	}
+
+	// Non-square map: checks the row stride used to walk the buffer.
+	{
+		BasicDouble2DMap const map(MakeMapBox(4., 2.), 4, 2);
+		const std::vector<double> buffer = { 0., 1., 2., 3., 4., 5., 6., 7. };
+		REQUIRE(static_cast<int>(buffer.size()) == map.CountCells());
+
+		CHECK(map.ComputeMean(buffer.data(), 0, 0) == Catch::Approx(2.5)); // 0,1,4,5
+		CHECK(map.ComputeMean(buffer.data(), 3, 0) == Catch::Approx(4.5)); // 2,3,6,7
+		CHECK(map.ComputeMean(buffer.data(), 1, 1) == Catch::Approx(3.));  // 0,1,2,4,5,6
+	}
+
+	// Single cell map: the mean is the cell itself.
+	{
+		BasicDouble2DMap const map(MakeMapBox(1., 1.), 1, 1);
+		const double buffer[1] = { 7. };
+		CHECK(map.ComputeMean(buffer, 0, 0) == Catch::Approx(7.));
+	}
+
+	// A uniform buffer has a constant mean, whatever the position in the map.
+	{
+		BasicDouble2DMap const map(MakeMapBox(3., 3.), 3, 3);
+		const std::vector<double> buffer(9, 1.5);
+		for (int y = 0; y < 3; ++y)
+		{
+			for (int x = 0; x < 3; ++x)
+			{
+				CHECK(map.ComputeMean(buffer.data(), x, y) == Catch::Approx(1.5));
+			}
+		}
+	}
+}
+
+TEST_CASE("TestBasic2DMap_ComputeMeanWithFilter")
+{
+	BasicDouble2DMap const map(MakeMapBox(3., 3.), 3, 3);
+	const NonNegative2DFilter filter;
+
+	// Only the non-negative neighbors contribute, and the divisor is the number of actual
+	// contributions (not the neighborhood size).
+	{
+		const std::vector<double> buffer = { -1., -1., 2., -1., 4., 5., 6., 7., 8. };
+		REQUIRE(static_cast<int>(buffer.size()) == map.CountCells());
+
+		CHECK(map.ComputeMeanWithFilter(filter, buffer.data(), 1, 1) == Catch::Approx(32. / 6.));
+		CHECK(map.ComputeMeanWithFilter(filter, buffer.data(), 0, 0) == Catch::Approx(4.));  // only 4
+		// 4,5,7,8: no value filtered out here, so this matches ComputeMean.
+		CHECK(map.ComputeMeanWithFilter(filter, buffer.data(), 2, 2) == Catch::Approx(6.));
+		CHECK(map.ComputeMeanWithFilter(filter, buffer.data(), 2, 0) == Catch::Approx(11. / 3.)); // 2,4,5
+	}
+
+	// When nothing is filtered out, the result matches ComputeMean.
+	{
+		const std::vector<double> buffer = { 0., 1., 2., 3., 4., 5., 6., 7., 8. };
+		for (int y = 0; y < 3; ++y)
+		{
+			for (int x = 0; x < 3; ++x)
+			{
+				CHECK(map.ComputeMeanWithFilter(filter, buffer.data(), x, y)
+					== Catch::Approx(map.ComputeMean(buffer.data(), x, y)));
+			}
+		}
+	}
+
+	// When no neighbor contributes, the original value is kept.
+	{
+		const std::vector<double> buffer(9, -5.);
+		CHECK(map.ComputeMeanWithFilter(filter, buffer.data(), 1, 1) == Catch::Approx(-5.));
+		CHECK(map.ComputeMeanWithFilter(filter, buffer.data(), 0, 2) == Catch::Approx(-5.));
+	}
+	{
+		// The center is filtered out too: the kept value is the (invalid) original one.
+		std::vector<double> buffer(9, -1.);
+		buffer[4] = -3.;
+		CHECK(map.ComputeMeanWithFilter(filter, buffer.data(), 1, 1) == Catch::Approx(-3.));
+	}
+}

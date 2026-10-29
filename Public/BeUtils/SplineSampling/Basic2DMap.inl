@@ -49,4 +49,51 @@ namespace BeUtils
 		return pData_[cellIndex];
 	}
 
+	template <typename T>
+	template <typename Filter>
+	T TBasic2DMap<T>::ComputeMeanWithFilter(const Filter& filter, const T* pInBuffer, int x, int y) const
+	{
+		BE_ASSERT(x >= 0 && x < nWidth_ && y >= 0 && y < nHeight_);
+		constexpr int NEIGHBOURHOOD = 1;
+
+		int nMinX = std::max(x - NEIGHBOURHOOD, 0);
+		int nMaxX = std::min(x + NEIGHBOURHOOD, nWidth_ - 1);
+		int nMinY = std::max(y - NEIGHBOURHOOD, 0);
+		int nMaxY = std::min(y + NEIGHBOURHOOD, nHeight_ - 1);
+
+		int w = nMaxX - nMinX + 1;
+		int h = nMaxY - nMinY + 1;
+
+		T dSum(0.0);
+		int nContribs(0);
+
+		T origVal = *(pInBuffer + x + nWidth_ * y);
+		pInBuffer += nMinX + nWidth_ * nMinY;
+
+		int nShift = nWidth_ - w;
+
+		for (int j = h; j; --j)
+		{
+			for (int i = w; i; --i)
+			{
+				if (filter.ShouldAddContribution(*pInBuffer))
+				{
+					dSum += *pInBuffer;
+					nContribs++;
+				}
+				pInBuffer++;
+			}
+			pInBuffer += nShift;
+		}
+		if (nContribs > 0)
+		{
+			return dSum / nContribs;
+		}
+		else
+		{
+			// keep original value.
+			return origVal;
+		}
+	}
+
 }

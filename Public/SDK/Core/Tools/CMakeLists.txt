@@ -22,6 +22,7 @@ be_add_library(Tools OBJECT
 		IDelayedCallHandler.cpp
 		JsonCacheUtilities.h
 		JsonCacheUtilities.cpp
+		StringParsing.h
 		StringWithEncoding.h
 		StrongTypeId.h
 		LockableObject.h

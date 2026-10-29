@@ -30,8 +30,7 @@ void FITwinClippingPlaneInfo::SetPlaneEquation(FVector const& PlaneOrientation, 
 			if (TileExcluder.IsValid())
 			{
 				UITwinPlaneTileExcluder* PlaneExcluder = Cast<UITwinPlaneTileExcluder>(TileExcluder.Get());
-				PlaneExcluder->PlaneEquation.PlaneOrientation = PlaneOrientation;
-				PlaneExcluder->PlaneEquation.PlaneW = PlaneW;
+				PlaneExcluder->SetPlaneEquation(PlaneOrientation, PlaneW);
 			}
 		}
 	}

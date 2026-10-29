@@ -336,7 +336,7 @@ void AITwinSavedView::UpdateSavedView()
 		return;
 	}
 	BE_LOGI("ITwinAPI", "Will update SavedView: " << TCHAR_TO_UTF8(*GetActorNameOrLabel()));
-	if (CheckServerConnection() != AdvViz::SDK::EITwinAuthStatus::Success)
+	if (CheckAuthorizationStatus() != AdvViz::SDK::EITwinAuthStatus::Success)
 	{
 		// No authorization yet: postpone the actual update (see UpdateOnSuccessfulAuthorization)
 		return;
@@ -393,7 +393,7 @@ void AITwinSavedView::OnSavedViewThumbnailUpdated(bool bSuccess, FString const& 
 	BE_LOGI("ITwinAPI", "SavedView thumbnail updated: " << TCHAR_TO_UTF8(*GetActorNameOrLabel()));
 }
 
-void AITwinSavedView::MoveToSavedView()
+void AITwinSavedView::MoveToSavedView(float moveDuration)
 {
 	BE_LOGI("ITwinAPI", "Will move to SavedView: " << TCHAR_TO_UTF8(*GetActorNameOrLabel()));
 	if (SavedViewId.IsEmpty() && !Impl->bSavedViewTransformIsSet)
@@ -415,21 +415,22 @@ void AITwinSavedView::MoveToSavedView()
 		{
 			checkSlow(GetWorld()->GetFirstPlayerController() == Controller && Controller->GetPawn() == Pawn);
 			auto StartRot = Pawn->GetActorRotation();
-			float BlendTime = 3.f;
+			float BlendTime = moveDuration;
 			ACameraActor* Actor = nullptr;
 			FTransform Transform(GetActorRotation(), GetActorLocation());
-			Impl->StartCameraMovementToSavedView(BlendTime, Actor, Transform, 3.f);
-			GetWorldTimerManager().SetTimer(ITwinSavedView::TimerHandle,
-				FTimerDelegate::CreateLambda([=, ThisPtr = TWeakObjectPtr<AITwinSavedView>(this)]
+			Impl->StartCameraMovementToSavedView(BlendTime, Actor, Transform, moveDuration);
+			FTimerDelegate delegate = FTimerDelegate::CreateLambda([=, ThisPtr = TWeakObjectPtr<AITwinSavedView>(this)]
 				{
 					if (!ThisPtr.IsValid())
 						return;
 					ThisPtr->Impl->EndCameraMovement(Actor, Transform);
 					ThisPtr->Impl->ApplyScheduleTime();
 					ThisPtr->FinishedMovingToSavedView.Broadcast();
-				}),
-				BlendTime,
-				false);
+				});
+			if (BlendTime <= 0.f)
+				GetWorldTimerManager().SetTimerForNextTick(delegate);
+			else
+				GetWorldTimerManager().SetTimer(ITwinSavedView::TimerHandle, delegate, BlendTime, false);
 		}
 		else // no Pawn (nor Controller): we're probably in the Editor
 		{

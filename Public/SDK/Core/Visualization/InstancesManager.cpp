@@ -196,7 +196,7 @@ namespace AdvViz::SDK
 				// We may have saved linked spline as userData. Spline should be loaded *before* populations
 				// to make it work.
 				if (row.userData
-					&& group->GetType() == "spline"
+					&& group->GetType() == SPLINE_GROUP_TYPE
 					&& splineManager_)
 				{
 					RefID const splineId = splineManager_->GetLoadedSplineId(*row.userData);
@@ -377,11 +377,14 @@ namespace AdvViz::SDK
 					group->SetName(row.name);
 					if (row.type.has_value())
 						group->SetType(row.type.value());
+					if (row.userData && row.userData == "hidden"
+						&& group->GetType() != SPLINE_GROUP_TYPE)
+						group->SetVisibility(false);
 
 					// We may have saved linked spline as userData. Spline should be loaded *before* populations
 					// to make it work.
 					if (row.userData
-						&& group->GetType() == "spline"
+						&& group->GetType() == SPLINE_GROUP_TYPE
 						&& SThis->splineManager_)
 					{
 						RefID const splineId = SThis->splineManager_->GetLoadedSplineId(*row.userData);
@@ -487,6 +490,10 @@ namespace AdvViz::SDK
 			SJsonInstGroup jIn{ .name = instGroup->GetName() };
 			if (instGroup->GetType() != "")
 				jIn.type = instGroup->GetType();
+			// Here we use userData to store visibility flag for non-spline groups
+			// (for spline groups visibility is managed by the spline).
+			if (instGroup->GetType() != SPLINE_GROUP_TYPE && !instGroup->GetVisibility())
+				jIn.userData = "hidden";
 
 			// Save linked spline as userData. Spline should be saved *before* populations to guarantee that
 			// we have retrieved the spline identifier on the server.
@@ -1169,6 +1176,40 @@ namespace AdvViz::SDK
 				func(*group);
 			}
 		}
+
+		void ModifyInstancesGroups(std::function<void(IInstancesGroup&)> const& func) const
+		{
+			auto thdata = thdata_.GetRAutoLock();
+			for (auto const& [_, groupPtr] : thdata->instanceGroupsByName_)
+			{
+				auto group = groupPtr->GetAutoLock();
+				func(*group);
+			}
+		}
+
+		void GetInstanceGroupNames(std::vector<std::string>& names, bool bIncludeEmpty, std::string type) const
+		{
+			auto thdata = thdata_.GetRAutoLock();
+			names.clear();
+			for (auto const& [name, _] : thdata->instanceGroupsByName_)
+			{
+				auto group = thdata->instanceGroupsByName_.at(name)->GetRAutoLock();
+				if ((type.empty() || group->GetType() == type) && (bIncludeEmpty || group->HasInstances()))
+					names.push_back(name);
+			}
+		}
+
+		void GetInstanceGroupIds(std::vector<RefID>& ids, bool bIncludeEmpty, std::string type) const
+		{
+			auto thdata = thdata_.GetRAutoLock();
+			ids.clear();
+			for (auto const& [id, _] : thdata->mapIdToInstGroups_)
+			{
+				auto group = thdata->mapIdToInstGroups_.at(id)->GetRAutoLock();
+				if ((type.empty() || group->GetType() == type) && (bIncludeEmpty || group->HasInstances()))
+					ids.push_back(group->GetId());
+			}
+		}
 	};
 
 	void InstancesManager::LoadDataFromServer(const std::string& decorationId,
@@ -1270,6 +1311,21 @@ namespace AdvViz::SDK
 	void InstancesManager::IterateInstancesGroups(std::function<void(IInstancesGroup const&)> const& func) const
 	{
 		GetImpl().IterateInstancesGroups(func);
+	}
+
+	void InstancesManager::ModifyInstancesGroups(std::function<void(IInstancesGroup&)> const& func)
+	{
+		GetImpl().ModifyInstancesGroups(func);
+	}
+
+	void InstancesManager::GetInstanceGroupNames(std::vector<std::string>& names, bool bIncludeEmpty, std::string type) const
+	{
+		GetImpl().GetInstanceGroupNames(names, bIncludeEmpty, type);
+	}
+
+	void InstancesManager::GetInstanceGroupIds(std::vector<RefID>& ids, bool bIncludeEmpty, std::string type) const
+	{
+		GetImpl().GetInstanceGroupIds(ids, bIncludeEmpty, type);
 	}
 
 	void InstancesManager::SetSplineManager(std::shared_ptr<ISplinesManager> const& splineManager)

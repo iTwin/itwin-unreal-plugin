@@ -165,11 +165,11 @@ namespace AdvViz::SDK
 							auto jout = joutPtr->GetAutoLock();
 							if (Http::IsSuccessful(httpResult) && !jout->ids.empty())
 							{
-								if (callbackfct)
-									callbackfct(httpResult);
 								auto this_ = thisWptr.lock();
 								if (this_)
 									this_->serverSideData_.id = jout->ids[0];
+								if (callbackfct)
+									callbackfct(httpResult);
 							}
 							else
 							{

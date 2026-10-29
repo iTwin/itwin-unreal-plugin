@@ -1,4 +1,4 @@
-# Returns the name of the vcpkg package coresponding to the given dependency,
+# Returns the name of the vcpkg package corresponding to the given dependency,
 # or the empty string if this is not a vcpkg package.
 # Recognizes regular package name (eg. "catch2") as well as CMake targets
 # created by the package (eg. "Catch2::Catch2WithMain").
@@ -94,15 +94,14 @@ function (be_create_plugin_packager_target pluginName projectDir)
 			)
 		endif()
 	else()
-		# Run through 'env' in order to pass options to BuildPlugin, because it does not ready any project-specific
+		# Run through 'env' in order to pass options to BuildPlugin, because it does not read any project-specific
 		# BuildConfiguration.xml (because the HostProject that is use as a container for the plugin build process is
 		# created by UBT without any customization possibility) and Engine-specific configuration is not possible with
 		# an installed (official) build (and maybe not even with our "faked installed" source build anyway...)
 		# Note: had to remove "./" before "${RunUATBaseName}" otherwise I got "'.' is not an executable command"
 		set(runUatCommand ${CMAKE_COMMAND} -E env
 				UnrealBuildTool_WindowsPlatform__CompilerVersion="${BE_GENERATOR_TOOLSET}"
-				# This would reduce further but may reduce optimizations:
-				# UnrealBuildTool_BuildConfiguration__bAllowLTCG=false
+				# Not sure it is equivalent to the attrib command below: there are probably other consequences of having read-only sources...
 				UnrealBuildTool_BuildConfiguration__bUseAdaptiveUnityBuild=false
 				UnrealBuildTool_BuildConfiguration__bForceUnityBuild=true
 			"${RunUATBasename}" BuildPlugin -Plugin=${pluginPackageSrcDir}/${pluginName}.uplugin -Package="${pluginPackageDstDir}" -CreateSubFolder
@@ -122,8 +121,6 @@ function (be_create_plugin_packager_target pluginName projectDir)
 			COMMAND ${CMAKE_COMMAND} -E copy_directory "${projectAbsDir}/Plugins/${pluginName}" "${pluginPackageSrcDir}"
 			# Set sources as read-only, to disable the "adaptive mode" of the unity build, thus actually merging source files.
 			# See doc on bUseAdaptiveUnityBuild here: https://dev.epicgames.com/documentation/en-us/unreal-engine/build-configuration-for-unreal-engine?application_version=5.5
-			# Ideally we would enable bUseAdaptiveUnityBuild as we do in the xxx.target.cs file for our apps,
-			# but there is no xxx.target.cs (or BuildConfiguration.xml) for plugins.
 			COMMAND attrib /S +R "${pluginPackageSrcDir}/*"
 			COMMAND ${CMAKE_COMMAND} -E rm -rf "${pluginPackageSrcDir}/Binaries"
 			COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/UnrealProjects/ExternBinaries_${projectName}_${pluginName}" "${pluginPackageSrcDir}/Binaries"

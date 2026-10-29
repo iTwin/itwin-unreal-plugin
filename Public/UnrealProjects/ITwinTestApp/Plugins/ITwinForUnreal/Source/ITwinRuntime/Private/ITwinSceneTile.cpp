@@ -23,17 +23,38 @@ namespace ITwin
 {
 	/// Highlight color for selected element (CANNOT use the alpha component, which would conflict with
 	/// HideElements!)
-	static const std::array<uint8, 4> COLOR_SELECTED_ELEMENT_BGRA = { 96, 230, 0, 255 };
+	static const std::array<uint8, 4> COLOR_SELECTED_ELEMENT_BGRA = { 200, 230, 100, 255 };
 	/// Highlight color for hidden element
 	static const std::array<uint8, 4> COLOR_HIDDEN_ELEMENT_BGRA = { 0, 0, 0, 0 };
 	/// Highlight color to revert to when deselecting AND un-hiding an element
 	static const std::array<uint8, 4> COLOR_UNSELECT_ELEMENT_BGRA = { 0, 0, 0, 255 };
 
-	static const std::array<uint8, 4> COLOR_SELECTED_MATERIAL_BGRA = { 0, 230, 96, 255 };
+	static const std::array<uint8, 4> COLOR_SELECTED_MATERIAL_BGRA = COLOR_SELECTED_ELEMENT_BGRA;
+
+	/// Selection texture alpha values (see GetPerFeatureValues.ush): 0 = hidden, HOVER_MARKER_ALPHA = hover,
+	/// 255 = visible/blinking selection, other intermediate values = non-blinking selection mix ratio.
+	static constexpr uint8 SELECTION_BLINKING_ALPHA = 255;
+	static constexpr uint8 SELECTION_SOLID_ALPHA = 150;
 
 	std::array<uint8, 4> const& GetMaterialSelectionHighlightBGRA()
 	{
 		return COLOR_SELECTED_MATERIAL_BGRA;
+	}
+
+	/// Set the alpha of the given features, leaving hidden ones (alpha 0) untouched
+	template<typename FeatureIDsCont>
+	void SetHighlightAlpha(FITwinDynamicShadingBGRA8Property& Tex, FeatureIDsCont const& Features,
+						   uint8 const Alpha, bool& bChanged)
+	{
+		for (auto const& Feature : Features)
+		{
+			uint8 const Current = Tex.GetPixel(Feature.value())[3];
+			if (Current != 0 && Current != Alpha)
+			{
+				Tex.SetPixel(Feature, { 0, 0, 0, Alpha }, { false, false, false, true });
+				bChanged = true;
+			}
+		}
 	}
 }
 
@@ -220,12 +241,21 @@ bool FITwinSceneTile::IsLoaded() const
 
 void FITwinSceneTile::Unload()
 {
+	// Companion components must be destroyed explicitly (and before the reset below drops the references)
+	SelectionOutline.Destroy();
+
 	// If some textures were overridden during material tuning, we must reset them before they are processed
 	// by #destroyGltfParameterValues
 	ResetCustomTexturesInMaterials();
 
 	ForEachElementFeatures([](FITwinElementFeaturesInTile& ElemInTile) { ElemInTile.Unload(); });
 	ForEachExtractedElement([](FITwinExtractedElement& Extracted) { Extracted.Unload(); });
+	// Mesh ranks are no longer valid once the tile is reloaded (Features are kept, see below)
+	for (auto&& MaterialFeatures : MaterialsFeatures)
+	{
+		// See comment about const_cast in ElementSelectionHelper::ForEachFeaturesSelectionTexFlag
+		const_cast<FITwinMaterialFeaturesInTile&>(MaterialFeatures).Meshes.clear();
+	}
 
 	// Preserve containers to keep ordering
 	FElementFeaturesCont Elems;
@@ -672,18 +702,26 @@ public:
 	}
 	void SetSelectedID(ITwinElementID const& NewID) const
 	{
-		SceneTile.SelectedElements.clear();
-		if (NewID != ITwin::NOT_ELEMENT)
-			SceneTile.SelectedElements.insert(NewID);
+		if (NewID != ITwin::NOT_ELEMENT
+			&& SceneTile.SelectedElements.size() == 1 && SceneTile.SelectedElements.contains(NewID))
+		{
+			return;
+		}
+		ClearSelection();
+		AddSelectedID(NewID);
 	}
 	void AddSelectedID(ITwinElementID const& NewID) const
 	{
-		if (NewID != ITwin::NOT_ELEMENT)
-			SceneTile.SelectedElements.insert(NewID);
+		if (NewID != ITwin::NOT_ELEMENT && SceneTile.SelectedElements.insert(NewID).second)
+			++SceneTile.SelectionRevision;
 	}
 	void ClearSelection() const
 	{
-		SceneTile.SelectedElements.clear();
+		if (!SceneTile.SelectedElements.empty())
+		{
+			SceneTile.SelectedElements.clear();
+			++SceneTile.SelectionRevision;
+		}
 	}
 
 	inline FITwinElementFeaturesInTile* FindSelectableFeaturesSLOW(ITwinElementID const& EltID) const
@@ -730,7 +768,12 @@ public:
 	}
 	void SetSelectedID(ITwinRenderMaterialElementID const& NewID) const
 	{
-		SceneTile.SelectedMaterial = ITwinMaterialID{ NewID.getValue() };
+		ITwinMaterialID const NewMatID{ NewID.getValue() };
+		if (SceneTile.SelectedMaterial != NewMatID)
+		{
+			SceneTile.SelectedMaterial = NewMatID;
+			++SceneTile.SelectionRevision;
+		}
 	}
 
 	inline FITwinMaterialFeaturesInTile* FindSelectableFeaturesSLOW(ITwinRenderMaterialElementID const& MatID) const
@@ -771,6 +814,8 @@ void FITwinSceneTile::TResetSelection(SelectableHelper const& Helper, FTextureNe
 		{
 			SelectingAndHiding->SetPixelsExceptAlpha(Features->Features,
 				ITwin::COLOR_UNSELECT_ELEMENT_BGRA);
+			ITwin::SetHighlightAlpha(*SelectingAndHiding, Features->Features, ITwin::SELECTION_BLINKING_ALPHA,
+									 TextureNeeds.bWasChanged);
 			TextureNeeds.bWasChanged = true;
 		}
 	};
@@ -787,6 +832,7 @@ void FITwinSceneTile::TResetSelection(SelectableHelper const& Helper, FTextureNe
 		DeselectOne(Helper.GetSelectedID(), Helper);
 		Helper.SetSelectedID(SelectableHelper::NoneSelected());
 	}
+	PaintHover(TextureNeeds);
 }
 
 void FITwinSceneTile::ResetSelection(FTextureNeeds& TextureNeeds)
@@ -913,6 +959,7 @@ bool FITwinSceneTile::TPickSelectable(SelectableHelper const& PickHelper, Select
 				PickHelper.AddSelectedID(InElemID);
 			else
 				PickHelper.SetSelectedID(InElemID);
+			PaintHover(TextureNeeds);
 		}
 		return true;
 	}
@@ -943,10 +990,14 @@ void FITwinSceneTile::DeselectElements(std::unordered_set<ITwinElementID> const&
 		{
 			SelectingAndHiding->SetPixelsExceptAlpha(Features->Features,
 				ITwin::COLOR_UNSELECT_ELEMENT_BGRA);
+			ITwin::SetHighlightAlpha(*SelectingAndHiding, Features->Features, ITwin::SELECTION_BLINKING_ALPHA,
+									 TextureNeeds.bWasChanged);
 			TextureNeeds.bWasChanged = true;
 		}
 		SelectedElements.erase(ElemID);
+		++SelectionRevision;
 	}
+	PaintHover(TextureNeeds);
 }
 
 bool FITwinSceneTile::PickMaterial(ITwinRenderMaterialElementID const& InMaterialID, FTextureNeeds& TextureNeeds,
@@ -954,6 +1005,169 @@ bool FITwinSceneTile::PickMaterial(ITwinRenderMaterialElementID const& InMateria
 {
 	MaterialSelectionHelper MatSelectionHelper(*this);
 	return TPickSelectable(MatSelectionHelper, InMaterialID, TextureNeeds, Opts);
+}
+
+void FITwinSceneTile::SetSelectionTintMode(EITwinSelectionTintMode const Mode, FTextureNeeds& TextureNeeds)
+{
+	if (!SelectingAndHiding)
+		return;
+	bool const bHidden = (Mode == EITwinSelectionTintMode::Hidden);
+	uint8 const Alpha = (Mode == EITwinSelectionTintMode::Solid)
+		? ITwin::SELECTION_SOLID_ALPHA : ITwin::SELECTION_BLINKING_ALPHA;
+	for (auto const& ElemID : SelectedElements)
+	{
+		auto const* Features = FindElementFeaturesSLOW(ElemID);
+		if (Features && !Features->Features.empty())
+		{
+			SelectingAndHiding->SetPixelsExceptAlpha(Features->Features,
+				bHidden ? ITwin::COLOR_UNSELECT_ELEMENT_BGRA : ITwin::COLOR_SELECTED_ELEMENT_BGRA);
+			ITwin::SetHighlightAlpha(*SelectingAndHiding, Features->Features, Alpha, TextureNeeds.bWasChanged);
+			TextureNeeds.bWasChanged = true;
+		}
+	}
+	if (SelectedMaterial != ITwin::NOT_MATERIAL)
+	{
+		auto const* Features =
+			FindMaterialFeaturesSLOW(ITwinRenderMaterialElementID{ SelectedMaterial.getValue() });
+		if (Features && !Features->Features.empty())
+		{
+			SelectingAndHiding->SetPixelsExceptAlpha(Features->Features,
+				bHidden ? ITwin::COLOR_UNSELECT_ELEMENT_BGRA : ITwin::COLOR_SELECTED_MATERIAL_BGRA);
+			ITwin::SetHighlightAlpha(*SelectingAndHiding, Features->Features, Alpha, TextureNeeds.bWasChanged);
+			TextureNeeds.bWasChanged = true;
+		}
+	}
+	PaintHover(TextureNeeds);
+}
+
+void FITwinSceneTile::PaintHover(FTextureNeeds& TextureNeeds)
+{
+	bHoverHighlightDirty = true;
+	if (MaxFeatureID == ITwin::NOT_FEATURE)
+		return;
+	auto const Paint = [this, &TextureNeeds](auto* Features)
+	{
+		if (!Features || Features->Features.empty())
+			return;
+		if (!SelectingAndHiding)
+			CreateAndSetSelectingAndHiding(*Features, TextureNeeds,
+				ITwin::COLOR_UNSELECT_ELEMENT_BGRA, /*bColorOrAlpha: color only*/true);
+	};
+	if (HoveredElement != ITwin::NOT_ELEMENT)
+	{
+		Paint(FindElementFeaturesSLOW(HoveredElement));
+	}
+	if (HoveredMaterial != ITwin::NOT_MATERIAL)
+	{
+		Paint(FindMaterialFeaturesSLOW(ITwinRenderMaterialElementID{ HoveredMaterial.getValue() }));
+	}
+}
+
+void FITwinSceneTile::UnpaintHover(EITwinSelectionTintMode const, FTextureNeeds& TextureNeeds)
+{
+	bHoverHighlightDirty = true;
+	TextureNeeds.bWasChanged |= (SelectingAndHiding != nullptr);
+}
+
+void FITwinSceneTile::SyncMaterialHover()
+{
+	if (!SelectingAndHiding || MaxFeatureID == ITwin::NOT_FEATURE)
+		return;
+	auto const* ElementFeatures = FindElementFeaturesSLOW(HoveredElement);
+	auto const* MaterialFeatures = FindMaterialFeaturesSLOW(
+		ITwinRenderMaterialElementID{ HoveredMaterial.getValue() });
+	bool const bHasHover = (ElementFeatures && !ElementFeatures->Features.empty())
+		|| (MaterialFeatures && !MaterialFeatures->Features.empty());
+	if (!bHasHover && !HoverSelectingAndHiding && HoverMaterialBindings.empty())
+		return;
+	if (bHasHover && (!HoverSelectingAndHiding
+		|| HoverSelectingAndHiding->GetTotalUsedPixels() != SelectingAndHiding->GetTotalUsedPixels()))
+	{
+		FITwinDynamicShadingBGRA8Property::Create(HoverSelectingAndHiding, MaxFeatureID,
+			ITwin::COLOR_UNSELECT_ELEMENT_BGRA);
+		bHoverHighlightDirty = true;
+	}
+	if (bHasHover && bHoverHighlightDirty)
+	{
+		for (uint32 Feature = 0; Feature < SelectingAndHiding->GetTotalUsedPixels(); ++Feature)
+			HoverSelectingAndHiding->SetPixel(Feature, SelectingAndHiding->GetPixel(Feature));
+		auto const Paint = [this](auto const* Features)
+		{
+			if (!Features)
+				return;
+			for (auto const Feature : Features->Features)
+			{
+				auto Pixel = SelectingAndHiding->GetPixel(Feature.value());
+				if (Pixel[3] == 0)
+					continue;
+				bool const bSelected = Pixel[0] || Pixel[1] || Pixel[2];
+				if (bSelected)
+					continue;
+				for (size_t Channel = 0; Channel < 3; ++Channel)
+					Pixel[Channel] = 0;
+				Pixel[3] = ITwin::HOVER_MARKER_ALPHA;
+				HoverSelectingAndHiding->SetPixel(Feature, Pixel);
+			}
+		};
+		Paint(ElementFeatures);
+		Paint(MaterialFeatures);
+		bHoverHighlightDirty = false;
+	}
+	auto const& Texture = bHasHover ? HoverSelectingAndHiding : SelectingAndHiding;
+	Texture->UpdateTexture();
+	ITwinMatParamInfo::SetupSelectingAndHidingInfo();
+	bool bAllBound = true;
+	auto const SyncMaterial = [&](TWeakObjectPtr<UMaterialInstanceDynamic> const Material)
+	{
+		if (!Material.IsValid())
+			return;
+		auto& Binding = HoverMaterialBindings[Material.Get()];
+		if (Binding.Material != Material || Binding.Parent != Material->Parent)
+		{
+			Binding = FHoverMaterialBinding{};
+			Binding.Material = Material;
+			Binding.Parent = Material->Parent;
+		}
+		UTexture* CurrentTexture = nullptr;
+		Material->GetTextureParameterValue(*ITwinMatParamInfo::SelectingAndHidingInfo, CurrentTexture);
+		if (Binding.Texture.lock() != Texture || Binding.BoundTexture.Get() != CurrentTexture)
+		{
+			if (Texture->SetupInMaterial(Material, *ITwinMatParamInfo::SelectingAndHidingInfo))
+			{
+				Binding.Texture = Texture;
+				Material->GetTextureParameterValue(*ITwinMatParamInfo::SelectingAndHidingInfo, CurrentTexture);
+				Binding.BoundTexture = CurrentTexture;
+			}
+			else
+				bAllBound = false;
+		}
+	};
+	for (auto const& Material : Materials)
+		SyncMaterial(Material);
+	for (auto& Mesh : GltfMeshes)
+		if (auto* Component = Mesh.MeshComponent())
+			for (int32 Slot = 0; Slot < Component->GetNumMaterials(); ++Slot)
+				SyncMaterial(Cast<UMaterialInstanceDynamic>(Component->GetMaterial(Slot)));
+	if (!bHasHover)
+		for (auto const& Entry : HoverMaterialBindings)
+			SyncMaterial(Entry.second.Material);
+	if (!bHasHover && bAllBound)
+	{
+		HoverSelectingAndHiding.reset();
+		HoverMaterialBindings.clear();
+	}
+}
+
+void FITwinSceneTile::SetHover(ITwinElementID const& ElemID, ITwinRenderMaterialElementID const& MatID,
+							   EITwinSelectionTintMode const Mode, FTextureNeeds& TextureNeeds)
+{
+	ITwinMaterialID const NewMat{ MatID.getValue() };
+	if (HoveredElement == ElemID && HoveredMaterial == NewMat)
+		return;
+	UnpaintHover(Mode, TextureNeeds);
+	HoveredElement = ElemID;
+	HoveredMaterial = NewMat;
+	PaintHover(TextureNeeds);
 }
 
 template<typename IDType, typename FeatureType>
@@ -966,6 +1180,7 @@ void FITwinSceneTile::THideIDs(std::unordered_set<IDType>& CurrentHiddenItems,
 		FShowHideOptions const& Opts,
 		std::unordered_set<IDType> const* SelectedIDs /*= nullptr*/)
 {
+	bHoverHighlightDirty = true;
 	// Update hidden elements in current saved view
 	for (auto it = CurrentHiddenItems.begin(); it != CurrentHiddenItems.end();)
 	{
@@ -1399,4 +1614,11 @@ void FITwinSceneTile::ResetCustomTexturesInMaterials()
 			RestoreInfo.Mat.Reset();
 		}
 	}
+}
+
+void FITwinSceneTile::GetNeedTextureSetupInMaterialsFlagsForUnitTest(bool& HiliteOpa, bool& CutPlanes, bool& SelHide)
+{
+	HiliteOpa = bNeed4DHighlightsOpaTextureSetupInMaterials;
+	CutPlanes = bNeed4DCuttingPlanesTextureSetupInMaterials;
+	SelHide = bNeedSelectingAndHidingTextureSetupInMaterials;
 }

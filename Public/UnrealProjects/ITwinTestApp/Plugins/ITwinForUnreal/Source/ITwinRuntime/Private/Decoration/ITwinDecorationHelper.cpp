@@ -403,8 +403,8 @@ public:
 	}
 
 	TWeakObjectPtr<AITwinDecorationHelper> Owner;
-	bool sceneStatus;
-	bool timelineStatus;
+	bool sceneStatus = false;
+	bool timelineStatus = false;
 	std::map< ITwin::ModelLink, bool > linksStatus;
 
 };
@@ -1784,9 +1784,6 @@ bool AITwinDecorationHelper::FImpl::ShouldSaveScene() const
 		&& DecorationIO->materialPersistenceMngr->NeedUpdateDB();
 	bool const saveScenes = DecorationIO->scene
 		&& DecorationIO->scene->ShouldSave();
-	bool const saveTimeline = DecorationIO->scene
-		&& DecorationIO->scene->GetTimeline()
-		&& DecorationIO->scene->GetTimeline()->HasSomethingToSave();
 	bool const saveSplines = DecorationIO->splinesManager
 		&& DecorationIO->splinesManager->HasSplinesToSave();
 	bool const saveAnnotations = DecorationIO->annotationsManager
@@ -1796,7 +1793,7 @@ bool AITwinDecorationHelper::FImpl::ShouldSaveScene() const
 	bool const savePopulations = DecorationIO->populationManager
 		&& DecorationIO->populationManager->HasPopulationsToSave();
 
-	if (!saveInstances && !saveMaterials && !saveScenes && !saveTimeline && !saveSplines && !saveAnnotations && !savePathAnimation && !savePopulations)
+	if (!saveInstances && !saveMaterials && !saveScenes && !saveSplines && !saveAnnotations && !savePathAnimation && !savePopulations)
 		return false;
 	return true;
 }
@@ -2030,6 +2027,25 @@ AITwinPopulation* AITwinDecorationHelper::GetPopulation(FString assetPath, const
 	return nullptr;
 }
 
+TArray<AITwinPopulation*> AITwinDecorationHelper::GetPopulations(const AdvViz::SDK::RefID& groupId) const
+{
+	TArray<AITwinPopulation*> result;
+	TArray<AActor*> populations;
+    UGameplayStatics::GetAllActorsOfClass(
+		GetWorld(), AITwinPopulation::StaticClass(), populations);
+
+    for (AActor* actor : populations)
+    {
+		AITwinPopulation* pop = Cast<AITwinPopulation>(actor);
+		if (pop->GetInstanceGroupId() == groupId)
+		{
+			result.Add(pop);
+		}
+	}
+
+	return result;
+}
+
 AITwinKeyframePath* AITwinDecorationHelper::CreateKeyframePath() const
 {
 	return GetWorld()->SpawnActor<AITwinKeyframePath>();
@@ -2167,7 +2183,7 @@ AdvViz::SDK::RefID AITwinDecorationHelper::GetInstancesGroupIdForSpline(AITwinSp
 		// No group for this spline yet: create it now.
 		auto gp = AdvViz::SDK::IInstancesGroup::New();
 		gp->SetName(TCHAR_TO_UTF8(*Spline.GetActorNameOrLabel()));
-		gp->SetType("spline");
+		gp->SetType(AdvViz::SDK::InstancesManager::SPLINE_GROUP_TYPE);
 		gp->SetLinkedSplineId(spline->GetId());
 		gpPtr = AdvViz::SDK::Tools::MakeSharedLockableDataPtr(gp);
 		instancesManager.AddInstancesGroup(gpPtr);
@@ -2178,6 +2194,39 @@ AdvViz::SDK::RefID AITwinDecorationHelper::GetInstancesGroupIdForSpline(AITwinSp
 		auto gp = gpPtr->GetRAutoLock();
 		return gp->GetId();	
 	}
+}
+
+AdvViz::SDK::RefID AITwinDecorationHelper::GetInstancesGroupIdFromName(const std::string& groupName) const
+{
+	if (!(Impl->DecorationIO && Impl->DecorationIO->instancesManager_))
+	{
+		BE_ISSUE("no instance manager");
+		return AdvViz::SDK::RefID::Invalid();
+	}
+	auto gpPtr = Impl->DecorationIO->instancesManager_->GetInstancesGroupByName(groupName);
+	if (gpPtr)
+	{
+		auto gp = gpPtr->GetRAutoLock();
+		return gp->GetId();
+	}
+	return AdvViz::SDK::RefID::Invalid();
+}
+
+AdvViz::SDK::RefID AITwinDecorationHelper::AddNewCustomInstancesGroup(const std::string& groupName)
+{
+	if (!(Impl->DecorationIO && Impl->DecorationIO->instancesManager_))
+	{
+		BE_ISSUE("no instance manager");
+		return AdvViz::SDK::RefID::Invalid();
+	}
+	auto& instancesManager(*Impl->DecorationIO->instancesManager_);
+	auto gp = AdvViz::SDK::IInstancesGroup::New();
+	gp->SetName(groupName);
+	gp->SetType(AdvViz::SDK::InstancesManager::CUSTOM_GROUP_TYPE);
+	auto gpPtr = AdvViz::SDK::Tools::MakeSharedLockableDataPtr(gp);
+	instancesManager.AddInstancesGroup(gpPtr);
+	BE_LOGI("ITwinDecoration", "Added new custom instances group: " << groupName << " (ID: " << gp->GetId().ID() << ")");
+	return gp->GetId();
 }
 
 void AITwinDecorationHelper::VisitSplinesWaitingForLinkedModels(const TFunction<void(const AdvViz::SDK::ISpline&)>& Visitor) const
@@ -2286,6 +2335,7 @@ std::vector<ITwin::ModelLink> AITwinDecorationHelper::GetLinkedElements() const
 {
 	auto linkslock = Impl->DecorationIO->links.GetRAutoLock();
 	std::vector<ITwin::ModelLink> res;
+	res.reserve(linkslock->size());
 	for (auto link : *linkslock)
 	{
 		res.push_back(link.first);
@@ -2618,6 +2668,11 @@ void AITwinDecorationHelper::AsyncGetITwinSceneInfos(const FString& itwinid,
 std::shared_ptr<AdvViz::SDK::IAnnotationsManager> AITwinDecorationHelper::GetAnnotationManager() const
 {
 	return Impl->DecorationIO->annotationsManager;
+}
+
+std::shared_ptr<AdvViz::SDK::IInstancesManager> AITwinDecorationHelper::GetInstancesManager() const
+{
+	return Impl->DecorationIO->instancesManager_;
 }
 
 void AITwinDecorationHelper::EnableExportOfResourcesInSceneApI(bool bEnable)

@@ -12,6 +12,8 @@
 #include <Engine/Blueprint.h>
 #include <Misc/EnumRange.h>
 
+#include "ITwinClippingEnums.generated.h"
+
 /// Supported primitive types for clipping (aka cutout).
 UENUM(BlueprintType)
 enum class EITwinClippingPrimitiveType : uint8
@@ -23,7 +25,6 @@ enum class EITwinClippingPrimitiveType : uint8
 	Count UMETA(Hidden)
 };
 ENUM_RANGE_BY_COUNT(EITwinClippingPrimitiveType, EITwinClippingPrimitiveType::Count);
-
 
 
 /// Clipping effects usually work both at the tileset level (tile exclusion) and the

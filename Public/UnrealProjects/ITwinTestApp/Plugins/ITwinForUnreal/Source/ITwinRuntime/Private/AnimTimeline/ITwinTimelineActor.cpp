@@ -25,6 +25,7 @@
 #include <LevelSequenceActor.h>
 #include <Misc/Paths.h>
 #include <MovieSceneSequencePlayer.h>
+#include <ProfilingDebugging/CpuProfilerTrace.h>
 
 #include <optional>
 #include <ITwinRuntime/Private/Compil/BeforeNonUnrealIncludes.h>
@@ -438,12 +439,78 @@ public:
 	bool IsTypeOf(std::uint64_t i) const override { return (i == GetTypeId()) || AdvViz::SDK::Timeline::IsTypeOf(i); }
 };
 
+namespace
+{
+	/// Index of each parameter animated by the timeline, inside the (constant) track info table
+	/// returned by GetAnimTracksInfo(), and hence inside each clip's track array (ClipData::GetTracks()).
+	enum class EAnimTrack : uint8
+	{
+		Transform,
+		Date,
+		DateSun,
+		Clouds,
+		Fog,
+		HeliodonLong,
+		HeliodonLat,
+		SunAzimuth,
+		SunPitch,
+		HDRIZRotation,
+		SunIntensity,
+		Exposure,
+		UseHeliodon,
+		HDRIImage,
+		Count
+	};
+
+	constexpr int32 AnimTrackCount = static_cast<int32>(EAnimTrack::Count);
+
+	constexpr int32 TrackIdx(EAnimTrack Track) { return static_cast<int32>(Track); }
+
+
+	/// Description of all the parameters animated by the timeline (track names and types).
+	/// This table is constant: its order defines EAnimTrack, and each clip's track array
+	/// (ClipData::GetTracks()) is filled in the very same order by UITwinSequencerHelper::AddNewClip().
+	/// WARNING: track names are persisted in the level sequence - do not "fix" them (see HRDIImage).
+	TArray<UITwinSequencerHelper::FTrackInfo> const& GetAnimTracksInfo()
+	{
+		static TArray<UITwinSequencerHelper::FTrackInfo> const TracksInfo = []
+			{
+				using FTrackInfo = UITwinSequencerHelper::FTrackInfo;
+				TArray<FTrackInfo> Info;
+				Info.SetNum(AnimTrackCount);
+
+				Info[TrackIdx(EAnimTrack::Transform)]     = FTrackInfo(TEXT("transform"),     UITwinSequencerHelper::TT_Transform);
+				Info[TrackIdx(EAnimTrack::Date)]          = FTrackInfo(TEXT("date"),          UITwinSequencerHelper::TT_Double);
+				Info[TrackIdx(EAnimTrack::DateSun)]       = FTrackInfo(TEXT("date_sun"),      UITwinSequencerHelper::TT_Double);
+				Info[TrackIdx(EAnimTrack::Clouds)]        = FTrackInfo(TEXT("clouds"),        UITwinSequencerHelper::TT_Float);
+				Info[TrackIdx(EAnimTrack::Fog)]           = FTrackInfo(TEXT("fog"),           UITwinSequencerHelper::TT_Float);
+				Info[TrackIdx(EAnimTrack::HeliodonLong)]  = FTrackInfo(TEXT("HeliodonLong"),  UITwinSequencerHelper::TT_Float);
+				Info[TrackIdx(EAnimTrack::HeliodonLat)]   = FTrackInfo(TEXT("HeliodonLat"),   UITwinSequencerHelper::TT_Float);
+				Info[TrackIdx(EAnimTrack::SunAzimuth)]    = FTrackInfo(TEXT("sunAzimuth"),    UITwinSequencerHelper::TT_Float);
+				Info[TrackIdx(EAnimTrack::SunPitch)]      = FTrackInfo(TEXT("sunPitch"),      UITwinSequencerHelper::TT_Float);
+				Info[TrackIdx(EAnimTrack::HDRIZRotation)] = FTrackInfo(TEXT("HDRIZRotation"), UITwinSequencerHelper::TT_Float);
+				Info[TrackIdx(EAnimTrack::SunIntensity)]  = FTrackInfo(TEXT("sunIntensity"),  UITwinSequencerHelper::TT_Float);
+				Info[TrackIdx(EAnimTrack::Exposure)]      = FTrackInfo(TEXT("Exposure"),      UITwinSequencerHelper::TT_Float);
+				Info[TrackIdx(EAnimTrack::UseHeliodon)]   = FTrackInfo(TEXT("UseHeliodon"),   UITwinSequencerHelper::TT_Bool);
+				// Historical typo ("HRDI" instead of "HDRI"): kept as is, the name is stored in existing sequences.
+				Info[TrackIdx(EAnimTrack::HDRIImage)]     = FTrackInfo(TEXT("HRDIImage"),     UITwinSequencerHelper::TT_String);
+
+				// Every slot must have been assigned: FTrackInfo's default ctor leaves eType uninitialized.
+				for (auto const& Track : Info)
+				{
+					checkf(!Track.sName.IsNone(), TEXT("GetAnimTracksInfo: an EAnimTrack entry is missing"));
+				}
+				return Info;
+			}();
+		return TracksInfo;
+	}
+}
+
 class AITwinTimelineActor::FImpl
 {
 public:
 	AITwinTimelineActor& Owner;
 	FString levelSequencePath_;
-	TStrongObjectPtr<ULevelSequence> pLevelSeq_;
 	TStrongObjectPtr<ULevelSequencePlayer> pPlayer_;
 	TStrongObjectPtr<ALevelSequenceActor> pPlayerActor_;
 	TStrongObjectPtr<AActor> pSynchroActor_;
@@ -453,7 +520,13 @@ public:
 	ACineCameraActor* CurrentCutTrackCamera_ = nullptr; 
 	TArray<float> CurrentCutTrackStartTimes_;
 
-	TArray<USequencerHelper::FTrackInfo> AnimTracksInfo_; // map of all the parameters animated by the timeline to their type
+	/// The time at which playback should stop. This is used to determine whether to stop playback.
+	/// Only valid between LinkClipsToCutTrack() and UnlinkClipsFromCutTrack().
+	/// Initialized to -1.f, which is an invalid time.
+	float PlaybackEndTime_ = -1.f;
+
+	/// map of all the parameters animated by the timeline to their type
+	TArray<UITwinSequencerHelper::FTrackInfo> const& AnimTracksInfo_ = GetAnimTracksInfo();
 
 	typedef AdvViz::SDK::Timeline BaseClass;
 
@@ -470,27 +543,15 @@ public:
 	{
 		// Find predefined timeline-related level sequence (its creation is only possible in editor mode)
 		levelSequencePath_ = FString("/ITwinForUnreal/ITwin/AnimTimeline/ITwinLevelSequence");
-		pLevelSeq_.Reset(
-			Cast<ULevelSequence>(StaticLoadObject(ULevelSequence::StaticClass(), nullptr, *levelSequencePath_)));
+
+		Owner.SequencerHelper = NewObject<UITwinSequencerHelper>(&Owner);
+		if (!Owner.SequencerHelper->Initialize(levelSequencePath_))
+		{
+			BE_LOGE("Timeline", "Failed to initialize sequencer helper");
+		}
 		CreatePlayer();
 
 		timeline_.reset(AdvViz::SDK::Timeline::New());
-
-		// Fill up description of all the parameters animated by the timeline (names and track types they use)
-		AnimTracksInfo_.Add(USequencerHelper::FTrackInfo(TEXT("transform"), USequencerHelper::TT_Transform));
-		AnimTracksInfo_.Add(USequencerHelper::FTrackInfo(TEXT("date"), USequencerHelper::TT_Double));
-		AnimTracksInfo_.Add(USequencerHelper::FTrackInfo(TEXT("date_sun"), USequencerHelper::TT_Double));
-		AnimTracksInfo_.Add(USequencerHelper::FTrackInfo(TEXT("clouds"), USequencerHelper::TT_Float));
-		AnimTracksInfo_.Add(USequencerHelper::FTrackInfo(TEXT("fog"), USequencerHelper::TT_Float)); // = Fog
-		AnimTracksInfo_.Add(USequencerHelper::FTrackInfo(TEXT("HeliodonLong"), USequencerHelper::TT_Float));
-		AnimTracksInfo_.Add(USequencerHelper::FTrackInfo(TEXT("HeliodonLat"), USequencerHelper::TT_Float)); 
-		AnimTracksInfo_.Add(USequencerHelper::FTrackInfo(TEXT("sunAzimuth"), USequencerHelper::TT_Float)); 
-		AnimTracksInfo_.Add(USequencerHelper::FTrackInfo(TEXT("sunPitch"), USequencerHelper::TT_Float)); 
-		AnimTracksInfo_.Add(USequencerHelper::FTrackInfo(TEXT("HDRIZRotation"), USequencerHelper::TT_Float));
-		AnimTracksInfo_.Add(USequencerHelper::FTrackInfo(TEXT("sunIntensity"), USequencerHelper::TT_Float));
-		AnimTracksInfo_.Add(USequencerHelper::FTrackInfo(TEXT("Exposure"), USequencerHelper::TT_Float));
-		AnimTracksInfo_.Add(USequencerHelper::FTrackInfo(TEXT("UseHeliodon"), USequencerHelper::TT_Bool));
-		AnimTracksInfo_.Add(USequencerHelper::FTrackInfo(TEXT("HRDIImage"), USequencerHelper::TT_String));
 
 		// Set reasonable default implementations for the synchro4D schedule time retrieval and setting functions
 		// (replaced in Engage by custom implementations based on Engage's 4D controller)
@@ -544,148 +605,156 @@ public:
 	{
 	}
 
+	inline bool IsReady() const
+	{
+		return Owner.SequencerHelper && Owner.SequencerHelper->IsInitialized();
+	}
+
 	void CreatePlayer()
 	{
-		if (pLevelSeq_.IsValid())
+		if (IsReady())
 		{
-			ALevelSequenceActor* pPlayerActor;
+			ALevelSequenceActor* pPlayerActor(nullptr);
 			// Create player for the sequence
 			FMovieSceneSequencePlaybackSettings s;
 			s.bPauseAtEnd = false;
 			s.bDisableCameraCuts = false; // Ensure camera cuts are processed
-			pPlayer_.Reset(ULevelSequencePlayer::CreateLevelSequencePlayer(Owner.GetWorld(), pLevelSeq_.Get(), s, pPlayerActor));
+			pPlayer_.Reset(ULevelSequencePlayer::CreateLevelSequencePlayer(Owner.GetWorld(), Owner.GetLevelSequence(), s, pPlayerActor));
 			pPlayerActor_.Reset(pPlayerActor);
 		}
 
-		if (pPlayer_.IsValid())
+		if (pPlayer_.IsValid() && IsReady())
 		{
-			pLevelSeq_->MovieScene->SetDisplayRate(FFrameRate(30, 1)); // Match desired playback frame rate
-			pLevelSeq_->MovieScene->SetEvaluationType(EMovieSceneEvaluationType::WithSubFrames);
+			auto* MovieScene = Owner.GetLevelSequence()->GetMovieScene();
+			if (MovieScene)
+			{
+				MovieScene->SetDisplayRate(FFrameRate(30, 1)); // Match desired playback frame rate
+				MovieScene->SetEvaluationType(EMovieSceneEvaluationType::WithSubFrames);
+			}
 			pPlayer_->SetFrameRate(FFrameRate(30, 1)); // Set to match 30 FPS
 			//pPlayer_->ForceUpdate();
 			pPlayer_->OnPlay.AddDynamic(&Owner, &AITwinTimelineActor::OnPlaybackStarted);
 		}
 	}
 
-	void ConvertToSequencer(const AdvViz::SDK::ITimelineKeyframe::KeyframeData & KF, TArray<std::optional<USequencerHelper::KFValueType> >& Out)
+	void ConvertToSequencer(const AdvViz::SDK::ITimelineKeyframe::KeyframeData & KF, TArray<std::optional<UITwinSequencerHelper::KFValueType> >& Out)
 	{
 		Out.Empty();
-		for (auto Track : AnimTracksInfo_)
+		for (int32 i = 0; i < AnimTrackCount; ++i)
 		{
 			Out.Add(std::nullopt);
-			if (Track.sName.Compare(TEXT("transform")) == 0)
+			switch (static_cast<EAnimTrack>(i))
 			{
+			case EAnimTrack::Transform:
 				if (KF.camera.has_value())
 				{
 					FTransform transf;
 					GetFTransform(KF.camera->transform, transf);
 					Out.Last() = std::make_optional(transf);
 				}
-			}
-			else if (Track.sName.Compare(TEXT("date")) == 0)
-			{
+				break;
+			case EAnimTrack::Date:
 				if (KF.synchro.has_value())
 				{
 					auto synchro = ITwin::SynchroToTimeline(StrToDateTime(KF.synchro->date));
 					Out.Last() = std::make_optional(synchro);
 				}
-			}
-			else if (Track.sName.Compare(TEXT("date_sun")) == 0)
-			{
+				break;
+			case EAnimTrack::DateSun:
 				if (KF.atmo.has_value())
 				{
 					auto date = ITwin::SynchroToTimeline(StrToDateTime(KF.atmo->time));
 					Out.Last() = std::make_optional(date);
 				}
-			}
-			else if (Track.sName.Compare(TEXT("clouds")) == 0)
-			{
+				break;
+			case EAnimTrack::Clouds:
 				if (KF.atmo.has_value())
 				{
 					Out.Last() = std::make_optional(KF.atmo->cloudCoverage);
 				}
-			}
-			else if (Track.sName.Compare(TEXT("fog")) == 0)
-			{
+				break;
+			case EAnimTrack::Fog:
 				if (KF.atmo.has_value())
 				{
 					Out.Last() = std::make_optional(KF.atmo->fog);
 				}
-			}
-			else if (Track.sName.Compare(TEXT("sunAzimuth")) == 0)
-			{
+				break;
+			case EAnimTrack::SunAzimuth:
 				if (KF.atmo.has_value())
 				{
 					Out.Last() = std::make_optional(KF.atmo->sunAzimuth.get());
 				}
-			}
-			else if (Track.sName.Compare(TEXT("sunPitch")) == 0)
-			{
+				break;
+			case EAnimTrack::SunPitch:
 				if (KF.atmo.has_value())
 				{
 					Out.Last() = std::make_optional(KF.atmo->sunPitch.get());
 				}
-			}
-			else if (Track.sName.Compare(TEXT("HeliodonLong")) == 0)
-			{
+				break;
+			case EAnimTrack::HeliodonLong:
 				if (KF.atmo.has_value())
 				{
 					Out.Last() = std::make_optional(KF.atmo->heliodonLongitude.get());
 				}
-			}
-			else if (Track.sName.Compare(TEXT("HeliodonLat")) == 0)
-			{
+				break;
+			case EAnimTrack::HeliodonLat:
 				if (KF.atmo.has_value())
 				{
 					Out.Last() = std::make_optional(KF.atmo->heliodonLatitude.get());
 				}
-			}
-			else if (Track.sName.Compare(TEXT("HDRIZRotation")) == 0)
-			{
+				break;
+			case EAnimTrack::HDRIZRotation:
 				if (KF.atmo.has_value())
 				{
 					Out.Last() = std::make_optional(KF.atmo->HDRIZRotation.get());
 				}
-			}
-			else if (Track.sName.Compare(TEXT("sunIntensity")) == 0)
-			{
+				break;
+			case EAnimTrack::SunIntensity:
 				if (KF.atmo.has_value())
 				{
 					Out.Last() = std::make_optional(KF.atmo->sunIntensity.get());
 				}
-			}
-			else if (Track.sName.Compare(TEXT("UseHeliodon")) == 0)
-			{
+				break;
+			case EAnimTrack::UseHeliodon:
 				if (KF.atmo.has_value())
 				{
 					Out.Last() = std::make_optional(KF.atmo->useHeliodon.get());
 				}
-			}
-			else if (Track.sName.Compare(TEXT("HRDIImage")) == 0)
-			{
+				break;
+			case EAnimTrack::HDRIImage:
 				if (KF.atmo.has_value())
 				{
 					Out.Last() = std::make_optional(KF.atmo->HDRIImage.get());
 				}
-			}
-			else if (Track.sName.Compare(TEXT("Exposure")) == 0)
-			{
+				break;
+			case EAnimTrack::Exposure:
 				if (KF.atmo.has_value())
 				{
 					Out.Last() = std::make_optional(KF.atmo->exposure.get());
 				}
+				break;
+
+			default:
+				BE_LOGE("Timeline", "ConvertToSequencer: unhandled track index " << i);
+				break;
 			}
 		}
 	}
 	
 	void OnLoad()
 	{
-		//finalize camera clip
+		if (!IsReady())
+		{
+			BE_ISSUE("Cannot load timeline data: sequencer helper is not ready");
+			return;
+		}
+		auto& SeqHelper = *Owner.SequencerHelper;
+		// Finalize camera clip
 		for (size_t i = 0; i < timeline_->GetClipCount(); ++i)
 		{
 			auto clip = GetClip(i);
 			clip->InitCamera(Owner.GetWorld());
-			USequencerHelper::AddNewClip(clip->GetCamera(), levelSequencePath_, AnimTracksInfo_, clip->GetTracks());
+			SeqHelper.AddNewClip(clip->GetCamera(), AnimTracksInfo_, clip->GetTracks());
 			for (size_t j = 0; j < clip->GetKeyframeCount(); ++j)
 			{
 				auto kf = clip->GetKeyframeByIndex(j);
@@ -694,17 +763,12 @@ public:
 				const auto& KF = (*kf)->GetData();
 				BE_ASSERT(KF.camera.has_value());
 				BE_ASSERT(KF.synchro.has_value());
-				TArray<std::optional<USequencerHelper::KFValueType> > ParamValues;
+				TArray<std::optional<UITwinSequencerHelper::KFValueType> > ParamValues;
 				ConvertToSequencer(KF, ParamValues);
-				USequencerHelper::AddKeyFrame(clip->GetTracks(), levelSequencePath_, KF.time, ParamValues);
+				SeqHelper.AddKeyFrame(clip->GetTracks(), KF.time, ParamValues);
 			}
 		}
 		SetCurrentClip(-1); // do not modify current scene state (camera, synchro, atmosphere) after loading the timeline data
-	}
-
-	bool IsReady() const
-	{
-		return pLevelSeq_.IsValid();
 	}
 
 	ClipData* GetCurrentClip()
@@ -721,7 +785,7 @@ public:
 				SetCurrentTime(0.f);
 			else
 				curTime_ = 0.f;
-			//USequencerHelper::AdjustMoviePlaybackRange(GetCurrentCamera(), levelSequencePath_); // TODO: to check
+			//SeqHelper.AdjustMoviePlaybackRange(GetCurrentCamera()); // TODO: to check
 			return true;
 		}
 		else if (clipIdx < 0)
@@ -733,28 +797,28 @@ public:
 		return false;
 	}
 
-	float GetClipDuration(int clipIdx)
+	float GetClipDuration(int clipIdx) const
 	{
 		float fDuration(0.f);
 		if (clipIdx >= 0 && clipIdx < timeline_->GetClipCount())
 		{
-			auto clip = GetClip(clipIdx);
+			auto clip = GetClipConst(clipIdx);
 			if (clip)
 				fDuration = clip->GetDuration();
 			// There are two ways to obtain clip duration: from SDK timeline's key frame times or from Unreal sequencer.
 			// The result should be the same except for the case when the clip times are manually shifted to fit into a single camera cut track - see AssembleClips()
 			// That's why we use the first way here, although the line below can be still useful to debug sequencer-related issues:
-			//return USequencerHelper::GetEndTime(clip->GetCamera(), levelSequencePath_);
+			//return SeqHelper.GetEndTime(clip->GetCamera());
 		}
 		return fDuration;
 	}
 
-	float GetTotalDuration()
+	float GetTotalDuration() const
 	{
 		float fTotalDuration(0.f);
 		for (size_t i(0); i < timeline_->GetClipCount(); i++)
 		{
-			auto clip = GetClip(i);
+			auto clip = GetClipConst(i);
 			if (clip && clip->IsEnabled())
 				fTotalDuration += clip->GetDuration();
 		}
@@ -762,31 +826,31 @@ public:
 	}
 
 	// Get starting time of the clip within the sequence of clips
-	float GetClipStartTime(int clipIdx)
+	float GetClipStartTime(int clipIdx) const
 	{
 		if (clipIdx >= timeline_->GetClipCount())
 			return 0.f;
 
 		float fStartTime(0.f);
-		for(size_t i(1); i <= clipIdx; i++)
+		for (size_t i(1); i <= clipIdx; i++)
 		{
-			auto clip = GetClip(i-1);
+			auto clip = GetClipConst(i-1);
 			if (clip && clip->IsEnabled())
 				fStartTime += clip->GetDuration();
 		}
 		return fStartTime;
 	}
 
-	void GetClipsStartTimes(TArray<float> &vTimes, bool bAppendLastDuration = false)
+	void GetClipsStartTimes(TArray<float> &vTimes, bool bAppendLastDuration = false) const
 	{
 		vTimes.Empty();
 		if (timeline_->GetClipCount() == 0)
 			return;
 
 		float fAccumTime(0.f);
-		for(size_t i(0); i < timeline_->GetClipCount(); i++)
+		for (size_t i(0); i < timeline_->GetClipCount(); i++)
 		{
-			if (auto clip = GetClip(i))
+			if (auto clip = GetClipConst(i))
 			{
 				vTimes.Add(fAccumTime);
 				if (clip->IsEnabled())
@@ -809,13 +873,14 @@ public:
 				<< "': " << res.error());
 			return;
 		}
-
-		USequencerHelper::SetClipKFsTimes(clip.GetTracks(), levelSequencePath_, vNewTimes);
+		BE_ASSERT(IsReady());
+		auto& SeqHelper = *Owner.SequencerHelper;
+		SeqHelper.SetClipKFsTimes(clip.GetTracks(), vNewTimes);
 
 		UpdateSceneFromTimeline(); // see comment in AddOrUpdateKeyFrame
 	}
 
-	void GetEnabledClipIndices(TArray<int>& vIndices, bool bSkipEmpty = false)
+	void GetEnabledClipIndices(TArray<int>& vIndices, bool bSkipEmpty = false) const
 	{
 		vIndices.Empty();
 		if (timeline_->GetClipCount() == 0)
@@ -823,7 +888,7 @@ public:
 
 		for (size_t i(0); i < timeline_->GetClipCount(); i++)
 		{
-			if (auto const clip = GetClip(i))
+			if (auto const clip = GetClipConst(i))
 			{
 				if (clip->IsEnabled() && (!bSkipEmpty || clip->GetKeyframeCount() > 1))
 					vIndices.Add(i);
@@ -831,11 +896,11 @@ public:
 		}
 	}
 
-	bool HasClipsToExport()
+	bool HasClipsToExport() const
 	{
 		for (size_t i(0); i < timeline_->GetClipCount(); i++)
 		{
-			if (auto clip = GetClip(i))
+			if (auto clip = GetClipConst(i))
 			{
 				if (clip->IsEnabled() && clip->GetKeyframeCount() > 1)
 					return true;
@@ -862,7 +927,11 @@ public:
 		auto clipdata = AdvViz::SDK::Tools::DynamicCast<ClipData>(clip.get());
 		BE_ASSERT(clipdata);
 		clipdata->InitCamera(Owner.GetWorld());
-		USequencerHelper::AddNewClip(clipdata->GetCamera(), levelSequencePath_, AnimTracksInfo_, clipdata->GetTracks());
+
+		BE_ASSERT(IsReady());
+		auto& SeqHelper = *Owner.SequencerHelper;
+		SeqHelper.AddNewClip(clipdata->GetCamera(), AnimTracksInfo_, clipdata->GetTracks());
+
 		curClip_ = timeline_->GetClipCount() - 1;
 		curTime_ = 0.f;
 		return clip;
@@ -900,16 +969,19 @@ public:
 
 	void RemoveClip(int clipIdx)
 	{
+		BE_ASSERT(IsReady());
+		auto& SeqHelper = *Owner.SequencerHelper;
+
 		if (clipIdx < 0)
 			clipIdx = curClip_;
 		if (clipIdx >= 0 && clipIdx < (int)timeline_->GetClipCount())
 		{
 			auto clip = GetClip(clipIdx);
 
-			bool bRes;
+			bool bRes(false);
 			FString outMsg;
-			USequencerHelper::RemoveAllTracksFromLevelSequence(clip->GetCamera(), levelSequencePath_, bRes, outMsg);
-			USequencerHelper::RemovePActorFromLevelSequence(clip->GetCamera(), levelSequencePath_, bRes, outMsg);
+			SeqHelper.RemoveAllTracksFromLevelSequence(clip->GetCamera(), bRes, outMsg);
+			SeqHelper.RemovePActorFromLevelSequence(clip->GetCamera(), bRes, outMsg);
 			//clip->GetCamera()->Destroy();
 
 			timeline_->RemoveClip(clipIdx);
@@ -946,6 +1018,22 @@ public:
 				return nullptr;
 
 			auto clipdata = AdvViz::SDK::Tools::DynamicCast<ClipData>(*clip);
+			BE_ASSERT(clipdata);
+			return clipdata.get();
+		}
+		return nullptr;
+	}
+
+	ClipData const* GetClipConst(int clipIdx) const
+	{
+		if (clipIdx >= 0 && clipIdx < timeline_->GetClipCount())
+		{
+			auto clip = timeline_->GetClipByIndex(clipIdx);
+			BE_ASSERT(clip);
+			if (!clip)
+				return nullptr;
+
+			auto clipdata = AdvViz::SDK::Tools::DynamicCast<ClipData const>(*clip);
 			BE_ASSERT(clipdata);
 			return clipdata.get();
 		}
@@ -1030,6 +1118,41 @@ public:
 			AddOrUpdateKeyFrame((*ret)->GetData().time, clipIdx, copiedKF_->GetData());
 	}
 
+	void DuplicateKeyFrame(int clipIdx, int iKF)
+	{
+		const int iClip = (clipIdx >= 0) ? clipIdx : curClip_;
+		auto clip = GetClip(iClip);
+		if (!clip)
+			return;
+		auto ret = clip->GetKeyframeByIndex(iKF);
+		if (!ret)
+			return;
+
+		const int nKFs = (int)clip->GetKeyframeCount();
+		const float fTime = (*ret)->GetData().time;
+
+		// The duplicate takes over the duration (transition time) of the original key-frame: it is
+		// inserted exactly one transition after it, and every later key-frame is shifted by that same
+		// duration, so that no existing transition is modified - the clip simply gets longer by
+		// fDuration. For the last key-frame, which has no transition of its own, reuse the incoming
+		// one; fall back on the default delta for a single-key-frame clip.
+		float fDuration = ITwin::fDefaultTimeDelta;
+		if (iKF + 1 < nKFs)
+			fDuration = clip->GetKeyFrameTime(iKF + 1) - fTime;
+		else if (iKF > 0)
+			fDuration = fTime - clip->GetKeyFrameTime(iKF - 1);
+		if (fDuration <= 0.f)
+			fDuration = ITwin::fDefaultTimeDelta;
+
+		// Free the slot: push the next key-frame (and, with bMoveOneKFOnly = false, all those after
+		// it) by fDuration. Must be done before adding the copy, otherwise the new key-frame would be
+		// shifted as well.
+		if (iKF + 1 < nKFs)
+			MoveKeyFrame(clip->GetKeyFrameTime(iKF + 1), fTime + 2.f * fDuration, iClip, false);
+
+		AddOrUpdateKeyFrame(fTime + fDuration, iClip, (*ret)->GetData());
+	}
+
 	// Add/update the specified clip's key-frame with given parameters
 	std::shared_ptr<AdvViz::SDK::ITimelineKeyframe> AddOrUpdateKeyFrame(float fTime, int clipIdx, const AdvViz::SDK::ITimelineKeyframe::KeyframeData &KF)
 	{
@@ -1043,9 +1166,13 @@ public:
 		//FTransform transf;
 		//GetFTransform(KF.camera->transform, transf);
 		//auto synchro = ITwin::SynchroToTimeline(StrToDateTime(KF.synchro->date));
-		TArray<std::optional<USequencerHelper::KFValueType> > ParamValues;
-		ConvertToSequencer(KF, ParamValues);
-		fTime = USequencerHelper::AddKeyFrame(clip->GetTracks(), levelSequencePath_, fTime, ParamValues);
+		if (ensure(IsReady()))
+		{
+			TArray<std::optional<UITwinSequencerHelper::KFValueType> > ParamValues;
+			ConvertToSequencer(KF, ParamValues);
+			auto& SeqHelper = *Owner.SequencerHelper;
+			fTime = SeqHelper.AddKeyFrame(clip->GetTracks(), fTime, ParamValues);
+		}
 		auto ret = clip->AddOrUpdateKeyFrame(fTime, KF);
 		// We may have changed the timeline in a way that affects the scene at the current time, no?
 		// For example, when pasting over the currently selected keyframe, the scene was not updated, not even
@@ -1107,8 +1234,10 @@ public:
 		if (!clip)
 			return;
 
+		BE_ASSERT(IsReady());
+		auto& SeqHelper = *Owner.SequencerHelper;
 		float const fTime = clip->GetKeyFrameTime(iKF);
-		USequencerHelper::RemoveKeyFrame(clip->GetTracks(), levelSequencePath_, fTime);
+		SeqHelper.RemoveKeyFrame(clip->GetTracks(), fTime);
 		auto key = clip->GetKeyframe(fTime);
 		if (key)
 			clip->RemoveKeyframe(*key);
@@ -1129,10 +1258,14 @@ public:
 		if (!clip || AdvViz::SDK::RoundTime(fOldTime) == AdvViz::SDK::RoundTime(fNewTime))
 			return;
 
+		if (!IsReady())
+			return;
+		auto& SeqHelper = *Owner.SequencerHelper;
+
 		float const fTimeDelta = fNewTime - fOldTime;
 		float lastKFToMove =
-			bMoveOneKFOnly ? fOldTime : USequencerHelper::GetEndTime(clip->GetCamera(), levelSequencePath_);
-		USequencerHelper::ShiftClipKFsInRange(clip->GetTracks(), levelSequencePath_, fOldTime, lastKFToMove,
+			bMoveOneKFOnly ? fOldTime : SeqHelper.GetEndTime(clip->GetCamera());
+		SeqHelper.ShiftClipKFsInRange(clip->GetTracks(), fOldTime, lastKFToMove,
 											  fTimeDelta);
 		if (bMoveOneKFOnly)
 			clip->MoveKeyFrame(fOldTime, fNewTime);
@@ -1159,13 +1292,17 @@ public:
 		if (!clip->ReorderKeyFrame(iKFSrc, iKFDst))
 			return false;
 
+		if (!IsReady())
+			return false;
+		auto& SeqHelper = *Owner.SequencerHelper;
+
 		// Key-frame times are unchanged, but the values stored at those times in the level sequence
 		// tracks now belong to different key-frames: overwrite them in place. Do NOT remove the keys
 		// first: AddKeyFrameToChannel already replaces any existing key at the same frame, whereas
 		// RemoveKeyFrame would shrink (and possibly empty) the section range.
 		int const iFirst = std::min(iKFSrc, iKFDst);
 		int const iLast = std::max(iKFSrc, iKFDst);
-		TArray<std::optional<USequencerHelper::KFValueType> > ParamValues;
+		TArray<std::optional<UITwinSequencerHelper::KFValueType> > ParamValues;
 		for (int i = iFirst; i <= iLast; ++i)
 		{
 			auto kf = clip->GetKeyframeByIndex(i);
@@ -1173,7 +1310,7 @@ public:
 				continue;
 			auto const& KF = (*kf)->GetData();
 			ConvertToSequencer(KF, ParamValues);
-			USequencerHelper::AddKeyFrame(clip->GetTracks(), levelSequencePath_, KF.time, ParamValues);
+			SeqHelper.AddKeyFrame(clip->GetTracks(), KF.time, ParamValues);
 		}
 
 		UpdateSceneFromTimeline(); // see comment in AddOrUpdateKeyFrame
@@ -1227,9 +1364,12 @@ public:
 
 	void UpdateCameraFromTime(AActor* pCamera, float fTime)
 	{
+		BE_ASSERT(IsReady());
+		auto const& SeqHelper = *Owner.SequencerHelper;
+
 		FVector pos;
 		FRotator rot;
-		bool bSuccess = USequencerHelper::GetTransformAtTime(pCamera, levelSequencePath_, fTime, pos, rot);
+		bool bSuccess = SeqHelper.GetTransformAtTime(pCamera, fTime, pos, rot);
 		if (bSuccess)
 		{
 			BE_LOGV("Timeline", "Time set to " << fTime << ", setting current view to: "
@@ -1251,10 +1391,11 @@ public:
 		double dateDelta(0);
 		if (clip)
 		{
-			auto idx = AnimTracksInfo_.IndexOfByKey(TEXT("date"));
-			if (idx != INDEX_NONE && idx < clip->GetTracks().Num())
+			constexpr int32 idx = TrackIdx(EAnimTrack::Date);
+			if (idx < clip->GetTracks().Num() && ensure(IsReady()))
 			{
-				USequencerHelper::GetDoubleValueAtTime(clip->GetTracks()[idx].Get(), levelSequencePath_, fTime, dateDelta);
+				auto const& SeqHelper = *Owner.SequencerHelper;
+				SeqHelper.GetDoubleValueAtTime(clip->GetTracks()[idx].Get(), fTime, dateDelta);
 				Out = ITwin::TimelineToSynchro(dateDelta);
 				return true;
 			}
@@ -1289,20 +1430,24 @@ public:
 
 	void UpdateAtmoFromTime(ClipData* clip, float fTime)
 	{
+		TRACE_CPUPROFILER_EVENT_SCOPE(ITwinTimeline::UpdateAtmoFromTime);
 		if (!clip || !Owner.GetAtmoSettingsDelegate.IsBound() || !Owner.SetAtmoSettingsDelegate.IsBound())
 			return;
+
+		BE_ASSERT(IsReady());
+		auto const& SeqHelper = *Owner.SequencerHelper;
 
 		FAtmoAnimSettings data;
 		Owner.GetAtmoSettingsDelegate.Execute(data);
 
 		bool changed = false;
 
-		auto idx = AnimTracksInfo_.IndexOfByKey(TEXT("date_sun"));
-		if (idx != INDEX_NONE && idx < clip->GetTracks().Num())
+		int32 idx = TrackIdx(EAnimTrack::DateSun);
+		if (idx < clip->GetTracks().Num())
 		{
 			double dateDelta;
-			USequencerHelper::GetDoubleValueAtTime(clip->GetTracks()[idx].Get(), levelSequencePath_, fTime, dateDelta);
-			if(fabs(dateDelta) > 1e-6)
+			SeqHelper.GetDoubleValueAtTime(clip->GetTracks()[idx].Get(), fTime, dateDelta);
+			if (fabs(dateDelta) > 1e-6)
 			{
 				auto date = ITwin::TimelineToSynchro(dateDelta);
 				if (data.heliodonDate != date)
@@ -1312,132 +1457,121 @@ public:
 				}
 			}
 		}
-		idx = AnimTracksInfo_.IndexOfByKey(TEXT("clouds"));
-		if (idx != INDEX_NONE && idx < clip->GetTracks().Num())
+		idx = TrackIdx(EAnimTrack::Clouds);
+		if (idx < clip->GetTracks().Num())
 		{
 			float Value;
-			USequencerHelper::GetFloatValueAtTime(clip->GetTracks()[idx].Get(), levelSequencePath_, fTime, Value);
+			SeqHelper.GetFloatValueAtTime(clip->GetTracks()[idx].Get(), fTime, Value);
 			if (data.cloudCoverage != Value)
 			{
 				data.cloudCoverage = Value;
 				changed = true;
 			}
 		}
-		idx = AnimTracksInfo_.IndexOfByKey(TEXT("fog"));
-		if (idx != INDEX_NONE && idx < clip->GetTracks().Num())
+		idx = TrackIdx(EAnimTrack::Fog);
+		if (idx < clip->GetTracks().Num())
 		{
 			float Value;
-			USequencerHelper::GetFloatValueAtTime(clip->GetTracks()[idx].Get(), levelSequencePath_, fTime, Value);
+			SeqHelper.GetFloatValueAtTime(clip->GetTracks()[idx].Get(), fTime, Value);
 			if (data.fog != Value)
 			{
 				data.fog = Value;
 				changed = true;
 			}
 		}
-		idx = AnimTracksInfo_.IndexOfByKey(TEXT("sunAzimuth"));
-		if (idx != INDEX_NONE && idx < clip->GetTracks().Num())
+		idx = TrackIdx(EAnimTrack::SunAzimuth);
+		if (idx < clip->GetTracks().Num())
 		{
 			float Value;
-			USequencerHelper::GetFloatValueAtTime(clip->GetTracks()[idx].Get(), levelSequencePath_, fTime, Value);
+			SeqHelper.GetFloatValueAtTime(clip->GetTracks()[idx].Get(), fTime, Value);
 			if (data.sunAzimuth != Value)
 			{
 				data.sunAzimuth = Value;
 				changed = true;
 			}
 		}
-		idx = AnimTracksInfo_.IndexOfByKey(TEXT("sunAzimuth"));
-		if (idx != INDEX_NONE && idx < clip->GetTracks().Num())
+		idx = TrackIdx(EAnimTrack::SunPitch);
+		if (idx < clip->GetTracks().Num())
 		{
 			float Value;
-			USequencerHelper::GetFloatValueAtTime(clip->GetTracks()[idx].Get(), levelSequencePath_, fTime, Value);
-			if (data.sunAzimuth != Value)
-			{
-				data.sunAzimuth = Value;
-				changed = true;
-			}
-		}
-		idx = AnimTracksInfo_.IndexOfByKey(TEXT("sunPitch"));
-		if (idx != INDEX_NONE && idx < clip->GetTracks().Num())
-		{
-			float Value;
-			USequencerHelper::GetFloatValueAtTime(clip->GetTracks()[idx].Get(), levelSequencePath_, fTime, Value);
+			SeqHelper.GetFloatValueAtTime(clip->GetTracks()[idx].Get(), fTime, Value);
 			if (data.sunPitch != Value)
 			{
 				data.sunPitch = Value;
 				changed = true;
 			}
 		}
-		idx = AnimTracksInfo_.IndexOfByKey(TEXT("HeliodonLong"));
-		if (idx != INDEX_NONE && idx < clip->GetTracks().Num())
+		idx = TrackIdx(EAnimTrack::HeliodonLong);
+		if (idx < clip->GetTracks().Num())
 		{
 			float Value;
-			USequencerHelper::GetFloatValueAtTime(clip->GetTracks()[idx].Get(), levelSequencePath_, fTime, Value);
+			SeqHelper.GetFloatValueAtTime(clip->GetTracks()[idx].Get(), fTime, Value);
 			if (data.heliodonLongitude != Value)
 			{
 				data.heliodonLongitude = Value;
 				changed = true;
 			}
 		}
-		idx = AnimTracksInfo_.IndexOfByKey(TEXT("HeliodonLat"));
-		if (idx != INDEX_NONE && idx < clip->GetTracks().Num())
+		idx = TrackIdx(EAnimTrack::HeliodonLat);
+		if (idx < clip->GetTracks().Num())
 		{
 			float Value;
-			USequencerHelper::GetFloatValueAtTime(clip->GetTracks()[idx].Get(), levelSequencePath_, fTime, Value);
+			SeqHelper.GetFloatValueAtTime(clip->GetTracks()[idx].Get(), fTime, Value);
 			if (data.heliodonLatitude != Value)
 			{
 				data.heliodonLatitude = Value;
 				changed = true;
 			}
 		}
-		idx = AnimTracksInfo_.IndexOfByKey(TEXT("HDRIZRotation"));
-		if (idx != INDEX_NONE && idx < clip->GetTracks().Num())
+		idx = TrackIdx(EAnimTrack::HDRIZRotation);
+		if (idx < clip->GetTracks().Num())
 		{
 			float Value;
-			USequencerHelper::GetFloatValueAtTime(clip->GetTracks()[idx].Get(), levelSequencePath_, fTime, Value);
+			SeqHelper.GetFloatValueAtTime(clip->GetTracks()[idx].Get(), fTime, Value);
 			if (data.HDRIZRotation != Value)
 			{
 				data.HDRIZRotation = Value;
 				changed = true;
 			}
 		}
-		idx = AnimTracksInfo_.IndexOfByKey(TEXT("sunIntensity"));
-		if (idx != INDEX_NONE && idx < clip->GetTracks().Num())
+		idx = TrackIdx(EAnimTrack::SunIntensity);
+		if (idx < clip->GetTracks().Num())
 		{
 			float Value;
-			USequencerHelper::GetFloatValueAtTime(clip->GetTracks()[idx].Get(), levelSequencePath_, fTime, Value);
+			SeqHelper.GetFloatValueAtTime(clip->GetTracks()[idx].Get(), fTime, Value);
 			if (data.sunIntensity != Value)
 			{
 				data.sunIntensity = Value;
 				changed = true;
 			}
 		}
-		idx = AnimTracksInfo_.IndexOfByKey(TEXT("HRDIImage"));
-		if (idx != INDEX_NONE && idx < clip->GetTracks().Num())
+		idx = TrackIdx(EAnimTrack::HDRIImage);
+		if (idx < clip->GetTracks().Num())
 		{
 			std::string Value;
-			USequencerHelper::GetStringValueAtTime(clip->GetTracks()[idx].Get(), levelSequencePath_, fTime, Value);
+			SeqHelper.GetStringValueAtTime(clip->GetTracks()[idx].Get(), fTime, Value);
 			if (data.HDRIImage != Value)
 			{
 				data.HDRIImage = Value;
 				changed = true;
 			}
 		}
-		idx = AnimTracksInfo_.IndexOfByKey(TEXT("UseHeliodon"));
-		if (idx != INDEX_NONE && idx < clip->GetTracks().Num())
+		idx = TrackIdx(EAnimTrack::UseHeliodon);
+		if (idx < clip->GetTracks().Num())
 		{
 			bool Value = true;
-			USequencerHelper::GetBoolValueAtTime(clip->GetTracks()[idx].Get(), levelSequencePath_, fTime, Value);
+			SeqHelper.GetBoolValueAtTime(clip->GetTracks()[idx].Get(), fTime, Value);
 			if (data.useHeliodon != Value)
 			{
 				data.useHeliodon = Value;
 				changed = true;
 			}
 		}
-		idx = AnimTracksInfo_.IndexOfByKey(TEXT("Exposure"));
-		if (idx != INDEX_NONE && idx < clip->GetTracks().Num())
+		idx = TrackIdx(EAnimTrack::Exposure);
+		if (idx < clip->GetTracks().Num())
 		{
 			float Value;
-			USequencerHelper::GetFloatValueAtTime(clip->GetTracks()[idx].Get(), levelSequencePath_, fTime, Value);
+			SeqHelper.GetFloatValueAtTime(clip->GetTracks()[idx].Get(), fTime, Value);
 			if (data.exposure != Value)
 			{
 				data.exposure = Value;
@@ -1457,7 +1591,14 @@ public:
 
 	void UpdateSceneFromTimeline()
 	{
-		bool isCameraCutActive = USequencerHelper::HasCameraCutTrack(levelSequencePath_);
+		TRACE_CPUPROFILER_EVENT_SCOPE(ITwinTimeline::UpdateSceneFromTimeline);
+		if (!IsReady())
+		{
+			BE_LOGW("Timeline", "Invalid sequence helper - cannot update scene from timeline at time " << curTime_);
+			return;
+		}
+		auto const& SeqHelper = *Owner.SequencerHelper;
+		bool isCameraCutActive = SeqHelper.HasCameraCutTrack();
 		APlayerController* pController = UGameplayStatics::GetPlayerController(Owner.GetWorld(), 0);
 		// In PIE playback or export are managed by the sequencer via the camera cut track: the switch between cameras happens automatically.
 		// In Game-only however this doesn't happen, so the active cameras are neither accessible as controller view target, nor via OnCameraCutEvent,
@@ -1531,7 +1672,7 @@ ULevelSequencePlayer* AITwinTimelineActor::GetPlayer()
 
 ULevelSequence* AITwinTimelineActor::GetLevelSequence()
 {
-	return Impl->pLevelSeq_.Get();
+	return SequencerHelper ? SequencerHelper->GetLevelSequence() : nullptr;
 }
 
 //AITwinTimelineActor* AITwinTimelineActor::Get()
@@ -1566,17 +1707,29 @@ void AITwinTimelineActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 // Called every frame, used to update UI during playback
 void AITwinTimelineActor::Tick(float DeltaTime)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(AITwinTimelineActor::Tick);
 	Super::Tick(DeltaTime);
 
+	const bool bIsPlaying = Impl->pPlayer_->IsPlaying();
+	const float fPlayerTime = Impl->pPlayer_->GetCurrentTime().AsSeconds();
 	// Do this even when !IsPlaying otherwise we keep (and show in the UI) the last time obtained
 	// from the player before it stopped, which can be substantial depending on frame rate and
-	// have visible effect on the 4D because task state often changes *just* before the end
-	float fPlayerTime = Impl->pPlayer_->GetCurrentTime().AsSeconds();
-	Impl->SetCurrentTime(fPlayerTime); // update synchro, atmo etc. from current time
-
-	if (Impl->pPlayer_->IsPlaying())
+	// have visible effect on the 4D because task state often changes *just* before the end.
+	// See ADO#2152665
+	//
+	// However, we should not reset the time if the user paused the animation manually!
+	// See ADO#2164441, which is a regression introduced by this change: in such case, the player
+	// time is reset to zero internally, but this should not be used as the current time, otherwise
+	// the animation restarts from the start when the user resumes it (which is wrong as it
+	// contradicts the "Pause" icon in iTwin Studio UI).
+	if (bIsPlaying || fPlayerTime > 0.f)
 	{
-		if (fPlayerTime > USequencerHelper::GetPlaybackEndTime(Impl->levelSequencePath_))
+		Impl->SetCurrentTime(fPlayerTime); // update synchro, atmo etc. from current time
+	}
+
+	if (bIsPlaying)
+	{
+		if (Impl->PlaybackEndTime_ >= 0.f && fPlayerTime > Impl->PlaybackEndTime_)
 			Impl->pPlayer_->Stop();
 	}
 	else
@@ -1607,6 +1760,8 @@ void AITwinTimelineActor::ImportData()
 {
 	RemoveAllClips();
 
+	if (!Impl->IsReady())
+		return;
 	Impl->ImportFromJson();
 }
 
@@ -1856,7 +2011,7 @@ void AITwinTimelineActor::AppendKeyFrame()
 	if (!clip)
 		return;
 
-	float fDuration = clip->GetDuration();// USequencerHelper::GetDuration(Impl->GetCurrentCamera(), Impl->levelSequencePath_);
+	float fDuration = clip->GetDuration();// SeqHelper.GetDuration(Impl->GetCurrentCamera());
 	Impl->curTime_ = clip->GetKeyframeCount() > 0 ? (int)(fDuration * 100.f) / 100.f + ITwin::fDefaultTimeDelta : 0.f;
 	Impl->AddOrUpdateKeyFrame(Impl->curTime_, Impl->curClip_);
 }
@@ -1901,7 +2056,7 @@ void AITwinTimelineActor::RemoveKeyFrame(int iKF)
 		if (clip->HasKeyFrame(Impl->curTime_))
 			Impl->RemoveKeyFrame(clip->GetKeyFrameIndex(Impl->curTime_), Impl->curClip_);
 	}
-	//SetCurrentTime(USequencerHelper::GetDuration(Impl->GetCurrentCamera(), Impl->levelSequencePath_));
+	//SetCurrentTime(SeqHelper.GetDuration(Impl->GetCurrentCamera()));
 }
 
 int AITwinTimelineActor::GetKeyframeCount() const
@@ -2015,6 +2170,11 @@ void AITwinTimelineActor::PasteKeyFrame(int clipIdx, int iKF)
 	Impl->PasteKeyFrame(clipIdx, iKF);
 }
 
+void AITwinTimelineActor::DuplicateKeyFrame(int clipIdx, int iKF)
+{
+	Impl->DuplicateKeyFrame(clipIdx, iKF);
+}
+
 void AITwinTimelineActor::EnableSynchroAnim(int clipIdx, bool bEnable)
 {
 	auto clip = Impl->GetClip(clipIdx);
@@ -2029,26 +2189,26 @@ void AITwinTimelineActor::EnableAtmoAnim(int clipIdx, bool bEnable)
 		clip->bAtmoAnim = bEnable;
 }
 
-bool AITwinTimelineActor::IsSynchroAnimEnabled(int clipIdx)
+bool AITwinTimelineActor::IsSynchroAnimEnabled(int clipIdx) const
 {
-	auto clip = Impl->GetClip(clipIdx);
+	auto clip = Impl->GetClipConst(clipIdx);
 	return clip ? clip->bSynchroAnim : false;
 }
 
-bool AITwinTimelineActor::IsAtmoAnimEnabled(int clipIdx)
+bool AITwinTimelineActor::IsAtmoAnimEnabled(int clipIdx) const
 {
-	auto clip = Impl->GetClip(clipIdx);
+	auto clip = Impl->GetClipConst(clipIdx);
 	return clip ? clip->bAtmoAnim : false;
 }
 
-float AITwinTimelineActor::GetClipDuration(int clipIdx)
+float AITwinTimelineActor::GetClipDuration(int clipIdx) const
 {
 	if (!Impl->IsReady())
 		return 0.f;
 	return Impl->GetClipDuration(clipIdx);
 }
 
-float AITwinTimelineActor::GetTotalDuration()
+float AITwinTimelineActor::GetTotalDuration() const
 {
 	if (!Impl->IsReady())
 		return 0.f;
@@ -2100,6 +2260,10 @@ void AITwinTimelineActor::SetClipDuration(int clipIdx, float fDuration)
 	}
 
 	Impl->SetClipKeyFrameTimes(*clip, vNewTimes);
+
+	// Also adjust the current time accordingly.
+	if (Impl->curTime_ > 0.f)
+		SetCurrentTime(Impl->curTime_ * fScaleDurationBy);
 }
 
 void AITwinTimelineActor::SetPerFrameDuration(int clipIdx, float fPerFrameDuration)
@@ -2168,11 +2332,13 @@ bool AITwinTimelineActor::LinkClipsToCutTrack(int clipIdx/* = -1*/)
 	if (!Impl->IsReady())
 		return false;
 
+	auto& SeqHelper = *SequencerHelper;
+
 	Impl->CurrentCutTrackStartTimes_.Empty();
 
-	bool bRes;
+	bool bRes(false);
 	FString outMsg;
-	USequencerHelper::AddCameraCutTrackToLevelSequence(Impl->levelSequencePath_, true, bRes, outMsg);
+	SeqHelper.AddCameraCutTrackToLevelSequence(true, bRes, outMsg);
 
 	float fTotalDuration(0.f);
 	for (size_t i(0); i < Impl->GetClipsNum(); i++)
@@ -2190,14 +2356,14 @@ bool AITwinTimelineActor::LinkClipsToCutTrack(int clipIdx/* = -1*/)
 			continue;
 
 		// shift clip key-frames so that it starts right after the previous clip
-		float fStartTime = USequencerHelper::GetStartTime(clip->GetCamera(), Impl->levelSequencePath_);
+		float fStartTime = SeqHelper.GetStartTime(clip->GetCamera());
 		float fDeltaTime = fTotalDuration - fStartTime;
 		if (fDeltaTime != 0.f)
-			USequencerHelper::ShiftClipKFs(clip->GetTracks(), Impl->levelSequencePath_, fDeltaTime);
+			SeqHelper.ShiftClipKFs(clip->GetTracks(), fDeltaTime);
 
 		// add clip to the camera cuts track
-		float fTotalDurationNew(USequencerHelper::GetEndTime(clip->GetCamera(), Impl->levelSequencePath_));
-		USequencerHelper::LinkCameraToCameraCutTrack(clip->GetCamera(), Impl->levelSequencePath_, fTotalDuration, fTotalDurationNew, bRes, outMsg);
+		float fTotalDurationNew(SeqHelper.GetEndTime(clip->GetCamera()));
+		SeqHelper.LinkCameraToCameraCutTrack(clip->GetCamera(), fTotalDuration, fTotalDurationNew, bRes, outMsg);
 		if (!bRes)
 		{
 			BE_LOGW("Timeline", "Failed to link clip " << i << " to Camera Cuts: " << TCHAR_TO_UTF8(*outMsg));
@@ -2210,6 +2376,8 @@ bool AITwinTimelineActor::LinkClipsToCutTrack(int clipIdx/* = -1*/)
 	if (clipIdx >= 0)
 		Impl->SetCurrentClip(clipIdx);
 
+	Impl->PlaybackEndTime_ = SeqHelper.GetPlaybackEndTime();
+
 	return true;
 }
 
@@ -2218,26 +2386,28 @@ bool AITwinTimelineActor::UnlinkClipsFromCutTrack()
 	if (!Impl->IsReady())
 		return false;
 
-	bool bRes;
-	FString outMsg;
+	auto& SeqHelper = *SequencerHelper;
 
-	USequencerHelper::RemoveCameraCutTrackFromLevelSequence(Impl->levelSequencePath_, bRes, outMsg);
+	bool bRes(false);
+	FString outMsg;
+	SeqHelper.RemoveCameraCutTrackFromLevelSequence(bRes, outMsg);
 
 	for (size_t i(0); i < Impl->GetClipsNum(); i++)
 	{
 		auto clip = Impl->GetClip(i);
-		float fStartTime = USequencerHelper::GetStartTime(clip->GetCamera(), Impl->levelSequencePath_);
+		float fStartTime = SeqHelper.GetStartTime(clip->GetCamera());
 		if (fStartTime != 0.f)
-			USequencerHelper::ShiftClipKFs(clip->GetTracks(), Impl->levelSequencePath_, -fStartTime);
+			SeqHelper.ShiftClipKFs(clip->GetTracks(), -fStartTime);
 	}
 
 	Impl->CurrentCutTrackStartTimes_.Empty();
+	Impl->PlaybackEndTime_ = -1.f;
 	return true;
 }
 
 //bool AITwinTimelineActor::IsInMovieMode()
 //{
-//	return USequencerHelper::HasCameraCutTrack(Impl->levelSequencePath_);
+//	return SeqHelper.HasCameraCutTrack();
 //}
 
 void AITwinTimelineActor::OnPlaybackStarted()

@@ -37,6 +37,7 @@ public class ITwinRuntime : ModuleRules
 			"Foliage",
 			"HTTP",
 			"HTTPServer",
+			"ITwinRendering",
 			"Json",
 			"JsonUtilities",
 			"LevelSequence",
@@ -73,8 +74,10 @@ public class ITwinRuntime : ModuleRules
 				"EditorFramework",
 				"FunctionalTesting",
 				"InputCore",
+				"MeshDescription",
 				"Projects",
 				"ScreenShotComparisonTools",
+				"StaticMeshDescription",
 				"UnrealEd",
             });
 		}

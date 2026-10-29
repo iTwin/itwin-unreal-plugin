@@ -562,3 +562,77 @@ TEST_CASE("GltfMaterialTuner - Metallic, Roughness, AO", "[GltfMaterialTuner]")
 		CHECK(gltfOcclusionTexture.index < static_cast<int32_t>(gltfStructures.textures.size()));
 	}
 }
+
+TEST_CASE("GltfMaterialTuner - Glass color override is explicit", "[GltfMaterialTuner]")
+{
+	auto materialHelper = std::make_shared<GltfMaterialHelper>();
+	GltfMaterialTuner tuner(materialHelper);
+	materialHelper->CreateITwinMaterialSlot(TEST_MATERIAL_ID, "GlassMaterial",
+		WLock(materialHelper->GetMutex()));
+	bool modified = false;
+	materialHelper->SetMaterialKind(TEST_MATERIAL_ID, EMaterialKind::Glass, modified);
+	REQUIRE(modified);
+	materialHelper->SetChannelIntensity(TEST_MATERIAL_ID, EChannelType::Opacity, 0.1, modified);
+
+	bool explicitColor = false;
+	SECTION("Kind and opacity alone preserve all vertex RGBA") {}
+	SECTION("Explicit RGB overrides vertex RGBA")
+	{
+		explicitColor = true;
+		materialHelper->SetChannelColor(TEST_MATERIAL_ID, EChannelType::Color,
+			ITwinColor{ 0.791298, 0.791298, 0.791298, 1.0 }, modified);
+	}
+
+	GltfMaterialStructures gltfStructures(1);
+	gltfStructures.materials[0].alphaMode = CesiumGltf::Material::AlphaMode::BLEND;
+	gltfStructures.meshColors = { { 51, 102, 204, 128 }, { 204, 51, 102, 64 } };
+	auto const originalColors = gltfStructures.meshColors;
+	GltfMaterialTuner::GltfMaterialInfo matInfo;
+	tuner.ConvertITwinMaterial(TEST_MATERIAL_ID, 0,
+		gltfStructures.materials, gltfStructures.textures, gltfStructures.images, matInfo, gltfStructures.meshColors);
+	REQUIRE(matInfo.gltfMaterialIndex_ >= 0);
+	REQUIRE(matInfo.gltfMaterialIndex_ < static_cast<int32_t>(gltfStructures.materials.size()));
+	auto const& material = gltfStructures.materials[matInfo.gltfMaterialIndex_];
+	CHECK(material.alphaMode == CesiumGltf::Material::AlphaMode::BLEND);
+	CHECK(matInfo.overrideColor_ == explicitColor);
+	CHECK(gltfStructures.meshColors == originalColors);
+	REQUIRE(material.pbrMetallicRoughness.has_value());
+	auto const& factor = material.pbrMetallicRoughness->baseColorFactor;
+	REQUIRE(factor.size() == 4);
+	CHECK(factor[3] == Catch::Approx(0.1));
+	for (size_t channel = 0; channel < 3; ++channel)
+		CHECK(factor[channel] == Catch::Approx(explicitColor ? 0.791298 : 1.0));
+}
+
+TEST_CASE("GltfMaterialTuner - Custom translucent alpha preserves vertex colors", "[GltfMaterialTuner]")
+{
+	auto materialHelper = std::make_shared<GltfMaterialHelper>();
+	GltfMaterialTuner tuner(materialHelper);
+
+	materialHelper->CreateITwinMaterialSlot(TEST_MATERIAL_ID, "TranslucentMaterial",
+		WLock(materialHelper->GetMutex()));
+	bool modified = false;
+	materialHelper->SetChannelIntensity(TEST_MATERIAL_ID, EChannelType::Opacity, 0.1, modified);
+	REQUIRE(modified);
+
+	GltfMaterialStructures gltfStructures(1);
+	gltfStructures.materials[0].alphaMode = CesiumGltf::Material::AlphaMode::BLEND;
+	gltfStructures.meshColors.push_back({ 51, 102, 204, 128 });
+	gltfStructures.meshColors.push_back({ 204, 51, 102, 64 });
+	auto const originalColors = gltfStructures.meshColors;
+
+	GltfMaterialTuner::GltfMaterialInfo matInfo;
+	tuner.ConvertITwinMaterial(TEST_MATERIAL_ID, 0,
+		gltfStructures.materials, gltfStructures.textures, gltfStructures.images, matInfo, gltfStructures.meshColors);
+
+	REQUIRE(matInfo.gltfMaterialIndex_ >= 0);
+	REQUIRE(matInfo.gltfMaterialIndex_ < static_cast<int32_t>(gltfStructures.materials.size()));
+	auto const& mat = gltfStructures.materials[matInfo.gltfMaterialIndex_];
+	CHECK(mat.alphaMode == CesiumGltf::Material::AlphaMode::BLEND);
+	CHECK_FALSE(matInfo.overrideColor_);
+	CHECK(gltfStructures.meshColors == originalColors);
+	REQUIRE(mat.pbrMetallicRoughness.has_value());
+	auto const& baseColorFactor = mat.pbrMetallicRoughness->baseColorFactor;
+	REQUIRE(baseColorFactor.size() == 4);
+	CHECK(baseColorFactor[3] == Catch::Approx(0.1).epsilon(0.01));
+}

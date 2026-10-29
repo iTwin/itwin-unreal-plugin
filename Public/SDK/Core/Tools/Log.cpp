@@ -121,9 +121,9 @@ namespace AdvViz::SDK::Tools
 	{
 		if (!Internal::GetLogGlobals().logInitialized)
 		{
-			std::filesystem::path tmpPath = std::filesystem::temp_directory_path();
-			tmpPath = tmpPath / "ITwinAdvViz" / "Logs";
 			std::error_code ec;
+			std::filesystem::path tmpPath = std::filesystem::temp_directory_path(ec);
+			tmpPath = tmpPath / "ITwinAdvViz" / "Logs";
 			if (!std::filesystem::is_directory(tmpPath, ec))
 			{
 				std::filesystem::create_directories(tmpPath, ec);
@@ -179,9 +179,9 @@ namespace AdvViz::SDK::Tools
 		const Level level = Level::debug;
 #else
 		Level level = Level::info;
-		std::filesystem::path tmpPath = std::filesystem::temp_directory_path();
-		tmpPath = tmpPath / "ITwinAdvViz" / "Logs" / "debuglevel.on";
 		std::error_code ec;
+		std::filesystem::path tmpPath = std::filesystem::temp_directory_path(ec);
+		tmpPath = tmpPath / "ITwinAdvViz" / "Logs" / "debuglevel.on";
 		if (std::filesystem::exists(tmpPath, ec))
 		{
 			level = Level::debug;

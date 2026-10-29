@@ -1471,7 +1471,7 @@ void AITwinSplineHelper::FImpl::SetSelected(bool bInSelected)
 	// Change color of 2D widget
 	if (Owner.OnScreen2DWidget)
 	{
-		Owner.OnScreen2DWidget->SetTint(bSelected ? FLinearColor(0.374, 1., 0.701) : FLinearColor::White);
+		Owner.OnScreen2DWidget->SetTint(bSelected ? FLinearColor(0.374f, 1.0f, 0.701f) : FLinearColor::White);
 	}
 }
 

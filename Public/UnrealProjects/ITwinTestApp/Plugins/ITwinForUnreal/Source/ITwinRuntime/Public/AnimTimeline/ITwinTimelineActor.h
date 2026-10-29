@@ -27,8 +27,7 @@
 class ULevelSequencePlayer;
 class ULevelSequence;
 class ACameraActor;
-class AITwinIModel;
-
+class UITwinSequencerHelper;
 
 //namespace AdvViz::SDK {
 //	class ITimeline;
@@ -122,9 +121,9 @@ public:
 	void ReorderKeyFrame(int clipIdx, int iKFSrc, int iKFDst);
 
 	// Get duration of a clip
-	float GetClipDuration(int clipIdx);
+	float GetClipDuration(int clipIdx) const;
 	// Get duration of all enabled clip
-	float GetTotalDuration();
+	float GetTotalDuration() const;
 	// Set clip duration by adjusting transition time of all the key-frames
 	void SetClipDuration(int clipIdx, float fDuration);
 	// Set transition time of each key-frame to the given value
@@ -177,11 +176,12 @@ public:
 	bool HasKeyFrameToPaste() const;
 	void CopyKeyFrame(int clipIdx, int iKF);
 	void PasteKeyFrame(int clipIdx, int iKF);
+	void DuplicateKeyFrame(int clipIdx, int iKF);
 
 	void EnableSynchroAnim(int clipIdx, bool bEnable);
 	void EnableAtmoAnim(int clipIdx, bool bEnable);
-	bool IsSynchroAnimEnabled(int clipIdx);
-	bool IsAtmoAnimEnabled(int clipIdx);
+	bool IsSynchroAnimEnabled(int clipIdx) const;
+	bool IsAtmoAnimEnabled(int clipIdx) const;
 
 	//TRange<FDateTime> GetSynchroRange() const;
 	//void SetSynchroRange(const TRange<FDateTime>& newRange);
@@ -227,6 +227,9 @@ public:
 	class FImpl;
 private:
 	TPimplPtr<FImpl> Impl;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UITwinSequencerHelper> SequencerHelper;
 
 	//TSharedPtr<AITwinTimelineActor::FImpl> GetImpl();
 	//const TSharedPtr<AITwinTimelineActor::FImpl> GetImpl() const;

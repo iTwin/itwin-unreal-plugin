@@ -61,7 +61,17 @@ MODULE_EXPORT namespace AdvViz::SDK
 		 std::uint64_t GetDynTypeId() const override { return GetTypeId(); }
 		 bool IsTypeOf(std::uint64_t i) const override { return (i == GetTypeId()) || ILink::IsTypeOf(i); }
 
-
+		 // Information about a resource that is stored in a repository and can be linked to a
+		 // scene (such as an iModel or RealityData resource).
+		 struct RepositoryResourceInfo
+		 {
+			 std::string repositoryId;
+			 // The type accepted by the SceneAPI for the resource. For example, "iModels" for iModel
+			 // resources, and "RealityData" for reality data resources.
+			 std::string strClass;
+		 };
+		 bool IsRepositoryResource() const;
+		 std::optional<RepositoryResourceInfo> GetRepositoryResourceInfo() const;
 
 	protected:
 		struct Impl;

@@ -7,6 +7,7 @@
 +--------------------------------------------------------------------------------------*/
 
 #include "ITwinSequencerHelper.h"
+#include "ITwinSequencerHelperInternals.h"
 
 #include <Compil/BeforeNonUnrealIncludes.h>
 #	include "SDK/Core/Tools/Log.h"
@@ -17,6 +18,7 @@
 #include <LevelSequence.h>
 #include <UObject/Package.h>
 #include <MovieScene.h>
+#include <MovieSceneCommonHelpers.h>
 #include <MovieSceneSection.h>
 #include <MovieSceneSpawnable.h>
 #include <Tracks/MovieSceneFloatTrack.h>
@@ -45,8 +47,38 @@
 //#include "FileHelpers.h"
 
 
-namespace {
-	
+namespace ITwin::SequencerHelper
+{
+	TArray<int32> ComputeEvenlySpacedIndices(int32 Count, int32 Size)
+	{
+		TArray<int32> Indices;
+		if (Count <= 0 || Size <= 0)
+			return Indices;
+
+		Indices.Reserve(Count);
+		if (Count == 1)
+		{
+			Indices.Add(0);
+			return Indices;
+		}
+
+		for (int32 i = 0; i < Count; ++i)
+		{
+			const double Ratio = (double)i / (double)(Count - 1);
+			int32 Index = FMath::RoundToInt(Ratio * (double)(Size - 1));
+			// Rounding can repeat an index when Count is close to Size; force strict growth
+			// so that no two keys are ever assigned the same frame.
+			if (i > 0 && Index <= Indices.Last())
+				Index = FMath::Min(Indices.Last() + 1, Size - 1);
+			Indices.Add(Index);
+		}
+		return Indices;
+	}
+}
+
+namespace
+{
+
 	template<typename T>
 	//using SequencerTypeTraits = void;
 	struct SequencerTypeTraits
@@ -103,54 +135,60 @@ namespace {
 		using ValueType = std::string;
 	};
 
-	FFrameNumber GetFrameNum(ULevelSequence* pLevelSeq, int iFrame)
+
+	// Frame/range conversion helpers
+
+	inline FFrameNumber GetFrameNum(const UMovieScene& MovieScene, int iFrame)
 	{
-		return FFrameNumber(int(iFrame * pLevelSeq->MovieScene->GetTickResolution().AsDecimal() / pLevelSeq->MovieScene->GetDisplayRate().AsDecimal()));
+		return FFrameNumber(int(iFrame * MovieScene.GetTickResolution().AsDecimal() / MovieScene.GetDisplayRate().AsDecimal()));
 	}
 
-	FFrameNumber GetTimeFrameNum(ULevelSequence* pLevelSeq, float fTime)
+	inline FFrameNumber GetTimeFrameNum(const UMovieScene& MovieScene, float fTime)
 	{
-		return FFrameNumber(int(fTime * pLevelSeq->MovieScene->GetTickResolution().AsDecimal()));
+		return FFrameNumber(int(fTime * MovieScene.GetTickResolution().AsDecimal()));
 	}
 
-	TRange<FFrameNumber> GetFrameRange(ULevelSequence* pLevelSeq, int iFrameStart, int iFrameEnd)
+	inline TRange<FFrameNumber> GetFrameRange(const UMovieScene& MovieScene, int iFrameStart, int iFrameEnd)
 	{
-		return TRange<FFrameNumber>(GetFrameNum(pLevelSeq, iFrameStart), TRangeBound<FFrameNumber>::Inclusive(GetFrameNum(pLevelSeq, iFrameEnd)));
+		return TRange<FFrameNumber>(GetFrameNum(MovieScene, iFrameStart), TRangeBound<FFrameNumber>::Inclusive(GetFrameNum(MovieScene, iFrameEnd)));
 	}
 
-	TRange<FFrameNumber> GetTimeFrameRange(ULevelSequence* pLevelSeq, float fTimeStart, float fTimeEnd)
+	inline TRange<FFrameNumber> GetTimeFrameRange(const UMovieScene& MovieScene, float fTimeStart, float fTimeEnd)
 	{
-		return TRange<FFrameNumber>(GetTimeFrameNum(pLevelSeq, fTimeStart), TRangeBound<FFrameNumber>::Inclusive(GetTimeFrameNum(pLevelSeq, fTimeEnd)));
+		return TRange<FFrameNumber>(GetTimeFrameNum(MovieScene, fTimeStart), TRangeBound<FFrameNumber>::Inclusive(GetTimeFrameNum(MovieScene, fTimeEnd)));
 	}
 
 	TRange<FFrameNumber> ComputeRangeFromKFs(UMovieSceneSection* pSection)
 	{
 		TRange<FFrameNumber> retRange = TRange<FFrameNumber>::Empty();
-		if (pSection == NULL)
+		if (pSection == nullptr)
 			return retRange;
-		for (const  auto & entries : pSection->GetChannelProxy().GetAllEntries())
+		for (const auto& entries : pSection->GetChannelProxy().GetAllEntries())
 		{ 
 			for (auto pChannel : entries.GetChannels())
 			{
 				TArray<FFrameNumber> vKeyTimes;
-				TArray<FKeyHandle> vKeyHandles;
-				pChannel->GetKeys(TRange<FFrameNumber>::All(), &vKeyTimes, &vKeyHandles);
+				pChannel->GetKeys(TRange<FFrameNumber>::All(), &vKeyTimes, nullptr);
 				if (vKeyTimes.Num() == 0)
-					continue;
-				TRange<FFrameNumber> channelRange = TRange<FFrameNumber>(vKeyTimes[0], TRangeBound<FFrameNumber>::Inclusive(vKeyTimes.Last()));
-				ensure(pChannel->ComputeEffectiveRange() == channelRange);
-				if (retRange.IsEmpty())
-					retRange = channelRange;
-				else if (channelRange.GetLowerBoundValue() < retRange.GetLowerBoundValue())
-					retRange.SetLowerBoundValue(channelRange.GetLowerBoundValue());
-				else if (channelRange.GetUpperBoundValue() > retRange.GetUpperBoundValue())
-					retRange.SetUpperBoundValue(channelRange.GetUpperBoundValue());
+					continue; // channel not animated
+				const TRange<FFrameNumber> channelRange(
+					vKeyTimes[0], TRangeBound<FFrameNumber>::Inclusive(vKeyTimes.Last()));
+				// Note: deliberately *not* ensure()ing against ComputeEffectiveRange() -
+				// channels with a default value can report an infinite effective range.
+				//		ensure(pChannel->ComputeEffectiveRange() == channelRange);
+
+				// Hull rather than a chain of else-ifs: a channel can extend the running
+				// range at both ends at once, and the previous code applied only whichever
+				// branch matched first - silently dropping the other bound.
+				retRange = retRange.IsEmpty()
+					? channelRange
+					: TRange<FFrameNumber>::Hull(retRange, channelRange);
 			 }
 		}
 		return retRange;
 	}
 
-	void ShiftKeyFrameInChannel(FMovieSceneChannel* pChannel, TRange<FFrameNumber>& FrameRange, FFrameNumber iDeltaFrameNum)
+	void ShiftKeyFrameInChannel(FMovieSceneChannel* pChannel, TRange<FFrameNumber> const& FrameRange, FFrameNumber iDeltaFrameNum)
 	{
 		if (pChannel == nullptr)
 			return;
@@ -164,12 +202,26 @@ namespace {
 	}
 
 	template <class T>
-	void ShiftSectionKFs(UMovieSceneSection* pSection, TRange<FFrameNumber> editedKFRange, FFrameNumber deltaFrameNum)
+	void ShiftSectionKFs(UMovieSceneSection* pSection, TRange<FFrameNumber> const& editedKFRange, FFrameNumber deltaFrameNum)
 	{
 		using Traits = SequencerTypeTraits<T>;
 
 		if (!pSection)
 			return;
+
+		// The proxy indexes per channel type, so this is also the correct loop bound:
+		// NumChannels() is the global count and would include e.g. ManualWeight.
+		auto Channels = pSection->GetChannelProxy().GetChannels<typename Traits::ChannelType>();
+		if (Channels.Num() == 0)
+		{
+			// No channel of the expected type means T does not match this section - a
+			// programming error, not the "channel present but unanimated" case. Bail out
+			// here, before the range is widened below: returning later would leave the
+			// section extended with nothing shifted into the new space.
+			BE_LOGW("Timeline", "ShiftSectionKFs: section has no channel of the expected type");
+			return;
+		}
+
 		auto ExtendedRange = pSection->GetRange();
 		// extend frame range to include both old and new frame times
 		if (deltaFrameNum > 0)
@@ -177,42 +229,14 @@ namespace {
 		//else
 		//	ExtendedRange.SetLowerBoundValue(ExtendedRange.GetLowerBoundValue() + deltaFrameNum);
 		pSection->SetRange(ExtendedRange);
+
 		// shift frame times in each transform channel
-		for (int i(0); i < pSection->GetChannelProxy().NumChannels(); i++)
-			ShiftKeyFrameInChannel(pSection->GetChannelProxy().GetChannel<typename Traits::ChannelType>(i), editedKFRange, deltaFrameNum);
+		for (int32 i(0); i < Channels.Num(); i++)
+			ShiftKeyFrameInChannel(Channels[i], editedKFRange, deltaFrameNum);
+
 		// adjust frame range to the shifted times
 		pSection->SetRange(ComputeRangeFromKFs(pSection));
 		pSection->Modify();
-	}
-
-	/// Picks Count evenly spaced indices within [0, Size-1], first and last included.
-	/// Linear interpolation on the index, rounded to a real index: the caller therefore
-	/// always ends up using values that actually exist in the source array.
-	/// The result is strictly increasing as long as Count <= Size.
-	TArray<int32> ComputeEvenlySpacedIndices(int32 Count, int32 Size)
-	{
-		TArray<int32> Indices;
-		if (Count <= 0 || Size <= 0)
-			return Indices;
-
-		Indices.Reserve(Count);
-		if (Count == 1)
-		{
-			Indices.Add(0);
-			return Indices;
-		}
-
-		for (int32 i = 0; i < Count; ++i)
-		{
-			const double Ratio = (double)i / (double)(Count - 1);
-			int32 Index = FMath::RoundToInt(Ratio * (double)(Size - 1));
-			// Rounding can repeat an index when Count is close to Size; force strict growth
-			// so that no two keys are ever assigned the same frame.
-			if (i > 0 && Index <= Indices.Last())
-				Index = FMath::Min(Indices.Last() + 1, Size - 1);
-			Indices.Add(Index);
-		}
-		return Indices;
 	}
 
 	void SetKeyFrameTimesInChannel(FMovieSceneChannel* pChannel, const TArray<FFrameNumber>& NewFrameNumbers)
@@ -249,7 +273,8 @@ namespace {
 			BE_LOGW("Timeline", "Channel holds " << vKeyTimes.Num() << " key(s) but "
 				<< NewFrameNumbers.Num() << " new time(s) were provided; remapping onto a subset");
 
-			const TArray<int32> Picked = ComputeEvenlySpacedIndices(vKeyTimes.Num(), NewFrameNumbers.Num());
+			const TArray<int32> Picked = ITwin::SequencerHelper::ComputeEvenlySpacedIndices(
+				vKeyTimes.Num(), NewFrameNumbers.Num());
 			TArray<FFrameNumber> Times;
 			Times.Reserve(Picked.Num());
 			for (int32 Index : Picked)
@@ -268,6 +293,16 @@ namespace {
 
 		if (!pSection || NewFrameNumbers.Num() == 0)
 			return;
+
+		// The proxy indexes per channel type, so this is also the correct loop bound:
+		// NumChannels() is the global count and would include e.g. ManualWeight.
+		auto Channels = pSection->GetChannelProxy().GetChannels<typename Traits::ChannelType>();
+		if (Channels.Num() == 0)
+		{
+			BE_LOGW("Timeline", "SetSectionKFs: section has no channel of the expected type");
+			return;
+		}
+
 		auto ExtendedRange = pSection->GetRange();
 		// Extend frame range to include new frame times
 		if (NewFrameNumbers.Last() > ExtendedRange.GetUpperBoundValue())
@@ -275,10 +310,11 @@ namespace {
 			ExtendedRange.SetUpperBoundValue(NewFrameNumbers.Last());
 			pSection->SetRange(ExtendedRange);
 		}
+
 		// Set the new times in each transform channel
-		for (int i(0); i < pSection->GetChannelProxy().NumChannels(); i++)
+		for (int32 i(0); i < Channels.Num(); i++)
 		{
-			SetKeyFrameTimesInChannel(pSection->GetChannelProxy().GetChannel<typename Traits::ChannelType>(i), NewFrameNumbers);
+			SetKeyFrameTimesInChannel(Channels[i], NewFrameNumbers);
 		}
 		// Adjust frame range to the modified times
 		pSection->SetRange(ComputeRangeFromKFs(pSection));
@@ -471,6 +507,7 @@ namespace {
 
 		return true;
 	}
+
 	template<class ChannelType, typename ValueType>
 	bool GetValueFromChannel(UMovieSceneSection* pSection, int iChannelIdx, FFrameNumber iFrameNum, ValueType& OutValue)
 	{
@@ -483,6 +520,10 @@ namespace {
 
 		return pChannel->Evaluate(iFrameNum, OutValue);
 	}
+
+	inline FString Utf8ToFString(const std::string& In) { return FString(UTF8_TO_TCHAR(In.c_str())); }
+	inline std::string FStringToUtf8(const FString& In) { return std::string(TCHAR_TO_UTF8(*In)); }
+
 	template<>
 	bool GetValueFromChannel<FMovieSceneStringChannel,FString>(UMovieSceneSection* pSection, int iChannelIdx, FFrameNumber iFrameNum, FString& OutValue)
 	{
@@ -495,6 +536,7 @@ namespace {
 
 		return EvaluateChannel(pChannel, iFrameNum, OutValue);
 	}
+
 	template<>
 	bool GetValueFromChannel<FMovieSceneStringChannel, std::string>(UMovieSceneSection* pSection, int iChannelIdx, FFrameNumber iFrameNum, std::string& OutValue)
 	{
@@ -505,13 +547,12 @@ namespace {
 		if (pChannel == nullptr)
 			return false;
 		FString tempValue;
-		 if(EvaluateChannel(pChannel, iFrameNum, tempValue))
-		 {
-			 OutValue = TCHAR_TO_UTF8(*tempValue);
-			 return true;
-		 }
-		 return false;
-
+		if (EvaluateChannel(pChannel, iFrameNum, tempValue))
+		{
+			OutValue = FStringToUtf8(tempValue);
+			return true;
+		}
+		return false;
 	}
 	
 	template<class ChannelType>
@@ -567,17 +608,15 @@ namespace {
 		if (pChannel == nullptr)
 			return false;
 
-		// if a key-frame already exists at the given time, delete it
-		TArray<FFrameNumber> vKeyTimes;
-		TArray<FKeyHandle> vKeyHandles;
-		pChannel->GetKeys(TRange<FFrameNumber>(iFrameNum, iFrameNum), &vKeyTimes, &vKeyHandles);
-		pChannel->DeleteKeys(vKeyHandles);
-
-		pChannel->AddKeys({ iFrameNum }, { Value });
+		// UpdateOrAddKey, not DeleteKeys + AddKeys: AddKeys appends without preserving
+		// ordering, and Evaluate() binary-searches Times, so a key added before an
+		// existing one silently corrupted every later evaluation on this channel.
+		pChannel->GetData().UpdateOrAddKey(iFrameNum, Value);
 		pSection->Modify();
 
 		return true;
 	}
+
 	template<>
 	bool AddKeyFrameToChannel<FMovieSceneStringChannel, std::string>(UMovieSceneSection* pSection, int iChannelIdx, FFrameNumber iFrameNum, const std::string& Value, int iKeyInterp)
 	{
@@ -588,13 +627,8 @@ namespace {
 		if (pChannel == nullptr)
 			return false;
 
-		// if a key-frame already exists at the given time, delete it
-		TArray<FFrameNumber> vKeyTimes;
-		TArray<FKeyHandle> vKeyHandles;
-		pChannel->GetKeys(TRange<FFrameNumber>(iFrameNum, iFrameNum), &vKeyTimes, &vKeyHandles);
-		pChannel->DeleteKeys(vKeyHandles);
-		FString FStringValue(Value.c_str());
-		pChannel->AddKeys({ iFrameNum }, { FStringValue });
+		// Same remark as for FMovieSceneBoolChannel specialization.
+		pChannel->GetData().UpdateOrAddKey(iFrameNum, Utf8ToFString(Value));
 		pSection->Modify();
 
 		return true;
@@ -670,10 +704,19 @@ namespace {
 		if (pSection == nullptr)
 			return false;
 
+		// The channel proxy indexes per channel type, so the loop must be bounded by the
+		// number of channels of *this* type. NumChannels() is the global count: for a
+		// transform section it also counts the ManualWeight float channel, which made the
+		// last iteration look up a non-existent double channel and report failure even
+		// though every key had in fact been removed.
+		auto Channels = pSection->GetChannelProxy().GetChannels<typename Traits::ChannelType>();
+		if (Channels.Num() == 0)
+			return false;
+
 		int outRes(0);
-		for (int32 i(0); i < pSection->GetChannelProxy().NumChannels(); i++)
+		for (int32 i(0); i < Channels.Num(); i++)
 			outRes += RemoveKeyFrameFromChannel<typename Traits::ChannelType>(pSection, i, iFrameNum);
-		return outRes >= pSection->GetChannelProxy().NumChannels();
+		return outRes >= Channels.Num();
 	}
 	
 	template<typename T>
@@ -698,74 +741,125 @@ namespace {
 		return outRes >= 3;
 	}
 
-	FString GetErrorMsg(FString fname, FString msg)
+	FString GetErrorMsg(const TCHAR* fname, const TCHAR* msg)
 	{
-		return FString::Printf(TEXT("'%s' error: '%s'"), *fname, *msg);
-	}
-
-	FString GetOutMsg(bool bSuccess, FString fname)
-	{
-		return bSuccess ? FString::Printf(TEXT("'%s' succeeded"), *fname) : FString::Printf(TEXT("'%s' failed"), *fname);
+		return FString::Printf(TEXT("'%s' error: '%s'"), fname, msg);
 	}
 }
 
 
-FGuid USequencerHelper::GetPActorGuidFromLevelSequence(AActor* pActor, FString levelSequencePath, bool& bOutSuccess, FString& outInfoMsg)
+bool UITwinSequencerHelper::Initialize(const FString& InLevelSequencePath)
 {
-	FString fname = "GetPActorGuidFromLevelSequence";
-	bOutSuccess = false;
+	// Already initialized with the same asset: nothing to do.
+	if (LevelSequence != nullptr && LevelSequencePath == InLevelSequencePath)
+		return true;
 
-	if (pActor == nullptr)
-	{
-		outInfoMsg = GetErrorMsg(fname, "Invalid actor pointer");
-		return FGuid();
-	}
-	ULevelSequence* pLevelSeq = Cast<ULevelSequence>(StaticLoadObject(ULevelSequence::StaticClass(), nullptr, *levelSequencePath));
+	ULevelSequence* pLevelSeq = Cast<ULevelSequence>(
+		StaticLoadObject(ULevelSequence::StaticClass(), nullptr, *InLevelSequencePath));
 	if (pLevelSeq == nullptr)
 	{
-		outInfoMsg = GetErrorMsg(fname, "Level sequence not found");
+		BE_LOGW("Timeline", "Level sequence not found at '"
+			<< TCHAR_TO_UTF8(*InLevelSequencePath) << "'");
+		return false;
+	}
+	LevelSequence = pLevelSeq;
+	LevelSequencePath = InLevelSequencePath;
+	InvalidatePActorGuidCache(); // bindings belong to the previous sequence
+	return true;
+}
+
+UMovieScene* UITwinSequencerHelper::GetMovieScene() const
+{
+	return LevelSequence ? LevelSequence->GetMovieScene() : nullptr;
+}
+
+/// Fails the current call if the movie scene is unavailable, distinguishing an
+/// uninitialized helper from a loaded sequence with no movie scene.
+/// Requires FuncName, bOutSuccess and outInfoMsg in scope; member functions only.
+#define ITWIN_CHECK_MOVIE_SCENE_OR_EXEC(_MovieVar, _Code)                      \
+	do {                                                                       \
+		if (!(_MovieVar))                                                      \
+		{                                                                      \
+			bOutSuccess = false;                                               \
+			outInfoMsg = GetErrorMsg(FuncName, IsInitialized()                 \
+				? TEXT("Invalid movie scene")                                  \
+				: TEXT("Level sequence not initialized"));                     \
+			_Code;                                                             \
+		}                                                                      \
+	} while (0)
+
+#define ITWIN_CHECK_MOVIE_SCENE_OR_RETURN(_MovieVar, _ReturnValue)	\
+	ITWIN_CHECK_MOVIE_SCENE_OR_EXEC(_MovieVar, return _ReturnValue)
+
+#define ITWIN_CHECK_MOVIE_SCENE_OR_RETURN_VOID(_MovieVar)	\
+	ITWIN_CHECK_MOVIE_SCENE_OR_EXEC(_MovieVar, return )
+
+
+FGuid UITwinSequencerHelper::GetPActorGuidFromLevelSequence(AActor* pActor, bool& bOutSuccess, FString& outInfoMsg) const
+{
+	const TCHAR* FuncName = TEXT("GetPActorGuidFromLevelSequence");
+	bOutSuccess = false;
+	if (!IsInitialized())
+	{
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Invalid level sequence"));
+		return FGuid();
+	}
+	if (pActor == nullptr)
+	{
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Invalid actor pointer"));
 		return FGuid();
 	}
 	FGuid guid;
-PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	if (pActor && pActor->GetWorld())
-		guid = pLevelSeq->FindBindingFromObject(pActor, pActor->GetWorld());
-PRAGMA_ENABLE_DEPRECATION_WARNINGS
+	if (pActor->GetWorld())
+	{
+		// The binding ID of an actor is constant for a given level sequence, but resolving it
+		// requires a transient playback state and a reverse lookup over all bindings, so the
+		// result is cached (see InvalidatePActorGuidCache for the invalidation points).
+		if (FGuid const* CachedGuid = PActorGuidCache.Find(pActor))
+		{
+			guid = *CachedGuid;
+		}
+		else
+		{
+			TSharedRef<UE::MovieScene::FSharedPlaybackState> SharedPlaybackState =
+				MovieSceneHelpers::CreateTransientSharedPlaybackState(pActor->GetWorld(), LevelSequence);
+			guid = LevelSequence->FindBindingFromObject(pActor, SharedPlaybackState);
+			if (guid.IsValid())
+				PActorGuidCache.Add(pActor, guid);
+		}
+	}
 	bOutSuccess = guid.IsValid();
-	outInfoMsg = GetOutMsg(bOutSuccess, fname);
+	if (bOutSuccess)
+		outInfoMsg.Reset();
+	else
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Actor GUID not found"));
 	return guid;
 }
-		
-FGuid USequencerHelper::AddPActorToLevelSequence(AActor* pActor, FString levelSequencePath, bool& bOutSuccess, FString& outInfoMsg)
-{
-	FString fname = "AddPActorToLevelSequence";
-	bOutSuccess = false;
 
-	FGuid guid = GetPActorGuidFromLevelSequence(pActor, levelSequencePath, bOutSuccess, outInfoMsg);
-	if (guid.IsValid())
+FGuid UITwinSequencerHelper::AddPActorToLevelSequence(AActor* pActor, bool& bOutSuccess, FString& outInfoMsg)
+{
+	const TCHAR* FuncName = TEXT("AddPActorToLevelSequence");
+	bOutSuccess = false;
+	if (!IsInitialized())
 	{
-		outInfoMsg = GetErrorMsg(fname, "Actor already exists in sequence");
-		return guid;
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Invalid level sequence"));
+		return FGuid();
 	}
 	if (pActor == nullptr)
 	{
-		outInfoMsg = GetErrorMsg(fname, "Invalid actor pointer");
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Invalid actor pointer"));
 		return FGuid();
 	}
-	ULevelSequence* pLevelSeq = Cast<ULevelSequence>(StaticLoadObject(ULevelSequence::StaticClass(), nullptr, *levelSequencePath));
-	if (pLevelSeq == nullptr)
+	FGuid guid = GetPActorGuidFromLevelSequence(pActor, bOutSuccess, outInfoMsg);
+	if (guid.IsValid())
 	{
-		outInfoMsg = GetErrorMsg(fname, "Level sequence not found");
-		return FGuid();
+		// This is not an error, but the caller should know that the actor is already in the sequence.
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Actor already exists in sequence"));
+		return guid;
 	}
-	//guid = Cast<UMovieSceneSequence>(pLevelSeq)->CreatePossessable(pActor);
+	UMovieScene* MovieScene = GetMovieScene();
+	ITWIN_CHECK_MOVIE_SCENE_OR_RETURN(MovieScene, FGuid());
 
-	UMovieScene* MovieScene = pLevelSeq->GetMovieScene();
-	if (!MovieScene)
-	{
-		outInfoMsg = GetErrorMsg(fname, "Invalid movie scene");
-		return FGuid();
-	}
 	// Add the actor as a possessable in the sequence
 	guid = MovieScene->AddPossessable(pActor->GetName(), pActor->GetClass());
 
@@ -782,8 +876,9 @@ FGuid USequencerHelper::AddPActorToLevelSequence(AActor* pActor, FString levelSe
 	//FGuid PossessableGuid = FGuid::NewGuid();
 
 	// Set BindingOverride for the newly added possessable actor
-	pLevelSeq->BindPossessableObject(guid, *pActor, pActor->GetWorld());
-	guid = GetPActorGuidFromLevelSequence(pActor, levelSequencePath, bOutSuccess, outInfoMsg);
+	LevelSequence->BindPossessableObject(guid, *pActor, pActor->GetWorld());
+	InvalidatePActorGuidCache(); // a new binding was added
+	guid = GetPActorGuidFromLevelSequence(pActor, bOutSuccess, outInfoMsg);
 	//if (LevelSequenceActor->BindingOverrides)
 	//{
 	//	FMovieSceneObjectBindingID BindingID(PossessableGuid);
@@ -791,296 +886,344 @@ FGuid USequencerHelper::AddPActorToLevelSequence(AActor* pActor, FString levelSe
 	//}
 
 	bOutSuccess = guid.IsValid();
-	outInfoMsg = GetOutMsg(bOutSuccess, fname);
+
+	if (bOutSuccess)
+		outInfoMsg.Reset();
+	else
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Actor GUID not found"));
+
 	return guid;
 }
 		
-void USequencerHelper::RemovePActorFromLevelSequence(AActor* pActor, FString levelSequencePath, bool& bOutSuccess, FString& outInfoMsg)
+void UITwinSequencerHelper::RemovePActorFromLevelSequence(AActor* pActor, bool& bOutSuccess, FString& outInfoMsg)
 {
-	FString fname = "RemovePActorFromLevelSequence";
+	const TCHAR* FuncName = TEXT("RemovePActorFromLevelSequence");
 	bOutSuccess = false;
-
-	FGuid guid = GetPActorGuidFromLevelSequence(pActor, levelSequencePath, bOutSuccess, outInfoMsg);
-	if (!guid.IsValid())
+	if (!IsInitialized())
 	{
-		outInfoMsg = GetErrorMsg(fname, "Actor doesn't exist in sequence");
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Invalid level sequence"));
 		return;
 	}
-	ULevelSequence* pLevelSeq = Cast<ULevelSequence>(StaticLoadObject(ULevelSequence::StaticClass(), nullptr, *levelSequencePath));
-	pLevelSeq->UnbindPossessableObjects(guid); // unbind track from actor
-	bOutSuccess = pLevelSeq->MovieScene->RemovePossessable(guid);
-	outInfoMsg = GetOutMsg(bOutSuccess, fname);
+	FGuid guid = GetPActorGuidFromLevelSequence(pActor, bOutSuccess, outInfoMsg);
+	if (!guid.IsValid())
+	{
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Actor doesn't exist in sequence"));
+		return;
+	}
+	UMovieScene* MovieScene = GetMovieScene();
+	ITWIN_CHECK_MOVIE_SCENE_OR_RETURN_VOID(MovieScene);
+
+	LevelSequence->UnbindPossessableObjects(guid); // unbind track from actor
+	bOutSuccess = MovieScene->RemovePossessable(guid);
+	InvalidatePActorGuidCache(); // a binding was removed
+	if (bOutSuccess)
+		outInfoMsg.Reset();
+	else
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Failed to remove actor from sequence"));
 }
 
 
-FGuid USequencerHelper::GetSActorGuidFromLevelSequence(FString spawnableName, FString levelSequencePath, bool& bOutSuccess, FString& outInfoMsg)
+FGuid UITwinSequencerHelper::GetSActorGuidFromLevelSequence(const FString& spawnableName, bool& bOutSuccess, FString& outInfoMsg) const
 {
-	FString fname = "GetSActorGuidFromLevelSequence";
+	const TCHAR* FuncName = TEXT("GetSActorGuidFromLevelSequence");
 	bOutSuccess = false;
 
-	ULevelSequence* pLevelSeq = Cast<ULevelSequence>(StaticLoadObject(ULevelSequence::StaticClass(), nullptr, *levelSequencePath));
-	if (pLevelSeq == nullptr)
-	{
-		outInfoMsg = GetErrorMsg(fname, "Level sequence not found");
-		return FGuid();
-	}
+	UMovieScene* MovieScene = GetMovieScene();
+	ITWIN_CHECK_MOVIE_SCENE_OR_RETURN(MovieScene, FGuid());
+
 	FGuid guid = FGuid();
-	for (int i(0); i < pLevelSeq->MovieScene->GetSpawnableCount(); i++)
+	for (int i(0); i < MovieScene->GetSpawnableCount(); i++)
 	{
-		FMovieSceneSpawnable spawnable = pLevelSeq->MovieScene->GetSpawnable(i);
-		if (pLevelSeq->MovieScene->GetObjectDisplayName(spawnable.GetGuid()).ToString() == spawnableName)
+		FMovieSceneSpawnable const& Spawnable = MovieScene->GetSpawnable(i);
+		if (MovieScene->GetObjectDisplayName(Spawnable.GetGuid()).ToString() == spawnableName)
 		{
-			guid = spawnable.GetGuid();
+			guid = Spawnable.GetGuid();
 			break;
 		}
 	}
 	bOutSuccess = guid.IsValid();
-	outInfoMsg = GetOutMsg(bOutSuccess, fname);
+	if (bOutSuccess)
+		outInfoMsg.Reset();
+	else
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Actor GUID not found"));
 	return guid;
 }
 
-FGuid USequencerHelper::AddSActorToLevelSequence(FString spawnableName, FString assetPath, FString levelSequencePath, bool& bOutSuccess, FString& outInfoMsg)
+FGuid UITwinSequencerHelper::AddSActorToLevelSequence(const FString& spawnableName, const FString& assetPath, bool& bOutSuccess, FString& outInfoMsg)
 {
-	FString fname = "AddSActorToLevelSequence";
+	const TCHAR* FuncName = TEXT("AddSActorToLevelSequence");
 	bOutSuccess = false;
-
-	FGuid guid = GetSActorGuidFromLevelSequence(spawnableName, levelSequencePath, bOutSuccess, outInfoMsg);
+	if (!IsInitialized())
+	{
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Invalid level sequence"));
+		return FGuid();
+	}
+	FGuid guid = GetSActorGuidFromLevelSequence(spawnableName, bOutSuccess, outInfoMsg);
 	if (guid.IsValid())
 	{
-		outInfoMsg = GetErrorMsg(fname, "Spawnable actor already exists in level sequence");
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Spawnable actor already exists in level sequence"));
 		return guid;
 	}
-	UObject* pObjTemplate = Cast<UObject>(StaticLoadObject(UObject::StaticClass(), nullptr, *assetPath));
+	UObject* pObjTemplate = StaticLoadObject(UObject::StaticClass(), nullptr, *assetPath);
 	if (pObjTemplate == nullptr)
 	{
-		outInfoMsg = GetErrorMsg(fname, "Spawnable template not found");
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Spawnable template not found"));
 		return FGuid();
 	}
-	ULevelSequence* pLevelSeq = Cast<ULevelSequence>(StaticLoadObject(ULevelSequence::StaticClass(), nullptr, *levelSequencePath));
-	if (pLevelSeq == nullptr)
-	{
-		outInfoMsg = GetErrorMsg(fname, "Level sequence not found");
-		return FGuid();
-	}
-	guid = Cast<UMovieSceneSequence>(pLevelSeq)->CreateSpawnable(pObjTemplate);
+	// The cast is needed here just because ULevelSequence overrides CreateSpawnable() as protected :-(
+	guid = Cast<UMovieSceneSequence>(LevelSequence.Get())->CreateSpawnable(pObjTemplate);
 	bOutSuccess = guid.IsValid();
-	outInfoMsg = GetOutMsg(bOutSuccess, fname);
+	if (bOutSuccess)
+		outInfoMsg.Reset();
+	else
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Failed to add spawnable actor to level sequence"));
 	// TODO: the following function is only available in Editor
 	//if (guid.IsValid())
-	//	pLevelSeq->MovieScene->SetObjectDisplayName(guid, FText::FromString(spawnableName)); // rename the spawnable to be able to find it later
+	//	LevelSequence->MovieScene->SetObjectDisplayName(guid, FText::FromString(spawnableName)); // rename the spawnable to be able to find it later
 	return guid;
 }
 
-void USequencerHelper::RemoveSActorFromLevelSequence(FString spawnableName, FString levelSequencePath, bool& bOutSuccess, FString& outInfoMsg)
+void UITwinSequencerHelper::RemoveSActorFromLevelSequence(const FString& spawnableName, bool& bOutSuccess, FString& outInfoMsg)
 {
-	FString fname = "RemoveSActorFromLevelSequence";
+	const TCHAR* FuncName = TEXT("RemoveSActorFromLevelSequence");
 	bOutSuccess = false;
 
-	FGuid guid = GetSActorGuidFromLevelSequence(spawnableName, levelSequencePath, bOutSuccess, outInfoMsg);
+	FGuid guid = GetSActorGuidFromLevelSequence(spawnableName, bOutSuccess, outInfoMsg);
 	if (!guid.IsValid())
 	{
-		outInfoMsg = GetErrorMsg(fname, "Spawnable actor not found in level sequence");
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Spawnable actor not found in level sequence"));
 		return;
 	}
-	ULevelSequence* pLevelSeq = Cast<ULevelSequence>(StaticLoadObject(ULevelSequence::StaticClass(), nullptr, *levelSequencePath));
-	bOutSuccess = pLevelSeq->MovieScene->RemoveSpawnable(guid);
-	outInfoMsg = GetOutMsg(bOutSuccess, fname);
+	UMovieScene* MovieScene = GetMovieScene();
+	ITWIN_CHECK_MOVIE_SCENE_OR_RETURN_VOID(MovieScene);
+
+	bOutSuccess = MovieScene->RemoveSpawnable(guid);
+	if (bOutSuccess)
+		outInfoMsg.Reset();
+	else
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Failed to remove spawnable actor from level sequence"));
 }
 
 
 template<class TrackType>
-TrackType* USequencerHelper::GetTrackFromActorInLevelSequence(AActor* pActor, FString levelSequencePath, bool& bOutSuccess, FString& outInfoMsg)
+TrackType* UITwinSequencerHelper::GetTrackFromActorInLevelSequence(AActor* pActor, bool& bOutSuccess, FString& outInfoMsg) const
 {
-	FString fname = "GetTrackFromActorInLevelSequence";
+	const TCHAR* FuncName = TEXT("GetTrackFromActorInLevelSequence");
 	bOutSuccess = false;
 
-	FGuid guid = GetPActorGuidFromLevelSequence(pActor, levelSequencePath, bOutSuccess, outInfoMsg);
+	FGuid guid = GetPActorGuidFromLevelSequence(pActor, bOutSuccess, outInfoMsg);
 	if (!guid.IsValid())
 	{
-		outInfoMsg = GetErrorMsg(fname, "Actor not found in level sequence");
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Actor not found in level sequence"));
 		return nullptr;
 	}
 
-	ULevelSequence* pLevelSeq = Cast<ULevelSequence>(StaticLoadObject(ULevelSequence::StaticClass(), nullptr, *levelSequencePath));
-	TrackType* pTrack = pLevelSeq->MovieScene->FindTrack<TrackType>(guid);//, TrackName);
-	bOutSuccess = pTrack != nullptr;
-	outInfoMsg = GetOutMsg(bOutSuccess, fname);
+	UMovieScene const* MovieScene = GetMovieScene();
+	ITWIN_CHECK_MOVIE_SCENE_OR_RETURN(MovieScene, nullptr);
+
+	TrackType* pTrack = MovieScene->FindTrack<TrackType>(guid);//, TrackName);
+	bOutSuccess = (pTrack != nullptr);
+	if (bOutSuccess)
+		outInfoMsg.Reset();
+	else
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Track not found for the actor"));
 	return pTrack;
 }
 
 template<class TrackType>
-TrackType* USequencerHelper::AddTrackToActorInLevelSequence(AActor* pActor, FString levelSequencePath, bool bOverwriteExisting, bool& bOutSuccess, FString& outInfoMsg)
+TrackType* UITwinSequencerHelper::AddTrackToActorInLevelSequence(AActor* pActor, bool bOverwriteExisting, bool& bOutSuccess, FString& outInfoMsg)
 {
-	FString fname = "AddTrackToActorInLevelSequence";
+	const TCHAR* FuncName = TEXT("AddTrackToActorInLevelSequence");
 	bOutSuccess = false;
 
-	ULevelSequence* pLevelSeq = Cast<ULevelSequence>(StaticLoadObject(ULevelSequence::StaticClass(), nullptr, *levelSequencePath));
-	if (pLevelSeq == nullptr)
-	{
-		outInfoMsg = GetErrorMsg(fname, "Level sequence not found");
-		return nullptr;
-	}
+	UMovieScene* MovieScene = GetMovieScene();
+	ITWIN_CHECK_MOVIE_SCENE_OR_RETURN(MovieScene, nullptr);
 
-	TrackType* pTrack = GetTrackFromActorInLevelSequence<TrackType>(pActor, levelSequencePath, bOutSuccess, outInfoMsg);
+	TrackType* pTrack = GetTrackFromActorInLevelSequence<TrackType>(pActor, bOutSuccess, outInfoMsg);
 	if (pTrack != nullptr)
 	{
 		if (bOverwriteExisting)
 		{
-			RemoveTrackFromActorInLevelSequence<TrackType>(pActor, levelSequencePath, bOutSuccess, outInfoMsg);
+			RemoveTrackFromActorInLevelSequence<TrackType>(pActor, bOutSuccess, outInfoMsg);
 		}
 		else
 		{
-			outInfoMsg = GetErrorMsg(fname, "Track of this type already exists for this actor");
+			bOutSuccess = false;
+			outInfoMsg = GetErrorMsg(FuncName, TEXT("Track of this type already exists for this actor"));
 			return pTrack;
 		}
 	}
 
-	FGuid guid = GetPActorGuidFromLevelSequence(pActor, levelSequencePath, bOutSuccess, outInfoMsg);
+	FGuid guid = GetPActorGuidFromLevelSequence(pActor, bOutSuccess, outInfoMsg);
 	if (!guid.IsValid())
 	{
-		outInfoMsg = GetErrorMsg(fname, "Actor not found in level sequence");
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Actor not found in level sequence"));
 		return nullptr;
 	}
 
-	pTrack = pLevelSeq->MovieScene->AddTrack<TrackType>(guid);
+	pTrack = MovieScene->AddTrack<TrackType>(guid);
 
 	if (auto pTransTrack = Cast<UMovieScene3DTransformTrack>((UMovieScenePropertyTrack*)pTrack))
 		pTransTrack->SetBlenderSystem(UMovieSceneQuaternionBlenderSystem::StaticClass());
 
 	bOutSuccess = (pTrack != nullptr);
-	outInfoMsg = GetOutMsg(bOutSuccess, fname);
+	if (bOutSuccess)
+		outInfoMsg.Reset();
+	else
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Failed to add track to actor in level sequence"));
 	return pTrack;
 }
 
 template<class TrackType>
-void USequencerHelper::RemoveTrackFromActorInLevelSequence(AActor* pActor, FString levelSequencePath, bool& bOutSuccess, FString& outInfoMsg)
+void UITwinSequencerHelper::RemoveTrackFromActorInLevelSequence(AActor* pActor, bool& bOutSuccess, FString& outInfoMsg)
 {
-	FString fname = "RemoveTrackFromActorInLevelSequence";
+	const TCHAR* FuncName = TEXT("RemoveTrackFromActorInLevelSequence");
 	bOutSuccess = false;
 
-	TrackType* pTrack = GetTrackFromActorInLevelSequence<TrackType>(pActor, levelSequencePath, bOutSuccess, outInfoMsg);
+	TrackType* pTrack = GetTrackFromActorInLevelSequence<TrackType>(pActor, bOutSuccess, outInfoMsg);
 	if (pTrack == nullptr)
 	{
-		outInfoMsg = GetErrorMsg(fname, "Track not found for the actor");
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Track not found for the actor"));
 		return;
 	}
 
-	ULevelSequence* pLevelSeq = Cast<ULevelSequence>(StaticLoadObject(ULevelSequence::StaticClass(), nullptr, *levelSequencePath));
-	pLevelSeq->MovieScene->RemoveTrack(*pTrack);
-	bOutSuccess = true;
-	outInfoMsg = GetOutMsg(true, fname);
+	UMovieScene* MovieScene = GetMovieScene();
+	ITWIN_CHECK_MOVIE_SCENE_OR_RETURN_VOID(MovieScene);
+
+	bOutSuccess = MovieScene->RemoveTrack(*pTrack);
+
+	if (bOutSuccess)
+		outInfoMsg.Reset();
+	else
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Failed to remove track from actor in level sequence"));
 }
 
-void USequencerHelper::RemoveAllTracksFromLevelSequence(AActor* pActor, FString levelSequencePath, bool& bOutSuccess, FString& outInfoMsg)
+void UITwinSequencerHelper::RemoveAllTracksFromLevelSequence(AActor* pActor, bool& bOutSuccess, FString& outInfoMsg)
 {
-	FString fname = "RemoveAllTracksFromLevelSequence";
+	const TCHAR* FuncName = TEXT("RemoveAllTracksFromLevelSequence");
 	bOutSuccess = false;
 
-	FGuid guid = GetPActorGuidFromLevelSequence(pActor, levelSequencePath, bOutSuccess, outInfoMsg);
+	FGuid guid = GetPActorGuidFromLevelSequence(pActor, bOutSuccess, outInfoMsg);
 	if (!guid.IsValid())
 	{
-		outInfoMsg = GetErrorMsg(fname, "Actor not found in level sequence");
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Actor not found in level sequence"));
 		return;
 	}
 
-	ULevelSequence* pLevelSeq = Cast<ULevelSequence>(StaticLoadObject(ULevelSequence::StaticClass(), nullptr, *levelSequencePath));
-	auto Tracks = pLevelSeq->MovieScene->FindTracks(UMovieSceneTrack::StaticClass(), guid);
+	UMovieScene* MovieScene = GetMovieScene();
+	ITWIN_CHECK_MOVIE_SCENE_OR_RETURN_VOID(MovieScene);
+
+	auto Tracks = MovieScene->FindTracks(UMovieSceneTrack::StaticClass(), guid);
+	bool bAnythingRemoved = false;
 	for (auto Track : Tracks)
 	{
-		pLevelSeq->MovieScene->RemoveTrack(*Track);
+		bAnythingRemoved |= MovieScene->RemoveTrack(*Track);
 	}
 
-	bOutSuccess = true;
-	outInfoMsg = GetOutMsg(true, fname);
+	bOutSuccess = bAnythingRemoved;
+	if (bOutSuccess)
+		outInfoMsg.Reset();
+	else
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Failed to remove any tracks from actor in level sequence"));
 }
 
 
 template<class TrackType>
-UMovieSceneSection* USequencerHelper::GetSectionFromActorInLevelSequence(AActor* pActor, FString levelSequencePath, int iSectionIdx, bool& bOutSuccess, FString& outInfoMsg)
+UMovieSceneSection* UITwinSequencerHelper::GetSectionFromActorInLevelSequence(AActor* pActor,
+	int iSectionIdx, bool& bOutSuccess, FString& outInfoMsg) const
 {
-	FString fname = "GetSectionFromActorInLevelSequence";
+	const TCHAR* FuncName = TEXT("GetSectionFromActorInLevelSequence");
 	bOutSuccess = false;
 
-	auto pTrack = GetTrackFromActorInLevelSequence<TrackType>(pActor, levelSequencePath, bOutSuccess, outInfoMsg);
+	auto pTrack = GetTrackFromActorInLevelSequence<TrackType>(pActor, bOutSuccess, outInfoMsg);
 	if (pTrack == nullptr)
 	{
-		outInfoMsg = GetErrorMsg(fname, "Track of this type not found for the actor");
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Track of this type not found for the actor"));
 		return nullptr;
 	}
 
 	auto pSection = GetSectionFromTrack(pTrack, iSectionIdx);
 	if (pSection == nullptr)
 	{
-		outInfoMsg = GetErrorMsg(fname, "Section with given type and index not found in the track");
+		bOutSuccess = false; // beware bOutSuccess is set to true in GetTrackFromActorInLevelSequence!
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Section with given type and index not found in the track"));
 		return nullptr;
 	}
 
 	bOutSuccess = true;
-	outInfoMsg = GetOutMsg(true, fname);
+	outInfoMsg.Reset();
 	return pSection;
 }
 
 template<class TrackType>
-UMovieSceneSection* USequencerHelper::AddSectionToActorInLevelSequence(AActor* pActor, FString levelSequencePath, FFrameNumber FrameNum, EMovieSceneBlendType eBlendType, bool& bOutSuccess, FString& outInfoMsg)
+UMovieSceneSection* UITwinSequencerHelper::AddSectionToActorInLevelSequence(AActor* pActor,
+	FFrameNumber FrameNum, EMovieSceneBlendType eBlendType, bool& bOutSuccess, FString& outInfoMsg)
 {
-	FString fname = "AddSectionToActorInLevelSequence";
+	const TCHAR* FuncName = TEXT("AddSectionToActorInLevelSequence");
 	bOutSuccess = false;
 
-	auto pTrack = GetTrackFromActorInLevelSequence<TrackType>(pActor, levelSequencePath, bOutSuccess, outInfoMsg);
+	auto pTrack = GetTrackFromActorInLevelSequence<TrackType>(pActor, bOutSuccess, outInfoMsg);
 	if (pTrack == nullptr)
 	{
-		outInfoMsg = GetErrorMsg(fname, "Track of this type not found for the actor");
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Track of this type not found for the actor"));
 		return nullptr;
 	}
 
 	auto pSection = AddSectionToTrack(pTrack, eBlendType, 0, FrameNum);
 	if (pSection == nullptr)
 	{
-		outInfoMsg = GetErrorMsg(fname, "Failed to create new section");
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Failed to create new section"));
 		return nullptr;
 	}
 
 	bOutSuccess = true;
-	outInfoMsg = GetOutMsg(true, fname);
+	outInfoMsg.Reset();
 	return pSection;
 }
 
 template<class TrackType>
-void USequencerHelper::RemoveSectionFromActorInLevelSequence(AActor* pActor, FString levelSequencePath, int iSectionIdx, bool& bOutSuccess, FString& outInfoMsg)
+void UITwinSequencerHelper::RemoveSectionFromActorInLevelSequence(AActor* pActor, int iSectionIdx, bool& bOutSuccess, FString& outInfoMsg)
 {
-	FString fname = "RemoveSectionFromActorInLevelSequence";
+	const TCHAR* FuncName = TEXT("RemoveSectionFromActorInLevelSequence");
 	bOutSuccess = false;
 
-	auto pTrack = GetTrackFromActorInLevelSequence<TrackType>(pActor, levelSequencePath, bOutSuccess, outInfoMsg);
+	auto pTrack = GetTrackFromActorInLevelSequence<TrackType>(pActor, bOutSuccess, outInfoMsg);
 	if (pTrack == nullptr)
 	{
-		outInfoMsg = GetErrorMsg(fname, "Track of this type not found for the actor");
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Track of this type not found for the actor"));
 		return;
 	}
 
 	if (!RemoveSectionFromTrack(pTrack, iSectionIdx))
 	{
-		outInfoMsg = GetErrorMsg(fname, "Failed to remove section");
+		bOutSuccess = false; // beware bOutSuccess is set to true in GetTrackFromActorInLevelSequence!
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Failed to remove section"));
 		return;
 	}
 
 	bOutSuccess = true;
-	outInfoMsg = GetOutMsg(true, fname);
+	outInfoMsg.Reset();
 }
 
 
 template<typename T>
-FFrameNumberRange USequencerHelper::AddKeyFrameToActor(AActor* pActor, FString levelSequencePath, int iSectionIdx, FFrameNumber iFrameNum, const T &Value, int iKeyInterp, bool& bOutSuccess, FString& outInfoMsg)
+FFrameNumberRange UITwinSequencerHelper::AddKeyFrameToActor(AActor* pActor,
+															int iSectionIdx,
+															FFrameNumber iFrameNum,
+															const T &Value,
+															int iKeyInterp,
+															bool& bOutSuccess,
+															FString& outInfoMsg)
 {
 	using Traits = SequencerTypeTraits<T>;
 
-	FString fname = "AddKeyFrameToActor";
+	const TCHAR* FuncName = TEXT("AddKeyFrameToActor");
 	bOutSuccess = false;
 
-	auto pTrack = GetTrackFromActorInLevelSequence<typename Traits::TrackType>(pActor, levelSequencePath, bOutSuccess, outInfoMsg);
+	auto pTrack = GetTrackFromActorInLevelSequence<typename Traits::TrackType>(pActor, bOutSuccess, outInfoMsg);
 	if (pTrack == nullptr)
 	{
-		outInfoMsg = GetErrorMsg(fname, "Track of this type not found for the actor");
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Track of this type not found for the actor"));
 		return FFrameNumberRange();
 	}
 
@@ -1088,23 +1231,29 @@ FFrameNumberRange USequencerHelper::AddKeyFrameToActor(AActor* pActor, FString l
 }
 
 template<typename T>
-FFrameNumberRange USequencerHelper::AddKeyFrameToTrack(UMovieSceneTrack* pTrack, int iSectionIdx, FFrameNumber iFrameNum, const T &Value, int iKeyInterp, bool& bOutSuccess, FString& outInfoMsg)
+FFrameNumberRange UITwinSequencerHelper::AddKeyFrameToTrack(UMovieSceneTrack* pTrack,
+															int iSectionIdx,
+															FFrameNumber iFrameNum,
+															const T &Value,
+															int iKeyInterp,
+															bool& bOutSuccess,
+															FString& outInfoMsg)
 {
 	using Traits = SequencerTypeTraits<T>;
 
-	FString fname = "AddKeyFrameToTrack";
+	const TCHAR* FuncName = TEXT("AddKeyFrameToTrack");
 	bOutSuccess = false;
 
 	auto pSection = GetSectionFromTrack(pTrack, iSectionIdx);
 	if (pSection == nullptr)
 	{
-		outInfoMsg = GetErrorMsg(fname, "Section not found in the track");
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Section not found in the track"));
 		return FFrameNumberRange();
 	}
 
 	if (!AddKeyFrameToSection<T>(pSection, iFrameNum, Value, iKeyInterp))
 	{
-		outInfoMsg = GetErrorMsg(fname, "Failed to add key-frame");
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Failed to add key-frame"));
 		return FFrameNumberRange();
 	}
 
@@ -1118,23 +1267,24 @@ FFrameNumberRange USequencerHelper::AddKeyFrameToTrack(UMovieSceneTrack* pTrack,
 	pTrack->MarkAsChanged(); //Cast<TrackType>(pSection->GetOuter())->MarkAsChanged();
 
 	bOutSuccess = true;
-	outInfoMsg = GetOutMsg(true, fname);
+	outInfoMsg.Reset();
 
 	return pSection->GetRange();
 }
 
 template<typename T>
-FFrameNumberRange USequencerHelper::RemoveKeyFrameFromActor(AActor* pActor, FString levelSequencePath, int iSectionIdx, FFrameNumber iFrameNum, bool& bOutSuccess, FString& outInfoMsg)
+FFrameNumberRange UITwinSequencerHelper::RemoveKeyFrameFromActor(AActor* pActor,
+	int iSectionIdx, FFrameNumber iFrameNum, bool& bOutSuccess, FString& outInfoMsg)
 {
 	using Traits = SequencerTypeTraits<T>;
 
-	FString fname = "RemoveKeyFrameFromActor";
+	const TCHAR* FuncName = TEXT("RemoveKeyFrameFromActor");
 	bOutSuccess = false;
 
-	auto pTrack = GetTrackFromActorInLevelSequence<typename Traits::TrackType>(pActor, levelSequencePath, bOutSuccess, outInfoMsg);
+	auto pTrack = GetTrackFromActorInLevelSequence<typename Traits::TrackType>(pActor, bOutSuccess, outInfoMsg);
 	if (pTrack == nullptr)
 	{
-		outInfoMsg = GetErrorMsg(fname, "Track of this type not found for the actor");
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Track of this type not found for the actor"));
 		return FFrameNumberRange();
 	}
 
@@ -1142,23 +1292,24 @@ FFrameNumberRange USequencerHelper::RemoveKeyFrameFromActor(AActor* pActor, FStr
 }
 
 template<typename T>
-FFrameNumberRange USequencerHelper::RemoveKeyFrameFromTrack(UMovieSceneTrack* pTrack, int iSectionIdx, FFrameNumber iFrameNum, bool& bOutSuccess, FString& outInfoMsg)
+FFrameNumberRange UITwinSequencerHelper::RemoveKeyFrameFromTrack(UMovieSceneTrack* pTrack,
+	int iSectionIdx, FFrameNumber iFrameNum, bool& bOutSuccess, FString& outInfoMsg)
 {
 	using Traits = SequencerTypeTraits<T>;
 
-	FString fname = "RemoveKeyFrameFromTrack";
+	const TCHAR* FuncName = TEXT("RemoveKeyFrameFromTrack");
 	bOutSuccess = false;
 
 	auto pSection = GetSectionFromTrack(pTrack, iSectionIdx);
 	if (pSection == nullptr)
 	{
-		outInfoMsg = GetErrorMsg(fname, "Section not found in the track");
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Section not found in the track"));
 		return FFrameNumberRange();
 	}
 
 	if (!RemoveKeyFrameFromSection<T>(pSection, iFrameNum))
 	{
-		outInfoMsg = GetErrorMsg(fname, "Failed to remove key-frame");
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Failed to remove key-frame"));
 		return FFrameNumberRange();
 	}
 
@@ -1167,23 +1318,26 @@ FFrameNumberRange USequencerHelper::RemoveKeyFrameFromTrack(UMovieSceneTrack* pT
 	pSection->Modify();
 
 	bOutSuccess = true;
-	outInfoMsg = GetOutMsg(true, fname);
+	outInfoMsg.Reset();
 
 	return pSection->GetRange();
 }
 
 
-bool USequencerHelper::GetTransformAtTime(AActor* pActor, FString levelSequencePath, float fTime, FVector& pos, FRotator& rot)
+bool UITwinSequencerHelper::GetTransformAtTime(AActor* pActor, float fTime, FVector& pos, FRotator& rot) const
 {
-	bool bRes;
+	bool bRes(false);
 	FString outMsg;
-	auto pTransSection = Cast<UMovieScene3DTransformSection>(GetSectionFromActorInLevelSequence<UMovieScene3DTransformTrack>(pActor, levelSequencePath, 0, bRes, outMsg));
+	auto pTransSection = Cast<UMovieScene3DTransformSection>(GetSectionFromActorInLevelSequence<UMovieScene3DTransformTrack>(pActor, 0, bRes, outMsg));
 	if (pTransSection == nullptr)
 		return false;
 
-	ULevelSequence* pLevelSeq = Cast<ULevelSequence>(StaticLoadObject(ULevelSequence::StaticClass(), nullptr, *levelSequencePath));
-	auto iFrameNum = GetTimeFrameNum(pLevelSeq, fTime);
-	//if (!pLevelSeq->MovieScene->GetPlaybackRange().Contains(iFrameNum))
+	UMovieScene const* MovieScene = GetMovieScene();
+	if (MovieScene == nullptr)
+		return false;
+
+	auto iFrameNum = GetTimeFrameNum(*MovieScene, fTime);
+	//if (!MovieScene->GetPlaybackRange().Contains(iFrameNum))
 	//	return false;
 
 	// When interpolating rotation angles, there's an issue due to angle clamping to (-180,180): despite referring to the same angle,
@@ -1205,22 +1359,22 @@ bool USequencerHelper::GetTransformAtTime(AActor* pActor, FString levelSequenceP
 }
 
 template<typename T>
-bool USequencerHelper::GetActorValueAtTime(AActor* pActor, FString levelSequencePath, float fTime, T& OutValue)
+bool UITwinSequencerHelper::GetActorValueAtTime(AActor* pActor, float fTime, T& OutValue) const
 {
 	using Traits = SequencerTypeTraits<T>;
 
-	bool bRes;
+	bool bRes(false);
 	FString outMsg;
 
-	auto pTrack = GetTrackFromActorInLevelSequence<typename Traits::TrackType>(pActor, levelSequencePath, bRes, outMsg);
+	auto pTrack = GetTrackFromActorInLevelSequence<typename Traits::TrackType>(pActor, bRes, outMsg);
 	if (pTrack == nullptr)
 		return false;
 
-	return GetTrackValueAtTime<T>(pTrack, levelSequencePath, fTime, OutValue);
+	return GetTrackValueAtTime<T>(pTrack, fTime, OutValue);
 }
 
 template<typename T>
-bool USequencerHelper::GetTrackValueAtTime(UMovieSceneTrack* pTrack, FString levelSequencePath, float fTime, T& OutValue)
+bool UITwinSequencerHelper::GetTrackValueAtTime(UMovieSceneTrack* pTrack, float fTime, T& OutValue) const
 {
 	using Traits = SequencerTypeTraits<T>;
 
@@ -1228,118 +1382,154 @@ bool USequencerHelper::GetTrackValueAtTime(UMovieSceneTrack* pTrack, FString lev
 	if (pSection == nullptr)
 		return false;
 
-	ULevelSequence* pLevelSeq = Cast<ULevelSequence>(StaticLoadObject(ULevelSequence::StaticClass(), nullptr, *levelSequencePath));
-	auto iFrameNum = GetTimeFrameNum(pLevelSeq, fTime);
-	//if (!pLevelSeq->MovieScene->GetPlaybackRange().Contains(iFrameNum))
+	UMovieScene const* MovieScene = GetMovieScene();
+	if (MovieScene == nullptr)
+		return false;
+	auto iFrameNum = GetTimeFrameNum(*MovieScene, fTime);
+	//if (!MovieScene->GetPlaybackRange().Contains(iFrameNum))
 	//	return false;
 
 	return GetKeyFrameValue<T>(pSection, iFrameNum, OutValue);
 }
 
-bool USequencerHelper::GetFloatValueAtTime(UMovieSceneTrack* pTrack, FString levelSequencePath, float fTime, float& OutValue)
+bool UITwinSequencerHelper::GetFloatValueAtTime(UMovieSceneTrack* pTrack, float fTime, float& OutValue) const
 {
-	return GetTrackValueAtTime<float>(pTrack, levelSequencePath, fTime, OutValue);
+	return GetTrackValueAtTime<float>(pTrack, fTime, OutValue);
 }
 
-bool USequencerHelper::GetDoubleValueAtTime(UMovieSceneTrack* pTrack, FString levelSequencePath, float fTime, double& OutValue)
+bool UITwinSequencerHelper::GetDoubleValueAtTime(UMovieSceneTrack* pTrack, float fTime, double& OutValue) const
 {
-	return GetTrackValueAtTime<double>(pTrack, levelSequencePath, fTime, OutValue);
+	return GetTrackValueAtTime<double>(pTrack, fTime, OutValue);
 }
 
-bool USequencerHelper::GetStringValueAtTime(UMovieSceneTrack* pTrack, FString levelSequencePath, float fTime, std::string& OutValue)
+bool UITwinSequencerHelper::GetStringValueAtTime(UMovieSceneTrack* pTrack, float fTime, std::string& OutValue) const
 {
-	return GetTrackValueAtTime<std::string>(pTrack, levelSequencePath, fTime, OutValue);
+	return GetTrackValueAtTime<std::string>(pTrack, fTime, OutValue);
 }
-bool USequencerHelper::GetBoolValueAtTime(UMovieSceneTrack* pTrack, FString levelSequencePath, float fTime, bool& OutValue)
+bool UITwinSequencerHelper::GetBoolValueAtTime(UMovieSceneTrack* pTrack, float fTime, bool& OutValue) const
 {
-	return GetTrackValueAtTime<bool>(pTrack, levelSequencePath, fTime, OutValue);
+	return GetTrackValueAtTime<bool>(pTrack, fTime, OutValue);
 }
 
-bool USequencerHelper::HasTransformKeyFrame(AActor* pActor, FString levelSequencePath, int iSectionIdx, FFrameNumber iFrameNum, bool& bOutSuccess, FString& outInfoMsg)
+bool UITwinSequencerHelper::HasTransformKeyFrame(AActor* pActor, int iSectionIdx, FFrameNumber iFrameNum, bool& bOutSuccess, FString& outInfoMsg) const
 {
-	FString fname = "ActorHasTransformKeyFrame";
+	const TCHAR* FuncName = TEXT("ActorHasTransformKeyFrame");
 	bOutSuccess = false;
 
-	auto pTrack = GetTrackFromActorInLevelSequence<UMovieScene3DTransformTrack>(pActor, levelSequencePath, bOutSuccess, outInfoMsg);
+	auto pTrack = GetTrackFromActorInLevelSequence<UMovieScene3DTransformTrack>(pActor, bOutSuccess, outInfoMsg);
 	if (pTrack == nullptr)
 	{
-		outInfoMsg = GetErrorMsg(fname, "Track of this type not found for the actor");
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Track of this type not found for the actor"));
 		return false;
 	}
 
 	auto pSection = GetSectionFromTrack(pTrack, iSectionIdx);
 	if (pSection == nullptr)
 	{
-		outInfoMsg = GetErrorMsg(fname, "Section not found in the track");
+		bOutSuccess = false; // beware bOutSuccess is set to true in GetTrackFromActorInLevelSequence!
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Section not found in the track"));
 		return false;
 	}
 
 	return HasKeyFrameInChannel<FMovieSceneDoubleChannel>(pSection, 0, iFrameNum);
 }
 
-float USequencerHelper::GetDuration(AActor* pActor, FString levelSequencePath)
+float UITwinSequencerHelper::GetDuration(AActor* pActor) const
 {
-	bool bRes;
+	bool bRes(false);
 	FString outMsg;
-	auto pTransSection = GetSectionFromActorInLevelSequence<UMovieScene3DTransformTrack>(pActor, levelSequencePath, 0, bRes, outMsg);
+	auto pTransSection = GetSectionFromActorInLevelSequence<UMovieScene3DTransformTrack>(pActor, 0, bRes, outMsg);
 	if (pTransSection == nullptr)
 		return 0.f;
-	ULevelSequence* pLevelSeq = Cast<ULevelSequence>(StaticLoadObject(ULevelSequence::StaticClass(), nullptr, *levelSequencePath));
-	auto rangeKFs = pTransSection->GetRange();// GetRangeFromKFs(pTransSection);
-	return (float)(rangeKFs.GetUpperBoundValue().Value - rangeKFs.GetLowerBoundValue().Value) / (float)(pLevelSeq->MovieScene->GetTickResolution().AsDecimal());
+	UMovieScene const* MovieScene = GetMovieScene();
+	if (MovieScene == nullptr)
+		return 0.f;
+	auto const SectionRange = pTransSection->GetRange();// GetRangeFromKFs(pTransSection);
+	if (!SectionRange.HasLowerBound() || !SectionRange.HasUpperBound())
+		return 0.f;
+	return (float)(SectionRange.GetUpperBoundValue().Value - SectionRange.GetLowerBoundValue().Value) / (float)(MovieScene->GetTickResolution().AsDecimal());
 }
 
-float USequencerHelper::GetStartTime(AActor* pActor, FString levelSequencePath)
+float UITwinSequencerHelper::GetStartTime(AActor* pActor) const
 {
-	bool bRes;
+	bool bRes(false);
 	FString outMsg;
-	auto pTransSection = GetSectionFromActorInLevelSequence<UMovieScene3DTransformTrack>(pActor, levelSequencePath, 0, bRes, outMsg);
+	auto pTransSection = GetSectionFromActorInLevelSequence<UMovieScene3DTransformTrack>(pActor, 0, bRes, outMsg);
 	if (pTransSection == nullptr)
 		return 0.f;
-	ULevelSequence* pLevelSeq = Cast<ULevelSequence>(StaticLoadObject(ULevelSequence::StaticClass(), nullptr, *levelSequencePath));
-	auto rangeKFs = pTransSection->GetRange();// GetRangeFromKFs(pTransSection);
-	return (float)(rangeKFs.GetLowerBoundValue().Value) / (float)(pLevelSeq->MovieScene->GetTickResolution().AsDecimal());
+	UMovieScene const* MovieScene = GetMovieScene();
+	if (MovieScene == nullptr)
+		return 0.f;
+	auto const SectionRange = pTransSection->GetRange();// GetRangeFromKFs(pTransSection);
+	if (!SectionRange.HasLowerBound())
+		return 0.f;
+	return (float)(SectionRange.GetLowerBoundValue().Value) / (float)(MovieScene->GetTickResolution().AsDecimal());
 }
 
-float USequencerHelper::GetEndTime(AActor* pActor, FString levelSequencePath)
+float UITwinSequencerHelper::GetEndTime(AActor* pActor) const
 {
-	bool bRes;
+	bool bRes(false);
 	FString outMsg;
-	auto pTransSection = GetSectionFromActorInLevelSequence<UMovieScene3DTransformTrack>(pActor, levelSequencePath, 0, bRes, outMsg);
+	auto pTransSection = GetSectionFromActorInLevelSequence<UMovieScene3DTransformTrack>(pActor, 0, bRes, outMsg);
 	if (pTransSection == nullptr)
 		return 0.f;
-	ULevelSequence* pLevelSeq = Cast<ULevelSequence>(StaticLoadObject(ULevelSequence::StaticClass(), nullptr, *levelSequencePath));
-	auto rangeKFs = pTransSection->GetRange();// GetRangeFromKFs(pTransSection);
-	return (float)(rangeKFs.GetUpperBoundValue().Value) / (float)(pLevelSeq->MovieScene->GetTickResolution().AsDecimal());
+	UMovieScene const* MovieScene = GetMovieScene();
+	if (MovieScene == nullptr)
+		return 0.f;
+	auto const SectionRange = pTransSection->GetRange();// GetRangeFromKFs(pTransSection);
+	if (!SectionRange.HasUpperBound())
+		return 0.f;
+	return (float)(SectionRange.GetUpperBoundValue().Value) / (float)(MovieScene->GetTickResolution().AsDecimal());
 }
 
-void USequencerHelper::AdjustMoviePlaybackRange(ACameraActor* pCameraActor, FString levelSequencePath)
+void UITwinSequencerHelper::AdjustMoviePlaybackRange(ACameraActor* pCameraActor)
 {
-	bool bRes;
+	UMovieScene* MovieScene = GetMovieScene();
+	if (MovieScene == nullptr)
+	{
+		return;
+	}
+	bool bRes(false);
 	FString outMsg;
-
-	ULevelSequence* pLevelSeq = Cast<ULevelSequence>(StaticLoadObject(ULevelSequence::StaticClass(), nullptr, *levelSequencePath));
-	auto pTransSection = GetSectionFromActorInLevelSequence<UMovieScene3DTransformTrack>(pCameraActor, levelSequencePath, 0, bRes, outMsg);
-	pLevelSeq->MovieScene->SetPlaybackRange(pTransSection->GetRange());
+	auto pTransSection = GetSectionFromActorInLevelSequence<UMovieScene3DTransformTrack>(pCameraActor, 0, bRes, outMsg);
+	if (pTransSection)
+	{
+		auto const SectionRange = pTransSection->GetRange();
+		// Both predicates are needed and neither implies the other: an open-bounded range is
+		// never "empty" (so IsEmpty alone would not protect GetXxxBoundValue's check()), and a
+		// closed-but-inverted range like [10,5] has both bounds yet no elements.
+		if (SectionRange.HasLowerBound() && SectionRange.HasUpperBound() && !SectionRange.IsEmpty())
+		{
+			MovieScene->SetPlaybackRange(SectionRange);
+		}
+	}
 }
 
-float USequencerHelper::GetPlaybackEndTime(FString levelSequencePath)
+float UITwinSequencerHelper::GetPlaybackEndTime() const
 {
-	ULevelSequence* pLevelSeq = Cast<ULevelSequence>(StaticLoadObject(ULevelSequence::StaticClass(), nullptr, *levelSequencePath));
-	return pLevelSeq ? pLevelSeq->MovieScene->GetPlaybackRange().GetUpperBoundValue().Value / pLevelSeq->MovieScene->GetTickResolution().AsDecimal() : 0.f;
+	UMovieScene const* MovieScene = GetMovieScene();
+	if (MovieScene == nullptr)
+	{
+		return 0.f;
+	}
+	return MovieScene->GetPlaybackRange().GetUpperBoundValue().Value / MovieScene->GetTickResolution().AsDecimal();
 }
 
 
-bool USequencerHelper::HasCameraCutTrack(FString levelSequencePath)
+bool UITwinSequencerHelper::HasCameraCutTrack() const
 {
-	ULevelSequence* pLevelSeq = Cast<ULevelSequence>(StaticLoadObject(ULevelSequence::StaticClass(), nullptr, *levelSequencePath));
-	return (pLevelSeq != nullptr) && (Cast<UMovieSceneCameraCutTrack>(pLevelSeq->MovieScene->GetCameraCutTrack()) != nullptr);
+	UMovieScene const* MovieScene = GetMovieScene();
+	return (MovieScene != nullptr) && (Cast<UMovieSceneCameraCutTrack>(MovieScene->GetCameraCutTrack()) != nullptr);
 }
 
-ACameraActor* USequencerHelper::GetCameraCutBoundCamera(FString levelSequencePath, FFrameTime PlaybackTime)
+ACameraActor* UITwinSequencerHelper::GetCameraCutBoundCamera(FFrameTime PlaybackTime) const
 {
-	ULevelSequence* pLevelSeq = Cast<ULevelSequence>(StaticLoadObject(ULevelSequence::StaticClass(), nullptr, *levelSequencePath));
-	if (auto CameraCutTrack = Cast<UMovieSceneCameraCutTrack>(pLevelSeq->MovieScene->GetCameraCutTrack()))
+	UMovieScene* MovieScene = GetMovieScene();
+	if (MovieScene == nullptr)
+	{
+		return nullptr;
+	}
+	if (auto CameraCutTrack = Cast<UMovieSceneCameraCutTrack>(MovieScene->GetCameraCutTrack()))
 	{
 		TArray<UMovieSceneSection*> Sections = CameraCutTrack->GetAllSections();
 		for (UMovieSceneSection* Section : Sections)
@@ -1349,7 +1539,7 @@ ACameraActor* USequencerHelper::GetCameraCutBoundCamera(FString levelSequencePat
 				if (UMovieSceneCameraCutSection* CameraCutSection = Cast<UMovieSceneCameraCutSection>(Section))
 				{
 					// Return the camera bound to this section
-					if (FMovieSceneSpawnable* pSpawnable = pLevelSeq->MovieScene->FindSpawnable(CameraCutSection->GetCameraBindingID().GetGuid()))
+					if (FMovieSceneSpawnable* pSpawnable = MovieScene->FindSpawnable(CameraCutSection->GetCameraBindingID().GetGuid()))
 						return Cast<ACameraActor>(pSpawnable->GetObjectTemplate());
 					//return CameraCutSection->GetCameraBindingID().GetGuid().ResolveBoundObjects();
 				}
@@ -1360,24 +1550,21 @@ ACameraActor* USequencerHelper::GetCameraCutBoundCamera(FString levelSequencePat
 	return nullptr;
 }
 
-UMovieSceneCameraCutTrack* USequencerHelper::AddCameraCutTrackToLevelSequence(FString levelSequencePath, bool bOverwriteExisting, bool& bOutSuccess, FString& outInfoMsg)
+UMovieSceneCameraCutTrack* UITwinSequencerHelper::AddCameraCutTrackToLevelSequence(bool bOverwriteExisting, bool& bOutSuccess, FString& outInfoMsg)
 {
-	FString fname = "AddCameraCutTrackToLevelSequence";
+	const TCHAR* FuncName = TEXT("AddCameraCutTrackToLevelSequence");
 	bOutSuccess = false;
 
-	ULevelSequence* pLevelSeq = Cast<ULevelSequence>(StaticLoadObject(ULevelSequence::StaticClass(), nullptr, *levelSequencePath));
-	if (pLevelSeq == nullptr)
-	{
-		outInfoMsg = GetErrorMsg(fname, "Level sequence not found");
-		return nullptr;
-	}
+	UMovieScene* MovieScene = GetMovieScene();
+	ITWIN_CHECK_MOVIE_SCENE_OR_RETURN(MovieScene, nullptr);
 
-	UMovieSceneCameraCutTrack* pTrack = Cast<UMovieSceneCameraCutTrack>(pLevelSeq->MovieScene->GetCameraCutTrack());
+	UMovieSceneCameraCutTrack* pTrack = Cast<UMovieSceneCameraCutTrack>(MovieScene->GetCameraCutTrack());
 	if (pTrack != nullptr)
 	{
 		if (!bOverwriteExisting)
 		{
-			outInfoMsg = GetErrorMsg(fname, "Camera cut track already exists in the sequence");
+			bOutSuccess = false;
+			outInfoMsg = GetErrorMsg(FuncName, TEXT("Camera cut track already exists in the sequence"));
 			return pTrack;
 		}
 		else
@@ -1387,118 +1574,80 @@ UMovieSceneCameraCutTrack* USequencerHelper::AddCameraCutTrackToLevelSequence(FS
 	}
 	else
 	{
-		pTrack = Cast<UMovieSceneCameraCutTrack>(pLevelSeq->MovieScene->AddCameraCutTrack(UMovieSceneCameraCutTrack::StaticClass()));
+		pTrack = Cast<UMovieSceneCameraCutTrack>(MovieScene->AddCameraCutTrack(UMovieSceneCameraCutTrack::StaticClass()));
 	}
 
-	bOutSuccess = pTrack != nullptr;
-	outInfoMsg = GetOutMsg(bOutSuccess, fname);
+	bOutSuccess = (pTrack != nullptr);
+	if (bOutSuccess)
+		outInfoMsg.Reset();
+	else
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Failed to add camera cut track to level sequence"));
 	return pTrack;
 }
 
-void USequencerHelper::RemoveCameraCutTrackFromLevelSequence(FString levelSequencePath, bool& bOutSuccess, FString& outInfoMsg)
+void UITwinSequencerHelper::RemoveCameraCutTrackFromLevelSequence(bool& bOutSuccess, FString& outInfoMsg)
 {
-	FString fname = "RemoveCameraCutTrackFromLevelSequence";
+	const TCHAR* FuncName = TEXT("RemoveCameraCutTrackFromLevelSequence");
 	bOutSuccess = false;
 
-	ULevelSequence* pLevelSeq = Cast<ULevelSequence>(StaticLoadObject(ULevelSequence::StaticClass(), nullptr, *levelSequencePath));
-	if (pLevelSeq == nullptr)
-	{
-		outInfoMsg = GetErrorMsg(fname, "Level sequence not found");
-		return;
-	}
+	UMovieScene* MovieScene = GetMovieScene();
+	ITWIN_CHECK_MOVIE_SCENE_OR_RETURN_VOID(MovieScene);
 
-	pLevelSeq->MovieScene->RemoveCameraCutTrack();
+	MovieScene->RemoveCameraCutTrack();
 	bOutSuccess = true;
-	outInfoMsg = GetOutMsg(true, fname);
+	outInfoMsg.Reset();
 }
 
-void USequencerHelper::LinkCameraToCameraCutTrack(ACameraActor* pCameraActor, FString levelSequencePath, float fStartTime, float fEndTime, bool &bOutSuccess, FString& outInfoMsg)
+void UITwinSequencerHelper::LinkCameraToCameraCutTrack(ACameraActor* pCameraActor, float fStartTime, float fEndTime, bool &bOutSuccess, FString& outInfoMsg)
 {
-	FString fname = "LinkCameraToCameraCutTrack";
+	const TCHAR* FuncName = TEXT("LinkCameraToCameraCutTrack");
 	bOutSuccess = false;
 
 	if (pCameraActor == nullptr)
 	{
-		outInfoMsg = GetErrorMsg(fname, "Invalid camera actor pointer");
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Invalid camera actor pointer"));
 		return;
 	}
+	UMovieScene* MovieScene = GetMovieScene();
+	ITWIN_CHECK_MOVIE_SCENE_OR_RETURN_VOID(MovieScene);
 
-	ULevelSequence* pLevelSeq = Cast<ULevelSequence>(StaticLoadObject(ULevelSequence::StaticClass(), nullptr, *levelSequencePath));
-	if (pLevelSeq == nullptr)
-	{
-		outInfoMsg = GetErrorMsg(fname, "Level sequence not found");
-		return;
-	}
-
-	UMovieSceneCameraCutTrack* pTrack = Cast<UMovieSceneCameraCutTrack>(pLevelSeq->MovieScene->GetCameraCutTrack());
+	UMovieSceneCameraCutTrack* pTrack = Cast<UMovieSceneCameraCutTrack>(MovieScene->GetCameraCutTrack());
 	if (pTrack == nullptr)
 	{
-		outInfoMsg = GetErrorMsg(fname, "Camera cut track not found in level sequence");
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Camera cut track not found in level sequence"));
 		return;
 	}
 
-	FGuid guid = GetPActorGuidFromLevelSequence(pCameraActor, levelSequencePath, bOutSuccess, outInfoMsg);
+	FGuid guid = GetPActorGuidFromLevelSequence(pCameraActor, bOutSuccess, outInfoMsg);
 	if (!guid.IsValid())
 	{
-		outInfoMsg = GetErrorMsg(fname, "Camera actor not found in level sequence");
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Camera actor not found in level sequence"));
 		return;
 	}
 
-	auto iStartFrameNum = GetTimeFrameNum(pLevelSeq, fStartTime);
-	auto iEndFrameNum = GetTimeFrameNum(pLevelSeq, fEndTime);
+	auto iStartFrameNum = GetTimeFrameNum(*MovieScene, fStartTime);
+	auto iEndFrameNum = GetTimeFrameNum(*MovieScene, fEndTime);
 	UMovieSceneCameraCutSection* pSection = pTrack->AddNewCameraCut(UE::MovieScene::FRelativeObjectBindingID(guid), iStartFrameNum);
 	if (pSection == nullptr)
 	{
-		outInfoMsg = GetErrorMsg(fname, "Failed to add camera cut section");
+		outInfoMsg = GetErrorMsg(FuncName, TEXT("Failed to add camera cut section"));
 		return;
 	}
 	pSection->SetRange(TRange<FFrameNumber>(iStartFrameNum, iEndFrameNum));
 	pSection->Modify();
 	pTrack->MarkAsChanged();
 
-	pLevelSeq->MovieScene->SetPlaybackRange(TRange<FFrameNumber>(0, iEndFrameNum));
+	MovieScene->SetPlaybackRange(TRange<FFrameNumber>(0, iEndFrameNum));
 
 	bOutSuccess = true;
-	outInfoMsg = GetOutMsg(true, fname);
-}
-
-
-bool USequencerHelper::AddNewClipOld(ACameraActor* pCameraActor, FString levelSequencePath)
-{
-	bool bRes;
-	FString outMsg;
-
-	FGuid guid = AddPActorToLevelSequence(pCameraActor, levelSequencePath, bRes, outMsg);
-	if (!bRes)
-		return false;
-
-	ULevelSequence* pLevelSeq = Cast<ULevelSequence>(StaticLoadObject(ULevelSequence::StaticClass(), nullptr, *levelSequencePath));
-	auto initialRange = GetTimeFrameRange(pLevelSeq, 0, 1.f/*arbitrary small value to create a non-zero section*/);
-	//pLevelSeq->MovieScene->SetPlaybackRange(initialRange);
-
-	if (UMovieScene3DTransformTrack* pTrack = AddTrackToActorInLevelSequence<UMovieScene3DTransformTrack>(pCameraActor, levelSequencePath, true, bRes, outMsg))
-	{
-		pTrack->SetBlenderSystem(UMovieSceneQuaternionBlenderSystem::StaticClass());
-		auto pSection = AddSectionToActorInLevelSequence<UMovieScene3DTransformTrack>(pCameraActor, levelSequencePath, initialRange.GetUpperBoundValue().Value, EMovieSceneBlendType::Absolute, bRes, outMsg);
-		ensure(pSection != nullptr && pSection->GetRowIndex() == 0);
-	}
-
-	if (UMovieSceneDoubleTrack* pTrack = AddTrackToActorInLevelSequence<UMovieSceneDoubleTrack>(pCameraActor, levelSequencePath, true, bRes, outMsg))
-	{
-	#if WITH_EDITOR
-		pTrack->SetDisplayName(FText::FromString("DateDelta"));
-	#endif //WITH_EDITOR
-		auto pSection = AddSectionToActorInLevelSequence<UMovieSceneDoubleTrack>(pCameraActor, levelSequencePath, initialRange.GetUpperBoundValue().Value, EMovieSceneBlendType::Absolute, bRes, outMsg);
-		ensure(pSection != nullptr && pSection->GetRowIndex() == 0);
-	}
-
-	return true;
+	outInfoMsg.Reset();
 }
 
 template<class TrackType>
-UMovieSceneTrack* USequencerHelper::CreateTrackForParameter(ACameraActor* pCameraActor, FString levelSequencePath, const TRange<FFrameNumber>& initialRange, FName sTrackName, bool& bRes, FString& outMsg)
+UMovieSceneTrack* UITwinSequencerHelper::CreateTrackForParameter(ACameraActor* pCameraActor,
+	const TRange<FFrameNumber>& initialRange, const FName& sTrackName, bool& bRes, FString& outMsg)
 {
-	if (auto pTrack = AddTrackToActorInLevelSequence<TrackType>(pCameraActor, levelSequencePath, true /*bOverwriteExisting*/, bRes, outMsg))
+	if (auto pTrack = AddTrackToActorInLevelSequence<TrackType>(pCameraActor, true /*bOverwriteExisting*/, bRes, outMsg))
 	{
 		auto pSection = AddSectionToTrack(pTrack, EMovieSceneBlendType::Absolute, (FFrameNumber)0, initialRange.GetUpperBoundValue().Value);
 		ensure(pSection != nullptr && pSection->GetRowIndex() == 0);
@@ -1510,90 +1659,68 @@ UMovieSceneTrack* USequencerHelper::CreateTrackForParameter(ACameraActor* pCamer
 	return nullptr;
 }
 
-bool USequencerHelper::AddNewClip(ACameraActor* pCameraActor, FString levelSequencePath, const TArray<USequencerHelper::FTrackInfo> &AnimParams, TArray<TStrongObjectPtr<UMovieSceneTrack> >& OutTracks)
+bool UITwinSequencerHelper::AddNewClip(ACameraActor* pCameraActor,
+	const TArray<FTrackInfo> &AnimParams,
+	TArray<TStrongObjectPtr<UMovieSceneTrack> >& OutTracks)
 {
-	bool bRes;
+	bool bRes(false);
 	FString outMsg;
 
-	FGuid guid = AddPActorToLevelSequence(pCameraActor, levelSequencePath, bRes, outMsg);
+	FGuid guid = AddPActorToLevelSequence(pCameraActor, bRes, outMsg);
 	if (!bRes)
 		return false;
 
-	ULevelSequence* pLevelSeq = Cast<ULevelSequence>(StaticLoadObject(ULevelSequence::StaticClass(), nullptr, *levelSequencePath));
-	auto initialRange = GetTimeFrameRange(pLevelSeq, 0, 1.f/*arbitrary small value to create a non-zero section*/);
-	//pLevelSeq->MovieScene->SetPlaybackRange(initialRange);
+	UMovieScene* MovieScene = GetMovieScene();
+	if (MovieScene == nullptr)
+		return false;
+	auto initialRange = GetTimeFrameRange(*MovieScene, 0, 1.f/*arbitrary small value to create a non-zero section*/);
+	//MovieScene->SetPlaybackRange(initialRange);
 
 	OutTracks.Empty();
 	for (size_t i(0); i < AnimParams.Num(); i++)
 	{
 		auto &Info = AnimParams[i];
-		UMovieSceneTrack* pTrack(NULL);
+		UMovieSceneTrack* pTrack(nullptr);
 		switch (Info.eType)
 		{
 		case ETrackType::TT_Transform:
-			pTrack = CreateTrackForParameter<UMovieScene3DTransformTrack>(pCameraActor, levelSequencePath, initialRange, Info.sName, bRes, outMsg);
+			pTrack = CreateTrackForParameter<UMovieScene3DTransformTrack>(pCameraActor, initialRange, Info.sName, bRes, outMsg);
 			break;
 		case ETrackType::TT_Vector:
-			pTrack = CreateTrackForParameter<UMovieSceneFloatVectorTrack>(pCameraActor, levelSequencePath, initialRange, Info.sName, bRes, outMsg);
+			pTrack = CreateTrackForParameter<UMovieSceneFloatVectorTrack>(pCameraActor, initialRange, Info.sName, bRes, outMsg);
 			break;
 		case ETrackType::TT_Double:
-			pTrack = CreateTrackForParameter<UMovieSceneDoubleTrack>(pCameraActor, levelSequencePath, initialRange, Info.sName, bRes, outMsg);
+			pTrack = CreateTrackForParameter<UMovieSceneDoubleTrack>(pCameraActor, initialRange, Info.sName, bRes, outMsg);
 			break;
 		case ETrackType::TT_Float:
-			pTrack = CreateTrackForParameter<UMovieSceneFloatTrack>(pCameraActor, levelSequencePath, initialRange, Info.sName, bRes, outMsg);
+			pTrack = CreateTrackForParameter<UMovieSceneFloatTrack>(pCameraActor, initialRange, Info.sName, bRes, outMsg);
 			break;
 		case ETrackType::TT_Bool:
-			pTrack = CreateTrackForParameter<UMovieSceneBoolTrack>(pCameraActor, levelSequencePath, initialRange, Info.sName, bRes, outMsg);
+			pTrack = CreateTrackForParameter<UMovieSceneBoolTrack>(pCameraActor, initialRange, Info.sName, bRes, outMsg);
 			break;
 		case ETrackType::TT_String:
-			pTrack = CreateTrackForParameter<UMovieSceneStringTrack>(pCameraActor, levelSequencePath, initialRange, Info.sName, bRes, outMsg);
+			pTrack = CreateTrackForParameter<UMovieSceneStringTrack>(pCameraActor, initialRange, Info.sName, bRes, outMsg);
 			break;
 		default:
 			break;
 		}
-
 		OutTracks.Add(TStrongObjectPtr<UMovieSceneTrack>(pTrack));
 	}
 
 	return true;
 }
 
-float USequencerHelper::AddKeyFrameOld(ACameraActor* pCameraActor, FString levelSequencePath, FTransform mTransform, double DaysDelta, float fTime)
+float UITwinSequencerHelper::AddKeyFrame(TArray<TStrongObjectPtr<UMovieSceneTrack> >& Tracks,
+									float fTime,
+									TArray<std::optional<UITwinSequencerHelper::KFValueType> > &Values)
 {
-	ULevelSequence* pLevelSeq = Cast<ULevelSequence>(StaticLoadObject(ULevelSequence::StaticClass(), nullptr, *levelSequencePath));
-	auto iFrameNum = GetTimeFrameNum(pLevelSeq, fTime);
+	UMovieScene* MovieScene = GetMovieScene();
+	if (MovieScene == nullptr)
+		return 0.f;
 
-	bool bRes;
-	FString outMsg;
+	auto iFrameNum = GetTimeFrameNum(*MovieScene, fTime);
 
-	AddKeyFrameToActor<FTransform>(pCameraActor, levelSequencePath, 0 /*iSectionIdx*/, iFrameNum, mTransform, 0 /*iKeyInterp*/, bRes, outMsg);
-	AddKeyFrameToActor<double>(pCameraActor, levelSequencePath, 0 /*iSectionIdx*/, iFrameNum, DaysDelta, 0 /*iKeyInterp*/, bRes, outMsg);
-
-	AdjustMoviePlaybackRange(pCameraActor, levelSequencePath);
-
-	return fTime;
-}
-
-void USequencerHelper::RemoveKeyFrameOld(ACameraActor* pCameraActor, FString levelSequencePath, float fTime)
-{
-	ULevelSequence* pLevelSeq = Cast<ULevelSequence>(StaticLoadObject(ULevelSequence::StaticClass(), nullptr, *levelSequencePath));
-	auto iFrameNum = GetTimeFrameNum(pLevelSeq, fTime);
-
-	bool bRes;
-	FString outMsg;
-
-	RemoveKeyFrameFromActor<FTransform>(pCameraActor, levelSequencePath, 0 /*iSectionIdx*/, iFrameNum, bRes, outMsg);
-	RemoveKeyFrameFromActor<double>(pCameraActor, levelSequencePath, 0 /*iSectionIdx*/, iFrameNum, bRes, outMsg);
-	
-	AdjustMoviePlaybackRange(pCameraActor, levelSequencePath);
-}
-
-float USequencerHelper::AddKeyFrame(TArray<TStrongObjectPtr<UMovieSceneTrack> >& Tracks, FString levelSequencePath, float fTime, TArray<std::optional<USequencerHelper::KFValueType> > &Values)
-{
-	ULevelSequence* pLevelSeq = Cast<ULevelSequence>(StaticLoadObject(ULevelSequence::StaticClass(), nullptr, *levelSequencePath));
-	auto iFrameNum = GetTimeFrameNum(pLevelSeq, fTime);
-
-	bool bRes;
+	bool bRes(false);
 	FString outMsg;
 
 	int iSectionIdx(0); // we use only one section in each track
@@ -1606,7 +1733,7 @@ float USequencerHelper::AddKeyFrame(TArray<TStrongObjectPtr<UMovieSceneTrack> >&
 		if (!Tracks[i] || !Values[i].has_value())
 			continue;
 		UMovieSceneTrack* pTrack = Tracks[i].Get();
-		if  (pTrack->GetClass()->GetFName().Compare(TEXT("MovieScene3DTransformTrack")) == 0)
+		if (pTrack->GetClass()->GetFName().Compare(TEXT("MovieScene3DTransformTrack")) == 0)
 			AddKeyFrameToTrack<FTransform>(pTrack, iSectionIdx, iFrameNum, std::get<FTransform>(Values[i].value()), iKeyInterp, bRes, outMsg);
 		else if (pTrack->GetClass()->GetFName().Compare(TEXT("MovieSceneFloatVectorTrack")) == 0)
 			AddKeyFrameToTrack<FVector>(pTrack, iSectionIdx, iFrameNum, std::get<FVector>(Values[i].value()), iKeyInterp, bRes, outMsg);
@@ -1620,28 +1747,34 @@ float USequencerHelper::AddKeyFrame(TArray<TStrongObjectPtr<UMovieSceneTrack> >&
 			AddKeyFrameToTrack<std::string>(pTrack, iSectionIdx, iFrameNum, std::get<std::string>(Values[i].value()), iKeyInterp, bRes, outMsg);
 		else
 		{
-			BE_ASSERT(false,"Unsupoorted type of track");
+			BE_ISSUE("Unsupported type of track",
+				TCHAR_TO_UTF8(*pTrack->GetClass()->GetFName().ToString()));
 		}
 	}
 
 	return fTime;
 }
 
-void USequencerHelper::RemoveKeyFrame(TArray<TStrongObjectPtr<UMovieSceneTrack> >& Tracks, FString levelSequencePath, float fTime)
+void UITwinSequencerHelper::RemoveKeyFrame(TArray<TStrongObjectPtr<UMovieSceneTrack> >& Tracks, float fTime)
 {
-	ULevelSequence* pLevelSeq = Cast<ULevelSequence>(StaticLoadObject(ULevelSequence::StaticClass(), nullptr, *levelSequencePath));
-	auto iFrameNum = GetTimeFrameNum(pLevelSeq, fTime);
+	UMovieScene* MovieScene = GetMovieScene();
+	if (MovieScene == nullptr)
+	{
+		return;
+	}
+	auto iFrameNum = GetTimeFrameNum(*MovieScene, fTime);
 
-	bool bRes;
 	FString outMsg;
-
 	int iSectionIdx(0); // we use only one section in each track
 
-	for (size_t i(0); i < Tracks.Num(); i++)
+	for (int32 i(0); i < Tracks.Num(); i++)
 	{
 		if (!Tracks[i])
 			continue;
 		UMovieSceneTrack* pTrack = Tracks[i].Get();
+
+		// Reset per track: a failure on one track must not be masked by a previous success.
+		bool bRes = false;
 		if (pTrack->GetClass()->GetFName().Compare(TEXT("MovieScene3DTransformTrack")) == 0)
 			RemoveKeyFrameFromTrack<FTransform>(pTrack, iSectionIdx, iFrameNum, bRes, outMsg);
 		else if (pTrack->GetClass()->GetFName().Compare(TEXT("MovieSceneFloatVectorTrack")) == 0)
@@ -1656,35 +1789,20 @@ void USequencerHelper::RemoveKeyFrame(TArray<TStrongObjectPtr<UMovieSceneTrack> 
 			RemoveKeyFrameFromTrack<std::string>(pTrack, iSectionIdx, iFrameNum, bRes, outMsg);
 		else
 		{
-			BE_ASSERT(false, "Unsupoorted type of track");
+			BE_ISSUE("Unsupported type of track",
+				TCHAR_TO_UTF8(*pTrack->GetClass()->GetFName().ToString()));
+			continue;
 		}
+
+		// Silently discarding this is what let the channel-indexing bug hide: the keys
+		// were deleted but the section range was never updated, and nobody noticed.
+		if (!bRes)
+			BE_LOGW("Timeline", "RemoveKeyFrame failed on track '"
+				<< TCHAR_TO_UTF8(*pTrack->GetName()) << "' ("
+				<< TCHAR_TO_UTF8(*pTrack->GetClass()->GetFName().ToString()) << "): " << TCHAR_TO_UTF8(*outMsg));
 	}
 }
 
-void USequencerHelper::ShiftClipKFsInRangeOld(ACameraActor* pCameraActor, FString levelSequencePath, float fStartTime, float fEndTime, float fDeltaTime)
-{
-	bool bRes;
-	FString outMsg;
-	ULevelSequence* pLevelSeq = Cast<ULevelSequence>(StaticLoadObject(ULevelSequence::StaticClass(), nullptr, *levelSequencePath));
-	auto EditedKFRange = GetTimeFrameRange(pLevelSeq, fStartTime, fEndTime);
-	auto DeltaFrameNum = GetTimeFrameNum(pLevelSeq, fDeltaTime);
-	if (auto pTransSection = GetSectionFromActorInLevelSequence<UMovieScene3DTransformTrack>(pCameraActor, levelSequencePath, 0, bRes, outMsg))
-		ShiftSectionKFs<FTransform>(pTransSection, EditedKFRange, DeltaFrameNum);
-	if (auto pDateSection = GetSectionFromActorInLevelSequence<UMovieSceneDoubleTrack>(pCameraActor, levelSequencePath, 0, bRes, outMsg))
-		ShiftSectionKFs<double>(pDateSection, EditedKFRange, DeltaFrameNum);
-}
-
-void USequencerHelper::ShiftClipKFsOld(ACameraActor* pCameraActor, FString levelSequencePath, float fDeltaTime)
-{
-	bool bRes;
-	FString outMsg;
-	ULevelSequence* pLevelSeq = Cast<ULevelSequence>(StaticLoadObject(ULevelSequence::StaticClass(), nullptr, *levelSequencePath));
-	auto DeltaFrameNum = GetTimeFrameNum(pLevelSeq, fDeltaTime);
-	if (auto pTransSection = GetSectionFromActorInLevelSequence<UMovieScene3DTransformTrack>(pCameraActor, levelSequencePath, 0, bRes, outMsg))
-		ShiftSectionKFs<FTransform>(pTransSection, pTransSection->GetRange(), DeltaFrameNum);
-	if (auto pDateSection = GetSectionFromActorInLevelSequence<UMovieSceneDoubleTrack>(pCameraActor, levelSequencePath, 0, bRes, outMsg))
-		ShiftSectionKFs<double>(pDateSection, pDateSection->GetRange(), DeltaFrameNum);
-}
 
 namespace {
 
@@ -1709,7 +1827,7 @@ namespace {
 		if (ClassName == TEXT("MovieSceneBoolTrack"))        { Func(TTrackValueTag<bool>{});         return true; }
 		if (ClassName == TEXT("MovieSceneStringTrack"))      { Func(TTrackValueTag<std::string>{});  return true; }
 
-		BE_ASSERT(false, "Unsupoorted type of track");
+		BE_ISSUE("Unsupported type of track");
 		return false;
 	}
 
@@ -1755,48 +1873,57 @@ namespace {
 	}
 }
 
-void USequencerHelper::ShiftClipKFsInRange(TArray<TStrongObjectPtr<UMovieSceneTrack> >& Tracks, FString levelSequencePath, float fStartTime, float fEndTime, float fDeltaTime)
+void UITwinSequencerHelper::ShiftClipKFsInRange(TArray<TStrongObjectPtr<UMovieSceneTrack> >& Tracks, float fStartTime, float fEndTime, float fDeltaTime)
 {
-	ULevelSequence* pLevelSeq = Cast<ULevelSequence>(StaticLoadObject(ULevelSequence::StaticClass(), nullptr, *levelSequencePath));
-	auto EditedKFRange = GetTimeFrameRange(pLevelSeq, fStartTime, fEndTime);
-	auto DeltaFrameNum = GetTimeFrameNum(pLevelSeq, fDeltaTime);
+	UMovieScene const* MovieScene = GetMovieScene();
+	if (MovieScene == nullptr)
+	{
+		return;
+	}
+	auto EditedKFRange = GetTimeFrameRange(*MovieScene, fStartTime, fEndTime);
+	auto DeltaFrameNum = GetTimeFrameNum(*MovieScene, fDeltaTime);
 
 	DoShiftClipKFs(Tracks, DeltaFrameNum, EditedKFRange);
 }
 
-void USequencerHelper::ShiftClipKFs(TArray<TStrongObjectPtr<UMovieSceneTrack> >& Tracks, FString levelSequencePath, float fDeltaTime)
+void UITwinSequencerHelper::ShiftClipKFs(TArray<TStrongObjectPtr<UMovieSceneTrack> >& Tracks, float fDeltaTime)
 {
-	ULevelSequence* pLevelSeq = Cast<ULevelSequence>(StaticLoadObject(ULevelSequence::StaticClass(), nullptr, *levelSequencePath));
-	auto DeltaFrameNum = GetTimeFrameNum(pLevelSeq, fDeltaTime);
+	UMovieScene const* MovieScene = GetMovieScene();
+	if (MovieScene == nullptr)
+	{
+		return;
+	}
+	auto DeltaFrameNum = GetTimeFrameNum(*MovieScene, fDeltaTime);
 
 	DoShiftClipKFs(Tracks, DeltaFrameNum);
 }
 
-void USequencerHelper::SetClipKFsTimes(TArray<TStrongObjectPtr<UMovieSceneTrack> >& Tracks, FString levelSequencePath, const std::vector<float>& vNewTimes)
+void UITwinSequencerHelper::SetClipKFsTimes(TArray<TStrongObjectPtr<UMovieSceneTrack> >& Tracks, const std::vector<float>& vNewTimes)
 {
 	if (!ensure(vNewTimes.size() > 0))
 		return;
-	ULevelSequence* pLevelSeq = Cast<ULevelSequence>(StaticLoadObject(ULevelSequence::StaticClass(), nullptr, *levelSequencePath));
+	UMovieScene const* MovieScene = GetMovieScene();
+	if (MovieScene == nullptr)
+	{
+		return;
+	}
 	TArray<FFrameNumber> NewFrameNumbers;
 	NewFrameNumbers.Reserve(vNewTimes.size());
 	for (float Time : vNewTimes)
 	{
-		NewFrameNumbers.Add(GetTimeFrameNum(pLevelSeq, Time));
+		NewFrameNumbers.Add(GetTimeFrameNum(*MovieScene, Time));
 	}
 	DoSetClipKFsTimes(Tracks, NewFrameNumbers);
 }
 
 
-void USequencerHelper::SaveLevelSequenceAsAsset(FString levelSequencePath, const FString& PackagePath)
+void UITwinSequencerHelper::SaveLevelSequenceAsAsset(const FString& PackagePath)
 {
-	FString outMsg;
-	ULevelSequence* pLevelSeq = Cast<ULevelSequence>(StaticLoadObject(ULevelSequence::StaticClass(), nullptr, *levelSequencePath));
-	if (!pLevelSeq)
+	if (!IsInitialized())
 	{
-		BE_LOGW("Timeline", "Level sequence not found");
 		return;
 	}
-
+	ULevelSequence& LevelSeq = GetSeqChecked();
 	// Create a new package
 	UPackage* Package = CreatePackage(*PackagePath);
 	if (!Package)
@@ -1806,9 +1933,9 @@ void USequencerHelper::SaveLevelSequenceAsAsset(FString levelSequencePath, const
 	}
 
 	// Assign the LevelSequence to the package
-	FString OldName(pLevelSeq->GetName());
-	UObject* OldOuter(pLevelSeq->GetOuter());
-	pLevelSeq->Rename(*pLevelSeq->GetName(), Package);
+	FString OldName(LevelSeq.GetName());
+	UObject* OldOuter(LevelSeq.GetOuter());
+	LevelSeq.Rename(*LevelSeq.GetName(), Package);
 
 	// Mark the package dirty
 	Package->MarkPackageDirty();
@@ -1820,7 +1947,7 @@ void USequencerHelper::SaveLevelSequenceAsAsset(FString levelSequencePath, const
 	SaveArgs.TopLevelFlags = EObjectFlags::RF_Public | EObjectFlags::RF_Standalone;
 	SaveArgs.SaveFlags = SAVE_NoError;
 
-	bool bSaved = UPackage::SavePackage(Package, pLevelSeq, *FilePath, SaveArgs);
+	bool bSaved = UPackage::SavePackage(Package, &LevelSeq, *FilePath, SaveArgs);
 	if (bSaved)
 	{
 		BE_LOGI("Timeline", "LevelSequence saved to: " << TCHAR_TO_UTF8(*FilePath));
@@ -1830,5 +1957,213 @@ void USequencerHelper::SaveLevelSequenceAsAsset(FString levelSequencePath, const
 		BE_LOGE("Timeline", "Failed to save LevelSequence");
 	}
 
-	pLevelSeq->Rename(*OldName, OldOuter);
+	LevelSeq.Rename(*OldName, OldOuter);
 }
+
+#if WITH_TESTS
+
+void FSequencerHelperTestAccess::SetKeyFrameTimesInChannel(
+	FMovieSceneChannel* pChannel, const TArray<FFrameNumber>& NewFrameNumbers)
+{
+	::SetKeyFrameTimesInChannel(pChannel, NewFrameNumbers);
+}
+
+bool FSequencerHelperTestAccess::GetStringFromChannel(
+	UMovieSceneSection* pSection, int iChannelIdx, FFrameNumber iFrameNum, FString& OutValue)
+{
+	return ::GetValueFromChannel<FMovieSceneStringChannel, FString>(
+		pSection, iChannelIdx, iFrameNum, OutValue);
+}
+
+bool FSequencerHelperTestAccess::GetStdStringFromChannel(
+	UMovieSceneSection* pSection, int iChannelIdx, FFrameNumber iFrameNum, std::string& OutValue)
+{
+	return ::GetValueFromChannel<FMovieSceneStringChannel, std::string>(
+		pSection, iChannelIdx, iFrameNum, OutValue);
+}
+
+bool FSequencerHelperTestAccess::AddBoolKeyFrameToChannel(
+	UMovieSceneSection* pSection, int iChannelIdx, FFrameNumber iFrameNum, bool Value, int iKeyInterp)
+{
+	return ::AddKeyFrameToChannel<FMovieSceneBoolChannel, bool>(
+		pSection, iChannelIdx, iFrameNum, Value, iKeyInterp);
+}
+
+bool FSequencerHelperTestAccess::AddStdStringKeyFrameToChannel(
+	UMovieSceneSection* pSection, int iChannelIdx, FFrameNumber iFrameNum,
+	const std::string& Value, int iKeyInterp)
+{
+	return ::AddKeyFrameToChannel<FMovieSceneStringChannel, std::string>(
+		pSection, iChannelIdx, iFrameNum, Value, iKeyInterp);
+}
+
+bool FSequencerHelperTestAccess::AddVectorKeyFrameToSection(
+	UMovieSceneSection* pSection, FFrameNumber iFrameNum, const FVector& Value, int iKeyInterp)
+{
+	return ::AddKeyFrameToSection<FVector>(pSection, iFrameNum, Value, iKeyInterp);
+}
+
+UMovieSceneTrack* FSequencerHelperTestAccess::GetTransformTrack(const UITwinSequencerHelper& Helper,
+	AActor* pActor, bool& bOutSuccess, FString& outInfoMsg)
+{
+	return Helper.GetTrackFromActorInLevelSequence<UMovieScene3DTransformTrack>(
+		pActor, bOutSuccess, outInfoMsg);
+}
+
+UMovieSceneTrack* FSequencerHelperTestAccess::AddTransformTrack(UITwinSequencerHelper& Helper,
+	AActor* pActor, bool bOverwriteExisting, bool& bOutSuccess, FString& outInfoMsg)
+{
+	return Helper.AddTrackToActorInLevelSequence<UMovieScene3DTransformTrack>(
+		pActor, bOverwriteExisting, bOutSuccess, outInfoMsg);
+}
+
+void FSequencerHelperTestAccess::RemoveTransformTrack(UITwinSequencerHelper& Helper,
+	AActor* pActor, bool& bOutSuccess, FString& outInfoMsg)
+{
+	Helper.RemoveTrackFromActorInLevelSequence<UMovieScene3DTransformTrack>(
+		pActor, bOutSuccess, outInfoMsg);
+}
+
+UMovieSceneTrack* FSequencerHelperTestAccess::AddDoubleTrack(UITwinSequencerHelper& Helper,
+	AActor* pActor, bool bOverwriteExisting, bool& bOutSuccess, FString& outInfoMsg)
+{
+	return Helper.AddTrackToActorInLevelSequence<UMovieSceneDoubleTrack>(
+		pActor, bOverwriteExisting, bOutSuccess, outInfoMsg);
+}
+
+UMovieSceneSection* FSequencerHelperTestAccess::GetTransformSection(const UITwinSequencerHelper& Helper,
+	AActor* pActor, int iSectionIdx, bool& bOutSuccess, FString& outInfoMsg)
+{
+	return Helper.GetSectionFromActorInLevelSequence<UMovieScene3DTransformTrack>(
+		pActor, iSectionIdx, bOutSuccess, outInfoMsg);
+}
+
+UMovieSceneSection* FSequencerHelperTestAccess::AddTransformSection(UITwinSequencerHelper& Helper,
+	AActor* pActor, FFrameNumber FrameNum, EMovieSceneBlendType eBlendType,
+	bool& bOutSuccess, FString& outInfoMsg)
+{
+	return Helper.AddSectionToActorInLevelSequence<UMovieScene3DTransformTrack>(
+		pActor, FrameNum, eBlendType, bOutSuccess, outInfoMsg);
+}
+
+void FSequencerHelperTestAccess::RemoveTransformSection(UITwinSequencerHelper& Helper,
+	AActor* pActor, int iSectionIdx, bool& bOutSuccess, FString& outInfoMsg)
+{
+	Helper.RemoveSectionFromActorInLevelSequence<UMovieScene3DTransformTrack>(
+		pActor, iSectionIdx, bOutSuccess, outInfoMsg);
+}
+
+FFrameNumberRange FSequencerHelperTestAccess::AddTransformKeyFrameToActor(UITwinSequencerHelper& Helper,
+	AActor* pActor, int iSectionIdx, FFrameNumber iFrameNum,
+	const FTransform& Value, int iKeyInterp, bool& bOutSuccess, FString& outInfoMsg)
+{
+	return Helper.AddKeyFrameToActor<FTransform>(
+		pActor, iSectionIdx, iFrameNum, Value, iKeyInterp, bOutSuccess, outInfoMsg);
+}
+
+FFrameNumberRange FSequencerHelperTestAccess::AddDoubleKeyFrameToTrack(UITwinSequencerHelper& Helper,
+	UMovieSceneTrack* pTrack, int iSectionIdx, FFrameNumber iFrameNum, double Value,
+	int iKeyInterp, bool& bOutSuccess, FString& outInfoMsg)
+{
+	return Helper.AddKeyFrameToTrack<double>(
+		pTrack, iSectionIdx, iFrameNum, Value, iKeyInterp, bOutSuccess, outInfoMsg);
+}
+
+FFrameNumberRange FSequencerHelperTestAccess::RemoveTransformKeyFrameFromActor(UITwinSequencerHelper& Helper,
+	AActor* pActor, int iSectionIdx, FFrameNumber iFrameNum,
+	bool& bOutSuccess, FString& outInfoMsg)
+{
+	return Helper.RemoveKeyFrameFromActor<FTransform>(
+		pActor, iSectionIdx, iFrameNum, bOutSuccess, outInfoMsg);
+}
+
+UMovieSceneSection* FSequencerHelperTestAccess::AddDoubleSection(UITwinSequencerHelper& Helper,
+	AActor* pActor, FFrameNumber FrameNum, EMovieSceneBlendType eBlendType,
+	bool& bOutSuccess, FString& outInfoMsg)
+{
+	return Helper.AddSectionToActorInLevelSequence<UMovieSceneDoubleTrack>(
+		pActor, FrameNum, eBlendType, bOutSuccess, outInfoMsg);
+}
+
+FFrameNumberRange FSequencerHelperTestAccess::RemoveDoubleKeyFrameFromActor(UITwinSequencerHelper& Helper,
+	AActor* pActor, int iSectionIdx, FFrameNumber iFrameNum,
+	bool& bOutSuccess, FString& outInfoMsg)
+{
+	return Helper.RemoveKeyFrameFromActor<double>(
+		pActor, iSectionIdx, iFrameNum, bOutSuccess, outInfoMsg);
+}
+
+UMovieSceneTrack* FSequencerHelperTestAccess::AddFloatTrack(UITwinSequencerHelper& Helper,
+	AActor* pActor, bool bOverwriteExisting, bool& bOutSuccess, FString& outInfoMsg)
+{
+	return Helper.AddTrackToActorInLevelSequence<UMovieSceneFloatTrack>(
+		pActor, bOverwriteExisting, bOutSuccess, outInfoMsg);
+}
+
+UMovieSceneSection* FSequencerHelperTestAccess::AddFloatSection(UITwinSequencerHelper& Helper,
+	AActor* pActor, FFrameNumber FrameNum, EMovieSceneBlendType eBlendType,
+	bool& bOutSuccess, FString& outInfoMsg)
+{
+	return Helper.AddSectionToActorInLevelSequence<UMovieSceneFloatTrack>(
+		pActor, FrameNum, eBlendType, bOutSuccess, outInfoMsg);
+}
+
+FFrameNumberRange FSequencerHelperTestAccess::AddFloatKeyFrameToTrack(UITwinSequencerHelper& Helper,
+	UMovieSceneTrack* pTrack, int iSectionIdx, FFrameNumber iFrameNum, float Value,
+	int iKeyInterp, bool& bOutSuccess, FString& outInfoMsg)
+{
+	return Helper.AddKeyFrameToTrack<float>(
+		pTrack, iSectionIdx, iFrameNum, Value, iKeyInterp, bOutSuccess, outInfoMsg);
+}
+
+UMovieSceneTrack* FSequencerHelperTestAccess::AddBoolTrack(UITwinSequencerHelper& Helper,
+	AActor* pActor, bool bOverwriteExisting, bool& bOutSuccess, FString& outInfoMsg)
+{
+	return Helper.AddTrackToActorInLevelSequence<UMovieSceneBoolTrack>(
+		pActor, bOverwriteExisting, bOutSuccess, outInfoMsg);
+}
+
+UMovieSceneSection* FSequencerHelperTestAccess::AddBoolSection(UITwinSequencerHelper& Helper,
+	AActor* pActor, FFrameNumber FrameNum, EMovieSceneBlendType eBlendType,
+	bool& bOutSuccess, FString& outInfoMsg)
+{
+	return Helper.AddSectionToActorInLevelSequence<UMovieSceneBoolTrack>(
+		pActor, FrameNum, eBlendType, bOutSuccess, outInfoMsg);
+}
+
+FFrameNumberRange FSequencerHelperTestAccess::AddBoolKeyFrameToTrack(UITwinSequencerHelper& Helper,
+	UMovieSceneTrack* pTrack, int iSectionIdx, FFrameNumber iFrameNum, bool Value,
+	int iKeyInterp, bool& bOutSuccess, FString& outInfoMsg)
+{
+	return Helper.AddKeyFrameToTrack<bool>(
+		pTrack, iSectionIdx, iFrameNum, Value, iKeyInterp, bOutSuccess, outInfoMsg);
+}
+
+UMovieSceneTrack* FSequencerHelperTestAccess::AddStringTrack(UITwinSequencerHelper& Helper,
+	AActor* pActor, bool bOverwriteExisting, bool& bOutSuccess, FString& outInfoMsg)
+{
+	return Helper.AddTrackToActorInLevelSequence<UMovieSceneStringTrack>(
+		pActor, bOverwriteExisting, bOutSuccess, outInfoMsg);
+}
+
+UMovieSceneSection* FSequencerHelperTestAccess::AddStringSection(UITwinSequencerHelper& Helper,
+	AActor* pActor, FFrameNumber FrameNum, EMovieSceneBlendType eBlendType,
+	bool& bOutSuccess, FString& outInfoMsg)
+{
+	return Helper.AddSectionToActorInLevelSequence<UMovieSceneStringTrack>(
+		pActor, FrameNum, eBlendType, bOutSuccess, outInfoMsg);
+}
+
+FFrameNumberRange FSequencerHelperTestAccess::AddStringKeyFrameToTrack(UITwinSequencerHelper& Helper,
+	UMovieSceneTrack* pTrack, int iSectionIdx, FFrameNumber iFrameNum,
+	const std::string& Value, int iKeyInterp, bool& bOutSuccess, FString& outInfoMsg)
+{
+	return Helper.AddKeyFrameToTrack<std::string>(
+		pTrack, iSectionIdx, iFrameNum, Value, iKeyInterp, bOutSuccess, outInfoMsg);
+}
+
+#endif // WITH_TESTS
+
+#undef ITWIN_CHECK_MOVIE_SCENE_OR_RETURN_VOID
+#undef ITWIN_CHECK_MOVIE_SCENE_OR_RETURN
+#undef ITWIN_CHECK_MOVIE_SCENE_OR_EXEC

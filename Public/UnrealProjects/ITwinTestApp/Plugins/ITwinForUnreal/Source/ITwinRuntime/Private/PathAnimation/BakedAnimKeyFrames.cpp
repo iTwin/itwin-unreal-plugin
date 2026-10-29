@@ -11,6 +11,7 @@
 #include <Components/SplineComponent.h>
 #include <Math/UEMathConversion.h>
 #include <EngineUtils.h> // for TActorIterator<>
+#include <HAL/PlatformTime.h>
 #include <ITwinIModel.h>
 #include <ITwinRealityData.h>
 #include <ProfilingDebugging/CpuProfilerTrace.h>
@@ -22,8 +23,9 @@
 #include <Compil/AfterNonUnrealIncludes.h>
 
 
+float UBakedAnimKeyFrames::BakedFramesStep = 50.f; // 50 cm between the baked frames
 
-namespace
+namespace PathAnimHelpers
 {
 bool FindHeight(UWorld* World, const FVector& InPos, float& OutHeight, FVector& OutNormal, float maxHeight = 1000)
 {
@@ -72,6 +74,166 @@ bool FindHeight(UWorld* World, const FVector& InPos, float& OutHeight, FVector& 
 	OutNormal = FVector::UpVector;
 	return false;
 }
+
+bool HasCurvedIntervals(const USplineComponent* Spline)
+{
+	const float DirectionTolerance = 0.9999f;
+	// Iterate over all spline points
+	for (int32 i = 0; i < Spline->GetNumberOfSplinePoints() - 1; ++i)
+	{
+		const FVector P0 = Spline->GetLocationAtSplinePoint(i, ESplineCoordinateSpace::Local);
+		const FVector P1 = Spline->GetLocationAtSplinePoint(i + 1, ESplineCoordinateSpace::Local);
+
+		const FVector Chord = P1 - P0;
+		const float ChordLengthSq = Chord.SizeSquared();
+
+		if (ChordLengthSq < SMALL_NUMBER)
+			continue;
+
+		const FVector Direction = Chord.GetSafeNormal();
+
+		const FVector T0 = Spline->GetTangentAtSplinePoint(i, ESplineCoordinateSpace::Local).GetSafeNormal();
+		const FVector T1 = Spline->GetTangentAtSplinePoint(i + 1, ESplineCoordinateSpace::Local).GetSafeNormal();
+
+		// Check if tangents point in the same direction as the segment
+		if (FVector::DotProduct(T0, Direction) < DirectionTolerance ||
+			FVector::DotProduct(T1, Direction) < DirectionTolerance)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+bool IsValidSplineLength(float SplineLength)
+{
+	constexpr float MaxReasonableSplineLength = 2'000'000.0f; // 20 km
+	return FMath::IsFinite(SplineLength) && SplineLength >= 1.f && SplineLength <= MaxReasonableSplineLength;
+}
+
+bool IsValidSpline(const FSplineCurves& SplineCurves)
+{
+	return IsValidSplineLength(SplineCurves.GetSplineLength());
+}
+
+void SampleSpline(const FSplineCurves& SplineCurves, FTransform ComponentToWorld, float SamplingStep, TArray<FVector> &OutPositions, TArray<FVector>& OutDirections)
+{
+	float SplineLength = SplineCurves.GetSplineLength();
+	OutPositions.SetNumUninitialized(FMath::CeilToInt(SplineLength / SamplingStep) + 1);
+	OutDirections.SetNumUninitialized(FMath::CeilToInt(SplineLength / SamplingStep) + 1);
+	float Distance = 0.0f;
+	int Index = 0;
+	while (true)
+	{
+		const float InputKey = SplineCurves.ReparamTable.Eval(Distance);
+		OutPositions[Index] = ComponentToWorld.TransformPosition(SplineCurves.Position.Eval(InputKey));
+		OutDirections[Index] = ComponentToWorld.TransformVectorNoScale(SplineCurves.Position.EvalDerivative(InputKey)).GetSafeNormal();
+
+		//if (OutDirections[Index].IsNearlyZero())
+		//{
+		//	// The tangents of the first and last points can be 0. In this case we
+		//	// compute forward direction from nearby input keys.
+		//	const float DeltaKey = 0.001f;
+		//	const float Key0 = FMath::Max(0.0f, InputKey - DeltaKey);
+		//	const float Key1 = FMath::Min(static_cast<float>(SplineCurves.Position.Points.Num() - 1), InputKey + DeltaKey);
+		//	OutDirections[Index] = (SplineCurves.Position.Eval(Key1) - SplineCurves.Position.Eval(Key0)).GetSafeNormal();
+		//}
+
+		Index++;
+
+		if (Distance >= SplineLength)
+			break;
+		Distance += SamplingStep;
+	}
+	OutPositions.SetNum(Index);
+	OutDirections.SetNum(Index);
+	// Hack to avoid zero tangents at the start and end of the spline when 
+	// the tangents of the first and last points are 0.
+	if (OutDirections[0].IsNearlyZero())
+		OutDirections[0] = OutDirections[1];
+	if (OutDirections.Last().IsNearlyZero())
+		OutDirections.Last() = OutDirections[OutDirections.Num() - 2];
+}
+
+void PrecomputeKeyFrames(UWorld* World, const TArray<FVector>& InPositions, const TArray<FVector>& InDirections, float InSamplingStep, float InSpeed, float InOffset, TArray<FTransform>& OutTransforms, float OutTotalLength)
+{
+	OutTotalLength = (InPositions.Num() - 1) * InSamplingStep;
+
+	bool isLaneWithOffset = (FMath::Abs(InOffset) > KINDA_SMALL_NUMBER);
+	int32 EstimatedKeyframes = FMath::CeilToInt(OutTotalLength / UBakedAnimKeyFrames::GetBakedFramesStep()) + 1;
+	if (isLaneWithOffset)
+		EstimatedKeyframes *= 2;
+	OutTransforms.SetNumUninitialized(EstimatedKeyframes);
+
+	// Apply alignment fix (Y+ to X+ correction, currently required for all vehicle
+	// content items except articulated ones)
+	FQuat AlignmentFix = FQuat(FVector::UpVector, 3 * PI / 2);
+
+	FVector PrevLocation = InPositions[0];
+	float CurrentDistance = 0.0f;
+	float AccumulatedDistance = 0.0f;
+	float NextFrameDistance = 0.0f;
+	int32 Index = 0;
+	for (int32 i = 0; i < InPositions.Num(); ++i)
+	{
+		FVector SplineLocation = InPositions[i];
+		FVector SplineTangent = InDirections[i];
+		FVector SplineRight = FVector::CrossProduct(SplineTangent, FVector::UpVector).GetSafeNormal();
+		if (isLaneWithOffset)
+		{
+			SplineLocation = SplineLocation + SplineRight * InOffset;
+			if (i > 0)
+				AccumulatedDistance += FVector::Dist(PrevLocation, SplineLocation);
+			PrevLocation = SplineLocation;
+			if (AccumulatedDistance < NextFrameDistance)
+			{
+				// Skip this frame, we haven't reached the next step yet
+				continue;
+			}
+		}
+
+		// Ground height and normal
+		float GroundZ = 0.0f;
+		FVector GroundNormal = FVector::UpVector;
+		//FVector TracePosition = SplineLocation + FVector(0, 0, 500); // trace from above
+		if (FindHeight(World, SplineLocation/*TracePosition*/, GroundZ, GroundNormal, 200)) // limit to 2m to avoid snapping to bridges
+		{
+			SplineLocation.Z = GroundZ;
+		}
+
+		// Build orientation
+		FVector Forward = SplineTangent;
+		FVector Up = GroundNormal;
+		FVector Right = FVector::CrossProduct(Up, Forward).GetSafeNormal();
+		FVector AlignedForward = FVector::CrossProduct(Right, Up).GetSafeNormal();
+
+		// World orientation based on spline and surface
+		FMatrix Basis(AlignedForward, Right, Up, FVector::ZeroVector);
+		FQuat WorldRotation = FQuat(Basis);
+		FQuat FinalRotation = WorldRotation * AlignmentFix;
+
+		// Add new transform keyframe
+		FTransform Keyframe(FinalRotation, SplineLocation);
+		OutTransforms[Index++] = Keyframe;
+		NextFrameDistance += UBakedAnimKeyFrames::GetBakedFramesStep();
+	}
+
+	OutTransforms.SetNum(Index);
+
+	// If offset is used, total path length might be different from the spline length
+	if (isLaneWithOffset)
+		OutTotalLength = AccumulatedDistance;
+}
+
+} // namespace PathAnimHelpers
+
+void UBakedAnimKeyFrames::CopyFromData(int32 InLaneIdx, float InSpeed, float InTotalLength, const TArray<FTransform>& InTransforms)
+{
+	LaneIdx = InLaneIdx;
+	TotalLength = InTotalLength;
+	TotalTime = InTotalLength / InSpeed;
+	Transforms = InTransforms;
+	Status = Transforms.Num() > 0 ? EBakedKeyFramesStatus::Ready : EBakedKeyFramesStatus::Invalid;
 }
 
 void UBakedAnimKeyFrames::MarkForUpdate()
@@ -81,12 +243,12 @@ void UBakedAnimKeyFrames::MarkForUpdate()
 
 bool UBakedAnimKeyFrames::NeedsUpdate() const
 {
-	return Status == EBakedKeyFramesStatus::NeedsUpdate;
+	return Status == EBakedKeyFramesStatus::NeedsUpdate || Status == EBakedKeyFramesStatus::Invalid;
 }
 
 bool UBakedAnimKeyFrames::IsReady() const
 {
-	return Status == EBakedKeyFramesStatus::Ready && transforms.Num() > 0;
+	return Status == EBakedKeyFramesStatus::Ready && Transforms.Num() > 0;
 }
 
 float UBakedAnimKeyFrames::GetTotalTime() const
@@ -110,10 +272,18 @@ void UBakedAnimKeyFrames::SetSpeed(float InSpeed)
 		TotalTime = TotalLength / InSpeed;
 }
 
-void UBakedAnimKeyFrames::BakeSpline(UWorld* World, const AdvViz::SDK::RefID& SplineId, float InSpeed, int32 InLaneIdx, std::optional<float> InOffset)
+void UBakedAnimKeyFrames::BakeSpline(UWorld* World, const AdvViz::SDK::RefID& SplineId, float InSpeed, int32 InLaneIdx, float InOffset)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(BakedAnimKeyFrames_BakeSpline);
+	const double BakeStartTime = FPlatformTime::Seconds();
+	auto LogBakeDuration = [BakeStartTime](const char* Outcome)
+		{
+			const double ElapsedMs = (FPlatformTime::Seconds() - BakeStartTime) * 1000.0;
+			BE_LOGI("App", "BakeSpline benchmark (" << Outcome << "): " << ElapsedMs << " ms");
+		};
+
 	Status = EBakedKeyFramesStatus::InProgress;
-	transforms.Empty();
+	Transforms.Empty();
 
 	auto AnimSpline = [World, SplineId]() -> AITwinSplineHelper*
 		{
@@ -128,6 +298,7 @@ void UBakedAnimKeyFrames::BakeSpline(UWorld* World, const AdvViz::SDK::RefID& Sp
 	if (!AnimSpline || InSpeed <= 0.0f)
 	{
 		Status = EBakedKeyFramesStatus::Invalid;
+		LogBakeDuration("invalid input");
 		return;
 	}
 
@@ -135,33 +306,40 @@ void UBakedAnimKeyFrames::BakeSpline(UWorld* World, const AdvViz::SDK::RefID& Sp
 	if (!UESpline)
 	{
 		Status = EBakedKeyFramesStatus::Invalid;
+		LogBakeDuration("missing spline component");
 		return;
 	}
 
 	LaneIdx = InLaneIdx;
 
-	constexpr float MaxReasonableSplineLength = 2'000'000.0f; // 20 km
-
 	TotalLength = UESpline->GetSplineLength(); // in cm
 	BE_LOGI("App", "Processing animation spline of length " << TotalLength);
-	// Check whether the spline is not too short or corrupted (we set a limit of 20 km here)
-	if (!FMath::IsFinite(TotalLength) || TotalLength < 0.01f || TotalLength > MaxReasonableSplineLength)
+	if (!PathAnimHelpers::IsValidSplineLength(TotalLength))
 	{
 		BE_LOGI("App", "Invalid spline, animation baking cancelled");
 		Status = EBakedKeyFramesStatus::Invalid;
+		LogBakeDuration("invalid spline length");
 		return;
 	}
 
+	bool isLaneWithOffset = (FMath::Abs(InOffset) > KINDA_SMALL_NUMBER);
 	int32 EstimatedKeyframes = FMath::CeilToInt(TotalLength / BakedFramesStep) + 1;
-	if (InOffset.has_value())
+	if (isLaneWithOffset)
 		EstimatedKeyframes *= 2;
-	transforms.SetNumUninitialized(EstimatedKeyframes);
+	Transforms.SetNumUninitialized(EstimatedKeyframes);
+
+	// Apply alignment fix (Y+ to X+ correction, currently required for all vehicle
+	// content items except articulated ones)
+	FQuat AlignmentFix = FQuat(FVector::UpVector, 3 * PI / 2);
 
 	FVector PrevLocation = UESpline->GetLocationAtDistanceAlongSpline(0.0f, ESplineCoordinateSpace::World);
 	float CurrentDistance = 0.0f;
 	float AccumulatedDistance = 0.0f;
 	float NextFrameDistance = 0.0f;
-	float DistanceStep = InOffset.has_value() ? 0.1f : BakedFramesStep;
+	// For lanes with offset, we use a smaller step to ensure we trace a smooth curve
+	// along the central spline (otherwise it might lead to visual inconsistencies 
+	// with multi-lane paths at sharp turns)
+	float DistanceStep = UBakedAnimKeyFrames::GetSamplingStep(PathAnimHelpers::HasCurvedIntervals(UESpline), isLaneWithOffset);
 	int32 Index = 0;
 	while (CurrentDistance <= TotalLength)
 	{
@@ -170,30 +348,29 @@ void UBakedAnimKeyFrames::BakeSpline(UWorld* World, const AdvViz::SDK::RefID& Sp
 		FVector SplineTangent = UESpline->GetTangentAtDistanceAlongSpline(CurrentDistance, ESplineCoordinateSpace::World).GetSafeNormal();
 		FVector SplineRight = UESpline->GetRightVectorAtDistanceAlongSpline(CurrentDistance, ESplineCoordinateSpace::World);
 
-		if (InOffset.has_value())
-			SplineLocation = SplineLocation + SplineRight * InOffset.value();
-
-		// Ground height and normal
-		float GroundZ = 0.0f;
-		FVector GroundNormal = FVector::UpVector;
-
-		//FVector TracePosition = SplineLocation + FVector(0, 0, 500); // trace from above
-		if (FindHeight(World, SplineLocation/*TracePosition*/, GroundZ, GroundNormal, 200)) // limit to 2m to avoid snapping to bridges
+		if (isLaneWithOffset)
 		{
-			SplineLocation.Z = GroundZ;
-		}
+			SplineLocation = SplineLocation + SplineRight * InOffset;
 
-		if (InOffset.has_value())
-		{
 			if (CurrentDistance > 0.0f)
 				AccumulatedDistance += FVector::Dist(PrevLocation, SplineLocation);
 			PrevLocation = SplineLocation;
+
 			if (AccumulatedDistance < NextFrameDistance)
 			{
 				// Skip this frame, we haven't reached the next step yet
 				CurrentDistance += DistanceStep;
 				continue;
 			}
+		}
+
+		// Ground height and normal
+		float GroundZ = 0.0f;
+		FVector GroundNormal = FVector::UpVector;
+		//FVector TracePosition = SplineLocation + FVector(0, 0, 500); // trace from above
+		if (PathAnimHelpers::FindHeight(World, SplineLocation/*TracePosition*/, GroundZ, GroundNormal, 200)) // limit to 2m to avoid snapping to bridges
+		{
+			SplineLocation.Z = GroundZ;
 		}
 		
 		// Build orientation
@@ -205,28 +382,26 @@ void UBakedAnimKeyFrames::BakeSpline(UWorld* World, const AdvViz::SDK::RefID& Sp
 		// World orientation based on spline and surface
 		FMatrix Basis(AlignedForward, Right, Up, FVector::ZeroVector);
 		FQuat WorldRotation = FQuat(Basis);
-
-		// Apply alignment fix (Y+ to X+ correction, currently required for all vehicle content items)
-		FQuat AlignmentFix = FQuat(FVector::UpVector, 3 * PI / 2);
 		FQuat FinalRotation = WorldRotation * AlignmentFix;
 
 		// Add new transform keyframe
 		FTransform Keyframe(FinalRotation, SplineLocation);
-		transforms[Index++] = Keyframe;
+		Transforms[Index++] = Keyframe;
 
 		NextFrameDistance += BakedFramesStep;
 		CurrentDistance += DistanceStep;
 	}
 
-	transforms.SetNum(Index);
+	Transforms.SetNum(Index);
 
 	// If offset is used, total path length might be different from the spline length
-	if (InOffset.has_value())
+	if (isLaneWithOffset)
 		TotalLength = AccumulatedDistance;
-	BE_LOGI("App", "Successfully baked " << Index << " keyframes for lane " << LaneIdx << ", final lane length is " << TotalLength);
+	BE_LOGI("App", "Successfully baked " << Index << " keyframes for lane " << LaneIdx << ", final lane length is " << 0.01*TotalLength << "m");
 	TotalTime = TotalLength / InSpeed;
 
-	Status = transforms.Num() > 0 ? EBakedKeyFramesStatus::Ready : EBakedKeyFramesStatus::Invalid;
+	Status = Transforms.Num() > 0 ? EBakedKeyFramesStatus::Ready : EBakedKeyFramesStatus::Invalid;
+	LogBakeDuration(Status == EBakedKeyFramesStatus::Ready ? "ready" : "invalid (no keyframes)");
 }
 
 int32 UBakedAnimKeyFrames::GetKeyframeIndex(float Time)
@@ -234,8 +409,8 @@ int32 UBakedAnimKeyFrames::GetKeyframeIndex(float Time)
 	if (!IsReady())
 		return -1;
 
-	int32 Index = FMath::FloorToInt((transforms.Num() - 1) * Time / TotalTime);
-	return FMath::Clamp(Index, 0, transforms.Num() - 2); // -2 to allow interpolation with next frame
+	int32 Index = FMath::FloorToInt((Transforms.Num() - 1) * Time / TotalTime);
+	return FMath::Clamp(Index, 0, Transforms.Num() - 2); // -2 to allow interpolation with next frame
 }
 
 FTransform UBakedAnimKeyFrames::GetTransform(float Time, bool bNeedAlignmentFix, bool bReverse)
@@ -251,18 +426,18 @@ FTransform UBakedAnimKeyFrames::GetTransform(float Time, bool bNeedAlignmentFix,
 	float IndexFloat(0.f);
 	if (bReverse)
 	{
-		IndexFloat = (transforms.Num() - 1) * (TotalTime-Time) / TotalTime;
+		IndexFloat = (Transforms.Num() - 1) * (TotalTime-Time) / TotalTime;
 	}
 	else
 	{
-		IndexFloat = (transforms.Num() - 1) * Time / TotalTime;
+		IndexFloat = (Transforms.Num() - 1) * Time / TotalTime;
 	}
 	int32 Index = FMath::FloorToInt(IndexFloat);
-	int32 IndexNext = FMath::Clamp(Index + 1, 0, transforms.Num() - 1);
+	int32 IndexNext = FMath::Clamp(Index + 1, 0, Transforms.Num() - 1);
 	float Alpha = IndexFloat - (float)Index;
 
-	const FTransform& A = transforms[Index];
-	const FTransform& B = transforms[IndexNext];
+	const FTransform& A = Transforms[Index];
+	const FTransform& B = Transforms[IndexNext];
 
 	FVector Location = FMath::Lerp(
 		A.GetLocation(),

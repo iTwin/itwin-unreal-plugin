@@ -106,7 +106,8 @@ namespace AdvViz::SDK::Json {
 
 	template<typename Type>
 	inline bool LoadFile(Type& t, const std::filesystem::path& jsonPath, std::string &parseError) {
-		if (!std::filesystem::exists(jsonPath))
+		std::error_code ec;
+		if (!std::filesystem::exists(jsonPath, ec))
 		{
 			BE_LOGE("json", "Content JSON file does not exist:" << jsonPath.string());
 			return false;

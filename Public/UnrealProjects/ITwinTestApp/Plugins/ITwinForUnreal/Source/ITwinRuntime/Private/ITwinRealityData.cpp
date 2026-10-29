@@ -232,7 +232,7 @@ void AITwinRealityData::UpdateRealityData()
 		}
 		return;
 	}
-	if (CheckServerConnection() != AdvViz::SDK::EITwinAuthStatus::Success)
+	if (CheckAuthorizationStatus() != AdvViz::SDK::EITwinAuthStatus::Success)
 	{
 		// No authorization yet: postpone the actual update (see UpdateOnSuccessfulAuthorization)
 		return;

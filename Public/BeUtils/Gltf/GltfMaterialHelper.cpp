@@ -132,6 +132,16 @@ AdvViz::SDK::ITwinColor MaterialDefinitionAccess::GetColor(AdvViz::SDK::EChannel
 		return GltfMaterialHelper::GetChannelDefaultColor(channel, {});
 }
 
+bool MaterialDefinitionAccess::UseSrgbColorSpace() const
+{
+	if (customMaterial)
+	{
+		return customMaterial->useSrgbColorSpace;
+	}
+	// Keep default sRGB conversion for iModel RenderMaterials.
+	return true;
+}
+
 AdvViz::SDK::ITwinChannelMap MaterialDefinitionAccess::GetIntensityMap(AdvViz::SDK::EChannelType channel) const
 {
 	auto const intensityMapOpt = TGetValue<AdvViz::SDK::ITwinChannelMap>(channel,
@@ -920,6 +930,27 @@ void GltfMaterialHelper::SetChannelColor(uint64_t matID, AdvViz::SDK::EChannelTy
 	TSetChannelParam(colorSetter, matID, bValueModified);
 }
 
+bool GltfMaterialHelper::UseSrgbColorSpace(uint64_t matID, RWLockBase const& lock) const
+{
+	return GetMaterialDefinitionAccess(matID, lock).UseSrgbColorSpace();
+}
+
+bool GltfMaterialHelper::UseSrgbColorSpace(uint64_t matID) const
+{
+	RLock lock(mutex_);
+	return UseSrgbColorSpace(matID, lock);
+}
+
+void GltfMaterialHelper::SetUseSrgbColorSpace(uint64_t matID, bool bUseSrgb)
+{
+	WLock lock(mutex_);
+	auto itMat = materialMap_.find(matID);
+	if (itMat != materialMap_.end())
+	{
+		AdvViz::SDK::ITwinMaterial& matDefinition = itMat->second.customMaterialDefinition_;
+		matDefinition.useSrgbColorSpace = bUseSrgb;
+	}
+}
 
 /*static*/
 AdvViz::SDK::ITwinChannelMap GltfMaterialHelper::GetChannelDefaultIntensityMap(AdvViz::SDK::EChannelType /*channel*/,
@@ -1228,12 +1259,17 @@ bool GltfMaterialHelper::GetMaterialFullDefinition(uint64_t matID, AdvViz::SDK::
 
 void GltfMaterialHelper::SetMaterialFullDefinition(uint64_t matID,
 												   AdvViz::SDK::ITwinMaterial const& matDefinition,
-												   WLock const&)
+												   WLock const& lock)
 {
 	auto itMat = materialMap_.find(matID);
 	if (itMat != materialMap_.end())
 	{
 		itMat->second.customMaterialDefinition_ = matDefinition;
+		// Refresh the cached alpha mode (if already computed) so that it matches the new definition.
+		if (!itMat->second.currentAlphaMode_.empty())
+		{
+			UpdateCurrentAlphaMode(matID, std::nullopt, lock);
+		}
 	}
 	if (persistenceMngr_)
 	{

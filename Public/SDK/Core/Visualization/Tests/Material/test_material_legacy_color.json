@@ -1,0 +1,10 @@
+{
+    "id": "2199023255739_ff4fc2bf-74b2-4a3d-8549-1758cdfd4fb7",
+    "displayName": "Legacy Grey",
+    "type": "PBR",
+    "color": "#3E3E3E",
+    "albedoMapFactor": 1.0,
+    "roughness": 0.5,
+    "metallic": 0.0,
+    "opacity": 1.0
+}

@@ -20,6 +20,8 @@
 #	include <SDK/Core/Visualization/ConstantIDs.h>
 #include <ITwinRuntime/Private/Compil/AfterNonUnrealIncludes.h>
 
+#include "ITwinModelType.generated.h"
+
 //! A "model" designates any dataset that can be loaded by the plugin.
 UENUM(BlueprintType)
 enum class EITwinModelType : uint8

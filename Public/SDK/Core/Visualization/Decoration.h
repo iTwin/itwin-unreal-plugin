@@ -31,7 +31,7 @@ namespace AdvViz::SDK
 		/// Delete the decoration on server
 		virtual void Delete() = 0;
 		/// Get decoration identifier
-		virtual const std::string& GetId() = 0;
+		virtual const std::string& GetId() const = 0;
 
 		virtual void SetGCSTransform(const Tools::IGCSTransformPtr& transform) = 0;
 		virtual const Tools::IGCSTransformPtr& GetGCSTransform() const = 0;
@@ -54,7 +54,7 @@ namespace AdvViz::SDK
 		/// Delete the decoration on server
 		void Delete() override;
 		/// Get decoration identifier
-		const std::string& GetId() override;
+		const std::string& GetId() const override;
 
 		/// Set Geo Coordinate System
 		void SetGCS(const GCS& v) override;

@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include <ITwinEnvironmentEnum.h>
 #include <ITwinHttpUtils.h>
 
 #include <GameFramework/Actor.h>
@@ -16,8 +17,6 @@
 #include <Logging/LogMacros.h>
 #include <UObject/Object.h>
 
-#include <array>
-#include <string>
 #include <memory>
 
 #include <ITwinServerConnection.generated.h>
@@ -25,30 +24,6 @@
 namespace AdvViz::SDK
 {
 	class ThreadSafeAccessToken;
-}
-
-UENUM()
-enum class EITwinEnvironment : uint8
-{
-	Prod,
-	QA,
-	Dev,
-	Invalid,
-};
-
-UENUM()
-enum class EITwinSceneService : uint8
-{
-	DecorationService,
-	SceneAPI,
-	Invalid,
-};
-
-namespace ITwin
-{
-	// App ID can be depend on the chosen environment, so we store all possible values
-	static constexpr size_t ENV_COUNT = static_cast<size_t>(EITwinEnvironment::Invalid) + 1;
-	using AppIDArray = std::array<std::string, ENV_COUNT>;
 }
 
 //! Stores common information used to access the iTwin Web APIs.
@@ -63,10 +38,6 @@ public:
 	UPROPERTY(Category = "iTwin",
 		EditAnywhere)
 	EITwinEnvironment Environment = EITwinEnvironment::Invalid;
-
-	UPROPERTY(Category = "iTwin",
-		EditAnywhere, meta = (DeprecatedProperty))
-	EITwinSceneService SceneService = EITwinSceneService::Invalid;
 
 	UPROPERTY(Category = "iTwin",
 		EditAnywhere)
@@ -84,6 +55,7 @@ public:
 	FString GetAccessToken() const;
 
 	static std::shared_ptr<AdvViz::SDK::ThreadSafeAccessToken> GetAccessTokenPtrForEnv(EITwinEnvironment Environment);
+	static FString GetAccessTokenStringForEnv(EITwinEnvironment Environment);
 	std::shared_ptr<AdvViz::SDK::ThreadSafeAccessToken> GetAccessTokenPtr() const;
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin")
@@ -96,6 +68,13 @@ public:
 		CallInEditor,
 		BlueprintCallable)
 	void FillAuthorizationURL();
+
+	//! Resets the current authorization, if any, as well as the cache, so that the next session displays the
+	//! login prompt.
+	UFUNCTION(Category = "iTwin",
+		CallInEditor,
+		BlueprintCallable)
+	void Logout();
 
 	//! Sets the app ID for all environments.
 	//! This function is useful only for Bentley apps, which may use non-Prod envs.
@@ -110,12 +89,6 @@ public:
 	//! Sets the port for the redirect Uri used in authorization process (the default port is 3000).
 	UFUNCTION(BlueprintCallable, Category = "iTwin")
 	static void SetAuthRedirectUriPort(int Port);
-	//! Resets the current authorization, if any, as well as the cache, so that the next session displays the
-	//! login prompt.
-	UFUNCTION(Category = "iTwin",
-		CallInEditor,
-		BlueprintCallable)
-	static void Logout();
 };
 
 DECLARE_LOG_CATEGORY_EXTERN(LogITwinHttp, Log, All);

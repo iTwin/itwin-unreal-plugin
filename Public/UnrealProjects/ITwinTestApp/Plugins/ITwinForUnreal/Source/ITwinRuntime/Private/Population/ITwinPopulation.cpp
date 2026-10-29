@@ -18,16 +18,17 @@
 
 #include <Blueprint/WidgetLayoutLibrary.h>
 #include <DrawDebugHelpers.h>
-#include "Materials/MaterialInstanceConstant.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/StaticMeshActor.h"
-#include "Kismet/GameplayStatics.h"
-#include "Materials/Material.h"
-#include "Materials/MaterialInstanceDynamic.h"
-#include "MeshDescription.h"
-#include "Kismet/KismetSystemLibrary.h"
 #include <HttpModule.h>
 #include <Interfaces/IHttpResponse.h>
+#include "Kismet/GameplayStatics.h"
+#include "Kismet/KismetSystemLibrary.h"
+#include "Materials/Material.h"
+#include "Materials/MaterialInstanceConstant.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "MeshDescription.h"
+#include <Misc/EngineVersionComparison.h>
 #include <Policies/CondensedJsonPrintPolicy.h>
 #include <Policies/PrettyJsonPrintPolicy.h>
 #include <Serialization/JsonReader.h>
@@ -57,23 +58,54 @@ namespace ITwin::Clipping
 // struct FITwinFoliageComponentHolder
 //---------------------------------------------------------------------------------------
 
-void FITwinFoliageComponentHolder::InitWithMasterMesh(AITwinPopulation& PopulationActor, UStaticMesh* Mesh)
+namespace
 {
+	FString BuildPopulationLoadingErrorMessage(const FString& BaseMessage,
+		const FString& AssetPath,
+		int32 MeshIndex = -1)
+	{
+		FString Error = BaseMessage;
+		if (MeshIndex >= 0)
+		{
+			Error += FString::Printf(TEXT(" (mesh index: %d)"), MeshIndex);
+		}
+		Error += FString::Printf(TEXT(" from %s"), *AssetPath);
+		return Error;
+	}
+}
+
+bool FITwinFoliageComponentHolder::InitWithMasterMesh(AITwinPopulation& PopulationActor,
+	UStaticMesh* Mesh,
+	const FString& AssetPath,
+	int32 MeshIndex /*= -1*/)
+{
+	bool bInitSuccess = false;
 	if (ensure(Mesh))
 	{
 		MasterMesh = Mesh;
 
-		InitFoliageMeshComponent(PopulationActor);
+		bInitSuccess = InitFoliageMeshComponent(PopulationActor, AssetPath, MeshIndex);
 
 		for (int32 i = 0; i < Mesh->GetStaticMaterials().Num(); ++i)
 		{
 			InstancedMeshComponent->SetMaterial(i, Mesh->GetMaterial(i));
 		}
 	}
+	else
+	{
+		FString const Error = BuildPopulationLoadingErrorMessage(
+			TEXT("Failed to load master mesh"), AssetPath, MeshIndex);
+		PopulationActor.AddLoadingError(Error);
+		BE_LOGE("ContentHelper", TCHAR_TO_ANSI(*Error));
+	}
+	return bInitSuccess;
 }
 
-void FITwinFoliageComponentHolder::InitFoliageMeshComponent(AITwinPopulation& PopulationActor)
+bool FITwinFoliageComponentHolder::InitFoliageMeshComponent(AITwinPopulation& PopulationActor,
+	const FString& AssetPath,
+	int32 MeshIndex /*= -1*/)
 {
+	bool bInitSuccess = false;
 	if (!InstancedMeshComponent)
 	{
 		// There will be a very limited number of clipping primitives: simplify things (and avoid render
@@ -91,15 +123,34 @@ void FITwinFoliageComponentHolder::InitFoliageMeshComponent(AITwinPopulation& Po
 			InstancedMeshComponent = NewObject<UITwinInstancedStaticMeshComponent>(&PopulationActor, UITwinInstancedStaticMeshComponent::StaticClass());
 			bIsFoliageComponent = true;
 		}
-		InstancedMeshComponent->SetupAttachment(PopulationActor.K2_GetRootComponent());
+		if (InstancedMeshComponent)
+		{
+			InstancedMeshComponent->SetupAttachment(PopulationActor.K2_GetRootComponent());
+			bInitSuccess = true;
+		}
+		else
+		{
+			FString const Error = BuildPopulationLoadingErrorMessage(
+				TEXT("Failed to create instanced mesh component"), AssetPath, MeshIndex);
+			PopulationActor.AddLoadingError(Error);
+			BE_LOGE("ContentHelper", TCHAR_TO_ANSI(*Error));
+		}
 		//PopulationActor.SetRootComponent(InstancedMeshComponent.Get());
 	}
+	else
+	{
+		bInitSuccess = true; // already initialized
+	}
+	return bInitSuccess;
 }
 
-void FITwinFoliageComponentHolder::BeginPlay(AITwinPopulation& PopulationActor)
+void FITwinFoliageComponentHolder::BeginPlay(AITwinPopulation& PopulationActor,
+	int32 MeshIndex /*= -1*/)
 {
-	InitFoliageMeshComponent(PopulationActor);
-
+	if (!InstancedMeshComponent)
+	{
+		InitFoliageMeshComponent(PopulationActor, PopulationActor.GetAssetPath(), MeshIndex);
+	}
 	if (InstancedMeshComponent && MasterMesh)
 	{
 		InstancedMeshComponent->RegisterComponent();
@@ -179,6 +230,9 @@ struct AITwinPopulation::FImpl
 	std::shared_ptr<AdvViz::SDK::IInstancesManager> instancesManager_;
 	// whether an interactive transformation is currently happening on this population.
 	bool bBeingTransformed_ = false;
+	// Error messages that occurred during the loading of this population (e.g. missing assets, etc.)
+	TArray<FString> LoadingErrors;
+
 
 	AdvViz::SDK::RefID GetGpId() const
 	{
@@ -222,7 +276,12 @@ namespace
 #if WITH_EDITORONLY_DATA
 		StaticMesh->CreateMeshDescription(0);
 		//Set the Imported version before calling the build
-		StaticMesh->ImportVersion = EImportStaticMeshVersion::LastVersion;
+	#if UE_VERSION_OLDER_THAN(5, 7, 0)
+		StaticMesh->ImportVersion =
+	#else
+		StaticMesh->SetImportVersion
+	#endif
+			(EImportStaticMeshVersion::LastVersion);
 #endif
 		StaticMesh->SetStaticMaterials(Materials);
 		StaticMesh->Build();
@@ -263,7 +322,7 @@ AITwinPopulation* AITwinPopulation::CreatePopulation(const UObject* WorldContext
 	if (Mesh)
 	{
 		FITwinFoliageComponentHolder& FoliageHolder = Population->FoliageComponents.AddDefaulted_GetRef();
-		FoliageHolder.InitWithMasterMesh(*Population, Mesh);
+		FoliageHolder.InitWithMasterMesh(*Population, Mesh, AssetPath);
 	}
 	else
 	{
@@ -306,7 +365,7 @@ AITwinPopulation* AITwinPopulation::CreatePopulation(const UObject* WorldContext
 		{
 			UStaticMeshComponent* MeshComp = Cast<UStaticMeshComponent>(BP_Meshes[i]);
 			FITwinFoliageComponentHolder& FoliageHolder = Population->FoliageComponents.AddDefaulted_GetRef();
-			FoliageHolder.InitWithMasterMesh(*Population, MeshComp->GetStaticMesh().Get());
+			FoliageHolder.InitWithMasterMesh(*Population, MeshComp->GetStaticMesh().Get(), AssetPath, i);
 		}
 
 		// Make sure the actor created at world's zero will not be visible (fortunately, this does not also
@@ -382,6 +441,22 @@ FBoxSphereBounds AITwinPopulation::GetMasterMeshBounds() const
 	return Bounds;
 }
 
+FString AITwinPopulation::GetAssetPath() const
+{
+	// Only valid after decoObjectRef is set.
+	return UTF8_TO_TCHAR(decoObjectRef.c_str());
+}
+
+const TArray<FString>& AITwinPopulation::GetLoadingErrors() const
+{
+	return Impl->LoadingErrors;
+}
+
+void AITwinPopulation::AddLoadingError(const FString& ErrorMessage)
+{
+	Impl->LoadingErrors.Add(ErrorMessage);
+}
+
 namespace
 {
 	struct UnrealInstanceInfo
@@ -391,7 +466,7 @@ namespace
 		FVector colorShift;
 	};
 
-	const float convRGBToDouble = 0.003921568627450980; // 1/255
+	const float convRGBToDouble = 0.003921568627450980f; // 1/255
 
 	void UpdateAVizInstanceTransform(
 		AdvViz::SDK::IInstancePtr& dstInstance, const FTransform& srcInstanceTransform)
@@ -572,8 +647,6 @@ void AITwinPopulation::SetInstanceTransform(int32 instanceIndex, const FTransfor
 {
 	if (SetInstanceTransformUEOnly(instanceIndex, tm))
 	{
-		NotifyClippingToolOfTransform(instanceIndex, bTriggeredFromITS);
-
 		const AdvViz::SDK::SharedInstVect& instances = Impl->instancesManager_->GetInstancesByObjectRef(decoObjectRef, Impl->GetGpId());
 		if (instanceIndex < instances.size())
 		{
@@ -582,6 +655,11 @@ void AITwinPopulation::SetInstanceTransform(int32 instanceIndex, const FTransfor
 			auto inst = instPtr->GetAutoLock();
 			inst->SetShouldSave(true);
 		}
+
+		// Notify the Clipping Tool if this is a clipping primitive. This must be called *after* the AdvViz
+		// instance is updated, as the Clipping Tool will read the instance transform from the AdvViz
+		// instance.
+		NotifyClippingToolOfTransform(instanceIndex, bTriggeredFromITS);
 	}
 }
 
@@ -1368,9 +1446,13 @@ void AITwinPopulation::BeginPlay()
 {
 	Super::BeginPlay();
 
+	// Mesh component index is left to -1 if there is only one mesh component, otherwise it is set
+	// to the index of the mesh component in the FoliageComponents array.
+	int32 MeshCompIndex = FoliageComponents.Num() > 1 ? 0 : -1;
 	for (auto& FoliageComp : FoliageComponents)
 	{
-		FoliageComp.BeginPlay(*this);
+		FoliageComp.BeginPlay(*this, MeshCompIndex);
+		++MeshCompIndex;
 	}
 
 	if (FoliageComponents.Num() > 0 && InitialNumberOfInstances > 0)

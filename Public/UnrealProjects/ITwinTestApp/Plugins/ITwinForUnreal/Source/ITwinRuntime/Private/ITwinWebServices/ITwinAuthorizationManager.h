@@ -33,6 +33,12 @@ public:
 
 #if WITH_TESTS
 	static void SetupTestMode(AdvViz::SDK::EITwinEnvironment Env, FString const& TokenFileSuffix);
+
+	//! Re-registers the production IHttpRouter factory, after a test replaced it through
+	//! AdvViz::SDK::IHttpRouter::SetNewFct.
+	//! Leaking a mock factory is harmful because ITwinAuthManager builds its router lazily and
+	//! only once: every manager that has not done so yet would silently receive the mock.
+	static void RestoreHttpRouterFactory();
 #endif
 
 	using AdvViz::SDK::Tools::TypeId<FITwinAuthorizationManager>::GetTypeId;

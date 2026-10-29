@@ -13,6 +13,7 @@
 
 #include "ITwinAuthorizationManager.h"
 
+#include <ITwinServerConnection.h>
 #include <ITwinServerEnvironment.h>
 #include <ITwinWebServices/ITwinWebServicesObserver.h>
 #include <Decoration/ITwinDecorationServiceSettings.h>
@@ -37,7 +38,7 @@
 
 namespace ITwin
 {
-	// Filled by InitServerConnectionFromWorld in case we find a custom server connection in world.
+	// Filled by InitEnvironmentFromWorld in case we find a custom server connection in world.
 	static std::optional<EITwinEnvironment> PreferredEnvironment;
 }
 
@@ -337,25 +338,87 @@ void UITwinWebServices::SetPreferredEnvironment(EITwinEnvironment Env)
 	}
 }
 
+
 /*static*/
-void UITwinWebServices::InitDefaultEnvironmentFromDecoSettings(UITwinDecorationServiceSettings const* DecoSettings)
+void UITwinWebServices::ResetPreferredEnvironment()
+{
+	if (ITwin::PreferredEnvironment)
+	{
+		const FString EnvName = ITwinServerEnvironment::ToName(*ITwin::PreferredEnvironment).ToString();
+		BE_LOGI("ITwinAPI", "Resetting preferred environment (was " << TCHAR_TO_UTF8(*EnvName) << ")");
+
+		ITwin::PreferredEnvironment.reset();
+	}
+}
+
+/*static*/
+bool UITwinWebServices::InitDefaultEnvironmentFromDecoSettings(UITwinDecorationServiceSettings const* DecoSettings)
 {
 	if (DecoSettings && !DecoSettings->CustomEnv.IsEmpty())
 	{
 		if (DecoSettings->CustomEnv == TEXT("DEV"))
 		{
 			SetPreferredEnvironment(EITwinEnvironment::Dev);
+			return true;
 		}
 		else if (DecoSettings->CustomEnv == TEXT("QA"))
 		{
 			SetPreferredEnvironment(EITwinEnvironment::QA);
+			return true;
 		}
+	}
+	return false;
+}
+
+/*static*/
+bool UITwinWebServices::InitDefaultEnvironmentFromWorld(const UWorld* WorldContextObject)
+{
+	if (!WorldContextObject)
+	{
+		return false;
+	}
+	// If the level already contains AITwinServerConnection actors, and they all have the same
+	// environment, use the latter.
+	TArray<AActor*> ServerConnectionActors;
+	UGameplayStatics::GetAllActorsOfClass(
+		WorldContextObject, AITwinServerConnection::StaticClass(), ServerConnectionActors);
+	EITwinEnvironment CommonEnv = EITwinEnvironment::Invalid;
+	for (AActor const* ServConn : ServerConnectionActors)
+	{
+		AITwinServerConnection const* ExistingConnection = Cast<AITwinServerConnection const>(ServConn);
+		if (ExistingConnection
+			&& ExistingConnection->IsValidLowLevel()
+			// Ignore any ServerConnection which has not been assigned any valid environment.
+			&& ExistingConnection->Environment != EITwinEnvironment::Invalid)
+		{
+			if (CommonEnv != EITwinEnvironment::Invalid
+				&& CommonEnv != ExistingConnection->Environment)
+			{
+				// distinct environments are present, so we cannot decide which connection to use
+				CommonEnv = EITwinEnvironment::Invalid;
+				break;
+			}
+			CommonEnv = ExistingConnection->Environment;
+		}
+	}
+	if (CommonEnv != EITwinEnvironment::Invalid)
+	{
+		// Register this environment as the preferred one.
+		SetPreferredEnvironment(CommonEnv);
+		return true;
+	}
+	else
+	{
+		return false;
 	}
 }
 
 /*static*/
-EITwinEnvironment UITwinWebServices::GetDefaultEnvironment()
+EITwinEnvironment UITwinWebServices::GetDefaultEnvironment(const UWorld* WorldContextObject,
+	EITwinEnvironment InFallbackEnvironment /*= EITwinEnvironment::Prod*/)
 {
+	const bool bAlreadyHadDefaultEnv = ITwin::PreferredEnvironment.has_value();
+
 	static bool bHasTestedDecoSettings = false;
 	if (!ITwin::PreferredEnvironment)
 	{
@@ -363,7 +426,11 @@ EITwinEnvironment UITwinWebServices::GetDefaultEnvironment()
 		InitDefaultEnvironmentFromDecoSettings(GetDefault<UITwinDecorationServiceSettings>());
 		bHasTestedDecoSettings = true;
 	}
-	return ITwin::PreferredEnvironment.value_or(EITwinEnvironment::Prod);
+	if (!bAlreadyHadDefaultEnv && WorldContextObject)
+	{
+		InitDefaultEnvironmentFromWorld(WorldContextObject);
+	}
+	return ITwin::PreferredEnvironment.value_or(InFallbackEnvironment);
 }
 
 class UITwinWebServices::FImpl
@@ -434,10 +501,6 @@ public:
 	virtual void OnRealityData3DInfoRetrieved(bool bSuccess, AdvViz::SDK::ITwinRealityData3DInfo const& info) override;
 	virtual void OnElementPropertiesRetrieved(bool bSuccess, AdvViz::SDK::ITwinElementProperties const& props, std::string const& ElementId) override;
 	virtual void OnIModelPropertiesRetrieved(bool bSuccess, AdvViz::SDK::IModelProperties const& props) override;
-	virtual void OnIModelPagedNodesRetrieved(bool bSuccess, AdvViz::SDK::IModelPagedNodesRes const& nodes) override;
-	virtual void OnModelFilteredNodesRetrieved(bool bSuccess, AdvViz::SDK::FilteredNodesRes const& nodes, std::string const& Filter) override;
-	virtual void OnCategoryFilteredNodesRetrieved(bool bSuccess, AdvViz::SDK::FilteredNodesRes const& nodes, std::string const& Filter) override;
-	virtual void OnIModelCategoryNodesRetrieved(bool bSuccess, AdvViz::SDK::IModelPagedNodesRes const& nodes) override;
 	virtual void OnConvertedIModelCoordsToGeoCoords(bool bSuccess,
 		AdvViz::SDK::GeoCoordsReply const& GeoCoords, AdvViz::SDK::RequestID const& FromRequestId) override;
 	virtual void OnIModelQueried(bool bSuccess, std::string const& QueryResult, AdvViz::SDK::RequestID const&) override;
@@ -553,51 +616,42 @@ UITwinWebServices* UITwinWebServices::GetWorkingInstance()
 }
 
 /*static*/
-bool UITwinWebServices::GetActiveConnection(TObjectPtr<AITwinServerConnection>& OutConnection,
-	const UObject* WorldContextObject)
+EITwinEnvironment UITwinWebServices::GetActiveEnvironment()
 {
 	if (GetWorkingInstance())
 	{
-		GetWorkingInstance()->GetServerConnection(OutConnection);
+		return GetWorkingInstance()->GetEnvironment();
 	}
 	else
 	{
-		// Quick fix for Carrot MVP - GetWorkingInstance only works if it's called in a callback of a http
-		// request - however, when it's not the case, it's often very easy to recover a correct instance,
-		// because in the packaged game, there is only one unique environment at one time (Prod).
-		TArray<AActor*> itwinServerActors;
-		UGameplayStatics::GetAllActorsOfClass(
-			WorldContextObject, AITwinServerConnection::StaticClass(), itwinServerActors);
-		EITwinEnvironment commonEnv = EITwinEnvironment::Invalid;
-		AITwinServerConnection* firstValidConnection = nullptr;
-		for (AActor* servConn : itwinServerActors)
+		// GetWorkingInstance only works if it's called in a callback of a http request.
+		// However, when it's not the case, it's often very easy to recover a correct environment,
+		// because there is only one unique environment with an access token at a time.
+		AdvViz::SDK::EITwinEnvironment EnvWithAccess = AdvViz::SDK::EITwinEnvironment::Invalid;
+		for (auto CoreEnv : {
+			AdvViz::SDK::EITwinEnvironment::Prod,
+			AdvViz::SDK::EITwinEnvironment::QA,
+			AdvViz::SDK::EITwinEnvironment::Dev })
 		{
-			AITwinServerConnection* existingConnection = Cast<AITwinServerConnection>(servConn);
-			if (existingConnection
-				&& existingConnection->IsValidLowLevel()
-				// Ignore any ServerConnection which has not been assigned any valid environment.
-				&& existingConnection->Environment != EITwinEnvironment::Invalid
-				&& existingConnection->HasAccessToken())
+			auto& AuthMngr = AdvViz::SDK::ITwinAuthManager::GetInstance(CoreEnv);
+			if (AuthMngr && AuthMngr->HasAccessToken())
 			{
-				if (!firstValidConnection)
+				if (EnvWithAccess != AdvViz::SDK::EITwinEnvironment::Invalid
+					&& EnvWithAccess != CoreEnv)
 				{
-					firstValidConnection = existingConnection;
-					commonEnv = existingConnection->Environment;
-				}
-				if (commonEnv != existingConnection->Environment)
-				{
-					// distinct environments are present, so we cannot decide which connection to use
-					commonEnv = EITwinEnvironment::Invalid;
+					// distinct environments are active, so we cannot decide which connection to use.
+					EnvWithAccess = AdvViz::SDK::EITwinEnvironment::Invalid;
 					break;
 				}
+				EnvWithAccess = CoreEnv;
 			}
 		}
-		if (firstValidConnection && commonEnv != EITwinEnvironment::Invalid)
+		if (EnvWithAccess != AdvViz::SDK::EITwinEnvironment::Invalid)
 		{
-			OutConnection = firstValidConnection;
+			return static_cast<EITwinEnvironment>(EnvWithAccess);
 		}
 	}
-	return OutConnection.Get() != nullptr;
+	return EITwinEnvironment::Invalid;
 }
 
 UITwinWebServices::FImpl::FImpl(UITwinWebServices& Owner)
@@ -1049,127 +1103,6 @@ void UITwinWebServices::FImpl::OnElementPropertiesRetrieved(bool bSuccess, AdvVi
 	}
 }
 
-namespace
-{
-	FIModelNodeItem FromCoreIModelNodeItem(AdvViz::SDK::IModelNodeItem const& coreItem)
-	{
-		FIModelNodeItem item;
-		item.hasChildren = coreItem.hasChildren.has_value() ? coreItem.hasChildren.value() : false;
-		item.supportsFiltering = coreItem.supportsFiltering.value_or(false);
-		item.description = coreItem.description.value_or("").c_str();
-		item.labelDefinition = {
-			coreItem.labelDefinition.displayValue.c_str(),
-			coreItem.labelDefinition.rawValue.c_str(),
-			coreItem.labelDefinition.typeName.c_str()
-		};
-		if (coreItem.extendedData.has_value())
-		{
-			item.extendedData = {
-				coreItem.extendedData->icon.c_str(),
-				coreItem.extendedData->isSubject.value_or(false),
-				coreItem.extendedData->isCategory.value_or(false),
-				coreItem.extendedData->modelId.value_or("").c_str(),
-				coreItem.extendedData->categoryId.value_or("").c_str()
-			};
-		}
-		item.key.type = coreItem.key.type.c_str();
-		item.key.version = coreItem.key.version;
-		item.key.instanceKeysSelectQuery.query = coreItem.key.instanceKeysSelectQuery.query.c_str();
-		item.key.instanceKeysSelectQuery.bindings.Reserve(coreItem.key.instanceKeysSelectQuery.bindings.size());
-		Algo::Transform(coreItem.key.instanceKeysSelectQuery.bindings, item.key.instanceKeysSelectQuery.bindings,
-			[](AdvViz::SDK::Binding const& coreBinding) -> FBinding {
-				return {
-					coreBinding.type.c_str(),
-					coreBinding.value.c_str()
-				};
-			});
-		item.key.pathFromRoot = FromCoreStringVector(coreItem.key.pathFromRoot);
-		item.key.instanceKeys.Reserve(coreItem.key.instanceKeys.size());
-		Algo::Transform(coreItem.key.instanceKeys, item.key.instanceKeys,
-			[](AdvViz::SDK::InstanceKey const& instKey) -> FInstanceKey {
-				return {
-					instKey.className.c_str(),
-					instKey.id.c_str()
-				};
-			});
-		return item;
-	}
-
-	FFilteredNodesRes OnFilteredNodesRetrieved(AdvViz::SDK::FilteredNodesRes const& coreNodes)
-	{
-		FFilteredNodesRes res;
-		res.result.Reserve(coreNodes.result.size());
-		std::function<FFilteredResItem(AdvViz::SDK::FilteredResItem const&)> FromSDKToCore;
-		FromSDKToCore = [&](AdvViz::SDK::FilteredResItem const& coreItem) -> FFilteredResItem {
-			FFilteredResItem resItem;
-			resItem.children.Reserve(coreItem.children.size());
-			Algo::Transform(coreItem.children, resItem.children, FromSDKToCore);
-			resItem.node = FromCoreIModelNodeItem(coreItem.node);
-			//coreItem.node.hasChildren is not reliable for search trees, better to check if children is empty
-			resItem.node.hasChildren = coreItem.children.empty() ? false : true;
-			return resItem;
-
-			};
-		Algo::Transform(coreNodes.result, res.result, FromSDKToCore);
-		return res;
-	}
-
-	FIModelPagedNodesRes OnNodesRetrieved(AdvViz::SDK::IModelPagedNodesRes const& coreNodes)
-	{
-		FIModelPagedNodesRes res;
-		res.result.total = coreNodes.result.total;
-		res.result.items.Reserve(coreNodes.result.items.size());
-		Algo::Transform(coreNodes.result.items, res.result.items,
-			&FromCoreIModelNodeItem);
-		return res;
-	}
-}
-
-void UITwinWebServices::FImpl::OnIModelPagedNodesRetrieved(bool bSuccess,
-														   AdvViz::SDK::IModelPagedNodesRes const& coreNodes)
-{
-	FIModelPagedNodesRes res = OnNodesRetrieved(coreNodes);
-	owner_.OnGetPagedNodesComplete.Broadcast(bSuccess, res);
-	if (observer_)
-	{
-		observer_->OnIModelPagedNodesRetrieved(bSuccess, res);
-	}
-}
-
-void UITwinWebServices::FImpl::OnModelFilteredNodesRetrieved(bool bSuccess,
-	AdvViz::SDK::FilteredNodesRes const& coreNodes, std::string const& Filter)
-{
-	FFilteredNodesRes res = OnFilteredNodesRetrieved(coreNodes);
-	FString FilterStr(Filter.c_str());
-	owner_.OnGetModelFilteredNodesComplete.Broadcast(bSuccess, res, FilterStr);
-	if (observer_)
-	{
-		observer_->OnModelFilteredNodesRetrieved(bSuccess, res, FilterStr);
-	}
-}
-
-void UITwinWebServices::FImpl::OnCategoryFilteredNodesRetrieved(bool bSuccess,
-	AdvViz::SDK::FilteredNodesRes const& coreNodes, std::string const& Filter)
-{
-	FFilteredNodesRes res = OnFilteredNodesRetrieved(coreNodes);
-	FString FilterStr(Filter.c_str());
-	owner_.OnGetCategoryFilteredNodesComplete.Broadcast(bSuccess, res, FilterStr);
-	if (observer_)
-	{
-		observer_->OnCategoryFilteredNodesRetrieved(bSuccess, res, FilterStr);
-	}
-}
-
-void UITwinWebServices::FImpl::OnIModelCategoryNodesRetrieved(bool bSuccess,
-	AdvViz::SDK::IModelPagedNodesRes const& coreNodes)
-{
-	FIModelPagedNodesRes res = OnNodesRetrieved(coreNodes);
-	owner_.OnGetCategoryNodesComplete.Broadcast(bSuccess, res);
-	if (observer_)
-	{
-		observer_->OnIModelCategoryNodesRetrieved(bSuccess, res);
-	}
-}
 
 void UITwinWebServices::FImpl::OnIModelPropertiesRetrieved(bool bSuccess,
 														   AdvViz::SDK::IModelProperties const& coreProps)
@@ -1332,7 +1265,7 @@ UITwinWebServices::UITwinWebServices()
 	{
 		// See if a server connection was instantiated before playing the level: this is an easy trick to
 		// test QA or Dev environment in the test app.
-		InitServerConnectionFromWorld();
+		InitEnvironmentFromWorld();
 	}
 }
 
@@ -1340,11 +1273,6 @@ UITwinWebServices::UITwinWebServices()
 bool UITwinWebServices::IsAuthorizationInProgress() const
 {
 	FImpl::FLock Lock(Impl->mutex_);
-	if (ServerConnection && ServerConnection->HasAccessToken())
-	{
-		// Authorization already proceed.
-		return false;
-	}
 	if (!Impl->authManager_)
 	{
 		// Never started.
@@ -1357,6 +1285,25 @@ UITwinWebServices::AuthManagerPtr& UITwinWebServices::GetAuthManager() const
 {
 	return FITwinAuthorizationManager::GetInstance(
 		static_cast<AdvViz::SDK::EITwinEnvironment>(Environment));
+}
+
+bool UITwinWebServices::HasAccessToken() const
+{
+	auto& AuthMngr = GetAuthManager();
+	if (ensure(AuthMngr))
+	{
+		return AuthMngr->HasAccessToken();
+	}
+	return false;
+}
+
+FString UITwinWebServices::GetAccessToken() const
+{
+	if (Environment != EITwinEnvironment::Invalid)
+	{
+		return AITwinServerConnection::GetAccessTokenStringForEnv(Environment);
+	}
+	return {};
 }
 
 void UITwinWebServices::SetRegularAccessToken(const FString& InAccessToken)
@@ -1399,36 +1346,14 @@ AdvViz::SDK::EITwinAuthOverrideMode UITwinWebServices::GetOverrideMode() const
 	}
 }
 
-void UITwinWebServices::SetServerConnection(TObjectPtr<AITwinServerConnection> const& InConnection)
-{
-	FImpl::FLock Lock(Impl->mutex_);
-	ServerConnection = InConnection;
-	if (ServerConnection)
-	{
-		SetEnvironment(ServerConnection->Environment);
-	}
-}
-
 void UITwinWebServices::SetEnvironment(EITwinEnvironment InEnvironment)
 {
 	this->Environment = InEnvironment;
 	Impl->SetEnvironment(InEnvironment);
 }
 
-bool UITwinWebServices::TryGetServerConnection(bool bAllowBroadcastAuthResult)
+bool UITwinWebServices::TryGetAccessToken(bool bAllowBroadcastAuthResult)
 {
-	if (ServerConnection && ServerConnection->HasAccessToken())
-	{
-		// We already have an access token for this environment. Bypass the authorization process, but make
-		// sure we broadcast the success if needed, as some code logic is placed in the callback (typically
-		// in ITwinSelector)
-		if (bAllowBroadcastAuthResult)
-		{
-			OnAuthDoneImpl(true, {}, true /*bAllowBroadcastAuthResult*/);
-		}
-		return true;
-	}
-
 	// Initiate the manager handling tokens for current Environment
 	if (!Impl->authManager_)
 	{
@@ -1443,51 +1368,23 @@ bool UITwinWebServices::TryGetServerConnection(bool bAllowBroadcastAuthResult)
 		return true;
 	}
 
-	// No valid server connection
+	// No valid access token
 	return false;
 }
 
-bool UITwinWebServices::InitServerConnectionFromWorld()
+bool UITwinWebServices::InitEnvironmentFromWorld()
 {
-	// If the level already contains AITwinServerConnection actors, and they all have the same
-	// environment, use the latter.
-	TArray<AActor*> itwinServerActors;
-	UGameplayStatics::GetAllActorsOfClass(
-		GetWorld(), AITwinServerConnection::StaticClass(), itwinServerActors);
-	EITwinEnvironment commonEnv = EITwinEnvironment::Invalid;
-	AITwinServerConnection* firstValidConnection = nullptr;
-	for (AActor* servConn : itwinServerActors)
-	{
-		AITwinServerConnection* existingConnection = Cast<AITwinServerConnection>(servConn);
-		if (existingConnection
-			&& existingConnection->IsValidLowLevel()
-			// Ignore any ServerConnection which has not been assigned any valid environment.
-			&& existingConnection->Environment != EITwinEnvironment::Invalid)
-		{
-			if (!firstValidConnection)
-			{
-				firstValidConnection = existingConnection;
-				commonEnv = existingConnection->Environment;
-			}
-			if (commonEnv != existingConnection->Environment)
-			{
-				// distinct environments are present, so we cannot decide which connection to use
-				commonEnv = EITwinEnvironment::Invalid;
-				break;
-			}
-		}
-	}
-	if (firstValidConnection && commonEnv != EITwinEnvironment::Invalid)
-	{
-		SetServerConnection(firstValidConnection);
-		// Register this environment as the preferred one.
-		UITwinWebServices::SetPreferredEnvironment(commonEnv);
-		return true;
-	}
-	else
+	if (!GetWorld())
 	{
 		return false;
 	}
+	if (InitDefaultEnvironmentFromWorld(GetWorld())
+		&& ensure(ITwin::PreferredEnvironment.has_value()))
+	{
+		this->SetEnvironment(*ITwin::PreferredEnvironment);
+		return true;
+	}
+	return false;
 }
 
 AdvViz::SDK::EITwinAuthStatus UITwinWebServices::CheckAuthorizationStatus()
@@ -1502,9 +1399,9 @@ AdvViz::SDK::EITwinAuthStatus UITwinWebServices::CheckAuthorizationStatus()
 			SetEnvironment(OverrideEnv);
 		}
 	}
-	if (TryGetServerConnection(true))
+	if (TryGetAccessToken(true))
 	{
-		// We could get a valid server connection. No need to do anything more (note that the token
+		// We could get a valid access token. No need to do anything more (note that the token
 		// will be automatically refreshed when approaching its expiration: no need to check that).
 		return AdvViz::SDK::EITwinAuthStatus::Success;
 	}
@@ -1545,15 +1442,14 @@ FString UITwinWebServices::InitiateAuthorizationURL()
 FString UITwinWebServices::GetAuthorizationURL()
 {
 	AdvViz::SDK::EITwinAuthStatus Status = AdvViz::SDK::EITwinAuthStatus::None;
-	if (Impl->authManager_ && Impl->authManager_->IsAuthorizationInProgress())
+	if (Impl->authManager_)
 	{
-		Status = AdvViz::SDK::EITwinAuthStatus::InProgress;
+		if (Impl->authManager_->IsAuthorizationInProgress())
+			Status = AdvViz::SDK::EITwinAuthStatus::InProgress;
+		else if (Impl->authManager_->HasAccessToken())
+			Status = AdvViz::SDK::EITwinAuthStatus::Success;
 	}
-	else if (ServerConnection && ServerConnection->HasAccessToken())
-	{
-		Status = AdvViz::SDK::EITwinAuthStatus::Success;
-	}
-	else
+	if (Status == AdvViz::SDK::EITwinAuthStatus::None)
 	{
 		// No authorization started yet => initiate it now.
 		Status = CheckAuthorizationStatus();
@@ -1573,40 +1469,10 @@ FString UITwinWebServices::GetAuthorizationURL()
 
 void UITwinWebServices::OnAuthDoneImpl(bool bSuccess, std::string const& Error, bool bBroadcastResult /*= true*/)
 {
-	ScopedWorkingWebServices WorkingInstanceSetter(this);
-
-	if (bSuccess)
-	{
-		FImpl::FLock Lock(Impl->mutex_);
-
-		if (!ServerConnection)
-		{
-			// First see if an existing connection actor for this environment can be reused.
-			TArray<AActor*> itwinServerActors;
-			UGameplayStatics::GetAllActorsOfClass(
-				GetWorld(), AITwinServerConnection::StaticClass(), itwinServerActors);
-			for (AActor* servConn : itwinServerActors)
-			{
-				AITwinServerConnection* existingConnection = Cast<AITwinServerConnection>(servConn);
-				if (existingConnection
-					&& existingConnection->IsValidLowLevelFast(false)
-					&& existingConnection->Environment == this->Environment)
-				{
-					ServerConnection = existingConnection;
-					break;
-				}
-			}
-		}
-		if (!ServerConnection)
-		{
-			ServerConnection = GetWorld()->SpawnActor<AITwinServerConnection>();
-		}
-		ServerConnection->Environment = this->Environment;
-		ensureMsgf(ServerConnection->HasAccessToken(), TEXT("Upon success, an access token is expected!"));
-	}
-
 	if (bBroadcastResult)
 	{
+		ScopedWorkingWebServices WorkingInstanceSetter(this);
+
 		OnAuthorizationChecked.Broadcast(bSuccess, UTF8_TO_TCHAR(Error.c_str()));
 		if (Impl->observer_)
 		{
@@ -1627,25 +1493,6 @@ void UITwinWebServices::OnAuthorizationDone(bool bSuccess, std::string const& Er
 		BE_LOGE("ITwinAPI", "No authorization for " << TCHAR_TO_UTF8(*EnvName) << " environment");
 	}
 	OnAuthDoneImpl(bSuccess, Error, true);
-}
-
-void UITwinWebServices::GetServerConnection(TObjectPtr<AITwinServerConnection>& OutConnection) const
-{
-	FImpl::FLock Lock(Impl->mutex_);
-	if (ServerConnection && ServerConnection->IsValidLowLevelFast(false))
-	{
-		OutConnection = ServerConnection;
-	}
-	else
-	{
-		OutConnection = {};
-	}
-}
-
-bool UITwinWebServices::HasSameConnection(AITwinServerConnection const* Connection) const
-{
-	FImpl::FLock Lock(Impl->mutex_);
-	return ServerConnection.Get() == Connection;
 }
 
 void UITwinWebServices::SetObserver(IITwinWebServicesObserver* InObserver)
@@ -1691,12 +1538,12 @@ void UITwinWebServices::SetRetryDelayFactor(float InFactor)
 template <typename FunctorType>
 void UITwinWebServices::DoRequest(FunctorType&& InFunctor)
 {
-	// We may have no ServerConnection yet (happens if one instantiates UITwinWebServices and uses it at once
-	// without calling SetServerConnection or CheckAuthorization...)
+	// We may have no access token yet (happens if one instantiates UITwinWebServices and uses it at once
+	// without calling CheckAuthorization...)
 	// In such case, if we can find an existing access token, use it instead of failing directly. However we
 	// should not broadcast the authorization success in such case, as this is certainly not expected by the
 	// client.
-	if (!TryGetServerConnection(false))
+	if (!TryGetAccessToken(false))
 	{
 		return;
 	}
@@ -2027,44 +1874,11 @@ void UITwinWebServices::GetRealityData3DInfo(FString ITwinId, FString RealityDat
 	});
 }
 
-
 void UITwinWebServices::GetElementProperties(FString iTwinId, FString iModelId, FString ChangesetId, FString ElementId)
 {
 	DoRequest([this, iTwinId, iModelId, ChangesetId, ElementId]() {
 		Impl->GetElementProperties(IDToStdString(iTwinId), IDToStdString(iModelId), IDToStdString(ChangesetId), IDToStdString(ElementId));
 	});
-}
-
-void UITwinWebServices::GetPagedNodes(FString const& iTwinId, FString const& iModelId,
-	FString const& ChangesetId, FString const& parentKey /*= ""*/, int offset /*= 0*/, int count /*= 1000*/)
-{
-	DoRequest([this, iTwinId, iModelId, ChangesetId, parentKey, offset, count]() {
-		Impl->GetPagedNodes(IDToStdString(iTwinId), IDToStdString(iModelId), IDToStdString(ChangesetId), TCHAR_TO_UTF8(*parentKey), offset, count);
-		});
-}
-
-void UITwinWebServices::GetModelFilteredNodes(FString const& iTwinId, FString const& iModelId,
-	FString const& ChangesetId, FString const& Filter)
-{
-	DoRequest([this, iTwinId, iModelId, ChangesetId, Filter]() {
-		Impl->GetModelFilteredNodePaths(IDToStdString(iTwinId), IDToStdString(iModelId), IDToStdString(ChangesetId), TCHAR_TO_UTF8(*Filter));
-		});
-}
-
-void UITwinWebServices::GetCategoryFilteredNodes(FString const& iTwinId, FString const& iModelId,
-	FString const& ChangesetId, FString const& Filter)
-{
-	DoRequest([this, iTwinId, iModelId, ChangesetId, Filter]() {
-		Impl->GetCategoryFilteredNodePaths(IDToStdString(iTwinId), IDToStdString(iModelId), IDToStdString(ChangesetId), TCHAR_TO_UTF8(*Filter));
-		});
-}
-
-void UITwinWebServices::GetCategoryNodes(FString const& iTwinId, FString const& iModelId,
-	FString const& ChangesetId, FString const& parentKey /*= ""*/, int offset /*= 0*/, int count /*= 1000*/)
-{
-	DoRequest([this, iTwinId, iModelId, ChangesetId, parentKey, offset, count]() {
-		Impl->GetCategoryNodes(IDToStdString(iTwinId), IDToStdString(iModelId), IDToStdString(ChangesetId), TCHAR_TO_UTF8(*parentKey), offset, count);
-		});
 }
 
 void UITwinWebServices::GetIModelProperties(FString iTwinId, FString iModelId, FString ChangesetId)

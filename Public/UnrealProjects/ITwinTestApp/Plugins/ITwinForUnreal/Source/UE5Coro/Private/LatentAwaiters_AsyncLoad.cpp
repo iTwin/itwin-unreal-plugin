@@ -31,6 +31,7 @@
 
 #include "UE5Coro/LatentAwaiter.h"
 #include "Engine/AssetManager.h"
+#include "UObject/Package.h"
 
 using namespace UE5Coro;
 using namespace UE5Coro::Private;

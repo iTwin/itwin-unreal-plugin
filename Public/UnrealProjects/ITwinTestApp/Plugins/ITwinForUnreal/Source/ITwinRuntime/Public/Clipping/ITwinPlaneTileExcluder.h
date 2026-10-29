@@ -29,6 +29,14 @@ public:
 		BlueprintCallable)
 	void SetInvertEffect(bool bInvert);
 
+	void SetPlaneEquation(FVector3d const& Orientation, double W)
+	{
+		PlaneEquation.PlaneOrientation = Orientation;
+		PlaneEquation.PlaneW = W;
+	}
+
+	int32 GetPlaneIndex() const { return PlaneIndex; }
+	void SetPlaneIndex(int32 Index) { PlaneIndex = Index; }
 
 	virtual bool ShouldExclude_Implementation(const UCesiumTile* TileObject) override;
 
@@ -51,8 +59,4 @@ private:
 	};
 	FPlaneEquation PlaneEquation;
 	int32 PlaneIndex = -1;
-
-
-	friend class UITwinClippingRenderer;
-	friend struct FITwinClippingPlaneInfo;
 };

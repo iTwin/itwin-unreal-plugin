@@ -16,7 +16,6 @@
 #include <Clipping/ITwinClippingTool.h>
 #include <Decoration/ITwinDecorationHelper.h>
 #include <Helpers/WorldSingleton.h>
-#include <ITwinServerConnection.h>
 #include <Population/ITwinPopulationTool.h>
 #include <Spline/ITwinSplineTool.h>
 
@@ -240,8 +239,6 @@ private:
 	TObjectPtr<AITwinPopulationTool> PopulationTool;
 	TObjectPtr<AITwinSplineTool> SplineTool;
 
-	TObjectPtr<AITwinServerConnection> ServerConnection;
-
 	TObjectPtr<AITwinDecorationHelper> DecoHelper;
 
 	FDelegateHandle OnDecorationLoadedHandle;
@@ -305,9 +302,6 @@ bool UCutoutPersistenceTestHelper::FImpl::DoInit(AdvViz::SDK::EITwinEnvironment 
 		ClippingTool->ConnectPopulationTool(PopulationTool);
 		ClippingTool->ConnectSplineTool(SplineTool);
 	}
-
-	ServerConnection = World->SpawnActor<AITwinServerConnection>();
-	ServerConnection->Environment = static_cast<EITwinEnvironment>(Env);
 
 	AdvViz::SDK::GetDefaultHttp()->SetAccessToken(
 		AdvViz::SDK::ITwinAuthManager::GetInstance(Env)->GetAccessToken());

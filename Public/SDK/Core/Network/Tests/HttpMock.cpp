@@ -41,10 +41,13 @@ namespace AdvViz::SDK
 		const std::string& method,
 		const std::string& data,
 		const std::vector<UrlArg>& urlArguments,
-		const std::vector<Header>& /*headers*/)
+		const std::vector<Header>& headers)
 	{
 		auto thdata = thdata_.GetRAutoLock();
 		RequestKey const requestKey(method, url);
+		auto itR = thdata->responseFctWithRequest_.find(requestKey);
+		if (itR != thdata->responseFctWithRequest_.end())
+			return itR->second(data, urlArguments, headers);
 		auto it0 = thdata->responseFctWithArgs_.find(requestKey);
 		if (it0 != thdata->responseFctWithArgs_.end())
 			return it0->second(urlArguments);
@@ -64,6 +67,7 @@ namespace AdvViz::SDK
 		thdata->responseFct_.erase(key);
 		thdata->responseFctWithData_.erase(key);
 		thdata->responseFctWithArgs_.erase(key);
+		thdata->responseFctWithRequest_.erase(key);
 	}
 
 } // namespace AdvViz::SDK

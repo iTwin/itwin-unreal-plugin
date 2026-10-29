@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.28.0)
+set(PROJNAME copy_timestamps_to_symlink)
+project(${PROJNAME})
+set (CMAKE_CXX_STANDARD 20)
+add_executable(${PROJNAME} WIN32 main.cpp)

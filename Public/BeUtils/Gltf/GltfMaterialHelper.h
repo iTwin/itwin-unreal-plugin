@@ -82,6 +82,7 @@ struct MaterialDefinitionAccess
 
 	double GetIntensity(AdvViz::SDK::EChannelType channel) const;
 	AdvViz::SDK::ITwinColor GetColor(AdvViz::SDK::EChannelType channel) const;
+	bool UseSrgbColorSpace() const;
 	AdvViz::SDK::ITwinChannelMap GetIntensityMap(AdvViz::SDK::EChannelType channel) const;
 	AdvViz::SDK::ITwinChannelMap GetColorMap(AdvViz::SDK::EChannelType channel) const;
 
@@ -167,6 +168,10 @@ public:
 	ITwinColor GetChannelColor(uint64_t matID, AdvViz::SDK::EChannelType channel) const;
 	void SetChannelColor(uint64_t matID, AdvViz::SDK::EChannelType channel, ITwinColor const& color, bool& bValueModified);
 
+	//! Returns whether the given material color should use an sRGB color space when converted from/to hexa color.
+	bool UseSrgbColorSpace(uint64_t matID, RWLockBase const&) const;
+	bool UseSrgbColorSpace(uint64_t matID) const;
+	void SetUseSrgbColorSpace(uint64_t matID, bool bUseSrgb);
 
 	using ITwinChannelMap = AdvViz::SDK::ITwinChannelMap;
 	static ITwinChannelMap GetChannelDefaultIntensityMap(AdvViz::SDK::EChannelType channel,

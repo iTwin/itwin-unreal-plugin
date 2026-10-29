@@ -48,6 +48,9 @@ bool operator==(float4 const& a, float4 const& b)
 {
 	return a.xyz == b.xyz && a.w == b.w;
 }
+// glm only accepts a same-typed scalar: emulate HLSL's 'float * float3' with our double-based 'rgb'
+inline rgb operator*(float s, rgb const& v) { return (double)s * v; }
+inline rgb operator*(rgb const& v, float s) { return v * (double)s; }
 
 class TextureLoader
 {
@@ -94,14 +97,18 @@ namespace workaround
 
 #pragma warning (push)
 #pragma warning (disable:4701) // potentially uninitialized local variable
+#define MATERIALBLENDING_ANY_TRANSLUCENT 0
 double GetPerFeatureValueWrapped(TextureLoader const& Synchro4D_RGBA_DATA,
 	TextureLoader const& Synchro4D_CutPlanes_DATA, TextureLoader const& Selection_RGBA_DATA,
-	uint const FeatureID, double BlinkingFactor, float4& Combined_RGBA, float4& Synchro4D_CutPlane)
+	uint const FeatureID, double BlinkingFactor, float4& Combined_RGBA, float4& Synchro4D_CutPlane,
+	float& HoverMask)
 {
 	using workaround::min;
 	using workaround::max;
+	HoverMask = 0.f;
 	#include "GeneratedShaderTest/GetPerFeatureValues.ush.inl"
 }
+#undef MATERIALBLENDING_ANY_TRANSLUCENT
 #pragma warning (pop)
 
 struct InputsAggr
@@ -109,6 +116,7 @@ struct InputsAggr
 	FAutomationTestBase& Test;
 	TextureLoader tex4D, texSelHide, texPlanes;
 	mutable float4 Combined_RGBA, Synchro4D_CutPlane;
+	mutable float HoverMask = 0.f;
 	InputsAggr(FAutomationTestBase& InTest, uint dim4D) : InputsAggr(InTest, dim4D, 1, 1) {}
 	InputsAggr(FAutomationTestBase& InTest, uint dim4D, uint dimSelHide) : InputsAggr(InTest, dim4D, dimSelHide, 1) {}
 	InputsAggr(FAutomationTestBase& InTest, uint dim4D, uint dimSelHide, uint dimPlanes)
@@ -124,6 +132,7 @@ struct InputsAggr
 	{
 		Combined_RGBA = float4();
 		Synchro4D_CutPlane = float4();
+		HoverMask = 0.f;
 	}
 	void SetTex4D(uint const FeatureID, rgb const& RGB, double A = 1.)
 	{
@@ -165,7 +174,7 @@ struct InputsAggr
 	{
 		ResetOutputs();
 		return GetPerFeatureValueWrapped(tex4D, texPlanes, texSelHide, FeatureID, BlinkingFactor,
-										 Combined_RGBA, Synchro4D_CutPlane);
+										 Combined_RGBA, Synchro4D_CutPlane, HoverMask);
 	}
 };
 
@@ -180,26 +189,30 @@ constexpr double AnyBlink = 0.25; // phase of the blinking cycle: anything not z
 constexpr rgb SelAnd4DBlinkedMix(0.55, 0.35, 0.625); // mix of Any4DColor and Selected by AnyBlink
 constexpr double Opaque = 1.;
 constexpr double Hidden = 0.;
+constexpr double SolidSelection = 150. / 255.; // SELECTION_SOLID_ALPHA: selected without blinking, = mix ratio
 constexpr double AnyAlpha = 0.8;
 constexpr double UseOriginalAlphaIn = 0.0039; // no need to be exactly 1/255
 constexpr double UseOriginalAlphaOut = 0.0049; // value hardcoded in shader
 constexpr double SelectedAnyAlpha = 0.9; // when selected, translucency is halved
 
 constexpr double tolerance = 1e-8;
+// For values the shader stores in 'float' variables (the C++ build uses /fp:fast, so whether an explicit
+// float rounding actually happens is not even predictable)
+constexpr double floatTolerance = 1e-6;
 
-bool ApproxEqual(double const a, double const b)
+bool ApproxEqual(double const a, double const b, double const tol = tolerance)
 {
-	return std::abs(a - b) < tolerance;
+	return std::abs(a - b) < tol;
 }
 
-bool ApproxEqual(rgb const& a, rgb const& b)
+bool ApproxEqual(rgb const& a, rgb const& b, double const tol = tolerance)
 {
-	return ApproxEqual(a.x, b.x) && ApproxEqual(a.y, b.y) && ApproxEqual(a.z, b.z);
+	return ApproxEqual(a.x, b.x, tol) && ApproxEqual(a.y, b.y, tol) && ApproxEqual(a.z, b.z, tol);
 }
 
-bool CheckOutRGBA(InputsAggr const& v, rgb const& col, double const alpha)
+bool CheckOutRGBA(InputsAggr const& v, rgb const& col, double const alpha, double const tol = tolerance)
 {
-	return ApproxEqual(v.Combined_RGBA.xyz, col) && ApproxEqual(v.Combined_RGBA.w, alpha);
+	return ApproxEqual(v.Combined_RGBA.xyz, col, tol) && ApproxEqual(v.Combined_RGBA.w, alpha, tol);
 }
 
 } // namespace Detail
@@ -241,6 +254,50 @@ void ShaderMixSpec::Define()
 				CHECK(In.Get(42, Detail::AnyBlink) == Detail::FullBaseColor);
 				CHECK(In.Combined_RGBA.xyz != Detail::Selected && In.Combined_RGBA.xyz != Detail::Any4DColor);
 				CHECK(In.Synchro4D_CutPlane == float4(0.));
+				});
+			It("classifies only the reserved hover alpha byte", [this]() {
+				constexpr double HoverMarkerAlpha = 2. / 255.;
+				Detail::InputsAggr In(*this, 2, 2);
+				In.SetTexSelHide(0, Detail::NoSelColor, HoverMarkerAlpha);
+				In.Get(0, Detail::AnyBlink);
+				CHECK(In.HoverMask == 1.f);
+				In.SetTexSelHide(1, Detail::NoSelColor, 1. / 255.);
+				In.Get(1, Detail::AnyBlink);
+				CHECK(In.HoverMask == 0.f);
+				In.SetTexSelHide(1, Detail::NoSelColor, 3. / 255.);
+				In.Get(1, Detail::AnyBlink);
+				CHECK(In.HoverMask == 0.f);
+				In.SetTexSelHide(1, Detail::Selected, HoverMarkerAlpha);
+				In.Get(1, Detail::AnyBlink);
+				CHECK(In.HoverMask == 0.f);
+				In.SetTexSelHide(1, Detail::NoSelColor, HoverMarkerAlpha);
+				In.SetTex4D(1, Detail::Any4DColor);
+				In.Get(1, Detail::AnyBlink);
+				CHECK(In.HoverMask == 0.f);
+				});
+			It("preserves original opacity through selection without a 4D override", [this]() {
+				Detail::InputsAggr In(*this, NoTexture, 4);
+				CHECK(In.Get(2, Detail::AnyBlink) == Detail::FullBaseColor);
+				CHECK(Detail::ApproxEqual(In.Combined_RGBA.w, Detail::UseOriginalAlphaOut,
+					Detail::floatTolerance));
+				for (double const SelectionAlpha : { Detail::Opaque, Detail::SolidSelection, 120. / 255. })
+				{
+					In.SetTexSelHide(2, Detail::Selected, SelectionAlpha);
+					for (double const Blink : { 0., Detail::AnyBlink, 1. })
+					{
+						double const ExpectedRatio = SelectionAlpha == Detail::Opaque ? Blink : SelectionAlpha;
+						CHECK(Detail::ApproxEqual(In.Get(2, Blink), ExpectedRatio, Detail::floatTolerance));
+						CHECK(Detail::CheckOutRGBA(In, Detail::Selected, Detail::UseOriginalAlphaOut,
+							Detail::floatTolerance));
+					}
+				}
+				In.SetTexSelHide(2, Detail::NoSelColor, Detail::Opaque);
+				CHECK(In.Get(2, Detail::AnyBlink) == Detail::FullBaseColor);
+				CHECK(Detail::ApproxEqual(In.Combined_RGBA.w, Detail::UseOriginalAlphaOut,
+					Detail::floatTolerance));
+				In.SetTexSelHide(2, Detail::Selected, Detail::Hidden);
+				CHECK(In.Get(2, Detail::AnyBlink) == Detail::FullBaseColor);
+				CHECK(In.Combined_RGBA.w == Detail::Hidden);
 				});
 			It("checks we get what's in the 4D and Planes texture (visible, blink=1)", [this]() {
 				Detail::InputsAggr In(*this, 2, 2, 2); // all 2x2 textures
@@ -353,6 +410,27 @@ void ShaderMixSpec::Define()
 				CHECK(In.Get(3, Detail::AnyBlink) == Detail::FullBaseColor);
 				// Note: no longer displaying hidden elements when they are selected:
 				CHECK(Detail::CheckOutRGBA(In, Detail::Selected, Detail::Hidden));
+				});
+			It("checks the 'solid selection' alpha disables blinking and sets the mix ratio", [this]() {
+				Detail::InputsAggr In(*this, 2, 2, 2); // all 2x2 textures
+				In.SetTex4D(0, Detail::No4DColor, Detail::Opaque);
+				In.SetTex4D(1, Detail::Any4DColor, Detail::AnyAlpha);
+				In.SetTex4D(2, Detail::No4DColor, Detail::Opaque);
+				In.SetTexSelHide(0, Detail::Selected, Detail::SolidSelection);
+				In.SetTexSelHide(1, Detail::Selected, Detail::SolidSelection);
+				In.SetTexSelHide(2, Detail::NoSelColor, Detail::SolidSelection);
+				// No 4D color: the alpha is the base/selection mix ratio, whatever the blinking phase
+				CHECK(ApproxEqual(In.Get(0, Detail::AnyBlink), Detail::SolidSelection, Detail::floatTolerance));
+				CHECK(Detail::CheckOutRGBA(In, Detail::Selected, Detail::Opaque));
+				CHECK(ApproxEqual(In.Get(0, 0.), Detail::SolidSelection, Detail::floatTolerance));
+				// 4D color: mixed with the selection color by the same ratio
+				CHECK(In.Get(1, Detail::AnyBlink) == Detail::ColorOverride);
+				CHECK(Detail::CheckOutRGBA(In,
+					Detail::Any4DColor * (1. - Detail::SolidSelection) + Detail::Selected * Detail::SolidSelection,
+					Detail::SelectedAnyAlpha, Detail::floatTolerance));
+				// Not selected: the intermediate alpha is just "visible"
+				CHECK(In.Get(2, Detail::AnyBlink) == Detail::FullBaseColor);
+				CHECK(In.Combined_RGBA.w == Detail::Opaque);
 				});
 			It("checks the 'use original alpha' value is handled", [this]() {
 				Detail::InputsAggr In(*this, 2, 2, 2); // all 2x2 textures

@@ -28,8 +28,13 @@
 
 #include <Compil/BeforeNonUnrealIncludes.h>
 #	include <BeHeaders/Util/CleanUpGuard.h>
+#	pragma push_macro("FLOAT")
+#	undef FLOAT
+#	include <BeUtils/Gltf/GltfBuilder.h>
+#	pragma pop_macro("FLOAT")
 #	include <BeUtils/Gltf/GltfMaterialHelper.h>
 #	include <BeUtils/Gltf/GltfTuner.h>
+#	include <CesiumGltf/Model.h>
 #	include <Core/Tools/Tools.h>
 #	include <SDK/Core/ITwinAPI/ITwinMaterial.h>
 #	include <SDK/Core/ITwinAPI/ITwinTypes.h>
@@ -72,6 +77,152 @@ IMPLEMENT_CUSTOM_SIMPLE_AUTOMATION_TEST(FIModelMaterialHandlerTest, FAutomationT
 	"Bentley.ITwinForUnreal.ITwinRuntime.IModelMaterialHandler", \
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
+
+IMPLEMENT_CUSTOM_SIMPLE_AUTOMATION_TEST(FIModelMaterialGlassSwitchTest, FAutomationTestBase, \
+	"Bentley.ITwinForUnreal.ITwinRuntime.MaterialGlassSwitch", \
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FIModelMaterialGlassSwitchTest::RunTest(const FString& /*Parameters*/)
+{
+	AITwinIModel::EnableMaterialTuning(true);
+	auto World = FITwinAPITestHelperBase::GetTestWorld();
+	UTEST_NOT_NULL(TEXT("Test world"), World);
+	auto* IModel = World->SpawnActor<AITwinIModel>();
+	UTEST_NOT_NULL(TEXT("Test iModel"), IModel);
+	IModel->IModelId = TEXT("imodel_glass_switch_test");
+	Be::CleanUpGuard Cleanup([IModel]() { IModel->Destroy(); });
+	for (double InitialOpacity : { 0.5, 0.05 })
+	{
+		FITwinIModelMaterialHandler Handler;
+		Handler.SetSpecificPersistenceManager(std::make_shared<AdvViz::SDK::MaterialPersistenceManager>());
+		auto Tuner = std::make_shared<BeUtils::GltfTuner>();
+		Handler.Initialize(Tuner, IModel);
+		TSceneMappingPtr SceneMapping = AdvViz::SDK::Tools::MakeSharedLockableData<FITwinSceneMapping>(false);
+		CesiumUtility::JsonValue::Object Extras =
+		{
+			{ "iTwinMaterials", CesiumUtility::JsonValue::Array
+				{ CesiumUtility::JsonValue::Object { { "id", "0x6789" }, { "name", "Glass switch" } } } }
+		};
+		Tuner->ParseExtras(Extras);
+		constexpr uint64_t MaterialId = 0x6789;
+		auto Helper = Handler.GetGltfMatHelper();
+		{
+			BeUtils::WLock Lock(Helper->GetMutex());
+			Helper->CreateITwinMaterialSlot(MaterialId, "Glass switch", Lock);
+			Helper->SetCurrentAlphaMode(MaterialId, "MASK", Lock);
+		}
+		UTEST_TRUE(TEXT("Initial kind is PBR"), Handler.GetMaterialKind(MaterialId) == AdvViz::SDK::EMaterialKind::PBR);
+		bool bModified = false;
+		Helper->SetChannelIntensity(MaterialId, AdvViz::SDK::EChannelType::Opacity, InitialOpacity, bModified);
+		Handler.SetMaterialKind(MaterialId, AdvViz::SDK::EMaterialKind::Glass, SceneMapping);
+
+		AdvViz::SDK::EMaterialKind EffectiveKind;
+		bool bRequiresTranslucency = false;
+		UTEST_TRUE(TEXT("Material has requirements"), Handler.GetMaterialCustomRequirements(MaterialId, EffectiveKind, bRequiresTranslucency));
+		UTEST_TRUE(TEXT("Effective kind is Glass"), EffectiveKind == AdvViz::SDK::EMaterialKind::Glass);
+		UTEST_TRUE(TEXT("Glass requires translucency"), bRequiresTranslucency);
+		UTEST_EQUAL(TEXT("Opacity is clamped only above the Glass default"),
+			Handler.GetMaterialChannelIntensity(MaterialId, AdvViz::SDK::EChannelType::Opacity), FMath::Min(InitialOpacity, 0.1));
+		UTEST_EQUAL(TEXT("Glass metallic default"), Handler.GetMaterialChannelIntensity(MaterialId, AdvViz::SDK::EChannelType::Metallic), 0.);
+		UTEST_EQUAL(TEXT("Glass specular default"), Handler.GetMaterialChannelIntensity(MaterialId, AdvViz::SDK::EChannelType::Specular), 0.5);
+	}
+	return true;
+}
+
+IMPLEMENT_CUSTOM_SIMPLE_AUTOMATION_TEST(FIModelMaterialGlassAppearanceTest, FAutomationTestBase, \
+	"Bentley.ITwinForUnreal.ITwinRuntime.MaterialGlassAppearance", \
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FIModelMaterialGlassAppearanceTest::RunTest(const FString& /*Parameters*/)
+{
+	using namespace AdvViz::SDK;
+	using EChannelType = AdvViz::SDK::EChannelType;
+	using EMaterialKind = AdvViz::SDK::EMaterialKind;
+	AITwinIModel::EnableMaterialTuning(true);
+	auto World = FITwinAPITestHelperBase::GetTestWorld();
+	UTEST_NOT_NULL(TEXT("Test world"), World);
+	auto* IModel = World->SpawnActor<AITwinIModel>();
+	UTEST_NOT_NULL(TEXT("Test iModel"), IModel);
+	IModel->IModelId = TEXT("imodel_glass_appearance_test");
+	Be::CleanUpGuard Cleanup([IModel]() { IModel->Destroy(); });
+	for (bool bExplicitTint : { false, true })
+	for (double InitialOpacity : { 0.71, 0.05, 0.1 })
+	{
+		FITwinIModelMaterialHandler Handler;
+		Handler.SetSpecificPersistenceManager(std::make_shared<MaterialPersistenceManager>());
+		auto Tuner = std::make_shared<BeUtils::GltfTuner>(true);
+		Handler.Initialize(Tuner, IModel);
+		TSceneMappingPtr SceneMapping = AdvViz::SDK::Tools::MakeSharedLockableData<FITwinSceneMapping>(false);
+		Tuner->ParseExtras({ { "iTwinMaterials", CesiumUtility::JsonValue::Array
+			{ CesiumUtility::JsonValue::Object { { "id", "0x6789" }, { "name", "Glass appearance" } } } } });
+		constexpr uint64_t MaterialId = 0x6789;
+		auto Helper = Handler.GetGltfMatHelper();
+		ITwinRenderMaterialProperties Source;
+		Source.name = "Glass appearance";
+		Source.attributes["HasBaseColor"] = true;
+		Source.attributes["color"] = std::array<double, 3>{ 0.2, 0.4, 0.7 };
+		{
+			BeUtils::WLock Lock(Helper->GetMutex());
+			Helper->CreateITwinMaterialSlot(MaterialId, Source.name, Lock);
+			Helper->SetIModelRenderMaterialProperties(MaterialId, Source, Source.name, Lock);
+			Helper->SetCurrentAlphaMode(MaterialId, "MASK", Lock);
+		}
+		bool bModified = false;
+		Helper->SetChannelIntensity(MaterialId, EChannelType::Opacity, InitialOpacity, bModified);
+		if (bExplicitTint)
+			Helper->SetChannelColor(MaterialId, EChannelType::Color, ITwinColor{ 0.6, 0.3, 0.1, 1. }, bModified);
+		auto const ExpectedTint = Helper->GetChannelColor(MaterialId, EChannelType::Color);
+		auto const ExpectedTexture = Helper->GetChannelColorMap(MaterialId, EChannelType::Color);
+		auto const ExpectedTextureFactor = Helper->GetChannelIntensity(MaterialId, EChannelType::Color);
+		Handler.SetMaterialKind(MaterialId, EMaterialKind::PBR, SceneMapping);
+		{
+			BeUtils::RLock Lock(Helper->GetMutex());
+			UTEST_TRUE(TEXT("PBR no-op does not introduce a tint"),
+				Helper->GetCustomMaterialDefinition(MaterialId, Lock)->GetChannelColorOpt(EChannelType::Color).has_value() == bExplicitTint);
+		}
+		BeUtils::GltfBuilder Builder;
+		Builder.AddMetadataProperty("features", "element", { 1 });
+		Builder.AddMetadataProperty("materials", "material", { MaterialId }, 1);
+		Builder.GetModel().meshes.emplace_back();
+		auto Primitive = Builder.AddMeshPrimitive(0, Builder.AddMaterial(), CesiumGltf::MeshPrimitive::Mode::TRIANGLES);
+		Primitive.SetPositions({ { 0.f, 0.f, 0.f }, { 1.f, 0.f, 0.f }, { 0.f, 1.f, 0.f } });
+		Primitive.SetIndices(std::vector<std::array<uint8_t, 1>>{ { 0 }, { 1 }, { 2 } }, false);
+		Primitive.SetFeatureIds(std::vector<std::array<float, 1>>{ { 0.f }, { 0.f }, { 0.f } }, true);
+		Primitive.SetITwinMaterialID(MaterialId);
+		Primitive.SetColors(std::vector<std::array<uint8_t, 4>>{ { 0, 0, 0, 182 }, { 255, 64, 32, 64 }, { 25, 200, 90, 128 } });
+		Tuner->SetMaterialRules({ .itwinMatIDsToSplit_ = { MaterialId } });
+		CesiumGltf::Model PbrModel;
+		UTEST_TRUE(TEXT("PBR tuning succeeds"), Tuner->applyForUnitTest(Builder.GetModel(), glm::dmat4(1.), PbrModel));
+		UTEST_EQUAL(TEXT("PBR mesh exists"), PbrModel.meshes.size(), size_t(1));
+		UTEST_EQUAL(TEXT("PBR retains vertex colors without explicit tint"),
+			PbrModel.meshes[0].primitives[0].attributes.contains("COLOR_0"), !bExplicitTint);
+		Handler.SetMaterialKind(MaterialId, EMaterialKind::Glass, SceneMapping);
+		{
+			BeUtils::RLock Lock(Helper->GetMutex());
+			UTEST_TRUE(TEXT("Glass establishes explicit tint"),
+				Helper->GetCustomMaterialDefinition(MaterialId, Lock)->GetChannelColorOpt(EChannelType::Color).has_value());
+		}
+		UTEST_TRUE(TEXT("Glass preserves resolved tint"), Helper->GetChannelColor(MaterialId, EChannelType::Color) == ExpectedTint);
+		UTEST_TRUE(TEXT("Glass preserves color texture"), Helper->GetChannelColorMap(MaterialId, EChannelType::Color) == ExpectedTexture);
+		UTEST_EQUAL(TEXT("Glass preserves texture factor"), Helper->GetChannelIntensity(MaterialId, EChannelType::Color), ExpectedTextureFactor);
+		CesiumGltf::Model GlassModel;
+		UTEST_TRUE(TEXT("Glass tuning succeeds"), Tuner->applyForUnitTest(Builder.GetModel(), glm::dmat4(1.), GlassModel));
+		UTEST_EQUAL(TEXT("Glass mesh exists"), GlassModel.meshes.size(), size_t(1));
+		UTEST_EQUAL(TEXT("Glass primitive exists"), GlassModel.meshes[0].primitives.size(), size_t(1));
+		auto const& TunedPrimitive = GlassModel.meshes[0].primitives[0];
+		UTEST_FALSE(TEXT("Glass drops baked vertex RGB and alpha"), TunedPrimitive.attributes.contains("COLOR_0"));
+		auto const& Material = GlassModel.materials[TunedPrimitive.material];
+		UTEST_TRUE(TEXT("Glass is translucent"), Material.alphaMode == "BLEND");
+		UTEST_TRUE(TEXT("Glass has PBR factors"), Material.pbrMetallicRoughness.has_value());
+		auto const& Factor = Material.pbrMetallicRoughness->baseColorFactor;
+		for (size_t Channel = 0; Channel < 3; ++Channel)
+			UTEST_EQUAL(TEXT("Glass factor is tint, not first vertex RGB"), Factor[Channel], ExpectedTint[Channel]);
+		UTEST_EQUAL(TEXT("Glass retains custom opacity with clamp"), Factor[3], FMath::Min(InitialOpacity, 0.1));
+		Handler.SetMaterialKind(MaterialId, EMaterialKind::Glass, SceneMapping);
+		UTEST_TRUE(TEXT("Repeated Glass switch preserves tint"), Helper->GetChannelColor(MaterialId, EChannelType::Color) == ExpectedTint);
+	}
+	return true;
+}
 
 bool FIModelMaterialHandlerTest::RunTest(const FString& /*Parameters*/)
 {

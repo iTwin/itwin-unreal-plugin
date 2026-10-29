@@ -211,20 +211,16 @@ void FDecorationAsyncIOHelper::InitDecorationServiceConnection(const UWorld* Wor
 	// Initialize the connection to the decoration service
 	if (bNeedInitConfig)
 	{
-		EITwinEnvironment Env = UITwinWebServices::GetDefaultEnvironment();
+		EITwinEnvironment Env = UITwinWebServices::GetDefaultEnvironment(WorldContextObject);
 
 		// Deduce environment from current iTwin authorization, if any.
 		// Note that we must use the same environment both in iTwin IMS and decoration service, as the
 		// token will be validated on both sides. Therefore, it is much preferable to have a valid
 		// authorization at this point...
-		TObjectPtr<AITwinServerConnection> ServerConnection;
-		if (UITwinWebServices::GetActiveConnection(ServerConnection, WorldContextObject))
+		EITwinEnvironment const ActiveEnv = UITwinWebServices::GetActiveEnvironment();
+		if (ActiveEnv != EITwinEnvironment::Invalid)
 		{
-			if (ensure(ServerConnection
-				&& ServerConnection->Environment != EITwinEnvironment::Invalid))
-			{
-				Env = ServerConnection->Environment;
-			}
+			Env = ActiveEnv;
 		}
 
 		UITwinDecorationServiceSettings const* DecoSettings = GetDefault<UITwinDecorationServiceSettings>();
@@ -339,10 +335,11 @@ void FDecorationAsyncIOHelper::InitDefaultInstancesGroup(AdvViz::SDK::IInstances
 	{
 		// Create a default group for static instances (i.e. not linked to splines or animation paths).
 		// This group will be used by default for all instances created without specifying a group.
-		IInstancesGroup* p = IInstancesGroup::New();
-		p->SetName(InstancesManager::DEFAULT_GROUP_NAME);
-		staticInstancesGroup = AdvViz::SDK::Tools::MakeSharedLockableDataPtr<IInstancesGroup>(p);
+		IInstancesGroup* gp = IInstancesGroup::New();
+		gp->SetName(InstancesManager::DEFAULT_GROUP_NAME);
+		staticInstancesGroup = AdvViz::SDK::Tools::MakeSharedLockableDataPtr<IInstancesGroup>(gp);
 		instancesManager_->AddInstancesGroup(staticInstancesGroup);
+		BE_LOGI("ITwinDecoration", "Added default instances group: " << gp->GetName() << " (ID: " << gp->GetId().ID() << ")");
 	}
 }
 

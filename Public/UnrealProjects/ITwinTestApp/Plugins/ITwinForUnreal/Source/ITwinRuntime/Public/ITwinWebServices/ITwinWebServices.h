@@ -13,7 +13,7 @@
 
 #include "CoreMinimal.h"
 #include "UObject/NoExportTypes.h"
-#include <ITwinServerConnection.h>
+#include <ITwinEnvironmentEnum.h>
 #include "ITwinWebServices_Info.h"
 
 #include <ITwinRuntime/Private/Compil/BeforeNonUnrealIncludes.h>
@@ -54,10 +54,6 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnUpdateSavedViewThumbnailComple
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGetRealityDataComplete, bool, bSuccess, FITwinRealityDataInfos, RealityDataInfos);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGetRealityData3DInfoComplete, bool, bSuccess, FITwinRealityData3DInfo, RealityDataInfo);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnGetElementPropertiesComplete, bool, bSuccess, FElementProperties, ElementProps, FString, ElementId);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGetPagedNodesComplete, bool, bSuccess, FIModelPagedNodesRes, IModelNodes);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnGetModelFilteredNodesComplete, bool, bSuccess, FFilteredNodesRes, FilteredNodes, FString, Filter);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnGetCategoryFilteredNodesComplete, bool, bSuccess, FFilteredNodesRes, FilteredNodes, FString, Filter);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGetCategoryNodesComplete, bool, bSuccess, FIModelPagedNodesRes, IModelNodes);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_FiveParams(FOnGetIModelPropertiesComplete, bool, bSuccess, bool, bHasExtents, FProjectExtents, Extents, bool, bHasEcefLocation, FEcefLocation, EcefLocation);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnQueryIModelComplete, bool, bSuccess, FString, QueryResult);
 
@@ -178,22 +174,6 @@ public:
 	void GetElementProperties(FString iTwinId, FString iModelId, FString ChangesetId, FString ElementId);
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
-	void GetPagedNodes(FString const& iTwinId, FString const& iModelId,
-		FString const& changesetId, FString const& parentKey = "", int offset = 0, int count = 1000);
-
-	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
-	void GetModelFilteredNodes(FString const& iTwinId, FString const& iModelId,
-		FString const& ChangesetId, FString const& Filter);
-
-	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
-	void GetCategoryFilteredNodes(FString const& iTwinId, FString const& iModelId,
-		FString const& ChangesetId, FString const& Filter);
-
-	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
-	void GetCategoryNodes(FString const& iTwinId, FString const& iModelId,
-		FString const& changesetId, FString const& parentKey = "", int offset = 0, int count = 1000);
-
-	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
 	void GetIModelProperties(FString iTwinId, FString iModelId, FString ChangesetId);
 
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
@@ -298,18 +278,6 @@ public:
 	FOnGetElementPropertiesComplete OnGetElementPropertiesComplete;
 
 	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
-	FOnGetPagedNodesComplete OnGetPagedNodesComplete;
-
-	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
-	FOnGetModelFilteredNodesComplete OnGetModelFilteredNodesComplete;
-
-	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
-	FOnGetCategoryFilteredNodesComplete OnGetCategoryFilteredNodesComplete;
-
-	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
-	FOnGetCategoryNodesComplete OnGetCategoryNodesComplete;
-
-	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
 	FOnGetIModelPropertiesComplete OnGetIModelPropertiesComplete;
 
 	UPROPERTY(BlueprintAssignable, Category = "iTwin Web Services")
@@ -321,10 +289,18 @@ public:
 	UFUNCTION(BlueprintSetter, Category = "iTwin Web Services")
 	void SetEnvironment(EITwinEnvironment InEnvironment);
 
+	UFUNCTION(BlueprintSetter, Category = "iTwin Web Services")
 	bool IsAuthorizationInProgress() const;
+
+	UFUNCTION(BlueprintSetter, Category = "iTwin Web Services")
+	bool HasAccessToken() const;
+
+	//! Return the OAuth access token for this environment, if any.
+	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
+	FString GetAccessToken() const;
+
 	using AuthManagerPtr = std::shared_ptr<AdvViz::SDK::ITwinAuthManager>;
 	AuthManagerPtr& GetAuthManager() const;
-	void SetServerConnection(TObjectPtr<AITwinServerConnection> const& InConnection);
 
 	//! Set the regular access token.
 	void SetRegularAccessToken(const FString& InAccessToken);
@@ -335,14 +311,11 @@ public:
 	//! Returns the access token override mode.
 	AdvViz::SDK::EITwinAuthOverrideMode GetOverrideMode() const;
 
-	//! Initialize the server connection from the level, if all connection actors in the level are using the
+	//! Initialize the environment from the level, if all server connection actors in the level are using the
 	//! same environment. If no server connection actor exists in the world, or if there are several ones not
 	//! sharing the same environment, this WebServices actor will not be modified and false is returned.
 	UFUNCTION(BlueprintCallable, Category = "iTwin Web Services")
-	bool InitServerConnectionFromWorld();
-
-	void GetServerConnection(TObjectPtr<AITwinServerConnection>& OutConnection) const;
-	bool HasSameConnection(AITwinServerConnection const* Connection) const;
+	bool InitEnvironmentFromWorld();
 
 	void SetObserver(IITwinWebServicesObserver* InObserver);
 	bool HasObserver(IITwinWebServicesObserver const* Observer) const;
@@ -354,12 +327,26 @@ public:
 
 	static void SetPreAuthFunc(PreAuthFunc const& InPreAuthCallback);
 
+	static void InitDefaultEnvironment(class UITwinDecorationServiceSettings const* DecoSettings);
+
 	static void SetPreferredEnvironment(EITwinEnvironment Env);
-	static EITwinEnvironment GetDefaultEnvironment();
 
+	//! Resets the preferred environment, so that it will be re-initialized from the settings or the world
+	//! context object.
+	static void ResetPreferredEnvironment();
 
-	static bool GetActiveConnection(TObjectPtr<AITwinServerConnection>& OutConnection,
-		const UObject* WorldContextObject);
+	//! Returns the default environment, as set in the settings or by the preferred environment.
+	//! If none of the atter is set, it will also try to guess the environment from the world context object
+	//! (ie. the level), if any - by looking for instances of AITwinServerConnection.
+	//! If no environment can be determined, returns the fallback environment (defaulting to Prod).
+	static EITwinEnvironment GetDefaultEnvironment(const UWorld* WorldContextObject,
+		EITwinEnvironment InFallbackEnvironment = EITwinEnvironment::Prod);
+
+	//! Returns the environment currently used by the active web-services instance, if any.
+	//! If no web-services instance is active, looks for the environment for which we currently have an
+	//! access token: if such environment exists, and there is no ambiguity (ie. no other environment
+	//! with an access token), returns it; otherwise, returns the invalid environment.
+	static EITwinEnvironment GetActiveEnvironment();
 
 	static void SetLogErrors(bool bInLogErrors);
 	static bool ShouldLogErrors() { return bLogErrors; }
@@ -383,7 +370,7 @@ private:
 	/// mix different environments in a same session...)
 	static UITwinWebServices* GetWorkingInstance();
 
-	bool TryGetServerConnection(bool bAllowBroadcastAuthResult);
+	bool TryGetAccessToken(bool bAllowBroadcastAuthResult);
 	void OnAuthDoneImpl(bool bSuccess, std::string const& Error, bool bBroadcastResult = true);
 
 	virtual void OnAuthorizationDone(bool bSuccess, std::string const& Error) override;
@@ -398,12 +385,11 @@ private:
 	template <typename FunctorType>
 	HttpRequestID DoRequestRetID(FunctorType&& InFunctor);
 
-	static void InitDefaultEnvironmentFromDecoSettings(class UITwinDecorationServiceSettings const* DecoSettings);
+	static bool InitDefaultEnvironmentFromDecoSettings(class UITwinDecorationServiceSettings const* DecoSettings);
+
+	static bool InitDefaultEnvironmentFromWorld(const UWorld* WorldContextObject);
 
 private:
-	UPROPERTY()
-	TObjectPtr<AITwinServerConnection> ServerConnection;
-
 	UPROPERTY(EditAnywhere, Category = "iTwin Web Services",
 		BlueprintGetter = GetEnvironment, BlueprintSetter = SetEnvironment)
 	EITwinEnvironment Environment = EITwinEnvironment::Prod;

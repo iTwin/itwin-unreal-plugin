@@ -99,7 +99,7 @@ namespace AdvViz::SDK
 
 	double AnimationPathInfo::GetSpeed() const
 	{
-		return GetImpl().serverSideData_.speed.value_or(750.); // in m/s
+		return GetImpl().serverSideData_.speed.value_or(1389.); // in cm/s, ~50km/h
 	}
 
 	void AnimationPathInfo::SetOffsetX(double v)
@@ -242,7 +242,7 @@ namespace AdvViz::SDK
 
 	double AnimationPathInfo::GetMinSpeed() const
 	{
-		return GetImpl().serverSideData_.minSpeed.value_or(1389.0);
+		return GetImpl().serverSideData_.minSpeed.value_or(1389.0); // in cm/s, ~50km/h
 	}
 
 	void AnimationPathInfo::SetMaxSpeed(double v)
@@ -253,7 +253,7 @@ namespace AdvViz::SDK
 
 	double AnimationPathInfo::GetMaxSpeed() const
 	{
-		return GetImpl().serverSideData_.maxSpeed.value_or(1389.0);
+		return GetImpl().serverSideData_.maxSpeed.value_or(2222.0); // in cm/s, ~80km/h
 	}
 
 	void AnimationPathInfo::SetObjects(const std::vector<std::string> &objs)
@@ -487,18 +487,6 @@ namespace AdvViz::SDK
 			auto pathInfoPtr = SThis->AddAnimationPathInfo();
 			auto pathInfo = pathInfoPtr->GetAutoLock();
 			pathInfo->SetServerSideData(row);
-			//if (row.speed)
-			//	pathInfo->SetSpeed(row.speed.value());
-			//if (row.offsetX)
-			//	pathInfo->SetOffsetX(row.offsetX.value());
-			//if (row.offsetY)
-			//	pathInfo->SetOffsetY(row.offsetY.value());
-			//if (row.startTime)
-			//	pathInfo->SetStartTime(row.startTime.value());
-			//if (row.is_looping)
-			//	pathInfo->SetIsLooping(row.is_looping.value());
-			//if (row.is_enabled)
-			//	pathInfo->SetIsEnabled(row.is_enabled.value());
 			auto refID = pathInfo->GetId();
 			refID.SetDBIdentifier(row.id.value());
 			pathInfo->SetId(refID);

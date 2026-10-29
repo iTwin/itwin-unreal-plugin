@@ -15,7 +15,6 @@
 #include "TimeInSeconds.h"
 #include "Timeline.h"
 #include <ITwinIModel.h>
-#include <ITwinServerConnection.h>
 #include <ITwinServerEnvironment.h>
 #include <ITwinSynchro4DSchedules.h>
 #include <ITwinSynchro4DSchedulesInternals.h>
@@ -180,8 +179,6 @@ private:
 	bool IsSimulatedSchedule() const { return Schedule && Schedule->Id.StartsWith(TEXT("fadafada-")); }
 	UITwinSynchro4DSchedules const& SchedulesComponent() const { return *Owner->Owner; }
 	UITwinSynchro4DSchedules& SchedulesComponent() { return *Owner->Owner; }
-	TObjectPtr<AITwinServerConnection> const& GetServerConnection() const
-		{ return Cast<AITwinIModel>(SchedulesComponent().GetOwner())->ServerConnection; }
 	FITwinSynchro4DSchedulesInternals const& SchedulesInternals() const
 		{ return GetInternals(SchedulesComponent()); }
 	FITwinSynchro4DSchedulesInternals& SchedulesInternals() { return GetInternals(SchedulesComponent()); }
@@ -266,7 +263,9 @@ private:
 			return UnitTesting->Environment;
 		}
 		else
-			return GetServerConnection()->Environment;
+		{
+			return Cast<AITwinIModel const>(SchedulesComponent().GetOwner())->GetEnvironment();
+		}
 	}
 
 	FString GetSchedulesAPIBaseUrl() const
@@ -275,7 +274,8 @@ private:
 		{
 			return UnitTesting->BaseUrl;
 		}
-		return FString::Printf(TEXT("https://%sapi.bentley.com/schedules"), *GetServerConnection()->UrlPrefix());
+		return FString::Printf(TEXT("https://%sapi.bentley.com/schedules"),
+			*ITwinServerEnvironment::GetUrlPrefix(GetScheduleEnvironment()));
 	}
 
 	FString GetIdToQuerySchedules() const
@@ -1647,8 +1647,9 @@ void FITwinSchedulesImport::FImpl::ResetConnection(FString const& ITwinAkaProjec
 			GetBearerToken = [SchedComp = Owner->Owner]() -> FString
 			{
 				AITwinIModel const& IModel = *Cast<AITwinIModel const>(SchedComp->GetOwner());
-				if (ensure(IModel.ServerConnection))
-					return IModel.ServerConnection->GetAccessToken();
+				FString const Token = IModel.GetAccessToken();
+				if (ensure(!Token.IsEmpty()))
+					return Token;
 				else
 					return TEXT("_TokenError_");
 			};
@@ -2183,7 +2184,7 @@ void FITwinSchedulesImport::Uninitialize()
 		};
 	while (WaitingForBGTasksWithoutCompletion())
 	{
-		FPlatformProcess::Sleep(0.1);
+		FPlatformProcess::Sleep(0.1f);
 	}
 	if (Impl->Schedule && Impl->bNeedToSaveScheduleToDisk)
 	{
@@ -2244,25 +2245,14 @@ FString FAnimationBinding::ToString(const TCHAR* SpecificElementID/* = nullptr*/
 
 FString FITwinSchedule::ToString() const
 {
-	return FString::Printf(TEXT("%s Schedule %s (\"%s\"), with:\n" \
-		"\t%llu bindings, %llu tasks, %llu groups, %llu appearance profiles,\n" \
-		"\t%llu static transfo. assignments,\n" \
-		"\t%llu 3D path transfo. assignments,\n" \
-		"\t%llu unique resources (single Elements or groups of them) are bound to a task,\n" \
-		"\t%llu unique Elements are bound to a task."),
-		::ToString(Generation),
-		*Id, *Name, AnimationBindings.size(), Tasks.size(), NumGroups(), AppearanceProfiles.size(),
-		StaticTransfoAssignments.size(),
-		PathTransfoAssignments.size(),
-		Animation3DPaths.size()
-		, [this]()
+	size_t const Bound = [this]()
 		{
 			std::unordered_set<decltype(FAnimationBinding::AnimatedEntities)> Bound;
 			for (auto&& Binding : AnimationBindings)
 				Bound.insert(Binding.AnimatedEntities);//could explore the variant and recurse into groups...
 			return Bound.size();
-		}()
-		, [this]()
+		}();
+	size_t const UniqueBound = [this]()
 		{
 			// Only one sort will be actually used, ElemIDs or FedGUIDs
 			std::unordered_set<ITwinElementID> BoundIDs;
@@ -2301,6 +2291,16 @@ FString FITwinSchedule::ToString() const
 					Binding.AnimatedEntities);
 			}
 			return BoundIDs.size() + BoundGUIDs.size();
-		}()
+		}();
+	return FString::Printf(TEXT("%s Schedule %s (\"%s\"), with:\n" \
+		"\t%llu bindings, %llu tasks, %llu groups, %llu appearance profiles,\n" \
+		"\t%llu static transfo. assignments,\n" \
+		"\t%llu 3D path transfo. assignments,\n" \
+		"\t%llu 3D paths,\n" \
+		"\t%llu unique resources (single Elements or groups of them) are bound to a task,\n" \
+		"\t%llu unique Elements are bound to a task."),
+		::ToString(Generation),
+		*Id, *Name, AnimationBindings.size(), Tasks.size(), NumGroups(), AppearanceProfiles.size(),
+		StaticTransfoAssignments.size(), PathTransfoAssignments.size(), Animation3DPaths.size(), Bound, UniqueBound
 	);
 }

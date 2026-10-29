@@ -395,6 +395,63 @@ TEST_CASE("GltfMaterialHelper - Material Full Definition", "[GltfMaterialHelper]
 		CHECK(*metallicOpt == Catch::Approx(0.9).epsilon(0.0001));
 	}
 
+	SECTION("Set full material definition refreshes cached alpha mode (BLEND -> MASK)")
+	{
+		bool modified = false;
+		helper.SetChannelIntensity(TEST_MATERIAL_ID, EChannelType::Opacity, 0.5, modified);
+		std::string alphaMode;
+		helper.StoreInitialAlphaModeIfNeeded(TEST_MATERIAL_ID, alphaMode, WLock(helper.GetMutex()));
+		CHECK(alphaMode == "BLEND");
+
+		ITwinMaterial matDef;
+		matDef.SetChannelIntensity(EChannelType::Opacity, 1.0);
+		matDef.SetChannelIntensity(EChannelType::Metallic, 1.0);
+		helper.SetMaterialFullDefinition(TEST_MATERIAL_ID, matDef);
+
+		alphaMode.clear();
+		CHECK(helper.GetCurrentAlphaMode(TEST_MATERIAL_ID, alphaMode, RLock(helper.GetMutex())));
+		CHECK(alphaMode == "MASK");
+
+		EMaterialKind kind = EMaterialKind::Glass;
+		bool bRequiresTranslucency = true;
+		CHECK(helper.GetCustomRequirements(TEST_MATERIAL_ID, kind, bRequiresTranslucency));
+		CHECK(bRequiresTranslucency == false);
+		CHECK(kind == EMaterialKind::PBR);
+	}
+
+	SECTION("Set full material definition refreshes cached alpha mode (MASK -> BLEND)")
+	{
+		std::string alphaMode;
+		helper.StoreInitialAlphaModeIfNeeded(TEST_MATERIAL_ID, alphaMode, WLock(helper.GetMutex()));
+		CHECK(alphaMode == "MASK");
+
+		ITwinMaterial matDef;
+		matDef.kind = EMaterialKind::Glass;
+		matDef.SetChannelIntensity(EChannelType::Opacity, 0.5);
+		helper.SetMaterialFullDefinition(TEST_MATERIAL_ID, matDef);
+
+		alphaMode.clear();
+		CHECK(helper.GetCurrentAlphaMode(TEST_MATERIAL_ID, alphaMode, RLock(helper.GetMutex())));
+		CHECK(alphaMode == "BLEND");
+
+		EMaterialKind kind = EMaterialKind::PBR;
+		bool bRequiresTranslucency = false;
+		CHECK(helper.GetCustomRequirements(TEST_MATERIAL_ID, kind, bRequiresTranslucency));
+		CHECK(bRequiresTranslucency == true);
+		CHECK(kind == EMaterialKind::Glass);
+	}
+
+	SECTION("Set full material definition keeps alpha mode lazy when not yet computed")
+	{
+		ITwinMaterial matDef;
+		matDef.SetChannelIntensity(EChannelType::Opacity, 0.5);
+		helper.SetMaterialFullDefinition(TEST_MATERIAL_ID, matDef);
+
+		std::string alphaMode;
+		CHECK(helper.GetCurrentAlphaMode(TEST_MATERIAL_ID, alphaMode, RLock(helper.GetMutex())) == false);
+		CHECK(alphaMode.empty());
+	}
+
 	SECTION("SetIModelRenderMaterialProperties")
 	{
 		ITwinRenderMaterialProperties renderMaterialProps;

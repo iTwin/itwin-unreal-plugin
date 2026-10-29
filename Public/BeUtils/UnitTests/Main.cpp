@@ -14,6 +14,13 @@
 int main(int argc, char* argv[])
 {
 	std::cout << "Test work dir = " << BEUTILS_WORK_DIR << std::endl;
-	std::filesystem::remove_all(BEUTILS_WORK_DIR);
+	std::error_code ec;
+	const std::filesystem::path workDir(BEUTILS_WORK_DIR);
+	if (std::filesystem::exists(workDir, ec)
+		&& std::filesystem::is_directory(workDir, ec)
+		&& workDir.root_path() != workDir /* basic protection to avoid deleting root directory */)
+	{
+		std::filesystem::remove_all(workDir, ec);
+	}
 	return Catch::Session().run(argc, argv);
 }

@@ -23,6 +23,7 @@
 #include <Spline/ITwinSplineHelper.h>
 #include <Spline/ITwinUESplineCurve.h>
 #include <Spline/ITwinSplineTool.h>
+#include <Math/UEMathConversion.h>
 
 #include <Async/Async.h>
 #include <Components/SplineComponent.h>
@@ -47,6 +48,7 @@
 #	include <BeHeaders/Util/CleanUpGuard.h>
 #	include <BeUtils/SplineSampling/SplineSampling.h>
 #	include <SDK/Core/Visualization/PopulationPersistence.h>
+#	include <SDK/Core/Visualization/InstancesManager.h>
 #	include "SDK/Core/Tools/DelayedCall.h"
 #	include "SDK/Core/Tools/Log.h"
 #include <Compil/AfterNonUnrealIncludes.h>
@@ -393,6 +395,8 @@ public:
 
 	void DeleteSelectedInstance();
 
+	void SetCurrentInstanceGroupId(AdvViz::SDK::RefID groupId);
+
 	bool IsPopulationModeActivated() const;
 	bool IsBrushModeActivated() const;
 
@@ -484,6 +488,8 @@ public:
 	bool ShowOnlyTranslationZGizmo() const;
 
 	AITwinPopulation* PreLoadPopulation(const FString& AssetPath);
+	TArray<FString> GetAssetLoadingErrors(const FString& AssetPath, bool bAssetShouldExist) const;
+
 	void SetUsedOnCutout(bool bForCutout);
 	void SetInstanceTransformProxy(IITwinPopulationInstanceTransformProxyPtr InTransformProxy);
 
@@ -582,6 +588,7 @@ public:
 	/// Returns the unique identifier of a population from its index.
 	AdvViz::SDK::RefID GetPopulationId(EITwinPopulationType PopulationType, int32 PopulationIndex) const;
 	void ToggleSplineToolForSelectedPath();
+	AdvViz::SDK::IInstancesGroupPtr GetGroupFromName(const std::string& groupName);
 private:
 	FPopulationIdentifier GetPopulationIdentifierFromSpline(AdvViz::SDK::RefID const& RefID) const;
 	UITwinPopulationHelper* CreatePop(EITwinPopulationType PopType);
@@ -617,6 +624,12 @@ inline std::vector<AITwinPopulation*> const& AITwinPopulationTool::FImpl::GetEdi
 		CollectEditedPopulations();
 	}
 	return EditedPopulations;
+}
+
+void AITwinPopulationTool::FImpl::SetCurrentInstanceGroupId(AdvViz::SDK::RefID groupId)
+{
+	instanceGroupId = groupId;
+	BE_LOGI("ITwinDecoration", "Setting current instance group to " << groupId.ID());
 }
 
 void AITwinPopulationTool::FImpl::SetMode(EPopulationToolMode mode)
@@ -783,6 +796,11 @@ void AITwinPopulationTool::FImpl::DeleteSelectedInstance()
 		// Reset transformation proxy as the selection has been reset.
 		SetInstanceTransformProxy({});
 		owner.SelectionChangedEvent.Broadcast();
+
+		// If last item has been deleted from a custom group, we need
+		// to remove this group from the population panel group list.
+		if (instanceGroupId.IsValid() && owner.IsCustomPopulationGroup(instanceGroupId))
+			owner.PopulationListModifiedEvent.Broadcast();
 	}
 }
 
@@ -1057,9 +1075,7 @@ bool AITwinPopulationTool::FImpl::DragActorInLevel(const FVector2D& screenPositi
 		return false;
 	}
 	if (!instanceGroupId.IsValid() && decorationHelper)
-	{
-		instanceGroupId = decorationHelper->GetStaticInstancesGroupId();
-	}
+		SetCurrentInstanceGroupId(decorationHelper->GetStaticInstancesGroupId());
 
 	APlayerController* playerController = World->GetFirstPlayerController();
 
@@ -1329,6 +1345,11 @@ void AITwinPopulationTool::FImpl::FinalizeInteractiveCreation(const FHitResult* 
 	OnSelectionTransformCompleted(/*bForInteractivePopulation*/true);
 
 	owner.InteractiveCreationCompletedEvent.Broadcast(&owner, bTriggeredFromITS);
+
+	// If the item has been added to a previously empty custom group, we need
+	// to add this group to the population panel group list.
+	if (instanceGroupId.IsValid() && owner.IsCustomPopulationGroup(instanceGroupId))
+		owner.PopulationListModifiedEvent.Broadcast();
 
 	// Track Amplitude event
 	PopulationChanged(*selectedPopulation, EChangeType::Added, TEXT("single_placement"));
@@ -1606,6 +1627,11 @@ void AITwinPopulationTool::FImpl::Tick(float DeltaTime)
 
 						// Actually remove instances. The indices will be sorted in decreasing order.
 						hits.first->RemoveInstances(hits.second);
+
+						// If last items have been removed from a custom group, we need
+						// to remove this group from the population panel group list.
+						if (instanceGroupId.IsValid() && owner.IsCustomPopulationGroup(instanceGroupId))
+							owner.PopulationListModifiedEvent.Broadcast();
 					}
 				}
 			}
@@ -1970,6 +1996,10 @@ void AITwinPopulationTool::FImpl::MultiLineTraceFromMousePos(
 
 				BrushAddedInstancesInfo.emplace(Population, Index);
 			}
+			// If items have been added to a previously empty custom group, we need
+			// to add this group to the population panel group list.
+			if (instanceGroupId.IsValid() && owner.IsCustomPopulationGroup(instanceGroupId))
+				owner.PopulationListModifiedEvent.Broadcast();
 #ifndef RELEASE_CONFIG
 			BrushAddedInstancesInfo[Population].NumAddedInstances++;
 #endif
@@ -2070,7 +2100,7 @@ size_t AITwinPopulationTool::FImpl::CollectEditedPopulations()
 	}
 	if (!instanceGroupId.IsValid())
 	{
-		instanceGroupId = decorationHelper->GetStaticInstancesGroupId();
+		SetCurrentInstanceGroupId(decorationHelper->GetStaticInstancesGroupId());
 	}
 
 	EditedPopulations.clear();
@@ -2131,9 +2161,30 @@ AITwinPopulation* AITwinPopulationTool::FImpl::PreLoadPopulation(const FString& 
 	}
 	if (!instanceGroupId.IsValid())
 	{
-		instanceGroupId = decorationHelper->GetStaticInstancesGroupId();
+		SetCurrentInstanceGroupId(decorationHelper->GetStaticInstancesGroupId());
 	}
 	return decorationHelper->GetOrCreatePopulation(AssetPath, instanceGroupId);
+}
+
+TArray<FString> AITwinPopulationTool::FImpl::GetAssetLoadingErrors(const FString& AssetPath, bool bAssetShouldExist) const
+{
+	AITwinPopulation const* LoadedPopulation = nullptr;
+	if (decorationHelper)
+	{
+		AdvViz::SDK::RefID const groupId = instanceGroupId.IsValid() ? instanceGroupId
+			: decorationHelper->GetStaticInstancesGroupId();
+		// Note: we cannot just call GetPopulation - which we would be tempted to do when
+		// bAssetShouldExist is true - because a population can be removed from cache
+		// if it has no instances, which is often the case just after selecting an asset in the
+		// interface.
+		LoadedPopulation = decorationHelper->GetOrCreatePopulation(AssetPath, groupId);
+	}
+	if (LoadedPopulation)
+		return LoadedPopulation->GetLoadingErrors();
+	else if (bAssetShouldExist)
+		return { FString::Printf(TEXT("Population asset '%s' could not be loaded."), *AssetPath) };
+	else
+		return {};
 }
 
 void AITwinPopulationTool::FImpl::SetUsedOnCutout(bool bForCutout)
@@ -2232,10 +2283,13 @@ void AITwinPopulationTool::FImpl::UpdateGroupId(AITwinSplineHelper const* CurSpl
 	if (!ensure(decorationHelper))
 		return;
 	
-	AdvViz::SDK::RefID newGroupId = AdvViz::SDK::RefID::Invalid();
+	AdvViz::SDK::RefID newGroupId = instanceGroupId;
 	if (CurSpline == nullptr)
 	{
-		newGroupId = decorationHelper->GetStaticInstancesGroupId();
+		// If a custom population group is used, we keep it.
+		// Otherwise, we use the default static instances group.
+		if (!owner.IsCustomPopulationGroup(instanceGroupId))
+			newGroupId = decorationHelper->GetStaticInstancesGroupId();
 	}
 	else
 	{
@@ -2252,10 +2306,10 @@ void AITwinPopulationTool::FImpl::UpdateGroupId(AITwinSplineHelper const* CurSpl
 		}
 	}
 
-	// If a change is detected, we must collect populations again (as they depend the group ID.
+	// If a change is detected, we must collect populations again (as they depend the group ID).
 	if (instanceGroupId != newGroupId)
 	{
-		instanceGroupId = newGroupId;
+		SetCurrentInstanceGroupId(newGroupId);
 		CollectEditedPopulations();
 	}
 }
@@ -3817,6 +3871,11 @@ AITwinPopulation* AITwinPopulationTool::PreLoadPopulation(const FString& AssetPa
 	return Impl->PreLoadPopulation(AssetPath);
 }
 
+TArray<FString> AITwinPopulationTool::GetAssetLoadingErrors(const FString& AssetPath, bool bAssetShouldExist) const
+{
+	return Impl->GetAssetLoadingErrors(AssetPath, bAssetShouldExist);
+}
+
 void AITwinPopulationTool::FImpl::OnActivatePicking(bool bActivate)
 {
 	if (bActivate)
@@ -4253,12 +4312,35 @@ void AITwinPopulationTool::SetAvoidOverlapping(FPopulationIdentifier PopHandle, 
 
 void AITwinPopulationTool::SetAllVisible(bool isVisible, bool bForceHiddenSpline)
 {
+	// Set visibility for area and path populations.
 	for (EITwinPopulationType PopType : { EITwinPopulationType::Area,
 										   EITwinPopulationType::Path })
 	{
 		for (int32 Index(0); Index < NumPopulations(PopType); ++Index)
 		{
 			SetVisible(FPopulationIdentifier(PopType, Index), isVisible, bForceHiddenSpline);
+		}
+	}
+
+	// Set visibility for custom instances groups (including the default one).
+	if (auto instancesManager = Impl->decorationHelper->GetInstancesManager())
+	{
+		std::vector<AdvViz::SDK::RefID> result;
+		instancesManager->GetInstanceGroupIds(result, false, AdvViz::SDK::InstancesManager::CUSTOM_GROUP_TYPE);
+		result.push_back(Impl->decorationHelper->GetStaticInstancesGroupId());
+		for (auto id : result)
+		{
+			if (auto groupPtr = instancesManager->GetInstancesGroup(id))
+			{
+				auto group = groupPtr->GetAutoLock();
+				group->SetVisibility(isVisible);
+				auto Populations = Impl->decorationHelper->GetPopulations(id);
+				for (auto population : Populations)
+				{
+					if (population)
+						population->SetHiddenInGame(!isVisible);
+				}
+			}
 		}
 	}
 }
@@ -4779,4 +4861,184 @@ namespace
 TSharedPtr<AITwinInteractiveTool::FToolDisabler> AITwinPopulationTool::MakeToolDisabler()
 {
 	return MakeShared<FPopulationToolDisabler>(this);
+}
+
+
+namespace {
+	bool IsDefaultPopulationGroup(const std::string& groupName)
+	{
+		return groupName.empty() || groupName.compare(AITwinPopulationTool::DefaultGroupDisplayName) == 0;
+	}
+}
+
+AdvViz::SDK::IInstancesGroupPtr AITwinPopulationTool::FImpl::GetGroupFromName(const std::string& groupName)
+{
+	if (auto instancesManager = decorationHelper->GetInstancesManager())
+	{
+		return IsDefaultPopulationGroup(groupName) ?
+			instancesManager->GetInstancesGroup(decorationHelper->GetStaticInstancesGroupId())
+			: instancesManager->GetInstancesGroupByName(groupName);
+	}
+	return {};
+}
+
+void AITwinPopulationTool::AddNewCustomPopulationGroup(const std::string& groupName, bool setAsCurrent/* = true*/)
+{
+	if (!IsDefaultPopulationGroup(groupName))
+	{
+		auto groupId = Impl->decorationHelper->AddNewCustomInstancesGroup(groupName);
+		if (setAsCurrent)
+		{
+			Impl->SetCurrentInstanceGroupId(groupId);
+			Impl->CollectEditedPopulations();
+		}
+	}
+}
+
+void AITwinPopulationTool::SetCurrentPopulationGroup(const std::string& groupName)
+{
+	auto newGroupId = IsDefaultPopulationGroup(groupName) ?
+		Impl->decorationHelper->GetStaticInstancesGroupId()
+		: Impl->decorationHelper->GetInstancesGroupIdFromName(groupName);
+	if (newGroupId.IsValid() && newGroupId != Impl->instanceGroupId)
+	{
+		Impl->SetCurrentInstanceGroupId(newGroupId);
+		Impl->CollectEditedPopulations();
+	}
+}
+
+std::string AITwinPopulationTool::GetCurrentPopulationGroup() const
+{
+	if (!Impl->instanceGroupId.IsValid()
+		|| Impl->instanceGroupId == Impl->decorationHelper->GetStaticInstancesGroupId())
+		return {};
+
+	if (auto instancesManager = Impl->decorationHelper->GetInstancesManager())
+	{
+		auto gpPtr = instancesManager->GetInstancesGroup(Impl->instanceGroupId);
+		if (gpPtr)
+		{
+			auto gp = gpPtr->GetRAutoLock();
+			return gp->GetName();
+		}
+	}
+	return {};
+}
+
+bool AITwinPopulationTool::IsCustomPopulationGroup(const AdvViz::SDK::RefID& groupId) const
+{
+	if (auto instancesManager = Impl->decorationHelper->GetInstancesManager())
+	{
+		auto gpPtr = instancesManager->GetInstancesGroup(groupId);
+		if (gpPtr)
+		{
+			auto gp = gpPtr->GetRAutoLock();
+			return gp->GetType() == AdvViz::SDK::InstancesManager::CUSTOM_GROUP_TYPE;
+		}
+	}
+	return false;
+}
+
+void AITwinPopulationTool::ChangeCustomPopulationGroupName(const std::string& oldName, const std::string& newName)
+{
+	if (auto instancesManager = Impl->decorationHelper->GetInstancesManager())
+	{
+		auto gpPtr = instancesManager->GetInstancesGroupByName(oldName);
+		if (gpPtr)
+		{
+			auto gp = gpPtr->GetAutoLock();
+			gp->SetName(newName);
+		}
+	}
+}
+
+std::vector<std::string> AITwinPopulationTool::GetCustomPopulationGroupsList(bool bIncludeEmptyGroups) const
+{
+	std::vector<std::string> result;
+	if (auto instancesManager = Impl->decorationHelper->GetInstancesManager())
+	{
+		instancesManager->GetInstanceGroupNames(result, bIncludeEmptyGroups, AdvViz::SDK::InstancesManager::CUSTOM_GROUP_TYPE);
+	}
+	return result;
+}
+
+bool AITwinPopulationTool::IsGroupVisible(const std::string& groupName) const
+{
+	if (auto instancesManager = Impl->decorationHelper->GetInstancesManager())
+	{
+		if (auto gpPtr = Impl->GetGroupFromName(groupName))
+		{
+			auto gp = gpPtr->GetRAutoLock();
+			return gp->GetVisibility();
+		}
+	}
+	return true;
+}
+
+void AITwinPopulationTool::SetGroupVisible(const std::string& groupName, bool visible)
+{
+	if (auto instancesManager = Impl->decorationHelper->GetInstancesManager())
+	{
+		if (auto gpPtr = Impl->GetGroupFromName(groupName))
+		{
+			auto gp = gpPtr->GetAutoLock();
+			gp->SetVisibility(visible);
+
+			auto Populations = Impl->decorationHelper->GetPopulations(gp->GetId());
+			for (auto population : Populations)
+			{
+				if (population)
+					population->SetHiddenInGame(!visible);
+			}
+		}
+	}
+}
+
+void AITwinPopulationTool::ZoomOnPopulationGroup(const std::string& groupName)
+{
+	FBox focusBBox;
+	if (auto instancesManager = Impl->decorationHelper->GetInstancesManager())
+	{
+		if (auto gpPtr = Impl->GetGroupFromName(groupName))
+		{
+			auto gp = gpPtr->GetAutoLock();
+			auto instances = gp->GetInstances();
+			for (auto& instancePtr : instances)
+			{
+				auto instance = instancePtr.lock();
+				if (instance)
+				{
+					auto instanceLock = instance->GetAutoLock();
+					FTransform transform = FITwinMathConversion::SDKtoUE(instanceLock->GetTransform());
+					focusBBox += transform.GetLocation();
+				}
+			}
+		}
+	}
+	if (focusBBox.IsValid)
+	{
+		focusBBox = focusBBox.ExpandBy(5.0f); // add constant extent
+		UITwinUtilityLibrary::ZoomOn(focusBBox, GetWorld(), 2000.0);
+	}
+}
+
+void AITwinPopulationTool::RemovePopulationGroup(const std::string& groupName)
+{
+	if (auto instancesManager = Impl->decorationHelper->GetInstancesManager())
+	{
+		if (auto gpPtr = Impl->GetGroupFromName(groupName))
+		{
+			auto gp = gpPtr->GetRAutoLock();
+			auto Populations = Impl->decorationHelper->GetPopulations(gp->GetId());
+			for (auto population : Populations)
+			{
+				if (population)
+					population->RemoveAllInstances();
+			}
+			//instancesManager->RemoveGroupInstances(gp->GetId());
+			if (gp->GetType() == AdvViz::SDK::InstancesManager::CUSTOM_GROUP_TYPE)
+				instancesManager->RemoveInstancesGroup(gpPtr);
+			PopulationListModifiedEvent.Broadcast();
+		}
+	}
 }

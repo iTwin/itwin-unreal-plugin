@@ -68,6 +68,8 @@ void FITwinStartup::CommonStartup(FString const& ModuleName)
 	CreateLogChannel("Cutout", Level::info);
 	CreateLogChannel("VideoExport", Level::info);
 	CreateLogChannel("ArticulatedVehicles", Level::info);
+	CreateLogChannel("SelectionOutline", Level::info);
+	CreateLogChannel("ITwinGlass", Level::info);
 
 	// Remark: at this point, logs are not yet totally enabled: #InitLog is called a few lines below, through
 	// Tools::#InitAssertHandler.

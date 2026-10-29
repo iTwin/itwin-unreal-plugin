@@ -62,6 +62,20 @@ public:
 
 	void ResetResponseFunction(const RequestKey& key);
 
+	using Headers = std::vector<Header>;
+
+	//! Register a handler receiving the full request: body, url arguments and headers.
+	//! Func signature: Response2(const std::string& data,
+	//!                           const std::vector<UrlArg>& args,
+	//!                           const Headers& headers)
+	template <typename Func>
+	void SetResponseFunctionWithRequest(const RequestKey& key, Func&& f)
+	{
+		auto thdata = thdata_.GetAutoLock();
+		thdata->responseFctWithRequest_[key] = std::forward<Func>(f);
+	}
+
+
 private:
 
 	/// Handler called by MockServer on HTTP request.
@@ -70,7 +84,7 @@ private:
 		const std::string& method,
 		const std::string& data,
 		const std::vector<UrlArg>& urlArguments,
-		const std::vector<Header>& /*headers*/) override;
+		const std::vector<Header>& headers) override;
 
 	/// Return true if \p url starts with \p str.
 	bool matchesURL(const std::string& url, const std::string& str) const {
@@ -83,6 +97,8 @@ private:
 		std::map<RequestKey, std::function<Response2()>> responseFct_;
 		std::map<RequestKey, std::function<Response2(const std::string&)>> responseFctWithData_;
 		std::map<RequestKey, std::function<Response2(const std::vector<UrlArg>&)>> responseFctWithArgs_;
+		std::map<RequestKey, std::function<Response2(
+			const std::string&, const std::vector<UrlArg>&, const Headers&)>> responseFctWithRequest_;
 	};
 	Tools::RWLockableObject<SThreadSafeData> thdata_;
 };

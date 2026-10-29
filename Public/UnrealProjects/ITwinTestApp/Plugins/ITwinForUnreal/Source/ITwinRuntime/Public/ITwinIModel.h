@@ -228,7 +228,7 @@ public:
 	// also from UObject "interface":
 	static void AddReferencedObjects(UObject* InThis, FReferenceCollector& Collector);
 
-	//! To be called at least once after ServerConnection, IModelId, ChangesetId have been set.
+	//! To be called at least once after access token, IModelId, ChangesetId have been set.
 	//! This will query the mesh export service for a corresponding export, and if complete one is found,
 	//! It will spawn the corresponding Cesium tileset.
 	//! In any case, this will also update ExportStatus.
@@ -329,6 +329,7 @@ public:
 	bool bShowConstructionData = false;
 
 	//! Deselect any element previously selected. This will disable the selection highlight, if any.
+	//! The selected material (if any) is left untouched: see DeSelectMaterials and DeSelectAll.
 	UFUNCTION(Category = "iTwin",
 		BlueprintCallable)
 	void DeSelectElements();
@@ -344,6 +345,24 @@ public:
 		BlueprintCallable)
 	void DeSelectMaterials();
 
+	//! Remove the highlight color applied to the current selection (Elements or Material), but keep it
+	//! selected so that the selection outline (if enabled) remains visible, until the next selection.
+	//! Note that after each new selection, the highlight color blinks for a few seconds, then stays on
+	//! (without blinking) for Elements but is removed for a Material.
+	UFUNCTION(Category = "iTwin",
+		BlueprintCallable)
+	void HideSelectionHighlightColor();
+
+	//! Highlight the given Element (ElementId as hex string, or empty) and/or the given iTwin Material
+	//! (ignored unless bHoverMaterial, as 0 is a valid ID: the iModel's default material) with the
+	//! non-blinking "hover" color, typically because the mouse cursor is over it.
+	//! Independent from the selection: a hovered selected item gets a mix of both colors.
+	void SetHover(const FString& ElementId, uint64 MaterialID, bool bHoverMaterial = false);
+	//! Remove any hover highlight.
+	UFUNCTION(Category = "iTwin",
+		BlueprintCallable)
+	void ClearHover();
+
 	//! Deselect any element or material previously selected. This will disable the selection highlight, if
 	//! any.
 	UFUNCTION(Category = "iTwin",
@@ -358,21 +377,6 @@ public:
 		BlueprintCallable)
 	void AddSavedViewGroup(const FString& groupName);
 
-	UFUNCTION(Category = "iTwin|Tree",
-		BlueprintCallable)
-	void GetPagedNodes(const FString& KeyString = "", int Offset = 0, int Count = 1000);
-
-	UFUNCTION(Category = "iTwin|Tree",
-		BlueprintCallable)
-	void GetModelFilteredNodes(const FString& Filter);
-
-	UFUNCTION(Category = "iTwin|Tree",
-		BlueprintCallable)
-	void GetCategoryFilteredNodes(const FString& Filter);
-
-	UFUNCTION(Category = "iTwin|Tree",
-		BlueprintCallable)
-	void GetCategoryNodes(const FString& KeyString = "");
 
 	UFUNCTION(Category = "iTwin",
 		BlueprintCallable)
@@ -583,10 +587,6 @@ private:
 	virtual void OnSavedViewDeleted(bool bSuccess, FString const& SavedViewId, FString const& Response) override;
 	virtual void OnSavedViewEdited(bool bSuccess, FSavedView const& SavedView, FSavedViewInfo const& SavedViewInfo) override;
 	virtual void OnElementPropertiesRetrieved(bool bSuccess, FElementProperties const& ElementProps, FString const& ElementId) override;
-	virtual void OnIModelPagedNodesRetrieved(bool bSuccess, FIModelPagedNodesRes const& IModelNodes) override;
-	virtual void OnIModelCategoryNodesRetrieved(bool bSuccess, FIModelPagedNodesRes const& IModelNodes) override;
-	virtual void OnModelFilteredNodesRetrieved(bool bSuccess, FFilteredNodesRes const& FilteredNodes, FString const& Filter) override;
-	virtual void OnCategoryFilteredNodesRetrieved(bool bSuccess, FFilteredNodesRes const& IModelNodes, FString const& Filter) override;
 	virtual void OnMaterialPropertiesRetrieved(bool bSuccess, AdvViz::SDK::ITwinRenderMaterialPropertiesMap const& props) override;
 	virtual void OnTextureDataRetrieved(bool bSuccess, std::string const& textureId, AdvViz::SDK::ITwinTextureData const& textureData) override;
 	virtual void OnIModelQueried(bool bSuccess, FString const& QueryResult, HttpRequestID const&) override;

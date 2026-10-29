@@ -919,14 +919,27 @@ namespace
 			// When turning a material to glass, ensure we have some transparency:
 			// Set opacity to 10% at most.
 			static constexpr double DefaultGlassOpacity = 0.1;
-			if (bModifiedValue
-				&& this->NewValue == AdvViz::SDK::EMaterialKind::Glass
-				&& GltfMatHelper.GetChannelIntensity(MaterialId, AdvViz::SDK::EChannelType::Opacity) > DefaultGlassOpacity)
+			if (bModifiedValue)
 			{
 				bool bSubValueModified(false);
-				GltfMatHelper.SetChannelIntensity(MaterialId, AdvViz::SDK::EChannelType::Opacity, DefaultGlassOpacity, bSubValueModified);
-				// Also set a default metallic factor
-				GltfMatHelper.SetChannelIntensity(MaterialId, AdvViz::SDK::EChannelType::Metallic, 0.5, bSubValueModified);
+				if (this->NewValue == AdvViz::SDK::EMaterialKind::Glass)
+				{
+					GltfMatHelper.SetChannelColor(MaterialId, AdvViz::SDK::EChannelType::Color,
+						GltfMatHelper.GetChannelColor(MaterialId, AdvViz::SDK::EChannelType::Color), bSubValueModified);
+					if (GltfMatHelper.GetChannelIntensity(MaterialId, AdvViz::SDK::EChannelType::Opacity) > DefaultGlassOpacity)
+						GltfMatHelper.SetChannelIntensity(MaterialId, AdvViz::SDK::EChannelType::Opacity, DefaultGlassOpacity, bSubValueModified);
+					// Also set a default metallic factor
+					GltfMatHelper.SetChannelIntensity(MaterialId, AdvViz::SDK::EChannelType::Metallic, 0., bSubValueModified);
+					GltfMatHelper.SetChannelIntensity(MaterialId, AdvViz::SDK::EChannelType::Roughness, 0.05, bSubValueModified);				
+					GltfMatHelper.SetChannelIntensity(MaterialId, AdvViz::SDK::EChannelType::Specular, 0.5, bSubValueModified);
+					GltfMatHelper.UpdateCurrentAlphaMode(MaterialId);
+				}
+				else
+				{
+					GltfMatHelper.SetChannelIntensity(MaterialId, AdvViz::SDK::EChannelType::Opacity, 1.0, bSubValueModified);
+					GltfMatHelper.SetChannelIntensity(MaterialId, AdvViz::SDK::EChannelType::Roughness, 1.0, bSubValueModified);
+					GltfMatHelper.UpdateCurrentAlphaMode(MaterialId);
+				}
 			}
 		}
 

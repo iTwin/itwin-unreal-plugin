@@ -20,6 +20,7 @@ namespace AdvViz::SDK
 		RefID id_;
 		std::string name_;
 		std::optional<std::string> type_;
+		std::optional<bool> visible_;
 		std::optional<RefID> splineId_;
 		Tools::LockableObject<
 			IInstancesGroup::InstanceList
@@ -76,6 +77,19 @@ namespace AdvViz::SDK
 		return empty;
 	}
 
+
+	bool InstancesGroup::GetVisibility() const
+	{
+		if (GetImpl().visible_.has_value())
+			return GetImpl().visible_.value();
+		return true;
+	}
+
+	void InstancesGroup::SetVisibility(bool visibility)
+	{
+		GetImpl().visible_ = visibility;
+	}
+
 	void InstancesGroup::SetLinkedSplineId(const RefID& splineId)
 	{
 		GetImpl().splineId_ = splineId;
@@ -102,6 +116,13 @@ namespace AdvViz::SDK
 	{
 		Tools::AutoLockObject<decltype(GetImpl().intances_)> lockedInstanceList(GetImpl().intances_);
 		lockedInstanceList.Get().erase(inst);
+	}
+
+	bool InstancesGroup::HasInstances() const
+	{
+		bool res = GetImpl().intances_.Lock().size() > 0;
+		GetImpl().intances_.Unlock();
+		return res;
 	}
 
 	template<>

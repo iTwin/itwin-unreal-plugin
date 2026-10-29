@@ -74,6 +74,16 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "iTwin")
 	void DeSelect(AITwinIModel* iModel);
 
+	/// Highlight the visible Element and/or Material under the mouse cursor with the (non-blinking) hover
+	/// color, and remove the hover highlight from everything else. Does not select anything nor broadcast.
+	/// Meant to be called every frame while a selection tool is active (cheap when nothing changed).
+	UFUNCTION(BlueprintCallable, Category = "iTwin")
+	void HoverUnderCursor(bool bHoverElement, bool bHoverMaterial);
+
+	/// Remove the hover highlight from all iModels.
+	UFUNCTION(BlueprintCallable, Category = "iTwin")
+	void ClearHover();
+
 	UPROPERTY(BlueprintAssignable, Category = "iTwin")
 	FOnMaterialPicked OnMaterialPicked;
 

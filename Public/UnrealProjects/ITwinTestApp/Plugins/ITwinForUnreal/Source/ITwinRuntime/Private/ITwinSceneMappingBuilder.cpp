@@ -948,8 +948,13 @@ void UITwinSceneMappingBuilder::OnTileMeshPrimitiveLoaded(ICesiumLoadedTilePrimi
 			// Merge material/model/category features for SceneTile - BULK INSERT
 			for (auto& [MaterialID, FeatureSet] : LocalData.MaterialFeatures)
 			{
-				auto& Features = SceneTile.MaterialFeaturesSLOW(MaterialID).Features;
-				Features.merge(FeatureSet);
+				auto& MatInTile = SceneTile.MaterialFeaturesSLOW(MaterialID);
+				MatInTile.Features.merge(FeatureSet);
+				if (std::find(MatInTile.Meshes.begin(), MatInTile.Meshes.end(), GltfMeshWrapIdx)
+					== MatInTile.Meshes.end())
+				{
+					MatInTile.Meshes.push_back(GltfMeshWrapIdx);
+				}
 			}
 			for (auto& [ModelID, FeatureSet] : LocalData.ModelFeatures)
 			{

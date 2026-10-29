@@ -156,7 +156,7 @@ namespace AdvViz::SDK {
 		GetImpl().Delete();
 	}
 
-	const std::string& Decoration::GetId()
+	const std::string& Decoration::GetId() const
 	{
 		return GetImpl().id_;
 	}

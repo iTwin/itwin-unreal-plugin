@@ -61,7 +61,7 @@ public:
 	UFUNCTION(Category = "iTwin",
 		CallInEditor,
 		BlueprintCallable)
-	void MoveToSavedView();
+	void MoveToSavedView(float moveDuration = 3.f);
 
 	UFUNCTION(Category = "iTwin",
 		CallInEditor,

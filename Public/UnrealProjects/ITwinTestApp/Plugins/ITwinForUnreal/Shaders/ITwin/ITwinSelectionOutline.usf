@@ -1,0 +1,133 @@
+/*--------------------------------------------------------------------------------------+
+|
+|     $Source: ITwinSelectionOutline.usf $
+|
+|  $Copyright: (c) 2026 Bentley Systems, Incorporated. All rights reserved. $
+|
++--------------------------------------------------------------------------------------*/
+
+// Screen-space outline of the geometry tagged with 'StencilValue' in the custom stencil buffer.
+// Applied on the tone-mapped scene color (see FITwinSelectionOutlineViewExtension).
+
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Private/ScreenPass.ush"
+
+// Tone-mapped scene color (possibly already upscaled to output resolution)
+SCREEN_PASS_TEXTURE_VIEWPORT(Input)
+// Custom stencil, at rendering resolution
+SCREEN_PASS_TEXTURE_VIEWPORT(Scene)
+
+Texture2D InputTexture;
+SamplerState InputSampler;
+Texture2D<uint2> CustomStencilTexture;
+// Output of VerticalDistancePS: x = selected (0/1), y = signed vertical offset (in pixels) to the closest
+// pixel of the opposite state in the same column
+Texture2D MaskAndDistTexture;
+
+static const float4 SelectionOutlineColor = float4(0.1, 0.8, 0.65, 1.0);
+uint StencilValue;
+
+#define OUTLINE_THICKNESS 2
+#define OUTLINE_RADIUS (OUTLINE_THICKNESS + 1)
+
+// Must stay representable in half precision and larger than OUTLINE_RADIUS.
+#define NO_SILHOUETTE 1024.0
+
+bool IsSelectedPixel(int2 Pixel)
+{
+	uint Stencil = CustomStencilTexture.Load(int3(Pixel, 0)) STENCIL_COMPONENT_SWIZZLE;
+	return Stencil == StencilValue;
+}
+
+// Pass 1, at rendering resolution over the Scene viewport: first half of a separable Euclidean distance
+// transform. For each pixel, store its selected state and the signed offset (along the column, up to
+// Radius) to the closest pixel with the opposite state.
+// Input signature must be exactly FScreenPassVS's TEXCOORD0 (declaring SV_POSITION too fails PSO creation).
+void VerticalDistancePS(
+	noperspective float4 UVAndScreenPos : TEXCOORD0,
+	out float2 OutMaskAndDist : SV_Target0)
+{
+	// Input and output viewports are both the Scene viewport, so the UV maps straight to scene pixels
+	int2 Pixel = int2(UVAndScreenPos.xy * float2(Scene_Extent));
+	int MinY = Scene_ViewportMin.y;
+	int MaxY = Scene_ViewportMax.y - 1;
+	Pixel = clamp(Pixel, Scene_ViewportMin, Scene_ViewportMax - 1);
+	bool bCenterSelected = IsSelectedPixel(Pixel);
+	float Offset = NO_SILHOUETTE;
+	for (int dy = 1; dy <= OUTLINE_RADIUS; ++dy)
+	{
+		if (IsSelectedPixel(int2(Pixel.x, clamp(Pixel.y - dy, MinY, MaxY))) != bCenterSelected)
+		{
+			Offset = -dy;
+			break;
+		}
+		if (IsSelectedPixel(int2(Pixel.x, clamp(Pixel.y + dy, MinY, MaxY))) != bCenterSelected)
+		{
+			Offset = dy;
+			break;
+		}
+	}
+	OutMaskAndDist = float2(bCenterSelected ? 1.0 : 0.0, Offset);
+}
+
+// Euclidean distance from 'Pos' to the unit square of pixel 'Pixel' (0 when inside)
+float DistanceToPixelSquare(float2 Pos, int2 Pixel)
+{
+	float2 Delta = max(abs(Pos - (float2(Pixel) + 0.5)) - 0.5, 0.0);
+	return length(Delta);
+}
+
+// Second half of the distance transform: the closest opposite-state pixel lies in some column x+dx, and
+// within that column it is either the pixel on our row itself (if it differs) or the one at the vertical
+// offset stored by pass 1. Signed distance (in scene pixels) from the sample position 'Pos' (sub-pixel
+// precision, needed when the output is upscaled) to the silhouette, ie. the boundary of the union of the
+// selected pixel squares: negative inside the selection, positive outside. Only accurate within 'Radius'.
+float SignedDistanceToSilhouette(float2 Pos, int2 Pixel, int MinX, int MaxX)
+{
+	float2 Center = MaskAndDistTexture.Load(int3(Pixel, 0)).xy;
+	float MinDist = NO_SILHOUETTE;
+	if (abs(Center.y) < NO_SILHOUETTE)
+	{
+		MinDist = DistanceToPixelSquare(Pos, int2(Pixel.x, Pixel.y + int(Center.y)));
+	}
+	for (int dx = -OUTLINE_RADIUS; dx <= OUTLINE_RADIUS; ++dx)
+	{
+		if (dx == 0)
+		{
+			continue;
+		}
+		int2 Neighbor = int2(clamp(Pixel.x + dx, MinX, MaxX), Pixel.y);
+		float2 N = MaskAndDistTexture.Load(int3(Neighbor, 0)).xy;
+		if (N.x != Center.x)
+		{
+			MinDist = min(MinDist, DistanceToPixelSquare(Pos, Neighbor));
+		}
+		else if (abs(N.y) < NO_SILHOUETTE)
+		{
+			MinDist = min(MinDist, DistanceToPixelSquare(Pos, int2(Neighbor.x, Neighbor.y + int(N.y))));
+		}
+	}
+	return Center.x > 0.5 ? -MinDist : MinDist;
+}
+
+void MainPS(
+	noperspective float4 UVAndScreenPos : TEXCOORD0,
+	out float4 OutColor : SV_Target0)
+{
+	float2 InputUV = UVAndScreenPos.xy;
+	OutColor = Texture2DSample(InputTexture, InputSampler, InputUV);
+
+	// Normalized position in the view, then matching (sub-pixel) position and pixel in the (rendering
+	// resolution) scene textures
+	float2 ViewportUV = (InputUV - Input_UVViewportMin) * Input_UVViewportSizeInverse;
+	float2 ScenePos = float2(Scene_ViewportMin) + ViewportUV * Scene_ViewportSize;
+	int2 MinPixel = Scene_ViewportMin;
+	int2 MaxPixel = Scene_ViewportMax - 1;
+	int2 Pixel = clamp(int2(floor(ScenePos)), MinPixel, MaxPixel);
+
+	float D = SignedDistanceToSilhouette(ScenePos, Pixel, MinPixel.x, MaxPixel.x);
+	// Band [0, Thickness] outside the silhouette, with ~1px smooth ramps on both edges (the inner ramp
+	// slightly bleeds over the selected geometry so that its edge is softened too).
+	float Coverage = smoothstep(-0.75, 0.75, D) * (1.0 - smoothstep(OUTLINE_THICKNESS - 0.5, OUTLINE_THICKNESS + 0.5, D));
+	OutColor.rgb = lerp(OutColor.rgb, SelectionOutlineColor.rgb, Coverage * saturate(SelectionOutlineColor.a));
+}

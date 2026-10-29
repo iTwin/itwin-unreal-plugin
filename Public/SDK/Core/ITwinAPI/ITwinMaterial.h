@@ -164,7 +164,7 @@ namespace AdvViz::SDK
 		std::array< std::optional<ITwinChannel>, (size_t)EChannelType::ENUM_END > channels;
 		ITwinUVTransform uvTransform;
 		std::string displayName;
-
+		bool useSrgbColorSpace = true;
 
 		/// Return true if this material holds a definition for the given channel.
 		bool DefinesChannel(EChannelType channel) const;

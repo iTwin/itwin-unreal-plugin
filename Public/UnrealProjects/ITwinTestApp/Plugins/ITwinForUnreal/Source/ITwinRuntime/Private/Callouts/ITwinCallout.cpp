@@ -17,7 +17,7 @@
 #include <Compil/BeforeNonUnrealIncludes.h>
 #	include <map>
 #	include <BeHeaders/Util/CleanUpGuard.h>
-#	include <Core/Visualization/AnnotationsManager.h>
+#	include <SDK/Core/Visualization/AnnotationsManager.h>
 #include <Compil/AfterNonUnrealIncludes.h>
 
 namespace ITwin::Callout
@@ -38,10 +38,10 @@ namespace ITwin::Callout
 	static const std::map<EITwinCalloutColor, FLinearColor> BackgroundColors
 	{
 		{ EITwinCalloutColor::Dark, FLinearColor(0.067f, 0.071f, 0.075f, 1.0f) },
-		{ EITwinCalloutColor::Blue, FLinearColor(0.002f, 0.162f, 0.724) },
-		{ EITwinCalloutColor::Green, FLinearColor(0.016f, 0.231f, 0.001) },
-		{ EITwinCalloutColor::Orange, FLinearColor(0.714f, 0.349f, 0.001) },
-		{ EITwinCalloutColor::Red, FLinearColor(0.714f, 0.001f, 0.001) },
+		{ EITwinCalloutColor::Blue, FLinearColor(0.002f, 0.162f, 0.724f) },
+		{ EITwinCalloutColor::Green, FLinearColor(0.016f, 0.231f, 0.001f) },
+		{ EITwinCalloutColor::Orange, FLinearColor(0.714f, 0.349f, 0.001f) },
+		{ EITwinCalloutColor::Red, FLinearColor(0.714f, 0.001f, 0.001f) },
 		{ EITwinCalloutColor::White, FLinearColor(1.0f, 1.0f, 1.0f) },
 		{ EITwinCalloutColor::None, FLinearColor(1.0f, 1.0f, 1.0f, 0.0f) }
 	};

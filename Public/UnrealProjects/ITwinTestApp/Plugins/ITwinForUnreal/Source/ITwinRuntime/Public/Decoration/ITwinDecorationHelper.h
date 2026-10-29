@@ -49,6 +49,7 @@ namespace AdvViz::SDK {
 	class RefID;
 	class IScenePersistence;
 	class IAnnotationsManager;
+	class IInstancesManager;
 	class ISpline;
 }
 
@@ -290,6 +291,7 @@ public:
 	void DeleteAllCustomMaterials();
 
 	AITwinPopulation* GetPopulation(FString assetPath, const AdvViz::SDK::RefID& groupId) const;
+	TArray<AITwinPopulation*> GetPopulations(const AdvViz::SDK::RefID& groupId) const;
 	AITwinKeyframePath* CreateKeyframePath() const;
 	bool MountPak(const std::string & file, const std::string& id) const;
 	/// Returns true if the component with the given id still needs to be downloaded/mounted.
@@ -302,6 +304,8 @@ public:
 	int32 GetPopulationInstanceCount(FString assetPath, const AdvViz::SDK::RefID& groupId) const;
 	AdvViz::SDK::RefID GetStaticInstancesGroupId() const;
 	AdvViz::SDK::RefID GetInstancesGroupIdForSpline(const AITwinSplineHelper& Spline) const;
+	AdvViz::SDK::RefID GetInstancesGroupIdFromName(const std::string& groupName) const;
+	AdvViz::SDK::RefID AddNewCustomInstancesGroup(const std::string& groupName);
 
 	//! Visits all splines that are waiting for linked models to be loaded, and calls the given visitor
 	//! function on each of them.
@@ -360,11 +364,10 @@ public:
 
 
 	std::shared_ptr<AdvViz::SDK::IAnnotationsManager> GetAnnotationManager() const;
-
+	std::shared_ptr<AdvViz::SDK::IInstancesManager> GetInstancesManager() const;
 
 	//allow disable export of resources (IModels/RealityData) when saving the scene API. Scene API is not responsible for managing these resources in Itwin Engage and want to avoid sending them to the server when saving the scene 
 	static void EnableExportOfResourcesInSceneApI(bool bEnable);
-
 
 #if WITH_TESTS
 	//! Used in automated tests, to enable mocking of decoration / scene API services.

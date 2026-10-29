@@ -248,7 +248,7 @@ public:
 
 
 protected:
-	virtual void ConnectLoadedIModelToUI(AITwinIModel* IModel) const;
+	virtual void ConnectLoadedIModelToUI(AITwinIModel* IModel);
 
 private:
 	void RequestData();

@@ -104,7 +104,7 @@ namespace ITwin::Timeline {
             auto ItB = B.Values.cbegin();
             for (; ItA != A.Values.cend(); ++ItA, ++ItB)
             {
-                if (!NearlyEqual(ItA->Time, ItB->Time, 1e-3/*1ms, Tol not suited to the range*/))
+                if (!NearlyEqual(ItA->Time, ItB->Time, 1e-3f/*1ms, Tol not suited to the range*/))
                     return false;
                 if (ItA->Interpolation != ItB->Interpolation)
                     return false;

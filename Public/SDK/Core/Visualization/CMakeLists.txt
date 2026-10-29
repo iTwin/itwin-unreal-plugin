@@ -53,6 +53,7 @@ be_add_library(Visualization ${libtype}
 		SavableItemManager.inl
 		SavableItemManager.h
 		SaveStatus.h
+		Tests/MaterialPersistencePayloads.h # added here to make it available for the test target, but not compiled into the library
 )
 target_compile_features(Visualization PRIVATE ${DefaultCXXSTD})
 if ( MSVC )
@@ -85,9 +86,15 @@ if(SDK_ADDUNITTEST)
 		Tests/SplinesTest.cpp
 		Tests/PathAnimTest.cpp
 		Tests/TimelineTest.cpp
+		Tests/MaterialColorEncodingTest.cpp
+		Tests/MaterialPersistencePayloads.h
+		Tests/MaterialPersistenceTest.cpp
 	)
 	target_compile_features(VisualizationTest PRIVATE ${DefaultCXXSTD})
-	target_compile_definitions(VisualizationTest PRIVATE "CMAKE_SOURCE_DIR=\"${CMAKE_SOURCE_DIR}\"")
+	target_compile_definitions(VisualizationTest PRIVATE
+		"CMAKE_SOURCE_DIR=\"${CMAKE_SOURCE_DIR}\"")
+	target_compile_definitions(VisualizationTest PRIVATE
+		"VIZ_TEST_DATA_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/Tests\"")
 
 	set_target_properties(VisualizationTest PROPERTIES FOLDER "SDK/Core/Tests")
 

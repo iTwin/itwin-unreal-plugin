@@ -17,6 +17,11 @@
 #include <Compil/AfterNonUnrealIncludes.h>
 #include <Decoration/ITwinDecorationHelper.h>
 
+
+/*static*/
+TSharedPtr<FITwinGeolocation> FITwinGeolocation::Instance;
+
+/*static*/
 std::function<FVector(bool& bRequestInProgress, bool& bHasRelevantElevation)> FITwinGeolocation::GetDefaultGeoRefFct;
 
 void FITwinGeolocation::CheckInit(UWorld& World)
@@ -91,7 +96,6 @@ void FITwinGeolocation::CheckInit(UWorld& World)
 
 /*static*/ TSharedPtr<FITwinGeolocation> FITwinGeolocation::Get(UWorld& World)
 {
-	static TSharedPtr<FITwinGeolocation> Instance;
 	if (!Instance)
 	{
 		// can happen if the IModel was created manually, outside of any instance of AITwinDigitalTwin
@@ -114,4 +118,9 @@ void FITwinGeolocation::CheckInit(UWorld& World)
 	{
 		return false;
 	}
+}
+
+/*static*/ bool FITwinGeolocation::IsInitialized()
+{
+	return Instance.IsValid();
 }

@@ -170,6 +170,10 @@ namespace
 			// Beware we have a shared pointer of a shared pointer here...
 			TSharedPtr<FHttpRouteHandle> Ptr = MakeShared<FHttpRouteHandle>();
 
+			/// Port this route was bound to. Only meaningful once BindRoute has filled it, and
+			/// required to retrieve the right router when unbinding.
+			int Port = 0;
+
 			FHttpRouteHandle& Get() const {
 				return *Ptr;
 			}
@@ -177,9 +181,31 @@ namespace
 			{
 				return Ptr && Ptr->Get() != nullptr;
 			}
+
+			/// Unbinds the route and stops the listeners, and reflects it in IsValid().
+			/// This is the *only* place where a route is released, whether because the exchange
+			/// is concluded (ERouteDisposition::Unbind) or because it was cancelled.
+			/// @return True if the route was still bound.
+			bool Release()
+			{
+				if (!IsValid())
+				{
+					return false;
+				}
+				FHttpServerModule::Get().StopAllListeners();
+				if (auto* Router = FHttpServerModule::Get().GetHttpRouter(Port).Get())
+				{
+					Router->UnbindRoute(Get());
+				}
+				// Reflect the unbinding, so that RouteHandle::IsValid() stays truthful.
+				Get() = nullptr;
+				return true;
+			}
 		};
+
 		virtual RouteHandlePtr MakeRouteHandler() const override
 		{
+			// Note: the port is unknown at this point - BindRoute will stamp it in.
 			return std::make_shared<FUERouteHandle>();
 		}
 
@@ -203,12 +229,17 @@ namespace
 				BE_ISSUE("unknown verb", eVerb);
 				break;
 			}
+
+			// Remember the port, so that the route can be released later without the caller
+			// having to keep track of the binding parameters (see UnbindRoute).
+			routeHandle->Port = Port;
+
 			routeHandle->Get() = FHttpServerModule::Get().GetHttpRouter(Port)
 				->BindRoute(FHttpPath(redirectUriEndpoint.c_str()), requestsVerb,
 #if !UE_VERSION_OLDER_THAN(5, 5, 0)
 					FHttpRequestHandler::CreateLambda(
 #endif
-						[routeHandlePtr, Port, coreRequestHandler = requestHandlerCB]
+						[routeHandlePtr, coreRequestHandler = requestHandlerCB]
 						(const FHttpServerRequest& request, const FHttpResultCallback& onComplete)
 			{
 				std::map<std::string, std::string> queryParams;
@@ -217,19 +248,20 @@ namespace
 					queryParams[TCHAR_TO_UTF8(*Key)] = TCHAR_TO_UTF8(*Value);
 				}
 				std::string HtmlText;
-				if (coreRequestHandler)
-				{
-					coreRequestHandler(queryParams, HtmlText);
-				}
+
+				// If there is no handler, there is nothing left to wait for -> release the route.
+				auto const Disposition = coreRequestHandler
+					? coreRequestHandler(queryParams, HtmlText)
+					: AdvViz::SDK::IHttpRouter::ERouteDisposition::Unbind;
 
 				onComplete(FHttpServerResponse::Create(HtmlText.c_str(), TEXT("text/html")));
 
-				FHttpServerModule::Get().StopAllListeners();
-
-				auto routeHandle = std::static_pointer_cast<FUERouteHandle>(routeHandlePtr);
-				if (routeHandle && routeHandle->Get())
+				if (Disposition == AdvViz::SDK::IHttpRouter::ERouteDisposition::Unbind)
 				{
-					FHttpServerModule::Get().GetHttpRouter(Port)->UnbindRoute(routeHandle->Get());
+					if (auto routeHandle = std::static_pointer_cast<FUERouteHandle>(routeHandlePtr))
+					{
+						routeHandle->Release();
+					}
 				}
 				return true;
 			}
@@ -239,6 +271,12 @@ namespace
 			);
 			FHttpServerModule::Get().StartAllListeners();
 			return true;
+		}
+
+		virtual bool UnbindRoute(RouteHandlePtr const& routeHandlePtr) const override
+		{
+			auto routeHandle = std::static_pointer_cast<FUERouteHandle>(routeHandlePtr);
+			return routeHandle && routeHandle->Release();
 		}
 
 		using AdvViz::SDK::Tools::TypeId<FUEHttpRouter>::GetTypeId;
@@ -274,6 +312,19 @@ FITwinAuthorizationManager::FExternalBrowserDisabler::~FExternalBrowserDisabler(
 	SetUseExternalBrowser(bOldUseExternalBrowser);
 }
 
+namespace
+{
+	/// Registers the production IHttpRouter factory. Shared by OnStartup and, for tests, by
+	/// RestoreHttpRouterFactory, so that the two can never drift apart.
+	void RegisterHttpRouterFactory()
+	{
+		AdvViz::SDK::IHttpRouter::SetNewFct([]() {
+			AdvViz::SDK::IHttpRouter* p(static_cast<AdvViz::SDK::IHttpRouter*>(new FUEHttpRouter()));
+			return p;
+		});
+	}
+}
+
 /*static*/
 void FITwinAuthorizationManager::OnStartup()
 {
@@ -286,10 +337,7 @@ void FITwinAuthorizationManager::OnStartup()
 		return p;
 	});
 
-	AdvViz::SDK::IHttpRouter::SetNewFct([]() {
-		AdvViz::SDK::IHttpRouter* p(static_cast<AdvViz::SDK::IHttpRouter*>(new FUEHttpRouter()));
-		return p;
-	});
+	RegisterHttpRouterFactory();
 }
 
 FITwinAuthorizationManager::FITwinAuthorizationManager(AdvViz::SDK::EITwinEnvironment Env)
@@ -377,10 +425,16 @@ void FITwinAuthorizationManager::SetupTestMode(AdvViz::SDK::EITwinEnvironment En
 	// any conflict with the normal run.
 	if (!ITwinAuthManager::HasAppID(Env))
 	{
-		ITwinAuthManager::SetAppIDArray({ "ThisIsADummyAppIDForTesting" });
+		ITwinAuthManager::SetAppID(Env, "ThisIsADummyAppIDForTesting");
 	}
 	checkf(!InTokenFileSuffix.IsEmpty(), TEXT("a unique suffix is required to avoid conflicts"));
 	TokenFileSuffix = InTokenFileSuffix;
+}
+
+/*static*/
+void FITwinAuthorizationManager::RestoreHttpRouterFactory()
+{
+	RegisterHttpRouterFactory();
 }
 
 #endif // WITH_TESTS

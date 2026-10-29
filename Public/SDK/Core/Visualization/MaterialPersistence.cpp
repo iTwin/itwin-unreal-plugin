@@ -15,6 +15,7 @@
 #include <Core/Json/Json.h>
 #include "Core/Network/HttpGetWithLink.h"
 #include "Config.h"
+#include <Core/Tools/StringParsing.h>
 #include <Core/Visualization/AsyncHelpers.h>
 #include <Core/Visualization/SavableItem.h>
 
@@ -113,6 +114,7 @@ namespace AdvViz::SDK
 
 			std::optional<std::string> type;
 			std::optional<std::string> color;
+			std::optional<std::string> colorEncoding;
 			std::optional<std::string> albedoMap;
 			std::optional<double> albedoMapFactor;
 			std::optional<double> roughness;
@@ -250,6 +252,26 @@ namespace AdvViz::SDK
 		return Http::IsSuccessful(r);
 	}
 
+	// sRGB <-> linear transfer function (IEC 61966-2-1).
+	// Must stay consistent with the Unreal side (FLinearColor::ToFColorSRGB /
+	// FLinearColor::FromSRGBColor), otherwise a color edited in the materials panel and the
+	// same color round-tripped through the Decoration Service would not agree.
+	inline double LinearToSRGB(double linear)
+	{
+		linear = std::clamp(linear, 0., 1.);
+		return (linear <= 0.0031308)
+			? linear * 12.92
+			: 1.055 * std::pow(linear, 1. / 2.4) - 0.055;
+	}
+
+	inline double SRGBToLinear(double srgb)
+	{
+		srgb = std::clamp(srgb, 0., 1.);
+		return (srgb <= 0.04045)
+			? srgb / 12.92
+			: std::pow((srgb + 0.055) / 1.055, 2.4);
+	}
+
 	void MaterialPersistenceManager::Impl::ParseJSONMaterials(
 		std::vector<SJsonMaterialWithId> const& rows,
 		IModelMaterialMap& dataIO,
@@ -269,7 +291,7 @@ namespace AdvViz::SDK
 			return EMaterialKind::PBR;
 		};
 
-		static const auto stringToColor = [](std::string const& str)
+		static const auto stringToColor = [](std::string const& str, bool bUseSrgbColorSpace)
 			-> std::optional<ITwinColor>
 		{
 			// Expecting a format #RRGGBB
@@ -290,7 +312,9 @@ namespace AdvViz::SDK
 					BE_ISSUE("error parsing color", str);
 					return std::nullopt;
 				}
-				result[i] = 1. * nValue / 255.;
+				// Legacy branch must stay bit-identical to what shipped before the fix.
+				double const component = 1. * nValue / 255.;
+				result[i] = bUseSrgbColorSpace ? SRGBToLinear(component) : component;
 			}
 			result[3] = 1.;
 			return result;
@@ -348,7 +372,11 @@ namespace AdvViz::SDK
 				BE_ISSUE("invalid material ID in DB", row.id);
 				continue;
 			}
-			uint64_t const matID = static_cast<uint64_t>(std::stoull(row.id.substr(0, sep_pos)));
+			std::string_view const matIdStr = row.id;
+			uint64_t const matID = AdvViz::SDK::Tools::ParseUInt64Or(
+				matIdStr.substr(0, sep_pos),
+				0 /*fallback*/);
+
 			std::string const iModelID = row.id.substr(sep_pos + 1);
 
 			TextureKeySet& imodelTextures = perIModelTextures[iModelID];
@@ -375,11 +403,31 @@ namespace AdvViz::SDK
 				material.SetChannelIntensity(EChannelType::AmbientOcclusion, *row.ao);
 			if (row.specular)
 				material.SetChannelIntensity(EChannelType::Specular, *row.specular);
+
+			// Color encoding was added lately, to distinguish old materials from new ones (which
+			// use sRGB). Previously the conversion was wrong, so we keep a legacy mode to avoid
+			// modifying the render of existing scenes.
+			// Must be resolved BEFORE parsing the color, since it selects the decoding.
+			material.useSrgbColorSpace = row.colorEncoding && *row.colorEncoding == "sRGB";
+			if (row.colorEncoding && !material.useSrgbColorSpace)
+			{
+				BE_ISSUE("unknown color encoding, falling back to legacy", *row.colorEncoding);
+			}
+
 			std::optional<ITwinColor> customColor;
 			if (row.color)
-				customColor = stringToColor(*row.color);
+				customColor = stringToColor(*row.color, material.useSrgbColorSpace);
 			if (customColor)
+			{
 				material.SetChannelColor(EChannelType::Color, *customColor);
+			}
+			else if (!row.color)
+			{
+				// No color definition at all => the encoding is unobservable, so adopt the
+				// modern one. This spares us from migrating the material library json files
+				// (hosted on a server) while still letting a later user edit be correct.
+				material.useSrgbColorSpace = true;
+			}
 
 			setChannelMap(material, EChannelType::Color, row.albedoMap,			imodelTextures, textureUsageMap, customTexSource);
 			setChannelMap(material, EChannelType::Normal, row.normalMap,		imodelTextures, textureUsageMap, customTexSource);
@@ -832,13 +880,19 @@ namespace AdvViz::SDK
 		}
 	};
 
-	static const auto colorToString = [](ITwinColor const& col)
+	/// Encodes a linear color as #RRGGBB.
+	/// \param bUseSrgbColorSpace When false, the legacy behavior is reproduced exactly: the
+	///   linear value is written out verbatim. Needed so that materials saved before the
+	///   encoding fix keep rendering identically after a load/save cycle.
+	static const auto colorToString = [](ITwinColor const& col, bool bUseSrgbColorSpace)
 		-> std::string
 	{
-		return fmt::format("#{0:02X}{1:02X}{2:02X}",
-			static_cast<uint8_t>(std::clamp(255. * col[0], 0., 255.)),
-			static_cast<uint8_t>(std::clamp(255. * col[1], 0., 255.)),
-			static_cast<uint8_t>(std::clamp(255. * col[2], 0., 255.)));
+		auto const toByte = [bUseSrgbColorSpace](double component) -> uint8_t
+		{
+			double const encoded = bUseSrgbColorSpace ? LinearToSRGB(component) : component;
+			return static_cast<uint8_t>(std::clamp(std::round(255. * encoded), 0., 255.));
+		};
+		return fmt::format("#{0:02X}{1:02X}{2:02X}", toByte(col[0]), toByte(col[1]), toByte(col[2]));
 	};
 
 	// Only consider textures present on the decoration service.
@@ -882,7 +936,11 @@ namespace AdvViz::SDK
 		if (colorOpt)
 		{
 			// Convert to string #RRGGBB
-			jsonMat.color = colorToString(*colorOpt);
+			jsonMat.color = colorToString(*colorOpt, material.useSrgbColorSpace);
+		}
+		if (material.useSrgbColorSpace)
+		{
+			jsonMat.colorEncoding = "sRGB";
 		}
 
 		jsonMat.albedoMap =		getChannelMap(material, EChannelType::Color);

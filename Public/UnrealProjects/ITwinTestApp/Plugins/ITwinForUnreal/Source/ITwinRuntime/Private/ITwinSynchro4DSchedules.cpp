@@ -660,7 +660,7 @@ FTransform FITwinSynchro4DSchedulesInternals::ComputeTransformFromFinalizedKeyfr
 	if (ITwin::Timeline::EAnchorPoint::Static == TransfoKey.DefrdAnchor.AnchorPoint)
 	{
 		// Desperate solution: just switch back to iModel space!
-		// See comments in AddStaticTransformToTimeline and RequestTransfoAssignment...
+		// See comments in AddStaticTransformToTimeline and FSchedulesParse::ParseStaticTransform...
 		// Maybe it was all related to FTransform::Inverse being buggy...
 		if (bWantsResultAsIfIModelUntransformed)
 		{
@@ -883,7 +883,7 @@ bool FITwinSynchro4DSchedulesInternals::ResetSchedules()
 		return false;
 	if (IModel->ITwinId.IsEmpty()) // happens transitorily in iTwinTestApp...
 		return false;
-	if (!IModel->ServerConnection)
+	if (!IModel->HasAccessToken())
 		return false; // e.g. happens when an iModel is created from scratch by the user
 	FITwinIModelInternals& IModelInternals = GetInternals(*IModel);
 
@@ -1092,14 +1092,14 @@ void UITwinSynchro4DSchedules::TickSchedules(float DeltaSeconds)
 		return; // fine, happens between constructor and registration to parent iModel
 	Impl->Internals.CheckInitialized(*IModel);
 
-	if (!IModel->ServerConnection // happens when an iModel is created from scratch by the user
+	if (!IModel->HasAccessToken() // happens when an iModel is created from scratch by the user
 		|| IModel->ITwinId.IsEmpty()) // happens transitorily in iTwinTestApp...
 	{
 		if (!HasValidId())
 		{
 			ScheduleId = Detail::ErrPrefix;
-			if (!IModel->ServerConnection)
-				ScheduleId += TEXT("NoServerConnection!");
+			if (!IModel->HasAccessToken())
+				ScheduleId += TEXT("NoAccessToken!");
 			if (IModel->ITwinId.IsEmpty())
 				ScheduleId += TEXT("NoITwinId!");
 			ScheduleGeneration = EITwinSchedulesGeneration::Unknown;

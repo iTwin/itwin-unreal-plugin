@@ -16,6 +16,7 @@
 #	include <httpmockserver/mock_server.h>
 #	include <httpmockserver/port_searcher.h>
 #	include <microhttpd.h>
+#	include <SDK/Core/Network/Tests/MockServerHeaderCheck.h>
 #include <Compil/AfterNonUnrealIncludes.h>
 
 #include <map>
@@ -50,18 +51,19 @@ protected:
 		return res;
 	}
 
-	int CheckRequiredHeaders(const std::vector<Header>& headers,
-		std::map<std::string, std::string> const& requiredHeaders) const;
+	static int CheckRequiredHeaders(const std::vector<Header>& headers,
+		std::map<std::string, std::string> const& requiredHeaders)
+	{
+		return AdvViz::SDK::MockServerUtils::CheckRequiredHeaders(headers, requiredHeaders);
+	}
 
-	std::string ToString(const std::vector<Header>& headers) const;
+	bool isUrl(const std::string& url, const std::string& urlRequired) const {
+		return url.compare(0, urlRequired.size(), urlRequired) == 0;
+	}
 
 	/// Process /arg_test request
 	Response ProcessArgTest(const std::vector<UrlArg>& urlArguments) const;
 };
-
-
-// Special test token used in both WebServices and MaterialPersistence tests
-#define ITWINTEST_ACCESS_TOKEN "ThisIsATestITwinAccessToken"
 
 
 #define CHECK_DECORATION_HEADERS()										\

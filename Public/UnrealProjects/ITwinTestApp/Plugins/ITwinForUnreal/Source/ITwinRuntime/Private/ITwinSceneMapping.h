@@ -22,10 +22,17 @@
 #include <ITwinDynamicShadingProperty.h>
 #include <ITwinGltfMeshComponentWrapper.h>
 #include <ITwinSceneMappingTypes.h>
+#include <ITwinSelectionOutline.h>
 #include <ITwinUtilityLibrary.h>
 
+#include <Misc/EngineVersionComparison.h>
+#if UE_VERSION_OLDER_THAN(5, 7, 0)
+	#include <MaterialTypes.h>
+#else
+	#include <Materials/MaterialParameters.h>
+#endif
+
 #include <DrawDebugHelpers.h>
-#include <MaterialTypes.h>
 #include <Math/Matrix.h>
 #include <Misc/Guid.h>
 #include <Templates/SharedPointer.h>
@@ -60,6 +67,12 @@ class UStaticMeshComponent;
 class UITwinClipping3DTilesetHelper;
 class UITwinSceneMappingBuilder;
 class UTexture;
+
+namespace ITwin
+{
+	/// Reserved alpha byte for the unselected hover marker; GetPerFeatureValues.ush decodes this exact value.
+	inline constexpr uint8 HOVER_MARKER_ALPHA = 2;
+}
 
 namespace AdvViz::SDK
 {
@@ -191,6 +204,9 @@ struct FITwinMaterialFeaturesInTile
 	// the same material.... The same remark is valid for #FITwinModelFeaturesInTile,
 	// #FITwinCategoryFeaturesInTile, #FITwinCategoryPerModelFeaturesInTile
 	std::unordered_set<ITwinFeatureID> Features;
+	/// All mesh components of this tile which contain Features of this material, known by their rank
+	/// in the SceneTile's GltfMeshes vector (used by the selection outline).
+	FSmallVec<int32_t, 2> Meshes;
 
 	void InvalidateSelectingAndHidingTexFlags(FITwinSceneTile& SceneTile);
 };
@@ -319,10 +335,20 @@ OPTIONS_CLASS_ADD_MEMBER(bool, SkipResetSelection, false)
 OPTIONS_CLASS_ADD_MEMBER(bool, Force, false)
 OPTIONS_CLASS_END
 
+/// How the highlight color of the current selection is displayed (the selection itself, and thus the
+/// selection outline, is not affected)
+enum class EITwinSelectionTintMode : uint8
+{
+	Blinking,	///< Material blinks between base and selection colors (default after each new selection)
+	Solid,		///< Selection color shown without blinking (Elements, a few seconds after selection)
+	Hidden,		///< Selection color not shown at all (Material, a few seconds after selection)
+};
+
 class FITwinSceneTile
 {
 	friend class FITwinSceneMapping;
 	friend class UITwinSceneMappingBuilder;
+	friend class FITwinTileSelectionOutline;
 
 	/// Use random_access as the first, and thus the default, indexation mode, to "discourage" the use
 	/// of the slower alternative (ElementID hashing), typically for performance-critical tasks like
@@ -427,6 +453,17 @@ private:
 	/// RGBA texture where the 'RGB' part is the selection Highlight color (used to highlight the selected
 	/// iTwin Element during picking).
 	std::shared_ptr<FITwinDynamicShadingBGRA8Property> SelectingAndHiding;
+	std::shared_ptr<FITwinDynamicShadingBGRA8Property> HoverSelectingAndHiding;
+	bool bHoverHighlightDirty = true;
+	friend class FITwinMaterialHoverTest;
+	struct FHoverMaterialBinding
+	{
+		TWeakObjectPtr<UMaterialInstanceDynamic> Material;
+		TWeakObjectPtr<UMaterialInterface> Parent;
+		std::weak_ptr<FITwinDynamicShadingBGRA8Property> Texture;
+		TWeakObjectPtr<UTexture> BoundTexture;
+	};
+	std::unordered_map<UMaterialInstanceDynamic*, FHoverMaterialBinding> HoverMaterialBindings;
 
 	bool bNeed4DHighlightsOpaTextureSetupInMaterials = false;
 	bool bNeed4DCuttingPlanesTextureSetupInMaterials = false;
@@ -446,8 +483,17 @@ private:
 	/// Set of Element IDs, if any, which the tile's SelectingAndHiding texture was actually used to highlight
 	/// (ie the Elements indeed have Features in this tile - see SelectedElemNotInTile below)
 	std::unordered_set<ITwinElementID> SelectedElements;
-	/// Same principle, but for Material selection.
+	/// Incremented each time SelectedElements or SelectedMaterial actually changes (cheap change detection
+	/// for SelectionOutline)
+	uint32 SelectionRevision = 1;
+	/// Same principle as SelectedElements, but for Material selection.
 	ITwinMaterialID SelectedMaterial = ITwin::NOT_MATERIAL;
+	/// Element and Material currently under the mouse cursor, if any (see SetHover).
+	ITwinElementID HoveredElement = ITwin::NOT_ELEMENT;
+	ITwinMaterialID HoveredMaterial = ITwin::NOT_MATERIAL;
+	/// Companion geometry feeding the custom stencil buffer with the selected Elements, for the screen-space
+	/// selection outline (see FITwinSceneMapping::UpdateSelectionOutlines)
+	FITwinTileSelectionOutline SelectionOutline;
 	
 	std::unordered_set<ITwinElementID> CurrentSavedViewHiddenElements;
 	std::unordered_set<ITwinElementID> CurrentSavedViewHiddenModels;
@@ -498,6 +544,11 @@ private:
 	void TResetSelection(SelectableHelper const& Helper, FTextureNeeds& TextureNeeds);
 	void ResetSelection(FTextureNeeds& TextureNeeds);
 
+	/// Ensure the source selection texture exists and invalidate the derived per-feature hover markers.
+	void PaintHover(FTextureNeeds& TextureNeeds);
+	/// Restore the hovered Element/Material's features to their selection state, given the current tint mode
+	void UnpaintHover(EITwinSelectionTintMode Mode, FTextureNeeds& TextureNeeds);
+
 	template<typename IDType, typename FeatureType>
 	void THideIDs(std::unordered_set<IDType>& CurrentHiddenItems,
 		std::unordered_set<IDType> const& NewIDs,
@@ -533,6 +584,19 @@ public:
 		{ return GltfMeshes; }
 	[[nodiscard]] std::vector<FITwinGltfMeshComponentWrapper>& GltfMeshWrappers()
 		{ return GltfMeshes; }
+	[[nodiscard]] uint32 GetSelectionRevision() const { return SelectionRevision; }
+	[[nodiscard]] FITwinTileSelectionOutline& SelectionOutlineForUnitTest() { return SelectionOutline; }
+	[[nodiscard]] auto SelectionPixelForUnitTest(ITwinFeatureID Feature, bool bIncludeHover = false) const
+	{
+		return (bIncludeHover && HoverSelectingAndHiding ? HoverSelectingAndHiding : SelectingAndHiding)
+			->GetPixel(Feature.value());
+	}
+	[[nodiscard]] bool HoverTextureNeedsUploadForUnitTest() const
+	{
+		return HoverSelectingAndHiding && HoverSelectingAndHiding->NeedToWaitForAsyncUpdate();
+	}
+	/// Refresh per-feature material-hover markers and runtime parameters on all supported material slots.
+	void SyncMaterialHover();
 	[[nodiscard]] bool Need4DAnimTexturesSetupInMaterials() const;
 	[[nodiscard]] bool NeedSelectingAndHidingTexturesSetupInMaterials() const;
 	[[nodiscard]] size_t NumElementsFeatures() const { return ElementsFeatures.size(); }
@@ -631,6 +695,14 @@ public:
 	bool PickElement(ITwinElementID const& InElemID, FTextureNeeds& TextureNeeds, FPickingOptions const& Opts);
 	/// Same as PickElement, but for a Material ID.
 	bool PickMaterial(ITwinRenderMaterialElementID const& InMaterialID, FTextureNeeds& TextureNeeds, FPickingOptions const& Opts);
+	/// Change how the highlight color of the selected Elements' and Material's features is displayed,
+	/// without changing the selection itself (so that the selection outline, if any, remains).
+	void SetSelectionTintMode(EITwinSelectionTintMode Mode, FTextureNeeds& TextureNeeds);
+	/// Change the Element and Material under the mouse cursor (pass ITwin::NOT_ELEMENT / NOT_IMODEL_MATERIAL
+	/// to clear). Does not change the selection. \param Mode is the current selection tint mode, needed to
+	/// restore the previously hovered features.
+	void SetHover(ITwinElementID const& ElemID, ITwinRenderMaterialElementID const& MatID,
+				  EITwinSelectionTintMode Mode, FTextureNeeds& TextureNeeds);
 	/// Remove specific elements from the current selection highlight.
 	void DeselectElements(std::unordered_set<ITwinElementID> const& InElemIDs, FTextureNeeds& TextureNeeds);
 
@@ -657,7 +729,6 @@ public:
 		std::unordered_set<std::pair<ITwinElementID, ITwinElementID>, FITwinSceneTile::pair_hash> const& InCategoryPerModelIDs,
 		FTextureNeeds& TextureNeeds, FShowHideOptions const& Opts);
 
-
 	void UseTunedMeshAsExtract(FITwinExtractedElement& DummyExtr, int32_t const GltfMeshWrapperIndex,
 		FTransform const& IModelTilesetTransform);
 
@@ -667,6 +738,7 @@ public:
 	void SetITwinMaterialChannelTexture(uint64_t ITwinMaterialID, AdvViz::SDK::EChannelType Channel,
 		UTexture* pTexture);
 	void ResetCustomTexturesInMaterials();
+	void GetNeedTextureSetupInMaterialsFlagsForUnitTest(bool& HiliteOpa, bool& CutPlanes, bool& SelHide);
 
 }; // class FITwinSceneTile
 
@@ -862,6 +934,20 @@ private:
 	std::unordered_set<ITwinElementID> SelectedElements;
 	/// ID of the currently selected Material, if any
 	ITwinMaterialID SelectedMaterial = ITwin::NOT_MATERIAL;
+	/// How the highlight color of the current selection is displayed (see UpdateSelectionTint)
+	EITwinSelectionTintMode SelectionTintMode = EITwinSelectionTintMode::Blinking;
+	struct FSelectionTintTimer
+	{
+		double StartTime = 0.; ///< FPlatformTime::Seconds()
+		EITwinSelectionTintMode ModeAfter = EITwinSelectionTintMode::Solid;
+	};
+	/// Blinking phase following each new selection, after which ModeAfter is applied
+	std::optional<FSelectionTintTimer> SelectionTintTimer;
+	void StartSelectionTintBlinking(EITwinSelectionTintMode ModeAfter);
+	void SetSelectionTintMode(EITwinSelectionTintMode Mode);
+	/// Element and Material under the mouse cursor, if any (see SetHover)
+	ITwinElementID HoveredElement = ITwin::NOT_ELEMENT;
+	ITwinMaterialID HoveredMaterial = ITwin::NOT_MATERIAL;
 	//enum class EHiddenByFlag : uint8_t
 	//{
 	//	ConstructionData, ///< Hidden because Element is construction data and user asked to hide them
@@ -894,6 +980,9 @@ private:
 	/// Had to defer that a little bit because when the metadata are in cache, FinishedParsingIModelMetadata
 	/// is called before CoordConversions is set
 	bool bNeedConvertElemBBoxes = false;
+	/// Whether some tiles had selection outline geometry at the last call to UpdateSelectionOutlines, so that
+	/// we clean it up if the feature gets disabled.
+	bool bHadSelectionOutlines = false;
 	TWeakObjectPtr<UITwinClipping3DTilesetHelper> ClippingHelper;
 
 public:
@@ -1009,11 +1098,6 @@ public:
 		std::variant<ITwinScene::TileIdx, TITwinSceneTilePtr> const KnownTile,
 		FITwinElementTimeline& ModifiedTimeline, std::vector<ITwinElementID> const* OnlyForElements,
 		bool const bTileIsTunedFor4D, int const TimelineIndex);
-	/// See long comment before call, in FITwinSynchro4DSchedulesInternals::HandleReceivedElements.
-	/// Does not (need to) handle selection highlight (see UpdateSelectingAndHidingTextures).
-	/// \return Whether new tiles received have textures set up for Synchro animation
-	bool ReplicateAnimElemTextureSetupInTile(
-		std::pair<ITwinScene::TileIdx, std::unordered_set<ITwinScene::ElemIdx>> const& TileElements);
 	/// Update all dirty textures (which may post asynchronous tasks to be performed by the render thread)
 	/// related to 4D animation (ie Highlights/Opacities textures + Cutting Planes textures).
 	/// \return Number of textures for which we have to wait before being able to attach them to any
@@ -1030,6 +1114,10 @@ public:
 	/// Disables (or re-enable) the update of dirty textures.
 	void DisableUpdateSelectingAndHidingTextures(bool b);
 	[[nodiscard]] bool AreSelectingAndHidingTexturesUpdatesDisabled() const;
+
+	/// Make the screen-space selection outline (see ITwinSelectionOutline.h) match the current selection in
+	/// all tiles. To be called once per frame, on the game thread.
+	void UpdateSelectionOutlines();
 
 	[[nodiscard]] bool TilesHaveNew4DAnimTextures(bool& bWaitingForTextures);
 	// Note: we don't need a separate TilesHaveNewSelectingAndHidingTextures here, as opposed to 4D anim
@@ -1116,6 +1204,19 @@ public:
 
 	/// Same as PickVisibleElement, but applying to a Material.
 	bool PickVisibleMaterial(ITwinMaterialID const& InMaterialID);
+	/// Animate the highlight color of the selection: it blinks for a few seconds after each new selection
+	/// (done by the material itself), then stays on without blinking (Element selection) or is removed
+	/// (Material selection, for which the outline is enough). Game thread, once per frame.
+	void UpdateSelectionTint();
+	/// Remove the highlight color of the current selection (in all tiles, including those loaded later), but
+	/// keep it selected so that the selection outline remains. Until the next selection.
+	void HideSelectionTint();
+	/// Highlight (in all tiles, including those loaded later) the Element and/or Material under the mouse
+	/// cursor, with a distinct non-blinking color. Pass ITwin::NOT_ELEMENT / NOT_MATERIAL to clear.
+	/// Independent from the selection.
+	void SetHover(ITwinElementID const& ElemID, ITwinMaterialID const& MatID);
+	[[nodiscard]] ITwinElementID GetHoveredElement() const { return HoveredElement; }
+	[[nodiscard]] ITwinMaterialID GetHoveredMaterial() const { return HoveredMaterial; }
 	//! Returns the selected Material's ID, if a Material is selected, or ITwin::NOT_MATERIAL.
 	[[nodiscard]] ITwinMaterialID GetSelectedMaterial() const { return SelectedMaterial; }
 

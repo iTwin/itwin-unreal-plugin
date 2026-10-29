@@ -115,7 +115,7 @@ FString GetCacheFolder(EElementsMetadata const KindOfMetadata, AITwinIModel cons
 		ensure(false);
 		return {};
 	}
-	return QueriesCache::GetCacheFolder(Type, IModel.ServerConnection->Environment, IModel.ITwinId, IModel.IModelId,
+	return QueriesCache::GetCacheFolder(Type, IModel.GetEnvironment(), IModel.ITwinId, IModel.IModelId,
 										IModel.ResolvedChangesetId);
 }
 
@@ -226,7 +226,7 @@ void FPaginatedIModelRowsQueries::DoRestart()
 	FString const CacheFolder = GetCacheFolder(KindOfMetadata, IModel);
 	if (LastCacheFolderUsed != CacheFolder && ensure(!CacheFolder.IsEmpty()))
 	{
-		if (!Cache.Initialize(CacheFolder, IModel.ServerConnection->Environment, UTF8_TO_TCHAR(Description.c_str())))
+		if (!Cache.Initialize(CacheFolder, IModel.GetEnvironment(), UTF8_TO_TCHAR(Description.c_str())))
 		{
 			BE_LOGW("ITwinQuery", "Something went wrong while setting up the local http cache for Elements metadata queries - cache will NOT be used!");
 		}

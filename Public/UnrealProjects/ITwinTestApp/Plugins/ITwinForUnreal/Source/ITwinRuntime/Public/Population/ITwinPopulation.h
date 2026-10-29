@@ -53,11 +53,22 @@ struct FITwinFoliageComponentHolder
 	UPROPERTY(Category = "iTwin", VisibleAnywhere)
 	bool bIsFoliageComponent = false;
 
-	void InitWithMasterMesh(AITwinPopulation& PopulationActor, UStaticMesh* Mesh);
 
-	void InitFoliageMeshComponent(AITwinPopulation& PopulationActor);
+	//! Initializes the holder with the given master mesh and creates an instanced mesh component for it.
+	//! MeshIndex is used in case of multiple meshes in the same population, to identify which mesh failed
+	//! to initialize for this holder.
+	//! Returns true if the initialization was successful, false otherwise.
+	bool InitWithMasterMesh(AITwinPopulation& PopulationActor, UStaticMesh* Mesh,
+		const FString& AssetPath, int32 MeshIndex = -1);
 
-	void BeginPlay(AITwinPopulation& PopulationActor);
+	//! Initializes the foliage mesh component for the holder.
+	//! //! MeshIndex is used in case of multiple meshes in the same population, to identify which mesh failed
+	//! to initialize for this holder.
+	//! Returns true if the initialization was successful, false otherwise.
+	bool InitFoliageMeshComponent(AITwinPopulation& PopulationActor,
+		const FString& AssetPath, int32 MeshIndex = -1);
+
+	void BeginPlay(AITwinPopulation& PopulationActor, int32 MeshIndex = -1);
 
 	int32 GetInstanceCount() const;
 
@@ -87,6 +98,21 @@ public:
 	/// Returns the bounding box of the master mesh object.
 	FBox GetMasterMeshBoundingBox() const;
 	FBoxSphereBounds GetMasterMeshBounds() const;
+
+	//! Returns the path of the asset used to create this population.
+	UFUNCTION(Category = "iTwin",
+		BlueprintCallable)
+	FString GetAssetPath() const;
+
+	//! Returns the list of errors that occurred during the loading of the population. If the list is empty,
+	//! the population was loaded successfully.
+	UFUNCTION(Category = "iTwin",
+		BlueprintCallable)
+	const TArray<FString>& GetLoadingErrors() const;
+
+	//! Adds an error message to the list of loading errors.
+	void AddLoadingError(const FString& ErrorMessage);
+
 		
 	AdvViz::SDK::IInstancePtr GetAVizInstance(int32 instanceIndex) const;
 

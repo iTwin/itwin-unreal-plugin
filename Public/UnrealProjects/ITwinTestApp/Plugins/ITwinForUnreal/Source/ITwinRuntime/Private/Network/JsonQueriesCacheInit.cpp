@@ -74,7 +74,8 @@ bool FRecordDirIterator::Visit(const TCHAR* Filename, bool bIsDirectory) /*overr
 		*pRecorderTimestamp = std::max(*pRecorderTimestamp, Timestamp + 1);
 	bool bIsReply = false;
 	std::string RflParseError;
-	if (!std::filesystem::exists(std::filesystem::path(Filename)))
+	std::error_code ec;
+	if (!std::filesystem::exists(std::filesystem::path(Filename), ec))
 		{ ensure(false); return false; }
 	std::string const FileString = AdvViz::SDK::Tools::LoadCacheFileToStringWithoutReply(Filename);
 	if (FileString.empty())

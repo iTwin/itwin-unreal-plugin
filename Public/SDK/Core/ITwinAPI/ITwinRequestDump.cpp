@@ -29,10 +29,11 @@ namespace AdvViz::SDK::RequestDump
 	void DumpRequest(const std::string& urlSuffix, const std::string& body, std::filesystem::path& requestDumpPath)
 	{
 		// Dump request to temp folder.
-		requestDumpPath = std::filesystem::temp_directory_path() / "iTwinRequestDump" /
+		std::error_code ec;
+		requestDumpPath = std::filesystem::temp_directory_path(ec) / "iTwinRequestDump" /
 			RequestDump::GetRequestHash(urlSuffix, body);
-		std::filesystem::remove_all(requestDumpPath);
-		std::filesystem::create_directories(requestDumpPath);
+		std::filesystem::remove_all(requestDumpPath, ec);
+		std::filesystem::create_directories(requestDumpPath, ec);
 		std::ofstream(requestDumpPath / "request.json") << rfl::json::write(
 			RequestDump::Request{ urlSuffix, body }, YYJSON_WRITE_PRETTY);
 	}

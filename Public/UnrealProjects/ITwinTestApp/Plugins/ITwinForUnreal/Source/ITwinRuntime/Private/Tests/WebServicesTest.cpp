@@ -31,42 +31,9 @@
 #include <Tests/AutomationCommon.h>
 #endif
 
-#include <set>
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FITwinWebServicesTest, "Bentley.ITwinForUnreal.ITwinRuntime.WebServices", \
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-
-bool FITwinWebServicesTest::RunTest(const FString& /*Parameters*/)
-{
-	SECTION("TokenEncryption")
-	{
-		FString SrcToken;
-		// Build a random token
-		FString const ValidChars = TEXT("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789");
-		int32 const NbValidChars = ValidChars.Len() - 1;
-		SrcToken.Reserve(512);
-		for (uint32 i = 0; i < 512; ++i)
-		{
-			SrcToken.AppendChar(ValidChars[FMath::RandRange(0, NbValidChars)]);
-		}
-		// Since tokens are saved on a per-environment basis, we need to choose one, even though this has no
-		// real impact on the test
-		AdvViz::SDK::EITwinEnvironment const TestEnv = AdvViz::SDK::EITwinEnvironment::Prod;
-		// Avoid conflicting with the true application (or another instance of the same test running in
-		// parallel...), and provide with a default iTwin App ID if there is none currently.
-		FString TokenFileSuffixForTest = FString::Printf(TEXT("_Test_%d"), FPlatformProcess::GetCurrentProcessId());
-		FITwinAuthorizationManager::SetupTestMode(TestEnv, TokenFileSuffixForTest);
-
-		UTEST_TRUE("SaveToken", FITwinAuthorizationManager::SaveToken(SrcToken, TestEnv));
-		FString ReadToken;
-		UTEST_TRUE("LoadToken", FITwinAuthorizationManager::LoadToken(ReadToken, TestEnv));
-		UTEST_EQUAL("Unchanged Token", ReadToken, SrcToken);
-
-		// Cleanup
-		FITwinAuthorizationManager::DeleteTokenFile(TestEnv);
-	}
-	return true;
-}
+#include <Compil/BeforeNonUnrealIncludes.h>
+#	include <BeUtils/Gltf/GltfMaterialHelper.h>
+#include <Compil/AfterNonUnrealIncludes.h>
 
 
 #define ITWINID_CAYMUS_EAP "itwinId-Cay-EA"
@@ -94,9 +61,13 @@ bool FITwinWebServicesTest::RunTest(const FString& /*Parameters*/)
 #define CHANGESETID_STADIUM "changesetIdStadium"
 #define IMODELID_SYNC_RUNNING "ef8eb98c-1ba4-4cb9-89f1-5eafcc7c443e"
 
+#define IMODELID_MATERIALS "b53cebea-451f-4433-942f-eabda9c11d21"
+#define MATERIALID_0X25 "0x25"
+
 #define REALITYDATAID_ORLANDO "realityData-Id-Orlando-Magic"
 
 #define ITWINID_NOT_EXISTING "toto"
+
 
 /// Mock server implementation for iTwin services
 
@@ -146,6 +117,10 @@ public:
 		if (isUrl(url, "/imodel/rpc"))
 		{
 			return ProcessIModelRPCTest(url, method, data, urlArguments, headers);
+		}
+		if (isUrl(url, "/custom-request"))
+		{
+			return ProcessCustomRequestTest(url, method, data, urlArguments, headers);
 		}
 		return Response(MHD_HTTP_NOT_FOUND,
 			std::string("Page not found: ") + url);
@@ -962,6 +937,96 @@ private:
 				);
 			}
 		}
+		if (url.ends_with("IModelReadRpcInterface-3.6.0-getElementProps")
+			&& method == "POST")
+		{
+			//---------------------------------------------------------------------------
+			// GetMaterialListProperties
+			//---------------------------------------------------------------------------
+			if (url.find("/" ITWINID_CAYMUS_EAP "/") != std::string::npos
+				&& url.find("/" IMODELID_MATERIALS "/") != std::string::npos
+				&& url.find("/0/") != std::string::npos
+				&& data == "[{\"iTwinId\":\"" ITWINID_CAYMUS_EAP "\",\"iModelId\":\"" IMODELID_MATERIALS  "\",\"changeset\":{\"id\":\"\"}},[\"0x25\"]]")
+			{
+				return Response(MHD_HTTP_OK,
+					"[{\"id\":\"0x25\",\"classFullName\":\"BisCore:RenderMaterial\",\"model\":\"0x16\",\"code\":{\"spec\":\"0x15\",\"scope\":\"0x16\",\"value\":\"0_0103_Blue\"}," \
+					"\"jsonProperties\":{\"materialAssets\":{\"renderMaterial\":{\"CustomSpecular\":false,\"HasBaseColor\":true,\"HasDiffuse\":false,\"HasExitColor\":false," \
+					"\"HasFinish\":false,\"HasGlowColor\":false,\"HasReflect\":false,\"HasReflectColor\":false,\"HasRefract\":false,\"HasSpecular\":false,\"HasSpecularColor\":false," \
+					"\"HasTranslucencyColor\":false,\"HasTransmit\":false,\"HasTransmitColor\":false,\"Invisible\":false,\"LinkedToLxp\":false," \
+					"\"LockEfficiency\":false,\"LockFinishToSpecular\":true,\"LockFresnelToReflect\":true,\"LockRefractionRoughnessToFinish\":true,\"LockSpecularAndBase\":false," \
+					"\"LockSpecularAndReflect\":false,\"NoShadows\":false,\"ambient\":0.5,\"color\":[0,0,1],\"diffuse\":0.5,\"finish\":0.05,\"glow\":0," \
+					"\"reflect\":0,\"reflect_color\":[1,1,1],\"refract\":1,\"specular\":0.05,\"specular_color\":[1,1,1],\"transmit\":0}}},\"paletteName\":\"box_su8\",\"isPrivate\":false}]"
+				);
+			}
+		}
+		if (url.ends_with("IModelReadRpcInterface-3.6.0-getGeoCoordinatesFromIModelCoordinates")
+			&& method == "POST")
+		{
+			if (url.find("/" ITWINID_CAYMUS_EAP "/") != std::string::npos
+				&& url.find("/" IMODELID_BUILDING "/") != std::string::npos
+				&& url.find("/" CHANGESETID_BUILDING "/") != std::string::npos
+				&& data == "[{\"iTwinId\":\"itwinId-Cay-EA\",\"iModelId\":\"imodelId-Building\",\"changeset\":{\"id\":\"changesetidbuilding59\"}}, {\"target\": \"WGS84\", \"iModelCoords\": [{\"x\": 565267.327272441, \"y\": 5276825.694905683, \"z\": 64.66442709360786}]}]")
+			{
+				return Response(MHD_HTTP_OK,
+					"{\"geoCoords\":[{\"p\":[-122.13104950739952,47.641538442598,42.47204495705395],\"s\":0}]}"
+				);
+			}
+		}
+		return Response(MHD_HTTP_NOT_FOUND, "Page not found.");
+	}
+
+	/// Process /custom-request/ requests, used to exercise UITwinWebServices::RunCustomRequest.
+	Response ProcessCustomRequestTest(
+		const std::string& url,
+		const std::string& method,
+		const std::string& data,
+		const std::vector<UrlArg>& urlArguments,
+		const std::vector<Header>& headers) const
+	{
+		CHECK_ITWIN_HEADERS("v1");
+
+		if (url.ends_with("/custom-request/ok"))
+		{
+			//---------------------------------------------------------------------------
+			// RunCustomRequest - nominal case (GET)
+			//---------------------------------------------------------------------------
+			if (!ensure(method == "GET"))
+			{
+				return Response(MHD_HTTP_METHOD_NOT_ALLOWED, "Unexpected verb.");
+			}
+			StringMap argMap = ToArgMap(urlArguments);
+			checkf(argMap["flavor"] == "vanilla", TEXT("unexpected arguments"));
+			return Response(MHD_HTTP_OK,
+				"{\"properties\":{\"myCustomSetting\":\"CustomValue_42\"}}");
+		}
+		if (url.ends_with("/custom-request/post"))
+		{
+			//---------------------------------------------------------------------------
+			// RunCustomRequest - with a payload (POST) and a custom header
+			//---------------------------------------------------------------------------
+			if (!ensure(method == "POST"))
+			{
+				return Response(MHD_HTTP_METHOD_NOT_ALLOWED, "Unexpected verb.");
+			}
+			const int HeaderStatus = CheckRequiredHeaders(headers, {{ "X-Carrot-Test", "42" }});
+			if (HeaderStatus != MHD_HTTP_OK)
+			{
+				return Response(HeaderStatus, "Missing custom header.");
+			}
+			if (data != "{\"value\":\"sent-by-test\"}")
+			{
+				return Response(MHD_HTTP_BAD_REQUEST, "Unexpected payload.");
+			}
+			return Response(MHD_HTTP_OK, "{\"echo\":\"sent-by-test\"}");
+		}
+		if (url.ends_with("/custom-request/error"))
+		{
+			//---------------------------------------------------------------------------
+			// RunCustomRequest - error case (used to test FilterErrorFunc)
+			//---------------------------------------------------------------------------
+			return Response(MHD_HTTP_NOT_FOUND,
+				"{\"error\":{\"code\":\"CustomNotFound\",\"message\":\"No such custom resource.\"}}");
+		}
 		return Response(MHD_HTTP_NOT_FOUND, "Page not found.");
 	}
 };
@@ -988,6 +1053,7 @@ public:
 		ensureMsgf(NumProcessedRequests <= NumPendingRequests, TEXT("received more answers than expected!"));
 	}
 	bool IsWaitingForServerResponse() const { return NumProcessedRequests < NumPendingRequests; }
+	int GetPendingRequestCount() const { return NumPendingRequests - NumProcessedRequests; }
 
 
 #define IMPLEMENT_OBS_CALLBACK( CallbackName, InfoClass )	\
@@ -1041,6 +1107,9 @@ public:
 	IMPLEMENT_OBS_CALLBACK(OnRealityData3DInfoRetrieved, FITwinRealityData3DInfo);
 
 	IMPLEMENT_OBS_CALLBACK_TWO_ARGS(OnElementPropertiesRetrieved, FElementProperties, FString);
+
+	IMPLEMENT_OBS_CALLBACK(OnMaterialPropertiesRetrieved, AdvViz::SDK::ITwinRenderMaterialPropertiesMap);
+	IMPLEMENT_OBS_CALLBACK_TWO_ARGS(OnConvertedIModelCoordsToGeoCoords, AdvViz::SDK::GeoCoordsReply, HttpRequestID);
 
 	std::function<bool(bool, bool, FProjectExtents const&, bool, FEcefLocation const&)> OnIModelPropertiesRetrievedFunc;
 
@@ -1111,6 +1180,8 @@ void FITwinAPITestHelperBase::Cleanup()
 	MockServer.reset();
 
 	DoCleanup();
+
+	bInitDone = false;
 }
 
 std::string FITwinAPITestHelperBase::GetServerUrl() const
@@ -1192,7 +1263,6 @@ private:
 	FITwinAPITestHelper() {}
 
 	TObjectPtr<UITwinWebServices> WebServices;
-	TObjectPtr<AITwinServerConnection> ServerConnection;
 	TestObserverPtr Observer;
 };
 
@@ -1221,9 +1291,7 @@ bool FITwinAPITestHelper::DoInit(AdvViz::SDK::EITwinEnvironment Env)
 	const std::string url = GetServerUrl();
 
 	WebServices = NewObject<UITwinWebServices>();
-	ServerConnection = NewObject<AITwinServerConnection>();
-	ServerConnection->Environment = static_cast<EITwinEnvironment>(Env);
-	WebServices->SetServerConnection(ServerConnection);
+	WebServices->SetEnvironment(static_cast<EITwinEnvironment>(Env));
 	WebServices->SetTestServerURL(url.c_str());
 	WebServices->SetRetryDelayFactor(0.1f); // wait less before retrying.
 	Observer = std::make_shared<ITwinTestWebServicesObserver>();
@@ -1238,7 +1306,6 @@ void FITwinAPITestHelper::DoCleanup()
 		WebServices->SetObserver(nullptr);
 	}
 	WebServices = nullptr;
-	ServerConnection = nullptr;
 	Observer.reset();
 }
 
@@ -1252,7 +1319,18 @@ DEFINE_LATENT_AUTOMATION_COMMAND_ONE_PARAMETER(FNUTWaitForMockServerResponse, Te
 
 bool FNUTWaitForMockServerResponse::Update()
 {
-	return !Observer || !Observer->IsWaitingForServerResponse();
+	if (Observer && Observer->IsWaitingForServerResponse())
+	{
+		static double LastLog = 0.;
+		if (FPlatformTime::Seconds() - LastLog > 2.)
+		{
+			LastLog = FPlatformTime::Seconds();
+			UE_LOG(LogTemp, Warning, TEXT("Still waiting for %d response(s)"),
+				Observer->GetPendingRequestCount());
+		}
+		return false;
+	}
+	return true;
 }
 
 
@@ -2072,6 +2150,176 @@ bool FITwinWebServicesRequestTest::RunTest(const FString& /*Parameters*/)
 		// iModel with ECEF location
 		Observer->AddPendingRequest();
 		WebServices->GetIModelProperties(ITWINID_STADIUM_RN_QA, IMODELID_STADIUM, CHANGESETID_STADIUM);
+	}
+
+	SECTION("GetMaterialProperties")
+	{
+		Observer->AddPendingRequest();
+		Observer->OnMaterialPropertiesRetrievedFunc = [this](bool bSuccess, AdvViz::SDK::ITwinRenderMaterialPropertiesMap const& MaterialProps)
+		{
+			UTEST_TRUE("Get Material Properties request result", bSuccess);
+			// Add appropriate tests for MaterialProps here
+			auto const& MaterialMap = MaterialProps.data_;
+			UTEST_EQUAL("NumMaterials", MaterialMap.size(), 1);
+			if (!MaterialMap.empty())
+			{
+				// Add appropriate tests for the retrieved material here.
+				auto const& Material = MaterialMap.begin()->second;
+				UTEST_EQUAL("Material Id as Key in map", Material.id, MaterialMap.begin()->first);
+				UTEST_TRUE("Material Id", Material.id == MATERIALID_0X25);
+
+				UTEST_TRUE("Material Name", Material.name == "0_0103_Blue");
+				UTEST_TRUE("Material attributes count", Material.attributes.size() == 34);
+				UTEST_TRUE("Material HasBaseColor", BeUtils::GetMaterialBoolProperty(Material, "HasBaseColor"));
+			}
+			return true;
+		};
+		WebServices->GetMaterialProperties(ITWINID_CAYMUS_EAP,	IMODELID_MATERIALS, TEXT(""), TEXT(MATERIALID_0X25));
+	}
+
+	SECTION("ConvertIModelCoordsToGeoCoords")
+	{
+		Observer->AddPendingRequest();
+		Observer->OnConvertedIModelCoordsToGeoCoordsFunc = [this](bool bSuccess,
+																  AdvViz::SDK::GeoCoordsReply const& GeoCoords,
+																  HttpRequestID const& RequestId)
+		{
+			UTEST_TRUE("ConvertIModelCoordsToGeoCoords", bSuccess);
+			// Add appropriate tests for GeoCoords here
+			UTEST_TRUE("Has GeoCoords", GeoCoords.geoCoords.has_value());
+			if (GeoCoords.geoCoords.has_value())
+			{
+				// Add appropriate tests for the retrieved GeoCoords here.
+				auto const& GeoCoordsValue = GeoCoords.geoCoords.value();
+				UTEST_EQUAL("NumCoords", GeoCoordsValue.size(), 1);
+				// Add tests for GeoCoordsValue as needed
+				UTEST_EQUAL("Coord success", GeoCoordsValue[0].s, 0);
+				UTEST_TRUE("Coord values",
+					   FMath::IsNearlyEqual(GeoCoordsValue[0].p[0], -122.13104950739952, UE_SMALL_NUMBER)
+					&& FMath::IsNearlyEqual(GeoCoordsValue[0].p[1], 47.641538442598, UE_SMALL_NUMBER)
+					&& FMath::IsNearlyEqual(GeoCoordsValue[0].p[2], 42.47204495705395, UE_SMALL_NUMBER));
+			}
+			return true;
+		};
+		WebServices->ConvertIModelCoordsToGeoCoords(ITWINID_CAYMUS_EAP, IMODELID_BUILDING, CHANGESETID_BUILDING,
+			FVector(565267.32727244101, 5276825.6949056834, 64.664427093607856), {});
+	}
+
+	SECTION("RunCustomRequest")
+	{
+		using namespace AdvViz::SDK;
+
+		//---------------------------------------------------------------------------
+		// Nominal case: GET, response parsed by the user-provided callback.
+		//---------------------------------------------------------------------------
+		{
+			// RunCustomRequest keeps a *reference* on the request info until the request is
+			// actually issued (see UITwinWebServices::RunCustomRequest), hence the shared_ptr.
+			auto const ReqInfo = std::make_shared<ITwinAPIRequestInfo>(ITwinAPIRequestInfo{
+				.ShortName = "CustomRequestOK",
+				.Verb = EVerb::Get,
+				.UrlSuffix = "/custom-request/ok?flavor=vanilla",
+				.AcceptHeader = "application/vnd.bentley.itwin-platform.v1+json"
+			});
+			Observer->AddPendingRequest();
+			WebServices->RunCustomRequest(*ReqInfo,
+				[this, Observer, ReqInfo](long Status, std::string const& Response,
+					RequestID const& ReqID, std::string& StrError) -> bool
+				{
+					TestEqual(TEXT("Custom request status"), Status, 200L);
+					TestTrue(TEXT("Custom request response"),
+						Response.find("CustomValue_42") != std::string::npos);
+					TestFalse(TEXT("Custom request ID is not empty"), ReqID.empty());
+					StrError.clear();
+					Observer->OnResponseReceived();
+					return true;
+				});
+		}
+
+		//---------------------------------------------------------------------------
+		// POST with a payload, a custom content-type and a custom header.
+		//---------------------------------------------------------------------------
+		{
+			auto const ReqInfo = std::make_shared<ITwinAPIRequestInfo>(ITwinAPIRequestInfo{
+				.ShortName = "CustomRequestPost",
+				.Verb = EVerb::Post,
+				.UrlSuffix = "/custom-request/post",
+				.AcceptHeader = "application/vnd.bentley.itwin-platform.v1+json",
+				.ContentType = "application/json",
+				.ContentString = "{\"value\":\"sent-by-test\"}",
+				.CustomHeaders = {{ "X-Carrot-Test", "42" }}
+			});
+			Observer->AddPendingRequest();
+			WebServices->RunCustomRequest(*ReqInfo,
+				[this, Observer, ReqInfo](long Status, std::string const& Response,
+					RequestID const&, std::string& StrError) -> bool
+				{
+					TestEqual(TEXT("Custom POST status"), Status, 200L);
+					TestTrue(TEXT("Custom POST echo"),
+						Response.find("sent-by-test") != std::string::npos);
+					StrError.clear();
+					Observer->OnResponseReceived();
+					return true;
+				});
+		}
+
+		//---------------------------------------------------------------------------
+		// Error case.
+		// Note: the response callback is *not* invoked on failure - RunCustomRequest
+		// short-circuits it with Http::IsSuccessful() - so FilterErrorFunc is our only
+		// completion signal here, and what we assert on.
+		//---------------------------------------------------------------------------
+		{
+			auto const ReqInfo = std::make_shared<ITwinAPIRequestInfo>(ITwinAPIRequestInfo{
+				.ShortName = "CustomRequestError",
+				.Verb = EVerb::Get,
+				.UrlSuffix = "/custom-request/error",
+				.AcceptHeader = "application/vnd.bentley.itwin-platform.v1+json"
+			});
+			auto const bCallbackCalled = std::make_shared<std::atomic_bool>(false);
+			Observer->AddPendingRequest();
+			WebServices->RunCustomRequest(*ReqInfo,
+				[bCallbackCalled](long, std::string const&, RequestID const&, std::string&) -> bool
+				{
+					// Must not be reached: the request fails.
+					*bCallbackCalled = true;
+					return false;
+				},
+				[this, Observer, ReqInfo, bCallbackCalled](long StatusCode,
+					std::string const& Error, bool& bAllowRetry, bool& bLogError)
+				{
+					TestEqual(TEXT("Custom request error status"), StatusCode, 404L);
+					TestTrue(TEXT("Custom request error payload"),
+						Error.find("CustomNotFound") != std::string::npos);
+					TestFalse(TEXT("Response callback is not invoked on failure"),
+						bCallbackCalled->load());
+					// Do not pollute the test with retries nor error logs.
+					bAllowRetry = false;
+					bLogError = false;
+					Observer->OnResponseReceived();
+				});
+		}
+
+		//---------------------------------------------------------------------------
+		// A badly formed request must not even reach the server.
+		//---------------------------------------------------------------------------
+		{
+			auto const ReqInfo = std::make_shared<ITwinAPIRequestInfo>(ITwinAPIRequestInfo{
+				.ShortName = "CustomRequestBadlyFormed",
+				.Verb = EVerb::Get,
+				.UrlSuffix = "/custom-request/ok",
+				.AcceptHeader = "application/vnd.bentley.itwin-platform.v1+json",
+				.badlyFormed = true
+			});
+			auto const bCallbackCalled = std::make_shared<std::atomic_bool>(false);
+			WebServices->RunCustomRequest(*ReqInfo,
+				[bCallbackCalled](long, std::string const&, RequestID const&, std::string&) -> bool
+				{
+					*bCallbackCalled = true;
+					return false;
+				});
+			UTEST_FALSE("Badly formed request is not sent", bCallbackCalled->load());
+		}
 	}
 
 	ADD_LATENT_AUTOMATION_COMMAND(FNUTWaitForMockServerResponse(Observer));

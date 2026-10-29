@@ -25,6 +25,7 @@
 
 #include <Core/Tools/Tools.h>
 #include <Core/Network/http.h>
+#include <Core/Network/IHttpRouter.h>
 
 #include "ITwinAuthInfo.h"
 #include "ITwinAuthStatus.h"
@@ -35,7 +36,6 @@ MODULE_EXPORT namespace AdvViz::SDK
 {
 	class ITwinAuthObserver;
 	class Http;
-	class IHttpRouter;
 
 	enum class EITwinAuthGrantType : uint8_t
 	{
@@ -83,7 +83,10 @@ MODULE_EXPORT namespace AdvViz::SDK
 		static constexpr size_t ENV_COUNT = static_cast<size_t>(EITwinEnvironment::Invalid) + 1;
 		using AppIDArray = std::array<std::string, ENV_COUNT>;
 
+		//! Sets the iTwin AppID for all environments.
 		static void SetAppIDArray(AppIDArray const& ITwinAppIDs, bool bLogIDs = true);
+		//! Sets the iTwin AppID for the given environment.
+		static void SetAppID(EITwinEnvironment env, std::string const& ITwinAppID, bool bLogID = true);
 		static bool HasAppID(EITwinEnvironment env);
 		static std::string GetAppID(EITwinEnvironment env);
 
@@ -95,7 +98,20 @@ MODULE_EXPORT namespace AdvViz::SDK
 		static void SetRedirectUriPort(int port);
 		static int GetRedirectUriPort();
 
+		//! Redirects the IMS requests (in particular the token endpoint) to the given base URL.
+		//! For unit testing only: this is what allows a mock server to answer /connect/token.
+		//! Pass std::nullopt to restore the regular, environment-based URL.
+		void SetIMSBaseUrlForTesting(std::optional<std::string> const& baseUrl);
+
 		static SharedInstance& GetInstance(EITwinEnvironment env);
+
+		//! Destroys the manager instance of the given environment, so that the next call to
+		//! GetInstance builds a fresh one.
+		//! For unit testing only: this is what lets two test sections use the same environment
+		//! without inheriting each other's state - in particular the lazily created, and never
+		//! re-created, http router (see CheckAuthorization).
+		//! Any authorization in progress on that instance is cancelled first.
+		static void ResetInstanceForTesting(EITwinEnvironment env);
 
 		virtual ~ITwinAuthManager();
 
@@ -136,7 +152,29 @@ MODULE_EXPORT namespace AdvViz::SDK
 		//! Returns the access token override mode.
 		EITwinAuthOverrideMode GetOverrideMode() const;
 
+		/// Returns true as long as the route listening for the authorization callback is bound.
+		/// This is what prevents us from rebinding the same port.
+		bool IsAuthPortBound() const;
+
+		//! Returns true if an authorization is currently in progress.
 		bool IsAuthorizationInProgress() const;
+
+		/// Cancels the authorization currently in progress, if any:
+		/// releases the route listening for the authorization callback, cancels any pending
+		/// restart, and makes sure a token exchange already in flight will be discarded when it
+		/// completes (see authEpoch_).
+		/// Does *not* reset the current access token: this only aborts an ongoing sign-in.
+		/// Observers are not notified, because the cancellation is a deliberate action of the
+		/// caller, not an authorization failure.
+		///
+		/// \return True if the authorization callback route was still bound, and has been
+		/// released - ie. the same condition as IsAuthPortBound().
+		/// \remark Beware the returned value is *not* a reliable "something was aborted" flag.
+		/// Once the browser redirect has been received, the route is already unbound while the
+		/// token exchange is still running: in that window this method returns false, even though
+		/// bumping the epoch did abort the sign-in. The cancellation itself is always effective;
+		/// only the reporting is narrower.
+		bool CancelAuthorization();
 
 		std::string GetCurrentAuthorizationURL() const;
 
@@ -152,6 +190,7 @@ MODULE_EXPORT namespace AdvViz::SDK
 		//! Resets current authorization token, if it was acquired from the SDK, rather than set from
 		//! SetOverrideAccessToken, and reset cached data so that the next authorization process triggers a
 		//! new login.
+		//! If an authorization is currently in progress, it is cancelled (see CancelAuthorization).
 		virtual bool Logout();
 
 
@@ -182,6 +221,16 @@ MODULE_EXPORT namespace AdvViz::SDK
 
 		bool TryLoadRefreshToken();
 		bool ResetRefreshToken();
+
+		/// Returns the current authorization epoch - see authEpoch_.
+		/// Call this when initiating a token exchange, and pass the returned value to
+		/// IsAuthEpochCurrent when the response finally arrives.
+		uint64_t GetAuthEpoch() const;
+
+		/// Returns whether the given epoch, obtained from GetAuthEpoch when a token exchange was
+		/// initiated, is still the current one - ie. whether the response to that exchange is
+		/// still relevant, or must be discarded - see authEpoch_.
+		bool IsAuthEpochCurrent(uint64_t epoch) const;
 
 		bool SaveAccessToken(std::string const& accessToken, EAuthContext authContext) const;
 		bool ReloadAccessToken(std::string& readAccessToken, ITwinAuthInfo& readAuthInfo) const;
@@ -231,7 +280,24 @@ MODULE_EXPORT namespace AdvViz::SDK
 
 		std::shared_ptr<Http> http_;
 		std::shared_ptr<IHttpRouter> httpRouter_;
-		std::atomic_bool hasBoundAuthPort_ = false;
+		/// The route currently bound to receive the authorization callback, if any.
+		/// This is the single source of truth for "an authorization is in progress".
+		IHttpRouter::RouteHandlePtr routeHandle_; // guarded by mutex_
+
+		/// Incremented every time the authorization process is cancelled (see CancelAuthorization).
+		///
+		/// Rationale: releasing routeHandle_ is enough to abort a sign-in that is still waiting for
+		/// the browser redirect, but *not* one that already received it. In the latter case the
+		/// route is already unbound while the /connect/token exchange is still in flight, and its
+		/// completion handler would happily log the user back in - typically right after a Logout().
+		/// Since an http request cannot be cancelled once sent, we discard its outcome instead: a
+		/// token exchange captures the epoch in effect when it is initiated, and its response is
+		/// ignored if the epoch has changed in the meantime.
+		///
+		/// Never reset, and only ever incremented, so that an epoch value can never be mistaken for
+		/// a later one. uint64_t makes wrapping a non-issue in practice.
+		uint64_t authEpoch_ = 0; // guarded by mutex_
+
 		std::string currentAuthorizationURL_;
 		int loadRefreshTokenAttempts_ = 0;
 
@@ -239,6 +305,7 @@ MODULE_EXPORT namespace AdvViz::SDK
 		std::string clientSecret_; // only used in ClientCredentials mode
 		std::optional<std::string> customClientId_;
 		std::optional<std::string> customScope_;
+		std::optional<std::string> customIMSBaseUrl_; // unit tests only
 
 		std::shared_ptr< std::atomic_bool > stillValid_; // to check lambda validity
 

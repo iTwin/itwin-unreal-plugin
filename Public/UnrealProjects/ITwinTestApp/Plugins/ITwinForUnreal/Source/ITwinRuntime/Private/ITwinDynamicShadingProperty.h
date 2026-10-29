@@ -11,8 +11,9 @@
 #include "CoreMinimal.h"
 #include "ITwinFeatureID.h"
 
-#include "RHITypes.h"
-#include "UObject/NameTypes.h"
+#include <RHIGlobals.h>
+#include <RHITypes.h>
+#include <UObject/NameTypes.h>
 
 #include <array>
 #include <atomic>
@@ -142,9 +143,9 @@ private:
 	/// Mark the texture for future update (should be called whenever we modify a pixel in TextureData...)
 	void InvalidateTexture() { bNeedUpdate = true; }
 
-	/// Returns whether the texture can be attached to a material instance: one can update material(s) with
-	/// our texture only if the latter has been completely updated at least once.
-	bool AllowUpdatingMaterials() const { return bHasBeenUpdatedAtLeastOnce.load(); }
+	/// Returns whether the texture can be attached to a material instance. Wait for its first completed upload
+	/// unless no RHI is active, in which case there is no asynchronous texture work to wait for.
+	bool AllowUpdatingMaterials() const { return GUsingNullRHI || bHasBeenUpdatedAtLeastOnce.load(); }
 };
 
 // Note: all template combinations must have their specialization in the CPP

@@ -227,6 +227,26 @@ namespace AdvViz::SDK
 	}
 
 	/*static*/
+	void ITwinAuthManager::SetAppID(EITwinEnvironment env, std::string const& ITwinAppID, bool bLogID /*= true*/)
+	{
+		if ((size_t)env >= Credentials::AppIDs.size())
+		{
+			BE_ISSUE("invalid env", (size_t)env);
+			return;
+		}
+
+		if (bLogID && AdvViz::SDK::Tools::IsLogInitialized())
+		{
+			// Do not write clear AppID in logs.
+			BE_LOGI("ITwinAPI", "Setting AppID - "
+				<< ITwinServerEnvironment::ToString(env)
+				<< ": " << HideAppID(ITwinAppID));
+		}
+		Credentials::AppIDs[(size_t)env] = ITwinAppID;
+	}
+
+
+	/*static*/
 	bool ITwinAuthManager::HasAppID(EITwinEnvironment env)
 	{
 		if ((size_t)env < Credentials::AppIDs.size())
@@ -309,6 +329,21 @@ namespace AdvViz::SDK
 		return globals.instances_[envIndex];
 	}
 
+	/*static*/
+	void ITwinAuthManager::ResetInstanceForTesting(EITwinEnvironment env)
+	{
+		const size_t envIndex = (size_t)env;
+		Globals& globals = GetGlobals();
+		BE_ASSERT(envIndex < globals.instances_.size(), "Invalid environment", envIndex);
+
+		if (auto& instance = globals.instances_[envIndex])
+		{
+			// Release the loopback route and invalidate any pending token exchange before the
+			// instance goes away.
+			instance->CancelAuthorization();
+			instance.reset();
+		}
+	}
 
 	ITwinAuthManager::ITwinAuthManager(EITwinEnvironment env)
 		: env_(env)
@@ -512,9 +547,20 @@ namespace AdvViz::SDK
 	{
 		return customScope_.value_or(Credentials::GetScope());
 	}
+
+	void ITwinAuthManager::SetIMSBaseUrlForTesting(std::optional<std::string> const& baseUrl)
+	{
+		Lock lock(mutex_);
+		customIMSBaseUrl_ = baseUrl;
+		// Same approach as SetClientCredentialGrantType: rebuild the client on the new base URL.
+		http_.reset(Http::New());
+		http_->SetBaseUrl(GetIMSBaseUrl().c_str());
+	}
+
 	std::string ITwinAuthManager::GetIMSBaseUrl() const
 	{
-		return Credentials::GetITwinIMSRootUrl(env_);
+		Lock lock(mutex_);
+		return customIMSBaseUrl_.value_or(Credentials::GetITwinIMSRootUrl(env_));
 	}
 
 	void ITwinAuthManager::AddObserver(ITwinAuthObserver* observer)
@@ -642,12 +688,23 @@ namespace AdvViz::SDK
 		using RequestPtr = HttpRequest::RequestPtr;
 		using Response = HttpRequest::Response;
 		request->SetResponseCallback(
-			[this, IsValidLambda = this->stillValid_, authorizationCode, verifier, tokenMode, bIsAutomaticRefresh]
+			[this, IsValidLambda = this->stillValid_, authEpoch = this->GetAuthEpoch(),
+			 authorizationCode, verifier, tokenMode, bIsAutomaticRefresh]
 			(RequestPtr const& request, Response const& response)
 		{
 			if (!(*IsValidLambda))
 			{
 				// see comments in #ReusableJsonQueries.cpp
+				return;
+			}
+
+			// The authorization was cancelled (typically by a Logout) while this exchange was in
+			// flight: discard the outcome, or we would silently log the user back in.
+			// This must be tested *before* arming resultGuard below, whose cleanup would otherwise
+			// notify the observers or schedule a restart for a sign-in nobody is waiting for.
+			if (!this->IsAuthEpochCurrent(authEpoch))
+			{
+				BE_LOGI("ITwinAPI", "Discarding a token response from a cancelled authorization");
 				return;
 			}
 
@@ -774,7 +831,7 @@ namespace AdvViz::SDK
 			return EITwinAuthStatus::InProgress;
 		}
 
-		BE_ASSERT(!hasBoundAuthPort_, "Authorization process already in progress...");
+		BE_ASSERT(!IsAuthorizationInProgress(), "Authorization process already in progress...");
 
 		const std::string state = GenerateRandomCharacters(10);
 		const std::string verifier = GenerateRandomCharacters(128);
@@ -804,10 +861,13 @@ namespace AdvViz::SDK
 			EVerb::Get,
 			[=, this, httpRouter = this->httpRouter_, IsValidRequestHandler = this->stillValid_]
 			(std::map<std::string, std::string> const& queryParams, std::string& outHtmlText)
+				-> IHttpRouter::ERouteDisposition
 		{
+			using enum IHttpRouter::ERouteDisposition;
+
 			if (!(*IsValidRequestHandler))
 			{
-				return;
+				return Unbind; // this manager is gone: release the route
 			}
 			if (queryParams.contains("code")
 				&& queryParams.contains("state") && queryParams.at("state") == state)
@@ -815,6 +875,7 @@ namespace AdvViz::SDK
 				ProcessTokenRequest(verifier, queryParams.at("code"),
 					HasRefreshToken() ? ETokenMode::Refresh : ETokenMode::Standard);
 				outHtmlText = "<h1>Sign in was successful!</h1>You can close this browser window and return to the application.";
+				return Unbind;
 			}
 			else if (queryParams.contains("error"))
 			{
@@ -837,18 +898,26 @@ namespace AdvViz::SDK
 					outHtmlText = fmt::format("<h1>Error signin in!</h1><br/>{}<br/><br/>You can close this browser window and return to the application.",
 						htmlError);
 				}
+				return Unbind;
 			}
-			hasBoundAuthPort_ = false;
+			// Unsolicited request (or spoofed 'state'): keep listening for the genuine redirect.
+			BE_LOGW("ITwinAPI", "Ignoring unexpected request on the authorization callback endpoint");
+			return KeepBound;
 		});
-		if (routeHandle && routeHandle->IsValid())
+
 		{
-			hasBoundAuthPort_ = true;
+			Lock lock(mutex_);
+			routeHandle_ = routeHandle;
 		}
 
 		// Start the actual authorization (typically by opening a Web Browser).
 		std::string brwError;
 		if (!StartAuthorizationInstance(state, verifier, brwError))
 		{
+			{
+				Lock lock(mutex_);
+				routeHandle_.reset();
+			}
 			this->NotifyResult(false, brwError);
 			return EITwinAuthStatus::Failed;
 		}
@@ -860,15 +929,21 @@ namespace AdvViz::SDK
 	{
 		// We cannot just call CheckAuthorization in the middle of the process, because we must ensure we can
 		// rebind our router on the same port, which requires we have unbounded the previous instance...
-		// Therefore the use of a ticker here
+		// Therefore the use of a ticker here.
+		// Note that the route is only unbound by the router *after* the current request handler has
+		// returned, hence we cannot test the condition synchronously here.
 		ResetRestartTicker();
 		UniqueDelayedCall("restartAuth",
 			[this, IsValidLambda = this->stillValid_]() -> DelayedCall::EReturnedValue
 		{
 			if (*IsValidLambda)
 			{
-				if (!hasBoundAuthPort_)
+				if (!IsAuthPortBound())
 				{
+					{
+						Lock lock(mutex_);
+						routeHandle_.reset();
+					}
 					CheckAuthorization();
 					return DelayedCall::EReturnedValue::Done; // stop ticking
 				}
@@ -881,12 +956,17 @@ namespace AdvViz::SDK
 		}, 0.200f /*TickerDelay: 200 ms*/);
 	}
 
+	bool ITwinAuthManager::IsAuthPortBound() const
+	{
+		Lock lock(mutex_);
+		return routeHandle_ && routeHandle_->IsValid();
+	}
 
 	bool ITwinAuthManager::IsAuthorizationInProgress() const
 	{
 		if (HasAccessToken())
 			return false;
-		return hasBoundAuthPort_.load();
+		return IsAuthPortBound();
 	}
 
 	bool ITwinAuthManager::SaveAccessToken(std::string const& accessToken, EAuthContext authContext) const
@@ -1003,18 +1083,54 @@ namespace AdvViz::SDK
 		return true;
 	}
 
-	bool ITwinAuthManager::Logout()
+	uint64_t ITwinAuthManager::GetAuthEpoch() const
 	{
-		if (IsAuthorizationInProgress())
+		Lock lock(mutex_);
+		return authEpoch_;
+	}
+
+	bool ITwinAuthManager::IsAuthEpochCurrent(uint64_t epoch) const
+	{
+		Lock lock(mutex_);
+		return epoch == authEpoch_;
+	}
+
+	bool ITwinAuthManager::CancelAuthorization()
+	{
+		// A restart may have been scheduled by the 'error' branch of the callback handler (see
+		// RestartAuthorizationLater): it must not survive the cancellation, or it would silently
+		// re-open a sign-in right after the caller cancelled this one.
+		ResetRestartTicker();
+
+		IHttpRouter::RouteHandlePtr routeHandle;
 		{
-			BE_LOGE("ITwinAPI", "Cannot log out while an authorization request is in progress");
+			Lock lock(mutex_);
+			// Any token exchange already in flight becomes irrelevant from now on.
+			++authEpoch_;
+			routeHandle.swap(routeHandle_);
+		}
+
+		// Note: the route may already have been released by the request handler (the redirect was
+		// received and the token exchange is running) - in which case Unbind does nothing and we
+		// report false, even though the epoch bump above did abort the sign-in. See the remark on
+		// CancelAuthorization in the header.
+		if (!routeHandle || !httpRouter_ || !httpRouter_->UnbindRoute(routeHandle))
+		{
 			return false;
 		}
+		BE_LOGI("ITwinAPI", "Pending authorization was cancelled");
+		return true;
+	}
+
+	bool ITwinAuthManager::Logout()
+	{
 		if (GetOverrideMode() != EITwinAuthOverrideMode::None)
 		{
 			BE_LOGE("ITwinAPI", "The authorization token was overridden from outside - cannot log out");
 			return false;
 		}
+		// An authorization in progress is no longer a reason to refuse: just cancel it.
+		CancelAuthorization();
 		SetAuthorizationInfo({}, {}, EAuthContext::Logout);
 		return true;
 	}

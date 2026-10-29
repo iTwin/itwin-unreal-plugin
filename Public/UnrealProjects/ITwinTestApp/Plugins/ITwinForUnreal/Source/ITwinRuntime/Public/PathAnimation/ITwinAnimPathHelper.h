@@ -20,6 +20,8 @@
 #   include <SDK/Core/Visualization/PathAnimation.h>
 #include <ITwinRuntime/Private/Compil/AfterNonUnrealIncludes.h>
 
+#include <Components/SplineComponent.h>
+
 #include <memory>
 #include <optional>
 
@@ -33,6 +35,87 @@ namespace AdvViz::SDK
 {
 	class RefID;
 }
+
+struct FAnimPathLaneData
+{
+	float LaneSpeed;
+	float LaneOffset;
+	TArray<FTransform> OutTransforms;
+	float OutLength;
+};
+
+struct FAnimPathRebakeData
+{
+	TWeakObjectPtr<UITwinAnimPathHelper> PathHelper;
+	TWeakObjectPtr<UWorld> World;
+	FSplineCurves SplineCurves;
+	FTransform ComponentToWorld;
+	bool bClosedLoop = false;
+	bool bHasCurvedIntervals = false;
+	TArray<FAnimPathLaneData> LanesData;
+	uint64 Version;
+};
+
+enum class EAnimPathUpdateStatus : uint8
+{
+	Idle,
+	//Pending,
+	Running,
+	//Done,
+};
+
+struct FAnimPathUpdateState
+{
+	bool IsReady() const { return !bNeedRebake && !bNeedRepopulate; }
+	bool UpdateInProgress() const { return Status == EAnimPathUpdateStatus::Running; }
+	void RequestUpdate(bool InNeedRebake, bool InNeedRepopulate, float RequestTime)
+	{
+		if (!InNeedRebake && !InNeedRepopulate)
+			return;
+		LastUpdateRequestTime = RequestTime;
+		if (InNeedRebake)
+		{
+			bNeedRebake = true;
+			LatestBakingVersion++;
+		}
+		if (InNeedRepopulate)
+		{
+			bNeedRepopulate = true;
+			LatestPopulationVersion++;
+		}
+	}
+	uint64 GetLatestBakingVersion() const { return LatestBakingVersion; }
+	uint64 GetLatestPopulationVersion() const { return LatestPopulationVersion;	}
+	bool ShouldStartUpdate(float CurrentTime) const
+	{
+		return !IsReady() && !UpdateInProgress() &&
+				(bFirstUpdate
+				|| (LastUpdateRequestTime >= 0.f 
+				&& CurrentTime - LastUpdateRequestTime > FAnimPathUpdateState::UpdateDelay));
+	}
+	bool NeedsRebake() const { return bNeedRebake; }
+	bool NeedsRepopulate() const { return bNeedRepopulate; }
+
+	void MarkUpdateStarted()
+	{
+		bFirstUpdate = false;
+		LastUpdateRequestTime = -1.f;
+		Status = EAnimPathUpdateStatus::Running;
+	}
+	void MarkRebakeDone() { bNeedRebake = false; }
+	void MarkRepopulateDone() { bNeedRepopulate = false; }
+	void SetIdle() { Status = EAnimPathUpdateStatus::Idle; }
+
+private:
+	bool bNeedRebake = true;
+	bool bNeedRepopulate = true;
+	uint64 LatestBakingVersion = 0;
+	uint64 LatestPopulationVersion = 0;
+	EAnimPathUpdateStatus Status = EAnimPathUpdateStatus::Idle;
+	bool bFirstUpdate = true;
+	float LastUpdateRequestTime = -1.f;
+	static float UpdateDelay; // seconds to wait before starting update after request (in case user continues editing)
+};
 
 // Animation path type, should be in the same order same as in
 // ITwinStudioApp\carrot\frontend\components\Toolbar\tools\PathAnimTool.tsx
@@ -86,11 +169,14 @@ public:
 
 	virtual bool CanHaveMultipleObjects() const { return false; }
 
+	void BakeAnimation();
+	void BakeAnimationAsync(std::shared_ptr<FAnimPathRebakeData> Data);
+	void FinalizeAsyncBaking(const TArray<FAnimPathLaneData>& LanesData);
+
 	UBakedAnimKeyFrames* GetBakedFrames(int laneIdx = 0);
-	bool HasBakedAnimation() const;
-	void InvalidateBakedAnimation();
-	void BakeAnimationIfNeeded();
 	FTransform GetStartTransform(int laneIdx, bool bNeedAlignmentFix) const;
+	FAnimPathUpdateState& GetUpdateState();
+	bool IsReady() const;
 	float GetLaneLength(int laneIdx) const;
 	float GetSplineLength() const;
 	float GetBakedSplineLength() const;
@@ -233,10 +319,10 @@ public:
 	void SetSpeed(float InSpeed) override;
 
 	float GetMinSpeed() const override;
-	void SetMinSpeed(float InMinSpeed) override;
+	void SetMinSpeed(float InSpeed) override;
 
 	float GetMaxSpeed() const override;
-	void SetMaxSpeed(float InMaxSpeed) override;
+	void SetMaxSpeed(float InSpeed) override;
 
 	float GetLaneSpeed(int laneIdx) const override;
 	float GetLaneDensity(int laneIdx) const override;

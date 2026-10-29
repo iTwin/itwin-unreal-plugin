@@ -61,6 +61,9 @@ MODULE_EXPORT namespace AdvViz::SDK
 		virtual IInstancesGroupPtr GetInstancesGroupByName(const std::string& name) const = 0;
 		virtual IInstancesGroupPtr GetInstancesGroupBySplineID(const RefID& splineId) const = 0;
 		virtual void IterateInstancesGroups(std::function<void(IInstancesGroup const&)> const& func) const = 0;
+		virtual void ModifyInstancesGroups(std::function<void(IInstancesGroup&)> const& func) = 0;
+		virtual void GetInstanceGroupNames(std::vector<std::string>& names, bool bIncludeEmpty, std::string type) const = 0;
+		virtual void GetInstanceGroupIds(std::vector<RefID>& ids, bool bIncludeEmpty, std::string type) const = 0;
 
 		virtual void SetSplineManager(std::shared_ptr<ISplinesManager> const& splineManager) = 0;
 		virtual void SetAnimPathManager(std::shared_ptr<IPathAnimManager> const& animPathManager) = 0;
@@ -70,6 +73,8 @@ MODULE_EXPORT namespace AdvViz::SDK
 	{
 	public:
 		inline static const std::string DEFAULT_GROUP_NAME = "staticInstances";
+		inline static const std::string SPLINE_GROUP_TYPE = "spline";
+		inline static const std::string CUSTOM_GROUP_TYPE = "custom";
 
 		/// Load the data from the server
 		void LoadDataFromServer(const std::string& decorationId,
@@ -112,6 +117,9 @@ MODULE_EXPORT namespace AdvViz::SDK
 		IInstancesGroupPtr GetInstancesGroupByName(const std::string& name) const override;
 		IInstancesGroupPtr GetInstancesGroupBySplineID(const RefID& splineId) const override;
 		void IterateInstancesGroups(std::function<void(IInstancesGroup const&)> const& func) const override;
+		void ModifyInstancesGroups(std::function<void(IInstancesGroup&)> const& func) override;
+		void GetInstanceGroupNames(std::vector<std::string>& names, bool bIncludeEmpty, std::string type) const override;
+		void GetInstanceGroupIds(std::vector<RefID>& ids, bool bIncludeEmpty, std::string type) const override;
 
 		void SetSplineManager(std::shared_ptr<ISplinesManager> const& splineManager) override;
 		void SetAnimPathManager(std::shared_ptr<IPathAnimManager> const& animPathManager) override;

@@ -84,10 +84,6 @@ MODULE_EXPORT namespace AdvViz::SDK
 		virtual void OnElementPropertiesRetrieved(bool bSuccess, ITwinElementProperties const& props, std::string const& ElementId) = 0;
 
 		virtual void OnIModelPropertiesRetrieved(bool bSuccess, IModelProperties const& props) = 0;
-		virtual void OnIModelPagedNodesRetrieved(bool /*bSuccess*/, IModelPagedNodesRes const& nodes) = 0;
-		virtual void OnModelFilteredNodesRetrieved(bool /*bSuccess*/, FilteredNodesRes const& nodes, std::string const& Filter) = 0;
-		virtual void OnCategoryFilteredNodesRetrieved(bool /*bSuccess*/, FilteredNodesRes const& nodes, std::string const& Filter) = 0;
-		virtual void OnIModelCategoryNodesRetrieved(bool /*bSuccess*/, IModelPagedNodesRes const& nodes) = 0;
 		virtual void OnConvertedIModelCoordsToGeoCoords(bool bSuccess, GeoCoordsReply const& geoCoords,
 														RequestID const& requestId) = 0;
 		virtual void OnIModelQueried(bool bSuccess, std::string const& Response, RequestID const&) = 0;
@@ -127,10 +123,6 @@ MODULE_EXPORT namespace AdvViz::SDK
 		void OnRealityData3DInfoRetrieved(bool bSuccess, ITwinRealityData3DInfo const& info) override;
 		void OnElementPropertiesRetrieved(bool bSuccess, ITwinElementProperties const& props, std::string const& ElementId) override;
 		void OnIModelPropertiesRetrieved(bool bSuccess, IModelProperties const& props) override;
-		void OnIModelPagedNodesRetrieved(bool bSuccess, IModelPagedNodesRes const& nodes) override;
-		void OnModelFilteredNodesRetrieved(bool bSuccess, FilteredNodesRes const&, std::string const& Filter) override;
-		void OnCategoryFilteredNodesRetrieved(bool bSuccess, FilteredNodesRes const&, std::string const& Filter) override;
-		void OnIModelCategoryNodesRetrieved(bool bSuccess, IModelPagedNodesRes const& nodes) override;
 		void OnConvertedIModelCoordsToGeoCoords(bool bSuccess, GeoCoordsReply const& geoCoords,
 												RequestID const& requestId) override;
 		void OnIModelQueried(bool bSuccess, std::string const& Response, RequestID const&) override;

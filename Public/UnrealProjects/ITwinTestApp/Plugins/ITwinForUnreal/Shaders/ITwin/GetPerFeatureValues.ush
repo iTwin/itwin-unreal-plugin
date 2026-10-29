@@ -13,6 +13,8 @@ bool bHas4DOpacity = false;
 // Graph tests 0.005, but using 0.0051 here to avoid possible float precision issues.
 // Must remain consistent with values in ElementTimelineEx::SetVisibilityAt
 static const float OriginalAlphaThreshold = 0.0051f;
+// Selection_RGBA_DATA is an 8-bit texture; byte 2 is the unselected hover marker written by ITwinSceneTile.
+static const uint HoverMarkerAlphaByte = 2u;
 if (_czm_width == 1 || _czm_pixelY >= _czm_height)
 {
 	Combined_RGBA = float4(0, 0, 0, 0.0049f);
@@ -37,9 +39,10 @@ if (_czm_width != 1 && !_czm_knownXY)
 
 // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // //
 //                                 !!! IMPORTANT !!!
-// When you edit this file, change also the shader script inside the MLB_ITwinBlend
-// node named "Get Synchro4D and selection Values per Feature" (see comment there), otherwise
-// Unreal (tested with 5.3) may reuse a precompiled shader cache...
+// This file is #included by the Custom node "Get Synchro4D and selection Values per Feature" of
+// MLB_ITwinBlend. When you edit this file, open that node in the Material Editor and increment the
+// dummy version number in its Code field, then Apply and Save the asset (git lfs lock it first),
+// otherwise Unreal may reuse a precompiled shader cache...
 // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // //
 
 
@@ -70,10 +73,17 @@ if (bHasSelHideTex && !_czm_knownXY)
 // 0 = use only BaseColor (no 4D nor Selection highlight), 1 = use none of the BaseColor
 // intermediate values used to blink between Selection/BaseColor when not done below between Selection/4D
 float BaseColorBlendRatio = 0.f;
+HoverMask = 0.f;
 if (bHasSelHideTex && _czm_pixelY < _czm_height)
 {
 	float4 SelecHideRGBA = Selection_RGBA_DATA.Load(int3(_czm_pixelX, _czm_pixelY, 0));
 	bool bSelected = (SelecHideRGBA.x + SelecHideRGBA.y + SelecHideRGBA.z) != 0;
+	uint SelectionAlphaByte = (uint)round(SelecHideRGBA.w * 255.f);
+	HoverMask = (!bSelected && !bHas4DColor && SelectionAlphaByte == HoverMarkerAlphaByte) ? 1.f : 0.f;
+	// Alpha strictly between 0 and 1 means "selected, no blinking": it is then the (constant) mix ratio
+	// between the base and selection colors (see SELECTION_SOLID_ALPHA in ITwinSceneTile.cpp),
+	// instead of the time-based BlinkingFactor
+	float SelectionFactor = (SelecHideRGBA.w > 0.f && SelecHideRGBA.w < 0.99f) ? SelecHideRGBA.w : BlinkingFactor;
 	if (bHas4DColor)
 	{
 		// Use none of the base color: set to 1. and not BlinkingFactor even when selected,
@@ -82,8 +92,8 @@ if (bHasSelHideTex && _czm_pixelY < _czm_height)
 		// When selected, blink between Selection and 4D colors:
 		if (bSelected)
 		{
-			Combined_RGBA.xyz = (1.f - BlinkingFactor) * Combined_RGBA.xyz;
-			Combined_RGBA.xyz += BlinkingFactor * SelecHideRGBA.xyz;
+			Combined_RGBA.xyz = (1.f - SelectionFactor) * Combined_RGBA.xyz;
+			Combined_RGBA.xyz += SelectionFactor * SelecHideRGBA.xyz;
 		}
 	}
 	else
@@ -94,10 +104,10 @@ if (bHasSelHideTex && _czm_pixelY < _czm_height)
 		// (see Lerp node higher up in the Blueprint).
 		// Note: this will blink only RGB, not alpha, as the material may be opaque.
 		if (bSelected)
-			BaseColorBlendRatio = BlinkingFactor;
+			BaseColorBlendRatio = SelectionFactor;
 	}
-	// Need to account for hiding of Elements through Selection_RGBA_DATA's alpha:
-	// Note that SelecHideRGBA.w can only be 0. or 1. so far, no need to "mix alphas".
+	// Selection_RGBA_DATA's alpha: zero means hidden; nonzero also encodes hover and selection blending,
+	// not opacity to blend or multiply into Combined_RGBA.
 	if (SelecHideRGBA.w == 0)
 	{
 		Combined_RGBA.w = 0;
@@ -105,7 +115,7 @@ if (bHasSelHideTex && _czm_pixelY < _czm_height)
 	}
 	// Make selected Elements less transparent, for clarity:
 	// (Note: bHas4DOpacity and Combined_RGBA.w == 0.0049 (special "original alpha" value) are mutually exclusive)
-	else if (bSelected && bHas4DOpacity && Combined_RGBA.w != 0)
+	else if (bSelected && bHas4DOpacity && Combined_RGBA.w != 0 && !MATERIALBLENDING_ANY_TRANSLUCENT)
 	{
 		Combined_RGBA.w += (1.f - Combined_RGBA.w) / 2.f;
 	}

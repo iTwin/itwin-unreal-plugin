@@ -11,14 +11,15 @@
 
 #include <Helpers/ITwinMathUtils.h>
 
+#include <DrawDebugHelpers.h>
 #include <Engine/GameViewportClient.h>
 #include <Engine/Level.h>
 #include <Engine/LevelBounds.h>
 #include <Engine/LocalPlayer.h>
 #include <Engine/World.h>
 #include <Engine/Engine.h>
-#include "DrawDebugHelpers.h"
 #include "Kismet/GameplayStatics.h"
+#include <Misc/EngineVersionComparison.h>
 #include <SceneView.h>
 #include <UnrealClient.h>
 
@@ -231,7 +232,12 @@ void AITwinKeyframePath::Tick(float DeltaTime)
 				bCameraMove = bCameraMove || !sceneView->GetViewDirection().Equals(viewDir, 0.01f);
 				viewLoc = sceneView->ViewLocation;
 				viewDir = sceneView->GetViewDirection();
-				frustrumToWorld = sceneView->ViewMatrices.GetInvViewProjectionMatrix();
+				frustrumToWorld = sceneView->ViewMatrices.
+			#if UE_VERSION_OLDER_THAN(5, 8, 0)
+					GetInvViewProjectionMatrix();
+			#else
+					GetClipToWorld();
+			#endif
 			}
 
 			std::array<FVector, 5> nearVertices;

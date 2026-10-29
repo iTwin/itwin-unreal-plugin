@@ -10,6 +10,7 @@
 
 #include "Tools.h"
 #include "SharedRecursiveMutex.h"
+#include "StringParsing.h"
 #include <iostream>
 #include <thread>
 #include <chrono>
@@ -1041,6 +1042,48 @@ TEST_CASE("Tools:SharedRecursiveMutex - Stress test")
 //	INFO("This test is expected to fail an assertion.");
 //	REQUIRE(1 + 1 == 3);
 //}
+
+TEST_CASE("TryParseUInt64")
+{
+	using AdvViz::SDK::Tools::TryParseUInt64;
+	uint64_t value = 0;
+
+	SECTION("accepts plain decimal values, including the extremes")
+	{
+		CHECK((TryParseUInt64("0", value) && value == 0));
+		CHECK((TryParseUInt64("42", value) && value == 42));
+		CHECK((TryParseUInt64("18446744073709551615", value)
+			&& value == 18446744073709551615ull));
+		CHECK((TryParseUInt64("0042", value) && value == 42)); // leading zeros are harmless
+	}
+
+	SECTION("rejects what stoull would throw on")
+	{
+		CHECK_FALSE(TryParseUInt64("", value));
+		CHECK_FALSE(TryParseUInt64("abc", value));
+		CHECK_FALSE(TryParseUInt64(" 42", value));
+		CHECK_FALSE(TryParseUInt64("18446744073709551616", value)); // overflow
+	}
+
+	SECTION("rejects what stoull would silently accept")
+	{
+		// stoull("-1") returns UINT64_MAX: a silent corruption rather than an error.
+		CHECK_FALSE(TryParseUInt64("-1", value));
+		CHECK_FALSE(TryParseUInt64("+42", value));
+		// stoull stops at the first invalid character and reports success.
+		CHECK_FALSE(TryParseUInt64("42abc", value));
+		CHECK_FALSE(TryParseUInt64("42 ", value));
+		CHECK_FALSE(TryParseUInt64("4.2", value));
+		CHECK_FALSE(TryParseUInt64("0x2A", value));
+	}
+
+	SECTION("leaves the output untouched on failure")
+	{
+		value = 1234;
+		CHECK_FALSE(TryParseUInt64("nope", value));
+		CHECK(value == 1234);
+	}
+}
 
 int main(int argc, char* argv[]) {
 	// setup ...

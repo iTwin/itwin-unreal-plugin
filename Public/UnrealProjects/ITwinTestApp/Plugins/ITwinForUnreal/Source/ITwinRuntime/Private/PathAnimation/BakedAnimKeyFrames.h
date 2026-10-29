@@ -53,21 +53,27 @@ public:
 	float GetTotalLength() const;
 	int32 GetLaneIndex() const;
 	void SetSpeed(float InSpeed);
-	void BakeSpline(UWorld* World, const AdvViz::SDK::RefID& SplineId, float InSpeed, int32 InLaneIdx, std::optional<float> InOffset = {}/*corresponds to the offset of the lane*/);
-	int32 GetKeyframeIndex(float Time);
-	FTransform GetTransform(float Time, bool bNeedAlignmentFix, bool bReverse);
-
-	// Helper to get the total path length traveled at the given speed
-	float GetPathLength() const { return TotalLength; }
-
 	// Helper to get the speed this keyframe data is baked for (in cm/s)
 	float GetSpeed() const { return TotalLength > 0.f && TotalTime > 0.f ? TotalLength / TotalTime : 0.f; }
+	
+	void BakeSpline(UWorld* World, const AdvViz::SDK::RefID& SplineId, float InSpeed, int32 InLaneIdx, float InOffset/*corresponds to the offset of the lane*/);
+	int32 GetKeyframeIndex(float Time);
+	FTransform GetTransform(float Time, bool bNeedAlignmentFix, bool bReverse);
+	void CopyFromData(int32 InLaneIdx, float InSpeed, float InTotalLength, const TArray<FTransform>& InTransforms);
 
+	static float GetSamplingStep(bool HasCurvedIntervals, bool IsMultilane)
+	{
+		// For lanes with offset, we use a smaller step to ensure we trace a smooth curve
+		// along the central spline (otherwise it might lead to visual inconsistencies 
+		// with multi-lane paths at sharp turns)
+		return HasCurvedIntervals && IsMultilane ? 0.2f*BakedFramesStep : BakedFramesStep;
+	}
+	static float GetBakedFramesStep() { return BakedFramesStep; }
 private:
-	TArray<FTransform> transforms;
+	TArray<FTransform> Transforms;
 	float TotalLength = 0.f;
 	float TotalTime = 0.f;
-	float BakedFramesStep = 50.f; // 50 cm between the baked frames
+	static float BakedFramesStep;
 	int32 LaneIdx = 0;
 	EBakedKeyFramesStatus Status = EBakedKeyFramesStatus::Invalid;
 };

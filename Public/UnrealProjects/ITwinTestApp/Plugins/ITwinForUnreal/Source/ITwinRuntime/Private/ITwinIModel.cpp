@@ -17,7 +17,6 @@
 #include <ITwinMetadataConstants.h>
 #include <ITwinSavedView.h>
 #include <ITwinSceneMappingBuilder.h>
-#include <ITwinServerConnection.h>
 #include <ITwinServerEnvironment.h>
 #include <ITwinSetupMaterials.h>
 #include <ITwinSynchro4DAnimator.h>
@@ -1160,6 +1159,8 @@ void AITwinIModel::Tick(float DeltaSeconds)
 	{
 		auto SceneMappingLock = Impl->Internals.SceneMapping->GetAutoLock();
 		SceneMappingLock->HandleNewSelectingAndHidingTextures();
+		SceneMappingLock->UpdateSelectionTint();
+		SceneMappingLock->UpdateSelectionOutlines();
 	}
 	{
 		auto SceneMappingLock = Impl->Internals.SceneMapping->GetAutoLock();
@@ -1436,7 +1437,7 @@ void AITwinIModel::UpdateIModel()
 
 	// If no access token has been retrieved yet, make sure we request an authentication and then process
 	// the actual update.
-	if (CheckServerConnection() != AdvViz::SDK::EITwinAuthStatus::Success)
+	if (CheckAuthorizationStatus() != AdvViz::SDK::EITwinAuthStatus::Success)
 	{
 		Impl->PendingOperation = FImpl::EOperationUponAuth::Update;
 		return;
@@ -2268,27 +2269,6 @@ void AITwinIModel::OnElementPropertiesRetrieved(bool bSuccess, FElementPropertie
 	}
 }
 
-void AITwinIModel::GetPagedNodes(const FString& KeyString /*=""*/, int Offset /*= 0*/, int Count /*= 1000*/)
-{
-	WebServices->GetPagedNodes(ITwinId, IModelId, GetSelectedChangeset(), KeyString, Offset, Count);
-}
-
-void AITwinIModel::GetModelFilteredNodes(const FString& Filter)
-{
-	UE_LOG(LogITwin, Display, TEXT("AITwinIModel::GetModelFilteredNodes using Filter: %s"), *Filter);
-	WebServices->GetModelFilteredNodes(ITwinId, IModelId, GetSelectedChangeset(), Filter);
-}
-
-void AITwinIModel::GetCategoryFilteredNodes(const FString& Filter)
-{
-	WebServices->GetCategoryFilteredNodes(ITwinId, IModelId, GetSelectedChangeset(), Filter);
-}
-
-void AITwinIModel::GetCategoryNodes(const FString& KeyString /*=""*/)
-{
-	WebServices->GetCategoryNodes(ITwinId, IModelId, GetSelectedChangeset(), KeyString);
-}
-
 void AITwinIModel::GetElementProperties(const FString& ElementId)
 {
 	if (ElementId.IsEmpty())
@@ -2369,22 +2349,6 @@ void AITwinIModel::RemoveElementsFromSelection(const TArray<FString>& ElementIds
 		auto SceneMappingLock = IModelInt.SceneMapping->GetAutoLock();
 		SceneMappingLock->DeselectElements(ParsedIDs);
 	}
-}
-
-void AITwinIModel::OnIModelPagedNodesRetrieved(bool bSuccess, FIModelPagedNodesRes const& IModelNodes)
-{
-}
-
-void AITwinIModel::OnIModelCategoryNodesRetrieved(bool bSuccess, FIModelPagedNodesRes const& IModelNodes)
-{
-}
-
-void AITwinIModel::OnModelFilteredNodesRetrieved(bool bSuccess, FFilteredNodesRes const& FilteredNodes, FString const& Filter)
-{
-}
-
-void AITwinIModel::OnCategoryFilteredNodesRetrieved(bool bSuccess, FFilteredNodesRes const& FilteredNodes, FString const& Filter)
-{
 }
 
 void AITwinIModel::OnIModelQueried(bool bSuccess, FString const& QueryResult, HttpRequestID const& RequestID)
@@ -2537,7 +2501,7 @@ void AITwinIModel::LoadDecoration()
 	}
 
 	// If no access token has been retrieved yet, make sure we request one.
-	if (CheckServerConnection() != AdvViz::SDK::EITwinAuthStatus::Success)
+	if (CheckAuthorizationStatus() != AdvViz::SDK::EITwinAuthStatus::Success)
 	{
 		Impl->PendingOperation = FImpl::EOperationUponAuth::LoadDecoration;
 		return;
@@ -2549,7 +2513,7 @@ void AITwinIModel::FImpl::LoadDecorationIfNeeded()
 {
 	if (Owner.ITwinId.IsEmpty() || Owner.IModelId.IsEmpty())
 		return;
-	if (Owner.CheckServerConnection(false) != AdvViz::SDK::EITwinAuthStatus::Success)
+	if (Owner.CheckAuthorizationStatus(false) != AdvViz::SDK::EITwinAuthStatus::Success)
 		return;
 	if (ITwin::ShouldLoadScene(Owner.ITwinId, Owner.GetWorld()))
 	{
@@ -3094,7 +3058,7 @@ void AITwinIModel::OnSavedViewInfosRetrieved(bool bSuccess, FSavedViewInfos cons
 		//using the attachment to list savedViews in an iModel
 		savedViewActor->AttachToActor(this, FAttachmentTransformRules::KeepRelativeTransform);
 		savedViewActor->Tags.Add(*info.Id);
-		savedViewActor->ServerConnection = ServerConnection;
+		savedViewActor->CopyEnvironmentFrom(*this);
 		savedViewActor->SavedViewId = info.Id;
 	}
 	SavedViewsRetrieved.Broadcast(bSuccess, SavedViews);
@@ -3203,7 +3167,7 @@ void AITwinIModel::OnSavedViewAdded(bool bSuccess, FSavedViewInfo const& SavedVi
 	// RQ/Note: I'm using the attachment to list savedViews in an iModel
 	savedViewActor->AttachToActor(this, FAttachmentTransformRules::KeepRelativeTransform);
 	savedViewActor->Tags.Add(*SavedViewInfo.Id);
-	savedViewActor->ServerConnection = ServerConnection;
+	savedViewActor->CopyEnvironmentFrom(*this);
 	savedViewActor->SavedViewId = SavedViewInfo.Id;
 	SavedViewAdded.Broadcast(bSuccess, SavedViewInfo);
 }
@@ -3386,7 +3350,7 @@ void AITwinIModel::FImpl::OnLoadingUIEvent()
 {
 	// If no access token has been retrieved yet, make sure we request an authentication and then
 	// process the actual loading request(s).
-	if (Owner.CheckServerConnection() != AdvViz::SDK::EITwinAuthStatus::Success)
+	if (Owner.CheckAuthorizationStatus() != AdvViz::SDK::EITwinAuthStatus::Success)
 	{
 		PendingOperation = FImpl::EOperationUponAuth::Load;
 		return;
@@ -4028,6 +3992,18 @@ void FITwinIModelInternals::SelectMaterial(ITwinMaterialID const& InMaterialID)
 	SceneMappingLock->PickVisibleMaterial(InMaterialID);
 }
 
+void FITwinIModelInternals::HideSelectionTint()
+{
+	auto SceneMappingLock = SceneMapping->GetAutoLock();
+	SceneMappingLock->HideSelectionTint();
+}
+
+void FITwinIModelInternals::SetHover(ITwinElementID const& ElemID, ITwinMaterialID const& MatID)
+{
+	auto SceneMappingLock = SceneMapping->GetAutoLock();
+	SceneMappingLock->SetHover(ElemID, MatID);
+}
+
 void FITwinIModelInternals::DeSelectAll()
 {
 	FITwinTextureUpdateDisabler TexUpdateDisabler(SceneMapping);
@@ -4038,8 +4014,10 @@ void FITwinIModelInternals::DeSelectAll()
 void AITwinIModel::DeSelectElements()
 {
 	auto SceneMappingLock = GetInternals(*this).SceneMapping->GetAutoLock();
-	SceneMappingLock->PickVisibleElement(ITwin::NOT_ELEMENT,
-		FPickingOptions::CreateDefaultPickVisible().TestElementVisibility(false));
+	// Not PickVisibleElement(NOT_ELEMENT): this would reset the whole selection, Material included
+	auto const SelectedElems = SceneMappingLock->GetSelectedElements(); // copy: DeselectElements erases
+	if (!SelectedElems.empty())
+		SceneMappingLock->DeselectElements(SelectedElems);
 }
 
 bool AITwinIModel::IsElementSelected(const FString& ElementId) const
@@ -4062,6 +4040,23 @@ bool AITwinIModel::HasElementWithID(const FString& ElementId) const
 void AITwinIModel::DeSelectMaterials()
 {
 	GetInternals(*this).SelectMaterial(ITwin::NOT_MATERIAL);
+}
+
+void AITwinIModel::HideSelectionHighlightColor()
+{
+	GetInternals(*this).HideSelectionTint();
+}
+
+void AITwinIModel::SetHover(const FString& ElementId, uint64 MaterialID, bool bHoverMaterial)
+{
+	GetInternals(*this).SetHover(
+		ElementId.IsEmpty() ? ITwin::NOT_ELEMENT : ITwin::ParseElementID(ElementId),
+		bHoverMaterial ? ITwinMaterialID{ MaterialID } : ITwin::NOT_MATERIAL);
+}
+
+void AITwinIModel::ClearHover()
+{
+	GetInternals(*this).SetHover(ITwin::NOT_ELEMENT, ITwin::NOT_MATERIAL);
 }
 
 void AITwinIModel::DeSelectAll()
@@ -4304,10 +4299,22 @@ static FAutoConsoleCommandWithWorldAndArgs FCmd_ITwinToggleElementVisibility(
 	TEXT("Toggle the visibility of either the supplied Element, or to the first selected Element, if any. If animated, note that the Element's visibility may change at any time after this call. Because of internal limitations, this command may discard part or all Element visibilities last applied by a Saved View. Optional arguments: 'reset' to show previously hidden elements, 'rec' for recursively operating on Element's children."),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
 		{
+			int32 const ResetIdx = Args.Find(TEXT("reset"));
+			bool const bReset = (INDEX_NONE != ResetIdx);
+			int32 const RecIdx = Args.Find(TEXT("rec"));
+			bool const bRecursive = (INDEX_NONE != RecIdx);
+			FString ElementArg;
+			for (int32 i = 0; i < Args.Num(); ++i)
+			{
+				if (i != ResetIdx && i != RecIdx)
+				{
+					ElementArg = Args[i];
+					break;
+				}
+			}
 			AITwinIModel* InIModel = nullptr;
-			bool const bReset = Args.Contains(TEXT("reset"));
 			std::unordered_set<ITwinElementID> ElemsToProcess;
-			if (Args.IsEmpty())
+			if (ElementArg.IsEmpty())
 			{
 				for (TActorIterator<AITwinIModel> IModelIter(World); IModelIter; ++IModelIter)
 				{
@@ -4323,21 +4330,20 @@ static FAutoConsoleCommandWithWorldAndArgs FCmd_ITwinToggleElementVisibility(
 			{
 				ITwinElementID SelectedElement = ITwin::NOT_ELEMENT;
 				FGuid ElementGuid;
-				if (Args[0].Len() >= 36)
+				if (ElementArg.Len() >= 36)
 				{
-					if (!FGuid::ParseExact(Args[0], EGuidFormats::DigitsWithHyphensLower, ElementGuid))
+					if (!FGuid::ParseExact(ElementArg, EGuidFormats::DigitsWithHyphensLower, ElementGuid))
 						return;
 				}
 				else
 				{
-					SelectedElement = ITwin::ParseElementID(Args[0]);
+					SelectedElement = ITwin::ParseElementID(ElementArg);
 				}
 				if (SelectedElement == ITwin::NOT_ELEMENT && !ElementGuid.IsValid())
 					return;
-				bool const bRecursive = Args.Contains(TEXT("rec"));
 				for (TActorIterator<AITwinIModel> IModelIter(World); IModelIter; ++IModelIter)
 				{
-					if (FindMatchingElements(**IModelIter, Args[0], ElementGuid, SelectedElement, ElemsToProcess,
+					if (FindMatchingElements(**IModelIter, ElementArg, ElementGuid, SelectedElement, ElemsToProcess,
 											 bRecursive))
 					{
 						InIModel = *IModelIter;
@@ -4395,9 +4401,22 @@ static FAutoConsoleCommandWithWorldAndArgs FCmd_ITwinZoomOnSelectedElement(
 	TEXT("Move the viewport pawn close to either the supplied Element, or to the first selected Element, if any. If animated, try to set the current time to when the Element is (partly) visible. Optional arguments: 'add' for additive selection, 'rec' for recursively selecting Element's children."),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
 {
+	int32 const AddIdx = Args.Find(TEXT("add"));
+	bool const bAdditive = (INDEX_NONE != AddIdx);
+	int32 const RecIdx = Args.Find(TEXT("rec"));
+	bool const bRecursive = (INDEX_NONE != RecIdx);
+	FString ElementArg;
+	for (int32 i = 0; i < Args.Num(); ++i)
+	{
+		if (i != AddIdx && i != RecIdx)
+		{
+			ElementArg = Args[i];
+			break;
+		}
+	}
 	AITwinIModel* InIModel = nullptr;
 	std::unordered_set<ITwinElementID> ElemsToProcess;
-	if (Args.IsEmpty())
+	if (ElementArg.IsEmpty())
 	{
 		for (TActorIterator<AITwinIModel> IModelIter(World); IModelIter; ++IModelIter)
 		{
@@ -4413,22 +4432,20 @@ static FAutoConsoleCommandWithWorldAndArgs FCmd_ITwinZoomOnSelectedElement(
 	{
 		ITwinElementID SelectedElement = ITwin::NOT_ELEMENT;
 		FGuid ElementGuid;
-		if (Args[0].Len() >= 36)
+		if (ElementArg.Len() >= 36)
 		{
-			if (!FGuid::ParseExact(Args[0], EGuidFormats::DigitsWithHyphensLower, ElementGuid))
+			if (!FGuid::ParseExact(ElementArg, EGuidFormats::DigitsWithHyphensLower, ElementGuid))
 				return;
 		}
 		else
 		{
-			SelectedElement = ITwin::ParseElementID(Args[0]);
+			SelectedElement = ITwin::ParseElementID(ElementArg);
 		}
 		if (SelectedElement == ITwin::NOT_ELEMENT && !ElementGuid.IsValid())
 			return;
-		bool const bAdditive = Args.Contains(TEXT("add"));
-		bool const bRecursive = Args.Contains(TEXT("rec"));
 		for (TActorIterator<AITwinIModel> IModelIter(World); IModelIter; ++IModelIter)
 		{
-			if (FindMatchingElements(**IModelIter, Args[0], ElementGuid, SelectedElement, ElemsToProcess,
+			if (FindMatchingElements(**IModelIter, ElementArg, ElementGuid, SelectedElement, ElemsToProcess,
 									 bRecursive))
 			{
 				InIModel = *IModelIter;

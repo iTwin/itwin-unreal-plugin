@@ -23,11 +23,12 @@
 #include <Helpers/ITwinConsoleCommandUtils.inl>
 #include <Helpers/ITwinTracingHelper.h>
 #include <Helpers/WorldSingleton.h>
-#include <ITwinGeolocation.h>
 #include <IncludeCesium3DTileset.h>
+#include <ITwinFeatureChange.h>
+#include <ITwinGeolocation.h>
+#include <ITwinModelType.h>
 #include <ITwinTilesetAccess.h>
 #include <ITwinUtilityLibrary.h>
-#include <ITwinFeatureChange.h>
 #include <Math/UEMathConversion.h>
 #include <Population/ITwinPopulation.h>
 #include <Population/ITwinPopulationTool.h>
@@ -36,7 +37,6 @@
 
 // UE headers=
 #include <DrawDebugHelpers.h>
-
 
 #include <Compil/BeforeNonUnrealIncludes.h>
 #	include <BeHeaders/Compil/EnumSwitchCoverage.h>

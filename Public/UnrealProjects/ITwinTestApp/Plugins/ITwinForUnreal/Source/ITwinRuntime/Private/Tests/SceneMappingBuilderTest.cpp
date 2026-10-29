@@ -16,12 +16,18 @@
 #include <ITwinElementID.h>
 #include <ITwinFeatureID.h>
 #include <ITwinSceneMappingTypes.h>
+#include <Timeline/Timeline.h>
+#include <Timeline/GrowthStatus.h>
 
 #include <Components/StaticMeshComponent.h>
 #include <Engine/StaticMesh.h>
+#include <Interfaces/IPluginManager.h>
 #include <Materials/MaterialInstanceDynamic.h>
 #include <Misc/AutomationTest.h>
+#include <Misc/FileHelper.h>
 #include <Misc/LowLevelTestAdapter.h>
+#include <Serialization/JsonReader.h>
+#include <Serialization/JsonSerializer.h>
 #include <UObject/Package.h>
 
 class USceneMappingTestHelper::FImpl
@@ -54,6 +60,30 @@ void USceneMappingTestHelper::OnReset()
 
 }
 
+namespace
+{
+	FString GetSceneMappingTestFolder()
+	{
+		return IPluginManager::Get().FindPlugin(TEXT("ITwinForUnreal"))->GetBaseDir()
+			+ TEXT("/Resources/SceneMappingTests/");
+	}
+
+	bool LoadJsonRows(FString const& FileName, TArray<TSharedPtr<FJsonValue>>& OutRows)
+	{
+		FString JsonStr;
+		if (!FFileHelper::LoadFileToString(JsonStr, *(GetSceneMappingTestFolder() + FileName)))
+			return false;
+		TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonStr);
+		return FJsonSerializer::Deserialize(Reader, OutRows);
+	}
+
+	ITwinScene::ElemIdx RankOf(FITwinSceneMapping const& Mapping, ITwinElementID const Id)
+	{
+		ITwinScene::ElemIdx Rank = ITwinScene::NOT_ELEM;
+		(void)Mapping.GetElementForSLOW(Id, &Rank);
+		return Rank;
+	}
+}
 
 IMPLEMENT_CUSTOM_SIMPLE_AUTOMATION_TEST(FSceneMappingBuilderTest, FITwinAutomationTestBaseNoLogs, \
 	"Bentley.ITwinForUnreal.ITwinRuntime.SceneMappingBuilder", \
@@ -1381,6 +1411,406 @@ bool FSceneMappingBuilderTest::RunTest(const FString& /*Parameters*/)
 			SceneMapping.GetSavedViewHiddenElements().empty());
 		TestTrue("GetSelectedElements should be empty after reset",
 			SceneMapping.GetSelectedElements().empty());
+	}
+
+	SECTION("FITwinSceneMapping - ReserveIModelMetadata")
+	{
+		TSceneMappingPtr SceneMapping = AdvViz::SDK::Tools::MakeSharedLockableData<FITwinSceneMapping>(false);
+		{
+			auto Locked = SceneMapping->GetAutoLock();
+			Locked->ReserveIModelMetadata(0);
+			Locked->ReserveIModelMetadata(1000);
+			TestEqual("Reserve must not create Elements", (int)Locked->NumElements(), 0);
+		}
+		TArray<TSharedPtr<FJsonValue>> Rows;
+		TestTrue("Load IModelMetadataNoBBoxes.json", LoadJsonRows(TEXT("IModelMetadataNoBBoxes.json"), Rows));
+		FITwinSceneMapping::ParseIModelMetadata(SceneMapping, Rows, false);
+		{
+			auto Locked = SceneMapping->GetAutoLock();
+			TestEqual("Parsing after Reserve works", (int)Locked->NumElements(), 5);
+		}
+	}
+
+	SECTION("FITwinSceneMapping - ParseIModelMetadata without BBoxes")
+	{
+		TSceneMappingPtr SceneMapping = AdvViz::SDK::Tools::MakeSharedLockableData<FITwinSceneMapping>(false);
+		TArray<TSharedPtr<FJsonValue>> Rows;
+		if (TestTrue("Load IModelMetadataNoBBoxes.json", LoadJsonRows(TEXT("IModelMetadataNoBBoxes.json"), Rows)))
+		{
+			auto Locked = SceneMapping->GetAutoLock();
+			Locked->ReserveIModelMetadata(Rows.Num());
+			int const GoodGuids = FITwinSceneMapping::ParseIModelMetadata(SceneMapping, Rows, false);
+			FITwinSceneMapping const& M = *Locked;
+			TestEqual("Valid Federation GUIDs count", GoodGuids, 2);
+			TestEqual("Elements count", (int)M.NumElements(), 5);
+
+			ITwinScene::ElemIdx const Rank201 = RankOf(M, ITwinElementID(0x201));
+			TestEqual("Null parent => root", M.GetElement(ITwinElementID(0x201)).ParentInVec, ITwinScene::NOT_ELEM);
+			TestEqual("0x202 parent", M.GetElement(ITwinElementID(0x202)).ParentInVec, Rank201);
+			TestEqual("0x203 parent (no ids)", M.GetElement(ITwinElementID(0x203)).ParentInVec, Rank201);
+			TestEqual("0x204 has no parent column", M.GetElement(ITwinElementID(0x204)).ParentInVec, ITwinScene::NOT_ELEM);
+			TestEqual("0x205 parent (empty ids)", M.GetElement(ITwinElementID(0x205)).ParentInVec, Rank201);
+			TestEqual("0x201 children", (int)M.GetElement(ITwinElementID(0x201)).SubElemsInVec.size(), 3);
+
+			FGuid Guid;
+			TestTrue("GUID parsed", FGuid::Parse(TEXT("22222222-2222-3333-4444-555555555502"), Guid));
+			ITwinElementID Found = ITwin::NOT_ELEMENT;
+			TestTrue("Find by GUID", M.FindElementIDForGUID(Guid, Found));
+			TestEqual("Find by GUID result", Found, ITwinElementID(0x202));
+			TestTrue("Find by SourceID", M.FindElementIDForSourceID(TEXT("SRC-1"), Found));
+			TestEqual("Find by SourceID result", Found, ITwinElementID(0x201));
+			TestFalse("Empty SourceID not indexed", M.FindElementIDForSourceID(TEXT(""), Found));
+		}
+	}
+
+	SECTION("FITwinSceneMapping - ParseIModelMetadata with BBoxes")
+	{
+		TSceneMappingPtr SceneMapping = AdvViz::SDK::Tools::MakeSharedLockableData<FITwinSceneMapping>(false);
+		TArray<TSharedPtr<FJsonValue>> Rows;
+		if (TestTrue("Load IModelMetadataWithBBoxes.json", LoadJsonRows(TEXT("IModelMetadataWithBBoxes.json"), Rows)))
+		{
+			auto Locked = SceneMapping->GetAutoLock();
+			Locked->ReserveIModelMetadata(Rows.Num());
+			int const GoodGuids = FITwinSceneMapping::ParseIModelMetadata(SceneMapping, Rows, true);
+			FITwinSceneMapping const& M = *Locked;
+
+			// 0x101,0x102,0x103,0x109 have valid GUIDs; 0x105/0x106 invalid; 0x104 empty; others missing;
+			// duplicated 0x102 row is skipped
+			TestEqual("Valid Federation GUIDs count", GoodGuids, 4);
+			// 0x101..0x109 (0x108 given in decimal as "264") + unknown parent 0x1ff created on the fly
+			TestEqual("Elements count", (int)M.NumElements(), 10);
+			TestNotNull("Decimal ID parsed", M.GetElementForSLOW(ITwinElementID(264)));
+			TestNotNull("Unknown parent created", M.GetElementForSLOW(ITwinElementID(0x1ff)));
+
+			// Hierarchy
+			ITwinScene::ElemIdx const Rank101 = RankOf(M, ITwinElementID(0x101));
+			ITwinScene::ElemIdx const Rank102 = RankOf(M, ITwinElementID(0x102));
+			TestEqual("0x101 is root", M.GetElement(ITwinElementID(0x101)).ParentInVec, ITwinScene::NOT_ELEM);
+			TestEqual("0x102 parent", M.GetElement(ITwinElementID(0x102)).ParentInVec, Rank101);
+			TestEqual("0x104 parent", M.GetElement(ITwinElementID(0x104)).ParentInVec, Rank102);
+			TestEqual("0x105 parent", M.GetElement(ITwinElementID(0x105)).ParentInVec, RankOf(M, ITwinElementID(0x1ff)));
+			TestEqual("0x108 has no parent", M.GetElement(ITwinElementID(0x108)).ParentInVec, ITwinScene::NOT_ELEM);
+			TestEqual("0x101 children (102,103,106,107)", (int)M.GetElement(ITwinElementID(0x101)).SubElemsInVec.size(), 4);
+			TestEqual("0x102 children not duplicated by repeated row", (int)M.GetElement(ITwinElementID(0x102)).SubElemsInVec.size(), 2);
+			TestEqual("0x1ff children", (int)M.GetElement(ITwinElementID(0x1ff)).SubElemsInVec.size(), 1);
+
+			// BBoxes
+			FBox const& Box101 = M.GetElement(ITwinElementID(0x101)).BBox;
+			TestTrue("0x101 BBox valid", (bool)Box101.IsValid);
+			TestEqual("0x101 BBox Min", Box101.Min, FVector(0, 0, 0));
+			TestEqual("0x101 BBox Max", Box101.Max, FVector(1, 1, 1));
+			FBox const& Box102 = M.GetElement(ITwinElementID(0x102)).BBox;
+			TestEqual("0x102 BBox from first row (duplicate ignored)", Box102.Min, FVector(-1, -2, -3));
+			TestEqual("0x102 BBox Max", Box102.Max, FVector(4, 5, 6));
+			TestFalse("Degenerate BBox rejected", (bool)M.GetElement(ITwinElementID(0x104)).BBox.IsValid);
+			TestFalse("Incomplete BBox rejected", (bool)M.GetElement(ITwinElementID(0x105)).BBox.IsValid);
+			TestFalse("Non-object BBox rejected", (bool)M.GetElement(ITwinElementID(0x106)).BBox.IsValid);
+			TestTrue("BBox without ids columns", (bool)M.GetElement(ITwinElementID(0x107)).BBox.IsValid);
+			TestFalse("Row with only ID has no BBox", (bool)M.GetElement(ITwinElementID(0x108)).BBox.IsValid);
+
+			// Identifiers
+			ITwinElementID Found = ITwin::NOT_ELEMENT;
+			FGuid Guid;
+			FGuid::Parse(TEXT("11111111-2222-3333-4444-5555555555ff"), Guid);
+			TestFalse("GUID of skipped duplicate row not indexed", M.FindElementIDForGUID(Guid, Found));
+			FGuid::Parse(TEXT("11111111-2222-3333-4444-555555555509"), Guid);
+			TestTrue("Find 0x109 by GUID", M.FindElementIDForGUID(Guid, Found));
+			TestEqual("Find 0x109 by GUID result", Found, ITwinElementID(0x109));
+			TestTrue("Find by SourceID", M.FindElementIDForSourceID(TEXT("SRC-A"), Found));
+			TestEqual("Find by SourceID result", Found, ITwinElementID(0x101));
+			TestTrue("Numeric SourceID accepted as string", M.FindElementIDForSourceID(TEXT("42"), Found));
+			TestEqual("Numeric SourceID result", Found, ITwinElementID(0x105));
+			TestFalse("SourceID of skipped row not indexed", M.FindElementIDForSourceID(TEXT("SRC-Z"), Found));
+
+			// Source ID duplicates: SRC-B shared by 0x102, 0x103, 0x109
+			TestEqual("Duplicates of 0x102", (int)M.GetDuplicateElements(ITwinElementID(0x102)).size(), 3);
+			TestEqual("Duplicates of 0x109", (int)M.GetDuplicateElements(ITwinElementID(0x109)).size(), 3);
+			TestEqual("No duplicates for 0x101", (int)M.GetDuplicateElements(ITwinElementID(0x101)).size(), 0);
+		}
+	}
+
+	SECTION("FITwinSceneMapping - ParseStandaloneBoundingBoxes")
+	{
+		TSceneMappingPtr SceneMapping = AdvViz::SDK::Tools::MakeSharedLockableData<FITwinSceneMapping>(false);
+		TArray<TSharedPtr<FJsonValue>> Rows;
+		if (TestTrue("Load StandaloneBBoxes.json", LoadJsonRows(TEXT("StandaloneBBoxes.json"), Rows)))
+		{
+			int const Parsed = FITwinSceneMapping::ParseStandaloneBoundingBoxes(SceneMapping, Rows);
+			auto Locked = SceneMapping->GetAutoLock();
+			FITwinSceneMapping const& M = *Locked;
+			TestEqual("Valid BBoxes count", Parsed, 2);
+			// rows with != 3 columns are skipped without creating the Element
+			TestEqual("Elements count", (int)M.NumElements(), 5);
+			TestNull("1-column row skipped", M.GetElementForSLOW(ITwinElementID(0x303)));
+			TestNull("4-column row skipped", M.GetElementForSLOW(ITwinElementID(0x304)));
+
+			FBox const& Box301 = M.GetElement(ITwinElementID(0x301)).BBox;
+			TestTrue("0x301 BBox valid", (bool)Box301.IsValid);
+			TestEqual("0x301 Min", Box301.Min, FVector(0, 0, 0));
+			TestEqual("0x301 Max", Box301.Max, FVector(1, 2, 3));
+			TestFalse("Degenerate BBox", (bool)M.GetElement(ITwinElementID(0x302)).BBox.IsValid);
+			TestFalse("Non-object BBox", (bool)M.GetElement(ITwinElementID(0x305)).BBox.IsValid);
+			TestFalse("Incomplete BBox", (bool)M.GetElement(ITwinElementID(0x306)).BBox.IsValid);
+			FBox const& Box307 = M.GetElement(ITwinElementID(775)).BBox;
+			TestTrue("Decimal ID BBox valid", (bool)Box307.IsValid);
+			TestEqual("0x307 Min", Box307.Min, FVector(-1.5, -2, -3));
+			TestEqual("0x307 Max", Box307.Max, FVector(4, 5.25, 6));
+		}
+	}
+
+	SECTION("FITwinSceneMapping - ParseConstructionDetailingParentIDs")
+	{
+		TSceneMappingPtr SceneMapping = AdvViz::SDK::Tools::MakeSharedLockableData<FITwinSceneMapping>(false);
+		TArray<TSharedPtr<FJsonValue>> Rows;
+		if (TestTrue("Load ConstructionDetailingParentIDs.json", LoadJsonRows(TEXT("ConstructionDetailingParentIDs.json"), Rows)))
+		{
+			int const Parsed = FITwinSceneMapping::ParseConstructionDetailingParentIDs(SceneMapping, Rows);
+			{
+				auto Locked = SceneMapping->GetAutoLock();
+				FITwinSceneMapping const& M = *Locked;
+				TestEqual("Parsed count", Parsed, 3);
+				TestEqual("Elements created", (int)M.NumElements(), 3);
+				auto const& ToHide = M.GetConstructionDetailingParentsToHide();
+				if (TestEqual("Parents to hide count", (int)ToHide.size(), 3))
+				{
+					TestEqual("1st", ToHide[0], RankOf(M, ITwinElementID(0x401)));
+					TestEqual("2nd (extra column ignored)", ToHide[1], RankOf(M, ITwinElementID(0x402)));
+					TestEqual("3rd (decimal ID)", ToHide[2], RankOf(M, ITwinElementID(0x403)));
+				}
+			}
+			// Parsing more pages appends to the existing list
+			FITwinSceneMapping::ParseConstructionDetailingParentIDs(SceneMapping, Rows);
+			auto Locked = SceneMapping->GetAutoLock();
+			TestEqual("Appended on second call", (int)Locked->GetConstructionDetailingParentsToHide().size(), 6);
+			TestEqual("No new Elements on second call", (int)Locked->NumElements(), 3);
+		}
+	}
+
+	// =====================================================================================
+	// FITwinSceneMapping::OnElementsTimelineModified tests
+	// =====================================================================================
+
+	// Extends CreatePopulatedTile: registers the tile's Elements in the scene mapping and sets their SceneRank,
+	// which is required by OnElementsTimelineModified (Elements without SceneRank are ignored).
+	auto CreateAnimatableTile = [&CreatePopulatedTile](FITwinSceneMapping& SceneMapping) -> TITwinSceneTilePtr
+		{
+			TITwinSceneTilePtr SceneTilePtr =
+				AdvViz::SDK::Tools::MakeSharedLockableData<FITwinSceneTile>(CreatePopulatedTile());
+			auto SceneTileLock = SceneTilePtr->GetAutoLock();
+			for (uint64 const Id : { 1001ull, 1002ull, 1003ull })
+			{
+				ITwinScene::ElemIdx Rank;
+				FITwinElement& Elem = SceneMapping.ElementForSLOW(ITwinElementID(Id), &Rank);
+				Elem.bHasMesh = true;
+				auto* ElemInTile = SceneTileLock->FindElementFeaturesSLOW(ITwinElementID(Id));
+				if (ElemInTile)
+					ElemInTile->SceneRank = Rank;
+			}
+			return SceneTilePtr;
+		};
+
+	// FTimelineToScene is normally deleted by FITwinScheduleTimelineBuilder
+	auto FreeTimelineExtraData = [](FITwinElementTimeline& Timeline)
+		{
+			delete static_cast<FTimelineToScene*>(Timeline.ExtraData);
+			Timeline.ExtraData = nullptr;
+		};
+
+	FIModelElementsKey const TimelineKey(ITwinElementID(500));
+
+	SECTION("FITwinSceneMapping::OnElementsTimelineModified - Early exit with empty timeline")
+	{
+		FITwinSceneMapping SceneMapping(false);
+		TITwinSceneTilePtr SceneTilePtr = CreateAnimatableTile(SceneMapping);
+		FITwinElementTimeline Timeline(TimelineKey, FElementsGroup{ ITwinElementID(1001) });
+
+		SceneMapping.OnElementsTimelineModified(SceneTilePtr, Timeline, nullptr, false, 0);
+
+		auto SceneTile = SceneTilePtr->GetAutoLock();
+		TestFalse("No 4D texture should be created without keyframes", (bool)SceneTile->HighlightsAndOpacities);
+		TestFalse("No cutting plane texture should be created", (bool)SceneTile->CuttingPlanes);
+		TestNull("ExtraData should not be allocated", Timeline.ExtraData);
+	}
+
+	SECTION("FITwinSceneMapping::OnElementsTimelineModified - Early exit when tile has no features")
+	{
+		FITwinSceneMapping SceneMapping(false);
+		TITwinSceneTilePtr SceneTilePtr = CreateAnimatableTile(SceneMapping);
+		auto SceneTile = SceneTilePtr->GetAutoLock();
+		SceneTile->MaxFeatureID = ITwin::NOT_FEATURE;
+		FITwinElementTimeline Timeline(TimelineKey, FElementsGroup{ ITwinElementID(1001) });
+		Timeline.SetColorAt(0., FVector(1, 0, 0), ITwin::Timeline::EInterpolation::Step);
+
+		SceneMapping.OnElementsTimelineModified(SceneTilePtr, Timeline, nullptr, false, 0);
+
+		TestFalse("No 4D texture should be created", (bool)SceneTile->HighlightsAndOpacities);
+		TestNull("ExtraData should not be allocated", Timeline.ExtraData);
+	}
+
+	SECTION("FITwinSceneMapping::OnElementsTimelineModified - Early exit when no Element is in tile")
+	{
+		FITwinSceneMapping SceneMapping(false);
+		TITwinSceneTilePtr SceneTilePtr = CreateAnimatableTile(SceneMapping);
+		FITwinElementTimeline Timeline(TimelineKey, FElementsGroup{ ITwinElementID(9999) });
+		Timeline.SetColorAt(0., FVector(1, 0, 0), ITwin::Timeline::EInterpolation::Step);
+
+		SceneMapping.OnElementsTimelineModified(SceneTilePtr, Timeline, nullptr, false, 0);
+
+		auto SceneTile = SceneTilePtr->GetAutoLock();
+		TestFalse("No 4D texture should be created", (bool)SceneTile->HighlightsAndOpacities);
+		TestNull("ExtraData should not be allocated", Timeline.ExtraData);
+	}
+
+	SECTION("FITwinSceneMapping::OnElementsTimelineModified - Color timeline")
+	{
+		FITwinSceneMapping SceneMapping(false);
+		TITwinSceneTilePtr SceneTilePtr = CreateAnimatableTile(SceneMapping);
+		FITwinElementTimeline Timeline(TimelineKey,
+			FElementsGroup{ ITwinElementID(1001), ITwinElementID(1002), ITwinElementID(9999) });
+		Timeline.SetColorAt(0., FVector(1, 0, 0), ITwin::Timeline::EInterpolation::Linear);
+		Timeline.SetColorAt(10., FVector(0, 1, 0), ITwin::Timeline::EInterpolation::Step);
+
+		SceneMapping.OnElementsTimelineModified(SceneTilePtr, Timeline, nullptr, false, 0);
+		{
+			auto SceneTile = SceneTilePtr->GetAutoLock();
+			TestTrue("HighlightsAndOpacities texture should be created", (bool)SceneTile->HighlightsAndOpacities);
+			bool bHiliteOpa, bCutPlanes, bSelHide;
+			SceneTile->GetNeedTextureSetupInMaterialsFlagsForUnitTest(bHiliteOpa, bCutPlanes, bSelHide);
+			TestTrue("Texture should need setup in materials", bHiliteOpa);
+			TestFalse("No cutting plane texture without clipping keyframes", (bool)SceneTile->CuttingPlanes);
+		}
+
+		auto const& Req1 = SceneMapping.GetElement(ITwinElementID(1001)).Requirements;
+		TestTrue("1001 needs hilite/opa texture", Req1.bNeedHiliteAndOpaTex);
+		TestFalse("1001 needs no cutting plane texture", Req1.bNeedCuttingPlaneTex);
+		TestFalse("1001 needs no translucent material", Req1.bNeedTranslucentMat);
+		TestFalse("1001 needs not be transformable", Req1.bNeedBeTransformable);
+		TestTrue("1002 needs hilite/opa texture",
+			SceneMapping.GetElement(ITwinElementID(1002)).Requirements.bNeedHiliteAndOpaTex);
+		TestFalse("1003 is not animated by this timeline",
+			SceneMapping.GetElement(ITwinElementID(1003)).Requirements.bNeedHiliteAndOpaTex);
+
+		auto* Optim = static_cast<FTimelineToScene*>(Timeline.ExtraData);
+		if (TestNotNull("ExtraData should be allocated", Optim))
+		{
+			TestEqual("One tile entry", static_cast<int32>(Optim->Tiles.size()), 1);
+			TestEqual("Two tile Elements (unknown 9999 skipped)", static_cast<int32>(Optim->TileElems.size()), 2);
+			TestEqual("SceneElems parallel to TileElems",
+				static_cast<int32>(Optim->SceneElems.size()), static_cast<int32>(Optim->TileElems.size()));
+			TestTrue("No extraction for color-only timeline", Optim->Extracts.empty());
+			if (!Optim->Tiles.empty())
+			{
+				TestEqual("NbOfElements", static_cast<int32>(Optim->Tiles.begin()->NbOfElements), 2);
+				TestEqual("NbOfExtracts", static_cast<int32>(Optim->Tiles.begin()->NbOfExtracts), 0);
+			}
+		}
+		FreeTimelineExtraData(Timeline);
+	}
+
+	SECTION("FITwinSceneMapping::OnElementsTimelineModified - OnlyForElements restricts processing")
+	{
+		FITwinSceneMapping SceneMapping(false);
+		TITwinSceneTilePtr SceneTilePtr = CreateAnimatableTile(SceneMapping);
+		FITwinElementTimeline Timeline(TimelineKey,
+			FElementsGroup{ ITwinElementID(1001), ITwinElementID(1002), ITwinElementID(1003) });
+		Timeline.SetColorAt(0., FVector(1, 0, 0), ITwin::Timeline::EInterpolation::Step);
+
+		std::vector<ITwinElementID> const OnlyFor = { ITwinElementID(1003) };
+		SceneMapping.OnElementsTimelineModified(SceneTilePtr, Timeline, &OnlyFor, false, 0);
+
+		TestTrue("1003 processed", SceneMapping.GetElement(ITwinElementID(1003)).Requirements.bNeedHiliteAndOpaTex);
+		TestFalse("1001 skipped", SceneMapping.GetElement(ITwinElementID(1001)).Requirements.bNeedHiliteAndOpaTex);
+		TestFalse("1002 skipped", SceneMapping.GetElement(ITwinElementID(1002)).Requirements.bNeedHiliteAndOpaTex);
+		auto* Optim = static_cast<FTimelineToScene*>(Timeline.ExtraData);
+		if (TestNotNull("ExtraData should be allocated", Optim))
+		{
+			TestEqual("Only one tile Element", static_cast<int32>(Optim->TileElems.size()), 1);
+		}
+		FreeTimelineExtraData(Timeline);
+	}
+
+	SECTION("FITwinSceneMapping::OnElementsTimelineModified - Partial visibility and cutting planes")
+	{
+		FITwinSceneMapping SceneMapping(false);
+		TITwinSceneTilePtr SceneTilePtr = CreateAnimatableTile(SceneMapping);
+		FITwinElementTimeline Timeline(TimelineKey, FElementsGroup{ ITwinElementID(1001) });
+		Timeline.SetVisibilityAt(0., 0.5f, ITwin::Timeline::EInterpolation::Linear);
+		Timeline.SetVisibilityAt(10., 1.f, ITwin::Timeline::EInterpolation::Step);
+		Timeline.SetCuttingPlaneAt(0., FVector(0, 0, 1), ITwin::Timeline::EGrowthStatus::DeferredFullyRemoved,
+			ITwin::Timeline::EInterpolation::Linear);
+		Timeline.SetCuttingPlaneAt(10., FVector(0, 0, 1), ITwin::Timeline::EGrowthStatus::DeferredFullyGrown,
+			ITwin::Timeline::EInterpolation::Step);
+
+		SceneMapping.OnElementsTimelineModified(SceneTilePtr, Timeline, nullptr, false, 0);
+		{
+			auto SceneTile = SceneTilePtr->GetAutoLock();
+			TestTrue("HighlightsAndOpacities texture created", (bool)SceneTile->HighlightsAndOpacities);
+			TestTrue("CuttingPlanes texture created", (bool)SceneTile->CuttingPlanes);
+			bool bHiliteOpa, bCutPlanes, bSelHide;
+			SceneTile->GetNeedTextureSetupInMaterialsFlagsForUnitTest(bHiliteOpa, bCutPlanes, bSelHide);
+			TestTrue("CuttingPlanes need setup in materials", bCutPlanes);
+		}
+		auto const& Req = SceneMapping.GetElement(ITwinElementID(1001)).Requirements;
+		TestTrue("Needs cutting plane texture", Req.bNeedCuttingPlaneTex);
+		TestTrue("Needs translucent material", Req.bNeedTranslucentMat);
+
+		auto* Optim = static_cast<FTimelineToScene*>(Timeline.ExtraData);
+		if (TestNotNull("ExtraData should be allocated", Optim) && !Optim->Tiles.empty())
+		{
+			TestNotEqual("Extraction range reserved for partial visibility",
+				Optim->Tiles.begin()->FirstExtract, NO_EXTRACTION);
+			TestEqual("No dummy extract when tile is not tuned for 4D",
+				static_cast<int32>(Optim->Tiles.begin()->NbOfExtracts), 0);
+		}
+		FreeTimelineExtraData(Timeline);
+	}
+
+	SECTION("FITwinSceneMapping::OnElementsTimelineModified - Requirements propagate to animated parents")
+	{
+		FITwinSceneMapping SceneMapping(false);
+		TITwinSceneTilePtr SceneTilePtr = CreateAnimatableTile(SceneMapping);
+
+		// 2001 (not animated) -> 2000 (animated by timeline) -> 1001 (leaf, in tile)
+		ITwinScene::ElemIdx AnimatedParentRank, RootRank;
+		SceneMapping.ElementForSLOW(ITwinElementID(2000), &AnimatedParentRank).AnimationKeys = { TimelineKey };
+		(void)SceneMapping.ElementForSLOW(ITwinElementID(2001), &RootRank);
+		SceneMapping.ElementForSLOW(ITwinElementID(2000)).ParentInVec = RootRank;
+		SceneMapping.ElementForSLOW(ITwinElementID(1001)).ParentInVec = AnimatedParentRank;
+
+		FITwinElementTimeline Timeline(TimelineKey, FElementsGroup{ ITwinElementID(1001) });
+		Timeline.SetColorAt(0., FVector(1, 0, 0), ITwin::Timeline::EInterpolation::Step);
+
+		SceneMapping.OnElementsTimelineModified(SceneTilePtr, Timeline, nullptr, false, 0);
+
+		TestTrue("Leaf gets requirement",
+			SceneMapping.GetElement(ITwinElementID(1001)).Requirements.bNeedHiliteAndOpaTex);
+		TestTrue("Parent animated by same timeline gets requirement",
+			SceneMapping.GetElement(ITwinElementID(2000)).Requirements.bNeedHiliteAndOpaTex);
+		TestFalse("Propagation stops at non-animated ancestor",
+			SceneMapping.GetElement(ITwinElementID(2001)).Requirements.bNeedHiliteAndOpaTex);
+		FreeTimelineExtraData(Timeline);
+	}
+
+	SECTION("FITwinSceneMapping::OnElementsTimelineModified - Repeated call does not duplicate data")
+	{
+		FITwinSceneMapping SceneMapping(false);
+		TITwinSceneTilePtr SceneTilePtr = CreateAnimatableTile(SceneMapping);
+		FITwinElementTimeline Timeline(TimelineKey,
+			FElementsGroup{ ITwinElementID(1001), ITwinElementID(1002) });
+		Timeline.SetColorAt(0., FVector(1, 0, 0), ITwin::Timeline::EInterpolation::Step);
+
+		SceneMapping.OnElementsTimelineModified(SceneTilePtr, Timeline, nullptr, false, 0);
+		void* const FirstExtraData = Timeline.ExtraData;
+		SceneMapping.OnElementsTimelineModified(SceneTilePtr, Timeline, nullptr, false, 0);
+
+		TestEqual("ExtraData is reused", Timeline.ExtraData, FirstExtraData);
+		auto* Optim = static_cast<FTimelineToScene*>(Timeline.ExtraData);
+		if (TestNotNull("ExtraData should be allocated", Optim))
+		{
+			TestEqual("Still one tile entry", static_cast<int32>(Optim->Tiles.size()), 1);
+			TestEqual("TileElems not duplicated", static_cast<int32>(Optim->TileElems.size()), 2);
+		}
+		FreeTimelineExtraData(Timeline);
 	}
 
 	return !HasAnyErrors();

@@ -45,6 +45,11 @@ MODULE_EXPORT namespace AdvViz::SDK
 		// Get type
 		virtual const std::string& GetType() const = 0;
 
+		// Get the group visibility
+		virtual bool GetVisibility() const = 0;
+		// Set the group visibility
+		virtual void SetVisibility(bool visibility) = 0;
+
 		/// Set linked spline ID.
 		virtual void SetLinkedSplineId(const RefID& splineId) = 0;
 		// Returns linked spline ID, if any.
@@ -55,6 +60,7 @@ MODULE_EXPORT namespace AdvViz::SDK
 		virtual InstanceList GetInstances() = 0;
 		virtual void AddInstance(const IInstanceWPtr& inst) = 0;
 		virtual void RemoveInstance(const IInstanceWPtr& inst) = 0;
+		virtual bool HasInstances() const = 0;
 	};
 	
 	class ADVVIZ_LINK InstancesGroup : public IInstancesGroup, Tools::TypeId<InstancesGroup>
@@ -69,6 +75,10 @@ MODULE_EXPORT namespace AdvViz::SDK
 		void SetId(const RefID& id) override;
 		/// Get the group name
 		const std::string& GetName() const override;
+		/// Get the group visibility
+		bool GetVisibility() const override;
+		/// Set the group visibility
+		void SetVisibility(bool visibility) override;
 		/// Set the group name
 		void SetName(const std::string& name) override;
 
@@ -89,6 +99,7 @@ MODULE_EXPORT namespace AdvViz::SDK
 		InstanceList GetInstances() override;
 		void AddInstance(const IInstanceWPtr& inst) override;
 		void RemoveInstance(const IInstanceWPtr& inst) override;
+		bool HasInstances() const override;
 
 	protected:
 		class Impl;

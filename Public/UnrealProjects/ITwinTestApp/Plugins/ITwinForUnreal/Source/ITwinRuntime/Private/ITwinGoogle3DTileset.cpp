@@ -230,6 +230,13 @@ void AITwinGoogle3DTileset::SetDefaultKey(FString const& DefaultGoogleKey, UWorl
 /*static*/
 void AITwinGoogle3DTileset::SetContentAccess(AdvViz::SDK::ITwinGoogleCuratedContentAccess const& ContentAccess, UWorld* World)
 {
+	if (!ensure(IsInGameThread()))
+		return;
+	if (!IsValid(World) || World->bIsTearingDown)
+	{
+		ITwinGoogleAccess = ContentAccess;  // cache for tilesets created later
+		return;
+	}
 	if (ITwinGoogleAccess.accessToken != ContentAccess.accessToken
 		|| ITwinGoogleAccess.url != ContentAccess.url)
 	{
@@ -248,6 +255,8 @@ void AITwinGoogle3DTileset::SetContentAccess(AdvViz::SDK::ITwinGoogleCuratedCont
 		for (TActorIterator<AITwinGoogle3DTileset> GooIter(World); GooIter; ++GooIter)
 		{
 			AITwinGoogle3DTileset* Tileset = *GooIter;
+			if (!IsValid(Tileset) || Tileset->IsActorBeingDestroyed())
+				continue;
 			Tileset->SetRequestHeaders(RequestHeaders);
 			Tileset->SetUrl(NewUrl);
 		}

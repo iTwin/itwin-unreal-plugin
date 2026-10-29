@@ -295,3 +295,47 @@ void AITwinPickingActor::DeSelect(AITwinIModel* iModel)
 		iModel->DeSelectAll();
 	}
 }
+
+void AITwinPickingActor::HoverUnderCursor(bool const bHoverElement, bool const bHoverMaterial)
+{
+	AITwinIModel* HoveredIModel = nullptr;
+	ITwinElementID HoveredElem = ITwin::NOT_ELEMENT;
+	std::optional<uint64_t> HoveredMat; // ID 0 is a valid (default) material, hence the optional
+	if (bHoverElement || bHoverMaterial)
+	{
+		FVector2D MousePosition; FVector TraceStart, TraceEnd;
+		FITwinTracingHelper TracingHelper;
+		TracingHelper.VisitElementsUnderCursor(GetWorld(), MousePosition, TraceStart, TraceEnd,
+			[&](FHitResult const& HitResult, ITwinElementID const& EltID)
+			{
+				if (HoveredIModel || !HitResult.HasValidHitObjectHandle() || !HitResult.GetActor())
+					return;
+				auto* iModel = Cast<AITwinIModel>(HitResult.GetActor()->GetOwner());
+				if (!iModel)
+					return;
+				HoveredIModel = iModel;
+				if (bHoverElement && GetInternals(*iModel).HasElementWithID(EltID))
+					HoveredElem = EltID;
+				if (bHoverMaterial)
+					HoveredMat = ITwin::GetMaterialIDFromHit(HitResult, *iModel);
+			},
+			/*MaxUniqueElementsHit*/1);
+	}
+	for (TActorIterator<AITwinIModel> Iter(GetWorld()); Iter; ++Iter)
+	{
+		if (*Iter == HoveredIModel)
+		{
+			GetInternals(**Iter).SetHover(HoveredElem,
+				HoveredMat ? ITwinMaterialID{ *HoveredMat } : ITwin::NOT_MATERIAL);
+		}
+		else
+		{
+			GetInternals(**Iter).SetHover(ITwin::NOT_ELEMENT, ITwin::NOT_MATERIAL);
+		}
+	}
+}
+
+void AITwinPickingActor::ClearHover()
+{
+	HoverUnderCursor(false, false);
+}

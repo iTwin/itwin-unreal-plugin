@@ -10,7 +10,7 @@
 
 #include <ITwinSynchro4DSchedulesTimelineBuilder.h>
 #include <ITwinSceneMapping.h>
-#include <ITwinServerConnection.h>
+#include <ITwinEnvironmentEnum.h>
 #include <ITwinUtilityLibrary.h>
 #include <Network/JsonQueriesCacheInit.h>
 #include <Tests/GenericHelpers.h>

@@ -35,14 +35,9 @@ std::shared_ptr<AdvViz::SDK::ThreadSafeAccessToken> AITwinServerConnection::GetA
 	return AuthMngr->GetAccessToken();
 }
 
-std::shared_ptr<AdvViz::SDK::ThreadSafeAccessToken> AITwinServerConnection::GetAccessTokenPtr() const
+/*static*/ FString AITwinServerConnection::GetAccessTokenStringForEnv(EITwinEnvironment Environment)
 {
-	return GetAccessTokenPtrForEnv(this->Environment);
-}
-
-FString AITwinServerConnection::GetAccessToken() const
-{
-	auto token = GetAccessTokenPtr();
+	auto token = GetAccessTokenPtrForEnv(Environment);
 	if (token)
 	{
 		auto tokenPtr = token->Get();
@@ -50,6 +45,16 @@ FString AITwinServerConnection::GetAccessToken() const
 			return tokenPtr->c_str();
 	}
 	return {};
+}
+
+std::shared_ptr<AdvViz::SDK::ThreadSafeAccessToken> AITwinServerConnection::GetAccessTokenPtr() const
+{
+	return GetAccessTokenPtrForEnv(this->Environment);
+}
+
+FString AITwinServerConnection::GetAccessToken() const
+{
+	return GetAccessTokenStringForEnv(this->Environment);
 }
 
 /*static*/
@@ -75,18 +80,15 @@ void AITwinServerConnection::SetAuthRedirectUriPort(int Port)
 	AdvViz::SDK::ITwinAuthManager::SetRedirectUriPort(Port);
 }
 
-/*static*/
 void AITwinServerConnection::Logout()
 {
-	const AdvViz::SDK::EITwinEnvironment Env =
-		static_cast<AdvViz::SDK::EITwinEnvironment>(UITwinWebServices::GetDefaultEnvironment());
-	if (Env == AdvViz::SDK::EITwinEnvironment::Invalid)
+	if (this->Environment == EITwinEnvironment::Invalid)
 	{
-		ensureMsgf(false, TEXT("wrong default env"));
 		BE_LOGE("ITwinAPI", "Logout failure: invalid environment");
 		return;
 	}
-	auto const& AuthMngr = FITwinAuthorizationManager::GetInstance(Env);
+	auto const& AuthMngr = FITwinAuthorizationManager::GetInstance(
+		static_cast<AdvViz::SDK::EITwinEnvironment>(this->Environment));
 	if (!ensure(AuthMngr))
 	{
 		BE_LOGE("ITwinAPI", "Logout failure: no authorization manager");
@@ -113,7 +115,7 @@ void AITwinServerConnection::PostLoad()
 
 	if (Environment == EITwinEnvironment::Invalid)
 	{
-		Environment = UITwinWebServices::GetDefaultEnvironment();
+		Environment = UITwinWebServices::GetDefaultEnvironment(GetWorld());
 
 		const FString EnvName = ITwinServerEnvironment::ToName(Environment).ToString();
 		BE_LOGI("ITwinAPI", "Using iTwin environment: " << TCHAR_TO_UTF8(*EnvName));

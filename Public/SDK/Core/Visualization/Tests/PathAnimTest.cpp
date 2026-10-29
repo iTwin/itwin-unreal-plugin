@@ -8,6 +8,7 @@
 
 #include "../Visualization.h"
 #include "../PathAnimation.h"
+#include "../SplinesManager.h"
 #include <filesystem>
 #include <mutex>
 
@@ -201,5 +202,411 @@ TEST_CASE("PathAnimation") {
 		{
 			FAIL("Error: " << error);
 		}
+	}
+}
+
+
+namespace
+{
+	static const std::string kDecorationId = "67a0e122f9f9158c2e60d7ba";
+	static const std::string kAnimPathsUrlPath = "/advviz/v1/decorations/" + kDecorationId + "/animationpaths";
+
+	static const std::string kPathDBId = "67a0e124f9f9158c2e60d001";
+	static const std::string kSplineDBId = "67a0e124f9f9158c2e60d002";
+
+	// GET decorations/<id>/animationpaths (HttpGetWithLink envelope)
+	static const std::string kAnimPathsListPayload =
+		"{\"total_rows\":1,\"rows\":["
+		"{\"id\":\"67a0e124f9f9158c2e60d001\",\"splineId\":\"67a0e124f9f9158c2e60d002\",\"speed\":42.5,"
+		"\"startTime\":3.0,\"hasLoop\":true,\"isEnabled\":false,\"invDir\":true,\"repeatMode\":2,"
+		"\"oneWay\":false,\"laneCount\":4,\"laneWidth\":350.0,\"density\":0.5,\"sepWidth\":150.0,"
+		"\"minSpeed\":1000.0,\"maxSpeed\":2000.0,\"objects\":[\"obj1\",\"obj2\"]}"
+		"],\"_links\":{\"self\":\"http:///advviz/v1/decorations/67a0e122f9f9158c2e60d7ba/animationpaths\"}}";
+
+	// POST / PUT / DELETE answers
+	static const std::string kPostIdsPayload = "{\"ids\":[\"67a0e124f9f9158c2e60d001\"]}";
+	static const std::string kNumUpdated1Payload = "{\"numUpdated\":1}";
+
+	static constexpr int kAsyncTimeoutSeconds = 10;
+
+	//! Common setup: log channels, config, mock server and access token.
+	//! Note: the Http instance is captured by PathAnimManager at construction time,
+	//! so this must be called *before* creating the manager.
+	HTTPMock& InitPathAnimTest()
+	{
+		Tools::CreateAdvVizLogChannels();
+		SetDefaultConfig();
+		HTTPMock* mock = GetHttpMock();
+		REQUIRE(mock != nullptr);
+		std::shared_ptr<ThreadSafeAccessToken> token = std::make_shared<ThreadSafeAccessToken>();
+		token->Set("abcd");
+		GetDefaultHttp()->SetAccessToken(token);
+		return *mock;
+	}
+
+	//! Registers a one-shot response, and unregisters it at end of scope.
+	class [[nodiscard]] ScopedPathResponse
+	{
+	public:
+		ScopedPathResponse(HTTPMock& mock, const HTTPMock::RequestKey& key, long code, const std::string& payload)
+			: mock_(mock), key_(key)
+		{
+			mock_.SetResponseFunction(key_, [code, payload] {
+				return HTTPMock::Response2(code, std::string(payload));
+			});
+		}
+		~ScopedPathResponse() { mock_.ResetResponseFunction(key_); }
+	private:
+		HTTPMock& mock_;
+		HTTPMock::RequestKey key_;
+	};
+
+	//! Adds a spline holding the given server identifier, and returns its (unique) RefID.
+	RefID AddSplineWithDBId(const std::shared_ptr<ISplinesManager>& splinesManager, const std::string& dbId)
+	{
+		ISplinePtr splinePtr = splinesManager->AddSpline();
+		REQUIRE(splinePtr != nullptr);
+		auto spline = splinePtr->GetAutoLock();
+		spline->SetDBIdentifier(dbId);
+		return spline->GetId();
+	}
+}
+
+TEST_CASE("AnimationPathInfoSplineDBId") {
+
+	SetDefaultConfig();
+
+	auto pathInfo = IAnimationPathInfo::New();
+	REQUIRE(pathInfo != nullptr);
+
+	// a spline RefID carrying a database identifier is propagated to the server side data
+	RefID splineRefId;
+	splineRefId.SetDBIdentifier(kSplineDBId);
+	pathInfo->SetSplineId(splineRefId);
+
+	CHECK(pathInfo->GetSplineId() == splineRefId);
+	REQUIRE(pathInfo->GetServerSideData().splineId.has_value());
+	CHECK(pathInfo->GetServerSideData().splineId.value() == kSplineDBId);
+	// setting a DB-backed spline id invalidates the item
+	CHECK(pathInfo->ShouldSave() == true);
+
+	// a spline RefID without database identifier leaves the server side data untouched
+	pathInfo->SetShouldSave(false);
+	RefID plainRefId;
+	pathInfo->SetSplineId(plainRefId);
+	CHECK(pathInfo->GetSplineId() == plainRefId);
+	CHECK(pathInfo->GetServerSideData().splineId.value() == kSplineDBId);
+	CHECK(pathInfo->ShouldSave() == false);
+}
+
+TEST_CASE("PathAnimManagerLookupAndDirtyState") {
+
+	SetDefaultConfig();
+
+	auto pathAnimManager = IPathAnimManager::New();
+	REQUIRE(pathAnimManager != nullptr);
+
+	SECTION("FindAnimationPathInfoByDBId") {
+		auto path1 = pathAnimManager->AddAnimationPathInfo();
+		auto path2 = pathAnimManager->AddAnimationPathInfo();
+		REQUIRE(pathAnimManager->GetNumberOfPaths() == 2);
+
+		RefID path2Id;
+		{
+			auto path2Locked = path2->GetAutoLock();
+			path2Locked->SetDBIdentifier(kPathDBId);
+			path2Id = path2Locked->GetId();
+		}
+
+		auto found = pathAnimManager->FindAnimationPathInfoByDBId(kPathDBId);
+		REQUIRE(found != nullptr);
+		CHECK(found->GetRAutoLock()->GetId() == path2Id);
+
+		// unknown identifier -> null pointer
+		CHECK(pathAnimManager->FindAnimationPathInfoByDBId("000000000000000000000000") == nullptr);
+		// path1 has no DB identifier at all, it must never match
+		CHECK(path1->GetRAutoLock()->HasDBIdentifier() == false);
+	}
+
+	SECTION("HasAnimPathsToSave") {
+		// empty manager
+		CHECK(pathAnimManager->HasAnimPathsToSave() == false);
+
+		auto path = pathAnimManager->AddAnimationPathInfo();
+		RefID pathId;
+		{
+			auto pathLocked = path->GetAutoLock();
+			pathId = pathLocked->GetId();
+			// a brand new path is 'NeverSaved', not 'ShouldSave'
+			CHECK(pathLocked->ShouldSave() == false);
+		}
+		CHECK(pathAnimManager->HasAnimPathsToSave() == false);
+
+		SECTION("a modified path must be saved") {
+			{
+				auto pathLocked = path->GetAutoLock();
+				pathLocked->SetSpeed(50.0); // invalidates the item
+			}
+			CHECK(pathAnimManager->HasAnimPathsToSave() == true);
+
+			{
+				auto pathLocked = path->GetAutoLock();
+				pathLocked->SetShouldSave(false);
+			}
+			CHECK(pathAnimManager->HasAnimPathsToSave() == false);
+		}
+
+		SECTION("a removed path known by the server must be saved") {
+			{
+				auto pathLocked = path->GetAutoLock();
+				pathLocked->SetDBIdentifier(kPathDBId);
+				pathLocked->SetShouldSave(false);
+			}
+			pathAnimManager->RemoveAnimationPathInfo(pathId);
+			CHECK(pathAnimManager->GetNumberOfPaths() == 0);
+			// the deletion still has to be sent to the server
+			CHECK(pathAnimManager->HasAnimPathsToSave() == true);
+		}
+
+		SECTION("a removed path unknown by the server is just dropped") {
+			pathAnimManager->RemoveAnimationPathInfo(pathId);
+			CHECK(pathAnimManager->GetNumberOfPaths() == 0);
+			CHECK(pathAnimManager->HasAnimPathsToSave() == false);
+		}
+	}
+}
+
+TEST_CASE("PathAnimManagerLoadDataFromServer") {
+
+	HTTPMock& mock = InitPathAnimTest();
+
+	std::shared_ptr<ISplinesManager> splinesManager(ISplinesManager::New());
+	REQUIRE(splinesManager != nullptr);
+	const RefID splineRefId = AddSplineWithDBId(splinesManager, kSplineDBId);
+
+	auto pathAnimManager = IPathAnimManager::New();
+	REQUIRE(pathAnimManager != nullptr);
+	pathAnimManager->SetSplinesManager(splinesManager);
+
+	const HTTPMock::RequestKey getKey = std::pair("GET", kAnimPathsUrlPath);
+
+	SECTION("synchronous") {
+		ScopedPathResponse resp(mock, getKey, 200, kAnimPathsListPayload);
+
+		pathAnimManager->LoadDataFromServer(kDecorationId);
+
+		REQUIRE(pathAnimManager->GetNumberOfPaths() == 1);
+		auto pathPtr = pathAnimManager->FindAnimationPathInfoByDBId(kPathDBId);
+		REQUIRE(pathPtr != nullptr);
+
+		auto path = pathPtr->GetRAutoLock();
+		CHECK(path->GetSpeed() == 42.5);
+		CHECK(path->GetStartTime() == 3.0);
+		CHECK(path->IsLooping() == true);
+		CHECK(path->IsEnabled() == false);
+		CHECK(path->HasInvDir() == true);
+		CHECK(path->GetRepeatMode() == 2);
+		CHECK(path->IsOneWay() == false);
+		CHECK(path->GetLaneCount() == 4);
+		// the spline RefID is resolved through the splines manager
+		CHECK(path->GetSplineId() == splineRefId);
+		// freshly loaded data is not dirty
+		CHECK(path->ShouldSave() == false);
+
+		// the path can also be retrieved by its spline RefID
+		CHECK(pathAnimManager->FindAnimationPathInfoBySplineRefId(splineRefId) != nullptr);
+	}
+
+	SECTION("synchronous - server error leaves the manager empty") {
+		ScopedPathResponse resp(mock, getKey, 404, std::string("{}"));
+		pathAnimManager->LoadDataFromServer(kDecorationId);
+		CHECK(pathAnimManager->GetNumberOfPaths() == 0);
+	}
+
+	SECTION("asynchronous") {
+		ScopedPathResponse resp(mock, getKey, 200, kAnimPathsListPayload);
+
+		std::mutex resultMutex;
+		std::vector<IAnimationPathInfoPtr> loadedPaths;
+		std::atomic_bool bFinished = false;
+		bool bFinishedOk = false;
+
+		std::function<void(IAnimationPathInfoPtr&)> onPathLoaded =
+			[&resultMutex, &loadedPaths](IAnimationPathInfoPtr& pathPtr) {
+				std::lock_guard<std::mutex> lock(resultMutex);
+				loadedPaths.push_back(pathPtr);
+			};
+		std::function<void(AdvViz::expected<void, std::string> const&)> onComplete =
+			[&bFinished, &bFinishedOk](AdvViz::expected<void, std::string> const& ret) {
+				bFinishedOk = ret.has_value();
+				bFinished = true;
+			};
+
+		pathAnimManager->AsyncLoadDataFromServer(kDecorationId, onPathLoaded, onComplete);
+
+		REQUIRE(WaitForAsyncTask(bFinished, kAsyncTimeoutSeconds));
+		CHECK(bFinishedOk);
+
+		std::lock_guard<std::mutex> lock(resultMutex);
+		REQUIRE(loadedPaths.size() == 1);
+		REQUIRE(pathAnimManager->GetNumberOfPaths() == 1);
+
+		auto pathPtr = pathAnimManager->FindAnimationPathInfoByDBId(kPathDBId);
+		REQUIRE(pathPtr != nullptr);
+		auto path = pathPtr->GetRAutoLock();
+		CHECK(path->GetSplineId() == splineRefId);
+		CHECK(path->GetSpeed() == 42.5);
+		CHECK(path->ShouldSave() == false);
+	}
+
+	SECTION("asynchronous - missing splines manager is reported") {
+		ScopedPathResponse resp(mock, getKey, 200, kAnimPathsListPayload);
+
+		auto managerWithoutSplines = IPathAnimManager::New();
+		REQUIRE(managerWithoutSplines != nullptr);
+
+		std::atomic_bool bFinished = false;
+		std::atomic_bool bErrorReported = false; // onFinish may be called twice
+		std::function<void(IAnimationPathInfoPtr&)> onPathLoaded;
+		std::function<void(AdvViz::expected<void, std::string> const&)> onComplete =
+			[&bFinished, &bErrorReported](AdvViz::expected<void, std::string> const& ret) {
+				if (!ret.has_value())
+					bErrorReported = true;
+				bFinished = true;
+			};
+
+		managerWithoutSplines->AsyncLoadDataFromServer(kDecorationId, onPathLoaded, onComplete);
+
+		REQUIRE(WaitForAsyncTask(bFinished, kAsyncTimeoutSeconds));
+		CHECK(bErrorReported == true);
+	}
+}
+
+TEST_CASE("PathAnimManagerAsyncSaveDataOnServer") {
+
+	HTTPMock& mock = InitPathAnimTest();
+
+	std::shared_ptr<ISplinesManager> splinesManager(ISplinesManager::New());
+	REQUIRE(splinesManager != nullptr);
+	const RefID splineRefId = AddSplineWithDBId(splinesManager, kSplineDBId);
+
+	auto pathAnimManager = IPathAnimManager::New();
+	REQUIRE(pathAnimManager != nullptr);
+	pathAnimManager->SetSplinesManager(splinesManager);
+
+	SECTION("new path is created (POST)") {
+		ScopedPathResponse postResp(mock, std::pair("POST", kAnimPathsUrlPath), 201, kPostIdsPayload);
+
+		auto pathPtr = pathAnimManager->AddAnimationPathInfo();
+		{
+			auto path = pathPtr->GetAutoLock();
+			path->SetSplineId(splineRefId);
+			path->SetSpeed(42.5);
+			REQUIRE(path->HasDBIdentifier() == false);
+		}
+
+		std::atomic_bool bDone = false;
+		bool bSaveOk = false;
+		pathAnimManager->AsyncSaveDataOnServer(kDecorationId, [&](bool success) {
+			bSaveOk = success;
+			bDone = true;
+		});
+
+		REQUIRE(WaitForAsyncTask(bDone, kAsyncTimeoutSeconds));
+		CHECK(bSaveOk);
+
+		// the server identifier returned by the POST is assigned to the path
+		auto path = pathPtr->GetRAutoLock();
+		REQUIRE(path->HasDBIdentifier() == true);
+		CHECK(path->GetDBIdentifier() == kPathDBId);
+		CHECK(path->ShouldSave() == false);
+		CHECK(pathAnimManager->FindAnimationPathInfoByDBId(kPathDBId) != nullptr);
+	}
+
+	SECTION("existing path is updated (PUT)") {
+		ScopedPathResponse putResp(mock, std::pair("PUT", kAnimPathsUrlPath), 200, kNumUpdated1Payload);
+
+		auto pathPtr = pathAnimManager->AddAnimationPathInfo();
+		{
+			auto path = pathPtr->GetAutoLock();
+			path->SetSplineId(splineRefId);
+			path->SetDBIdentifier(kPathDBId); // already known by the server
+			path->SetSpeed(60.0);
+			REQUIRE(path->ShouldSave() == true);
+		}
+		CHECK(pathAnimManager->HasAnimPathsToSave() == true);
+
+		std::atomic_bool bDone = false;
+		bool bSaveOk = false;
+		pathAnimManager->AsyncSaveDataOnServer(kDecorationId, [&](bool success) {
+			bSaveOk = success;
+			bDone = true;
+		});
+
+		REQUIRE(WaitForAsyncTask(bDone, kAsyncTimeoutSeconds));
+		CHECK(bSaveOk);
+		CHECK(pathPtr->GetRAutoLock()->ShouldSave() == false);
+		CHECK(pathAnimManager->HasAnimPathsToSave() == false);
+	}
+
+	SECTION("removed path is deleted (DELETE)") {
+		ScopedPathResponse delResp(mock, std::pair("DELETE", kAnimPathsUrlPath), 204, std::string("{}"));
+
+		auto pathPtr = pathAnimManager->AddAnimationPathInfo();
+		RefID pathId;
+		{
+			auto path = pathPtr->GetAutoLock();
+			path->SetSplineId(splineRefId);
+			path->SetDBIdentifier(kPathDBId);
+			path->SetShouldSave(false);
+			pathId = path->GetId();
+		}
+		pathAnimManager->RemoveAnimationPathInfo(pathId);
+		REQUIRE(pathAnimManager->HasAnimPathsToSave() == true);
+
+		std::atomic_bool bDone = false;
+		bool bSaveOk = false;
+		pathAnimManager->AsyncSaveDataOnServer(kDecorationId, [&](bool success) {
+			bSaveOk = success;
+			bDone = true;
+		});
+
+		REQUIRE(WaitForAsyncTask(bDone, kAsyncTimeoutSeconds));
+		CHECK(bSaveOk);
+	}
+
+	SECTION("server error is reported") {
+		ScopedPathResponse postResp(mock, std::pair("POST", kAnimPathsUrlPath), 500, std::string("{}"));
+
+		auto pathPtr = pathAnimManager->AddAnimationPathInfo();
+		{
+			auto path = pathPtr->GetAutoLock();
+			path->SetSplineId(splineRefId);
+			path->SetSpeed(42.5);
+		}
+
+		std::atomic_bool bDone = false;
+		bool bSaveOk = true;
+		pathAnimManager->AsyncSaveDataOnServer(kDecorationId, [&](bool success) {
+			bSaveOk = success;
+			bDone = true;
+		});
+
+		REQUIRE(WaitForAsyncTask(bDone, kAsyncTimeoutSeconds));
+		CHECK(bSaveOk == false);
+		// no DB identifier was assigned
+		CHECK(pathPtr->GetRAutoLock()->HasDBIdentifier() == false);
+	}
+
+	SECTION("nothing to save still invokes the callback") {
+		// no path at all: no request is registered
+		std::atomic_bool bDone = false;
+		bool bSaveOk = false;
+		pathAnimManager->AsyncSaveDataOnServer(kDecorationId, [&](bool success) {
+			bSaveOk = success;
+			bDone = true;
+		});
+		REQUIRE(WaitForAsyncTask(bDone, kAsyncTimeoutSeconds));
+		CHECK(bSaveOk);
 	}
 }

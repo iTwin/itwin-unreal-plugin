@@ -506,35 +506,7 @@ struct FResult
 	UPROPERTY(BlueprintReadOnly, Category = "IModelTree")
 		int total = 0;
 };
-USTRUCT(BlueprintType)
-struct FIModelPagedNodesRes
-{
-	GENERATED_USTRUCT_BODY()
 
-	UPROPERTY(BlueprintReadOnly, Category = "IModelTree")
-		FResult result;
-};
-
-USTRUCT(BlueprintType)
-struct FFilteredResItem
-{
-	GENERATED_USTRUCT_BODY()
-
-	//Can't use uproperty here because it doesn't support Struct recursion via arrays
-		TArray<FFilteredResItem> children;
-
-	UPROPERTY(BlueprintReadOnly, Category = "IModelTree")
-		FIModelNodeItem node;
-};
-
-USTRUCT(BlueprintType)
-struct FFilteredNodesRes
-{
-	GENERATED_USTRUCT_BODY()
-
-	UPROPERTY(BlueprintReadOnly, Category = "IModelTree")
-		TArray<FFilteredResItem> result;
-};
 
 USTRUCT(BlueprintType)
 struct FProjectExtents

@@ -491,7 +491,7 @@ void AITwinDigitalTwinManager::Init(FString const& InITwinId, FString const& InD
 	{
 		return;
 	}
-	if (CheckServerConnection() != AdvViz::SDK::EITwinAuthStatus::Success)
+	if (CheckAuthorizationStatus() != AdvViz::SDK::EITwinAuthStatus::Success)
 	{
 		// No authorization yet: postpone the actual update (see UpdateOnSuccessfulAuthorization)
 		Impl->PendingOperation = FImpl::EOperationUponAuth::Update;
@@ -723,7 +723,7 @@ void AITwinDigitalTwinManager::SetupSpawnedLayer(AITwinServiceActor* NewLayer)
 {
 	NewLayer->AttachToActor(this, FAttachmentTransformRules::KeepRelativeTransform);
 
-	NewLayer->ServerConnection = ServerConnection;
+	NewLayer->CopyEnvironmentFrom(*this);
 
 #if WITH_TESTS
 	// In test mode, we need to set the server URL to all spawned layers.
@@ -925,7 +925,7 @@ void AITwinDigitalTwinManager::LoadIModel(FIModelInfo const& Info, EITwinLoadCon
 	}
 }
 
-void AITwinDigitalTwinManager::ConnectLoadedIModelToUI(AITwinIModel* /*IModel*/) const
+void AITwinDigitalTwinManager::ConnectLoadedIModelToUI(AITwinIModel* /*IModel*/)
 {
 
 }
@@ -1359,7 +1359,7 @@ void AITwinDigitalTwinManager::LoadDecoration()
 	}
 
 	// If no access token has been retrieved yet, make sure we request one.
-	if (CheckServerConnection() != AdvViz::SDK::EITwinAuthStatus::Success)
+	if (CheckAuthorizationStatus() != AdvViz::SDK::EITwinAuthStatus::Success)
 	{
 		Impl->PendingOperation = FImpl::EOperationUponAuth::LoadDecoration;
 		return;
@@ -1379,7 +1379,7 @@ void AITwinDigitalTwinManager::PostEditChangeProperty(FPropertyChangedEvent& Pro
 
 	FName const PropertyName = (PropertyChangedEvent.Property != nullptr) ? PropertyChangedEvent.Property->GetFName() : NAME_None;
 	FName const MemberPropertyName = (PropertyChangedEvent.MemberProperty != nullptr) ? PropertyChangedEvent.MemberProperty->GetFName() : NAME_None;
-	if (PropertyName == GET_MEMBER_NAME_CHECKED(AITwinDigitalTwinManager, ServerConnection) ||
+	if (PropertyName == GET_MEMBER_NAME_CHECKED(AITwinDigitalTwinManager, Environment) ||
 		PropertyName == GET_MEMBER_NAME_CHECKED(AITwinDigitalTwinManager, ITwinId))
 	{
 		ResetITwin();

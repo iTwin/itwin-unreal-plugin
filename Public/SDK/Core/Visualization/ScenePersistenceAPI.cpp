@@ -165,6 +165,17 @@ namespace AdvViz::SDK {
 		};
 	}
 
+	//! Returns the default heliodon date in ISO 8601 format (UTC) with the hour set to 12:00.
+	static std::string GetDefaultHeliodonDate()
+	{
+		// Format today time as ISO 8601 (UTC)
+		// For the hour, we use 12:00 to avoid having a too dark scene at night when loading
+		// a new scene.
+		using namespace std::chrono;
+		zoned_time local_now{ current_zone(), system_clock::now() };
+
+		return std::format("{:%Y-%m-%dT12:00:00Z}", local_now);
+	}
 
 
 	struct LinkAPI::Impl final : SavableItemWithID
@@ -174,6 +185,7 @@ namespace AdvViz::SDK {
 			std::string wkt;
 			std::array<float, 3> center = { 0.f, 0.f, 0.f };
 		};
+
 		struct Link
 		{
 			std::string type;
@@ -183,6 +195,10 @@ namespace AdvViz::SDK {
 			std::optional<bool> visibility;
 			std::optional<double> quality;
 			std::optional< std::array<double, 12> > transform;
+			// Set for links that are resources in the repository (iModels, reality data, etc.).
+			// Those links are sometimes excluded from saving here, when the are saved by the
+			// iTwin Studio typically (see boolean enableExportOfResources).
+			std::optional<RepositoryResourceInfo> repositoryResourceInfo;
 		};
 
 		bool shouldDelete_ = false;
@@ -196,8 +212,37 @@ namespace AdvViz::SDK {
 			if (link_.type != value)
 			{
 				link_.type = value;
+				// Set the respository resource flag for iModel and RealityData types, which are
+				// typically managed by the iTwin Studio. Note that we do *not* reset this flag for
+				// other types, because we don't know the exhaustive list (we found "Cesium" and
+				// "Google" in some scenes, and this will probably evolve in the future).
+				if (!link_.repositoryResourceInfo.has_value()
+					&& (value == "iModel" || value == "RealityData"))
+				{
+					// Set the repository resource info for the types we know are repository
+					// resources.
+					RepositoryResourceInfo info;
+					if (value == "iModel")
+					{
+						info.repositoryId = "imodels";
+						info.strClass = "iModels";
+					}
+					else if (value == "RealityData")
+					{
+						info.repositoryId = "realitydata";
+						info.strClass = "RealityData";
+					}
+					SetRepositoryResourceInfo(info);
+				}
+
 				InvalidateDB();
 			}
+		}
+
+		void SetRepositoryResourceInfo(RepositoryResourceInfo const& value)
+		{
+			link_.repositoryResourceInfo = value;
+			// Do not invalidate the DB here, as this property is constant.
 		}
 
 		void SetRef(const std::string& value)
@@ -776,19 +821,44 @@ namespace AdvViz::SDK {
 			link->GetImpl().SetDBIdentifier(row.id);
 			if (row.kind == "RepositoryResource")
 			{
+				// This is a resource in the repository (iModel, reality data, etc.). Not saved by
+				// us if enableExportOfResources is false.
+
+				LinkAPI::RepositoryResourceInfo repoInfo;
+
 				std::string& linkType = link->GetImpl().link_.type;
 				std::optional<std::string> ttype;
 				if (row.data)
 				{
 					ttype = row.data->type.get();
+
+					// Store the repository resource info received from the server (important for
+					// types that we do not support, so avoid losing the information when saving
+					// the scene).
+					repoInfo.strClass = ttype.value_or("");
+					repoInfo.repositoryId = row.data->repositoryId.value_or("");
 				}
 				if (ttype.has_value())
 				{
-					if (toLower(*ttype) == "imodels")
+					auto const lowerType = toLower(*ttype);
+					if (lowerType == "imodels" || lowerType.starts_with("imodel"))
+					{
 						linkType = "iModel";
-					else if (toLower(*ttype) == "realitydata")
+					}
+					else if (lowerType == "realitydata")
+					{
 						linkType = "RealityData";
+					}
+					else
+					{
+						// In some scenes (see ADO#2175129), we can find other types of layers,
+						// such as Cesium ("Cesium World Terrain") or Google ("Google satellite").
+						// Those layers are not handled here for now, but there is no reason to
+						// flag them as iModel, so we just use the type from the row.
+						linkType = *ttype;
+					}
 				}
+				link->GetImpl().SetRepositoryResourceInfo(repoInfo);
 				link->SetType(linkType.empty() ? "iModel" : linkType); // check row class
 				if (row.visible)
 				{
@@ -799,20 +869,29 @@ namespace AdvViz::SDK {
 				if (row.data && row.data->id)
 					link->GetImpl().link_.ref = *row.data->id;
 
+				if (!enableExportOfResources)
+				{
+					// if we do not save such layers, ensure the links are not invalidated (through
+					// the SetType call above...)
+					link->SetShouldSave(false);
+				}
+
 				AddLink(link);
 			}
 			else if (row.kind == "View3d")
 			{
 				link->GetImpl().link_.type = "camera";
-				if (row.data && row.data->name)
-					link->GetImpl().link_.ref = *row.data->name;
-				else if (row.displayName)
+				if (row.displayName)
 					link->GetImpl().link_.ref = *row.displayName;
+				else if (row.data && row.data->name)
+					link->GetImpl().link_.ref = *row.data->name;
 				else
 					link->GetImpl().link_.ref = "Home Camera";
 				if (row.data && row.data->ecefTransform)
+				{
 					link->GetImpl().link_.transform = Identity34;
-				std::memcpy(link->GetImpl().link_.transform->data(), row.data->ecefTransform->data(), 12 * sizeof(double));
+					std::memcpy(link->GetImpl().link_.transform->data(), row.data->ecefTransform->data(), 12 * sizeof(double));
+				}
 				AddLink(link);
 			}
 			else if (row.kind == "UnrealAtmosphericStyling")
@@ -908,7 +987,7 @@ namespace AdvViz::SDK {
 					sl.id = row.id;
 					sl.ref = *row.data->id;
 					sl.adjusts = *row.data->adjustment;
-					thLoadedLinksData->sublinks.push_back(sl);
+					thLoadedLinksData->sublinks.push_back(std::move(sl));
 				}
 				else if (row.relatedId && row.data && row.data->adjustment)
 				{
@@ -916,7 +995,7 @@ namespace AdvViz::SDK {
 					sl.id = row.id;
 					sl.ref = *row.relatedId;
 					sl.adjusts = *row.data->adjustment;
-					thLoadedLinksData->sublinks.push_back(sl);
+					thLoadedLinksData->sublinks.push_back(std::move(sl));
 				}
 			}
 			else if (row.kind == "Movie")
@@ -1062,13 +1141,7 @@ namespace AdvViz::SDK {
 					{
 						auto thdata = thdata_.GetAutoLock();
 
-						// Format today time as ISO 8601 (UTC)
-						// For the hour, we use 12:00 to avoid having a too dark scene at night when loading
-						// a new scene.
-						using namespace std::chrono;
-						zoned_time local_now{ current_zone(), system_clock::now() };
-
-						thdata->jsonAtmo_.heliodonDate = std::format("{:%Y-%m-%dT12:00:00Z}", local_now);
+						thdata->jsonAtmo_.heliodonDate = GetDefaultHeliodonDate();
 						thdata->jsonAtmo_.useHeliodon = true;
 						thdata->jsonAtmo_.heliodonLongitude = -77.90736389160156;
 						thdata->jsonAtmo_.heliodonLatitude = 35.857818603515625;
@@ -1583,6 +1656,12 @@ namespace AdvViz::SDK {
 				jsonCutoutBox.rotation = SJsonQuaternion();
 				Double4ToJsonQuat(cutoutBox.rotation, *jsonCutoutBox.rotation);
 			}
+			else
+			{
+				// Clear any rotation previously stored, otherwise resetting a box to an identity
+				// rotation would silently keep the former one.
+				jsonCutoutBox.rotation.reset();
+			}
 		}
 
 		void CutoutPlaneToJson(const CutoutPlane& cutoutPlane, SJsonClippingPlane& jsonCutoutPlane, bool inverse)
@@ -1664,7 +1743,7 @@ namespace AdvViz::SDK {
 						Double3ToJsonVector(point, jsonPoint);
 						jsonPolygon.positions.push_back(jsonPoint);
 					}
-					jsonCutout.polygons->push_back(jsonPolygon);
+					jsonCutout.polygons->push_back(std::move(jsonPolygon));
 				}
 			}
 			else
@@ -1909,9 +1988,9 @@ namespace AdvViz::SDK {
 							JsonVectorToDouble3(jsonPoint, point);
 							polygon.positions.push_back(point);
 						}
-						polygonSet.polygons.push_back(polygon);
+						polygonSet.polygons.push_back(std::move(polygon));
 					}
-					cutout.cutoutData = polygonSet;
+					cutout.cutoutData = std::move(polygonSet);
 					hasValidData = true;
 				}
 				break;
@@ -1932,11 +2011,22 @@ namespace AdvViz::SDK {
 	{
 		auto thdata = GetImpl().thdata_.GetRAutoLock();
 		if (thdata->ShouldSave())
+		{
 			return true;
-		for (auto link : thdata->links_)
+		}
+		for (auto const& link : thdata->links_)
 		{
 			if (link->ShouldSave())
+			{
 				return true;
+			}
+		}
+		// Timeline is now stored in the scene API (using links), so we need to check if it has unsaved
+		// changes (was the root cause of ADO#2174600 for instance).
+		if (GetImpl().timeline_
+			&& GetImpl().timeline_->HasSomethingToSave())
+		{
+			return true;
 		}
 		return false;
 	}
@@ -1997,7 +2087,7 @@ namespace AdvViz::SDK {
 		thdata->jsonScene_.name = name;
 		thdata->jsonScene_.itwinid = itwinid;
 		ITwinAtmosphereSettings defaultAtmo;
-		defaultAtmo.heliodonDate = "2024-03-18T12:00:00Z";
+		defaultAtmo.heliodonDate = GetDefaultHeliodonDate();
 		defaultAtmo.useHeliodon = true;
 		defaultAtmo.heliodonLongitude = -77.90736389160156;
 		defaultAtmo.heliodonLatitude= 35.857818603515625;
@@ -2011,6 +2101,7 @@ namespace AdvViz::SDK {
 	{
 		std::vector<std::shared_ptr<AdvViz::SDK::ILink>> res;
 		auto thdata = GetImpl().thdata_.GetRAutoLock();
+		res.reserve(thdata->links_.size());
 		for (auto l : thdata->links_)
 			res.push_back(l);
 		return res;
@@ -2085,9 +2176,9 @@ namespace AdvViz::SDK {
 
 		for (auto link : links)
 		{
-			// RealityData and iModel links are saved separately, in Itwin Engage TS. We don't want to save
+			// RealityData and iModel links are saved separately, in iTwin Engage TS. We don't want to save
 			// them here as well.
-			if (!enableExportOfResources && (link->GetType() == "RealityData" || link->GetType() == "iModel"))
+			if (!enableExportOfResources && link->IsRepositoryResource())
 			{
 				continue;
 			}
@@ -2249,10 +2340,10 @@ namespace AdvViz::SDK {
 		{
 			if (!callbackPtr->IsValid())
 				return;
-			auto tl = GetTimeline();
+			auto timeline = GetTimeline();
 			for (auto link : prelinks)
 			{
-				auto clipp = tl->GetClipByRefID(link->GetImpl().GetId());
+				auto clipp = timeline->GetClipByRefID(link->GetImpl().GetId());
 				if (!clipp)
 					continue;
 				if (link->HasDBIdentifier())
@@ -2266,17 +2357,20 @@ namespace AdvViz::SDK {
 					}
 				}
 			}
-			if (tl)
+			if (timeline)
 			{
 				bool bDeleteSuccess = true;
-				for (auto clipp : tl->GetObsoleteClips())
+				for (auto clipp : timeline->GetObsoleteClips())
 				{
 					bool deletionFailed = false;
 					for (auto link : prelinks)
 					{
 						if (clipp->GetId() == link->GetId())
 						{
-							deletionFailed = true;
+							// Upon deletion notification, we reset the DB identifier (see AsyncSaveLinksVec
+							// above, part 'link->ShouldDelete()') so we test the DB identifier to know if
+							// the opeation was successful.
+							deletionFailed = link->HasDBIdentifier();
 							break;
 						}
 					}
@@ -2286,12 +2380,12 @@ namespace AdvViz::SDK {
 					}
 					else
 					{
-						tl->RemoveObsoleteClip(clipp);
+						timeline->RemoveObsoleteClip(clipp);
 					}
 				}
 				if (bSuccess && bDeleteSuccess)
 				{
-					tl->OnSaved();
+					timeline->OnSaved();
 				}
 			}
 		
@@ -2319,7 +2413,7 @@ namespace AdvViz::SDK {
 
 	std::shared_ptr<AdvViz::SDK::ILink> ScenePersistenceAPI::MakeLink()
 	{
-		return 	std::shared_ptr<AdvViz::SDK::ILink>(LinkAPI::New());
+		return std::shared_ptr<AdvViz::SDK::ILink>(LinkAPI::New());
 	}
 
 	template <typename T>
@@ -2338,8 +2432,14 @@ namespace AdvViz::SDK {
 	{
 		using namespace SceneAPIDetails;
 
-		if (link->GetType() == "RealityData" || link->GetType() == "iModel")
+		if (link->IsRepositoryResource())
 		{
+			auto const repositoryInfo = link->GetRepositoryResourceInfo();
+			BE_ASSERT(repositoryInfo.has_value()
+				&& !repositoryInfo->strClass.empty()
+				&& !repositoryInfo->repositoryId.empty(),
+				"Repository resource link must have valid repository info");
+
 			std::string itwinid;
 			{
 				auto thdata = GetImpl().thdata_.GetRAutoLock();
@@ -2371,17 +2471,8 @@ namespace AdvViz::SDK {
 				}
 				Jin.data.id = link->GetRef();
 				Jin.data.iTwinId = itwinid;
-				
-				if (link->GetType() == "iModel")
-				{
-					Jin.data.repositoryId = "imodels";
-					Jin.data.type = "iModels";
-				}
-				else if (link->GetType() == "RealityData")
-				{
-					Jin.data.repositoryId = "realitydata";
-					Jin.data.type = "RealityData";
-				}
+				Jin.data.repositoryId = repositoryInfo->repositoryId;
+				Jin.data.type = repositoryInfo->strClass;
 
 				return Json::ToString(Jin);
 			}
@@ -2406,16 +2497,8 @@ namespace AdvViz::SDK {
 				}
 				Jin.data.id = link->GetRef();
 				Jin.data.iTwinId = itwinid;
-				if (link->GetType() == "iModel")
-				{
-					Jin.data.repositoryId = "imodels";
-					Jin.data.type = "iModels";
-				}
-				else if (link->GetType() == "RealityData")
-				{
-					Jin.data.repositoryId = "realitydata";
-					Jin.data.type = "RealityData";
-				}
+				Jin.data.repositoryId = repositoryInfo->repositoryId;
+				Jin.data.type = repositoryInfo->strClass;
 				
 				return ToPostString(Jin);
 			}
@@ -2568,6 +2651,7 @@ namespace AdvViz::SDK {
 			auto tl = GetTimeline();
 			if (tl)
 			{
+				inData.animations.reserve(tl->GetClipCount());
 				for (size_t i(0); i < tl->GetClipCount(); i++)
 				{
 					auto clipp = tl->GetClipByIndex(i);
@@ -2642,6 +2726,8 @@ namespace AdvViz::SDK {
 			};
 			SJsonInData inData;
 
+			inData.input.reserve(clipp->GetKeyframeCount());
+			inData.output.reserve(clipp->GetKeyframeCount());
 			for (size_t idx(0); idx < clipp->GetKeyframeCount(); ++idx)
 			{
 				auto kf = clipp->GetKeyframeByIndex(idx);
@@ -2690,17 +2776,15 @@ namespace AdvViz::SDK {
 					{
 						o.schedule = SJsonScheduleSimulation();
 						o.schedule->timePoint = tp.time_since_epoch().count();
-						if(ignoreTimelineID)
+						if (ignoreTimelineID)
 							o.schedule->timelineId ="0x30";
 						else
 							o.schedule->timelineId = kdata.synchro->scheduleId();
 					}
-
 				}
-
 				inData.output.push_back(o);
-
 			}
+
 			if (forPatch)
 			{
 				struct SJsonIn
@@ -2776,6 +2860,8 @@ namespace AdvViz::SDK {
 				//std::optional<std::string> displayName;
 			};
 			SJsonInData data;
+			data.adjustment.reserve(
+				(link->HasTransform() ? 12 : 0) + (link->HasQuality() ? 1 : 0));
 			if (link->HasTransform())
 			{
 				auto tr = link->GetTransform();
@@ -2869,14 +2955,18 @@ namespace AdvViz::SDK {
 
 	ScenePersistenceAPI::LinkAPIPtrVec ScenePersistenceAPI::GenerateSubLinks()
 	{
-		auto thdata = GetImpl().thdata_.GetRAutoLock();
 		LinkAPIPtrVec res;
+		// Disable saving of adjustments if they are currently saved in the TypeScript side of iTwin Engage.
+		if (!enableExportOfResources)
+		{
+			return res;
+		}
+		auto thdata = GetImpl().thdata_.GetRAutoLock();
 		for (auto link : thdata->links_)
 		{
 			BE_ASSERT(!link->GetImpl().parentLink_, "main links should not have parents");
 
-			//disable saving of adjustments if they are currently saved in Itwin Engage Typescript.
-			if (enableExportOfResources && (link->GetType() == "RealityData" || link->GetType() == "iModel"))
+			if (link->IsRepositoryResource())
 			{
 				if (link->HasTransform() || link->HasQuality())
 				{
@@ -2923,6 +3013,7 @@ namespace AdvViz::SDK {
 		if (!timeline)
 			return res;
 		timeline->OnStartSave();
+		res.reserve(timeline->GetClipCount() + timeline->GetObsoleteClips().size());
 		for (size_t i(0); i < timeline->GetClipCount(); i++)
 		{
 			auto clipp = timeline->GetClipByIndex(i);
@@ -3230,6 +3321,16 @@ namespace AdvViz::SDK {
 	bool LinkAPI::ShouldDelete() const
 	{
 		return GetImpl().shouldDelete_;
+	}
+
+	bool LinkAPI::IsRepositoryResource() const
+	{
+		return GetImpl().link_.repositoryResourceInfo.has_value();
+	}
+
+	std::optional<LinkAPI::RepositoryResourceInfo> LinkAPI::GetRepositoryResourceInfo() const
+	{
+		return GetImpl().link_.repositoryResourceInfo;
 	}
 
 	void SetSceneAPIConfig(const Config::SConfig& c)

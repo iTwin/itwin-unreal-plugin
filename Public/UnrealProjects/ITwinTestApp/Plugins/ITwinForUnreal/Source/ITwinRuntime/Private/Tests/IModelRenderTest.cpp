@@ -100,7 +100,8 @@ inline std::filesystem::path FITwinFileBasedMockServer::GetResponsePath(
 		// Look for the folder corresponding to this request, containing the pre-recorded response.
 		BE_ASSERT(!CachedResponsesFolder.empty());
 		auto ResponseJsonPath = GetResponsePath(url, data);
-		bool bHasResponseInCache = std::filesystem::exists(ResponseJsonPath);
+		std::error_code ec;
+		bool bHasResponseInCache = std::filesystem::exists(ResponseJsonPath, ec);
 		if (!bHasResponseInCache)
 		{
 			std::vector<std::filesystem::path> alternatePaths;
@@ -145,7 +146,8 @@ inline std::filesystem::path FITwinFileBasedMockServer::GetResponsePath(
 
 			for (auto const& Path : alternatePaths)
 			{
-				if (std::filesystem::exists(Path))
+				ec.clear();
+				if (std::filesystem::exists(Path, ec))
 				{
 					ResponseJsonPath = Path;
 					bHasResponseInCache = true;
@@ -175,7 +177,8 @@ inline std::filesystem::path FITwinFileBasedMockServer::GetResponsePath(
 		}
 		// If there is a binary response file, use its content instead of the response stored in the json file.
 		const auto ResponseBinPath = std::filesystem::path(ResponseJsonPath).replace_extension(".bin");
-		if (std::filesystem::exists(ResponseBinPath))
+		ec.clear();
+		if (std::filesystem::exists(ResponseBinPath, ec))
 		{
 			std::ifstream Ifs(ResponseBinPath, std::ios::in|std::ios::binary);
 			return Response{ResponseInfo.status, std::string(std::istreambuf_iterator<char>{Ifs}, {})};

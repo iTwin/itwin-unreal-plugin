@@ -321,9 +321,6 @@ namespace AdvViz::SDK
 			}
 		}
 
-	
-
-
 		bool HasSomethingToSave() const
 		{
 			if (ShouldSave())
@@ -646,7 +643,6 @@ namespace AdvViz::SDK
 			return {};
 		}
 
-
 		bool HasSomethingToSave() const
 		{
 			if (ShouldSave())
@@ -655,6 +651,11 @@ namespace AdvViz::SDK
 				if (clip && clip->HasSomethingToSave())
 					return true;
 			return false;
+		}
+
+		void RemoveObsoleteClip(const std::shared_ptr<ITimelineClip>& clipp)
+		{
+			std::erase_if(toDeleteClips_, [clipp](auto& vclip) {return clipp == vclip; });
 		}
 	};
 
@@ -787,9 +788,7 @@ namespace AdvViz::SDK
 
 	void Timeline::RemoveObsoleteClip(const std::shared_ptr<ITimelineClip>& clipp)
 	{
-		GetImpl().toDeleteClips_.erase(
-			std::remove_if(GetImpl().toDeleteClips_.begin(), GetImpl().toDeleteClips_.end(), [clipp](auto& vclip) {return clipp == vclip; }),
-			GetImpl().toDeleteClips_.end());
+		GetImpl().RemoveObsoleteClip(clipp);
 	}
 
 	void Timeline::SetShouldSaveRecursive(bool bshouldSave)

@@ -43,9 +43,15 @@ public:
 
 	static TSharedPtr<FITwinGeolocation> Get(UWorld& World);
 
+	//! Returns true if the geolocation instance has been initialized.
+	static bool IsInitialized();
+
 	//! Returns true if the default geo-ref retrieval (for current iTwin) request is still in progress, and
 	//! thus the actual loading of tilesets should be delayed.
 	static bool IsDefaultGeoRefRequestInProgress();
 
 	static std::function<FVector(bool& bRequestInProgress, bool& bHasRelevantElevation)> GetDefaultGeoRefFct;
+
+private:
+	static TSharedPtr<FITwinGeolocation> Instance;
 };

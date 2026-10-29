@@ -308,6 +308,12 @@ public:
 	/// Pre-load the given asset in a population.
 	AITwinPopulation* PreLoadPopulation(const FString& AssetPath);
 
+	//! Returns the list of errors that occurred during the loading of the given asset in a
+	//! population.
+	//! \param bAssetShouldExist If the population cannot be found, and this is true, a default
+	//! error will be returned.
+	TArray<FString> GetAssetLoadingErrors(const FString& AssetPath, bool bAssetShouldExist) const;
+
 	/// Switch the tool usage to cutout mode on or off.
 	UFUNCTION(Category = "iTwin", BlueprintCallable)
 	void SetUsedOnCutout(bool bForCutout);
@@ -442,6 +448,19 @@ public:
 	virtual TSharedPtr<FToolDisabler> MakeToolDisabler() override;
 
 	bool IsSplineToolActive(FPopulationIdentifier PathHandle) const;
+
+	void AddNewCustomPopulationGroup(const std::string& GroupName, bool setAsCurrent = true);
+	void SetCurrentPopulationGroup(const std::string& GroupName);
+	std::string GetCurrentPopulationGroup() const;
+	void ChangeCustomPopulationGroupName(const std::string& OldName, const std::string& NewName);
+	std::vector<std::string> GetCustomPopulationGroupsList(bool bIncludeEmptyGroups) const;
+	bool IsCustomPopulationGroup(const AdvViz::SDK::RefID& groupId) const;
+	void ZoomOnPopulationGroup(const std::string& groupName);
+	void RemovePopulationGroup(const std::string& groupName);
+	bool IsGroupVisible(const std::string& groupName) const;
+	void SetGroupVisible(const std::string& groupName, bool visible);
+	// Should be same name as in PopulationPanel.tsx in order to match the name in population tool settings.
+	inline static std::string DefaultGroupDisplayName = "Default collection";
 
 protected:
 	/// Overridden from AActor

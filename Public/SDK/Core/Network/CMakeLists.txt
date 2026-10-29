@@ -13,6 +13,7 @@ be_add_library(Network OBJECT
 		IHttpRouter.h
 		IHttpRouter.cpp
 		HttpGetWithLink.h
+		Tests/MockServerHeaderCheck.h # added here to make it available for the test target, but not compiled into the library
 )
 target_compile_features(Network PRIVATE ${DefaultCXXSTD})
 if (WITH_HTTPCPR)
@@ -35,6 +36,7 @@ if(SDK_ADDUNITTEST)
 	be_add_library(NetworkMockServer OBJECT
 		Tests/AsyncTestHelpers.h
 		Tests/AsyncTestHelpers.cpp
+		Tests/MockServerHeaderCheck.h
 		Tests/HttpMock.h
 		Tests/HttpMock.cpp
 	)

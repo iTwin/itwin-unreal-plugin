@@ -23,6 +23,7 @@ class ITWINRUNTIME_API UITwinBoxTileExcluder : public UITwinTileExcluderBase
 public:
 	using SharedProperties = std::shared_ptr<FITwinClippingBoxInfo::FBoxProperties>;
 
+	void AddBox(SharedProperties const& BoxProperties) { BoxPropertiesArray.push_back(BoxProperties); }
 	bool ContainsBox(SharedProperties const& BoxProperties) const;
 	void RemoveBox(SharedProperties const& BoxProperties);
 
@@ -36,6 +37,4 @@ private:
 
 	// A Box tile excluder can reference several boxes.
 	FBoxPropertiesArray BoxPropertiesArray;
-
-	friend class UITwinClippingRenderer;
 };

@@ -6,6 +6,46 @@ function (readSymlink link result)
 	set (${result} ${result_local} PARENT_SCOPE)
 endfunction ()
 
+if (WIN32)
+	# copyTimestampsToSymlink may be called many times, avoid testing presence of the exe many times uselessly
+	set (copy_timestamps_to_symlink_src "${CMAKE_SOURCE_DIR}/Public/CMake/copy_timestamps_to_symlink")
+	set (copy_timestamps_to_symlink_dir "${copy_timestamps_to_symlink_src}/build")
+	set (copy_timestamps_to_symlink_exe "${copy_timestamps_to_symlink_dir}/Release/copy_timestamps_to_symlink.exe")
+	if (NOT EXISTS "${copy_timestamps_to_symlink_dir}")
+		file(MAKE_DIRECTORY "${copy_timestamps_to_symlink_dir}")
+	elseif (EXISTS "${copy_timestamps_to_symlink_exe}" AND
+			("${copy_timestamps_to_symlink_src}/main.cpp" IS_NEWER_THAN "${copy_timestamps_to_symlink_exe}"
+			OR "${copy_timestamps_to_symlink_src}/CMakeLists.txt" IS_NEWER_THAN "${copy_timestamps_to_symlink_exe}")
+		)
+		file(REMOVE "${copy_timestamps_to_symlink_exe}")
+	endif()
+	if (NOT EXISTS "${copy_timestamps_to_symlink_exe}")
+		execute_process(
+			COMMAND ${CMAKE_COMMAND} -S "${copy_timestamps_to_symlink_src}" -B .
+			COMMAND_ECHO STDOUT
+			COMMAND_ERROR_IS_FATAL ANY
+			WORKING_DIRECTORY "${copy_timestamps_to_symlink_dir}"
+		)
+		execute_process(
+			COMMAND ${CMAKE_COMMAND} --build . --config Release
+			COMMAND_ECHO STDOUT
+			COMMAND_ERROR_IS_FATAL ANY
+			WORKING_DIRECTORY "${copy_timestamps_to_symlink_dir}"
+		)
+	endif()
+	if (NOT EXISTS "${copy_timestamps_to_symlink_exe}")
+		message(FATAL_ERROR "Building ${copy_timestamps_to_symlink_exe} failed?!")
+	endif()
+endif()
+
+function(copyTimestampsToSymlink referenceFile targetSymlink)
+	execute_process(
+		COMMAND "${copy_timestamps_to_symlink_exe}" "${referenceFile}" "${targetSymlink}"
+		COMMAND_ECHO STDOUT
+		COMMAND_ERROR_IS_FATAL ANY
+	)
+endfunction()
+
 # Wrapper around "file (CREATE_LINK)" that does nothing if the link already exists
 # and points to the correct target.
 function (createSymlink target link addedFilesRef)
@@ -29,9 +69,10 @@ function (createSymlink target link addedFilesRef)
 			# It appears that, with CMake 3.28 on Windows, method #1 does not follow symlinks,
 			# but method #2 does. It may change with other version or platform.
 			# So to ensure reliable behavior, we use a python script.
+			# Note that we now test strict equality of the timestamps: see the call to 'utime' at the end of this function
 			if (EXISTS "${target}" AND NOT IS_DIRECTORY "${target}")
 				execute_process (
-					COMMAND "${Python3_EXECUTABLE}" -c "import os,sys; sys.stdout.write(str(os.lstat('${link}').st_mtime >= os.lstat('${target}').st_mtime))"
+					COMMAND "${Python3_EXECUTABLE}" -c "import os,sys; sys.stdout.write(str(os.lstat('${link}').st_mtime == os.lstat('${target}').st_mtime))"
 					OUTPUT_VARIABLE isUpToDate
 					COMMAND_ERROR_IS_FATAL ANY
 				)
@@ -54,6 +95,21 @@ function (createSymlink target link addedFilesRef)
 	endif ()
 	file (MAKE_DIRECTORY "${linkParent}")
 	file (CREATE_LINK "${target}" "${link}" SYMBOLIC)
+	# Copy the target's timestamp onto the link otherwise UBT will error out (got this when upgrading to UE 5.7).
+	# Symptom: packaging the app loops on "Failed to copy" errors because of differing timestamps then unhelpfully
+	# proceed to "deleting, waiting 10s and retrying" the copy with obviously the same result (10 times per file...).
+	if (NOT IS_DIRECTORY "${target}")
+		if (APPLE)
+			execute_process (
+				COMMAND "${Python3_EXECUTABLE}" -c "import os; os.utime('${link}', (os.path.getmtime('${target}'), os.path.getctime('${target}')), follow_symlinks=False)"
+				COMMAND_ERROR_IS_FATAL ANY
+			)
+		else()
+			# Alas changing a symlink's timestamp does not work, neither with 'utime' nor with 'touch' in a bash: it modifies the link's target.
+			# Let's use a custom utility built for this purpose...
+			copyTimestampsToSymlink("${target}" "${link}")
+		endif()
+	endif()
 endfunction ()
 
 # Wrapper around "file (WRITE)" that does nothing if the file is already up to date.
