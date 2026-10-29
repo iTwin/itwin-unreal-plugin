@@ -18,7 +18,8 @@ public class ITwinRuntime : ModuleRules
 
 	public ITwinRuntime(ReadOnlyTargetRules Target) : base(Target)
 	{
-		bWarningsAsErrors = true;
+        // See comment in Public/CMake/BuildConfiguration.xml.in
+        //bWarningsAsErrors = true;
 		new CommandLineArguments(System.Environment.GetCommandLineArgs()).ApplyTo(this);
 		Logger.LogInformation($"bBeUseUnity {GetType().Name} = {bBeUseUnity}");
 		bUseUnity = bBeUseUnity;

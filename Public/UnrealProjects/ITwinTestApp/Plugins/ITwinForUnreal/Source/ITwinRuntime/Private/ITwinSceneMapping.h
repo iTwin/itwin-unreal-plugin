@@ -25,13 +25,6 @@
 #include <ITwinSelectionOutline.h>
 #include <ITwinUtilityLibrary.h>
 
-#include <Misc/EngineVersionComparison.h>
-#if UE_VERSION_OLDER_THAN(5, 7, 0)
-	#include <MaterialTypes.h>
-#else
-	#include <Materials/MaterialParameters.h>
-#endif
-
 #include <DrawDebugHelpers.h>
 #include <Math/Matrix.h>
 #include <Misc/Guid.h>

@@ -30,17 +30,17 @@ MODULE_EXPORT namespace AdvViz::SDK
 
 	struct ITwinAtmosphereSettings
 	{
-		double sunAzimuth;
-		double sunPitch;
-		double heliodonLongitude;
-		double heliodonLatitude;
+		double sunAzimuth = 0.;
+		double sunPitch = 0.;
+		double heliodonLongitude = 0.;
+		double heliodonLatitude = 0.;
 		std::string heliodonDate;
-		double weather;
-		double windOrientation;
-		double windForce;
-		double fog;
-		double exposure;
-		bool useHeliodon;
+		double weather = 0.;
+		double windOrientation = 0.;
+		double windForce = 0.;
+		double fog = 0.;
+		double exposure = 0.;
+		bool useHeliodon = false;
 		std::optional<std::string> HDRIImage;
 		std::optional<double> HDRIZRotation;
 		std::optional<double> sunIntensity;
@@ -83,10 +83,10 @@ MODULE_EXPORT namespace AdvViz::SDK
 	struct ITwinHDRISettings
 	{
 		std::string	hdriName;
-		double		sunPitch;
-		double		sunYaw;
-		double		sunIntensity;
-		double		rotation;	// rotation of the hdri around the up vector
+		double		sunPitch = 0.;
+		double		sunYaw = 0.;
+		double		sunIntensity = 10.;
+		double		rotation = 0.;	// rotation of the hdri around the up vector
 		bool operator==(const ITwinHDRISettings& other) const
 		{
 			return this->hdriName==other.hdriName

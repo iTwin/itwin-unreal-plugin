@@ -3,8 +3,18 @@
 <!-- [PPROJECT]/Saved/UnrealBuildTool/BuildConfiguration.xml written by CMake, do NOT edit directly!
 	 See Carrot.git/Public/CMake/BuildConfiguration.xml.in -->
 <WindowsPlatform>
-	<Compiler>VisualStudio2022</Compiler>
+	<Compiler>VisualStudio2026</Compiler>
 	<CompilerVersion>@BE_GENERATOR_TOOLSET@</CompilerVersion>
 	<WindowsSdkVersion>Latest</WindowsSdkVersion>
 </WindowsPlatform>
+<BuildConfiguration>
+	<!-- From Epic doc: "UE enables most warnings as errors already, but disables a few (such as deprecation
+       warnings)". Despite this, since VS2026, enabling this yields build errors in Unreal headers for deprecated
+       methods it overrides and that we never do in our own code! Setting DeprecationWarningLevel to 'Warning' does
+       not work either, only 'Off' works. So either we set this to off and get logs for all warnings not set as
+       errors by Epic (no errors anymore), or we keep it true but disable DeprecationWarningLevel which will mask
+       them entirely: I choose to keep the warnings (I don't know which were not set as errors by Epic). -->
+	<bWarningsAsErrors>true</bWarningsAsErrors>
+	<DeprecationWarningLevel>Off</DeprecationWarningLevel>
+</BuildConfiguration>
 </Configuration>

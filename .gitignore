@@ -17,6 +17,7 @@ __pycache__/
 **/UnrealProjects/*/DerivedDataCache
 **/UnrealProjects/*/Intermediate/
 **/UnrealProjects/*/Saved/
+**/UnrealProjects/*/*.slnx
 **/UnrealProjects/*/*.sln
 **/UnrealProjects/*/Plugins/*/Binaries/
 **/UnrealProjects/*/Plugins/*/Intermediate/

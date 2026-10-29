@@ -21,15 +21,21 @@
 			"0x8dd24072d4bed00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -67,7 +73,11 @@
 				"anchor": "MinZ"
 			}
 		],
-		"TransformInterps": [ 1, 1, 0 ]
+		"TransformInterps": [
+			1,
+			1,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -91,15 +101,21 @@
 			"0x8dd24072d4bed00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -168,7 +184,13 @@
 				"anchor": "MaxZ"
 			}
 		],
-		"TransformInterps": [ 1, 1, 1, 1, 0 ]
+		"TransformInterps": [
+			1,
+			1,
+			1,
+			1,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -190,15 +212,21 @@
 			"0x8dd5687015b1b00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.823529,
+			[
+				true,
+				0.823529,
 				0.411765,
 				0.117647
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -266,7 +294,12 @@
 				]
 			}
 		],
-		"TransformInterps": [ 1, 1, 1, 0 ]
+		"TransformInterps": [
+			1,
+			1,
+			1,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -291,15 +324,21 @@
 			"0x8dd24072d4bed00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -335,7 +374,10 @@
 				]
 			}
 		],
-		"TransformInterps": [ 1, 0 ]
+		"TransformInterps": [
+			1,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -357,15 +399,21 @@
 			"0x8dd614445005b00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.823529,
+			[
+				true,
+				0.823529,
 				0.411765,
 				0.117647
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -412,7 +460,11 @@
 				]
 			}
 		],
-		"TransformInterps": [ 1, 1, 0 ]
+		"TransformInterps": [
+			1,
+			1,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -436,15 +488,21 @@
 			"0x8dd24072d4bed00"
 		],
 		"ColorValues": [
-			[ true, 0.603922,
+			[
+				true,
+				0.603922,
 				0.803922,
 				0.196078
 			],
-			[ true, 0.0,
+			[
+				true,
+				0.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -469,7 +527,10 @@
 				0.0
 			]
 		],
-		"CuttingPlaneInterps": [ 1, 0 ]
+		"CuttingPlaneInterps": [
+			1,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -493,15 +554,21 @@
 			"0x8dd24072d4bed00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				1.0,
 				0.003922
 			],
-			[ true, 0.862745,
+			[
+				true,
+				0.862745,
 				0.078431,
 				0.235294
 			]
@@ -548,7 +615,11 @@
 				]
 			}
 		],
-		"TransformInterps": [ 1, 1, 0 ],
+		"TransformInterps": [
+			1,
+			1,
+			0
+		],
 		"CuttingPlaneTicks": [
 			"0x8dc78ab3abd6800",
 			"0x8dd24072d4a6600",
@@ -577,7 +648,11 @@
 				0.0
 			]
 		],
-		"CuttingPlaneInterps": [ 1, 0, 0 ]
+		"CuttingPlaneInterps": [
+			1,
+			0,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -601,15 +676,21 @@
 			"0x8dd24072d4bed00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.0,
+			[
+				true,
+				0.0,
 				0.0,
 				1.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -656,7 +737,11 @@
 				]
 			}
 		],
-		"TransformInterps": [ 1, 1, 0 ]
+		"TransformInterps": [
+			1,
+			1,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -680,15 +765,21 @@
 			"0x8dd24072d4bed00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -757,47 +848,69 @@
 			"0x8de22d614c21b00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.0,
+			[
+				true,
+				0.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.823529,
+			[
+				true,
+				0.823529,
 				0.411765,
 				0.117647
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -864,7 +977,13 @@
 				0.0
 			]
 		],
-		"CuttingPlaneInterps": [ 0, 1, 0, 0, 0 ]
+		"CuttingPlaneInterps": [
+			0,
+			1,
+			0,
+			0,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -888,15 +1007,21 @@
 			"0x8dd39525900bb00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -922,15 +1047,21 @@
 			"0x8dd5687015b1b00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.823529,
+			[
+				true,
+				0.823529,
 				0.411765,
 				0.117647
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -987,7 +1118,11 @@
 				]
 			}
 		],
-		"TransformInterps": [ 1, 1, 0 ]
+		"TransformInterps": [
+			1,
+			1,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -1038,51 +1173,75 @@
 			"0x8ddcdf830251b00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.0,
+			[
+				true,
+				0.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.0,
+			[
+				true,
+				0.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.0,
+			[
+				true,
+				0.0,
 				1.0,
 				0.0
 			],
-			[ true, 0.392157,
+			[
+				true,
+				0.392157,
 				0.584314,
 				0.929412
 			]
@@ -1170,7 +1329,15 @@
 				0.0
 			]
 		],
-		"CuttingPlaneInterps": [ 0, 1, 0, 1, 0, 1, 0 ]
+		"CuttingPlaneInterps": [
+			0,
+			1,
+			0,
+			1,
+			0,
+			1,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -1221,51 +1388,75 @@
 			"0x8ddcdf830251b00"
 		],
 		"ColorValues": [
-			[ true, 0.603922,
+			[
+				true,
+				0.603922,
 				0.803922,
 				0.196078
 			],
-			[ true, 0.0,
+			[
+				true,
+				0.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				1.0,
 				0.003922
 			],
-			[ true, 0.862745,
+			[
+				true,
+				0.862745,
 				0.078431,
 				0.235294
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.0,
+			[
+				true,
+				0.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -1372,7 +1563,16 @@
 				0.0
 			]
 		],
-		"CuttingPlaneInterps": [ 1, 0, 1, 0, 0, 0, 1, 0 ]
+		"CuttingPlaneInterps": [
+			1,
+			0,
+			1,
+			0,
+			0,
+			0,
+			1,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -1405,27 +1605,39 @@
 			"0x8ddcdf830251b00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				1.0,
 				0.003922
 			],
-			[ true, 0.862745,
+			[
+				true,
+				0.862745,
 				0.078431,
 				0.235294
 			],
-			[ true, 0.541176,
+			[
+				true,
+				0.541176,
 				0.168627,
 				0.886275
 			],
-			[ true, 0.12549,
+			[
+				true,
+				0.12549,
 				0.698039,
 				0.666667
 			],
-			[ true, 0.0,
+			[
+				true,
+				0.0,
 				1.0,
 				1.0
 			]
@@ -1501,7 +1713,14 @@
 				0.0
 			]
 		],
-		"CuttingPlaneInterps": [ 1, 0, 0, 0, 1, 0 ]
+		"CuttingPlaneInterps": [
+			1,
+			0,
+			0,
+			0,
+			1,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -1534,27 +1753,39 @@
 			"0x8ddcdf830251b00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				0.631373,
 				0.011765
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -1608,47 +1839,69 @@
 			"0x8de22d614c21b00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.0,
+			[
+				true,
+				0.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.0,
+			[
+				true,
+				0.0,
 				0.0,
 				1.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				1.0,
 				0.003922
 			],
-			[ true, 0.862745,
+			[
+				true,
+				0.862745,
 				0.078431,
 				0.235294
 			]
@@ -1713,7 +1966,15 @@
 				0.0
 			]
 		],
-		"CuttingPlaneInterps": [ 1, 0, 0, 0, 1, 0, 0 ]
+		"CuttingPlaneInterps": [
+			1,
+			0,
+			0,
+			0,
+			1,
+			0,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -1755,39 +2016,57 @@
 			"0x8dd0561b72fad00"
 		],
 		"ColorValues": [
-			[ true, 0.603922,
+			[
+				true,
+				0.603922,
 				0.803922,
 				0.196078
 			],
-			[ true, 0.0,
+			[
+				true,
+				0.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.12549,
+			[
+				true,
+				0.12549,
 				0.698039,
 				0.666667
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.0,
+			[
+				true,
+				0.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -1852,7 +2131,15 @@
 				0.0
 			]
 		],
-		"CuttingPlaneInterps": [ 1, 0, 1, 0, 1, 0, 0 ]
+		"CuttingPlaneInterps": [
+			1,
+			0,
+			1,
+			0,
+			1,
+			0,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -1894,39 +2181,57 @@
 			"0x8de22d614c21b00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -1960,23 +2265,33 @@
 			"0x8dd0250c0163b00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.603922,
+			[
+				true,
+				0.603922,
 				0.803922,
 				0.196078
 			],
-			[ true, 0.0,
+			[
+				true,
+				0.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -2009,7 +2324,11 @@
 				0.0
 			]
 		],
-		"CuttingPlaneInterps": [ 0, 1, 0 ]
+		"CuttingPlaneInterps": [
+			0,
+			1,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -2033,15 +2352,21 @@
 			"0x8dd0561b72fad00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -2078,27 +2403,39 @@
 			"0x8ddcdf830251b00"
 		],
 		"ColorValues": [
-			[ true, 0.603922,
+			[
+				true,
+				0.603922,
 				0.803922,
 				0.196078
 			],
-			[ true, 0.0,
+			[
+				true,
+				0.0,
 				0.0,
 				1.0
 			],
-			[ true, 0.603922,
+			[
+				true,
+				0.603922,
 				0.803922,
 				0.196078
 			],
-			[ true, 0.603922,
+			[
+				true,
+				0.603922,
 				0.803922,
 				0.196078
 			],
-			[ true, 0.0,
+			[
+				true,
+				0.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -2179,7 +2516,13 @@
 				]
 			}
 		],
-		"TransformInterps": [ 0, 0, 0, 1, 0 ],
+		"TransformInterps": [
+			0,
+			0,
+			0,
+			1,
+			0
+		],
 		"CuttingPlaneTicks": [
 			"0x8dd0250c0194800",
 			"0x8dd990f0857a800",
@@ -2208,7 +2551,11 @@
 				0.0
 			]
 		],
-		"CuttingPlaneInterps": [ 0, 1, 0 ]
+		"CuttingPlaneInterps": [
+			0,
+			1,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -2230,15 +2577,21 @@
 			"0x8dd5687015b1b00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.823529,
+			[
+				true,
+				0.823529,
 				0.411765,
 				0.117647
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -2307,7 +2660,13 @@
 				"anchor": "Center"
 			}
 		],
-		"TransformInterps": [ 1, 1, 1, 1, 0 ]
+		"TransformInterps": [
+			1,
+			1,
+			1,
+			1,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -2329,15 +2688,21 @@
 			"0x8dd614445005b00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.823529,
+			[
+				true,
+				0.823529,
 				0.411765,
 				0.117647
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -2363,15 +2728,21 @@
 			"0x8dd614445005b00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.823529,
+			[
+				true,
+				0.823529,
 				0.411765,
 				0.117647
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -2434,39 +2805,57 @@
 			"0x8de22d614c21b00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.0,
+			[
+				true,
+				0.0,
 				0.807843,
 				0.819608
 			],
-			[ true, 0.180392,
+			[
+				true,
+				0.180392,
 				0.545098,
 				0.341176
 			],
-			[ true, 0.180392,
+			[
+				true,
+				0.180392,
 				0.545098,
 				0.341176
 			],
-			[ true, 0.12549,
+			[
+				true,
+				0.12549,
 				0.698039,
 				0.666667
 			],
-			[ true, 0.180392,
+			[
+				true,
+				0.180392,
 				0.545098,
 				0.341176
 			],
-			[ true, 0.603922,
+			[
+				true,
+				0.603922,
 				0.803922,
 				0.196078
 			],
-			[ true, 0.0,
+			[
+				true,
+				0.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -2506,7 +2895,12 @@
 				]
 			}
 		],
-		"TransformInterps": [ 0, 0, 1, 0 ],
+		"TransformInterps": [
+			0,
+			0,
+			1,
+			0
+		],
 		"CuttingPlaneTicks": [
 			"0x8dd0250c0194800",
 			"0x8dd395258ff3400",
@@ -2567,7 +2961,15 @@
 				0.0
 			]
 		],
-		"CuttingPlaneInterps": [ 1, 0, 0, 1, 0, 1, 0 ]
+		"CuttingPlaneInterps": [
+			1,
+			0,
+			0,
+			1,
+			0,
+			1,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -2618,51 +3020,75 @@
 			"0x8ddcdf830251b00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.0,
+			[
+				true,
+				0.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				0.631373,
 				0.011765
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.0,
+			[
+				true,
+				0.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -2719,7 +3145,14 @@
 				0.0
 			]
 		],
-		"CuttingPlaneInterps": [ 1, 0, 0, 0, 1, 0 ]
+		"CuttingPlaneInterps": [
+			1,
+			0,
+			0,
+			0,
+			1,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -2750,27 +3183,39 @@
 			"0x8ddebd47bd79b00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.823529,
+			[
+				true,
+				0.823529,
 				0.411765,
 				0.117647
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -2867,7 +3312,16 @@
 				"anchor": "Center"
 			}
 		],
-		"TransformInterps": [ 1, 1, 1, 1, 0, 0, 0, 0 ]
+		"TransformInterps": [
+			1,
+			1,
+			1,
+			1,
+			0,
+			0,
+			0,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -2918,51 +3372,75 @@
 			"0x8de22d614c21b00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.0,
+			[
+				true,
+				0.0,
 				0.0,
 				1.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.0,
+			[
+				true,
+				0.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				0.631373,
 				0.011765
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -3034,7 +3512,13 @@
 				0.0
 			]
 		],
-		"CuttingPlaneInterps": [ 0, 1, 0, 0, 0 ]
+		"CuttingPlaneInterps": [
+			0,
+			1,
+			0,
+			0,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -3067,27 +3551,39 @@
 			"0x8ddcdf830251b00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.0,
+			[
+				true,
+				0.0,
 				0.0,
 				1.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -3178,39 +3674,57 @@
 			"0x8ddcdf830251b00"
 		],
 		"ColorValues": [
-			[ true, 0.603922,
+			[
+				true,
+				0.603922,
 				0.803922,
 				0.196078
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				1.0,
 				0.0
 			],
-			[ true, 0.603922,
+			[
+				true,
+				0.603922,
 				0.803922,
 				0.196078
 			],
-			[ true, 0.603922,
+			[
+				true,
+				0.603922,
 				0.803922,
 				0.196078
 			],
-			[ true, 0.0,
+			[
+				true,
+				0.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				0.631373,
 				0.011765
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -3251,7 +3765,12 @@
 				0.0
 			]
 		],
-		"CuttingPlaneInterps": [ 0, 1, 0, 0 ]
+		"CuttingPlaneInterps": [
+			0,
+			1,
+			0,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -3302,51 +3821,75 @@
 			"0x8ddcdf830251b00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.0,
+			[
+				true,
+				0.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				1.0,
 				0.003922
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.0,
+			[
+				true,
+				0.0,
 				0.0,
 				1.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -3561,7 +4104,24 @@
 				"anchor": "Static"
 			}
 		],
-		"TransformInterps": [ 0, 0, 1, 1, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0 ],
+		"TransformInterps": [
+			0,
+			0,
+			1,
+			1,
+			1,
+			1,
+			0,
+			0,
+			0,
+			1,
+			1,
+			0,
+			0,
+			0,
+			0,
+			0
+		],
 		"CuttingPlaneTicks": [
 			"0x8dc6f3d3dc86800",
 			"0x8dcb0b90c305400",
@@ -3622,7 +4182,15 @@
 				0.0
 			]
 		],
-		"CuttingPlaneInterps": [ 1, 0, 1, 0, 0, 0, 0 ]
+		"CuttingPlaneInterps": [
+			1,
+			0,
+			1,
+			0,
+			0,
+			0,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -3664,39 +4232,57 @@
 			"0x8de22d614c21b00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.0,
+			[
+				true,
+				0.0,
 				0.0,
 				1.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				0.631373,
 				0.011765
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -3740,15 +4326,21 @@
 			"0x8dd24072d4bed00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -3786,7 +4378,11 @@
 				"anchor": "MinX"
 			}
 		],
-		"TransformInterps": [ 1, 1, 0 ]
+		"TransformInterps": [
+			1,
+			1,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -3810,15 +4406,21 @@
 			"0x8dd24072d4bed00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.0,
+			[
+				true,
+				0.0,
 				0.807843,
 				0.819608
 			],
-			[ true, 0.180392,
+			[
+				true,
+				0.180392,
 				0.545098,
 				0.341176
 			]
@@ -3843,7 +4445,10 @@
 				0.0
 			]
 		],
-		"CuttingPlaneInterps": [ 1, 0 ]
+		"CuttingPlaneInterps": [
+			1,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -3876,27 +4481,39 @@
 			"0x8de22d614c21b00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				0.631373,
 				0.011765
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.0,
+			[
+				true,
+				0.0,
 				0.0,
 				1.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -3925,15 +4542,21 @@
 			"0x8dcb0b90c31db00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				0.631373,
 				0.011765
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -3961,15 +4584,21 @@
 			"0x8dd24072d4bed00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				1.0,
 				0.003922
 			],
-			[ true, 0.862745,
+			[
+				true,
+				0.862745,
 				0.078431,
 				0.235294
 			]
@@ -4007,7 +4636,11 @@
 				"anchor": "MinZ"
 			}
 		],
-		"TransformInterps": [ 1, 1, 0 ],
+		"TransformInterps": [
+			1,
+			1,
+			0
+		],
 		"CuttingPlaneTicks": [
 			"0x8dc78ab3abd6800",
 			"0x8dd24072d4a6600",
@@ -4036,7 +4669,11 @@
 				0.0
 			]
 		],
-		"CuttingPlaneInterps": [ 1, 0, 0 ]
+		"CuttingPlaneInterps": [
+			1,
+			0,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -4060,15 +4697,21 @@
 			"0x8dd24072d4bed00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.0,
+			[
+				true,
+				0.0,
 				0.0,
 				1.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -4096,15 +4739,21 @@
 			"0x8dd24072d4bed00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.0,
+			[
+				true,
+				0.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -4129,7 +4778,10 @@
 				0.0
 			]
 		],
-		"CuttingPlaneInterps": [ 1, 0 ]
+		"CuttingPlaneInterps": [
+			1,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -4154,15 +4806,21 @@
 			"0x8dd39525900bb00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -4190,15 +4848,21 @@
 			"0x8dcb0b90c31db00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.0,
+			[
+				true,
+				0.0,
 				0.807843,
 				0.819608
 			],
-			[ true, 0.180392,
+			[
+				true,
+				0.180392,
 				0.545098,
 				0.341176
 			]
@@ -4223,7 +4887,10 @@
 				0.0
 			]
 		],
-		"CuttingPlaneInterps": [ 1, 0 ]
+		"CuttingPlaneInterps": [
+			1,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -4247,15 +4914,21 @@
 			"0x8dd0250c0163b00"
 		],
 		"ColorValues": [
-			[ true, 0.603922,
+			[
+				true,
+				0.603922,
 				0.803922,
 				0.196078
 			],
-			[ true, 0.0,
+			[
+				true,
+				0.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -4280,7 +4953,10 @@
 				0.0
 			]
 		],
-		"CuttingPlaneInterps": [ 1, 0 ]
+		"CuttingPlaneInterps": [
+			1,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -4304,15 +4980,21 @@
 			"0x8dd5687015b1b00"
 		],
 		"ColorValues": [
-			[ true, 0.603922,
+			[
+				true,
+				0.603922,
 				0.803922,
 				0.196078
 			],
-			[ true, 0.0,
+			[
+				true,
+				0.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -4354,7 +5036,10 @@
 				0.0
 			]
 		],
-		"CuttingPlaneInterps": [ 1, 0 ]
+		"CuttingPlaneInterps": [
+			1,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -4378,15 +5063,21 @@
 			"0x8dd5687015b1b00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -4429,15 +5120,21 @@
 			"0x8dd5687015b1b00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.823529,
+			[
+				true,
+				0.823529,
 				0.411765,
 				0.117647
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -4505,7 +5202,12 @@
 				]
 			}
 		],
-		"TransformInterps": [ 1, 1, 1, 0 ]
+		"TransformInterps": [
+			1,
+			1,
+			1,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -4538,27 +5240,39 @@
 			"0x8dd39525900bb00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				0.631373,
 				0.011765
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -4611,7 +5325,11 @@
 				"anchor": "Center"
 			}
 		],
-		"TransformInterps": [ 1, 1, 0 ]
+		"TransformInterps": [
+			1,
+			1,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -4633,15 +5351,21 @@
 			"0x8dd5687015b1b00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.823529,
+			[
+				true,
+				0.823529,
 				0.411765,
 				0.117647
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -4698,7 +5422,11 @@
 				]
 			}
 		],
-		"TransformInterps": [ 1, 1, 0 ]
+		"TransformInterps": [
+			1,
+			1,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -4722,15 +5450,21 @@
 			"0x8dd5687015b1b00"
 		],
 		"ColorValues": [
-			[ true, 0.603922,
+			[
+				true,
+				0.603922,
 				0.803922,
 				0.196078
 			],
-			[ true, 0.0,
+			[
+				true,
+				0.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -4772,7 +5506,10 @@
 				0.0
 			]
 		],
-		"CuttingPlaneInterps": [ 1, 0 ]
+		"CuttingPlaneInterps": [
+			1,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -4796,15 +5533,21 @@
 			"0x8dd24072d4bed00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				1.0,
 				0.003922
 			],
-			[ true, 0.862745,
+			[
+				true,
+				0.862745,
 				0.078431,
 				0.235294
 			]
@@ -4837,7 +5580,11 @@
 				0.0
 			]
 		],
-		"CuttingPlaneInterps": [ 1, 0, 0 ]
+		"CuttingPlaneInterps": [
+			1,
+			0,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -4861,15 +5608,21 @@
 			"0x8dd24072d4bed00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.415686,
+			[
+				true,
+				0.415686,
 				0.352941,
 				0.803922
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -4911,7 +5664,10 @@
 				0.0
 			]
 		],
-		"CuttingPlaneInterps": [ 1, 0 ]
+		"CuttingPlaneInterps": [
+			1,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -4935,15 +5691,21 @@
 			"0x8dd5687015b1b00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.0,
+			[
+				true,
+				0.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -4980,7 +5742,10 @@
 				0.0
 			]
 		],
-		"CuttingPlaneInterps": [ 1, 0 ]
+		"CuttingPlaneInterps": [
+			1,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -5004,15 +5769,21 @@
 			"0x8de22d614c21b00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.0,
+			[
+				true,
+				0.0,
 				0.0,
 				1.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -5040,15 +5811,21 @@
 			"0x8dd24072d4bed00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -5086,7 +5863,11 @@
 				"anchor": "MaxY"
 			}
 		],
-		"TransformInterps": [ 1, 1, 0 ]
+		"TransformInterps": [
+			1,
+			1,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -5131,51 +5912,75 @@
 			"0x8de22d614c21b00"
 		],
 		"ColorValues": [
-			[ true, 0.541176,
+			[
+				true,
+				0.541176,
 				0.168627,
 				0.886275
 			],
-			[ true, 0.12549,
+			[
+				true,
+				0.12549,
 				0.698039,
 				0.666667
 			],
-			[ true, 0.0,
+			[
+				true,
+				0.0,
 				1.0,
 				1.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.823529,
+			[
+				true,
+				0.823529,
 				0.411765,
 				0.117647
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.823529,
+			[
+				true,
+				0.823529,
 				0.411765,
 				0.117647
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.823529,
+			[
+				true,
+				0.823529,
 				0.411765,
 				0.117647
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -5232,7 +6037,14 @@
 				0.0
 			]
 		],
-		"CuttingPlaneInterps": [ 0, 1, 0, 0, 0, 0 ]
+		"CuttingPlaneInterps": [
+			0,
+			1,
+			0,
+			0,
+			0,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -5256,15 +6068,21 @@
 			"0x8ddcdf830251b00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.0,
+			[
+				true,
+				0.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -5289,7 +6107,10 @@
 				0.0
 			]
 		],
-		"CuttingPlaneInterps": [ 1, 0 ]
+		"CuttingPlaneInterps": [
+			1,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -5322,27 +6143,39 @@
 			"0x8ddcdf830251b00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.0,
+			[
+				true,
+				0.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -5375,7 +6208,11 @@
 				0.0
 			]
 		],
-		"CuttingPlaneInterps": [ 0, 1, 0 ]
+		"CuttingPlaneInterps": [
+			0,
+			1,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -5410,27 +6247,39 @@
 			"0x8dda45268405b00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.0,
+			[
+				true,
+				0.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]
@@ -5515,7 +6364,11 @@
 				0.0
 			]
 		],
-		"CuttingPlaneInterps": [ 1, 0, 0 ]
+		"CuttingPlaneInterps": [
+			1,
+			0,
+			0
+		]
 	},
 	{
 		"elementIds": [
@@ -5539,15 +6392,21 @@
 			"0x8dd614445005b00"
 		],
 		"ColorValues": [
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				true,
+				1.0,
 				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				false,
+				0.0,
 				0.0,
 				0.0
 			]

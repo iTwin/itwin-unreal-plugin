@@ -5,13 +5,13 @@
 	{
 		"name": "windows-x64-base"
 		,"hidden": true
-		,"description": "Common Windows x64 configuration with Visual Studio 2022"
-		,"generator": "Visual Studio 17 2022"
+		,"description": "Common Windows x64 configuration with Visual Studio 2026"
+		,"generator": "Visual Studio 18 2026"
 		,"architecture": "x64"
 		,"cacheVariables": {
 			"CMAKE_TOOLCHAIN_FILE": "${dollar}<VCPKG_ROOT>/scripts/buildsystems/vcpkg.cmake"
 		}
-		,"toolset": { "value": "host=x64,version=14.44.35207" }
+		,"toolset": { "value": "host=x64,version=14.51.36231" }
 	}
 	,{
 	"name": "win64static"

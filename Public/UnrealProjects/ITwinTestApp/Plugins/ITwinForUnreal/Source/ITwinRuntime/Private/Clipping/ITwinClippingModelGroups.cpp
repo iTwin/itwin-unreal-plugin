@@ -14,6 +14,7 @@
 #	include <Core/Tools/Log.h>
 #include <Compil/AfterNonUnrealIncludes.h>
 
+#include <algorithm>
 
 int32 FITwinClippingEffectManagerInfluenceSource::NumEffects(EITwinClippingPrimitiveType Type) const
 {
