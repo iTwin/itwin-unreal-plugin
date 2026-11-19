@@ -36,6 +36,10 @@ public:
 	AITwinDecorationHelper* GetPersistenceMgr();
 
 	bool bHasLoadedIModel = false;
+	bool bHasGeoLocatedIModel = false;
+	// Sometimes, the actual initialization has to be postponed until the scene is loaded, so we
+	// need to remember that we need to do it later.
+	bool bNeedInitFromScene = false;
 
 private:
 	void FindPersistenceMgr();
@@ -199,7 +203,15 @@ void AITwinGoogle3DTilesController::OnSceneLoaded(bool bSuccess)
 	if (!bSuccess)
 		return;
 
-	UpdateFromSceneSettings();
+	if (Impl->bNeedInitFromScene)
+	{
+		InitFromScene();
+		Impl->bNeedInitFromScene = false;
+	}
+	else
+	{
+		UpdateFromSceneSettings();
+	}
 }
 
 void AITwinGoogle3DTilesController::UpdateFromSceneSettings()
@@ -227,15 +239,14 @@ std::optional<float> AITwinGoogle3DTilesController::GetQualityFromTileset() cons
 	return std::nullopt;
 }
 
-void AITwinGoogle3DTilesController::UpdateGeolocUIFromTileset(AITwinIModel const* IModel)
+void AITwinGoogle3DTilesController::UpdateGeolocUIFromTileset(bool bHasGeoLocatedIModel)
 {
 	for (TActorIterator<AITwinGoogle3DTileset> Google3DIter(GetWorld()); Google3DIter; ++Google3DIter)
 	{
 		auto GeoRef = (*Google3DIter)->GetGeoreference();
 		if (ensure(GeoRef))
 		{
-			bool bHasGeoLocatedIModel = (IModel && IModel->GetEcefLocation() != nullptr);
-			bool bEnableGeoRefEdition = !bHasGeoLocatedIModel;
+			const bool bEnableGeoRefEdition = !bHasGeoLocatedIModel;
 			SetGeolocationInUI(
 				GeoRef->GetOriginLatitude(),
 				GeoRef->GetOriginLongitude(),
@@ -256,6 +267,10 @@ void AITwinGoogle3DTilesController::OnModelLoaded(AITwinIModel const* IModel)
 	if (IModel && ensure(!IModel->IModelId.IsEmpty()))
 	{
 		Impl->bHasLoadedIModel = true;
+	}
+	if (IModel && IModel->GetEcefLocation() != nullptr)
+	{
+		Impl->bHasGeoLocatedIModel = true;
 	}
 
 	// Quick fix for old MVP presentations: discard any Google tileset to avoid troubles.
@@ -278,15 +293,17 @@ void AITwinGoogle3DTilesController::OnModelLoaded(AITwinIModel const* IModel)
 	AITwinDecorationHelper* PersistenceMgr = Impl->GetPersistenceMgr();
 	if (PersistenceMgr)
 	{
-		// Update geolocation from loaded decoration
-		for (TActorIterator<AITwinGoogle3DTileset> Google3DIter(GetWorld()); Google3DIter; ++Google3DIter)
+		// Update geolocation from loaded scene, if any.
+		// If the scene is not yet loaded (asynchronously), the geolocation will be updated when
+		// it is loaded.
+		if (PersistenceMgr->AllowInitGCS())
 		{
-			(*Google3DIter)->OnSceneLoaded(true);
+			InitFromScene();
 		}
-
-		UpdateFromSceneSettings();
-		UpdateGeolocUIFromTileset(IModel);
-		OnGoogleTilesLoaded();
+		else
+		{
+			Impl->bNeedInitFromScene = true;
+		}
 	}
 	else
 	{
@@ -295,8 +312,21 @@ void AITwinGoogle3DTilesController::OnModelLoaded(AITwinIModel const* IModel)
 		auto Quality = GetQualityFromTileset();
 		if (Quality)
 			Update3DMapUI(true, Quality.value());
-		UpdateGeolocUIFromTileset(IModel);
+		UpdateGeolocUIFromTileset(Impl->bHasGeoLocatedIModel);
 	}
+}
+
+void AITwinGoogle3DTilesController::InitFromScene()
+{
+	// Update geo-location from loaded scene.
+	for (TActorIterator<AITwinGoogle3DTileset> Google3DIter(GetWorld()); Google3DIter; ++Google3DIter)
+	{
+		(*Google3DIter)->OnSceneLoaded(true);
+	}
+
+	UpdateFromSceneSettings();
+	UpdateGeolocUIFromTileset(Impl->bHasGeoLocatedIModel);
+	OnGoogleTilesLoaded();
 }
 
 bool AITwinGoogle3DTilesController::HasValidGoogleTileset() const

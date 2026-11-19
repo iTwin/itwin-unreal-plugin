@@ -93,7 +93,9 @@ inline bool operator==(const FPathTransformAssignment& A, const FPathTransformAs
 		return false;
 	if (A.Animation3DPathId != B.Animation3DPathId)
 		return false;
-	if (A.b3DPathReverseDirection != B.b3DPathReverseDirection)
+	if (A.b3DPathReverseDirection != B.b3DPathReverseDirection
+		|| A.bPauseDuringNonWorkingTime != B.bPauseDuringNonWorkingTime
+		|| A.bAdjustForTaskPercentComplete != B.bAdjustForTaskPercentComplete)
 		return false;
 	if (A.TransformAnchor.index() != B.TransformAnchor.index())
 		return false;
@@ -124,6 +126,53 @@ inline bool operator==(FScheduleTask const& A, FScheduleTask const& B)
 	return static_cast<const FAnimProperty&>(A) == static_cast<const FAnimProperty&>(B)
 		&& A.Name == B.Name
 		&& A.TimeRange == B.TimeRange;
+}
+
+inline bool operator==(FCalendarTimeBlock const& A, FCalendarTimeBlock const& B)
+{
+	return A.TimeBlock == B.TimeBlock;
+}
+
+inline bool operator==(FCalendarException const& A, FCalendarException const& B)
+{
+	return A.Date == B.Date && A.DayTypeId == B.DayTypeId;
+}
+
+// Assumes that there is no redundancy (or that multiple identical entries are irrelevant for the comparison)
+template<typename T>
+bool CompareUnordered(std::vector<T> const& VecA, std::vector<T> const& VecB)
+{
+	if (VecA.size() != VecB.size())
+		return false;
+	for (T const& A : VecA)
+	{
+		auto itB = std::find_if(VecB.begin(), VecB.end(), [&A](T const& B) { return A == B; });
+		if (itB == VecB.end())
+			return false;
+	}
+	return true;
+}
+
+inline bool operator==(FCalendarDayType const& A, FCalendarDayType const& B)
+{
+	return A.Id == B.Id
+		&& A.Description == B.Description
+		&& A.Color.Equals(B.Color, KINDA_SMALL_NUMBER)
+		&& A.Type == B.Type
+		&& CompareUnordered(A.TimeBlocks, B.TimeBlocks);
+}
+
+inline bool operator==(FCalendar const& A, FCalendar const& B)
+{
+	return static_cast<const FAnimProperty&>(A) == static_cast<const FAnimProperty&>(B)
+		&& A.Name == B.Name
+		&& A.ParentId == B.ParentId
+		&& CompareUnordered(A.DayTypes, B.DayTypes)
+		&& CompareUnordered(A.Exceptions, B.Exceptions)
+		// compared ordered, not by Ids, since the order is meaningful (Monday first)
+		&& A.WeekDayTypeIds == B.WeekDayTypeIds
+		&& A.WorkingDaysPerWeek == B.WorkingDaysPerWeek
+		&& A.WorkingSecondsPerDay == B.WorkingSecondsPerDay;
 }
 
 template <>

@@ -105,6 +105,17 @@ void FITwinGeolocation::CheckInit(UWorld& World)
 	return Instance;
 }
 
+#if WITH_TESTS
+/*static*/ void FITwinGeolocation::UnlockLocation(UWorld& /*World*/)
+{
+	if (Instance)
+	{
+		Instance->bCanBypassCurrentLocation = true;
+	}
+}
+#endif
+
+
 /*static*/ bool FITwinGeolocation::IsDefaultGeoRefRequestInProgress()
 {
 	if (GetDefaultGeoRefFct)

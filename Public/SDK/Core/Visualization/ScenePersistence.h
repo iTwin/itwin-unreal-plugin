@@ -7,7 +7,9 @@
 +--------------------------------------------------------------------------------------*/
 
 #pragma once
+
 #include <string>
+#include <string_view>
 #include "Core/Network/Network.h"
 #include "Core/Tools/Tools.h"
 #include "Core/ITwinAPI/ITwinScene.h"
@@ -31,6 +33,8 @@ MODULE_EXPORT namespace AdvViz::SDK
 		virtual bool GetVisibility() const = 0;
 		virtual double GetQuality() const = 0;
 		virtual dmat4x3 GetTransform() const = 0;
+		virtual double GetFov() const = 0; // in radians
+		virtual double GetAspectRatio() const = 0;
 
 		virtual void SetType(const std::string&) = 0;
 		virtual void SetRef(const std::string&) = 0;
@@ -38,6 +42,8 @@ MODULE_EXPORT namespace AdvViz::SDK
 		virtual void SetVisibility(bool) = 0;
 		virtual void SetQuality(double) = 0;
 		virtual void SetTransform(const dmat4x3&) = 0;
+		virtual void SetFov(double) = 0;
+		virtual void SetAspectRatio(double) = 0;
 
 		virtual void SetGCS(const std::string&, const std::array<float, 3>&) = 0;
 		virtual std::pair<std::string, std::array<float, 3>> GetGCS() const = 0;
@@ -46,12 +52,16 @@ MODULE_EXPORT namespace AdvViz::SDK
 		virtual bool HasVisibility() const = 0;
 		virtual bool HasQuality() const = 0;
 		virtual bool HasTransform() const = 0;
+		virtual bool HasFov() const = 0;
+		virtual bool HasAspectRatio() const = 0;
+
 		virtual void Delete(bool value = true) = 0;
 		virtual bool ShouldDelete() const = 0;
 
 		std::uint64_t GetDynTypeId() const override { return GetTypeId(); }
 		bool IsTypeOf(std::uint64_t i) const override { return (i == GetTypeId()); }
 	};
+	using ILinkPtr = std::shared_ptr<ILink>;
 
 	ADVVIZ_LINK std::ostream& operator<< (std::ostream& os, ILink const& link);
 
@@ -76,8 +86,10 @@ MODULE_EXPORT namespace AdvViz::SDK
 		/// Get scene identifiers
 		virtual const std::string& GetId() const = 0;
 		virtual const std::string& GetITwinId() const = 0;
-		virtual const std::string& GetName()  const = 0;
+		virtual const std::string& GetName() const = 0;
 		virtual std::string GetLastModified() const { return {}; }
+		virtual std::string GetCreationTime() const { return {}; }
+		virtual bool HasTag(const std::string_view& /*tagDisplayName*/) const { return false; }
 
 		//setter/getter for scene members
 		virtual void SetAtmosphere(const ITwinAtmosphereSettings&) = 0;
@@ -104,10 +116,11 @@ MODULE_EXPORT namespace AdvViz::SDK
 		virtual void AsyncSave(std::function<void(bool)>&& onDataSavedFunc = {}) = 0;
 		virtual bool ShouldSave() const = 0;
 		virtual void SetShouldSave(bool shouldSave) const = 0;
-		//links management
-		virtual std::vector<std::shared_ptr<ILink>> GetLinks() const = 0;
-		virtual void AddLink(std::shared_ptr<ILink>) = 0;
-		virtual std::shared_ptr<ILink> MakeLink() = 0;
+		// links management
+		virtual std::vector<ILinkPtr> GetLinks() const = 0;
+		virtual void AddLink(ILinkPtr) = 0;
+		virtual ILinkPtr MakeLink() = 0;
+		virtual void ResolvePendingCameraBases() = 0;
 
 		using Tools::TypeId<IScenePersistence>::GetTypeId;
 		std::uint64_t GetDynTypeId() const override { return GetTypeId(); }
@@ -142,5 +155,7 @@ MODULE_EXPORT namespace AdvViz::SDK
 	using ScenePtrVector = std::vector<std::shared_ptr<IScenePersistence>>;
 
 #define ITWIN_DEFAULT_SCENE_NAME "default scene"
-
+	static constexpr auto MAIN_CAMERA_REF = "Main Camera";
+	static constexpr auto HOME_CAMERA_REF = "Home Camera";
+	static constexpr auto ENGAGE_TAG_DISPLAY_NAME = "ENGAGE";
 }

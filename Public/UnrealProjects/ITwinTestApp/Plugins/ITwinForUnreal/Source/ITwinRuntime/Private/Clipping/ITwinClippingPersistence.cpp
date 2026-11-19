@@ -106,23 +106,6 @@ namespace
 		}
 	}
 
-	/// By pre-loading the cutout populations, we avoid some latency when the user creates a first
-	/// cutout cube or plane.
-	bool PreLoadCutoutPrimitive(
-		UITwinClippingEffectManager& EffectManager,
-		AITwinPopulationTool& PopulationTool,
-		EITwinClippingPrimitiveType PrimitiveType)
-	{
-		AITwinPopulation* Population = PopulationTool.PreLoadPopulation(
-			ITwin::GetCutoutAssetPath(PrimitiveType));
-		if (Population)
-		{
-			EffectManager.RegisterCutoutPopulation(PrimitiveType, Population);
-			return true;
-		}
-		return false;
-	}
-
 	// Convenient function to get the AdvViz instance associated to a given clipping primitive, and assert
 	// on the validity of the population and index.
 	inline AdvViz::SDK::IInstancePtr GetAVizInstance(TWeakObjectPtr<AITwinPopulation> const& Population,
@@ -279,23 +262,35 @@ namespace
 
 }
 
+bool UITwinClippingPersistence::PreLoadCutoutPrimitive(EITwinClippingPrimitiveType PrimitiveType)
+{
+	auto const& PopulationTool = EffectManager->GetPopulationTool();
+	if (PopulationTool.IsValid())
+	{
+		AITwinPopulation* Population = PopulationTool->PreLoadPopulation(ITwin::GetCutoutAssetPath(PrimitiveType));
+		if (Population)
+		{
+			EffectManager->RegisterCutoutPopulation(PrimitiveType, Population);
+			return true;
+		}
+	}
+	return false;
+}
+
 uint32 UITwinClippingPersistence::PreLoadClippingPrimitives()
 {
 	if (!EffectManager.IsValid())
 	{
 		return 0;
 	}
-	auto const& PopulationTool = EffectManager->GetPopulationTool();
-	if (!PopulationTool.IsValid())
-	{
-		return 0;
-	}
+	/// By pre-loading the cutout populations, we avoid some latency when the user creates a first
+	/// cutout cube or plane.
 	uint32 NumPreloaded = 0;
-	if (PreLoadCutoutPrimitive(*EffectManager, *PopulationTool, EITwinClippingPrimitiveType::Box))
+	if (PreLoadCutoutPrimitive(EITwinClippingPrimitiveType::Box))
 	{
 		NumPreloaded++;
 	}
-	if (PreLoadCutoutPrimitive(*EffectManager, *PopulationTool, EITwinClippingPrimitiveType::Plane))
+	if (PreLoadCutoutPrimitive(EITwinClippingPrimitiveType::Plane))
 	{
 		NumPreloaded++;
 	}

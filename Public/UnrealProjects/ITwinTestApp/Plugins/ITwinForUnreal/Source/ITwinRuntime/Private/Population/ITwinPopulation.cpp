@@ -43,10 +43,10 @@
 #	include <SDK/Core/Tools/Log.h>
 #	include <SDK/Core/Visualization/InstancesGroup.h>
 #	include <SDK/Core/Visualization/InstancesManager.h>
+#	include <string_view>
+#	include <numeric>
+#	include <array>
 #include <Compil/AfterNonUnrealIncludes.h>
-
-#include <numeric>
-#include <array>
 
 
 namespace ITwin::Clipping
@@ -60,6 +60,28 @@ namespace ITwin::Clipping
 
 namespace
 {
+	bool RemovePopulationMeshInstances(UInstancedStaticMeshComponent& MeshComponent,
+		const TArray<int32>& IndicesInReverseOrder)
+	{
+		if (auto* Foliage = Cast<UITwinInstancedStaticMeshComponent>(&MeshComponent))
+		{
+			// UE 5.6's legacy HISM proxy remaps sparse render indices twice when computing
+			// visibility after removal. Unrelated instances can disappear until the async
+			// tree build completes. Publish a compact tree before the next render update.
+			// Suppress the automatic async build so we only build once per removal batch.
+			const bool bAutoRebuild = Foliage->bAutoRebuildTreeOnInstanceChanges;
+			Foliage->bAutoRebuildTreeOnInstanceChanges = false;
+			const bool bRemoved = Foliage->RemoveInstances(IndicesInReverseOrder, true);
+			Foliage->bAutoRebuildTreeOnInstanceChanges = bAutoRebuild;
+			if (bRemoved)
+			{
+				Foliage->BuildTreeIfOutdated(/*Async*/false, /*ForceUpdate*/false);
+			}
+			return bRemoved;
+		}
+		return MeshComponent.RemoveInstances(IndicesInReverseOrder, true);
+	}
+
 	FString BuildPopulationLoadingErrorMessage(const FString& BaseMessage,
 		const FString& AssetPath,
 		int32 MeshIndex = -1)
@@ -1023,7 +1045,7 @@ void AITwinPopulation::RemoveInstance(int32 instIndex)
 		{
 			if (instIndex < FoliageComp.GetInstanceCount())
 			{
-				FoliageComp.InstancedMeshComponent->RemoveInstance(instIndex);
+				RemovePopulationMeshInstances(*FoliageComp.InstancedMeshComponent, { instIndex });
 
 				const bool bMeshSupportsRemoveSwap = FoliageComp.InstancedMeshComponent->SupportsRemoveSwap();
 				BE_ASSERT(!UseRemoveAtSwapOpt || UseRemoveAtSwapOpt.value() == bMeshSupportsRemoveSwap);
@@ -1062,7 +1084,6 @@ void AITwinPopulation::RemoveInstances(TArray<int32>& InstanceIndices)
 
 	// Sort in decreasing order.
 	InstanceIndices.Sort([](const int32& a, const int32& b) { return a > b; } );
-	constexpr bool bArraySortedInReverseOrder = true;
 
 	AITwinClippingTool* ClippingActor = IsClippingPrimitive()
 		? TWorldSingleton<AITwinClippingTool>().Get(GetWorld()) : nullptr;
@@ -1081,7 +1102,7 @@ void AITwinPopulation::RemoveInstances(TArray<int32>& InstanceIndices)
 	std::optional<bool> UseRemoveAtSwapOpt;
 	for (auto& FoliageComp : FoliageComponents)
 	{
-		FoliageComp.InstancedMeshComponent->RemoveInstances(InstanceIndices, bArraySortedInReverseOrder);
+		RemovePopulationMeshInstances(*FoliageComp.InstancedMeshComponent, InstanceIndices);
 
 		const bool bMeshSupportsRemoveSwap = FoliageComp.InstancedMeshComponent->SupportsRemoveSwap();
 		BE_ASSERT(!UseRemoveAtSwapOpt || UseRemoveAtSwapOpt.value() == bMeshSupportsRemoveSwap);
@@ -1230,14 +1251,24 @@ void AITwinPopulation::SetObjectRef(const std::string& objRef)
 {
 	decoObjectRef = objRef;
 
-	if (objRef.find("Character") != std::string::npos)
+	// Component Center names are user supplied and may contain category keywords.
+	// Infer the type only from the asset path, retaining the full reference for loading.
+	std::string_view assetRef(objRef);
+	if (assetRef.starts_with("/CC/"))
+	{
+		const auto gamePos = assetRef.find("/Game/");
+		if (gamePos != std::string_view::npos)
+			assetRef.remove_prefix(gamePos);
+	}
+
+	if (assetRef.find("Character") != std::string_view::npos)
 	{
 		objectType = EITwinInstantiatedObjectType::Character;
 	}
-	else if (objRef.find("Vehicle") != std::string::npos ||
-			 objRef.find("Construction") != std::string::npos)
+	else if (assetRef.find("Vehicle") != std::string_view::npos ||
+			 assetRef.find("Construction") != std::string_view::npos)
 	{
-		if (objRef.find("Crane") != std::string::npos)
+		if (assetRef.find("Crane") != std::string_view::npos)
 		{
 			objectType = EITwinInstantiatedObjectType::Crane;
 		}
@@ -1250,18 +1281,18 @@ void AITwinPopulation::SetObjectRef(const std::string& objRef)
 			SetColorVariationIntensity(1.f);
 		}
 	}
-	else if (objRef.find("Vegetation") != std::string::npos)
+	else if (assetRef.find("Vegetation") != std::string_view::npos)
 	{
 		objectType = EITwinInstantiatedObjectType::Vegetation;
 	}
-	else if (objRef.find("ClippingPlane") != std::string::npos)
+	else if (assetRef.find("ClippingPlane") != std::string_view::npos)
 	{
 		objectType = EITwinInstantiatedObjectType::ClippingPlane;
 		// To deal with rendering issues now that the material is two-sided, the plane uses now the same
 		// geometry as the cube, just scaled differently.
 		BaseTransform.MultiplyScale3D(FVector(100.0, 100.0, 0.1));
 	}
-	else if (objRef.find("ClippingBox") != std::string::npos)
+	else if (assetRef.find("ClippingBox") != std::string_view::npos)
 	{
 		objectType = EITwinInstantiatedObjectType::ClippingBox;
 		// The cube imported for this tool has a side of one meter, which is quite small for an

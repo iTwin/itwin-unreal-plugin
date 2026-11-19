@@ -207,12 +207,14 @@ bool FromJsonValue(double Time, EInterpolation Interp, TSharedPtr<FJsonValue> co
 		Entry.bIsTransformed = ITwin::Flag::Absent;
 		Entry.Position = FVector::ZeroVector;
 		Entry.Rotation = FQuat::Identity;
+		Entry.Scale = FVector::OneVector;
 	}
 	else if (Value->TryGetObject(pTransformData))
 	{
 		FJsonObject* TransformData = pTransformData->Get();
 		FVector Position = FVector::ZeroVector;
 		FQuat Rotation = FQuat::Identity;
+		FVector Scale = FVector::OneVector;
 		FDeferredAnchor Anchor;
 		if (TransformData->HasField(TEXT("translation")))
 		{
@@ -238,6 +240,13 @@ bool FromJsonValue(double Time, EInterpolation Interp, TSharedPtr<FJsonValue> co
 				Rotation = FQuat(Axis, AngleRadians);
 			}
 		}
+		if (TransformData->HasField(TEXT("scale")))
+		{
+			TArray<TSharedPtr<FJsonValue>> ScaleArray = TransformData->GetArrayField(TEXT("scale"));
+			if (ScaleArray.Num() != 3)
+				return false;
+			Scale = FVector(ScaleArray[0]->AsNumber(), ScaleArray[1]->AsNumber(), ScaleArray[2]->AsNumber());
+		}
 		if (TransformData->HasField(TEXT("anchor")))
 		{
 			TSharedPtr<FJsonValue> AnchorField = TransformData->TryGetField(TEXT("anchor"));
@@ -262,6 +271,7 @@ bool FromJsonValue(double Time, EInterpolation Interp, TSharedPtr<FJsonValue> co
 		Entry.bIsTransformed = ITwin::Flag::Present;
 		Entry.Position = Position;
 		Entry.Rotation = Rotation;
+		Entry.Scale = Scale;
 		Entry.DefrdAnchor = Anchor;
 	}
 	else

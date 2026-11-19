@@ -12,6 +12,7 @@
 #include <BeUtils/SplineSampling/OcclusionMap.h>
 #include <BeUtils/SplineSampling/SplineHelper.h>
 #include <BeUtils/SplineSampling/SplinePattern.h>
+#include <BeUtils/SplineSampling/SplineUtils.h> // SplineSampler / Get2dNormal
 
 #include <cmath>
 #include <numbers>
@@ -1075,5 +1076,379 @@ TEST_CASE("TestBasic2DMap_ComputeMeanWithFilter")
 		std::vector<double> buffer(9, -1.);
 		buffer[4] = -3.;
 		CHECK(map.ComputeMeanWithFilter(filter, buffer.data(), 1, 1) == Catch::Approx(-3.));
+	}
+}
+
+//---------------------------------------------------------------------------------------
+// BeUtils::SplineHelper tests (construction, curve access, length & velocity).
+//---------------------------------------------------------------------------------------
+
+namespace
+{
+	/// Non-failing projector along Z (the common case for the SplineHelper tests below).
+	static Test2DProjector const& SafeProjector()
+	{
+		static const Test2DProjector projector(std::nullopt);
+		return projector;
+	}
+
+	/// Uninitialized bounding box (min > max), as expected by #ExtendBox.
+	static BeUtils::BoundingBox MakeEmptyBox()
+	{
+		return { { 1., 1., 1. }, { -1., -1., -1. } };
+	}
+
+	/// Length of the control polygon of #ParabolaSplineCurve, projected on Z: (0,-1) -> (1,1).
+	static const double ParabolaControlPointsLength = std::sqrt(5.);
+	/// Same for #ClosedParabolaSplineCurve: (0,-1) -> (1,1) -> (0,1) (cyclicity not accounted for).
+	static const double ClosedParabolaControlPointsLength = std::sqrt(5.) + 1.;
+}
+
+TEST_CASE("TestSplineHelper_CopyConstructor")
+{
+	ParabolaSplineCurve const testCurve;
+	BeUtils::TransformHolder const identityTsf;
+
+	BeUtils::SplineHelper original(&testCurve);
+
+	// Fill the cache of the original, to ensure the copy does not share nor reuse it blindly.
+	{
+		std::vector<BeUtils::Segment_2D> segments;
+		BeUtils::BoundingBox bbox = MakeEmptyBox();
+		CHECK(original.ComputeSegments(segments, 0.05, ParabolaControlPointsLength, bbox,
+			identityTsf, SafeProjector()) > 0);
+	}
+
+	BeUtils::SplineHelper const copy(original);
+
+	// The copy points to the very same curve, and evaluates identically.
+	CHECK(copy.GetSplineCurve() == &testCurve);
+	CHECK(copy.CountControlPoints() == original.CountControlPoints());
+	for (double u : { 0., 0.25, 0.5, 0.75, 1. })
+	{
+		CHECK(glm::distance(copy.GetPosition(u), original.GetPosition(u)) < 1e-12);
+		CHECK(glm::distance(copy.GetTangentAtCoord(u), original.GetTangentAtCoord(u)) < 1e-12);
+	}
+	CHECK(copy.GetControlPointsPathLength(identityTsf, SafeProjector())
+		== Catch::Approx(original.GetControlPointsPathLength(identityTsf, SafeProjector())));
+
+	// The copy must produce the same segments as the original (whatever its own cache state).
+	std::vector<BeUtils::Segment_2D> origSegments, copySegments;
+	BeUtils::BoundingBox origBox = MakeEmptyBox(), copyBox = MakeEmptyBox();
+	const size_t nOrig = original.ComputeSegments(origSegments, 0.05, ParabolaControlPointsLength,
+		origBox, identityTsf, SafeProjector());
+	const size_t nCopy = copy.ComputeSegments(copySegments, 0.05, ParabolaControlPointsLength,
+		copyBox, identityTsf, SafeProjector());
+	REQUIRE(nCopy == nOrig);
+	for (size_t i = 0; i < nOrig; ++i)
+	{
+		CHECK(glm::distance(copySegments[i].posStart_, origSegments[i].posStart_) < 1e-12);
+		CHECK(glm::distance(copySegments[i].posEnd_, origSegments[i].posEnd_) < 1e-12);
+	}
+
+	// Invalidating the original's cache must not affect the copy's results.
+	original.InvalidateCache();
+	std::vector<BeUtils::Segment_2D> copySegments2;
+	BeUtils::BoundingBox copyBox2 = MakeEmptyBox();
+	CHECK(copy.ComputeSegments(copySegments2, 0.05, ParabolaControlPointsLength, copyBox2,
+		identityTsf, SafeProjector()) == nCopy);
+}
+
+TEST_CASE("TestSplineHelper_CopyOperator")
+{
+	ParabolaSplineCurve const parabola;
+	ClosedParabolaSplineCurve const closedParabola;
+	BeUtils::TransformHolder const identityTsf;
+
+	BeUtils::SplineHelper source(&parabola);
+	BeUtils::SplineHelper target(&closedParabola);
+	REQUIRE(target.CountControlPoints() == 3);
+
+	target = source;
+
+	// The assignment rebinds the curve: the previous one must not be used anymore.
+	CHECK(target.GetSplineCurve() == &parabola);
+	CHECK(target.CountControlPoints() == 2);
+	CHECK(glm::distance(target.GetPosition(0.5), parabola.GetPositionAtCoord(0.5)) < 1e-12);
+	CHECK(target.GetControlPointsPathLength(identityTsf, SafeProjector())
+		== Catch::Approx(ParabolaControlPointsLength));
+
+	// Self-assignment must be a no-op (and must not leave a dangling curve).
+	BeUtils::SplineHelper& selfRef = target;
+	target = selfRef;
+	CHECK(target.GetSplineCurve() == &parabola);
+	CHECK(target.CountControlPoints() == 2);
+
+	// Assigning twice in a row from different sources also works.
+	BeUtils::SplineHelper const closedSource(&closedParabola);
+	target = closedSource;
+	CHECK(target.GetSplineCurve() == &closedParabola);
+	CHECK(target.GetControlPointsPathLength(identityTsf, SafeProjector())
+		== Catch::Approx(ClosedParabolaControlPointsLength));
+}
+
+TEST_CASE("TestSplineHelper_SetSplineCurve")
+{
+	ParabolaSplineCurve const parabola;
+	ClosedParabolaSplineCurve const closedParabola;
+	BeUtils::TransformHolder const identityTsf;
+
+	BeUtils::SplineHelper helper(&parabola);
+	CHECK(helper.GetSplineCurve() == &parabola);
+	CHECK(helper.CountControlPoints() == 2);
+	CHECK(glm::distance(helper.GetControlPointPosition(1), glm::dvec3(1., 1., 5.)) < 1e-12);
+
+	// Baking segments fills the internal cache for dU = 0.05.
+	std::vector<BeUtils::Segment_2D> segmentsOpen;
+	BeUtils::BoundingBox boxOpen = MakeEmptyBox();
+	const size_t nOpen = helper.ComputeSegments(segmentsOpen, 0.05, ParabolaControlPointsLength,
+		boxOpen, identityTsf, SafeProjector());
+	REQUIRE(nOpen > 0);
+
+	// Switching the curve must invalidate that cache: the segments of the closed curve differ.
+	helper.SetSplineCurve(&closedParabola);
+	CHECK(helper.GetSplineCurve() == &closedParabola);
+	CHECK(helper.CountControlPoints() == 3);
+	CHECK(glm::distance(helper.GetControlPointPosition(2), glm::dvec3(0., 1., 5.)) < 1e-12);
+	CHECK(glm::distance(helper.GetPosition(0.25), closedParabola.GetPositionAtCoord(0.25)) < 1e-12);
+
+	std::vector<BeUtils::Segment_2D> segmentsClosed;
+	BeUtils::BoundingBox boxClosed = MakeEmptyBox();
+	const size_t nClosed = helper.ComputeSegments(segmentsClosed, 0.05,
+		ClosedParabolaControlPointsLength, boxClosed, identityTsf, SafeProjector());
+	REQUIRE(nClosed > 0);
+	// The closed outline spans the whole y range and reaches x = 0 again at the end.
+	CHECK(boxClosed.max[1] == Catch::Approx(1.).margin(1e-6));
+	CHECK(boxClosed.min[1] == Catch::Approx(-1.).margin(1e-6));
+
+	// The cache was really invalidated: the baked geometry differs from the open curve's one
+	// (the segment *count* can coincide, so compare the segments themselves).
+	{
+		bool bSameGeometry = (nClosed == nOpen);
+		for (size_t i = 0; i < nClosed && bSameGeometry; ++i)
+		{
+			if (glm::distance(segmentsClosed[i].posStart_, segmentsOpen[i].posStart_) > 1e-9
+				|| glm::distance(segmentsClosed[i].posEnd_, segmentsOpen[i].posEnd_) > 1e-9)
+			{
+				bSameGeometry = false;
+			}
+		}
+		CHECK(!bSameGeometry);
+	}
+	// The open curve only spans x in [0,1] with y >= -1 along the parabola, whereas the closed one
+	// also walks back along y = 1 then down x = 0.
+	CHECK(boxOpen.max[0] == Catch::Approx(1.).margin(1e-6));
+
+	// Setting the same curve again is a no-op (same results, no crash).
+	helper.SetSplineCurve(&closedParabola);
+	CHECK(helper.GetSplineCurve() == &closedParabola);
+	CHECK(helper.CountControlPoints() == 3);
+
+	// Setting back the original curve restores the original results.
+	helper.SetSplineCurve(&parabola);
+	std::vector<BeUtils::Segment_2D> segmentsOpen2;
+	BeUtils::BoundingBox boxOpen2 = MakeEmptyBox();
+	CHECK(helper.ComputeSegments(segmentsOpen2, 0.05, ParabolaControlPointsLength, boxOpen2,
+		identityTsf, SafeProjector()) == nOpen);
+}
+
+TEST_CASE("TestSplineHelper_GetTangentAtCoord")
+{
+	ParabolaSplineCurve const parabola;
+	BeUtils::SplineHelper helper(&parabola);
+
+	// SplineHelper forwards to the curve, in Object coordinates (no transform applied).
+	for (double u : { 0., 0.1, 0.5, 0.9, 1. })
+	{
+		CHECK(glm::distance(helper.GetTangentAtCoord(u), parabola.GetTangentAtCoord(u)) < 1e-12);
+		CHECK(glm::distance(helper.GetTangentAtCoord(u), glm::dvec3(1., u, 0.)) < 1e-12);
+	}
+
+	// A transform set on the helper's caller side must not alter the (Object space) tangent.
+	BeUtils::TransformHolder scaledTsf;
+	scaledTsf.transfrom_ = glm::dmat3x3(3.0);
+	scaledTsf.pos_ = glm::dvec3(10., 20., 30.);
+	CHECK(glm::distance(helper.GetTangentAtCoord(0.5), glm::dvec3(1., 0.5, 0.)) < 1e-12);
+	// ...while the position does follow the transform.
+	CHECK(glm::distance(helper.GetPosition_world(0.5, scaledTsf),
+		(scaledTsf.transfrom_ * helper.GetPosition(0.5)) + scaledTsf.pos_) < 1e-12);
+
+	// After switching the curve, the tangent comes from the new curve.
+	ClosedParabolaSplineCurve const closedParabola;
+	helper.SetSplineCurve(&closedParabola);
+	CHECK(glm::distance(helper.GetTangentAtCoord(0.3), closedParabola.GetTangentAtCoord(0.3)) < 1e-12);
+}
+
+TEST_CASE("TestSplineSampler_Compute2dNormals")
+{
+	ParabolaSplineCurve const parabola;
+	BeUtils::SplineHelper const helper(&parabola);
+	BeUtils::TransformHolder const identityTsf;
+
+	BeUtils::SplineSampler sampler;
+	const size_t nPts = sampler.Sample(helper, identityTsf, 0.05, ParabolaControlPointsLength);
+	REQUIRE(nPts >= 2);
+
+	const double dU_delta = 1e-3;
+	sampler.Compute2dNormals(SafeProjector(), dU_delta, helper, identityTsf);
+
+	// For y = 2x^2 - 1, the (unnormalized) tangent is (1, 4x) and the expected normal (-4x, 1),
+	// i.e. the normal always points "up" and is orthogonal to the tangent.
+	for (size_t i = 0; i < nPts; ++i)
+	{
+		glm::dvec2 const& normal = sampler.Get2dNormalAtIndex(i);
+		CHECK(glm::length(normal) == Catch::Approx(1.).margin(1e-9));
+		CHECK(normal.y > 0.);
+
+		const double x = sampler.pts_[i].uCoord_;
+		glm::dvec2 const tangentDir = glm::normalize(glm::dvec2(1., 4. * x));
+		// Finite differences => small tolerance on the orthogonality.
+		CHECK(std::fabs(glm::dot(normal, tangentDir)) < 1e-2);
+		glm::dvec2 const expectedNormal = glm::normalize(glm::dvec2(-4. * x, 1.));
+		CHECK(glm::distance(normal, expectedNormal) < 1e-2);
+	}
+
+	// Degenerated inputs must not crash nor read out of bounds.
+	{
+		BeUtils::SplineSampler emptySampler;
+		emptySampler.Compute2dNormals(SafeProjector(), dU_delta, helper, identityTsf);
+		CHECK(emptySampler.pts_.empty());
+	}
+	{
+		// A single point: there is no "next" nor "previous" point, the normal stays at its default.
+		BeUtils::SplineSampler singleSampler;
+		singleSampler.pts_.emplace_back(0., helper.GetPosition_world(0., identityTsf));
+		singleSampler.Compute2dNormals(SafeProjector(), dU_delta, helper, identityTsf);
+		REQUIRE(singleSampler.pts_.size() == 1);
+		CHECK(singleSampler.Get2dNormalAtIndex(0) == glm::dvec2(0.));
+	}
+
+	// Get2dNormal contract: degenerated (null) deltas fall back on a valid unit normal.
+	{
+		glm::dvec2 const nullNormal = BeUtils::Get2dNormal(glm::dvec2(1., 2.), glm::dvec2(1., 2.));
+		CHECK(nullNormal == glm::dvec2(0., 1.));
+	}
+}
+
+TEST_CASE("TestSplineHelper_ControlPointsPathLengthAndMeanVelocity")
+{
+	BeUtils::TransformHolder const identityTsf;
+
+	// Open curve: the control polygon is the single chord (0,-1) -> (1,1).
+	{
+		ParabolaSplineCurve const parabola;
+		BeUtils::SplineHelper const helper(&parabola);
+		const double len = helper.GetControlPointsPathLength(identityTsf, SafeProjector());
+		CHECK(len == Catch::Approx(ParabolaControlPointsLength));
+		// The chord is shorter than the actual (convex) curve.
+		CHECK(len < helper.EvalSplineLength(identityTsf, 0.001, SafeProjector()).totalLength);
+
+		// GetMeanVelocity is that length over a total "time" of 1 (abscissa range [0..1]).
+		CHECK(helper.GetMeanVelocity(identityTsf, SafeProjector()) == Catch::Approx(len));
+	}
+
+	// Closed curve: 3 control points => 2 chords (cyclicity is not accounted for here).
+	{
+		ClosedParabolaSplineCurve const closedParabola;
+		BeUtils::SplineHelper const helper(&closedParabola);
+		CHECK(helper.GetControlPointsPathLength(identityTsf, SafeProjector())
+			== Catch::Approx(ClosedParabolaControlPointsLength));
+		CHECK(helper.GetMeanVelocity(identityTsf, SafeProjector())
+			== Catch::Approx(ClosedParabolaControlPointsLength));
+	}
+
+	// The length is computed in world space, after projection.
+	{
+		ParabolaSplineCurve const parabola;
+		BeUtils::SplineHelper const helper(&parabola);
+
+		// A pure translation does not change the length...
+		BeUtils::TransformHolder translatedTsf;
+		translatedTsf.pos_ = glm::dvec3(10., -5., 100.);
+		CHECK(helper.GetControlPointsPathLength(translatedTsf, SafeProjector())
+			== Catch::Approx(ParabolaControlPointsLength));
+
+		// ...but a uniform scale does (the projection drops Z only).
+		BeUtils::TransformHolder scaledTsf;
+		scaledTsf.transfrom_ = glm::dmat3x3(2.0);
+		CHECK(helper.GetControlPointsPathLength(scaledTsf, SafeProjector())
+			== Catch::Approx(2. * ParabolaControlPointsLength));
+		CHECK(helper.GetMeanVelocity(scaledTsf, SafeProjector())
+			== Catch::Approx(2. * ParabolaControlPointsLength));
+	}
+}
+
+TEST_CASE("TestSplineHelper_EvalMeanVelocity")
+{
+	ParabolaSplineCurve const parabola;
+	BeUtils::SplineHelper const helper(&parabola);
+	BeUtils::TransformHolder const identityTsf;
+
+	// Non-failing projector: the whole [0..1] range is used, so the mean velocity is the length.
+	{
+		const double dU = 0.001;
+		auto const evalData = helper.EvalSplineLength(identityTsf, dU, SafeProjector());
+		double maxVelocity = -1.;
+		const double meanVelocity = helper.EvalMeanVelocity(identityTsf, maxVelocity, dU, SafeProjector());
+		CHECK(meanVelocity == Catch::Approx(evalData.totalLength));
+		CHECK(maxVelocity == Catch::Approx(evalData.maxVelocity));
+		// The velocity is maximal at the end of the parabola, where the slope is the steepest.
+		CHECK(maxVelocity > meanVelocity);
+		// Consistency with EvalMaxVelocity (which picks its own dU).
+		double lenEval = 0.;
+		CHECK(helper.EvalMaxVelocity(identityTsf, lenEval, SafeProjector()) > 0.);
+		CHECK(lenEval > 0.);
+	}
+
+	// Refining dU changes the result only marginally: the finer polyline is slightly longer, but
+	// the accumulated abscissa (u += dU) may drop the very last segment because of floating-point
+	// drift, which compensates (and can even dominate) on this curve. Hence only closeness is
+	// checked here, not monotonicity.
+	{
+		double maxVelCoarse = 0., maxVelFine = 0.;
+		const double meanCoarse = helper.EvalMeanVelocity(identityTsf, maxVelCoarse, 0.1, SafeProjector());
+		const double meanFine = helper.EvalMeanVelocity(identityTsf, maxVelFine, 0.001, SafeProjector());
+		CHECK(meanFine == Catch::Approx(meanCoarse).epsilon(0.05));
+		// The max velocity is a local (per-step) quantity: refining can only increase it, up to
+		// the same tolerance.
+		CHECK(maxVelFine >= maxVelCoarse * 0.95);
+	}
+
+	// Scaling the curve scales the mean velocity accordingly.
+	{
+		BeUtils::TransformHolder scaledTsf;
+		scaledTsf.transfrom_ = glm::dmat3x3(2.0);
+		double maxVel1 = 0., maxVel2 = 0.;
+		const double mean1 = helper.EvalMeanVelocity(identityTsf, maxVel1, 0.001, SafeProjector());
+		const double mean2 = helper.EvalMeanVelocity(scaledTsf, maxVel2, 0.001, SafeProjector());
+		CHECK(mean2 == Catch::Approx(2. * mean1));
+		CHECK(maxVel2 == Catch::Approx(2. * maxVel1));
+	}
+
+	// Failing projector: only the valid sub-range [u_start, u_end] is taken into account, so the
+	// mean velocity is the (shorter) valid length divided by a (shorter) time range.
+	{
+		const double dU = 0.001;
+		Test2DProjector const failingProjector(0. /*yBound*/);
+		auto const evalData = helper.EvalSplineLength(identityTsf, dU, failingProjector);
+		REQUIRE(evalData.u_start > 0.);
+		REQUIRE(evalData.u_end > evalData.u_start);
+		// y = 2u^2 - 1 >= 0 from u = sqrt(0.5) on.
+		CHECK(evalData.u_start == Catch::Approx(std::sqrt(0.5)).margin(2. * dU));
+
+		double maxVelocity = 0.;
+		const double meanVelocity = helper.EvalMeanVelocity(identityTsf, maxVelocity, dU, failingProjector);
+		CHECK(meanVelocity
+			== Catch::Approx(evalData.totalLength / (evalData.u_end - evalData.u_start)));
+		CHECK(maxVelocity == Catch::Approx(evalData.maxVelocity));
+	}
+
+	// All points fail to project => null length and null mean velocity (no division by zero).
+	{
+		Test2DProjector const alwaysFailing(50. /*yBound*/);
+		double maxVelocity = -1.;
+		CHECK(helper.EvalMeanVelocity(identityTsf, maxVelocity, 0.01, alwaysFailing)
+			== Catch::Approx(0.));
+		CHECK(maxVelocity == Catch::Approx(0.));
 	}
 }

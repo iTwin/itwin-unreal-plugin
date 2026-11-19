@@ -13,8 +13,8 @@
 #include <ITwinTilesetAccess.h>
 #include <Math/MathFwd.h>
 #include <Spline/ITwinSplineEnums.h>
-#include <memory>
 #include <ITwinRuntime/Private/Compil/BeforeNonUnrealIncludes.h>
+#	include <memory>
 #	include <SDK/Core/Visualization/SplinesManager.h>
 #include <ITwinRuntime/Private/Compil/AfterNonUnrealIncludes.h>
 #include "ITwinSplineTool.generated.h"

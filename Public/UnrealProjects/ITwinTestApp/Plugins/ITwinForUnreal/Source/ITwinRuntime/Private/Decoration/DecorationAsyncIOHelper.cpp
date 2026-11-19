@@ -11,6 +11,7 @@
 
 #include <Decoration/DecorationWaitableLoadEvent.h>
 #include <Decoration/ITwinDecorationServiceSettings.h>
+#include <Decoration/UnrealDecorationGCSTransform.h>
 #include <ITwinIModel.h>
 #include <ITwinGeolocation.h>
 #include <ITwinServerConnection.h>
@@ -48,7 +49,6 @@
 #	include <BeUtils/Gltf/GltfMaterialTuner.h>
 #	include <BeUtils/Gltf/GltfTextureHelper.h>
 #	include <BeUtils/Misc/RWLock.h>
-#	include <numbers>
 #include <ITwinRuntime/Private/Compil/AfterNonUnrealIncludes.h>
 
 
@@ -361,6 +361,7 @@ void FDecorationAsyncIOHelper::InitDecorationService(UWorld* WorldContextObject,
 
 	decoration.reset(IDecoration::New());
 	decorationITwin = std::make_shared<FString>();
+	bFreezeDecoGCS = false;
 
 	IInstance::SetNewFct([]() {
 		return static_cast<IInstance*>(new FITwinInstance());
@@ -393,10 +394,46 @@ void FDecorationAsyncIOHelper::InitDecorationService(UWorld* WorldContextObject,
 	instancesManager_->SetAnimPathManager(pathAnimManager);
 }
 
+bool FDecorationAsyncIOHelper::UseGCSForCameras() const
+{
+	// See if the scene has the ENGAGE tag to determine if we apply GCS or not.
+	// Old scenes (created before the ENGAGE tag was added) will not have it, and thus will not
+	// use GCS for camera links nor key-frames.
+	// For scenes created outside of ENGAGE, we will rely on the creation date (less accurate...),
+	// or an hypothetic "GCS" tag.
+	BE_ASSERT(!bIsLoadingScene, "loading in progress, tag and creation time not available");
+	bool bUseGCSForCameras = false;
+	if (scene)
+	{
+		if (scene->HasTag(AdvViz::SDK::ENGAGE_TAG_DISPLAY_NAME)
+			|| scene->HasTag("GCS") /* also test an hypothetic GCS tag */
+			)
+		{
+			bUseGCSForCameras = true;
+		}
+		else
+		{
+			// The creation time is not a good indicator, as users could continue to use an
+			// old version of Engage to create a scene, so we will take a reasonable date (June 2027).
+			std::string const creationTime = scene->GetCreationTime();
+			constexpr std::string_view kGcsCutoff = "2027-06"; // ISO-8601 YYYY-MM
+			bUseGCSForCameras = creationTime.size() >= kGcsCutoff.size()
+				&& std::string_view(creationTime).substr(0, kGcsCutoff.size()) >= kGcsCutoff;
+		}
+	}
+	else
+	{
+		// We may pass here in the plugin or Editor, when no scene is loaded yet.
+		// In such case, use the default value (true) for new scenes.
+		bUseGCSForCameras = true;
+	}
+	return bUseGCSForCameras;
+}
+
 void FDecorationAsyncIOHelper::SetDecoGeoreference(const FVector& latLongHeightDeg)
 {
 	using namespace AdvViz::SDK;
-	if (decoration && !decoration->GetGCS())
+	if (decoration && (!decoration->GetGCS() || !bFreezeDecoGCS))
 	{
 		GCS WGS8gcs = GCSTransform::GetECEFWGS84WKT();
 		WGS8gcs.center[0] = latLongHeightDeg[0];
@@ -407,74 +444,25 @@ void FDecorationAsyncIOHelper::SetDecoGeoreference(const FVector& latLongHeightD
 	}
 }
 
-class FUnrealDecorationGCSTransform : public AdvViz::SDK::Tools::IGCSTransform {
-public:
-	FMatrix ENU2ECEF; // from ENU (unreal local East North Up) to ECEF (Earth-Centered, Earth-Fixed)
-	FMatrix ECEF2ENU; // from ECEF (Earth-Centered, Earth-Fixed) to ENU (unreal local East North Up)
-	FVector scale;
-	FVector invscale;
-	void Init(const AdvViz::SDK::double3& latLonHeightDeg)
-	{
-		AdvViz::SDK::double3 latLonHeightRad = { latLonHeightDeg[0] * (std::numbers::pi / 180.0),
-			latLonHeightDeg[1] * (std::numbers::pi / 180.0),
-			latLonHeightDeg[2] };
-
-		AdvViz::SDK::dmat4x4 ecf2enu = AdvViz::SDK::GCSTransform::WGS84ECEFToENUMatrix(latLonHeightRad);
-		AdvViz::SDK::dmat4x4 enu2ecf = AdvViz::SDK::GCSTransform::WGS84ENUToECEFMatrix(latLonHeightRad);
-		ENU2ECEF = toUnreal(enu2ecf);
-		ECEF2ENU = toUnreal(ecf2enu);
-
-		scale = FVector(1. / 100.0, -1. / 100.0, 1. / 100.0);
-		invscale = FVector(100.0, -100.0, 100.0);
-	}
-
-	virtual AdvViz::SDK::double3 PositionFromClient(const AdvViz::SDK::double3& p)
-	{
-		FVector v = toUnreal(p);
-		FVector r = ENU2ECEF.TransformPosition(v * scale);
-		return toAdvizSdk(r);
-	}
-	virtual AdvViz::SDK::double3 PositionToClient(const AdvViz::SDK::double3& p)
-	{
-		FVector v = toUnreal(p);
-		FVector r = ECEF2ENU.TransformPosition(v) * invscale;
-		return toAdvizSdk(r);
-	}
-
-	virtual AdvViz::SDK::dmat4x4 MatrixFromClient(const AdvViz::SDK::dmat4x4& m)
-	{
-		FMatrix um = toUnreal(m);
-		// transform translation
-		FVector trans = FVector(um.M[3][0], um.M[3][1], um.M[3][2]);
-		trans = ENU2ECEF.TransformPosition(trans * scale);
-		// transform rotation
-		FMatrix rm = ENU2ECEF * um;
-		// set translation
-		rm.M[3][0] = trans[0];
-		rm.M[3][1] = trans[1];
-		rm.M[3][2] = trans[2];
-		return toAdvizSdk(rm);
-	}
-	virtual AdvViz::SDK::dmat4x4 MatrixToClient(const AdvViz::SDK::dmat4x4& m)
-	{
-		FMatrix um = toUnreal(m);
-		// transform translation
-		FVector trans = FVector(um.M[3][0], um.M[3][1], um.M[3][2]);
-		trans = ECEF2ENU.TransformPosition(trans) * invscale;
-		// transform rotation
-		FMatrix rm = ECEF2ENU * um;
-		// set translation
-		rm.M[3][0] = trans[0];
-		rm.M[3][1] = trans[1];
-		rm.M[3][2] = trans[2];
-		return toAdvizSdk(rm);
-	}
-};
-
 AdvViz::expected<void, std::string> FDecorationAsyncIOHelper::InitDecoGeoreference()
 {
 	using namespace AdvViz::SDK;
 	FITwinMathConversion::transform_.reset();
+
+	// Camera placements are serialized as up/direction/position: the SDK needs the handedness
+	// of the GCS to rebuild the 'right' column with the same convention it was decomposed with.
+	// Set on every exit path, including the "unsupported georeference" one, which installs an
+	// identity (orientation-preserving) transform.
+	ON_SCOPE_EXIT
+	{
+		auto const gcsTransform = decoration ? decoration->GetGCSTransform() : nullptr;
+		ScenePersistenceAPI::SetCameraHandedness(
+			gcsTransform ? gcsTransform->GetHandedness() : 1.0);
+		// Links parsed before the georeference existed may carry unresolved camera bases.
+		if (scene)
+			scene->ResolvePendingCameraBases();
+	};
+
 	if (decoration && decoration->GetGCS())
 	{
 		const std::string& wkt = decoration->GetGCS()->wkt;
@@ -499,9 +487,11 @@ AdvViz::expected<void, std::string> FDecorationAsyncIOHelper::InitDecoGeoreferen
 		IGCSTransform::SetNewFct([]() {
 			return static_cast<IGCSTransform*>(new FUnrealDecorationGCSTransform());
 			});
-		// Create the transform between Unreal coordinates (East, North, Up) and ECEF
+		// Create the transform between Unreal coordinates (East, North, Up) and ECEF.
 		IGCSTransformPtr UnrealDecorationGCSTransform(IGCSTransform::New());
-		static_cast<FUnrealDecorationGCSTransform*>(UnrealDecorationGCSTransform.get())->Init(latLonHeightDeg);
+		// Apply the fixed composition matrix to the transform, except for old scenes.
+		static_cast<FUnrealDecorationGCSTransform*>(UnrealDecorationGCSTransform.get())
+			->Init(latLonHeightDeg, UseFixedGCSCompositionMatrix());
 		decoration->SetGCSTransform(UnrealDecorationGCSTransform);
 		IGCSTransform::SetNewFct(prevNew);
 		FITwinMathConversion::transform_ = decoration->GetGCSTransform();
@@ -588,6 +578,8 @@ bool FDecorationAsyncIOHelper::LoadITwinDecoration(std::string& OutError)
 			if (!decoGeoref)
 				BE_LOGW("ITwinDecoration", "Failed to init georeference: " << decoGeoref.error());
 			decorationIsLinked = true;
+			// If the loaded decoration has a georeference, we should not override it afterwards.
+			bFreezeDecoGCS = decoGeoref.has_value();
 			break;
 		}
 	}
@@ -1345,8 +1337,11 @@ void FDecorationAsyncIOHelper::LoadDefaultSceneForITwin(CallbackWithBool OnFinis
 {
 	using namespace AdvViz::SDK;
 
+	BE_ASSERT(bIsLoadingScene.load());
+
 	if (LoadedITwinId.IsEmpty())
 	{
+		bIsLoadingScene.store(false);
 		OnFinishCallback(AdvViz::make_unexpected("LoadDefaultSceneForITwin: LoadedITwinId.IsEmpty"));
 		return;
 	}
@@ -1360,6 +1355,15 @@ void FDecorationAsyncIOHelper::LoadDefaultSceneForITwin(CallbackWithBool OnFinis
 	AsyncGetITwinSceneInfos(LoadedITwinId,
 		[SThis, OnFinishCallback, itwinid, sceneid](AdvViz::expected<SceneInfoVec, AdvViz::SDK::HttpError> const& ret)
 	{
+		ON_SCOPE_EXIT
+		{
+			// All treatments in this callback are synchronous, so in all paths we can mark the
+			// loading as finished at the end of this callback.
+			// However, we also reset this flag before calling the OnFinishCallback in some paths
+			// below.
+			SThis->bIsLoadingScene.store(false);
+		};
+
 		if (ret)
 		{
 			SceneInfoVec const& SceneInfos(*ret);
@@ -1387,6 +1391,7 @@ void FDecorationAsyncIOHelper::LoadDefaultSceneForITwin(CallbackWithBool OnFinis
 				{
 					SThis->scene->PrepareCreation(defaultSceneName, itwinid);
 				}
+				SThis->bIsLoadingScene.store(false);
 				OnFinishCallback(false);
 				return;
 			}
@@ -1399,6 +1404,7 @@ void FDecorationAsyncIOHelper::LoadDefaultSceneForITwin(CallbackWithBool OnFinis
 					if (SThis->bSceneIdIsForNewScene)
 					{
 						SThis->scene->PrepareCreation(sceneid, itwinid);
+						SThis->bIsLoadingScene.store(false);
 						OnFinishCallback(false);
 						return;
 					}
@@ -1448,21 +1454,20 @@ void FDecorationAsyncIOHelper::LoadDefaultSceneForITwin(CallbackWithBool OnFinis
 					BE_LOGI("ITwinScene", "Loading scene '" << SelectedSceneInfo.displayName
 						<< "' (ID: " << SelectedSceneInfo.id << ") for iTwin " << itwinid);
 
-					if (!SThis->scene->Get(itwinid, SelectedSceneInfo.id))
-					{
-						OnFinishCallback(false);
-						return;
-					}
-					else
+					// Make a (synchronous) request to load the scene from the server.
+					bool const bSuccess = SThis->scene->Get(itwinid, SelectedSceneInfo.id);
+					SThis->bIsLoadingScene.store(false);
+					if (bSuccess)
 					{
 						SThis->PostLoadSceneFromServer(true);
-						OnFinishCallback(true);
 					}
+					OnFinishCallback(bSuccess);
 				}
 			}
 		}
 		else
 		{
+			SThis->bIsLoadingScene.store(false);
 			int const status = ret.error().httpCode;
 			if (status == 404 || status == 400)
 			{
@@ -1481,6 +1486,7 @@ void FDecorationAsyncIOHelper::LoadDefaultSceneForITwin(CallbackWithBool OnFinis
 
 void FDecorationAsyncIOHelper::AsyncLoadScene(CallbackWithBool onFinishcallback)
 {
+	BE_ASSERT(!bIsLoadingScene.load(), "do not nest AsyncLoadScene");
 	if (!scene)
 	{
 		BE_ISSUE("InitDecorationService must be called before, in game thread");
@@ -1503,6 +1509,7 @@ void FDecorationAsyncIOHelper::AsyncLoadScene(CallbackWithBool onFinishcallback)
 		return;
 	}
 	auto SThis = shared_from_this();
+	bIsLoadingScene.store(true);
 	if (LoadedSceneID.IsEmpty())
 	{
 		// No scene provided (happens in plugin, when decoration loading is activated).
@@ -1517,21 +1524,41 @@ void FDecorationAsyncIOHelper::AsyncLoadScene(CallbackWithBool onFinishcallback)
 		scene->AsyncGet(itwinid, TCHAR_TO_UTF8(*(LoadedSceneID)),
 			[SThis, itwinid, onFinishcallback](AdvViz::expected<void, std::string> const& exp1)
 			{
-				bool bIsLoadExistingSceneOK = !SThis->LoadedSceneID.IsEmpty() && !SThis->bSceneIdIsForNewScene && (bool)exp1;
+				bool const bIsLoadExistingSceneOK = !SThis->LoadedSceneID.IsEmpty()
+					&& !SThis->bSceneIdIsForNewScene
+					&& (bool)exp1;
 
-				if (!bIsLoadExistingSceneOK)
+				if (bIsLoadExistingSceneOK)
 				{
+					SThis->bIsLoadingScene.store(false);
+
+					SThis->PostLoadSceneFromServer(true);
+
+					onFinishcallback(true);
+				}
+				else
+				{
+					// The selected scene failed to load (or was not found).
+					// In this case, we fallback to the default behavior of loading the default
+					// scene for this iTwin.
 					SThis->LoadDefaultSceneForITwin(onFinishcallback);
 				}
-				SThis->PostLoadSceneFromServer(true);
-
-				onFinishcallback(true);
 			});
 	}
 }
 
 void FDecorationAsyncIOHelper::PostLoadSceneFromServer(bool bCreateTimelineIfNeeded /*= false*/)
 {
+	using namespace AdvViz::SDK;
+
+	if (!ensure(scene))
+		return;
+
+	// Resolving requires the georeference; if it is not ready yet, InitDecoGeoreference()
+	// will do it. Both call sites are idempotent.
+	if (ScenePersistenceAPI::IsCameraHandednessInitialized())
+		scene->ResolvePendingCameraBases();
+
 	auto linkslock = links.GetAutoLock();
 	linkslock->clear();
 	for (auto l : scene->GetLinks())
@@ -1546,6 +1573,14 @@ void FDecorationAsyncIOHelper::PostLoadSceneFromServer(bool bCreateTimelineIfNee
 	{
 		scene->SetTimeline(std::shared_ptr<AdvViz::SDK::ITimeline>(AdvViz::SDK::ITimeline::New()));
 	}
+}
+
+void FDecorationAsyncIOHelper::OnStartSave()
+{
+	BE_ASSERT(!bIsLoadingScene.load());
+	// Cameras, cutout, etc. are about to be saved with the current GCS used for conversions.
+	// Therefore we should no longer change the GCS.
+	bFreezeDecoGCS = true;
 }
 
 bool FDecorationAsyncIOHelper::AsyncSaveSceneToServer(

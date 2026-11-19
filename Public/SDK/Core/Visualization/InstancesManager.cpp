@@ -1017,8 +1017,13 @@ namespace AdvViz::SDK
 						std::swap(currentInstances[index], currentInstances.back());
 						currentInstances.pop_back();
 
-						auto movedInst = currentInstances[index]->GetAutoLock();
-						movedInst->OnIndexChanged(index);
+						// Removing the tail does not move an instance. After pop_back(),
+						// that index is no longer valid.
+						if (index < currentInstances.size())
+						{
+							auto movedInst = currentInstances[index]->GetAutoLock();
+							movedInst->OnIndexChanged(index);
+						}
 					}
 					else
 					{

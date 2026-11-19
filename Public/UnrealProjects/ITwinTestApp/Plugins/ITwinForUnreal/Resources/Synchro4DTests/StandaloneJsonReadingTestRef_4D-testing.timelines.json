@@ -1,9 +1,9 @@
 ﻿[
 	{
 		"elementIds": [
-			"0x1a000000005a"
+			"0x30000000065"
 		],
-		"animationKey": 52,
+		"animationKey": 18,
 		"startTime": "2024.05.20-09.00.00 +0000",
 		"endTime": "2024.12.24-10.39.00 +0000",
 		"VisibilityTicks": [
@@ -41,29 +41,39 @@
 		],
 		"TransformValues": [
 			{
-				"translation": [ -42561.425618,
-					29142.5845,
-					-5433.798235
+				"translation": [ -32269.326176,
+					26546.613821,
+					-7048.686508
 				],
-				"rotationAxis": [ -0.991704,
-					-0.127823,
-					-0.013545
+				"rotationAxis": [ -0.999508,
+					-0.030461,
+					0.007433
 				],
-				"rotationAngleDegrees": 12.198338,
+				"rotationAngleDegrees": 51.643802,
 				"anchor": "MinZ"
 			},
 			{
-				"translation": [ -36114.745931,
-					39336.139188,
-					-4662.936418
+				"translation": [ -25822.646489,
+					34900.129446,
+					-12941.266731
 				],
+				"rotationAxis": [ -1.0,
+					0.0,
+					0.0
+				],
+				"rotationAngleDegrees": 39.523811,
 				"anchor": "MinZ"
 			},
 			{
-				"translation": [ -22653.808431,
-					35834.576688,
-					5016.014082
+				"translation": [ -12361.708989,
+					38358.723196,
+					-3246.838478
 				],
+				"rotationAxis": [ -1.0,
+					0.0,
+					0.0
+				],
+				"rotationAngleDegrees": 39.523811,
 				"anchor": "MinZ"
 			}
 		],
@@ -71,9 +81,9 @@
 	},
 	{
 		"elementIds": [
-			"0x1a000000005b"
+			"0x30000000066"
 		],
-		"animationKey": 5,
+		"animationKey": 64,
 		"startTime": "2024.05.20-09.00.00 +0000",
 		"endTime": "2024.12.24-10.39.00 +0000",
 		"VisibilityTicks": [
@@ -106,75 +116,90 @@
 		],
 		"TransformTicks": [
 			"0x8dc78ab3abd6800",
-			"0x8dcbe46f544d200",
-			"0x8dcd3a91c426180",
-			"0x8dcd533ec0c4380",
+			"0x8dcb2ee54eef100",
+			"0x8dcce5934063100",
+			"0x8dceee81cf72780",
 			"0x8dd24072d4a6600"
 		],
 		"TransformValues": [
 			{
-				"translation": [ -48443.261556,
-					-29111.126437,
-					-12759.665315
+				"translation": [ 0.0,
+					0.0,
+					0.0
 				],
-				"rotationAxis": [ 0.0,
-					-1.0,
+				"rotationAxis": [ 1.0,
+					0.0,
 					0.0
 				],
 				"rotationAngleDegrees": 45.0,
-				"anchor": "MaxZ"
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
 			},
 			{
-				"translation": [ -49007.909993,
-					1518.561063,
-					-14227.635067
+				"translation": [ -564.648437,
+					30629.6875,
+					-1467.969751
 				],
 				"rotationAxis": [ 0.0,
 					-1.0,
 					0.0
 				],
 				"rotationAngleDegrees": 90.0,
-				"anchor": "MaxZ"
-			},
-			{
-				"translation": [ -30549.511556,
-					-3588.6655,
-					-14227.635067
-				],
-				"anchor": "MaxZ"
-			},
-			{
-				"translation": [ -30549.511556,
-					-3588.6655,
-					-14227.635067
-				],
-				"rotationAxis": [ 0.0,
+				"anchor": [ 0.0,
 					0.0,
-					1.0
-				],
-				"rotationAngleDegrees": 90.0,
-				"anchor": "MaxZ"
+					0.0
+				]
 			},
 			{
-				"translation": [ -4923.339681,
-					-1923.235812,
-					-14227.635067
+				"translation": [ 17893.75,
+					25522.460938,
+					-1467.969751
 				],
-				"rotationAxis": [ 0.0,
+				"anchor": [ 0.0,
 					0.0,
-					-1.0
+					0.0
+				]
+			},
+			{
+				"translation": [ 17893.75,
+					25522.460938,
+					-1467.969751
 				],
-				"rotationAngleDegrees": 45.0,
-				"anchor": "MaxZ"
+				"rotationAxis": [ 0.576563,
+					-0.578922,
+					0.576563
+				],
+				"rotationAngleDegrees": 170.0,
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ 43519.921875,
+					27187.890625,
+					-1467.969751
+				],
+				"rotationAxis": [ 0.707107,
+					0.0,
+					-0.707107
+				],
+				"rotationAngleDegrees": 175.0,
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
 			}
 		],
 		"TransformInterps": [ 1, 1, 1, 1, 0 ]
 	},
 	{
 		"elementIds": [
-			"0x1a000000005c"
+			"0x30000000067"
 		],
-		"animationKey": 26,
+		"animationKey": 52,
 		"startTime": "2024.05.20-09.00.00 +0000",
 		"endTime": "2025.02.26-17.00.00 +0000",
 		"VisibilityTicks": [
@@ -270,10 +295,10 @@
 	},
 	{
 		"elementIds": [
-			"0x1a000000005d",
-			"0x1a000000009f"
+			"0x30000000068",
+			"0x300000000b1"
 		],
-		"animationKey": 57,
+		"animationKey": 0,
 		"startTime": "2024.05.20-09.00.00 +0000",
 		"endTime": "2024.12.24-10.39.00 +0000",
 		"VisibilityTicks": [
@@ -310,25 +335,30 @@
 		],
 		"TransformValues": [
 			{
-				"translation": [ 648.730632,
-					-13827.923312,
-					-4752.037065
+				"translation": [ 10940.830074,
+					-18880.729929,
+					1377.217766
 				],
 				"rotationAxis": [ 0.0,
 					0.0,
-					-1.0
+					1.0
 				],
-				"rotationAngleDegrees": 100.0,
+				"rotationAngleDegrees": 5.0,
 				"anchor": [ -6797.039795,
 					-121.920002,
 					-5000.000381
 				]
 			},
 			{
-				"translation": [ 648.730632,
-					-13827.923312,
-					-4752.037065
+				"translation": [ 10940.830074,
+					-18880.729929,
+					1377.217766
 				],
+				"rotationAxis": [ 0.0,
+					0.0,
+					-1.0
+				],
+				"rotationAngleDegrees": 235.0,
 				"anchor": [ -6797.039795,
 					-121.920002,
 					-5000.000381
@@ -339,9 +369,9 @@
 	},
 	{
 		"elementIds": [
-			"0x1a000000005e"
+			"0x30000000069"
 		],
-		"animationKey": 55,
+		"animationKey": 58,
 		"startTime": "2024.05.20-09.00.00 +0000",
 		"endTime": "2025.03.12-09.00.00 +0000",
 		"VisibilityTicks": [
@@ -381,11 +411,11 @@
 					0.0,
 					0.0
 				],
-				"rotationAxis": [ -0.991704,
-					-0.127823,
-					-0.013545
+				"rotationAxis": [ -0.999508,
+					-0.030461,
+					0.007433
 				],
-				"rotationAngleDegrees": 12.198338,
+				"rotationAngleDegrees": 51.643802,
 				"anchor": [ 0.0,
 					0.0,
 					0.0
@@ -393,9 +423,14 @@
 			},
 			{
 				"translation": [ 6446.679687,
-					10193.554688,
-					770.861816
+					8353.515625,
+					-5892.580223
 				],
+				"rotationAxis": [ -1.0,
+					0.0,
+					0.0
+				],
+				"rotationAngleDegrees": 39.523811,
 				"anchor": [ 0.0,
 					0.0,
 					0.0
@@ -403,9 +438,14 @@
 			},
 			{
 				"translation": [ 19907.617187,
-					6691.992188,
-					10449.812317
+					11812.109375,
+					3801.84803
 				],
+				"rotationAxis": [ -1.0,
+					0.0,
+					0.0
+				],
+				"rotationAngleDegrees": 39.523811,
 				"anchor": [ 0.0,
 					0.0,
 					0.0
@@ -416,9 +456,9 @@
 	},
 	{
 		"elementIds": [
-			"0x1a000000005f"
+			"0x3000000006a"
 		],
-		"animationKey": 51,
+		"animationKey": 23,
 		"startTime": "2024.05.20-09.00.00 +0000",
 		"endTime": "2024.12.24-10.39.00 +0000",
 		"VisibilityTicks": [
@@ -473,9 +513,9 @@
 	},
 	{
 		"elementIds": [
-			"0x1a0000000060"
+			"0x3000000006c"
 		],
-		"animationKey": 47,
+		"animationKey": 37,
 		"startTime": "2024.05.20-09.00.00 +0000",
 		"endTime": "2024.12.24-10.39.00 +0000",
 		"VisibilityTicks": [
@@ -514,9 +554,14 @@
 		"TransformValues": [
 			{
 				"translation": [ 19907.617187,
-					6691.992188,
-					10449.812317
+					11812.109375,
+					3801.84803
 				],
+				"rotationAxis": [ -1.0,
+					0.0,
+					0.0
+				],
+				"rotationAngleDegrees": 39.523811,
 				"anchor": [ 0.0,
 					0.0,
 					0.0
@@ -524,9 +569,14 @@
 			},
 			{
 				"translation": [ 6446.679687,
-					10193.554688,
-					770.861816
+					8353.515625,
+					-5892.580223
 				],
+				"rotationAxis": [ -1.0,
+					0.0,
+					0.0
+				],
+				"rotationAngleDegrees": 39.523811,
 				"anchor": [ 0.0,
 					0.0,
 					0.0
@@ -537,11 +587,11 @@
 					0.0,
 					0.0
 				],
-				"rotationAxis": [ -0.991704,
-					-0.127823,
-					-0.013545
+				"rotationAxis": [ -0.999508,
+					-0.030461,
+					0.007433
 				],
-				"rotationAngleDegrees": 12.198338,
+				"rotationAngleDegrees": 51.643802,
 				"anchor": [ 0.0,
 					0.0,
 					0.0
@@ -581,9 +631,9 @@
 	},
 	{
 		"elementIds": [
-			"0x1a0000000062"
+			"0x3000000006e"
 		],
-		"animationKey": 42,
+		"animationKey": 36,
 		"startTime": "2024.05.20-09.00.00 +0000",
 		"endTime": "2024.12.24-10.39.00 +0000",
 		"VisibilityTicks": [
@@ -625,11 +675,11 @@
 					0.0,
 					0.0
 				],
-				"rotationAxis": [ -0.991704,
-					-0.127823,
-					-0.013545
+				"rotationAxis": [ -0.999508,
+					-0.030461,
+					0.007433
 				],
-				"rotationAngleDegrees": 12.198338,
+				"rotationAngleDegrees": 51.643802,
 				"anchor": [ 0.0,
 					0.0,
 					0.0
@@ -637,9 +687,14 @@
 			},
 			{
 				"translation": [ 6446.679687,
-					10193.554688,
-					770.861816
+					8353.515625,
+					-5892.580223
 				],
+				"rotationAxis": [ -1.0,
+					0.0,
+					0.0
+				],
+				"rotationAngleDegrees": 39.523811,
 				"anchor": [ 0.0,
 					0.0,
 					0.0
@@ -647,9 +702,14 @@
 			},
 			{
 				"translation": [ 19907.617187,
-					6691.992188,
-					10449.812317
+					11812.109375,
+					3801.84803
 				],
+				"rotationAxis": [ -1.0,
+					0.0,
+					0.0
+				],
+				"rotationAngleDegrees": 39.523811,
 				"anchor": [ 0.0,
 					0.0,
 					0.0
@@ -660,9 +720,9 @@
 	},
 	{
 		"elementIds": [
-			"0x1a0000000063"
+			"0x3000000006f"
 		],
-		"animationKey": 35,
+		"animationKey": 47,
 		"startTime": "2024.05.20-09.00.00 +0000",
 		"endTime": "2024.12.24-10.39.00 +0000",
 		"VisibilityTicks": [
@@ -707,15 +767,19 @@
 					1.0
 				],
 				"rotationAngleDegrees": 14.765625,
+				"scale": [ 0.999999,
+					0.999999,
+					1.0
+				],
 				"anchor": "Static"
 			}
 		]
 	},
 	{
 		"elementIds": [
-			"0x1a000000006d"
+			"0x30000000079"
 		],
-		"animationKey": 34,
+		"animationKey": 49,
 		"startTime": "2024.05.20-09.00.00 +0000",
 		"endTime": "2025.11.13-17.00.00 +0000",
 		"VisibilityTicks": [
@@ -868,9 +932,9 @@
 	},
 	{
 		"elementIds": [
-			"0x1a000000006e"
+			"0x3000000007a"
 		],
-		"animationKey": 62,
+		"animationKey": 68,
 		"startTime": "2024.11.11-13.00.00 +0000",
 		"endTime": "2025.01.20-13.00.00 +0000",
 		"VisibilityTicks": [
@@ -904,9 +968,9 @@
 	},
 	{
 		"elementIds": [
-			"0x1a000000006f"
+			"0x3000000007b"
 		],
-		"animationKey": 10,
+		"animationKey": 65,
 		"startTime": "2024.05.20-09.00.00 +0000",
 		"endTime": "2025.02.26-17.00.00 +0000",
 		"VisibilityTicks": [
@@ -991,9 +1055,9 @@
 	},
 	{
 		"elementIds": [
-			"0x1a0000000071"
+			"0x3000000007e"
 		],
-		"animationKey": 19,
+		"animationKey": 1,
 		"startTime": "2024.05.08-09.00.00 +0000",
 		"endTime": "2025.07.28-17.00.00 +0000",
 		"VisibilityTicks": [
@@ -1012,16 +1076,16 @@
 		],
 		"VisibilityValues": [ 0.0,
 			1.0,
-			0.0,
-			0.0,
+			2.0,
+			2.0,
 			1.0,
 			2.0,
-			0.0,
+			2.0,
 			1.0,
 			2.0,
-			0.0,
+			2.0,
 			1.0,
-			0.67
+			2.0
 		],
 		"ColorTicks": [
 			"0x8dc6f3d3dc6e180",
@@ -1042,6 +1106,30 @@
 				0.0,
 				0.0
 			],
+			[ true, 0.0,
+				1.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ true, 1.0,
+				1.0,
+				0.003922
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
 			[ true, 1.0,
 				1.0,
 				0.0
@@ -1055,71 +1143,503 @@
 				0.0
 			],
 			[ true, 0.0,
-				1.0,
-				0.0
+				0.0,
+				1.0
 			],
 			[ false, 0.0,
 				0.0,
 				0.0
-			],
-			[ false, 0.0,
-				0.0,
-				0.0
-			],
-			[ true, 0.0,
-				1.0,
-				0.0
-			],
-			[ false, 0.0,
-				0.0,
-				0.0
-			],
-			[ false, 0.0,
-				0.0,
-				0.0
-			],
-			[ true, 0.0,
-				1.0,
-				0.0
-			],
-			[ true, 0.392157,
-				0.584314,
-				0.929412
 			]
 		],
 		"TransformTicks": [
 			"0x8dc6f3d3dc86800",
+			"0x8dcc0f678bce180",
 			"0x8dcc0f678be6800",
+			"0x8dcdb828712a700",
+			"0x8dce3aa3ffdaa00",
+			"0x8dce440d2913f00",
+			"0x8dd0250c014b400",
+			"0x8dd0250c0163b00",
+			"0x8dd0250c017c180",
 			"0x8dd0250c0194800",
-			"0x8dd990f0857a800"
+			"0x8dd10112653e800",
+			"0x8dd395258ff3400",
+			"0x8dd39525900bb00",
+			"0x8dd990f08562180",
+			"0x8dd990f0857a800",
+			"0x8ddcdf830251b00"
 		],
 		"TransformValues": [
-			"Untransformed",
-			"Untransformed",
 			{
-				"translation": [ -11091.014648,
-					19223.744141,
+				"translation": [ -13032.325195,
+					28895.804688,
 					0.0
 				],
 				"rotationAxis": [ 0.0,
 					0.0,
 					-1.0
 				],
-				"rotationAngleDegrees": 28.044537,
+				"rotationAngleDegrees": 40.635919,
+				"scale": [ 0.999999,
+					0.999999,
+					1.0
+				],
 				"anchor": "Static"
 			},
-			"Untransformed"
+			{
+				"translation": [ -13032.325195,
+					28895.804688,
+					0.0
+				],
+				"rotationAxis": [ 0.0,
+					0.0,
+					-1.0
+				],
+				"rotationAngleDegrees": 40.635919,
+				"scale": [ 0.999999,
+					0.999999,
+					1.0
+				],
+				"anchor": "Static"
+			},
+			{
+				"translation": [ 0.0,
+					0.0,
+					0.0
+				],
+				"rotationAxis": [ 0.0,
+					-1.0,
+					0.0
+				],
+				"rotationAngleDegrees": 45.0,
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -564.648437,
+					30629.6875,
+					-1467.969751
+				],
+				"rotationAxis": [ 0.0,
+					-1.0,
+					0.0
+				],
+				"rotationAngleDegrees": 90.0,
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ 17893.75,
+					25522.460938,
+					-1467.969751
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ 17893.75,
+					25522.460938,
+					-1467.969751
+				],
+				"rotationAxis": [ 0.0,
+					0.0,
+					1.0
+				],
+				"rotationAngleDegrees": 90.0,
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ 43519.921875,
+					27187.890625,
+					-1467.969751
+				],
+				"rotationAxis": [ 0.0,
+					0.0,
+					-1.0
+				],
+				"rotationAngleDegrees": 45.0,
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -13032.325195,
+					28895.804688,
+					0.0
+				],
+				"rotationAxis": [ 0.0,
+					0.0,
+					-1.0
+				],
+				"rotationAngleDegrees": 40.635919,
+				"scale": [ 0.999999,
+					0.999999,
+					1.0
+				],
+				"anchor": "Static"
+			},
+			{
+				"translation": [ -13032.325195,
+					28895.804688,
+					0.0
+				],
+				"rotationAxis": [ 0.0,
+					0.0,
+					-1.0
+				],
+				"rotationAngleDegrees": 40.635919,
+				"scale": [ 0.999999,
+					0.999999,
+					1.0
+				],
+				"anchor": "Static"
+			},
+			{
+				"translation": [ 0.0,
+					0.0,
+					0.0
+				],
+				"rotationAxis": [ -0.999508,
+					-0.030461,
+					0.007433
+				],
+				"rotationAngleDegrees": 51.643802,
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ 6446.679687,
+					8353.515625,
+					-5892.580223
+				],
+				"rotationAxis": [ -1.0,
+					0.0,
+					0.0
+				],
+				"rotationAngleDegrees": 39.523811,
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ 19907.617187,
+					11812.109375,
+					3801.84803
+				],
+				"rotationAxis": [ -1.0,
+					0.0,
+					0.0
+				],
+				"rotationAngleDegrees": 39.523811,
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -13032.325195,
+					28895.804688,
+					0.0
+				],
+				"rotationAxis": [ 0.0,
+					0.0,
+					-1.0
+				],
+				"rotationAngleDegrees": 40.635919,
+				"scale": [ 0.999999,
+					0.999999,
+					1.0
+				],
+				"anchor": "Static"
+			},
+			{
+				"translation": [ -13032.325195,
+					28895.804688,
+					0.0
+				],
+				"rotationAxis": [ 0.0,
+					0.0,
+					-1.0
+				],
+				"rotationAngleDegrees": 40.635919,
+				"scale": [ 0.999999,
+					0.999999,
+					1.0
+				],
+				"anchor": "Static"
+			},
+			"Untransformed",
+			{
+				"translation": [ -13032.325195,
+					28895.804688,
+					0.0
+				],
+				"rotationAxis": [ 0.0,
+					0.0,
+					-1.0
+				],
+				"rotationAngleDegrees": 40.635919,
+				"scale": [ 0.999999,
+					0.999999,
+					1.0
+				],
+				"anchor": "Static"
+			}
 		],
+		"TransformInterps": [ 0, 0, 1, 1, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0 ],
 		"CuttingPlaneTicks": [
 			"0x8dc6f3d3dc86800",
+			"0x8dcb0b90c305400",
 			"0x8dcc0f678be6800",
 			"0x8dd0250c014b400",
+			"0x8dd0250c0163b00",
 			"0x8dd0250c0194800",
-			"0x8dd395258ff3400",
-			"0x8dd990f0857a800",
-			"0x8ddcdf830239400"
+			"0x8dd990f0857a800"
 		],
 		"CuttingPlaneValues": [
+			[
+				"DeferredFullyRemoved",
+				0.0,
+				-1.0,
+				0.0,
+				0.0
+			],
+			[
+				"DeferredFullyGrown",
+				0.0,
+				-1.0,
+				0.0,
+				0.0
+			],
+			[
+				"DeferredFullyGrown",
+				-1.0,
+				0.0,
+				0.0,
+				0.0
+			],
+			[
+				"DeferredFullyRemoved",
+				-1.0,
+				0.0,
+				0.0,
+				0.0
+			],
+			[
+				"FullyGrown",
+				0.0,
+				0.0,
+				0.0,
+				0.0
+			],
+			[
+				"FullyGrown",
+				0.0,
+				0.0,
+				0.0,
+				0.0
+			],
+			[
+				"FullyGrown",
+				0.0,
+				0.0,
+				0.0,
+				0.0
+			]
+		],
+		"CuttingPlaneInterps": [ 1, 0, 1, 0, 0, 0, 0 ]
+	},
+	{
+		"elementIds": [
+			"0x3000000007f"
+		],
+		"animationKey": 21,
+		"startTime": "2024.06.20-09.00.00 +0000",
+		"endTime": "2024.11.15-10.39.00 +0000",
+		"VisibilityTicks": [
+			"0x8dc91075d8a2180",
+			"0x8dc91075d8ba800",
+			"0x8dd0561b72fad00"
+		],
+		"VisibilityValues": [ 0.0,
+			0.5,
+			2.0
+		],
+		"ColorTicks": [
+			"0x8dc91075d8a2180",
+			"0x8dc91075d8ba800",
+			"0x8dd0561b72fad00"
+		],
+		"ColorValues": [
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ true, 1.0,
+				0.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			]
+		]
+	},
+	{
+		"elementIds": [
+			"0x30000000081"
+		],
+		"animationKey": 2,
+		"startTime": "2024.11.11-13.00.00 +0000",
+		"endTime": "2025.11.13-17.00.00 +0000",
+		"VisibilityTicks": [
+			"0x8dd0250c017c180",
+			"0x8dd0250c0194800",
+			"0x8dd39525900bb00",
+			"0x8dd990f08562180",
+			"0x8dd990f0857a800",
+			"0x8ddcdf830251b00",
+			"0x8ddfc54f685e180",
+			"0x8ddfc54f6876800",
+			"0x8de22d614c21b00"
+		],
+		"VisibilityValues": [ 0.0,
+			1.0,
+			2.0,
+			2.0,
+			0.9,
+			2.0,
+			2.0,
+			1.0,
+			0.0
+		],
+		"ColorTicks": [
+			"0x8dd0250c017c180",
+			"0x8dd0250c0194800",
+			"0x8dd39525900bb00",
+			"0x8dd990f08562180",
+			"0x8dd990f0857a800",
+			"0x8ddcdf830251b00",
+			"0x8ddfc54f685e180",
+			"0x8ddfc54f6876800",
+			"0x8de22d614c21b00"
+		],
+		"ColorValues": [
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ true, 0.0,
+				0.807843,
+				0.819608
+			],
+			[ true, 0.180392,
+				0.545098,
+				0.341176
+			],
+			[ true, 0.180392,
+				0.545098,
+				0.341176
+			],
+			[ true, 0.12549,
+				0.698039,
+				0.666667
+			],
+			[ true, 0.180392,
+				0.545098,
+				0.341176
+			],
+			[ true, 0.603922,
+				0.803922,
+				0.196078
+			],
+			[ true, 0.0,
+				1.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			]
+		],
+		"TransformTicks": [
+			"0x8dd0250c0194800",
+			"0x8dd990f0857a800",
+			"0x8ddfc54f6876800",
+			"0x8de22d614c09400"
+		],
+		"TransformValues": [
+			"Untransformed",
+			"Untransformed",
+			{
+				"translation": [ 0.0,
+					0.0,
+					0.0
+				],
+				"rotationAxis": [ 0.0,
+					0.0,
+					-1.0
+				],
+				"rotationAngleDegrees": 235.0,
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ 0.0,
+					0.0,
+					0.0
+				],
+				"rotationAxis": [ 0.0,
+					0.0,
+					1.0
+				],
+				"rotationAngleDegrees": 5.0,
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			}
+		],
+		"TransformInterps": [ 0, 0, 1, 0 ],
+		"CuttingPlaneTicks": [
+			"0x8dd0250c0194800",
+			"0x8dd395258ff3400",
+			"0x8dd990f08562180",
+			"0x8dd990f0857a800",
+			"0x8ddcdf830239400",
+			"0x8ddfc54f6876800",
+			"0x8de22d614c09400"
+		],
+		"CuttingPlaneValues": [
+			[
+				"DeferredFullyRemoved",
+				0.57735,
+				-0.57735,
+				0.57735,
+				0.0
+			],
+			[
+				"DeferredFullyGrown",
+				0.57735,
+				-0.57735,
+				0.57735,
+				0.0
+			],
 			[
 				"FullyGrown",
 				0.0,
@@ -1130,53 +1650,515 @@
 			[
 				"DeferredFullyRemoved",
 				0.0,
-				-1.0,
 				0.0,
+				1.0,
 				0.0
 			],
 			[
 				"DeferredFullyGrown",
 				0.0,
-				-1.0,
 				0.0,
-				0.0
-			],
-			[
-				"DeferredFullyRemoved",
-				0.0,
-				-1.0,
-				0.0,
+				1.0,
 				0.0
 			],
 			[
 				"DeferredFullyGrown",
-				0.0,
-				-1.0,
-				0.0,
-				0.0
-			],
-			[
-				"DeferredFullyRemoved",
 				1.0,
 				0.0,
 				0.0,
 				0.0
 			],
 			[
-				"DeferredFullyGrown",
+				"DeferredFullyRemoved",
 				1.0,
 				0.0,
 				0.0,
 				0.0
 			]
 		],
-		"CuttingPlaneInterps": [ 0, 1, 0, 1, 0, 1, 0 ]
+		"CuttingPlaneInterps": [ 1, 0, 0, 1, 0, 1, 0 ]
 	},
 	{
 		"elementIds": [
-			"0x1a0000000072"
+			"0x30000000082"
 		],
-		"animationKey": 9,
+		"animationKey": 5,
+		"startTime": "2024.05.08-13.00.00 +0000",
+		"endTime": "2024.06.07-11.00.00 +0000",
+		"VisibilityTicks": [
+			"0x8dc6f5ec4d88180",
+			"0x8dc6f5ec4da0800",
+			"0x8dc7b5229df4300",
+			"0x8dc7bcfe462e180",
+			"0x8dc7bcfe4646800",
+			"0x8dc86e0f9b2ab00"
+		],
+		"VisibilityValues": [ 0.0,
+			1.0,
+			2.0,
+			0.7,
+			1.0,
+			0.0
+		],
+		"ColorTicks": [
+			"0x8dc6f5ec4d88180",
+			"0x8dc6f5ec4da0800",
+			"0x8dc7b5229df4300",
+			"0x8dc7bcfe462e180",
+			"0x8dc7bcfe4646800",
+			"0x8dc86e0f9b2ab00"
+		],
+		"ColorValues": [
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ true, 0.0,
+				1.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ true, 0.0,
+				1.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			]
+		],
+		"TransformTicks": [
+			"0x8dc6f5ec4da0800",
+			"0x8dc7558775e2c00",
+			"0x8dc785550a03e00",
+			"0x8dc79d3bc3a5c00",
+			"0x8dc7a92f30e5600",
+			"0x8dc7b5229ddbc00",
+			"0x8dc7bcfe4646800"
+		],
+		"TransformValues": [
+			{
+				"translation": [ 0.0,
+					0.0,
+					0.0
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -21301.367187,
+					0.0,
+					23105.391407
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ 0.0,
+					-0.195312,
+					37482.356739
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ 34787.5,
+					-0.195312,
+					33051.530933
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ 69575.390625,
+					-0.195312,
+					37482.356739
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ 69575.390625,
+					-0.195312,
+					-8894.718456
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			"Untransformed"
+		],
+		"TransformInterps": [ 1, 1, 1, 1, 1, 0, 0 ],
+		"CuttingPlaneTicks": [
+			"0x8dc6f5ec4da0800",
+			"0x8dc7b5229ddbc00",
+			"0x8dc7bcfe4646800",
+			"0x8dc7c12f287a800",
+			"0x8dc7e2b63a1a800",
+			"0x8dc7e6e71c4e800",
+			"0x8dc7ef48e0b6800",
+			"0x8dc7f379c2ea800",
+			"0x8dc7fbdb8752800",
+			"0x8dc8000c6986800",
+			"0x8dc8086e2dee800",
+			"0x8dc80c9f1022800",
+			"0x8dc81500d48a800",
+			"0x8dc81931b6be800",
+			"0x8dc83ab8c85e800",
+			"0x8dc83ee9aa92800",
+			"0x8dc8474b6efa800",
+			"0x8dc84b7c512e800",
+			"0x8dc853de1596800",
+			"0x8dc8580ef7ca800",
+			"0x8dc86070bc32800",
+			"0x8dc864a19e66800",
+			"0x8dc86d0362ce800",
+			"0x8dc86e0f9b12400"
+		],
+		"CuttingPlaneValues": [
+			[
+				"DeferredFullyRemoved",
+				0.0,
+				-1.0,
+				0.0,
+				0.0
+			],
+			[
+				"DeferredFullyGrown",
+				0.0,
+				-1.0,
+				0.0,
+				0.0
+			],
+			[
+				"DeferredFullyGrown",
+				-1.0,
+				0.0,
+				0.0,
+				0.0
+			],
+			[
+				"DeferredPartiallyGrown",
+				-1.0,
+				0.0,
+				0.0,
+				0.902439
+			],
+			[
+				"DeferredPartiallyGrown",
+				-1.0,
+				0.0,
+				0.0,
+				0.902439
+			],
+			[
+				"DeferredPartiallyGrown",
+				-1.0,
+				0.0,
+				0.0,
+				0.804878
+			],
+			[
+				"DeferredPartiallyGrown",
+				-1.0,
+				0.0,
+				0.0,
+				0.804878
+			],
+			[
+				"DeferredPartiallyGrown",
+				-1.0,
+				0.0,
+				0.0,
+				0.707317
+			],
+			[
+				"DeferredPartiallyGrown",
+				-1.0,
+				0.0,
+				0.0,
+				0.707317
+			],
+			[
+				"DeferredPartiallyGrown",
+				-1.0,
+				0.0,
+				0.0,
+				0.609756
+			],
+			[
+				"DeferredPartiallyGrown",
+				-1.0,
+				0.0,
+				0.0,
+				0.609756
+			],
+			[
+				"DeferredPartiallyGrown",
+				-1.0,
+				0.0,
+				0.0,
+				0.512195
+			],
+			[
+				"DeferredPartiallyGrown",
+				-1.0,
+				0.0,
+				0.0,
+				0.512195
+			],
+			[
+				"DeferredPartiallyGrown",
+				-1.0,
+				0.0,
+				0.0,
+				0.414634
+			],
+			[
+				"DeferredPartiallyGrown",
+				-1.0,
+				0.0,
+				0.0,
+				0.414634
+			],
+			[
+				"DeferredPartiallyGrown",
+				-1.0,
+				0.0,
+				0.0,
+				0.317073
+			],
+			[
+				"DeferredPartiallyGrown",
+				-1.0,
+				0.0,
+				0.0,
+				0.317073
+			],
+			[
+				"DeferredPartiallyGrown",
+				-1.0,
+				0.0,
+				0.0,
+				0.219512
+			],
+			[
+				"DeferredPartiallyGrown",
+				-1.0,
+				0.0,
+				0.0,
+				0.219512
+			],
+			[
+				"DeferredPartiallyGrown",
+				-1.0,
+				0.0,
+				0.0,
+				0.121951
+			],
+			[
+				"DeferredPartiallyGrown",
+				-1.0,
+				0.0,
+				0.0,
+				0.121951
+			],
+			[
+				"DeferredPartiallyGrown",
+				-1.0,
+				0.0,
+				0.0,
+				0.02439
+			],
+			[
+				"DeferredPartiallyGrown",
+				-1.0,
+				0.0,
+				0.0,
+				0.02439
+			],
+			[
+				"DeferredFullyRemoved",
+				-1.0,
+				0.0,
+				0.0,
+				0.0
+			]
+		],
+		"CuttingPlaneInterps": [ 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0 ]
+	},
+	{
+		"elementIds": [
+			"0x30000000083"
+		],
+		"animationKey": 32,
+		"startTime": "2024.05.08-09.00.00 +0000",
+		"endTime": "2025.07.28-17.00.00 +0000",
+		"VisibilityTicks": [
+			"0x8dc6f3d3dc6e180",
+			"0x8dc6f3d3dc86800",
+			"0x8dcb0b90c31db00",
+			"0x8dd0250c017c180",
+			"0x8dd0250c0194800",
+			"0x8dd39525900bb00",
+			"0x8dd990f08562180",
+			"0x8dd990f0857a800",
+			"0x8ddcdf830251b00"
+		],
+		"VisibilityValues": [ 2.0,
+			1.0,
+			2.0,
+			2.0,
+			1.0,
+			0.0,
+			2.0,
+			1.0,
+			0.0
+		],
+		"ColorTicks": [
+			"0x8dc6f3d3dc6e180",
+			"0x8dc6f3d3dc86800",
+			"0x8dcb0b90c31db00",
+			"0x8dd0250c017c180",
+			"0x8dd0250c0194800",
+			"0x8dd39525900bb00",
+			"0x8dd990f08562180",
+			"0x8dd990f0857a800",
+			"0x8ddcdf830251b00"
+		],
+		"ColorValues": [
+			[ true, 0.603922,
+				0.803922,
+				0.196078
+			],
+			[ true, 1.0,
+				1.0,
+				0.0
+			],
+			[ true, 0.603922,
+				0.803922,
+				0.196078
+			],
+			[ true, 0.603922,
+				0.803922,
+				0.196078
+			],
+			[ true, 0.0,
+				1.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ true, 1.0,
+				0.631373,
+				0.011765
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			]
+		],
+		"CuttingPlaneTicks": [
+			"0x8dc6f3d3dc86800",
+			"0x8dd0250c0194800",
+			"0x8dd395258ff3400",
+			"0x8dd990f0857a800"
+		],
+		"CuttingPlaneValues": [
+			[
+				"FullyGrown",
+				0.0,
+				0.0,
+				0.0,
+				0.0
+			],
+			[
+				"DeferredFullyGrown",
+				1.0,
+				0.0,
+				0.0,
+				0.0
+			],
+			[
+				"DeferredFullyRemoved",
+				1.0,
+				0.0,
+				0.0,
+				0.0
+			],
+			[
+				"FullyGrown",
+				0.0,
+				0.0,
+				0.0,
+				0.0
+			]
+		],
+		"CuttingPlaneInterps": [ 0, 1, 0, 0 ]
+	},
+	{
+		"elementIds": [
+			"0x30000000084"
+		],
+		"animationKey": 46,
+		"startTime": "2024.05.20-09.00.00 +0000",
+		"endTime": "2025.03.12-09.00.00 +0000",
+		"VisibilityTicks": [
+			"0x8dc78ab3abbe180",
+			"0x8dc78ab3abd6800"
+		],
+		"VisibilityValues": [ 0.0,
+			2.0
+		],
+		"ColorTicks": [
+			"0x8dc78ab3abbe180",
+			"0x8dc78ab3abd6800",
+			"0x8dd614445005b00"
+		],
+		"ColorValues": [
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ true, 0.823529,
+				0.411765,
+				0.117647
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			]
+		]
+	},
+	{
+		"elementIds": [
+			"0x30000000085"
+		],
+		"animationKey": 8,
 		"startTime": "2024.05.08-09.00.00 +0000",
 		"endTime": "2025.07.28-17.00.00 +0000",
 		"VisibilityTicks": [
@@ -1193,10 +2175,10 @@
 			"0x8dd990f0857a800",
 			"0x8ddcdf830251b00"
 		],
-		"VisibilityValues": [ 2.0,
+		"VisibilityValues": [ 0.0,
 			1.0,
-			0.0,
-			0.0,
+			2.0,
+			2.0,
 			1.0,
 			0.0,
 			0.0,
@@ -1221,9 +2203,9 @@
 			"0x8ddcdf830251b00"
 		],
 		"ColorValues": [
-			[ true, 0.603922,
-				0.803922,
-				0.196078
+			[ false, 0.0,
+				0.0,
+				0.0
 			],
 			[ true, 0.0,
 				1.0,
@@ -1238,12 +2220,12 @@
 				0.0
 			],
 			[ true, 1.0,
-				1.0,
-				0.003922
+				0.631373,
+				0.011765
 			],
-			[ true, 0.862745,
-				0.078431,
-				0.235294
+			[ false, 0.0,
+				0.0,
+				0.0
 			],
 			[ false, 0.0,
 				0.0,
@@ -1269,77 +2251,27 @@
 				0.0,
 				0.0
 			]
-		],
-		"TransformTicks": [
-			"0x8dc6f3d3dc86800",
-			"0x8dcc0f678be6800",
-			"0x8dd0250c0194800",
-			"0x8dd990f0857a800"
-		],
-		"TransformValues": [
-			{
-				"translation": [ 29916.705078,
-					-13928.015625,
-					0.0
-				],
-				"rotationAxis": [ 0.0,
-					0.0,
-					1.0
-				],
-				"rotationAngleDegrees": 42.352941,
-				"anchor": "Static"
-			},
-			"Untransformed",
-			"Untransformed",
-			{
-				"translation": [ -5379.15332,
-					6781.668457,
-					126.880135
-				],
-				"rotationAxis": [ 0.0,
-					0.0,
-					-1.0
-				],
-				"rotationAngleDegrees": 10.874406,
-				"anchor": "Static"
-			}
 		],
 		"CuttingPlaneTicks": [
 			"0x8dc6f3d3dc86800",
 			"0x8dcb0b90c305400",
 			"0x8dcc0f678be6800",
-			"0x8dd0250c014b400",
-			"0x8dd0250c0163b00",
 			"0x8dd0250c0194800",
 			"0x8dd990f0857a800",
 			"0x8ddcdf830239400"
 		],
 		"CuttingPlaneValues": [
 			[
-				"DeferredFullyGrown",
-				1.0,
-				0.0,
-				0.0,
-				0.0
-			],
-			[
 				"DeferredFullyRemoved",
-				1.0,
 				0.0,
+				-1.0,
 				0.0,
 				0.0
 			],
 			[
 				"DeferredFullyGrown",
+				0.0,
 				-1.0,
-				0.0,
-				0.0,
-				0.0
-			],
-			[
-				"DeferredFullyRemoved",
-				-1.0,
-				0.0,
 				0.0,
 				0.0
 			],
@@ -1369,135 +2301,6 @@
 				0.0,
 				-1.0,
 				0.0,
-				0.0
-			]
-		],
-		"CuttingPlaneInterps": [ 1, 0, 1, 0, 0, 0, 1, 0 ]
-	},
-	{
-		"elementIds": [
-			"0x1a0000000073"
-		],
-		"animationKey": 0,
-		"startTime": "2024.11.11-13.00.00 +0000",
-		"endTime": "2025.07.28-17.00.00 +0000",
-		"VisibilityTicks": [
-			"0x8dd0250c017c180",
-			"0x8dd0250c0194800",
-			"0x8dd39525900bb00",
-			"0x8dd990f08562180",
-			"0x8dd990f0857a800",
-			"0x8ddcdf830251b00"
-		],
-		"VisibilityValues": [ 2.0,
-			1.0,
-			2.0,
-			0.6,
-			0.9,
-			0.8
-		],
-		"ColorTicks": [
-			"0x8dd0250c017c180",
-			"0x8dd0250c0194800",
-			"0x8dd39525900bb00",
-			"0x8dd990f08562180",
-			"0x8dd990f0857a800",
-			"0x8ddcdf830251b00"
-		],
-		"ColorValues": [
-			[ false, 0.0,
-				0.0,
-				0.0
-			],
-			[ true, 1.0,
-				1.0,
-				0.003922
-			],
-			[ true, 0.862745,
-				0.078431,
-				0.235294
-			],
-			[ true, 0.541176,
-				0.168627,
-				0.886275
-			],
-			[ true, 0.12549,
-				0.698039,
-				0.666667
-			],
-			[ true, 0.0,
-				1.0,
-				1.0
-			]
-		],
-		"TransformTicks": [
-			"0x8dd0250c0194800",
-			"0x8dd990f0857a800"
-		],
-		"TransformValues": [
-			{
-				"translation": [ 0.000001,
-					7604.685547,
-					-20506.943359
-				],
-				"rotationAxis": [ 1.0,
-					0.0,
-					0.0
-				],
-				"rotationAngleDegrees": 40.635992,
-				"anchor": "Static"
-			},
-			"Untransformed"
-		],
-		"CuttingPlaneTicks": [
-			"0x8dd0250c0194800",
-			"0x8dd395258ff3400",
-			"0x8dd39525900bb00",
-			"0x8dd990f08562180",
-			"0x8dd990f0857a800",
-			"0x8ddcdf830239400"
-		],
-		"CuttingPlaneValues": [
-			[
-				"DeferredFullyGrown",
-				-1.0,
-				0.0,
-				0.0,
-				0.0
-			],
-			[
-				"DeferredFullyRemoved",
-				-1.0,
-				0.0,
-				0.0,
-				0.0
-			],
-			[
-				"FullyGrown",
-				0.0,
-				0.0,
-				0.0,
-				0.0
-			],
-			[
-				"FullyGrown",
-				0.0,
-				0.0,
-				0.0,
-				0.0
-			],
-			[
-				"DeferredFullyRemoved",
-				0.0,
-				0.0,
-				1.0,
-				0.0
-			],
-			[
-				"DeferredFullyGrown",
-				0.0,
-				0.0,
-				1.0,
 				0.0
 			]
 		],
@@ -1505,9 +2308,108 @@
 	},
 	{
 		"elementIds": [
-			"0x1a0000000074"
+			"0x30000000086"
 		],
-		"animationKey": 20,
+		"animationKey": 57,
+		"startTime": "2024.05.20-09.00.00 +0000",
+		"endTime": "2025.02.26-17.00.00 +0000",
+		"VisibilityTicks": [
+			"0x8dc78ab3abbe180",
+			"0x8dc78ab3abd6800"
+		],
+		"VisibilityValues": [ 0.0,
+			2.0
+		],
+		"ColorTicks": [
+			"0x8dc78ab3abbe180",
+			"0x8dc78ab3abd6800",
+			"0x8dd5687015b1b00"
+		],
+		"ColorValues": [
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ true, 0.823529,
+				0.411765,
+				0.117647
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			]
+		],
+		"TransformTicks": [
+			"0x8dc78ab3abd6800",
+			"0x8dd003fc18b1b80",
+			"0x8dd03f25a447680",
+			"0x8dd3737204fb280",
+			"0x8dd568701599400"
+		],
+		"TransformValues": [
+			{
+				"translation": [ -1873.419048,
+					-7446.707328,
+					-8098.380236
+				],
+				"rotationAxis": [ 0.0,
+					0.0,
+					-1.0
+				],
+				"rotationAngleDegrees": 9.898479,
+				"anchor": "Center"
+			},
+			{
+				"translation": [ -20257.412114,
+					-8641.472117,
+					-8098.380236
+				],
+				"rotationAxis": [ 0.0,
+					0.0,
+					1.0
+				],
+				"rotationAngleDegrees": 90.0,
+				"anchor": "Center"
+			},
+			{
+				"translation": [ -20257.412114,
+					-8641.472117,
+					-8098.380236
+				],
+				"anchor": "Center"
+			},
+			{
+				"translation": [ -38715.810551,
+					-3534.245554,
+					-8098.380236
+				],
+				"rotationAxis": [ 0.0,
+					-1.0,
+					0.0
+				],
+				"rotationAngleDegrees": 90.0,
+				"anchor": "Center"
+			},
+			{
+				"translation": [ -38609.872196,
+					-9280.934093,
+					-7822.962312
+				],
+				"rotationAxis": [ 0.0,
+					-1.0,
+					0.0
+				],
+				"rotationAngleDegrees": 81.66802,
+				"anchor": "Center"
+			}
+		],
+		"TransformInterps": [ 1, 1, 1, 1, 0 ]
+	},
+	{
+		"elementIds": [
+			"0x30000000087"
+		],
+		"animationKey": 10,
 		"startTime": "2024.11.11-13.00.00 +0000",
 		"endTime": "2025.07.28-17.00.00 +0000",
 		"VisibilityTicks": [
@@ -1538,6 +2440,18 @@
 				0.0,
 				0.0
 			],
+			[ true, 0.0,
+				0.0,
+				1.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
 			[ true, 1.0,
 				1.0,
 				0.0
@@ -1545,26 +2459,150 @@
 			[ false, 0.0,
 				0.0,
 				0.0
+			]
+		],
+		"TransformTicks": [
+			"0x8dd0250c017c180",
+			"0x8dd0250c0194800",
+			"0x8dd39525900bb00",
+			"0x8dd990f0857a800"
+		],
+		"TransformValues": [
+			{
+				"translation": [ -8689.797852,
+					12912.1875,
+					0.0
+				],
+				"rotationAxis": [ 0.0,
+					0.0,
+					-1.0
+				],
+				"rotationAngleDegrees": 19.584032,
+				"scale": [ 0.999999,
+					0.999999,
+					1.0
+				],
+				"anchor": "Static"
+			},
+			"Untransformed",
+			{
+				"translation": [ -8689.797852,
+					12912.1875,
+					0.0
+				],
+				"rotationAxis": [ 0.0,
+					0.0,
+					-1.0
+				],
+				"rotationAngleDegrees": 19.584032,
+				"scale": [ 0.999999,
+					0.999999,
+					1.0
+				],
+				"anchor": "Static"
+			},
+			{
+				"translation": [ -8689.797852,
+					12912.1875,
+					0.0
+				],
+				"rotationAxis": [ 0.0,
+					0.0,
+					-1.0
+				],
+				"rotationAngleDegrees": 19.584032,
+				"scale": [ 0.999999,
+					0.999999,
+					1.0
+				],
+				"anchor": "Static"
+			}
+		]
+	},
+	{
+		"elementIds": [
+			"0x30000000088"
+		],
+		"animationKey": 53,
+		"startTime": "2024.05.07-09.00.00 +0000",
+		"endTime": "2024.11.11-13.00.00 +0000",
+		"VisibilityTicks": [
+			"0x8dc6e74135a1400",
+			"0x8dc6e74135b9b00",
+			"0x8dcc0f678bce180",
+			"0x8dcc0f678be6800",
+			"0x8dd0250c0163b00"
+		],
+		"VisibilityValues": [ 2.0,
+			0.0,
+			2.0,
+			1.0,
+			0.0
+		],
+		"ColorTicks": [
+			"0x8dc6e74135d2180",
+			"0x8dc6e74135ea800",
+			"0x8dcc0f678bce180",
+			"0x8dcc0f678be6800",
+			"0x8dd0250c0163b00"
+		],
+		"ColorValues": [
+			[ false, 0.0,
+				0.0,
+				0.0
 			],
 			[ false, 0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
-				0.631373,
-				0.011765
+			[ true, 0.603922,
+				0.803922,
+				0.196078
+			],
+			[ true, 0.0,
+				1.0,
+				0.0
 			],
 			[ false, 0.0,
 				0.0,
 				0.0
 			]
-		]
+		],
+		"CuttingPlaneTicks": [
+			"0x8dc6e74135ea800",
+			"0x8dcc0f678be6800",
+			"0x8dd0250c014b400"
+		],
+		"CuttingPlaneValues": [
+			[
+				"FullyGrown",
+				0.0,
+				0.0,
+				0.0,
+				0.0
+			],
+			[
+				"DeferredFullyGrown",
+				1.0,
+				0.0,
+				0.0,
+				0.0
+			],
+			[
+				"DeferredFullyRemoved",
+				1.0,
+				0.0,
+				0.0,
+				0.0
+			]
+		],
+		"CuttingPlaneInterps": [ 0, 1, 0 ]
 	},
 	{
 		"elementIds": [
-			"0x1a0000000076"
+			"0x3000000008a"
 		],
-		"animationKey": 18,
+		"animationKey": 29,
 		"startTime": "2024.05.08-09.00.00 +0000",
 		"endTime": "2025.11.13-17.00.00 +0000",
 		"VisibilityTicks": [
@@ -1717,9 +2755,818 @@
 	},
 	{
 		"elementIds": [
-			"0x1a0000000078"
+			"0x3000000008c"
 		],
-		"animationKey": 13,
+		"animationKey": 43,
+		"startTime": "2024.05.20-09.00.00 +0000",
+		"endTime": "2025.03.12-09.00.00 +0000",
+		"VisibilityTicks": [
+			"0x8dc78ab3abbe180",
+			"0x8dc78ab3abd6800"
+		],
+		"VisibilityValues": [ 0.0,
+			2.0
+		],
+		"ColorTicks": [
+			"0x8dc78ab3abbe180",
+			"0x8dc78ab3abd6800",
+			"0x8dd614445005b00"
+		],
+		"ColorValues": [
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ true, 0.823529,
+				0.411765,
+				0.117647
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			]
+		]
+	},
+	{
+		"elementIds": [
+			"0x3000000008d"
+		],
+		"animationKey": 28,
+		"startTime": "2024.11.11-13.00.00 +0000",
+		"endTime": "2025.11.13-17.00.00 +0000",
+		"VisibilityTicks": [
+			"0x8dd0250c017c180",
+			"0x8dd0250c0194800",
+			"0x8dd39525900bb00",
+			"0x8dd990f08562180",
+			"0x8dd990f0857a800",
+			"0x8ddcdf830251b00",
+			"0x8ddfc54f685e180",
+			"0x8ddfc54f6876800",
+			"0x8de22d614c21b00"
+		],
+		"VisibilityValues": [ 0.0,
+			1.0,
+			0.0,
+			0.0,
+			1.0,
+			0.0,
+			2.0,
+			1.0,
+			0.0
+		],
+		"ColorTicks": [
+			"0x8dd0250c017c180",
+			"0x8dd0250c0194800",
+			"0x8dd39525900bb00",
+			"0x8dd990f08562180",
+			"0x8dd990f0857a800",
+			"0x8ddcdf830251b00",
+			"0x8ddfc54f685e180",
+			"0x8ddfc54f6876800",
+			"0x8de22d614c21b00"
+		],
+		"ColorValues": [
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ true, 1.0,
+				1.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ true, 0.0,
+				0.0,
+				1.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ true, 1.0,
+				0.631373,
+				0.011765
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			]
+		],
+		"TransformTicks": [
+			"0x8dd0250c0194800",
+			"0x8dd990f0857a800",
+			"0x8ddfc54f6876800"
+		],
+		"TransformValues": [
+			"Untransformed",
+			{
+				"translation": [ 49.548401,
+					-0.000002,
+					0.0
+				],
+				"anchor": "Static"
+			},
+			"Untransformed"
+		]
+	},
+	{
+		"elementIds": [
+			"0x3000000008e"
+		],
+		"animationKey": 40,
+		"startTime": "2024.05.08-09.00.00 +0000",
+		"endTime": "2025.11.13-17.00.00 +0000",
+		"VisibilityTicks": [
+			"0x8dc6f3d3dc6e180",
+			"0x8dc6f3d3dc86800",
+			"0x8dcb0b90c31db00",
+			"0x8dcc0f678bce180",
+			"0x8dcc0f678be6800",
+			"0x8dd0250c0163b00",
+			"0x8dd990f08562180",
+			"0x8dd990f0857a800",
+			"0x8ddcdf830251b00",
+			"0x8ddfc54f685e180",
+			"0x8ddfc54f6876800",
+			"0x8de22d614c21b00"
+		],
+		"VisibilityValues": [ 0.0,
+			1.0,
+			0.0,
+			0.0,
+			1.0,
+			2.0,
+			2.0,
+			1.0,
+			2.0,
+			2.0,
+			1.0,
+			0.0
+		],
+		"ColorTicks": [
+			"0x8dc6f3d3dc6e180",
+			"0x8dc6f3d3dc86800",
+			"0x8dcb0b90c31db00",
+			"0x8dcc0f678bce180",
+			"0x8dcc0f678be6800",
+			"0x8dd0250c0163b00",
+			"0x8dd990f08562180",
+			"0x8dd990f0857a800",
+			"0x8ddcdf830251b00",
+			"0x8ddfc54f685e180",
+			"0x8ddfc54f6876800",
+			"0x8de22d614c21b00"
+		],
+		"ColorValues": [
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ true, 0.0,
+				0.0,
+				1.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ true, 0.0,
+				1.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ true, 1.0,
+				1.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ true, 1.0,
+				0.631373,
+				0.011765
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			]
+		],
+		"TransformTicks": [
+			"0x8dc6f3d3dc86800",
+			"0x8dcc0f678be6800",
+			"0x8dd990f0857a800",
+			"0x8ddfc54f6876800"
+		],
+		"TransformValues": [
+			{
+				"translation": [ 68975.882812,
+					4075.714844,
+					0.0
+				],
+				"rotationAxis": [ 0.0,
+					0.0,
+					1.0
+				],
+				"rotationAngleDegrees": 99.014308,
+				"scale": [ 0.999997,
+					0.999997,
+					1.0
+				],
+				"anchor": "Static"
+			},
+			"Untransformed",
+			"Untransformed",
+			"Untransformed"
+		],
+		"CuttingPlaneTicks": [
+			"0x8dc6f3d3dc86800",
+			"0x8dcc0f678be6800",
+			"0x8dd0250c014b400",
+			"0x8dd990f0857a800",
+			"0x8ddfc54f6876800"
+		],
+		"CuttingPlaneValues": [
+			[
+				"FullyGrown",
+				0.0,
+				0.0,
+				0.0,
+				0.0
+			],
+			[
+				"DeferredFullyRemoved",
+				0.0,
+				-1.0,
+				0.0,
+				0.0
+			],
+			[
+				"DeferredFullyGrown",
+				0.0,
+				-1.0,
+				0.0,
+				0.0
+			],
+			[
+				"FullyGrown",
+				0.0,
+				0.0,
+				0.0,
+				0.0
+			],
+			[
+				"FullyGrown",
+				0.0,
+				0.0,
+				0.0,
+				0.0
+			]
+		],
+		"CuttingPlaneInterps": [ 0, 1, 0, 0, 0 ]
+	},
+	{
+		"elementIds": [
+			"0x3000000008f"
+		],
+		"animationKey": 42,
+		"startTime": "2024.11.11-13.00.00 +0000",
+		"endTime": "2025.07.28-17.00.00 +0000",
+		"VisibilityTicks": [
+			"0x8dd0250c017c180",
+			"0x8dd0250c0194800",
+			"0x8dd39525900bb00",
+			"0x8dd990f08562180",
+			"0x8dd990f0857a800",
+			"0x8ddcdf830251b00"
+		],
+		"VisibilityValues": [ 2.0,
+			1.0,
+			2.0,
+			2.0,
+			1.0,
+			0.0
+		],
+		"ColorTicks": [
+			"0x8dd0250c017c180",
+			"0x8dd0250c0194800",
+			"0x8dd39525900bb00",
+			"0x8dd990f08562180",
+			"0x8dd990f0857a800",
+			"0x8ddcdf830251b00"
+		],
+		"ColorValues": [
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ true, 1.0,
+				1.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ true, 1.0,
+				0.631373,
+				0.011765
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			]
+		]
+	},
+	{
+		"elementIds": [
+			"0x30000000090"
+		],
+		"animationKey": 17,
+		"startTime": "2024.05.07-09.00.00 +0000",
+		"endTime": "2025.05.22-09.00.00 +0000",
+		"VisibilityTicks": [
+			"0x8dc6e74135a1400",
+			"0x8dc6e74135b9b00",
+			"0x8dd990f0857a800"
+		],
+		"VisibilityValues": [ 0.0,
+			2.0,
+			2.0
+		]
+	},
+	{
+		"elementIds": [
+			"0x30000000091"
+		],
+		"animationKey": 27,
+		"startTime": "2024.05.20-09.00.00 +0000",
+		"endTime": "2025.09.04-17.00.00 +0000",
+		"VisibilityTicks": [
+			"0x8dc78ab3abbe180",
+			"0x8dc78ab3abd6800",
+			"0x8dda4526841e180",
+			"0x8dda45268436800",
+			"0x8ddebd47bd79b00"
+		],
+		"VisibilityValues": [ 0.0,
+			2.0,
+			2.0,
+			1.0,
+			2.0
+		],
+		"ColorTicks": [
+			"0x8dc78ab3abbe180",
+			"0x8dc78ab3abd6800",
+			"0x8dd5687015b1b00",
+			"0x8dda4526841e180",
+			"0x8dda45268436800",
+			"0x8ddebd47bd79b00"
+		],
+		"ColorValues": [
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ true, 0.823529,
+				0.411765,
+				0.117647
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ true, 1.0,
+				1.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			]
+		],
+		"TransformTicks": [
+			"0x8dc78ab3abd6800",
+			"0x8dcea26943c1500",
+			"0x8dd1d6b5a475180",
+			"0x8dd211df300ac80",
+			"0x8dd568701599400",
+			"0x8dda4526841e180",
+			"0x8dda45268436800",
+			"0x8ddebd47bd79b00"
+		],
+		"TransformValues": [
+			{
+				"translation": [ -38331.866084,
+					-24361.539607,
+					-7100.203624
+				],
+				"rotationAxis": [ 0.0,
+					-1.0,
+					0.0
+				],
+				"rotationAngleDegrees": 59.309581,
+				"anchor": "Center"
+			},
+			{
+				"translation": [ -38715.810551,
+					-3534.245554,
+					-8098.380236
+				],
+				"rotationAxis": [ 0.0,
+					-1.0,
+					0.0
+				],
+				"rotationAngleDegrees": 90.0,
+				"anchor": "Center"
+			},
+			{
+				"translation": [ -20257.412114,
+					-8641.472117,
+					-8098.380236
+				],
+				"anchor": "Center"
+			},
+			{
+				"translation": [ -20257.412114,
+					-8641.472117,
+					-8098.380236
+				],
+				"rotationAxis": [ 0.0,
+					0.0,
+					1.0
+				],
+				"rotationAngleDegrees": 90.0,
+				"anchor": "Center"
+			},
+			{
+				"translation": [ -13015.233305,
+					-8170.807218,
+					-8098.380236
+				],
+				"rotationAxis": [ 0.0,
+					0.0,
+					1.0
+				],
+				"rotationAngleDegrees": 54.898479,
+				"anchor": "Center"
+			},
+			{
+				"translation": [ -13015.233305,
+					-8170.807218,
+					-8098.380236
+				],
+				"rotationAxis": [ 0.0,
+					0.0,
+					1.0
+				],
+				"rotationAngleDegrees": 54.898479,
+				"anchor": "Center"
+			},
+			"Untransformed",
+			{
+				"translation": [ -13015.233305,
+					-8170.807218,
+					-8098.380236
+				],
+				"rotationAxis": [ 0.0,
+					0.0,
+					1.0
+				],
+				"rotationAngleDegrees": 54.898479,
+				"anchor": "Center"
+			}
+		],
+		"TransformInterps": [ 1, 1, 1, 1, 0, 0, 0, 0 ]
+	},
+	{
+		"elementIds": [
+			"0x30000000092"
+		],
+		"animationKey": 31,
+		"startTime": "2024.05.08-09.00.00 +0000",
+		"endTime": "2025.07.28-17.00.00 +0000",
+		"VisibilityTicks": [
+			"0x8dc6f3d3dc6e180",
+			"0x8dc6f3d3dc86800",
+			"0x8dcb0b90c31db00",
+			"0x8dcc0f678bce180",
+			"0x8dcc0f678be6800",
+			"0x8dd0250c0163b00",
+			"0x8dd0250c017c180",
+			"0x8dd0250c0194800",
+			"0x8dd39525900bb00",
+			"0x8dd990f08562180",
+			"0x8dd990f0857a800",
+			"0x8ddcdf830251b00"
+		],
+		"VisibilityValues": [ 2.0,
+			1.0,
+			0.0,
+			0.0,
+			1.0,
+			0.0,
+			0.0,
+			1.0,
+			0.0,
+			0.0,
+			1.0,
+			2.0
+		],
+		"ColorTicks": [
+			"0x8dc6f3d3dc6e180",
+			"0x8dc6f3d3dc86800",
+			"0x8dcb0b90c31db00",
+			"0x8dcc0f678bce180",
+			"0x8dcc0f678be6800",
+			"0x8dd0250c0163b00",
+			"0x8dd0250c017c180",
+			"0x8dd0250c0194800",
+			"0x8dd39525900bb00",
+			"0x8dd990f08562180",
+			"0x8dd990f0857a800",
+			"0x8ddcdf830251b00"
+		],
+		"ColorValues": [
+			[ true, 0.603922,
+				0.803922,
+				0.196078
+			],
+			[ true, 0.0,
+				1.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ true, 1.0,
+				1.0,
+				0.003922
+			],
+			[ true, 0.862745,
+				0.078431,
+				0.235294
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ true, 1.0,
+				1.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ true, 0.0,
+				1.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			]
+		],
+		"TransformTicks": [
+			"0x8dc6f3d3dc86800",
+			"0x8dcc0f678be6800",
+			"0x8dd0250c0194800",
+			"0x8dd990f0857a800"
+		],
+		"TransformValues": [
+			{
+				"translation": [ 29916.705078,
+					-13928.015625,
+					0.0
+				],
+				"rotationAxis": [ 0.0,
+					0.0,
+					1.0
+				],
+				"rotationAngleDegrees": 42.352941,
+				"scale": [ 0.999997,
+					0.999997,
+					1.0
+				],
+				"anchor": "Static"
+			},
+			"Untransformed",
+			"Untransformed",
+			{
+				"translation": [ -5379.15332,
+					6781.668457,
+					126.880135
+				],
+				"rotationAxis": [ 0.0,
+					0.0,
+					-1.0
+				],
+				"rotationAngleDegrees": 10.874406,
+				"scale": [ 0.999999,
+					0.999999,
+					1.0
+				],
+				"anchor": "Static"
+			}
+		],
+		"CuttingPlaneTicks": [
+			"0x8dc6f3d3dc86800",
+			"0x8dcb0b90c305400",
+			"0x8dcc0f678be6800",
+			"0x8dd0250c014b400",
+			"0x8dd0250c0163b00",
+			"0x8dd0250c0194800",
+			"0x8dd990f0857a800",
+			"0x8ddcdf830239400"
+		],
+		"CuttingPlaneValues": [
+			[
+				"DeferredFullyGrown",
+				1.0,
+				0.0,
+				0.0,
+				0.0
+			],
+			[
+				"DeferredFullyRemoved",
+				1.0,
+				0.0,
+				0.0,
+				0.0
+			],
+			[
+				"DeferredFullyGrown",
+				-1.0,
+				0.0,
+				0.0,
+				0.0
+			],
+			[
+				"DeferredFullyRemoved",
+				-1.0,
+				0.0,
+				0.0,
+				0.0
+			],
+			[
+				"FullyGrown",
+				0.0,
+				0.0,
+				0.0,
+				0.0
+			],
+			[
+				"FullyGrown",
+				0.0,
+				0.0,
+				0.0,
+				0.0
+			],
+			[
+				"DeferredFullyRemoved",
+				0.0,
+				-1.0,
+				0.0,
+				0.0
+			],
+			[
+				"DeferredFullyGrown",
+				0.0,
+				-1.0,
+				0.0,
+				0.0
+			]
+		],
+		"CuttingPlaneInterps": [ 1, 0, 1, 0, 0, 0, 1, 0 ]
+	},
+	{
+		"elementIds": [
+			"0x30000000093"
+		],
+		"animationKey": 34,
+		"startTime": "2025.03.07-09.00.00 +0000",
+		"endTime": "2025.11.13-17.00.00 +0000",
+		"VisibilityTicks": [
+			"0x8dd5d5670f12180",
+			"0x8dd5d5670f2a800",
+			"0x8dda45268405b00",
+			"0x8dda4526841e180",
+			"0x8dda45268436800",
+			"0x8ddebd47bd79b00",
+			"0x8ddfc54f685e180",
+			"0x8ddfc54f6876800",
+			"0x8de22d614c21b00"
+		],
+		"VisibilityValues": [ 0.0,
+			0.5,
+			2.0,
+			0.0,
+			0.5,
+			2.0,
+			0.0,
+			0.5,
+			2.0
+		],
+		"ColorTicks": [
+			"0x8dd5d5670f12180",
+			"0x8dd5d5670f2a800",
+			"0x8dda45268405b00",
+			"0x8dda4526841e180",
+			"0x8dda45268436800",
+			"0x8ddebd47bd79b00",
+			"0x8ddfc54f685e180",
+			"0x8ddfc54f6876800",
+			"0x8de22d614c21b00"
+		],
+		"ColorValues": [
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ true, 1.0,
+				0.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ true, 1.0,
+				0.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ true, 1.0,
+				0.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			]
+		]
+	},
+	{
+		"elementIds": [
+			"0x30000000095"
+		],
+		"animationKey": 4,
 		"startTime": "2024.05.08-09.00.00 +0000",
 		"endTime": "2024.11.15-10.39.00 +0000",
 		"VisibilityTicks": [
@@ -1856,42 +3703,33 @@
 	},
 	{
 		"elementIds": [
-			"0x1a0000000079"
+			"0x30000000096"
 		],
-		"animationKey": 24,
-		"startTime": "2025.03.07-09.00.00 +0000",
-		"endTime": "2025.11.13-17.00.00 +0000",
+		"animationKey": 48,
+		"startTime": "2024.11.11-13.00.00 +0000",
+		"endTime": "2025.07.28-17.00.00 +0000",
 		"VisibilityTicks": [
-			"0x8dd5d5670f12180",
-			"0x8dd5d5670f2a800",
-			"0x8dda45268405b00",
-			"0x8dda4526841e180",
-			"0x8dda45268436800",
-			"0x8ddebd47bd79b00",
-			"0x8ddfc54f685e180",
-			"0x8ddfc54f6876800",
-			"0x8de22d614c21b00"
+			"0x8dd0250c017c180",
+			"0x8dd0250c0194800",
+			"0x8dd39525900bb00",
+			"0x8dd990f08562180",
+			"0x8dd990f0857a800",
+			"0x8ddcdf830251b00"
 		],
-		"VisibilityValues": [ 0.0,
-			0.5,
+		"VisibilityValues": [ 2.0,
+			1.0,
 			2.0,
-			0.0,
-			0.5,
-			2.0,
-			0.0,
-			0.5,
-			2.0
+			0.6,
+			0.9,
+			0.8
 		],
 		"ColorTicks": [
-			"0x8dd5d5670f12180",
-			"0x8dd5d5670f2a800",
-			"0x8dda45268405b00",
-			"0x8dda4526841e180",
-			"0x8dda45268436800",
-			"0x8ddebd47bd79b00",
-			"0x8ddfc54f685e180",
-			"0x8ddfc54f6876800",
-			"0x8de22d614c21b00"
+			"0x8dd0250c017c180",
+			"0x8dd0250c0194800",
+			"0x8dd39525900bb00",
+			"0x8dd990f08562180",
+			"0x8dd990f0857a800",
+			"0x8ddcdf830251b00"
 		],
 		"ColorValues": [
 			[ false, 0.0,
@@ -1899,78 +3737,494 @@
 				0.0
 			],
 			[ true, 1.0,
+				1.0,
+				0.003922
+			],
+			[ true, 0.862745,
+				0.078431,
+				0.235294
+			],
+			[ true, 0.541176,
+				0.168627,
+				0.886275
+			],
+			[ true, 0.12549,
+				0.698039,
+				0.666667
+			],
+			[ true, 0.0,
+				1.0,
+				1.0
+			]
+		],
+		"TransformTicks": [
+			"0x8dd0250c0194800",
+			"0x8dd990f0857a800"
+		],
+		"TransformValues": [
+			{
+				"translation": [ 0.000001,
+					7604.685547,
+					-20506.943359
+				],
+				"rotationAxis": [ 1.0,
+					0.0,
+					0.0
+				],
+				"rotationAngleDegrees": 40.635992,
+				"scale": [ 1.0,
+					0.999993,
+					0.999993
+				],
+				"anchor": "Static"
+			},
+			"Untransformed"
+		],
+		"CuttingPlaneTicks": [
+			"0x8dd0250c0194800",
+			"0x8dd395258ff3400",
+			"0x8dd39525900bb00",
+			"0x8dd990f08562180",
+			"0x8dd990f0857a800",
+			"0x8ddcdf830239400"
+		],
+		"CuttingPlaneValues": [
+			[
+				"DeferredFullyGrown",
+				-1.0,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				"DeferredFullyRemoved",
+				-1.0,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				"FullyGrown",
+				0.0,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[
+				"FullyGrown",
+				0.0,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				"DeferredFullyRemoved",
 				0.0,
+				0.0,
+				1.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				"DeferredFullyGrown",
 				0.0,
-				0.0
-			],
-			[ true, 1.0,
 				0.0,
-				0.0
-			],
-			[ false, 0.0,
-				0.0,
+				1.0,
 				0.0
 			]
-		]
+		],
+		"CuttingPlaneInterps": [ 1, 0, 0, 0, 1, 0 ]
 	},
 	{
 		"elementIds": [
-			"0x1a000000007a"
+			"0x30000000097"
 		],
-		"animationKey": 23,
-		"startTime": "2024.05.07-09.00.00 +0000",
-		"endTime": "2024.11.11-13.00.00 +0000",
+		"animationKey": 60,
+		"startTime": "2024.05.08-13.00.00 +0000",
+		"endTime": "2024.05.23-18.00.00 +0000",
 		"VisibilityTicks": [
-			"0x8dc6e74135a1400",
-			"0x8dc6e74135b9b00",
-			"0x8dcc0f678bce180",
-			"0x8dcc0f678be6800",
-			"0x8dd0250c0163b00"
+			"0x8dc6f5ec4d88180",
+			"0x8dc6f5ec4da0800",
+			"0x8dc7b5229df4300"
 		],
-		"VisibilityValues": [ 2.0,
-			0.0,
-			2.0,
+		"VisibilityValues": [ 0.0,
 			1.0,
-			0.0
+			2.0
 		],
 		"ColorTicks": [
-			"0x8dc6e74135d2180",
-			"0x8dc6e74135ea800",
-			"0x8dcc0f678bce180",
-			"0x8dcc0f678be6800",
-			"0x8dd0250c0163b00"
+			"0x8dc6f5ec4d88180",
+			"0x8dc6f5ec4da0800",
+			"0x8dc7b5229df4300"
 		],
 		"ColorValues": [
 			[ false, 0.0,
 				0.0,
 				0.0
 			],
+			[ true, 0.0,
+				1.0,
+				0.0
+			],
+			[ true, 0.392157,
+				0.584314,
+				0.929412
+			]
+		],
+		"CuttingPlaneTicks": [
+			"0x8dc6f5ec4da0800",
+			"0x8dc6f804beba800",
+			"0x8dc700668322800",
+			"0x8dc7027ef43c800",
+			"0x8dc703051083000",
+			"0x8dc7051d819d000",
+			"0x8dc7198bd05a800",
+			"0x8dc71ba44174800",
+			"0x8dc71c2a5dbb000",
+			"0x8dc71e42ced5000",
+			"0x8dc73f43c42e800",
+			"0x8dc7415c3548800",
+			"0x8dc741e2518f000",
+			"0x8dc743fac2a9000",
+			"0x8dc74bd66aca800",
+			"0x8dc750074cfe800",
+			"0x8dc758691166800",
+			"0x8dc75a818280800",
+			"0x8dc75b079ec7000",
+			"0x8dc75d200fe1000",
+			"0x8dc7718e5e9e800",
+			"0x8dc773a6cfb8800",
+			"0x8dc7742cebff000",
+			"0x8dc776455d19000",
+			"0x8dc78ab3abd6800",
+			"0x8dc78ccc1cf0800",
+			"0x8dc78d523937000",
+			"0x8dc78f6aaa51000",
+			"0x8dc797465272800",
+			"0x8dc7995ec38c800",
+			"0x8dc799e4dfd3000",
+			"0x8dc79bfd50ed000",
+			"0x8dc7a3d8f90e800",
+			"0x8dc7a809db42800",
+			"0x8dc7b06b9faa800",
+			"0x8dc7b28410c4800",
+			"0x8dc7b30a2d0b000",
+			"0x8dc7b5229ddbc00"
+		],
+		"CuttingPlaneValues": [
+			[
+				"DeferredFullyRemoved",
+				1.0,
+				0.0,
+				0.0,
+				0.0
+			],
+			[
+				"DeferredPartiallyGrown",
+				1.0,
+				0.0,
+				0.0,
+				0.047619
+			],
+			[
+				"DeferredPartiallyGrown",
+				1.0,
+				0.0,
+				0.0,
+				0.047619
+			],
+			[
+				"DeferredPartiallyGrown",
+				1.0,
+				0.0,
+				0.0,
+				0.095238
+			],
+			[
+				"DeferredPartiallyGrown",
+				1.0,
+				0.0,
+				0.0,
+				0.095238
+			],
+			[
+				"DeferredPartiallyGrown",
+				1.0,
+				0.0,
+				0.0,
+				0.142857
+			],
+			[
+				"DeferredPartiallyGrown",
+				1.0,
+				0.0,
+				0.0,
+				0.142857
+			],
+			[
+				"DeferredPartiallyGrown",
+				1.0,
+				0.0,
+				0.0,
+				0.190476
+			],
+			[
+				"DeferredPartiallyGrown",
+				1.0,
+				0.0,
+				0.0,
+				0.190476
+			],
+			[
+				"DeferredPartiallyGrown",
+				1.0,
+				0.0,
+				0.0,
+				0.238095
+			],
+			[
+				"DeferredPartiallyGrown",
+				1.0,
+				0.0,
+				0.0,
+				0.238095
+			],
+			[
+				"DeferredPartiallyGrown",
+				1.0,
+				0.0,
+				0.0,
+				0.285714
+			],
+			[
+				"DeferredPartiallyGrown",
+				1.0,
+				0.0,
+				0.0,
+				0.285714
+			],
+			[
+				"DeferredPartiallyGrown",
+				1.0,
+				0.0,
+				0.0,
+				0.333333
+			],
+			[
+				"DeferredPartiallyGrown",
+				1.0,
+				0.0,
+				0.0,
+				0.333333
+			],
+			[
+				"DeferredPartiallyGrown",
+				1.0,
+				0.0,
+				0.0,
+				0.428571
+			],
+			[
+				"DeferredPartiallyGrown",
+				1.0,
+				0.0,
+				0.0,
+				0.428571
+			],
+			[
+				"DeferredPartiallyGrown",
+				1.0,
+				0.0,
+				0.0,
+				0.47619
+			],
+			[
+				"DeferredPartiallyGrown",
+				1.0,
+				0.0,
+				0.0,
+				0.47619
+			],
+			[
+				"DeferredPartiallyGrown",
+				1.0,
+				0.0,
+				0.0,
+				0.52381
+			],
+			[
+				"DeferredPartiallyGrown",
+				1.0,
+				0.0,
+				0.0,
+				0.52381
+			],
+			[
+				"DeferredPartiallyGrown",
+				1.0,
+				0.0,
+				0.0,
+				0.571429
+			],
+			[
+				"DeferredPartiallyGrown",
+				1.0,
+				0.0,
+				0.0,
+				0.571429
+			],
+			[
+				"DeferredPartiallyGrown",
+				1.0,
+				0.0,
+				0.0,
+				0.619048
+			],
+			[
+				"DeferredPartiallyGrown",
+				1.0,
+				0.0,
+				0.0,
+				0.619048
+			],
+			[
+				"DeferredPartiallyGrown",
+				1.0,
+				0.0,
+				0.0,
+				0.666667
+			],
+			[
+				"DeferredPartiallyGrown",
+				1.0,
+				0.0,
+				0.0,
+				0.666667
+			],
+			[
+				"DeferredPartiallyGrown",
+				1.0,
+				0.0,
+				0.0,
+				0.714286
+			],
+			[
+				"DeferredPartiallyGrown",
+				1.0,
+				0.0,
+				0.0,
+				0.714286
+			],
+			[
+				"DeferredPartiallyGrown",
+				1.0,
+				0.0,
+				0.0,
+				0.761905
+			],
+			[
+				"DeferredPartiallyGrown",
+				1.0,
+				0.0,
+				0.0,
+				0.761905
+			],
+			[
+				"DeferredPartiallyGrown",
+				1.0,
+				0.0,
+				0.0,
+				0.809524
+			],
+			[
+				"DeferredPartiallyGrown",
+				1.0,
+				0.0,
+				0.0,
+				0.809524
+			],
+			[
+				"DeferredPartiallyGrown",
+				1.0,
+				0.0,
+				0.0,
+				0.904762
+			],
+			[
+				"DeferredPartiallyGrown",
+				1.0,
+				0.0,
+				0.0,
+				0.904762
+			],
+			[
+				"DeferredPartiallyGrown",
+				1.0,
+				0.0,
+				0.0,
+				0.952381
+			],
+			[
+				"DeferredPartiallyGrown",
+				1.0,
+				0.0,
+				0.0,
+				0.952381
+			],
+			[
+				"DeferredFullyGrown",
+				1.0,
+				0.0,
+				0.0,
+				0.0
+			]
+		],
+		"CuttingPlaneInterps": [ 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0 ]
+	},
+	{
+		"elementIds": [
+			"0x30000000098"
+		],
+		"animationKey": 13,
+		"startTime": "2024.05.08-13.00.00 +0000",
+		"endTime": "2024.06.07-11.00.00 +0000",
+		"VisibilityTicks": [
+			"0x8dc6f5ec4d88180",
+			"0x8dc6f5ec4da0800",
+			"0x8dc7b5229df4300",
+			"0x8dc7bcfe462e180",
+			"0x8dc7bcfe4646800",
+			"0x8dc86e0f9b2ab00"
+		],
+		"VisibilityValues": [ 0.0,
+			1.0,
+			2.0,
+			0.0,
+			1.0,
+			2.0
+		],
+		"ColorTicks": [
+			"0x8dc6f5ec4d88180",
+			"0x8dc6f5ec4da0800",
+			"0x8dc7b5229df4300",
+			"0x8dc7bcfe462e180",
+			"0x8dc7bcfe4646800",
+			"0x8dc86e0f9b2ab00"
+		],
+		"ColorValues": [
 			[ false, 0.0,
 				0.0,
 				0.0
 			],
-			[ true, 0.603922,
-				0.803922,
-				0.196078
+			[ true, 0.0,
+				1.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
 			],
 			[ true, 0.0,
 				1.0,
@@ -1981,77 +4235,958 @@
 				0.0
 			]
 		],
+		"TransformTicks": [
+			"0x8dc6f5ec4da0800",
+			"0x8dc6f804beba800",
+			"0x8dc700668322800",
+			"0x8dc7027ef43c800",
+			"0x8dc703051083000",
+			"0x8dc7051d819d000",
+			"0x8dc7198bd05a800",
+			"0x8dc71ba44174800",
+			"0x8dc71c2a5dbb000",
+			"0x8dc71e42ced5000",
+			"0x8dc73f43c42e800",
+			"0x8dc7415c3548800",
+			"0x8dc741e2518f000",
+			"0x8dc743fac2a9000",
+			"0x8dc74bd66aca800",
+			"0x8dc750074cfe800",
+			"0x8dc758691166800",
+			"0x8dc75a818280800",
+			"0x8dc75b079ec7000",
+			"0x8dc75c13d754000",
+			"0x8dc75d200fe1000",
+			"0x8dc7718e5e9e800",
+			"0x8dc773a6cfb8800",
+			"0x8dc7742cebff000",
+			"0x8dc776455d19000",
+			"0x8dc78ab3abd6800",
+			"0x8dc78ccc1cf0800",
+			"0x8dc78d523937000",
+			"0x8dc78f6aaa51000",
+			"0x8dc797465272800",
+			"0x8dc798d8a746000",
+			"0x8dc7995ec38c800",
+			"0x8dc799e4dfd3000",
+			"0x8dc79bfd50ed000",
+			"0x8dc7a3d8f90e800",
+			"0x8dc7a6ba90ca200",
+			"0x8dc7a809db42800",
+			"0x8dc7b06b9faa800",
+			"0x8dc7b1dc6b88580",
+			"0x8dc7b28410c4800",
+			"0x8dc7b30a2d0b000",
+			"0x8dc7b5229ddbc00",
+			"0x8dc7bcfe4646800",
+			"0x8dc7bfad9908580",
+			"0x8dc7c12f287a800",
+			"0x8dc7e2b63a1a800",
+			"0x8dc7e3e3fd6a300",
+			"0x8dc7e6e71c4e800",
+			"0x8dc7ef48e0b6800",
+			"0x8dc7f1a45ff3c00",
+			"0x8dc7f379c2ea800",
+			"0x8dc7fbdb8752800",
+			"0x8dc8000c6986800",
+			"0x8dc8086e2dee800",
+			"0x8dc80c9f1022800",
+			"0x8dc81500d48a800",
+			"0x8dc81586f0d1000",
+			"0x8dc81931b6be800",
+			"0x8dc83ab8c85e800",
+			"0x8dc83ee9aa92800",
+			"0x8dc8474b6efa800",
+			"0x8dc84b7c512e800",
+			"0x8dc853de1596800",
+			"0x8dc8580ef7ca800",
+			"0x8dc86070bc32800",
+			"0x8dc864a19e66800",
+			"0x8dc86d0362ce800",
+			"0x8dc86e0f9b12400"
+		],
+		"TransformValues": [
+			{
+				"translation": [ 0.0,
+					0.0,
+					0.0
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -2028.701675,
+					0.0,
+					2200.513508
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -2028.701675,
+					0.0,
+					2200.513508
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -4057.403349,
+					0.0,
+					4401.027017
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -4057.403349,
+					0.0,
+					4401.027017
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -6086.105183,
+					0.0,
+					6601.540697
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -6086.105183,
+					0.0,
+					6601.540697
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -8114.806699,
+					0.0,
+					8802.054033
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -8114.806699,
+					0.0,
+					8802.054033
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -10143.508215,
+					0.0,
+					11002.567369
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -10143.508215,
+					0.0,
+					11002.567369
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -12172.210366,
+					0.0,
+					13203.081394
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -12172.210366,
+					0.0,
+					13203.081394
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -14200.911882,
+					0.0,
+					15403.59473
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -14200.911882,
+					0.0,
+					15403.59473
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -18258.314914,
+					0.0,
+					19804.621403
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -18258.314914,
+					0.0,
+					19804.621403
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -20287.01643,
+					0.0,
+					22005.134739
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -20287.01643,
+					0.0,
+					22005.134739
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -21301.367187,
+					0.0,
+					23105.391407
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -19272.665513,
+					-0.018601,
+					24474.626226
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -19272.665513,
+					-0.018601,
+					24474.626226
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -15215.262005,
+					-0.055804,
+					27213.095971
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -15215.262005,
+					-0.055804,
+					27213.095971
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -11157.858973,
+					-0.093006,
+					29951.565395
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -11157.858973,
+					-0.093006,
+					29951.565395
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -7100.455306,
+					-0.130208,
+					32690.035247
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -7100.455306,
+					-0.130208,
+					32690.035247
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -3043.052274,
+					-0.167411,
+					35428.504671
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -3043.052274,
+					-0.167411,
+					35428.504671
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ 0.0,
+					-0.195312,
+					37482.356739
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ 3313.130031,
+					-0.195312,
+					37060.368897
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ 3313.130031,
+					-0.195312,
+					37060.368897
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ 16565.650414,
+					-0.195312,
+					35372.417498
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ 16565.650414,
+					-0.195312,
+					35372.417498
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ 34787.5,
+					-0.195312,
+					33051.530933
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ 51353.717955,
+					-0.195312,
+					35161.518768
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ 51353.717955,
+					-0.195312,
+					35161.518768
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ 69575.390625,
+					-0.195312,
+					37482.356739
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ 69575.390625,
+					-0.195312,
+					26439.825531
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ 69575.390625,
+					-0.195312,
+					26439.825531
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ 69575.390625,
+					-0.195312,
+					-8894.718456
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ 69575.390625,
+					-0.195312,
+					-8894.718456
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ 69575.390625,
+					-0.195312,
+					37482.356739
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ 50060.802637,
+					-0.195312,
+					34996.844151
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ 50060.802637,
+					-0.195312,
+					34996.844151
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ 34787.5,
+					-0.195312,
+					33051.530933
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ 15272.721621,
+					-0.195312,
+					35537.09568
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ 15272.721621,
+					-0.195312,
+					35537.09568
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ 0.0,
+					-0.195312,
+					37482.356739
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -3636.819129,
+					-0.161966,
+					35027.752672
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -3636.819129,
+					-0.161966,
+					35027.752672
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -11949.547478,
+					-0.085747,
+					29417.229825
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -11949.547478,
+					-0.085747,
+					29417.229825
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -20262.276144,
+					-0.009527,
+					23806.706763
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -20262.276144,
+					-0.009527,
+					23806.706763
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -21301.367187,
+					0.0,
+					23105.391407
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -17664.548059,
+					0.0,
+					19160.568114
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -17664.548059,
+					0.0,
+					19160.568114
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -13508.183884,
+					0.0,
+					14652.199227
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -13508.183884,
+					0.0,
+					14652.199227
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -9351.81971,
+					0.0,
+					10143.83034
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -9351.81971,
+					0.0,
+					10143.83034
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -5195.455535,
+					0.0,
+					5635.461453
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -5195.455535,
+					0.0,
+					5635.461453
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -1039.091044,
+					0.0,
+					1127.092222
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -1039.091044,
+					0.0,
+					1127.092222
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ 0.0,
+					0.0,
+					0.0
+				],
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			}
+		],
+		"TransformInterps": [ 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0 ],
 		"CuttingPlaneTicks": [
-			"0x8dc6e74135ea800",
-			"0x8dcc0f678be6800",
-			"0x8dd0250c014b400"
+			"0x8dc6f5ec4da0800",
+			"0x8dc7b5229ddbc00",
+			"0x8dc7bcfe4646800",
+			"0x8dc86e0f9b12400"
 		],
 		"CuttingPlaneValues": [
 			[
-				"FullyGrown",
+				"DeferredFullyRemoved",
 				0.0,
-				0.0,
+				-1.0,
 				0.0,
 				0.0
 			],
 			[
 				"DeferredFullyGrown",
-				1.0,
 				0.0,
+				-1.0,
 				0.0,
 				0.0
 			],
 			[
 				"DeferredFullyRemoved",
-				1.0,
 				0.0,
+				-1.0,
+				0.0,
+				0.0
+			],
+			[
+				"DeferredFullyGrown",
+				0.0,
+				-1.0,
 				0.0,
 				0.0
 			]
 		],
-		"CuttingPlaneInterps": [ 0, 1, 0 ]
+		"CuttingPlaneInterps": [ 1, 0, 1, 0 ]
 	},
 	{
 		"elementIds": [
-			"0x1a000000007b"
+			"0x30000000099"
 		],
-		"animationKey": 36,
-		"startTime": "2024.06.20-09.00.00 +0000",
-		"endTime": "2024.11.15-10.39.00 +0000",
+		"animationKey": 11,
+		"startTime": "2024.11.11-13.00.00 +0000",
+		"endTime": "2025.07.28-17.00.00 +0000",
 		"VisibilityTicks": [
-			"0x8dc91075d8a2180",
-			"0x8dc91075d8ba800",
-			"0x8dd0561b72fad00"
+			"0x8dd0250c017c180",
+			"0x8dd0250c0194800",
+			"0x8dd990f08562180",
+			"0x8dd990f0857a800",
+			"0x8ddcdf830251b00"
 		],
 		"VisibilityValues": [ 0.0,
-			0.5,
+			2.0,
+			2.0,
+			1.0,
 			2.0
 		],
 		"ColorTicks": [
-			"0x8dc91075d8a2180",
-			"0x8dc91075d8ba800",
-			"0x8dd0561b72fad00"
+			"0x8dd0250c017c180",
+			"0x8dd0250c0194800",
+			"0x8dd39525900bb00",
+			"0x8dd990f08562180",
+			"0x8dd990f0857a800",
+			"0x8ddcdf830251b00"
 		],
 		"ColorValues": [
 			[ false, 0.0,
 				0.0,
 				0.0
 			],
-			[ true, 1.0,
+			[ true, 0.823529,
+				0.411765,
+				0.117647
+			],
+			[ false, 0.0,
 				0.0,
 				0.0
 			],
 			[ false, 0.0,
 				0.0,
 				0.0
+			],
+			[ true, 1.0,
+				1.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
 			]
-		]
+		],
+		"TransformTicks": [
+			"0x8dd0250c0194800",
+			"0x8dd395258ff3400",
+			"0x8dd990f08562180",
+			"0x8dd990f0857a800",
+			"0x8ddcdf830239400",
+			"0x8ddcdf830251b00"
+		],
+		"TransformValues": [
+			{
+				"translation": [ 0.0,
+					0.0,
+					0.0
+				],
+				"rotationAxis": [ -0.863617,
+					-0.314331,
+					-0.394159
+				],
+				"rotationAngleDegrees": 85.439401,
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -22083.984375,
+					3392.382812,
+					-17052.378273
+				],
+				"rotationAxis": [ -0.863617,
+					-0.314331,
+					-0.394159
+				],
+				"rotationAngleDegrees": 85.439401,
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -22083.984375,
+					3392.382812,
+					-17052.378273
+				],
+				"rotationAxis": [ -0.863617,
+					-0.314331,
+					-0.394159
+				],
+				"rotationAngleDegrees": 85.439401,
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ 0.0,
+					0.0,
+					0.0
+				],
+				"rotationAxis": [ -0.863617,
+					-0.314331,
+					-0.394159
+				],
+				"rotationAngleDegrees": 85.439401,
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -22083.984375,
+					3392.382812,
+					-17052.378273
+				],
+				"rotationAxis": [ -0.863617,
+					-0.314331,
+					-0.394159
+				],
+				"rotationAngleDegrees": 85.439401,
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -22083.984375,
+					3392.382812,
+					-17052.378273
+				],
+				"rotationAxis": [ -0.863617,
+					-0.314331,
+					-0.394159
+				],
+				"rotationAngleDegrees": 85.439401,
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			}
+		],
+		"TransformInterps": [ 1, 0, 0, 1, 0, 0 ]
 	},
 	{
 		"elementIds": [
-			"0x1a000000007d"
+			"0x3000000009a"
 		],
-		"animationKey": 27,
+		"animationKey": 56,
 		"startTime": "2024.11.11-13.00.00 +0000",
 		"endTime": "2025.07.28-17.00.00 +0000",
 		"VisibilityTicks": [
@@ -2120,7 +5255,7 @@
 					0.0,
 					-1.0
 				],
-				"rotationAngleDegrees": 100.0,
+				"rotationAngleDegrees": 235.0,
 				"anchor": [ 0.0,
 					0.0,
 					0.0
@@ -2136,6 +5271,10 @@
 					1.0
 				],
 				"rotationAngleDegrees": 27.648039,
+				"scale": [ 0.999998,
+					0.999998,
+					1.0
+				],
 				"anchor": "Static"
 			},
 			{
@@ -2147,7 +5286,7 @@
 					0.0,
 					-1.0
 				],
-				"rotationAngleDegrees": 100.0,
+				"rotationAngleDegrees": 235.0,
 				"anchor": [ 0.0,
 					0.0,
 					0.0
@@ -2162,7 +5301,7 @@
 					0.0,
 					-1.0
 				],
-				"rotationAngleDegrees": 100.0,
+				"rotationAngleDegrees": 235.0,
 				"anchor": [ 0.0,
 					0.0,
 					0.0
@@ -2173,6 +5312,11 @@
 					0.0,
 					0.0
 				],
+				"rotationAxis": [ 0.0,
+					0.0,
+					1.0
+				],
+				"rotationAngleDegrees": 5.0,
 				"anchor": [ 0.0,
 					0.0,
 					0.0
@@ -2212,368 +5356,9 @@
 	},
 	{
 		"elementIds": [
-			"0x1a000000007e"
+			"0x3000000009b"
 		],
-		"animationKey": 40,
-		"startTime": "2024.05.20-09.00.00 +0000",
-		"endTime": "2025.02.26-17.00.00 +0000",
-		"VisibilityTicks": [
-			"0x8dc78ab3abbe180",
-			"0x8dc78ab3abd6800"
-		],
-		"VisibilityValues": [ 0.0,
-			2.0
-		],
-		"ColorTicks": [
-			"0x8dc78ab3abbe180",
-			"0x8dc78ab3abd6800",
-			"0x8dd5687015b1b00"
-		],
-		"ColorValues": [
-			[ false, 0.0,
-				0.0,
-				0.0
-			],
-			[ true, 0.823529,
-				0.411765,
-				0.117647
-			],
-			[ false, 0.0,
-				0.0,
-				0.0
-			]
-		],
-		"TransformTicks": [
-			"0x8dc78ab3abd6800",
-			"0x8dd003fc18b1b80",
-			"0x8dd03f25a447680",
-			"0x8dd3737204fb280",
-			"0x8dd568701599400"
-		],
-		"TransformValues": [
-			{
-				"translation": [ -12165.51849,
-					-2393.900711,
-					-14227.635067
-				],
-				"rotationAxis": [ 0.0,
-					0.0,
-					-1.0
-				],
-				"rotationAngleDegrees": 9.898479,
-				"anchor": "Center"
-			},
-			{
-				"translation": [ -30549.511556,
-					-3588.6655,
-					-14227.635067
-				],
-				"rotationAxis": [ 0.0,
-					0.0,
-					1.0
-				],
-				"rotationAngleDegrees": 90.0,
-				"anchor": "Center"
-			},
-			{
-				"translation": [ -30549.511556,
-					-3588.6655,
-					-14227.635067
-				],
-				"anchor": "Center"
-			},
-			{
-				"translation": [ -49007.909993,
-					1518.561063,
-					-14227.635067
-				],
-				"rotationAxis": [ 0.0,
-					-1.0,
-					0.0
-				],
-				"rotationAngleDegrees": 90.0,
-				"anchor": "Center"
-			},
-			{
-				"translation": [ -48901.971639,
-					-4228.127476,
-					-13952.217143
-				],
-				"rotationAxis": [ 0.0,
-					-1.0,
-					0.0
-				],
-				"rotationAngleDegrees": 81.66802,
-				"anchor": "Center"
-			}
-		],
-		"TransformInterps": [ 1, 1, 1, 1, 0 ]
-	},
-	{
-		"elementIds": [
-			"0x1a000000007f"
-		],
-		"animationKey": 48,
-		"startTime": "2024.05.20-09.00.00 +0000",
-		"endTime": "2025.03.12-09.00.00 +0000",
-		"VisibilityTicks": [
-			"0x8dc78ab3abbe180",
-			"0x8dc78ab3abd6800"
-		],
-		"VisibilityValues": [ 0.0,
-			2.0
-		],
-		"ColorTicks": [
-			"0x8dc78ab3abbe180",
-			"0x8dc78ab3abd6800",
-			"0x8dd614445005b00"
-		],
-		"ColorValues": [
-			[ false, 0.0,
-				0.0,
-				0.0
-			],
-			[ true, 0.823529,
-				0.411765,
-				0.117647
-			],
-			[ false, 0.0,
-				0.0,
-				0.0
-			]
-		]
-	},
-	{
-		"elementIds": [
-			"0x1a0000000081"
-		],
-		"animationKey": 45,
-		"startTime": "2024.05.20-09.00.00 +0000",
-		"endTime": "2025.03.12-09.00.00 +0000",
-		"VisibilityTicks": [
-			"0x8dc78ab3abbe180",
-			"0x8dc78ab3abd6800"
-		],
-		"VisibilityValues": [ 0.0,
-			2.0
-		],
-		"ColorTicks": [
-			"0x8dc78ab3abbe180",
-			"0x8dc78ab3abd6800",
-			"0x8dd614445005b00"
-		],
-		"ColorValues": [
-			[ false, 0.0,
-				0.0,
-				0.0
-			],
-			[ true, 0.823529,
-				0.411765,
-				0.117647
-			],
-			[ false, 0.0,
-				0.0,
-				0.0
-			]
-		]
-	},
-	{
-		"elementIds": [
-			"0x1a0000000082"
-		],
-		"animationKey": 29,
-		"startTime": "2024.05.07-09.00.00 +0000",
-		"endTime": "2025.05.22-09.00.00 +0000",
-		"VisibilityTicks": [
-			"0x8dc6e74135a1400",
-			"0x8dc6e74135b9b00",
-			"0x8dd990f0857a800"
-		],
-		"VisibilityValues": [ 0.0,
-			2.0,
-			2.0
-		]
-	},
-	{
-		"elementIds": [
-			"0x1a0000000083"
-		],
-		"animationKey": 14,
-		"startTime": "2024.11.11-13.00.00 +0000",
-		"endTime": "2025.11.13-17.00.00 +0000",
-		"VisibilityTicks": [
-			"0x8dd0250c017c180",
-			"0x8dd0250c0194800",
-			"0x8dd39525900bb00",
-			"0x8dd990f08562180",
-			"0x8dd990f0857a800",
-			"0x8ddcdf830251b00",
-			"0x8ddfc54f685e180",
-			"0x8ddfc54f6876800",
-			"0x8de22d614c21b00"
-		],
-		"VisibilityValues": [ 0.0,
-			1.0,
-			2.0,
-			2.0,
-			0.9,
-			2.0,
-			2.0,
-			1.0,
-			0.0
-		],
-		"ColorTicks": [
-			"0x8dd0250c017c180",
-			"0x8dd0250c0194800",
-			"0x8dd39525900bb00",
-			"0x8dd990f08562180",
-			"0x8dd990f0857a800",
-			"0x8ddcdf830251b00",
-			"0x8ddfc54f685e180",
-			"0x8ddfc54f6876800",
-			"0x8de22d614c21b00"
-		],
-		"ColorValues": [
-			[ false, 0.0,
-				0.0,
-				0.0
-			],
-			[ true, 0.0,
-				0.807843,
-				0.819608
-			],
-			[ true, 0.180392,
-				0.545098,
-				0.341176
-			],
-			[ true, 0.180392,
-				0.545098,
-				0.341176
-			],
-			[ true, 0.12549,
-				0.698039,
-				0.666667
-			],
-			[ true, 0.180392,
-				0.545098,
-				0.341176
-			],
-			[ true, 0.603922,
-				0.803922,
-				0.196078
-			],
-			[ true, 0.0,
-				1.0,
-				0.0
-			],
-			[ false, 0.0,
-				0.0,
-				0.0
-			]
-		],
-		"TransformTicks": [
-			"0x8dd0250c0194800",
-			"0x8dd990f0857a800",
-			"0x8ddfc54f6876800",
-			"0x8de22d614c09400"
-		],
-		"TransformValues": [
-			"Untransformed",
-			"Untransformed",
-			{
-				"translation": [ 0.0,
-					0.0,
-					0.0
-				],
-				"rotationAxis": [ 0.0,
-					0.0,
-					-1.0
-				],
-				"rotationAngleDegrees": 100.0,
-				"anchor": [ 0.0,
-					0.0,
-					0.0
-				]
-			},
-			{
-				"translation": [ 0.0,
-					0.0,
-					0.0
-				],
-				"anchor": [ 0.0,
-					0.0,
-					0.0
-				]
-			}
-		],
-		"TransformInterps": [ 0, 0, 1, 0 ],
-		"CuttingPlaneTicks": [
-			"0x8dd0250c0194800",
-			"0x8dd395258ff3400",
-			"0x8dd990f08562180",
-			"0x8dd990f0857a800",
-			"0x8ddcdf830239400",
-			"0x8ddfc54f6876800",
-			"0x8de22d614c09400"
-		],
-		"CuttingPlaneValues": [
-			[
-				"DeferredFullyRemoved",
-				0.57735,
-				-0.57735,
-				0.57735,
-				0.0
-			],
-			[
-				"DeferredFullyGrown",
-				0.57735,
-				-0.57735,
-				0.57735,
-				0.0
-			],
-			[
-				"FullyGrown",
-				0.0,
-				0.0,
-				0.0,
-				0.0
-			],
-			[
-				"DeferredFullyRemoved",
-				0.0,
-				0.0,
-				1.0,
-				0.0
-			],
-			[
-				"DeferredFullyGrown",
-				0.0,
-				0.0,
-				1.0,
-				0.0
-			],
-			[
-				"DeferredFullyGrown",
-				1.0,
-				0.0,
-				0.0,
-				0.0
-			],
-			[
-				"DeferredFullyRemoved",
-				1.0,
-				0.0,
-				0.0,
-				0.0
-			]
-		],
-		"CuttingPlaneInterps": [ 1, 0, 0, 1, 0, 1, 0 ]
-	},
-	{
-		"elementIds": [
-			"0x1a0000000084"
-		],
-		"animationKey": 3,
+		"animationKey": 22,
 		"startTime": "2024.05.08-09.00.00 +0000",
 		"endTime": "2025.07.28-17.00.00 +0000",
 		"VisibilityTicks": [
@@ -2592,16 +5377,16 @@
 		],
 		"VisibilityValues": [ 0.0,
 			1.0,
+			0.0,
+			0.0,
+			1.0,
 			2.0,
+			0.0,
+			1.0,
 			2.0,
-			1.0,
-			0.0,
 			0.0,
 			1.0,
-			0.0,
-			0.0,
-			1.0,
-			2.0
+			0.67
 		],
 		"ColorTicks": [
 			"0x8dc6f3d3dc6e180",
@@ -2622,30 +5407,6 @@
 				0.0,
 				0.0
 			],
-			[ true, 0.0,
-				1.0,
-				0.0
-			],
-			[ false, 0.0,
-				0.0,
-				0.0
-			],
-			[ false, 0.0,
-				0.0,
-				0.0
-			],
-			[ true, 1.0,
-				0.631373,
-				0.011765
-			],
-			[ false, 0.0,
-				0.0,
-				0.0
-			],
-			[ false, 0.0,
-				0.0,
-				0.0
-			],
 			[ true, 1.0,
 				1.0,
 				0.0
@@ -2665,340 +5426,70 @@
 			[ false, 0.0,
 				0.0,
 				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ true, 0.0,
+				1.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ true, 0.0,
+				1.0,
+				0.0
+			],
+			[ true, 0.392157,
+				0.584314,
+				0.929412
 			]
+		],
+		"TransformTicks": [
+			"0x8dc6f3d3dc86800",
+			"0x8dcc0f678be6800",
+			"0x8dd0250c0194800",
+			"0x8dd990f0857a800"
+		],
+		"TransformValues": [
+			"Untransformed",
+			"Untransformed",
+			{
+				"translation": [ -11091.014648,
+					19223.744141,
+					0.0
+				],
+				"rotationAxis": [ 0.0,
+					0.0,
+					-1.0
+				],
+				"rotationAngleDegrees": 28.044537,
+				"scale": [ 0.999998,
+					0.999998,
+					1.0
+				],
+				"anchor": "Static"
+			},
+			"Untransformed"
 		],
 		"CuttingPlaneTicks": [
 			"0x8dc6f3d3dc86800",
-			"0x8dcb0b90c305400",
 			"0x8dcc0f678be6800",
+			"0x8dd0250c014b400",
 			"0x8dd0250c0194800",
+			"0x8dd395258ff3400",
 			"0x8dd990f0857a800",
 			"0x8ddcdf830239400"
 		],
 		"CuttingPlaneValues": [
 			[
-				"DeferredFullyRemoved",
-				0.0,
-				-1.0,
-				0.0,
-				0.0
-			],
-			[
-				"DeferredFullyGrown",
-				0.0,
-				-1.0,
-				0.0,
-				0.0
-			],
-			[
-				"FullyGrown",
-				0.0,
-				0.0,
-				0.0,
-				0.0
-			],
-			[
-				"FullyGrown",
-				0.0,
-				0.0,
-				0.0,
-				0.0
-			],
-			[
-				"DeferredFullyRemoved",
-				0.0,
-				-1.0,
-				0.0,
-				0.0
-			],
-			[
-				"DeferredFullyGrown",
-				0.0,
-				-1.0,
-				0.0,
-				0.0
-			]
-		],
-		"CuttingPlaneInterps": [ 1, 0, 0, 0, 1, 0 ]
-	},
-	{
-		"elementIds": [
-			"0x1a0000000085"
-		],
-		"animationKey": 7,
-		"startTime": "2024.05.20-09.00.00 +0000",
-		"endTime": "2025.09.04-17.00.00 +0000",
-		"VisibilityTicks": [
-			"0x8dc78ab3abbe180",
-			"0x8dc78ab3abd6800",
-			"0x8dda4526841e180",
-			"0x8dda45268436800",
-			"0x8ddebd47bd79b00"
-		],
-		"VisibilityValues": [ 0.0,
-			2.0,
-			2.0,
-			1.0,
-			2.0
-		],
-		"ColorTicks": [
-			"0x8dc78ab3abbe180",
-			"0x8dc78ab3abd6800",
-			"0x8dd5687015b1b00",
-			"0x8dda4526841e180",
-			"0x8dda45268436800",
-			"0x8ddebd47bd79b00"
-		],
-		"ColorValues": [
-			[ false, 0.0,
-				0.0,
-				0.0
-			],
-			[ true, 0.823529,
-				0.411765,
-				0.117647
-			],
-			[ false, 0.0,
-				0.0,
-				0.0
-			],
-			[ false, 0.0,
-				0.0,
-				0.0
-			],
-			[ true, 1.0,
-				1.0,
-				0.0
-			],
-			[ false, 0.0,
-				0.0,
-				0.0
-			]
-		],
-		"TransformTicks": [
-			"0x8dc78ab3abd6800",
-			"0x8dcea26943c1500",
-			"0x8dd1d6b5a475180",
-			"0x8dd211df300ac80",
-			"0x8dd568701599400",
-			"0x8dda4526841e180",
-			"0x8dda45268436800",
-			"0x8ddebd47bd79b00"
-		],
-		"TransformValues": [
-			{
-				"translation": [ -48623.965526,
-					-19308.73299,
-					-13229.458455
-				],
-				"rotationAxis": [ 0.0,
-					-1.0,
-					0.0
-				],
-				"rotationAngleDegrees": 59.309581,
-				"anchor": "Center"
-			},
-			{
-				"translation": [ -49007.909993,
-					1518.561063,
-					-14227.635067
-				],
-				"rotationAxis": [ 0.0,
-					-1.0,
-					0.0
-				],
-				"rotationAngleDegrees": 90.0,
-				"anchor": "Center"
-			},
-			{
-				"translation": [ -30549.511556,
-					-3588.6655,
-					-14227.635067
-				],
-				"anchor": "Center"
-			},
-			{
-				"translation": [ -30549.511556,
-					-3588.6655,
-					-14227.635067
-				],
-				"rotationAxis": [ 0.0,
-					0.0,
-					1.0
-				],
-				"rotationAngleDegrees": 90.0,
-				"anchor": "Center"
-			},
-			{
-				"translation": [ -23307.332747,
-					-3118.000601,
-					-14227.635067
-				],
-				"rotationAxis": [ 0.0,
-					0.0,
-					1.0
-				],
-				"rotationAngleDegrees": 54.898479,
-				"anchor": "Center"
-			},
-			{
-				"translation": [ -23307.332747,
-					-3118.000601,
-					-14227.635067
-				],
-				"rotationAxis": [ 0.0,
-					0.0,
-					1.0
-				],
-				"rotationAngleDegrees": 54.898479,
-				"anchor": "Center"
-			},
-			"Untransformed",
-			{
-				"translation": [ -23307.332747,
-					-3118.000601,
-					-14227.635067
-				],
-				"rotationAxis": [ 0.0,
-					0.0,
-					1.0
-				],
-				"rotationAngleDegrees": 54.898479,
-				"anchor": "Center"
-			}
-		],
-		"TransformInterps": [ 1, 1, 1, 1, 0, 0, 0, 0 ]
-	},
-	{
-		"elementIds": [
-			"0x1a0000000086"
-		],
-		"animationKey": 1,
-		"startTime": "2024.05.08-09.00.00 +0000",
-		"endTime": "2025.11.13-17.00.00 +0000",
-		"VisibilityTicks": [
-			"0x8dc6f3d3dc6e180",
-			"0x8dc6f3d3dc86800",
-			"0x8dcb0b90c31db00",
-			"0x8dcc0f678bce180",
-			"0x8dcc0f678be6800",
-			"0x8dd0250c0163b00",
-			"0x8dd990f08562180",
-			"0x8dd990f0857a800",
-			"0x8ddcdf830251b00",
-			"0x8ddfc54f685e180",
-			"0x8ddfc54f6876800",
-			"0x8de22d614c21b00"
-		],
-		"VisibilityValues": [ 0.0,
-			1.0,
-			0.0,
-			0.0,
-			1.0,
-			2.0,
-			2.0,
-			1.0,
-			2.0,
-			2.0,
-			1.0,
-			0.0
-		],
-		"ColorTicks": [
-			"0x8dc6f3d3dc6e180",
-			"0x8dc6f3d3dc86800",
-			"0x8dcb0b90c31db00",
-			"0x8dcc0f678bce180",
-			"0x8dcc0f678be6800",
-			"0x8dd0250c0163b00",
-			"0x8dd990f08562180",
-			"0x8dd990f0857a800",
-			"0x8ddcdf830251b00",
-			"0x8ddfc54f685e180",
-			"0x8ddfc54f6876800",
-			"0x8de22d614c21b00"
-		],
-		"ColorValues": [
-			[ false, 0.0,
-				0.0,
-				0.0
-			],
-			[ true, 0.0,
-				0.0,
-				1.0
-			],
-			[ false, 0.0,
-				0.0,
-				0.0
-			],
-			[ false, 0.0,
-				0.0,
-				0.0
-			],
-			[ true, 0.0,
-				1.0,
-				0.0
-			],
-			[ false, 0.0,
-				0.0,
-				0.0
-			],
-			[ false, 0.0,
-				0.0,
-				0.0
-			],
-			[ true, 1.0,
-				1.0,
-				0.0
-			],
-			[ false, 0.0,
-				0.0,
-				0.0
-			],
-			[ false, 0.0,
-				0.0,
-				0.0
-			],
-			[ true, 1.0,
-				0.631373,
-				0.011765
-			],
-			[ false, 0.0,
-				0.0,
-				0.0
-			]
-		],
-		"TransformTicks": [
-			"0x8dc6f3d3dc86800",
-			"0x8dcc0f678be6800",
-			"0x8dd990f0857a800",
-			"0x8ddfc54f6876800"
-		],
-		"TransformValues": [
-			{
-				"translation": [ 68975.882812,
-					4075.714844,
-					0.0
-				],
-				"rotationAxis": [ 0.0,
-					0.0,
-					1.0
-				],
-				"rotationAngleDegrees": 99.014308,
-				"anchor": "Static"
-			},
-			"Untransformed",
-			"Untransformed",
-			"Untransformed"
-		],
-		"CuttingPlaneTicks": [
-			"0x8dc6f3d3dc86800",
-			"0x8dcc0f678be6800",
-			"0x8dd0250c014b400",
-			"0x8dd990f0857a800",
-			"0x8ddfc54f6876800"
-		],
-		"CuttingPlaneValues": [
-			[
 				"FullyGrown",
 				0.0,
 				0.0,
@@ -3020,559 +5511,6 @@
 				0.0
 			],
 			[
-				"FullyGrown",
-				0.0,
-				0.0,
-				0.0,
-				0.0
-			],
-			[
-				"FullyGrown",
-				0.0,
-				0.0,
-				0.0,
-				0.0
-			]
-		],
-		"CuttingPlaneInterps": [ 0, 1, 0, 0, 0 ]
-	},
-	{
-		"elementIds": [
-			"0x1a0000000087"
-		],
-		"animationKey": 43,
-		"startTime": "2024.11.11-13.00.00 +0000",
-		"endTime": "2025.07.28-17.00.00 +0000",
-		"VisibilityTicks": [
-			"0x8dd0250c017c180",
-			"0x8dd0250c0194800",
-			"0x8dd39525900bb00",
-			"0x8dd990f08562180",
-			"0x8dd990f0857a800",
-			"0x8ddcdf830251b00"
-		],
-		"VisibilityValues": [ 2.0,
-			1.0,
-			2.0,
-			2.0,
-			1.0,
-			0.0
-		],
-		"ColorTicks": [
-			"0x8dd0250c017c180",
-			"0x8dd0250c0194800",
-			"0x8dd39525900bb00",
-			"0x8dd990f08562180",
-			"0x8dd990f0857a800",
-			"0x8ddcdf830251b00"
-		],
-		"ColorValues": [
-			[ false, 0.0,
-				0.0,
-				0.0
-			],
-			[ true, 0.0,
-				0.0,
-				1.0
-			],
-			[ false, 0.0,
-				0.0,
-				0.0
-			],
-			[ false, 0.0,
-				0.0,
-				0.0
-			],
-			[ true, 1.0,
-				1.0,
-				0.0
-			],
-			[ false, 0.0,
-				0.0,
-				0.0
-			]
-		],
-		"TransformTicks": [
-			"0x8dd0250c017c180",
-			"0x8dd0250c0194800",
-			"0x8dd39525900bb00",
-			"0x8dd990f0857a800"
-		],
-		"TransformValues": [
-			{
-				"translation": [ -8689.797852,
-					12912.1875,
-					0.0
-				],
-				"rotationAxis": [ 0.0,
-					0.0,
-					-1.0
-				],
-				"rotationAngleDegrees": 19.584032,
-				"anchor": "Static"
-			},
-			"Untransformed",
-			{
-				"translation": [ -8689.797852,
-					12912.1875,
-					0.0
-				],
-				"rotationAxis": [ 0.0,
-					0.0,
-					-1.0
-				],
-				"rotationAngleDegrees": 19.584032,
-				"anchor": "Static"
-			},
-			{
-				"translation": [ -8689.797852,
-					12912.1875,
-					0.0
-				],
-				"rotationAxis": [ 0.0,
-					0.0,
-					-1.0
-				],
-				"rotationAngleDegrees": 19.584032,
-				"anchor": "Static"
-			}
-		]
-	},
-	{
-		"elementIds": [
-			"0x1a0000000088"
-		],
-		"animationKey": 4,
-		"startTime": "2024.05.08-09.00.00 +0000",
-		"endTime": "2025.07.28-17.00.00 +0000",
-		"VisibilityTicks": [
-			"0x8dc6f3d3dc6e180",
-			"0x8dc6f3d3dc86800",
-			"0x8dcb0b90c31db00",
-			"0x8dd0250c017c180",
-			"0x8dd0250c0194800",
-			"0x8dd39525900bb00",
-			"0x8dd990f08562180",
-			"0x8dd990f0857a800",
-			"0x8ddcdf830251b00"
-		],
-		"VisibilityValues": [ 2.0,
-			1.0,
-			2.0,
-			2.0,
-			1.0,
-			0.0,
-			2.0,
-			1.0,
-			0.0
-		],
-		"ColorTicks": [
-			"0x8dc6f3d3dc6e180",
-			"0x8dc6f3d3dc86800",
-			"0x8dcb0b90c31db00",
-			"0x8dd0250c017c180",
-			"0x8dd0250c0194800",
-			"0x8dd39525900bb00",
-			"0x8dd990f08562180",
-			"0x8dd990f0857a800",
-			"0x8ddcdf830251b00"
-		],
-		"ColorValues": [
-			[ true, 0.603922,
-				0.803922,
-				0.196078
-			],
-			[ true, 1.0,
-				1.0,
-				0.0
-			],
-			[ true, 0.603922,
-				0.803922,
-				0.196078
-			],
-			[ true, 0.603922,
-				0.803922,
-				0.196078
-			],
-			[ true, 0.0,
-				1.0,
-				0.0
-			],
-			[ false, 0.0,
-				0.0,
-				0.0
-			],
-			[ false, 0.0,
-				0.0,
-				0.0
-			],
-			[ true, 1.0,
-				0.631373,
-				0.011765
-			],
-			[ false, 0.0,
-				0.0,
-				0.0
-			]
-		],
-		"CuttingPlaneTicks": [
-			"0x8dc6f3d3dc86800",
-			"0x8dd0250c0194800",
-			"0x8dd395258ff3400",
-			"0x8dd990f0857a800"
-		],
-		"CuttingPlaneValues": [
-			[
-				"FullyGrown",
-				0.0,
-				0.0,
-				0.0,
-				0.0
-			],
-			[
-				"DeferredFullyGrown",
-				1.0,
-				0.0,
-				0.0,
-				0.0
-			],
-			[
-				"DeferredFullyRemoved",
-				1.0,
-				0.0,
-				0.0,
-				0.0
-			],
-			[
-				"FullyGrown",
-				0.0,
-				0.0,
-				0.0,
-				0.0
-			]
-		],
-		"CuttingPlaneInterps": [ 0, 1, 0, 0 ]
-	},
-	{
-		"elementIds": [
-			"0x1a000000008a"
-		],
-		"animationKey": 32,
-		"startTime": "2024.05.08-09.00.00 +0000",
-		"endTime": "2025.07.28-17.00.00 +0000",
-		"VisibilityTicks": [
-			"0x8dc6f3d3dc6e180",
-			"0x8dc6f3d3dc86800",
-			"0x8dcb0b90c31db00",
-			"0x8dcc0f678bce180",
-			"0x8dcc0f678be6800",
-			"0x8dd0250c0163b00",
-			"0x8dd0250c017c180",
-			"0x8dd0250c0194800",
-			"0x8dd39525900bb00",
-			"0x8dd990f08562180",
-			"0x8dd990f0857a800",
-			"0x8ddcdf830251b00"
-		],
-		"VisibilityValues": [ 0.0,
-			1.0,
-			2.0,
-			2.0,
-			1.0,
-			2.0,
-			2.0,
-			1.0,
-			2.0,
-			2.0,
-			1.0,
-			2.0
-		],
-		"ColorTicks": [
-			"0x8dc6f3d3dc6e180",
-			"0x8dc6f3d3dc86800",
-			"0x8dcb0b90c31db00",
-			"0x8dcc0f678bce180",
-			"0x8dcc0f678be6800",
-			"0x8dd0250c0163b00",
-			"0x8dd0250c017c180",
-			"0x8dd0250c0194800",
-			"0x8dd39525900bb00",
-			"0x8dd990f08562180",
-			"0x8dd990f0857a800",
-			"0x8ddcdf830251b00"
-		],
-		"ColorValues": [
-			[ false, 0.0,
-				0.0,
-				0.0
-			],
-			[ true, 0.0,
-				1.0,
-				0.0
-			],
-			[ false, 0.0,
-				0.0,
-				0.0
-			],
-			[ false, 0.0,
-				0.0,
-				0.0
-			],
-			[ true, 1.0,
-				1.0,
-				0.003922
-			],
-			[ false, 0.0,
-				0.0,
-				0.0
-			],
-			[ false, 0.0,
-				0.0,
-				0.0
-			],
-			[ true, 1.0,
-				1.0,
-				0.0
-			],
-			[ false, 0.0,
-				0.0,
-				0.0
-			],
-			[ false, 0.0,
-				0.0,
-				0.0
-			],
-			[ true, 0.0,
-				0.0,
-				1.0
-			],
-			[ false, 0.0,
-				0.0,
-				0.0
-			]
-		],
-		"TransformTicks": [
-			"0x8dc6f3d3dc86800",
-			"0x8dcc0f678bce180",
-			"0x8dcc0f678be6800",
-			"0x8dcdb828712a700",
-			"0x8dce3aa3ffdaa00",
-			"0x8dce440d2913f00",
-			"0x8dd0250c014b400",
-			"0x8dd0250c0163b00",
-			"0x8dd0250c017c180",
-			"0x8dd0250c0194800",
-			"0x8dd10112653e800",
-			"0x8dd395258ff3400",
-			"0x8dd39525900bb00",
-			"0x8dd990f08562180",
-			"0x8dd990f0857a800",
-			"0x8ddcdf830251b00"
-		],
-		"TransformValues": [
-			{
-				"translation": [ -13032.325195,
-					28895.804688,
-					0.0
-				],
-				"rotationAxis": [ 0.0,
-					0.0,
-					-1.0
-				],
-				"rotationAngleDegrees": 40.635919,
-				"anchor": "Static"
-			},
-			{
-				"translation": [ -13032.325195,
-					28895.804688,
-					0.0
-				],
-				"rotationAxis": [ 0.0,
-					0.0,
-					-1.0
-				],
-				"rotationAngleDegrees": 40.635919,
-				"anchor": "Static"
-			},
-			{
-				"translation": [ 0.0,
-					0.0,
-					0.0
-				],
-				"rotationAxis": [ 0.0,
-					-1.0,
-					0.0
-				],
-				"rotationAngleDegrees": 45.0,
-				"anchor": [ 0.0,
-					0.0,
-					0.0
-				]
-			},
-			{
-				"translation": [ -564.648437,
-					30629.6875,
-					-1467.969751
-				],
-				"rotationAxis": [ 0.0,
-					-1.0,
-					0.0
-				],
-				"rotationAngleDegrees": 90.0,
-				"anchor": [ 0.0,
-					0.0,
-					0.0
-				]
-			},
-			{
-				"translation": [ 17893.75,
-					25522.460938,
-					-1467.969751
-				],
-				"anchor": [ 0.0,
-					0.0,
-					0.0
-				]
-			},
-			{
-				"translation": [ 17893.75,
-					25522.460938,
-					-1467.969751
-				],
-				"rotationAxis": [ 0.0,
-					0.0,
-					1.0
-				],
-				"rotationAngleDegrees": 90.0,
-				"anchor": [ 0.0,
-					0.0,
-					0.0
-				]
-			},
-			{
-				"translation": [ 43519.921875,
-					27187.890625,
-					-1467.969751
-				],
-				"rotationAxis": [ 0.0,
-					0.0,
-					-1.0
-				],
-				"rotationAngleDegrees": 45.0,
-				"anchor": [ 0.0,
-					0.0,
-					0.0
-				]
-			},
-			{
-				"translation": [ -13032.325195,
-					28895.804688,
-					0.0
-				],
-				"rotationAxis": [ 0.0,
-					0.0,
-					-1.0
-				],
-				"rotationAngleDegrees": 40.635919,
-				"anchor": "Static"
-			},
-			{
-				"translation": [ -13032.325195,
-					28895.804688,
-					0.0
-				],
-				"rotationAxis": [ 0.0,
-					0.0,
-					-1.0
-				],
-				"rotationAngleDegrees": 40.635919,
-				"anchor": "Static"
-			},
-			{
-				"translation": [ 0.0,
-					0.0,
-					0.0
-				],
-				"rotationAxis": [ -0.991704,
-					-0.127823,
-					-0.013545
-				],
-				"rotationAngleDegrees": 12.198338,
-				"anchor": [ 0.0,
-					0.0,
-					0.0
-				]
-			},
-			{
-				"translation": [ 6446.679687,
-					10193.554688,
-					770.861816
-				],
-				"anchor": [ 0.0,
-					0.0,
-					0.0
-				]
-			},
-			{
-				"translation": [ 19907.617187,
-					6691.992188,
-					10449.812317
-				],
-				"anchor": [ 0.0,
-					0.0,
-					0.0
-				]
-			},
-			{
-				"translation": [ -13032.325195,
-					28895.804688,
-					0.0
-				],
-				"rotationAxis": [ 0.0,
-					0.0,
-					-1.0
-				],
-				"rotationAngleDegrees": 40.635919,
-				"anchor": "Static"
-			},
-			{
-				"translation": [ -13032.325195,
-					28895.804688,
-					0.0
-				],
-				"rotationAxis": [ 0.0,
-					0.0,
-					-1.0
-				],
-				"rotationAngleDegrees": 40.635919,
-				"anchor": "Static"
-			},
-			"Untransformed",
-			{
-				"translation": [ -13032.325195,
-					28895.804688,
-					0.0
-				],
-				"rotationAxis": [ 0.0,
-					0.0,
-					-1.0
-				],
-				"rotationAngleDegrees": 40.635919,
-				"anchor": "Static"
-			}
-		],
-		"TransformInterps": [ 0, 0, 1, 1, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0 ],
-		"CuttingPlaneTicks": [
-			"0x8dc6f3d3dc86800",
-			"0x8dcb0b90c305400",
-			"0x8dcc0f678be6800",
-			"0x8dd0250c014b400",
-			"0x8dd0250c0163b00",
-			"0x8dd0250c0194800",
-			"0x8dd990f0857a800"
-		],
-		"CuttingPlaneValues": [
-			[
 				"DeferredFullyRemoved",
 				0.0,
 				-1.0,
@@ -3587,142 +5525,27 @@
 				0.0
 			],
 			[
-				"DeferredFullyGrown",
-				-1.0,
-				0.0,
-				0.0,
-				0.0
-			],
-			[
 				"DeferredFullyRemoved",
-				-1.0,
-				0.0,
-				0.0,
-				0.0
-			],
-			[
-				"FullyGrown",
-				0.0,
-				0.0,
-				0.0,
-				0.0
-			],
-			[
-				"FullyGrown",
-				0.0,
-				0.0,
-				0.0,
-				0.0
-			],
-			[
-				"FullyGrown",
-				0.0,
-				0.0,
-				0.0,
-				0.0
-			]
-		],
-		"CuttingPlaneInterps": [ 1, 0, 1, 0, 0, 0, 0 ]
-	},
-	{
-		"elementIds": [
-			"0x1a000000008b"
-		],
-		"animationKey": 22,
-		"startTime": "2024.11.11-13.00.00 +0000",
-		"endTime": "2025.11.13-17.00.00 +0000",
-		"VisibilityTicks": [
-			"0x8dd0250c017c180",
-			"0x8dd0250c0194800",
-			"0x8dd39525900bb00",
-			"0x8dd990f08562180",
-			"0x8dd990f0857a800",
-			"0x8ddcdf830251b00",
-			"0x8ddfc54f685e180",
-			"0x8ddfc54f6876800",
-			"0x8de22d614c21b00"
-		],
-		"VisibilityValues": [ 0.0,
-			1.0,
-			0.0,
-			0.0,
-			1.0,
-			0.0,
-			2.0,
-			1.0,
-			0.0
-		],
-		"ColorTicks": [
-			"0x8dd0250c017c180",
-			"0x8dd0250c0194800",
-			"0x8dd39525900bb00",
-			"0x8dd990f08562180",
-			"0x8dd990f0857a800",
-			"0x8ddcdf830251b00",
-			"0x8ddfc54f685e180",
-			"0x8ddfc54f6876800",
-			"0x8de22d614c21b00"
-		],
-		"ColorValues": [
-			[ false, 0.0,
-				0.0,
-				0.0
-			],
-			[ true, 1.0,
 				1.0,
-				0.0
-			],
-			[ false, 0.0,
+				0.0,
 				0.0,
 				0.0
 			],
-			[ false, 0.0,
+			[
+				"DeferredFullyGrown",
+				1.0,
 				0.0,
-				0.0
-			],
-			[ true, 0.0,
-				0.0,
-				1.0
-			],
-			[ false, 0.0,
-				0.0,
-				0.0
-			],
-			[ false, 0.0,
-				0.0,
-				0.0
-			],
-			[ true, 1.0,
-				0.631373,
-				0.011765
-			],
-			[ false, 0.0,
 				0.0,
 				0.0
 			]
 		],
-		"TransformTicks": [
-			"0x8dd0250c0194800",
-			"0x8dd990f0857a800",
-			"0x8ddfc54f6876800"
-		],
-		"TransformValues": [
-			"Untransformed",
-			{
-				"translation": [ 49.548401,
-					-0.000002,
-					0.0
-				],
-				"anchor": "Static"
-			},
-			"Untransformed"
-		]
+		"CuttingPlaneInterps": [ 0, 1, 0, 1, 0, 1, 0 ]
 	},
 	{
 		"elementIds": [
-			"0x1a000000008c"
+			"0x3000000009c"
 		],
-		"animationKey": 11,
+		"animationKey": 25,
 		"startTime": "2024.05.20-09.00.00 +0000",
 		"endTime": "2024.12.24-10.39.00 +0000",
 		"VisibilityTicks": [
@@ -3760,29 +5583,39 @@
 		],
 		"TransformValues": [
 			{
-				"translation": [ -42561.425618,
-					29142.5845,
-					-5433.798235
+				"translation": [ -32269.326176,
+					26546.613821,
+					-7048.686508
 				],
-				"rotationAxis": [ -0.991704,
-					-0.127823,
-					-0.013545
+				"rotationAxis": [ -0.999508,
+					-0.030461,
+					0.007433
 				],
-				"rotationAngleDegrees": 12.198338,
+				"rotationAngleDegrees": 51.643802,
 				"anchor": "MinX"
 			},
 			{
-				"translation": [ -36114.745931,
-					39336.139188,
-					-4662.936418
+				"translation": [ -25822.646489,
+					34900.129446,
+					-12941.266731
 				],
+				"rotationAxis": [ -1.0,
+					0.0,
+					0.0
+				],
+				"rotationAngleDegrees": 39.523811,
 				"anchor": "MinX"
 			},
 			{
-				"translation": [ -22653.808431,
-					35834.576688,
-					5016.014082
+				"translation": [ -12361.708989,
+					38358.723196,
+					-3246.838478
 				],
+				"rotationAxis": [ -1.0,
+					0.0,
+					0.0
+				],
+				"rotationAngleDegrees": 39.523811,
 				"anchor": "MinX"
 			}
 		],
@@ -3790,9 +5623,199 @@
 	},
 	{
 		"elementIds": [
-			"0x1a000000008d"
+			"0x3000000009d"
 		],
-		"animationKey": 17,
+		"animationKey": 3,
+		"startTime": "2024.05.08-09.00.00 +0000",
+		"endTime": "2025.07.28-17.00.00 +0000",
+		"VisibilityTicks": [
+			"0x8dc6f3d3dc6e180",
+			"0x8dc6f3d3dc86800",
+			"0x8dcc0f678bce180",
+			"0x8dcc0f678be6800",
+			"0x8dd0250c017c180",
+			"0x8dd0250c0194800",
+			"0x8dd39525900bb00",
+			"0x8dd990f08562180",
+			"0x8dd990f0857a800"
+		],
+		"VisibilityValues": [ 0.0,
+			2.0,
+			0.0,
+			2.0,
+			2.0,
+			1.0,
+			2.0,
+			0.0,
+			2.0
+		],
+		"ColorTicks": [
+			"0x8dc6f3d3dc6e180",
+			"0x8dc6f3d3dc86800",
+			"0x8dcb0b90c31db00",
+			"0x8dcc0f678bce180",
+			"0x8dcc0f678be6800",
+			"0x8dd0250c0163b00",
+			"0x8dd0250c017c180",
+			"0x8dd0250c0194800",
+			"0x8dd39525900bb00",
+			"0x8dd990f08562180",
+			"0x8dd990f0857a800",
+			"0x8ddcdf830251b00"
+		],
+		"ColorValues": [
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ true, 0.823529,
+				0.411765,
+				0.117647
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ true, 0.823529,
+				0.411765,
+				0.117647
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ true, 1.0,
+				1.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ true, 0.823529,
+				0.411765,
+				0.117647
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			]
+		],
+		"TransformTicks": [
+			"0x8dc6f3d3dc86800",
+			"0x8dcc0f678be6800",
+			"0x8dd0250c017c180",
+			"0x8dd0250c0194800",
+			"0x8dd39525900bb00",
+			"0x8dd990f0857a800"
+		],
+		"TransformValues": [
+			{
+				"translation": [ 0.000006,
+					0.000013,
+					-142.524429
+				],
+				"anchor": "Static"
+			},
+			{
+				"translation": [ -7012.220215,
+					9731.705078,
+					0.0
+				],
+				"rotationAxis": [ 0.0,
+					0.0,
+					-1.0
+				],
+				"rotationAngleDegrees": 15.238082,
+				"scale": [ 0.999999,
+					0.999999,
+					1.0
+				],
+				"anchor": "Static"
+			},
+			{
+				"translation": [ -7012.220215,
+					9731.705078,
+					0.0
+				],
+				"rotationAxis": [ 0.0,
+					0.0,
+					-1.0
+				],
+				"rotationAngleDegrees": 15.238082,
+				"scale": [ 0.999999,
+					0.999999,
+					1.0
+				],
+				"anchor": "Static"
+			},
+			{
+				"translation": [ 204.072205,
+					3216.14209,
+					-13828.077148
+				],
+				"rotationAxis": [ 1.0,
+					0.0,
+					0.0
+				],
+				"rotationAngleDegrees": 26.190463,
+				"scale": [ 1.0,
+					0.999998,
+					0.999998
+				],
+				"anchor": "Static"
+			},
+			{
+				"translation": [ -7012.220215,
+					9731.705078,
+					0.0
+				],
+				"rotationAxis": [ 0.0,
+					0.0,
+					-1.0
+				],
+				"rotationAngleDegrees": 15.238082,
+				"scale": [ 0.999999,
+					0.999999,
+					1.0
+				],
+				"anchor": "Static"
+			},
+			{
+				"translation": [ 2410.271973,
+					69.418808,
+					11486.350586
+				],
+				"rotationAxis": [ 0.0,
+					1.0,
+					0.0
+				],
+				"rotationAngleDegrees": 20.4762,
+				"scale": [ 0.999999,
+					1.0,
+					0.999999
+				],
+				"anchor": "Static"
+			}
+		]
+	},
+	{
+		"elementIds": [
+			"0x3000000009e"
+		],
+		"animationKey": 30,
 		"startTime": "2024.05.20-09.00.00 +0000",
 		"endTime": "2024.12.24-10.39.00 +0000",
 		"VisibilityTicks": [
@@ -3847,9 +5870,9 @@
 	},
 	{
 		"elementIds": [
-			"0x1a000000008e"
+			"0x3000000009f"
 		],
-		"animationKey": 59,
+		"animationKey": 69,
 		"startTime": "2024.05.08-09.00.00 +0000",
 		"endTime": "2025.11.13-17.00.00 +0000",
 		"VisibilityTicks": [
@@ -3904,10 +5927,10 @@
 	},
 	{
 		"elementIds": [
-			"0x1a000000008e",
-			"0x1a000000009d"
+			"0x3000000009f",
+			"0x300000000af"
 		],
-		"animationKey": 16,
+		"animationKey": 63,
 		"startTime": "2024.05.08-09.00.00 +0000",
 		"endTime": "2024.07.30-17.00.00 +0000",
 		"VisibilityTicks": [
@@ -3941,9 +5964,9 @@
 	},
 	{
 		"elementIds": [
-			"0x1a000000008f"
+			"0x300000000a0"
 		],
-		"animationKey": 53,
+		"animationKey": 39,
 		"startTime": "2024.05.20-09.00.00 +0000",
 		"endTime": "2024.12.24-10.39.00 +0000",
 		"VisibilityTicks": [
@@ -3981,29 +6004,39 @@
 		],
 		"TransformValues": [
 			{
-				"translation": [ -22653.808431,
-					35834.576688,
-					5016.014082
+				"translation": [ -12361.708989,
+					38358.723196,
+					-3246.838478
 				],
+				"rotationAxis": [ -1.0,
+					0.0,
+					0.0
+				],
+				"rotationAngleDegrees": 39.523811,
 				"anchor": "MinZ"
 			},
 			{
-				"translation": [ -36114.745931,
-					39336.139188,
-					-4662.936418
+				"translation": [ -25822.646489,
+					34900.129446,
+					-12941.266731
 				],
+				"rotationAxis": [ -1.0,
+					0.0,
+					0.0
+				],
+				"rotationAngleDegrees": 39.523811,
 				"anchor": "MinZ"
 			},
 			{
-				"translation": [ -42561.425618,
-					29142.5845,
-					-5433.798235
+				"translation": [ -32269.326176,
+					26546.613821,
+					-7048.686508
 				],
-				"rotationAxis": [ -0.991704,
-					-0.127823,
-					-0.013545
+				"rotationAxis": [ -0.999508,
+					-0.030461,
+					0.007433
 				],
-				"rotationAngleDegrees": 12.198338,
+				"rotationAngleDegrees": 51.643802,
 				"anchor": "MinZ"
 			}
 		],
@@ -4040,9 +6073,9 @@
 	},
 	{
 		"elementIds": [
-			"0x1a0000000090"
+			"0x300000000a1"
 		],
-		"animationKey": 25,
+		"animationKey": 16,
 		"startTime": "2024.05.20-09.00.00 +0000",
 		"endTime": "2024.12.24-10.39.00 +0000",
 		"VisibilityTicks": [
@@ -4076,9 +6109,204 @@
 	},
 	{
 		"elementIds": [
-			"0x1a0000000091"
+			"0x300000000a2"
 		],
-		"animationKey": 37,
+		"animationKey": 24,
+		"startTime": "2024.05.08-09.00.00 +0000",
+		"endTime": "2025.01.20-13.00.00 +0000",
+		"VisibilityTicks": [
+			"0x8dc6f3d3dc6e180",
+			"0x8dc6f3d3dc86800",
+			"0x8dcc0f678bce180",
+			"0x8dcc0f678be6800",
+			"0x8dd0250c0163b00",
+			"0x8dd0250c017c180",
+			"0x8dd0250c0194800"
+		],
+		"VisibilityValues": [ 0.0,
+			2.0,
+			2.0,
+			1.0,
+			2.0,
+			0.0,
+			2.0
+		],
+		"ColorTicks": [
+			"0x8dc6f3d3dc6e180",
+			"0x8dc6f3d3dc86800",
+			"0x8dcb0b90c31db00",
+			"0x8dcc0f678bce180",
+			"0x8dcc0f678be6800",
+			"0x8dd0250c0163b00",
+			"0x8dd0250c017c180",
+			"0x8dd0250c0194800",
+			"0x8dd39525900bb00"
+		],
+		"ColorValues": [
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ true, 0.823529,
+				0.411765,
+				0.117647
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ true, 1.0,
+				1.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ true, 0.823529,
+				0.411765,
+				0.117647
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			]
+		],
+		"TransformTicks": [
+			"0x8dc6f3d3dc86800",
+			"0x8dcc0f678bce180",
+			"0x8dcc0f678be6800",
+			"0x8dcd14d0a952000",
+			"0x8dd0250c014b400",
+			"0x8dd0250c0163b00",
+			"0x8dd0250c0194800"
+		],
+		"TransformValues": [
+			{
+				"translation": [ -12967.287109,
+					32867.050781,
+					0.0
+				],
+				"rotationAxis": [ 0.0,
+					0.0,
+					-1.0
+				],
+				"rotationAngleDegrees": 46.190471,
+				"scale": [ 0.999999,
+					0.999999,
+					1.0
+				],
+				"anchor": "Static"
+			},
+			{
+				"translation": [ -12967.287109,
+					32867.050781,
+					0.0
+				],
+				"rotationAxis": [ 0.0,
+					0.0,
+					-1.0
+				],
+				"rotationAngleDegrees": 46.190471,
+				"scale": [ 0.999999,
+					0.999999,
+					1.0
+				],
+				"anchor": "Static"
+			},
+			{
+				"translation": [ 0.0,
+					0.0,
+					0.0
+				],
+				"rotationAxis": [ -0.999508,
+					-0.030461,
+					0.007433
+				],
+				"rotationAngleDegrees": 51.643802,
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ 6446.679687,
+					8353.515625,
+					-5892.580223
+				],
+				"rotationAxis": [ -1.0,
+					0.0,
+					0.0
+				],
+				"rotationAngleDegrees": 39.523811,
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ 19907.617187,
+					11812.109375,
+					3801.84803
+				],
+				"rotationAxis": [ -1.0,
+					0.0,
+					0.0
+				],
+				"rotationAngleDegrees": 39.523811,
+				"anchor": [ 0.0,
+					0.0,
+					0.0
+				]
+			},
+			{
+				"translation": [ -12967.287109,
+					32867.050781,
+					0.0
+				],
+				"rotationAxis": [ 0.0,
+					0.0,
+					-1.0
+				],
+				"rotationAngleDegrees": 46.190471,
+				"scale": [ 0.999999,
+					0.999999,
+					1.0
+				],
+				"anchor": "Static"
+			},
+			{
+				"translation": [ 0.000014,
+					7246.381836,
+					-20129.671875
+				],
+				"rotationAxis": [ 1.0,
+					0.0,
+					0.0
+				],
+				"rotationAngleDegrees": 39.523811,
+				"scale": [ 1.0,
+					0.999999,
+					0.999999
+				],
+				"anchor": "Static"
+			}
+		],
+		"TransformInterps": [ 0, 0, 1, 1, 0, 0, 0 ]
+	},
+	{
+		"elementIds": [
+			"0x300000000a3"
+		],
+		"animationKey": 45,
 		"startTime": "2024.05.20-09.00.00 +0000",
 		"endTime": "2024.12.24-10.39.00 +0000",
 		"VisibilityTicks": [
@@ -4133,46 +6361,9 @@
 	},
 	{
 		"elementIds": [
-			"0x1a0000000093",
-			"0x1a0000000096"
+			"0x300000000a5"
 		],
-		"animationKey": 54,
-		"startTime": "2024.11.11-13.00.00 +0000",
-		"endTime": "2025.01.20-13.00.00 +0000",
-		"VisibilityTicks": [
-			"0x8dd0250c017c180",
-			"0x8dd0250c0194800",
-			"0x8dd39525900bb00"
-		],
-		"VisibilityValues": [ 2.0,
-			1.0,
-			2.0
-		],
-		"ColorTicks": [
-			"0x8dd0250c017c180",
-			"0x8dd0250c0194800",
-			"0x8dd39525900bb00"
-		],
-		"ColorValues": [
-			[ false, 0.0,
-				0.0,
-				0.0
-			],
-			[ true, 1.0,
-				1.0,
-				0.0
-			],
-			[ false, 0.0,
-				0.0,
-				0.0
-			]
-		]
-	},
-	{
-		"elementIds": [
-			"0x1a0000000094"
-		],
-		"animationKey": 31,
+		"animationKey": 62,
 		"startTime": "2024.05.08-09.00.00 +0000",
 		"endTime": "2024.07.30-17.00.00 +0000",
 		"VisibilityTicks": [
@@ -4227,9 +6418,9 @@
 	},
 	{
 		"elementIds": [
-			"0x1a0000000095"
+			"0x300000000a6"
 		],
-		"animationKey": 15,
+		"animationKey": 20,
 		"startTime": "2024.08.20-09.00.00 +0000",
 		"endTime": "2024.11.11-13.00.00 +0000",
 		"VisibilityTicks": [
@@ -4284,9 +6475,46 @@
 	},
 	{
 		"elementIds": [
-			"0x1a0000000097"
+			"0x300000000a7",
+			"0x300000000a8"
 		],
-		"animationKey": 2,
+		"animationKey": 38,
+		"startTime": "2024.11.11-13.00.00 +0000",
+		"endTime": "2025.01.20-13.00.00 +0000",
+		"VisibilityTicks": [
+			"0x8dd0250c017c180",
+			"0x8dd0250c0194800",
+			"0x8dd39525900bb00"
+		],
+		"VisibilityValues": [ 2.0,
+			1.0,
+			2.0
+		],
+		"ColorTicks": [
+			"0x8dd0250c017c180",
+			"0x8dd0250c0194800",
+			"0x8dd39525900bb00"
+		],
+		"ColorValues": [
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ true, 1.0,
+				1.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			]
+		]
+	},
+	{
+		"elementIds": [
+			"0x300000000a9"
+		],
+		"animationKey": 41,
 		"startTime": "2024.05.20-09.00.00 +0000",
 		"endTime": "2025.02.26-17.00.00 +0000",
 		"VisibilityTicks": [
@@ -4331,6 +6559,10 @@
 					0.365738
 				],
 				"rotationAngleDegrees": 219.809705,
+				"scale": [ 0.999984,
+					0.999987,
+					0.999978
+				],
 				"anchor": "Static"
 			}
 		],
@@ -4358,9 +6590,9 @@
 	},
 	{
 		"elementIds": [
-			"0x1a000000009a"
+			"0x300000000ac"
 		],
-		"animationKey": 39,
+		"animationKey": 19,
 		"startTime": "2024.05.20-09.00.00 +0000",
 		"endTime": "2025.02.26-17.00.00 +0000",
 		"VisibilityTicks": [
@@ -4405,15 +6637,19 @@
 					1.0
 				],
 				"rotationAngleDegrees": 30.0,
+				"scale": [ 1.0,
+					1.0,
+					1.0
+				],
 				"anchor": "Static"
 			}
 		]
 	},
 	{
 		"elementIds": [
-			"0x1a000000009b"
+			"0x300000000ad"
 		],
-		"animationKey": 12,
+		"animationKey": 9,
 		"startTime": "2024.05.20-09.00.00 +0000",
 		"endTime": "2025.02.26-17.00.00 +0000",
 		"VisibilityTicks": [
@@ -4509,9 +6745,9 @@
 	},
 	{
 		"elementIds": [
-			"0x1a000000009d"
+			"0x300000000af"
 		],
-		"animationKey": 61,
+		"animationKey": 67,
 		"startTime": "2024.05.08-09.00.00 +0000",
 		"endTime": "2025.01.20-13.00.00 +0000",
 		"VisibilityTicks": [
@@ -4566,7 +6802,7 @@
 	},
 	{
 		"elementIds": [
-			"0x1a00000000a0"
+			"0x300000000b2"
 		],
 		"animationKey": 50,
 		"startTime": "2024.05.20-09.00.00 +0000",
@@ -4585,29 +6821,39 @@
 		],
 		"TransformValues": [
 			{
-				"translation": [ -42561.425618,
-					29142.5845,
-					-5433.798235
+				"translation": [ -32269.326176,
+					26546.613821,
+					-7048.686508
 				],
-				"rotationAxis": [ -0.991704,
-					-0.127823,
-					-0.013545
+				"rotationAxis": [ -0.999508,
+					-0.030461,
+					0.007433
 				],
-				"rotationAngleDegrees": 12.198338,
+				"rotationAngleDegrees": 51.643802,
 				"anchor": "Center"
 			},
 			{
-				"translation": [ -36114.745931,
-					39336.139188,
-					-4662.936418
+				"translation": [ -25822.646489,
+					34900.129446,
+					-12941.266731
 				],
+				"rotationAxis": [ -1.0,
+					0.0,
+					0.0
+				],
+				"rotationAngleDegrees": 39.523811,
 				"anchor": "Center"
 			},
 			{
-				"translation": [ -22653.808431,
-					35834.576688,
-					5016.014082
+				"translation": [ -12361.708989,
+					38358.723196,
+					-3246.838478
 				],
+				"rotationAxis": [ -1.0,
+					0.0,
+					0.0
+				],
+				"rotationAngleDegrees": 39.523811,
 				"anchor": "Center"
 			}
 		],
@@ -4615,9 +6861,162 @@
 	},
 	{
 		"elementIds": [
-			"0x1a00000000a1"
+			"0x300000000b3"
 		],
-		"animationKey": 41,
+		"animationKey": 7,
+		"startTime": "2024.05.08-09.00.00 +0000",
+		"endTime": "2025.07.28-17.00.00 +0000",
+		"VisibilityTicks": [
+			"0x8dc6f3d3dc6e180",
+			"0x8dc6f3d3dc86800",
+			"0x8dcb0b90c31db00",
+			"0x8dcc0f678bce180",
+			"0x8dcc0f678be6800",
+			"0x8dd0250c0163b00",
+			"0x8dd0250c017c180",
+			"0x8dd0250c0194800",
+			"0x8dd39525900bb00",
+			"0x8dd990f08562180",
+			"0x8dd990f0857a800",
+			"0x8ddcdf830251b00"
+		],
+		"VisibilityValues": [ 2.0,
+			1.0,
+			2.0,
+			2.0,
+			1.0,
+			2.0,
+			2.0,
+			1.0,
+			2.0,
+			2.0,
+			1.0,
+			2.0
+		],
+		"ColorTicks": [
+			"0x8dc6f3d3dc6e180",
+			"0x8dc6f3d3dc86800",
+			"0x8dcb0b90c31db00",
+			"0x8dcc0f678bce180",
+			"0x8dcc0f678be6800",
+			"0x8dd0250c0163b00",
+			"0x8dd0250c017c180",
+			"0x8dd0250c0194800",
+			"0x8dd39525900bb00",
+			"0x8dd990f08562180",
+			"0x8dd990f0857a800",
+			"0x8ddcdf830251b00"
+		],
+		"ColorValues": [
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ true, 1.0,
+				1.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ true, 1.0,
+				1.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ true, 1.0,
+				1.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			],
+			[ true, 1.0,
+				1.0,
+				0.0
+			],
+			[ false, 0.0,
+				0.0,
+				0.0
+			]
+		],
+		"TransformTicks": [
+			"0x8dc6f3d3dc86800",
+			"0x8dcc0f678be6800",
+			"0x8dd0250c0194800",
+			"0x8dd990f0857a800"
+		],
+		"TransformValues": [
+			{
+				"translation": [ -57.970848,
+					28.409845,
+					0.0
+				],
+				"anchor": "Static"
+			},
+			{
+				"translation": [ 62.960243,
+					0.000007,
+					0.0
+				],
+				"anchor": "Static"
+			},
+			{
+				"translation": [ 0.000002,
+					11738.717773,
+					-24481.326172
+				],
+				"rotationAxis": [ 1.0,
+					0.0,
+					0.0
+				],
+				"rotationAngleDegrees": 51.428567,
+				"scale": [ 1.0,
+					0.999997,
+					0.999997
+				],
+				"anchor": "Static"
+			},
+			{
+				"translation": [ -10201.603516,
+					17226.591797,
+					0.0
+				],
+				"rotationAxis": [ 0.0,
+					0.0,
+					-1.0
+				],
+				"rotationAngleDegrees": 25.714296,
+				"scale": [ 0.999998,
+					0.999998,
+					1.0
+				],
+				"anchor": "Static"
+			}
+		]
+	},
+	{
+		"elementIds": [
+			"0x300000000b4"
+		],
+		"animationKey": 6,
 		"startTime": "2024.05.20-09.00.00 +0000",
 		"endTime": "2025.02.26-17.00.00 +0000",
 		"VisibilityTicks": [
@@ -4702,9 +7101,9 @@
 	},
 	{
 		"elementIds": [
-			"0x1a00000000a2"
+			"0x300000000b5"
 		],
-		"animationKey": 44,
+		"animationKey": 35,
 		"startTime": "2024.05.20-09.00.00 +0000",
 		"endTime": "2025.02.26-17.00.00 +0000",
 		"VisibilityTicks": [
@@ -4749,6 +7148,10 @@
 					0.490175
 				],
 				"rotationAngleDegrees": 67.562732,
+				"scale": [ 0.999995,
+					0.999995,
+					0.999994
+				],
 				"anchor": "Static"
 			}
 		],
@@ -4776,9 +7179,9 @@
 	},
 	{
 		"elementIds": [
-			"0x1a00000000a4"
+			"0x300000000b7"
 		],
-		"animationKey": 30,
+		"animationKey": 54,
 		"startTime": "2024.05.20-09.00.00 +0000",
 		"endTime": "2024.12.24-10.39.00 +0000",
 		"VisibilityTicks": [
@@ -4841,9 +7244,9 @@
 	},
 	{
 		"elementIds": [
-			"0x1a00000000a5"
+			"0x300000000b8"
 		],
-		"animationKey": 33,
+		"animationKey": 26,
 		"startTime": "2024.05.20-09.00.00 +0000",
 		"endTime": "2024.12.24-10.39.00 +0000",
 		"VisibilityTicks": [
@@ -4888,6 +7291,10 @@
 					-0.4558
 				],
 				"rotationAngleDegrees": 45.005695,
+				"scale": [ 2.492139,
+					1.223026,
+					1.542751
+				],
 				"anchor": "Static"
 			}
 		],
@@ -4915,9 +7322,9 @@
 	},
 	{
 		"elementIds": [
-			"0x1a00000000a6"
+			"0x300000000b9"
 		],
-		"animationKey": 49,
+		"animationKey": 15,
 		"startTime": "2024.05.20-09.00.00 +0000",
 		"endTime": "2025.02.26-17.00.00 +0000",
 		"VisibilityTicks": [
@@ -4984,9 +7391,9 @@
 	},
 	{
 		"elementIds": [
-			"0x1a00000000a7"
+			"0x300000000ba"
 		],
-		"animationKey": 58,
+		"animationKey": 70,
 		"startTime": "2025.09.25-17.00.00 +0000",
 		"endTime": "2025.11.13-17.00.00 +0000",
 		"VisibilityTicks": [
@@ -5020,9 +7427,9 @@
 	},
 	{
 		"elementIds": [
-			"0x1a00000000a9"
+			"0x300000000bc"
 		],
-		"animationKey": 21,
+		"animationKey": 59,
 		"startTime": "2024.05.20-09.00.00 +0000",
 		"endTime": "2024.12.24-10.39.00 +0000",
 		"VisibilityTicks": [
@@ -5060,29 +7467,39 @@
 		],
 		"TransformValues": [
 			{
-				"translation": [ -42561.425618,
-					29142.5845,
-					-5433.798235
+				"translation": [ -32269.326176,
+					26546.613821,
+					-7048.686508
 				],
-				"rotationAxis": [ -0.991704,
-					-0.127823,
-					-0.013545
+				"rotationAxis": [ -0.999508,
+					-0.030461,
+					0.007433
 				],
-				"rotationAngleDegrees": 12.198338,
+				"rotationAngleDegrees": 51.643802,
 				"anchor": "MaxY"
 			},
 			{
-				"translation": [ -36114.745931,
-					39336.139188,
-					-4662.936418
+				"translation": [ -25822.646489,
+					34900.129446,
+					-12941.266731
 				],
+				"rotationAxis": [ -1.0,
+					0.0,
+					0.0
+				],
+				"rotationAngleDegrees": 39.523811,
 				"anchor": "MaxY"
 			},
 			{
-				"translation": [ -22653.808431,
-					35834.576688,
-					5016.014082
+				"translation": [ -12361.708989,
+					38358.723196,
+					-3246.838478
 				],
+				"rotationAxis": [ -1.0,
+					0.0,
+					0.0
+				],
+				"rotationAngleDegrees": 39.523811,
 				"anchor": "MaxY"
 			}
 		],
@@ -5090,9 +7507,9 @@
 	},
 	{
 		"elementIds": [
-			"0x1a00000000aa"
+			"0x300000000bd"
 		],
-		"animationKey": 8,
+		"animationKey": 14,
 		"startTime": "2024.05.20-09.00.00 +0000",
 		"endTime": "2025.11.13-17.00.00 +0000",
 		"VisibilityTicks": [
@@ -5236,9 +7653,9 @@
 	},
 	{
 		"elementIds": [
-			"0x1a00000000ac"
+			"0x300000000bf"
 		],
-		"animationKey": 38,
+		"animationKey": 51,
 		"startTime": "2025.05.22-09.00.00 +0000",
 		"endTime": "2025.07.28-17.00.00 +0000",
 		"VisibilityTicks": [
@@ -5293,9 +7710,9 @@
 	},
 	{
 		"elementIds": [
-			"0x1a00000000ac"
+			"0x300000000bf"
 		],
-		"animationKey": 60,
+		"animationKey": 66,
 		"startTime": "2024.11.11-13.00.00 +0000",
 		"endTime": "2025.07.28-17.00.00 +0000",
 		"VisibilityTicks": [
@@ -5379,9 +7796,9 @@
 	},
 	{
 		"elementIds": [
-			"0x1a00000000ae"
+			"0x300000000c1"
 		],
-		"animationKey": 6,
+		"animationKey": 33,
 		"startTime": "2024.05.20-09.00.00 +0000",
 		"endTime": "2025.06.05-17.00.00 +0000",
 		"VisibilityTicks": [
@@ -5393,7 +7810,7 @@
 			"0x8dd5d5670f2a800",
 			"0x8dda45268405b00"
 		],
-		"VisibilityValues": [ 0.0,
+		"VisibilityValues": [ 0.5,
 			1.0,
 			0.5,
 			0.5,
@@ -5414,7 +7831,7 @@
 				0.0,
 				0.0
 			],
-			[ true, 0.0,
+			[ true, 1.0,
 				1.0,
 				0.0
 			],
@@ -5453,8 +7870,8 @@
 			},
 			{
 				"translation": [ 0.0,
-					44.472626,
-					0.000001
+					-168.629242,
+					0.0
 				],
 				"anchor": "Static"
 			},
@@ -5486,42 +7903,13 @@
 				],
 				"anchor": "Static"
 			}
-		],
-		"CuttingPlaneTicks": [
-			"0x8dc78ab3abd6800",
-			"0x8dd24072d4a6600",
-			"0x8dd5d5670f2a800"
-		],
-		"CuttingPlaneValues": [
-			[
-				"DeferredFullyRemoved",
-				0.0,
-				-1.0,
-				0.0,
-				0.0
-			],
-			[
-				"DeferredFullyGrown",
-				0.0,
-				-1.0,
-				0.0,
-				0.0
-			],
-			[
-				"FullyGrown",
-				0.0,
-				0.0,
-				0.0,
-				0.0
-			]
-		],
-		"CuttingPlaneInterps": [ 1, 0, 0 ]
+		]
 	},
 	{
 		"elementIds": [
-			"0x1a00000000af"
+			"0x300000000c2"
 		],
-		"animationKey": 46,
+		"animationKey": 55,
 		"startTime": "2024.05.20-09.00.00 +0000",
 		"endTime": "2025.03.12-09.00.00 +0000",
 		"VisibilityTicks": [

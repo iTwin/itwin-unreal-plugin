@@ -195,10 +195,20 @@ std::unique_ptr<FITwinFileBasedMockServer> GetITwinFileBasedMockServer(
 	if (ensure(Server))
 	{
 		Server->SetRelativeCachedResponsesFolder(InRelativeFolder);
+		BE_LOGI("http", "Started (file-based) MockServer on port " << Server->getPort());
 	}
 	return Server;
 }
 
+
+void FIModelTestHelper::FIModelLoadingResult::StopMockServer()
+{
+	if (MockServer)
+	{
+		BE_LOGI("http", "Stopping (file-based) MockServer on port " << MockServer->getPort());
+		MockServer.reset();
+	}
+}
 
 /*static*/ FIModelTestHelper::FIModelLoadingResult FIModelTestHelper::InitiateIModelLoading(UWorld* World,
 	FITwinExportInfo const& ExportInfo,
@@ -337,9 +347,6 @@ ITWIN_FUNCTIONAL_TEST_EX(IModelRender, false)
 
 	FIModelTestHelper::FOptions Opts;
 	Opts.bEnableRendering = true;
-	// This iModel has no 4D schedule, so we disable the automatic loading of the 4D schedule to avoid
-	// unnecessary requests (and errors in the logs).
-	Opts.bDisableSynchro4DAutoLoad = true;
 
 	auto IModelLoadingResult = FIModelTestHelper::InitiateIModelLoading(World, ExportInfo,
 		std::filesystem::path(*RelativeCacheFolder),
@@ -359,7 +366,7 @@ ITWIN_FUNCTIONAL_TEST_EX(IModelRender, false)
 
 			// Stop the mock server now that we are done with the test, to avoid conflicts with other tests
 			// that may be running in parallel (see FITwinMockServerBase::HasRunningInstance).
-			IModelLoadingResult.MockServer.reset();
+			IModelLoadingResult.StopMockServer();
 		});
 		co_await DecoPromise.GetFuture();
 		DecoHelper->OnDecorationLoaded.Remove(DelegateHandle);

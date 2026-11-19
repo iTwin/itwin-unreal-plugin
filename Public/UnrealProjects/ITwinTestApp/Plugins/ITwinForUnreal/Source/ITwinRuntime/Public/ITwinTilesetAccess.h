@@ -94,9 +94,11 @@ public:
 	void SetTilesetQuality(float Value) const;
 
 	/// Returns the model manual "offset" (= scene placement customization).
+	/// The position is expressed in meters, and the rotation is expressed in degrees.
 	void GetModelOffset(FVector& Pos, FVector& Rot) const;
 
 	/// Sets the model manual "offset" (= scene placement customization), and persist it to Cloud.
+	/// The position is expressed in meters, and the rotation is expressed in degrees.
 	void SetModelOffset(const FVector& Pos, const FVector& Rot) const;
 
 	/// Returns the cut-out helper for the owning layer.

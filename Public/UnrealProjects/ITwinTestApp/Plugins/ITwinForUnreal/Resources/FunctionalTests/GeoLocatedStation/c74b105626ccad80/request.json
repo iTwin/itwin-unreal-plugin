@@ -1,0 +1,4 @@
+{
+    "urlSuffix": "/imodel/rpc/v4/mode/1/context/cc04c77c-9da5-4699-873b-49dfaa074b5a/imodel/e9464c5d-f40a-4443-8652-47677a7a1089/changeset/c0e4e57d54bf87ed664ea49d1a45a93d3e92c0c6/IModelReadRpcInterface-3.7.0-queryRows",
+    "body": "[{\"iTwinId\":\"cc04c77c-9da5-4699-873b-49dfaa074b5a\",\"iModelId\":\"e9464c5d-f40a-4443-8652-47677a7a1089\",\"changeset\":{\"id\":\"c0e4e57d54bf87ed664ea49d1a45a93d3e92c0c6\"}},{\"limit\":{\"offset\":100000,\"count\":50000},\"rowFormat\":1,\"convertClassIdsToClassNames\":true,\"kind\":1,\"valueFormat\":0,\"query\":\"SELECT DISTINCT TargetECInstanceId FROM Construction.ConstructionDetailingElementSplitsGeometricElement3d\"}]"
+}

@@ -222,6 +222,11 @@ public:
 
 #endif // WITH_EDITOR
 
+#if WITH_TESTS
+	/// Test-only access to the implementation object, to unit-test the plane/gizmo geometry helpers
+	/// which are not exposed through IITwinClippingToolApi.
+	UITwinClippingToolImpl* GetImplForTests() const { return Impl; }
+#endif // WITH_TESTS
 
 private:
 	UPROPERTY()

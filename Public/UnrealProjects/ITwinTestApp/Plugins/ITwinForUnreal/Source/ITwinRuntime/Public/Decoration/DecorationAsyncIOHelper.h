@@ -84,7 +84,8 @@ public:
 	void AsyncLoadPathAnimations(LoadCallback Callback);
 	void AsyncLoadPopulationMetadata(LoadCallback Callback);
 
-
+	/// Called just before the async save of the scene.
+	void OnStartSave();
 	/// Asynchronous save methods: return true if some requests were actually started.
 	bool AsyncSaveSceneToServer(std::shared_ptr<AdvViz::SDK::AsyncRequestGroupCallback> CallbackPtr);
 	bool AsyncSaveDecorationToServer(std::shared_ptr<AdvViz::SDK::AsyncRequestGroupCallback> CallbackPtr);
@@ -106,6 +107,13 @@ public:
 	void SetDecoGeoreference(const FVector& latLongHeightDeg);
 	AdvViz::expected<void, std::string> InitDecoGeoreference();
 
+	//! Returns true if the scene is configured to use GCS for camera links, which is the default behavior.
+	//! for all new scenes.
+	[[nodiscard]] bool UseGCSForCameras() const;
+	//! Whether we use the fixed version of FUnrealDecorationGCSTransform. Old scenes (created before the
+	//! ENGAGE tag was added) were using a wrong GCS conversion, for which we maintain a backward
+	//! compatibility.
+	[[nodiscard]] bool UseFixedGCSCompositionMatrix() const { return UseGCSForCameras(); }
 
 	LinkSharedPtr CreateLink(ModelIdentifier const& Key);
 	void CreateLinkIfNeeded(ModelIdentifier const& Key, std::function<void(LinkSharedPtr)> const& linkInitor);
@@ -146,6 +154,15 @@ private:
 	FString LoadedITwinId;
 	FString LoadedSceneID;
 	bool bSceneIdIsForNewScene = false;
+	std::atomic_bool bIsLoadingScene = false;
+	//! Once the scene/decoration has been saved, or it it was reloaded with a specific GCS, we can
+	//! no longer change the GCS used for all conversion SDK <-> UE. (However, when creating a new
+	//! scene, we may improve the default geo-location using an elevation request, and this should
+	//! apply to the internal GCS as well).
+	//! Beware that it is used both in the decoration and the camera/timeline links, in scene API.
+	//! The name "Deco" was kept because of the existing SetDecoGeoreference / InitDecoGeoreference
+	//! methods, but it is actually used for all GCS conversions.
+	bool bFreezeDecoGCS = false;
 
 	std::shared_ptr<AdvViz::SDK::IDecoration> decoration;
 	std::shared_ptr<AdvViz::SDK::IInstancesManager> instancesManager_;

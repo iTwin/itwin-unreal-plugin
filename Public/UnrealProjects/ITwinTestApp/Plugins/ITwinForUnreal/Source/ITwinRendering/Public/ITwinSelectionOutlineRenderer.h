@@ -16,15 +16,22 @@
 /// #StencilValue (see FITwinTileSelectionOutline in ITwinRuntime). A scene view extension then draws, just
 /// before post-processing, an outline wherever the stencil mask has an edge.
 ///
-/// Rendering is always enabled for registered selection sources, with a 2-pixel opaque teal outline
-/// (display-space color 0.1, 0.8, 0.65, 1.0) that also shows occluded parts.
+/// Rendering is enabled for registered selection sources outside image capture, with a 2-pixel opaque teal
+/// outline (display-space color 0.1, 0.8, 0.65, 1.0) that also shows occluded parts.
 namespace ITwin::SelectionOutline
 {
 	/// Custom stencil value written by the geometry to outline.
 	constexpr int32 StencilValue = 0xA5;
 
-	/// Whether selection outlines are enabled. Always true. Game thread only.
+	/// Whether selection outlines are enabled. False while a screenshot or video capture suppresses them.
 	ITWINRENDERING_API bool IsEnabled();
+
+	/// Temporarily suppress selection tint, hover highlighting and outlines during image capture.
+	/// Calls must be balanced and made on the game thread. Nested captures are supported.
+	ITWINRENDERING_API void BeginCaptureSuppression();
+	ITWINRENDERING_API void EndCaptureSuppression();
+	/// Thread-safe query, also safe from the render thread.
+	ITWINRENDERING_API bool IsCaptureSuppressed();
 
 	/// Notify that some geometry is (resp. no longer) feeding the custom stencil mask: the outline pass is
 	/// only active when at least one source is registered. Game thread only.

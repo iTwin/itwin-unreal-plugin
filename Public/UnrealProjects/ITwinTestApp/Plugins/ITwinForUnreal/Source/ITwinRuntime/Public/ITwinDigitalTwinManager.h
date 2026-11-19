@@ -200,6 +200,11 @@ public:
 
 	UFUNCTION(Category = "iTwin",
 		BlueprintCallable)
+	void StopSynchro4DSchedules();
+
+
+	UFUNCTION(Category = "iTwin",
+		BlueprintCallable)
 	void RemoveComponent(FString const& StringId);
 
 	UFUNCTION()
@@ -264,8 +269,6 @@ private:
 	void OnComponentInfoRetrieved();
 
 	void OnComponentLoaded(AActor* LoadedObject, EITwinModelType ModelType, const FString& LayerId);
-
-	void SetupSpawnedLayer(AITwinServiceActor* NewLayer);
 
 private:
 	// iTwin info

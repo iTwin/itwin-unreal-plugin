@@ -12,6 +12,7 @@
 #include "Core/Singleton/singleton.h"
 #include "Core/Visualization/AsyncHelpers.h"
 #include "Core/Visualization/AsyncHttp.inl"
+#include "Core/Visualization/SceneAPICameraUtils.h"
 #include "Config.h"
 
 namespace AdvViz::SDK
@@ -263,6 +264,30 @@ namespace AdvViz::SDK
 	std::string TimelineKeyframe::GetSnapshotId() const
 	{
 		return GetImpl().snapshotId ? *(GetImpl().snapshotId) : std::string();
+	}
+
+	void TimelineKeyframe::ResolvePendingCameraBasis(double handedness)
+	{
+		if (!GetImpl().keyframeData.camera || !GetImpl().keyframeData.camera->pendingCameraBasis)
+			return;
+		auto& camera = *GetImpl().keyframeData.camera;
+		auto const& basis = *camera.pendingCameraBasis;
+		dmat3x4 m{};
+		if (TransformFromCameraVectors(basis.direction, basis.up, basis.position, handedness, m))
+		{
+			camera.transform = m;
+			// The placement was only deferred, not missing: this is not a pause.
+			camera.isPause = false;
+		}
+		else
+		{
+			BE_LOGW("ITwinScene", "Invalid camera vectors in key-frame at time " << GetImpl().keyframeData.time);
+			// Same fallback as TCameraPropertiesAccessor::OnMissingTransform().
+			camera.isPause = true;
+		}
+		camera.pendingCameraBasis.reset();
+		// Resolving a deferred basis completes the loading: the key-frame is unchanged from
+		// the server's point of view, so the DB is deliberately not invalidated here.
 	}
 
 	template<>
@@ -576,6 +601,17 @@ namespace AdvViz::SDK
 		return {};
 	}
 
+	void TimelineClip::ResolvePendingCameraBases(double handedness)
+	{
+		using namespace SceneAPIDetails;
+		for (auto& keyframe : GetImpl().keyframes_)
+		{
+			if (keyframe)
+				keyframe->ResolvePendingCameraBasis(handedness);
+		}
+		// Resolving a deferred basis is not a user modification: do not invalidate the DB.
+	}
+
 	////////////////////////////////////////////////////////////////////// Timeline /////////////////////////////////////
 
 	struct TimelineServerSideData
@@ -797,6 +833,15 @@ namespace AdvViz::SDK
 		for (auto clip : GetImpl().clips_)
 		{
 			clip->SetShouldSave(bshouldSave);
+		}
+	}
+
+	void Timeline::ResolvePendingCameraBases(double handedness)
+	{
+		for (auto& clip : GetImpl().clips_)
+		{
+			if (clip)
+				clip->ResolvePendingCameraBases(handedness);
 		}
 	}
 

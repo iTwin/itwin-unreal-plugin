@@ -10,6 +10,7 @@
 
 #include <Spline/ITwinSplineGeometry.h>
 #include <Spline/ITwinSplineHelper.h>
+#include <CameraViewHelper.h>
 
 #include <Math/UEMathConversion.h>
 #include <IncludeCesium3DTileset.h>
@@ -87,8 +88,6 @@ public:
 	TArray<TWeakObjectPtr<const AActor>> ActorsExcludedFromPicking_PointInsertion;
 
 	FTimerHandle RefreshTimerHandle;
-	FTimerHandle TimerHandle;
-	ACameraActor* OverviewCamera = nullptr;
 
 	bool bPreventDeletion = false; // workaround for duplicated events in iTS + shipping
 	FTimerHandle PreventDeletionTimerHandle;
@@ -168,10 +167,6 @@ public:
 
 	bool GetInvertSelectedSplineEffect() const;
 	void SetInvertSelectedSplineEffect(bool bInvertEffect);
-
-	// Inspired from ASavedViewsController
-	void StartCameraMovement(FTransform const& CamTransform, float BlendTime);
-	void EndCameraMovement(FTransform const& CamTransform);
 
 private:
 	template <typename TFunc>
@@ -1766,44 +1761,6 @@ void AITwinSplineTool::FImpl::SetTangentMode(EITwinTangentMode TangentMode)
 	}
 }
 
-void AITwinSplineTool::FImpl::StartCameraMovement(FTransform const& CamTransform, float BlendTime)
-{
-	if (OverviewCamera)
-	{
-		OverviewCamera->Destroy();
-		OverviewCamera = nullptr;
-	}
-	UWorld* World = owner.GetWorld();
-	APlayerController* PlayerController = ensure(World) ? World->GetFirstPlayerController() : nullptr;
-	if (!ensure(PlayerController))
-		return;
-	OverviewCamera = World->SpawnActor<ACameraActor>(ACameraActor::StaticClass(), CamTransform);
-	OverviewCamera->GetCameraComponent()->SetConstraintAspectRatio(false);
-	PlayerController->SetViewTargetWithBlend(OverviewCamera, BlendTime, VTBlend_Linear, 0, true);
-}
-
-void AITwinSplineTool::FImpl::EndCameraMovement(FTransform const& Transform)
-{
-	if (!ensure(OverviewCamera))
-		return;
-
-	OverviewCamera->Destroy();
-	OverviewCamera = nullptr;
-
-	const UWorld* World = owner.GetWorld();
-	APlayerController* PlayerController = ensure(World) ? World->GetFirstPlayerController() : nullptr;
-	APawn* Pawn = ensure(PlayerController) ? PlayerController->GetPawnOrSpectator() : nullptr;
-	if (!ensure(Pawn))
-		return;
-
-	Pawn->SetActorLocation(Transform.GetLocation(), false, nullptr, ETeleportType::TeleportPhysics);
-	FRotator Rot = Transform.Rotator();
-	PlayerController->SetControlRotation(Rot);
-	PlayerController->GetPawnOrSpectator()->SetActorRotation(Rot);
-	PlayerController->SetViewTargetWithBlend(Pawn);
-}
-
-
 // -----------------------------------------------------------------------------
 //                              AITwinSplineTool
 
@@ -2204,7 +2161,9 @@ void AITwinSplineTool::FImpl::AbortInteractiveCreation(bool bTriggeredFromITS)
 	const bool bTriggeredFromUnreal = !bTriggeredFromITS;
 	if (bTriggeredFromUnreal)
 	{
-		ToggleInteractiveCreationMode(bTriggeredFromITS, true);
+		const bool AutoSelectCutoutTarget = GetUsage() == EITwinSplineUsage::MapCutout
+			&& owner.GetCutoutTargets().IsEmpty();
+		ToggleInteractiveCreationMode(bTriggeredFromITS, AutoSelectCutoutTarget);
 	}
 	else
 	{
@@ -2412,16 +2371,7 @@ void AITwinSplineTool::OnOverviewCamera(
 
 void AITwinSplineTool::StartBlendedCameraMovement(const FTransform& NewCameraTransform)
 {
-	// (Strongly) inspired from ASavedViewsController
-	const float BlendTime = 3.f;
-	Impl->StartCameraMovement(NewCameraTransform, BlendTime);
-	GetWorld()->GetTimerManager().SetTimer(Impl->TimerHandle,
-		FTimerDelegate::CreateLambda([=, SplineToolActor = TWeakObjectPtr<AITwinSplineTool>(this)]
-	{
-		if (SplineToolActor.IsValid())
-			SplineToolActor->Impl->EndCameraMovement(NewCameraTransform);
-	}),
-		BlendTime, false);
+	ITwin::StartBlendedCameraMovement(GetWorld(), NewCameraTransform);
 }
 
 void AITwinSplineTool::SetPopulationTool(AITwinPopulationTool* InPopulationTool)

@@ -147,18 +147,23 @@ FITwinHDRILibrary::LoadHdriResult FITwinHDRILibrary::GetHrdiFromName(AITwinDecor
 	std::string strname = TCHAR_TO_UTF8(*NewHDRIName);
 	if (persistenceMngr && persistenceMngr->iTwinContentManager)
 	{
-		if (!persistenceMngr->iTwinContentManager->HasComponentIDInPath(NewHDRIName).IsEmpty())
+		const FString componentId = persistenceMngr->iTwinContentManager->HasComponentIDInPath(NewHDRIName);
+		if (!componentId.IsEmpty())
 		{
-			FString componentId = persistenceMngr->iTwinContentManager->ShouldDownloadComponent(PathName);
-			if (!componentId.IsEmpty())
+			EITwinComponentLoadState state = persistenceMngr->GetComponentLoadState(componentId);
+			if (state == EITwinComponentLoadState::NotRequested)
 			{
-				res.pendingDownload = persistenceMngr->iTwinContentManager->DownloadedComponent(componentId);
-				if (res.pendingDownload)
-				{
-					res.pendingComponentId = componentId;
-					return res;
-				}
+				persistenceMngr->RequestComponentDownload(componentId);
+				state = persistenceMngr->GetComponentLoadState(componentId);
 			}
+			if (state == EITwinComponentLoadState::InFlight)
+			{
+				res.pendingDownload = true;
+				res.pendingComponentId = componentId;
+				return res;
+			}
+			if (state != EITwinComponentLoadState::Ready)
+				return res;
 			PathName = persistenceMngr->iTwinContentManager->SanitizePath(NewHDRIName);
 			FullPath = true;
 		}

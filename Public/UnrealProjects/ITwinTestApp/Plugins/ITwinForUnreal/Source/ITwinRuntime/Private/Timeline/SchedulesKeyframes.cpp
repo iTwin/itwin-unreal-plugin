@@ -120,7 +120,8 @@ FVector GetCuttingPlaneOrientation(FActiveAppearance const& Appearance)
 
 void AddCuttingPlaneToTimeline(FITwinElementTimeline& ElementTimeline, FAppearanceProfile const& Profile,
 	FTimeRangeInSeconds const& Time, FITwinCoordConversions const& CoordConv,
-	PTransform const* const TransformKeyframe /*= nullptr*/)
+	PTransform const* const TransformKeyframe /*= nullptr*/,
+	std::vector<FWorkingTimeKeyframe> const* WorkingTimeKeyframes /*= nullptr*/)
 {
 	auto const& GrowthAppearance = Profile.ActiveAppearance;// all others are ignored...
 	if (Profile.ProfileType == EProfileAction::Neutral) // handled in AddVisibilityToTimeline
@@ -162,14 +163,43 @@ void AddCuttingPlaneToTimeline(FITwinElementTimeline& ElementTimeline, FAppearan
 		ElementTimeline.SetCuttingPlaneAt(Time.first - KF_START_EPSILON, {}, EGrowthStatus::FullyGrown,
 			EInterpolation::Step);
 	}
-	ElementTimeline.SetCuttingPlaneAt(Time.first, PlaneOrientation,
-		bInvertGrowth ? EGrowthStatus::DeferredFullyGrown : EGrowthStatus::DeferredFullyRemoved,
-		EInterpolation::Linear, TransformKeyframe);
-	// In case of exactly adjacent tasks, the larger epsilon avoids random overwrite of the second task's
-	// "FullyGrown" KF by one of the first task's ending keyframes below:
-	ElementTimeline.SetCuttingPlaneAt(Time.second - KF_END_3_EPSILON, PlaneOrientation,
-		bInvertGrowth ? EGrowthStatus::DeferredFullyRemoved : EGrowthStatus::DeferredFullyGrown,
-		EInterpolation::Step, TransformKeyframe);
+	double const EndTime = Time.second - KF_END_3_EPSILON;
+	if (GrowthAppearance.bGrowthSimulationPauseDuringNonWorkingTime
+		&& ensure(WorkingTimeKeyframes) && WorkingTimeKeyframes->size() >= 2)
+	{
+		// Task progression at each pause/resume time, framed by the task's start and end
+		std::vector<FWorkingTimeKeyframe> Points;
+		Points.reserve(WorkingTimeKeyframes->size() + 2);
+		Points.push_back({ Time.first, 0. });
+		for (auto&& WorkKF : *WorkingTimeKeyframes)
+		{
+			if (WorkKF.Time > Points.back().Time + KEYFRAME_TIME_EPSILON && WorkKF.Time < EndTime)
+				Points.push_back(WorkKF);
+		}
+		Points.push_back({ EndTime, 1. });
+		for (size_t i = 0; i < Points.size(); ++i)
+		{
+			double const Grown = std::clamp(bInvertGrowth ? (1. - Points[i].Progress) : Points[i].Progress, 0., 1.);
+			EGrowthStatus const Status = (Grown <= 0.) ? EGrowthStatus::DeferredFullyRemoved
+				: ((Grown >= 1.) ? EGrowthStatus::DeferredFullyGrown : EGrowthStatus::DeferredPartial);
+			// Step = frozen until the next keyframe (non-working time, or end of task)
+			bool const bProgressing = (i + 1 < Points.size()) && (Points[i + 1].Progress > Points[i].Progress);
+			ElementTimeline.SetCuttingPlaneAt(Points[i].Time, PlaneOrientation, Status,
+				bProgressing ? EInterpolation::Linear : EInterpolation::Step, TransformKeyframe,
+				static_cast<float>(Grown));
+		}
+	}
+	else
+	{
+		ElementTimeline.SetCuttingPlaneAt(Time.first, PlaneOrientation,
+			bInvertGrowth ? EGrowthStatus::DeferredFullyGrown : EGrowthStatus::DeferredFullyRemoved,
+			EInterpolation::Linear, TransformKeyframe);
+		// In case of exactly adjacent tasks, the larger epsilon avoids random overwrite of the second task's
+		// "FullyGrown" KF by one of the first task's ending keyframes below:
+		ElementTimeline.SetCuttingPlaneAt(EndTime, PlaneOrientation,
+			bInvertGrowth ? EGrowthStatus::DeferredFullyRemoved : EGrowthStatus::DeferredFullyGrown,
+			EInterpolation::Step, TransformKeyframe);
+	}
 	if (bVisibleOutsideTask && bInvertGrowth)
 	{
 		ElementTimeline.SetCuttingPlaneAt(Time.second - KF_END_2_EPSILON, {}, EGrowthStatus::FullyGrown, EInterpolation::Step);
@@ -274,11 +304,11 @@ void HandleFallbackTransfoOutsideTaskIfNeeded(FITwinElementTimeline& ElementTime
 			ElementTimeline.SetTransformationAt(StartTimeToAdd,
 				Transform.GetTranslation(), Transform.GetRotation(),
 				FDeferredAnchor{ EAnchorPoint::Static, false, FVector::ZeroVector },
-				EInterpolation::Step);
+				EInterpolation::Step, Transform.GetScale3D());
 			ElementTimeline.SetTransformationAt(FinishTimeToAdd,
 				Transform.GetTranslation(), Transform.GetRotation(),
 				FDeferredAnchor{ EAnchorPoint::Static, false, FVector::ZeroVector },
-				EInterpolation::Step);
+				EInterpolation::Step, Transform.GetScale3D());
 		}
 		else if (TaskDeps.ProfileForcedPathTransfoAssignOutside && ensure(TaskDeps.ProfileForced3DPathOutside))
 		{
@@ -314,9 +344,10 @@ PTransform const& AddStaticTransformToTimeline(FITwinElementTimeline & ElementTi
 	return ElementTimeline.SetTransformationAt(TaskTimes.first,
 		// KEEPING iModel-space transform here! I couldn't make static transfos work without hacking directly
 		// in FITwinSynchro4DSchedulesInternals::ComputeTransformFromFinalizedKeyframe... :/
+		// The scale must be kept too, even when (very) close to 1: see PTransform.
 		Transform.GetTranslation(), Transform.GetRotation(),
 		FDeferredAnchor{ EAnchorPoint::Static, false, FVector::ZeroVector },
-		EInterpolation::Step);
+		EInterpolation::Step, Transform.GetScale3D());
 }
 
 bool GetLast3DPathTransformKeyframeToApply(FTimeRangeInSeconds const& TaskTimes,
@@ -328,83 +359,167 @@ bool GetLast3DPathTransformKeyframeToApply(FTimeRangeInSeconds const& TaskTimes,
 										PathAssignment, Keyframes, CoordConv, {}, &KeyframeToApply);
 }
 
+void CropToMotionStartAndEnd(std::vector<FTransformKey>& Keyframes,
+							 FPathTransformAssignment const& PathAssignment)
+{
+	double const LowBoundary = std::clamp(
+		PathAssignment.b3DPathReverseDirection ? (1. - PathAssignment.MotionEnd) : PathAssignment.MotionStart,
+		0., 1.);
+	double const HighBoundary = std::clamp(
+		PathAssignment.b3DPathReverseDirection ? (1. - PathAssignment.MotionStart) : PathAssignment.MotionEnd,
+		0., 1.);
+	// Crop the start of the 3D path, interpolating as needed
+	auto LowIt = std::lower_bound(Keyframes.begin(), Keyframes.end(), FTransformKey{ .RelativeTime = LowBoundary });
+	// If the 3D path actually stops _before_ LowBoundary, just keep the last keyframe
+	if (LowIt == Keyframes.end())
+		LowIt = std::prev(Keyframes.end());
+	// Lower bound is the 1st element >= LowBoundary, so we may need the previous one to interpolate
+	if (LowIt->RelativeTime != LowBoundary
+		&& LowIt != Keyframes.begin() // First keyframe might(?) be > LowBoundary
+		&& LowIt != Keyframes.end())
+	{
+		auto PrevIt = std::prev(LowIt);
+		// Overwrite PrevIt by interpolating PrevIt and LowIt linearly at a RelativeTime equal to
+		// LowBoundary, then erase all keyframes before PrevIt
+		PrevIt->Transform.BlendWith(LowIt->Transform,
+			// Divider not zero because lower bound is the _first_ >= LowBoundary
+			(LowBoundary - PrevIt->RelativeTime) / (LowIt->RelativeTime - PrevIt->RelativeTime));
+		PrevIt->RelativeTime = LowBoundary;
+		LowIt = PrevIt; // PrevIt is our new boundary, exclude it from erasal
+	}
+	if (LowIt != Keyframes.begin())
+		Keyframes.erase(Keyframes.begin(), LowIt);
+
+	// Crop the end of the 3D path, interpolating as needed
+	auto HighIt = std::upper_bound(Keyframes.begin(), Keyframes.end(),
+								   FTransformKey{ .RelativeTime = HighBoundary });
+	if (HighIt != Keyframes.end()) // if 3D path actually stops _before_ HighBoundary, nothing to do
+	{
+		if (HighIt == Keyframes.begin()) // if 3D path starts _after_, keep only the first KF
+		{
+			++HighIt;
+		}
+		else
+		{
+			// Upper bound is the 1st element > HighBoundary, so we need to interpolate with the previous one
+			// (or use the previous one itself if exactly at HighBoundary)
+			auto PrevIt = std::prev(HighIt);
+			if (PrevIt->RelativeTime != HighBoundary)
+			{
+				// Overwrite PrevIt by interpolating PrevIt and HighIt linearly at a RelativeTime equal to
+				// HighBoundary, then erase all keyframes after and including HighIt
+				HighIt->Transform.Blend(PrevIt->Transform, HighIt->Transform,
+					// Divider not zero because upper bound is the _first_ > HighBoundary
+					(HighBoundary - PrevIt->RelativeTime) / (HighIt->RelativeTime - PrevIt->RelativeTime));
+				HighIt->RelativeTime = HighBoundary;
+				++HighIt; // HighIt is our new boundary, exclude it from erasal
+			}
+			// else: PrevIt is our new boundary, just erase from HighIt included until the end
+		}
+		if (HighIt != Keyframes.end())
+			Keyframes.erase(HighIt, Keyframes.end());
+	}
+	double const TimeRangeToStretch = HighBoundary - LowBoundary;
+	double const Ratio = (TimeRangeToStretch != 0.) ? (1. / TimeRangeToStretch) : 0.;
+	for (auto& StretchedKF : Keyframes)
+		StretchedKF.RelativeTime = Ratio * (StretchedKF.RelativeTime - LowBoundary);
+}
+
+/// Remaps the (sorted) path keyframes' RelativeTime, considered as the task progression, to the task's actual
+/// timing given by WorkingTimeKeyframes, and inserts keyframes at each pause/resume time so that the animation
+/// is frozen during non-working time.
+void SliceToNonWorkingTime(std::vector<FTransformKey>& Keyframes, FTimeRangeInSeconds const& TaskTimes,
+						   bool const bReverseDirection,
+						   std::vector<FWorkingTimeKeyframe> const& WorkingTimeKeyframes)
+{
+	double const TaskDuration = TaskTimes.second - TaskTimes.first;
+	if (Keyframes.empty() || WorkingTimeKeyframes.size() < 2 || TaskDuration <= 0.)
+		return;
+	// Path-space relative time <-> task progression (involutive)
+	auto const PathToProgress = [bReverseDirection](double const R) { return bReverseDirection ? (1. - R) : R; };
+	auto const TransformAtPathTime = [&Keyframes](double const R) -> FTransform
+		{
+			auto const It = std::lower_bound(Keyframes.begin(), Keyframes.end(),
+											 FTransformKey{ .RelativeTime = R });
+			if (It == Keyframes.end())
+				return Keyframes.back().Transform;
+			if (It == Keyframes.begin() || It->RelativeTime == R)
+				return It->Transform;
+			auto const Prev = std::prev(It);
+			FTransform Blended;
+			Blended.Blend(Prev->Transform, It->Transform,
+				(R - Prev->RelativeTime) / (It->RelativeTime - Prev->RelativeTime));
+			return Blended;
+		};
+	std::vector<FTransformKey> Sliced;
+	Sliced.reserve(Keyframes.size() + WorkingTimeKeyframes.size() + 2);
+	auto const AddKey = [&](FTransform const& Transform, double const Time)
+		{
+			// Copy an existing key to preserve the base properties (Id, bDeleted)
+			FTransformKey Key = Keyframes.front();
+			Key.Transform = Transform;
+			Key.RelativeTime = PathToProgress(std::clamp((Time - TaskTimes.first) / TaskDuration, 0., 1.));
+			Sliced.push_back(std::move(Key));
+		};
+	// Frozen at the start (resp. end) of the path before the first (resp. after the last) working block
+	if (WorkingTimeKeyframes.front().Time > TaskTimes.first)
+		AddKey(TransformAtPathTime(PathToProgress(0.)), TaskTimes.first);
+	for (auto&& WorkKF : WorkingTimeKeyframes)
+		AddKey(TransformAtPathTime(PathToProgress(WorkKF.Progress)), WorkKF.Time);
+	if (WorkingTimeKeyframes.back().Time < TaskTimes.second)
+		AddKey(TransformAtPathTime(PathToProgress(1.)), TaskTimes.second);
+	// Original keyframes strictly inside a working block: interpolate their time within the block
+	for (auto&& Key : Keyframes)
+	{
+		double const Progress = std::clamp(PathToProgress(Key.RelativeTime), 0., 1.);
+		auto const Next = std::upper_bound(WorkingTimeKeyframes.begin(), WorkingTimeKeyframes.end(), Progress,
+			[](double const P, FWorkingTimeKeyframe const& W) { return P < W.Progress; });
+		if (Next == WorkingTimeKeyframes.begin() || Next == WorkingTimeKeyframes.end())
+			continue;
+		auto const Prev = std::prev(Next);
+		if (Prev->Progress == Progress) // already added above
+			continue;
+		double const Time = Prev->Time + (Next->Time - Prev->Time)
+			* (Progress - Prev->Progress) / (Next->Progress - Prev->Progress);
+		AddKey(Key.Transform, Time);
+	}
+	std::sort(Sliced.begin(), Sliced.end());
+	Keyframes = std::move(Sliced);
+}
+
 bool Add3DPathTransformToTimeline(FITwinElementTimeline* ElementTimeline, FTimeRangeInSeconds const& TaskTimes,
 	FTransform const* /*StaticTransform*/, FPathTransformAssignment const& PathAssignment,
 	std::vector<FTransformKey> const& OriginalKeyframes, FITwinCoordConversions const& CoordConv,
-	FTaskDependenciesData const& TaskDeps, F3DPathKFData* pOnlyGetSingleKeyframe/*= nullptr*/)
+	FTaskDependenciesData const& TaskDeps, F3DPathKFData* pOnlyGetSingleKeyframe/*= nullptr*/,
+	std::vector<FWorkingTimeKeyframe> const* WorkingTimeKeyframes/*= nullptr*/)
 {
 	if (OriginalKeyframes.empty())
 		return false;
-	std::optional<std::vector<FTransformKey>> StretchedKeyFrames;
+	std::optional<std::vector<FTransformKey>> SortedModifiedKeyframes;
+	bool bKeyframesAreOrdered = false;
 	auto const* pKeyframes = &OriginalKeyframes;
-	if (PathAssignment.MotionStart > 0. || PathAssignment.MotionEnd < 1.
+	if ((PathAssignment.MotionStart > 0. || PathAssignment.MotionEnd < 1.)
 		 && ensure(PathAssignment.MotionStart <= PathAssignment.MotionEnd))
 	{
-		StretchedKeyFrames.emplace(OriginalKeyframes);
-		std::sort(StretchedKeyFrames->begin(), StretchedKeyFrames->end());
-		double const LowBoundary = std::clamp(
-			PathAssignment.b3DPathReverseDirection ? (1. - PathAssignment.MotionEnd) : PathAssignment.MotionStart,
-			0., 1.);
-		double const HighBoundary = std::clamp(
-			PathAssignment.b3DPathReverseDirection ? (1. - PathAssignment.MotionStart) : PathAssignment.MotionEnd,
-			0., 1.);
-		// Crop the start of the 3D path, interpolating as needed
-		auto LowIt = std::lower_bound(StretchedKeyFrames->begin(), StretchedKeyFrames->end(),
-									  FTransformKey{ .RelativeTime = LowBoundary });
-		// If the 3D path actually stops _before_ LowBoundary, just keep the last keyframe
-		if (LowIt == StretchedKeyFrames->end())
-			LowIt = std::prev(StretchedKeyFrames->end());
-		// Lower bound is the 1st element >= LowBoundary, so we may need the previous one to interpolate
-		if (LowIt->RelativeTime != LowBoundary
-			&& LowIt != StretchedKeyFrames->begin() // First keyframe might(?) be > LowBoundary
-			&& LowIt != StretchedKeyFrames->end())
+		if (!SortedModifiedKeyframes)
 		{
-			auto PrevIt = std::prev(LowIt);
-			// Overwrite PrevIt by interpolating PrevIt and LowIt linearly at a RelativeTime equal to
-			// LowBoundary, then erase all keyframes before PrevIt
-			PrevIt->Transform.BlendWith(LowIt->Transform,
-				// Divider not zero because lower bound is the _first_ >= LowBoundary
-				(LowBoundary - PrevIt->RelativeTime) / (LowIt->RelativeTime - PrevIt->RelativeTime));
-			PrevIt->RelativeTime = LowBoundary;
-			LowIt = PrevIt; // PrevIt is our new boundary, exclude it from erasal
+			SortedModifiedKeyframes.emplace(OriginalKeyframes);
+			std::sort(SortedModifiedKeyframes->begin(), SortedModifiedKeyframes->end());
 		}
-		if (LowIt != StretchedKeyFrames->begin())
-			StretchedKeyFrames->erase(StretchedKeyFrames->begin(), LowIt);
-
-		// Crop the end of the 3D path, interpolating as needed
-		auto HighIt = std::upper_bound(StretchedKeyFrames->begin(), StretchedKeyFrames->end(),
-									   FTransformKey{ .RelativeTime = HighBoundary });
-		if (HighIt != StretchedKeyFrames->end()) // if 3D path actually stops _before_ HighBoundary, nothing to do
+		bKeyframesAreOrdered = true;
+		CropToMotionStartAndEnd(*SortedModifiedKeyframes, PathAssignment);
+		pKeyframes = &(*SortedModifiedKeyframes);
+	}
+	if (PathAssignment.bPauseDuringNonWorkingTime && ensure(WorkingTimeKeyframes))
+	{
+		if (!SortedModifiedKeyframes)
 		{
-			if (HighIt == StretchedKeyFrames->begin()) // if 3D path starts _after_, keep only the first KF
-			{
-				++HighIt;
-			}
-			else
-			{
-				// Upper bound is the 1st element > HighBoundary, so we need to interpolate with the previous one
-				// (or use the previous one itself if exactly at HighBoundary)
-				auto PrevIt = std::prev(HighIt);
-				if (PrevIt->RelativeTime != HighBoundary)
-				{
-					// Overwrite PrevIt by interpolating PrevIt and HighIt linearly at a RelativeTime equal to
-					// HighBoundary, then erase all keyframes after and including HighIt
-					HighIt->Transform.Blend(PrevIt->Transform, HighIt->Transform,
-						// Divider not zero because upper bound is the _first_ > HighBoundary
-						(HighBoundary - PrevIt->RelativeTime) / (HighIt->RelativeTime - PrevIt->RelativeTime));
-					HighIt->RelativeTime = HighBoundary;
-					++HighIt; // HighIt is our new boundary, exclude it from erasal
-				}
-				// else: PrevIt is our new boundary, just erase from HighIt included until the end
-			}
-			if (HighIt != StretchedKeyFrames->end())
-				StretchedKeyFrames->erase(HighIt, StretchedKeyFrames->end());
+			SortedModifiedKeyframes.emplace(OriginalKeyframes);
+			std::sort(SortedModifiedKeyframes->begin(), SortedModifiedKeyframes->end());
 		}
-		double const TimeRangeToStretch = HighBoundary - LowBoundary;
-		double const Ratio = (TimeRangeToStretch != 0.) ? (1. / TimeRangeToStretch) : 0.;
-		for (auto& StretchedKF : (*StretchedKeyFrames))
-			StretchedKF.RelativeTime = Ratio * (StretchedKF.RelativeTime - LowBoundary);
-		pKeyframes = &(*StretchedKeyFrames);
+		SliceToNonWorkingTime(*SortedModifiedKeyframes, TaskTimes, PathAssignment.b3DPathReverseDirection,
+							  *WorkingTimeKeyframes);
+		pKeyframes = &(*SortedModifiedKeyframes);
 	}
 	double const TaskDuration = TaskTimes.second - TaskTimes.first;
 	FDeferredAnchor BaseAnchor;

@@ -68,7 +68,7 @@ namespace AdvViz::SDK {
 				if (bSuccess)
 				{
 					auto unlockedJout = joutPtr->GetAutoLock();
-					SJsonOut const& jOut = unlockedJout.Get();
+					SJsonOut& jOut = unlockedJout.Get();
 
 					jsonDeco_ = std::move(jOut.data);
 					id_ = jOut.id;

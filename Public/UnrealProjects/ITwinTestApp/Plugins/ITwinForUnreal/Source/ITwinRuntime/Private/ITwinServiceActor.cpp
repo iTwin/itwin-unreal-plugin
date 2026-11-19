@@ -113,6 +113,22 @@ void AITwinServiceActor::UpdateWebServices()
 	}
 }
 
+void AITwinServiceActor::AttachChildServiceActor(AITwinServiceActor& ChildActor)
+{
+	ChildActor.AttachToActor(this, FAttachmentTransformRules::KeepRelativeTransform);
+
+	ChildActor.CopyEnvironmentFrom(*this);
+
+#if WITH_TESTS
+	// In test mode, also propagate the test server URL to all spawned children.
+	FString ServerUrl;
+	if (IsInTestMode(ServerUrl))
+	{
+		ChildActor.SetTestMode(ServerUrl);
+	}
+#endif
+}
+
 #if WITH_TESTS
 void AITwinServiceActor::SetTestMode(FString const& ServerUrl)
 {

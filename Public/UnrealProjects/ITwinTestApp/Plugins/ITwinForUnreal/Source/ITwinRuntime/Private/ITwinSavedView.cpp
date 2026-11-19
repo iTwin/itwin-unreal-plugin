@@ -97,10 +97,8 @@ public:
 		}
 	}
 
-	void StartCameraMovementToSavedView(float& OutBlendTime, ACameraActor*& Actor, const FTransform& Transform,
-										float BlendTime)
+	void StartCameraMovementToSavedView(ACameraActor*& Actor, const FTransform& Transform, float const BlendTime)
 	{
-		OutBlendTime = BlendTime;
 		TObjectIterator<APlayerController> Itr;
 		if (!ensure(Itr))
 			return;
@@ -154,25 +152,6 @@ void AITwinSavedView::OnSavedViewDeleted(bool bSuccess, FString const& InSavedVi
 
 namespace
 {
-	std::unordered_set<ITwinElementID> IntersectSets(const std::unordered_set<ITwinElementID>& SetA,
-													 const std::unordered_set<ITwinElementID>& SetB)
-	{
-		std::unordered_set<ITwinElementID> Result;
-
-		const std::unordered_set<ITwinElementID>& Smaller = (SetA.size() < SetB.size()) ? SetA : SetB;
-		const std::unordered_set<ITwinElementID>& Larger = (SetA.size() < SetB.size()) ? SetB : SetA;
-
-		for (const ITwinElementID& Element : Smaller)
-		{
-			if (Larger.find(Element) != Larger.end())
-			{
-				Result.insert(Element);
-			}
-		}
-
-		return Result;
-	}
-
 	FString ToString(FPerModelCategoryVisibilityProps const& PerModelCat)
 	{
 		return FString::Printf(TEXT("Model:%s,Category:%s"), *PerModelCat.ModelId, *PerModelCat.CategoryId);
@@ -280,6 +259,7 @@ void AITwinSavedView::OnSavedViewRetrieved(bool bSuccess, FSavedView const& Save
 	if (!bSuccess)
 	{
 		BE_LOGE("ITwinAPI", "SavedView retrieval failed: " << TCHAR_TO_UTF8(*GetActorNameOrLabel()));
+		RetrievedInfoEvent.Broadcast(bSuccess, SavedView, SavedViewInfo);
 		return;
 	}
 	BE_LOGI("ITwinAPI", "SavedView information retrieved: " << TCHAR_TO_UTF8(*GetActorNameOrLabel()));
@@ -301,6 +281,8 @@ void AITwinSavedView::OnSavedViewRetrieved(bool bSuccess, FSavedView const& Save
 		break;
 	}
 	Impl->PendingOperation = FImpl::EPendingOperation::None;
+
+	RetrievedInfoEvent.Broadcast(bSuccess, SavedView, SavedViewInfo);
 }
 
 void AITwinSavedView::OnSavedViewEdited(bool bSuccess, FSavedView const& SavedView,
@@ -388,12 +370,20 @@ void AITwinSavedView::OnSavedViewThumbnailUpdated(bool bSuccess, FString const& 
 	if (!bSuccess)
 	{
 		BE_LOGE("ITwinAPI", "SavedView thumbnail update failed: " << TCHAR_TO_UTF8(*GetActorNameOrLabel()));
-		return;
 	}
-	BE_LOGI("ITwinAPI", "SavedView thumbnail updated: " << TCHAR_TO_UTF8(*GetActorNameOrLabel()));
+	else
+	{
+		BE_LOGI("ITwinAPI", "SavedView thumbnail updated: " << TCHAR_TO_UTF8(*GetActorNameOrLabel()));
+	}
+	UpdatedThumbnailEvent.Broadcast(bSuccess, InSavedViewId);
 }
 
-void AITwinSavedView::MoveToSavedView(float moveDuration)
+void AITwinSavedView::TeleportToSavedView()
+{
+	MoveToSavedView(0.f);
+}
+
+void AITwinSavedView::MoveToSavedView(float const MoveDuration)
 {
 	BE_LOGI("ITwinAPI", "Will move to SavedView: " << TCHAR_TO_UTF8(*GetActorNameOrLabel()));
 	if (SavedViewId.IsEmpty() && !Impl->bSavedViewTransformIsSet)
@@ -415,11 +405,10 @@ void AITwinSavedView::MoveToSavedView(float moveDuration)
 		{
 			checkSlow(GetWorld()->GetFirstPlayerController() == Controller && Controller->GetPawn() == Pawn);
 			auto StartRot = Pawn->GetActorRotation();
-			float BlendTime = moveDuration;
 			ACameraActor* Actor = nullptr;
 			FTransform Transform(GetActorRotation(), GetActorLocation());
-			Impl->StartCameraMovementToSavedView(BlendTime, Actor, Transform, moveDuration);
-			FTimerDelegate delegate = FTimerDelegate::CreateLambda([=, ThisPtr = TWeakObjectPtr<AITwinSavedView>(this)]
+			Impl->StartCameraMovementToSavedView(Actor, Transform, MoveDuration);
+			FTimerDelegate Delegate = FTimerDelegate::CreateLambda([=, ThisPtr = TWeakObjectPtr<AITwinSavedView>(this)]
 				{
 					if (!ThisPtr.IsValid())
 						return;
@@ -427,10 +416,10 @@ void AITwinSavedView::MoveToSavedView(float moveDuration)
 					ThisPtr->Impl->ApplyScheduleTime();
 					ThisPtr->FinishedMovingToSavedView.Broadcast();
 				});
-			if (BlendTime <= 0.f)
-				GetWorldTimerManager().SetTimerForNextTick(delegate);
+			if (MoveDuration <= 0.f)
+				GetWorldTimerManager().SetTimerForNextTick(Delegate);
 			else
-				GetWorldTimerManager().SetTimer(ITwinSavedView::TimerHandle, delegate, BlendTime, false);
+				GetWorldTimerManager().SetTimer(ITwinSavedView::TimerHandle, Delegate, MoveDuration, false);
 		}
 		else // no Pawn (nor Controller): we're probably in the Editor
 		{
@@ -556,7 +545,7 @@ void AITwinSavedView::RetakeSavedView()
 	if (!OwnerIModel)
 		return;
 	FSavedView ModifiedSV;
-	if (!UITwinUtilityLibrary::GetSavedViewFromPlayerController(OwnerIModel, ModifiedSV))
+	if (!UITwinUtilityLibrary::GetSavedViewFromCurrentViewpoint(OwnerIModel, ModifiedSV))
 	{
 		return;
 	}

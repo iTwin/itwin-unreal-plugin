@@ -27,6 +27,7 @@ class FPathTransformAssignment;
 class FSimpleAppearance;
 class FStaticTransformAssignment;
 class FPathTransformAssignment;
+class FWorkingTimeKeyframe;
 struct FITwinCoordConversions;
 
 namespace ITwin::Timeline {
@@ -68,7 +69,8 @@ FVector GetCuttingPlaneOrientation(FActiveAppearance const& Appearance);
 
 void AddCuttingPlaneToTimeline(FITwinElementTimeline& ElementTimeline, FAppearanceProfile const& Profile,
 	FTimeRangeInSeconds const& Time, FITwinCoordConversions const& CoordConv,
-	PTransform const* const TransformKeyframe = nullptr);
+	PTransform const* const TransformKeyframe = nullptr,
+	std::vector<FWorkingTimeKeyframe> const* WorkingTimeKeyframes = nullptr);
 
 void AddVisibilityToTimeline(FITwinElementTimeline& ElementTimeline,
 	FAppearanceProfile const& Profile, FTimeRangeInSeconds const& Time, FTaskDependenciesData const& TaskDeps);
@@ -91,7 +93,8 @@ bool Add3DPathTransformToTimeline(
 	FITwinElementTimeline* ElementTimeline, FTimeRangeInSeconds const& TaskTimes,
 	FTransform const* StaticTransformUnused, FPathTransformAssignment const& PathAssignment,
 	std::vector<FTransformKey> const& Keyframes, FITwinCoordConversions const& CoordConv,
-	FTaskDependenciesData const& TaskDeps, F3DPathKFData* pOnlyGetSingleKeyframe = nullptr);
+	FTaskDependenciesData const& TaskDeps, F3DPathKFData* pOnlyGetSingleKeyframe = nullptr,
+	std::vector<FWorkingTimeKeyframe> const* WorkingTimeKeyframes = nullptr);
 
 void HandleFallbackTransfoOutsideTaskIfNeeded(FITwinElementTimeline& ElementTimeline,
 	FTimeRangeInSeconds const& TaskTimes, FITwinCoordConversions const& CoordConv,

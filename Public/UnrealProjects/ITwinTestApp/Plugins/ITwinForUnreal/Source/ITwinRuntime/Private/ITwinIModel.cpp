@@ -11,6 +11,7 @@
 #include <IncludeCesium3DTileset.h>
 #include <ITwinDigitalTwin.h>
 #include <ITwinGeoLocation.h>
+#include <ITwinIModelEventHandler.h>
 #include <ITwinIModelInternals.h>
 #include <ITwinIModel3DInfo.h>
 #include <ITwinIModelSettings.h>
@@ -18,6 +19,7 @@
 #include <ITwinSavedView.h>
 #include <ITwinSceneMappingBuilder.h>
 #include <ITwinServerEnvironment.h>
+#include <ITwinSelectionOutlineRenderer.h>
 #include <ITwinSetupMaterials.h>
 #include <ITwinSynchro4DAnimator.h>
 #include <ITwinSynchro4DSchedules.h>
@@ -306,6 +308,7 @@ public:
 	std::optional<bool> optResolvedSynchro4DAutoLoadSchedule;
 #if WITH_TESTS
 	static bool b4DAutoLoadScheduleDisabledForTests;
+	std::shared_ptr<FITwinIModelEventHandler> TestEventHandler;
 #endif
 
 	// For auto-refresh system
@@ -939,6 +942,8 @@ void AITwinIModel::FImpl::MakeTileset(std::optional<FITwinExportInfo> const& Exp
 	}
 	Tileset->SetActorLabel(Owner.GetActorLabel() + TEXT(" tileset"));
 #endif
+	if (Owner.IModelName.IsEmpty() && !CompleteInfo.DisplayName.IsEmpty())
+		Owner.IModelName = CompleteInfo.DisplayName;
 	if (bSpawnNewTileset)
 	{
 		Tileset->AttachToActor(&Owner, FAttachmentTransformRules::KeepRelativeTransform);
@@ -1622,6 +1627,7 @@ void AITwinIModel::SetModelLoadInfo(FITwinLoadInfo Info)
 	IModelId = Info.IModelId;
 	ChangesetId = Info.ChangesetId;
 	ExportId = Info.ExportId;
+	IModelName = Info.IModelDisplayName;
 #if WITH_EDITOR
 	// Use the display name of the iModel preferably
 	if (!Info.IModelDisplayName.IsEmpty())
@@ -1688,84 +1694,6 @@ TFuture<TArray<FString>> AITwinIModel::GetAttachedRealityDataIds()
 	return Promise->GetFuture();
 }
 
-TFuture<TArray<FString>> AITwinIModel::GetChildrenModelIds(const FString& ParentModelId)
-{
-	if (Impl->ChildrenModelIds.Contains(ParentModelId))
-		return MakeFulfilledPromise<TArray<FString>>(Impl->ChildrenModelIds[ParentModelId]).GetFuture();
-	const auto Promise = MakeShared<TPromise<TArray<FString>>>();
-	Impl->ChildrenModelIdsPromises.Add(Promise);
-	ITwinHttp::FLock Lock(Impl->GetChildrenModelsRequestIdMutex);
-	{
-		WebServices->QueryIModelRows(ITwinId, IModelId, ResolvedChangesetId,
-			FString::Printf(TEXT("WITH RECURSIVE StartingSubject(SubjectId, IsFromModel) AS ("\
-				"SELECT s.ECInstanceId, FALSE "\
-				"FROM Bis.Subject s "\
-				"WHERE s.ECInstanceId = %s "\
-
-				"UNION "\
-
-				"SELECT s.ECInstanceId, TRUE "\
-				"FROM BisCore.GeometricModel3d m "\
-				"JOIN Bis.ModelModelsElement mme ON mme.SourceECInstanceId = m.ECInstanceId "\
-				"JOIN Bis.ElementOwnsChildElements owns ON owns.TargetECInstanceId = mme.TargetECInstanceId "\
-				"JOIN Bis.Subject s ON s.ECInstanceId = owns.SourceECInstanceId "\
-				"WHERE m.ECInstanceId = %s "\
-				"), "\
-				"SubjectHierarchy(SubjectId, IsFromModel) AS ("\
-				"SELECT SubjectId, IsFromModel FROM StartingSubject "\
-				
-				"UNION ALL "\
-
-				"SELECT child.ECInstanceId, parent.IsFromModel "\
-				"FROM Bis.Subject child "\
-				"JOIN SubjectHierarchy parent ON child.Parent.Id = parent.SubjectId"\
-				") "\
-				"SELECT sh.SubjectId AS Id FROM SubjectHierarchy sh WHERE sh.SubjectId = "\
-				"%s UNION SELECT id FROM (SELECT p.ECInstanceId id, p.Parent.Id ParentId FROM bis.InformationPartitionElement p INNER JOIN bis.GeometricModel3d model ON model.ModeledElement.Id = p.ECInstanceId WHERE p.Parent.Id IN (SELECT sh.SubjectId AS Id "\
-				"FROM SubjectHierarchy sh "\
-				"WHERE NOT sh.IsFromModel) "\
-				"AND EXISTS (SELECT 1 FROM BisCore.GeometricElement3d WHERE Model.Id = model.ECInstanceId)) "\
-				"UNION "\
-				"SELECT m.ECInstanceId AS Id "\
-				"FROM SubjectHierarchy sh "\
-				"JOIN Bis.ElementOwnsChildElements owns ON owns.SourceECInstanceId = sh.SubjectId "\
-				"JOIN Bis.ModelModelsElement mme ON mme.TargetECInstanceId = owns.TargetECInstanceId "\
-				"JOIN BisCore.GeometricModel3d m ON m.ECInstanceId = mme.SourceECInstanceId "\
-				"JOIN BisCore.Element e ON e.ECInstanceId = m.ModeledElement.Id "\
-				"WHERE NOT m.IsPrivate AND json_extract(e.JsonProperties, '$.PhysicalPartition.Model.Content') IS NULL "\
-				"AND json_extract(e.JsonProperties, '$.GraphicalPartition3d.Model.Content') IS NULL AND EXISTS (SELECT 1 FROM BisCore.GeometricElement3d WHERE Model.Id = m.ECInstanceId)"), *ParentModelId, *ParentModelId, *ParentModelId),
-			0, -1,
-			[Impl = this->Impl.Get(), ParentModelId](HttpRequestID const& ReqID)
-			{
-				ITwinHttp::FLock Lock(Impl->GetChildrenModelsRequestIdMutex);
-				Impl->GetChildrenModelsRequestId = ReqID;
-			});
-	}
-	return Promise->GetFuture();
-}
-
-TFuture<TArray<FString>> AITwinIModel::GetSubCategoryIds(const FString& ParentCategoryId)
-{
-	if (Impl->SubCategoryIds.Contains(ParentCategoryId))
-		return MakeFulfilledPromise<TArray<FString>>(Impl->SubCategoryIds[ParentCategoryId]).GetFuture();
-	const auto Promise = MakeShared<TPromise<TArray<FString>>>();
-	Impl->SubCategoryIdsPromises.Add(Promise);
-	ITwinHttp::FLock Lock(Impl->GetSubCategoriesRequestIdMutex);
-	{
-		WebServices->QueryIModelRows(ITwinId, IModelId, ResolvedChangesetId,
-			FString::Printf(TEXT("SELECT ECInstanceId as Id From bis.SpatialCategory c WHERE c.ECInstanceId = %s"\
-								 "UNION "\
-								 "SELECT ECInstanceId as Id FROM bis.SubCategory s WHERE s.Parent.Id = %s"), *ParentCategoryId, *ParentCategoryId),
-			0, -1,
-			[Impl = this->Impl.Get(), ParentCategoryId](HttpRequestID const& ReqID)
-			{
-				ITwinHttp::FLock Lock(Impl->GetSubCategoriesRequestIdMutex);
-				Impl->GetSubCategoriesRequestId = ReqID;
-			});
-	}
-	return Promise->GetFuture();
-}
-
 FString AITwinIModel::GetSelectedChangeset() const
 {
 	// By construction, this is generally ResolvedChangesetId - it can be empty if no export has been loaded
@@ -1824,6 +1752,11 @@ double AITwinIModel::GetScheduleDownloadPercentComplete() const
 /*static*/ void AITwinIModel::Disable4DAutoLoadSchedule(bool bDisable)
 {
 	FImpl::b4DAutoLoadScheduleDisabledForTests = bDisable;
+}
+
+void AITwinIModel::SetCustomEventHandler(std::shared_ptr<FITwinIModelEventHandler> InEventHandler)
+{
+	Impl->TestEventHandler = InEventHandler;
 }
 #endif // WITH_TESTS
 
@@ -2074,7 +2007,7 @@ void AITwinIModel::OnExportInfosRetrieved(bool bSuccess, FITwinExportInfos const
 			Impl->AutoRefreshInfo.State = FImpl::EAutoRefreshState::WaitForUserConfirmation;
 			if (ConfirmLoadNewChangeset.IsBound())
 			{
-				ConfirmLoadNewChangeset.Broadcast(IModelId, GetActorNameOrLabel(),
+				ConfirmLoadNewChangeset.Broadcast(IModelId, IModelName,
 					Impl->AutoRefreshInfo.NewChangesetId, Impl->AutoRefreshInfo.NewChangesetName);
 			}
 			else
@@ -2684,6 +2617,15 @@ AITwinIModel::MaterialPersistencePtr const& AITwinIModel::GetMaterialPersistence
 
 void AITwinIModel::OnIModelOffsetChanged()
 {
+#if WITH_TESTS
+	// In some tests, we may prefer to avoid refreshing the tileset when the iModel offset changes,
+	// to avoid unnecessary reloading of the scene when the loading is already complete.
+	if (Impl->TestEventHandler && Impl->TestEventHandler->HandleOffsetDetected())
+	{
+		return;
+	}
+#endif
+
 	Impl->SetLastTransforms();
 	// Bounding boxes have always been stored in Unreal world space AS IF the iModel were untransformed
 	// (see "Note 2" in UITwinSceneMappingBuilder::OnTileMeshPrimitiveLoaded), but this call _is_
@@ -2908,19 +2850,6 @@ void AITwinIModel::ShowConstructionData(bool bShow)
 	Internals.HideElements(SceneMappingLock->GetSavedViewHiddenElements(), false, true);
 }
 
-void AITwinIModel::UpdateConstructionData()
-{
-	auto SceneMappingLock = GetInternals(*this).SceneMapping->GetRAutoLock();
-	std::unordered_set<ITwinElementID> emptyElements;
-	const std::unordered_set<ITwinElementID>* hiddenElements = &emptyElements;
-	auto GeometryIDToElementIDsLock = SceneMappingLock->GeometryIDToElementIDs->GetRAutoLock();
-	auto& GeometryIDToElementIDs = *GeometryIDToElementIDsLock;
-	if (!bShowConstructionData)
-		hiddenElements = &GeometryIDToElementIDs.at(1); //ConstructionDataElements
-	GetInternals(*this).HideElements(*hiddenElements,
-		true, true);
-}
-
 void AITwinIModel::HideCategories(std::vector<std::string> const& InCategoryIDs, bool forceUpdate)
 {
 	GetInternals(*this).HideCategories(ITwin::InsertParsedIDs(InCategoryIDs), forceUpdate);
@@ -2943,6 +2872,11 @@ void AITwinIModel::ShowElements(std::vector<std::string> const& InElementIDs, bo
 
 void AITwinIModel::ShowCategoriesPerModel(std::vector<std::string> const& InModelIDs, std::vector<std::string> const& InCategoryIDs, bool forceUpdate)
 {
+	if (InModelIDs.size() != InCategoryIDs.size())
+	{
+		BE_LOGE("ITwinAPI", "ShowCategoriesPerModel: ModelIDs and CategoryIDs must have the same size");
+		return;
+	}
 	std::unordered_set<std::pair<ITwinElementID, ITwinElementID>, FITwinSceneTile::pair_hash> AlwaysDrawnCategoriesPerModel;
 	for (int i = 0; i < InModelIDs.size(); i++)
 	{
@@ -2954,6 +2888,11 @@ void AITwinIModel::ShowCategoriesPerModel(std::vector<std::string> const& InMode
 
 void AITwinIModel::HideCategoriesPerModel(std::vector<std::string> const& InModelIDs, std::vector<std::string> const& InCategoryIDs, bool forceUpdate)
 {
+	if (InModelIDs.size() != InCategoryIDs.size())
+	{
+		BE_LOGE("ITwinAPI", "HideCategoriesPerModel: ModelIDs and CategoryIDs must have the same size");
+		return;
+	}
 	std::unordered_set<std::pair<ITwinElementID, ITwinElementID>, FITwinSceneTile::pair_hash> HiddenCategoriesPerModel;
 	for (int i = 0; i < InModelIDs.size(); i++)
 	{
@@ -3016,6 +2955,10 @@ void AITwinIModel::FImpl::ForceShadowUpdatesIfNeeded()
 				Owner.GetWorldTimerManager().SetTimer(TimerHandle,
 					FTimerDelegate::CreateLambda([]
 					{
+						// The light may have been destroyed (world teardown, GC) between the
+						// moment the timer was set and the moment it fires.
+						if (!FImpl::LightForForcedShadowUpdate.IsValid())
+							return;
 						EpsilonRoll = -EpsilonRoll;  // oscillate to avoid possible surprises with diverging value...
 						FRotator SunRot = FImpl::LightForForcedShadowUpdate->GetComponentRotation();
 						SunRot.Roll += EpsilonRoll;
@@ -3055,10 +2998,9 @@ void AITwinIModel::OnSavedViewInfosRetrieved(bool bSuccess, FSavedViewInfos cons
 		savedViewActor->SetActorLabel(info.DisplayName);
 #endif
 		savedViewActor->DisplayName = info.DisplayName;
-		//using the attachment to list savedViews in an iModel
-		savedViewActor->AttachToActor(this, FAttachmentTransformRules::KeepRelativeTransform);
+		// Using the attachment to list savedViews in an iModel
+		AttachChildServiceActor(*savedViewActor);
 		savedViewActor->Tags.Add(*info.Id);
-		savedViewActor->CopyEnvironmentFrom(*this);
 		savedViewActor->SavedViewId = info.Id;
 	}
 	SavedViewsRetrieved.Broadcast(bSuccess, SavedViews);
@@ -3165,9 +3107,8 @@ void AITwinIModel::OnSavedViewAdded(bool bSuccess, FSavedViewInfo const& SavedVi
 	savedViewActor->SetActorLabel(SavedViewInfo.DisplayName);
 #endif
 	// RQ/Note: I'm using the attachment to list savedViews in an iModel
-	savedViewActor->AttachToActor(this, FAttachmentTransformRules::KeepRelativeTransform);
+	AttachChildServiceActor(*savedViewActor);
 	savedViewActor->Tags.Add(*SavedViewInfo.Id);
-	savedViewActor->CopyEnvironmentFrom(*this);
 	savedViewActor->SavedViewId = SavedViewInfo.Id;
 	SavedViewAdded.Broadcast(bSuccess, SavedViewInfo);
 }
@@ -3191,7 +3132,7 @@ void AITwinIModel::AddSavedView(const FString& displayName, const FString& group
 	}
 
 	FSavedView NewSavedView;
-	if (!UITwinUtilityLibrary::GetSavedViewFromPlayerController(this, NewSavedView))
+	if (!UITwinUtilityLibrary::GetSavedViewFromCurrentViewpoint(this, NewSavedView))
 	{
 		return;
 	}
@@ -3992,6 +3933,12 @@ void FITwinIModelInternals::SelectMaterial(ITwinMaterialID const& InMaterialID)
 	SceneMappingLock->PickVisibleMaterial(InMaterialID);
 }
 
+ITwinMaterialID FITwinIModelInternals::GetSelectedMaterial() const
+{
+	auto SceneMappingLock = SceneMapping->GetRAutoLock();
+	return SceneMappingLock->GetSelectedMaterial();
+}
+
 void FITwinIModelInternals::HideSelectionTint()
 {
 	auto SceneMappingLock = SceneMapping->GetAutoLock();
@@ -4047,6 +3994,16 @@ void AITwinIModel::HideSelectionHighlightColor()
 	GetInternals(*this).HideSelectionTint();
 }
 
+void AITwinIModel::BeginSelectionCaptureSuppression()
+{
+	ITwin::SelectionOutline::BeginCaptureSuppression();
+}
+
+void AITwinIModel::EndSelectionCaptureSuppression()
+{
+	ITwin::SelectionOutline::EndCaptureSuppression();
+}
+
 void AITwinIModel::SetHover(const FString& ElementId, uint64 MaterialID, bool bHoverMaterial)
 {
 	GetInternals(*this).SetHover(
@@ -4077,6 +4034,10 @@ void AITwinIModel::HighlightMaterial(uint64 MaterialID)
 	ModelInternals.SelectMaterial(ITwinMaterialID{ MaterialID });
 }
 
+uint64 AITwinIModel::GetSelectedMaterial() const
+{
+	return GetInternals(*this).GetSelectedMaterial().getValue();
+}
 
 UITwinClipping3DTilesetHelper* AITwinIModel::GetClippingHelper() const
 {

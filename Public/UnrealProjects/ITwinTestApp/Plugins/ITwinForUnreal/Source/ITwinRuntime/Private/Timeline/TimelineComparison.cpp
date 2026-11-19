@@ -75,6 +75,7 @@ namespace ITwin::Timeline {
                 return true;
             return NearlyEqual(A.Position, B.Position, Tol)
                 && NearlyEqual(A.Rotation, B.Rotation, Tol)
+                && NearlyEqual(A.Scale, B.Scale, Tol)
                 && NearlyEqual(A.DefrdAnchor, B.DefrdAnchor, Tol);
         }
 

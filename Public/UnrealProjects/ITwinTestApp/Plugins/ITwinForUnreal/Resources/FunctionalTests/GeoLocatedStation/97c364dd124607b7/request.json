@@ -1,0 +1,4 @@
+{
+    "urlSuffix": "/imodel/rpc/v4/mode/1/context/cc04c77c-9da5-4699-873b-49dfaa074b5a/imodel/e9464c5d-f40a-4443-8652-47677a7a1089/changeset/c0e4e57d54bf87ed664ea49d1a45a93d3e92c0c6/IModelReadRpcInterface-3.6.0-getGeoCoordinatesFromIModelCoordinates",
+    "body": "[{\"iTwinId\":\"cc04c77c-9da5-4699-873b-49dfaa074b5a\",\"iModelId\":\"e9464c5d-f40a-4443-8652-47677a7a1089\",\"changeset\":{\"id\":\"c0e4e57d54bf87ed664ea49d1a45a93d3e92c0c6\"}}, {\"target\": \"WGS84\", \"iModelCoords\": [{\"x\": 565267.327272441, \"y\": 5276825.694905683, \"z\": 64.66442709360786}]}]"
+}

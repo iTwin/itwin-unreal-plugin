@@ -10,8 +10,10 @@
 
 #include <Tests/IModelTestHelperImpl.h>
 
+#include <ITwinServerEnvironment.h>
 #include <ITwinTilesetAccess.h>
 #include <IncludeCesium3DTileset.h>
+#include <ITwinRuntime/Private/Network/JsonQueriesCache.h>
 
 #include <CesiumCameraManager.h>
 
@@ -53,13 +55,6 @@ bool FIModelTestHelperImpl::Init(FIModelTestOptions const& Options /*= {}*/)
 	// Override some options:
 	// Disable rendering for headless tests.
 	CurrentOptions.bEnableRendering = false;
-	// For now, disable 4D queries here (same comment as in IModelRenderTest about the 4D schedule).
-	// However, it is worth testing the error case (see regular expression used in
-	// FPaginatedIModelRowsQueries::QueryNextPage). But it seems to induce long delays in the test, which we
-	// should investigate later - TODO_JDE.
-	// See regular expression used in FPaginatedIModelRowsQueries::QueryNextPage.
-	CurrentOptions.bDisableSynchro4DAutoLoad = true;
-
 
 	// We need actors to tick in Editor (IModel, Cesium tileset...), otherwise the test will time out because
 	// the tileset will not be loaded.
@@ -72,6 +67,15 @@ bool FIModelTestHelperImpl::Init(FIModelTestOptions const& Options /*= {}*/)
 	FString SceneId;
 	std::filesystem::path RelativeCacheFolder;
 	FillTestInfo(ExportInfo, SceneId, RelativeCacheFolder, CurrentOptions);
+
+	// Clean the 4D cache folders for current iModel, if requested.
+	if (!Options.bDisableSynchro4DAutoLoad && Options.bCleanSynchro4DCache)
+	{
+		FString const ResolvedChangeset = ExportInfo.ChangesetId == TEXT("latest")
+			? FString() : ExportInfo.ChangesetId;
+		QueriesCache::CleanCacheFolders(EITwinEnvironment::Prod,
+			ExportInfo.iTwinId, ExportInfo.iModelId, ResolvedChangeset);
+	}
 
 	UWorld* const World = FITwinAPITestHelperBase::GetTestWorld();
 
@@ -117,11 +121,15 @@ void FIModelTestHelperImpl::Cleanup()
 
 	TestCallback = {};
 
+	if (IModelLoadingResult.IModel)
+	{
+		// Cancel any remaining 4D queries and wait, before stopping the mock server.
+		IModelLoadingResult.IModel->Destroy();
+	}
 	IModelLoadingResult.IModel = {};
-
 	// Stop the mock server now that we are done with the test, to avoid conflicts with other tests
 	// that may be running in parallel (see FITwinMockServerBase::HasRunningInstance).
-	IModelLoadingResult.MockServer.reset();
+	IModelLoadingResult.StopMockServer();
 
 	if (bHasPushedAllowTickInEditor)
 	{
@@ -220,8 +228,20 @@ void FIModelTestHelperImpl::DetectFilledSceneMapping()
 
 	if (AITwinIModel* IModel = GetIModel())
 	{
-		// Check if the iModel contains a specific element ID.
-		if (IModel->HasElementWithID(TEXT("0x5d")))
+		// Check if the iModel contains specific elements ID.
+		int32 FoundElts = 0;
+		for (auto const& EltID : ElementsToTest)
+		{
+			if (IModel->HasElementWithID(EltID))
+			{
+				FoundElts++;
+			}
+			else
+			{
+				break; // No need to check further if one element is missing.
+			}
+		}
+		if (FoundElts == ElementsToTest.Num())
 		{
 			bHasFilledSceneMapping = true;
 			OnLoadEventReceived();

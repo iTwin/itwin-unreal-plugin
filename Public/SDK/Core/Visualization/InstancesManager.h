@@ -72,8 +72,12 @@ MODULE_EXPORT namespace AdvViz::SDK
 	class ADVVIZ_LINK InstancesManager : public IInstancesManager, Tools::TypeId<InstancesManager>
 	{
 	public:
+		// unique default instances group
 		inline static const std::string DEFAULT_GROUP_NAME = "staticInstances";
+
+		// spline-controlled instances groups, like path animation or area/spline population (one group per spline)
 		inline static const std::string SPLINE_GROUP_TYPE = "spline";
+		// custom user instances groups for population instances (brush and single placement)
 		inline static const std::string CUSTOM_GROUP_TYPE = "custom";
 
 		/// Load the data from the server

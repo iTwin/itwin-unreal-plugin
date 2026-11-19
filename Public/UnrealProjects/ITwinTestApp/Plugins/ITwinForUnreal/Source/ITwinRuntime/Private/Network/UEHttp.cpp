@@ -160,7 +160,7 @@ FUEHttp::Response FUEHttp::Do(FString verb, const std::string& url, const BodyPa
 					auto Response = ConvertUnrealHttpResponse({}, pRequest, pResponse, connectedSuccessfully);
 					if (!RequestDumpPath.empty())
 					{
-						AdvViz::SDK::RequestDump::DumpResponse(Response.first, Response.second, RequestDumpPath);
+						AdvViz::SDK::RequestDump::DumpResponse(Response, RequestDumpPath);
 					}
 					if (asyncCBExecMode == EAsyncCallbackExecutionMode::GameThread)
 					{
@@ -223,7 +223,7 @@ FUEHttp::Response FUEHttp::Do(FString verb, const std::string& url, const BodyPa
 
 		if (!RequestDumpPath.empty())
 		{
-			AdvViz::SDK::RequestDump::DumpResponse(Ret.first, Ret.second, RequestDumpPath);
+			AdvViz::SDK::RequestDump::DumpResponse(Ret, RequestDumpPath);
 		}
 
 		return std::move(Ret);

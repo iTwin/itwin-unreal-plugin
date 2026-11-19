@@ -2,12 +2,11 @@
 vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
     REPO madler/zlib
-    REF 09a1572aa624e5ddb6c075dc013880de70b1b9b9
-    SHA512 8df6edcaf32252636da46730cffc8416d4a389c59f9c5b54f0162ccdcd35794a14e3d2c4937b973345797849ab8d2ae07420ebe6ece8febfc7da4ce6029df8f9
+    REF v${VERSION}
+    SHA512 67f3ce120210a69aa05cece6f76d5f45b50d947c095169f0d699732d0182d7d04aec1af56a3fc6bbcc2af91a57e099cd73980b17f7d96ad90aeabbeaafbf1cbc
     HEAD_REF master
 	PATCHES
 		0001-zlib-static-output-name.patch
-		0002-zlib-CVE-2026-85091.patch
 )
 
 # This is (was?) generated during the cmake build

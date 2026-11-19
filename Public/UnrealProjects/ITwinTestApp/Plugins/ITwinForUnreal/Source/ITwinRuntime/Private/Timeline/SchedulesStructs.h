@@ -26,6 +26,7 @@
 	#include <boost/container_hash/hash.hpp>
 #include <Compil/AfterNonUnrealIncludes.h>
 
+#include <array>
 #include <functional>
 #include <mutex>
 #include <optional>
@@ -75,11 +76,10 @@ public: // Note: ordered for best packing, not semantics (keep order or change l
 	/// Growth direction, either along a common axis, or custom, expressed in the iTwin base/convention.
 	/// Note that it should be interpreted in the transformed base (see FPathTransformAssignment, FStaticTransformAssignment).
 	EGrowthSimulationMode GrowthSimulationMode = EGrowthSimulationMode::None;
-	/// Not yet impl. in AppearanceProfilesApi.ts so we will ignore it
-	/// (see also To/FromJsonObject for FActiveAppearance)
+	/// Not yet implemented:
 	bool bGrowthSimulationBasedOnPercentComplete : 1 = false;
-	/// Not yet impl. in AppearanceProfilesApi.ts so we will ignore it
-	/// (see also To/FromJsonObject for FActiveAppearance)
+	/// Whether the growth simulation should pause during non-working time, as determined from the task's or resource's
+	/// calendar
 	bool bGrowthSimulationPauseDuringNonWorkingTime : 1 = false;
 	/// Means the Element disappears during the task, instead of appearing. It also means the opposite
 	/// cutting plane /orientation/ will be used, but that's NOT equivalent to using the opposite value of
@@ -150,6 +150,11 @@ public:
 	std::variant<ITwin::Timeline::EAnchorPoint, FVector> TransformAnchor;
 	/// Direction of the trajectory along the path, in case of a non-static transform
 	bool b3DPathReverseDirection = false;
+	/// Whether the animation along the 3D path should pause during non-working time, as determined from the task's or
+	/// resource's calendar
+	bool bPauseDuringNonWorkingTime = false;
+	/// Not yet implemented:
+	bool bAdjustForTaskPercentComplete = false;
 	/** From SynchroPro documentation : "Use the Motion Start and Motion End fields to specify where along the
 	3D path the object should start and stop. This can be used if the object should travel only a portion of the total
 	path during this task. (...) Regardless of the Start and End location, the object will still use the entire
@@ -167,6 +172,14 @@ public:
 	FTransform Transform;
 };
 
+/// Task progression at the start or end of a block of working hours (see FITwinSchedule::GetWorkingTimeKeyframes)
+class FWorkingTimeKeyframe
+{
+public:
+	double Time = 0.; ///< UTC time in seconds, same origin as FDateTime
+	double Progress = 0.; ///< Task progression in [0;1]
+};
+
 class FScheduleTask : public FAnimProperty
 {
 public:
@@ -174,6 +187,60 @@ public:
 	/// Task's start and finish times using dates in UTC time, expressed in seconds since Midnight
 	/// 00:00:00, January 1, 0001
 	FTimeRangeInSeconds TimeRange = ITwin::Time::Undefined();
+	FString CalendarId;
+	/// When using "pauseDuringNonWorkingTime" in a FPathTransformAssignment or growth simulation, the task's working
+	/// time keyframes list the time points at which the task's progression is paused or resumed, which can then be
+	/// used to add 3D path or growth simulation keyframes to the timeline for the assignments that need it.
+	mutable std::optional<std::vector<FWorkingTimeKeyframe>> WorkingTimeKeyframes;
+};
+
+enum class ECalendarDayType : uint8_t
+{
+	Normal, NonWorking, Partial, Unknown
+};
+
+class FCalendarTimeBlock
+{
+public:
+	/// Start and end of the block of working hours, in seconds since midnight (the schedules API returns them as
+	/// "HH:MM" hours of the day, not dates). An end lower than or equal to the start means the block ends on the
+	/// following day (eg. "22:00"-"06:00", or "00:00"-"00:00" for the whole day).
+	FTimeRangeInSeconds TimeBlock;
+};
+
+class FCalendarDayType
+{
+public:
+	FString Id;
+	FString Description;
+	FVector Color = FVector::ZeroVector;
+	ECalendarDayType Type = ECalendarDayType::Unknown;
+	std::vector<FCalendarTimeBlock> TimeBlocks;
+};
+
+/// Exception in the usual working week, eg. a holiday
+class FCalendarException
+{
+public:
+	double Date; ///< UTC time in seconds, same origin as FDateTime
+	FString DayTypeId;
+};
+
+/// Working/non-working time definition, obtained from https://api.bentley.com/schedules/{scheduleId}/calendars.
+/// A working day is a day of the week for which FCalendarDayType::Type is ECalendarDayType::Normal or ECalendarDayType::Partial.
+/// A non-working day is a day of the week for which FCalendarDayType::Type is ECalendarDayType::NonWorking.
+/// Exceptions: if the date is one of the FCalendar::Exceptions, the corresponding FCalendarException::DayTypeId overrides the usual working week definition.
+class FCalendar : public FAnimProperty
+{
+public:
+	FString Name;
+	FString ParentId; ///< Empty when the calendar has no parent
+	std::vector<FCalendarDayType> DayTypes;
+	std::vector<FCalendarException> Exceptions;
+	/// Day type Id for each day of the week, indexed by EDayOfWeek (Monday first)
+	std::array<FString, 7> WeekDayTypeIds;
+	int32 WorkingDaysPerWeek = 0;
+	int32 WorkingSecondsPerDay = 0;
 };
 
 /// Description of the animation of Elements during a Task: the properties that strictly identify a
@@ -238,14 +305,19 @@ class FITwinSchedule
 {
 public:
 	FString Id, Name;
-	/// Increment when older chedule json's will have to be converted to the current version, or simply wiped out
-	static const int CurrentJsonCacheVersion = 1;
+	/// Increment when older chedule json's will have to be converted to the current version, or simply wiped out:
+	/// v1: initial version.
+	/// v2: static transforms' Scale no longer discarded when close to 1.
+	/// v3: added calendars, which only requires incrementing because growthSimulationPauseDuringNonWorkingTime
+	///		and pauseDuringNonWorkingTime were not saved in the json so they will have to be queried again and stored.
+	static const int CurrentJsonCacheVersion = 3;
 	int JsonCacheVersion = CurrentJsonCacheVersion;
 	/// "Unknown" also means "Not needed", when used with APIM, which hides this detail from us.
 	EITwinSchedulesGeneration Generation = EITwinSchedulesGeneration::Unknown;
 
 	FString BindingsDeltaToken, AppearanceProfilesDeltaToken, TasksDeltaToken, StaticTransfosDeltaToken,
-			Anim3DPathsAssignmentsDeltaToken, Anim3DPathsDeltaToken, Anim3DPathKeyframesDeltaToken;
+			Anim3DPathsAssignmentsDeltaToken, Anim3DPathsDeltaToken, Anim3DPathKeyframesDeltaToken,
+			CalendarsDeltaToken;
 
 	FITwinSchedule(FString const& ScheduleId, FString const& ScheduleName,
 				   EITwinSchedulesGeneration ScheduleGen = EITwinSchedulesGeneration::Unknown)
@@ -267,6 +339,7 @@ public:
 	std::vector<FStaticTransformAssignment> StaticTransfoAssignments;
 	std::vector<FPathTransformAssignment> PathTransfoAssignments;
 	std::vector<FAnimation3DPath> Animation3DPaths;
+	std::vector<FCalendar> Calendars;
 
 	size_t NumGroups() const;
 	size_t GetNextGroupID() const;
@@ -344,10 +417,24 @@ public:
 	std::unordered_map<FString, size_t/*index in ...*/> KnownStaticTransfoAssignments;
 	std::unordered_map<FString, size_t/*index in ...*/> KnownPathTransfoAssignments;
 	std::unordered_map<FString, size_t/*index in ...*/> KnownAnimation3DPaths;
+	std::unordered_map<FString, size_t/*index in ...*/> KnownCalendars;
 
 	void Reserve(size_t Count);
 
 	bool FullyDefined(FSchedLock& Lock) const;
+
+	/// Computes the progression of a task spanning TimeRange, assuming progress is only made during the working
+	/// hours of the calendar identified by CalendarId (see FCalendar for the definition of working days, and
+	/// FCalendarDayType::TimeBlocks for the working hours of a working day). Calendar hours are interpreted in the
+	/// same time reference as TimeRange.
+	/// \return Keyframes ordered by time, one at the start and one at the end of each block of working hours
+	///		intersecting TimeRange (contiguous blocks are merged): progression is constant between the end of a
+	///		block and the start of the next one, and linear inside a block. The first keyframe has a progression
+	///		of 0, the last one a progression of 1. When the calendar is unknown or TimeRange does not contain any
+	///		working hours, returns the linear progression {TimeRange.first, 0}, {TimeRange.second, 1}. Returns an
+	///		empty vector only when TimeRange is invalid (eg. ITwin::Time::Undefined()).
+	[[nodiscard]] std::vector<FWorkingTimeKeyframe> GetWorkingTimeKeyframes(FTimeRangeInSeconds const& TimeRange,
+		FString const& CalendarId) const;
 
 	[[nodiscard]] TSharedPtr<FJsonObject> ToJson() const;
 	[[nodiscard]] FString ToCondensedJsonString() const;

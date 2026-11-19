@@ -12,6 +12,7 @@
 #include <Cesium3DTilesSelection/Tile.h>
 #include <ITwinDynamicShadingProperty.h>
 #include <ITwinDynamicShadingProperty.inl>
+#include <ITwinSelectionOutlineRenderer.h>
 #include <Material/ITwinMaterialParameters.h>
 
 #include <Components/StaticMeshComponent.h>
@@ -1011,7 +1012,8 @@ void FITwinSceneTile::SetSelectionTintMode(EITwinSelectionTintMode const Mode, F
 {
 	if (!SelectingAndHiding)
 		return;
-	bool const bHidden = (Mode == EITwinSelectionTintMode::Hidden);
+	bool const bHidden = (Mode == EITwinSelectionTintMode::Hidden)
+		|| ITwin::SelectionOutline::IsCaptureSuppressed();
 	uint8 const Alpha = (Mode == EITwinSelectionTintMode::Solid)
 		? ITwin::SELECTION_SOLID_ALPHA : ITwin::SELECTION_BLINKING_ALPHA;
 	for (auto const& ElemID : SelectedElements)
@@ -1076,8 +1078,9 @@ void FITwinSceneTile::SyncMaterialHover()
 	auto const* ElementFeatures = FindElementFeaturesSLOW(HoveredElement);
 	auto const* MaterialFeatures = FindMaterialFeaturesSLOW(
 		ITwinRenderMaterialElementID{ HoveredMaterial.getValue() });
-	bool const bHasHover = (ElementFeatures && !ElementFeatures->Features.empty())
-		|| (MaterialFeatures && !MaterialFeatures->Features.empty());
+	bool const bHasHover = !ITwin::SelectionOutline::IsCaptureSuppressed()
+		&& ((ElementFeatures && !ElementFeatures->Features.empty())
+			|| (MaterialFeatures && !MaterialFeatures->Features.empty()));
 	if (!bHasHover && !HoverSelectingAndHiding && HoverMaterialBindings.empty())
 		return;
 	if (bHasHover && (!HoverSelectingAndHiding

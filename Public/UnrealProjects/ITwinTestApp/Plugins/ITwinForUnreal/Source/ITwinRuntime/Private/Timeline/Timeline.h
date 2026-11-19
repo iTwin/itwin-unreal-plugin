@@ -89,10 +89,15 @@ struct FDeferredAnchor
 // which case it is a relative translation from the initial (non-animated) position.
 // 'Rotation' is the relative rotation of the Element at the given keyframe, in UE convention, around
 // the anchor point.
+// 'Scale' is only used for the 'Static' anchor point (ie. static transform assignments, for which Position and
+// Rotation are kept in iModel space, like Scale): SYNCHRO matrices are often not exactly orthonormal, which
+// matters for Elements far from the iModel origin. Always (1,1,1) for other anchor points. See
+// FITwinSynchro4DSchedulesInternals::ComputeTransformFromFinalizedKeyframe for how it is applied.
 ITWIN_TIMELINE_DEFINE_PROPERTY_VALUES(PTransform,
 	(ITwin::Flag::FPresence, bIsTransformed)
 	(FVector, Position)
 	(FQuat, Rotation)
+	(FVector, Scale)
 	(FDeferredAnchor, DefrdAnchor)
 )
 [[nodiscard]] TSharedPtr<FJsonValue> ToJsonValue(PTransform const&, int Decimals);
@@ -109,7 +114,8 @@ struct FDeferredPlaneEquation
 	mutable FVector3f PlaneOrientation;
 	PTransform const* TransformKeyframe = nullptr;
 	/// The necessarily deferred (until BBoxes are known for the Elements) translation (W) component of the
-	/// plane equation, ie. actually set only when !IsDeferred() (ie depending on GrowthStatus)
+	/// plane equation, ie. actually set only when !IsDeferred() (ie depending on GrowthStatus).
+	/// When DeferredPartial, holds the growth ratio in [0;1] instead.
 	mutable float PlaneW;
 	/// When set to one of the 'Deferred' states, it means PlaneW is not yet known. When it becomes known,
 	/// GrowthStatus switches to the corresponding non-deferred state.
@@ -121,6 +127,7 @@ struct FDeferredPlaneEquation
 		{
 		case EGrowthStatus::DeferredFullyRemoved:
 		case EGrowthStatus::DeferredFullyGrown:
+		case EGrowthStatus::DeferredPartial:
 			return true;
 		default:
 		case EGrowthStatus::FullyRemoved:
@@ -210,17 +217,21 @@ public:
 	/// have the Element's bounding box when creating the timeline's keyframes.
 	/// \param InTransformKeyframe Optional transformation of the Element(s) to account for when finalizing 
 	///		the plane equation based on their bounding box.
+	/// \param GrowthRatio Only used with EGrowthStatus::DeferredPartial (0 = fully removed, 1 = fully grown)
 	void SetCuttingPlaneAt(double const Time, std::optional<FVector> PlaneOrientation,
 		EGrowthStatus const GrowthStatus, EInterpolation const Interp,
-		PTransform const* const InTransformKeyframe = nullptr);
+		PTransform const* const InTransformKeyframe = nullptr, float const GrowthRatio = 0.f);
 	/// \return Whether the timeline has any CuttingPlane keyframe where fullyHidden_ is true
 	[[nodiscard]] bool HasFullyHidingCuttingPlaneKeyframes() const;
 	/// \return Whether the timeline has any Visibility keyframe where the transparency is neither 0 nor 1
 	[[nodiscard]] bool HasPartialVisibility() const;
 	void SetVisibilityAt(double const Time, std::optional<float> Alpha, EInterpolation const Interp);
-	/// Sets a transformation at a given time, expressed in the UE world reference system
+	/// Sets a transformation at a given time, expressed in the UE world reference system (except for the
+	/// 'Static' anchor point, see PTransform)
+	/// \param Scale Only relevant for the 'Static' anchor point (see PTransform)
 	PTransform const& SetTransformationAt(double const Time, FVector const& Position, FQuat const& Rotation,
-		FDeferredAnchor const& DefrdAnchor, EInterpolation const Interp);
+		FDeferredAnchor const& DefrdAnchor, EInterpolation const Interp,
+		FVector const& Scale = FVector::OneVector);
 	void SetTransformationDisabledAt(double const Time, EInterpolation const Interp);
 
 	void ToJson(TSharedRef<FJsonObject>& JsonObj) const override;

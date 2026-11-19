@@ -91,6 +91,62 @@ bool IdenticalInstanceManagers(IInstancesManager const& mngr1, IInstancesManager
 
 void SetDefaultConfig();
 
+TEST_CASE("Instances Manager: repeated swap removal")
+{
+	struct TrackedInstance : Instance
+	{
+		int32_t index_ = -1;
+		int notifications_ = 0;
+		void OnIndexChanged(int32_t index) override
+		{
+			index_ = index;
+			++notifications_;
+		}
+	};
+	struct RestoreFactory
+	{
+		IInstance::NewFctT previous_ = IInstance::GetNewFct();
+		~RestoreFactory() { IInstance::SetNewFct(previous_); }
+	} restoreFactory;
+	IInstance::SetNewFct([]() -> IInstance* { return new TrackedInstance(); });
+
+	std::shared_ptr<IInstancesManager> manager(IInstancesManager::New());
+	auto group = Tools::MakeSharedLockableDataPtr<IInstancesGroup>(IInstancesGroup::New());
+	const RefID groupId = group->GetRAutoLock()->GetId();
+	manager->AddInstancesGroup(group);
+	SharedInstVect original;
+	for (int i = 0; i < 6; ++i)
+		original.push_back(manager->AddInstance("vehicles", groupId));
+
+	auto expected = original;
+	auto Remove = [&](std::vector<int32_t> const& indices)
+	{
+		for (int32_t index : indices)
+		{
+			std::swap(expected[index], expected.back());
+			expected.pop_back();
+		}
+		manager->RemoveInstancesByObjectRef("vehicles", groupId, indices, true);
+		auto const& actual = manager->GetInstancesByObjectRef("vehicles", groupId);
+		REQUIRE(actual == expected);
+		for (size_t i = 0; i < actual.size(); ++i)
+		{
+			auto instance = actual[i]->GetRAutoLock();
+			CHECK(static_cast<TrackedInstance const*>(instance.GetPtr())->index_ == i);
+		}
+	};
+	// No callback is allowed on the erased tail: nothing moved into its old slot.
+	Remove({ 5 });
+	{
+		auto tail = original[5]->GetRAutoLock();
+		CHECK(static_cast<TrackedInstance const*>(tail.GetPtr())->notifications_ == 1);
+	}
+	Remove({ 4, 1 });
+	Remove({ 0 });
+	Remove({ 1, 0 });
+	CHECK(manager->GetInstanceCountByObjectRef("vehicles", groupId) == 0);
+}
+
 namespace
 {
 	static const std::string TEST_GROUP_NAME = "test_group";

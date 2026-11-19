@@ -52,6 +52,11 @@ public:
 
 	static std::function<FVector(bool& bRequestInProgress, bool& bHasRelevantElevation)> GetDefaultGeoRefFct;
 
+#if WITH_TESTS
+	//! Unlocks the geolocation instance for the given world.
+	static void UnlockLocation(UWorld& World);
+#endif
+
 private:
 	static TSharedPtr<FITwinGeolocation> Instance;
 };

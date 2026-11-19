@@ -85,6 +85,13 @@ TSharedPtr<FJsonValue> ToJsonValue(PTransform const& Prop, int Decimals)
 			JsonObj->SetField(TEXT("rotationAngleDegrees"),
 				MakeShared<FJsonValueNumberString>(ToString(FMath::RadiansToDegrees(LenIsAngle), Decimals)));
 		}
+		if (Prop.Scale != FVector::OneVector)
+		{
+			JsonObj->SetArrayField(TEXT("scale"), TArray<TSharedPtr<FJsonValue>>(
+				{ MakeShared<FJsonValueNumberString>(ToString(Prop.Scale.X, Decimals)),
+				  MakeShared<FJsonValueNumberString>(ToString(Prop.Scale.Y, Decimals)),
+				  MakeShared<FJsonValueNumberString>(ToString(Prop.Scale.Z, Decimals)) }));
+		}
 		if (Prop.DefrdAnchor.IsDeferred() || EAnchorPoint::Static == Prop.DefrdAnchor.AnchorPoint)
 		{
 			JsonObj->SetStringField(TEXT("anchor"), GetAnchorPointString(Prop.DefrdAnchor.AnchorPoint));

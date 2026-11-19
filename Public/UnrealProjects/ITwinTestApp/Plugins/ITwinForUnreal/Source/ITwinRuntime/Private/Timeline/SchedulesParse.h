@@ -54,4 +54,7 @@ public:
 	static bool ParseVector(TSharedPtr<FJsonObject> const& JsonObj, FVector& Out);
 	/// \return Parsing success (unlike ParseAppearanceProfileDetails!)
 	static bool ParseGrowthSimulationMode(FString const& FromStr, EGrowthSimulationMode& Mode);
+	/// \return Whether the passed Calendar when leaving this method differs from what it was upon entry (similarly to
+	///		@see ParseAppearanceProfileDetails)
+	static bool ParseCalendar(TSharedPtr<FJsonObject> const& JsonObj, FCalendar& Calendar);
 };

@@ -178,7 +178,7 @@ void PrecomputeKeyFrames(UWorld* World, const TArray<FVector>& InPositions, cons
 	{
 		FVector SplineLocation = InPositions[i];
 		FVector SplineTangent = InDirections[i];
-		FVector SplineRight = FVector::CrossProduct(SplineTangent, FVector::UpVector).GetSafeNormal();
+		FVector SplineRight = -FVector::CrossProduct(SplineTangent, FVector::UpVector).GetSafeNormal();
 		if (isLaneWithOffset)
 		{
 			SplineLocation = SplineLocation + SplineRight * InOffset;

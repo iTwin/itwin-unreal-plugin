@@ -31,6 +31,7 @@
 namespace
 {
 	FThreadSafeCounter ActiveSources;
+	FThreadSafeCounter CaptureSuppressionCount;
 
 	/// Pass 1 (rendering resolution): selected mask + vertical distance to the silhouette, per pixel
 	class FITwinSelectionDistancePS : public FGlobalShader
@@ -85,7 +86,28 @@ namespace ITwin::SelectionOutline
 {
 	bool IsEnabled()
 	{
-		return true;
+		return !IsCaptureSuppressed();
+	}
+
+	void BeginCaptureSuppression()
+	{
+		check(IsInGameThread());
+		CaptureSuppressionCount.Increment();
+	}
+
+	void EndCaptureSuppression()
+	{
+		check(IsInGameThread());
+		if (ensureMsgf(CaptureSuppressionCount.GetValue() > 0,
+			TEXT("EndCaptureSuppression called without a matching BeginCaptureSuppression")))
+		{
+			CaptureSuppressionCount.Decrement();
+		}
+	}
+
+	bool IsCaptureSuppressed()
+	{
+		return CaptureSuppressionCount.GetValue() > 0;
 	}
 
 	void AddActiveSource()
@@ -130,7 +152,7 @@ void FITwinSelectionOutlineViewExtension::Shutdown()
 
 bool FITwinSelectionOutlineViewExtension::IsActiveThisFrame_Internal(FSceneViewExtensionContext const&) const
 {
-	return ActiveSources.GetValue() > 0;
+	return ActiveSources.GetValue() > 0 && !ITwin::SelectionOutline::IsCaptureSuppressed();
 }
 
 void FITwinSelectionOutlineViewExtension::SubscribeToPostProcessingPass(EPostProcessingPass Pass,
@@ -138,7 +160,7 @@ void FITwinSelectionOutlineViewExtension::SubscribeToPostProcessingPass(EPostPro
 {
 	// Right after tone-mapping, so that the outline color is not altered by exposure/tone-mapping
 	if (Pass == EPostProcessingPass::Tonemap && bIsPassEnabled && !InView.bIsSceneCapture
-		&& ActiveSources.GetValue() > 0
+		&& ActiveSources.GetValue() > 0 && !ITwin::SelectionOutline::IsCaptureSuppressed()
 		&& IsFeatureLevelSupported(InView.GetShaderPlatform(), ERHIFeatureLevel::SM5))
 	{
 		InOutPassCallbacks.Add(FPostProcessingPassDelegate::CreateRaw(this,

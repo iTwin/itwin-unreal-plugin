@@ -15,6 +15,7 @@
 #include "Core/Network/Network.h"
 #include "Core/Tools/Tools.h"
 #include "Core/Visualization/SavableItem.h"
+#include "Core/Visualization/SceneAPIJsonTypes.h"
 
 namespace AdvViz::SDK
 {
@@ -24,11 +25,19 @@ namespace AdvViz::SDK
 	{
 	public:
 		// note: the data are directly streamed to/from decoration server 
-		struct CameraData {
+		struct CameraData
+		{
 			dmat3x4 transform = { 1., 0., 0., 0.,
 								  0., 1., 0., 0.,
 								  0., 0., 1., 0. };
+			std::optional<double> fov; // in radians
+			std::optional<double> aspectRatio;
 			bool isPause = false;
+			//! Set when the key-frame was loaded from a View3d carrying only
+			//! up/direction/position: the 'right' column depends on the georeference
+			//! handedness, which is unknown at parse time. Resolved by
+			//! ScenePersistenceAPI::ResolvePendingCameraBases().
+			std::optional<SceneAPIDetails::CameraBasis> pendingCameraBasis;
 		};
 		struct AtmoData
 		{
@@ -52,7 +61,8 @@ namespace AdvViz::SDK
 			rfl::Skip<std::string> scheduleId; //for sceneAPI only
 		};
 		// note: the data are directly streamed to/from decoration server 
-		struct KeyframeData {
+		struct KeyframeData
+		{
 			double time = 0.0;
 			std::optional<CameraData> camera;
 			std::optional<AtmoData> atmo;
@@ -64,6 +74,7 @@ namespace AdvViz::SDK
 		virtual const KeyframeData& GetData() const = 0;
 		// note: time and id are immutable, changes on these properties will be ignored. If you need to change them recreate a new keyframe in ITimelineClip.
 		virtual void Update(const KeyframeData& data) = 0;
+		virtual void ResolvePendingCameraBasis(double handedness) = 0;
 		virtual void SetSnapshotId(const std::string& Id) = 0;
 		virtual std::string GetSnapshotId() const = 0;
 
@@ -88,6 +99,7 @@ namespace AdvViz::SDK
 		 void InternalCreate(const KeyframeData& data, bool markAsChanged = true) override;
 		 const KeyframeData& GetData() const override;
 		 void Update(const KeyframeData& data) override;
+		 void ResolvePendingCameraBasis(double handedness) override;
 
 		 void SetSnapshotId(const std::string& Id);
 		 std::string GetSnapshotId() const;
@@ -132,6 +144,8 @@ namespace AdvViz::SDK
 		virtual void SetSnapshotId(const std::string& Id) = 0;
 		virtual std::string GetSnapshotId() const = 0;
 		virtual void GetKeyFrameSnapshotIds(std::vector<std::string>& Ids) const = 0;
+		//! See ScenePersistenceAPI::ResolvePendingCameraBases().
+		virtual void ResolvePendingCameraBases(double handedness) = 0;
 
 		friend class ITimelineKeyframe;
 	};
@@ -164,6 +178,8 @@ namespace AdvViz::SDK
 		//! (once rounded to the millisecond) and have exactly one entry per existing key-frame.
 		//! Returns an error and leaves the clip untouched if those preconditions are not met.
 		expected<void, std::string> SetKeyFrameTimes(const std::vector<float>& sortedTimes);
+
+		void ResolvePendingCameraBases(double handedness) override;
 
 		//------------------------------------------------------------------------------
 		/// overridden from ISavableItem
@@ -199,6 +215,7 @@ namespace AdvViz::SDK
 		//sceneAPI functions
 		virtual std::vector<std::shared_ptr<ITimelineClip>> GetObsoleteClips() const = 0;
 		virtual void RemoveObsoleteClip(const std::shared_ptr<ITimelineClip>&) = 0;
+		virtual void ResolvePendingCameraBases(double handedness) = 0;
 	};
 
 	class ADVVIZ_LINK Timeline : public ITimeline, public Tools::TypeId<Timeline>
@@ -233,6 +250,7 @@ namespace AdvViz::SDK
 		//sceneAPI functions
 		std::vector<std::shared_ptr<ITimelineClip>> GetObsoleteClips() const override;
 		void RemoveObsoleteClip(const std::shared_ptr<ITimelineClip>&) override;
+		void ResolvePendingCameraBases(double handedness) override;
 
 	protected:
 		struct Impl;

@@ -17,6 +17,7 @@
 #	endif // !MODULE_EXPORT
 #endif
 
+#include <Core/Network/http.h>
 #include <Core/Tools/Hash.h>
 
 namespace AdvViz::SDK::RequestDump
@@ -27,6 +28,8 @@ struct Request
 	std::string urlSuffix;
 	std::string body;
 };
+
+using HttpResponse = AdvViz::SDK::Http::Response;
 
 struct Response
 {
@@ -52,6 +55,6 @@ MODULE_EXPORT namespace AdvViz::SDK::RequestDump
 	//! Dumps the request content in a temporary folder named from the request hash.
 	void DumpRequest(const std::string& urlSuffix, const std::string& body, std::filesystem::path& requestDumpPath);
 	//! Dumps the response content in a folder named after the request hash, under the given path.
-	void DumpResponse(long status, const std::string& body, const std::filesystem::path& requestDumpPath);
+	void DumpResponse(const HttpResponse& response, const std::filesystem::path& requestDumpPath);
 
 } // namespace AdvViz::SDK::RequestDump

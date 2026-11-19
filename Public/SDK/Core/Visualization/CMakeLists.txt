@@ -26,6 +26,8 @@ be_add_library(Visualization ${libtype}
 		AsyncHttp.inl
 		MaterialPersistence.cpp
 		MaterialPersistence.h
+		SceneAPICameraUtils.h
+		SceneAPIJsonTypes.h
 		ScenePersistence.cpp
 		ScenePersistence.h
 		ScenePersistenceAPI.cpp

@@ -28,19 +28,38 @@ class ULevelSequencePlayer;
 class ULevelSequence;
 class ACameraActor;
 class UITwinSequencerHelper;
-
-//namespace AdvViz::SDK {
-//	class ITimeline;
-//	class ITimelineKeyframe;
-//	class ITimelineKeyframe::AtmoData;
-//}
+class AITwinPopulation;
 
 namespace ScreenUtils
 {
-	ITWINRUNTIME_API void SetCurrentView(UWorld* pWorld, const FTransform& ft, bool bVRMode);
-	ITWINRUNTIME_API void SetCurrentView(UWorld* pWorld, const FVector& pos,const FRotator& rot);
-	ITWINRUNTIME_API void GetCurrentView(UWorld* pWorld, FVector& pos, FRotator& rot);
-	ITWINRUNTIME_API FTransform GetCurrentViewTransform(UWorld* pWorld);
+	//! How SetCurrentView applies a view transform.
+	enum class ESetViewMode : uint8
+	{
+		//! Move pawn/controller and make that pawn the active view target.
+		//! Also refreshes PlayerCameraManager immediately.
+		AdoptPawnAsViewTarget,
+
+		//! Move pawn/controller only.
+		//! Does not change the active view target (e.g., keeps Sequencer camera cuts in control).
+		KeepCurrentViewTarget
+	};
+
+	//! Apply a world-space camera pose to the local player context.
+	//! - Always updates pawn (or spectator) transform and controller rotation when available.
+	//! - Mode controls whether the pawn is promoted as the active view target.
+	ITWINRUNTIME_API void SetCurrentView(
+		UWorld* World,
+		const FTransform& Tsf,
+		bool bVRMode,
+		ESetViewMode Mode = ESetViewMode::AdoptPawnAsViewTarget);
+	ITWINRUNTIME_API void SetCurrentView(
+		UWorld* World,
+		const FVector& Pos,
+		const FRotator& Rot,
+		ESetViewMode Mode = ESetViewMode::AdoptPawnAsViewTarget);
+	ITWINRUNTIME_API void GetCurrentView(UWorld* World, FVector& Pos, FRotator& Rot);
+	ITWINRUNTIME_API FTransform GetCurrentViewTransform(UWorld* World);
+	ITWINRUNTIME_API void SetCurrentViewRotation(UWorld* World, const FRotator& Rot);
 }
 
 
@@ -74,6 +93,7 @@ protected:
 	// Called when the game starts or when spawned
 	void BeginPlay() override;
 	void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+	bool IsImplReady() const;
 
 public:	
 	// Sets default values for this actor's properties
@@ -183,6 +203,43 @@ public:
 	bool IsSynchroAnimEnabled(int clipIdx) const;
 	bool IsAtmoAnimEnabled(int clipIdx) const;
 
+	// --- Camera tracking ---------------------------------------------------
+	enum class EClipFollowSpace : uint8
+	{
+		FullRelative,  //!< camera is fixed in the instance's frame (embedded in the car)
+		LocationOnly,  //!< camera trails the instance but keeps its own world orientation
+	};
+
+	//! Makes the clip camera ride an instance, at its current offset from it (runtime only,
+	//! not persisted). Independent from SetClipTrackingTarget: a clip may follow one instance
+	//! while looking at another.
+	void SetClipFollowTarget(int clipIdx, AITwinPopulation* Population, int32 InstanceIndex,
+							 bool bFollowRotation = true,
+							 TOptional<FTransform> const& ExplicitOffset = {});
+	void ClearClipFollowTarget(int clipIdx);
+	bool HasClipFollowTarget(int clipIdx) const;
+
+	// Makes the clip camera continuously look at one instance of a population.
+	// Passing an invalid index (or calling ClearClipTrackingTarget) disables tracking.
+	// Independent from SetClipFollowTarget: the aim target need not be the followed instance,
+	// so a camera riding a car can keep looking at a building.
+	void SetClipTrackingTarget(int clipIdx, AITwinPopulation* Population, int32 InstanceIndex);
+	void ClearClipTrackingTarget(int clipIdx);
+	bool HasClipTrackingTarget(int clipIdx) const;
+	//! Returns false when the clip has no target, or the target instance was deleted.
+	bool GetClipTrackingTarget(int clipIdx, AITwinPopulation*& OutPopulation, int32& OutInstanceIndex) const;
+	//! Interpolation speed of the look-at (0 = snap instantly).
+	void SetClipTrackingInterpSpeed(int clipIdx, float Speed);
+
+	//===================================================================================
+	// TEMPORARY: FOR TESTING PURPOSES ONLY
+	void TrackSelectedInstance();
+	void UntrackInstance();
+	void DriveAnimatedInstance();
+	void FollowAnimatedInstance(bool bFollowRotation);
+	void UnfollowInstance();
+	//===================================================================================
+
 	//TRange<FDateTime> GetSynchroRange() const;
 	//void SetSynchroRange(const TRange<FDateTime>& newRange);
 	// Sets pause duration of the given key-frame (or key-frame corresponding to current time if iKF = -1)
@@ -213,7 +270,7 @@ public:
 
 	std::shared_ptr<AdvViz::SDK::ITimeline> GetTimelineSDK();
 	void SetTimelineSDK(const std::shared_ptr<AdvViz::SDK::ITimeline>& p);
-	void OnLoad();
+	void OnLoad(bool bUseGCS);
 
 	/// Notified when the timeline has been loaded from the scene
 	FOnTimelineLoaded OnTimelineLoaded;

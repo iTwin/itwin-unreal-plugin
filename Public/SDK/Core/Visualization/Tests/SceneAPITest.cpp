@@ -8,6 +8,7 @@
 
 #include "../Visualization.h"
 #include "../ScenePersistenceAPI.h"
+#include "../SceneAPICameraUtils.h"
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -22,8 +23,18 @@
 
 using namespace AdvViz::SDK;
 
+// Camera link/key-frame transforms in this file are stored as a dmat3x4 whose 12 doubles are
+// grouped by component (index = col*4 + row); the four columns are direction, right, up and
+// position. They must be orthonormal triads with right = cross(direction, up), which is the
+// convention for handedness +1 -- the default here, since these tests install no reflecting
+// GCS. See SceneAPICameraUtils.h.
+
 TEST_CASE("SceneAPI camera metadata")
 {
+	// No reflecting GCS in the SDK tests: camera triads are right-handed,
+	// i.e. right == cross(up, direction).
+	ScenePersistenceAPI::SetCameraHandedness(1.);
+
 	class CameraScene : public ScenePersistenceAPI
 	{
 	public:
@@ -39,6 +50,15 @@ TEST_CASE("SceneAPI camera metadata")
 	{
 		std::vector<CameraObject> objects;
 	};
+	// Mirrors SceneAPIDetails::JsonVector, which is serialized as an object, not an array.
+	struct TestVector
+	{
+		double x = 0.;
+		double y = 0.;
+		double z = 0.;
+
+		bool operator==(TestVector const&) const = default;
+	};
 	auto checkCamera = [](CameraObject const& camera, std::string const& ref)
 	{
 		CHECK(camera.displayName == ref);
@@ -50,17 +70,34 @@ TEST_CASE("SceneAPI camera metadata")
 		}
 		CHECK(camera.data.find("name") == camera.data.end());
 		CHECK(camera.data.find("displayOrder") == camera.data.end());
+
 		auto transform = rfl::json::read<std::array<double, 16>>(
 			rfl::json::write(camera.data.at("ecefTransform")));
 		REQUIRE(transform);
-		CHECK(*transform == std::array<double, 16>{
-			1, 0, 0, 10, 0, 1, 0, 20, 0, 0, 1, 30, 0, 0, 0, 1 });
+		// The View3d vectors below are expressed in the frame given by ecefTransform.
+		// Ours are already ECEF, so that frame is the identity.
+		CHECK(*transform == Identity44);
+
+		auto readVector = [&camera](std::string const& key) {
+			return rfl::json::read<TestVector>(rfl::json::write(camera.data.at(key)));
+		};
+		auto const direction = readVector("direction");
+		auto const up = readVector("up");
+		auto const position = readVector("position");
+		REQUIRE(direction);
+		REQUIRE(up);
+		REQUIRE(position);
+		CHECK(*direction == TestVector{ 1., 0., 0. });
+		CHECK(*up == TestVector{ 0., 0., 1. });
+		CHECK(*position == TestVector{ 10., 20., 30. });
 	};
 	CameraScene scene;
 	auto link = std::dynamic_pointer_cast<LinkAPI>(scene.MakeLink());
 	REQUIRE(link);
 	link->SetType("camera");
-	link->SetTransform({ 1, 0, 0, 10, 0, 1, 0, 20, 0, 0, 1, 30 });
+	link->SetTransform({ 1, 0, 0, 10,
+						 0, 1, 0, 20,
+						 0, 0, 1, 30 });
 	SECTION("Encoded camera reference preserves order, identity and label on POST and PATCH")
 	{
 		std::string const createdRef = "Viewpoint;2;8e748cef-4443-41c3-9a58-8bf04d780756;North side";
@@ -127,6 +164,14 @@ bool CompareLink(const AdvViz::SDK::ILink& l1, const AdvViz::SDK::ILink& l2)
 		return false;
 	}
 	if (l1.HasTransform() != l2.HasTransform() || l1.GetTransform() != l2.GetTransform())
+	{
+		return false;
+	}
+	if (l1.HasFov() != l2.HasFov() || l1.GetFov() != l2.GetFov())
+	{
+		return false;
+	}
+	if (l1.HasAspectRatio() != l2.HasAspectRatio() || l1.GetAspectRatio() != l2.GetAspectRatio())
 	{
 		return false;
 	}
@@ -298,7 +343,10 @@ static void SetDefaultConfig()
 	CreateAdvVizLogChannels();
 }
 
-TEST_CASE("SceneAPI"){
+TEST_CASE("SceneAPI")
+{
+	// No reflecting GCS in the SDK tests: camera triads are right-handed.
+	ScenePersistenceAPI::SetCameraHandedness(1.);
 
 	SECTION("ScenePersistence") {
 		try {
@@ -497,10 +545,15 @@ TEST_CASE("SceneAPI"){
 			{
 				auto nulink = scene->MakeLink();
 				nulink->SetType("camera");
-				nulink->SetRef("Main Camera");
-				//nulink->SetQuality(0.02);
-				//nulink->SetVisibility(false);
-				dmat4x3 mat = { 0.1,1,1.56,0,1.0,2.3,1.2,0.13,1.0,74,5,12.52 };
+				nulink->SetRef(MAIN_CAMERA_REF);
+				// A non-axis-aligned but valid camera placement. Columns are
+				// (direction, right, up, position): direction=(0.6,0.8,0), right=(-0.8,0.6,0),
+				// up=(0,0,1), position=(0,0.13,12.52). The triad must be orthonormal and follow
+				// the convention for handedness +1 (no reflecting GCS in the SDK tests):
+				// right == cross(up, direction) == (-0.8,0.6,0).
+				dmat4x3 mat = { 0.6, -0.8, 0.,  0.,
+								0.8,  0.6, 0.,  0.13,
+								0.,   0.,  1.,  12.52 };
 				nulink->SetTransform(mat);
 				scene->AddLink(nulink);
 			}
@@ -512,8 +565,10 @@ TEST_CASE("SceneAPI"){
 			{
 				auto viewpoint = scene->MakeLink();
 				viewpoint->SetType("camera");
-					viewpoint->SetRef("Viewpoint;3;8e748cef-4443-41c3-9a58-8bf04d780756;North side");
-				viewpoint->SetTransform({ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0 });
+				viewpoint->SetRef("Viewpoint;3;8e748cef-4443-41c3-9a58-8bf04d780756;North side");
+				viewpoint->SetTransform({ 1, 0, 0, 0,
+										  0, 1, 0, 0,
+										  0, 0, 1, 0 });
 				scene->AddLink(viewpoint);
 			}
 
@@ -534,6 +589,9 @@ TEST_CASE("SceneAPI"){
 				std::shared_ptr<ScenePersistenceAPI> scene2(ScenePersistenceAPI::New());
 				scene2->Get(itwinID, scene->GetId());
 				REQUIRE(scene2->GetId() == scene->GetId());
+				// The Unreal side does this from InitDecoGeoreference / PostLoadSceneFromServer;
+				// in the SDK tests there is no georeference, so resolve explicitly.
+				scene2->ResolvePendingCameraBases();
 				CHECK(CompareLinks(scene->GetLinks(), scene2->GetLinks()));
 				CHECK(scene->GetAtmosphere() == scene2->GetAtmosphere());
 				CHECK(scene->GetSceneSettings() == scene2->GetSceneSettings());
@@ -546,6 +604,7 @@ TEST_CASE("SceneAPI"){
 				{
 					REQUIRE(exp);
 					REQUIRE(scene3->GetId() == scene->GetId());
+					scene3->ResolvePendingCameraBases();
 					CHECK(CompareLinks(scene->GetLinks(), scene3->GetLinks()));
 					CHECK(scene->GetAtmosphere() == scene3->GetAtmosphere());
 					CHECK(scene->GetSceneSettings() == scene3->GetSceneSettings());
@@ -1424,6 +1483,10 @@ TEST_CASE("SceneAPI:AsyncRefreshLinks")
 
 TEST_CASE("SceneAPI:Timeline")
 {
+	// No reflecting GCS in the SDK tests: camera triads are right-handed,
+	// i.e. right == cross(up, direction).
+	ScenePersistenceAPI::SetCameraHandedness(1.);
+
 	SetDefaultConfig();
 	HTTPMock* mock = GetHttpMock();
 	REQUIRE(mock != nullptr);
@@ -1481,6 +1544,11 @@ TEST_CASE("SceneAPI:Timeline")
 		CHECK(AnyBodyContains(posted, "\"input\":"));
 		CHECK(AnyBodyContains(posted, "\"output\":"));
 		CHECK(AnyBodyContains(posted, "\"ecefTransform\":"));
+		// Key-frame cameras now carry their placement in the vectors; ecefTransform is
+		// the (identity) frame those vectors are expressed in.
+		CHECK(AnyBodyContains(posted, "\"direction\":"));
+		CHECK(AnyBodyContains(posted, "\"up\":"));
+		CHECK(AnyBodyContains(posted, "\"position\":"));
 		// The "Movie" object references the saved clip.
 		CHECK(AnyBodyContains(posted, "\"kind\":\"Movie\""));
 
@@ -1532,5 +1600,313 @@ TEST_CASE("SceneAPI:Timeline")
 		CHECK(timeline->GetObsoleteClips().empty());
 	}
 
+	scene->Delete();
+}
+
+
+TEST_CASE("Camera vectors <-> transform round-trip", "[SceneAPI][Camera]")
+{
+	using namespace AdvViz::SDK::SceneAPIDetails;
+
+	// Both conventions must round-trip: +1 for an orientation-preserving GCS (the default,
+	// and the identity transform used for unsupported georeferences), -1 for a reflecting
+	// one (Unreal's left-handed client space).
+	double const handedness = GENERATE(1., -1.);
+	CAPTURE(handedness);
+
+	// Orthonormal basis; the 'right' column follows the convention under test.
+	// It must be exactly orthonormal: TransformFromCameraVectors re-orthogonalizes 'up'
+	// against 'direction', so a skewed fixture would not round-trip.
+	double3 dir{ 0.36, -0.48, 0.8 };
+	REQUIRE(Normalize3(dir));
+	double3 upv{ 0.6, -0.53, -0.59 };
+	double const dotUpDir = Dot3(upv, dir);
+	upv = { upv[0] - dotUpDir * dir[0],
+			upv[1] - dotUpDir * dir[1],
+			upv[2] - dotUpDir * dir[2] };
+	REQUIRE(Normalize3(upv));
+	REQUIRE_THAT(Dot3(dir, upv), Catch::Matchers::WithinAbs(0., 1e-15));
+
+	const double3 right = (handedness < 0.) ? Cross3(dir, upv) : Cross3(upv, dir);
+
+	// Invariant: dot(cross(direction, up), right) == -handedness, for both conventions.
+	CHECK_THAT(Dot3(Cross3(dir, upv), right) * handedness,
+		Catch::Matchers::WithinAbs(-1., 1e-12));
+
+	dmat3x4 m = Identity34;
+	for (size_t i = 0; i < 3; ++i)
+	{
+		m[kCamDir[i]] = dir[i];
+		m[kCamRight[i]] = right[i];
+		m[kCamUp[i]] = upv[i];
+	}
+	m[kCamPos[0]] = 4200000.; m[kCamPos[1]] = 170000.; m[kCamPos[2]] = 4780000.;
+
+	SECTION("transform -> vectors -> transform is the identity")
+	{
+		SJsonCamera cam;
+		cam.ecefTransform = std::array<double, 16>{};
+		std::memcpy(cam.ecefTransform->data(), m.data(), 12 * sizeof(double));
+		FillCameraVectorsFromTransform(cam, handedness);
+
+		dmat3x4 rebuilt{};
+		REQUIRE(TransformFromCameraVectors(cam.direction, cam.up, cam.position, handedness, rebuilt));
+		for (size_t i = 0; i < 12; ++i)
+			CHECK_THAT(rebuilt[i], Catch::Matchers::WithinAbs(m[i], 1e-9));
+	}
+
+	SECTION("the 'right' column follows the requested handedness")
+	{
+		dmat3x4 rebuilt{};
+		JsonVector const d{ dir[0], dir[1], dir[2] };
+		JsonVector const u{ upv[0], upv[1], upv[2] };
+		JsonVector const p{ m[kCamPos[0]], m[kCamPos[1]], m[kCamPos[2]] };
+		REQUIRE(TransformFromCameraVectors(d, u, p, handedness, rebuilt));
+		for (size_t i = 0; i < 3; ++i)
+			CHECK_THAT(rebuilt[kCamRight[i]], Catch::Matchers::WithinAbs(right[i], 1e-9));
+
+		// The two conventions genuinely differ: the 'right' column is mirrored.
+		dmat3x4 opposite{};
+		REQUIRE(TransformFromCameraVectors(d, u, p, -handedness, opposite));
+		for (size_t i = 0; i < 3; ++i)
+			CHECK_THAT(opposite[kCamRight[i]], Catch::Matchers::WithinAbs(-right[i], 1e-9));
+	}
+
+	SECTION("non-orthogonal and degenerate inputs")
+	{
+		// 'up' not perpendicular to 'direction' must be re-orthogonalized, not rejected.
+		JsonVector const d{ dir[0], dir[1], dir[2] };
+		JsonVector const skewedUp{ upv[0] + 0.2 * dir[0], upv[1] + 0.2 * dir[1], upv[2] + 0.2 * dir[2] };
+		dmat3x4 rebuilt{};
+		REQUIRE(TransformFromCameraVectors(d, skewedUp, JsonVector{}, handedness, rebuilt));
+		// Removing the component along 'direction' must give back the original 'up'.
+		for (size_t i = 0; i < 3; ++i)
+			CHECK_THAT(rebuilt[kCamUp[i]], Catch::Matchers::WithinAbs(upv[i], 1e-12));
+
+		// Colinear and null inputs must fail cleanly.
+		CHECK_FALSE(TransformFromCameraVectors(d, d, JsonVector{}, handedness, rebuilt));
+		CHECK_FALSE(TransformFromCameraVectors(JsonVector{}, d, JsonVector{}, handedness, rebuilt));
+	}
+}
+
+TEST_CASE("SceneAPI:ViewerAuthoredCamera")
+{
+	using namespace SceneAPIDetails;
+
+	SetDefaultConfig();
+	HTTPMock* mock = GetHttpMock();
+	REQUIRE(mock != nullptr);
+
+	SceneObjectsMock state;
+	InitSceneMocks(mock, state, "viewer scene");
+
+	// A View3d as written by iTwin-viewer: vectors only, no ecefTransform at all.
+	state.objects.push_back(
+		"{ \"id\": \"aaaaaaaa-bbbb-cccc-dddd-000000000001\", \"kind\": \"View3d\","
+		" \"displayName\": \"Viewer camera\","
+		" \"data\": { \"direction\": { \"x\": 1.0, \"y\": 0.0, \"z\": 0.0 },"
+		"             \"up\": { \"x\": 0.0, \"y\": 0.0, \"z\": 1.0 },"
+		"             \"position\": { \"x\": 10.0, \"y\": 20.0, \"z\": 30.0 } } }");
+
+	auto scene = CreateMockedScene("viewer scene");
+
+	// Load the links from the server: AsyncCreate does not read the objects endpoint.
+	{
+		std::atomic_bool done = false;
+		std::atomic_bool bSucceeded = false;
+		scene->AsyncRefreshLinks([&done, &bSucceeded](AdvViz::expected<void, std::string> const& exp)
+		{
+			if (exp)
+				bSucceeded = true;
+			done = true;
+		});
+		REQUIRE(WaitForAsyncTask(done, 10));
+		REQUIRE(bSucceeded);
+	}
+
+	auto FindCameraLink = [&scene](std::string const& ref) -> std::shared_ptr<LinkAPI>
+	{
+		for (auto const& l : scene->GetLinks())
+		{
+			if (l->GetType() == "camera" && l->GetRef() == ref)
+				return std::dynamic_pointer_cast<LinkAPI>(l);
+		}
+		return nullptr;
+	};
+
+	auto camLink = FindCameraLink("Viewer camera");
+	REQUIRE(camLink);
+
+	SECTION("the placement is deferred until the handedness is known")
+	{
+		CHECK(!camLink->HasTransform());
+	}
+
+	SECTION("resolution rebuilds the placement")
+	{
+		ScenePersistenceAPI::SetCameraHandedness(1.);
+		scene->ResolvePendingCameraBases();
+		REQUIRE(camLink->HasTransform());
+		// right == cross(up, direction) == cross((0,0,1), (1,0,0)) == (0,1,0)
+		CHECK(camLink->GetTransform() == dmat3x4{ 1, 0, 0, 10,
+												  0, 1, 0, 20,
+												  0, 0, 1, 30 });
+		// Loading is not a modification.
+		CHECK(!camLink->ShouldSave());
+	}
+
+	SECTION("the handedness drives the 'right' column")
+	{
+		ScenePersistenceAPI::SetCameraHandedness(-1.);
+		scene->ResolvePendingCameraBases();
+		REQUIRE(camLink->HasTransform());
+		CHECK(camLink->GetTransform()[kCamRight[1]] == -1.); // mirrored
+	}
+
+	SECTION("resolution is idempotent")
+	{
+		ScenePersistenceAPI::SetCameraHandedness(1.);
+		scene->ResolvePendingCameraBases();
+		auto const first = camLink->GetTransform();
+		scene->ResolvePendingCameraBases(); // no pending basis left
+		CHECK(camLink->GetTransform() == first);
+	}
+}
+
+TEST_CASE("SceneAPI:ViewerAuthoredTimeline")
+{
+	using namespace AdvViz::SDK::SceneAPIDetails;
+
+	SetDefaultConfig();
+	HTTPMock* mock = GetHttpMock();
+	REQUIRE(mock != nullptr);
+
+	SceneObjectsMock state;
+	InitSceneMocks(mock, state, "viewer timeline scene");
+
+	// A CameraAnimation as written by iTwin-viewer: the key-frame cameras carry only
+	// up/direction/position, with no ecefTransform at all. All the non-optional members of
+	// SJsonCamera must be present for the deserialization to succeed.
+	const std::string camAnimId = "995970f2-bdfb-4d6b-8224-100";
+	auto const makeCamera = [](const char* dir, const char* up, const char* pos)
+	{
+		return std::string("{ \"direction\": ") + dir + ", \"up\": " + up + ", \"position\": " + pos +
+			", \"isOrthographic\": false, \"aspectRatio\": 1.5,"
+			" \"far\": 10000000000.0, \"near\": 0.1 }";
+	};
+	state.objects.push_back(
+		"{ \"id\": \"" + camAnimId + "\", \"kind\": \"CameraAnimation\","
+		" \"displayName\": \"Viewer clip\","
+		" \"data\": { \"input\": [ 0.0, 1.0 ], \"output\": [ { \"camera\": " +
+		makeCamera("{ \"x\": 1.0, \"y\": 0.0, \"z\": 0.0 }",
+			"{ \"x\": 0.0, \"y\": 0.0, \"z\": 1.0 }",
+			"{ \"x\": 10.0, \"y\": 20.0, \"z\": 30.0 }") + " }, { \"camera\": " +
+		makeCamera("{ \"x\": 0.0, \"y\": 1.0, \"z\": 0.0 }",
+			"{ \"x\": 0.0, \"y\": 0.0, \"z\": 1.0 }",
+			"{ \"x\": 40.0, \"y\": 50.0, \"z\": 60.0 }") + " } ] } }");
+
+	// The timeline itself ("Movie") is what references the clip: without it,
+	// OnLoadLinksFinished() does not build the timeline at all.
+	state.objects.push_back(
+		"{ \"id\": \"995970f2-bdfb-4d6b-8224-101\", \"kind\": \"Movie\","
+		" \"data\": { \"animations\": [ \"" + camAnimId + "\" ] } }");
+
+	auto scene = CreateMockedScene("viewer timeline scene");
+
+	// Load the links (and hence the timeline) from the server.
+	{
+		std::atomic_bool done = false;
+		std::atomic_bool bSucceeded = false;
+		scene->AsyncRefreshLinks([&done, &bSucceeded](AdvViz::expected<void, std::string> const& exp)
+		{
+			if (exp)
+				bSucceeded = true;
+			done = true;
+		});
+		REQUIRE(WaitForAsyncTask(done, 10));
+		REQUIRE(bSucceeded);
+	}
+
+	auto timeline = scene->GetTimeline();
+	REQUIRE(timeline);
+	REQUIRE(timeline->GetClipCount() == 1);
+	auto clipExp = timeline->GetClipByIndex(0);
+	REQUIRE(clipExp);
+	auto clip = *clipExp;
+	REQUIRE(clip->GetKeyframeCount() == 2);
+
+	auto GetCamera = [&clip](size_t index) -> ITimelineKeyframe::CameraData
+	{
+		auto kfExp = clip->GetKeyframeByIndex(index);
+		REQUIRE(kfExp);
+		auto const& data = (*kfExp)->GetData();
+		REQUIRE(data.camera);
+		return *data.camera;
+	};
+
+	SECTION("the placement is deferred until the handedness is known")
+	{
+		for (size_t i = 0; i < 2; ++i)
+		{
+			auto const camera = GetCamera(i);
+			CHECK(camera.pendingCameraBasis.has_value());
+			// A deferred placement is not a missing one: the key-frame is not a pause.
+			CHECK(!camera.isPause);
+			// ... and the transform is still the default one.
+			CHECK(camera.transform == Identity34);
+		}
+		// Loading is not a modification.
+		CHECK(!clip->ShouldSave());
+		CHECK(!timeline->ShouldSave());
+	}
+
+	SECTION("resolution rebuilds the placements")
+	{
+		ScenePersistenceAPI::SetCameraHandedness(1.);
+		scene->ResolvePendingCameraBases();
+
+		// right == cross(up, direction): (0,0,1)x(1,0,0) == (0,1,0) for the 1st key-frame,
+		// (0,0,1)x(0,1,0) == (-1,0,0) for the 2nd one.
+		auto const cam0 = GetCamera(0);
+		CHECK(!cam0.pendingCameraBasis.has_value());
+		CHECK(!cam0.isPause);
+		CHECK(cam0.transform == dmat3x4{ 1., 0., 0., 10.,
+										 0., 1., 0., 20.,
+										 0., 0., 1., 30. });
+		auto const cam1 = GetCamera(1);
+		CHECK(cam1.transform == dmat3x4{ 0., -1., 0., 40.,
+										 1.,  0., 0., 50.,
+										 0.,  0., 1., 60. });
+		// Resolving a deferred basis completes the loading: nothing to save.
+		CHECK(!clip->ShouldSave());
+		CHECK(!timeline->ShouldSave());
+	}
+
+	SECTION("the handedness drives the 'right' column")
+	{
+		ScenePersistenceAPI::SetCameraHandedness(-1.);
+		scene->ResolvePendingCameraBases();
+
+		// right == cross(direction, up) == (1,0,0)x(0,0,1) == (0,-1,0): mirrored.
+		auto const cam0 = GetCamera(0);
+		CHECK(cam0.transform[kCamRight[1]] == -1.);
+		auto const cam1 = GetCamera(1);
+		CHECK(cam1.transform[kCamRight[0]] == 1.);
+	}
+
+	SECTION("resolution is idempotent")
+	{
+		ScenePersistenceAPI::SetCameraHandedness(1.);
+		scene->ResolvePendingCameraBases();
+		auto const first = GetCamera(0).transform;
+		// No pending basis is left: a 2nd pass (eg. a 2nd georeference init) changes nothing,
+		// even with another handedness.
+		ScenePersistenceAPI::SetCameraHandedness(-1.);
+		scene->ResolvePendingCameraBases();
+		CHECK(GetCamera(0).transform == first);
+	}
+
+	// Leave the global handedness in the state expected by the other SDK tests.
+	ScenePersistenceAPI::SetCameraHandedness(1.);
 	scene->Delete();
 }

@@ -28,22 +28,24 @@ MODULE_EXPORT namespace AdvViz::SDK
 	///==================================================================================
 
 
+	//! \remark Same default values are in SceneAPIDetails::SJSonAtmosphere
 	struct ITwinAtmosphereSettings
 	{
-		double sunAzimuth;
-		double sunPitch;
-		double heliodonLongitude;
-		double heliodonLatitude;
+		double sunAzimuth = 0.0;
+		double sunPitch = 0.0;
+		double heliodonLongitude = 0.0;
+		double heliodonLatitude = 0.0;
 		std::string heliodonDate;
-		double weather;
-		double windOrientation;
-		double windForce;
-		double fog;
-		double exposure;
-		bool useHeliodon;
+		double weather = 0.0;
+		double windOrientation = 0.0;
+		double windForce = 0.0;
+		double fog = 0.0;
+		double exposure = 0.0;
+		bool useHeliodon = true;
 		std::optional<std::string> HDRIImage;
 		std::optional<double> HDRIZRotation;
 		std::optional<double> sunIntensity;
+
 		bool operator==(const ITwinAtmosphereSettings& other) const
 		{
 			return fabs(this->sunAzimuth-other.sunAzimuth)<1e-5 
@@ -80,13 +82,15 @@ MODULE_EXPORT namespace AdvViz::SDK
 		}
 	};
 
+	//! \remark Same default values are in SceneAPIDetails::SJSonHDRI
 	struct ITwinHDRISettings
 	{
 		std::string	hdriName;
-		double		sunPitch;
-		double		sunYaw;
-		double		sunIntensity;
-		double		rotation;	// rotation of the hdri around the up vector
+		double		sunPitch = 0.0;
+		double		sunYaw = 0.0;
+		double		sunIntensity = 1.0;
+		double		rotation = 0.0;	// rotation of the hdri around the up vector
+
 		bool operator==(const ITwinHDRISettings& other) const
 		{
 			return this->hdriName==other.hdriName

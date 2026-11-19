@@ -7,10 +7,20 @@
 +--------------------------------------------------------------------------------------*/
 
 #include <AnimTimeline/ITwinTimelineActor.h>
+#include <AnimTimeline/ITwinLookAtCameraModifier.h>
+#include <AnimTimeline/ITwinLookAtTargetActor.h>
 #include <AnimTimeline/ITwinSequencerHelper.h>
+#include <AnimTimeline/ITwinTimelineClipMapping.h>
 #include <AnimTimeline/ReadWriteHelper.h>
 #include <ITwinIModel.h>
 #include <ITwinSynchro4DSchedules.h>
+#include <ITwinUtilityLibrary.h>
+#include <Math/UEMathConversion.h>
+#include <Population/ITwinPopulation.h>
+
+#if WITH_EDITOR
+#include <Helpers/WorldSingleton.h>
+#endif
 
 #include <Camera/CameraActor.h>
 #include <Camera/CameraComponent.h>
@@ -26,6 +36,7 @@
 #include <Misc/Paths.h>
 #include <MovieSceneSequencePlayer.h>
 #include <ProfilingDebugging/CpuProfilerTrace.h>
+#include <Sections/MovieScene3DTransformSection.h>
 
 #include <optional>
 #include <ITwinRuntime/Private/Compil/BeforeNonUnrealIncludes.h>
@@ -102,36 +113,6 @@ namespace ITwin
 	}
 }
 
-void GetFTransform(const AdvViz::SDK::dmat3x4& srcMat, FTransform &f)
-{
-	using namespace AdvViz::SDK;
-	FMatrix dstMat(FMatrix::Identity);
-	FVector dstPos;
-	for (unsigned i = 0; i < 3; ++i)
-		for (unsigned j = 0; j < 3; ++j)
-			dstMat.M[j][i] = ColRow3x4(srcMat, i, j);
-
-	dstPos.X = ColRow3x4(srcMat, 0, 3);
-	dstPos.Y = ColRow3x4(srcMat, 1, 3);
-	dstPos.Z = ColRow3x4(srcMat, 2, 3);
-
-	f.SetFromMatrix(dstMat);
-	f.SetTranslation(dstPos);
-}
-
-void GetSDKTransform(const FTransform& f, AdvViz::SDK::dmat3x4& dstTransform)
-{
-	using namespace AdvViz::SDK;
-	FMatrix srcMat = f.ToMatrixWithScale();
-	FVector srcPos = f.GetTranslation();
-	for (int32 i = 0; i < 3; ++i)
-		for (int32 j = 0; j < 3; ++j)
-			ColRow3x4(dstTransform, j, i) = srcMat.M[i][j];
-	ColRow3x4(dstTransform, 0, 3) = srcPos.X;
-	ColRow3x4(dstTransform, 1, 3) = srcPos.Y;
-	ColRow3x4(dstTransform, 2, 3) = srcPos.Z;
-}
-
 FDateTime StrToDateTime(const std::string& s)
 {
 	if (s.empty())
@@ -147,16 +128,91 @@ void DateTimeToStr(const FDateTime& datetime, std::string& s)
 	s = TCHAR_TO_UTF8(*datetime.ToIso8601());
 }
 
-
 class ClipData : public AdvViz::SDK::TimelineClip, public AdvViz::SDK::Tools::TypeId<ClipData>
 {
 private:
 	ACameraActor* pCamera_ = nullptr;
 	TArray<TStrongObjectPtr<UMovieSceneTrack> > Tracks_; // maps all the parameters animated by the timeline to their respective tracks
+	//! Proxy actor following the tracked ISM instance, when this clip's camera tracks one.
+	//! Weak: the actor lives in the world, we must not keep it alive past level teardown.
+	TWeakObjectPtr<AITwinLookAtTargetActor> pTrackingProxy_;
+	//! Camera modifier re-aiming the POV during playback, when this clip's camera tracks an
+	//! instance. Owned by the player camera manager, hence weak: see ClearLookAtModifier().
+	TWeakObjectPtr<UITwinLookAtCameraModifier> pLookAtModifier_;
+	//! Proxy of the instance the camera rides on, when this clip follows one. Distinct from
+	//! pTrackingProxy_: a camera may sit in a car (follow) while aiming at a building (look-at).
+	TWeakObjectPtr<AITwinLookAtTargetActor> pFollowProxy_;
 
 public:
 	ClipData()
 	{}
+
+	AITwinLookAtTargetActor* GetTrackingProxy() const { return pTrackingProxy_.Get(); }
+	void SetTrackingProxy(AITwinLookAtTargetActor* Proxy) { pTrackingProxy_ = Proxy; }
+
+	UITwinLookAtCameraModifier* GetLookAtModifier() const { return pLookAtModifier_.Get(); }
+	void SetLookAtModifier(UITwinLookAtCameraModifier* Modifier) { pLookAtModifier_ = Modifier; }
+
+	//! The modifier lives on the player camera manager, not on the clip, so it must be removed
+	//! explicitly: dropping our pointer would leave it re-aiming the view forever.
+	//! Resolves the camera manager from the clip camera, so that callers (RemoveClip, EndPlay,
+	//! ClearClipTracking) need no world/controller of their own.
+	void ClearLookAtModifier()
+	{
+		UITwinLookAtCameraModifier* M = pLookAtModifier_.Get();
+		pLookAtModifier_.Reset();
+		if (!M)
+			return;
+		UWorld* World = pCamera_ ? pCamera_->GetWorld() : nullptr;
+		APlayerController* PC = World ? World->GetFirstPlayerController() : nullptr;
+		if (PC && PC->PlayerCameraManager)
+			PC->PlayerCameraManager->RemoveCameraModifier(M);
+	}
+
+	//! Disables look-at tracking on the clip camera and destroys the proxy, if any.
+	void ClearTracking()
+	{
+		if (UITwinLookAtCameraModifier* M = pLookAtModifier_.Get())
+		{
+			M->Proxy = nullptr;
+			if (!M->FollowProxy.IsValid()) // follow may still need the modifier
+				ClearLookAtModifier();
+		}
+
+		auto* CineCam = Cast<ACineCameraActor>(pCamera_);
+		if (CineCam)
+		{
+			CineCam->LookatTrackingSettings.bEnableLookAtTracking = false;
+			CineCam->LookatTrackingSettings.ActorToTrack = nullptr;
+		}
+		if (AITwinLookAtTargetActor* Proxy = pTrackingProxy_.Get())
+		{
+			if (pCamera_)
+				pCamera_->RemoveTickPrerequisiteActor(Proxy);
+			Proxy->Destroy();
+		}
+		pTrackingProxy_.Reset();
+	}
+
+	AITwinLookAtTargetActor* GetFollowProxy() const { return pFollowProxy_.Get(); }
+	void SetFollowProxy(AITwinLookAtTargetActor* Proxy) { pFollowProxy_ = Proxy; }
+
+	void ClearFollow()
+	{
+		if (UITwinLookAtCameraModifier* M = pLookAtModifier_.Get())
+		{
+			M->FollowProxy = nullptr;
+			if (!M->Proxy.IsValid())
+				ClearLookAtModifier();
+		}
+		if (AITwinLookAtTargetActor* Proxy = pFollowProxy_.Get())
+		{
+			if (pCamera_)
+				pCamera_->RemoveTickPrerequisiteActor(Proxy);
+			Proxy->Destroy();
+		}
+		pFollowProxy_.Reset();
+	}
 
 	bool bSynchroAnim = true;
 	bool bAtmoAnim = true;
@@ -201,7 +257,7 @@ public:
 		return iKF >= 0 && iKF < GetKeyframeCount();
 	}
 
-	int GetKeyFrameIndex(float fTime, bool bPrecise = false)
+	int GetKeyFrameIndex(float fTime, bool bPrecise = false) const
 	{
 		if (bPrecise)
 		{
@@ -221,7 +277,7 @@ public:
 		return idx - 1;
 	}
 
-	float GetKeyFrameTime(int iKF)
+	float GetKeyFrameTime(int iKF) const
 	{
 		if (iKF >= 0 && iKF < GetKeyframeCount())
 		{
@@ -234,6 +290,8 @@ public:
 
 	float GetDuration() const
 	{
+		if (GetKeyframeCount() == 0)
+			return 0.0f;
 		auto ret = GetKeyframeByIndex(GetKeyframeCount() - 1);
 		if (ret)
 			return (*ret)->GetData().time;
@@ -466,7 +524,6 @@ namespace
 
 	constexpr int32 TrackIdx(EAnimTrack Track) { return static_cast<int32>(Track); }
 
-
 	/// Description of all the parameters animated by the timeline (track names and types).
 	/// This table is constant: its order defines EAnimTrack, and each clip's track array
 	/// (ClipData::GetTracks()) is filled in the very same order by UITwinSequencerHelper::AddNewClip().
@@ -516,6 +573,8 @@ public:
 	TStrongObjectPtr<AActor> pSynchroActor_;
 	std::function<bool(FDateTime& Out, FString& ScheduleIDOut)> GetSynchro4DScheduleTime;
 	std::function<void(FDateTime const& Date)> SetSynchro4DScheduleTime;
+	bool bHasBoundOnCameraCut = false;
+	bool bHasAnyPlaybackOwnershipTargets_ = false;
 
 	ACineCameraActor* CurrentCutTrackCamera_ = nullptr; 
 	TArray<float> CurrentCutTrackStartTimes_;
@@ -533,11 +592,16 @@ public:
 	std::shared_ptr<AdvViz::SDK::ITimeline> timeline_; // timeline data stored on the server
 
 	int nextFreeClipID_ = 0;
-	int curClip_ = -1.f; ///< index of the current clip in the clip array
+	int curClip_ = -1; ///< index of the current clip in the clip array
 	float curTime_ = 0.f; ///< current clip time in seconds (don't confuse with schedule time/date)
 	
 	std::shared_ptr<AdvViz::SDK::ITimelineKeyframe> copiedKF_; // used for copy-paste
 	//SynchroData synchroData_; // for now, we simply assign current UI date to each new key-frame
+
+	/// if true, camera key-frames are stored in GCS coordinates instead of local coordinates.
+	/// This is now the default, but can be disabled when loading an old scene.
+	bool bUseGCSForCameraKF_ = true;
+
 
 	FImpl(AITwinTimelineActor& InOwner) : Owner(InOwner)
 	{
@@ -648,8 +712,7 @@ public:
 			case EAnimTrack::Transform:
 				if (KF.camera.has_value())
 				{
-					FTransform transf;
-					GetFTransform(KF.camera->transform, transf);
+					FTransform const transf = FITwinMathConversion::SDKtoUE(KF.camera->transform, UseGCSForCameraKF());
 					Out.Last() = std::make_optional(transf);
 				}
 				break;
@@ -741,8 +804,14 @@ public:
 		}
 	}
 	
-	void OnLoad()
+	bool UseGCSForCameraKF() const
 	{
+		return bUseGCSForCameraKF_;
+	}
+
+	void OnLoad(bool bUseGCS)
+	{
+		bUseGCSForCameraKF_ = bUseGCS;
 		if (!IsReady())
 		{
 			BE_ISSUE("Cannot load timeline data: sequencer helper is not ready");
@@ -778,6 +847,11 @@ public:
 
 	bool SetCurrentClip(int clipIdx, bool updateSceneFromTimeline = true)
 	{
+		ON_SCOPE_EXIT
+		{
+			UpdateTrackingViewOwnership();
+		};
+
 		if (clipIdx >= 0 && clipIdx < (int)timeline_->GetClipCount() && clipIdx != curClip_)
 		{
 			curClip_ = clipIdx;
@@ -934,6 +1008,7 @@ public:
 
 		curClip_ = timeline_->GetClipCount() - 1;
 		curTime_ = 0.f;
+		UpdateTrackingViewOwnership();
 		return clip;
 	}
 
@@ -983,6 +1058,7 @@ public:
 			SeqHelper.RemoveAllTracksFromLevelSequence(clip->GetCamera(), bRes, outMsg);
 			SeqHelper.RemovePActorFromLevelSequence(clip->GetCamera(), bRes, outMsg);
 			//clip->GetCamera()->Destroy();
+			clip->ClearTracking(); // the proxy actor, unlike the camera, must not outlive the clip
 
 			timeline_->RemoveClip(clipIdx);
 
@@ -1000,12 +1076,302 @@ public:
 				--nextFreeClipID_;
 			}
 			//nextFreeClipID_ = std::min(nextFreeClipID_, clipIdx); // always reuse indices of the deleted clips
+
+			UpdateTrackingViewOwnership();
 		}
 	}
 
 	void MoveClip(size_t indexSrc, size_t indexDst)
 	{
 		timeline_->MoveClip(indexSrc, indexDst);
+	}
+
+	bool HasAnyPlaybackOwnershipTargets() const
+	{
+		return bHasAnyPlaybackOwnershipTargets_;
+	}
+
+	void RefreshPlaybackOwnershipPresence()
+	{
+		bHasAnyPlaybackOwnershipTargets_ = false;
+		const int ClipCount = static_cast<int>(GetClipsNum());
+		for (int i = 0; i < ClipCount; ++i)
+		{
+			ClipData* Clip = GetClip(i);
+			if (!Clip)
+				continue;
+			if (Clip->GetLookAtModifier() || Clip->GetTrackingProxy() || Clip->GetFollowProxy())
+			{
+				bHasAnyPlaybackOwnershipTargets_ = true;
+				return;
+			}
+		}
+	}
+
+	//! The clip's camera modifier is shared by look-at and follow: both must override the POV
+	//! during playback, and both are defeated if applied anywhere else (see the class doc of
+	//! UITwinLookAtCameraModifier). Created on demand; removed by ClearLookAtModifier() once
+	//! neither feature uses it any more.
+	UITwinLookAtCameraModifier* EnsureLookAtModifier(ClipData& clip)
+	{
+		if (UITwinLookAtCameraModifier* M = clip.GetLookAtModifier())
+			return M;
+		auto* CineCam = Cast<ACineCameraActor>(clip.GetCamera());
+		UWorld* World = Owner.GetWorld();
+		APlayerController* PC = World ? World->GetFirstPlayerController() : nullptr;
+		if (!CineCam || !PC || !PC->PlayerCameraManager)
+			return nullptr;
+		auto* M = Cast<UITwinLookAtCameraModifier>(
+			PC->PlayerCameraManager->AddNewCameraModifier(UITwinLookAtCameraModifier::StaticClass()));
+		if (M)
+		{
+			M->CineCam = CineCam;
+			clip.SetLookAtModifier(M);
+		}
+		return M;
+	}
+
+	//! Makes the clip camera ride an instance, keeping its current offset from it.
+	//! Independent from SetClipTrackingTarget: the camera may sit in a car (follow) while
+	//! aiming at a building (look-at). Runtime-only, nothing is persisted.
+	bool SetClipFollowTarget(int clipIdx, AITwinPopulation* Population, int32 InstanceIndex,
+							 bool bFollowRotation,
+							 TOptional<FTransform> const& ExplicitOffset = {})
+	{
+		ON_SCOPE_EXIT
+		{
+			UpdateTrackingViewOwnership();
+		};
+		ClipData* clip = GetClip(clipIdx);
+		if (!clip || !Population || InstanceIndex == INDEX_NONE
+			|| InstanceIndex >= Population->GetNumberOfInstances())
+		{
+			return false;
+		}
+
+		AITwinLookAtTargetActor* Proxy = clip->GetFollowProxy();
+		if (Proxy)
+		{
+			Proxy->SetTarget(*Population, InstanceIndex); // retarget, keep the same proxy
+		}
+		else
+		{
+			// Deliberately no camera: this proxy only *positions* the view from the instance
+			// pose, it must never aim it. CameraToDrive is what makes a proxy apply the cine
+			// camera's LookatTrackingSettings in AITwinLookAtTargetActor::Tick, so passing the
+			// clip camera here would make the follow proxy re-aim the view right after placing
+			// it - stealing the job of the look-at proxy, and breaking the "passenger" case
+			// (ride a car, look at a building) by overriding the aim with the follow rotation.
+			// The two roles are intentionally split across two proxies; see
+			// UpdateTrackingViewOwnership(), which also orders them (follow first, look-at last).
+			// Playback is likewise not a reason to pass it: the level sequence rewrites the
+			// camera transform every frame, and the proxy ticks in TG_PrePhysics, before that
+			// evaluation - so a camera here would achieve nothing during playback anyway.
+			Proxy = AITwinLookAtTargetActor::Spawn(*Population, InstanceIndex, /*CameraToDrive*/nullptr);
+			if (!Proxy)
+				return false;
+			clip->SetFollowProxy(Proxy);
+		}
+
+		// Seed the offset from wherever the user currently stands, so that enabling follow never
+		// moves the view: "keep me here, relative to this instance". Avoids having to decide on
+		// presets (driver seat, chase distance...) before the UX is defined.
+		auto const Space = bFollowRotation
+			? AITwinLookAtTargetActor::EFollowSpace::FullRelative
+			: AITwinLookAtTargetActor::EFollowSpace::LocationOnly;
+		// Without an explicit placement, seed from wherever the user currently stands ("keep me
+		// here, relative to this instance"), so that enabling follow never moves the view.
+		Proxy->SetFollowOffset(
+			ExplicitOffset.IsSet()
+			? *ExplicitOffset
+			: Proxy->MakeFollowOffsetFromWorld(
+				ScreenUtils::GetCurrentViewTransform(Owner.GetWorld()), Space),
+			Space);
+
+		// Playback follow goes through the same modifier as the look-at.
+		if (UITwinLookAtCameraModifier* M = EnsureLookAtModifier(*clip))
+		{
+			M->FollowProxy = Proxy;
+		}
+		RefreshPlaybackOwnershipPresence();
+
+		BE_LOGI("Timeline", "Clip " << clipIdx << " follows instance " << InstanceIndex
+			<< " of population " << TCHAR_TO_UTF8(*Population->GetAssetPath())
+			<< (bFollowRotation ? " (full relative)" : " (location only)"));
+		return true;
+	}
+
+	void ClearClipFollowTarget(int clipIdx, bool bUpdateViewOwnership = true)
+	{
+		if (ClipData* clip = GetClip(clipIdx))
+		{
+			clip->ClearFollow();
+			RefreshPlaybackOwnershipPresence();
+		}
+		if (bUpdateViewOwnership)
+		{
+			UpdateTrackingViewOwnership();
+		}
+	}
+
+	void ClearAllClipFollow()
+	{
+		const int ClipCount = static_cast<int>(GetClipsNum());
+		for (int i(0); i < ClipCount; i++)
+			ClearClipFollowTarget(i, false);
+		UpdateTrackingViewOwnership();
+	}
+
+	bool SetClipTrackingTarget(int clipIdx, AITwinPopulation* Population, int32 InstanceIndex)
+	{
+		ON_SCOPE_EXIT
+		{
+			UpdateTrackingViewOwnership();
+		};
+		ClipData* clip = GetClip(clipIdx);
+		if (!clip || !Population || InstanceIndex == INDEX_NONE
+			|| InstanceIndex >= Population->GetNumberOfInstances())
+			return false;
+
+		auto* CineCam = Cast<ACineCameraActor>(clip->GetCamera());
+		if (!CineCam)
+		{
+			BE_LOGW("Timeline", "Clip " << clipIdx << " has no cine camera, cannot track an instance");
+			return false;
+		}
+
+		AITwinLookAtTargetActor* Proxy = clip->GetTrackingProxy();
+		if (Proxy)
+		{
+			Proxy->SetTarget(*Population, InstanceIndex); // retarget, keep the same proxy
+		}
+		else
+		{
+			Proxy = AITwinLookAtTargetActor::Spawn(*Population, InstanceIndex, CineCam);
+			if (!Proxy)
+				return false;
+			clip->SetTrackingProxy(Proxy);
+		}
+
+		auto& Tracking = CineCam->LookatTrackingSettings;
+		Tracking.bEnableLookAtTracking = true;
+		Tracking.bAllowRoll = false;
+		// Note: ActorToTrack is a TSoftObjectPtr, and it does resolve correctly for this
+		// runtime-spawned transient actor (verified). If look-at ever aims at the world origin,
+		// suspect a missing/static RootComponent on the proxy rather than this pointer: the
+		// engine silently falls back to RelativeOffset when the target cannot be resolved.
+		Tracking.ActorToTrack = Proxy;
+
+		// Playback needs a camera modifier: the sequence's transform track overwrites the
+		// camera rotation every frame, and no tick group can win that race (see the class doc
+		// of UITwinLookAtCameraModifier).
+		if (UITwinLookAtCameraModifier* M = EnsureLookAtModifier(*clip))
+		{
+			M->Proxy = Proxy;
+		}
+		RefreshPlaybackOwnershipPresence();
+
+		BE_LOGI("Timeline", "Clip " << clipIdx << " tracks instance " << InstanceIndex
+			<< " of population " << TCHAR_TO_UTF8(*Population->GetAssetPath()));
+		return true;
+	}
+
+	void ClearClipTracking(int clipIdx, bool bUpdateViewOwnership = true)
+	{
+		if (ClipData* clip = GetClip(clipIdx))
+		{
+			clip->ClearTracking();
+			RefreshPlaybackOwnershipPresence();
+		}
+		if (bUpdateViewOwnership)
+		{
+			UpdateTrackingViewOwnership();
+		}
+	}
+
+	void ClearAllClipTracking()
+	{
+		const int ClipCount = static_cast<int>(GetClipsNum());
+		for (int i(0); i < ClipCount; i++)
+			ClearClipTracking(i, false);
+		UpdateTrackingViewOwnership();
+	}
+
+	//! Takes every clip out of playback mode, handing the view back to the manual path.
+	void DeactivateAllLookAtModifiers()
+	{
+		const int ClipCount = static_cast<int>(GetClipsNum());
+		for (int i(0); i < ClipCount; i++)
+		{
+			ClipData* Clip = GetClip(i);
+			if (!Clip)
+				continue;
+			if (UITwinLookAtCameraModifier* M = Clip->GetLookAtModifier())
+				M->bActiveForPlayback = false;
+			if (AITwinLookAtTargetActor* P = Clip->GetTrackingProxy())
+				P->SetPlaybackActive(false);
+			if (AITwinLookAtTargetActor* F = Clip->GetFollowProxy())
+				F->SetPlaybackActive(false);
+		}
+	}
+
+	//! Centralized playback ownership handoff for follow/look-at.
+	//! Exactly one clip is "active" at a time (the one whose camera matches ActiveCamera):
+	//! - its camera modifier is enabled for playback,
+	//! - its follow/look-at proxies are put in playback mode,
+	//! - all other clips are forced out of playback mode.
+	//!
+	//! This is shared by both activation paths:
+	//! 1) event-driven camera cuts (__OnCameraCutHandler__), and
+	//! 2) deterministic per-frame playback state (__Tick__) for cases where cut events are unreliable
+	//!    (notably outside PIE).
+	void ApplyPlaybackCameraOwnership(AActor* ActiveCamera)
+	{
+		const int ClipCount = static_cast<int>(GetClipsNum());
+		for (int i(0); i < ClipCount; i++)
+		{
+			ClipData* Clip = GetClip(i);
+			if (!Clip)
+				continue;
+
+			const bool bActive = (Clip->GetCamera() == ActiveCamera);
+
+			if (UITwinLookAtCameraModifier* M = Clip->GetLookAtModifier())
+				M->bActiveForPlayback = bActive;
+
+			if (AITwinLookAtTargetActor* P = Clip->GetTrackingProxy())
+				P->SetPlaybackActive(bActive);
+
+			if (AITwinLookAtTargetActor* F = Clip->GetFollowProxy())
+				F->SetPlaybackActive(bActive);
+		}
+	}
+
+	//! Only the current clip's proxies may re-aim the player view: otherwise every tracking
+	//! clip fights over the view rotation each frame. Must be called whenever curClip_ changes
+	//! or the set of proxies changes.
+	void UpdateTrackingViewOwnership()
+	{
+		const int ClipCount = static_cast<int>(GetClipsNum());
+		for (int i(0); i < ClipCount; i++)
+		{
+			ClipData* clip = GetClip(i);
+			if (!clip)
+				continue;
+			const bool bIsCurrent = (i == curClip_);
+			AITwinLookAtTargetActor* Follow = clip->GetFollowProxy();
+			AITwinLookAtTargetActor* LookAt = clip->GetTrackingProxy();
+			if (Follow)
+				Follow->SetDrivesPlayerView(bIsCurrent);
+			if (LookAt)
+			{
+				LookAt->SetDrivesPlayerView(bIsCurrent);
+				// Follow places the view, look-at then re-aims it: the order matters, and both
+				// proxies are in the same tick group.
+				if (Follow)
+					LookAt->AddTickPrerequisiteActor(Follow);
+			}
+		}
 	}
 
 	ClipData* GetClip(int clipIdx)
@@ -1163,8 +1529,7 @@ public:
 		// Update Unreal level sequence (TODO: manage atmosphere settings?)
 		BE_ASSERT(KF.camera.has_value());
 		BE_ASSERT(KF.synchro.has_value());
-		//FTransform transf;
-		//GetFTransform(KF.camera->transform, transf);
+		//FTransform const transf = FITwinMathConversion::SDKtoUE(KF.camera->transform, UseGCSForCameraKF());
 		//auto synchro = ITwin::SynchroToTimeline(StrToDateTime(KF.synchro->date));
 		if (ensure(IsReady()))
 		{
@@ -1195,8 +1560,20 @@ public:
 		KF.time = fTime;
 
 		KF.camera.emplace();
-		GetSDKTransform(ScreenUtils::GetCurrentViewTransform(Owner.GetWorld()), KF.camera->transform);
-		
+		KF.camera->transform = FITwinMathConversion::UEtoSDK(
+			ScreenUtils::GetCurrentViewTransform(Owner.GetWorld()),
+			UseGCSForCameraKF());
+		// Lens settings, needed by the iTwin viewer to reproduce the framing
+		// (stored in radians, like the View3d schema's "fov").
+		if (auto const FovDegrees = UITwinUtilityLibrary::GetCameraFOV())
+		{
+			KF.camera->fov = FMath::DegreesToRadians(*FovDegrees);
+		}
+		if (auto const Aspect = UITwinUtilityLibrary::GetViewportAspectRatio())
+		{
+			KF.camera->aspectRatio = *Aspect;
+		}
+
 		KF.synchro.emplace();
 		FDateTime date;
 		FString scheduleID;
@@ -1241,13 +1618,10 @@ public:
 		auto key = clip->GetKeyframe(fTime);
 		if (key)
 			clip->RemoveKeyframe(*key);
-		// If we delete the first or last keyframe, we change the total duration, whereas in other cases,
-		// we actually sum the durations before and after the deleted keyframe.
-		// For the last keyframe, there's nothing particular to do, but for the first, let's shift all
-		// keyframes so that the new first is at time 0: this assumption is made everywhere and it seems
-		// safest to keep it, even though it means modifying *all* keyframes just to erase one :/
-		if (0 == iKF && clip->GetKeyframeCount() >= 2)
-			MoveKeyFrame(clip->GetKeyFrameTime(0/*former 1, now 0*/), fTime, clipIdx, false);
+		// When we remove a key-frame, we don't want to modify the duration of the preceding
+		// key-frame (see ADO#2182741) so we need to update all times after the removed one.
+		if (clip->GetKeyframeCount() >= 2 && iKF < clip->GetKeyframeCount())
+			MoveKeyFrame(clip->GetKeyFrameTime(iKF), fTime, clipIdx, false);
 		else
 			UpdateSceneFromTimeline(); // see comment in AddOrUpdateKeyFrame
 	}
@@ -1364,8 +1738,32 @@ public:
 
 	void UpdateCameraFromTime(AActor* pCamera, float fTime)
 	{
+		using ESetViewMode = ScreenUtils::ESetViewMode;
+
 		BE_ASSERT(IsReady());
 		auto const& SeqHelper = *Owner.SequencerHelper;
+
+		const bool bIsPlaying = (pPlayer_.IsValid() && pPlayer_->IsPlaying());
+		// If the timeline is playing, playback view remains owned by camera cuts + modifier.
+		// Only sync pawn/controller pose to ensure Cesium remains in sync.
+		const ESetViewMode SetViewMode = bIsPlaying
+			? ESetViewMode::KeepCurrentViewTarget
+			: ESetViewMode::AdoptPawnAsViewTarget;
+
+		// Follow mode overrides the keyframed transform entirely: the camera is placed from the
+		// tracked instance's current pose.
+		if (ClipData* clip = FindClipByCamera(pCamera))
+		{
+			if (AITwinLookAtTargetActor* Follow = clip->GetFollowProxy())
+			{
+				if (TOptional<FTransform> const FollowTM = Follow->GetFollowWorldTransform())
+				{
+					ScreenUtils::SetCurrentView(Owner.GetWorld(), FollowTM->GetLocation(),
+												FollowTM->Rotator(), SetViewMode);
+					return;
+				}
+			}
+		}
 
 		FVector pos;
 		FRotator rot;
@@ -1375,7 +1773,7 @@ public:
 			BE_LOGV("Timeline", "Time set to " << fTime << ", setting current view to: "
 				<< "Rotation (" << rot.Yaw << ", " << rot.Pitch << ", " << rot.Roll
 				<< "), Position (" << pos.X << ", " << pos.Y << ", " << pos.Z << ")");
-			ScreenUtils::SetCurrentView(Owner.GetWorld(), pos, rot);
+			ScreenUtils::SetCurrentView(Owner.GetWorld(), pos, rot, SetViewMode);
 		}
 		else
 		{
@@ -1616,9 +2014,17 @@ public:
 			{
 				if (curTime_ < CurrentCutTrackStartTimes_[i])
 				{
-					pClip = GetClip(i-1);
+					pClip = GetClip(i - 1);
+					if (!pClip)
+					{
+						// Did happen in OnScreenshotBatchProcessed - see crash ADO#2185982
+						// (Sentry ITWIN-ENGAGE-H1).
+						BE_LOGW("Timeline", "Camera cut start times out of sync with clips (index "
+							<< (i - 1) << "/" << GetClipsNum() << ") at time " << curTime_);
+						return;
+					}
 					pCamera = pClip->GetCamera();
-					ClipStartTime = CurrentCutTrackStartTimes_[i-1];
+					ClipStartTime = CurrentCutTrackStartTimes_[i - 1];
 					break;
 				}
 			}
@@ -1648,7 +2054,8 @@ public:
 AITwinTimelineActor::AITwinTimelineActor()
 {
 	SetRootComponent(CreateDefaultSubobject<USceneComponent>(TEXT("root")));
-	// Set this actor to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
+	// Set this actor to call Tick() every frame.  You can turn this off to improve performance if you don't
+	// need it.
 	PrimaryActorTick.bCanEverTick = true;
 
 	static bool bNewInit = false;
@@ -1665,9 +2072,16 @@ AITwinTimelineActor::AITwinTimelineActor()
 	}
 }
 
+bool AITwinTimelineActor::IsImplReady() const
+{
+	// Note that Impl is null before BeginPlay and after EndPlay, so it's worth checking for null
+	// before calling IsReady() on it.
+	return Impl && Impl->IsReady();
+}
+
 ULevelSequencePlayer* AITwinTimelineActor::GetPlayer()
 {
-	return Impl->pPlayer_.Get();
+	return Impl ? Impl->pPlayer_.Get() : nullptr;
 }
 
 ULevelSequence* AITwinTimelineActor::GetLevelSequence()
@@ -1700,6 +2114,8 @@ void AITwinTimelineActor::BeginPlay()
 
 void AITwinTimelineActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (Impl)
+		Impl->ClearAllClipTracking();
 	Impl.Reset();
 	Super::EndPlay(EndPlayReason);
 }
@@ -1729,13 +2145,36 @@ void AITwinTimelineActor::Tick(float DeltaTime)
 
 	if (bIsPlaying)
 	{
+		if (Impl->HasAnyPlaybackOwnershipTargets())
+		{
+			// Keep playback ownership in sync every frame from timeline time.
+			// We do this even though __OnCameraCutHandler__ also updates ownership:
+			// camera-cut events are not guaranteed in all runtime modes (notably non-PIE),
+			// so this deterministic path is the authoritative fallback.
+			AActor* ActivePlaybackCamera = nullptr;
+			const auto [ClipIdx, _TimeWithinClip] = GetClipIdxAndTimeWithinSequence(fPlayerTime);
+			if (ClipIdx >= 0)
+			{
+				if (ClipData* Clip = Impl->GetClip(ClipIdx))
+					ActivePlaybackCamera = Clip->GetCamera();
+			}
+			Impl->ApplyPlaybackCameraOwnership(ActivePlaybackCamera);
+		}
+
 		if (Impl->PlaybackEndTime_ >= 0.f && fPlayerTime > Impl->PlaybackEndTime_)
 			Impl->pPlayer_->Stop();
 	}
 	else
 	{
+		if (Impl->bHasBoundOnCameraCut)
+		{
+			Impl->pPlayer_->OnCameraCut.RemoveDynamic(this, &AITwinTimelineActor::OnCameraCutHandler);
+			Impl->bHasBoundOnCameraCut = false;
+			// Playback is over: hand the view back to the manual path.
+			Impl->DeactivateAllLookAtModifiers();
+			Impl->CurrentCutTrackCamera_ = nullptr;
+		}
 		SetActorTickEnabled(false);
-		Impl->pPlayer_->OnCameraCut.RemoveDynamic(this, &AITwinTimelineActor::OnCameraCutHandler);
 	}
 }
 
@@ -1753,6 +2192,8 @@ void AITwinTimelineActor::Tick(float DeltaTime)
 
 void AITwinTimelineActor::ExportData()
 {
+	if (!IsImplReady())
+		return;
 	Impl->ExportToJson();
 }
 
@@ -1760,14 +2201,14 @@ void AITwinTimelineActor::ImportData()
 {
 	RemoveAllClips();
 
-	if (!Impl->IsReady())
+	if (!IsImplReady())
 		return;
 	Impl->ImportFromJson();
 }
 
 void AITwinTimelineActor::RemoveAllClips(bool bRemoveEmptyOnly/* = false*/)
 {
-	if (!Impl->IsReady())
+	if (!IsImplReady())
 		return;
 	for (int i(Impl->GetClipsNum()-1); i >= 0; i--)
 	{
@@ -1778,22 +2219,23 @@ void AITwinTimelineActor::RemoveAllClips(bool bRemoveEmptyOnly/* = false*/)
 
 void AITwinTimelineActor::RemoveAllKeyframes(int clipIdx)
 {
-	if (!Impl->IsReady())
+	if (!IsImplReady())
 		return;
 
 	auto clip = Impl->GetCurrentClip();
 	if (!clip)
 		return;
 
-	while(clip->GetKeyframeCount() > 0)
+	while (clip->GetKeyframeCount() > 0)
 	{
 		Impl->RemoveKeyFrame(clip->GetKeyframeCount()-1, clipIdx);
 	}
+	SetCurrentTime(0.f);
 }
 
 void AITwinTimelineActor::AddClip()
 {
-	if (!Impl->IsReady())
+	if (!IsImplReady())
 		return;
 	// Append a new clip and set it as current
 	Impl->AppendClip();
@@ -1804,28 +2246,28 @@ void AITwinTimelineActor::AddClip()
 
 void AITwinTimelineActor::DuplicateClip(int clipIdx)
 {
-	if (!Impl->IsReady())
+	if (!IsImplReady())
 		return;
 	Impl->DuplicateClip(clipIdx);
 }
 
 void AITwinTimelineActor::RemoveClip(int clipIdx)
 {
-	if (!Impl->IsReady())
+	if (!IsImplReady())
 		return;
 	Impl->RemoveClip(clipIdx);
 }
 
 void AITwinTimelineActor::MoveClip(size_t indexSrc, size_t indexDst)
 {
-	if (!Impl->IsReady())
+	if (!IsImplReady())
 		return;
 	Impl->MoveClip(indexSrc, indexDst);
 }
 
 void AITwinTimelineActor::EnableClip(bool bEnable, int clipIdx)
 {
-	if (!Impl->IsReady())
+	if (!IsImplReady())
 		return;
 	if (auto Clip = Impl->GetClip(clipIdx))
 		return Clip->SetEnable(bEnable);
@@ -1833,7 +2275,7 @@ void AITwinTimelineActor::EnableClip(bool bEnable, int clipIdx)
 
 void AITwinTimelineActor::EnableAllClips(bool bEnable)
 {
-	if (!Impl->IsReady())
+	if (!IsImplReady())
 		return;
 
 	for (int i(Impl->GetClipsNum() - 1); i >= 0; i--)
@@ -1842,7 +2284,7 @@ void AITwinTimelineActor::EnableAllClips(bool bEnable)
 
 bool AITwinTimelineActor::IsClipEnabled(int clipIdx) const
 {
-	if (!Impl->IsReady())
+	if (!IsImplReady())
 		return false;
 	if (auto Clip = Impl->GetClip(clipIdx))
 		return Clip->IsEnabled();
@@ -1851,78 +2293,88 @@ bool AITwinTimelineActor::IsClipEnabled(int clipIdx) const
 
 void AITwinTimelineActor::SetClipName(int clipIdx, FString ClipName)
 {
-	auto clip = Impl->GetClip(clipIdx);
+	auto clip = Impl ? Impl->GetClip(clipIdx) : nullptr;
 	if (clip)
 		clip->SetNameU(ClipName);
 }
 
 FString AITwinTimelineActor::GetClipName(int clipIdx) const
 {
-	auto clip = Impl->GetClip(clipIdx);
+	auto clip = Impl ? Impl->GetClip(clipIdx) : nullptr;
 	return clip ? clip->GetNameU() : FString();
 }
 
 void AITwinTimelineActor::GetClipsNames(TArray<FString>& vClipNames) const
 {
+	if (!Impl)
+		return;
 	Impl->GetClipsNames(vClipNames);
 }
 
 void AITwinTimelineActor::GetClipsStartTimes(TArray<float>& vTimes, bool bAppendLastDuration/* = false*/) const
 {
+	if (!Impl)
+		return;
 	Impl->GetClipsStartTimes(vTimes, bAppendLastDuration);
 }
 
 void AITwinTimelineActor::GetEnabledClipIndices(TArray<int>& vIndices, bool bSkipEmpty/* = false*/) const
 {
+	if (!Impl)
+		return;
 	Impl->GetEnabledClipIndices(vIndices, bSkipEmpty);
 }
 
 bool AITwinTimelineActor::HasClipsToExport() const
 {
-	return Impl->HasClipsToExport();
+	return Impl && Impl->HasClipsToExport();
 }
 
 float AITwinTimelineActor::GetClipStartTime(int clipIdx) const
 {
-	return Impl->GetClipStartTime(clipIdx);
+	return Impl ? Impl->GetClipStartTime(clipIdx) : 0.f;
 }
 
 int AITwinTimelineActor::GetClipsNum() const
 {
-	return Impl->GetClipsNum();
+	return Impl ? Impl->GetClipsNum() : 0;
 }
 
 bool AITwinTimelineActor::SetCurrentClip(FString clipName, bool updateSceneFromTimeline/* = true*/)
 {
+	if (!Impl)
+		return false;
 	return Impl->SetCurrentClip(Impl->GetClipIndex(clipName), updateSceneFromTimeline);
 }
 
 bool AITwinTimelineActor::SetCurrentClip(int clipIdx, bool updateSceneFromTimeline/* = true*/)
 {
+	if (!Impl)
+		return false;
 	return Impl->SetCurrentClip(clipIdx, updateSceneFromTimeline);
 }
 
 int AITwinTimelineActor::GetCurrentClipIndex() const
 {
-	return Impl->curClip_;
+	return Impl ? Impl->curClip_ : -1;
 }
 
 ACameraActor* AITwinTimelineActor::GetClipCamera(int clipIdx)
 {
-	auto clip = Impl->GetClip(clipIdx);
+	auto clip = Impl ? Impl->GetClip(clipIdx) : nullptr;
 	return clip ? clip->GetCamera() : nullptr;
 }
 
 void AITwinTimelineActor::SetClipSnapshotID(int clipIdx, const std::string& Id)
 {
-	auto clip = Impl->GetClip(clipIdx);
+	auto clip = Impl ? Impl->GetClip(clipIdx) : nullptr;
 	if (clip)
 		clip->SetSnapshotId(Id);
 }
 
 void AITwinTimelineActor::SetKeyFrameSnapshotID(int clipIdx, int iKF, const std::string& Id)
 {
-	auto clip = Impl->GetClip(clipIdx);
+	auto clip = Impl ? Impl->GetClip(clipIdx) : nullptr;
 	if (clip)
 	{
 		auto kf = clip->GetKeyframeByIndex(iKF);
@@ -1933,7 +2385,8 @@ void AITwinTimelineActor::SetKeyFrameSnapshotID(int clipIdx, int iKF, const std:
 
 std::string AITwinTimelineActor::GetClipSnapshotID(int clipIdx)
 {
-	if (auto clip = Impl->GetClip(clipIdx))
+	auto clip = Impl ? Impl->GetClip(clipIdx) : nullptr;
+	if (clip)
 	{
 		auto snapshotId = clip->GetSnapshotId();
 		if (snapshotId.empty())
@@ -1948,7 +2401,8 @@ std::string AITwinTimelineActor::GetClipSnapshotID(int clipIdx)
 
 std::string AITwinTimelineActor::GetKeyFrameSnapshotID(int clipIdx, int iKF)
 {
-	if (auto clip = Impl->GetClip(clipIdx))
+	auto clip = Impl ? Impl->GetClip(clipIdx) : nullptr;
+	if (clip)
 	{
 		if (auto kf = clip->GetKeyframeByIndex(iKF))
 		{
@@ -1967,7 +2421,8 @@ std::string AITwinTimelineActor::GetKeyFrameSnapshotID(int clipIdx, int iKF)
 void AITwinTimelineActor::GetKeyFrameSnapshotIDs(int clipIdx, std::vector<std::string>& Ids)
 {
 	Ids.clear();
-	if (auto clip = Impl->GetClip(clipIdx))
+	auto clip = Impl ? Impl->GetClip(clipIdx) : nullptr;
+	if (clip)
 	{
 		const int KFCount = clip->GetKeyframeCount();
 		Ids.reserve(KFCount);
@@ -1978,21 +2433,21 @@ void AITwinTimelineActor::GetKeyFrameSnapshotIDs(int clipIdx, std::vector<std::s
 
 //TRange<FDateTime> AITwinTimelineActor::GetSynchroRange() const
 //{
-//	if (!Impl || !Impl->IsReady())
+//	if (!IsImplReady())
 //		return TRange<FDateTime>::Empty();
 //	return Impl->synchroData_.GetTotalRange();
 //}
 
 //void AITwinTimelineActor::SetSynchroRange(const TRange<FDateTime>& newRange)
 //{
-//	if (!Impl || !Impl->IsReady())
+//	if (!IsImplReady())
 //		return;
 //	Impl->synchroData_.SetTotalRange(newRange);
 //}
 
 void AITwinTimelineActor::AddKeyFrame()
 {
-	if (!Impl->IsReady())
+	if (!IsImplReady())
 		return;
 
 	auto clip = Impl->GetCurrentClip();
@@ -2004,7 +2459,7 @@ void AITwinTimelineActor::AddKeyFrame()
 
 void AITwinTimelineActor::AppendKeyFrame()
 {
-	if (!Impl->IsReady())
+	if (!IsImplReady())
 		return;
 
 	auto clip = Impl->GetCurrentClip();
@@ -2018,7 +2473,7 @@ void AITwinTimelineActor::AppendKeyFrame()
 
 void AITwinTimelineActor::UpdateKeyFrame(int iKF)
 {
-	if (!Impl->IsReady())
+	if (!IsImplReady())
 		return;
 
 	auto clip = Impl->GetCurrentClip();
@@ -2039,7 +2494,7 @@ void AITwinTimelineActor::UpdateKeyFrame(int iKF)
 
 void AITwinTimelineActor::RemoveKeyFrame(int iKF)
 {
-	if (!Impl->IsReady())
+	if (!IsImplReady())
 		return;
 
 	auto clip = Impl->GetCurrentClip();
@@ -2056,19 +2511,22 @@ void AITwinTimelineActor::RemoveKeyFrame(int iKF)
 		if (clip->HasKeyFrame(Impl->curTime_))
 			Impl->RemoveKeyFrame(clip->GetKeyFrameIndex(Impl->curTime_), Impl->curClip_);
 	}
-	//SetCurrentTime(SeqHelper.GetDuration(Impl->GetCurrentCamera()));
+	// When we remove the last key-frame, ensure the current time remains in the timeline range.
+	if (GetCurrentTime() > 0.f && GetCurrentTime() >= clip->GetDuration())
+		SetCurrentTime(clip->GetDuration());
 }
 
 int AITwinTimelineActor::GetKeyframeCount() const
 {
-	auto clip = Impl->GetCurrentClip();
+	auto clip = Impl ? Impl->GetCurrentClip() : nullptr;
 	return clip ? (int)clip->GetKeyframeCount() : 0;
 }
 
 int AITwinTimelineActor::GetTotalKeyframeCount() const
 {
 	int nKFTotal(0);
-	for (size_t i(0); i < Impl->GetClipsNum(); i++)
+	const int nClips = GetClipsNum();
+	for (size_t i(0); i < nClips; i++)
 	{
 		auto clip = Impl->GetClip(i);
 		if (clip && clip->IsEnabled())
@@ -2079,13 +2537,15 @@ int AITwinTimelineActor::GetTotalKeyframeCount() const
 
 void AITwinTimelineActor::GetKeyFrameTimes(TArray<float>& vTimes) const
 {
-	if (auto clip = Impl->GetCurrentClip())
+	auto clip = Impl ? Impl->GetCurrentClip() : nullptr;
+	if (clip)
 		clip->GetKeyFrameTimes(vTimes);
 }
 
 void AITwinTimelineActor::GetKeyFrameDates(TArray<FDateTime>& vDates) const
 {
-	if (auto clip = Impl->GetCurrentClip())
+	auto clip = Impl ? Impl->GetCurrentClip() : nullptr;
+	if (clip)
 		clip->GetKeyFrameDates(vDates);
 }
 
@@ -2097,18 +2557,19 @@ void AITwinTimelineActor::GetKeyFrameDates(TArray<FDateTime>& vDates) const
 
 bool AITwinTimelineActor::HasKeyFrameToPaste() const
 {
-	return Impl->HasKeyFrameToPaste();
+	return Impl && Impl->HasKeyFrameToPaste();
 }
 
 float AITwinTimelineActor::GetCurrentTime() const
 {
-	return Impl->curTime_;
+	return Impl ? Impl->curTime_ : 0.f;
 }
 
 FDateTime AITwinTimelineActor::GetCurrentDate() const
 {
-	FDateTime curDate;
-	Impl->GetSynchroDateFromTime(Impl->FindClipByCamera(Impl->GetCurrentCamera()), Impl->curTime_, curDate);
+	FDateTime curDate = FDateTime::MinValue();
+	if (Impl)
+		Impl->GetSynchroDateFromTime(Impl->FindClipByCamera(Impl->GetCurrentCamera()), Impl->curTime_, curDate);
 	return curDate;
 }
 
@@ -2119,7 +2580,7 @@ void AITwinTimelineActor::OnSceneFromTimelineUpdate()
 
 void AITwinTimelineActor::SetCurrentTime(float fTime)
 {
-	if (!Impl->IsReady())// || Impl->curTime_ == fTime) // even if time is the same, clip index could have changed
+	if (!IsImplReady())// || Impl->curTime_ == fTime) // even if time is the same, clip index could have changed
 		return;
 
 	if (Impl->pPlayer_->IsPlaying())
@@ -2131,14 +2592,14 @@ void AITwinTimelineActor::SetCurrentTime(float fTime)
 
 int AITwinTimelineActor::GetKeyFrameIndexFromTime(float fTime, bool bPrecise/* = false*/) const
 {
-	if (!Impl->IsReady() || !Impl->GetCurrentClip())
+	if (!IsImplReady() || !Impl->GetCurrentClip())
 		return -1;
 	return Impl->GetCurrentClip()->GetKeyFrameIndex(fTime, bPrecise);
 }
 
 float AITwinTimelineActor::GetKeyFrameTime(int iKF) const
 {
-	if (!Impl->IsReady() || !Impl->GetCurrentClip())
+	if (!IsImplReady() || !Impl->GetCurrentClip())
 		return -1.f;
 	return Impl->GetCurrentClip()->GetKeyFrameTime(iKF);
 }
@@ -2155,7 +2616,7 @@ void AITwinTimelineActor::MoveKeyFrame(int clipIdx, float fOldTime, float fNewTi
 
 void AITwinTimelineActor::ReorderKeyFrame(int clipIdx, int iKFSrc, int iKFDst)
 {
-	if (!Impl->IsReady())
+	if (!IsImplReady())
 		return;
 	Impl->ReorderKeyFrame(clipIdx, iKFSrc, iKFDst);
 }
@@ -2203,21 +2664,21 @@ bool AITwinTimelineActor::IsAtmoAnimEnabled(int clipIdx) const
 
 float AITwinTimelineActor::GetClipDuration(int clipIdx) const
 {
-	if (!Impl->IsReady())
+	if (!IsImplReady())
 		return 0.f;
 	return Impl->GetClipDuration(clipIdx);
 }
 
 float AITwinTimelineActor::GetTotalDuration() const
 {
-	if (!Impl->IsReady())
+	if (!IsImplReady())
 		return 0.f;
 	return Impl->GetTotalDuration();
 }
 
 void AITwinTimelineActor::SetKFDuration(int KF, float fDuration)
 {
-	if (!Impl->IsReady())
+	if (!IsImplReady())
 		return;
 
 	auto clip = Impl->GetCurrentClip();
@@ -2234,7 +2695,7 @@ void AITwinTimelineActor::SetKFDuration(int KF, float fDuration)
 
 void AITwinTimelineActor::SetClipDuration(int clipIdx, float fDuration)
 {
-	if (!Impl->IsReady())
+	if (!IsImplReady())
 		return;
 	if (!ensure(fDuration > 0.f))
 		return;
@@ -2268,7 +2729,7 @@ void AITwinTimelineActor::SetClipDuration(int clipIdx, float fDuration)
 
 void AITwinTimelineActor::SetPerFrameDuration(int clipIdx, float fPerFrameDuration)
 {
-	if (!Impl->IsReady())
+	if (!IsImplReady())
 		return;
 	auto clip = Impl->GetClip(clipIdx);
 	if (!clip || clip->GetKeyframeCount() == 0)
@@ -2288,17 +2749,21 @@ void AITwinTimelineActor::SetPerFrameDuration(int clipIdx, float fPerFrameDurati
 
 std::pair<int, float> AITwinTimelineActor::GetClipIdxAndTimeWithinSequence(float fSeqTime)
 {
-	std::pair<int, float> InvalidResult = { -1, 0.f };
-	if (!Impl->IsReady() || fSeqTime < 0)
-		return InvalidResult;
+	if (!IsImplReady())
+		return { -1, 0.f };
+
+	// During playback/export, camera-cut linking defines the effective clip layout.
+	// Use those start times first (they also correctly handle "single selected clip" mode).
+	if (Impl->CurrentCutTrackStartTimes_.Num() >= 2)
+	{
+		return ITwin::Timeline::GetClipIdxAndLocalTimeFromStartTimes(
+			Impl->CurrentCutTrackStartTimes_, fSeqTime);
+	}
+
+	// Fallback for non-linked contexts.
 	TArray<float> vStartTimes;
 	Impl->GetClipsStartTimes(vStartTimes, true);
-	for (size_t i(1); i < vStartTimes.Num(); i++)
-	{
-		if (fSeqTime < vStartTimes[i])
-			return { i-1, fSeqTime - vStartTimes[i-1] };
-	}
-	return InvalidResult;
+	return ITwin::Timeline::GetClipIdxAndLocalTimeFromStartTimes(vStartTimes, fSeqTime);
 }
 
 void AITwinTimelineActor::OnCameraCutHandler(UCameraComponent* CameraComponent)
@@ -2325,11 +2790,17 @@ void AITwinTimelineActor::OnCameraCutHandler(UCameraComponent* CameraComponent)
 			Impl->CurrentCutTrackCamera_ = nullptr;
 		}
 	}
+
+	AActor* CutCamera = CameraComponent ? CameraComponent->GetOwner() : nullptr;
+	if (IsImplReady())
+	{
+		Impl->ApplyPlaybackCameraOwnership(CutCamera);
+	}
 }
 
 bool AITwinTimelineActor::LinkClipsToCutTrack(int clipIdx/* = -1*/)
 {
-	if (!Impl->IsReady())
+	if (!IsImplReady())
 		return false;
 
 	auto& SeqHelper = *SequencerHelper;
@@ -2383,7 +2854,7 @@ bool AITwinTimelineActor::LinkClipsToCutTrack(int clipIdx/* = -1*/)
 
 bool AITwinTimelineActor::UnlinkClipsFromCutTrack()
 {
-	if (!Impl->IsReady())
+	if (!IsImplReady())
 		return false;
 
 	auto& SeqHelper = *SequencerHelper;
@@ -2400,6 +2871,7 @@ bool AITwinTimelineActor::UnlinkClipsFromCutTrack()
 			SeqHelper.ShiftClipKFs(clip->GetTracks(), -fStartTime);
 	}
 
+	Impl->DeactivateAllLookAtModifiers();
 	Impl->CurrentCutTrackStartTimes_.Empty();
 	Impl->PlaybackEndTime_ = -1.f;
 	return true;
@@ -2413,6 +2885,7 @@ bool AITwinTimelineActor::UnlinkClipsFromCutTrack()
 void AITwinTimelineActor::OnPlaybackStarted()
 {
 	Impl->pPlayer_->OnCameraCut.AddUniqueDynamic(this, &AITwinTimelineActor::OnCameraCutHandler);
+	Impl->bHasBoundOnCameraCut = true;
 	SetActorTickEnabled(true);
 }
 
@@ -2435,9 +2908,9 @@ void AITwinTimelineActor::SetTimelineSDK(const std::shared_ptr<AdvViz::SDK::ITim
 	Impl->timeline_ = p;
 }
 
-void AITwinTimelineActor::OnLoad()
+void AITwinTimelineActor::OnLoad(bool bUseGCS)
 {
-	Impl->OnLoad();
+	Impl->OnLoad(bUseGCS);
 	OnTimelineLoaded.Broadcast();
 	//when loading , the timeline is up to date
 	Impl->timeline_->SetShouldSaveRecursive(false);
@@ -2448,7 +2921,195 @@ void AITwinTimelineActor::ReinitPlayer()
 	Impl->CreatePlayer();
 }
 
-void ScreenUtils::SetCurrentView(UWorld* pWorld, const FVector& pos, const FRotator& rot)
+void AITwinTimelineActor::SetClipFollowTarget(int clipIdx, AITwinPopulation* Population, int32 InstanceIndex,
+	bool bFollowRotation /*= true*/,
+	TOptional<FTransform> const& ExplicitOffset /*= {}*/)
+{
+	if (!IsImplReady())
+		return;
+	Impl->SetClipFollowTarget(clipIdx, Population, InstanceIndex, bFollowRotation, ExplicitOffset);
+}
+
+void AITwinTimelineActor::ClearClipFollowTarget(int clipIdx)
+{
+	if (!IsImplReady())
+		return;
+	Impl->ClearClipFollowTarget(clipIdx);
+}
+
+bool AITwinTimelineActor::HasClipFollowTarget(int clipIdx) const
+{
+	if (!IsImplReady())
+		return false;
+	ClipData const* clip = Impl->GetClipConst(clipIdx);
+	// GetClipConst is const; the proxy getter must be const too (it is above).
+	return clip && clip->GetFollowProxy() != nullptr;
+}
+
+void AITwinTimelineActor::SetClipTrackingTarget(int clipIdx, AITwinPopulation* Population,
+												int32 InstanceIndex)
+{
+	if (!IsImplReady())
+		return;
+	Impl->SetClipTrackingTarget(clipIdx, Population, InstanceIndex);
+}
+
+void AITwinTimelineActor::ClearClipTrackingTarget(int clipIdx)
+{
+	if (!IsImplReady())
+		return;
+	Impl->ClearClipTracking(clipIdx);
+}
+
+bool AITwinTimelineActor::HasClipTrackingTarget(int clipIdx) const
+{
+	if (!Impl)
+		return false;
+	ClipData const* clip = Impl->GetClipConst(clipIdx);
+	// GetClipConst is const; the proxy getter must be const too (it is above).
+	return clip && clip->GetTrackingProxy() != nullptr;
+}
+
+void AITwinTimelineActor::SetClipTrackingInterpSpeed(int clipIdx, float Speed)
+{
+	if (!IsImplReady())
+		return;
+	if (ClipData* clip = Impl->GetClip(clipIdx))
+		if (auto* CineCam = Cast<ACineCameraActor>(clip->GetCamera()))
+			CineCam->LookatTrackingSettings.LookAtTrackingInterpSpeed = Speed;
+}
+
+//===================================================================================
+// TEMPORARY: FOR TESTING PURPOSES ONLY
+
+namespace
+{
+	//! Quick fix for existing vehicles.
+	//! Yaw bringing the vehicle meshes' authored forward axis onto the camera's. The population
+	//! meshes face +Y, whereas an Unreal camera looks down its local +X, so a camera placed with
+	//! an identity rotation inside the instance looks out of the side window.
+	constexpr float InstanceForwardYawDegrees = 90.f;
+
+	//! Camera placement inside an instance, in its own frame: roughly at eye height, slightly
+	//! ahead of the centre, i.e. a driver/cockpit view. Derived from the instance's bounds so
+	//! that it scales with the mesh instead of assuming car-sized metres.
+	FTransform MakeCockpitOffset(AITwinPopulation& Pop, int32 InstanceIndex)
+	{
+		FTransform const InstTM = Pop.GetInstanceTransform(InstanceIndex);
+		FBox const WorldBox = Pop.GetInstanceBoundingBox(InstanceIndex);
+		if (!WorldBox.IsValid)
+			return FTransform::Identity;
+
+		// GetInstanceBoundingBox works in world space: bring the extents back into the
+		// instance's frame, where X is forward and Z up.
+		FVector const LocalExtent =
+			InstTM.InverseTransformVector(WorldBox.GetExtent()).GetAbs();
+		FVector const LocalCenter =
+			InstTM.InverseTransformPosition(WorldBox.GetCenter());
+
+		// The body runs along the mesh's forward axis (+Y here), so the "ahead of centre" shift
+		// must use the Y extent, not X.
+		FVector const Seat(
+			LocalCenter.X,
+			LocalCenter.Y + 0.33f * LocalExtent.Y,
+			LocalCenter.Z + 0.40f * LocalExtent.Z);
+		return FTransform(FRotator(0.f, InstanceForwardYawDegrees, 0.f), Seat);
+	}
+
+	//! First population flagged as path-animated (the moving cars), with at least one instance.
+	AITwinPopulation* FindAnimatedPopulation(UWorld* World)
+	{
+		for (TActorIterator<AITwinPopulation> PopIter(World); PopIter; ++PopIter)
+		{
+			if ((*PopIter)->IsPartOfPathAnimation() && (*PopIter)->GetNumberOfInstances() > 0)
+				return *PopIter;
+		}
+		return nullptr;
+	}
+
+	//! First population that is *not* path-animated, to be used as a static point of interest.
+	//! Skips ExcludePop so that "follow the car and look at something else" cannot degenerate
+	//! into the car looking at itself.
+	AITwinPopulation* FindStaticPopulation(UWorld* World, AITwinPopulation const* ExcludePop)
+	{
+		for (TActorIterator<AITwinPopulation> PopIter(World); PopIter; ++PopIter)
+		{
+			if (*PopIter != ExcludePop && !(*PopIter)->IsPartOfPathAnimation()
+				&& (*PopIter)->GetNumberOfInstances() > 0)
+			{
+				return *PopIter;
+			}
+		}
+		return nullptr;
+	}
+}
+
+void AITwinTimelineActor::TrackSelectedInstance()
+{
+	const int32 ClipIdx = GetCurrentClipIndex();
+	if (ClipIdx < 0)
+		return;
+	for (TActorIterator<AITwinPopulation> PopIter(GetWorld()); PopIter; ++PopIter)
+	{
+		if ((*PopIter)->HasSelectedInstance())
+		{
+			SetClipTrackingTarget(ClipIdx, *PopIter, (*PopIter)->GetSelectedInstanceIndex());
+			break;
+		}
+	}
+}
+
+void AITwinTimelineActor::UntrackInstance()
+{
+	const int32 ClipIdx = GetCurrentClipIndex();
+	if (ClipIdx < 0)
+		return;
+	ClearClipTrackingTarget(ClipIdx);
+}
+
+void AITwinTimelineActor::DriveAnimatedInstance()
+{
+	const int32 ClipIdx = GetCurrentClipIndex();
+	if (ClipIdx < 0)
+		return;
+	AITwinPopulation* AnimPop = FindAnimatedPopulation(GetWorld());
+	if (!AnimPop)
+	{
+		BE_LOGW("Timeline", "No path-animated population with instances found");
+		return;
+	}
+	ClearClipTrackingTarget(ClipIdx); // look straight ahead, no look-at override
+	SetClipFollowTarget(ClipIdx, AnimPop, 0, /*bFollowRotation*/true,
+		MakeCockpitOffset(*AnimPop, 0));
+}
+
+void AITwinTimelineActor::FollowAnimatedInstance(bool bFollowRotation)
+{
+	const int32 ClipIdx = GetCurrentClipIndex();
+	if (ClipIdx < 0)
+		return;
+	AITwinPopulation* AnimPop = FindAnimatedPopulation(GetWorld());
+	if (!AnimPop)
+	{
+		BE_LOGW("Timeline", "No path-animated population with instances found");
+		return;
+	}
+	ClearClipTrackingTarget(ClipIdx); // pure third-person: no look-at override
+	SetClipFollowTarget(ClipIdx, AnimPop, 0, bFollowRotation);
+}
+
+void AITwinTimelineActor::UnfollowInstance()
+{
+	const int32 ClipIdx = GetCurrentClipIndex();
+	if (ClipIdx < 0)
+		return;
+	ClearClipFollowTarget(ClipIdx);
+}
+//===================================================================================
+
+
+void ScreenUtils::SetCurrentView(UWorld* pWorld, const FVector& pos, const FRotator& rot,
+	ESetViewMode Mode /*= AdoptPawnAsViewTarget*/)
 {
 	BE_ASSERT(pWorld != nullptr);
 	if (!pWorld)
@@ -2460,16 +3121,20 @@ void ScreenUtils::SetCurrentView(UWorld* pWorld, const FVector& pos, const FRota
 			Pawn->SetActorLocation(pos, false, nullptr, ETeleportType::TeleportPhysics);
 			pController->SetControlRotation(rot);
 			Pawn->SetActorRotation(rot);
-			pController->SetViewTargetWithBlend(Pawn);
+
+			if (Mode == ESetViewMode::AdoptPawnAsViewTarget)
+				pController->SetViewTargetWithBlend(Pawn);
 		}
-		if (auto pCamManager = pController->PlayerCameraManager)
+		auto pCamManager = pController->PlayerCameraManager;
+		if (pCamManager && Mode == ESetViewMode::AdoptPawnAsViewTarget)
 		{
 			pCamManager->UpdateCamera(pWorld->GetDeltaSeconds());
 		}
 	}
 }
 
-void ScreenUtils::SetCurrentView(UWorld* pWorld, const FTransform& ft, bool bVRMode)
+void ScreenUtils::SetCurrentView(UWorld* pWorld, const FTransform& ft, bool bVRMode,
+	ESetViewMode Mode /*= AdoptPawnAsViewTarget*/)
 {
 	BE_ASSERT(pWorld != nullptr);
 	if (!pWorld)
@@ -2481,7 +3146,7 @@ void ScreenUtils::SetCurrentView(UWorld* pWorld, const FTransform& ft, bool bVRM
 		rotation.Pitch = 0.0f;
 		rotation.Roll = 0.0f;
 	}
-	SetCurrentView(pWorld, FVector(ft.GetTranslation()), rotation);
+	SetCurrentView(pWorld, FVector(ft.GetTranslation()), rotation, Mode);
 }
 
 void ScreenUtils::GetCurrentView(UWorld* pWorld, FVector& pos, FRotator& rot)
@@ -2508,12 +3173,111 @@ FTransform ScreenUtils::GetCurrentViewTransform(UWorld* pWorld)
 {
 	BE_ASSERT(pWorld != nullptr);
 	if (!pWorld)
-		return {};
-	FVector pos;
-	FRotator rot;
+		return FTransform::Identity;
+	FVector pos = FVector::ZeroVector;
+	FRotator rot = FRotator::ZeroRotator;
 	ScreenUtils::GetCurrentView(pWorld, pos, rot);
 	BE_LOGV("Timeline", "Current view transform: "
 		<< "Rotation (" << rot.Yaw << ", " << rot.Pitch << ", " << rot.Roll
 		<< "), Position (" << pos.X << ", " << pos.Y << ", " << pos.Z << ")");
 	return FTransform(rot, pos, FVector(1, 1, 1));
 }
+
+void ScreenUtils::SetCurrentViewRotation(UWorld* World, const FRotator& Rot)
+{
+	// Unlike SetCurrentView(FTransform, bVRMode), this does not zero pitch/roll in VR, where
+	// they are owned by the HMD: look-at tracking would fight the headset. Gate the caller on
+	// VR mode if tracking is ever enabled there.
+	if (!World)
+		return;
+	if (APlayerController* pController = World->GetFirstPlayerController())
+	{
+		// Deliberately does NOT touch the pawn location, nor re-set the view target:
+		// doing so every frame fights the movement component (see SetCurrentView).
+		pController->SetControlRotation(Rot);
+		if (APawn* Pawn = pController->GetPawnOrSpectator())
+			Pawn->SetActorRotation(Rot);
+	}
+}
+
+#if WITH_EDITOR
+
+// Dev-only: make clip 0 track the currently selected population instance.
+static FAutoConsoleCommandWithWorldAndArgs FCmd_ITwinTrackSelectedInstance(
+	TEXT("cmd.ITwin_TrackSelectedInstance"),
+	TEXT("Track the selected instance."),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+{
+	if (auto* TimelineActor = TWorldSingleton<AITwinTimelineActor>().Get(World))
+		TimelineActor->TrackSelectedInstance();
+})
+);
+
+// Dev-only: counterpart of cmd.ITwin_TrackSelectedInstance, to test the cleanup path.
+static FAutoConsoleCommandWithWorldAndArgs FCmd_ITwinUntrackInstance(
+	TEXT("cmd.ITwin_UntrackInstance"),
+	TEXT("Stop the first timeline clip's camera from tracking an instance."),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+{
+	if (auto* TimelineActor = TWorldSingleton<AITwinTimelineActor>().Get(World))
+		TimelineActor->UntrackInstance();
+})
+);
+
+
+
+// Dev-only: third-person camera riding the first instance of the first path-animated population.
+// The offset is taken from the current view, so place yourself behind/inside the car first.
+static FAutoConsoleCommandWithWorldAndArgs FCmd_ITwinFollowAnimatedInstance(
+	TEXT("cmd.ITwin_FollowAnimatedInstance"),
+	TEXT("Make the first timeline clip's camera ride the first animated (path) instance. "
+		 "Optional arg: 0 to keep the current heading instead of turning with the vehicle."),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+{
+	if (auto* TimelineActor = TWorldSingleton<AITwinTimelineActor>().Get(World))
+	{
+		// Default to true: a camera embedded in the car is the common third-person case.
+		const bool bFollowRotation = Args.Num() < 1 || Args[0] != TEXT("0");
+		TimelineActor->FollowAnimatedInstance(bFollowRotation);
+	}
+})
+);
+
+// Dev-only: "passenger" case - the camera rides the car but keeps looking at a static instance.
+static FAutoConsoleCommandWithWorldAndArgs FCmd_ITwinFollowAnimatedAndLookAt(
+	TEXT("cmd.ITwin_FollowAnimatedAndLookAt"),
+	TEXT("Ride the first animated (path) instance while looking at a static instance."),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+{
+	if (auto* TimelineActor = TWorldSingleton<AITwinTimelineActor>().Get(World))
+	{
+		TimelineActor->FollowAnimatedInstance(/*bFollowRotation*/true);
+		TimelineActor->TrackSelectedInstance();
+	}
+})
+);
+
+// Dev-only: cockpit view - the camera sits inside the first animated instance and looks ahead,
+// instead of keeping the offset it had when follow was enabled.
+static FAutoConsoleCommandWithWorldAndArgs FCmd_ITwinDriveAnimatedInstance(
+	TEXT("cmd.ITwin_DriveAnimatedInstance"),
+	TEXT("Put the first timeline clip's camera inside the first animated (path) instance."),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+{
+	if (auto* TimelineActor = TWorldSingleton<AITwinTimelineActor>().Get(World))
+		TimelineActor->DriveAnimatedInstance();
+})
+);
+
+// Dev-only: counterpart of the two commands above, to test the cleanup path.
+static FAutoConsoleCommandWithWorldAndArgs FCmd_ITwinUnfollowInstance(
+	TEXT("cmd.ITwin_UnfollowInstance"),
+	TEXT("Stop the first timeline clip's camera from following an instance."),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+{
+	if (auto* TimelineActor = TWorldSingleton<AITwinTimelineActor>().Get(World))
+		TimelineActor->UnfollowInstance();
+})
+);
+
+#endif // WITH_EDITOR

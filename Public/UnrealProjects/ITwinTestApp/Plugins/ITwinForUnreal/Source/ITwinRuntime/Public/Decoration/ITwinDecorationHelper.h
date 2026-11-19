@@ -14,6 +14,7 @@
 #include <Templates/PimplPtr.h>
 
 #include <ITwinLoadInfo.h>
+#include <Content/ITwinComponentLoadState.h>
 
 #include <functional>
 #include <memory>
@@ -58,6 +59,8 @@ struct ITwinSceneInfo
 	std::optional<bool> Visibility;
 	std::optional<double> Quality;
 	std::optional<FTransform> Offset;
+	std::optional<double> Fov; // in degrees
+	std::optional<double> AspectRatio;
 };
 
 USTRUCT(BlueprintType)
@@ -198,6 +201,8 @@ public:
 		BlueprintSetter = SetNewScene)
 	bool bIsNewScene = false;
 
+	//! Sets whether the scene is in read-only mode (no edition allowed).
+	void SetReadOnlyMode(bool value);
 
 	//! Sets the decoration client mode. Can be used to customize the handling of decorations for specific
 	//! usages.
@@ -247,6 +252,10 @@ public:
 	//! Returns true if a scene was loaded.
 	bool HasLoadedScene() const;
 
+	//! Returns true if we are allowed to initialize GCS (in practice, as soon as we have loaded
+	//! the scene and its tags.
+	bool AllowInitGCS() const;
+
 #if WITH_TESTS
 	//! Used in automated tests, to reset the state of the decoration helper between tests.
 	void ResetLoadedScene();
@@ -284,6 +293,14 @@ public:
 	};
 	void SaveSceneWithOptions(FSaveRequestOptions const& Options);
 
+	//! Returns true if the saving of a scene is in progress.
+	bool IsSavingScene() const;
+	//! Returns the save session index for the current save operation (or the last save operation
+	//! if no save is in progress). This is used to identify which camera snapshots can be uploaded
+	//! at a given time.
+	int32 GetSaveSessionIndex() const;
+
+
 	bool IsVREnabled() const;
 
 	//! Permanently deletes all material customizations for current model (cannot be undone!)
@@ -296,6 +313,21 @@ public:
 	bool MountPak(const std::string & file, const std::string& id) const;
 	/// Returns true if the component with the given id still needs to be downloaded/mounted.
 	bool IsComponentDownloadPending(const FString& componentId) const;
+	/// All component attempt methods must be called on the game thread. Bare IDs and asset
+	/// paths are both accepted. A successful registration is never invalidated by a failure.
+	EITwinComponentLoadState GetComponentLoadState(const FString& idOrPath) const;
+	FString GetComponentLoadFailureReason(const FString& idOrPath) const;
+	uint64 GetComponentLoadGeneration(const FString& idOrPath) const;
+	bool IsCurrentComponentLoad(const FString& idOrPath, uint64 generation) const;
+	/// A failed attempt is restarted only when bRetry is explicitly true.
+	bool RequestComponentDownload(const FString& idOrPath, bool bRetry = false) const;
+	/// Removes a transient attempt without marking the component ready. Stale generations are ignored.
+	bool ClearComponentLoadAttempt(const FString& idOrPath, uint64 generation) const;
+	void ReportComponentLoadFailure(const FString& idOrPath, uint64 generation,
+		EITwinComponentLoadFailure failure, const FString& reason) const;
+	/// A failure is reported only after other in-flight attempts in the set have settled.
+	/// This says nothing about population actors or their instances.
+	EITwinComponentLoadWait GetComponentLoadWait(const TArray<FString>& assetPaths) const;
 	/// Registers the resolved object path produced when a component is added, keyed by the component id
 	/// (the download token returned by ShouldDownloadComponent). It is later used to create the population.
 	void SetComponentObjectPath(const FString& componentId, const FString& objectPath) const;
@@ -316,6 +348,11 @@ public:
 
 	AdvViz::SDK::ITwinSceneSettings GetSceneSettings() const;
 	void SetSceneSettings(const AdvViz::SDK::ITwinSceneSettings& as) const;
+
+	//! Returns true if the links in the scene should be automatically updated to use GCS (Geographic
+	//! Coordinate System) coordinates instead of local (Unreal) coordinates.
+	//! New scenes should enable this, but we need to handle legacy scenes appropriately.
+	bool UseGCSForLinks() const;
 
 	using ModelIdentifier = ITwin::ModelDecorationIdentifier;
 
@@ -348,6 +385,8 @@ public:
 
 	void SetHomeCamera(const FTransform&);
 	FTransform GetHomeCamera() const;
+	virtual std::optional<FTransform> GetMainCameraTransform() const;
+	virtual void TriggerCameraThumbnailUpdate(std::shared_ptr<AdvViz::SDK::ILink> const& CameraLink);
 
 	std::shared_ptr<AdvViz::SDK::IScenePersistence> GetScenePersistence() const;
 	FString GetSceneID() const;
@@ -384,7 +423,6 @@ protected:
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 #endif
 
-
 private:
 	UFUNCTION()
 	void OnIModelLoaded(bool bSuccess, FString StringId);
@@ -392,6 +430,8 @@ private:
 	void OnRealityDataLoaded(bool bSuccess, FString StringId);
 	void OnCloseRequested(FViewport* Viewport);
 	void InitContentManager();
+	virtual std::optional<bool> QuerySceneThumbnailOnServer(FString const& ITwinId, FString const& SceneId) const;
+	virtual void OnSceneSaved_GameThread(bool bSaved);
 
 
 	static std::optional<bool> bHasComponentCenterOpt;
@@ -407,8 +447,4 @@ private:
 
 	void Lock(SaveLockerImpl&);
 	void Unlock(SaveLockerImpl const&);
-	
-
-public:
-	void SetReadOnlyMode(bool value);
 };

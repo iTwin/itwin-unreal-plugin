@@ -936,6 +936,7 @@ private:
 	ITwinMaterialID SelectedMaterial = ITwin::NOT_MATERIAL;
 	/// How the highlight color of the current selection is displayed (see UpdateSelectionTint)
 	EITwinSelectionTintMode SelectionTintMode = EITwinSelectionTintMode::Blinking;
+	bool bSelectionCaptureSuppressed = false;
 	struct FSelectionTintTimer
 	{
 		double StartTime = 0.; ///< FPlatformTime::Seconds()

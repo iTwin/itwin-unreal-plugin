@@ -116,7 +116,14 @@ bool FSchedulesParse::ParseTaskDetails(TSharedPtr<FJsonObject> const& JsonObj,
 	auto bDeleted = Task.bDeleted;
 	JSON_GETDELETEDORFALSE(JsonObj, Task)
 	bool bUpdatedTaskAffects4DAnim = (bDeleted != Task.bDeleted);
-	// Using  "Best dates" (Actual if any, Planned otw) like Synchro/Pineapple/DesignReview
+	FString CalendarId;
+	JsonObj->TryGetStringField(TEXT("calendarId"), CalendarId);
+	if (Task.CalendarId != CalendarId)
+	{
+		Task.CalendarId = CalendarId;
+		bUpdatedTaskAffects4DAnim = true;
+	}
+	// Using  "Best dates" (Actual if any, Planned otw) like Pineapple/DesignReview
 	FDateTime Start, Finish, ActualStart, ActualFinish; FString StartStr, FinishStr;
 	bool bUsesActualDates = true;
 	bool bCouldParseDates =
@@ -293,6 +300,150 @@ bool FSchedulesParse::ParseGrowthSimulationMode(FString const& FromStr, EGrowthS
 		return true;
 	}
 	return false;
+}
+
+/// Parses a time of the day like "09:00" or "17:30:00" into a number of seconds since midnight ("24:00" is accepted
+/// as end of day). Full ISO-8601 date-times are also accepted, in which case only their time of the day is used.
+static bool ParseCalendarTimeOfDay(FString const& TimeStr, double& OutSeconds)
+{
+	TArray<FString> Parts;
+	TimeStr.TrimStartAndEnd().ParseIntoArray(Parts, TEXT(":"), /*InCullEmpty*/false);
+	if (Parts.Num() == 2 || Parts.Num() == 3)
+	{
+		auto const IsUnsignedInt = [](FString const& Str)
+			{
+				if (Str.IsEmpty())
+					return false;
+				for (TCHAR const Char : Str)
+					if (!FChar::IsDigit(Char))
+						return false;
+				return true;
+			};
+		if (IsUnsignedInt(Parts[0]) && IsUnsignedInt(Parts[1]))
+		{
+			int32 const Hours = FCString::Atoi(*Parts[0]);
+			int32 const Minutes = FCString::Atoi(*Parts[1]);
+			double const Seconds = (Parts.Num() == 3) ? FCString::Atod(*Parts[2]) : 0.;
+			double const Total = Hours * 3600. + Minutes * 60. + Seconds;
+			if (Minutes < 60 && Seconds >= 0. && Seconds < 60. && Total <= 86400.)
+			{
+				OutSeconds = Total;
+				return true;
+			}
+		}
+	}
+	FDateTime DateTime;
+	if (FDateTime::ParseIso8601(*TimeStr, DateTime))
+	{
+		OutSeconds = ITwin::Time::FromTimespan(DateTime.GetTimeOfDay());
+		return true;
+	}
+	return false;
+}
+
+/*static*/
+bool FSchedulesParse::ParseCalendar(TSharedPtr<FJsonObject> const& JsonObj, FCalendar& Calendar)
+{
+	FCalendar Parsed;
+	Parsed.Id = Calendar.Id;
+	JSON_GETDELETEDORFALSE(JsonObj, Parsed)
+	if (Parsed.bDeleted)
+	{
+		bool const bDiffer = (Calendar.bDeleted != Parsed.bDeleted);
+		Calendar.bDeleted = Parsed.bDeleted;
+		return bDiffer;
+	}
+	JsonObj->TryGetStringField(TEXT("name"), Parsed.Name);
+	JsonObj->TryGetStringField(TEXT("parentId"), Parsed.ParentId); // may be null
+	JSON_GETNUMBER_OR(JsonObj, "workingDaysPerWeek", Parsed.WorkingDaysPerWeek, return false)
+	JSON_GETNUMBER_OR(JsonObj, "workingSecondsPerDay", Parsed.WorkingSecondsPerDay, return false)
+
+	TArray<TSharedPtr<FJsonValue>> const* DayTypesArr = nullptr;
+	if (JsonObj->TryGetArrayField(TEXT("dayTypes"), DayTypesArr) && DayTypesArr)
+	{
+		Parsed.DayTypes.reserve(DayTypesArr->Num());
+		for (auto&& DayTypeVal : *DayTypesArr)
+		{
+			auto const& DayTypeObj = DayTypeVal->AsObject();
+			if (!DayTypeObj)
+				return false;
+			FCalendarDayType& DayType = Parsed.DayTypes.emplace_back();
+			JSON_GETSTR_OR(DayTypeObj, "id", DayType.Id, return false)
+			DayTypeObj->TryGetStringField(TEXT("description"), DayType.Description);
+			FString Str;
+			if (DayTypeObj->TryGetStringField(TEXT("color"), Str) && !Str.IsEmpty())
+				ParseColorFromHexString(Str, DayType.Color);
+			if (DayTypeObj->TryGetStringField(TEXT("type"), Str))
+			{
+				if (Str.Equals(TEXT("Normal"), ESearchCase::IgnoreCase))
+					DayType.Type = ECalendarDayType::Normal;
+				else if (Str.Equals(TEXT("NonWorking"), ESearchCase::IgnoreCase))
+					DayType.Type = ECalendarDayType::NonWorking;
+				else if (Str.Equals(TEXT("Partial"), ESearchCase::IgnoreCase))
+					DayType.Type = ECalendarDayType::Partial;
+				else
+					BE_LOGW("ITwin4DImp", "Unknown calendar day type: " << TCHAR_TO_UTF8(*Str));
+			}
+			TArray<TSharedPtr<FJsonValue>> const* BlocksArr = nullptr;
+			if (DayTypeObj->TryGetArrayField(TEXT("timeBlocks"), BlocksArr) && BlocksArr)
+			{
+				DayType.TimeBlocks.reserve(BlocksArr->Num());
+				for (auto&& BlockVal : *BlocksArr)
+				{
+					auto const& BlockObj = BlockVal->AsObject();
+					if (!BlockObj)
+						return false;
+					FCalendarTimeBlock& Block = DayType.TimeBlocks.emplace_back();
+					FString TimeStr;
+					JSON_GETSTR_OR(BlockObj, "startTime", TimeStr, return false)
+					if (!ParseCalendarTimeOfDay(TimeStr, Block.TimeBlock.first))
+					{
+						BE_LOGE("ITwin4DImp", "Invalid calendar time block startTime: " << TCHAR_TO_UTF8(*TimeStr));
+						return false;
+					}
+					JSON_GETSTR_OR(BlockObj, "endTime", TimeStr, return false)
+					if (!ParseCalendarTimeOfDay(TimeStr, Block.TimeBlock.second))
+					{
+						BE_LOGE("ITwin4DImp", "Invalid calendar time block endTime: " << TCHAR_TO_UTF8(*TimeStr));
+						return false;
+					}
+				}
+			}
+		}
+	}
+
+	TArray<TSharedPtr<FJsonValue>> const* ExceptionsArr = nullptr;
+	if (JsonObj->TryGetArrayField(TEXT("exceptions"), ExceptionsArr) && ExceptionsArr)
+	{
+		Parsed.Exceptions.reserve(ExceptionsArr->Num());
+		for (auto&& ExceptionVal : *ExceptionsArr)
+		{
+			auto const& ExceptionObj = ExceptionVal->AsObject();
+			if (!ExceptionObj)
+				return false;
+			FCalendarException& Exception = Parsed.Exceptions.emplace_back();
+			FString DateStr;
+			JSON_GETSTR_OR(ExceptionObj, "date", DateStr, return false)
+			FDateTime Date;
+			if (!FDateTime::ParseIso8601(*DateStr, Date))
+				return false;
+			Exception.Date = ITwin::Time::FromDateTime(Date);
+			JSON_GETSTR_OR(ExceptionObj, "dayTypeId", Exception.DayTypeId, return false)
+		}
+	}
+
+	TSharedPtr<FJsonObject> const* WeekObj = nullptr;
+	JSON_GETOBJ_OR(JsonObj, "week", WeekObj, return false)
+	// Same order as EDayOfWeek
+	static TCHAR const* const WeekFields[7] = {
+		TEXT("mondayDayTypeId"), TEXT("tuesdayDayTypeId"), TEXT("wednesdayDayTypeId"), TEXT("thursdayDayTypeId"),
+		TEXT("fridayDayTypeId"), TEXT("saturdayDayTypeId"), TEXT("sundayDayTypeId") };
+	for (size_t Day = 0; Day < 7; ++Day)
+		(*WeekObj)->TryGetStringField(WeekFields[Day], Parsed.WeekDayTypeIds[Day]);
+
+	bool const bDiffer = (Calendar != Parsed);
+	Calendar = std::move(Parsed);
+	return bDiffer;
 }
 
 /*static*/
@@ -500,6 +651,9 @@ bool FSchedulesParse::Parse3DPathAssignment(FPathTransformAssignment& PathAssign
 		}
 	}
 	JSON_GETBOOL_OR(JsonObj, "reverseDirection", PathAssignment.b3DPathReverseDirection, return false);
+	JSON_GETBOOL_OR(JsonObj, "pauseDuringNonWorkingTime", PathAssignment.bPauseDuringNonWorkingTime, return false);
+	JSON_GETBOOL_OR(JsonObj, "adjustForTaskPercentComplete", PathAssignment.bAdjustForTaskPercentComplete, \
+		return false);
 	JSON_GETNUMBER_OR(JsonObj, "motionStart", PathAssignment.MotionStart, PathAssignment.MotionStart = 0.);
 	JSON_GETNUMBER_OR(JsonObj, "motionEnd", PathAssignment.MotionEnd, PathAssignment.MotionEnd = 1.);
 	if (PathAssignment.MotionStart > PathAssignment.MotionEnd)

@@ -30,6 +30,7 @@
 #include <ITwinGoogle3DTileset.h>
 #include <ITwinIModel.h>
 #include <ITwinRealityData.h>
+#include <ITwinUtilityLibrary.h>
 #include <Material/ITwinMaterialLibrary.h>
 #include <Population/ITwinKeyframePath.h>
 #include <Population/ITwinPopulation.h>
@@ -303,69 +304,48 @@ namespace ITwin
 		return (const char*)StringCast<UTF8CHAR>(*fstring).Get();
 	}
 
-	static ITwinSceneInfo LinkToSceneInfo(const AdvViz::SDK::ILink& l)
+	//! Get the transform of a link if it has one.
+	ITWINRUNTIME_API std::optional<FTransform> GetLinkTransform(const AdvViz::SDK::ILink& l, bool bApplyGCS)
 	{
-		using namespace AdvViz::SDK;
+		if (l.HasTransform())
+		{
+			return FITwinMathConversion::SDKtoUE(l.GetTransform(),
+				bApplyGCS, EDegenerateScalePolicy::IgnoreRotation);
+		}
+		return {};
+	}
 
+	static ITwinSceneInfo LinkToSceneInfo(const AdvViz::SDK::ILink& l, bool bApplyGCS)
+	{
 		ITwinSceneInfo s;
-		if(l.HasQuality())
+		if (l.HasQuality())
 			s.Quality = l.GetQuality();
 		if (l.HasVisibility())
 			s.Visibility = l.GetVisibility();
-		FMatrix dstMat(FMatrix::Identity);
-		FVector dstPos;
-		if (l.HasTransform())
-		{
-			s.Offset = FTransform();
-			const dmat3x4& srcMat = l.GetTransform();
-			for (unsigned i = 0; i < 3; ++i)
-			{
-				for (unsigned j = 0; j < 3; ++j)
-				{
-					dstMat.M[j][i] = ColRow3x4(srcMat, i, j);
-				}
-			}
-			dstPos.X = ColRow3x4(srcMat, 0, 3);
-			dstPos.Y = ColRow3x4(srcMat, 1, 3);
-			dstPos.Z = ColRow3x4(srcMat, 2, 3);
-			auto scale = dstMat.ExtractScaling(0);
-			if (scale.X != 0 && scale.Y != 0 && scale.Z != 0)
-			{
-				s.Offset->SetFromMatrix(dstMat);
-			}
-			else
-			{
-				BE_LOGE("ITwinDecoration","Invalid transformation loaded, ignoring rotation");
-			}
-			s.Offset->SetTranslation(dstPos);
-		}
+		if (l.HasFov())
+			s.Fov = FMath::RadiansToDegrees(l.GetFov());
+		if (l.HasAspectRatio())
+			s.AspectRatio = l.GetAspectRatio();
+		s.Offset = GetLinkTransform(l, bApplyGCS);
 		return s;
 	}
 
-	static void SceneToLink(const ITwinSceneInfo& si, std::shared_ptr<AdvViz::SDK::ILink> l)
+	static void SceneToLink(const ITwinSceneInfo& si, AdvViz::SDK::ILinkPtr l, bool bApplyGCS)
 	{
 		if (si.Visibility.has_value())
 			l->SetVisibility(*si.Visibility);
 		if (si.Quality.has_value())
 			l->SetQuality(*si.Quality);
+		if (si.Fov.has_value())
+			l->SetFov(FMath::DegreesToRadians(*si.Fov));
+		if (si.AspectRatio.has_value())
+			l->SetAspectRatio(*si.AspectRatio);
 		if (si.Offset.has_value())
 		{
-			std::array<double, 12> dstTransform;
-			FMatrix srcMat = si.Offset->ToMatrixWithScale();
-			for (int32 i = 0; i < 3; ++i)
-			{
-				for (int32 j = 0; j < 3; ++j)
-				{
-					if(srcMat.M[j][i] == -0.0)
-						dstTransform[i * 4 + j] = 0.0;
-					else
-						dstTransform[i*4+j] = srcMat.M[j][i];
-				}
-			}
-			FVector srcPos = si.Offset->GetTranslation();
-			dstTransform[3] = srcPos.X;
-			dstTransform[7] = srcPos.Y;
-			dstTransform[11] = srcPos.Z;
+			AdvViz::SDK::dmat3x4 const dstTransform =
+				FITwinMathConversion::UEtoSDK(*si.Offset,
+				bApplyGCS,
+				ENegativeZeroPolicy::Normalize);
 			l->SetTransform(dstTransform);
 		}
 		l->Delete(false); // cancel delete
@@ -431,7 +411,10 @@ public:
 
 	bool IsLoadingScene() const { return RemainingLoadingSceneTasks > 0; }
 	bool HasLoadedScene() const { return bHasLoadedScene; }
+	bool AllowInitGCS() const { return bAllowInitGCS; }
+
 	bool IsSavingScene() const { return bIsSavingScene; }
+	int32 GetSaveSessionIndex() const { return SaveSessionIndex; }
 
 #if WITH_TESTS
 	void ResetLoadedScene();
@@ -449,6 +432,10 @@ public:
 
 	bool ShouldSaveScene() const;
 	void SaveScene(FSaveRequestOptions const& opts);
+
+	void SetHasSceneThumbnail(bool bHasThumbnail) { bHasSceneThumbnail = bHasThumbnail; }
+
+	bool UseGCSForLinks() const { return bUseGCSForLinks; }
 
 	// Ask confirmation if the task is taking too long - return true if the user confirmed the abortion.
 	bool ShouldAbort();
@@ -493,7 +480,9 @@ private:
 	void OnSceneLoad_GameThread(bool bSuccess);
 
 	void PreSaveCameras();
-	void LoadCameras();
+
+	//! Apply the camera that was saved in the scene, if any. Return true if a camera was applied.
+	bool ApplyLoadedCamera();
 
 	void FinishedALoadingTask()
 	{
@@ -511,15 +500,23 @@ public:
 	EITwinDecorationClientMode ClientMode = EITwinDecorationClientMode::Unknown;
 	std::weak_ptr<SaveLocker> saveLocker;
 	bool ReadOnly = false;
-
+	// Pending geo-location to set (postponed until the scene is loaded, as GCS must be initialized
+	// *after* the scene tags are retrieved, for compatibility with scenes created before the
+	// ENGAGE tag, typically).
+	std::optional<FVector> PendingLatLongHeight = std::nullopt;
 private:
 	bool bPopulationEnabled = false;
 	bool bMaterialEditionEnabled = false;
 	
 	std::atomic_int RemainingLoadingSceneTasks = 0;
 	std::atomic_bool bHasLoadedScene = false;
+	// Only true when the scene definition has been loaded (including tags).
+	std::atomic_bool bAllowInitGCS = false;
 	std::atomic_bool bIsSavingScene = false;
+	int32 SaveSessionIndex = -1;
 	std::shared_ptr<std::atomic_bool> IsThisValid = std::make_shared<std::atomic_bool>(true);
+	bool bHasSceneThumbnail = false;
+	bool bUseGCSForLinks = false;
 
 	std::atomic<EAsyncContext> CurrentContext = EAsyncContext::None;
 
@@ -672,6 +669,7 @@ void AITwinDecorationHelper::FImpl::AsyncLoadScene()
 	RemainingLoadingSceneTasks = 1;
 	CurrentContext = EAsyncContext::Load;
 	bHasLoadedScene = false;
+	bUseGCSForLinks = false;
 	ResetTicker();
 
 	auto DecoIO = GetDecorationAsyncIOHelper();
@@ -690,7 +688,7 @@ void AITwinDecorationHelper::FImpl::AsyncLoadScene()
 	// but refactoring was faster keeping the smart pointer semantics instead of converting to raw ptrs.
 	TWeakObjectPtr<AITwinDecorationHelper> ownerPtr(&Owner);
 
-	// Start LoadScenes on background thread
+	// Start LoadScene on background thread
 	AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask,
 		[DecoIO, timelineActorPtr, bHasTimeline, ownerPtr]()
 	{
@@ -729,7 +727,11 @@ void AITwinDecorationHelper::FImpl::AsyncLoadScene()
 					AITwinTimelineActor* tla = (AITwinTimelineActor*)UGameplayStatics::GetActorOfClass(
 						This->Owner.GetWorld(), AITwinTimelineActor::StaticClass());
 					if (tla)
-						tla->OnLoad();
+					{
+						// Note that the GCS boolean is set just above, in OnSceneLoad_GameThread.
+						// Never move this call before OnSceneLoad_GameThread...
+						tla->OnLoad(This->UseGCSForLinks());
+					}
 
 					// load in parallel:
 
@@ -750,6 +752,7 @@ void AITwinDecorationHelper::FImpl::ResetLoadedScene()
 	if (bHasLoadedScene)
 	{
 		bHasLoadedScene = false;
+		bUseGCSForLinks = false;
 		auto DecoIO = GetDecorationAsyncIOHelper();
 		if (DecoIO && DecoIO->scene)
 		{
@@ -1121,11 +1124,30 @@ void AITwinDecorationHelper::FImpl::SaveScene(FSaveRequestOptions const& opts)
 		return;
 	}
 	bIsSavingScene = true;
+	SaveSessionIndex++;
 	bIsDeletingCustomMaterials = opts.bUponCustomMaterialsDeletion;
 	OnSceneSavedCallback = opts.OnSceneSavedCallback;
 	CurrentContext = EAsyncContext::Save;
 
-	if(bSomethingToSave)
+	// Store current viewport aspect ratio as default camera aspect ratio, if any.
+	// This is only used if the camera links in the scene have no aspect ratio set (which is the
+	// case for old scenes).
+	if (auto const Aspect = UITwinUtilityLibrary::GetViewportAspectRatio())
+	{
+		AdvViz::SDK::ScenePersistenceAPI::SetDefaultCameraAspectRatio(*Aspect);
+	}
+
+	// For save/auto-save, requests are build in the game thread to avoid threading issues if the user
+	// modifies some data being written. Then requests are run in an asynchronous way (using the AsyncXXX
+	// versions of AdvViz::SDK::Http)
+	auto DecoIO = GetDecorationAsyncIOHelper();
+
+	if (bSomethingToSave && DecoIO)
+	{
+		DecoIO->OnStartSave();
+	}
+
+	if (bSomethingToSave)
 		PreSaveCameras();
 
 	ResetTicker();
@@ -1133,10 +1155,6 @@ void AITwinDecorationHelper::FImpl::SaveScene(FSaveRequestOptions const& opts)
 	ConfirmOccurrences = 0;
 	ConfirmAbortMsg = ITwinMsg::GetConfirmAbortSaveMsg();
 
-	// For save/auto-save, requests are build in the game thread to avoid threading issues if the user
-	// modifies some data being written. Then requests are run in an asynchronous way (using the AsyncXXX
-	// versions of AdvViz::SDK::Http)
-	auto DecoIO = GetDecorationAsyncIOHelper();
 	bSomethingToSave = bSomethingToSave && DecoIO &&
 		DecoIO->AsyncSave(
 			[this,
@@ -1680,6 +1698,11 @@ void AITwinDecorationHelper::InitContentManager()
 	FITwinMaterialLibrary::InitPaths(*this);
 }
 
+std::optional<bool> AITwinDecorationHelper::QuerySceneThumbnailOnServer(FString const& ITwinId, FString const& SceneId) const
+{
+	return {};
+}
+
 void AITwinDecorationHelper::LoadScene()
 {
 	if (!ensure(Impl->HasITwinID()))
@@ -1691,6 +1714,12 @@ void AITwinDecorationHelper::LoadScene()
 	RegisterWaitableLoadEvent(std::make_unique<ITwin::FITwinGeolocInfoEvent>());
 
 	InitContentManager();
+
+	// Test if the scene already has a thumbnail on the server: if not, we will upload the scene
+	// thumbnail upon next save (if thumbnail upload is supported).
+	auto const HasThumbnailOpt = QuerySceneThumbnailOnServer(
+		GetLoadedITwinId(), LoadedSceneId);
+	Impl->SetHasSceneThumbnail(HasThumbnailOpt.value_or(false));
 
 	// This will start the asynchronous loading of materials, populations...
 	Impl->StartLoadingDecoration(GetWorld());
@@ -1713,6 +1742,11 @@ bool AITwinDecorationHelper::IsLoadingScene() const
 bool AITwinDecorationHelper::HasLoadedScene() const
 {
 	return Impl->HasLoadedScene();
+}
+
+bool AITwinDecorationHelper::AllowInitGCS() const
+{
+	return Impl->AllowInitGCS();
 }
 
 #if WITH_TESTS
@@ -1818,6 +1852,20 @@ void AITwinDecorationHelper::SaveSceneWithOptions(FSaveRequestOptions const& Opt
 	Impl->SaveScene(Options);
 }
 
+bool AITwinDecorationHelper::IsSavingScene() const
+{
+	return Impl->IsSavingScene();
+}
+
+int32 AITwinDecorationHelper::GetSaveSessionIndex() const
+{
+	return Impl->GetSaveSessionIndex();
+}
+
+void AITwinDecorationHelper::OnSceneSaved_GameThread(bool bSaved)
+{
+}
+
 void AITwinDecorationHelper::FImpl::OnDecorationSaved_GameThread(bool bSaved, bool bHasResetMaterials)
 {
 	Owner.OnSceneSaved.Broadcast(bSaved);
@@ -1830,8 +1878,10 @@ void AITwinDecorationHelper::FImpl::OnDecorationSaved_GameThread(bool bSaved, bo
 			IModelIter->ReloadCustomizedMaterials();
 		}
 	}
+	Owner.OnSceneSaved_GameThread(bSaved);
+
 	// Execute custom save callback, if any (used when iTwin Studio requests closing Unreal, or when a
-	// regular save is performed)
+	// regular save is performed).
 	if (OnSceneSavedCallback)
 	{
 		OnSceneSavedCallback(bSaved);
@@ -1914,8 +1964,7 @@ void AITwinDecorationHelper::OnIModelLoaded(bool bSuccess, FString StringId)
 						return;
 					TUniquePtr<FITwinTilesetAccess> TilesetAccess = Model->MakeTilesetAccess();
 
-
-					auto si = ITwin::LinkToSceneInfo(*linkPtr);
+					auto si = ITwin::LinkToSceneInfo(*linkPtr, SThis->UseGCSForLinks());
 					TilesetAccess->ApplyLoadedInfo(si, true);
 				});
 		}
@@ -1951,7 +2000,7 @@ void AITwinDecorationHelper::OnRealityDataLoaded(bool bSuccess, FString StringId
 						return;
 					TUniquePtr<FITwinTilesetAccess> TilesetAccess = RealityData->MakeTilesetAccess();
 
-					auto si = ITwin::LinkToSceneInfo(*linkPtr);
+					auto si = ITwin::LinkToSceneInfo(*linkPtr, SThis->UseGCSForLinks());
 					TilesetAccess->ApplyLoadedInfo(si, true);
 				});
 		}
@@ -1962,6 +2011,25 @@ void AITwinDecorationHelper::OnRealityDataLoaded(bool bSuccess, FString StringId
 
 void AITwinDecorationHelper::FImpl::OnSceneLoad_GameThread(bool bSuccess)
 {
+	// Now that the scene has been loaded, we can look for the ENGAGE tag to know whether we apply
+	// the fix if matrix composition in the GCS.
+	this->bAllowInitGCS = true;
+
+	if (bSuccess)
+	{
+		// See if the scene has the ENGAGE tag to determine if we apply GCS or not.
+		// Old scenes (created before the ENGAGE tag was added) will not have it, and thus will not
+		// use GCS for links.
+		// For scenes created outside of ENGAGE, we will rely on the creation date (less accurate...)
+		this->bUseGCSForLinks = ensure(DecorationIO) && DecorationIO->UseGCSForCameras();
+	}
+	if (PendingLatLongHeight)
+	{
+		// If we have a pending LatLongHeight, apply it now that the scene has been loaded.
+		if (DecorationIO)
+			DecorationIO->SetDecoGeoreference(*PendingLatLongHeight);
+		PendingLatLongHeight.reset();
+	}
 	// The atmosphere must be updated *before* the manager, or else the handling of geo-location could
 	// make use overwrite the atmosphere settings just read! This is a quick fix for ADO#2139590, which was a
 	// regression in LA7. It worked before by pure chance, just because of the order of execution of
@@ -1987,7 +2055,7 @@ void AITwinDecorationHelper::FImpl::OnSceneLoad_GameThread(bool bSuccess)
 		auto iter = linkslock->find(key);
 		if (iter != linkslock->end())
 		{
-			auto si = ITwin::LinkToSceneInfo(*iter->second);
+			auto si = ITwin::LinkToSceneInfo(*iter->second, UseGCSForLinks());
 			IModelIter->MakeTilesetAccess()->ApplyLoadedInfo(si, false);
 			IModelIter->OnIModelLoaded.AddUniqueDynamic(&Owner, &AITwinDecorationHelper::OnIModelLoaded);
 		}
@@ -1998,13 +2066,13 @@ void AITwinDecorationHelper::FImpl::OnSceneLoad_GameThread(bool bSuccess)
 		auto iter = linkslock->find(key);
 		if (iter != linkslock->end())
 		{
-			auto si = ITwin::LinkToSceneInfo(*iter->second);
+			auto si = ITwin::LinkToSceneInfo(*iter->second, UseGCSForLinks());
 			IReallIter->MakeTilesetAccess()->ApplyLoadedInfo(si, false);
 			IReallIter->OnRealityDataLoaded.AddUniqueDynamic(&Owner, &AITwinDecorationHelper::OnRealityDataLoaded);
 		}
 	}
 
-	LoadCameras();
+	ApplyLoadedCamera();
 }
 
 AITwinPopulation* AITwinDecorationHelper::GetPopulation(FString assetPath, const AdvViz::SDK::RefID& groupId) const
@@ -2055,15 +2123,67 @@ bool AITwinDecorationHelper::MountPak(const std::string& file, const std::string
 {
 	if (!iTwinContentManager)
 		return false;
-	iTwinContentManager->MountPak(UTF8_TO_TCHAR(file.c_str()), UTF8_TO_TCHAR(id.c_str()));
-	return true;
+	return iTwinContentManager->MountPak(UTF8_TO_TCHAR(file.c_str()), UTF8_TO_TCHAR(id.c_str()));
 }
 
 bool AITwinDecorationHelper::IsComponentDownloadPending(const FString& componentId) const
 {
-	if (!iTwinContentManager)
-		return false;
-	return !iTwinContentManager->ShouldDownloadComponent(componentId).IsEmpty();
+	const EITwinComponentLoadState state = GetComponentLoadState(componentId);
+	return state != EITwinComponentLoadState::NotComponent && state != EITwinComponentLoadState::Ready;
+}
+
+EITwinComponentLoadState AITwinDecorationHelper::GetComponentLoadState(const FString& idOrPath) const
+{
+	return iTwinContentManager ? iTwinContentManager->GetComponentLoadState(idOrPath)
+		: EITwinComponentLoadState::NotComponent;
+}
+
+FString AITwinDecorationHelper::GetComponentLoadFailureReason(const FString& idOrPath) const
+{
+	return iTwinContentManager ? iTwinContentManager->GetComponentLoadFailureReason(idOrPath) : FString();
+}
+
+uint64 AITwinDecorationHelper::GetComponentLoadGeneration(const FString& idOrPath) const
+{
+	return iTwinContentManager ? iTwinContentManager->GetComponentLoadGeneration(idOrPath) : 0;
+}
+
+bool AITwinDecorationHelper::IsCurrentComponentLoad(const FString& idOrPath, uint64 generation) const
+{
+	return iTwinContentManager && iTwinContentManager->IsCurrentComponentLoad(idOrPath, generation);
+}
+
+bool AITwinDecorationHelper::RequestComponentDownload(const FString& idOrPath, bool bRetry) const
+{
+	return iTwinContentManager && iTwinContentManager->RequestComponentDownload(idOrPath, bRetry);
+}
+
+bool AITwinDecorationHelper::ClearComponentLoadAttempt(const FString& idOrPath, uint64 generation) const
+{
+	return iTwinContentManager && iTwinContentManager->ClearComponentLoadAttempt(idOrPath, generation);
+}
+
+void AITwinDecorationHelper::ReportComponentLoadFailure(const FString& idOrPath, uint64 generation,
+	EITwinComponentLoadFailure failure, const FString& reason) const
+{
+	if (iTwinContentManager)
+		iTwinContentManager->ReportComponentLoadFailure(idOrPath, generation, failure, reason);
+}
+
+EITwinComponentLoadWait AITwinDecorationHelper::GetComponentLoadWait(const TArray<FString>& assetPaths) const
+{
+	bool bFailed = false;
+	bool bInFlight = false;
+	for (const FString& assetPath : assetPaths)
+	{
+		const EITwinComponentLoadState state = GetComponentLoadState(assetPath);
+		bInFlight |= state == EITwinComponentLoadState::InFlight;
+		bFailed |= state == EITwinComponentLoadState::RetryableFailure
+			|| state == EITwinComponentLoadState::TerminalFailure;
+	}
+	if (bInFlight)
+		return EITwinComponentLoadWait::InFlight;
+	return bFailed ? EITwinComponentLoadWait::Failed : EITwinComponentLoadWait::NoFailures;
 }
 
 void AITwinDecorationHelper::SetComponentObjectPath(const FString& componentId, const FString& objectPath) const
@@ -2096,6 +2216,10 @@ AITwinPopulation* AITwinDecorationHelper::CreatePopulation(FString assetPath, co
 		FString componentId = iTwinContentManager->ShouldDownloadComponent(assetPath);
 		if (!componentId.IsEmpty())
 		{
+			const EITwinComponentLoadState state = iTwinContentManager->GetComponentLoadState(componentId);
+			if (state == EITwinComponentLoadState::TerminalFailure
+				|| state == EITwinComponentLoadState::RetryableFailure)
+				return nullptr;
 			if (!iTwinContentManager->DownloadedComponent(componentId))
 			{
 				BE_LOGE("ContentHelper", "Failed to request component download: " << TCHAR_TO_UTF8(*componentId));
@@ -2106,7 +2230,9 @@ AITwinPopulation* AITwinDecorationHelper::CreatePopulation(FString assetPath, co
 			TWeakObjectPtr<AITwinDecorationHelper> weakOwner(const_cast<AITwinDecorationHelper*>(this));
 			std::string const delayedCallId =
 				"RetryPopulation_"
-				+ std::string(TCHAR_TO_UTF8(*componentId))
+				+ std::to_string(GetUniqueID())
+				+ "_"
+				+ std::string(TCHAR_TO_UTF8(*assetPath))
 				+ "_"
 				+ std::to_string(groupId.ID());
 
@@ -2118,12 +2244,11 @@ AITwinPopulation* AITwinDecorationHelper::CreatePopulation(FString assetPath, co
 						return AdvViz::SDK::DelayedCall::EReturnedValue::Done;
 					}
 
-					if (!weakOwner->iTwinContentManager->ShouldDownloadComponent(assetPath).IsEmpty())
-					{
+					const EITwinComponentLoadState state = weakOwner->GetComponentLoadState(componentId);
+					if (state == EITwinComponentLoadState::InFlight)
 						return AdvViz::SDK::DelayedCall::EReturnedValue::Repeat;
-					}
-
-					weakOwner->Impl->CreateOrRefreshPopulationInGame(assetPath, groupId);
+					if (state == EITwinComponentLoadState::Ready)
+						weakOwner->Impl->CreateOrRefreshPopulationInGame(assetPath, groupId);
 
 					return AdvViz::SDK::DelayedCall::EReturnedValue::Done;
 				},
@@ -2274,6 +2399,11 @@ void AITwinDecorationHelper::SetSceneSettings(const AdvViz::SDK::ITwinSceneSetti
 		Impl->DecorationIO->scene->SetSceneSettings(as);
 }
 
+bool AITwinDecorationHelper::UseGCSForLinks() const
+{
+	return Impl->UseGCSForLinks();
+}
+
 void AITwinDecorationHelper::GetSceneInfoThen(const ModelIdentifier& Key,
 	std::function<void(ITwinSceneInfo)>&& InCallback) const
 {
@@ -2284,19 +2414,19 @@ void AITwinDecorationHelper::GetSceneInfoThen(const ModelIdentifier& Key,
 			auto linkslock = Impl->DecorationIO->links.GetRAutoLock();
 			auto iter = linkslock->find(Key);
 			if (iter != linkslock->end())
-				SceneInfo = ITwin::LinkToSceneInfo(*iter->second);
+				SceneInfo = ITwin::LinkToSceneInfo(*iter->second, UseGCSForLinks());
 		}
 	}
 	InCallback(SceneInfo);
 }
 
-std::shared_ptr<AdvViz::SDK::ILink> AITwinDecorationHelper::GetRawSceneInfoSynchronous(const ModelIdentifier& Key) const
+AdvViz::SDK::ILinkPtr AITwinDecorationHelper::GetRawSceneInfoSynchronous(const ModelIdentifier& Key) const
 {
 	auto linkslock = this->Impl->DecorationIO->links.GetRAutoLock();
 	auto iter = linkslock->find(Key);
 	if (iter != linkslock->end())
 		return iter->second;
-	return std::shared_ptr<AdvViz::SDK::ILink>();
+	return {};
 }
 
 void AITwinDecorationHelper::SetSceneInfo(const ModelIdentifier& Key, const ITwinSceneInfo& si) const
@@ -2306,14 +2436,14 @@ void AITwinDecorationHelper::SetSceneInfo(const ModelIdentifier& Key, const ITwi
 		TWeakObjectPtr<AITwinDecorationHelper> SThis(const_cast<AITwinDecorationHelper*>(this));
 		auto linkslock = SThis->Impl->DecorationIO->links.GetRAutoLock();
 		auto iter = linkslock->find(Key);
-		std::shared_ptr<AdvViz::SDK::ILink> sp;
+		AdvViz::SDK::ILinkPtr sp;
 		if (iter == linkslock->end())
 			sp = SThis->Impl->DecorationIO->CreateLink(Key);
 		else
 			sp = iter->second;
 		if (sp)
 		{
-			ITwin::SceneToLink(si, sp);
+			ITwin::SceneToLink(si, sp, UseGCSForLinks());
 		}
 	}
 }
@@ -2324,9 +2454,9 @@ void AITwinDecorationHelper::CreateLinkIfNeeded(EITwinModelType ct, const FStrin
 	if (Impl->DecorationIO && Impl->DecorationIO->scene)
 	{
 		Impl->DecorationIO->CreateLinkIfNeeded(Key,
-			[](FDecorationAsyncIOHelper::LinkSharedPtr sp)
+			[bUseGCS = UseGCSForLinks()](FDecorationAsyncIOHelper::LinkSharedPtr sp)
 		{
-			ITwin::SceneToLink(ITwinSceneInfo(), sp);
+			ITwin::SceneToLink(ITwinSceneInfo(), sp, bUseGCS);
 		});
 	}
 }
@@ -2351,6 +2481,11 @@ void AITwinDecorationHelper::BeginPlay()
 	if (ensure(GEngine && GEngine->GameViewport))
 	{
 		GEngine->GameViewport->OnCloseRequested().AddUObject(this, &AITwinDecorationHelper::OnCloseRequested);
+	}
+	// Store current viewport aspect ratio as default camera aspect ratio, if any.
+	if (auto const Aspect = UITwinUtilityLibrary::GetViewportAspectRatio())
+	{
+		AdvViz::SDK::ScenePersistenceAPI::SetDefaultCameraAspectRatio(*Aspect);
 	}
 }
 
@@ -2414,57 +2549,80 @@ void AITwinDecorationHelper::FImpl::DeleteAllCustomMaterials()
 	}
 }
 
-void AITwinDecorationHelper::FImpl::PreSaveCameras()
+namespace
 {
-	if (!DecorationIO || !DecorationIO->scene)
-		return;
-	auto* PlayerController = Owner.GetWorld()->GetFirstPlayerController();
-
-	if (PlayerController)
+	AdvViz::SDK::ILinkPtr FindCameraLinkByRef(AdvViz::SDK::IScenePersistence const& scene,
+		const std::string_view& Ref,
+		bool bRequireTransform = false)
 	{
-		ITwinSceneInfo si;
-		si.Offset = ScreenUtils::GetCurrentViewTransform(Owner.GetWorld());
-		std::shared_ptr<AdvViz::SDK::ILink> clink;
-		for (auto link : DecorationIO->scene->GetLinks())
+		for (auto link : scene.GetLinks())
 		{
-			if (link->GetType() == "camera" && link->GetRef() == "Main Camera")
+			if (link->GetType() == "camera" && link->GetRef() == Ref)
 			{
-				clink = link;
-				break;
+				if (!bRequireTransform || link->HasTransform())
+				{
+					return link;
+				}
 			}
 		}
+		return {};
+	}
+}
+
+void AITwinDecorationHelper::FImpl::PreSaveCameras()
+{
+	using namespace AdvViz::SDK;
+
+	if (!DecorationIO || !DecorationIO->scene)
+		return;
+
+	auto MainCameraTransform = Owner.GetMainCameraTransform();
+	if (MainCameraTransform)
+	{
+		ITwinSceneInfo si;
+		si.Offset = *MainCameraTransform;
+		si.Fov = UITwinUtilityLibrary::GetCameraFOV(); // degrees
+		si.AspectRatio = UITwinUtilityLibrary::GetViewportAspectRatio();
+		auto clink = FindCameraLinkByRef(*DecorationIO->scene, MAIN_CAMERA_REF);
 		if (!clink)
 		{
 			clink = DecorationIO->scene->MakeLink();
 			DecorationIO->scene->AddLink(clink);
 			clink->SetType("camera");
-			clink->SetRef("Main Camera");
+			clink->SetRef(MAIN_CAMERA_REF);
 		}
-		ITwin::SceneToLink(si, clink);
+		ITwin::SceneToLink(si, clink, UseGCSForLinks());
+		// For now, there is no need to generate a thumbnail for the main camera (we don't need it in Engage,
+		// nor does the itwin-viewer when loading a scene: they recompute it from their own renderer).
+		//Owner.TriggerCameraThumbnailUpdate(clink);
 	}
 	TArray<AActor*> PlayerStarts;
 	UGameplayStatics::GetAllActorsOfClass(Owner.GetWorld(), APlayerStart::StaticClass(), PlayerStarts);
 	if (!PlayerStarts.IsEmpty())
 	{
-
 		ITwinSceneInfo si;
 		si.Offset = PlayerStarts[0]->GetActorTransform();
-		std::shared_ptr<AdvViz::SDK::ILink> clink;
-		for (auto link : DecorationIO->scene->GetLinks())
-		{
-			if (link->GetType() == "camera" && link->GetRef() =="Home Camera") 
-			{
-				clink = link;
-				break;
-			}
-		}
+		si.Fov = UITwinUtilityLibrary::GetCameraFOV(); // degrees
+		si.AspectRatio = UITwinUtilityLibrary::GetViewportAspectRatio();
+		auto clink = FindCameraLinkByRef(*DecorationIO->scene, HOME_CAMERA_REF);
 		if (!clink)
 		{
 			clink = DecorationIO->scene->MakeLink();
 			DecorationIO->scene->AddLink(clink);
 			clink->SetType("camera");
-			clink->SetRef("Home Camera");
-			ITwin::SceneToLink(si, clink); //save only if not exist ( otherwise it is already set )
+			clink->SetRef(HOME_CAMERA_REF);
+			ITwin::SceneToLink(si, clink, UseGCSForLinks()); //save only if not exist ( otherwise it is already set )
+			Owner.TriggerCameraThumbnailUpdate(clink);
+		}
+		else if (!this->bHasSceneThumbnail)
+		{
+			// if the home camera already exists, but was saved before thumbnail upload was implemented,
+			// generate the thumbnail now.
+			Owner.TriggerCameraThumbnailUpdate(clink);
+			// Consider that the upload will succeed, to avoid re-triggering it on next save (which is
+			// a bit disturbing because the view will quickly change to the home camera, then back
+			// to the main camera).
+			this->bHasSceneThumbnail = true;
 		}
 	}
 }
@@ -2474,35 +2632,29 @@ bool AITwinDecorationHelper::FImpl::IsVREnabled() const
 	return GEngine && GEngine->XRSystem.IsValid();
 }
 
-void AITwinDecorationHelper::FImpl::LoadCameras()
+bool AITwinDecorationHelper::FImpl::ApplyLoadedCamera()
 {
-	bool homeC = false;
-	bool mainC = false;
-	std::shared_ptr<AdvViz::SDK::ILink> clink;
-	for (auto link : DecorationIO->scene->GetLinks())
+	if (!DecorationIO || !DecorationIO->scene)
 	{
-		if (link->GetType() == "camera" && link->GetRef() == "Home Camera")
+		BE_ISSUE("no scene to load cameras from");
+		return false;
+	}
+	// Look for Main and Home camera in that order.
+	for (auto const Ref : { AdvViz::SDK::MAIN_CAMERA_REF, AdvViz::SDK::HOME_CAMERA_REF })
+	{
+		auto const CameraLink = FindCameraLinkByRef(*DecorationIO->scene, Ref, true /*needTransform*/);
+		if (CameraLink)
 		{
-			auto si = ITwin::LinkToSceneInfo(*link);
-			if (si.Offset.has_value())
+			auto si = ITwin::LinkToSceneInfo(*CameraLink, UseGCSForLinks());
+			// Should always have a transform, but just in case, check it.
+			if (ensure(si.Offset.has_value()))
 			{
-				homeC = true;
-			}
-		}
-		if (link->GetType() == "camera" && link->GetRef() == "Main Camera")
-		{
-			auto si = ITwin::LinkToSceneInfo(*link);
-			if (si.Offset.has_value())
-			{
-				ScreenUtils::SetCurrentView(Owner.GetWorld(),*si.Offset, IsVREnabled());
-				mainC = true;
+				ScreenUtils::SetCurrentView(Owner.GetWorld(), *si.Offset, IsVREnabled());
+				return true;
 			}
 		}
 	}
-	if (homeC && !mainC)
-	{
-		ScreenUtils::SetCurrentView(Owner.GetWorld(), Owner.GetHomeCamera(), IsVREnabled());
-	}
+	return false;
 }
 
 bool AITwinDecorationHelper::IsVREnabled() const
@@ -2566,36 +2718,38 @@ void AITwinDecorationHelper::SetHomeCamera(const FTransform& ft)
 {
 	ITwinSceneInfo si;
 	si.Offset = ft;
-	std::shared_ptr<AdvViz::SDK::ILink> clink;
-	for (auto link : Impl->DecorationIO->scene->GetLinks())
-	{
-		if (link->GetType() == "camera" && link->GetRef() == "Home Camera")
-		{
-			clink = link;
-			break;
-		}
-	}
+	// Lens settings: only meaningful when the view is (re-)recorded from Unreal.
+	si.Fov = UITwinUtilityLibrary::GetCameraFOV();                 // degrees
+	si.AspectRatio = UITwinUtilityLibrary::GetViewportAspectRatio();
+	auto clink = FindCameraLinkByRef(*Impl->DecorationIO->scene, AdvViz::SDK::HOME_CAMERA_REF);
 	if (!clink)
 	{
 		clink = Impl->DecorationIO->scene->MakeLink();
 		Impl->DecorationIO->scene->AddLink(clink);
 		clink->SetType("camera");
-		clink->SetRef("Home Camera");
+		clink->SetRef(AdvViz::SDK::HOME_CAMERA_REF);
 	}
-	ITwin::SceneToLink(si, clink);
+	ITwin::SceneToLink(si, clink, UseGCSForLinks());
+
+	TriggerCameraThumbnailUpdate(clink);
 }
 
 FTransform AITwinDecorationHelper::GetHomeCamera() const
 {
-	for (auto link : Impl->DecorationIO->scene->GetLinks())
+	if (!Impl->DecorationIO || !Impl->DecorationIO->scene)
 	{
-		if (link->GetType() == "camera" && link->GetRef() == "Home Camera")
+		BE_ISSUE("no scene to get home camera from");
+		return FTransform::Identity;
+	}
+	auto const HomeCameraLink = FindCameraLinkByRef(*Impl->DecorationIO->scene,
+		AdvViz::SDK::HOME_CAMERA_REF,
+		true);
+	if (HomeCameraLink)
+	{
+		auto si = ITwin::LinkToSceneInfo(*HomeCameraLink, UseGCSForLinks());
+		if (ensure(si.Offset.has_value()))
 		{
-			auto si = ITwin::LinkToSceneInfo(*link);
-			if (si.Offset.has_value())
-			{
-				return *si.Offset;
-			}
+			return *si.Offset;
 		}
 	}
 	TArray<AActor*> PlayerStarts;
@@ -2606,6 +2760,22 @@ FTransform AITwinDecorationHelper::GetHomeCamera() const
 	}
 	BE_ASSERT(false);
 	return FTransform::Identity;
+}
+
+std::optional<FTransform> AITwinDecorationHelper::GetMainCameraTransform() const
+{
+	auto* World = GetWorld();
+	auto const* PlayerController = World ? World->GetFirstPlayerController() : nullptr;
+	if (PlayerController)
+	{
+		return ScreenUtils::GetCurrentViewTransform(World);
+	}
+	return std::nullopt;
+}
+
+void AITwinDecorationHelper::TriggerCameraThumbnailUpdate(std::shared_ptr<AdvViz::SDK::ILink> const& /*CameraLink*/)
+{
+	// Not implemented in default implementation, but can be overridden in a derived class (eg. in iTwin Engage).
 }
 
 std::shared_ptr<AdvViz::SDK::IScenePersistence> AITwinDecorationHelper::GetScenePersistence() const
@@ -2765,12 +2935,24 @@ void AITwinDecorationHelper::ConnectPopulationToolToPopulationManager(AITwinPopu
 
 void AITwinDecorationHelper::SetDecoGeoreference(const FVector& latLongHeight)
 {
-	Impl->DecorationIO->SetDecoGeoreference(latLongHeight);
+	if (Impl->AllowInitGCS())
+	{
+		if (Impl->DecorationIO)
+			Impl->DecorationIO->SetDecoGeoreference(latLongHeight);
+	}
+	else
+	{
+		// If no scene is loaded yet, we can still set the georeference for the next scene to be loaded.
+		Impl->PendingLatLongHeight = latLongHeight;
+	}
 }
 
 AdvViz::expected<void, std::string> AITwinDecorationHelper::InitDecoGeoreference()
-{ 
-	return Impl->DecorationIO->InitDecoGeoreference();
+{
+	if (Impl->DecorationIO)
+		return Impl->DecorationIO->InitDecoGeoreference();
+	else
+		return AdvViz::make_unexpected("DecorationIO not initialized");
 }
 
 

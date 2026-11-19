@@ -170,6 +170,11 @@ namespace AdvViz::SDK
 			return std::string("https://") + ITwinServerEnvironment::GetUrlPrefix(env) + "api.bentley.com";
 		}
 
+		inline bool UseLocalServer() const
+		{
+			return customServerURL_.starts_with("http://localhost:");
+		}
+
 		static std::pair<float, int> defaultShouldRetryFunc(int attempt, int httpCode)
 		{
 			if (202 == httpCode)
@@ -440,7 +445,7 @@ namespace AdvViz::SDK
 			if (!requestDumpPath.empty())
 			{
 				// Dump response to the same temp folder.
-				RequestDump::DumpResponse(response.first, response.second, requestDumpPath);
+				RequestDump::DumpResponse(response, requestDumpPath);
 			}
 			if (!(*isValidLambda))
 			{
@@ -676,7 +681,7 @@ namespace AdvViz::SDK
 				if (!requestDumpPath.empty())
 				{
 					// Dump response to the same temp folder.
-					RequestDump::DumpResponse(response.first, response.second, requestDumpPath);
+					RequestDump::DumpResponse(response, requestDumpPath);
 				}
 				if (!(*isValidLambda))
 				{
@@ -791,11 +796,9 @@ namespace AdvViz::SDK
 				{
 					if (!requestDumpPath.empty())
 					{
-						// Dump response to temp folder.
 						// Dump response to the same temp folder.
-						RequestDump::DumpResponse(response.first, response.second, requestDumpPath);
+						RequestDump::DumpResponse(response, requestDumpPath);
 					}
-
 					result = std::move(response);
 				}
 				else
@@ -1542,11 +1545,23 @@ namespace AdvViz::SDK
 				if (thumbnailURL.starts_with("https"))
 				{
 					// Make a second request to download the thumbnail
+					std::string actualThumbnailURL = thumbnailURL;
+
+					if (impl_->UseLocalServer())
+					{
+						// Replace the server part (introduced for tests with a mock server...)
+						auto slashPos = thumbnailURL.find('/', std::string_view("https://").length() + 1);
+						if (slashPos != std::string::npos)
+						{
+							actualThumbnailURL = GetAPIRootURL() + thumbnailURL.substr(slashPos);
+						}
+					}
+
 					const ITwinAPIRequestInfo thumbnailRequestInfo =
 					{
 						.ShortName			= "DownloadThumbnail",
 						.Verb				= EVerb::Get,
-						.UrlSuffix			= thumbnailURL,
+						.UrlSuffix			= actualThumbnailURL,
 						.AcceptHeader		= "application/vnd.bentley.itwin-platform.v1+json",
 						.needRawData		= true,
 						.discardAllHeaders	= true,

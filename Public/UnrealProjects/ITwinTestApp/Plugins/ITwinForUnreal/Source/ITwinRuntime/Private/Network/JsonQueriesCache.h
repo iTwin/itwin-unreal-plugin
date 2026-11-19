@@ -47,6 +47,11 @@ namespace QueriesCache
 		FString const& ITwinId, FString const& IModelId, FString const& ChangesetId,
 		FString const& ExtraStr = {});
 
+	//! Deletes all cache folders for the given environment and identifiers.
+	void CleanCacheFolders(EITwinEnvironment const Environment,
+		FString const& ITwinId, FString const& IModelId, FString const& ChangesetId,
+		FString const& ExtraStr = {});
+
 } // namespace QueriesCache
 
 /// Cache for requests getting replies as json objects. Default-constructed as uninitialized, use

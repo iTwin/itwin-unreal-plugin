@@ -75,10 +75,11 @@ protected:
 
 private:
 	AITwinGoogle3DTileset* AddNew3DMap();
+	void InitFromScene();
 	void UpdateFromSceneSettings();
 	virtual void Update3DMapUI(bool IsVisible, float Quality) PURE_VIRTUAL(AITwinGoogle3DTilesController::Update3DMapUI);
 
-	void UpdateGeolocUIFromTileset(AITwinIModel const* IModel);
+	void UpdateGeolocUIFromTileset(bool bHasGeoLocatedIModel);
 	virtual void On3DMapLocationSet(double Latitude, double Longitude, double Elevation);
 	virtual void OnGoogleTilesLoaded() {}
 

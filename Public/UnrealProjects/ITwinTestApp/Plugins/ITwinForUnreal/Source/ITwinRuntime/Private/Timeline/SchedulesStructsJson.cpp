@@ -179,11 +179,10 @@ namespace
 		if (!Appearance.Base.bUseOriginalAlpha && Appearance.FinishAlpha != Appearance.Base.Alpha) // reduce verbosity
 			Obj->SetNumberField(TEXT("finishAlpha"), Appearance.FinishAlpha);
 		Obj->SetNumberField(TEXT("growthSimulationMode"), (double)Appearance.GrowthSimulationMode);
-		// Not yet supported:
-		//Obj->SetBoolField(TEXT("growthSimulationBasedOnPercentComplete"),
-		//				  Appearance.bGrowthSimulationBasedOnPercentComplete);
-		//Obj->SetBoolField(TEXT("growthSimulationPauseDuringNonWorkingTime"),
-		//				  Appearance.bGrowthSimulationPauseDuringNonWorkingTime);
+		Obj->SetBoolField(TEXT("growthSimulationBasedOnPercentComplete"),
+						  Appearance.bGrowthSimulationBasedOnPercentComplete);
+		Obj->SetBoolField(TEXT("growthSimulationPauseDuringNonWorkingTime"),
+						  Appearance.bGrowthSimulationPauseDuringNonWorkingTime);
 		if (Appearance.bInvertGrowth)
 			Obj->SetBoolField(TEXT("invertGrowth"), Appearance.bInvertGrowth);
 		return Obj;
@@ -208,15 +207,14 @@ namespace
 		Appearance.GrowthSimulationMode = (EGrowthSimulationMode)(uint8)NumVal;
 
 		bool BoolVal = false;
-		// Not yet supported:
-		//if (!Obj->TryGetBoolField(TEXT("growthSimulationBasedOnPercentComplete"), BoolVal))
-		//	return false;
-		//Appearance.bGrowthSimulationBasedOnPercentComplete = BoolVal;
-		//BoolVal = false;
-		//if (!Obj->TryGetBoolField(TEXT("growthSimulationPauseDuringNonWorkingTime"), BoolVal))
-		//	return false;
-		//Appearance.bGrowthSimulationPauseDuringNonWorkingTime = BoolVal;
-		//BoolVal = false; // reset! since the last one below is optional
+		if (!Obj->TryGetBoolField(TEXT("growthSimulationBasedOnPercentComplete"), BoolVal))
+			return false;
+		Appearance.bGrowthSimulationBasedOnPercentComplete = BoolVal;
+		BoolVal = false;
+		if (!Obj->TryGetBoolField(TEXT("growthSimulationPauseDuringNonWorkingTime"), BoolVal))
+			return false;
+		Appearance.bGrowthSimulationPauseDuringNonWorkingTime = BoolVal;
+		BoolVal = false; // reset! since the last one below is optional
 		Obj->TryGetBoolField(TEXT("invertGrowth"), BoolVal); // Appearance.bInvertGrowth is a bitfield...
 		Appearance.bInvertGrowth = BoolVal;
 		return true;
@@ -225,13 +223,14 @@ namespace
 	TSharedPtr<FJsonObject> ToJsonObject(FTransform const& Transform)
 	{
 		auto Obj = MakeShared<FJsonObject>();
-		// optional, to reduce verbosity: Equals uses a tolerance, particularly useful for Scale which is never
-		// set but never exactly 1. either due do conversions between the various representations...
+		// optional, to reduce verbosity: note that Equals uses a tolerance, which is OK for translation and rotation...
 		if (!Transform.GetTranslation().Equals(FVector::ZeroVector))
 			Obj->SetField(TEXT("translation"), ToJsonValue(Transform.GetTranslation()));
 		if (!Transform.GetRotation().Equals(FQuat::Identity))
 			Obj->SetField(TEXT("rotation"), ToJsonValue(Transform.GetRotation()));
-		if (!Transform.GetScale3D().Equals(FVector(1, 1, 1)))
+		// ...but NOT for Scale: static transforms' tiny scale deviations from 1 matter for Elements far from the
+		// iModel origin (see ITwin::Timeline::PTransform)
+		if (Transform.GetScale3D() != FVector::OneVector)
 			Obj->SetField(TEXT("scale"), ToJsonValue(Transform.GetScale3D()));
 		return Obj;
 	}
@@ -282,6 +281,10 @@ namespace
 
 		if (Assignment.b3DPathReverseDirection)
 			Obj->SetBoolField(TEXT("3DPathReverseDirection"), Assignment.b3DPathReverseDirection);
+		if (Assignment.bPauseDuringNonWorkingTime)
+			Obj->SetBoolField(TEXT("pauseDuringNonWorkingTime"), Assignment.bPauseDuringNonWorkingTime);
+		if (Assignment.bAdjustForTaskPercentComplete)
+			Obj->SetBoolField(TEXT("adjustForTaskPercentComplete"), Assignment.bAdjustForTaskPercentComplete);
 		if (Assignment.MotionStart != 0.)
 			SetNumberStringField(Obj, TEXT("motionStart"), Assignment.MotionStart);
 		if (Assignment.MotionEnd != 1.)
@@ -319,6 +322,8 @@ namespace
 		}
 		// Optional fields with default values, so that missing fields in the JSON are not an error
 		Obj->TryGetBoolField(TEXT("3DPathReverseDirection"), Assignment.b3DPathReverseDirection);
+		Obj->TryGetBoolField(TEXT("pauseDuringNonWorkingTime"), Assignment.bPauseDuringNonWorkingTime);
+		Obj->TryGetBoolField(TEXT("adjustForTaskPercentComplete"), Assignment.bAdjustForTaskPercentComplete);
 		Obj->TryGetNumberField(TEXT("motionStart"), Assignment.MotionStart);
 		Obj->TryGetNumberField(TEXT("motionEnd"), Assignment.MotionEnd);
 		return true;
@@ -340,6 +345,135 @@ namespace
 			return false;
 		return Obj->TryGetNumberField(TEXT("relativeTime"), Keyframe.RelativeTime);
 	}
+
+	TSharedPtr<FJsonObject> ToJsonObject(FCalendar const& Calendar)
+	{
+		auto Obj = MakeShared<FJsonObject>();
+		Obj->SetStringField(TEXT("id"), Calendar.Id);
+		Obj->SetStringField(TEXT("name"), Calendar.Name);
+		if (!Calendar.ParentId.IsEmpty())
+			Obj->SetStringField(TEXT("parentId"), Calendar.ParentId);
+		Obj->SetNumberField(TEXT("workingDaysPerWeek"), Calendar.WorkingDaysPerWeek);
+		Obj->SetNumberField(TEXT("workingSecondsPerDay"), Calendar.WorkingSecondsPerDay);
+
+		TArray<TSharedPtr<FJsonValue>> DayTypes;
+		DayTypes.Reserve(Calendar.DayTypes.size());
+		for (auto const& DayType : Calendar.DayTypes)
+		{
+			auto DayTypeObj = MakeShared<FJsonObject>();
+			DayTypeObj->SetStringField(TEXT("id"), DayType.Id);
+			DayTypeObj->SetStringField(TEXT("description"), DayType.Description);
+			DayTypeObj->SetField(TEXT("color"), ToJsonValue(DayType.Color));
+			DayTypeObj->SetNumberField(TEXT("type"), (double)DayType.Type);
+			TArray<TSharedPtr<FJsonValue>> Blocks;
+			Blocks.Reserve(DayType.TimeBlocks.size());
+			for (auto const& Block : DayType.TimeBlocks)
+			{
+				auto BlockObj = MakeShared<FJsonObject>();
+				SetNumberStringField(BlockObj, TEXT("startTime"), Block.TimeBlock.first);
+				SetNumberStringField(BlockObj, TEXT("endTime"), Block.TimeBlock.second);
+				Blocks.Add(MakeShared<FJsonValueObject>(BlockObj));
+			}
+			DayTypeObj->SetArrayField(TEXT("timeBlocks"), Blocks);
+			DayTypes.Add(MakeShared<FJsonValueObject>(DayTypeObj));
+		}
+		Obj->SetArrayField(TEXT("dayTypes"), DayTypes);
+
+		TArray<TSharedPtr<FJsonValue>> Exceptions;
+		Exceptions.Reserve(Calendar.Exceptions.size());
+		for (auto const& Exception : Calendar.Exceptions)
+		{
+			auto ExceptionObj = MakeShared<FJsonObject>();
+			SetNumberStringField(ExceptionObj, TEXT("date"), Exception.Date);
+			ExceptionObj->SetStringField(TEXT("dayTypeId"), Exception.DayTypeId);
+			Exceptions.Add(MakeShared<FJsonValueObject>(ExceptionObj));
+		}
+		Obj->SetArrayField(TEXT("exceptions"), Exceptions);
+
+		TArray<TSharedPtr<FJsonValue>> Week;
+		Week.Reserve(Calendar.WeekDayTypeIds.size());
+		for (auto const& DayTypeId : Calendar.WeekDayTypeIds)
+			Week.Add(MakeShared<FJsonValueString>(DayTypeId));
+		Obj->SetArrayField(TEXT("week"), Week);
+		return Obj;
+	}
+
+	bool FromJsonObject(TSharedPtr<FJsonObject> const& Obj, FCalendar& Calendar)
+	{
+		if (!Obj.IsValid())
+			return false;
+		if (!Obj->TryGetStringField(TEXT("id"), Calendar.Id))
+			return false;
+		Obj->TryGetStringField(TEXT("name"), Calendar.Name);
+		Obj->TryGetStringField(TEXT("parentId"), Calendar.ParentId);
+		if (!Obj->TryGetNumberField(TEXT("workingDaysPerWeek"), Calendar.WorkingDaysPerWeek)
+			|| !Obj->TryGetNumberField(TEXT("workingSecondsPerDay"), Calendar.WorkingSecondsPerDay))
+		{
+			return false;
+		}
+
+		TArray<TSharedPtr<FJsonValue>> const* Arr = nullptr;
+		if (Obj->TryGetArrayField(TEXT("dayTypes"), Arr) && Arr)
+		{
+			Calendar.DayTypes.reserve(Arr->Num());
+			for (auto const& Value : *Arr)
+			{
+				auto DayTypeObj = Value->AsObject();
+				if (!DayTypeObj.IsValid())
+					return false;
+				FCalendarDayType& DayType = Calendar.DayTypes.emplace_back();
+				if (!DayTypeObj->TryGetStringField(TEXT("id"), DayType.Id))
+					return false;
+				DayTypeObj->TryGetStringField(TEXT("description"), DayType.Description);
+				if (!FromJsonValue(DayTypeObj->TryGetField(TEXT("color")), DayType.Color))
+					return false;
+				double NumVal = 0.;
+				if (!DayTypeObj->TryGetNumberField(TEXT("type"), NumVal))
+					return false;
+				DayType.Type = (ECalendarDayType)(uint8)NumVal;
+				TArray<TSharedPtr<FJsonValue>> const* Blocks = nullptr;
+				if (DayTypeObj->TryGetArrayField(TEXT("timeBlocks"), Blocks) && Blocks)
+				{
+					DayType.TimeBlocks.reserve(Blocks->Num());
+					for (auto const& BlockValue : *Blocks)
+					{
+						auto BlockObj = BlockValue->AsObject();
+						if (!BlockObj.IsValid())
+							return false;
+						FCalendarTimeBlock& Block = DayType.TimeBlocks.emplace_back();
+						if (!BlockObj->TryGetNumberField(TEXT("startTime"), Block.TimeBlock.first)
+							|| !BlockObj->TryGetNumberField(TEXT("endTime"), Block.TimeBlock.second))
+						{
+							return false;
+						}
+					}
+				}
+			}
+		}
+
+		if (Obj->TryGetArrayField(TEXT("exceptions"), Arr) && Arr)
+		{
+			Calendar.Exceptions.reserve(Arr->Num());
+			for (auto const& Value : *Arr)
+			{
+				auto ExceptionObj = Value->AsObject();
+				if (!ExceptionObj.IsValid())
+					return false;
+				FCalendarException& Exception = Calendar.Exceptions.emplace_back();
+				if (!ExceptionObj->TryGetNumberField(TEXT("date"), Exception.Date)
+					|| !ExceptionObj->TryGetStringField(TEXT("dayTypeId"), Exception.DayTypeId))
+				{
+					return false;
+				}
+			}
+		}
+
+		if (!Obj->TryGetArrayField(TEXT("week"), Arr) || !Arr || Arr->Num() != (int32)Calendar.WeekDayTypeIds.size())
+			return false;
+		for (int32 Day = 0; Day < Arr->Num(); ++Day)
+			Calendar.WeekDayTypeIds[Day] = (*Arr)[Day]->AsString();
+		return true;
+	}
 }
 
 TSharedPtr<FJsonObject> FITwinSchedule::ToJson() const
@@ -358,6 +492,7 @@ TSharedPtr<FJsonObject> FITwinSchedule::ToJson() const
 	Root->SetStringField(TEXT("anim3DPathsAssignmentsDeltaToken"), Anim3DPathsAssignmentsDeltaToken);
 	Root->SetStringField(TEXT("anim3DPathsDeltaToken"), Anim3DPathsDeltaToken);
 	Root->SetStringField(TEXT("anim3DPathKeyframesDeltaToken"), Anim3DPathKeyframesDeltaToken);
+	Root->SetStringField(TEXT("calendarsDeltaToken"), CalendarsDeltaToken);
 
 	if (StatisticsTotal)
 		Root->SetObjectField(TEXT("statisticsTotal"), ToJsonObject(*StatisticsTotal));
@@ -416,6 +551,8 @@ TSharedPtr<FJsonObject> FITwinSchedule::ToJson() const
 			Obj->SetStringField(TEXT("name"), Task.Name);
 			SetNumberStringField(Obj, TEXT("start"), Task.TimeRange.first);
 			SetNumberStringField(Obj, TEXT("finish"), Task.TimeRange.second);
+			if (!Task.CalendarId.IsEmpty())
+				Obj->SetStringField(TEXT("calendarId"), Task.CalendarId);
 			Arr.Add(MakeShared<FJsonValueObject>(Obj));
 		}
 		Root->SetArrayField(TEXT("tasks"), Arr);
@@ -500,6 +637,17 @@ TSharedPtr<FJsonObject> FITwinSchedule::ToJson() const
 	}
 
 	{
+		TArray<TSharedPtr<FJsonValue>> Arr;
+		Arr.Reserve(Calendars.size());
+		for (auto const& Calendar : Calendars)
+		{
+			if (!Calendar.bDeleted)
+				Arr.Add(MakeShared<FJsonValueObject>(ToJsonObject(Calendar)));
+		}
+		Root->SetArrayField(TEXT("calendars"), Arr);
+	}
+
+	{
 		TArray<TSharedPtr<FJsonValue>> Groups;
 		Groups.Reserve(ElemIDGroups.size());
 		std::set<size_t> GroupsWritten;
@@ -563,6 +711,7 @@ bool FITwinSchedule::FromJson(TSharedPtr<FJsonObject> const& Root)
 	Root->TryGetStringField(TEXT("anim3DPathsAssignmentsDeltaToken"), Anim3DPathsAssignmentsDeltaToken);
 	Root->TryGetStringField(TEXT("anim3DPathsDeltaToken"), Anim3DPathsDeltaToken);
 	Root->TryGetStringField(TEXT("anim3DPathKeyframesDeltaToken"), Anim3DPathKeyframesDeltaToken);
+	Root->TryGetStringField(TEXT("calendarsDeltaToken"), CalendarsDeltaToken);
 
 	StatisticsTotal.reset();
 	if (Root->HasTypedField<EJson::Object>(TEXT("statisticsTotal")))
@@ -579,6 +728,7 @@ bool FITwinSchedule::FromJson(TSharedPtr<FJsonObject> const& Root)
 	StaticTransfoAssignments.clear();
 	PathTransfoAssignments.clear();
 	Animation3DPaths.clear();
+	Calendars.clear();
 	ElemIDGroups.clear();
 	FedGUIDGroups.clear();
 
@@ -601,6 +751,7 @@ bool FITwinSchedule::FromJson(TSharedPtr<FJsonObject> const& Root)
 				return false;
 			if (!Obj->TryGetNumberField(TEXT("finish"), Task.TimeRange.second))
 				return false;
+			Obj->TryGetStringField(TEXT("calendarId"), Task.CalendarId);
 			Tasks.emplace_back(std::move(Task));
 		}
 	}
@@ -690,6 +841,18 @@ bool FITwinSchedule::FromJson(TSharedPtr<FJsonObject> const& Root)
 				}
 			}
 			Animation3DPaths.emplace_back(std::move(Path));
+		}
+	}
+
+	if (Root->TryGetArrayField(TEXT("calendars"), Arr) && Arr)
+	{
+		Calendars.reserve(Arr->Num());
+		for (auto const& Value : *Arr)
+		{
+			FCalendar Calendar{ FString{}, EDeletedProp(false) };
+			if (!FromJsonObject(Value->AsObject(), Calendar))
+				return false;
+			Calendars.emplace_back(std::move(Calendar));
 		}
 	}
 
@@ -798,6 +961,13 @@ void FITwinSchedule::RebuildKnownProperties()
 	KnownStaticTransfoAssignments.clear();
 	KnownPathTransfoAssignments.clear();
 	KnownAnimation3DPaths.clear();
+	KnownCalendars.clear();
+
+	for (size_t Index = 0; Index < Calendars.size(); ++Index)
+	{
+		if (!Calendars[Index].Id.IsEmpty())
+			KnownCalendars[Calendars[Index].Id] = Index;
+	}
 
 	for (size_t Index = 0; Index < Tasks.size(); ++Index)
 	{

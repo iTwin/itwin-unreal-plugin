@@ -90,6 +90,9 @@ protected:
 	bool bHasFilledSceneMapping = false;
 
 	bool bHasPushedAllowTickInEditor = false;
+
+	//! Array of elements which are needed in the test (used in DetectFilledSceneMapping).
+	TArray<FString> ElementsToTest = { TEXT("0x5d") };
 };
 
 

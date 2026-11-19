@@ -8,9 +8,13 @@
 
 #pragma once
 
-#include <map>
-#include <set>
-#include <string>
+#include <Content/ITwinComponentLoadState.h>
+
+#include <Compil/BeforeNonUnrealIncludes.h>
+#	include <map>
+#	include <set>
+#	include <string>
+#include <Compil/AfterNonUnrealIncludes.h>
 #include "ITwinContentManager.generated.h"
 
 UCLASS()
@@ -30,7 +34,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "ITwinContent")
 	FString GetContentRootPath() const;
 	UFUNCTION(BlueprintCallable, Category = "ITwinContent")
-	void MountPak(const FString& path, const FString& id = TEXT(""));
+	bool MountPak(const FString& path, const FString& id = TEXT(""));
 	UFUNCTION(BlueprintCallable, Category = "ITwinContent")
 	void LoadContentJsonFile();
 	
@@ -38,6 +42,21 @@ public:
 	FString SanitizePath(const FString& path) const;
 	FString HasComponentIDInPath(const FString& path) const;
 	bool DownloadedComponent(const FString& componentId) const;
+	/// Returns true if the given component was already downloaded (and mounted).
+	bool IsComponentDownloaded(const FString& componentId) const;
+	/// Launches a download for the given component, unless it is already downloaded.
+	/// Returns true if the caller has to wait for the download.
+	bool RequestComponentDownload(const FString& componentId) const;
+	FString NormalizeComponentId(const FString& idOrPath) const;
+	EITwinComponentLoadState GetComponentLoadState(const FString& idOrPath) const;
+	FString GetComponentLoadFailureReason(const FString& idOrPath) const;
+	uint64 GetComponentLoadGeneration(const FString& idOrPath) const;
+	bool IsCurrentComponentLoad(const FString& idOrPath, uint64 generation) const;
+	/// Returns true if the component is ready, in flight, or a request was accepted.
+	bool RequestComponentDownload(const FString& idOrPath, bool bRetry) const;
+	bool ClearComponentLoadAttempt(const FString& idOrPath, uint64 generation) const;
+	void ReportComponentLoadFailure(const FString& idOrPath, uint64 generation,
+		EITwinComponentLoadFailure failure, const FString& reason) const;
 
 	/// Stores the resolved object path produced when a component is added (see ComponentCenter::AddComponent).
 	void SetComponentObjectPath(const FString& componentId, const FString& objectPath);
@@ -58,11 +77,18 @@ public:
 protected:
 	FString ContentRootPath;
 	std::map<FString, SContentInfo> ContentInfoMap;
-	std::set<FString> MountedPaks;
 	class FPakPlatformFile* PakPlatformFile = nullptr;
 	class IPlatformFile* PlatformFileRef = nullptr;
 	std::set<FString> DownloadedComponents;
 	std::map<FString, FString> ComponentObjectPaths;
 
+	struct FComponentAttempt
+	{
+		EITwinComponentLoadState State = EITwinComponentLoadState::NotRequested;
+		uint64 Generation = 0;
+		FString Reason;
+	};
+	mutable std::map<FString, FComponentAttempt> ComponentAttempts;
+	mutable uint64 NextComponentGeneration = 0;
+	void RegisterDownloadedComponent(const FString& id);
 };
-

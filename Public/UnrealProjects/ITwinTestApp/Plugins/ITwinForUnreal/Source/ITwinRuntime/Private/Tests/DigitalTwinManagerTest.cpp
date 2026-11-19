@@ -10,6 +10,7 @@
 
 #include <ITwinDigitalTwinManager.h>
 
+#include <ITwinGeolocation.h>
 #include <ITwinGoogle3DTilesController.h>
 #include <ITwinRealityData.h>
 #include <ITwinTilesetAccess.h>
@@ -282,14 +283,22 @@ bool FDigitalTwinManagerTest::RunTest(const FString& /*Parameters*/)
 	UDigitalTwinManagerTestHelper& HelperObject = UDigitalTwinManagerTestHelper::Instance();
 
 	auto& Helper = HelperObject.GetImpl();
-
-	if (!Helper.Init())
+	FIModelTestOptions Options;
+	Options.bDisableSynchro4DAutoLoad = true; // requests for this test were saved with 4D disabled.
+	if (!Helper.Init(Options))
 	{
 		return false;
 	}
 	UWorld* const World = FITwinAPITestHelperBase::GetTestWorld();
+	if (!World)
+	{
+		BE_ISSUE("Test world is not valid");
+		return false;
+	}
 
 	FString const MockServerUrl = Helper.GetMockServerUrl();
+
+	FITwinGeolocation::UnlockLocation(*World); // avoid conflicts with other tests loading geo-located models.
 
 	// Instantiate the iTwin manager, configured in test mode.
 	HelperObject.ITwinManager = World->SpawnActor<AITwinDigitalTwinManager>();
@@ -309,7 +318,6 @@ bool FDigitalTwinManagerTest::RunTest(const FString& /*Parameters*/)
 
 	SECTION("ITwinManager Load and Test")
 	{
-		UTEST_TRUE(TEXT("Check world"), World != nullptr);
 		UTEST_TRUE(TEXT("Check iTwin manager"), HelperObject.ITwinManager != nullptr);
 
 		// First we will load a (geo-located) reality data.
@@ -366,6 +374,19 @@ bool FDigitalTwinManagerTest::RunTest(const FString& /*Parameters*/)
 						UTEST_EQUAL_TOLERANCE(TEXT("Origin Longitude"), GeoRef->GetOriginLongitude(), -81.378958, 0.00001);
 						UTEST_EQUAL_TOLERANCE(TEXT("Origin Height"), GeoRef->GetOriginHeight(), 31.9135608, 0.00001);
 					}
+
+					auto const CartographicProps = Access->GetNativeGeoreference();
+					UTEST_TRUE(TEXT("GetNativeGeoreference"), CartographicProps.has_value());
+					UTEST_EQUAL_TOLERANCE(TEXT("Latitude"), CartographicProps->Latitude, 28.542089, 0.00001);
+					UTEST_EQUAL_TOLERANCE(TEXT("Longitude"), CartographicProps->Longitude, -81.378958, 0.00001);
+					UTEST_EQUAL_TOLERANCE(TEXT("Height"), CartographicProps->Height, 0., 0.00001);
+					auto const Box = Access->GetBoundingBox();
+					UTEST_EQUAL_TOLERANCE(TEXT("Bounding Box Min"), Box.Min, FVector(630548989.4374, 43815180.3656, -553417217.0169), 1.e-3);
+					UTEST_EQUAL_TOLERANCE(TEXT("Bounding Box Max"), Box.Max, FVector(630665593.4598, 43960857.8952, -553265852.4191), 1.e-3);
+
+					auto Access2 = Access->Clone();
+					UTEST_EQUAL(TEXT("Clone access Model Link"), Access2->GetModelLink(), std::make_pair(EITwinModelType::RealityData, RealityDataToLoad));
+					UTEST_EQUAL(TEXT("Clone access tileset"), Access2->GetTileset(), Access->GetTileset());
 				}
 
 				UTEST_NULL(TEXT("GetIModel"), ITwinManager->GetIModel(RealityDataToLoad));
@@ -376,6 +397,7 @@ bool FDigitalTwinManagerTest::RunTest(const FString& /*Parameters*/)
 				{
 					UTEST_TRUE(TEXT("IsGeolocated"), RealityData->IsGeolocated());
 					UTEST_EQUAL(TEXT("RealityData.ITwinId"), RealityData->ITwinId, ITwinManager->GetITwinId());
+					UTEST_TRUE(TEXT("RealityData.HasTileset"), RealityData->HasTileset());
 				}
 
 				UTEST_TRUE(TEXT("HasRetrievedITwinInfo"), ITwinManager->HasRetrievedITwinInfo());
@@ -438,14 +460,22 @@ bool FDigitalTwinManagerLoadSceneTest::RunTest(const FString& /*Parameters*/)
 	UDigitalTwinManagerTestHelper& HelperObject = UDigitalTwinManagerTestHelper::Instance();
 
 	auto& Helper = HelperObject.GetImpl();
-
-	if (!Helper.Init())
+	FIModelTestOptions Options;
+	Options.bDisableSynchro4DAutoLoad = true; // requests for this test were saved with 4D disabled.
+	if (!Helper.Init(Options))
 	{
 		return false;
 	}
 	UWorld* const World = FITwinAPITestHelperBase::GetTestWorld();
+	if (!World)
+	{
+		BE_ISSUE("Test world is not valid");
+		return false;
+	}
 
 	FString const MockServerUrl = Helper.GetMockServerUrl();
+
+	FITwinGeolocation::UnlockLocation(*World); // avoid conflicts with other tests loading geo-located models.
 
 	// Instantiate the iTwin manager, configured in test mode.
 	HelperObject.ITwinManager = World->SpawnActor<AITwinDigitalTwinManager>();
@@ -465,7 +495,6 @@ bool FDigitalTwinManagerLoadSceneTest::RunTest(const FString& /*Parameters*/)
 
 	SECTION("ITwinManager Load and Test")
 	{
-		UTEST_TRUE(TEXT("Check world"), World != nullptr);
 		UTEST_TRUE(TEXT("Check iTwin manager"), HelperObject.ITwinManager != nullptr);
 
 		// Activate check of loading step orders.

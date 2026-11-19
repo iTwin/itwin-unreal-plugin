@@ -1,5 +1,11 @@
 option(BE_PROJECT_NAME "" "")
 option(BE_SECONDARY_APPS "Build rarely used apps (= all but 'iTwin Engage')" ON)
+if (DEFINED ENV{TF_BUILD})
+	set(_beDefaultVSCodeCompileCommands OFF) # useless on build agents
+else ()
+	set(_beDefaultVSCodeCompileCommands ON)
+endif ()
+advanced_option(BE_VSCODE_COMPILE_COMMANDS "(Windows) Also have UBT generate the VS Code C++ IntelliSense database (<project>/.vscode/compileCommands_<project>.json) each time CMake configures" ${_beDefaultVSCodeCompileCommands})
 advanced_option(BE_FILL_SHARED_VCPKG_BINARY_CACHE "Fill the shared vcpkg binary cache on V:" OFF)
 advanced_option(BE_REBUILD_ALL_VCPKG_FOR_MEND "When non-empty, ignore all vcpkg binary caches so that everything is rebuilt, and a filtered copy of vcpkg's buildtrees folder is prepared. Pass a **relative** path (cwrsync requirement) from the **source** repository root to the folder into which to copy the buildtrees" "")
 advanced_option(BE_VCPKG_FILTERED_BUILDTREES_RELPATH "**Relative** path (for consistency with BE_REBUILD_ALL_VCPKG_FOR_MEND) from the **source** repository root to the folder containing the filtered copy of vcpkg buildtrees prepared in advance" "../vcpkg-buildtrees-for-Mend")

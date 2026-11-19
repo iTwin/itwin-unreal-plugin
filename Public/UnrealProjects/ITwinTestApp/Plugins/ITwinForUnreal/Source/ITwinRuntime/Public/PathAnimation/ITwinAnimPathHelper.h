@@ -15,6 +15,7 @@
 #include <Misc/EnumRange.h>
 #include <Templates/PimplPtr.h>
 #include <Spline/ITwinSplineHelper.h>
+#include <UObject/StrongObjectPtrTemplates.h>
 
 #include <ITwinRuntime/Private/Compil/BeforeNonUnrealIncludes.h>
 #   include <SDK/Core/Visualization/PathAnimation.h>
@@ -24,10 +25,12 @@
 
 #include <memory>
 #include <optional>
+#include <atomic>
 
 #include "ITwinAnimPathHelper.generated.h"
 
 class AITwinPopulation;
+class AITwinPathAnimTool;
 class AITwinSplineHelper;
 class UBakedAnimKeyFrames;
 
@@ -47,13 +50,17 @@ struct FAnimPathLaneData
 struct FAnimPathRebakeData
 {
 	TWeakObjectPtr<UITwinAnimPathHelper> PathHelper;
-	TWeakObjectPtr<UWorld> World;
+	// Pins the world only for the lifetime of the asynchronous bake job. The worker
+	// uses it for scene height queries, and cancellation releases it as soon as the
+	// worker and its completion callback finish.
+	TStrongObjectPtr<UWorld> World;
 	FSplineCurves SplineCurves;
 	FTransform ComponentToWorld;
 	bool bClosedLoop = false;
 	bool bHasCurvedIntervals = false;
 	TArray<FAnimPathLaneData> LanesData;
 	uint64 Version;
+	std::atomic<bool> bCancelled = false;
 };
 
 enum class EAnimPathUpdateStatus : uint8
@@ -149,6 +156,7 @@ class ITWINRUNTIME_API UITwinAnimPathHelper : public UObject
 
 public:
 	virtual ~UITwinAnimPathHelper() = default;
+	static void AddReferencedObjects(UObject* InThis, FReferenceCollector& Collector);
 
 	TWeakObjectPtr<AITwinSplineHelper> SplineHelper;
 	TSet<TWeakObjectPtr<AITwinPopulation> > Populations;
@@ -255,6 +263,13 @@ public:
 	virtual bool IsInvDirLane(int /*laneIdx*/) const { return HasInvDirection(); }
 	// Minimum allowed distance between objects
 	virtual float GetMinInterObjectDistance(int /*laneIdx*/, bool /*bDrive*/ = false) const { return 0.f; }
+
+private:
+	friend class AITwinPathAnimTool;
+	static void BakeAnimationAsyncData(std::shared_ptr<FAnimPathRebakeData> Data);
+	void SetAsyncBakingData(const std::shared_ptr<FAnimPathRebakeData>& Data);
+	void ClearAsyncBakingData(const std::shared_ptr<FAnimPathRebakeData>& Data);
+	void CancelAsyncBaking();
 };
 
 UCLASS()

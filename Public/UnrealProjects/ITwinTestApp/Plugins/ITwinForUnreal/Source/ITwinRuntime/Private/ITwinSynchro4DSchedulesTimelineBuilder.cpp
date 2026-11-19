@@ -379,6 +379,18 @@ void FITwinScheduleTimelineBuilder::FinalizeTimeline(FITwinSchedule& Schedule)
 	{
 		AddAnimationBindingToTimeline(Schedule, AnimIdx);
 	}
+	// Currently, ClearTimelinesData already called this, that's why we need to recompute it: note that
+	// AddAnimationBindingToTimeline above calls ElementTimelineFor and thus AddTimeline which calls 
+	// IncludeTimeRange, but this only uses the keyframe lists, which are empty at this point!
+	// The code path (or at least one of those) that led to a valid schedule but an empty timerange was through
+	// CheckFinalizeScheduleLoading in the "InitialPassDone != Impl->Internals.ApplySchedule && IsAvailable()" section
+	// of TickSchedules, even though it was apparently only witnessed when loading an Unreal level in the Editor
+	Impl->MainTimeline.ResetTimeRange();
+	for (auto&& Task : Schedule.Tasks)
+	{
+		if (!Task.bDeleted)
+			Impl->MainTimeline.IncludeTimeRange(Task.TimeRange);
+	}
 	auto SceneMappingLock = (*Impl->SceneMappingPtr)->GetAutoLock();
 	FITwinSceneMapping& SceneMapping = *SceneMappingLock.GetPtr();
 	for (auto ElemTimelinePtr : Impl->MainTimeline.GetContainer())
@@ -493,6 +505,13 @@ void FITwinScheduleTimelineBuilder::FImpl::CreateAnimationBindingKeyframes(FITwi
 	auto&& Binding = Schedule.AnimationBindings[AnimationBindingIndex];
 	auto&& AppearanceProfile = Schedule.AppearanceProfiles[Binding.AppearanceProfileInVec];
 	auto&& Task = Schedule.Tasks[Binding.TaskInVec];
+	auto const GetWorkingTimeKeyframes = [&Schedule, &Task]()
+		{
+			if (!Task.WorkingTimeKeyframes)
+				Task.WorkingTimeKeyframes.emplace(
+					Schedule.GetWorkingTimeKeyframes(Task.TimeRange, Task.CalendarId));
+			return &(*Task.WorkingTimeKeyframes);
+		};
 	ITwin::Timeline::FTaskDependenciesData TaskDeps{ .bHasOnlyNeutralTasks = bHasOnlyNeutralTasks };
 	if (EProfileAction::Maintenance == AppearanceProfile.ProfileType
 		|| EProfileAction::Temporary == AppearanceProfile.ProfileType)
@@ -534,10 +553,13 @@ void FITwinScheduleTimelineBuilder::FImpl::CreateAnimationBindingKeyframes(FITwi
 		else if (PathTransfoAssignment && ensure(ITwin::INVALID_IDX != PathTransfoAssignment->Animation3DPathInVec))
 		{
 			auto&& Path3D = Schedule.Animation3DPaths[PathTransfoAssignment->Animation3DPathInVec].Keyframes;
+			std::vector<FWorkingTimeKeyframe> const* WorkingTimeKeyframes = nullptr;
+			if (PathTransfoAssignment->bPauseDuringNonWorkingTime)
+				WorkingTimeKeyframes = GetWorkingTimeKeyframes();
 			ITwin::Timeline::Add3DPathTransformToTimeline(&ElementTimeline, Task.TimeRange,
 				// The static transform is actually ignored, as mentioned above and confirmed in #2070419
 				nullptr, //Was: StaticTransfoAssignment ? (&StaticTransfoAssignment->Transform) : nullptr,
-				*PathTransfoAssignment, Path3D, *CoordConversions, TaskDeps);
+				*PathTransfoAssignment, Path3D, *CoordConversions, TaskDeps, nullptr, WorkingTimeKeyframes);
 		}
 		else
 		{
@@ -552,7 +574,9 @@ void FITwinScheduleTimelineBuilder::FImpl::CreateAnimationBindingKeyframes(FITwi
 	}
 #endif // SYNCHRO4D_ENABLE_TRANSFORMATIONS
 	ITwin::Timeline::AddCuttingPlaneToTimeline(ElementTimeline, AppearanceProfile, Task.TimeRange,
-												*CoordConversions, TransformKeyframe);
+		*CoordConversions, TransformKeyframe,
+		AppearanceProfile.ActiveAppearance.bGrowthSimulationPauseDuringNonWorkingTime
+			? GetWorkingTimeKeyframes() : nullptr);
 
 	if (OnElementsTimelineModified) OnElementsTimelineModified(ElementTimeline, nullptr);
 }

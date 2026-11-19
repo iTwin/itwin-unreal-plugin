@@ -7,6 +7,7 @@
 +--------------------------------------------------------------------------------------*/
 
 #include <Clipping/ITwinClippingToolImpl.h>
+#include "ITwinClippingToolUtils.inl"
 
 #include <CesiumGlobeAnchorComponent.h>
 
@@ -950,76 +951,13 @@ void UITwinClippingToolImpl::SetEffectRotation(EITwinClippingPrimitiveType Type,
 	}
 }
 
-
-namespace ITwinClippingDetails
-{
-
-	inline FVector SnapVectorToGrid(FVector const& Vec, double SnapGridSize)
-	{
-		if (ensure(SnapGridSize > 0))
-		{
-			return FVector(
-				FMath::RoundToFloat(Vec.X / SnapGridSize) * SnapGridSize,
-				FMath::RoundToFloat(Vec.Y / SnapGridSize) * SnapGridSize,
-				FMath::RoundToFloat(Vec.Z / SnapGridSize) * SnapGridSize);
-		}
-		else
-		{
-			return Vec;
-		}
-	}
-
-	static FVector SnapLocationToGrid(FVector const& WorldPosition,
-		FBox const& RefBoundingBox,
-		double SnapGridSize)
-	{
-		if (ensure(SnapGridSize > 0))
-		{
-			if (RefBoundingBox.IsValid)
-			{
-				FVector const RelativePos = WorldPosition - RefBoundingBox.Min;
-				return RefBoundingBox.Min + FVector(
-					FMath::RoundToFloat(RelativePos.X / SnapGridSize) * SnapGridSize,
-					FMath::RoundToFloat(RelativePos.Y / SnapGridSize) * SnapGridSize,
-					FMath::RoundToFloat(RelativePos.Z / SnapGridSize) * SnapGridSize);
-			}
-			else
-			{
-				return FVector(
-					FMath::RoundToFloat(WorldPosition.X / SnapGridSize) * SnapGridSize,
-					FMath::RoundToFloat(WorldPosition.Y / SnapGridSize) * SnapGridSize,
-					FMath::RoundToFloat(WorldPosition.Z / SnapGridSize) * SnapGridSize);
-			}
-		}
-		else
-		{
-			return WorldPosition;
-		}
-	}
-
-
-	inline double GetSnapGridSize(FBox const& InfluenceBoundingBox)
-	{
-		if (InfluenceBoundingBox.IsValid)
-		{
-			return FMath::Max(InfluenceBoundingBox.GetSize().GetMax() * 0.001,
-				1000.0);
-		}
-		else
-		{
-			// Infinite influence (Google tileset)
-			// Let's use a fixed size of 20 meters.
-			return 20 * 100.0;
-		}
-	}
-
-}
-
 std::optional<FVector> UITwinClippingToolImpl::GetPointOnPlaneAtRayIntersection(int32 PlaneIndex,
 	FITwinRayTraceInput const& TraceInput,
 	bool bClampToInfluenceBounds)
 {
 	using namespace ITwinClippingDetails;
+	using namespace ITwinClippingToolUtils;
+
 	if (!ensure(IsValidEffectIndex(EITwinClippingPrimitiveType::Plane, PlaneIndex)))
 	{
 		return {};
@@ -1210,39 +1148,9 @@ bool UITwinClippingToolImpl::UpdateClippingPlaneTransformFromBoundingBox(int32 P
 	FQuat PlaneRotation = PlanePopulation->GetInstanceTransform(PlaneIndex).GetRotation();
 	PlaneRotation.Normalize();
 	FVector const EulerAngles = PlaneRotation.Euler();
-	double AngleX = FMath::DegreesToRadians(EulerAngles.X);
-	double AngleY = FMath::DegreesToRadians(EulerAngles.Y);
-	double AngleZ = FMath::DegreesToRadians(EulerAngles.Z);
-
 	FVector const BoxCenter = BoundingBox.GetCenter();
-	FVector const BoxSize = BoundingBox.GetSize();
-
-	FVector const AbsOrientation = PlaneOrientation.GetAbs();
-
-	FVector NewScale(1., 1., 0.1);
-	if (AbsOrientation.Z >= AbsOrientation.X && AbsOrientation.Z >= AbsOrientation.Y)
-	{
-		NewScale.X = (BoxSize.X * FMath::Abs(FMath::Cos(AngleZ)))
-			+ (BoxSize.Y * FMath::Abs(FMath::Sin(AngleZ)));
-		NewScale.Y = (BoxSize.Y * FMath::Abs(FMath::Cos(AngleZ)))
-			+ (BoxSize.X * FMath::Abs(FMath::Sin(AngleZ)));
-	}
-	else if (AbsOrientation.Y >= AbsOrientation.X && AbsOrientation.Y >= AbsOrientation.Z)
-	{
-		NewScale.X = (BoxSize.X * FMath::Abs(FMath::Cos(AngleY)))
-			+ (BoxSize.Z * FMath::Abs(FMath::Sin(AngleY)));
-		NewScale.Y = (BoxSize.Z * FMath::Abs(FMath::Cos(AngleY)))
-			+ (BoxSize.X * FMath::Abs(FMath::Sin(AngleY)));
-	}
-	else
-	{
-		NewScale.X = (BoxSize.Z * FMath::Abs(FMath::Cos(AngleX)))
-			+ (BoxSize.Y * FMath::Abs(FMath::Sin(AngleX)));
-		NewScale.Y = (BoxSize.Y * FMath::Abs(FMath::Cos(AngleX)))
-			+ (BoxSize.Z * FMath::Abs(FMath::Sin(AngleX)));
-	}
-	NewScale.X *= PLANE_TO_UNREAL;
-	NewScale.Y *= PLANE_TO_UNREAL;
+	FVector const NewScale = ITwinClippingToolUtils::ComputePlaneProxyScale(
+		BoundingBox.GetSize(), PlaneOrientation, EulerAngles, PLANE_TO_UNREAL);
 
 	// Move the center of the plane to the intersected point. This does not change the plane equation, so
 	// we should not invalidate DB nor recompute the plane effect: only modify the proxy transform.
@@ -1400,8 +1308,7 @@ bool UITwinClippingToolImpl::FindVisiblePointOnPlane(int32 PlaneIndex,
 	bool bStillValidPosition = CurrentGizmoPositionOpt
 		&& IsPointVisible(*CurrentGizmoPositionOpt, CurrentSign2D, CurrentScreenRatio);
 	if (bStillValidPosition
-		&& CurrentScreenRatio.GetMin() >= 0.2
-		&& CurrentScreenRatio.GetMax() <= 0.8)
+		&& ITwinClippingToolUtils::IsScreenRatioComfortable(CurrentScreenRatio))
 	{
 		bOutIsCenter = false;
 		OutPosition = *CurrentGizmoPositionOpt;
@@ -1412,26 +1319,17 @@ bool UITwinClippingToolImpl::FindVisiblePointOnPlane(int32 PlaneIndex,
 	{
 		if (bStillValidPosition)
 		{
-			// If the current gizmo position is still valid, we will only change it if the new projected
-			// position is significantly more centered on the screen than the current position, to avoid
-			// too much movements of the gizmo.
-			const double CurrentDistanceToCenter = FVector2D(CurrentScreenRatio - FVector2d(0.5, 0.5)).Size();
-			const double NewDistanceToCenter = FVector2D(InScreenRatio - FVector2d(0.5, 0.5)).Size();
-			if (NewDistanceToCenter < CurrentDistanceToCenter * 0.7)
+			// Only move the gizmo if the new projected position is significantly more centered on
+			// the screen than the current one, to avoid too much movements of the gizmo.
+			if (ITwinClippingToolUtils::ShouldReplaceGizmoPosition(CurrentScreenRatio, InScreenRatio))
 			{
 				return InProjectedPos;
 			}
-			else
-			{
-				bOutIsCenter = false;
-				return *CurrentGizmoPositionOpt;
-			}
+			bOutIsCenter = false;
+			return *CurrentGizmoPositionOpt;
 		}
-		else
-		{
-			// If the current gizmo position is not valid, we can directly use the new projected position.
-			return InProjectedPos;
-		}
+		// If the current gizmo position is not valid, we can directly use the new projected position.
+		return InProjectedPos;
 	};
 
 	TArray<std::pair<FBox, uint32>> BoxesToTest;

@@ -456,6 +456,17 @@ void AITwinDigitalTwinManager::SetSkyLight(UDirectionalLightComponent* InSkyLigh
 	SkyLight = InSkyLight;
 }
 
+void AITwinDigitalTwinManager::StopSynchro4DSchedules()
+{
+	for (auto& Schedule : Synchro4DSchedules)
+	{
+		if (Schedule.Value && IsValid(Schedule.Value))
+		{
+			Schedule.Value->Stop();
+		}
+	}
+}
+
 void AITwinDigitalTwinManager::UpdateITwin()
 {
 	if (ITwinId.IsEmpty())
@@ -719,22 +730,6 @@ void AITwinDigitalTwinManager::Add(FITwinLoadInfo const& Info, AITwinIModel* IMo
 	IModel->AttachToActor(this, FAttachmentTransformRules::KeepRelativeTransform);
 }
 
-void AITwinDigitalTwinManager::SetupSpawnedLayer(AITwinServiceActor* NewLayer)
-{
-	NewLayer->AttachToActor(this, FAttachmentTransformRules::KeepRelativeTransform);
-
-	NewLayer->CopyEnvironmentFrom(*this);
-
-#if WITH_TESTS
-	// In test mode, we need to set the server URL to all spawned layers.
-	FString ServerUrl;
-	if (IsInTestMode(ServerUrl))
-	{
-		NewLayer->SetTestMode(ServerUrl);
-	}
-#endif
-}
-
 void AITwinDigitalTwinManager::Load(FITwinLoadInfo const& Info, EITwinLoadContext LoadContext)
 {
 	switch (Info.ModelType)
@@ -749,7 +744,7 @@ void AITwinDigitalTwinManager::Load(FITwinLoadInfo const& Info, EITwinLoadContex
 			IModel->LoadingMethod = ELoadingMethod::LM_Automatic;
 			IModel->ChangesetId = TEXT("latest");
 			IModel->OnIModelLoaded.AddDynamic(this, &AITwinDigitalTwinManager::OnIModelLoaded);
-			SetupSpawnedLayer(IModel);
+			AttachChildServiceActor(*IModel);
 			IModel->SetModelLoadInfo(Info);
 			IModel->LoadModel(Info.ExportId);
 
@@ -905,7 +900,7 @@ void AITwinDigitalTwinManager::LoadIModel(FIModelInfo const& Info, EITwinLoadCon
 	IModel->LoadingMethod = ELoadingMethod::LM_Automatic;
 	IModel->ChangesetId = TEXT("latest");
 	IModel->OnIModelLoaded.AddDynamic(this, &AITwinDigitalTwinManager::OnIModelLoaded);
-	SetupSpawnedLayer(IModel);
+	AttachChildServiceActor(*IModel);
 	IModel->IModelId = Info.Id;
 	IModel->ITwinId = ITwinId;
 #if WITH_EDITOR
@@ -946,7 +941,7 @@ void AITwinDigitalTwinManager::LoadRealityData(FITwinRealityData3DInfo const& In
 #if WITH_EDITOR
 	RealityData->SetActorLabel(Info.DisplayName);
 #endif
-	SetupSpawnedLayer(RealityData);
+	AttachChildServiceActor(*RealityData);
 	RealityData->RealityDataId = Info.Id;
 	RealityData->ITwinId = ITwinId;
 	RealityData->OnRealityDataInfoLoaded.AddDynamic(this, &AITwinDigitalTwinManager::OnRealityDataInfoLoaded);

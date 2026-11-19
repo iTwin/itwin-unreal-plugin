@@ -659,6 +659,19 @@ FTransform FITwinSynchro4DSchedulesInternals::ComputeTransformFromFinalizedKeyfr
 {
 	if (ITwin::Timeline::EAnchorPoint::Static == TransfoKey.DefrdAnchor.AnchorPoint)
 	{
+		// The static transform matrix may include a scale, usually a tiny deviation from 1 (float precision drift
+		// in SYNCHRO) that still matters for Elements far from the iModel origin: eg. 1.1e-6 for an Element 500km
+		// away (projected CRS) yields a 0.58m offset. Applying it through FTransform's Scale3D would be lossy once
+		// composed with rotated frames (FTransform cannot represent shear), so the transform stays rigid, but its
+		// translation is adjusted so that the Elements' BBox center lands exactly where the full matrix puts it:
+		// residual error is then only (1-Scale) times the Elements' extent.
+		FVector Position = TransfoKey.Position;
+		if (TransfoKey.Scale != FVector::OneVector)
+		{
+			FVector const CenterInIModel =
+				CoordConv.IModelToUntransformedIModelInUE.InverseTransformPosition(ElementsBBoxCenter);
+			Position += TransfoKey.Rotation.RotateVector((TransfoKey.Scale - FVector::OneVector) * CenterInIModel);
+		}
 		// Desperate solution: just switch back to iModel space!
 		// See comments in AddStaticTransformToTimeline and FSchedulesParse::ParseStaticTransform...
 		// Maybe it was all related to FTransform::Inverse being buggy...
@@ -666,14 +679,14 @@ FTransform FITwinSynchro4DSchedulesInternals::ComputeTransformFromFinalizedKeyfr
 		{
 			return UITwinUtilityLibrary::Inverse(CoordConv.IModelToUntransformedIModelInUE)
 				 * FTransform(TransfoKey.Rotation)
-				 * FTransform(TransfoKey.Position)
+				 * FTransform(Position)
 				 * CoordConv.IModelToUntransformedIModelInUE;
 		}
 		else
 		{
 			return CoordConv.UnrealToIModel
 				 * FTransform(TransfoKey.Rotation)
-				 * FTransform(TransfoKey.Position)
+				 * FTransform(Position)
 				 * CoordConv.IModelToUnreal;
 		}
 	}
@@ -729,22 +742,31 @@ void FITwinSynchro4DSchedulesInternals::FinalizeCuttingPlaneEquation(FITwinCoord
 	// were untransformed
 	FBox const& ElementsBox = AsAssignedBox ? (*AsAssignedBox) : OriginalElementsBox;
 	FBox const ExpandedBox = ElementsBox.ExpandBy(0.01 * ElementsBox.GetSize());
+	FVector const GrownPosition(
+		(Deferred.PlaneOrientation.X > 0) ? ExpandedBox.Max.X : ExpandedBox.Min.X,
+		(Deferred.PlaneOrientation.Y > 0) ? ExpandedBox.Max.Y : ExpandedBox.Min.Y,
+		(Deferred.PlaneOrientation.Z > 0) ? ExpandedBox.Max.Z : ExpandedBox.Min.Z);
+	FVector const RemovedPosition(
+		(Deferred.PlaneOrientation.X > 0) ? ExpandedBox.Min.X : ExpandedBox.Max.X,
+		(Deferred.PlaneOrientation.Y > 0) ? ExpandedBox.Min.Y : ExpandedBox.Max.Y,
+		(Deferred.PlaneOrientation.Z > 0) ? ExpandedBox.Min.Z : ExpandedBox.Max.Z);
 	FVector Position;
 	switch (Deferred.GrowthStatus)
 	{
 	case ITwin::Timeline::EGrowthStatus::FullyGrown:
 	case ITwin::Timeline::EGrowthStatus::DeferredFullyGrown:
-		Position = FVector((Deferred.PlaneOrientation.X > 0) ? ExpandedBox.Max.X : ExpandedBox.Min.X,
-						   (Deferred.PlaneOrientation.Y > 0) ? ExpandedBox.Max.Y : ExpandedBox.Min.Y,
-						   (Deferred.PlaneOrientation.Z > 0) ? ExpandedBox.Max.Z : ExpandedBox.Min.Z);
+		Position = GrownPosition;
 		Deferred.GrowthStatus = ITwin::Timeline::EGrowthStatus::FullyGrown;
 		break;
 	case ITwin::Timeline::EGrowthStatus::FullyRemoved:
 	case ITwin::Timeline::EGrowthStatus::DeferredFullyRemoved:
-		Position = FVector((Deferred.PlaneOrientation.X > 0) ? ExpandedBox.Min.X : ExpandedBox.Max.X,
-						   (Deferred.PlaneOrientation.Y > 0) ? ExpandedBox.Min.Y : ExpandedBox.Max.Y,
-						   (Deferred.PlaneOrientation.Z > 0) ? ExpandedBox.Min.Z : ExpandedBox.Max.Z);
+		Position = RemovedPosition;
 		Deferred.GrowthStatus = ITwin::Timeline::EGrowthStatus::FullyRemoved;
+		break;
+	case ITwin::Timeline::EGrowthStatus::DeferredPartial:
+		// PlaneW holds the growth ratio until finalized
+		Position = FMath::Lerp(RemovedPosition, GrownPosition, static_cast<double>(Deferred.PlaneW));
+		Deferred.GrowthStatus = ITwin::Timeline::EGrowthStatus::Partial;
 		break;
 	default: [[unlikely]]
 		ensure(false);
@@ -1493,6 +1515,8 @@ bool UITwinSynchro4DSchedules::ClearCacheWithConfirmation()
 			}
 			// Could be the full schedule cached as json, which we should delete as well:
 			// (in that case, normally the folder does not exist)
+			// DO NOT delete both folder above and json, because this is called just after saving a just received
+			// schedule json... not ideal :/
 			if (IFileManager::Get().FileExists(*(CacheName + TEXT(".json"))))
 			{
 				return IFileManager::Get().Delete(*(CacheName + TEXT(".json")));

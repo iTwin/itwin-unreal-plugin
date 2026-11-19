@@ -16,18 +16,17 @@
 #include <ITwinWebServices/ITwinWebServices_Info.h>
 
 #include <Engine/GameViewportClient.h>
-#include <GameFramework/Pawn.h>
-#include <GameFramework/PlayerController.h>
-#include <Kismet/GameplayStatics.h>
-#include <Kismet/KismetMathLibrary.h>
-#include <UObject/UObjectIterator.h>
+#include <Engine/World.h>
 #include <GameFramework/Pawn.h>
 #include <GameFramework/PlayerController.h>
 #include <GameFramework/PlayerStart.h>
-#include <Engine/World.h>
+#include <Kismet/GameplayStatics.h>
+#include <Kismet/KismetMathLibrary.h>
+#include <UObject/UObjectIterator.h>
 
 #if WITH_EDITOR
 	#include "Editor.h"
+	#include "EditorViewportClient.h"
 	#include "LevelEditorViewport.h"
 #endif // WITH_EDITOR
 
@@ -149,6 +148,27 @@ namespace
 		}
 		return Cast<ACesiumGeoreference>(UGameplayStatics::GetActorOfClass(
 				Itr->GetWorld(), ACesiumGeoreference::StaticClass()));
+	}
+
+	inline APlayerController const* GetPlayerController()
+	{
+		TObjectIterator<APlayerController> Itr;
+		if (!Itr)
+		{
+			// No player controller: during tests with no RHI, this is expected.
+			ensure(GUsingNullRHI);
+			return nullptr;
+		}
+		APlayerController const* Controller = *Itr;
+		ensure(Controller || GUsingNullRHI);
+		return Controller;
+	}
+
+	inline APawn const* GetPlayerControllerPawn()
+	{
+		APlayerController const* Controller = GetPlayerController();
+		APawn const* Pawn = (Controller ? Controller->GetPawn() : nullptr);
+		return Pawn;
 	}
 }
 
@@ -281,32 +301,88 @@ void UITwinUtilityLibrary::GetIModelBaseFromUnrealTransform(const AITwinIModel* 
 	Rotation_ITwin.Yaw += 180.0;
 }
 
+namespace
+{
+	/// Deprojects a viewport pixel to a world ray, for a camera given by its transform (X forward, Y right, Z up).
+	/// Used when no player controller is available (Editor viewports).
+	void DeprojectFromCameraTransform(const FTransform& CameraTransform, float HorizontalFOVDeg,
+		FVector2D const& ViewportSize, FVector2D const& ScreenPosition, FVector& OutWorldLoc, FVector& OutWorldDir)
+	{
+		const double TanHalfHorizontalFOV = FMath::Tan(FMath::DegreesToRadians(HorizontalFOVDeg) * 0.5);
+		const double AspectRatio = ViewportSize.X / ViewportSize.Y;
+		const double TanHalfVerticalFOV = TanHalfHorizontalFOV / AspectRatio;
+		// Normalized device coordinates, in [-1, 1], with Y pointing up.
+		const double NdcX = 2.0 * ScreenPosition.X / ViewportSize.X - 1.0;
+		const double NdcY = 1.0 - 2.0 * ScreenPosition.Y / ViewportSize.Y;
+		OutWorldLoc = CameraTransform.GetTranslation();
+		OutWorldDir = (CameraTransform.GetUnitAxis(EAxis::X)
+			+ NdcX * TanHalfHorizontalFOV * CameraTransform.GetUnitAxis(EAxis::Y)
+			+ NdcY * TanHalfVerticalFOV * CameraTransform.GetUnitAxis(EAxis::Z)).GetSafeNormal();
+	}
+}
+
 void UITwinUtilityLibrary::GetSavedViewFrustumFromUnrealTransform(const AITwinIModel* IModel, 
 	const FTransform& Transform, FSavedView& SavedView)
 {
-	//0. Get current camera position/direction
-	TObjectIterator<APlayerController> Itr;
-	if (!ensure(Itr))
-		return;
-	APlayerController const* PlayerController = *Itr;
-	if (!ensure(PlayerController))
-		return;
-	UWorld* World = IModel ? IModel->GetWorld() : PlayerController->GetWorld();
-
+	//0. Get current camera position/direction, from the player controller if any, or the editor viewport
+	APlayerController const* PlayerController = GetPlayerController();
 	FVector CamPosition = Transform.GetTranslation();
 	FVector CamDir = Transform.GetUnitAxis(EAxis::X);
-	ULocalPlayer* LocalPlayer = PlayerController->GetLocalPlayer();
-	if (!LocalPlayer || !LocalPlayer->ViewportClient)
-		return;
-	//1. Find center (x,y) of the viewport screen in pixels
+	UWorld* World = IModel ? IModel->GetWorld() : nullptr;
 	FVector2D ViewportSize, ScreenPosition;
-	LocalPlayer->ViewportClient->GetViewportSize(ViewportSize);
+	float HorizontalFOVDeg = 90.f;
+	// Deprojects a screen position to a world ray, using the player controller or the editor viewport
+	TFunction<bool(FVector2D const&, FVector&, FVector&)> DeprojectScreen;
+	if (PlayerController)
+	{
+		ULocalPlayer* LocalPlayer = PlayerController->GetLocalPlayer();
+		if (!LocalPlayer || !LocalPlayer->ViewportClient)
+			return;
+		if (!World)
+			World = PlayerController->GetWorld();
+		LocalPlayer->ViewportClient->GetViewportSize(ViewportSize);
+		if (PlayerController->PlayerCameraManager)
+			HorizontalFOVDeg = PlayerController->PlayerCameraManager->GetFOVAngle();
+		DeprojectScreen = [PlayerController](FVector2D const& Pos, FVector& OutLoc, FVector& OutDir)
+			{
+				return PlayerController->DeprojectScreenPositionToWorld(Pos.X, Pos.Y, OutLoc, OutDir);
+			};
+	}
+	else
+	{
+#if WITH_EDITOR
+		if (!GEditor)
+			return;
+		FViewport* ActiveViewport = GEditor->GetActiveViewport();
+		FEditorViewportClient* ViewportClient = ActiveViewport
+			? static_cast<FEditorViewportClient*>(ActiveViewport->GetClient()) : nullptr;
+		if (!ActiveViewport || !ViewportClient)
+			return;
+		if (!World)
+			World = GEditor->GetEditorWorldContext().World();
+		FIntPoint const SizeXY = ActiveViewport->GetSizeXY();
+		ViewportSize = FVector2D(SizeXY.X, SizeXY.Y);
+		if (ViewportSize.X <= 0.0 || ViewportSize.Y <= 0.0)
+			return;
+		HorizontalFOVDeg = ViewportClient->ViewFOV;
+		DeprojectScreen =
+			[Transform, ViewportSize, HorizontalFOVDeg](FVector2D const& Pos, FVector& OutLoc, FVector& OutDir)
+			{
+				DeprojectFromCameraTransform(Transform, HorizontalFOVDeg, ViewportSize, Pos, OutLoc, OutDir);
+				return true;
+			};
+#else
+		return;
+#endif // WITH_EDITOR
+	}
+	if (!World)
+		return;
 	float AspectRatio = (float)ViewportSize.X / ViewportSize.Y;
+	//1. Find center (x,y) of the viewport screen in pixels
 	ScreenPosition = 0.5 * ViewportSize;
 	//2. Get world coords of center screen position
 	FVector WorldLoc, WorldDir;
-	if (!PlayerController->DeprojectScreenPositionToWorld(ScreenPosition.X, ScreenPosition.Y,
-		WorldLoc, WorldDir))
+	if (!DeprojectScreen(ScreenPosition, WorldLoc, WorldDir))
 		return;
 	//3. Get coords of intersection between CamDir and IModel
 	TArray<FHitResult> AllHits;
@@ -327,34 +403,19 @@ void UITwinUtilityLibrary::GetSavedViewFrustumFromUnrealTransform(const AITwinIM
 	FVector TargetPoint = bIntersectionFound? AllHits[0].ImpactPoint:WorldLoc;
 	FVector Normal = -CamDir;
 	ScreenPosition = ViewportSize * FVector2D(0, 1);
-	PlayerController->DeprojectScreenPositionToWorld(ScreenPosition.X, ScreenPosition.Y,
-		WorldLoc, WorldDir);
+	DeprojectScreen(ScreenPosition, WorldLoc, WorldDir);
 	FVector Inter = bIntersectionFound?
 		FMath::LinePlaneIntersection(WorldLoc, WorldLoc + WorldDir * 10000.0, TargetPoint, Normal):WorldLoc;	
 	float FocusDist_UE = FVector::Dist(TargetPoint, CamPosition);
 	float FocusDist_ITwin = FocusDist_UE / 100.;
 	SavedView.FocusDist = FocusDist_ITwin;
-	SavedView.Extents = { 2.0 * FocusDist_ITwin,
-		(2.0 * FocusDist_ITwin) / AspectRatio, FocusDist_ITwin };
+	// Frustum size at the focus distance depends on the horizontal FOV (default 90 deg if unavailable)
+	const double HalfWidth = FocusDist_ITwin * FMath::Tan(FMath::DegreesToRadians(HorizontalFOVDeg) * 0.5);
+	SavedView.Extents = { 2.0 * HalfWidth, (2.0 * HalfWidth) / AspectRatio, FocusDist_ITwin };
 	FRotator DummyRotator = FRotator::ZeroRotator;
 	FVector FarBottomLeft;
-	const ACesium3DTileset* Tileset = IModel ? IModel->GetTileset() : nullptr;
-	UITwinUtilityLibrary::GetIModelBaseFromUnrealTransform(
-		IModel, FTransform(Inter), FarBottomLeft, DummyRotator);
+	UITwinUtilityLibrary::GetIModelBaseFromUnrealTransform(IModel, FTransform(Inter), FarBottomLeft, DummyRotator);
 	SavedView.FrustumOrigin = FarBottomLeft;
-}
-
-namespace
-{
-	APawn const* GetPlayerControllerPawn()
-	{
-		TObjectIterator<APlayerController> Itr;
-		if (!ensure(Itr))
-			return nullptr;
-		APlayerController const* Controller = *Itr;
-		APawn const* Pawn = ensure(Controller != nullptr) ? Controller->GetPawn() : nullptr;
-		return Pawn;
-	}
 }
 
 /*static*/ const AActor* UITwinUtilityLibrary::GetPawnActor()
@@ -364,13 +425,35 @@ namespace
 
 /*static*/ std::optional<double> UITwinUtilityLibrary::GetCameraFOV()
 {
-	TObjectIterator<APlayerController> Itr;
-	if (!ensure(Itr))
-		return std::nullopt;
-	APlayerController const* Controller = *Itr;
-	if (!ensure(Controller) || !Controller->PlayerCameraManager)
+	APlayerController const* Controller = GetPlayerController();
+	if (!Controller || !Controller->PlayerCameraManager)
 		return std::nullopt;
 	return std::make_optional<double>(Controller->PlayerCameraManager->GetFOVAngle());
+}
+
+/*static*/ std::optional<double> UITwinUtilityLibrary::GetViewportAspectRatio()
+{
+	APlayerController const* Controller = GetPlayerController();
+	if (!Controller)
+		return std::nullopt;
+
+	// A constrained aspect ratio wins: it is what is actually rendered, whatever
+	// the viewport shape (letterboxing).
+	if (Controller->PlayerCameraManager)
+	{
+		FMinimalViewInfo const POV = Controller->PlayerCameraManager->GetCameraCacheView();
+		if (POV.bConstrainAspectRatio && POV.AspectRatio > KINDA_SMALL_NUMBER)
+			return std::make_optional<double>(POV.AspectRatio);
+	}
+	ULocalPlayer const* LocalPlayer = Controller->GetLocalPlayer();
+	if (LocalPlayer && LocalPlayer->ViewportClient)
+	{
+		FVector2D ViewportSize(0., 0.);
+		LocalPlayer->ViewportClient->GetViewportSize(ViewportSize);
+		if (ViewportSize.Y > KINDA_SMALL_NUMBER)
+			return std::make_optional<double>(ViewportSize.X / ViewportSize.Y);
+	}
+	return std::nullopt;
 }
 
 void UITwinUtilityLibrary::GetSavedViewFrustumFromPlayerController(const AITwinIModel* IModel,
@@ -407,7 +490,27 @@ bool UITwinUtilityLibrary::GetSavedViewFromPlayerController(const AITwinIModel* 
 	return true;
 }
 
-/*static*/ void UITwinUtilityLibrary::ZoomOn(FBox const& FocusBBox, UWorld* World, double MinDistanceToCenter /*= 10000*/)
+bool UITwinUtilityLibrary::GetSavedViewFromCurrentViewpoint(const AITwinIModel* IModel, FSavedView& OutSavedView)
+{
+	if (!GetSavedViewFromPlayerController(IModel, OutSavedView))
+	{
+#if WITH_EDITOR
+		// Not in-game nor PIE, try to get the current Editor viewport instead.
+		auto* PoV = StaticCast<FEditorViewportClient*>(GEditor->GetActiveViewport()->GetClient());
+		if (PoV)
+		{
+			OutSavedView = GetSavedViewFromUnrealTransform(IModel,
+				FTransform(PoV->GetViewTransform().GetRotation(), PoV->GetViewTransform().GetLocation()));
+			return true;
+		}
+#endif // WITH_EDITOR
+		return false;
+	}
+	return true;
+}
+
+/*static*/ void UITwinUtilityLibrary::ZoomOn(FBox const& FocusBBox, UWorld* World,
+											 double MinDistanceToCenter /*= 10000*/)
 {
 	if (!ensure(World)) return;
 	auto* PlayerController = World->GetFirstPlayerController();

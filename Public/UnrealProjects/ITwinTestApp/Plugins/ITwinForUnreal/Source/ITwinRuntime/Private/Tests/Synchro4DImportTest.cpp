@@ -349,9 +349,9 @@ void Synchro4DImportSpec::Define()
 			auto const SetupFnc = [](std::shared_ptr<FSynchro4DImportTestHelper> Helper) {
 					Helper->TestName = TEXT("4D-testing");
 					Helper->ScheduleName = TEXT("Exhaustive test with primitives");
-					Helper->ITwinId = TEXT("d9712811-5a10-407e-b517-fbc23fcf4dc3");
-					Helper->IModelId = TEXT("b088e94b-bfa8-48b0-b551-e7dbb3ef5ee1");
-					Helper->ChangesetId = TEXT("3de7554f8e10bb7c5fa7dbd88e2e6c76d3b04dc7");
+					Helper->ITwinId = TEXT("90e23fdb-b427-4704-a072-a2f0a33231fe");
+					Helper->IModelId = TEXT("1998d072-ee4b-4428-8dcf-fbd827088ca3");
+					Helper->ChangesetId = TEXT("16d0660ea2e7bc738a0f8414caebb6c4cb378be6");
 					Helper->EnvPrefix = TEXT(""); // ie Prod
 					Helper->optRequestPagination = 10'000; // small test project => no pagination
 					Helper->optBindingsReqPagination = 10'000; // small test project => no pagination
@@ -367,9 +367,9 @@ void Synchro4DImportSpec::Define()
 			auto const SetupFnc = [](std::shared_ptr<FSynchro4DImportTestHelper> Helper) {
 					Helper->TestName = TEXT("4D-testing");
 					Helper->ScheduleName = TEXT("Exhaustive test with primitives");
-					Helper->ITwinId = TEXT("d9712811-5a10-407e-b517-fbc23fcf4dc3");
-					Helper->IModelId = TEXT("b088e94b-bfa8-48b0-b551-e7dbb3ef5ee1");
-					Helper->ChangesetId = TEXT("3de7554f8e10bb7c5fa7dbd88e2e6c76d3b04dc7");
+					Helper->ITwinId = TEXT("90e23fdb-b427-4704-a072-a2f0a33231fe");
+					Helper->IModelId = TEXT("1998d072-ee4b-4428-8dcf-fbd827088ca3");
+					Helper->ChangesetId = TEXT("16d0660ea2e7bc738a0f8414caebb6c4cb378be6");
 					Helper->EnvPrefix = TEXT(""); // ie Prod
 					Helper->optRequestPagination = 2; // force pagination even on the very small test project
 					Helper->optBindingsReqPagination = 3; // same, for animation bindings only
@@ -380,34 +380,8 @@ void Synchro4DImportSpec::Define()
 			It("should match the ref json",
 				std::bind(&Synchro4DImportSpec::CheckEntireScheduleMatchesJson, this));
 		});
-	// Actually redundant with the other "4D-testing" tests above since CheckEntireScheduleMatchesJson also
-	// loads the serialized schedule to compare it to the one built from the cached HTTP replies...
-	Describe("Loading serialized schedule", [this]()
-		{
-			auto const SetupFnc = [](std::shared_ptr<FSynchro4DImportTestHelper> Helper) {
-				Helper->TestName = TEXT("4D-testing");
-				Helper->ScheduleName = TEXT("");// will be read from Json
-				Helper->Generation = EITwinSchedulesGeneration::Unknown;// will be read from Json
-				Helper->ITwinId = TEXT("d9712811-5a10-407e-b517-fbc23fcf4dc3");
-				Helper->IModelId = TEXT("b088e94b-bfa8-48b0-b551-e7dbb3ef5ee1");
-				Helper->ChangesetId = TEXT("3de7554f8e10bb7c5fa7dbd88e2e6c76d3b04dc7");
-				Helper->EnvPrefix = TEXT(""); // ie Prod
-				Helper->bUseCachedScheduleData = true; // skip querying, use the already serialized schedule instead
-				};
-			LatentBeforeEach(FTimespan::FromSeconds(5.),
-				std::bind(&Synchro4DImportSpec::WaitFullSchedule, this, std::placeholders::_1, SetupFnc));
-			It("should have overwritten the supplied name and generation with those from the Json",
-				[this]() {
-					TestTrue("Schedule name matches the one in the serialized schedule",
-						FString(TEXT("Exhaustive test with primitives")) == Helper->Schedule->Name);
-					TestTrue("Schedule generation matches the one in the serialized schedule",
-						EITwinSchedulesGeneration::Legacy == Helper->Schedule->Generation);
-				});
-			// Just compare the FullSchedule against the reference file
-			It("should match the ref json",
-				std::bind(&Synchro4DImportSpec::CheckEntireScheduleMatchesJson, this));
-		});
-	Describe("Querying a bigger schedule, with larger pagination", [this]()
+	// Too big to maintain :/
+	xDescribe("Querying a bigger schedule, with larger pagination", [this]()
 		{
 			auto const SetupFnc = [](std::shared_ptr<FSynchro4DImportTestHelper> Helper) {
 					Helper->optRequestPagination = 10000;

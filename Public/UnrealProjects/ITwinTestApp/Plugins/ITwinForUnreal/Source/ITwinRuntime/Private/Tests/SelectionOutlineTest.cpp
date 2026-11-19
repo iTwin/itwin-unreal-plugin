@@ -1063,12 +1063,74 @@ bool FITwinSelectionOutlineTest::RunTest(const FString& /*Parameters*/)
 	{
 		FITwinSceneTile Tile = Fixture.MakeTile();
 		Select(Tile, kElem1);
-		TestTrue("Selection outlines are always enabled", ITwin::SelectionOutline::IsEnabled());
+		TestTrue("Selection outlines are enabled outside capture", ITwin::SelectionOutline::IsEnabled());
 		Tile.SelectionOutlineForUnitTest().Sync(Tile);
 		TestTrue("Outline stays active after Sync", Tile.SelectionOutlineForUnitTest().IsActive());
 		TestEqual("Companion remains created", Fixture.NumCompanions(), 1);
 		TestEqual("Source remains registered", ITwin::SelectionOutline::GetActiveSourceCount(), BaseSources + 1);
 		Tile.SelectionOutlineForUnitTest().Destroy();
+	}
+
+	SECTION("Capture suppression hides outlines without changing selection and restores them")
+	{
+		TestFalse("No capture suppression is active at test start",
+			ITwin::SelectionOutline::IsCaptureSuppressed());
+		FITwinSceneTile Tile = Fixture.MakeTile();
+		Select(Tile, kElem1);
+		Tile.SelectionOutlineForUnitTest().Sync(Tile);
+		TestTrue("Selected geometry initially has an outline", Tile.SelectionOutlineForUnitTest().IsActive());
+		uint32 const SelectionRevisionBefore = Tile.GetSelectionRevision();
+		auto const SelectionPixelBefore = Tile.SelectionPixelForUnitTest(ITwinFeatureID(10));
+		FITwinSceneTile::FTextureNeeds TextureNeeds;
+		Tile.SetHover(kElem2, ITwinRenderMaterialElementID{ ITwin::NOT_MATERIAL.getValue() },
+			EITwinSelectionTintMode::Solid, TextureNeeds);
+		Tile.SyncMaterialHover();
+		TestEqual("Hover highlight is initially visible",
+			Tile.SelectionPixelForUnitTest(ITwinFeatureID(20), true)[3], ITwin::HOVER_MARKER_ALPHA);
+		bool bSuppressionActive = false;
+		ON_SCOPE_EXIT
+		{
+			if (bSuppressionActive)
+				ITwin::SelectionOutline::EndCaptureSuppression();
+			Tile.SelectionOutlineForUnitTest().Destroy();
+		};
+
+		ITwin::SelectionOutline::BeginCaptureSuppression();
+		bSuppressionActive = true;
+		Tile.SetSelectionTintMode(EITwinSelectionTintMode::Solid, TextureNeeds);
+		auto const SuppressedSelectionPixel = Tile.SelectionPixelForUnitTest(ITwinFeatureID(10));
+		TestEqual("Selection tint blue channel is hidden during capture", SuppressedSelectionPixel[0], uint8(0));
+		TestEqual("Selection tint green channel is hidden during capture", SuppressedSelectionPixel[1], uint8(0));
+		TestEqual("Selection tint red channel is hidden during capture", SuppressedSelectionPixel[2], uint8(0));
+		Tile.SyncMaterialHover();
+		TestEqual("Hover highlight is hidden during capture",
+			Tile.SelectionPixelForUnitTest(ITwinFeatureID(20), true)[3], uint8(255));
+		TestTrue("Capture suppression is visible to the plugin", ITwin::SelectionOutline::IsCaptureSuppressed());
+		TestFalse("Selection outlines are disabled during capture", ITwin::SelectionOutline::IsEnabled());
+		Tile.SelectionOutlineForUnitTest().Sync(Tile);
+		TestFalse("The per-tile outline is destroyed during capture", Tile.SelectionOutlineForUnitTest().IsActive());
+		TestEqual("Outline source is unregistered during capture",
+			ITwin::SelectionOutline::GetActiveSourceCount(), BaseSources);
+		TestEqual("Selection revision is unchanged during capture",
+			Tile.GetSelectionRevision(), SelectionRevisionBefore);
+
+		ITwin::SelectionOutline::BeginCaptureSuppression();
+		ITwin::SelectionOutline::EndCaptureSuppression();
+		TestTrue("Nested capture remains suppressed until every owner completes",
+			ITwin::SelectionOutline::IsCaptureSuppressed());
+		ITwin::SelectionOutline::EndCaptureSuppression();
+		bSuppressionActive = false;
+		Tile.SetSelectionTintMode(EITwinSelectionTintMode::Solid, TextureNeeds);
+		Tile.SyncMaterialHover();
+		TestFalse("Capture suppression is cleared", ITwin::SelectionOutline::IsCaptureSuppressed());
+		TestEqual("Selection tint is restored after capture",
+			Tile.SelectionPixelForUnitTest(ITwinFeatureID(10))[0], SelectionPixelBefore[0]);
+		TestEqual("Hover highlight is restored after capture",
+			Tile.SelectionPixelForUnitTest(ITwinFeatureID(20), true)[3], ITwin::HOVER_MARKER_ALPHA);
+		Tile.SelectionOutlineForUnitTest().Sync(Tile);
+		TestTrue("The selected outline is restored after capture", Tile.SelectionOutlineForUnitTest().IsActive());
+		TestTrue("Selection remains unchanged after restoring the outline",
+			Tile.GetSelectionRevision() == SelectionRevisionBefore);
 	}
 
 	SECTION("Select material -> companion created, deselect -> destroyed")

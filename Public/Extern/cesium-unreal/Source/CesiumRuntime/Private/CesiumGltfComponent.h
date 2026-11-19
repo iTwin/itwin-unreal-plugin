@@ -147,6 +147,7 @@ public:
   void SetRenderReady(bool bToggle) override;
 
   void UpdateFade(float fadePercentage, bool fadingIn);
+  void ApplyStyle(UObject* pBlueprintStyleInstance);
 
 private:
   UPROPERTY()

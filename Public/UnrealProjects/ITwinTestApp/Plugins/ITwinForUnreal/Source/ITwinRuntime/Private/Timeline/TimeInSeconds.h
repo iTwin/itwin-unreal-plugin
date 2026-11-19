@@ -82,9 +82,12 @@ inline FDateTime ToNearestSecond(FDateTime const& DateTime)
 
 inline FDateRange ToNearestSecond(FDateRange const& DateRange)
 {
-	return FDateRange(
-		ToNearestSecond(DateRange.HasLowerBound() ? DateRange.GetLowerBoundValue() : FDateTime::MinValue()),
-		ToNearestSecond(DateRange.HasUpperBound() ? DateRange.GetUpperBoundValue() : FDateTime::MaxValue()));
+	if (DateRange.HasLowerBound() && DateRange.HasUpperBound())
+		return FDateRange(
+			ToNearestSecond(DateRange.GetLowerBoundValue()),
+			ToNearestSecond(DateRange.GetUpperBoundValue()));
+	else
+		return FDateRange();
 }
 
 inline FDateRange ToDateRange(FTimeRangeInSeconds TimeRange)

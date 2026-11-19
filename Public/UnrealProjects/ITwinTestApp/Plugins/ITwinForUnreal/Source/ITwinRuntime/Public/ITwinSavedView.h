@@ -21,12 +21,19 @@ class ITWINRUNTIME_API AITwinSavedView : public AITwinServiceActor
 {
 	GENERATED_BODY()
 public:
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnRetrievedInfo, bool, bSuccess, FSavedView const&, SavedView, FSavedViewInfo const&, SavedViewInfo);
 	DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnFinishedMovingToSavedViewEvent);
 	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnRetrievedThumbnailEvent, FString const&, SavedViewId, UTexture2D*, Tex2D);
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnUpdatedThumbnailEvent, bool, bSuccess, FString const&, SavedViewId);
+
+	UPROPERTY()
+	FOnRetrievedInfo RetrievedInfoEvent;
 	UPROPERTY()
 	FOnFinishedMovingToSavedViewEvent FinishedMovingToSavedView;
 	UPROPERTY()
 	FOnRetrievedThumbnailEvent RetrievedThumbnail;
+	UPROPERTY()
+	FOnUpdatedThumbnailEvent UpdatedThumbnailEvent;
 
 	UPROPERTY(Category = "iTwin",
 		EditAnywhere,
@@ -56,12 +63,19 @@ public:
 		BlueprintCallable)
 	void DeleteSavedView();
 
-	//! UpdateSavedView() needs to be called at least once before calling RenameSavedView()
-	//! to set the savedView transform.
+	//! Move to the Saved View using a smooth viewpoint animation of the given duration (when in-game only, in Editor mode
+	//! there is no transition, like in TeleportToSavedView)
 	UFUNCTION(Category = "iTwin",
 		CallInEditor,
 		BlueprintCallable)
-	void MoveToSavedView(float moveDuration = 3.f);
+	void MoveToSavedView(float const MoveDuration = 3.f);
+
+	//! Move instantly to the Saved View without any kind of transition (see MoveToSavedView).
+	//! Useful in the Editor Outliner which shows a button for this one thanks to its lack of parameters.
+	UFUNCTION(Category = "iTwin",
+		CallInEditor,
+		BlueprintCallable)
+	void TeleportToSavedView();
 
 	UFUNCTION(Category = "iTwin",
 		CallInEditor,

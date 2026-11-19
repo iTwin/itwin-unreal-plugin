@@ -306,7 +306,7 @@ public:
 	void SetGizmoActorClass(TSubclassOf<AActor> ActorClass);
 
 	/// Pre-load the given asset in a population.
-	AITwinPopulation* PreLoadPopulation(const FString& AssetPath);
+	AITwinPopulation* PreLoadPopulation(const FString& AssetPath, AdvViz::SDK::RefID targetGroupId = AdvViz::SDK::RefID::Invalid());
 
 	//! Returns the list of errors that occurred during the loading of the given asset in a
 	//! population.
@@ -457,8 +457,9 @@ public:
 	bool IsCustomPopulationGroup(const AdvViz::SDK::RefID& groupId) const;
 	void ZoomOnPopulationGroup(const std::string& groupName);
 	void RemovePopulationGroup(const std::string& groupName);
-	bool IsGroupVisible(const std::string& groupName) const;
-	void SetGroupVisible(const std::string& groupName, bool visible);
+	bool IsPopulationGroupVisible(const std::string& groupName) const;
+	void SetPopulationGroupVisible(const std::string& groupName, bool visible);
+	void SetAllPopulationGroupsVisible(bool visible);
 	// Should be same name as in PopulationPanel.tsx in order to match the name in population tool settings.
 	inline static std::string DefaultGroupDisplayName = "Default collection";
 
@@ -466,7 +467,9 @@ protected:
 	/// Overridden from AActor
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+	virtual void Destroyed() override;
 	virtual void Tick(float DeltaTime) override;
+	static void AddReferencedObjects(UObject* InThis, FReferenceCollector& Collector);
 
 	/// Overridden from AITwinInteractiveTool
 	virtual bool IsPopulationToolImpl() const override { return true; }
@@ -489,6 +492,8 @@ protected:
 	virtual bool ShowOnlyTranslationZGizmoImpl() const override;
 
 private:
+	void CleanupForWorldTeardown();
+
 	class FImpl;
 	TPimplPtr<FImpl> Impl;
 

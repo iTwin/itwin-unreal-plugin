@@ -76,6 +76,28 @@ namespace QueriesCache
 		}
 	}
 
+	void CleanCacheFolders(EITwinEnvironment const Environment,
+		FString const& ITwinId, FString const& IModelId, FString const& ChangesetId,
+		FString const& ExtraStr /*= {}*/)
+	{
+		std::vector<FString> const SubcacheFolders = {
+			GetCacheFolder(ESubtype::DEPRECATED_ElementsHierarchies, Environment, ITwinId, IModelId, ChangesetId, ExtraStr),
+			GetCacheFolder(ESubtype::DEPRECATED_ElementsSourceIDs, Environment, ITwinId, IModelId, ChangesetId, ExtraStr),
+			GetCacheFolder(ESubtype::Schedules, Environment, ITwinId, IModelId, ChangesetId, ExtraStr),
+			GetCacheFolder(ESubtype::ElementsMetadataCombined, Environment, ITwinId, IModelId, ChangesetId, ExtraStr),
+			GetCacheFolder(ESubtype::ElementsMetadataNoBBoxes, Environment, ITwinId, IModelId, ChangesetId, ExtraStr),
+			GetCacheFolder(ESubtype::ElementsMetadataBBoxes, Environment, ITwinId, IModelId, ChangesetId, ExtraStr),
+			GetCacheFolder(ESubtype::ConstructionDetailing, Environment, ITwinId, IModelId, ChangesetId, ExtraStr),
+		};
+		for (FString const& Dir : SubcacheFolders)
+		{
+			if (IFileManager::Get().DirectoryExists(*Dir))
+			{
+				IFileManager::Get().DeleteDirectory(*Dir, /*requireExists*/false, /*recurse*/true);
+			}
+		}
+	}
+
 } // ns QueriesCache
 
 class FJsonQueriesCache;

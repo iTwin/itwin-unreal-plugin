@@ -62,3 +62,5 @@ Public/BeHeaders/BuildConfig/*.h
 *.*.bak
 .turbo/
 **/protoOut/*
+Public/UnrealProjects/ITwinTestApp/.ignore
+Public/UnrealProjects/ITwinTestApp/ITwinTestApp.code-workspace

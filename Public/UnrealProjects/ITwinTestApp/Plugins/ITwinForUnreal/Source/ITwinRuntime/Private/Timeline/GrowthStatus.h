@@ -42,6 +42,9 @@ enum class EGrowthStatus : uint8_t
 	/// to the first or last(*) cutting plane equation of the growth simulation ((*) depending on the task
 	/// action = install/remove/etc.)
 	DeferredFullyGrown = (FullyGrown | Detail::GrowthStatus::Mask::Deferred),
+	/// Partial growth whose ratio in [0;1] (0 = fully removed, 1 = fully grown) is stored in PlaneW until
+	/// the plane equation is finalized (to Partial).
+	DeferredPartial = (Partial | Detail::GrowthStatus::Mask::Deferred),
 };
 
 inline FString GetGrowthStatusString(EGrowthStatus const GrowthStatus)
@@ -52,6 +55,8 @@ inline FString GetGrowthStatusString(EGrowthStatus const GrowthStatus)
 		return TEXT("DeferredFullyRemoved");
 	case EGrowthStatus::DeferredFullyGrown:
 		return TEXT("DeferredFullyGrown");
+	case EGrowthStatus::DeferredPartial:
+		return TEXT("DeferredPartiallyGrown");
 	case EGrowthStatus::FullyRemoved:
 		return TEXT("FullyRemoved");
 	case EGrowthStatus::FullyGrown:
@@ -69,6 +74,8 @@ inline std::optional<EGrowthStatus> ParseGrowthStatus(FString const& GrowthStatu
 		return EGrowthStatus::DeferredFullyRemoved;
 	else if (GrowthStatus == TEXT("DeferredFullyGrown"))
 		return EGrowthStatus::DeferredFullyGrown;
+	else if (GrowthStatus == TEXT("DeferredPartiallyGrown"))
+		return EGrowthStatus::DeferredPartial;
 	else if (GrowthStatus == TEXT("FullyRemoved"))
 		return EGrowthStatus::FullyRemoved;
 	else if (GrowthStatus == TEXT("FullyGrown"))

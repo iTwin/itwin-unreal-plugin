@@ -1,0 +1,4 @@
+{
+    "status": 200,
+    "body": "{\"scene\":{\"id\":\"9714861e-56cb-4bfb-a0a7-ce5b5ead6c6b\",\"displayName\":\"JD synchro animation\",\"iTwinId\":\"cc04c77c-9da5-4699-873b-49dfaa074b5a\",\"tags\":[],\"visibility\":\"private\",\"isPubliclyShared\":false,\"createdById\":\"fab7496a-f871-4381-b243-623d0f897e09\",\"lastModifiedById\":\"fab7496a-f871-4381-b243-623d0f897e09\",\"creationTime\":\"2026-10-12T14:05:39.997Z\",\"lastModified\":\"2026-10-28T15:09:57.247Z\",\"image\":{\"href\":\"https://scenes.test.blob.net/scene-images/cc04c77c-9da5-4699-873b-49dfaa074b5a/9714861e-56cb-4bfb-a0a7-ce5b5ead6c6b/scene/small_20c68f6f-d705-4de1-90fe-3f713f8a460a.png?sv=2026-10-06&st=2026-11-12T10%3A07%3A35Z&se=2026-11-13T10%3A12%3A35Z&sr=b&sp=r&sig=zUxdtFaCjBVH09f9BO1E7Arz4iBI%2FOwZfySeCsxubEM%3D\"},\"sceneData\":{\"objects\":{\"href\":\"https://api.bentley.com/scenes/9714861e-56cb-4bfb-a0a7-ce5b5ead6c6b/objects?iTwinId=cc04c77c-9da5-4699-873b-49dfaa074b5a\"}}}}"
+}

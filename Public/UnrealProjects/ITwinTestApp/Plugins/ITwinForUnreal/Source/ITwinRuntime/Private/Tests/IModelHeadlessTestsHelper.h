@@ -20,6 +20,7 @@
 
 struct FElementProperties;
 struct FIModelTestOptions;
+class UTexture2D;
 
 UCLASS()
 class UIModelHeadlessTestsHelper : public UObject, public TTestHelperSingleton<UIModelHeadlessTestsHelper>
@@ -43,10 +44,25 @@ public:
 	void OnSavedViewsRetrieved(const FString& ID);
 
 	UFUNCTION()
+	void OnSavedViewInfoRetrieved(bool bSuccess, FSavedView const& SavedView, FSavedViewInfo const& SavedViewInfo);
+
+	UFUNCTION()
+	void OnSavedViewThumbnailRetrieved(FString const& SavedViewId, UTexture2D* Tex2D);
+
+	UFUNCTION()
+	void OnSavedViewThumbnailUpdated(bool bSuccess, FString const& SavedViewId);
+
+	UFUNCTION()
+	void OnSavedViewDeleted(bool bSuccess, FString SavedViewId, FString Response);
+
+	UFUNCTION()
 	void OnElementPropertiesRetrieved(bool bSuccess, const FElementProperties& ElementProps, const FString& ElementId);
 
 	class FImpl;
 	FImpl& GetImpl() { return *Impl; }
+
+private:
+	void OnExtraRequestResponseReceived();
 
 private:
 	TPimplPtr<FImpl> Impl;

@@ -38,16 +38,30 @@ namespace AdvViz::SDK::RequestDump
 			RequestDump::Request{ urlSuffix, body }, YYJSON_WRITE_PRETTY);
 	}
 
-	void DumpResponse(long status, const std::string& body, const std::filesystem::path& requestDumpPath)
+	void DumpResponse(const HttpResponse& response, const std::filesystem::path& requestDumpPath)
 	{
 		if (!requestDumpPath.empty())
 		{
 			// Dump response to temp folder.
+			const long status = response.first;
+			const std::string& body = response.second;
 			std::ofstream(requestDumpPath / "response.json") << rfl::json::write(
 				RequestDump::Response{ status, body }, YYJSON_WRITE_PRETTY);
-			if (!body.empty())
+
+			// If the response has raw binary content, dump it instead of the body string.
+			// This is the case for example for iModel textures.
+			if (response.rawdata_ && response.rawdata_->size() > 0)
+			{
+				std::ofstream out(requestDumpPath / "response.bin", std::ios::binary);
+				out.write(
+					reinterpret_cast<const char*>(response.rawdata_->data()),
+					static_cast<std::streamsize>(response.rawdata_->size()));
+			}
+			else if (!body.empty())
+			{
 				std::ofstream(requestDumpPath / "response.bin").write(
 					(const char*)body.data(), body.size());
+			}
 		}
 	}
 

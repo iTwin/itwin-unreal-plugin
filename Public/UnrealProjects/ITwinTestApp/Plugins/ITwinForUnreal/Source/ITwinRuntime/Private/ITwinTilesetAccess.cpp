@@ -325,6 +325,7 @@ void FITwinTilesetAccess::GetModelOffset(FVector& Pos, FVector& Rot) const
 {
 	if (IsValid())
 	{
+		// Convert from Unreal (centimeters) to meters.
 		Pos = TilesetOwner->GetActorLocation() / 100.0;
 		Rot = TilesetOwner->GetActorRotation().Euler();
 	}
@@ -334,7 +335,8 @@ void FITwinTilesetAccess::SetModelOffset(const FVector& Pos, const FVector& Rot)
 {
 	if (!IsValid())
 		return;
-	TilesetOwner->SetActorLocationAndRotation(Pos, FQuat::MakeFromEuler(Rot));
+	// Convert position offset from meters to Unreal (centimeters).
+	TilesetOwner->SetActorLocationAndRotation(Pos * 100.0, FQuat::MakeFromEuler(Rot));
 	// SetActorLocationAndRotation already calls that, and only when needed (SetModelOffset gets called from
 	// Carrot UI even when merely clicking into then away from the offset edit fields!)
 	//OnIModelOffsetChanged();

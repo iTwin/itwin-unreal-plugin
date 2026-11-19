@@ -67,6 +67,7 @@ private:
 	inline bool CanSendToScene(EITwinClippingPrimitiveType EffectType, int32 Index) const;
 	void LoadSceneAPICutoutInstancesInGame();
 
+	bool PreLoadCutoutPrimitive(EITwinClippingPrimitiveType PrimitiveType);
 	uint32 PreLoadClippingPrimitives();
 	inline TWeakObjectPtr<AITwinPopulation> GetPopulation(EITwinClippingPrimitiveType Type) const;
 	inline bool IsValidPopulationIndex(EITwinClippingPrimitiveType EffectType, int32 Index) const;

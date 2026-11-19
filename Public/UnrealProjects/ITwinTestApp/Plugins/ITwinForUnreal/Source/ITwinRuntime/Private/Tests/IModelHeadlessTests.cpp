@@ -8,11 +8,15 @@
 
 #if WITH_TESTS
 
+#include <ITwinElementID.h>
+#include <ITwinGeolocation.h>
 #include <ITwinIModel.h>
+#include <ITwinIModelEventHandler.h>
 #include <ITwinIModel3DInfo.h>
 #include <ITwinSavedView.h>
 #include <ITwinTilesetAccess.h>
-#include <ITwinWebServices/ITwinWebServices_Info.h>
+#include <ITwinUtilityLibrary.h>
+#include <ITwinWebServices/ITwinWebServices.h>
 #include <IncludeCesium3DTileset.h>
 #include <Decoration/ITwinDecorationHelper.h>
 
@@ -21,6 +25,10 @@
 #include <Tests/ITwinAutomationTestBaseNoLogs.h>
 #include <Tests/ITwinFileBasedMockServer.h>
 
+#include <Engine/Texture2D.h>
+#include <HAL/FileManager.h>
+#include <HAL/PlatformFile.h>
+#include <HAL/PlatformFileManager.h>
 #include <Misc/LowLevelTestAdapter.h>
 
 #include <Compil/BeforeNonUnrealIncludes.h>
@@ -31,7 +39,9 @@
 class UIModelHeadlessTestsHelper::FImpl : public FIModelTestHelperImpl
 {
 public:
-	FImpl(UIModelHeadlessTestsHelper& InOwner) : Owner(InOwner) {}
+	static bool bInGeoLocatedIModelTest;
+
+	FImpl(UIModelHeadlessTestsHelper& InOwner);
 	~FImpl() { Cleanup(); }
 	
 	virtual void FillTestInfo(FITwinExportInfo& OutExportInfo,
@@ -47,23 +57,51 @@ private:
 	UIModelHeadlessTestsHelper& Owner;
 };
 
+/*static*/
+bool UIModelHeadlessTestsHelper::FImpl::bInGeoLocatedIModelTest = false;
+
+UIModelHeadlessTestsHelper::FImpl::FImpl(UIModelHeadlessTestsHelper& InOwner)
+	: Owner(InOwner)
+{
+	// List all elements used in the test (see the SelectElement section).
+	if (bInGeoLocatedIModelTest)
+	{
+		ElementsToTest = { TEXT("0x5000000007c") };
+	}
+	else
+	{
+		ElementsToTest = { TEXT("0x59"), TEXT("0x5b"), TEXT("0x5d") };
+	}
+}
 
 void UIModelHeadlessTestsHelper::FImpl::FillTestInfo(FITwinExportInfo& OutExportInfo,
 	FString& OutSceneId,
 	std::filesystem::path& OutRelativeCacheFolder,
 	FInitOptions const& InOptions) const
 {
-	// Use the same iModel as in IModelRenderTest.
-	OutExportInfo.Id = InOptions.bDiscoverExport ? TEXT("") : TEXT("a4feb6ee-bb1c-40d3-8659-a1765b1d179d");
-	OutExportInfo.iTwinId = TEXT("5e15184e-6d3c-43fd-ad04-e28b4b39485e");
-	OutExportInfo.iModelId = TEXT("b53cebea-451f-4433-942f-eabda9c11d21");
+	if (bInGeoLocatedIModelTest)
+	{
+		OutExportInfo.iTwinId = TEXT("cc04c77c-9da5-4699-873b-49dfaa074b5a");
+		OutExportInfo.iModelId = TEXT("e9464c5d-f40a-4443-8652-47677a7a1089");
+		OutExportInfo.DisplayName = TEXT("iModel for geo located test") + FString(InOptions.bUseLatestChangeset ? TEXT(" (latest changeset)") : TEXT(""));
+		OutSceneId = TEXT("9714861e-56cb-4bfb-a0a7-ce5b5ead6c6b");
+
+		OutRelativeCacheFolder = "FunctionalTests/GeoLocatedStation";
+	}
+	else
+	{
+		// Use the same iModel as in IModelRenderTest.
+		OutExportInfo.Id = InOptions.bDiscoverExport ? TEXT("") : TEXT("a4feb6ee-bb1c-40d3-8659-a1765b1d179d");
+		OutExportInfo.iTwinId = TEXT("5e15184e-6d3c-43fd-ad04-e28b4b39485e");
+		OutExportInfo.iModelId = TEXT("b53cebea-451f-4433-942f-eabda9c11d21");
+		OutExportInfo.DisplayName = TEXT("iModel for headless tests") + FString(InOptions.bUseLatestChangeset ? TEXT(" (latest changeset)") : TEXT(""));
+
+		// Use the default scene of this iTwin.
+		OutSceneId = InOptions.bDiscoverDefaultScene ? TEXT("") : TEXT("7e2059e4-8a48-4671-a67d-6da36d88d9bf");
+
+		OutRelativeCacheFolder = "FunctionalTests/IModelRender";
+	}
 	OutExportInfo.ChangesetId = InOptions.bUseLatestChangeset ? TEXT("latest") : TEXT("");
-	OutExportInfo.DisplayName = TEXT("iModel for headless tests") + FString(InOptions.bUseLatestChangeset ? TEXT(" (latest changeset)") : TEXT(""));
-
-	// Use the default scene of this iTwin.
-	OutSceneId = InOptions.bDiscoverDefaultScene ? TEXT("") : TEXT("7e2059e4-8a48-4671-a67d-6da36d88d9bf");
-
-	OutRelativeCacheFolder = "FunctionalTests/IModelRender";
 }
 
 void UIModelHeadlessTestsHelper::FImpl::BindEvents()
@@ -153,21 +191,82 @@ void UIModelHeadlessTestsHelper::OnSavedViewsRetrieved(const FString& ID)
 	Impl->OnLoadEventReceived();
 }
 
-void UIModelHeadlessTestsHelper::OnElementPropertiesRetrieved(bool bSuccess, const FElementProperties& ElementProps, const FString& ElementId)
+void UIModelHeadlessTestsHelper::OnExtraRequestResponseReceived()
 {
-	BE_ASSERT(bSuccess);
-	BE_ASSERT(ElementId == TEXT("0x59"));
-	BE_ASSERT(ElementProps.Properties.Num() == 1
-		&& ElementProps.Properties[0].Attributes.Num() == 4
-		&& ElementProps.Properties[0].Attributes[3].Name == TEXT("Category")
-		&& ElementProps.Properties[0].Attributes[3].Value == TEXT("zoupiLayer0"));
-
 	FITwinIOAsyncCallbackPtr AsyncCallback = Impl->GetAsyncCallback();
 	if (AsyncCallback)
 	{
 		AsyncCallback->OnRequestDone();
 	}
 	Impl->CleanupIfDone();
+}
+
+void UIModelHeadlessTestsHelper::OnSavedViewInfoRetrieved(bool bSuccess, FSavedView const& SavedView, FSavedViewInfo const& SavedViewInfo)
+{
+	BE_ASSERT(bSuccess);
+
+	BE_ASSERT(SavedView.Origin.Equals(FVector(-155.70294122338959, 144.47916100846396, 108.36823390983045)));
+	BE_ASSERT(SavedView.Extents.Equals(FVector(414.95568847656250, 403.87248403521090, 207.47784423828125)));
+	BE_ASSERT(SavedView.Angles.Equals(FRotator(-53.023407775510790, 125.55997527224881, 29.730651049277785)));
+
+	BE_ASSERT(SavedViewInfo.Id == TEXT("ABIyuxws235Ku90nw9sCS05OGBVePG39Q60E4otLOUhe6us8tR9FM0SUL-q9qcEdIQ"));
+	BE_ASSERT(SavedViewInfo.DisplayName == TEXT("view 001"));
+
+	OnExtraRequestResponseReceived();
+}
+
+void UIModelHeadlessTestsHelper::OnSavedViewThumbnailRetrieved(FString const& SavedViewId, UTexture2D* Tex2D)
+{
+	BE_ASSERT(SavedViewId == TEXT("ABIyuxws235Ku90nw9sCS05OGBVePG39Q60E4otLOUhe6us8tR9FM0SUL-q9qcEdIQ"));
+	BE_ASSERT(Tex2D != nullptr);
+	if (Tex2D)
+	{
+		Tex2D->WaitForStreaming();
+		BE_ASSERT(Tex2D->GetSizeX() == 300);
+		BE_ASSERT(Tex2D->GetSizeY() == 169);
+	}
+
+	OnExtraRequestResponseReceived();
+}
+
+void UIModelHeadlessTestsHelper::OnSavedViewThumbnailUpdated(bool bSuccess, FString const& SavedViewId)
+{
+	BE_ASSERT(bSuccess);
+	BE_ASSERT(SavedViewId == TEXT("ABIyuxws235Ku90nw9sCS05OGBVePG39Q60E4otLOUhe6us8tR9FM0SUL-q9qcEdIQ"));
+
+	OnExtraRequestResponseReceived();
+}
+
+void UIModelHeadlessTestsHelper::OnSavedViewDeleted(bool bSuccess, FString SavedViewId, FString Response)
+{
+	BE_ASSERT(bSuccess);
+	BE_ASSERT(SavedViewId == TEXT("ABIyuxws235Ku90nw9sCS05OGBVePG39Q60E4otLOUhe6us8tR9FM0SUL-q9qcEdIQ"));
+
+	OnExtraRequestResponseReceived();
+}
+
+void UIModelHeadlessTestsHelper::OnElementPropertiesRetrieved(bool bSuccess, const FElementProperties& ElementProps, const FString& ElementId)
+{
+	BE_ASSERT(bSuccess);
+	if (ElementId == TEXT("0x5000000007c"))
+	{
+		BE_ASSERT(ElementProps.Properties.Num() == 4
+			&& ElementProps.Properties[3].Attributes.Num() == 9
+			&& ElementProps.Properties[3].Attributes[4].Name == TEXT("Code Value")
+			&& ElementProps.Properties[3].Attributes[4].Value == TEXT("fc9f936f-6b87-4047-a182-11aef78aa03a"));
+	}
+	else if (ElementId == TEXT("0x59"))
+	{
+		BE_ASSERT(ElementProps.Properties.Num() == 1
+			&& ElementProps.Properties[0].Attributes.Num() == 4
+			&& ElementProps.Properties[0].Attributes[3].Name == TEXT("Category")
+			&& ElementProps.Properties[0].Attributes[3].Value == TEXT("zoupiLayer0"));
+	}
+	else
+	{
+		BE_ISSUE("unexpected Element id in OnElementPropertiesRetrieved", TCHAR_TO_ANSI(*ElementId));
+	}
+	OnExtraRequestResponseReceived();
 }
 
 
@@ -187,6 +286,23 @@ bool FNUTWaitForAsyncIModelHeadlessTest::Update()
 }
 
 #if WITH_EDITOR
+
+namespace
+{
+	class FTestIModelEventHandler : public FITwinIModelEventHandler
+	{
+	public:
+		int32 OffsetDetectedCount = 0;
+
+		FTestIModelEventHandler() = default;
+
+		virtual bool HandleOffsetDetected() override
+		{
+			OffsetDetectedCount++;
+			return true;
+		}
+	};
+}
 
 IMPLEMENT_CUSTOM_SIMPLE_AUTOMATION_TEST(FIModelHeadlessTest, FITwinAutomationTestBaseNoLogs, \
 	"Bentley.ITwinForUnreal.ITwinRuntime.IModelHeadless", \
@@ -211,9 +327,9 @@ bool FIModelHeadlessTest::RunTest(const FString& /*Parameters*/)
 
 	SECTION("IModel Load and Test")
 	{
-		UTEST_TRUE(TEXT("Check world"), World != nullptr);
-		UTEST_TRUE(TEXT("Check decoration helper"), DecoHelper != nullptr);
-		UTEST_TRUE(TEXT("Check iModel"), IModel != nullptr);
+		UTEST_NOT_NULL(TEXT("Check world"), World);
+		UTEST_NOT_NULL(TEXT("Check decoration helper"), DecoHelper);
+		UTEST_NOT_NULL(TEXT("Check iModel"), IModel);
 
 		Helper.BindEvents();
 
@@ -224,6 +340,12 @@ bool FIModelHeadlessTest::RunTest(const FString& /*Parameters*/)
 		{
 			auto const ValidateLoadedIModel = [&]() -> bool
 			{
+				// Customize some events: typically, we don't want to reload the tileset when
+				// changing the offset (that would reset the scene mapping used in other tests).
+				std::shared_ptr<FITwinIModelEventHandler> EventHandler = std::make_shared<FTestIModelEventHandler>();
+				FTestIModelEventHandler* TestEventHandler = static_cast<FTestIModelEventHandler*>(EventHandler.get());
+				IModel->SetCustomEventHandler(EventHandler);
+
 				FBox BoundingBox;
 				UTEST_TRUE(TEXT("Get BoundingBox"), IModel->GetBoundingBox(BoundingBox, true, AITwinIModel::EBBoxMethod::ProjectExtents));
 				UTEST_TRUE(TEXT("BoundingBox is valid"), static_cast<bool>(BoundingBox.IsValid));
@@ -258,18 +380,56 @@ bool FIModelHeadlessTest::RunTest(const FString& /*Parameters*/)
 				UTEST_TRUE(TEXT("LoadInfo modelType"), LoadInfo.ModelType == EITwinModelType::IModel);
 				UTEST_TRUE(TEXT("LoadInfo reality data"), LoadInfo.RealityDataId.IsEmpty());
 
+				// Add a few tests on ITwinTilesetAccess
+				UWorld* const World = FITwinAPITestHelperBase::GetTestWorld();
+				UTEST_NOT_NULL(TEXT("Check world on scene loaded"), World);
+				int32 const NumIModelTilesets = ITwin::CountTilesetsOfModelType(EITwinModelType::IModel, World);
+				UTEST_TRUE(TEXT("CountTilesetsOfModelType"), NumIModelTilesets > 0);
 				{
 					TUniquePtr<FITwinTilesetAccess> Access = IModel->MakeTilesetAccess();
 					UTEST_TRUE(TEXT("Has tileset access"), Access.IsValid());
 					UTEST_TRUE(TEXT("Has tileset"), Access->HasTileset());
 					UTEST_EQUAL(TEXT("Model Link"), Access->GetModelLink(), std::make_pair(EITwinModelType::IModel, FString(TEXT("b53cebea-451f-4433-942f-eabda9c11d21"))));
+					UTEST_EQUAL(TEXT("Model Type"), Access->GetModelType(), EITwinModelType::IModel);
 					UTEST_FALSE(TEXT("IsTilesetHidden"), Access->IsTilesetHidden());
 					auto const Quality = Access->GetTilesetQuality();
 					UTEST_TRUE(TEXT("Tileset quality"), Quality > 0.f && Quality < 1.f);
-					FVector Pos, Rot;
+
+					Access->SetTilesetQuality(1.2 * Quality);
+					auto const NewQuality = Access->GetTilesetQuality();
+					UTEST_TRUE(TEXT("New Tileset quality"), NewQuality > Quality);
+
+					FVector Pos(-1.0), Rot(-1.0);
 					Access->GetModelOffset(Pos, Rot);
 					UTEST_EQUAL(TEXT("Offset Pos"), Pos, FVector::ZeroVector);
 					UTEST_EQUAL(TEXT("Offset Rot"), Rot, FVector::ZeroVector);
+
+					// Offset is now consistent between get and set...
+					// Both are in meters and degrees, respectively.
+					Access->SetModelOffset(FVector(1., 2., 3.), FVector(45., 0., 90.));
+					UTEST_EQUAL(TEXT("New Offset Detected"), TestEventHandler->OffsetDetectedCount, 1);
+					Access->GetModelOffset(Pos, Rot);
+					UTEST_EQUAL(TEXT("New Offset Pos"), Pos, FVector(1., 2., 3.));
+					UTEST_EQUAL(TEXT("New Offset Rot"), Rot, FVector(45., 0., 90.));
+
+					// GetTilesetAccess should work with both the iModel actor or the tileset actor.
+					ACesium3DTileset* Tileset = Access->GetMutableTileset();
+					auto Access2 = ITwin::GetTilesetAccess(IModel.Get());
+					bool const bIsSameAccess2 = Access2 && Access2->GetTileset() == Tileset;
+					UTEST_TRUE(TEXT("Tileset access from iModel actor is the same"), bIsSameAccess2);
+
+					auto Access3 = ITwin::GetTilesetAccess(Tileset);
+					bool const bIsSameAccess3 = Access3 && Access3->GetTileset() == Tileset;
+					UTEST_TRUE(TEXT("Tileset access from tileset actor is the same"), bIsSameAccess3);
+
+					auto Access4 = ITwin::GetTilesetAccessFromModelLink(IModel->GetModelLink(), World);
+					bool const bIsSameAccess4 = Access4 && Access4->GetTileset() == Tileset;
+					UTEST_TRUE(TEXT("Tileset access from model link is the same"), bIsSameAccess4);
+
+					FBox AABB = UITwinUtilityLibrary::GetUnrealAxisAlignBoundingBox(Tileset);
+					UTEST_TRUE(TEXT("GetUnrealAxisAlignBoundingBox"), (bool)AABB.IsValid);
+					UTEST_EQUAL_TOLERANCE(TEXT("AABB Min"), AABB.Min, FVector(-51210.0402796, -51200.0402704, -51210.0805421), 1e-7);
+					UTEST_EQUAL_TOLERANCE(TEXT("AABB Max"), AABB.Max, FVector(51200.0402717, 51210.0402783, 51200.0805578), 1e-7);
 				}
 
 				const FProjectExtents* Extents = IModel->GetProjectExtents();
@@ -282,6 +442,37 @@ bool FIModelHeadlessTest::RunTest(const FString& /*Parameters*/)
 				}
 				const FEcefLocation* EcefLocation = IModel->GetEcefLocation();
 				UTEST_NULL(TEXT("Ecef Location"), EcefLocation);
+
+				FTransform const IModelTsf = UITwinUtilityLibrary::GetIModelToUnrealTransform(IModel.Get());
+				{
+					UTEST_TRUE(TEXT("GetIModelToUnrealTransform"), IModelTsf.IsValid());
+					auto const Location = IModelTsf.GetLocation();
+					auto const Rotator = IModelTsf.Rotator();
+					auto const Scale = IModelTsf.GetScale3D();
+					UTEST_EQUAL_TOLERANCE(TEXT("IModel Location"), Location, FVector(-6667.5975038, 7939.4499217, -9044.4565289), 1e-7);
+					UTEST_EQUAL_TOLERANCE(TEXT("IModel Pitch"), Rotator.Pitch, 0.0, 1e-7);
+					UTEST_EQUAL_TOLERANCE(TEXT("IModel Yaw"), Rotator.Yaw, -90.0, 1e-7);
+					UTEST_EQUAL_TOLERANCE(TEXT("IModel Roll"), Rotator.Roll, -45.0, 1e-7);
+					UTEST_EQUAL_TOLERANCE(TEXT("IModel Scale"), Scale, FVector(-100., 100., 100.), 1e-7);
+				}
+
+				IModel->ShowConstructionData(false);
+				IModel->HideElements({ "0x59", "0x5d", "0x5b" }, false);
+				IModel->ShowElements({ "0x59", "0x5d", "0x5b" }, false);
+				IModel->HideCategories({ "0x31" }, false);
+				IModel->HideModels({ "0x1c" }, false);
+				IModel->HideCategoriesPerModel({ "0x1c" }, { "0x33" }, false);
+				IModel->ShowCategoriesPerModel({ "0x1c" }, { "0x33" }, false);
+
+				FSavedView SV;
+				SV.HiddenCategories.Add(TEXT("0x31"));
+				SV.HiddenElements.Add(TEXT("0x59"));
+				SV.AlwaysDrawnCategoriesPerModel.Add(FPerModelCategoryVisibilityProps{
+					.ModelId = TEXT("0x1c"),
+					.CategoryId = TEXT("0x33")
+				});
+				SV.AlwaysDrawnElements.Add(TEXT("0x5d"));
+				AITwinSavedView::HideElements(IModel.Get(), SV);
 
 				UTEST_EQUAL(TEXT("GetSceneID"), DecoHelper->GetSceneID(), FString(TEXT("7e2059e4-8a48-4671-a67d-6da36d88d9bf")));
 				auto const MaterialMap = IModel->GetITwinMaterialMap();
@@ -317,6 +508,9 @@ bool FIModelHeadlessTest::RunTest(const FString& /*Parameters*/)
 					AsyncCallback->OnRequestStarted();
 				}
 
+				IModel->GetElementProperties(TEXT("0x59"));
+				AsyncCallback->OnRequestStarted();
+
 				UTEST_TRUE(TEXT("SelectElement"), IModel->IsElementSelected(TEXT("0x59")));
 
 				IModel->SelectElements({ TEXT("0x5d"), TEXT("0x5b") });
@@ -333,6 +527,22 @@ bool FIModelHeadlessTest::RunTest(const FString& /*Parameters*/)
 
 				IModel->DeSelectElements();
 				UTEST_FALSE(TEXT("SelectElement"), IModel->IsElementSelected(TEXT("0x59")));
+
+				const uint64 Id38 = 38;
+				IModel->HighlightMaterial(Id38);
+				UTEST_EQUAL(TEXT("GetSelectedMaterial"), IModel->GetSelectedMaterial(), Id38);
+				IModel->DeSelectMaterials();
+				UTEST_EQUAL(TEXT("GetSelectedMaterial"), IModel->GetSelectedMaterial(), ITwin::NOT_MATERIAL.getValue());
+
+				// Both element and material selected.
+				IModel->HighlightMaterial(Id38);
+				IModel->AddElementsToSelection({ TEXT("0x59") });
+				UTEST_TRUE(TEXT("SelectElement"), IModel->IsElementSelected(TEXT("0x59")));
+				UTEST_EQUAL(TEXT("GetSelectedMaterial"), IModel->GetSelectedMaterial(), Id38);
+				IModel->DeSelectAll();
+				UTEST_FALSE(TEXT("SelectElement"), IModel->IsElementSelected(TEXT("0x59")));
+				UTEST_EQUAL(TEXT("GetSelectedMaterial"), IModel->GetSelectedMaterial(), ITwin::NOT_MATERIAL.getValue());
+
 				return true;
 			};
 
@@ -404,7 +614,7 @@ bool FIModelLatestChangesetTest::RunTest(const FString& /*Parameters*/)
 
 				// Saved views
 				UTEST_TRUE(TEXT("Has loaded saved views"), IModel->AreSavedViewsLoaded());
-				AITwinSavedView const* SV_001 = IModel->GetITwinSavedViewActor(TEXT("ABIyuxws235Ku90nw9sCS05OGBVePG39Q60E4otLOUhe6us8tR9FM0SUL-q9qcEdIQ"));
+				AITwinSavedView* SV_001 = IModel->GetITwinSavedViewActor(TEXT("ABIyuxws235Ku90nw9sCS05OGBVePG39Q60E4otLOUhe6us8tR9FM0SUL-q9qcEdIQ"));
 				UTEST_NOT_NULL(TEXT("Saved view 001"), SV_001);
 				AITwinSavedView const* SV_002 = IModel->GetITwinSavedViewActor(TEXT("APlW_hOBzBlGhjGUPAwNZgpOGBVePG39Q60E4otLOUhe6us8tR9FM0SUL-q9qcEdIQ"));
 				UTEST_NOT_NULL(TEXT("Saved view 002"), SV_002);
@@ -418,10 +628,162 @@ bool FIModelLatestChangesetTest::RunTest(const FString& /*Parameters*/)
 					UTEST_EQUAL(TEXT("Saved view 003 Name"), SV_003->DisplayName, FString(TEXT("view 003")));
 				}
 
+				if (SV_001)
+				{
+					// Test requests on a saved view. Each one will add an additional request to the queue,
+					// so we need to call OnRequestStarted.
+
+					UIModelHeadlessTestsHelper& HelperObject = UIModelHeadlessTestsHelper::Instance();
+					SV_001->RetrievedInfoEvent.AddUniqueDynamic(&HelperObject, &UIModelHeadlessTestsHelper::OnSavedViewInfoRetrieved);
+					SV_001->UpdateSavedView();
+					AsyncCallback->OnRequestStarted();
+
+					SV_001->RetrievedThumbnail.AddUniqueDynamic(&HelperObject, &UIModelHeadlessTestsHelper::OnSavedViewThumbnailRetrieved);
+					SV_001->GetThumbnail();
+					AsyncCallback->OnRequestStarted();
+
+					// Replace the thumbnail with a new one.
+					// Note that in practice, we should not be replacing the thumbnail while a request to get
+					// the thumbnail is in progress, but the mock server ignores the order here :-)
+					const FString TexturePath = FPaths::ProjectDir() / "../../../Public/SDK/Core/Visualization/Tests/UT_TextureToUpload.png";
+					UTEST_TRUE(TEXT("texture exists"), FPlatformFileManager::Get().GetPlatformFile().FileExists(*TexturePath));
+					SV_001->UpdatedThumbnailEvent.AddUniqueDynamic(&HelperObject, &UIModelHeadlessTestsHelper::OnSavedViewThumbnailUpdated);
+					SV_001->UpdateThumbnail(TexturePath);
+					AsyncCallback->OnRequestStarted();
+
+					// Same for deletion. In practice, we should not be deleting the saved view while
+					// requests to get/modify it are in progress...
+					// Not that the event is forwarded to the parent iModel
+					IModel->GetMutableWebServices()->OnDeleteSavedViewComplete
+						.AddUniqueDynamic(&HelperObject, &UIModelHeadlessTestsHelper::OnSavedViewDeleted);
+					SV_001->DeleteSavedView();
+					AsyncCallback->OnRequestStarted();
+				}
+
 				return true;
 			};
 
 			ValidateLoadedIModel();
+
+			AsyncCallback->OnRequestDone();
+		});
+
+		AsyncCallback->OnRequestStarted();
+	}
+
+	ADD_LATENT_AUTOMATION_COMMAND(FNUTWaitForAsyncIModelHeadlessTest(AsyncCallback));
+
+	return true;
+}
+
+
+IMPLEMENT_CUSTOM_SIMPLE_AUTOMATION_TEST(FIModelGeoLocatedTest, FITwinAutomationTestBaseNoLogs, \
+	"Bentley.ITwinForUnreal.ITwinRuntime.IModelGeoLocated", \
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FIModelGeoLocatedTest::RunTest(const FString& /*Parameters*/)
+{
+	UIModelHeadlessTestsHelper::FImpl::bInGeoLocatedIModelTest = true;
+	ON_SCOPE_EXIT
+	{
+		UIModelHeadlessTestsHelper::FImpl::bInGeoLocatedIModelTest = false;
+	};
+
+	UWorld* const World = FITwinAPITestHelperBase::GetTestWorld();
+	if (!World)
+	{
+		BE_ISSUE("Test world is not valid");
+		return false;
+	}
+	FITwinGeolocation::UnlockLocation(*World); // avoid conflicts with other tests loading geo-located models.
+
+	UIModelHeadlessTestsHelper& HelperObject = UIModelHeadlessTestsHelper::Instance();
+
+	auto& Helper = HelperObject.GetImpl();
+
+	if (!Helper.Init(FIModelTestOptions{
+		.bUseLatestChangeset = true,
+		.bDiscoverExport = true,
+		.bDiscoverDefaultScene = false,
+		.bAutoLoadSavedViews = false }))
+	{
+		return false;
+	}
+
+	auto* DecoHelper = Helper.GetDecorationHelper();
+	auto* IModel = Helper.GetIModel();
+	FITwinIOAsyncCallbackPtr AsyncCallback = Helper.GetAsyncCallback();
+
+
+	SECTION("Load geo-located IModel")
+	{
+		UTEST_TRUE(TEXT("Check decoration helper"), DecoHelper != nullptr);
+		UTEST_TRUE(TEXT("Check iModel"), IModel != nullptr);
+
+		Helper.BindEvents();
+
+		Helper.SetTestCallback(
+			[this, AsyncCallback,
+			IModel = TStrongObjectPtr<AITwinIModel>(IModel),
+			DecoHelper = TStrongObjectPtr<AITwinDecorationHelper>(DecoHelper)]()
+		{
+			auto const ValidateLoadedIModel = [&]() -> bool
+			{
+				UTEST_NOT_NULL(TEXT("Check Synchro4D schedules"), IModel->GetSynchro4DSchedules());
+
+				TUniquePtr<FITwinTilesetAccess> Access = IModel->MakeTilesetAccess();
+				UTEST_TRUE(TEXT("Has tileset access"), Access.IsValid());
+				if (Access.IsValid())
+				{
+					UTEST_TRUE(TEXT("Has tileset"), Access->HasTileset());
+					auto AccessClone = Access->Clone();
+
+					auto Box = AccessClone->GetBoundingBox();
+					UTEST_EQUAL(TEXT("Bounding box min"), Box.Min, FVector(-8368.3425673942329, -77641.821777780657, 3533.1325028092297));
+					UTEST_EQUAL(TEXT("Bounding box max"), Box.Max, FVector(8368.3425668130876, 77641.821742852335, 16466.867517238526));
+
+					auto CartographicProps = AccessClone->GetNativeGeoreference();
+					UTEST_TRUE(TEXT("Has georeference"), CartographicProps.has_value());
+					UTEST_EQUAL(TEXT("Georeference Longitude"), CartographicProps->Longitude, -122.13104950739952);
+					UTEST_EQUAL(TEXT("Georeference Latitude"), CartographicProps->Latitude, 47.641538442597998);
+					UTEST_EQUAL(TEXT("Georeference Height"), CartographicProps->Height, 64.664427093607856);
+				}
+
+				// The geo-location singleton should have been created and initialized by the iModel.
+				UWorld* const World = FITwinAPITestHelperBase::GetTestWorld();
+				UTEST_NOT_NULL(TEXT("Check world"), World);
+				auto&& Geoloc = FITwinGeolocation::Get(*World);
+				UTEST_TRUE(TEXT("Check geolocation"), Geoloc->GeoReference.IsValid());
+				UTEST_FALSE(TEXT("geolocation is locked"), Geoloc->bCanBypassCurrentLocation);
+				UTEST_EQUAL(TEXT("geolocation coordinates"), Geoloc->GeoReference->GetOriginLongitudeLatitudeHeight(),
+					FVector(-122.13104950739952, 47.641538442597998, 42.472044957053953));
+				return true;
+			};
+
+			auto const TestIModel = [&]() -> bool
+			{
+				// Select an element with a timeline.
+				if (IModel->SelectElement(TEXT("0x5000000007c")))
+				{
+					// SelectElement triggers a request to describe the element, so we should wait for the
+					// request to be processed before exiting the test.
+					// (see bLogPropertiesUponSelectElement in FITwinIModelInternals::DescribeElement).
+					AsyncCallback->OnRequestStarted();
+				}
+
+				UTEST_TRUE(TEXT("SelectElement"), IModel->IsElementSelected(TEXT("0x5000000007c")));
+
+				// Reset destroys the tileset.
+				IModel->Reset();
+				UTEST_FALSE(TEXT("Has tileset"), IModel->MakeTilesetAccess()->HasTileset());
+
+				return true;
+			};
+
+			if (ValidateLoadedIModel())
+			{
+				TestIModel();
+			}
 
 			AsyncCallback->OnRequestDone();
 		});

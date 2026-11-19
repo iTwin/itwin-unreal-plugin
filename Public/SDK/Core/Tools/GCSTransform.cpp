@@ -17,26 +17,41 @@ namespace AdvViz::SDK::Tools
 	static_assert(sizeof(dmat4x4) == sizeof(glm::dmat4x4));
 	static_assert(sizeof(double3) == sizeof(glm::dvec3));
 
+	double IGCSTransform::GetHandedness() const
+	{
+		// Transform the identity placement: the result's linear part is the client -> ECEF
+		// linear map itself. Its determinant is +/-1 (the metre/centimetre scaling is applied
+		// to translations only), so only the sign matters.
+		dmat4x4 const m = MatrixFromClient(Identity44);
+		double3 const r0{ ColRow4x4(m, 0, 0), ColRow4x4(m, 1, 0), ColRow4x4(m, 2, 0) };
+		double3 const r1{ ColRow4x4(m, 0, 1), ColRow4x4(m, 1, 1), ColRow4x4(m, 2, 1) };
+		double3 const r2{ ColRow4x4(m, 0, 2), ColRow4x4(m, 1, 2), ColRow4x4(m, 2, 2) };
+		double const det = r0[0] * (r1[1] * r2[2] - r1[2] * r2[1])
+						 - r0[1] * (r1[0] * r2[2] - r1[2] * r2[0])
+						 + r0[2] * (r1[0] * r2[1] - r1[1] * r2[0]);
+		return (det < 0.) ? -1. : 1.;
+	}
+
 	class GCSTransform::Impl
 	{
 	};
 
-	double3 GCSTransform::PositionFromClient(const double3& v)
+	double3 GCSTransform::PositionFromClient(const double3& v) const
 	{
 		return v;
 	}
 	
-	double3 GCSTransform::PositionToClient(const double3& v)
+	double3 GCSTransform::PositionToClient(const double3& v) const
 	{
 		return v;
 	}
 
-	dmat4x4 GCSTransform::MatrixFromClient(const dmat4x4& m)
+	dmat4x4 GCSTransform::MatrixFromClient(const dmat4x4& m) const
 	{
 		return m;
 	}
 
-	dmat4x4 GCSTransform::MatrixToClient(const dmat4x4& m)
+	dmat4x4 GCSTransform::MatrixToClient(const dmat4x4& m) const
 	{
 		return m;
 	}

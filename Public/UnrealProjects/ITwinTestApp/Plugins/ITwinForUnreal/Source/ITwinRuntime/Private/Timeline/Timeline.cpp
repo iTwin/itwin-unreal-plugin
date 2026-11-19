@@ -13,6 +13,8 @@
 #include <Timeline/SchedulesConstants.h>
 #include <Timeline/TimelineBase.h>
 
+#include <algorithm>
+
 /*static*/ FIModelElementsKey FIModelElementsKey::NOT_ANIMATED(ITwin::NOT_ELEMENT);
 
 namespace ITwin::Timeline {
@@ -147,7 +149,7 @@ void ElementTimelineEx::SetColorAt(double const Time, std::optional<FVector> InC
 
 void ElementTimelineEx::SetCuttingPlaneAt(double const Time, std::optional<FVector> InPlaneOrientation,
 	EGrowthStatus const InGrowthStatus, EInterpolation const Interp,
-	PTransform const* const InTransformKeyframe/*=nullptr*/)
+	PTransform const* const InTransformKeyframe/*=nullptr*/, float const GrowthRatio/*=0.f*/)
 {
 	PropertyEntry<PClippingPlane> Entry;
 	Entry.Time = Time;
@@ -155,7 +157,8 @@ void ElementTimelineEx::SetCuttingPlaneAt(double const Time, std::optional<FVect
 	Entry.DefrdPlaneEq = FDeferredPlaneEquation{
 		.PlaneOrientation = InPlaneOrientation ? FVector3f(*InPlaneOrientation) : FVector3f::ZeroVector,
 		.TransformKeyframe = InTransformKeyframe,
-		.PlaneW = 0.f,/*need init, see operator==*/
+		/*need init, see operator==*/
+		.PlaneW = (EGrowthStatus::DeferredPartial == InGrowthStatus) ? std::clamp(GrowthRatio, 0.f, 1.f) : 0.f,
 		.GrowthStatus = InGrowthStatus
 	};
 	check(Entry.DefrdPlaneEq.IsDeferred() || !InPlaneOrientation); // otherwise need to pass W as well
@@ -224,7 +227,8 @@ bool ElementTimelineEx::HasPartialVisibility() const
 }
 
 PTransform const& ElementTimelineEx::SetTransformationAt(double const Time, FVector const& InPosition,
-	FQuat const& InRotation, FDeferredAnchor const& DefrdAnchor, EInterpolation const Interp)
+	FQuat const& InRotation, FDeferredAnchor const& DefrdAnchor, EInterpolation const Interp,
+	FVector const& InScale/*= FVector::OneVector*/)
 {
 	PropertyEntry<PTransform> Entry;
 	Entry.Time = Time;
@@ -232,6 +236,7 @@ PTransform const& ElementTimelineEx::SetTransformationAt(double const Time, FVec
 	Entry.bIsTransformed = ITwin::Flag::Present;
 	Entry.Position = InPosition;
 	Entry.Rotation = InRotation;
+	Entry.Scale = InScale;
 	Entry.DefrdAnchor = DefrdAnchor;
 	return *Transform.Values.insert(Entry).first;
 }
@@ -244,6 +249,7 @@ void ElementTimelineEx::SetTransformationDisabledAt(double const Time, EInterpol
 	Entry.bIsTransformed = ITwin::Flag::Absent;
 	Entry.Position = FVector::ZeroVector;
 	Entry.Rotation = FQuat::Identity;
+	Entry.Scale = FVector::OneVector;
 	Transform.Values.insert(Entry);
 }
 

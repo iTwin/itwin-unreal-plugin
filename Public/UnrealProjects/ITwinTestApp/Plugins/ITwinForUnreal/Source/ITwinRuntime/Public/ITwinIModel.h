@@ -22,6 +22,7 @@ struct FChangesetInfos;
 struct FITwinExportInfos;
 struct FCesium3DTilesetLoadFailureDetails;
 class FITwinTilesetAccess;
+class FITwinIModelEventHandler;
 struct FSavedViewInfos;
 struct FSavedViewGroupInfos;
 class UITwinClipping3DTilesetHelper;
@@ -139,6 +140,10 @@ public:
 	UPROPERTY(Category = "iTwin|Loading",
 		VisibleAnywhere)
 	EITwinExportStatus ExportStatus = EITwinExportStatus::Unknown;
+
+	UPROPERTY(Category = "iTwin|Loading",
+		VisibleAnywhere)
+	FString IModelName;
 
 	//! Synchro4D schedules found on this iModel.
 	UPROPERTY(Category = "iTwin",
@@ -293,6 +298,9 @@ public:
 #if WITH_TESTS
 	//! Used in some automated tests, to permanently disable auto-loading of 4D schedules.
 	static void Disable4DAutoLoadSchedule(bool bDisable);
+
+	//! Used in some automated tests, to customize some behaviors on specific events.
+	void SetCustomEventHandler(std::shared_ptr<FITwinIModelEventHandler> InEventHandler);
 #endif
 
 
@@ -308,10 +316,6 @@ public:
 	UFUNCTION(Category = "iTwin",
 		BlueprintCallable)
 	void ShowConstructionData(bool bShow);
-
-	UFUNCTION(Category = "iTwin",
-		BlueprintCallable)
-	void UpdateConstructionData();
 
 	void HideCategories(std::vector<std::string> const& InCategoryIDs, bool forceUpdate);
 
@@ -352,6 +356,11 @@ public:
 	UFUNCTION(Category = "iTwin",
 		BlueprintCallable)
 	void HideSelectionHighlightColor();
+
+	/// Temporarily hide selection/hover highlights and outlines while screenshots or videos are captured.
+	/// Calls must be balanced; nested capture owners are supported.
+	static void BeginSelectionCaptureSuppression();
+	static void EndSelectionCaptureSuppression();
 
 	//! Highlight the given Element (ElementId as hex string, or empty) and/or the given iTwin Material
 	//! (ignored unless bHoverMaterial, as 0 is a valid ID: the iModel's default material) with the
@@ -429,6 +438,9 @@ public:
 
 	//! Highlight the parts of the model using the given iTwin Material ID.
 	void HighlightMaterial(uint64 MaterialID);
+
+	//! Returns the selected Material's ID, if a Material is selected, or ITwin::NOT_MATERIAL.
+	uint64 GetSelectedMaterial() const;
 
 	//! Returns the map of ITwin material info - the key being the iTwin Material ID, and the value, the
 	//! display name of the material.
@@ -539,9 +551,8 @@ public:
 	void LoadModelFromInfos(FITwinExportInfo const& ExportInfo);
 	//! Returns the list of IDs of the supported (ie. having Cesium format) reality data attached to the iModel.
 	TFuture<TArray<FString>> GetAttachedRealityDataIds();
+
 	void SetLightForForcedShadowUpdate(ULightComponent* SkyLight);
-	TFuture<TArray<FString>> GetChildrenModelIds(const FString& ParentModelId);
-	TFuture<TArray<FString>> GetSubCategoryIds(const FString& ParentCategoryId);
 
 	UITwinClipping3DTilesetHelper* GetClippingHelper() const;
 	bool MakeClippingHelper();

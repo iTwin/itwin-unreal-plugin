@@ -23,7 +23,8 @@ inline bool operator==(const FITwinSchedule& A, const FITwinSchedule& B)
 		|| A.StaticTransfosDeltaToken != B.StaticTransfosDeltaToken
 		|| A.Anim3DPathsAssignmentsDeltaToken != B.Anim3DPathsAssignmentsDeltaToken
 		|| A.Anim3DPathsDeltaToken != B.Anim3DPathsDeltaToken
-		|| A.Anim3DPathKeyframesDeltaToken != B.Anim3DPathKeyframesDeltaToken)
+		|| A.Anim3DPathKeyframesDeltaToken != B.Anim3DPathKeyframesDeltaToken
+		|| A.CalendarsDeltaToken != B.CalendarsDeltaToken)
 	{
 		return false;
 	}
@@ -57,6 +58,8 @@ inline bool operator==(const FITwinSchedule& A, const FITwinSchedule& B)
 		return false;
 	if (!CompareVectorWithMap(A.Animation3DPaths, A.KnownAnimation3DPaths,
 							  B.Animation3DPaths, B.KnownAnimation3DPaths))
+		return false;
+	if (!CompareVectorWithMap(A.Calendars, A.KnownCalendars, B.Calendars, B.KnownCalendars))
 		return false;
 
 	// AnimationBindings map uses the struct itself as key

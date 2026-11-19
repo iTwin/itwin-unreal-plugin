@@ -25,7 +25,9 @@ AdvViz::SDK::Tools::IGCSTransformPtr FITwinMathConversion::transform_;
 }
 
 // Transform
-/*static*/ AdvViz::SDK::dmat3x4 FITwinMathConversion::UEtoSDK(FTransform const& ueTransform, bool applyGCS /*= true*/)
+/*static*/ AdvViz::SDK::dmat3x4 FITwinMathConversion::UEtoSDK(FTransform const& ueTransform,
+	bool applyGCS /*= true*/,
+	ENegativeZeroPolicy negativeZeroPolicy /*= Preserve*/)
 {
 	using namespace AdvViz::SDK;
 
@@ -43,10 +45,21 @@ AdvViz::SDK::Tools::IGCSTransformPtr FITwinMathConversion::transform_;
 	for (int32 i = 0; i < 4; ++i)
 		for (int32 j = 0; j < 3; ++j)
 			ColRow3x4(sdkTransform,j,i) = srcMat.M[i][j];
+
+	if (negativeZeroPolicy == ENegativeZeroPolicy::Normalize)
+	{
+		for (double& v : sdkTransform)
+		{
+			if (v == -0.0)
+				v = 0.0;
+		}
+	}
 	return sdkTransform;
 }
 
-/*static*/ FTransform FITwinMathConversion::SDKtoUE(AdvViz::SDK::dmat3x4 const& sdkTransform, bool applyGCS /*= true*/)
+/*static*/ FTransform FITwinMathConversion::SDKtoUE(AdvViz::SDK::dmat3x4 const& sdkTransform,
+	bool applyGCS /*= true*/,
+	EDegenerateScalePolicy degenerateScalePolicy /*= Allow*/)
 {
 	using namespace AdvViz::SDK;
 
@@ -71,7 +84,21 @@ AdvViz::SDK::Tools::IGCSTransformPtr FITwinMathConversion::transform_;
 		ueMatF.M[3][2]);
 
 	FTransform ueTransform;
-	ueTransform.SetFromMatrix(ueMatF);
+	if (degenerateScalePolicy == EDegenerateScalePolicy::IgnoreRotation)
+	{
+		// NB: ExtractScaling normalizes ueMatF in place, so the transform built
+		// below is scale-free (unit scale) - this is intentional, it matches the
+		// original decoration-loading behavior.
+		FVector const scale = ueMatF.ExtractScaling(0);
+		if (scale.X != 0. && scale.Y != 0. && scale.Z != 0.)
+			ueTransform.SetFromMatrix(ueMatF);
+		else
+			BE_LOGE("ITwinDecoration", "Invalid transformation loaded, ignoring rotation");
+	}
+	else
+	{
+		ueTransform.SetFromMatrix(ueMatF);
+	}
 	ueTransform.SetTranslation(uePos);
 
 	return ueTransform;

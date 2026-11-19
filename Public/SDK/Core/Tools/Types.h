@@ -86,10 +86,19 @@ namespace AdvViz::SDK
 		return m[col * 4 + row];
 	}
 
+	static const dmat4x3 Identity34 = { 1., 0., 0.,	0.,
+										0., 1.,	0., 0.,
+										0., 0., 1., 0. };
+
+	static const dmat4x4 Identity44 = { 1., 0., 0.,	0.,
+										0., 1.,	0., 0.,
+										0., 0., 1., 0.,
+										0., 0., 0., 1. };
+
 	struct GCS
 	{
 		std::string wkt;
-		double3 center; // lat, lon, height 
+		double3 center = { 0.0, 0.0, 0.0 }; // lat, lon, height
 	};
 
 	struct BoundingBox {

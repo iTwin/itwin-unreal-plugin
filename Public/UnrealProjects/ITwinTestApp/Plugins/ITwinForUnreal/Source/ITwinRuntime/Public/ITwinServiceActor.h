@@ -82,6 +82,9 @@ public:
 		BlueprintCallable)
 	FString GetAccessToken() const;
 
+	//! Attach a child actor to this actor, and set its environment to match this actor's environment
+	//! (as well as copying other relevant settings, if any - typically in Test mode).
+	void AttachChildServiceActor(AITwinServiceActor& ChildActor);
 
 #if WITH_TESTS
 	//! Used in automated tests, to enable mocking of web services.

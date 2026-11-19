@@ -183,7 +183,7 @@ std::shared_ptr<_ObjectTimeline> const& MainTimelineBase<_ObjectTimeline>::AddTi
 	// Note: "AddTimeline" is now called from ElementTimelineFor, when creating an empty timeline, in that
 	// case this call is pointless, but let's keep it to preserve also the other use case (adding an already
 	// filled timeline, for example in unit testing - see other call to IncludeTimeRange done only in
-	// FITwinIModelInternals::OnElementsTimelineModified)
+	// FITwinIModelInternals::OnElementsTimelineModified via MainTimeline::OnElementsTimelineModified)
 	// Note 2: IncludeTimeRange is also now called directly from SchedulesImport.cpp in case of pre-fetching
 	// of all Tasks, in which case this is again redundant.
 	IncludeTimeRange(*Timeline);

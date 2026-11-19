@@ -14,6 +14,7 @@
 
 #include <Components/SplineComponent.h>
 #include <Engine/World.h>
+#include <UObject/UObjectGlobals.h>
 
 #include <Compil/BeforeNonUnrealIncludes.h>
 #	include <BeHeaders/Compil/EnumSwitchCoverage.h>
@@ -38,7 +39,8 @@ struct UITwinAnimPathHelper::FImpl
 
 	//FString PathName; // do we need to rename paths?
 	AdvViz::SDK::IAnimationPathInfoPtr PathProp;
-	TArray<TStrongObjectPtr<UBakedAnimKeyFrames> > BakedFramesPerLane;
+	TArray<TObjectPtr<UBakedAnimKeyFrames> > BakedFramesPerLane;
+	std::shared_ptr<FAnimPathRebakeData> ActiveAsyncBakingData;
 	TArray<FString> Objects; // same as 'objects' of PathProp but in FString format
 	// Spline length at the moment of last baking (used to detect if spline length
 	// has changed and significantly after edition and therefore path repopulation is required)
@@ -53,6 +55,25 @@ struct UITwinAnimPathHelper::FImpl
 	void FinalizeAsyncBaking(const TArray<FAnimPathLaneData>& LanesData);
 	UBakedAnimKeyFrames* GetBakedFrames(int laneIdx);
 	void UpdateBakedAnimationSpeed();
+
+	void SetAsyncBakingData(const std::shared_ptr<FAnimPathRebakeData>& Data)
+	{
+		CancelAsyncBaking();
+		ActiveAsyncBakingData = Data;
+	}
+	void ClearAsyncBakingData(const std::shared_ptr<FAnimPathRebakeData>& Data)
+	{
+		if (ActiveAsyncBakingData == Data)
+			ActiveAsyncBakingData.reset();
+	}
+	void CancelAsyncBaking()
+	{
+		if (ActiveAsyncBakingData)
+		{
+			ActiveAsyncBakingData->bCancelled = true;
+			ActiveAsyncBakingData.reset();
+		}
+	}
 	
 	FAnimPathUpdateState& GetUpdateState() { return UpdateState; }
 	bool IsReady() const { return UpdateState.IsReady(); }
@@ -61,6 +82,17 @@ private:
 	void ReserveBakedAnimKeyFramesStorage();
 	FAnimPathUpdateState UpdateState;
 };
+
+void UITwinAnimPathHelper::AddReferencedObjects(UObject* InThis, FReferenceCollector& Collector)
+{
+	Super::AddReferencedObjects(InThis, Collector);
+	auto* Helper = static_cast<UITwinAnimPathHelper*>(InThis);
+	if (!Helper || !Helper->Impl)
+		return;
+
+	for (TObjectPtr<UBakedAnimKeyFrames>& BakedFrames : Helper->Impl->BakedFramesPerLane)
+		Collector.AddReferencedObject(BakedFrames, Helper);
+}
 
 //bool UITwinAnimPathHelper::FImpl::HasBakedAnimation() const
 //{
@@ -82,15 +114,15 @@ void UITwinAnimPathHelper::FImpl::ReserveBakedAnimKeyFramesStorage()
 	BakedFramesPerLane.SetNum(Owner.GetFullLaneCount());
 	for (int i = 0; i < BakedFramesPerLane.Num(); ++i)
 	{
-		if (!BakedFramesPerLane[i].IsValid())
-			BakedFramesPerLane[i] = TStrongObjectPtr<UBakedAnimKeyFrames>(NewObject<UBakedAnimKeyFrames>(&Owner));
+		if (!IsValid(BakedFramesPerLane[i].Get()))
+			BakedFramesPerLane[i] = NewObject<UBakedAnimKeyFrames>(&Owner);
 	}
 }
 
 void UITwinAnimPathHelper::FImpl::UpdateBakedAnimationSpeed()
 {
 	for (int i = 0; i < BakedFramesPerLane.Num(); ++i)
-		if (BakedFramesPerLane[i].IsValid())
+		if (IsValid(BakedFramesPerLane[i].Get()))
 			BakedFramesPerLane[i]->SetSpeed(Owner.GetLaneSpeed(i));
 }
 
@@ -110,7 +142,7 @@ void UITwinAnimPathHelper::FImpl::BakeAnimation(AdvViz::SDK::ISplinePtr Spline)
 
 	auto splineInst = Spline->GetRAutoLock();
 	for (int32 i = 0; i < BakedFramesPerLane.Num(); ++i)
-		if (BakedFramesPerLane[i].IsValid())
+		if (IsValid(BakedFramesPerLane[i].Get()))
 			BakedFramesPerLane[i]->BakeSpline(Owner.GetWorld(), splineInst->GetId(), Owner.GetLaneSpeed(i), i, Owner.GetLaneOffset(i, false));
 }
 
@@ -124,7 +156,12 @@ void UITwinAnimPathHelper::BakeAnimation()
 
 void UITwinAnimPathHelper::BakeAnimationAsync(std::shared_ptr<FAnimPathRebakeData> Data)
 {
-	if (!PathAnimHelpers::IsValidSpline(Data->SplineCurves))
+	BakeAnimationAsyncData(Data);
+}
+
+void UITwinAnimPathHelper::BakeAnimationAsyncData(std::shared_ptr<FAnimPathRebakeData> Data)
+{
+	if (!Data || Data->bCancelled || !PathAnimHelpers::IsValidSpline(Data->SplineCurves))
 		return;
 	float SamplingStep = UBakedAnimKeyFrames::GetSamplingStep(Data->bHasCurvedIntervals, Data->LanesData.Num() > 0);
 	TArray<FVector> Positions;
@@ -132,12 +169,16 @@ void UITwinAnimPathHelper::BakeAnimationAsync(std::shared_ptr<FAnimPathRebakeDat
 	PathAnimHelpers::SampleSpline(Data->SplineCurves, Data->ComponentToWorld, SamplingStep, Positions, Directions);
 	for (int32 i = 0; i < Data->LanesData.Num(); ++i)
 	{
+		if (Data->bCancelled)
+			return;
 		// Initialize lane length with spline length, it will be then updated in PrecomputeKeyFrames()
 		// if lane offset is not zero
 		Data->LanesData[i].OutLength = Data->SplineCurves.GetSplineLength();
-		PathAnimHelpers::PrecomputeKeyFrames(Data->World.Get(), 
+		PathAnimHelpers::PrecomputeKeyFrames(Data->World.Get(),
 			Positions, Directions, SamplingStep, Data->LanesData[i].LaneSpeed, Data->LanesData[i].LaneOffset, 
 			Data->LanesData[i].OutTransforms, Data->LanesData[i].OutLength);
+		if (Data->bCancelled)
+			return;
 		BE_LOGI("App", "Successfully baked " << Data->LanesData[i].OutTransforms.Num() << " keyframes for lane " << i << ", final lane length is " << 0.01 * Data->LanesData[i].OutLength << "m");
 	}
 }
@@ -147,7 +188,7 @@ void UITwinAnimPathHelper::FImpl::FinalizeAsyncBaking(const TArray<FAnimPathLane
 	ReserveBakedAnimKeyFramesStorage();
 
 	for (int32 i = 0; i < BakedFramesPerLane.Num(); ++i)
-		if (BakedFramesPerLane[i].IsValid())
+		if (IsValid(BakedFramesPerLane[i].Get()))
 			BakedFramesPerLane[i]->CopyFromData(i, LanesData[i].LaneSpeed, LanesData[i].OutLength, LanesData[i].OutTransforms);
 }
 
@@ -167,6 +208,24 @@ UBakedAnimKeyFrames* UITwinAnimPathHelper::FImpl::GetBakedFrames(int laneIdx)
 UBakedAnimKeyFrames* UITwinAnimPathHelper::GetBakedFrames(int laneIdx/* = 0*/)
 {
 	return Impl->GetBakedFrames(laneIdx);
+}
+
+void UITwinAnimPathHelper::SetAsyncBakingData(const std::shared_ptr<FAnimPathRebakeData>& Data)
+{
+	if (Impl)
+		Impl->SetAsyncBakingData(Data);
+}
+
+void UITwinAnimPathHelper::ClearAsyncBakingData(const std::shared_ptr<FAnimPathRebakeData>& Data)
+{
+	if (Impl)
+		Impl->ClearAsyncBakingData(Data);
+}
+
+void UITwinAnimPathHelper::CancelAsyncBaking()
+{
+	if (Impl)
+		Impl->CancelAsyncBaking();
 }
 
 FTransform UITwinAnimPathHelper::GetStartTransform(int laneIdx, bool bNeedAlignmentFix) const

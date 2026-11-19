@@ -1148,6 +1148,7 @@ bool FITwinAPITestHelperBase::InitServer(MockServerPtr Server)
 	{
 		return false;
 	}
+	BE_LOGI("http", "Started MockServer on port " << MockServer->getPort());
 	return true;
 }
 
@@ -1177,6 +1178,10 @@ bool FITwinAPITestHelperBase::Init(AdvViz::SDK::EITwinEnvironment Env /*= EITwin
 
 void FITwinAPITestHelperBase::Cleanup()
 {
+	if (MockServer)
+	{
+		BE_LOGI("http", "Stopping MockServer on port " << MockServer->getPort());
+	}
 	MockServer.reset();
 
 	DoCleanup();

@@ -19,9 +19,15 @@
 #include <array>
 
 #include <Hashing/UnrealMath.h>
+#include <ITwinSynchro4DSchedulesInternals.h>
+#include <Timeline/SchedulesKeyframes.h>
+#include <Timeline/SchedulesParse.h>
 #include <Timeline/SchedulesStructs.h>
 #include <Timeline/SchedulesStructs.inl>
 #include <Timeline/Definition.h>
+
+#include <Dom/JsonObject.h>
+#include <Dom/JsonValue.h>
 
 #if WITH_TESTS
 
@@ -699,6 +705,129 @@ void TimelineBuilderRegressionSpec::Define()
 				static_cast<int32>(Builder.GetTimeline().GetContainer().size()), 1);
 			TestEqual("empty timelines should not mark any subgroup as keyframed",
 				static_cast<int32>(KeyframedSubgroups.size()), 0);
+		});
+}
+
+// Static transform matrices from SYNCHRO are often not exactly orthonormal (float precision drift): the scale
+// must be accounted for, otherwise Elements far from the iModel origin end up visibly misplaced.
+BEGIN_DEFINE_SPEC(StaticTransformScaleSpec, "Bentley.ITwinForUnreal.ITwinRuntime.Timeline",
+				  EAutomationTestFlags::EngineFilter | EAutomationTestFlags_ApplicationContextMask)
+	/// Actual static transforms (rows of the matrix, as returned by the 4D api) assigned to the same Element
+	/// (by two different tasks), whose BBox center is about 500km away from the iModel origin
+	static constexpr std::array<double, 16> MatrixScale1em6{
+		0.9997127056121826, -0.023921199142932892, 0.0, 11740.5263671875,
+		0.023921199142932892, 0.9997127056121826, 0.0, -2801.18896484375,
+		0.0, 0.0, 1.0, -0.1536215841770172,
+		0.0, 0.0, 0.0, 1.0 };
+	static constexpr std::array<double, 16> MatrixScale2em7{
+		0.9993506073951721, -0.03602726384997368, 0.0, 17686.22265625,
+		0.03602726384997368, 0.9993506073951721, 0.0, -4099.490234375,
+		0.0, 0.0, 1.0, -0.12895765900611877,
+		0.0, 0.0, 0.0, 1.0 };
+	/// Approximately the fixed point of both transforms above, ie. where the Element is (in iModel meters)
+	FVector const CenterInIModel{ 122900., 489000., 10. };
+	FITwinCoordConversions CoordConv;
+	FMatrix ParseMatrix(std::array<double, 16> const& Values);
+	/// Returns the distance (in UE units) between where the full static transform matrix puts the point, and
+	/// where the transform computed from the timeline keyframe puts it
+	double GetErrorAt(FVector const& PointInIModel, FMatrix const& Mat, ITwin::Timeline::PTransform const& Key,
+					  bool bWantsResultAsIfIModelUntransformed);
+END_DEFINE_SPEC(StaticTransformScaleSpec)
+
+FMatrix StaticTransformScaleSpec::ParseMatrix(std::array<double, 16> const& Values)
+{
+	auto JsonObj = MakeShared<FJsonObject>();
+	TArray<TSharedPtr<FJsonValue>> JsonValues;
+	for (double const Value : Values)
+		JsonValues.Add(MakeShared<FJsonValueNumber>(Value));
+	JsonObj->SetArrayField(TEXT("transform"), JsonValues);
+	FMatrix Mat;
+	TestTrue("parse static transform", FSchedulesParse::ParseStaticTransform(Mat, JsonObj));
+	return Mat;
+}
+
+double StaticTransformScaleSpec::GetErrorAt(FVector const& PointInIModel, FMatrix const& Mat,
+	ITwin::Timeline::PTransform const& Key, bool bWantsResultAsIfIModelUntransformed)
+{
+	FTransform const& IModelToUE = bWantsResultAsIfIModelUntransformed
+		? CoordConv.IModelToUntransformedIModelInUE : CoordConv.IModelToUnreal;
+	FVector const Expected = IModelToUE.TransformPosition(Mat.TransformPosition(PointInIModel));
+	FTransform const AsTransform = FITwinSynchro4DSchedulesInternals::ComputeTransformFromFinalizedKeyframe(
+		CoordConv, Key, CoordConv.IModelToUntransformedIModelInUE.TransformPosition(CenterInIModel),
+		bWantsResultAsIfIModelUntransformed);
+	return FVector::Distance(Expected, AsTransform.TransformPosition(IModelToUE.TransformPosition(PointInIModel)));
+}
+
+void StaticTransformScaleSpec::Define()
+{
+	BeforeEach([this]()
+		{
+			// Mimic UITwinUtilityLibrary::GetIModelCoordinateConversions for a geolocated iModel: meters to
+			// centimeters, Y flip, some rotation, and the project area brought close to the Unreal origin
+			FTransform IModelToUnreal(FQuat(FVector::ZAxisVector, 0.2), FVector::ZeroVector,
+									  FVector(100., -100., 100.));
+			IModelToUnreal.SetTranslation(
+				FVector(1000., 2000., 300.) - IModelToUnreal.TransformPosition(CenterInIModel));
+			CoordConv.IModelToUnreal = UITwinUtilityLibrary::StandardizeAndFixAngles(IModelToUnreal);
+			CoordConv.IModelToUntransformedIModelInUE = CoordConv.IModelToUnreal;
+			CoordConv.UnrealToIModel =
+				UITwinUtilityLibrary::StandardizeAndFixAngles(UITwinUtilityLibrary::Inverse(IModelToUnreal));
+			CoordConv.IModelTilesetTransform = FTransform::Identity;
+		});
+
+	struct FTestCase { const TCHAR* Name; std::array<double, 16> Values; double MinErrorWithoutScale; };
+	for (FTestCase const& TestCase : {
+			FTestCase{ TEXT("scale off by 1.1e-6"), MatrixScale1em6, 50. },
+			FTestCase{ TEXT("scale off by 2e-7"), MatrixScale2em7, 5. } })
+	{
+		It(FString::Printf(TEXT("applies a static transform with %s accurately far from the origin"), TestCase.Name),
+			[this, Values = TestCase.Values, MinErrorWithoutScale = TestCase.MinErrorWithoutScale]()
+			{
+				FMatrix const Mat = ParseMatrix(Values);
+				FTransform const AsTransform(Mat);
+				FITwinElementTimeline Timeline(FIModelElementsKey(ITwinElementID(1)),
+											   FElementsGroup{ ITwinElementID(1) });
+				ITwin::Timeline::PTransform const& Key = ITwin::Timeline::AddStaticTransformToTimeline(Timeline,
+					FTimeRangeInSeconds{ 10., 20. }, AsTransform, CoordConv, ITwin::Timeline::FTaskDependenciesData{});
+				TestTrue("keyframe keeps the scale", Key.Scale.Equals(AsTransform.GetScale3D(), 0.)
+					&& Key.Scale != FVector::OneVector);
+
+				FVector const OffCenter = CenterInIModel + FVector(20., -15., 5.);
+				for (bool const bUntransformed : { false, true })
+				{
+					// 0.1mm, in UE units (cm)
+					TestTrue("BBox center at the right place", GetErrorAt(CenterInIModel, Mat, Key, bUntransformed) < 0.01);
+					TestTrue("off-center point at the right place", GetErrorAt(OffCenter, Mat, Key, bUntransformed) < 0.01);
+				}
+
+				// Check the test is meaningful, ie. what happens when ignoring the scale
+				ITwin::Timeline::PropertyEntry<ITwin::Timeline::PTransform> KeyWithoutScale;
+				static_cast<ITwin::Timeline::PTransform&>(KeyWithoutScale) = Key;
+				KeyWithoutScale.Scale = FVector::OneVector;
+				TestTrue("ignoring the scale leads to a visible error",
+					GetErrorAt(CenterInIModel, Mat, KeyWithoutScale, false) > MinErrorWithoutScale);
+			});
+	}
+
+	It("round-trips the keyframe scale through json", [this]()
+		{
+			FITwinElementTimeline Timeline(FIModelElementsKey(ITwinElementID(1)), FElementsGroup{ ITwinElementID(1) });
+			auto const& Key = Timeline.SetTransformationAt(10., FVector(1., 2., 3.), FQuat::Identity,
+				ITwin::Timeline::FDeferredAnchor{ ITwin::Timeline::EAnchorPoint::Static, false, FVector::ZeroVector },
+				ITwin::Timeline::EInterpolation::Step, FVector(0.9999988588, 0.9999988588, 1.));
+			ITwin::Timeline::PropertyEntry<ITwin::Timeline::PTransform> FromJson;
+			TestTrue("parse json", ITwin::Timeline::FromJsonValue(10., ITwin::Timeline::EInterpolation::Step,
+				ITwin::Timeline::ToJsonValue(Key, /*Decimals: full precision*/-1), FromJson));
+			TestTrue("same scale", FromJson.Scale == Key.Scale);
+
+			auto const& UnscaledKey = Timeline.SetTransformationAt(20., FVector(1., 2., 3.), FQuat::Identity,
+				ITwin::Timeline::FDeferredAnchor{ ITwin::Timeline::EAnchorPoint::Static, false, FVector::ZeroVector },
+				ITwin::Timeline::EInterpolation::Step);
+			auto const UnscaledJson = ITwin::Timeline::ToJsonValue(UnscaledKey, -1);
+			TestFalse("no scale written when unscaled", UnscaledJson->AsObject()->HasField(TEXT("scale")));
+			TestTrue("parse json", ITwin::Timeline::FromJsonValue(20., ITwin::Timeline::EInterpolation::Step,
+				UnscaledJson, FromJson));
+			TestTrue("default scale", FromJson.Scale == FVector::OneVector);
 		});
 }
 

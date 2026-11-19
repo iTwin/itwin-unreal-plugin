@@ -27,6 +27,7 @@
 #	include <BeHeaders/Util/CleanUpGuard.h>
 #	include <Core/Tools/Log.h>
 #	include <SDK/Core/Tools/Tools.h>
+#	include <SDK/Core/ITwinAPI/ITwinRequestDump.h>
 #	include <SDK/Core/ITwinAPI/ITwinTypes.h>
 #include <Compil/AfterNonUnrealIncludes.h>
 
@@ -607,7 +608,16 @@ bool FPaginatedIModelRowsQueries::OnQueryCompleted(bool const bSuccess,
 	else
 	{
 		// Current page queried returned no result => signal completion.
-		lastPageReached = true;
+		bool bDetectedLastPage = true;
+#if WITH_TESTS
+		// If we are recording requests for a functional test, ensure a minimum requests are run, to avoid
+		// random failures in check, if the threads run with a different pace.
+		if (AdvViz::SDK::RequestDump::ShouldDumpRequests())
+		{
+			bDetectedLastPage = QueryRowStart > 4 * QueryRowCount;
+		}
+#endif
+		lastPageReached = bDetectedLastPage;
 	}
 	// Must decrement before fctFinish, in case we are the last one.
 	if (!PageDecrementer.isClean())

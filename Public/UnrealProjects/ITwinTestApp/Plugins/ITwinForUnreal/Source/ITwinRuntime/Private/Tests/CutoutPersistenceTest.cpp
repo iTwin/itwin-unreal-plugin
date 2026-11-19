@@ -14,7 +14,14 @@
 #include <Tests/WebTestHelpers.h>
 
 #include <Clipping/ITwinClippingTool.h>
+#include "../Clipping/ITwinClippingToolImpl.h"
+#include "../Clipping/ITwinClippingToolUtils.inl"
+#include "../Clipping/ITwinClippingEffectManager.inl" // inline GetPlaneEffect / IsValidEffectIndex
+#include <Clipping/ITwinClippingInfoBase.inl>
+#include <Clipping/ITwinClippingPlaneInfo.h>
+
 #include <Decoration/ITwinDecorationHelper.h>
+#include <Helpers/ITwinTracingHelper.h>
 #include <Helpers/WorldSingleton.h>
 #include <Population/ITwinPopulationTool.h>
 #include <Spline/ITwinSplineTool.h>
@@ -506,8 +513,127 @@ bool FCutoutPersistenceTest::RunTest(const FString& /*Parameters*/)
 				return true;
 			};
 
+			auto const TestClippingPlaneGeometry = [&]() -> bool
+			{
+				auto* Impl = ClippingTool->GetImplForTests();
+				UTEST_TRUE(TEXT("Impl is available"), Impl != nullptr);
+
+				auto TestWorld = FITwinAPITestHelperBase::GetTestWorld();
+				UTEST_NOT_NULL(TEXT("Test world is valid"), TestWorld);
+
+				constexpr int32 PlaneIdx = 0;
+				FITwinClippingPlaneInfo const& PlaneInfo = Impl->GetPlaneEffect(PlaneIdx);
+				FVector const Normal = PlaneInfo.GetPlaneEquation().PlaneOrientation;
+				double const PlaneW = PlaneInfo.GetPlaneEquation().PlaneW;
+				UTEST_TRUE(TEXT("Loaded plane normal is unit length"),
+					FMath::IsNearlyEqual(Normal.Size(), 1., 1e-6));
+
+				// --- GetPointOnPlaneAtRayIntersection: a ray aimed at the plane returns a point
+				// --- that satisfies the plane equation dot(P, N) == W.
+				{
+					FVector const PointOnPlane = Normal * PlaneW;
+					FITwinRayTraceInput TraceInput;
+					TraceInput.TraceStart = PointOnPlane + Normal * 50000.;
+					TraceInput.TraceDirection = -Normal;
+
+					auto const HitOpt = Impl->GetPointOnPlaneAtRayIntersection(
+						PlaneIdx, TraceInput, false /*bClampToInfluenceBounds*/);
+					UTEST_TRUE(TEXT("Ray hits the infinite plane"), HitOpt.has_value());
+					UTEST_TRUE(TEXT("Hit point satisfies the plane equation"),
+						FMath::IsNearlyEqual(HitOpt->Dot(Normal), PlaneW, 1e-3));
+					UTEST_TRUE(TEXT("Hit point is the orthogonal projection of the ray origin"),
+						HitOpt->Equals(PointOnPlane, 1e-3));
+				}
+
+				// --- A ray parallel to the plane never intersects it.
+				{
+					FVector Tangent = FVector::CrossProduct(Normal, FVector::UpVector);
+					if (!Tangent.Normalize())
+					{
+						Tangent = FVector::CrossProduct(Normal, FVector::ForwardVector).GetSafeNormal();
+					}
+					FITwinRayTraceInput TraceInput;
+					TraceInput.TraceStart = Normal * (PlaneW + 10000.);
+					TraceInput.TraceDirection = Tangent;
+
+					UTEST_FALSE(TEXT("A parallel ray does not hit the plane"),
+						Impl->GetPointOnPlaneAtRayIntersection(PlaneIdx, TraceInput, false).has_value());
+				}
+
+				// --- Clamping to the influence bounds must never leave the plane.
+				// Note: even without valid influence bounds, the clamped variant still snaps the
+				// result on a fixed 20m grid (see GetSnapGridSize), so it is NOT a no-op: we only
+				// check that it stays on the plane and in the neighborhood of the raw hit.
+				{
+					FVector const FarPointOnPlane = Normal * PlaneW + FVector(1.e7, 1.e7, 0.);
+					FITwinRayTraceInput TraceInput;
+					TraceInput.TraceStart = FarPointOnPlane + Normal * 50000.;
+					TraceInput.TraceDirection = -Normal;
+
+					auto const RawOpt = Impl->GetPointOnPlaneAtRayIntersection(PlaneIdx, TraceInput, false);
+					auto const ClampedOpt = Impl->GetPointOnPlaneAtRayIntersection(PlaneIdx, TraceInput, true);
+					UTEST_TRUE(TEXT("Raw variant hits"), RawOpt.has_value());
+					UTEST_TRUE(TEXT("Clamped variant also hits"), ClampedOpt.has_value());
+					UTEST_TRUE(TEXT("Clamped point stays on the plane"),
+						FMath::IsNearlyEqual(ClampedOpt->Dot(Normal), PlaneW, 1e-3));
+
+					// The snap grid is at most one cell away on each axis, and the re-cast of the
+					// ray through the snapped point keeps it on the plane: allow a couple of cells.
+					double const SnapGridSize = ITwinClippingToolUtils::GetSnapGridSize(
+						Impl->GetMutableEffect(EITwinClippingPrimitiveType::Plane, PlaneIdx).GetUpToDateInfluenceBoundingBox(TestWorld));
+					UTEST_TRUE(TEXT("Clamping only snaps the hit, it does not relocate it"),
+						FVector::Distance(*ClampedOpt, *RawOpt) <= 2. * SnapGridSize);
+				}
+
+				// --- No player controller in the editor test world: the screen-based helpers must
+				// --- fail gracefully instead of crashing.
+				{
+					UTEST_TRUE(TEXT("No player controller in the test world"),
+						TestWorld->GetFirstPlayerController() == nullptr);
+					UTEST_FALSE(TEXT("ProjectPredefinedScreenPositionOnPlane without a view"),
+						Impl->ProjectPredefinedScreenPositionOnPlane(PlaneIdx, true).has_value());
+
+					FVector VisiblePos(FVector::ZeroVector);
+					bool bIsCenter = false;
+					UTEST_FALSE(TEXT("FindVisiblePointOnPlane without a view"),
+						Impl->FindVisiblePointOnPlane(PlaneIdx, {}, VisiblePos, bIsCenter));
+				}
+
+				// --- UpdateClippingPlaneTransformFromBoundingBox: with no model loaded the influence
+				// --- box is invalid, so the call is a no-op and must not alter the plane equation.
+				{
+					bool const bUpdated = Impl->UpdateClippingPlaneTransformFromBoundingBox(PlaneIdx);
+					FITwinClippingPlaneInfo const& AfterInfo = Impl->GetPlaneEffect(PlaneIdx);
+					UTEST_TRUE(TEXT("Plane normal is preserved"),
+						AfterInfo.GetPlaneEquation().PlaneOrientation.Equals(Normal, 1e-9));
+					UTEST_TRUE(TEXT("Plane W is preserved"),
+						FMath::IsNearlyEqual(AfterInfo.GetPlaneEquation().PlaneW, PlaneW, 1e-6));
+					// Documents the current contract: no influence bounds => no proxy update.
+					UTEST_FALSE(TEXT("No update without valid influence bounds"), bUpdated);
+				}
+
+				// --- OnPlaneSelectionChanged: selection flags are exclusive and the equations are
+				// --- never modified by a selection change.
+				{
+					Impl->OnPlaneSelectionChanged(1);
+					Impl->OnPlaneSelectionChanged(0);
+					Impl->OnPlaneSelectionChanged(INDEX_NONE);
+
+					for (int32 i = 0; i < ClippingTool->NumEffects(EITwinClippingPrimitiveType::Plane); ++i)
+					{
+						FITwinClippingPlaneInfo const& Info = Impl->GetPlaneEffect(i);
+						UTEST_TRUE(TEXT("Selection change preserves the plane normal"),
+							FMath::IsNearlyEqual(Info.GetPlaneEquation().PlaneOrientation.Size(), 1., 1e-6));
+					}
+				}
+				return true;
+			};
+
 			if (ValidateLoadedCutouts())
 			{
+				// Geometry helpers of the clipping planes (gizmo positioning, ray casts).
+				TestClippingPlaneGeometry();
+
 				// Perform a few tests on clipping tool.
 				TestClippingTool();
 

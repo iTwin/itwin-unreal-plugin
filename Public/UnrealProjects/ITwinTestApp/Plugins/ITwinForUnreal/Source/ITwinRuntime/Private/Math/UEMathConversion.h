@@ -47,16 +47,45 @@ inline FMatrix toUnreal(AdvViz::SDK::dmat4x4 const& sdkMat) // SDK::dmat4x4 (glm
 	return ueMat;
 }
 
+/// Controls whether negative zeros (-0.0) produced by the conversion are
+/// normalized to +0.0.
+/// Note: the original need for this normalization is undocumented; it was
+/// observed to matter for consumers comparing/serializing matrix components
+/// (e.g. textual output or exact equality checks), where -0.0 and +0.0 differ
+/// even though they compare equal numerically.
+enum class ENegativeZeroPolicy : uint8
+{
+	Preserve,	//!< Leave the raw conversion result untouched (default).
+	Normalize	//!< Replace any -0.0 component by +0.0.
+};
+
+/// Controls what happens when the converted matrix has a degenerate (zero on
+/// one or more axes) scale, which makes rotation extraction undefined.
+/// Note: the original reason for this guard is undocumented; it was observed
+/// on transforms loaded from persisted decoration data where a null scale
+/// produced a garbage/NaN rotation in FTransform::SetFromMatrix.
+enum class EDegenerateScalePolicy : uint8
+{
+	Allow,			//!< Build the transform from the matrix as-is (default).
+	IgnoreRotation	//!< On zero scale, keep identity rotation/scale and log an error.
+};
+
 class ITWINRUNTIME_API FITwinMathConversion
 {
 public:
 
 	static AdvViz::SDK::Tools::IGCSTransformPtr transform_;
+
 	// Vector
 	[[nodiscard]] static AdvViz::SDK::double3 UEtoSDK(FVector const& ueVec, bool applyGCS = true);
 	[[nodiscard]] static FVector SDKtoUE(AdvViz::SDK::double3 const& sdkVec, bool applyGCS = true);
+
 	// Transform
-	[[nodiscard]] static AdvViz::SDK::dmat3x4 UEtoSDK(FTransform const& ueTransform, bool applyGCS = true);
-	[[nodiscard]] static FTransform SDKtoUE(AdvViz::SDK::dmat3x4 const& sdkTransform, bool applyGCS = true);
-	
+	[[nodiscard]] static AdvViz::SDK::dmat3x4 UEtoSDK(FTransform const& ueTransform,
+		bool applyGCS = true,
+		ENegativeZeroPolicy negativeZeroPolicy = ENegativeZeroPolicy::Preserve);
+
+	[[nodiscard]] static FTransform SDKtoUE(AdvViz::SDK::dmat3x4 const& sdkTransform,
+		bool applyGCS = true,
+		EDegenerateScalePolicy degenerateScalePolicy = EDegenerateScalePolicy::Allow);
 };

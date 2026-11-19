@@ -634,10 +634,13 @@ void FITwinSceneMapping::ApplySelectingAndHiding(const TITwinSceneTilePtr& Scene
 			// For all calls except the first one above, skip the ResetSelection call otherwise the element
 			// selected is overwritten... (azdev#1808163)
 			.SkipResetSelection(true));
-		if (SelectionTintMode != EITwinSelectionTintMode::Blinking)
-			SceneTile.SetSelectionTintMode(SelectionTintMode, TextureNeeds);
+		bool const bCaptureSuppressed = ITwin::SelectionOutline::IsCaptureSuppressed();
+		EITwinSelectionTintMode const EffectiveTintMode = bCaptureSuppressed
+			? EITwinSelectionTintMode::Hidden : SelectionTintMode;
+		if (bCaptureSuppressed || SelectionTintMode != EITwinSelectionTintMode::Blinking)
+			SceneTile.SetSelectionTintMode(EffectiveTintMode, TextureNeeds);
 		SceneTile.SetHover(HoveredElement, ITwinRenderMaterialElementID{ HoveredMaterial.getValue() },
-						   SelectionTintMode, TextureNeeds);
+						   EffectiveTintMode, TextureNeeds);
 		auto const ShowHideOpts = FShowHideOptions().SkipResetSelection(true).Force(true);
 		SceneTile.HideCategories(HiddenCategoriesFromSavedView, TextureNeeds, ShowHideOpts);
 		SceneTile.HideModels(HiddenModelsFromSavedView, TextureNeeds, ShowHideOpts);
@@ -1747,6 +1750,24 @@ void FITwinSceneMapping::StartSelectionTintBlinking(EITwinSelectionTintMode cons
 
 void FITwinSceneMapping::UpdateSelectionTint()
 {
+	bool const bCaptureSuppressed = ITwin::SelectionOutline::IsCaptureSuppressed();
+	if (bSelectionCaptureSuppressed != bCaptureSuppressed)
+	{
+		bSelectionCaptureSuppressed = bCaptureSuppressed;
+		EITwinSelectionTintMode const EffectiveMode = bCaptureSuppressed
+			? EITwinSelectionTintMode::Hidden : SelectionTintMode;
+		FITwinSceneTile::FTextureNeeds TextureNeeds;
+		ForEachKnownTile([EffectiveMode, &TextureNeeds](TITwinSceneTilePtr const& SceneTilePtr)
+		{
+			auto SceneTileLock = SceneTilePtr->GetAutoLock();
+			SceneTileLock->SetSelectionTintMode(EffectiveMode, TextureNeeds);
+		});
+		if (TextureNeeds.bWasChanged)
+			UpdateSelectingAndHidingTextures();
+	}
+	if (bCaptureSuppressed)
+		return;
+
 	if (SelectedElements.empty() && SelectedMaterial == ITwin::NOT_MATERIAL)
 	{
 		SelectionTintTimer.reset();
@@ -1765,14 +1786,17 @@ void FITwinSceneMapping::UpdateSelectionTint()
 
 void FITwinSceneMapping::SetSelectionTintMode(EITwinSelectionTintMode const Mode)
 {
-	if (SelectionTintMode == Mode)
+	bool const bModeChanged = SelectionTintMode != Mode;
+	if (!bModeChanged && !bSelectionCaptureSuppressed)
 		return;
 	SelectionTintMode = Mode;
+	EITwinSelectionTintMode const EffectiveMode = bSelectionCaptureSuppressed
+		? EITwinSelectionTintMode::Hidden : Mode;
 	FITwinSceneTile::FTextureNeeds TextureNeeds;
-	ForEachKnownTile([Mode, &TextureNeeds](TITwinSceneTilePtr const& SceneTilePtr)
+	ForEachKnownTile([EffectiveMode, &TextureNeeds](TITwinSceneTilePtr const& SceneTilePtr)
 	{
 		auto SceneTileLock = SceneTilePtr->GetAutoLock();
-		SceneTileLock->SetSelectionTintMode(Mode, TextureNeeds);
+		SceneTileLock->SetSelectionTintMode(EffectiveMode, TextureNeeds);
 	});
 	if (TextureNeeds.bWasChanged)
 		UpdateSelectingAndHidingTextures();

@@ -25,6 +25,7 @@ struct FIModelTestOptions
 	bool bEnableRendering = true;
 	bool bEnableMaterialTuning = true;
 	bool bDisableSynchro4DAutoLoad = false;
+	bool bCleanSynchro4DCache = true;
 
 	bool bUseLatestChangeset = false;
 	bool bDiscoverExport = false;
@@ -43,6 +44,8 @@ public:
 		std::unique_ptr<FITwinFileBasedMockServer> MockServer;
 
 		std::unique_ptr<Be::CleanUpGuard> CleanupGuard;
+
+		void StopMockServer();
 	};
 	using FOptions = FIModelTestOptions;
 

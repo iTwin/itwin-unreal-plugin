@@ -145,6 +145,8 @@ public:
 	std::unordered_set<ITwinElementID> const& GetSelectedElements() const;
 	//! Select the given material (use ITwin::NOT_MATERIAL to de-select).
 	void SelectMaterial(ITwinMaterialID const& InMaterialID);
+	//! Returns the selected Material's ID, if a Material is selected, or ITwin::NOT_MATERIAL.
+	ITwinMaterialID GetSelectedMaterial() const;
 	//! Remove the highlight color of the current selection, keeping it selected (and thus outlined).
 	void HideSelectionTint();
 	//! Highlight the Element and/or Material under the mouse cursor (see FITwinSceneMapping::SetHover).

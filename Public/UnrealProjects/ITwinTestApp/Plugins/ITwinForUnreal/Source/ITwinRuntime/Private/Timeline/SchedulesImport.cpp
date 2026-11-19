@@ -102,8 +102,11 @@ private:
 		EITwinEnvironment Environment = EITwinEnvironment::Invalid;
 	};
 	std::optional<FUnitTesting> UnitTesting;
-	std::unordered_map<FString, std::function<void(bool bTaskSuccess)>> WaitingForBackgroundTasks;
-	std::unordered_map<FString, std::function<void(bool bTaskSuccess)>> BackgroundTaskCompletionsInGT;
+	using FRequestsToCompletePartialSchedule = std::function<void(ReusableJsonQueries::FStackingToken const&)>;
+	std::unordered_map<FString, std::function<void(bool bTaskSuccess, FRequestsToCompletePartialSchedule&&)>>
+		WaitingForBackgroundTasks;
+	std::unordered_map<FString, std::function<void(bool bTaskSuccess, FRequestsToCompletePartialSchedule&&)>>
+		BackgroundTaskCompletionsInGT;
 	std::shared_ptr<std::atomic_bool> IsThisValid;
 
 	/// KEEP LAST, so that it is deleted first, because it's dtor waits on async tasks that use some of the
@@ -186,7 +189,7 @@ private:
 	void SetScheduleTimeRangeIsKnown();
 	bool OnFoundScheduleForTargetedIModel(FString const& ScheduleId, FString const& ScheduleName,
 		FString const& CustomCacheDir, EITwinSchedulesGeneration const ScheduleGen,
-		std::function<void(bool bSuccess)>&& OnScheduleLoadedFromJsonFile);
+		std::function<void(bool bTaskSuccess, FRequestsToCompletePartialSchedule&&)>&& OnScheduleLoadedFromJsonFile);
 	int ScheduleDependentPaginationCap() const;
 	FUrlArgList ConcatPaginationOrDeltaTokenParams(FUrlArgList&& ArgList, std::optional<FString> const& PageToken,
 		std::optional<FString> const& DeltaToken, std::optional<int> CustomRequestPagination = {});
@@ -231,6 +234,8 @@ private:
 	void RequestAll3DPaths(ReusableJsonQueries::FStackingToken const&, std::optional<FString> const PageToken, FLock&);
 	void RequestAll3DPathKeyframes(ReusableJsonQueries::FStackingToken const&, std::optional<FString> const PageToken,
 								   FLock&);
+	void RequestAllCalendars(ReusableJsonQueries::FStackingToken const&, FLock&,
+							 std::optional<FString> const PageToken = {});
 
 	//void DetermineTaskElements(...); <== blame here to retrieve method to query resource assignments
 	//void RequestResourceEntity3Ds(...); <== blame here to retrieve method to query resource entity3Ds
@@ -240,7 +245,8 @@ private:
 	///		task by querying the task resources and then the resource Entity3Ds), for testing purposes
 	void CreateRandomAppearanceProfile(FAnimationBinding& AnimationBinding, FLock& Lock,
 									   bool const bCreateGroupFromResource3DEntities = false);
-	bool ReadAndParseScheduleJsonCacheInWorkerThread(FString CacheName, FString JsonPath);
+	std::pair<bool, FRequestsToCompletePartialSchedule> ReadAndParseScheduleJsonCacheInWorkerThread(FString CacheName,
+		FString JsonPath);
 	void ComputeTimeRange()
 	{
 		auto& MainTimeline = UnitTesting ? UnitTesting->MainTimeline : SchedulesInternals().Timeline();
@@ -345,7 +351,7 @@ private:
 	void NextDebugSubIncrement()
 	{
 		++DebugCurrentSubIncrement;
-		if ((DebugCurrentSubIncrement % 7) == 0) // loop over the 7 properties...
+		if ((DebugCurrentSubIncrement % 8) == 0) // loop over the 8 properties...
 			DebugCurrentSubIncrement = 0;
 	}
 
@@ -392,7 +398,7 @@ FString FITwinSchedulesImport::FImpl::ComputeCacheName(std::optional<EITwinSched
 bool FITwinSchedulesImport::FImpl::OnFoundScheduleForTargetedIModel(FString const& ScheduleId,
 	FString const& ScheduleName, FString const& CustomCacheDir,
 	EITwinSchedulesGeneration const ScheduleGen,
-	std::function<void(bool bSuccess)>&& OnScheduleLoadedFromJsonFile)
+	std::function<void(bool bTaskSuccess, FRequestsToCompletePartialSchedule&&)>&& OnScheduleLoadedFromJsonFile)
 {
 	SchedulesGeneration = ScheduleGen;
 	if (!Schedule || Schedule->Id != ScheduleId)
@@ -445,18 +451,19 @@ bool FITwinSchedulesImport::FImpl::OnFoundScheduleForTargetedIModel(FString cons
 		FString const JsonPath = CacheName + TEXT(".json");
 		auto OnTriedLoadScheduleFromJsonFile =
 			[this, CacheName, OnScheduleLoadedFromJsonFile = std::move(OnScheduleLoadedFromJsonFile)]
-			(bool bTaskSuccess)
+			(bool bTaskSuccess, FRequestsToCompletePartialSchedule&& ToCompletePartialSchedule)
 			{
 				FLock Lock(Mutex);
 				if (!bTaskSuccess)
-				{
 					Schedule->Reserve(200);
+				if (!bTaskSuccess || ToCompletePartialSchedule)
+				{
 					Queries->InitializeCache(CacheName, GetScheduleEnvironment(),
 						FString(TEXT("schedule Id ")) + Schedule->Id + " named '" + Schedule->Name
 						+ "' for iModel " + TargetedIModelId,
 						(bool)UnitTesting);
 				}
-				OnScheduleLoadedFromJsonFile(bTaskSuccess);
+				OnScheduleLoadedFromJsonFile(bTaskSuccess, std::move(ToCompletePartialSchedule));
 			};
 		if (ensure(!CacheName.IsEmpty()) && PlatformFile.FileExists(*JsonPath))
 		{
@@ -464,14 +471,15 @@ bool FITwinSchedulesImport::FImpl::OnFoundScheduleForTargetedIModel(FString cons
 			FString const TaskName(TEXT("ReadAndParseScheduleJsonCache"));
 			UE::Tasks::Launch(UE_SOURCE_LOCATION, [this, TaskName, CacheName, JsonPath]()
 				{
-					bool const bSuccess = ReadAndParseScheduleJsonCacheInWorkerThread(CacheName, JsonPath);
+					auto&& ScheduleLoadResult = ReadAndParseScheduleJsonCacheInWorkerThread(CacheName, JsonPath);
 					FLock Lock(Mutex);
 					// The callback happens to create UObjects (thru WorldSingleton) ie game thread only!
 					// => I have to defer this back to GT and handle Uninitialize gracefully...
 					BackgroundTaskCompletionsInGT[TaskName] = std::move(WaitingForBackgroundTasks[TaskName]);
 					WaitingForBackgroundTasks.erase(TaskName);
 					AsyncTask(ENamedThreads::GameThread,
-						[IsThisValid = this->IsThisValid, pMutex = &Mutex, this, TaskName, bSuccess]()
+						[IsThisValid = this->IsThisValid, pMutex = &Mutex, this, TaskName,
+						 ScheduleLoadResult = std::move(ScheduleLoadResult)]() mutable
 						{
 							// Note: do NOT touch 'this' before checking validity: only 'pMutex' is safe,
 							// the mutex outlives the FImpl (it is owned by the schedules component).
@@ -486,7 +494,7 @@ bool FITwinSchedulesImport::FImpl::OnFoundScheduleForTargetedIModel(FString cons
 							auto const Completion = std::move(Found->second);
 							BackgroundTaskCompletionsInGT.erase(Found);
 							if (Completion)
-								Completion(bSuccess);
+								Completion(ScheduleLoadResult.first, std::move(ScheduleLoadResult.second));
 						});
 				});
 			WaitingForBackgroundTasks[TaskName] = std::move(OnTriedLoadScheduleFromJsonFile);
@@ -495,7 +503,7 @@ bool FITwinSchedulesImport::FImpl::OnFoundScheduleForTargetedIModel(FString cons
 		{
 			// I think in this case we can call it directly, because it does not reach the UObject creation code
 			// (UE will warn if it does, and we can fix it then)
-			OnTriedLoadScheduleFromJsonFile(false);
+			OnTriedLoadScheduleFromJsonFile(false, {});
 		}
 	}
 	BE_LOGI("ITwin4DImp", "Added schedule Id " << TCHAR_TO_UTF8(*ScheduleId) << " named '"
@@ -503,7 +511,8 @@ bool FITwinSchedulesImport::FImpl::OnFoundScheduleForTargetedIModel(FString cons
 	return true;
 }
 
-bool FITwinSchedulesImport::FImpl::ReadAndParseScheduleJsonCacheInWorkerThread(FString CacheName, FString JsonPath)
+std::pair<bool, FITwinSchedulesImport::FImpl::FRequestsToCompletePartialSchedule>
+FITwinSchedulesImport::FImpl::ReadAndParseScheduleJsonCacheInWorkerThread(FString CacheName, FString JsonPath)
 {
 	double const StartRead = FPlatformTime::Seconds();
 	FString JsonStructs;
@@ -512,6 +521,21 @@ bool FITwinSchedulesImport::FImpl::ReadAndParseScheduleJsonCacheInWorkerThread(F
 		FLock Lock(Mutex);
 		if (Schedule->FromJsonString(JsonStructs))
 		{
+			auto&& OnSuccessfulOrPartialLoad = [this, StartRead, &CacheName](bool bInitializeCache)
+				{
+					BE_LOGI("ITwin4DImp", "Loaded json cache for schedule Id " << TCHAR_TO_UTF8(*Schedule->Id)
+						<< " took " << (FPlatformTime::Seconds() - StartRead)
+						<< "s, named '" << TCHAR_TO_UTF8(*Schedule->Name) << "' to iModel "
+						<< TCHAR_TO_UTF8(*TargetedIModelId));
+					ComputeTimeRange();
+					SetScheduleTimeRangeIsKnown();
+					if (bInitializeCache)
+					{
+						// Still init the cache, so that we can test the incremental update mechanism
+						Queries->InitializeCache(CacheName, GetScheduleEnvironment(),
+							FString(TEXT("Simulated schedule Id ")) + Schedule->Id, (bool)UnitTesting);
+					}
+				};
 			IPlatformFile& FileManager = FPlatformFileManager::Get().GetPlatformFile();
 			if (Schedule->AnimationBindings.empty() || !ensure(Schedule->FullyDefined(Lock)))
 			{
@@ -522,6 +546,52 @@ bool FITwinSchedulesImport::FImpl::ReadAndParseScheduleJsonCacheInWorkerThread(F
 			}
 			else if (Schedule->JsonCacheVersion < FITwinSchedule::CurrentJsonCacheVersion)
 			{
+				if (Schedule->JsonCacheVersion < 3)
+				{
+					BE_LOGW("ITwin4DImp", "Schedule json cache for schedule Id " << TCHAR_TO_UTF8(*Schedule->Id)
+						<< " named '" << TCHAR_TO_UTF8(*Schedule->Name) << "' is outdated (cache version "
+						<< Schedule->JsonCacheVersion << ", current version is "
+						<< FITwinSchedule::CurrentJsonCacheVersion << ") but can be upgraded");
+					bool bNeedRequeryStaticTransfos = false;
+					if (Schedule->JsonCacheVersion < 2)
+					{
+						// Query all static transformations again to store their exact scale in the schedule and its
+						// cache (they were discarded when close to FVector::OneVector, but we need to know the exact
+						// scale because tiny deviations can affect placement - #2155388).
+						// KEEP the existing properties (vector and map) as well as the "*InVec" values because
+						// querying the properties will not recompute them, existing values will simply be
+						// overwritten. This means the 'reserve' calls in the 'RequestAll*' calls will overallocate,
+						// but only the 1st time.
+						Schedule->StaticTransfosDeltaToken = {};
+						Schedule->StatisticsCurrent.Animation3dTransformCount = 0;
+						bNeedRequeryStaticTransfos = true;
+					}
+					Schedule->JsonCacheVersion = FITwinSchedule::CurrentJsonCacheVersion;
+					// Re-query all appearance profiles and 3D path assignments again to get "pause during non working
+					// time" flags, and re-query all tasks for their calendarIds and this time save them because they
+					// were not so far.
+					Schedule->AppearanceProfilesDeltaToken = {};
+					Schedule->Anim3DPathsAssignmentsDeltaToken = {};
+					Schedule->TasksDeltaToken = {};
+					Schedule->StatisticsCurrent.AppearanceProfileCount = 0;
+					Schedule->StatisticsCurrent.Animation3dPathAssignmentCount = 0;
+					Schedule->StatisticsCurrent.TaskCount = 0;
+					OnScheduleDownloadProgressed(*Schedule, Lock);
+
+					OnSuccessfulOrPartialLoad(false);//cache will be init to query the missing APs and path assignments
+					return std::make_pair(true,
+						[this, bNeedRequeryStaticTransfos](ReusableJsonQueries::FStackingToken const& Token)
+						{
+							FLock Lock(Mutex);
+							// v2 -> v3
+							RequestAllTasks(Token, Lock);
+							RequestAllAppearanceProfiles(Token, Lock);
+							RequestAll3DPathTransfoAssignments(Token, {}, Lock);
+							// v1 -> v2
+							if (bNeedRequeryStaticTransfos)
+								RequestAllStaticTransfoAssignments(Token, {}, Lock);
+						});
+				}
 				BE_LOGW("ITwin4DImp", "Schedule json cache for schedule Id " << TCHAR_TO_UTF8(*Schedule->Id)
 					<< " named '" << TCHAR_TO_UTF8(*Schedule->Name) << "' is outdated (cache version "
 					<< Schedule->JsonCacheVersion << ", current version is "
@@ -530,25 +600,14 @@ bool FITwinSchedulesImport::FImpl::ReadAndParseScheduleJsonCacheInWorkerThread(F
 			}
 			else
 			{
-				BE_LOGI("ITwin4DImp", "Loaded json cache for schedule Id " << TCHAR_TO_UTF8(*Schedule->Id)
-					<< " took " << (FPlatformTime::Seconds() - StartRead)
-					<< "s, named '" << TCHAR_TO_UTF8(*Schedule->Name) << "' to iModel "
-					<< TCHAR_TO_UTF8(*TargetedIModelId));
-				ComputeTimeRange();
-				SetScheduleTimeRangeIsKnown();
-				if (IsSimulatedSchedule())
-				{
-					// Still init the cache, so that we can test the incremental update mechanism
-					Queries->InitializeCache(CacheName, GetScheduleEnvironment(),
-						FString(TEXT("Simulated schedule Id ")) + Schedule->Id, (bool)UnitTesting);
-				}
-				return true;
+				OnSuccessfulOrPartialLoad(IsSimulatedSchedule());
+				return std::make_pair(true, FRequestsToCompletePartialSchedule{});
 			}
 		}
 		// Clear the partially loaded schedule!
 		Schedule.emplace(FITwinSchedule(Schedule->Id, Schedule->Name, SchedulesGeneration));
 	}
-	return false;
+	return std::make_pair(false, FRequestsToCompletePartialSchedule{});
 }
 
 int FITwinSchedulesImport::FImpl::ScheduleDependentPaginationCap() const
@@ -681,10 +740,17 @@ void FITwinSchedulesImport::FImpl::RequestSchedules(ReusableJsonQueries::FStacki
 				if (ScheduleCandidates->end() != Found)
 				{
 					ensure(OnFoundScheduleForTargetedIModel(Found->Id, Found->Name, {}, Found->Generation,
-						[this, &Token](bool bLoadedFromJson)
+						[this, &Token]
+						(bool bLoadedFromJson, FRequestsToCompletePartialSchedule&& ToCompletePartialSchedule)
 						{
 							FLock Lock(Mutex);
-							if (!bLoadedFromJson && Schedule)
+							if (!Schedule)
+								return;
+							if (bLoadedFromJson && ToCompletePartialSchedule)
+							{
+								ToCompletePartialSchedule(Token);
+							}
+							else if (!bLoadedFromJson)
 							{
 								Queries->StatsResetActiveTime();
 								AutoRequestScheduleItems(Token, &Lock);
@@ -793,6 +859,12 @@ void FITwinSchedulesImport::FImpl::AutoRequestScheduleItems(ReusableJsonQueries:
 	if (CanRequestAll(Schedule->BindingsDeltaToken, Schedule->AnimationBindings, 6, *Lock))
 	{
 		RequestAllAnimationBindings(Token, *Lock);
+		if (bDebugSingleRequest)
+			return;
+	}
+	if (CanRequestAll(Schedule->CalendarsDeltaToken, Schedule->Calendars, 7, *Lock))
+	{
+		RequestAllCalendars(Token, *Lock);
 		if (bDebugSingleRequest)
 			return;
 	}
@@ -1269,7 +1341,8 @@ bool FITwinSchedulesImport::FImpl::ParseStaticTransfoAssignment(TSharedPtr<FJson
 	JSON_GETDELETEDORFALSE(JsonObj, (*pTransformAssignment))
 	FTransform AsTransform(Mat);
 	bool const bSameAssignment = (WasDeleted == pTransformAssignment->bDeleted)
-		&& (WasDeleted || pTransformAssignment->Transform.Equals(AsTransform));
+		// Note: compare with zero tolerance because tiny scale variations do matter! (#2155388)
+		&& (WasDeleted || pTransformAssignment->Transform.Equals(AsTransform, 0.0));
 	if (!bSameAssignment)
 		pTransformAssignment->Transform = AsTransform;
 	return !bSameAssignment;
@@ -1602,6 +1675,47 @@ void FITwinSchedulesImport::FImpl::Request3DPathKeyframes(ReusableJsonQueries::F
 		});
 }
 
+void FITwinSchedulesImport::FImpl::RequestAllCalendars(ReusableJsonQueries::FStackingToken const& Token,
+	FLock& Lock, std::optional<FString> const PageToken /*= {}*/)
+{
+	auto RequestArgList = ConcatPaginationOrDeltaTokenParams({}, PageToken, Schedule->CalendarsDeltaToken);
+	Queries->StackRequest(Token, &Lock, ITwinHttp::EVerb::Get, { Schedule->Id, TEXT("calendars") },
+		std::move(RequestArgList),
+		[this, &Token](TSharedPtr<FJsonObject> const& Reply)
+		{
+			auto const& Items = Reply->GetArrayField(TEXT("calendars"));
+			if (Items.IsEmpty())
+				return;
+			FString NextPageToken;
+			bool const bMoreToCome = Reply->TryGetStringField(TEXT("nextPageToken"), NextPageToken);
+			FLock Lock(Mutex);
+			BE_LOGD("ITwin4DImp", "Received " << Items.Num() << " calendars (total "
+				<< ((int)Schedule->Calendars.size() + Items.Num())
+				<< (bMoreToCome ? ", more to come" : ", final reply")
+				<< ") for schedule '" << TCHAR_TO_UTF8(*Schedule->Name) << "'");
+			if (bMoreToCome)
+				RequestAllCalendars(Token, Lock, NextPageToken);
+			else
+				HandleDeltaToken(Reply, Schedule->CalendarsDeltaToken, TEXT("Calendars"), Lock);
+			if (!bFetchingPropertyDeltas)
+				Schedule->Calendars.reserve(Schedule->Calendars.size() + Items.Num());
+			for (auto&& Item : Items)
+			{
+				const auto& CalendarObj = Item->AsObject();
+				if (!CalendarObj)
+					continue;
+				if (bFetchingPropertyDeltas)
+					BE_LOGD("ITwin4DImp", "Calendar increment: " << ToLoggerStr(CalendarObj));
+				FString CalendarId;
+				JSON_GETSTR_OR(CalendarObj, "id", CalendarId, continue)
+				size_t CalendarInVec = ITwin::INVALID_IDX;
+				auto* pCalendar = EmplaceProperty(CalendarId, CalendarInVec, Schedule->Calendars,
+												  Schedule->KnownCalendars, Lock);
+				bFetchingPropertyDeltasGotUpdates |= FSchedulesParse::ParseCalendar(CalendarObj, *pCalendar);
+			}
+		});
+}
+
 void FITwinSchedulesImport::FImpl::SetSchedulesImportConnectors(
 	FOnReceivedScheduleStats const& InOnReceivedScheduleStats)
 {
@@ -1699,6 +1813,12 @@ void FITwinSchedulesImport::FImpl::ResetConnection(FString const& ITwinAkaProjec
 						//else // sth went wrong, we don't know which token expired, so we can't recover
 						//	bWillRetry = ITwinHttp::RetryQuery(false);
 					}
+					// ADO#2200319 - Some (older?) schedules don't have calendars, assume optional and skip retries
+					else if (!bFetchingPropertyDeltas && Schedule
+						&& CompletedRequest->GetURL().Contains(Schedule->Id + TEXT("/calendars")))
+					{
+						bWillRetry = ITwinHttp::RetryQuery(false);
+					}
 					// Note: not marking delta queries errors, which would block 4D replay entirely
 					else if (!bHasFetchingErrors && !bWillRetry && !bFetchingPropertyDeltas)
 					{
@@ -1735,10 +1855,14 @@ void FITwinSchedulesImport::FImpl::ResetConnection(FString const& ITwinAkaProjec
 	if (Schedule)
 	{
 		if (!OnFoundScheduleForTargetedIModel(Schedule->Id, Schedule->Name, CustomCacheDir, Schedule->Generation,
-			[this](bool bLoadedFromJson)
+			[this](bool bLoadedFromJson, FRequestsToCompletePartialSchedule&& ToCompletePartialSchedule)
 			{
 				FLock Lock(Mutex);
-				if (!bLoadedFromJson)
+				if (bLoadedFromJson && ToCompletePartialSchedule)
+				{
+					Queries->NewBatch(std::move(ToCompletePartialSchedule));
+				}
+				else if (!bLoadedFromJson)
 				{
 					Queries->NewBatch([this](ReusableJsonQueries::FStackingToken const& Token)
 						{ AutoRequestScheduleItems(Token, nullptr); });
@@ -1864,6 +1988,8 @@ void FITwinSchedulesImport::FImpl::CreateIncrementalUpdateAndWrapUpBatches()
 						// directly from the raw structures saved above. Except for unit tests where the requests cache
 						// is part of the repo and of the test resources! (and also Owner->Owner is null)
 						if (bSaved && !UnitTesting)
+							// This is _not_ deleting the json we just saved only because it finds the requests cache
+							// subdir and stops there to delete it :/ Not ideal...
 							Owner->Owner->ClearCacheOnlyThis();
 					}
 				}

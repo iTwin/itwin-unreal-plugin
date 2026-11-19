@@ -7,11 +7,7 @@
 +--------------------------------------------------------------------------------------*/
 
 #pragma once
-#include <string>
-#include "Core/Network/Network.h"
-#include "Core/Tools/Tools.h"
-#include "Core/ITwinAPI/ITwinScene.h"
-#include "../Tools/Types.h"
+
 #include "ScenePersistence.h"
 #include "Config.h"
 
@@ -28,6 +24,8 @@ MODULE_EXPORT namespace AdvViz::SDK
 		 bool GetVisibility() const override;
 		 double GetQuality() const override;
 		 dmat4x3 GetTransform() const override;
+		 double GetFov() const override; // in radians
+		 double GetAspectRatio() const override;
 
 		 void SetType(const std::string&) override;
 		 void SetRef(const std::string&) override;
@@ -35,6 +33,8 @@ MODULE_EXPORT namespace AdvViz::SDK
 		 void SetVisibility(bool) override;
 		 void SetQuality(double) override;
 		 void SetTransform(const dmat4x3&) override;
+		 void SetFov(double) override;
+		 void SetAspectRatio(double) override;
 
 		 void SetGCS(const std::string&, const std::array<float, 3>&) override;
 		 std::pair<std::string, std::array<float, 3>> GetGCS() const  override;
@@ -43,6 +43,8 @@ MODULE_EXPORT namespace AdvViz::SDK
 		 bool HasVisibility() const override;
 		 bool HasQuality() const override;
 		 bool HasTransform() const override;
+		 bool HasFov() const override;
+		 bool HasAspectRatio() const override;
 
 		 //------------------------------------------------------------------------------
 		 /// overridden from ISavableItem
@@ -107,6 +109,8 @@ MODULE_EXPORT namespace AdvViz::SDK
 		const std::string& GetName() const final;
 		const std::string& GetITwinId() const final;
 		virtual std::string GetLastModified() const final;
+		virtual std::string GetCreationTime() const final;
+		virtual bool HasTag(const std::string_view& tagDisplayName) const final;
 
 		// Set Http server to use (if none provided, the default created by Config is used.)
 		void SetHttp(std::shared_ptr<Http> http);
@@ -141,10 +145,28 @@ MODULE_EXPORT namespace AdvViz::SDK
 		bool ShouldSave() const final;
 		void SetShouldSave(bool shouldSave) const final;
 
-		//links management
-		std::vector<std::shared_ptr<ILink>> GetLinks() const override;
-		void AddLink(std::shared_ptr<ILink>) override;
-		std::shared_ptr<ILink> MakeLink() override;
+		// links management
+		std::vector<ILinkPtr> GetLinks() const override;
+		void AddLink(ILinkPtr) override;
+		ILinkPtr MakeLink() override;
+
+		// Camera management
+		static double GetDefaultCameraAspectRatio();
+		static void SetDefaultCameraAspectRatio(double aspectRatio);
+
+		//! Sets the handedness of the client -> ECEF map, as returned by
+		//! IGCSTransform::GetHandedness(). Must be set before any scene is loaded or saved,
+		//! typically right after the georeference has been initialized.
+		static void SetCameraHandedness(double value);
+		static double GetCameraHandedness();
+		static bool IsCameraHandednessInitialized();
+
+		//! Rebuilds the camera placements of all links that were loaded from a View3d
+		//! carrying only up/direction/position (identity or absent ecefTransform).
+		//! The 'right' column depends on the handedness of the georeference, which is not
+		//! known when the links are parsed, so the reconstruction is deferred until here.
+		//! Must be called after SetCameraHandedness(), i.e. once the georeference is ready.
+		void ResolvePendingCameraBases() override;
 
 		void SetTimeline(const std::shared_ptr<AdvViz::SDK::ITimeline>& timeline) final;
 		std::shared_ptr<AdvViz::SDK::ITimeline> GetTimeline() final;

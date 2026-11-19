@@ -7,6 +7,7 @@
 +--------------------------------------------------------------------------------------*/
 
 #include "ScenePersistenceAPI.h"
+#include "SceneAPICameraUtils.h"
 #include "Config.h"
 #include "Core/Singleton/singleton.h"
 #include "Core/Network/HttpGetWithLink.h"
@@ -35,34 +36,27 @@ namespace AdvViz::SDK {
 
 	namespace SceneAPIDetails
 	{
-		struct JsonVector
+		struct SJsonTag
 		{
-			double x = 0.0;
-			double y = 0.0;
-			double z = 0.0;
+			std::string id;
+			std::string displayName;
 		};
-		struct SJsonQuaternion
+
+		// Known as scene in apis/scenes/operations/get-scene/
+		struct SJsonScene
 		{
-			double x = 0.0;
-			double y = 0.0;
-			double z = 0.0;
-			double w = 1.0;
+			std::string id;
+			std::string displayName;
+			std::string iTwinId;
+			std::optional<std::string> creationTime;
+			std::optional<std::string> lastModified;
+			std::optional<std::vector<SJsonTag>> tags;
 		};
-		struct SJsonCamera
-		{
-			JsonVector up;
-			JsonVector direction;
-			JsonVector position;
-			bool isOrthographic = false;
-			double aspectRatio = 1.0;
-			double far = 10000000000;
-			double near = 0.1;
-			std::optional< std::array<double, 16> > ecefTransform;
-		};
+
 		struct SJsonScheduleSimulation
 		{
 			std::string timelineId;
-			int64_t timePoint;
+			int64_t timePoint = 0;
 		};
 		struct SJSonAtmosphere
 		{
@@ -130,7 +124,7 @@ namespace AdvViz::SDK {
 			std::vector<std::string> appliesTo;
 		};
 
-		struct Data
+		struct ObjectData
 		{
 			std::optional<bool> visible; //obsolete
 			rfl::Rename<"class", std::optional<std::string>> type;
@@ -138,6 +132,9 @@ namespace AdvViz::SDK {
 			std::optional<std::string> id;
 			std::optional<std::string> name;
 			std::optional<double> quality;
+			std::optional<JsonVector> up;
+			std::optional<JsonVector> direction;
+			std::optional<JsonVector> position;
 			std::optional< std::array<double, 16> > ecefTransform;
 			std::optional< std::vector<double> > adjustment;
 			std::optional<SJSonAtmosphere> atmosphere;
@@ -152,7 +149,7 @@ namespace AdvViz::SDK {
 		{
 			std::string id;
 			std::string kind;
-			std::optional<Data> data;
+			std::optional<ObjectData> data;
 			std::optional<std::string> displayName;
 			std::optional<std::string> relatedId;
 			std::optional<bool> visible;
@@ -163,7 +160,47 @@ namespace AdvViz::SDK {
 			std::optional<std::vector<JsonObjectWithId>> objects;
 			std::optional<SceneAPILinks> _links;
 		};
-	}
+
+		struct SJSonGCS
+		{
+			std::string wkt;
+			std::array<float, 3> center = { 0.f, 0.f, 0.f };
+		};
+
+		struct LinkData
+		{
+			std::string type;
+			std::string ref;
+			std::optional < std::string > name;
+			std::optional<SJSonGCS> gcs;
+			std::optional<bool> visibility;
+			std::optional<double> quality;
+			std::optional< std::array<double, 12> > transform;
+			//! Camera links loaded from a View3d whose ecefTransform is identity/absent carry
+			//! their placement as vectors. The 'right' column cannot be rebuilt at parse time,
+			//! because the georeference (and thus the handedness) is not known yet: it is
+			//! resolved on first access to the transform.
+			std::optional<CameraBasis> pendingCameraBasis;
+
+			std::optional<double> fov; // in radians
+			std::optional<double> aspectRatio;
+			// Set for links that are resources in the repository (iModels, reality data, etc.).
+			// Those links are sometimes excluded from saving here, when the are saved by the
+			// iTwin Studio typically (see boolean enableExportOfResources).
+			std::optional<LinkAPI::RepositoryResourceInfo> repositoryResourceInfo;
+		};
+
+		static std::atomic<double> defaultCameraAspectRatio{ 16.0 / 9.0 };
+
+		//! Handedness of the client -> ECEF map currently in use (see
+		//! IGCSTransform::GetHandedness). Camera placements are serialized as
+		//! up/direction/position, so the 'right' column must be rebuilt with the same
+		//! convention it was decomposed with.
+		//! 0 means "not initialized yet" (see ScenePersistenceAPI::SetCameraHandedness).
+		static std::atomic<double> cameraHandedness{ 0.0 };
+
+	} // SceneAPIDetails
+
 
 	//! Returns the default heliodon date in ISO 8601 format (UTC) with the hour set to 12:00.
 	static std::string GetDefaultHeliodonDate()
@@ -180,26 +217,8 @@ namespace AdvViz::SDK {
 
 	struct LinkAPI::Impl final : SavableItemWithID
 	{
-		struct SJSonGCS
-		{
-			std::string wkt;
-			std::array<float, 3> center = { 0.f, 0.f, 0.f };
-		};
-
-		struct Link
-		{
-			std::string type;
-			std::string ref;
-			std::optional < std::string > name;
-			std::optional<SJSonGCS> gcs;
-			std::optional<bool> visibility;
-			std::optional<double> quality;
-			std::optional< std::array<double, 12> > transform;
-			// Set for links that are resources in the repository (iModels, reality data, etc.).
-			// Those links are sometimes excluded from saving here, when the are saved by the
-			// iTwin Studio typically (see boolean enableExportOfResources).
-			std::optional<RepositoryResourceInfo> repositoryResourceInfo;
-		};
+		using SJSonGCS = SceneAPIDetails::SJSonGCS;
+		using Link = SceneAPIDetails::LinkData;
 
 		bool shouldDelete_ = false;
 		Link link_;
@@ -291,6 +310,24 @@ namespace AdvViz::SDK {
 			}
 		}
 
+		void SetFov(double v)
+		{
+			if (!link_.fov.has_value() || link_.fov.value() != v)
+			{
+				link_.fov = v;
+				InvalidateDB();
+			}
+		}
+
+		void SetAspectRatio(double v)
+		{
+			if (!link_.aspectRatio.has_value() || link_.aspectRatio.value() != v)
+			{
+				link_.aspectRatio = v;
+				InvalidateDB();
+			}
+		}
+
 		void SetTransform(const dmat4x3& v)
 		{
 			if (!link_.transform.has_value() || link_.transform.value() != v)
@@ -362,14 +399,6 @@ namespace AdvViz::SDK {
 	static Credential creds;
 	static bool enableExportOfResources = true;
 
-	namespace
-	{
-		static dmat4x3 Identity34 = { 1., 0., 0.,
-									  0., 0., 1.,
-									  0., 0., 0.,
-									  0., 1., 0. };
-	}
-
 
 	class ScenePersistenceAPI::Impl : public std::enable_shared_from_this<ScenePersistenceAPI::Impl>
 	{
@@ -379,6 +408,8 @@ namespace AdvViz::SDK {
 		using SJSonAtmosphere = SceneAPIDetails::SJSonAtmosphere;
 		using SJsonCutout = SceneAPIDetails::SJsonCutout;
 		using SJsonCutoutInfo = SceneAPIDetails::SJsonCutoutInfo;
+		using SJsonTag = SceneAPIDetails::SJsonTag;
+		using SJsonScene = SceneAPIDetails::SJsonScene;
 
 		struct SJSonSceneSettings
 		{
@@ -391,20 +422,15 @@ namespace AdvViz::SDK {
 			SJSonAtmosphere atmosphere;
 			SJSonSceneSettings sceneSettings;
 		};
-		struct SJsonScene
-		{
-			std::string name;
-			std::string itwinid;
-			std::string lastModified;
-		};
 		struct SJSonHDRI
 		{
 			std::string	hdriName;
-			double		sunPitch;
-			double		sunYaw;
-			double		sunIntensity;
-			double		rotation;
+			double		sunPitch = 0.0;
+			double		sunYaw = 0.0;
+			double		sunIntensity = 1.0;
+			double		rotation = 0.0;
 		};
+
 	public:
 		struct SThreadSafeData : public SavableItemWithID
 		{
@@ -488,7 +514,7 @@ namespace AdvViz::SDK {
 
 		void AsyncCreate(
 			const std::string& name,
-			const std::string& itwinid,
+			const std::string& iTwinId,
 			std::function<void(bool)>&& onCreationDoneFunc,
 			bool keepCurrentValues = false)
 		{
@@ -514,7 +540,7 @@ namespace AdvViz::SDK {
 					std::move(onCreationDoneFunc), isThisValid_);
 
 			AsyncPostJsonJBody<SJsonOut>(GetHttp(), callbackPtr,
-				[this, itwinid, keepCurrentValues](long httpCode,
+				[this, iTwinId, keepCurrentValues](long httpCode,
 												   const Tools::TSharedLockableData<SJsonOut>& joutPtr)
 			{
 				const bool bSuccess = (httpCode == 200 || httpCode == 201);
@@ -525,31 +551,32 @@ namespace AdvViz::SDK {
 					SJsonOut const& jOut = unlockedJout.Get();
 					if (!keepCurrentValues)
 					{
-						thdata->jsonScene_.itwinid = itwinid;
-						thdata->jsonScene_.name = jOut.scene.displayName;
+						thdata->jsonScene_.iTwinId = iTwinId;
+						thdata->jsonScene_.displayName = jOut.scene.displayName;
 					}
 					// Update DB identifier now that the scene has been created.
 					thdata->SetDBIdentifier(jOut.scene.id);
 
-					BE_LOGI("ITwinScene", "Created scene in Scene API for itwin " << itwinid
+					BE_LOGI("ITwinScene", "Created scene in Scene API for itwin " << iTwinId
 						<< " (ID: " << thdata->GetDBIdentifier() << ")");
 
-					//add atmo and scene settings links
+					// Add atmo and scene settings links
 					std::shared_ptr<AdvViz::SDK::LinkAPI> link(AdvViz::SDK::LinkAPI::New());
 					link->GetImpl().link_.type = "atmosphere";
 					thdata->links_.push_back(link);
+
 					std::shared_ptr<AdvViz::SDK::LinkAPI> link2(AdvViz::SDK::LinkAPI::New());
 					link2->GetImpl().link_.type = "SceneSettings";
 					thdata->links_.push_back(link2);
 				}
 				else
 				{
-					BE_LOGW("ITwinScene", "Could not create scene in Scene API for itwin " << itwinid
+					BE_LOGW("ITwinScene", "Could not create scene in Scene API for itwin " << iTwinId
 						<< ". Http status: " << httpCode);
 				}
 				return bSuccess;
 			},
-				"scenes?iTwinId="+itwinid,
+				"scenes?iTwinId="+iTwinId,
 				jIn);
 
 			callbackPtr->OnFirstLevelRequestsRegistered();
@@ -562,14 +589,14 @@ namespace AdvViz::SDK {
 			if (!thdata->HasDBIdentifier())
 			{
 				BE_LOGE("ITwinScene", "Cannot save scene with no ID!"
-					<< " (from itwin " << thdata->jsonScene_.itwinid << ")");
+					<< " (from itwin " << thdata->jsonScene_.iTwinId << ")");
 				return;
 			}
 			thdata->OnStartSave();
 
 			struct SJsonIn { std::string displayName; };
 			SJsonIn jIn;
-			jIn.displayName = thdata->jsonScene_.name;
+			jIn.displayName = thdata->jsonScene_.displayName;
 			struct SJsonOutData
 			{
 				std::string displayName;
@@ -588,42 +615,35 @@ namespace AdvViz::SDK {
 				if (bSuccess)
 				{
 					BE_LOGI("ITwinScene", "Saved scene in Scene API with ID " << thdata->GetDBIdentifier()
-						<< " itwin " << thdata->jsonScene_.itwinid);
+						<< " itwin " << thdata->jsonScene_.iTwinId);
 					thdata->OnSaved();
 				}
 				else
 				{
 					BE_LOGW("ITwinScene", "Failed saving scene with ID " << thdata->GetDBIdentifier()
-						<< " in Scene API from itwin " << thdata->jsonScene_.itwinid
+						<< " in Scene API from itwin " << thdata->jsonScene_.iTwinId
 						<< " Http status: " << httpCode);
 				}
 				return bSuccess;
 			},
-				"scenes/" + thdata->GetDBIdentifier() + "?iTwinId=" + thdata->jsonScene_.itwinid,
+				"scenes/" + thdata->GetDBIdentifier() + "?iTwinId=" + thdata->jsonScene_.iTwinId,
 				jIn);
 		}
 
-		bool Get(const std::string& itwinid, const std::string& id)
+		bool Get(const std::string& iTwinId, const std::string& id)
 		{
 			auto thdata = thdata_.GetAutoLock();
-			struct SJsonOutData
+			struct SJsonOut
 			{
-				std::string displayName;
-				std::string id;
-				std::string iTwinId;
-				std::optional<std::string> lastModified;
+				SceneAPIDetails::SJsonScene scene;
 			};
-			struct SJsonOut { SJsonOutData scene; };
 			SJsonOut jOut;
-			long status = GetHttp()->GetJson(jOut, "scenes/" + id + "?iTwinId=" + itwinid);
+			long status = GetHttp()->GetJson(jOut, "scenes/" + id + "?iTwinId=" + iTwinId);
 			if (status == 200)
 			{
-				thdata->jsonScene_.itwinid = jOut.scene.iTwinId;
-				thdata->jsonScene_.name = jOut.scene.displayName;
+				thdata->jsonScene_ = jOut.scene;
 				thdata->SetDBIdentifier(jOut.scene.id);
-				if (jOut.scene.lastModified)
-					thdata->jsonScene_.lastModified = *jOut.scene.lastModified;
-				BE_LOGI("ITwinScene", "Loaded Scene in Scene API with ID " << thdata->GetDBIdentifier() << " from itwin "<< itwinid);
+				BE_LOGI("ITwinScene", "Loaded Scene in Scene API with ID " << thdata->GetDBIdentifier() << " from itwin "<< iTwinId);
 				return true;
 			}
 			else
@@ -633,14 +653,14 @@ namespace AdvViz::SDK {
 			}
 		}
 
-		void AsyncGet(const std::string& itwinid, const std::string& id,
+		void AsyncGet(const std::string& iTwinId, const std::string& id,
 			std::function<void(expected<void, std::string> const&)> onFinishCallback)
 		{
 			auto SThis = shared_from_this();
-			struct SJsonOutData {
-				std::string displayName;	std::string id; std::string iTwinId; std::optional<std::string> lastModified;
+			struct SJsonOut
+			{
+				SceneAPIDetails::SJsonScene scene;
 			};
-			struct SJsonOut { SJsonOutData scene; };
 			typedef Tools::TSharedLockableDataPtr<SJsonOut> TJsonOutPtr;
 			TJsonOutPtr jOut = MakeSharedLockableDataPtr<SJsonOut>(new SJsonOut());
 			GetHttp()->AsyncGetJson(jOut, 
@@ -651,11 +671,8 @@ namespace AdvViz::SDK {
 						{
 							auto jOut = (*exp1)->GetAutoLock();
 							auto thdata = SThis->thdata_.GetAutoLock();
-							thdata->jsonScene_.itwinid = jOut->scene.iTwinId;
-							thdata->jsonScene_.name = jOut->scene.displayName;
+							thdata->jsonScene_ = jOut->scene;
 							thdata->SetDBIdentifier(jOut->scene.id);
-							if (jOut->scene.lastModified)
-								thdata->jsonScene_.lastModified = *jOut->scene.lastModified;
 						}
 						onFinishCallback(exp);
 					}
@@ -665,7 +682,7 @@ namespace AdvViz::SDK {
 						onFinishCallback(exp);
 					}
 				},
-				"scenes/" + id + "?iTwinId=" + itwinid);
+				"scenes/" + id + "?iTwinId=" + iTwinId);
 		}
 
 		/// Load links from server (synchronous version).
@@ -680,10 +697,10 @@ namespace AdvViz::SDK {
 			if (!thdata->HasDBIdentifier())
 			{
 				BE_LOGE("ITwinScene", "Cannot delete scene with no ID!"
-					<< " (from itwin " << thdata->jsonScene_.itwinid << ")");
+					<< " (from itwin " << thdata->jsonScene_.iTwinId << ")");
 				return false;
 			}
-			std::string s("scenes/" + thdata->GetDBIdentifier() + "?iTwinId=" + thdata->jsonScene_.itwinid);
+			std::string s("scenes/" + thdata->GetDBIdentifier() + "?iTwinId=" + thdata->jsonScene_.iTwinId);
 			auto status = GetHttp()->Delete(s, {});
 			if (status.first != 200 && status.first != 204)
 			{
@@ -794,6 +811,202 @@ namespace AdvViz::SDK {
 		Tools::RWLockableObject<SLoadedLinksData> thLoadedLinksData_;
 	};
 
+	template <typename TCameraSourceData>
+	struct TCameraTraits
+	{
+
+	};
+
+	template <>
+	struct TCameraTraits<LinkAPI>
+	{
+		static bool HasTransform(const LinkAPI& sourceData) { return sourceData.HasTransform(); }
+		static dmat3x4 GetTransform(const LinkAPI& sourceData) { return sourceData.GetTransform(); }
+
+		static bool HasFov(const LinkAPI& sourceData) { return sourceData.HasFov(); }
+		static double GetFov(const LinkAPI& sourceData) { return sourceData.GetFov(); }
+
+		static bool HasAspectRatio(const LinkAPI& sourceData) { return sourceData.HasAspectRatio(); }
+		static double GetAspectRatio(const LinkAPI& sourceData) { return sourceData.GetAspectRatio(); }
+	};
+
+	using TimelineCameraData = ITimelineKeyframe::CameraData;
+
+	template <>
+	struct TCameraTraits<TimelineCameraData>
+	{
+		static bool HasTransform(const TimelineCameraData& /*sourceData*/) { return true; }
+		static dmat3x4 GetTransform(const TimelineCameraData& sourceData) { return sourceData.transform; }
+
+		static bool HasFov(const TimelineCameraData& sourceData) { return sourceData.fov.has_value(); }
+		static double GetFov(const TimelineCameraData& sourceData) { return sourceData.fov.value(); }
+
+		static bool HasAspectRatio(const TimelineCameraData& sourceData) { return sourceData.aspectRatio.has_value(); }
+		static double GetAspectRatio(const TimelineCameraData& sourceData) { return sourceData.aspectRatio.value(); }
+	};
+
+	template <typename TCameraSourceData>
+	void TCameraToJson(const TCameraSourceData& sourceData, SceneAPIDetails::SJsonCamera& data)
+	{
+		using namespace SceneAPIDetails;
+
+		using CameraTraits = TCameraTraits<TCameraSourceData>;
+		if (CameraTraits::HasTransform(sourceData))
+		{
+			data.ecefTransform = Identity44;
+			std::memcpy(data.ecefTransform->data(), CameraTraits::GetTransform(sourceData).data(), 12 * sizeof(double));
+			FillCameraVectorsFromTransform(data, ScenePersistenceAPI::GetCameraHandedness());
+			// The View3d vectors are expressed in the frame given by ecefTransform;
+			// ours are already ECEF, so that frame must be the identity.
+			*data.ecefTransform = Identity44;
+		}
+		if (CameraTraits::HasFov(sourceData))
+		{
+			data.fov = CameraTraits::GetFov(sourceData);
+		}
+		data.aspectRatio = CameraTraits::HasAspectRatio(sourceData)
+			? CameraTraits::GetAspectRatio(sourceData)
+			: ScenePersistenceAPI::GetDefaultCameraAspectRatio();
+	}
+
+	template <typename TCameraSDKData>
+	struct TCameraPropertiesAccessor
+	{
+
+	};
+
+	template <>
+	struct TCameraPropertiesAccessor<SceneAPIDetails::LinkData>
+	{
+		static dmat3x4& GetMutableTransform(SceneAPIDetails::LinkData& link)
+		{
+			link.transform.emplace();
+			return link.transform.value();
+		}
+		static void SetPendingCameraBasis(SceneAPIDetails::LinkData& link,
+			SceneAPIDetails::CameraBasis const& basis)
+		{
+			link.pendingCameraBasis = basis;
+		}
+		static void OnMissingTransform(SceneAPIDetails::LinkData& /*link*/) {}
+		static std::string GetLogName(const SceneAPIDetails::LinkData& link) { return std::string("link ") + link.ref; }
+	};
+
+	template <>
+	struct TCameraPropertiesAccessor<TimelineCameraData>
+	{
+		static dmat3x4& GetMutableTransform(TimelineCameraData& camera) { return camera.transform; }
+		static void SetPendingCameraBasis(TimelineCameraData& camera,
+			SceneAPIDetails::CameraBasis const& basis)
+		{
+			camera.pendingCameraBasis = basis;
+		}
+		static void OnMissingTransform(TimelineCameraData& camera)
+		{
+			// Mark the camera as paused if it has no transform.
+			camera.isPause = true;
+		}
+		static std::string GetLogName(const TimelineCameraData& /*camera*/) { return "key-frame camera "; }
+	};
+
+
+	template <typename TCameraJsonData>
+	struct TJsonCameraTraits
+	{
+
+	};
+
+	template <>
+	struct TJsonCameraTraits<SceneAPIDetails::ObjectData>
+	{
+		using JsonVector = SceneAPIDetails::JsonVector;
+
+		static bool HasVectors(const SceneAPIDetails::ObjectData& data)
+		{
+			return data.direction && data.up && data.position
+				// Both direction and up vectors must be non-zero (otherwise the camera is invalid).
+				&& !IsNullVector(*data.direction) && !IsNullVector(*data.up);
+		}
+		static const JsonVector& GetDirection(const SceneAPIDetails::ObjectData& data) { return data.direction.value(); }
+		static const JsonVector& GetUp(const SceneAPIDetails::ObjectData& data) { return data.up.value(); }
+		static const JsonVector& GetPosition(const SceneAPIDetails::ObjectData& data) { return data.position.value(); }
+
+		static bool HasFov(const SceneAPIDetails::ObjectData& /*data*/) { return false; }
+		static double GetFov(const SceneAPIDetails::ObjectData& /*data*/) { BE_ISSUE("no fov in ObjectData"); return 1.0; }
+
+		static bool HasAspectRatio(const SceneAPIDetails::ObjectData& /*data*/) { return false; }
+		static double GetAspectRatio(const SceneAPIDetails::ObjectData& /*data*/) { BE_ISSUE("no aspect ratio in ObjectData"); return 1.0; }
+	};
+
+	template <>
+	struct TJsonCameraTraits<SceneAPIDetails::SJsonCamera>
+	{
+		using JsonVector = SceneAPIDetails::JsonVector;
+
+		static bool HasVectors(const SceneAPIDetails::SJsonCamera& c)
+		{
+			// Both direction and up vectors must be non-zero (otherwise the camera is invalid).
+			return !IsNullVector(c.direction) && !IsNullVector(c.up);
+		}
+		static const JsonVector& GetDirection(const SceneAPIDetails::SJsonCamera& data) { return data.direction; }
+		static const JsonVector& GetUp(const SceneAPIDetails::SJsonCamera& data) { return data.up; }
+		static const JsonVector& GetPosition(const SceneAPIDetails::SJsonCamera& data) { return data.position; }
+
+		static bool HasFov(const SceneAPIDetails::SJsonCamera& data) { return data.fov.has_value(); }
+		static double GetFov(const SceneAPIDetails::SJsonCamera& data) { return data.fov.value(); }
+
+		static bool HasAspectRatio(const SceneAPIDetails::SJsonCamera& data) { return data.aspectRatio > 0.; }
+		static double GetAspectRatio(const SceneAPIDetails::SJsonCamera& data) { return data.aspectRatio; }
+	};
+
+
+	template <typename TCameraJsonData, typename TCameraSDKData>
+	void TJsonCameraToSDK(const TCameraJsonData& jsonCameraData, TCameraSDKData& data)
+	{
+		using namespace SceneAPIDetails;
+		using CameraPropertiesAccessor = TCameraPropertiesAccessor<TCameraSDKData>;
+		using JsonCameraTraits = TJsonCameraTraits<TCameraJsonData>;
+
+		bool bHasSetTransform = false;
+		bool bTransformFromVectors = !jsonCameraData.ecefTransform.has_value();
+		if (jsonCameraData.ecefTransform)
+		{
+			// An identity frame means the vectors are expressed directly in ECEF.
+			bTransformFromVectors = IsIdentity44(*jsonCameraData.ecefTransform);
+			if (!bTransformFromVectors)
+			{
+				auto& dstTransform = CameraPropertiesAccessor::GetMutableTransform(data);
+				dstTransform = Identity34;
+				std::memcpy(dstTransform.data(), jsonCameraData.ecefTransform->data(), 12 * sizeof(double));
+				bHasSetTransform = true;
+			}
+		}
+		if (bTransformFromVectors && JsonCameraTraits::HasVectors(jsonCameraData))
+		{
+			// We cannot resolve the transform directly, as the geo-reference may not be known at
+			// this point => store the pending camera basis, which will be resolved afterwards.
+			CameraPropertiesAccessor::SetPendingCameraBasis(data, CameraBasis{
+					JsonCameraTraits::GetDirection(jsonCameraData),
+					JsonCameraTraits::GetUp(jsonCameraData),
+					JsonCameraTraits::GetPosition(jsonCameraData) });
+			bHasSetTransform = true; // not missing: merely deferred
+		}
+		if (!bHasSetTransform)
+		{
+			// In some cases, we handle a missing transform in a specific way (for example, for
+			// timeline key-frame cameras, we mark the camera as paused).
+			CameraPropertiesAccessor::OnMissingTransform(data);
+		}
+		if (JsonCameraTraits::HasFov(jsonCameraData))
+		{
+			data.fov = JsonCameraTraits::GetFov(jsonCameraData);
+		}
+		if (JsonCameraTraits::HasAspectRatio(jsonCameraData))
+		{
+			data.aspectRatio = JsonCameraTraits::GetAspectRatio(jsonCameraData);
+		}
+	}
+
 	bool ScenePersistenceAPI::Impl::StartLoadingLinks(std::function<void(expected<void, std::string> const&)> const& callback)
 	{
 		auto thLoadedLinksData = thLoadedLinksData_.GetAutoLock();
@@ -886,12 +1099,13 @@ namespace AdvViz::SDK {
 				else if (row.data && row.data->name)
 					link->GetImpl().link_.ref = *row.data->name;
 				else
-					link->GetImpl().link_.ref = "Home Camera";
-				if (row.data && row.data->ecefTransform)
+					link->GetImpl().link_.ref = HOME_CAMERA_REF;
+
+				if (row.data)
 				{
-					link->GetImpl().link_.transform = Identity34;
-					std::memcpy(link->GetImpl().link_.transform->data(), row.data->ecefTransform->data(), 12 * sizeof(double));
+					TJsonCameraToSDK(*row.data, link->GetImpl().link_);
 				}
+
 				AddLink(link);
 			}
 			else if (row.kind == "UnrealAtmosphericStyling")
@@ -1257,7 +1471,6 @@ namespace AdvViz::SDK {
 								if (output.settings->atmosphere.HDRIImage)
 									kd.atmo->HDRIImage = *output.settings->atmosphere.HDRIImage;
 								kd.atmo->exposure = output.settings->atmosphere.exposure;
-
 							}
 
 							if (output.schedule)
@@ -1273,14 +1486,8 @@ namespace AdvViz::SDK {
 								kd.synchro->date = kd.atmo->time;
 							}
 							kd.camera = ITimelineKeyframe::CameraData();
-							if (output.camera.ecefTransform && output.camera.ecefTransform->size() >= 12)
-							{
-								std::memcpy(kd.camera->transform.data(), output.camera.ecefTransform->data(), 12 * sizeof(double));
-							}
-							else
-							{
-								kd.camera->isPause = true;
-							}
+							TJsonCameraToSDK(output.camera, *kd.camera);
+
 							auto kfResult = clipp->AddKeyframe(kd);
 							if (kfResult)
 							{
@@ -1338,7 +1545,7 @@ namespace AdvViz::SDK {
 		// Synchronous, with multi-page support
 		StartLoadingLinks({});
 		auto exp = ITwinAPI::GetPagedDataVector<"objects", JsonObjectWithId>(http,
-			"scenes/" + thdata->GetDBIdentifier() + "/objects?iTwinId=" + thdata->jsonScene_.itwinid,
+			"scenes/" + thdata->GetDBIdentifier() + "/objects?iTwinId=" + thdata->jsonScene_.iTwinId,
 			{} /*headers*/,
 			[this](std::vector<JsonObjectWithId> const& objects) { return HandleLoadLinksResponse(objects); }
 		);
@@ -1377,7 +1584,7 @@ namespace AdvViz::SDK {
 			return;
 		}
 		ITwinAPI::AsyncGetPagedDataVector<"objects", JsonObjectWithId>(http,
-			"scenes/" + thdata->GetDBIdentifier() + "/objects?iTwinId=" + thdata->jsonScene_.itwinid,
+			"scenes/" + thdata->GetDBIdentifier() + "/objects?iTwinId=" + thdata->jsonScene_.iTwinId,
 			{} /*headers*/,
 			[SThis](std::vector<SceneAPIDetails::JsonObjectWithId> const& objects) ->expected<void, HttpError>
 		{
@@ -1430,10 +1637,10 @@ namespace AdvViz::SDK {
 		GetImpl().SetHttp(http);
 	}
 
-	void ScenePersistenceAPI::AsyncCreate(const std::string& name, const std::string& itwinid,
+	void ScenePersistenceAPI::AsyncCreate(const std::string& name, const std::string& iTwinId,
 		std::function<void(bool)>&& onCreationDoneFunc /*= {}*/)
 	{
-		GetImpl().AsyncCreate(name, itwinid, std::move(onCreationDoneFunc), false);
+		GetImpl().AsyncCreate(name, iTwinId, std::move(onCreationDoneFunc), false);
 	}
 
 	bool ScenePersistenceAPI::Get(const std::string& itwinId, const std::string& id)
@@ -1443,11 +1650,11 @@ namespace AdvViz::SDK {
 		return res;
 	}
 
-	void ScenePersistenceAPI::AsyncGet(const std::string& itwinid, const std::string& id,
+	void ScenePersistenceAPI::AsyncGet(const std::string& iTwinId, const std::string& id,
 		std::function<void(expected<void, std::string> const&)> onFinish)
 	{
 		auto implPtr = GetImpl().shared_from_this();
-		GetImpl().AsyncGet(itwinid, id,
+		GetImpl().AsyncGet(iTwinId, id,
 			[implPtr, onFinish](expected<void, std::string> const& exp)
 			{
 				if (exp)
@@ -1475,20 +1682,25 @@ namespace AdvViz::SDK {
 	const std::string& ScenePersistenceAPI::GetName() const
 	{
 		auto thdata = GetImpl().thdata_.GetRAutoLock();
-		return thdata->jsonScene_.name;
+		return thdata->jsonScene_.displayName;
 	}
 
 	std::string ScenePersistenceAPI::GetLastModified() const
 	{
 		auto thdata = GetImpl().thdata_.GetRAutoLock();
-		return thdata->jsonScene_.lastModified;
+		return thdata->jsonScene_.lastModified.value_or("");
 	}
 
+	std::string ScenePersistenceAPI::GetCreationTime() const
+	{
+		auto thdata = GetImpl().thdata_.GetRAutoLock();
+		return thdata->jsonScene_.creationTime.value_or("");
+	}
 
 	const std::string& ScenePersistenceAPI::GetITwinId() const
 	{
 		auto thdata = GetImpl().thdata_.GetRAutoLock();
-		return thdata->jsonScene_.itwinid;
+		return thdata->jsonScene_.iTwinId;
 	}
 
 	ScenePersistenceAPI::~ScenePersistenceAPI()
@@ -1501,6 +1713,19 @@ namespace AdvViz::SDK {
 
 	ScenePersistenceAPI::Impl& ScenePersistenceAPI::GetImpl() const {
 		return *impl_;
+	}
+
+	bool ScenePersistenceAPI::HasTag(const std::string_view& tag) const
+	{
+		auto thdata = GetImpl().thdata_.GetRAutoLock();
+		if (!thdata->jsonScene_.tags.has_value())
+			return false;
+		for (const auto& t : thdata->jsonScene_.tags.value())
+		{
+			if (t.displayName == tag)
+				return true;
+		}
+		return false;
 	}
 
 	void ScenePersistenceAPI::SetAtmosphere(const ITwinAtmosphereSettings& atmo)
@@ -2057,17 +2282,17 @@ namespace AdvViz::SDK {
 
 		bool hasDBId(false);
 		std::string name;
-		std::string itwinid;
+		std::string iTwinId;
 		{
 			auto thdata = GetImpl().thdata_.GetRAutoLock();
 			hasDBId = thdata->HasDBIdentifier();
-			name = thdata->jsonScene_.name;
-			itwinid = thdata->jsonScene_.itwinid;	
+			name = thdata->jsonScene_.displayName;
+			iTwinId = thdata->jsonScene_.iTwinId;
 		}
 
-		if (!hasDBId && !name.empty() && !itwinid.empty())
+		if (!hasDBId && !name.empty() && !iTwinId.empty())
 		{
-			GetImpl().AsyncCreate(name, itwinid, std::move(actualSaveFunc), true);
+			GetImpl().AsyncCreate(name, iTwinId, std::move(actualSaveFunc), true);
 		}
 		else
 		{
@@ -2081,11 +2306,11 @@ namespace AdvViz::SDK {
 		thdata->SetShouldSave(shouldSave);
 	}
 
-	void ScenePersistenceAPI::PrepareCreation(const std::string& name, const std::string& itwinid)
+	void ScenePersistenceAPI::PrepareCreation(const std::string& name, const std::string& iTwinId)
 	{
 		auto thdata = GetImpl().thdata_.GetAutoLock();
-		thdata->jsonScene_.name = name;
-		thdata->jsonScene_.itwinid = itwinid;
+		thdata->jsonScene_.displayName = name;
+		thdata->jsonScene_.iTwinId = iTwinId;
 		ITwinAtmosphereSettings defaultAtmo;
 		defaultAtmo.heliodonDate = GetDefaultHeliodonDate();
 		defaultAtmo.useHeliodon = true;
@@ -2172,7 +2397,7 @@ namespace AdvViz::SDK {
 
 		auto thdata = GetImpl().thdata_.GetRAutoLock();
 		const std::string sceneId = thdata->GetDBIdentifier();
-		const std::string itwinid = thdata->jsonScene_.itwinid;
+		const std::string iTwinId = thdata->jsonScene_.iTwinId;
 
 		for (auto link : links)
 		{
@@ -2225,7 +2450,7 @@ namespace AdvViz::SDK {
 					std::vector<SJsonO2> objects;
 				};
 				AsyncPostJson<SJsonOut>(http, callbackPtr,
-					[this, link, callbackPtr, sceneId, itwinid](long httpCode, const Tools::TSharedLockableData<SJsonOut>& joutPtr)
+					[this, link, callbackPtr, sceneId, iTwinId](long httpCode, const Tools::TSharedLockableData<SJsonOut>& joutPtr)
 				{
 					auto thdata = GetImpl().thdata_.GetRAutoLock();
 					auto unlockedJout = joutPtr->GetAutoLock();
@@ -2243,7 +2468,7 @@ namespace AdvViz::SDK {
 					}
 					return bSuccess;
 				},
-					"scenes/" + sceneId + "/objects?iTwinId=" + itwinid,
+					"scenes/" + sceneId + "/objects?iTwinId=" + iTwinId,
 					bodyParams);
 			}
 			else if (link->ShouldDelete() && linkId.HasDBIdentifier())
@@ -2256,7 +2481,7 @@ namespace AdvViz::SDK {
 					}
 				}
 				Impl::SJsonInEmpty Jin;
-				std::string url("scenes/" + sceneId + "/objects/" + linkId.GetDBIdentifier() + "?iTwinId=" + itwinid);
+				std::string url("scenes/" + sceneId + "/objects/" + linkId.GetDBIdentifier() + "?iTwinId=" + iTwinId);
 				AsyncDeleteJsonNoOutput(http, callbackPtr,
 					[this, link, sceneId](long httpCode)
 				{
@@ -2300,7 +2525,7 @@ namespace AdvViz::SDK {
 				}
 				const Http::BodyParams bodyParams(GenerateBody(link, true));
 				AsyncPatchJson<SJsonOut>(http, callbackPtr,
-					[this, link, callbackPtr, sceneId, itwinid](long httpCode, const Tools::TSharedLockableData<SJsonOut>& /*joutPtr*/)
+					[this, link, callbackPtr, sceneId, iTwinId](long httpCode, const Tools::TSharedLockableData<SJsonOut>& /*joutPtr*/)
 				{
 					RefID linkId = link->GetId();
 					bool bSuccess = (httpCode == 200);
@@ -2317,7 +2542,7 @@ namespace AdvViz::SDK {
 					}
 					return bSuccess;
 				},
-					"scenes/" + sceneId + "/objects/" + linkId.GetDBIdentifier() + "?iTwinId=" + itwinid,
+					"scenes/" + sceneId + "/objects/" + linkId.GetDBIdentifier() + "?iTwinId=" + iTwinId,
 					bodyParams);
 			}
 			//else nothing to do, id is empty so the link is not on the server
@@ -2428,7 +2653,18 @@ namespace AdvViz::SDK {
 		return Json::ToString(jobs);
 	}
 
-	std::string ScenePersistenceAPI::GenerateBody(const std::shared_ptr<LinkAPI>& link, bool forPatch,bool ignoreTimelineID)
+	template <typename TData>
+	struct SJsonLinkDataHolder
+	{
+		// only for POST:
+		std::optional<std::string> version;
+		std::optional<std::string> kind;
+		// common to POST and PATCH:
+		TData data;
+		std::optional<std::string> displayName;
+	};
+
+	std::string ScenePersistenceAPI::GenerateBody(const std::shared_ptr<LinkAPI>& link, bool forPatch, bool ignoreTimelineID)
 	{
 		using namespace SceneAPIDetails;
 
@@ -2440,164 +2676,109 @@ namespace AdvViz::SDK {
 				&& !repositoryInfo->repositoryId.empty(),
 				"Repository resource link must have valid repository info");
 
-			std::string itwinid;
+			std::string iTwinId;
 			{
 				auto thdata = GetImpl().thdata_.GetRAutoLock();
-				itwinid = thdata->jsonScene_.itwinid;
+				iTwinId = thdata->jsonScene_.iTwinId;
 			}
 
-			struct SJsonInData
+			struct SJsonRepositoryResourceData
 			{
 				std::string id;
 				rfl::Rename<"class", std::string> type;
 				std::string repositoryId;
 				std::string iTwinId;
 			};
+			struct SJsonRepositoryResource
+			{
+				// only for POST:
+				std::optional<std::string> version;
+				std::optional<std::string> kind;
+				// common to POST and PATCH:
+				SJsonRepositoryResourceData data;
+				std::optional<bool> visible;
+			};
+
+			SJsonRepositoryResource Jin;
+			if (link->HasVisibility())
+			{
+				Jin.visible = link->GetVisibility();
+			}
+			else
+			{
+				Jin.visible = true;
+			}
+			Jin.data.id = link->GetRef();
+			Jin.data.iTwinId = iTwinId;
+			Jin.data.repositoryId = repositoryInfo->repositoryId;
+			Jin.data.type = repositoryInfo->strClass;
+
 			if (forPatch)
 			{
-				struct SJsonIn
-				{
-					SJsonInData data;
-					std::optional<bool> visible;
-				};
-				SJsonIn Jin;
-				if (link->HasVisibility())
-				{
-					Jin.visible = link->GetVisibility();
-				}
-				else
-				{
-					Jin.visible = true;
-				}
-				Jin.data.id = link->GetRef();
-				Jin.data.iTwinId = itwinid;
-				Jin.data.repositoryId = repositoryInfo->repositoryId;
-				Jin.data.type = repositoryInfo->strClass;
-
 				return Json::ToString(Jin);
 			}
 			else
 			{
-				struct SJsonIn
-				{
-					std::string version = "1.0.0";
-					std::string kind = "RepositoryResource";
-					SJsonInData data;
-					std::optional<bool> visible;
-				};
-
-				SJsonIn Jin;
-				if (link->HasVisibility())
-				{
-					Jin.visible = link->GetVisibility();
-				}
-				else
-				{
-					Jin.visible = true;
-				}
-				Jin.data.id = link->GetRef();
-				Jin.data.iTwinId = itwinid;
-				Jin.data.repositoryId = repositoryInfo->repositoryId;
-				Jin.data.type = repositoryInfo->strClass;
-				
+				Jin.version = "1.0.0";
+				Jin.kind = "RepositoryResource";
 				return ToPostString(Jin);
 			}
-
 		}
 		else if (link->GetType() == "camera")
 		{
-			struct SJsonInData
-			{
-				JsonVector up;
-				JsonVector direction;
-				JsonVector position;
-				bool isOrthographic = false;
-				double aspectRatio = 1.0;
-				double far = 10000000000;
-				double near = 0.1;
-				std::optional< std::array<double, 16> > ecefTransform;
-			};
-			SJsonInData data;
-			if (link->HasTransform())
-			{
-				data.ecefTransform = std::array<double, 16>();
-				std::memcpy(data.ecefTransform->data(), link->GetTransform().data(), 12 * sizeof(double));
-				(*data.ecefTransform)[12] = 0.0;
-				(*data.ecefTransform)[13] = 0.0;
-				(*data.ecefTransform)[14] = 0.0;
-				(*data.ecefTransform)[15] = 1.0;
-			}
+			using SJsonCameraHolder = SJsonLinkDataHolder<SJsonCamera>;
+			SJsonCameraHolder Jin;
+			Jin.displayName = link->GetRef();
+			TCameraToJson(*link, Jin.data);
+
 			if (forPatch)
 			{
-				struct SJsonIn
-				{
-					std::optional<std::string> displayName;
-					SJsonInData data;
-				};
-				SJsonIn Jin;
-				Jin.data = data;
-				Jin.displayName = link->GetRef();
 				return Json::ToString(Jin);
 			}
 			else
 			{
-				struct SJsonIn
-				{
-					std::string version = "1.0.0";
-					std::string kind = "View3d";
-					SJsonInData data;
-					std::optional<std::string> displayName;
-				};
-				SJsonIn Jin;
-				Jin.data = data;
-				Jin.displayName = link->GetRef();
+				Jin.version = "1.0.0";
+				Jin.kind = "View3d";
 				return ToPostString(Jin);
 			}
 		}
 		else if (link->GetType() == "atmosphere")
 		{
-			struct SJsonInData
+			struct SJsonAtmosphereData
 			{
 				Impl::SJSonAtmosphere atmosphere;
 			};
+			using SJSonAtmosphereHolder = SJsonLinkDataHolder<SJsonAtmosphereData>;
+			SJSonAtmosphereHolder Jin;
+
+			{
+				auto thdata = GetImpl().thdata_.GetRAutoLock();
+				Jin.data.atmosphere = thdata->jsonAtmo_;
+			}
+
 			if (forPatch)
 			{
-				struct SJsonIn
-				{
-					SJsonInData data;
-				};
-				SJsonIn Jin;
-				{
-					auto thdata = GetImpl().thdata_.GetRAutoLock();
-					Jin.data.atmosphere = thdata->jsonAtmo_;
-				}
 				return Json::ToString(Jin);
 			}
 			else
 			{
-				struct SJsonIn
-				{
-					std::string version = "1.0.0";
-					std::string kind = "UnrealAtmosphericStyling";
-					SJsonInData data;
-				};
-				SJsonIn Jin;
-				{
-					auto thdata = GetImpl().thdata_.GetRAutoLock();
-					Jin.data.atmosphere = thdata->jsonAtmo_;
-				}
+				Jin.version = "1.0.0";
+				Jin.kind = "UnrealAtmosphericStyling";
 				return ToPostString(Jin);
 			}
 		}
 		else if (link->GetType() == "SceneSettings")
 		{
-			struct SJsonInData
+			struct SJsonSceneSettingsData
 			{
-				double quality;
+				double quality = 0.5;
 				std::vector<double> adjustment;
 			};
+			using SJsonSceneSettings = SJsonLinkDataHolder<SJsonSceneSettingsData>;
+			SJsonSceneSettings Jin;
+
 			auto thdata = GetImpl().thdata_.GetRAutoLock();
-			SJsonInData inData;
+			SJsonSceneSettingsData& inData = Jin.data;
 			inData.quality = thdata->jsonSS_.qualityGoogleTiles / 100;
 			double ql = thdata->jsonSS_.qualityGoogleTiles;
 			if (fabs(ql) < 1e-6)
@@ -2619,34 +2800,25 @@ namespace AdvViz::SDK {
 
 			if (forPatch)
 			{
-				struct SJsonIn
-				{
-					SJsonInData data;
-				};
-				SJsonIn Jin;
-				Jin.data = inData;
 				return Json::ToString(Jin);
 			}
 			else
 			{
-				struct SJsonIn
-				{
-					std::string version = "1.0.0";
-					std::string kind = "GoogleTilesStyling";
-					SJsonInData data;
-				};
-				SJsonIn Jin;
-				Jin.data = inData;
+				Jin.version = "1.0.0";
+				Jin.kind = "GoogleTilesStyling";
 				return ToPostString(Jin);
 			}
 		}
 		else if (link->GetType() == "timeline")
 		{
-			struct SJsonInData
+			struct SJsonTimelineData
 			{
 				std::vector<std::string> animations;
 			};
-			SJsonInData inData;
+
+			using SJsonTimeline = SJsonLinkDataHolder<SJsonTimelineData>;
+			SJsonTimeline Jin;
+			SJsonTimelineData& inData = Jin.data;
 
 			auto tl = GetTimeline();
 			if (tl)
@@ -2660,29 +2832,16 @@ namespace AdvViz::SDK {
 					if ((*clipp)->HasDBIdentifier())
 						inData.animations.push_back((*clipp)->GetDBIdentifier());
 				}
-
 			}
 
 			if (forPatch)
 			{
-				struct SJsonIn
-				{
-					SJsonInData data;
-				};
-				SJsonIn Jin;
-				Jin.data = inData;
 				return Json::ToString(Jin);
 			}
 			else
 			{
-				struct SJsonIn
-				{
-					std::string version = "1.0.0";
-					std::string kind = "Movie";
-					SJsonInData data;
-				};
-				SJsonIn Jin;
-				Jin.data = inData;
+				Jin.version = "1.0.0";
+				Jin.kind = "Movie";
 				return ToPostString(Jin);
 			}
 		}
@@ -2693,21 +2852,10 @@ namespace AdvViz::SDK {
 			if (!clipp)
 				return "";
 
-			struct SJsonCamera
-			{
-				JsonVector up;
-				JsonVector direction;
-				JsonVector position;
-				bool isOrthographic = false;
-				double aspectRatio = 1.0;
-				double far = 10000000000;
-				double near = 0.1;
-				std::optional< std::array<double, 16> > ecefTransform;
-			};
 			struct SJsonScheduleSimulation
 			{
 				std::string timelineId;
-				int64_t timePoint;
+				int64_t timePoint = 0;
 			};
 			struct SJsonSettings
 			{
@@ -2716,16 +2864,20 @@ namespace AdvViz::SDK {
 			struct SJsonFrameData
 			{
 				SJsonCamera camera;
-				std::optional <SJsonSettings> settings;
+				std::optional<SJsonSettings> settings;
 				std::optional<SJsonScheduleSimulation> schedule;
 			};
-			struct SJsonInData
+			struct SJsonClipData
 			{
 				std::vector<double> input;
 				std::vector<SJsonFrameData> output;
 			};
-			SJsonInData inData;
 
+			using SJsonClip = SJsonLinkDataHolder<SJsonClipData>;
+			SJsonClip Jin;
+			Jin.displayName = clipp->GetName();
+
+			SJsonClipData& inData = Jin.data;
 			inData.input.reserve(clipp->GetKeyframeCount());
 			inData.output.reserve(clipp->GetKeyframeCount());
 			for (size_t idx(0); idx < clipp->GetKeyframeCount(); ++idx)
@@ -2738,13 +2890,9 @@ namespace AdvViz::SDK {
 					continue;
 				}
 				inData.input.push_back(kdata.time);
+
 				SJsonFrameData o;
-				o.camera.ecefTransform = std::array<double, 16>();
-				std::memcpy(o.camera.ecefTransform->data(), kdata.camera->transform.data(), 12 * sizeof(double));
-				(*o.camera.ecefTransform)[12] = 0.0;
-				(*o.camera.ecefTransform)[13] = 0.0;
-				(*o.camera.ecefTransform)[14] = 0.0;
-				(*o.camera.ecefTransform)[15] = 1.0;
+				TCameraToJson(*kdata.camera, o.camera);
 				if (kdata.atmo)
 				{
 					o.settings = SJsonSettings();
@@ -2787,61 +2935,34 @@ namespace AdvViz::SDK {
 
 			if (forPatch)
 			{
-				struct SJsonIn
-				{
-					SJsonInData data;
-					std::optional<std::string> displayName;
-				};
-				SJsonIn Jin;
-				Jin.data = inData;
-				Jin.displayName = clipp->GetName();
 				return Json::ToString(Jin);
 			}
 			else
 			{
-				struct SJsonIn
-				{
-					std::string version = "1.0.0";
-					std::string kind = "CameraAnimation";
-					SJsonInData data;
-					std::optional<std::string> displayName;
-				};
-				SJsonIn Jin;
-				Jin.data = inData;
-				Jin.displayName = clipp->GetName();
+				Jin.version = "1.0.0";
+				Jin.kind = "CameraAnimation";
 				return ToPostString(Jin);
 			}
 		}
 		else if (link->GetType() == "decoration" || link->GetType() == "DecorationScene")
 		{
-			struct SJsonInData
+			struct SJsonDecorationData
 			{
 				std::string decorationId;
 			};
+			using SJsonDecoration = SJsonLinkDataHolder<SJsonDecorationData>;
+			SJsonDecoration Jin;
+			Jin.data.decorationId = DSIDtoSceneAPIGuid(link->GetRef());
+			Jin.displayName = link->GetType();
+
 			if (forPatch)
 			{
-				struct SJsonIn
-				{
-					SJsonInData data;
-					std::optional<std::string> displayName;
-				};
-				SJsonIn Jin;
-				Jin.data.decorationId = DSIDtoSceneAPIGuid(link->GetRef());
-				Jin.displayName = link->GetType();
 				return Json::ToString(Jin);
 			}
 			else
 			{
-				struct SJsonIn
-				{
-					std::string version = "1.0.0";
-					std::string kind = "MaterialDecoration";
-					std::optional<std::string> displayName;
-					SJsonInData data;
-				};
-				SJsonIn Jin;
-				Jin.data.decorationId = DSIDtoSceneAPIGuid(link->GetRef());
-				Jin.displayName = link->GetType();
+				Jin.version = "1.0.0";
+				Jin.kind = "MaterialDecoration";
 				return ToPostString(Jin);
 			}
 		}
@@ -2852,14 +2973,27 @@ namespace AdvViz::SDK {
 				std::string shownList = "";
 				std::string hiddenList = "";
 			};
-			struct SJsonInData
+			struct SJsonAdjustmentData
 			{
 				std::vector<double> adjustment;
 				SJsonInDataList categories; //temp until it comes optional
 				SJsonInDataList models;//temp until it comes optional
 				//std::optional<std::string> displayName;
 			};
-			SJsonInData data;
+			struct SJsonAdjustment
+			{
+				// only for POST:
+				std::optional<std::string> version;
+				std::optional<std::string> kind;
+				// common to POST and PATCH:
+				SJsonAdjustmentData data;
+				std::optional<std::string> displayName;
+				std::optional<std::string> relatedId;
+			};
+
+			SJsonAdjustment Jin;
+
+			SJsonAdjustmentData& data = Jin.data;
 			data.adjustment.reserve(
 				(link->HasTransform() ? 12 : 0) + (link->HasQuality() ? 1 : 0));
 			if (link->HasTransform())
@@ -2882,35 +3016,17 @@ namespace AdvViz::SDK {
 				else
 					data.adjustment.push_back(ql);
 			}
-
+			Jin.displayName = link->GetType();
 
 			if (forPatch)
 			{
-				struct SJsonIn
-				{
-					std::optional<std::string> displayName;
-					//std::string relatedId;
-					SJsonInData data;
-				};
-				SJsonIn Jin;
-				Jin.data = data;
-				Jin.displayName = link->GetType();
 				//Jin.relatedId = link->GetRef();
 				return Json::ToString(Jin);
 			}
 			else
 			{
-				struct SJsonIn
-				{
-					std::string version = "1.0.0";
-					std::string kind = "iModelVisibility";
-					std::string relatedId;
-					std::optional<std::string> displayName;
-					SJsonInData data;
-				};
-				SJsonIn Jin;
-				Jin.data = data;
-				Jin.displayName = link->GetType();
+				Jin.version = "1.0.0";
+				Jin.kind = "iModelVisibility";
 				Jin.relatedId = link->GetRef();
 				return ToPostString(Jin);
 			}
@@ -2925,27 +3041,18 @@ namespace AdvViz::SDK {
 				BE_ISSUE("No cutout info found for cutout link with id ", link->GetId().ID());
 				return "";
 			}
+			using SJsonCutoutIn = SJsonLinkDataHolder<SJsonCutoutInfo>;
+			SJsonCutoutIn Jin;
+			Jin.data = itCutout->second;
+
 			if (forPatch)
 			{
-				struct SJsonIn
-				{
-					SJsonCutoutInfo data;
-					std::optional<std::string> displayName;
-				};
-				SJsonIn Jin;
-				Jin.data = itCutout->second;
 				return Json::ToString(Jin);
 			}
 			else
 			{
-				struct SJsonIn
-				{
-					std::string version = "2.0.0";
-					std::string kind = "Cutout";
-					SJsonCutoutInfo data;
-				};
-				SJsonIn Jin;
-				Jin.data = itCutout->second;
+				Jin.version = "2.0.0";
+				Jin.kind = "Cutout";
 				return ToPostString(Jin);
 			}
 		}
@@ -3047,6 +3154,78 @@ namespace AdvViz::SDK {
 		creds.SetDefaultHttp(http);
 	}
 
+	/*static*/ double ScenePersistenceAPI::GetDefaultCameraAspectRatio()
+	{
+		return SceneAPIDetails::defaultCameraAspectRatio.load();
+	}
+
+	/*static*/ void ScenePersistenceAPI::SetDefaultCameraAspectRatio(double aspectRatio)
+	{
+		SceneAPIDetails::defaultCameraAspectRatio.store(aspectRatio);
+	}
+
+	/*static*/ void ScenePersistenceAPI::SetCameraHandedness(double value)
+	{
+		BE_ASSERT(value == 1.0 || value == -1.0, "handedness must be +1 or -1");
+		SceneAPIDetails::cameraHandedness = (value < 0.) ? -1.0 : 1.0;
+	}
+
+	/*static*/ double ScenePersistenceAPI::GetCameraHandedness()
+	{
+		double const value = SceneAPIDetails::cameraHandedness;
+		// Camera placements cannot be (de)serialized correctly before the georeference has
+		// been initialized: see IGCSTransform::GetHandedness.
+		BE_ASSERT(value != 0.0, "camera handedness was not initialized");
+		return (value < 0.) ? -1. : 1.; // fall back to the orientation-preserving convention
+	}
+
+	/*static*/ bool ScenePersistenceAPI::IsCameraHandednessInitialized()
+	{
+		return SceneAPIDetails::cameraHandedness != 0.0;
+	}
+
+	namespace
+	{
+		//! Rebuilds a deferred camera placement. Returns true if the basis was resolved
+		//! (or if there was nothing to do).
+		template <typename TCameraSDKData>
+		bool ResolveCameraBasis(TCameraSDKData& data, double handedness, std::string const& logName)
+		{
+			if (!data.pendingCameraBasis)
+				return true;
+			auto const& basis = *data.pendingCameraBasis;
+			dmat3x4 m{};
+			bool const ok = TransformFromCameraVectors(
+				basis.direction, basis.up, basis.position, handedness, m);
+			if (ok)
+				data.transform = m;
+			else
+				BE_LOGW("ITwinScene", "Invalid camera vectors for " << logName);
+			data.pendingCameraBasis.reset();
+			return ok;
+		}
+	}
+
+	void ScenePersistenceAPI::ResolvePendingCameraBases()
+	{
+		using namespace SceneAPIDetails;
+
+		double const handedness = GetCameraHandedness();
+		for (auto const& link : GetLinks())
+		{
+			auto const linkAPI = std::dynamic_pointer_cast<LinkAPI>(link);
+			if (!linkAPI)
+				continue;
+			auto& linkData = linkAPI->GetImpl().link_;
+			ResolveCameraBasis(linkData, handedness, "link " + linkData.ref);
+		}
+
+		// Key-frame cameras are parsed from the same response as the links, so they are
+		// deferred as well.
+		if (auto const timeline = GetTimeline())
+			timeline->ResolvePendingCameraBases(handedness);
+	}
+
 	std::string ScenePersistenceAPI::ExportHDRIAsJson(ITwinHDRISettings const& hdri) const
 	{
 		return GetImpl().ExportHDRIAsJson(hdri);
@@ -3085,7 +3264,7 @@ namespace AdvViz::SDK {
 	}
 
 	AdvViz::expected<ScenePtrVector, HttpError> GetITwinScenesAPI(
-		const std::string& itwinid)
+		const std::string& iTwinId)
 	{
 		std::shared_ptr<Http> const& http = creds.GetHttp();
 		if (!http)
@@ -3096,12 +3275,12 @@ namespace AdvViz::SDK {
 		}
 		ScenePtrVector scenes;
 		auto ret = ITwinAPI::GetPagedData<"scenes", JsonSceneWithId>(http,
-			"scenes?iTwinId=" + itwinid,
+			"scenes?iTwinId=" + iTwinId,
 			{} /* extra headers*/,
-			[&scenes, itwinid](JsonSceneWithId const& row) -> expected<void, HttpError>
+			[&scenes, iTwinId](JsonSceneWithId const& row) -> expected<void, HttpError>
 		{
 			std::shared_ptr<ScenePersistenceAPI> scene(ScenePersistenceAPI::New());
-			if (scene->Get(itwinid, row.id))
+			if (scene->Get(iTwinId, row.id))
 			{
 				scenes.push_back(scene);
 			}
@@ -3114,7 +3293,7 @@ namespace AdvViz::SDK {
 		return scenes;
 	}
 
-	void AsyncGetITwinSceneInfosAPI(const std::string& itwinid,
+	void AsyncGetITwinSceneInfosAPI(const std::string& iTwinId,
 		std::function<void(expected<SceneInfoVec, HttpError>)>&& inCallback,
 		Http::EAsyncCallbackExecutionMode asyncCBExecMode /*= Default*/)
 	{
@@ -3133,7 +3312,7 @@ namespace AdvViz::SDK {
 		std::shared_ptr<SceneInfoVec> sceneInfos = std::make_shared<SceneInfoVec>();
 
 		ITwinAPI::AsyncGetPagedDataVector<"scenes", JsonSceneWithId>(http,
-			"scenes?iTwinId=" + itwinid,
+			"scenes?iTwinId=" + iTwinId,
 			{} /*headers*/,
 			/* Receive-Vector callback */
 			[scenesMutex, sceneInfos](std::vector<JsonSceneWithId> const& rows) -> expected<void, HttpError>
@@ -3152,17 +3331,17 @@ namespace AdvViz::SDK {
 			return {};
 		},
 			/* OnFinish callback */
-			[itwinid, callback = std::move(inCallback), scenesMutex, sceneInfos](expected<void, HttpError> const& exp)
+			[iTwinId, callback = std::move(inCallback), scenesMutex, sceneInfos](expected<void, HttpError> const& exp)
 		{
 			if (exp)
 			{
 				std::lock_guard<std::mutex> lock(*scenesMutex);
-				BE_LOGI("ITwinScene", "[SceneAPI] Found " << sceneInfos->size() << " Scenes(s) for iTwin " << itwinid);
+				BE_LOGI("ITwinScene", "[SceneAPI] Found " << sceneInfos->size() << " Scenes(s) for iTwin " << iTwinId);
 				callback(*sceneInfos);
 			}
 			else
 			{
-				BE_LOGW("ITwinScene", "Fetching scene infos from SceneAPI failed for iTwin " << itwinid
+				BE_LOGW("ITwinScene", "Fetching scene infos from SceneAPI failed for iTwin " << iTwinId
 					<< ". " << exp.error().message
 					<< " (status: " << exp.error().httpCode << ")");
 				callback(make_unexpected(exp.error()));
@@ -3215,6 +3394,16 @@ namespace AdvViz::SDK {
 		return GetImpl().link_.quality.value_or(1.0);
 	}
 
+	double LinkAPI::GetFov() const
+	{
+		return GetImpl().link_.fov.value_or(1.0);
+	}
+
+	double LinkAPI::GetAspectRatio() const
+	{
+		return GetImpl().link_.aspectRatio.value_or(1.0);
+	}
+
 	dmat3x4 LinkAPI::GetTransform() const
 	{
 		if (GetImpl().link_.transform.has_value())
@@ -3256,6 +3445,16 @@ namespace AdvViz::SDK {
 		GetImpl().SetQuality(v);
 	}
 
+	void LinkAPI::SetFov(double v)
+	{
+		GetImpl().SetFov(v);
+	}
+
+	void LinkAPI::SetAspectRatio(double v)
+	{
+		GetImpl().SetAspectRatio(v);
+	}
+
 	void LinkAPI::SetTransform(const dmat4x3& v)
 	{
 		GetImpl().SetTransform(v);
@@ -3279,6 +3478,16 @@ namespace AdvViz::SDK {
 	bool LinkAPI::HasQuality() const
 	{
 		return GetImpl().link_.quality.has_value();
+	}
+
+	bool LinkAPI::HasFov() const
+	{
+		return GetImpl().link_.fov.has_value();
+	}
+
+	bool LinkAPI::HasAspectRatio() const
+	{
+		return GetImpl().link_.aspectRatio.has_value();
 	}
 
 	bool LinkAPI::HasTransform() const
