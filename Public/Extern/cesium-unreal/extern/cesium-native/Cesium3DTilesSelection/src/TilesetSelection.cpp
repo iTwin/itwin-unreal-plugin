@@ -278,6 +278,7 @@ void computeDistances(
     const std::vector<ViewState>& frustums,
     std::vector<double>& distances) {
   const BoundingVolume& boundingVolume = tile.getBoundingVolume();
+  distances.clear();
   distances.resize(frustums.size());
   std::transform(
       frustums.begin(),

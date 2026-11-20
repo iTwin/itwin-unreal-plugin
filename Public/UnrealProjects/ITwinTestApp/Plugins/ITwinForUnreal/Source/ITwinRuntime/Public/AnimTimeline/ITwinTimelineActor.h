@@ -126,7 +126,7 @@ public:
 	// Remove given clip (if clipIdx = -1, applies to the current clip)
 	void RemoveClip(int clipIdx);
 	// Moves a clip from one position in the sequence to another
-	void MoveClip(size_t indexSrc, size_t indexDst);
+	void MoveClip(int indexSrc, int indexDst);
 	// Add a new key-frame at the current time to the current clip
 	void AddKeyFrame();
 	// Add a new key-frame at the current clip's end

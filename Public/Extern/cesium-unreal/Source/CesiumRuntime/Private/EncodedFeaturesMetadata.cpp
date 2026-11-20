@@ -14,7 +14,6 @@
 #include "CesiumRuntime.h"
 #include "Containers/Map.h"
 #include "EncodedMetadataConversions.h"
-#include "MaterialTypes.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "PixelFormat.h"
 #include "TextureResource.h"
@@ -216,10 +215,12 @@ void encodeFeatureStylingAnyThreadPart(
           modelMetadata,
           propertyTableIndex);
 
-  int64 count = FMath::Max(
-      UCesiumPropertyTableBlueprintLibrary::GetPropertyTableCount(
-          propertyTable),
-      int64(1));
+  int64 count = UCesiumPropertyTableBlueprintLibrary::GetPropertyTableCount(
+      propertyTable);
+
+  if (count == 0) {
+    return;
+  }
 
   EncodedFeatureStyling& styling = encodedFeatureIdSet.styling.emplace();
 
@@ -261,6 +262,7 @@ void encodeFeatureStylingAnyThreadPart(
         EPixelFormat::PF_R8G8B8A8);
   }
 }
+
 } // namespace
 
 EncodedPrimitiveFeatures encodePrimitiveFeaturesAnyThreadPart(
@@ -345,10 +347,17 @@ EncodedPrimitiveFeatures encodePrimitiveFeaturesAnyThreadPart(
   return result;
 }
 
-void encodeFeatureStylingGameThreadPart(
+namespace {
+bool encodeFeatureStylingGameThreadPart(
     EncodedFeatureIdSet& encodedFeatureIdSet,
     const FCesiumModelMetadata& modelMetadata,
     UObject* pBlueprintStyleInstance) {
+  if (!IsValid(pBlueprintStyleInstance) ||
+      !pBlueprintStyleInstance->GetClass()->ImplementsInterface(
+          UCesium3DTilesStylingProvider::StaticClass())) {
+    return false;
+  }
+
   const FCesiumPropertyTable* pTable =
       UCesiumModelMetadataBlueprintLibrary::GetPropertyTables(modelMetadata)
           .FindByPredicate([&propertyTableName =
@@ -357,10 +366,12 @@ void encodeFeatureStylingGameThreadPart(
             return getNameForPropertyTable(propertyTable) == propertyTableName;
           });
 
+  if (!pTable) {
+    return false;
+  }
+
   int64 count =
-      pTable
-          ? UCesiumPropertyTableBlueprintLibrary::GetPropertyTableCount(*pTable)
-          : int64(1);
+      UCesiumPropertyTableBlueprintLibrary::GetPropertyTableCount(*pTable);
 
   std::vector<uint8_t> colorResult(count * 4, 255);
   uint8_t* pColorData = colorResult.data();
@@ -368,27 +379,23 @@ void encodeFeatureStylingGameThreadPart(
   std::vector<uint8_t> showResult(count, 255);
   uint8_t* pShowData = showResult.data();
 
-  if (IsValid(pBlueprintStyleInstance) &&
-      pBlueprintStyleInstance->GetClass()->ImplementsInterface(
-          UCesium3DTilesStylingProvider::StaticClass())) {
-    TScriptInterface<ICesium3DTilesStylingProvider> pInterface =
-        pBlueprintStyleInstance;
+  TScriptInterface<ICesium3DTilesStylingProvider> pInterface =
+      pBlueprintStyleInstance;
 
-    for (int64 i = 0; i < count; i++) {
-      FCesium3DTilesStyle result =
-          ICesium3DTilesStylingProvider::Execute_EvaluateStyle(
-              pInterface.GetObject(),
-              *pTable,
-              i);
-      uint8_t* pWriteColor = pColorData + (i * 4);
-      pWriteColor[0] = result.Color.R;
-      pWriteColor[1] = result.Color.G;
-      pWriteColor[2] = result.Color.B;
-      pWriteColor[3] = result.Color.A;
+  for (int64 i = 0; i < count; i++) {
+    FCesium3DTilesStyle result =
+        ICesium3DTilesStylingProvider::Execute_EvaluateStyle(
+            pInterface.GetObject(),
+            *pTable,
+            i);
+    uint8_t* pWriteColor = pColorData + (i * 4);
+    pWriteColor[0] = result.Color.R;
+    pWriteColor[1] = result.Color.G;
+    pWriteColor[2] = result.Color.B;
+    pWriteColor[3] = result.Color.A;
 
-      uint8_t* pWriteShow = pShowData + (i * sizeof(uint8_t));
-      *pWriteShow = uint8_t(result.bShow ? 255 : 0);
-    }
+    uint8_t* pWriteShow = pShowData + (i * sizeof(uint8_t));
+    *pWriteShow = uint8_t(result.bShow ? 255 : 0);
   }
 
   auto& styling = *encodedFeatureIdSet.styling;
@@ -453,7 +460,9 @@ void encodeFeatureStylingGameThreadPart(
       }
     });
   }
+  return true;
 }
+} // namespace
 
 bool encodePrimitiveFeaturesGameThreadPart(
     EncodedPrimitiveFeatures& encodedFeatures,
@@ -489,7 +498,7 @@ bool encodePrimitiveFeaturesGameThreadPart(
       success &= loadTextureSuccess;
 
       if (loadTextureSuccess) {
-        encodeFeatureStylingGameThreadPart(
+        success &= encodeFeatureStylingGameThreadPart(
             encodedFeatureIdSet,
             modelMetadata,
             pBlueprintStyleInstance);

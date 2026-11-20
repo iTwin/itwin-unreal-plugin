@@ -47,8 +47,8 @@ option(BE_RSYNC_DELETE_LOCAL "When using our Unreal fork and syncing with EONNAS
 
 include (be_file_utils)
 
-set(BE_CURRENT_UE_VERSION_BASED_ON "UE_5.6")
-set(BE_CURRENT_FULL_UE_VERNUM_BASED_ON "5.6.1") # used by the yaml pipeline to determine the BeUE fork branch, eg. advviz-ue5.6.1
+set(BE_CURRENT_UE_VERSION_BASED_ON "UE_5.8")
+set(BE_CURRENT_FULL_UE_VERNUM_BASED_ON "5.8.3") # used by the yaml pipeline to determine the BeUE fork branch, eg. advviz-ue5.6.1
 set(BE_OPENSSL_VERSION_STRING_OFFICIAL_BASED_ON "1.1.1t")
 set(BE_OPENSSL_PORT_VERSION_STRING_OFFICIAL_BASED_ON "0")
 set(BE_TINYXML2_VERSION_STRING_OFFICIAL_BASED_ON "9.0.0")

@@ -20,8 +20,20 @@ if (WIN32)
 		file(REMOVE "${copy_timestamps_to_symlink_exe}")
 	endif()
 	if (NOT EXISTS "${copy_timestamps_to_symlink_exe}")
+		# Use the same generator and toolset as the main build (from the preset), otherwise
+		# Visual Studio picks its newest default toolset.
+		set (copy_timestamps_to_symlink_gen_args)
+		if (CMAKE_GENERATOR)
+			list (APPEND copy_timestamps_to_symlink_gen_args -G "${CMAKE_GENERATOR}")
+		endif ()
+		if (CMAKE_GENERATOR_PLATFORM)
+			list (APPEND copy_timestamps_to_symlink_gen_args -A "${CMAKE_GENERATOR_PLATFORM}")
+		endif ()
+		if (CMAKE_GENERATOR_TOOLSET)
+			list (APPEND copy_timestamps_to_symlink_gen_args -T "${CMAKE_GENERATOR_TOOLSET}")
+		endif ()
 		execute_process(
-			COMMAND ${CMAKE_COMMAND} -S "${copy_timestamps_to_symlink_src}" -B .
+			COMMAND ${CMAKE_COMMAND} ${copy_timestamps_to_symlink_gen_args} -S "${copy_timestamps_to_symlink_src}" -B .
 			COMMAND_ECHO STDOUT
 			COMMAND_ERROR_IS_FATAL ANY
 			WORKING_DIRECTORY "${copy_timestamps_to_symlink_dir}"

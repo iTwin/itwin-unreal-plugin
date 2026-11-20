@@ -170,12 +170,12 @@ void UCesiumGaussianSplatSubsystem::RecomputeBounds() {
 }
 
 void UCesiumGaussianSplatSubsystem::initializeForWorld(UWorld& InWorld) {
-  TActorIterator<ACesiumGaussianSplatActor> existingActor(&InWorld);
-  if (existingActor) {
+  for (ACesiumGaussianSplatActor* pActor :
+       TActorRange<ACesiumGaussianSplatActor>(&InWorld)) {
     // Actor singleton already exists in the world (usually means we stopped a
     // PIE session and returned to the editor world).
     this->_pLastCreatedWorld = &InWorld;
-    this->_pNiagaraActor = *existingActor;
+    this->_pNiagaraActor = pActor;
     this->_pNiagaraComponent =
         this->_pNiagaraActor->FindComponentByClass<UNiagaraComponent>();
     this->RecomputeBounds();

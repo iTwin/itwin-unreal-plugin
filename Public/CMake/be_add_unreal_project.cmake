@@ -100,7 +100,11 @@ function (be_create_plugin_packager_target pluginName projectDir)
 		# an installed (official) build (and maybe not even with our "faked installed" source build anyway...)
 		# Note: had to remove "./" before "${RunUATBaseName}" otherwise I got "'.' is not an executable command"
 		set(runUatCommand ${CMAKE_COMMAND} -E env
+			  # Reproduce build settings from Public/CMake/BuildConfiguration.xml.in:
 				UnrealBuildTool_WindowsPlatform__CompilerVersion="${BE_GENERATOR_TOOLSET}"
+				UnrealBuildTool_BuildConfiguration__bWarningsAsErrors=true
+				UnrealBuildTool_BuildConfiguration__DeprecationWarningLevel=Off
+			  # Add some more plugin-only settings:
 				# Not sure it is equivalent to the attrib command below: there are probably other consequences of having read-only sources...
 				UnrealBuildTool_BuildConfiguration__bUseAdaptiveUnityBuild=false
 				UnrealBuildTool_BuildConfiguration__bForceUnityBuild=true

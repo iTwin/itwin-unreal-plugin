@@ -10,12 +10,14 @@
 
 #include <Components/HierarchicalInstancedStaticMeshComponent.h>
 #include <Decoration/ITwinDecorationHelper.h>
+#include <Population/ITwinPopulation.h>
+#include <Tests/TestWorldHelpers.h>
+
 #include <Engine/StaticMesh.h>
 #include <HAL/IConsoleManager.h>
 #include <Misc/AutomationTest.h>
-#include <Population/ITwinPopulation.h>
 #include <StaticMeshCompiler.h>
-#include <Tests/TestWorldHelpers.h>
+#include <Templates/Greater.h>
 
 #include <Compil/BeforeNonUnrealIncludes.h>
 #	include <SDK/Core/Visualization/RefID.h>

@@ -9,8 +9,7 @@
 
 namespace CesiumGltf {
 /**
- * @brief An axis-aligned box with a size per-axis, centered at the origin in
- * local space, with normals facing outwards along each axis.
+ * @brief Parameters describing a box shape.
  */
 struct CESIUMGLTF_API Box final : public CesiumUtility::ExtensibleObject {
   /**
@@ -19,7 +18,7 @@ struct CESIUMGLTF_API Box final : public CesiumUtility::ExtensibleObject {
   static constexpr const char* TypeName = "Box";
 
   /**
-   * @brief The size of the box in each axis in local space.
+   * @brief The extents of the box in each axis in local space.
    */
   std::vector<double> size = {1, 1, 1};
 

@@ -40,11 +40,17 @@ FIModelTestHelperImpl::~FIModelTestHelperImpl()
 #if WITH_EDITOR
 	// Cleanup cannot be called here as it calls virtual functions (BindEvents/UnBindEvents) that may have
 	// been overridden in derived classes.
-	BE_ASSERT(!IModelLoadingResult.MockServer && !TestCallback
+	BE_ASSERT(!IModelLoadingResult.MockServer && CountExecutableCallbacks() == 0
 		&& !IModelLoadingResult.IModel
 		&& !bHasPushedAllowTickInEditor,
 		"Cleanup() should have been called before destroying this object.");
 #endif
+}
+
+size_t FIModelTestHelperImpl::CountExecutableCallbacks() const
+{
+	return std::count_if(TestCallbacks.begin(), TestCallbacks.end(),
+		[](auto const& Callback) { return (bool)Callback; });
 }
 
 bool FIModelTestHelperImpl::Init(FIModelTestOptions const& Options /*= {}*/)
@@ -112,6 +118,16 @@ FString FIModelTestHelperImpl::GetMockServerUrl() const
 #endif
 }
 
+void FIModelTestHelperImpl::RedirectMockServerResponse(std::string const& RequestHash, std::string const& NewHash)
+{
+#if WITH_EDITOR
+	if (IModelLoadingResult.MockServer)
+	{
+		IModelLoadingResult.MockServer->RedirectResponse(RequestHash, NewHash);
+	}
+#endif
+}
+
 void FIModelTestHelperImpl::Cleanup()
 {
 	UnBindEvents();
@@ -119,7 +135,8 @@ void FIModelTestHelperImpl::Cleanup()
 #if WITH_EDITOR
 	IModelLoadingResult.CleanupGuard.reset();
 
-	TestCallback = {};
+	std::vector<CallbackFunc>().swap(TestCallbacks);
+	TestCallbackIndex = 0;
 
 	if (IModelLoadingResult.IModel)
 	{
@@ -139,17 +156,10 @@ void FIModelTestHelperImpl::Cleanup()
 #endif
 }
 
-int32 FIModelTestHelperImpl::ExpectedLoadEvents() const
-{
-	return 2 /*iModel loaded + scene mapping filled*/
-		+ (bShouldLoadScene ? 1 : 0)
-		+ (CurrentOptions.bAutoLoadSavedViews ? 1 : 0);
-}
-
 void FIModelTestHelperImpl::OnLoadEventReceived()
 {
 	LoadEventsReceived++;
-	if (LoadEventsReceived == ExpectedLoadEvents())
+	if (LoadEventsReceived == ExpectedLoadEvents(TestCallbackIndex))
 	{
 		ExecuteTestCallback();
 
@@ -160,17 +170,35 @@ void FIModelTestHelperImpl::OnLoadEventReceived()
 
 void FIModelTestHelperImpl::ExecuteTestCallback()
 {
-	if (TestCallback)
+	if (TestCallbackIndex < TestCallbacks.size())
 	{
-		TestCallback();
-		// Reset the callback to avoid calling it again. It also prevents GC issues if the callback captures
-		// a UObject through a TStrongObjectPtr (see UDigitalTwinManagerTestHelper).
-		TestCallback = {};
+		CallbackFunc& TestCallback = TestCallbacks[TestCallbackIndex];
+		if (TestCallback)
+		{
+			TestCallback();
+			// Reset the callback to avoid calling it again. It also prevents GC issues if the callback captures
+			// a UObject through a TStrongObjectPtr (see UDigitalTwinManagerTestHelper).
+			TestCallback = {};
+		}
+		TestCallbackIndex++;
+
+		if (TestCallbackIndex < TestCallbacks.size())
+		{
+			// Reset the load events counter for the next callback.
+			LoadEventsReceived = 0;
+		}
 	}
 }
 
 void FIModelTestHelperImpl::CleanupIfDone()
 {
+	if (TestCallbackIndex < TestCallbacks.size())
+	{
+		if (ensure(LoadEventsReceived < ExpectedLoadEvents(TestCallbackIndex)))
+			return;
+
+		BE_ISSUE("No load events to receive. The next callback would never be executed - abort.");
+	}
 	if (!AsyncCallback || AsyncCallback->IsDone())
 	{
 		Cleanup();

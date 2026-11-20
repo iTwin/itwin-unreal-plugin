@@ -5,7 +5,6 @@
 #include <CesiumGltf/Library.h>
 #include <CesiumUtility/ExtensibleObject.h>
 
-#include <cstdint>
 #include <optional>
 #include <string>
 
@@ -29,13 +28,6 @@ struct CESIUMGLTF_API Asset final : public CesiumUtility::ExtensibleObject {
    * @brief Tool that generated this glTF model.  Useful for debugging.
    */
   std::optional<std::string> generator;
-
-  /**
-   * @brief The index of the image in the `images` array to use as a thumbnail
-   * for this asset. The image **SHOULD** be a common, widely-supported format,
-   * but **MAY** have any media type.
-   */
-  int32_t thumbnail = -1;
 
   /**
    * @brief The glTF version in the form of `<major>.<minor>` that this asset

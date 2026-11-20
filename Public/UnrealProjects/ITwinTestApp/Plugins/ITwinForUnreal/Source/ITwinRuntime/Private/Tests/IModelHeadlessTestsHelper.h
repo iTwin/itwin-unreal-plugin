@@ -58,6 +58,9 @@ public:
 	UFUNCTION()
 	void OnElementPropertiesRetrieved(bool bSuccess, const FElementProperties& ElementProps, const FString& ElementId);
 
+	UFUNCTION()
+	void OnConfirmLoadNewChangeset(FString IModelId, FString IModelName, FString NewChangesetId, FString NewChangesetName);
+
 	class FImpl;
 	FImpl& GetImpl() { return *Impl; }
 

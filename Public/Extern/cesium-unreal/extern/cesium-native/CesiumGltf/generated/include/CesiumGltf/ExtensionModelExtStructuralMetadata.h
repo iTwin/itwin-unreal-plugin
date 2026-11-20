@@ -7,7 +7,6 @@
 #include <CesiumGltf/PropertyTable.h>
 #include <CesiumGltf/PropertyTexture.h>
 #include <CesiumGltf/Schema.h>
-#include <CesiumGltf/Statistics.h>
 #include <CesiumUtility/ExtensibleObject.h>
 #include <CesiumUtility/IntrusivePointer.h>
 
@@ -59,11 +58,6 @@ struct CESIUMGLTF_API ExtensionModelExtStructuralMetadata final
   std::vector<CesiumGltf::PropertyAttribute> propertyAttributes;
 
   /**
-   * @brief An object containing statistics about metadata entities.
-   */
-  std::optional<CesiumGltf::Statistics> statistics;
-
-  /**
    * @brief Calculates the size in bytes of this object, including the contents
    * of all collections, pointers, and strings. This will NOT include the size
    * of any extensions attached to the object. Calling this method may be slow
@@ -98,10 +92,6 @@ struct CESIUMGLTF_API ExtensionModelExtStructuralMetadata final
          this->propertyAttributes) {
       accum +=
           value.getSizeBytes() - int64_t(sizeof(CesiumGltf::PropertyAttribute));
-    }
-    if (this->statistics) {
-      accum += this->statistics->getSizeBytes() -
-               int64_t(sizeof(CesiumGltf::Statistics));
     }
     return accum;
   }

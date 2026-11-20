@@ -40,7 +40,7 @@ public:
 
 	virtual void BindEvents() override;
 	virtual void UnBindEvents() override;
-	virtual int32 ExpectedLoadEvents() const override;
+	virtual int32 ExpectedLoadEvents(size_t SubTestIndex) const override;
 	virtual void DetectCustomEvents() override;
 
 	virtual TUniquePtr<FITwinTilesetAccess> MakeTilesetAccess() const override;
@@ -119,8 +119,9 @@ void UDigitalTwinManagerTestHelper::FImpl::UnBindEvents()
 	}
 }
 
-int32 UDigitalTwinManagerTestHelper::FImpl::ExpectedLoadEvents() const
+int32 UDigitalTwinManagerTestHelper::FImpl::ExpectedLoadEvents(size_t SubTestIndex) const
 {
+	BE_ASSERT(SubTestIndex == 0);
 	return 4 /*iTwin Info + Load Reality Data + Load IModel + Attached reality data request */;
 }
 
@@ -339,7 +340,7 @@ bool FDigitalTwinManagerTest::RunTest(const FString& /*Parameters*/)
 
 		HelperObject.ITwinManager->Init(Helper.GetITwinID(), TEXT("Digital Twin Manager Test"));
 
-		Helper.SetTestCallback(
+		Helper.AddTestCallback(
 			[this, AsyncCallback, RealityDataToLoad, IModelToLoad = Helper.GetIModelToLoad(),
 			ITwinManager = TStrongObjectPtr<AITwinDigitalTwinManager>(HelperObject.ITwinManager)]()
 		{
@@ -381,8 +382,8 @@ bool FDigitalTwinManagerTest::RunTest(const FString& /*Parameters*/)
 					UTEST_EQUAL_TOLERANCE(TEXT("Longitude"), CartographicProps->Longitude, -81.378958, 0.00001);
 					UTEST_EQUAL_TOLERANCE(TEXT("Height"), CartographicProps->Height, 0., 0.00001);
 					auto const Box = Access->GetBoundingBox();
-					UTEST_EQUAL_TOLERANCE(TEXT("Bounding Box Min"), Box.Min, FVector(630548989.4374, 43815180.3656, -553417217.0169), 1.e-3);
-					UTEST_EQUAL_TOLERANCE(TEXT("Bounding Box Max"), Box.Max, FVector(630665593.4598, 43960857.8952, -553265852.4191), 1.e-3);
+					UTEST_EQUAL_TOLERANCE(TEXT("Bounding Box Min"), Box.Min, FVector(630548989.4374, 43815180.3656, -553417217.0169), 1.e-3f);
+					UTEST_EQUAL_TOLERANCE(TEXT("Bounding Box Max"), Box.Max, FVector(630665593.4598, 43960857.8952, -553265852.4191), 1.e-3f);
 
 					auto Access2 = Access->Clone();
 					UTEST_EQUAL(TEXT("Clone access Model Link"), Access2->GetModelLink(), std::make_pair(EITwinModelType::RealityData, RealityDataToLoad));
@@ -510,7 +511,7 @@ bool FDigitalTwinManagerLoadSceneTest::RunTest(const FString& /*Parameters*/)
 		// Load the scene defined in the test.
 		HelperObject.ITwinManager->LoadDecoration();
 
-		Helper.SetTestCallback(
+		Helper.AddTestCallback(
 			[this, AsyncCallback, RealityDataToLoad = Helper.GetRealityDataToLoad(), IModelToLoad = Helper.GetIModelToLoad(),
 			ITwinManager = TStrongObjectPtr<AITwinDigitalTwinManager>(HelperObject.ITwinManager)]()
 		{

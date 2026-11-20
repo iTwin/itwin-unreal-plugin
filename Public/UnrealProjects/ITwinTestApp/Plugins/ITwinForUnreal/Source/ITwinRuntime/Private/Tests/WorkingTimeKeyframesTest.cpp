@@ -197,12 +197,12 @@ void WorkingTimeKeyframesSpec::Define()
 				double const ExpectedTime = WorkingTimeKeyframes[i].Time - (bLast ? 3 * KEYFRAME_TIME_EPSILON : 0.);
 				TestEqual(*FString::Printf(TEXT("Keyframe %d time"), (int32)i), Keys[i].Time, ExpectedTime, 1e-2);
 				TestEqual(*FString::Printf(TEXT("Keyframe %d position"), (int32)i), Keys[i].Position,
-						  FVector(11. * WorkingTimeKeyframes[i].Progress, 0., 0.), 1e-6);
+						  FVector(11. * WorkingTimeKeyframes[i].Progress, 0., 0.), 1e-6f);
 				TestTrue(*FString::Printf(TEXT("Keyframe %d interpolation"), (int32)i), Keys[i].Interpolation
 					== (bLast ? EInterpolation::Step : EInterpolation::Linear));
 			}
 			// Over the weekend, the path does not move
-			TestEqual(TEXT("Frozen over the weekend"), Keys[3].Position, Keys[4].Position, 1e-6);
+			TestEqual(TEXT("Frozen over the weekend"), Keys[3].Position, Keys[4].Position, 1e-6f);
 		});
 
 	auto const CheckGrowthKeyframes = [this](EProfileAction const Action, bool const bInvert)

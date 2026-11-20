@@ -82,11 +82,30 @@ void FITwinFileBasedMockServer::SetRelativeCachedResponsesFolder(std::filesystem
 	}
 }
 
+void FITwinFileBasedMockServer::RedirectResponse(std::string const& RequestHash, std::string const& NewHash)
+{
+	std::filesystem::path const RedirectedResponsePath =
+		CachedResponsesFolder / NewHash / "response.json";
+	std::error_code ec;
+	if (!std::filesystem::exists(RedirectedResponsePath, ec))
+	{
+		BE_ISSUE("Redirected response file does not exist", RedirectedResponsePath.string());
+		return;
+	}
+	RedirectedResponses[RequestHash] = NewHash;
+}
+
 inline std::filesystem::path FITwinFileBasedMockServer::GetResponsePath(
 	const std::string& url,
 	const std::string& data) const
 {
-	return CachedResponsesFolder / AdvViz::SDK::RequestDump::GetRequestHash(url, data) / "response.json";
+	std::string RequestHash = AdvViz::SDK::RequestDump::GetRequestHash(url, data);
+	auto ItRedir = RedirectedResponses.find(RequestHash);
+	if (ItRedir != RedirectedResponses.end())
+	{
+		RequestHash = ItRedir->second;
+	}
+	return CachedResponsesFolder / RequestHash / "response.json";
 }
 
 
@@ -299,7 +318,15 @@ void FIModelTestHelper::FIModelLoadingResult::StopMockServer()
 	{
 		IModel = World->SpawnActor<AITwinIModel>();
 		IModel->SetTestMode(MockServer->GetUrl());
-		IModel->DisableAutoRefresh();
+		if (Options.bAutoRefreshChangesets)
+		{
+			// Do not wait for too long before testing nex changeset.
+			IModel->SetAutoRefreshChangesetDelay(2.0f);
+		}
+		else
+		{
+			IModel->DisableAutoRefresh();
+		}
 
 		if (ExportInfo.Id.IsEmpty())
 		{

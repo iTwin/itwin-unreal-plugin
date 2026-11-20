@@ -315,3 +315,25 @@ bool FITwinTracingHelper::FindNearestImpact(FHitResult& OutHitResult, UWorld con
 	}
 	return false;
 }
+
+bool FITwinTracingHelper::FindNearestImpactFromMousePos(FHitResult& OutHitResult, UWorld const* World,
+	std::optional<float> const& CustomTraceExtentInMeters /*= std::nullopt*/)
+{
+	FITwinRayTraceInput TraceInput;
+	FVector2D MousePosition = FVector2D::ZeroVector;
+	if (!GetRayFromMousePosition(World, MousePosition, TraceInput))
+	{
+		return false;
+	}
+
+	FVector const TraceStart = TraceInput.TraceStart;
+	FVector const TraceDirection = TraceInput.TraceDirection;
+
+	FVector::FReal const TraceExtentInMeters = static_cast<FVector::FReal>(
+		CustomTraceExtentInMeters.value_or(1e6f)); // 1.000 km by default
+	FVector::FReal const TraceExtent = TraceExtentInMeters * 100; // Unreal units are centimeters
+
+	FVector const TraceEnd = TraceStart + TraceDirection * TraceExtent;
+
+	return FindNearestImpact(OutHitResult, World, TraceStart, TraceEnd);
+}

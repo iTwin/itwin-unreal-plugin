@@ -36,6 +36,7 @@ public:
 
 	//! Return the URL of the mock server used in tests, or an empty string if no mock server is used.
 	FString GetMockServerUrl() const;
+	void RedirectMockServerResponse(std::string const& RequestHash, std::string const& NewHash);
 
 	inline AITwinDecorationHelper* GetDecorationHelper() const;
 	inline AITwinIModel* GetIModel() const;
@@ -54,10 +55,11 @@ public:
 	virtual void BindEvents() = 0;
 	virtual void UnBindEvents() = 0;
 
-	void SetTestCallback(std::function<void()>&& InCallback) { TestCallback = std::move(InCallback); }
+	void AddTestCallback(std::function<void()>&& InCallback) { TestCallbacks.emplace_back(std::move(InCallback)); }
 	void ExecuteTestCallback();
+	size_t CountExecutableCallbacks() const;
 
-	virtual int32 ExpectedLoadEvents() const = 0;
+	virtual int32 ExpectedLoadEvents(size_t SubTestIndex) const = 0;
 	void OnLoadEventReceived();
 
 	void SetupCesiumCameraManager();
@@ -73,26 +75,29 @@ public:
 
 
 protected:
+	FDelegateHandle OnDecorationLoadedHandle;
+	FInitOptions CurrentOptions;
+	bool bShouldLoadScene = false;
+	//! Array of elements which are needed in the test (used in DetectFilledSceneMapping).
+	TArray<FString> ElementsToTest = { TEXT("0x5d") };
+
+private:
 #if WITH_EDITOR
 	FIModelTestHelper::FIModelLoadingResult IModelLoadingResult;
 #endif
 
-	FInitOptions CurrentOptions;
-
-	FDelegateHandle OnDecorationLoadedHandle;
-
 	FITwinIOAsyncCallbackPtr AsyncCallback;
 
-	std::function<void()> TestCallback;
+	using CallbackFunc = std::function<void()>;
+	// We can now chain several callbacks, so we can have multiple tests in the same test case.
+	std::vector<CallbackFunc> TestCallbacks;
+	size_t TestCallbackIndex = 0;
+
 	int32 LoadEventsReceived = 0;
-	bool bShouldLoadScene = false;
+
 	bool bHasSetupCesiumCameraManager = false;
 	bool bHasFilledSceneMapping = false;
-
 	bool bHasPushedAllowTickInEditor = false;
-
-	//! Array of elements which are needed in the test (used in DetectFilledSceneMapping).
-	TArray<FString> ElementsToTest = { TEXT("0x5d") };
 };
 
 

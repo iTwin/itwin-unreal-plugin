@@ -416,7 +416,7 @@ public:
 				}
 
 				return AdvViz::SDK::DelayedCall::EReturnedValue::Repeat;
-			}, 60.0f /*TickerDelay: 60 s*/);
+			}, Owner.AutoRefreshChangesetDelaySeconds /*TickerDelay default: 60s */);
 		}
 	}
 
@@ -1830,6 +1830,11 @@ void AITwinIModel::DisableAutoRefresh()
 	bAutoRefreshChangeset = false;
 	Impl->AutoRefreshInfo = {};
 	Impl->AutoRefreshInfo.State = FImpl::EAutoRefreshState::Disabled;
+}
+
+void AITwinIModel::SetAutoRefreshChangesetDelay(float DelaySeconds)
+{
+	AutoRefreshChangesetDelaySeconds = DelaySeconds;
 }
 
 void AITwinIModel::OnLoadNewChangesetConfirmation(const FString& NewChangesetId, bool bLoadNewChangeset)

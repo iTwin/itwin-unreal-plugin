@@ -1,8 +1,5 @@
 {
   "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
-  "default-features": [
-    "spz"
-  ],
   "dependencies": [
     "asyncplusplus",
     {
@@ -49,16 +46,9 @@
     {
       "name": "asmjit",
       "platform": "!ios&!wasm32"
-    }
-  ],
-  "features": {
-    "spz": {
-      "description": "Support decoding Gaussian splats compressed with Niantic SPZ",
-      "dependencies": [
-        "spz",
-        "zlib"
-      ]
-    }
-  }
+    },
+    "spz",
+    "zlib"
+  ]
 }
 

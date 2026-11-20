@@ -1800,18 +1800,11 @@ bool AITwinPopulationTool::FImpl::ComputeTransformFromHitResult(
 
 FHitResult AITwinPopulationTool::FImpl::LineTraceFromMousePos()
 {
-	FHitResult HitResult;
-
-	APlayerController* playerController = owner.GetWorld()->GetFirstPlayerController();
-
-	if (!playerController)
-		return HitResult;
-
-	FVector traceStart, traceEnd, traceDir;
-	if (!playerController->DeprojectMousePositionToWorld(traceStart, traceDir))
-		return HitResult;
-
-	traceEnd = traceStart + traceDir * 1e8f;
+	UWorld const* World = owner.GetWorld();
+	if (!World)
+	{
+		return FHitResult();
+	}
 
 	TArray<AActor const*> ActorsToIgnore;
 	if (toolMode == EPopulationToolMode::RemoveInstances ||	draggedAssetPopulation || bInteractivePlacement)
@@ -1826,12 +1819,13 @@ FHitResult AITwinPopulationTool::FImpl::LineTraceFromMousePos()
 	{
 		// Splines added for the display of box edges should also be ignored during interactive placement.
 		// (In fact all splines, as they are not real physical objects...)
-		ITwin::AppendSplineHelpers(ActorsToIgnore, owner.GetWorld());
+		ITwin::AppendSplineHelpers(ActorsToIgnore, World);
 	}
 
+	FHitResult HitResult;
 	FITwinTracingHelper TracingHelper;
 	TracingHelper.AddIgnoredActors(ActorsToIgnore);
-	TracingHelper.FindNearestImpact(HitResult, owner.GetWorld(), traceStart, traceEnd);
+	TracingHelper.FindNearestImpactFromMousePos(HitResult, World);
 
 	return HitResult;
 }

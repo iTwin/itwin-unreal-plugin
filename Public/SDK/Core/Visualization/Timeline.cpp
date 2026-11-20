@@ -754,7 +754,9 @@ namespace AdvViz::SDK
 
 	void Timeline::MoveClip(size_t indexSrc, size_t indexDst)
 	{
-		if (indexSrc < 0 || indexSrc >= GetImpl().clips_.size() || indexDst < 0 || indexDst >= GetImpl().clips_.size())
+		if (indexSrc == indexDst
+			|| indexSrc >= GetImpl().clips_.size()
+			|| indexDst >= GetImpl().clips_.size())
 			return;
 
 		auto it = std::next(GetImpl().clips_.begin(), indexSrc);

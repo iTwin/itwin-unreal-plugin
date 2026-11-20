@@ -4,7 +4,6 @@
 
 #include <CesiumGltf/Asset.h>
 #include <CesiumJsonReader/ExtensibleObjectJsonHandler.h>
-#include <CesiumJsonReader/IntegerJsonHandler.h>
 #include <CesiumJsonReader/StringJsonHandler.h>
 
 namespace CesiumJsonReader {
@@ -32,7 +31,6 @@ private:
   CesiumGltf::Asset* _pObject = nullptr;
   CesiumJsonReader::StringJsonHandler _copyright;
   CesiumJsonReader::StringJsonHandler _generator;
-  CesiumJsonReader::IntegerJsonHandler<int32_t> _thumbnail;
   CesiumJsonReader::StringJsonHandler _version;
   CesiumJsonReader::StringJsonHandler _minVersion;
 };

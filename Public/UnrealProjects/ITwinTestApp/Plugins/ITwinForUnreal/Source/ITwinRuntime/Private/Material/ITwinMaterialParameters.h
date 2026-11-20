@@ -6,7 +6,6 @@
 |
 +--------------------------------------------------------------------------------------*/
 
-
 #pragma once
 
 #include <CoreMinimal.h>
@@ -48,4 +47,3 @@ namespace ITwin
 	using FPerChannelParamInfos = std::array<FChannelParamInfosOpt, (size_t)AdvViz::SDK::EChannelType::ENUM_END>;
 
 } // ITwin
-

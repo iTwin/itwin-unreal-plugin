@@ -7,10 +7,7 @@
 
 namespace CesiumGltf {
 /**
- * @brief A capsule, centered at the origin in local space with potentially
- * different radii at each end, equivalent to the convex hull of two spheres
- * located along the Y axis (in local space) at a specified distance, with
- * normals facing outwards.
+ * @brief Parameters describing a capsule shape.
  */
 struct CESIUMGLTF_API Capsule final : public CesiumUtility::ExtensibleObject {
   /**
@@ -20,21 +17,21 @@ struct CESIUMGLTF_API Capsule final : public CesiumUtility::ExtensibleObject {
 
   /**
    * @brief The distance between the centers of the two capping spheres of
-   * capsule, also known as the mid-height.
+   * capsule.
    */
-  double height = 1;
+  double height = 0.5;
 
   /**
    * @brief The radius of the sphere located at the bottom of the capsule (i.e.
    * the sphere at the half-height along -Y)
    */
-  double radiusBottom = 0.5;
+  double radiusBottom = 0.25;
 
   /**
    * @brief The radius of the sphere located at the top of the capsule (i.e. the
    * sphere at the half-height along +Y)
    */
-  double radiusTop = 0.5;
+  double radiusTop = 0.25;
 
   /**
    * @brief Calculates the size in bytes of this object, including the contents

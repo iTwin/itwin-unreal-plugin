@@ -561,6 +561,7 @@ public:
 
 	bool AutoRefreshChangeset() const;
 	void DisableAutoRefresh();
+	void SetAutoRefreshChangesetDelay(float DelaySeconds);
 
 	UFUNCTION()
 	bool HasLoadedTileset() const;
@@ -653,6 +654,12 @@ private:
 	UPROPERTY(Category = "iTwin|Loading",
 		EditAnywhere)
 	bool bAutoRefreshChangeset = true;
+
+	//! When bAutoRefreshChangeset is true, this is the delay between two checks for a new changeset,
+	//! in seconds. The default value is 60 seconds.
+	UPROPERTY(Category = "iTwin|Loading",
+		EditAnywhere)
+	float AutoRefreshChangesetDelaySeconds = 60.0f;
 
 	class FTilesetAccess;
 };

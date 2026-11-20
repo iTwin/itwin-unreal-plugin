@@ -51,7 +51,7 @@ public:
 
 	virtual void BindEvents() override;
 	virtual void UnBindEvents() override;
-	virtual int32 ExpectedLoadEvents() const override;
+	virtual int32 ExpectedLoadEvents(size_t SubTestIndex) const override;
 
 private:
 	UIModelHeadlessTestsHelper& Owner;
@@ -138,11 +138,21 @@ void UIModelHeadlessTestsHelper::FImpl::UnBindEvents()
 }
 
 
-int32 UIModelHeadlessTestsHelper::FImpl::ExpectedLoadEvents() const
+int32 UIModelHeadlessTestsHelper::FImpl::ExpectedLoadEvents(size_t SubTestIndex) const
 {
-	return 2 /*iModel loaded + scene mapping filled*/
-		+ (bShouldLoadScene ? 1 : 0)
-		+ (CurrentOptions.bAutoLoadSavedViews ? 1 : 0);
+	switch (SubTestIndex)
+	{
+	case 0:
+		return 2 /*iModel loaded + scene mapping filled*/
+			+ (bShouldLoadScene ? 1 : 0)
+			+ (CurrentOptions.bAutoLoadSavedViews ? 1 : 0);
+	case 1:
+		// new changeset detection: just the iModel loading event is waited.
+		return 1;
+	default:
+		BE_ISSUE("unexpected sub-test index", SubTestIndex);
+		return 0;
+	}
 }
 
 
@@ -269,6 +279,23 @@ void UIModelHeadlessTestsHelper::OnElementPropertiesRetrieved(bool bSuccess, con
 	OnExtraRequestResponseReceived();
 }
 
+void UIModelHeadlessTestsHelper::OnConfirmLoadNewChangeset(FString IModelId, FString IModelName, FString NewChangesetId, FString NewChangesetName)
+{
+	BE_ASSERT(IModelId == TEXT("b53cebea-451f-4433-942f-eabda9c11d21"));
+	BE_ASSERT(IModelName == TEXT("UTF8_ADE_InstancesTest"));
+	BE_ASSERT(NewChangesetId == TEXT("c0e4e57d54bf87ed664ea49d1a45a93d3e92c0c6"));
+	BE_ASSERT(NewChangesetName == TEXT("#New beautiful changeset - Synchronized geometry and animation sequence."));
+
+	AITwinIModel* IModel = Impl->GetIModel();
+	if (ensure(IModel))
+	{
+		// Load the new changeset - here we first disable 4D querying, to avoid having to duplicate
+		// all responses.
+		IModel->SetSynchro4DAutoLoadSchedule(false);
+		IModel->OnLoadNewChangesetConfirmation(NewChangesetId, true);
+	}
+}
+
 
 DEFINE_LATENT_AUTOMATION_COMMAND_ONE_PARAMETER(FNUTWaitForAsyncIModelHeadlessTest, FITwinIOAsyncCallbackPtr, IModelHeadlessAsyncCallback);
 
@@ -333,7 +360,7 @@ bool FIModelHeadlessTest::RunTest(const FString& /*Parameters*/)
 
 		Helper.BindEvents();
 
-		Helper.SetTestCallback(
+		Helper.AddTestCallback(
 			[this, AsyncCallback,
 			IModel = TStrongObjectPtr<AITwinIModel>(IModel),
 			DecoHelper = TStrongObjectPtr<AITwinDecorationHelper>(DecoHelper)]()
@@ -428,8 +455,8 @@ bool FIModelHeadlessTest::RunTest(const FString& /*Parameters*/)
 
 					FBox AABB = UITwinUtilityLibrary::GetUnrealAxisAlignBoundingBox(Tileset);
 					UTEST_TRUE(TEXT("GetUnrealAxisAlignBoundingBox"), (bool)AABB.IsValid);
-					UTEST_EQUAL_TOLERANCE(TEXT("AABB Min"), AABB.Min, FVector(-51210.0402796, -51200.0402704, -51210.0805421), 1e-7);
-					UTEST_EQUAL_TOLERANCE(TEXT("AABB Max"), AABB.Max, FVector(51200.0402717, 51210.0402783, 51200.0805578), 1e-7);
+					UTEST_EQUAL_TOLERANCE(TEXT("AABB Min"), AABB.Min, FVector(-51210.0402796, -51200.0402704, -51210.0805421), 1e-7f);
+					UTEST_EQUAL_TOLERANCE(TEXT("AABB Max"), AABB.Max, FVector(51200.0402717, 51210.0402783, 51200.0805578), 1e-7f);
 				}
 
 				const FProjectExtents* Extents = IModel->GetProjectExtents();
@@ -449,11 +476,11 @@ bool FIModelHeadlessTest::RunTest(const FString& /*Parameters*/)
 					auto const Location = IModelTsf.GetLocation();
 					auto const Rotator = IModelTsf.Rotator();
 					auto const Scale = IModelTsf.GetScale3D();
-					UTEST_EQUAL_TOLERANCE(TEXT("IModel Location"), Location, FVector(-6667.5975038, 7939.4499217, -9044.4565289), 1e-7);
+					UTEST_EQUAL_TOLERANCE(TEXT("IModel Location"), Location, FVector(-6667.5975038, 7939.4499217, -9044.4565289), 1e-7f);
 					UTEST_EQUAL_TOLERANCE(TEXT("IModel Pitch"), Rotator.Pitch, 0.0, 1e-7);
 					UTEST_EQUAL_TOLERANCE(TEXT("IModel Yaw"), Rotator.Yaw, -90.0, 1e-7);
 					UTEST_EQUAL_TOLERANCE(TEXT("IModel Roll"), Rotator.Roll, -45.0, 1e-7);
-					UTEST_EQUAL_TOLERANCE(TEXT("IModel Scale"), Scale, FVector(-100., 100., 100.), 1e-7);
+					UTEST_EQUAL_TOLERANCE(TEXT("IModel Scale"), Scale, FVector(-100., 100., 100.), 1e-7f);
 				}
 
 				IModel->ShowConstructionData(false);
@@ -577,7 +604,8 @@ bool FIModelLatestChangesetTest::RunTest(const FString& /*Parameters*/)
 		.bUseLatestChangeset = true,
 		.bDiscoverExport = true,
 		.bDiscoverDefaultScene = true,
-		.bAutoLoadSavedViews = true }))
+		.bAutoLoadSavedViews = true,
+		.bAutoRefreshChangesets = true }))
 	{
 		return false;
 	}
@@ -596,7 +624,7 @@ bool FIModelLatestChangesetTest::RunTest(const FString& /*Parameters*/)
 
 		Helper.BindEvents();
 
-		Helper.SetTestCallback(
+		Helper.AddTestCallback(
 			[this, AsyncCallback,
 			IModel = TStrongObjectPtr<AITwinIModel>(IModel),
 			DecoHelper = TStrongObjectPtr<AITwinDecorationHelper>(DecoHelper)]()
@@ -653,7 +681,7 @@ bool FIModelLatestChangesetTest::RunTest(const FString& /*Parameters*/)
 
 					// Same for deletion. In practice, we should not be deleting the saved view while
 					// requests to get/modify it are in progress...
-					// Not that the event is forwarded to the parent iModel
+					// Note that the event is forwarded to the parent iModel.
 					IModel->GetMutableWebServices()->OnDeleteSavedViewComplete
 						.AddUniqueDynamic(&HelperObject, &UIModelHeadlessTestsHelper::OnSavedViewDeleted);
 					SV_001->DeleteSavedView();
@@ -663,7 +691,36 @@ bool FIModelLatestChangesetTest::RunTest(const FString& /*Parameters*/)
 				return true;
 			};
 
-			ValidateLoadedIModel();
+			if (ValidateLoadedIModel())
+			{
+				UIModelHeadlessTestsHelper& HelperObject = UIModelHeadlessTestsHelper::Instance();
+
+				// Bind the new changeset event to the helper object, so that it can be handled in the test.
+				IModel->ConfirmLoadNewChangeset.AddUniqueDynamic(&HelperObject, &UIModelHeadlessTestsHelper::OnConfirmLoadNewChangeset);
+
+				// Modify the mock server so that the auto-refresh detects a new changeset.
+				HelperObject.GetImpl().RedirectMockServerResponse(
+					"56d8aa50361e7894", "new_changeset");
+				// Wait for the auto-refresh to detect the new changeset.
+				AsyncCallback->OnRequestStarted();
+			}
+
+			AsyncCallback->OnRequestDone();
+		});
+
+		// Add a second callback to test the automatic refresh of the latest changeset.
+		Helper.AddTestCallback(
+			[this, AsyncCallback,
+			IModel = TStrongObjectPtr<AITwinIModel>(IModel),
+			DecoHelper = TStrongObjectPtr<AITwinDecorationHelper>(DecoHelper)]()
+		{
+			auto const ValidateNewChangeset = [&]() -> bool
+			{
+				UTEST_EQUAL(TEXT("GetSelectedChangeset"), IModel->GetSelectedChangeset(), FString(TEXT("c0e4e57d54bf87ed664ea49d1a45a93d3e92c0c6")));
+				UTEST_EQUAL(TEXT("GetExportID"), IModel->GetExportID(), FString(TEXT("b4feeeee-bb1c-40d3-8659-a1765b1d179d")));
+				return true;
+			};
+			ValidateNewChangeset();
 
 			AsyncCallback->OnRequestDone();
 		});
@@ -722,7 +779,7 @@ bool FIModelGeoLocatedTest::RunTest(const FString& /*Parameters*/)
 
 		Helper.BindEvents();
 
-		Helper.SetTestCallback(
+		Helper.AddTestCallback(
 			[this, AsyncCallback,
 			IModel = TStrongObjectPtr<AITwinIModel>(IModel),
 			DecoHelper = TStrongObjectPtr<AITwinDecorationHelper>(DecoHelper)]()

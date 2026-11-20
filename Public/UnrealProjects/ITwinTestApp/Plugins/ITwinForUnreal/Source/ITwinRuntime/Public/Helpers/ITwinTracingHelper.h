@@ -27,7 +27,7 @@ struct FITwinRayTraceInput
 };
 
 /// Helper to trace a ray in the scene, and collecting information on the impacted iTwin element.
-class FITwinTracingHelper
+class ITWINRUNTIME_API FITwinTracingHelper
 {
 public:
 	/// Computes tracing start and direction from current mouse position (or a custom one, if
@@ -72,6 +72,10 @@ public:
 	/// filtering out objects and/or iTwin elements currently invisible.
 	bool FindNearestImpact(FHitResult& OutHitResult, UWorld const* World,
 		FVector const& TraceStart, FVector const& TraceEnd);
+
+	//! Find the nearest impact from the current mouse position.
+	bool FindNearestImpactFromMousePos(FHitResult& OutHitResult, UWorld const* World,
+		std::optional<float> const& CustomTraceExtentInMeters = std::nullopt);
 
 private:
 	struct FImpl;

@@ -31,6 +31,7 @@ struct FIModelTestOptions
 	bool bDiscoverExport = false;
 	bool bDiscoverDefaultScene = false;
 	bool bAutoLoadSavedViews = false;
+	bool bAutoRefreshChangesets = false;
 };
 
 class FIModelTestHelper

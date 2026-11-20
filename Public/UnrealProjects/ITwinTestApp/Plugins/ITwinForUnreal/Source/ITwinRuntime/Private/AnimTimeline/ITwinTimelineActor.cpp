@@ -819,7 +819,8 @@ public:
 		}
 		auto& SeqHelper = *Owner.SequencerHelper;
 		// Finalize camera clip
-		for (size_t i = 0; i < timeline_->GetClipCount(); ++i)
+		const int ClipCount = GetClipsNum();
+		for (int i = 0; i < ClipCount; ++i)
 		{
 			auto clip = GetClip(i);
 			clip->InitCamera(Owner.GetWorld());
@@ -852,7 +853,7 @@ public:
 			UpdateTrackingViewOwnership();
 		};
 
-		if (clipIdx >= 0 && clipIdx < (int)timeline_->GetClipCount() && clipIdx != curClip_)
+		if (clipIdx >= 0 && clipIdx < GetClipsNum() && clipIdx != curClip_)
 		{
 			curClip_ = clipIdx;
 			if (updateSceneFromTimeline)
@@ -874,7 +875,7 @@ public:
 	float GetClipDuration(int clipIdx) const
 	{
 		float fDuration(0.f);
-		if (clipIdx >= 0 && clipIdx < timeline_->GetClipCount())
+		if (clipIdx >= 0 && clipIdx < GetClipsNum())
 		{
 			auto clip = GetClipConst(clipIdx);
 			if (clip)
@@ -890,7 +891,8 @@ public:
 	float GetTotalDuration() const
 	{
 		float fTotalDuration(0.f);
-		for (size_t i(0); i < timeline_->GetClipCount(); i++)
+		const int ClipCount = GetClipsNum();
+		for (int i = 0; i < ClipCount; i++)
 		{
 			auto clip = GetClipConst(i);
 			if (clip && clip->IsEnabled())
@@ -902,13 +904,13 @@ public:
 	// Get starting time of the clip within the sequence of clips
 	float GetClipStartTime(int clipIdx) const
 	{
-		if (clipIdx >= timeline_->GetClipCount())
+		if (clipIdx >= GetClipsNum())
 			return 0.f;
 
 		float fStartTime(0.f);
-		for (size_t i(1); i <= clipIdx; i++)
+		for (int i = 1; i <= clipIdx; i++)
 		{
-			auto clip = GetClipConst(i-1);
+			auto clip = GetClipConst(i - 1);
 			if (clip && clip->IsEnabled())
 				fStartTime += clip->GetDuration();
 		}
@@ -918,11 +920,13 @@ public:
 	void GetClipsStartTimes(TArray<float> &vTimes, bool bAppendLastDuration = false) const
 	{
 		vTimes.Empty();
-		if (timeline_->GetClipCount() == 0)
+
+		const int ClipCount = GetClipsNum();
+		if (ClipCount == 0)
 			return;
 
 		float fAccumTime(0.f);
-		for (size_t i(0); i < timeline_->GetClipCount(); i++)
+		for (int i = 0; i < ClipCount; i++)
 		{
 			if (auto clip = GetClipConst(i))
 			{
@@ -957,10 +961,11 @@ public:
 	void GetEnabledClipIndices(TArray<int>& vIndices, bool bSkipEmpty = false) const
 	{
 		vIndices.Empty();
-		if (timeline_->GetClipCount() == 0)
+		const int ClipCount = GetClipsNum();
+		if (ClipCount == 0)
 			return;
 
-		for (size_t i(0); i < timeline_->GetClipCount(); i++)
+		for (int i = 0; i < ClipCount; i++)
 		{
 			if (auto const clip = GetClipConst(i))
 			{
@@ -972,7 +977,8 @@ public:
 
 	bool HasClipsToExport() const
 	{
-		for (size_t i(0); i < timeline_->GetClipCount(); i++)
+		const int ClipCount = GetClipsNum();
+		for (int i = 0; i < ClipCount; i++)
 		{
 			if (auto clip = GetClipConst(i))
 			{
@@ -1006,7 +1012,7 @@ public:
 		auto& SeqHelper = *Owner.SequencerHelper;
 		SeqHelper.AddNewClip(clipdata->GetCamera(), AnimTracksInfo_, clipdata->GetTracks());
 
-		curClip_ = timeline_->GetClipCount() - 1;
+		curClip_ = GetClipsNum() - 1;
 		curTime_ = 0.f;
 		UpdateTrackingViewOwnership();
 		return clip;
@@ -1014,7 +1020,7 @@ public:
 
 	void DuplicateClip(int clipIdx)
 	{
-		if (clipIdx >= 0 && clipIdx < (int)timeline_->GetClipCount())
+		if (clipIdx >= 0 && clipIdx < GetClipsNum())
 		{
 			auto clip = GetClip(clipIdx);
 			FString sName = clip->GetNameU() + FString(TEXT("_copy"));
@@ -1025,11 +1031,18 @@ public:
 				sNewName = FString::Printf(TEXT("%s_%d"), *sName, ++ind);
 			}
 
-			int newClipIdx = timeline_->GetClipCount();
+			int newClipIdx = GetClipsNum();
 			AppendClip(sNewName);
 			auto newClip = GetClip(newClipIdx);
-			BE_ASSERT(newClip);
-			for (int i(0); i < clip->GetKeyframeCount(); ++i)
+
+			if (!newClip)
+			{
+				BE_ISSUE("DuplicateClip: could not create a new clip");
+				return;
+			}
+
+			const size_t KFCount = clip->GetKeyframeCount();
+			for (size_t i = 0; i < KFCount; ++i)
 			{
 				if (auto kf = clip->GetKeyframeByIndex(i))
 				{
@@ -1049,7 +1062,7 @@ public:
 
 		if (clipIdx < 0)
 			clipIdx = curClip_;
-		if (clipIdx >= 0 && clipIdx < (int)timeline_->GetClipCount())
+		if (clipIdx >= 0 && clipIdx < GetClipsNum())
 		{
 			auto clip = GetClip(clipIdx);
 
@@ -1062,16 +1075,16 @@ public:
 
 			timeline_->RemoveClip(clipIdx);
 
-			auto const count = (int)timeline_->GetClipCount();
+			const int NewClipCount = GetClipsNum();
 			
 			// adjust currently selected clip index if needed
 			if (curClip_ == clipIdx)
-				curClip_ = (count > 0) ? 0 : -1;
+				curClip_ = (NewClipCount > 0) ? 0 : -1;
 			else if (curClip_ > clipIdx)
 				curClip_--;
 			
 			// "free" new clip name IDs if the deleted clip was the last one in the list
-			if (count >= 0 && clipIdx == count)
+			if (NewClipCount >= 0 && clipIdx == NewClipCount)
 			{
 				--nextFreeClipID_;
 			}
@@ -1081,8 +1094,13 @@ public:
 		}
 	}
 
-	void MoveClip(size_t indexSrc, size_t indexDst)
+	void MoveClip(int indexSrc, int indexDst)
 	{
+		// Beware AdvViz::SDK::ITimelineClip::MoveClip works with size_t indices.
+		if (indexSrc < 0 || indexDst < 0)
+		{
+			return;
+		}
 		timeline_->MoveClip(indexSrc, indexDst);
 	}
 
@@ -1094,7 +1112,7 @@ public:
 	void RefreshPlaybackOwnershipPresence()
 	{
 		bHasAnyPlaybackOwnershipTargets_ = false;
-		const int ClipCount = static_cast<int>(GetClipsNum());
+		const int ClipCount = GetClipsNum();
 		for (int i = 0; i < ClipCount; ++i)
 		{
 			ClipData* Clip = GetClip(i);
@@ -1216,7 +1234,7 @@ public:
 
 	void ClearAllClipFollow()
 	{
-		const int ClipCount = static_cast<int>(GetClipsNum());
+		const int ClipCount = GetClipsNum();
 		for (int i(0); i < ClipCount; i++)
 			ClearClipFollowTarget(i, false);
 		UpdateTrackingViewOwnership();
@@ -1291,7 +1309,7 @@ public:
 
 	void ClearAllClipTracking()
 	{
-		const int ClipCount = static_cast<int>(GetClipsNum());
+		const int ClipCount = GetClipsNum();
 		for (int i(0); i < ClipCount; i++)
 			ClearClipTracking(i, false);
 		UpdateTrackingViewOwnership();
@@ -1300,7 +1318,7 @@ public:
 	//! Takes every clip out of playback mode, handing the view back to the manual path.
 	void DeactivateAllLookAtModifiers()
 	{
-		const int ClipCount = static_cast<int>(GetClipsNum());
+		const int ClipCount = GetClipsNum();
 		for (int i(0); i < ClipCount; i++)
 		{
 			ClipData* Clip = GetClip(i);
@@ -1327,7 +1345,7 @@ public:
 	//!    (notably outside PIE).
 	void ApplyPlaybackCameraOwnership(AActor* ActiveCamera)
 	{
-		const int ClipCount = static_cast<int>(GetClipsNum());
+		const int ClipCount = GetClipsNum();
 		for (int i(0); i < ClipCount; i++)
 		{
 			ClipData* Clip = GetClip(i);
@@ -1352,7 +1370,7 @@ public:
 	//! or the set of proxies changes.
 	void UpdateTrackingViewOwnership()
 	{
-		const int ClipCount = static_cast<int>(GetClipsNum());
+		const int ClipCount = GetClipsNum();
 		for (int i(0); i < ClipCount; i++)
 		{
 			ClipData* clip = GetClip(i);
@@ -1378,7 +1396,8 @@ public:
 	{
 		if (clipIdx >= 0 && clipIdx < timeline_->GetClipCount())
 		{
-			auto clip = timeline_->GetClipByIndex(clipIdx);
+			auto clip = timeline_->GetClipByIndex(
+				static_cast<size_t>(clipIdx));
 			BE_ASSERT(clip);
 			if (!clip)
 				return nullptr;
@@ -1394,7 +1413,8 @@ public:
 	{
 		if (clipIdx >= 0 && clipIdx < timeline_->GetClipCount())
 		{
-			auto clip = timeline_->GetClipByIndex(clipIdx);
+			auto clip = timeline_->GetClipByIndex(
+				static_cast<size_t>(clipIdx));
 			BE_ASSERT(clip);
 			if (!clip)
 				return nullptr;
@@ -1420,14 +1440,15 @@ public:
 		return -1;
 	}
 
-	size_t GetClipsNum() const
+	int GetClipsNum() const
 	{
-		return timeline_->GetClipCount();
+		return static_cast<int>(timeline_->GetClipCount());
 	}
 
 	ClipData* FindClipByCamera(AActor* pCamera)
 	{
-		for (size_t i(0); i < GetClipsNum(); i++)
+		const int ClipCount = GetClipsNum();
+		for (int i(0); i < ClipCount; i++)
 		{
 			auto clip = GetClip(i);
 			if (clip->GetCamera() == pCamera)
@@ -1439,8 +1460,9 @@ public:
 	void GetClipsNames(TArray<FString>& vClipNames)
 	{
 		vClipNames.Empty();
-		vClipNames.Reserve(GetClipsNum());
-		for (size_t i(0); i < GetClipsNum(); i++)
+		const int ClipCount = GetClipsNum();
+		vClipNames.Reserve(ClipCount);
+		for (int i(0); i < ClipCount; i++)
 		{
 			auto clip = GetClip(i);
 			vClipNames.Add(clip->GetNameU());
@@ -2010,7 +2032,7 @@ public:
 		if (isCameraCutActive)
 		{
 			// All clips are combined in one camera cut track -> find the clip that corresponds to the current playback time
-			for (size_t i(1); i < CurrentCutTrackStartTimes_.Num(); i++)
+			for (int i = 1; i < CurrentCutTrackStartTimes_.Num(); i++)
 			{
 				if (curTime_ < CurrentCutTrackStartTimes_[i])
 				{
@@ -2210,7 +2232,7 @@ void AITwinTimelineActor::RemoveAllClips(bool bRemoveEmptyOnly/* = false*/)
 {
 	if (!IsImplReady())
 		return;
-	for (int i(Impl->GetClipsNum()-1); i >= 0; i--)
+	for (int i = GetClipsNum() - 1; i >= 0; i--)
 	{
 		if (!bRemoveEmptyOnly || Impl->GetClip(i)->GetKeyframeCount() == 0)
 			Impl->RemoveClip(i);
@@ -2258,7 +2280,7 @@ void AITwinTimelineActor::RemoveClip(int clipIdx)
 	Impl->RemoveClip(clipIdx);
 }
 
-void AITwinTimelineActor::MoveClip(size_t indexSrc, size_t indexDst)
+void AITwinTimelineActor::MoveClip(int indexSrc, int indexDst)
 {
 	if (!IsImplReady())
 		return;
@@ -2278,7 +2300,7 @@ void AITwinTimelineActor::EnableAllClips(bool bEnable)
 	if (!IsImplReady())
 		return;
 
-	for (int i(Impl->GetClipsNum() - 1); i >= 0; i--)
+	for (int i = GetClipsNum() - 1; i >= 0; i--)
 		Impl->GetClip(i)->SetEnable(bEnable);
 }
 
@@ -2524,9 +2546,9 @@ int AITwinTimelineActor::GetKeyframeCount() const
 
 int AITwinTimelineActor::GetTotalKeyframeCount() const
 {
-	int nKFTotal(0);
-	const int nClips = GetClipsNum();
-	for (size_t i(0); i < nClips; i++)
+	int nKFTotal = 0;
+	const int ClipCount = GetClipsNum();
+	for (int i = 0; i < ClipCount; i++)
 	{
 		auto clip = Impl->GetClip(i);
 		if (clip && clip->IsEnabled())
@@ -2811,8 +2833,9 @@ bool AITwinTimelineActor::LinkClipsToCutTrack(int clipIdx/* = -1*/)
 	FString outMsg;
 	SeqHelper.AddCameraCutTrackToLevelSequence(true, bRes, outMsg);
 
-	float fTotalDuration(0.f);
-	for (size_t i(0); i < Impl->GetClipsNum(); i++)
+	float fTotalDuration = 0.f;
+	const int ClipCount = Impl->GetClipsNum();
+	for (int i = 0; i < ClipCount; i++)
 	{
 		Impl->CurrentCutTrackStartTimes_.Add(fTotalDuration);
 
@@ -2863,7 +2886,8 @@ bool AITwinTimelineActor::UnlinkClipsFromCutTrack()
 	FString outMsg;
 	SeqHelper.RemoveCameraCutTrackFromLevelSequence(bRes, outMsg);
 
-	for (size_t i(0); i < Impl->GetClipsNum(); i++)
+	const int ClipCount = Impl->GetClipsNum();
+	for (int i = 0; i < ClipCount; i++)
 	{
 		auto clip = Impl->GetClip(i);
 		float fStartTime = SeqHelper.GetStartTime(clip->GetCamera());

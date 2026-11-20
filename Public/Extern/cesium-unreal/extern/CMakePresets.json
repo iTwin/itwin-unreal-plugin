@@ -10,7 +10,7 @@
     },
     {
       "name": "x64-Windows",
-      "generator": "Visual Studio 17 2022",
+      "generator": "Visual Studio 18 2026",
       "binaryDir": "${sourceDir}/out/build/${presetName}",
       "installDir": "${sourceDir}/../Source/ThirdParty",
       "cacheVariables": {
@@ -21,7 +21,7 @@
     },
     {
       "name": "x64-Debug-Windows",
-      "generator": "Visual Studio 17 2022",
+      "generator": "Visual Studio 18 2026",
       "binaryDir": "${sourceDir}/out/build/${presetName}",
       "installDir": "${sourceDir}/../Source/ThirdParty",
       "cacheVariables": {
@@ -40,7 +40,7 @@
     },
     {
       "name": "Windows-CI",
-      "generator": "Visual Studio 17 2022",
+      "generator": "Visual Studio 18 2026",
       "cacheVariables": {
         "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
         "VCPKG_TARGET_TRIPLET": "x64-windows-unreal",

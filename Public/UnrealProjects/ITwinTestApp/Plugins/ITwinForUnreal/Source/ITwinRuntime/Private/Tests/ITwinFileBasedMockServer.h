@@ -12,6 +12,7 @@
 
 #include <Tests/ITwinMockServerBase.h>
 #include <filesystem>
+#include <map>
 
 //! Generic mock server implementation for iTwin APIs, based on cached responses from the real use cases.
 //! Use AdvViz::SDK::RequestDump to generate the cached responses from a real session.
@@ -25,6 +26,9 @@ public:
 	//! Set the relative path to the folder containing the cached responses for this mock server.
 	//! The path is relative to the plugin's Resources folder.
 	void SetRelativeCachedResponsesFolder(std::filesystem::path const& InRelativeCachedResponsesFolder);
+
+	//! Redirect the response to a custom path (which should exist).
+	void RedirectResponse(std::string const& RequestHash, std::string const& NewHash);
 
 	virtual Response responseHandler(
 		const std::string& url,
@@ -41,6 +45,8 @@ private:
 private:
 	//! Path to the folder containing the cached responses for this mock server.
 	std::filesystem::path CachedResponsesFolder;
+
+	std::map<std::string, std::string> RedirectedResponses;
 };
 
 //! Get a mock server instance for the given relative folder containing the cached responses.
